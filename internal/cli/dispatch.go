@@ -115,10 +115,10 @@ Examples:
 	}
 	emitContextDiagnostics(resolvedContext)
 	projectDir, profile := resolvedContext.ProjectDir, resolvedContext.Profile
-	if !team.ExistsProfile(projectDir, profile) {
+	if !team.ExistsFor(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
-	t, err := team.ReadProfile(projectDir, profile)
+	t, err := team.ReadFor(projectDir, profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
@@ -382,7 +382,7 @@ func resolveDispatchSender(t team.Team, fromFlag string) (string, error) {
 // honoring the canonical member ordering.
 func teamMemberByRole(t team.Team, role string) (team.Member, bool) {
 	role = strings.ToLower(strings.TrimSpace(role))
-	for _, m := range orderedTeamMembers(t.Members) {
+	for _, m := range t.Members {
 		if strings.ToLower(m.Role) == role {
 			return m, true
 		}

@@ -17,12 +17,12 @@ import (
 func TestCompoundReleaseBarrierClearsWithStableTombstone(t *testing.T) {
 	project := t.TempDir()
 	session := "issue-414"
-	root := squadnamespace.AMQRoot(project, team.DefaultProfile, session)
+	root := squadnamespace.AMQRoot(project, squadnamespace.DefaultProfile, session)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	degradedSession := state.Session{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: squadnamespace.ID(team.DefaultProfile, session), Root: root + ".wrong"}
-	degraded, _, err := projectCompoundReleaseSession(project, team.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), degradedSession, notifyNow)
+	degradedSession := state.Session{Name: session, TeamProfile: squadnamespace.DefaultProfile, NamespaceID: squadnamespace.ID(squadnamespace.DefaultProfile, session), Root: root + ".wrong"}
+	degraded, _, err := projectCompoundReleaseSession(project, squadnamespace.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), degradedSession, notifyNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestCompoundReleaseBarrierClearsWithStableTombstone(t *testing.T) {
 
 	cleanSession := degradedSession
 	cleanSession.Root = root
-	clean, _, err := projectCompoundReleaseSession(project, team.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), cleanSession, notifyNow.Add(time.Minute))
+	clean, _, err := projectCompoundReleaseSession(project, squadnamespace.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), cleanSession, notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestCompoundReleaseClaimedIDPreservesOrdinarySameThread(t *testing.T) {
 	writeCompoundAttentionMessage(t, root, "user", "new", "release-v1", "cto", "user", thread, "APPROVAL: marker", "question", notifyNow, map[string]any{"release_child": map[string]any{"schema_version": 1}})
 	writeCompoundAttentionMessage(t, root, "user", "new", "ordinary", "cto", "user", thread, "APPROVAL: ordinary", "question", notifyNow.Add(time.Second), nil)
 
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestCompoundReleaseProjectionOrdinaryGateRegressionAndOneScan(t *testing.T)
 		return compoundrelease.ResolveSessionSeries(scope, query, adapter)
 	}
 
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestCompoundReleaseProjectionSelectedBaseRootLayoutsScanOnce(t *testing.T) 
 		profile string
 		root    func(string, string) (string, string)
 	}{
-		{name: "custom default base", profile: team.DefaultProfile, root: func(project, session string) (string, string) {
+		{name: "custom default base", profile: squadnamespace.DefaultProfile, root: func(project, session string) (string, string) {
 			base := filepath.Join(project, "custom-amq")
 			return base, filepath.Join(base, session)
 		}},
@@ -165,7 +165,7 @@ func TestCompoundReleaseProjectionSelectedRootMismatchIsPresentUnscannedBarrier(
 		name, profile string
 		roots         func(string, string) (string, string)
 	}{
-		{name: "wrong observed root", profile: team.DefaultProfile, roots: func(project, session string) (string, string) {
+		{name: "wrong observed root", profile: squadnamespace.DefaultProfile, roots: func(project, session string) (string, string) {
 			base := filepath.Join(project, "custom-amq")
 			return base, filepath.Join(base, session+"-wrong")
 		}},
@@ -220,7 +220,7 @@ func TestCompoundReleaseRootBarrierPreservesExistingOrdinaryAttention(t *testing
 		return state.ScanSessionMessages(root, now)
 	}
 
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestCompoundReleaseRootBarrierPreservesExistingOrdinaryAttention(t *testing
 func TestExplicitActionabilityPreservesNonGateSurfaceBehavior(t *testing.T) {
 	project, snapshot, cfg, root := compoundReleaseProjectionFixture(t)
 	writeCompoundAttentionMessage(t, root, "user", "new", "surface", "cto", "user", "ask/ordinary", "Which option?", "question", notifyNow, nil)
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,12 +339,12 @@ func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, tea
 	t.Helper()
 	project := t.TempDir()
 	session := "issue-414"
-	root := squadnamespace.AMQRoot(project, team.DefaultProfile, session)
+	root := squadnamespace.AMQRoot(project, squadnamespace.DefaultProfile, session)
 	if err := os.MkdirAll(filepath.Join(root, "agents", "user", "inbox", "new"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	agents := []state.Agent{{Handle: "cto", Liveness: state.LivenessAlive}}
-	snapshot := state.Snapshot{BaseRoot: filepath.Dir(root), Sessions: []state.Session{{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: squadnamespace.ID(team.DefaultProfile, session), Root: root, Agents: agents}}}
+	snapshot := state.Snapshot{BaseRoot: filepath.Dir(root), Sessions: []state.Session{{Name: session, TeamProfile: squadnamespace.DefaultProfile, NamespaceID: squadnamespace.ID(squadnamespace.DefaultProfile, session), Root: root, Agents: agents}}}
 	cfg := team.Team{Project: project, Members: []team.Member{{Role: "cto", Handle: "cto"}}}
 	return project, snapshot, cfg, root
 }
@@ -417,13 +417,13 @@ func attentionByLatestID(items []operatorAttention, id string) (operatorAttentio
 
 func TestCompoundReleaseStatusPreservesReadBacklog(t *testing.T) {
 	fixture, _ := newCLIActiveReleaseAttentionFixture(t)
-	cfg := team.Team{Project: fixture.adapter.project, Workstream: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
-	if err := team.WriteProfile(fixture.adapter.project, team.DefaultProfile, cfg); err != nil {
+	cfg := team.Team{Project: fixture.adapter.project, Session: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
+	if err := team.Write(fixture.adapter.project, cfg); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(fixture.adapter.project, ".agent-mail")
 	seedNotifyLaunch(t, fixture.adapter.project, base, fixture.adapter.session, "cto")
-	data, err := buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: team.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(time.Minute) }})
+	data, err := buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: squadnamespace.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(time.Minute) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +440,7 @@ func TestCompoundReleaseStatusPreservesReadBacklog(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	data, err = buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: team.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(2 * time.Minute) }})
+	data, err = buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: squadnamespace.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(2 * time.Minute) }})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -51,9 +51,9 @@ var v228Now = time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 // switch, so a test can address the same project through two path spellings.
 func v228SeedProfile(t *testing.T, projectDir, profile, session string, members []team.Member) {
 	t.Helper()
-	if err := team.WriteProfile(projectDir, profile, team.Team{
+	if err := team.Write(projectDir, team.Team{
 		Project:            projectDir,
-		Workstream:         session,
+		Session:            session,
 		Members:            members,
 		SharedCwdException: "v2.28 contract fixture: not exercising #497 worktree isolation",
 	}); err != nil {

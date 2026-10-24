@@ -176,7 +176,7 @@ Examples:
 			return usageErrorf("gate raise task binding: %v", err)
 		}
 	}
-	cfg, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
+	cfg, err := team.ReadFor(ctx.ProjectDir, ctx.Profile)
 	if err != nil {
 		return fmt.Errorf("read team profile: %w", err)
 	}

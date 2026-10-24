@@ -228,7 +228,7 @@ func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliR
 		captureVerifyActionResult(x.Capture, result)
 		return emitVerifyActionResult(out, result, x.To, x.JSON)
 	}
-	cfg, err := team.ReadProfile(selected.ProjectDir, selected.Profile)
+	cfg, err := team.ReadFor(selected.ProjectDir, selected.Profile)
 	if err != nil {
 		return fmt.Errorf("read team profile: %w", err)
 	}

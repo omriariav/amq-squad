@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -149,7 +150,7 @@ func TestResolveCanonicalContextPrecedenceMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ctx.Profile != team.DefaultProfile || ctx.Sources["profile"] != contextSourceDefault {
+		if ctx.Profile != squadnamespace.DefaultProfile || ctx.Sources["profile"] != contextSourceDefault {
 			t.Fatalf("default profile = %q from %q", ctx.Profile, ctx.Sources["profile"])
 		}
 		if ctx.Sources["session"] != contextSourceDefault || ctx.PinMode != "sessionful" {
@@ -210,7 +211,7 @@ func TestResolveCanonicalContextPrecedenceMatrix(t *testing.T) {
 func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)
-	if err := team.WriteProfile(project, "flagprof", team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "flagsession"}}}); err != nil {
+	if err := team.Write(project, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "flagsession"}}}); err != nil {
 		t.Fatal(err)
 	}
 	writeContextAMQRC(t, project, filepath.Join(".agent-mail", "configprof", "configsession"))
@@ -243,7 +244,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 			return runTask([]string{"list", "--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"})
 		}},
 		{"wrapped-amq", func() error {
-			return runAMQ([]string{"route", "--project", project, "--profile", "flagprof", "--to", "peer"})
+			return runAMQ([]string{"route", "--project", project, "--profile", "flagprof", "--session", "flagsession", "--to", "peer"})
 		}},
 	}
 	for _, command := range commands {

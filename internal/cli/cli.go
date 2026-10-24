@@ -180,8 +180,8 @@ Exit codes:
 
 Examples:
   amq-squad roles
-  amq-squad team init --roles cto,fullstack --binary cto=codex
-  amq-squad team init --profile review --roles cto,qa
+  amq-squad team propose --roles cto,fullstack --runtime fullstack=codex --lead cto
+  amq-squad team check
   amq-squad status --project ~/Code/app --session issue-435 --json
   amq-squad dispatch --session issue-96 --role qa --subject "Validate" --body-file task.md
   amq-squad task list --session issue-96

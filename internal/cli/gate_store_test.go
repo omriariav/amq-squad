@@ -20,7 +20,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // cliMemRelay is an in-memory relay for the CLI tests.
@@ -76,7 +75,7 @@ type gateCLIFixture struct {
 // Buzz transport.
 func newGateCLIFixture(t *testing.T) gateCLIFixture {
 	t.Helper()
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -245,7 +244,7 @@ func TestTypedGateRaiseWithoutTransport(t *testing.T) {
 
 // Behavior change (3-1 ruling P): operator answer refuses the typed gates.
 func TestOperatorAnswerRefusesTypedGates(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent forbidden to cto\n")
 	for _, action := range []string{"tag", "github_release", "package_publish", "external_send", "credential_change", "spawn"} {

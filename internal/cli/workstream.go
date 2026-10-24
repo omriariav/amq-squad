@@ -59,16 +59,9 @@ func resolveTeamWorkstreamName(t team.Team, requested string, explicit bool) (st
 	if inferred := inferredSharedMemberSession(t); inferred != "" {
 		return resolveWorkstreamName(t.Project, inferred, false)
 	}
-	// Tier 2: the deprecated pin shim. Still read, but emit a notice.
-	if pinned := strings.TrimSpace(t.Workstream); pinned != "" {
-		resolved, err := resolveWorkstreamName(t.Project, pinned, false)
-		if err != nil {
-			return "", err
-		}
-		quietNotice("notice: using session %q from the deprecated 'workstream' default pinned in team.json. "+
-			"This pin is deprecated and will be removed in 2.1; pass --session %s explicitly (or re-init the team) instead.\n",
-			resolved, resolved)
-		return resolved, nil
+	// Tier 2: the squad.yaml session.
+	if session := strings.TrimSpace(t.Session); session != "" {
+		return resolveWorkstreamName(t.Project, session, false)
 	}
 	// Tier 3: sanitized project basename.
 	return resolveWorkstreamName(t.Project, defaultWorkstreamName(t.Project), false)

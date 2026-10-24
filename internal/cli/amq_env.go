@@ -11,7 +11,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type amqEnv struct {
@@ -28,7 +27,7 @@ type amqEnv struct {
 }
 
 func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, error) {
-	if squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
+	if squadnamespace.NormalizeProfile(profile) == squadnamespace.DefaultProfile {
 		return resolveAMQEnvInDir(cwd, "", session, handle)
 	}
 	root := squadnamespace.AMQRoot(cwd, profile, session)

@@ -68,16 +68,19 @@ type SeatDefaults struct {
 
 // Squad is squad.yaml in memory.
 type Squad struct {
-	Schema             int          `json:"schema"`
-	Session            string       `json:"session,omitempty"`
-	Lead               string       `json:"lead,omitempty"` // a seat handle
-	LeadMode           string       `json:"lead_mode,omitempty"`
-	ExecutionMode      string       `json:"execution_mode,omitempty"`
-	ControlRoot        string       `json:"control_root,omitempty"`
-	TargetProjectRoot  string       `json:"target_project_root,omitempty"`
-	SharedCwdException string       `json:"shared_cwd_exception,omitempty"`
-	Defaults           SeatDefaults `json:"defaults"`
-	Seats              []Seat       `json:"seats"`
+	Schema             int    `json:"schema"`
+	Session            string `json:"session,omitempty"`
+	Lead               string `json:"lead,omitempty"` // a seat handle
+	LeadMode           string `json:"lead_mode,omitempty"`
+	ExecutionMode      string `json:"execution_mode,omitempty"`
+	ControlRoot        string `json:"control_root,omitempty"`
+	TargetProjectRoot  string `json:"target_project_root,omitempty"`
+	SharedCwdException string `json:"shared_cwd_exception,omitempty"`
+	// OperatorInteraction is how the owner answers gates: lead_pane,
+	// separate_terminal or noc ("" is unspecified).
+	OperatorInteraction string       `json:"operator_interaction,omitempty"`
+	Defaults            SeatDefaults `json:"defaults"`
+	Seats               []Seat       `json:"seats"`
 	// Grants is the narrowing (mode, max_seats, cost_per_day_usd,
 	// permitted_runtimes, privacy_class, protected_paths, merge_repositories,
 	// merge_size_cap_lines), as grants.ParseSquadNarrowing reads it.
@@ -166,6 +169,10 @@ func ParseSquad(text, source string, owner grants.Grants) (Squad, error) {
 			s.TargetProjectRoot, err = absPath(e)
 		case "shared_cwd_exception":
 			s.SharedCwdException, err = e.Scalar()
+		case "operator_interaction":
+			if s.OperatorInteraction, err = e.Scalar(); err == nil {
+				err = ValidateOperatorInteractionMode(s.OperatorInteraction)
+			}
 		case "defaults":
 			s.Defaults, err = parseDefaults(e)
 		case "seats":
@@ -403,6 +410,7 @@ func Render(s Squad) string {
 	line("control_root", s.ControlRoot)
 	line("target_project_root", s.TargetProjectRoot)
 	line("shared_cwd_exception", s.SharedCwdException)
+	line("operator_interaction", s.OperatorInteraction)
 	g := s.Grants
 	line("mode", g.Mode)
 	if g.MaxSeats > 0 {

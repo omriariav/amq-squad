@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/status"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const noisyAMQNotice = "AMQ UPDATE NOTICE"
@@ -193,8 +193,8 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 	})
 
 	t.Run("operator", func(t *testing.T) {
-		project, base, _ := seedNotifyProject(t, team.DefaultOperator())
-		seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
+		project, base, _ := seedNotifyProject(t)
+		seedLegacyOperatorQuestion(t, project, squadnamespace.DefaultProfile, "s", "cto", "gate/release")
 		marker, calls := setupNoisyAMQ(t, base)
 		stdout, stderr, err := captureOutput(t, func() error {
 			return runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", "release", "--to", "cto", "--approved", "--json"})

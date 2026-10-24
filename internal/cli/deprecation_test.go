@@ -34,8 +34,11 @@ func TestRemovedVerbsReturnUsageError(t *testing.T) {
 		{"launch", "codex"},
 		{"restore", "--exec", "--role", "cto"},
 		{"list"},
-		{"team", "show"},
 		{"team", "launch"},
+		{"team", "init"},
+		{"team", "rules", "init"},
+		{"team", "sync"},
+		{"team", "operator", "set"},
 	}
 	for _, args := range cases {
 		assertRemovedUsageError(t, args)

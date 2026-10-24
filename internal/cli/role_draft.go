@@ -158,7 +158,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	cfg, err := team.ReadProfile(projectDir, profile)
+	cfg, err := team.ReadFor(projectDir, profile)
 	if err != nil {
 		return fmt.Errorf("read team profile: %w", err)
 	}
@@ -177,7 +177,7 @@ Examples:
 		return err
 	}
 	prompt := buildRoleDraftPrompt(id, label, binary, purpose, peers, brief)
-	resolved, err := resolveCLIDrafter(cfg.Drafter)
+	resolved, err := resolveCLIDrafter(nil)
 	if err != nil {
 		return err
 	}

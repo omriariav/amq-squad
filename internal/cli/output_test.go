@@ -282,40 +282,6 @@ func TestRootHelpDocumentsOutputFlags(t *testing.T) {
 	}
 }
 
-// TestQuietSuppressesTeamRulesInitNotice covers a concrete locked notice
-// site: `team rules init` writes "Wrote ..." to stderr. Under --quiet the
-// line must be absent; without --quiet it must be present.
-func TestQuietSuppressesTeamRulesInitNotice(t *testing.T) {
-	t.Run("loud emits the wrote notice", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{})
-		dir := t.TempDir()
-		chdir(t, dir)
-		_, stderr, err := captureOutput(t, func() error {
-			return runTeam([]string{"rules", "init"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(stderr, "Wrote ") {
-			t.Errorf("loud team rules init should print Wrote notice, got stderr:\n%s", stderr)
-		}
-	})
-	t.Run("quiet suppresses the wrote notice", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Quiet: true})
-		dir := t.TempDir()
-		chdir(t, dir)
-		_, stderr, err := captureOutput(t, func() error {
-			return runTeam([]string{"rules", "init"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(stderr, "Wrote ") {
-			t.Errorf("quiet team rules init should not print the Wrote notice, got stderr:\n%s", stderr)
-		}
-	})
-}
-
 // Verbose adds a footer line to the human doctor output but must not change
 // JSON output.
 func TestDoctorVerboseFooter(t *testing.T) {
@@ -371,14 +337,12 @@ func TestQuietDoesNotSuppressWarningsOrErrors(t *testing.T) {
 	withOutputPolicy(t, outputPolicy{Quiet: true})
 	dir := t.TempDir()
 	chdir(t, dir)
-	// team sync in a dir with no team-rules.md returns a non-UsageError, which
-	// the command itself surfaces as a plain returned error. The error must
-	// not be swallowed by --quiet (errors flow through main, not
-	// quietNotice).
+	// team show in a dir with no squad.yaml returns a plain error, which
+	// --quiet must not swallow (errors flow through main, not quietNotice).
 	_, _, err := captureOutput(t, func() error {
-		return runTeamSync(nil)
+		return runTeam([]string{"show"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "no team-rules.md") {
+	if err == nil || !strings.Contains(err.Error(), "no squad.yaml") {
 		t.Fatalf("--quiet must not swallow command errors; got %v", err)
 	}
 }

@@ -67,8 +67,8 @@ func TestInferredSharedMemberSessionIgnoresLegacyRoleSessions(t *testing.T) {
 // a shared non-legacy member session wins silently (no deprecation notice).
 func TestResolveTeamWorkstreamInferenceWinsOverPin(t *testing.T) {
 	tm := team.Team{
-		Project:    "/Users/me/My Project",
-		Workstream: "pinned-default",
+		Project: "/Users/me/My Project",
+		Session: "pinned-default",
 		Members: []team.Member{
 			{Role: "cto", Handle: "cto", Session: "issue-96"},
 			{Role: "fullstack", Handle: "fullstack", Session: "issue-96"},
@@ -97,8 +97,8 @@ func TestResolveTeamWorkstreamInferenceWinsOverPin(t *testing.T) {
 // notice fires on stderr in that case.
 func TestResolveTeamWorkstreamUsesPinOnlyWhenInferenceYieldsNothing(t *testing.T) {
 	tm := team.Team{
-		Project:    "/Users/me/My Project",
-		Workstream: "issue-96",
+		Project: "/Users/me/My Project",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Handle: "cto", Session: "cto"},
 		},
@@ -112,14 +112,9 @@ func TestResolveTeamWorkstreamUsesPinOnlyWhenInferenceYieldsNothing(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "issue-96" {
-		t.Fatalf("resolveTeamWorkstreamName = %q, want issue-96 (pin shim)", got)
-	}
-	if !strings.Contains(stderr, "deprecated") || !strings.Contains(stderr, "issue-96") {
-		t.Fatalf("pin path must emit the deprecation notice naming the session; stderr:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "--session") || !strings.Contains(stderr, "2.1") {
-		t.Fatalf("notice must mention --session and removal in 2.1; stderr:\n%s", stderr)
+	// 3.0: the squad.yaml session is a first-class field, not a deprecated pin.
+	if got != "issue-96" || strings.Contains(stderr, "deprecated") {
+		t.Fatalf("resolveTeamWorkstreamName = %q (stderr %q), want issue-96 without a notice", got, stderr)
 	}
 }
 
@@ -156,8 +151,8 @@ func TestResolveTeamWorkstreamFallsBackToBasenameAsLastResort(t *testing.T) {
 // even when a pin is present.
 func TestResolveTeamWorkstreamExplicitDoesNotEmitNotice(t *testing.T) {
 	tm := team.Team{
-		Project:    "/Users/me/My Project",
-		Workstream: "pinned-default",
+		Project: "/Users/me/My Project",
+		Session: "pinned-default",
 		Members: []team.Member{
 			{Role: "cto", Handle: "cto", Session: "cto"},
 		},

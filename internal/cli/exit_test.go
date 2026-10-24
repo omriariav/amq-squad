@@ -100,7 +100,7 @@ func TestParseFlagsUsageErrorAcrossCommands(t *testing.T) {
 		fn   func() error
 	}{
 		{"doctor", func() error { return runDoctor([]string{"--banana"}, "") }},
-		{"team rules init", func() error { return runTeam([]string{"rules", "init", "--banana"}) }},
+		{"team propose", func() error { return runTeam([]string{"propose", "--banana"}) }},
 		{"version", func() error { return Run([]string{"version", "--banana"}, "test") }},
 	}
 	for _, tc := range cases {

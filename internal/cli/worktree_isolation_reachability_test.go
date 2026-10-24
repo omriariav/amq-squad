@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -23,8 +24,8 @@ import (
 // A blocked DEFAULT profile must not be told to pass --profile default.
 func TestWorktreeIsolationFixOmitsDefaultProfileScope(t *testing.T) {
 	dir := t.TempDir()
-	fix := worktreeIsolationFix(dir, team.DefaultProfile, []string{"dev-1", "dev-2"})
-	if !strings.Contains(fix, shellQuote(team.ProfilePath(dir, team.DefaultProfile))) || strings.Contains(fix, "teams/") {
+	fix := worktreeIsolationFix(dir, squadnamespace.DefaultProfile, []string{"dev-1", "dev-2"})
+	if !strings.Contains(fix, shellQuote(team.SquadPath(dir))) || strings.Contains(fix, "teams/") {
 		t.Fatalf("default profile fix must name the project's team.json, not a named profile; text was: %s", fix)
 	}
 }
@@ -243,133 +244,8 @@ func TestProbeTimeoutIsAnObservationFailure(t *testing.T) {
 	}
 }
 
-// remedy 1, at creation: per-member isolated working directories.
-func TestSharedCwdRemedyIsolatedCwdsReachableInOneCommand(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	wtA := filepath.Join(dir, "wt-a")
-	wtB := filepath.Join(dir, "wt-b")
-	for _, p := range []string{wtA, wtB} {
-		if err := os.MkdirAll(p, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if _, _, err := captureOutput(t, func() error {
-		return runTeamInit([]string{"--profile", "squad",
-			"--project", dir,
-			"--roles", "cto,dev-1,dev-2",
-			"--binary", "cto=claude,dev-1=claude,dev-2=codex",
-			"--actor-mode", "cto=review,dev-1=implementation,dev-2=implementation",
-			"--cwd", "dev-1=" + wtA + ",dev-2=" + wtB,
-			"--no-session-pin",
-		})
-	}); err != nil {
-		t.Fatalf("one-command roster creation with isolated cwds failed: %v", err)
-	}
-
-	tm, err := team.ReadProfile(dir, "squad")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The readiness row must be satisfied without an exception being recorded.
-	row := worktreeIsolationCheck(tm, "squad")
-	if row.Status != "ready" {
-		t.Fatalf("worktree_isolation = %s (%s); isolated cwds must satisfy it. fix text was: %s", row.Status, row.Evidence, row.Fix)
-	}
-	if strings.TrimSpace(tm.SharedCwdException) != "" {
-		t.Fatal("isolated cwds must not require a recorded exception")
-	}
-}
-
 // remedy 2, at creation: deliberately accept the shared checkout.
 //
-// --shared-cwd-exception was one of the 17 value-taking team-init flags that
-// `new profile` silently dropped, so this remedy was not merely undocumented but
-// actively rejected with an error blaming the operator's argument.
-func TestSharedCwdRemedyExceptionReachableInOneCommand(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	if _, _, err := captureOutput(t, func() error {
-		return runTeamInit([]string{"--profile", "squad",
-			"--project", dir,
-			"--roles", "cto,dev-1,dev-2",
-			"--binary", "cto=claude,dev-1=claude,dev-2=codex",
-			"--actor-mode", "cto=review,dev-1=implementation,dev-2=implementation",
-			"--shared-cwd-exception", "single checkout accepted for this run",
-			"--no-session-pin",
-		})
-	}); err != nil {
-		t.Fatalf("one-command roster creation with a recorded exception failed: %v", err)
-	}
-
-	tm, err := team.ReadProfile(dir, "squad")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(tm.SharedCwdException) == "" {
-		t.Fatal("--shared-cwd-exception was accepted but not recorded")
-	}
-	row := worktreeIsolationCheck(tm, "squad")
-	if row.Status != "ready" {
-		t.Fatalf("worktree_isolation = %s (%s); a recorded exception must satisfy it", row.Status, row.Evidence)
-	}
-}
-
 // #538 acceptance criterion 1: every remedy the row NAMES must be executable
 // against the EXACT blocked roster.
 //
-// Second review F1: naming a command is not enough, it must be SCOPED. An
-// unscoped `team member update` targets the default profile, so for a blocked
-// named profile the printed command would mutate a different roster. And a
-// creation-time form is wrong here by construction: this profile already exists,
-// so `new profile NAME` would build an unrelated roster. Creation forms belong to
-// the rollback message, not this row.
-func TestWorktreeIsolationFixNamesScopedExecutableRemedies(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	seedBlockedSquad(t, dir)
-	tm, err := team.ReadProfile(dir, "squad")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fix := worktreeIsolationCheckForSession(tm, "squad", "prepared").Fix
-	if fix == "" {
-		t.Fatal("a blocked row must carry a fix")
-	}
-	for _, want := range []string{
-		"members[].cwd",
-		"shared_cwd_exception",
-		shellQuote(team.ProfilePath(dir, "squad")),
-		"dev-1",
-	} {
-		if !strings.Contains(fix, want) {
-			t.Fatalf("fix text is missing %q; text was: %s", want, fix)
-		}
-	}
-	// The blocked profile already exists, so a creation form here would be wrong.
-	if strings.Contains(fix, "new profile") {
-		t.Fatalf("fix text must not offer a creation remedy for an EXISTING blocked profile; text was: %s", fix)
-	}
-}
-
-// seedBlockedSquad creates a named profile whose two implementers share the
-// team-home, i.e. the exact blocked state #538 is about.
-func seedBlockedSquad(t *testing.T, dir string) {
-	t.Helper()
-	seedBlockedSquadIn(t, dir)
-}
-
-func seedBlockedSquadIn(t *testing.T, dir string) {
-	t.Helper()
-	if _, _, err := captureOutput(t, func() error {
-		return runTeamInit([]string{"--profile", "squad", "--project", dir,
-			"--roles", "cto,dev-1,dev-2",
-			"--binary", "cto=claude,dev-1=claude,dev-2=codex",
-			"--actor-mode", "cto=review,dev-1=implementation,dev-2=implementation",
-			"--no-session-pin"})
-	}); err != nil {
-		t.Fatalf("seed blocked squad: %v", err)
-	}
-}

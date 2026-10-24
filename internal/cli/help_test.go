@@ -22,17 +22,11 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"status", "--help"},
 		{"dispatch", "--help"},
 		{"team", "--help"},
-		{"team", "init", "--help"},
-		// gh#758/t11: "team resume --help" deliberately omitted here.
-		// `team resume` was deleted outright (a hard error, not a
-		// deprecation notice like the other legacy verbs above), so its
-		// --help is a one-line redirect to `amq-squad resume` with no
-		// Examples: section or usage doc to check -- there is no longer a
-		// help surface here matching this table's contract.
-		{"team", "sync", "--help"},
-		{"team", "rules", "--help"},
-		{"team", "rules", "show", "--help"},
-		{"team", "rules", "init", "--help"},
+		{"team", "propose", "--help"},
+		{"team", "apply", "--help"},
+		{"team", "show", "--help"},
+		{"team", "check", "--help"},
+		{"team", "draft-rules", "--help"},
 		{"operator", "--help"},
 		{"gate", "--help"},
 		{"gate", "raise", "--help"},
@@ -68,10 +62,10 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
+		{name: "team propose --help", args: []string{"team", "propose", "--help"}, want: "amq-squad team propose"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
 		{name: "roles --help", args: []string{"roles", "--help"}, want: "amq-squad roles"},
-		{name: "team rules show --help", args: []string{"team", "rules", "show", "--help"}, want: "amq-squad team rules show"},
+		{name: "team show --help", args: []string{"team", "show", "--help"}, want: "amq-squad team show"},
 		{name: "version --help", args: []string{"version", "--help"}, want: "amq-squad version"},
 		{name: "doctor --help", args: []string{"doctor", "--help"}, want: "amq-squad doctor"},
 		{name: "operator --help", args: []string{"operator", "--help"}, want: "amq-squad operator"},
@@ -206,13 +200,8 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{name: "team init", args: []string{"team", "init", "--help"}, want: []string{"--project DIR", "amq-squad team init --project ~/Code/app"}},
-		{name: "team sync", args: []string{"team", "sync", "--help"}, want: []string{"--project DIR", "amq-squad team sync --project ~/Code/app --apply"}},
-		// gh#758/t11: "team resume" omitted -- deleted outright (hard
-		// error), its --help is a one-line redirect with no "--project
-		// DIR" usage doc to check, unlike the other legacy verbs above.
-		{name: "team rules show", args: []string{"team", "rules", "show", "--help"}, want: []string{"--project DIR", "amq-squad team rules show --project ~/Code/app"}},
-		{name: "team rules init", args: []string{"team", "rules", "init", "--help"}, want: []string{"--project DIR", "amq-squad team rules init --project ~/Code/app"}},
+		{name: "team propose", args: []string{"team", "propose", "--help"}, want: []string{"--project DIR", "amq-squad team propose --project ~/Code/app"}},
+		{name: "team apply", args: []string{"team", "apply", "--help"}, want: []string{"--project DIR", "amq-squad team apply --digest"}},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
@@ -276,10 +265,9 @@ func assertTextNamesRegisteredCommands(t *testing.T, label, text string) {
 
 func TestGeneratedTeamRulesNameRegisteredCommands(t *testing.T) {
 	for _, mode := range []string{"", team.OperatorInteractionLeadPane, team.OperatorInteractionSeparateTerminal, team.OperatorInteractionNOC} {
-		op := team.DefaultOperator()
-		op.InteractionMode = mode
+		opMode := mode
 		body, err := renderTeamRules(team.Team{
-			Project: t.TempDir(), Operator: &op, Orchestrated: true, Lead: "cto",
+			Project: t.TempDir(), OperatorInteraction: opMode, Orchestrated: true, Lead: "cto",
 			Members: []team.Member{
 				{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"},
 				{Role: "dev-1", Binary: "claude", Handle: "dev-1", Session: "s", ActorMode: team.ActorModeImplementation},

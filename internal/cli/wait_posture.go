@@ -52,7 +52,7 @@ type waitPostureAuditRecord struct {
 }
 
 var (
-	waitPostureReadTeam            = team.ReadProfile
+	waitPostureReadTeam            = team.ReadFor
 	waitPostureResolveCurrentActor = currentEnvRosterActor
 	waitPostureLoadSnapshot        = defaultWaitPostureSnapshot
 	waitPostureAppendAudit         = writeWaitPostureAudit

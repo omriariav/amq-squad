@@ -18,6 +18,17 @@ The Go form is `internal/team` (`squad.go`): `ParseSquad`, `LoadSquad`,
   matches. `amq-squad team show` prints the parsed file and its effective
   grant; `amq-squad team check` validates it.
 
+## The digest
+
+`team propose` plans, in this order, `squad.yaml`, `.amq-squad/team-rules.md`
+(rendered from the squad), then `CLAUDE.md` and `AGENTS.md` for the
+repository root and each existing seat directory inside the repository
+(sorted). The digest is `sha256:` + hex(sha256(path NUL content NUL ...))
+over those files. `team apply --digest D` recomputes the plan and writes
+only when the digest is equal; the pointer stubs are refused if they
+changed since the plan. The Go form is `team.NewPlan` and `Plan.Apply`
+(`internal/team/digest.go`); the pi lead of 4-1 uses the same function.
+
 ## Format
 
 The strict YAML subset of `internal/yamlsub` (the same reader as the owner
@@ -37,6 +48,7 @@ a parse error.
 | `execution_mode` | `global_orchestrator`, `project_lead`, `project_team`, `direct_lead_session` | was `team init --mode` |
 | `control_root`, `target_project_root` | absolute paths | were `team init --control-root`, `--target-project-root` |
 | `shared_cwd_exception` | text | the recorded reason for two mutation-capable seats sharing a tree |
+| `operator_interaction` | `lead_pane`, `separate_terminal`, `noc` | how the owner answers gates; was `team operator set --mode` |
 | `defaults` | map of `runtime`, `model`, `effort`, `tools` | filled into a seat that leaves the field empty; a pi seat never takes model or effort |
 | `seats` | list of maps | at least one |
 | `mode`, `max_seats`, `cost_per_day_usd`, `permitted_runtimes`, `privacy_class`, `protected_paths`, `merge_repositories`, `merge_size_cap_lines` | as in the owner file | grant narrowing, below |

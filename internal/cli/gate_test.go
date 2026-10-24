@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -36,7 +37,7 @@ func TestGateRaiseRejectsUnknownOrMismatchedPairBeforeResolutionOrSend(t *testin
 }
 
 func TestGateRaiseSendsExactTypedRequestToConfiguredOperator(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-gate to user\n")
 	_, stderr, err := captureOutput(t, func() error {
 		return runGate([]string{"raise", "--project", project, "--session", "s", "--me", "cto", "--gate", "merge-414", "--kind", "merge", "--action", "protected_branch_push", "--target", "PR #414 head abcdef0 into main", "--note", "integrity note", "--json"})
@@ -62,7 +63,7 @@ func TestGateRaiseSendsExactTypedRequestToConfiguredOperator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.Namespace.ProjectDir != project || request.Namespace.Profile != team.DefaultProfile || request.Namespace.Session != "s" || request.Namespace.NamespaceID != "default/s" || request.Namespace.Generation != "none" || request.Note != "integrity note" {
+	if request.Namespace.ProjectDir != project || request.Namespace.Profile != squadnamespace.DefaultProfile || request.Namespace.Session != "s" || request.Namespace.NamespaceID != "default/s" || request.Namespace.Generation != "none" || request.Note != "integrity note" {
 		t.Fatalf("typed request=%+v", request)
 	}
 
@@ -83,7 +84,7 @@ func TestGateRaiseReResolutionDriftRefusesBeforeSend(t *testing.T) {
 		{name: "root", fn: func(ctx *contextResolution) { ctx.Root = filepath.Join(ctx.Root, "changed") }},
 	} {
 		t.Run(mutate.name, func(t *testing.T) {
-			project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, _, _ := seedNotifyProject(t)
 			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible to user\n")
 			original := resolveGateRaiseContext
 			count := 0
@@ -168,7 +169,7 @@ func TestTypedCLIInjectionFailsBeforeResolutionOrMutation(t *testing.T) {
 }
 
 func TestTypedAnswerReasonInjectionMayResolveButNeverSendsOrWritesReceipt(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	request := typedQuestion(project, "s", "q", "github_release", "release target", "note", time.Now().UTC()).AuthorizationRequest
 	writeTypedGateMessage(t, base, "s", "user", "q", "gate/test", "cto", "question", "Gate-Kind: release\nAction: github_release\nTarget: release target\nNote: note", request, time.Now().UTC())
@@ -212,7 +213,7 @@ func writeTypedGateMessage(t *testing.T, base, session, owner, id, thread, from,
 }
 
 func TestOperatorAnswerTypedAutoBindExactOverridesAndMalformedBarrier(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	request := typedQuestion(project, "s", "q", "protected_branch_push", "exact target", "note", time.Now().UTC()).AuthorizationRequest
 	writeTypedGateMessage(t, base, "s", "user", "q", "gate/test", "cto", "question", "Gate-Kind: merge\nAction: protected_branch_push\nTarget: exact target\nNote: note", request, time.Now().UTC())
@@ -293,7 +294,7 @@ func TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary(t *t
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, _, _ := seedNotifyProject(t)
 			observed, err := tc.run(t, project)
 			if err == nil || !strings.Contains(err.Error(), "context changed") {
 				t.Fatalf("drift did not fail closed: observed=%d err=%v", observed, err)
@@ -306,7 +307,7 @@ func TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary(t *t
 }
 
 func TestOperatorAnswerNoQuestionFailsClosedWithoutSend(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible to cto\n")
 	err := runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", "missing", "--to", "cto", "--approved"})
 	if err == nil {
@@ -337,7 +338,7 @@ func TestGateListKindsIsContextFreeAndCatalogDriven(t *testing.T) {
 }
 
 func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	raiseCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent q-safe to user\n")
 	if err := runGate([]string{"raise", "--project", project, "--session", "s", "--me", "cto", "--gate", "release-safe", "--kind", "feature_branch_push", "--action", "feature_branch_push", "--target", "release v1 with  two spaces", "--note", "safe prose"}); err != nil {
@@ -379,11 +380,11 @@ func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
 		t.Fatalf("safe prose did not round trip exactly: %q", answer.Body)
 	}
 	writeAuthorizationMessage(t, base, "s", "cto", "cur", answer)
-	cfg, err := team.ReadProfile(project, team.DefaultProfile)
+	cfg, err := team.Read(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := decideTypedVerifyActionWithPolicy([]state.Message{question, answer}, request.Gate, request.Action, request.Target, "user", cfg, "s", project, team.DefaultProfile)
+	got := decideTypedVerifyActionWithPolicy([]state.Message{question, answer}, request.Gate, request.Action, request.Target, "user", cfg, "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionApproved {
 		t.Fatalf("safe typed round trip not approved: %+v", got)
 	}
@@ -394,7 +395,7 @@ func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
 	if err != nil || verifiedCLI.Decision != actionDecisionApproved {
 		t.Fatalf("verify action CLI err=%v stdout=%s stderr=%s", err, stdout, stderr)
 	}
-	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return answer.Created.Add(time.Second) }})
+	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return answer.Created.Add(time.Second) }})
 	if err != nil {
 		t.Fatal(err)
 	}

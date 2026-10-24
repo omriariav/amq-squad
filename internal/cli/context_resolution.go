@@ -368,17 +368,17 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	addTupleContextCandidate(&candidates, "profile", contextSourceAMQRC, amqrc.Profile, amqrc.Path, amqrc.Profile, amqrc.Session)
 	addTupleContextCandidate(&candidates, "session", contextSourceAMQRC, amqrc.Session, amqrc.Path, amqrc.Profile, amqrc.Session)
 
-	addContextCandidate(&candidates, "profile", contextSourceDefault, team.DefaultProfile, "implicit default profile")
+	addContextCandidate(&candidates, "profile", contextSourceDefault, squadnamespace.DefaultProfile, "implicit default profile")
 	profile, profileSource, err := selectContextCandidate(candidates, "profile")
 	if err != nil {
 		return contextResolution{}, err
 	}
 	if profile == "" {
-		profile = team.DefaultProfile
+		profile = squadnamespace.DefaultProfile
 		profileSource = contextSourceDefault
 	}
 	profile = squadnamespace.NormalizeProfile(profile)
-	if err := team.ValidateProfileName(profile); err != nil {
+	if err := squadnamespace.ValidateProfile(profile); err != nil {
 		return contextResolution{}, usageErrorf("resolved profile %q is invalid: %v", profile, err)
 	}
 
@@ -453,10 +453,10 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 
 	if amqrc.Root != "" {
 		probe := contextCandidate{tupleProfile: squadnamespace.NormalizeProfile(amqrc.Profile), tupleSession: amqrc.Session, tupleBound: amqrc.Profile != "" || amqrc.Session != ""}
-		eligible := contextCandidateTupleCompatible(probe, profile, session) && (profile == team.DefaultProfile || amqrc.Profile != "")
+		eligible := contextCandidateTupleCompatible(probe, profile, session) && (profile == squadnamespace.DefaultProfile || amqrc.Profile != "")
 		if eligible {
 			root := amqrc.Root
-			if profile == team.DefaultProfile && session != "" {
+			if profile == squadnamespace.DefaultProfile && session != "" {
 				if _, configuredSession, ok := profileSessionFromAMQRoot(projectDir, root); !ok || configuredSession == "" {
 					root = filepath.Join(root, session)
 				}
@@ -475,7 +475,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 		defaultRoot = squadnamespace.AMQRoot(projectDir, profile, session)
 	}
 	defaultBase := filepath.Join(projectDir, ".agent-mail")
-	if profile != team.DefaultProfile {
+	if profile != squadnamespace.DefaultProfile {
 		defaultBase = defaultRoot
 	}
 	addContextCandidate(&compatible, "root", contextSourceDefault, defaultRoot, "profile/session storage contract")
@@ -489,7 +489,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	if err != nil {
 		return contextResolution{}, err
 	}
-	if profile != team.DefaultProfile {
+	if profile != squadnamespace.DefaultProfile {
 		baseRoot = root
 		baseSource = rootSource
 	}
@@ -505,7 +505,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	resolution.Sources["root"] = rootSource
 	resolution.Sources["base_root"] = baseSource
 	resolution.PinMode = "sessionful"
-	if profile != team.DefaultProfile {
+	if profile != squadnamespace.DefaultProfile {
 		resolution.PinMode = "exact_root"
 	}
 	if err := validateResolvedContext(resolution); err != nil {
@@ -584,7 +584,7 @@ func readInjectedContext(projectDir string) (injectedContext, []string, error) {
 		if filepath.Clean(root) != filepath.Clean(filepath.Join(base, session)) {
 			return ctx, nil, usageErrorf("injected AMQ identity is inconsistent: AM_ROOT %q is not AM_BASE_ROOT/AM_SESSION %q", root, filepath.Join(base, session))
 		}
-		if underProject && profile != team.DefaultProfile {
+		if underProject && profile != squadnamespace.DefaultProfile {
 			return ctx, nil, usageErrorf("injected named-profile root %q must be exact-root/sessionless; AM_SESSION must be omitted", root)
 		}
 		ctx.Profile, ctx.Session, ctx.PinMode = profile, session, "sessionful"
@@ -594,7 +594,7 @@ func readInjectedContext(projectDir string) (injectedContext, []string, error) {
 		return ctx, nil, usageErrorf("injected exact-root identity is inconsistent: AM_ROOT %q must equal AM_BASE_ROOT %q when AM_SESSION is omitted", root, base)
 	}
 	if underProject {
-		if profile == team.DefaultProfile && inferredSession != "" {
+		if profile == squadnamespace.DefaultProfile && inferredSession != "" {
 			return ctx, nil, usageErrorf("injected default-profile root %q is missing AM_SESSION=%q; stop and resume/relaunch the shell", root, inferredSession)
 		}
 		ctx.Profile, ctx.Session = profile, inferredSession
@@ -618,14 +618,14 @@ func profileSessionFromComparableRoots(base, root string) (string, string, bool)
 		return "", "", false
 	}
 	if rel == "." || rel == "" {
-		return team.DefaultProfile, "", true
+		return squadnamespace.DefaultProfile, "", true
 	}
 	parts := strings.Split(filepath.Clean(rel), string(os.PathSeparator))
 	switch len(parts) {
 	case 1:
-		return team.DefaultProfile, parts[0], true
+		return squadnamespace.DefaultProfile, parts[0], true
 	case 2:
-		if parts[0] == team.DefaultProfile || team.ValidateProfileName(parts[0]) != nil {
+		if parts[0] == squadnamespace.DefaultProfile || squadnamespace.ValidateProfile(parts[0]) != nil {
 			return "", "", false
 		}
 		return parts[0], parts[1], true
@@ -661,7 +661,7 @@ func readProjectAMQRCContext(projectDir string) (amqrcContext, error) {
 	ctx := amqrcContext{Root: root, BaseRoot: root, Path: path}
 	if profile, session, ok := profileSessionFromAMQRoot(projectDir, root); ok {
 		ctx.Profile, ctx.Session = profile, session
-		if session != "" && profile == team.DefaultProfile {
+		if session != "" && profile == squadnamespace.DefaultProfile {
 			ctx.BaseRoot = filepath.Dir(root)
 		}
 	}
@@ -669,12 +669,12 @@ func readProjectAMQRCContext(projectDir string) (amqrcContext, error) {
 }
 
 func defaultSessionForProfile(projectDir, profile string) (string, string) {
-	if team.ExistsProfile(projectDir, profile) {
-		if configured, err := team.ReadProfile(projectDir, profile); err == nil {
+	if team.ExistsFor(projectDir, profile) {
+		if configured, err := team.ReadFor(projectDir, profile); err == nil {
 			if inferred := inferredSharedMemberSession(configured); inferred != "" {
 				return inferred, "shared member session in team profile"
 			}
-			if pinned := strings.TrimSpace(configured.Workstream); pinned != "" {
+			if pinned := strings.TrimSpace(configured.Session); pinned != "" {
 				return pinned, "deprecated team workstream default"
 			}
 		}
@@ -696,7 +696,7 @@ func contextRootMatches(root, source, projectDir, profile, session string, env i
 		}
 		return (env.Profile == "" || squadnamespace.ProfilesEqual(env.Profile, profile)) && (env.Session == "" || session == "" || env.Session == session)
 	}
-	return profile == team.DefaultProfile
+	return profile == squadnamespace.DefaultProfile
 }
 
 func contextBaseRootMatches(baseRoot, source, projectDir, profile, session string, env injectedContext, amqrc amqrcContext) bool {
@@ -710,7 +710,7 @@ func contextBaseRootMatches(baseRoot, source, projectDir, profile, session strin
 		}
 		return (env.Profile == "" || squadnamespace.ProfilesEqual(env.Profile, profile)) && (env.Session == "" || session == "" || env.Session == session)
 	}
-	return source == contextSourceAMQRC && profile == team.DefaultProfile
+	return source == contextSourceAMQRC && profile == squadnamespace.DefaultProfile
 }
 
 func externalContextRootMatchesProject(root string, amqrc amqrcContext) bool {
@@ -728,7 +728,7 @@ func validateResolvedContext(ctx contextResolution) error {
 	if ctx.Root == "" || ctx.BaseRoot == "" {
 		return usageErrorf("could not resolve AMQ root/base root; pass explicit --project, --profile, and --session")
 	}
-	if ctx.Profile == team.DefaultProfile {
+	if ctx.Profile == squadnamespace.DefaultProfile {
 		if ctx.Session != "" && filepath.Clean(ctx.Root) != filepath.Clean(filepath.Join(ctx.BaseRoot, ctx.Session)) {
 			return usageErrorf("resolved default-profile context is inconsistent: root %q is not base_root/session %q", ctx.Root, filepath.Join(ctx.BaseRoot, ctx.Session))
 		}
@@ -762,7 +762,7 @@ func resolveExistingTeamProfile(projectFlag, profileFlag string, projectSet bool
 	if err != nil {
 		return "", "", err
 	}
-	if !team.ExistsProfile(projectDir, profile) {
+	if !team.ExistsFor(projectDir, profile) {
 		return "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	return projectDir, profile, nil
@@ -773,10 +773,10 @@ func resolveExistingTeamProfile(projectFlag, profileFlag string, projectSet bool
 // the slug rules. Returns the canonical profile name and any error.
 func resolveProfileFlag(name string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || name == team.DefaultProfile {
-		return team.DefaultProfile, nil
+	if name == "" || name == squadnamespace.DefaultProfile {
+		return squadnamespace.DefaultProfile, nil
 	}
-	if err := team.ValidateProfileName(name); err != nil {
+	if err := squadnamespace.ValidateProfile(name); err != nil {
 		return "", fmt.Errorf("--profile: %w", err)
 	}
 	return name, nil

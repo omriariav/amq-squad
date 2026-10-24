@@ -48,13 +48,13 @@ const briefDraftLimit = 128 << 10
 // goal through the configured drafter and validates the exact document shape
 // (validateBriefDraft). draft.Text is the reviewed document unless draft.Manual.
 func draftBrief(project, profile, session, goal string, tm team.Team) (cliDraft, error) {
-	return runCLIDraft(project, tm.Drafter, buildBriefDraftPrompt(profile, session, goal, tm), "workstream brief", "no brief was staged",
+	return runCLIDraft(project, nil, buildBriefDraftPrompt(profile, session, goal, tm), "workstream brief", "no brief was staged",
 		func(raw string) (string, error) { return validateBriefDraft(raw, session, goal, tm.Members) })
 }
 
 func buildBriefDraftPrompt(profile, session, goal string, tm team.Team) string {
 	var roster strings.Builder
-	for _, member := range orderedTeamMembers(tm.Members) {
+	for _, member := range tm.Members {
 		fmt.Fprintf(&roster, "- `%s` (`%s`, `%s`): explain this seat's responsibility for the goal without changing its authority.\n",
 			member.Role, memberHandle(member), member.Binary)
 	}

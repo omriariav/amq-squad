@@ -43,6 +43,9 @@ type leadExecutionData struct {
 	FinalRecommendation string   `json:"final_recommendation,omitempty"`
 }
 
+// undeclaredLeadExecution: squad.yaml carries no v2 lead-execution posture.
+var undeclaredLeadExecution = leadExecutionData{Posture: "undeclared", GoalSignificance: "standard"}
+
 type executionModeData struct {
 	Mode                  string            `json:"mode"`
 	ControlRoot           string            `json:"control_root,omitempty"`
@@ -167,7 +170,7 @@ func executionContract(mode, controlRoot, targetRoot, profile, session, namespac
 		contract.PollingRequired = false
 		contract.Boundary = "one visible project-root lead owns implementation, validation, child delegation, and final evidence"
 	}
-	applyLeadExecutionContract(&contract, nil)
+	contract.LeadExecution = undeclaredLeadExecution
 	return contract
 }
 
@@ -202,7 +205,6 @@ func executionContractForTeam(t team.Team, profile, session, goalBinding, topolo
 	contract := executionContract(mode, controlRoot, targetRoot, profile, session,
 		squadnamespace.Resolve(t.Project, profile, session).ID, lead, goalBinding, topology)
 	applyLeadModeContract(&contract, t, lead)
-	applyLeadExecutionContract(&contract, t.LeadExecution)
 	return contract
 }
 
@@ -296,36 +298,4 @@ func plannerMutableActorFromRoles(lead string, roles []string) string {
 		return workers[0]
 	}
 	return "delegated_workers"
-}
-
-func applyLeadExecutionContract(contract *executionModeData, exec *team.LeadExecution) {
-	if contract == nil {
-		return
-	}
-	contract.LeadExecution = leadExecutionDataForConfig(exec)
-}
-
-func leadExecutionDataForConfig(exec *team.LeadExecution) leadExecutionData {
-	if exec == nil {
-		return leadExecutionData{
-			Declared:         false,
-			Posture:          "undeclared",
-			GoalSignificance: team.GoalSignificanceStandard,
-		}
-	}
-	significance := strings.TrimSpace(exec.GoalSignificance)
-	if significance == "" {
-		significance = team.GoalSignificanceStandard
-	}
-	return leadExecutionData{
-		Declared:            true,
-		Posture:             strings.TrimSpace(exec.Posture),
-		GoalSignificance:    significance,
-		DecisionTime:        strings.TrimSpace(exec.DecisionTime),
-		Reason:              strings.TrimSpace(exec.Reason),
-		ChildBudget:         exec.ChildBudget,
-		PlannedDelegations:  append([]string(nil), exec.PlannedDelegations...),
-		ReviewPlan:          strings.TrimSpace(exec.ReviewPlan),
-		FinalRecommendation: strings.TrimSpace(exec.FinalRecommendation),
-	}
 }

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 // frozenClock returns a fixed timestamp so provenance assertions are
@@ -166,10 +166,10 @@ func TestBuildSeedBriefBodyByteForByte(t *testing.T) {
 
 func TestWriteSeedBriefRefusesExistingWithoutForce(t *testing.T) {
 	home := t.TempDir()
-	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "first content\n", false); err != nil {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "first content\n", false); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
-	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "second content\n", false); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "second content\n", false); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("second write should refuse: %v", err)
 	}
 	// Existing content must be untouched.
@@ -205,7 +205,7 @@ func TestWriteSeedBriefNoForceConcurrentExclusive(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", contents[i], false)
+			_, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", contents[i], false)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -248,10 +248,10 @@ func TestWriteSeedBriefNoForceConcurrentExclusive(t *testing.T) {
 
 func TestWriteSeedBriefForceOverwrites(t *testing.T) {
 	home := t.TempDir()
-	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "first content\n", false); err != nil {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "first content\n", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "second content\n", true); err != nil {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "second content\n", true); err != nil {
 		t.Fatalf("force overwrite failed: %v", err)
 	}
 	got, _ := os.ReadFile(filepath.Join(home, ".amq-squad", "briefs", "issue-96.md"))

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -40,10 +41,9 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatalf("build amq-squad: %v\n%s", err, out)
 	}
 
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
+	opMode := team.OperatorInteractionLeadPane
+	if err := team.Write(dir, team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, OperatorInteraction: opMode,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s", CWD: dir}, {Role: "qa", Binary: "codex", Handle: "qa", Session: "s", CWD: dir}},
 	}); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 
 	base := filepath.Join(dir, ".agent-mail")
 	root := filepath.Join(base, "s")
-	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: team.DefaultProfile, Root: root, TeamHome: dir})
+	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: squadnamespace.DefaultProfile, Root: root, TeamHome: dir})
 	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
 		ID: "pty-gate", From: "cto", To: "user", Thread: "gate/pty", Subject: "APPROVAL: real PTY wait", Kind: "question", Created: time.Now().UTC(),
 	})

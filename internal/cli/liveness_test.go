@@ -11,6 +11,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -41,7 +42,7 @@ func stubLaunchapiInspect(t *testing.T, fn func(context.Context, launchapi.Inspe
 func TestClassifierPresenceLiveWhenWriterUnknown(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	_ = seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -71,7 +72,7 @@ func TestClassifierPresenceLiveWhenWriterUnknown(t *testing.T) {
 func TestStoppedLaunchRecordOverridesReusedLivePID(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -127,7 +128,7 @@ func TestInspectLivenessUnknownFailsClosed(t *testing.T) {
 func TestInspectLivenessParityWithPaneProbeForLiveSeats(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -140,11 +141,11 @@ func TestInspectLivenessParityWithPaneProbeForLiveSeats(t *testing.T) {
 	})
 
 	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	tm, err := team.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, squadnamespace.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive {
 		t.Fatalf("status = %q, want live (session Inspect present must corroborate, not override, an independently live seat)", rec.Status)
 	}
@@ -160,7 +161,7 @@ func TestInspectLivenessParityWithPaneProbeForLiveSeats(t *testing.T) {
 func TestStatusRollupUnchangedForLegacyLaunches(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -173,11 +174,11 @@ func TestStatusRollupUnchangedForLegacyLaunches(t *testing.T) {
 	})
 
 	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	tm, err := team.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, squadnamespace.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive || rec.Detail != "agent pid 5555 alive (codex)" {
 		t.Fatalf("legacy-session status/detail changed: status=%q detail=%q", rec.Status, rec.Detail)
 	}
@@ -195,7 +196,7 @@ func TestStatusRollupUnchangedForLegacyLaunches(t *testing.T) {
 func TestInspectAbsentConflictsWithLivePaneProbeFailsClosed(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -208,11 +209,11 @@ func TestInspectAbsentConflictsWithLivePaneProbeFailsClosed(t *testing.T) {
 	})
 
 	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	tm, err := team.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, squadnamespace.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateStale {
 		t.Fatalf("status = %q, want stale (session Inspect absent conflicts with a live pane probe -- must fail closed, not silently trust either source)", rec.Status)
 	}
@@ -232,7 +233,7 @@ func TestInspectAbsentConflictsWithLivePaneProbeFailsClosed(t *testing.T) {
 func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -245,11 +246,11 @@ func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
 	})
 
 	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	tm, err := team.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, squadnamespace.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive || rec.Detail != "agent pid 5555 alive (codex)" {
 		t.Fatalf("Inspect call error must not clamp: status=%q detail=%q", rec.Status, rec.Detail)
 	}
@@ -272,7 +273,7 @@ func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
 func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 			{Role: "senior-dev", Binary: "codex", Handle: "senior-dev", Session: "issue-96"},
@@ -300,12 +301,12 @@ func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
 		map[int]bool{5555: true, 5556: true, 5557: true},
 		time.Now(),
 	)
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	tm, err := team.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range tm.Members {
-		rec := classifyMemberStatusForTest(tm, team.DefaultProfile, m, "issue-96", probe)
+		rec := classifyMemberStatusForTest(tm, squadnamespace.DefaultProfile, m, "issue-96", probe)
 		if rec.Status != statusStateLive {
 			t.Fatalf("member %q status = %q, want live", m.Handle, rec.Status)
 		}
@@ -328,7 +329,7 @@ func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
 func TestStatusSurfacesNotableLaunchapiObservation(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -346,11 +347,11 @@ func TestStatusSurfacesNotableLaunchapiObservation(t *testing.T) {
 	})
 
 	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	tm, err := team.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, squadnamespace.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive {
 		t.Fatalf("status = %q, want live (a notable Observation corroborates/explains, never overrides per-seat evidence)", rec.Status)
 	}
@@ -395,7 +396,7 @@ func TestStatusSurfacesNotableLaunchapiObservation(t *testing.T) {
 func TestStatusOmitsUnremarkableLaunchapiObservation(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
+		Session: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 		},
@@ -413,11 +414,11 @@ func TestStatusOmitsUnremarkableLaunchapiObservation(t *testing.T) {
 	})
 
 	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	tm, err := team.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, squadnamespace.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if strings.Contains(rec.Detail, "launchapi observes") {
 		t.Fatalf("detail should stay silent for an unremarkable observation: %q", rec.Detail)
 	}

@@ -394,13 +394,13 @@ entries:
   status: keep
 - path: internal/cli/effort.go
   v2_lines: 239
-  current_lines: 98
   fate: shrink
   target_lines: 180
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: shrunk
+  status: deleted
+  note: "2b-5: effort is a squad.yaml seat field and travels as a provider argument; the team init role=effort flag is gone (reason: provider-argument assembly is R4)"
 - path: internal/cli/evidence.go
   v2_lines: 774
   fate: replace
@@ -411,7 +411,7 @@ entries:
   status: deleted
 - path: internal/cli/execution_mode.go
   v2_lines: 682
-  current_lines: 331
+  current_lines: 301
   fate: review
   target_lines: 331
   cluster: C25
@@ -632,13 +632,13 @@ entries:
   status: new
 - path: internal/cli/init.go
   v2_lines: 284
-  current_lines: 131
   fate: shrink
   target_lines: 150
   cluster: C4
   extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)"
   reason: "legacy wizard/start scaffolding"
-  status: shrunk
+  status: deleted
+  note: "2b-5: dead since 2a (no caller of computeInitPlan); team propose and team apply are the digest flow (reason: legacy wizard/start scaffolding)"
 - path: internal/cli/json.go
   v2_lines: 47
   current_lines: 47
@@ -1244,14 +1244,14 @@ entries:
 
 - path: internal/cli/roles.go
   v2_lines: 146
-  current_lines: 146
+  current_lines: 69
   fate: shrink
   target_lines: 80
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+  status: shrunk
+  note: "2b-5: lists the roles a squad.yaml seat may name (was accepted-3: provider-argument assembly is R4)"
 
 - path: internal/cli/run_shell_silence.go
   v2_lines: 31
@@ -1361,7 +1361,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 453
+  current_lines: 442
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1512,13 +1512,13 @@ entries:
   status: deleted
 - path: internal/cli/team_operator.go
   v2_lines: 207
-  current_lines: 70
   fate: shrink
   target_lines: 122
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: shrunk
+  status: deleted
+  note: "2b-5: team operator set is gone; squad.yaml carries operator_interaction (reason: keep gate raise/answer and attention projection)"
 - path: internal/cli/team_overlay.go
   v2_lines: 1310
   fate: delete
@@ -1547,14 +1547,14 @@ entries:
   note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
 - path: internal/cli/team_rules.go
   v2_lines: 515
-  current_lines: 512
+  current_lines: 251
   fate: shrink
   target_lines: 300
   cluster: C18
   extract: "renderTeamRules (:40)"
   reason: "rewrite around squad.yaml in 2b"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: team rules rendered from squad.yaml; renderTeamRules kept as the extract (was deferred-2b: rewrite around squad.yaml in 2b)"
 - path: internal/cli/team_shared_cwd.go
   v2_lines: 142
   fate: delete
@@ -1565,14 +1565,14 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1924
+  current_lines: 335
   fate: shrink
   target_lines: 350
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: rewritten around squad.yaml; the verbs are team propose, apply, show, check and draft-rules (was deferred-2b: rewrite around squad.yaml in 2b)"
 - path: internal/cli/thread_session.go
   v2_lines: 16
   current_lines: 16
@@ -1694,7 +1694,7 @@ entries:
   status: deleted
 - path: internal/cli/workstream.go
   v2_lines: 353
-  current_lines: 183
+  current_lines: 176
   fate: shrink
   target_lines: 100
   cluster: C27
@@ -2116,7 +2116,7 @@ entries:
   status: deleted
 - path: internal/namespace/namespace.go
   v2_lines: 120
-  current_lines: 120
+  current_lines: 140
   fate: keep
   target_lines: 120
   cluster: namespace
@@ -2767,9 +2767,18 @@ entries:
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
   status: deleted
+- path: internal/team/digest.go
+  v2_lines: 0
+  current_lines: 107
+  fate: new
+  target_lines: 107
+  cluster: team
+  extract: ""
+  reason: "2b-5: the digest flow of R8: plan every file the squad writes, one digest, apply on a matching digest"
+  status: new
 - path: internal/team/squad.go
   v2_lines: 0
-  current_lines: 488
+  current_lines: 496
   fate: new
   target_lines: 488
   cluster: team
@@ -2778,14 +2787,14 @@ entries:
   status: new
 - path: internal/team/team.go
   v2_lines: 1640
-  current_lines: 1313
+  current_lines: 360
   fate: shrink
   target_lines: 631
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
+  status: shrunk
+  note: "2b-5: the in-memory form of squad.yaml; the v2 profile model is gone (was deferred-2b: rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a)"
 - path: internal/tmuxharness/harness.go
   v2_lines: 485
   fate: delete

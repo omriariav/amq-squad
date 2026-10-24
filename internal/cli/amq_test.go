@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -165,7 +166,7 @@ func TestAMQCommandEnvBuildsCompleteIdentityTuples(t *testing.T) {
 	t.Run("sessionful default profile", func(t *testing.T) {
 		ctx := amqContext{
 			ProjectDir: "/project",
-			Profile:    team.DefaultProfile,
+			Profile:    squadnamespace.DefaultProfile,
 			Env:        amqEnv{BaseRoot: "/project/.agent-mail"},
 			Root:       "/project/.agent-mail/issue-96",
 			Me:         "cto",
@@ -285,7 +286,7 @@ func TestNamedProfileFromInheritedAMQRootFailsClosed(t *testing.T) {
 		}
 	})
 	t.Run("default profile path collision", func(t *testing.T) {
-		root := filepath.Join(base, team.DefaultProfile, "issue-96")
+		root := filepath.Join(base, squadnamespace.DefaultProfile, "issue-96")
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -472,7 +473,7 @@ func TestAMQRejectsUnknownSubcommandWithCompleteCanonicalSurface(t *testing.T) {
 
 func writeAMQBoundaryTeamProfile(t *testing.T, dir, profile string) {
 	t.Helper()
-	if err := team.WriteProfile(dir, profile, team.Team{
+	if err := team.Write(dir, team.Team{
 		Project:       dir,
 		Orchestrated:  true,
 		Lead:          "cto",
@@ -517,10 +518,9 @@ func TestDurableSendWaitPostureUsesLastWaitFlagsAndPreservesNoWait(t *testing.T)
 func installAMQWaitPostureRuntime(t *testing.T, dir, session, gate string) string {
 	t.Helper()
 	t.Setenv("AM_ME", "cto")
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
+	opMode := team.OperatorInteractionLeadPane
+	if err := team.Write(dir, team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, OperatorInteraction: opMode,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}, {Role: "qa", Binary: "claude", Handle: "qa", Session: session}},
 	}); err != nil {
 		t.Fatal(err)
@@ -545,7 +545,7 @@ func installAMQWaitPostureRuntime(t *testing.T, dir, session, gate string) strin
 	previousSnapshot := waitPostureLoadSnapshot
 	waitPostureLoadSnapshot = func(projectDir, _ string) (state.Snapshot, error) {
 		selectedRoot := filepath.Join(projectDir, ".agent-mail", session)
-		return state.Snapshot{Sessions: []state.Session{{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: team.DefaultProfile + "/" + session, Root: selectedRoot, Coordination: state.Coordination{Threads: threads}}}}, nil
+		return state.Snapshot{Sessions: []state.Session{{Name: session, TeamProfile: squadnamespace.DefaultProfile, NamespaceID: squadnamespace.DefaultProfile + "/" + session, Root: selectedRoot, Coordination: state.Coordination{Threads: threads}}}}, nil
 	}
 	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
 	return root

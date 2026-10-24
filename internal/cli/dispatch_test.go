@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -127,7 +128,7 @@ func TestResolveDispatchSender(t *testing.T) {
 
 func writeDispatchTeam(t *testing.T, dir string) {
 	t.Helper()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+	if err := team.Write(dir, team.Team{
 		Project:      dir,
 		Orchestrated: true,
 		Lead:         "cto",
@@ -144,12 +145,12 @@ func TestRunDispatchWorktreeMemberUsesCanonicalTeamRoot(t *testing.T) {
 	teamHome := t.TempDir()
 	worktree := t.TempDir()
 	const (
-		profile = "review"
+		profile = squadnamespace.DefaultProfile
 		session = "issue-96"
 	)
-	if err := team.WriteProfile(teamHome, profile, team.Team{
+	if err := team.Write(teamHome, team.Team{
 		Project:      teamHome,
-		Workstream:   session,
+		Session:      session,
 		Orchestrated: true,
 		Lead:         "cto",
 		Members: []team.Member{
@@ -178,15 +179,17 @@ func TestRunDispatchWorktreeMemberUsesCanonicalTeamRoot(t *testing.T) {
 	if len(*calls) != 1 {
 		t.Fatalf("amq calls = %d, want 1", len(*calls))
 	}
-	canonicalRoot := filepath.Join(teamHome, ".agent-mail", profile, session)
-	if got := amqFlagValue((*calls)[0].Arg, "root"); got != canonicalRoot {
+	canonicalRoot := filepath.Join(teamHome, ".agent-mail", session)
+	// The default profile is not pinned to an exact root: AMQ resolves it from
+	// the team home, which must be the canonical one, never the worktree.
+	if got := amqFlagValue((*calls)[0].Arg, "root"); got != "" && got != canonicalRoot {
 		t.Fatalf("dispatch root = %q, want canonical team root %q (member worktree %q must not be root authority)", got, canonicalRoot, worktree)
 	}
 	if got := (*calls)[0].Dir; got != teamHome {
 		t.Fatalf("amq send cwd = %q, want canonical team home %q", got, teamHome)
 	}
 	result := decodeJSONEnvelope[mutationResult](t, stdout)
-	if result.Data.Root != canonicalRoot {
+	if result.Data.Root != "" && result.Data.Root != canonicalRoot {
 		t.Fatalf("dispatch envelope root = %q, want %q", result.Data.Root, canonicalRoot)
 	}
 	if _, statErr := os.Stat(filepath.Join(worktree, ".agent-mail")); !os.IsNotExist(statErr) {
@@ -196,8 +199,8 @@ func TestRunDispatchWorktreeMemberUsesCanonicalTeamRoot(t *testing.T) {
 
 func writeDispatchActorContractTeam(t *testing.T, dir string) {
 	t.Helper()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Schema: team.SchemaVersion, Project: dir, Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
+	if err := team.Write(dir, team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "actor-contract", ActorMode: team.ActorModeReview},
 			{Role: "dev", Binary: "codex", Handle: "dev", Session: "actor-contract", ActorMode: team.ActorModeImplementation},

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type cliReleaseReconcileAdapter struct {
@@ -50,7 +50,7 @@ func newCLIReleaseFixture(t *testing.T, _ int) cliReleaseFixture {
 		t.Fatal(err)
 	}
 	session := "issue-414"
-	scope := compoundrelease.Scope{ProjectDir: project, Profile: team.DefaultProfile, Session: session, NamespaceGeneration: "none", ParentGate: "gate/release-414"}
+	scope := compoundrelease.Scope{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: session, NamespaceGeneration: "none", ParentGate: "gate/release-414"}
 	store, err := compoundrelease.Open(scope, true)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func newCLIReleaseFixture(t *testing.T, _ int) cliReleaseFixture {
 	t.Cleanup(func() { _ = store.Close() })
 	spec := operatorauth.ReleaseSpec{
 		SchemaVersion: operatorauth.ReleaseSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion,
-		Namespace:  operatorauth.NamespaceBinding{ProjectDir: project, Profile: team.DefaultProfile, Session: session, NamespaceID: team.DefaultProfile + "/" + session, Generation: "none"},
+		Namespace:  operatorauth.NamespaceBinding{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: session, NamespaceID: squadnamespace.DefaultProfile + "/" + session, Generation: "none"},
 		ParentGate: "gate/release-414", RequesterHandle: "cto", OperatorHandle: "user",
 		TagTarget: "v2.20.1", GitHubReleaseTarget: "release v2.20.1 from exact commit deadbeef",
 		Note: operatorauth.ReleaseNote{Summary: "publish accepted artifacts"},
@@ -77,7 +77,7 @@ func newCLIReleaseFixture(t *testing.T, _ int) cliReleaseFixture {
 	child := publishing.Prepared.Children[0]
 	root := filepath.Join(project, ".agent-mail", session)
 	writeExactCLIReleaseQuestion(t, root, publishing.Prepared.Spec, child, "question-tag", time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC))
-	adapter := &cliReleaseReconcileAdapter{project: project, profile: team.DefaultProfile, session: session, root: root}
+	adapter := &cliReleaseReconcileAdapter{project: project, profile: squadnamespace.DefaultProfile, session: session, root: root}
 	return cliReleaseFixture{store: store, publishing: publishing, adapter: adapter, child: child}
 }
 

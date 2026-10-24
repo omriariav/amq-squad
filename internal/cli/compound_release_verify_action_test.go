@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -102,10 +103,10 @@ func slicesContains(items []string, want string) bool {
 
 func TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey(t *testing.T) {
 	project := shortTestTempDir(t, "amq-cli-signed-project-")
-	profile, session := team.DefaultProfile, "s"
+	profile, session := squadnamespace.DefaultProfile, "s"
 	cfg := typedHumanTeam()
-	cfg.Project, cfg.Workstream = project, session
-	if err := team.WriteProfile(project, team.DefaultProfile, cfg); err != nil {
+	cfg.Project, cfg.Session = project, session
+	if err := team.Write(project, cfg); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)

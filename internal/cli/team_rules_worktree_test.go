@@ -34,10 +34,10 @@ func TestRenderTeamRulesTwoImplementationDevsGetWorktreeIsolation(t *testing.T) 
 	if !strings.Contains(body, "## Worktree Isolation") {
 		t.Fatalf("2 mutation-capable devs should get the worktree isolation section:\n%s", body)
 	}
-	if !strings.Contains(body, "2 mutation-capable developers") {
+	if !strings.Contains(body, "2 mutation-capable seats") {
 		t.Fatalf("section should cite the count:\n%s", body)
 	}
-	if !strings.Contains(body, "shared-cwd-exception") {
+	if !strings.Contains(body, "shared_cwd_exception") {
 		t.Fatalf("section should mention the exception verb:\n%s", body)
 	}
 }
@@ -70,7 +70,7 @@ func TestRenderTeamRulesShowsRecordedSharedCwdException(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(body, "Recorded shared-cwd exception for this profile: hotspot serialization") {
+	if !strings.Contains(body, "Recorded shared-cwd exception: hotspot serialization") {
 		t.Fatalf("expected the recorded exception to be quoted verbatim:\n%s", body)
 	}
 }

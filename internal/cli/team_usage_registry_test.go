@@ -38,7 +38,7 @@ func TestTeamUsageNamesExactlyTheDispatchedSubcommands(t *testing.T) {
 			t.Errorf("team %s is named in usage but does not dispatch: %v", name, err)
 		}
 	}
-	for _, removed := range []string{"member", "profiles", "rm", "delete", "lead", "autonomous", "shared-cwd-exception", "show", "launch", "overlay"} {
+	for _, removed := range []string{"member", "profiles", "rm", "delete", "lead", "autonomous", "shared-cwd-exception", "launch", "overlay"} {
 		if named[removed] {
 			t.Errorf("team usage still names removed subcommand %q", removed)
 		}

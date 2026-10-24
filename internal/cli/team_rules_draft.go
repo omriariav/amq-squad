@@ -25,7 +25,7 @@ type teamRulesDraftResult struct {
 
 type cliDrafterRunner func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error)
 
-// cliDraft is one CLI prose drafting run (brief --goal, team rules init): the
+// cliDraft is one CLI prose drafting run (brief --goal, team draft-rules): the
 // validated Text, or Manual with the Prompt to complete in the active session.
 type cliDraft struct {
 	Text, Prompt, Reason, Remedy, ConfigSource string
@@ -34,7 +34,7 @@ type cliDraft struct {
 	Attempts                                   []drafter.Evidence
 }
 
-// The drafter seam shared by brief --goal and team rules init; tests swap it.
+// The drafter seam shared by brief --goal and team draft-rules; tests swap it.
 var (
 	resolveDraftConfig resolveCLIDrafterFunc = resolveCLIDrafter
 	runDraft           cliDrafterRunner      = drafter.Run
@@ -70,7 +70,7 @@ func teamRulesNeedsDraft(tm team.Team, template string) bool {
 
 func draftTeamRulesProse(projectDir, template string, tm team.Team) (teamRulesDraftResult, error) {
 	var prose teamRulesProse
-	draft, err := runCLIDraft(projectDir, tm.Drafter, buildTeamRulesDraftPrompt(template, tm), "team-rules prose", "no team rules were written",
+	draft, err := runCLIDraft(projectDir, nil, buildTeamRulesDraftPrompt(template, tm), "team-rules prose", "no team rules were written",
 		func(raw string) (string, error) {
 			var err error
 			prose, err = validateTeamRulesDraft(raw, customTeamRulesRoles(tm))

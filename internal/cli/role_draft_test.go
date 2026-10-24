@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/drafter"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -144,7 +145,7 @@ func TestRunRoleDraftFailureModeErrorReportsEveryAttempt(t *testing.T) {
 		t.Fatal("chain failure returned nil error")
 	}
 	for _, want := range []string{
-		"drafter config source: profile",
+		"drafter config source: global",
 		"attempt[1] backend=yoetz", `command="yoetz ask --model fast"`, `fall-through="missing credentials"`,
 		"attempt[2] backend=claude", `command="claude -p --model fable"`, `fall-through="provider unavailable"`,
 	} {
@@ -215,7 +216,7 @@ func TestRunRoleDraftRejectsSessionBoundOutputWithoutStaging(t *testing.T) {
 		t.Fatalf("session-bound draft error = %v", err)
 	}
 	for _, want := range []string{
-		"drafter config source: profile",
+		"drafter config source: global",
 		"attempt[1] backend=yoetz", `command="yoetz ask"`, `fall-through="missing credentials"`,
 		"attempt[2] backend=claude", `command="claude -p"`,
 	} {
@@ -304,10 +305,21 @@ func setupRoleDraftTeam(t *testing.T, cfg *drafter.Config) (string, string, stri
 	t.Helper()
 	project := t.TempDir()
 	t.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(project, "missing-user-config.json"))
-	const profile = "review"
+	if cfg != nil {
+		// 3.0: squad.yaml carries no drafter; the owner's global config does.
+		raw, err := json.Marshal(map[string]any{"drafter": cfg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, "user-config.json"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(project, "user-config.json"))
+	}
+	profile := squadnamespace.DefaultProfile
 	const session = "issue-665"
-	if err := team.WriteProfile(project, profile, team.Team{
-		Project: project, Workstream: session, Orchestrated: true, Lead: "lead", Drafter: cfg,
+	if err := team.Write(project, team.Team{
+		Project: project, Session: session, Orchestrated: true, Lead: "lead",
 		Members: []team.Member{{Role: "lead", Handle: "lead", Binary: "claude", Session: session, CWD: project}},
 	}); err != nil {
 		t.Fatalf("write role draft profile: %v", err)
@@ -417,10 +429,10 @@ func TestRunRoleDraftStagesValidatedDocumentWithoutLaunching(t *testing.T) {
 			t.Fatalf("draft prompt missing %q:\n%s", want, gotPrompt)
 		}
 	}
-	if !strings.Contains(stdout, "Wrote "+path) || !strings.Contains(stdout, "Drafter config source: profile") || strings.Contains(stdout, "Next:") {
+	if !strings.Contains(stdout, "Wrote "+path) || !strings.Contains(stdout, "Drafter config source: global") || strings.Contains(stdout, "Next:") {
 		t.Fatalf("role draft output missing staged path, or names a next command:\n%s", stdout)
 	}
-	stored, err := team.ReadProfile(project, profile)
+	stored, err := team.ReadFor(project, profile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,8 +480,8 @@ func TestRunRoleDraftJSONIncludesStructuredEvidence(t *testing.T) {
 	if !envelope.Data.Staged || envelope.Data.Manual || envelope.Data.ID != "researcher" {
 		t.Fatalf("role draft data = %+v", envelope.Data)
 	}
-	if envelope.Data.ConfigSource != drafter.SourceProfile {
-		t.Fatalf("role draft config source = %q, want profile", envelope.Data.ConfigSource)
+	if envelope.Data.ConfigSource != drafter.SourceGlobal {
+		t.Fatalf("role draft config source = %q, want global", envelope.Data.ConfigSource)
 	}
 	if envelope.Data.Evidence.CommandDisplay != "fake-drafter" || envelope.Data.Evidence.TimeoutSeconds != 30 {
 		t.Fatalf("role draft evidence = %+v", envelope.Data.Evidence)
