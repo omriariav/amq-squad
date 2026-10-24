@@ -9,8 +9,11 @@ func TestMergeSizeCapDefaultsAndNarrowing(t *testing.T) {
 	if err != nil || len(g.Merge) != 1 || g.Merge[0].SizeCapLines != DefaultSizeCapLines || g.Merge[0].SizeCapFiles != DefaultSizeCapFiles {
 		t.Fatalf("defaults: %v %+v", err, g.Merge)
 	}
-	g, err = ParseOwner("merge:\n  - repository: a/b\n    base_branch: main\n    size_cap_lines: 400\n    size_cap_files: 8\n", "g")
-	if err != nil || g.Merge[0].SizeCapLines != 400 || g.Merge[0].SizeCapFiles != 8 {
+	if len(g.Merge[0].RequiredCompanions) != 0 {
+		t.Fatalf("required companions default %v", g.Merge[0].RequiredCompanions)
+	}
+	g, err = ParseOwner("merge:\n  - repository: a/b\n    base_branch: main\n    size_cap_lines: 400\n    size_cap_files: 8\n    required_companions: [skills/*/SKILL.md, skills/*/references/commands.md]\n", "g")
+	if err != nil || g.Merge[0].SizeCapLines != 400 || g.Merge[0].SizeCapFiles != 8 || len(g.Merge[0].RequiredCompanions) != 2 {
 		t.Fatalf("explicit: %v %+v", err, g.Merge)
 	}
 	n, err := ParseSquadNarrowing("merge_size_cap_files: 3\nmerge_size_cap_lines: 900\n", "squad.yaml")

@@ -110,7 +110,7 @@ func TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey(t *testing.T
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	question := typedQuestion(project, session, "signed-question", "protected_branch_push", "PR #414 head abcdef0 into main", "exact merge", now)
+	question := typedQuestion(project, session, "signed-question", "feature_branch_push", "PR #414 head abcdef0 into main", "exact merge", now)
 	base := filepath.Join(project, ".agent-mail")
 	root := filepath.Join(base, session)
 	writeAuthorizationMessage(t, base, session, "user", "new", question)

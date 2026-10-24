@@ -12,13 +12,13 @@ import (
 
 type fakeReleaseLister struct {
 	tags     []mergetrain.Tag
-	releases []string
+	releases []mergetrain.Release
 }
 
 func (f *fakeReleaseLister) Tags(context.Context, string) ([]mergetrain.Tag, error) {
 	return f.tags, nil
 }
-func (f *fakeReleaseLister) Releases(context.Context, string) ([]string, error) {
+func (f *fakeReleaseLister) Releases(context.Context, string) ([]mergetrain.Release, error) {
 	return f.releases, nil
 }
 
@@ -37,7 +37,7 @@ func TestDoctorReleaseDriftFailsOnAnUngatedTag(t *testing.T) {
 		t.Fatalf("baseline run: %+v", c)
 	}
 	l.tags = append(l.tags, mergetrain.Tag{Name: "v2", SHA: "b2"})
-	l.releases = []string{"v2"}
+	l.releases = []mergetrain.Release{{ID: 2, Tag: "v2"}}
 	c := doctorReleaseDrift(root, g, l, time.Now())
 	if len(c) != 1 || c[0].Status != doctorFail || !strings.Contains(c[0].Detail, "tag v2") || !strings.Contains(c[0].Detail, "release v2") {
 		t.Fatalf("ungated tag and release: %+v", c)

@@ -367,6 +367,8 @@ func TestGuardRuleMatrix(t *testing.T) {
 		{"cred/deny keychain password", "Bash", bash("security find-generic-password -s gh:github.com -w"), nil, "deny", "credential_read"},
 		{"cred/deny git credential fill", "Bash", bash("printf 'host=github.com\\n' | git credential fill"), nil, "deny", "credential_read"},
 		{"cred/deny osxkeychain helper", "Bash", bash("git credential-osxkeychain get"), nil, "deny", "credential_read"},
+		{"cred/deny standalone helper by path", "Bash", bash("printf 'host=github.com\\n' | /Library/Developer/CommandLineTools/usr/libexec/git-core/git-credential-osxkeychain get"), nil, "deny", "credential_read"},
+		{"cred/deny standalone helper on PATH", "Bash", bash("git-credential-store get"), nil, "deny", "credential_read"},
 		{"cred/deny launchd ssh agent", "Bash", bash("export SSH_AUTH_SOCK=$(launchctl getenv SSH_AUTH_SOCK)"), nil, "deny", "credential_read"},
 		{"merge/needs_gate gate first", "Bash", bash("git tag v3 && gh pr merge 1"), nil, "needs_gate", "gate_release"},
 		// pushes

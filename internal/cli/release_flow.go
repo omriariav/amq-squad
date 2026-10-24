@@ -69,11 +69,11 @@ func runRelease(args []string) error {
 		return fmt.Errorf("release: %w", err)
 	}
 	defer store.Close()
-	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow}
+	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow, Squad: mergetrain.SquadOf(sel.Root)}
 	if transportErr == nil {
 		esc.Send = core.QuestionSender(ctx)
 	}
-	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: esc.Raise, Lead: firstOf(sel.Handle, "lead"),
+	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: esc.Raise, Lead: firstOf(sel.Handle, "lead"), Squad: mergetrain.SquadOf(sel.Root),
 		Exec: &releaseflow.GH{Bin: *ghBin},
 		Accepted: func(rec gatestore.Record) error {
 			trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())

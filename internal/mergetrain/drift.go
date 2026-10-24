@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +25,17 @@ type Tag struct {
 	SHA  string `json:"sha"`
 }
 
+// Release is one repository release: its id and its tag. A release deleted
+// and created again under the same tag has a new id (P2-12).
+type Release struct {
+	ID  int64  `json:"id"`
+	Tag string `json:"tag"`
+}
+
 // ReleaseLister reads a repository's tags and releases (GH does).
 type ReleaseLister interface {
 	Tags(ctx context.Context, repository string) ([]Tag, error)
-	Releases(ctx context.Context, repository string) ([]string, error) // tag names
+	Releases(ctx context.Context, repository string) ([]Release, error)
 }
 
 // Alert is an owner alert: a tag or release on the repository that no
@@ -37,7 +45,7 @@ type ReleaseLister interface {
 type Alert struct {
 	ID         string `json:"id"`
 	Repository string `json:"repository"`
-	Kind       string `json:"kind"` // tag | release
+	Kind       string `json:"kind"` // tag | release | tag_moved
 	Name       string `json:"name"`
 	SHA        string `json:"sha,omitempty"`
 	At         string `json:"at"`
@@ -49,10 +57,10 @@ type Alert struct {
 func AlertsDir(root string) string { return filepath.Join(root, "extensions", "amq-squad", "alerts") }
 
 type baseline struct {
-	Repository string   `json:"repository"`
-	At         string   `json:"at"`
-	Tags       []Tag    `json:"tags"`
-	Releases   []string `json:"releases"`
+	Repository string    `json:"repository"`
+	At         string    `json:"at"`
+	Tags       []Tag     `json:"tags"`
+	Releases   []Release `json:"releases"`
 }
 
 // Drift compares the repository's tags and releases against the session's
@@ -61,7 +69,13 @@ type baseline struct {
 // release outside the baseline needs an accepted gate for it: the release
 // flow's targets (gatetarget.ReleaseTag, ReleaseCreate) or a seat's gated
 // command (git tag <name>, git push refs/tags/<name>, gh release create
-// <name>). Each uncovered one is written once as an alert and returned.
+// <name>). Tags compare by name and commit, releases by id, and one accepted
+// gate covers one object: the first tag commit or release id it is seen
+// covering is bound to it (alerts/covered-<gate>.json), so a tag moved to
+// another commit or a release deleted and recreated under the same tag needs
+// a new gate. Each uncovered one is written once as an alert and returned.
+// Recorded limit: what exists at the first run is the baseline, so the
+// owner's first run is the baseline review.
 func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, repository string, now time.Time) ([]Alert, error) {
 	tags, err := l.Tags(ctx, repository)
 	if err != nil {
@@ -84,11 +98,11 @@ func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, re
 	if err := json.Unmarshal(raw, &base); err != nil {
 		return nil, fmt.Errorf("baseline %s: %w", bpath, err)
 	}
-	accepted := acceptedTargets(gates)
+	accepted := acceptedTargets(gates, SquadOf(root))
 	var alerts []Alert
-	raise := func(kind, name, sha string, targets ...string) error {
+	raise := func(kind, name, sha, object string, targets ...string) error {
 		for _, t := range targets {
-			if accepted[t] {
+			if id, ok := accepted[t]; ok && bindCovered(dir, id, object) {
 				return nil
 			}
 		}
@@ -105,7 +119,7 @@ func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, re
 		if slices.Contains(base.Tags, t) {
 			continue
 		}
-		if err := raise("tag", t.Name, t.SHA, gatetarget.ReleaseTag(repository, t.Name, t.SHA), gatetarget.Command("git tag", t.Name), gatetarget.TagPush("refs/tags/"+t.Name)); err != nil {
+		if err := raise("tag", t.Name, t.SHA, "tag "+t.Name+"@"+t.SHA, gatetarget.ReleaseTag(repository, t.Name, t.SHA), gatetarget.Command("git tag", t.Name), gatetarget.TagPush("refs/tags/"+t.Name)); err != nil {
 			return alerts, err
 		}
 	}
@@ -113,32 +127,56 @@ func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, re
 		if slices.Contains(base.Releases, r) {
 			continue
 		}
-		if err := raise("release", r, "", gatetarget.ReleaseCreate(repository, r), gatetarget.Command("gh release create", r)); err != nil {
+		if err := raise("release", r.Tag, "", "release "+strconv.FormatInt(r.ID, 10), gatetarget.ReleaseCreate(repository, r.Tag), gatetarget.Command("gh release create", r.Tag)); err != nil {
 			return alerts, err
 		}
 	}
 	return alerts, nil
 }
 
-// acceptedTargets are the targets of the store's tag and release gates with
-// an accepted decision.
-func acceptedTargets(gates gatestore.Store) map[string]bool {
-	out := map[string]bool{}
+// acceptedTargets maps the targets of the store's tag and release gates with
+// an accepted decision to their gate ids.
+func acceptedTargets(gates gatestore.Store, squad string) map[string]string {
+	out := map[string]string{}
 	ids, _ := gates.IDs()
 	for _, id := range ids {
 		rec, err := gates.Load(id)
-		if err == nil && gatetarget.Class(rec.Class) == gatetarget.ClassRelease && gates.Decision(id) == gatestore.StateAccepted {
-			out[rec.Target] = true
+		if err == nil && gatetarget.Class(rec.Class) == gatetarget.ClassRelease && SameSquad(rec, squad) && gates.Decision(id) == gatestore.StateAccepted {
+			out[rec.Target] = id
 		}
 	}
 	return out
 }
 
+// bindCovered binds an accepted gate to the first object it covers and
+// reports whether object is that object.
+func bindCovered(dir, gateID, object string) bool {
+	path := filepath.Join(dir, "covered-"+gateID+".json")
+	if err := writeOnceJSON(path, map[string]string{"gate": gateID, "object": object}); err == nil {
+		return true
+	}
+	raw, err := os.ReadFile(path)
+	var b map[string]string
+	return err == nil && json.Unmarshal(raw, &b) == nil && b["object"] == object
+}
+
+// WriteAlert writes one owner alert once (the release flow's tag_moved too).
+func WriteAlert(root string, a Alert) error {
+	err := writeOnceJSON(filepath.Join(AlertsDir(root), a.ID+".json"), a)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	return err
+}
+
 // ReadAlerts lists the session's alerts (the status contract reads them).
 func ReadAlerts(root string) []Alert {
-	paths, _ := filepath.Glob(filepath.Join(AlertsDir(root), "ungated-*.json"))
+	paths, _ := filepath.Glob(filepath.Join(AlertsDir(root), "*.json"))
 	var out []Alert
 	for _, p := range paths {
+		if b := filepath.Base(p); strings.HasPrefix(b, "baseline-") || strings.HasPrefix(b, "covered-") {
+			continue
+		}
 		var a Alert
 		if raw, err := os.ReadFile(p); err == nil && json.Unmarshal(raw, &a) == nil {
 			out = append(out, a)

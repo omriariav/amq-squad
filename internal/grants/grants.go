@@ -52,6 +52,11 @@ type Merge struct {
 	CIRequired   bool   `json:"ci_required"`
 	SizeCapLines int    `json:"size_cap_lines"` // 0: no merge fits the grant
 	SizeCapFiles int    `json:"size_cap_files"` // changed files; 0: no merge fits the grant
+	// RequiredCompanions are repository-relative globs the repository's CI
+	// requires beside a change (workspace-cli: the skill docs of a new CLI
+	// command, S6 W2/W3/W4/W6). The lead's widening path adds them to a
+	// task's declared files. The owner names them; the default is empty.
+	RequiredCompanions []string `json:"required_companions,omitempty"`
 }
 
 // Size cap defaults (3-2, measured on the S6 dry run): the largest clean PR,

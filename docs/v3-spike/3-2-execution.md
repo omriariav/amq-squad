@@ -237,10 +237,54 @@ Defaults measured (ruling 14):
 - CI wait after a rebase: 20 min, a proposal.
 - Gate window for refusal and release gates: 3-1's 30 minutes, unchanged.
 
+## Commit 5: fix 1, the Codex pass on 700b1940 and the six held rulings
+
+One commit with a test row per item. Every row fails on its assertion when its fix is reverted and passes when restored (`fix1-revert-check.txt`, 23 rows, driver `revert_fix1.py`). Gate output: `gate-fix1.txt`.
+
+The first gate run is kept as `gate-fix1-race-timeout.txt` (it predates the rename of the squad field to 4-5's `squad`). Its race run of `internal/mergetrain` hit go test's default 10-minute timeout. Every package was green without race. Under race the fake gh is the race-built test binary itself, so each of its now 68 calls per run is slow, and the timeout came during `TestAuditFailureStopsBeforeAnyMerge` at 4 s of its own time. `gate.sh` now passes `-timeout 45m` to the race run. The second run was stopped (TaskStop) when 4-5's field name arrived; the harness denied a `pkill` of its children, but none were left running. The gate was run again after the rename.
+
+| # | Finding | Fix | Test row |
+| --- | --- | --- | --- |
+| P1-1 | ci_green ignored the check's app | `RequiredCheck{Context, AppID}` from the rule (ruleset `integration_id`, classic `checks[].app_id`). A pinned app counts only by that app's latest result (highest check-run id). A rule that pins no app needs every same-named result green | `TestRequiredCheckIsBoundToItsAppAndLatestResult` (6 unit cases, the integration id read, and the fixture end to end with a second app's success) |
+| P1-2 | bypassable protection counted toward Met | A ruleset with bypass actors contributes no required check, and classic required checks without enforce_admins do not count. Notes give the reason | `TestBypassableProtectionIsUnmet` |
+| P1-3 | diff and head were separate snapshots | `Forge.Diff` reads the compare endpoint for the pinned base...head pair (never `pulls/N/files`). The head is re-read after the checks and a moved head is checked again (up to 3 tries, then an error). A diff at the compare endpoint's 300-file limit is a size_cap refusal | `TestHeadMovingDuringTheCheckIsReadAgain` (also asserts no `/files` call) |
+| P1-4 | a request could carry declared_files | In a real run declared files come only from the task store. A request with declared_files, or a PR without a task, is refused before anything is resolved. The dry run keeps the feature (the S6 run) | `TestMergeTrainRealRunTakesDeclaredFilesOnlyFromTheTaskStore` |
+| P1-5 | GIT_CONFIG_* reached the seat | `seatexec.NeverNeeded`: the `GIT_CONFIG_*` family and GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN and GH_CONFIG_DIR are scrubbed even when declared. A launch record that declares one in env_needs is refused (`env_needs_refused`) before anything is published | `TestGitConfigFamilyAndGHTokensNeverReachASeat` |
+| P1-6 | a tag moved after the approved tag step was released | Before each step the flow resolves the remote tag (`Executor.TagCommit`). A tag at another commit is `tag_moved`: nothing is published and the owner alert is raised (`mergetrain.WriteAlert`; status shows kind `tag_moved`) | `TestReleaseRefusesAMovedTag` |
+| P1-7 | argv redaction was element by element; numbers kept | The element after a secret flag in an argv array is redacted. `flag=value` keeps the key and redacts the value. Command strings are split quote-aware, so a quoted secret is one word. `Bearer`/`Basic` credentials and `Authorization:` headers are redacted. Only numeric count fields (`*_tokens`) stay | `TestRedactArgvQuotesAndNumbers` (8 cases) |
+| P2-8 | protected paths compared case-sensitively | case-folded match | `TestProtectedPathsAreCaseFolded` |
+| P2-9 | manual confirmation for head A used for head B | The confirmation is asked inside the landing step after the final rebase, check and digest, for that head and digest. A push after it is refused by the pinned merge | `TestManualConfirmationIsForTheHeadThatMerges` |
+| P2-10 | a crash after the tag made every retry fail | `Publish` holds a per-release `publish.lock`. A remote tag at the approved commit with no done marker is reconciled (recorded as ran, no second tag) and the flow continues | `TestRetryAfterACrashReconcilesTheTag` |
+| P2-11 | audit failures were ignored | The first failed append is kept, and no merge starts after it (checked before each landing and right before each merge) | `TestAuditFailureStopsBeforeAnyMerge` |
+| P2-12 | a recreated release escaped drift | Releases compare by id, tags by name and commit. One accepted gate covers one object (`alerts/covered-<gate>.json`), so a recreated release or a moved tag needs a new gate | `TestDriftBindsAGateToOneReleaseAndOneTagCommit` |
+| P2-13 | an absolute path to git-credential-osxkeychain was not classified | Any `git-credential-*` executable, by path or name, is credential_read | `TestGuardRuleMatrix` rows `cred/deny standalone helper by path`, `... on PATH` |
+
+The six held rulings:
+1. store.go: `PrepareSuccessor` and `completeSuccessor` are deleted, not kept as a test fixture. `successor_fixture_test.go` now writes the superseded and pointer-ahead states as data, file by file, under the store lock (`writeSuccessorState`, `writePointerAheadSuccessor`).
+   - Deleted, because they tested the writer's own crash recovery: `TestPointerAheadSuccessorRealCrashInspection` and the five `successor_*` phases of `TestMutableRealCrashRecoveryAcrossLifecycle` and its subprocess helper.
+   - `TestPointerAheadSuccessorInspectionIsNonMutating` now writes its pointer-ahead state.
+2. The task-scope matcher: milestone B is not merged, so `mergetrain.Declared` stays. The swap to `task.MatchPath` is named for the rebase.
+3. The outcome log is read at `<root>/extensions/amq-squad/routing/outcomes.jsonl` (2b-4's path).
+4. verify_action.go: `default_branch_push` and `protected_branch_push` are refused with `merge_train`, because the train replaces them. `feature_branch_push` keeps the v2 path. The seven tests that used the two kinds as a vehicle now use `feature_branch_push`: `TestVerifyActionBlocksGatedReleaseBeforeOperatorAnswer`, `TestVerifyActionPassesBoundOperatorAnswer`, `TestVerifyActionLatestOperatorAnswerWinsOverOlderApproval`, `TestVerifyActionRejectsApprovedAnswerForDifferentTarget`, `TestVerifyActionRejectsProseOnlyOperatorAnswer`, `TestVerifyActionDeniedExitCode`, `TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey`. New row: `TestVerifyActionRefusesMergeKindsForTheTrain`. The row stays at its target (700 / 700, two comment lines reflowed to make room). Its note says the train replaces the kinds.
+5. The drift baseline is a recorded limit: what exists at a repository's first run is the baseline, so the owner's first run is the baseline review.
+6. Required companions: `merge.required_companions` (globs) is a grant field with a documented empty default. The owner names the paths, and the lead's widening path adds them. Row `TestMergeSizeCapDefaultsAndNarrowing`.
+
+Addition from 4-5's re-pass, squad identity:
+- The gate record gains 4-5's field `squad` (c3859fec): the root-sha256 of the gate store's root. 4-5's `Store.Raise` fills it and its verifier refuses a record without it.
+- On this branch the field is added to `gatestore.Record` and `Spec` with the same name and JSON key, so the rebase onto 4-5 keeps one field.
+- The merge train's escalator and the release flow set it on every gate they raise (`mergetrain.SquadOf(root)`).
+- Matching an accepted answer to a record reads it: the train's lift (`InSquad`), drift coverage, and the release flow's adoption and publish checks.
+- A record from another squad does not match. Until the rebase, a record with no `squad` still matches; 4-5's verifier refuses it after the rebase.
+- Rows: `TestGatesCarryAndMatchTheSquadIdentity`, `TestReleaseGatesCarryTheSquadIdentity`.
+
+S6 dry run again with the fixes (pass 4, read-only): the plan, the refusals and both batch digests are unchanged. gh calls rose from 50 to 68 per repository, for the compare endpoint and the head re-read. Wall time is 27.7 s for amq-noc and 29.0 s for workspace-cli.
+
 ## Open rulings
 
-1. Required companions (reviewer addition): a per-repository list in the merge grant of files the repository's CI requires beside a change, which the lead's widening path adds to a task's declared_files by default. For workspace-cli: `skills/*/SKILL.md` and `skills/*/references/commands.md` beside any `cmd/*.go` that adds a CLI command. The exact paths need the owner's confirmation. Evidence: W2, W3, W4 and W6. 2b-4 gets the matching class-table item from the lead.
-2. Credential custody (ruling 12): the proposal above.
-3. Acceptance 4 (the real run) waits for ruling 1 (the owner's merge grant) and for the CI-only rulesets on both repositories.
-4. The task-scope matcher `mergetrain.Declared` duplicates what milestone B's commit-step check will need. One of the two should own it when both land (proposal: `internal/task`).
-5. The outcome log reader for merge and release evidence waits for 2b-4's file (see commit 3).
+1. Required companions: the field exists with an empty default (fix 1). The owner names the paths per repository. For workspace-cli the S6 evidence points at `skills/*/SKILL.md` and `skills/*/references/commands.md` beside a new `cmd/*.go` command.
+2. Credential custody (ruling 12): ruled; the R33 plan wording is the lead's.
+3. Acceptance 4 (the real run) waits for the owner's merge grant and for the CI-only rulesets on both repositories.
+4. Task-scope matcher: ruled to be milestone B's `task.MatchPath`. Swap `mergetrain.Declared` for it at the rebase if milestone B lands first.
+5. Outcome log: ruled to be 2b-4's `<root>/extensions/amq-squad/routing/outcomes.jsonl`. Its row schema (the `task` field) is 2b-4's to confirm.
+6. Squad identity: 4-5's field `squad`. At the rebase take 4-5's `Store.Raise` fill and its root-sha256 format, and drop `mergetrain.SquadOf` if 4-5 exports one.
+7. Recorded limits: the drift baseline (the owner's first run is the baseline review), the same-UID threat (plan 7.3), and the 20-minute CI wait after a rebase (a proposal).

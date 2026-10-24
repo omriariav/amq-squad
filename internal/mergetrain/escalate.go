@@ -16,9 +16,24 @@ type StoreEscalator struct {
 	Identity gatestore.Identity
 	Send     gatestore.Sender
 	Now      func() time.Time
+	Squad    string // set on every gate this escalator raises (Record.Squad)
+}
+
+// SquadOf is a squad's identity for its gate records: 4-5's
+// gatestore.SquadID of its AMQ session root (the value Store.Raise fills).
+func SquadOf(root string) string { return gatestore.SquadID(root) }
+
+// SameSquad reports whether a record was raised by this squad. A record
+// with no squad identity predates the field and still counts until 4-5's
+// verifier requires it.
+func SameSquad(rec gatestore.Record, squad string) bool {
+	return squad == "" || rec.Squad == "" || rec.Squad == squad
 }
 
 func (e StoreEscalator) Raise(spec gatestore.Spec) (gatestore.Record, error) {
+	if spec.Squad == "" {
+		spec.Squad = e.Squad
+	}
 	now := time.Now()
 	if e.Now != nil {
 		now = e.Now()
@@ -44,4 +59,12 @@ func (f AcceptedFunc) Accepted(action, target string) (string, bool) {
 	}
 	rec, ok := f(action, target)
 	return rec.GateID, ok
+}
+
+// InSquad wraps a lookup so only this squad's records match.
+func InSquad(squad string, find func(action, target string) (gatestore.Record, bool)) AcceptedFunc {
+	return func(action, target string) (gatestore.Record, bool) {
+		rec, ok := find(action, target)
+		return rec, ok && SameSquad(rec, squad)
+	}
 }

@@ -27,16 +27,19 @@ type fakePR struct {
 }
 
 type fakeState struct {
-	Bare      string             `json:"bare"`
-	Repo      string             `json:"repo"`
-	Rules     json.RawMessage    `json:"rules"` // GET rules/branches/main
-	Classic   json.RawMessage    `json:"classic,omitempty"`
-	PRs       map[string]*fakePR `json:"prs"`
-	RedCI     []string           `json:"red_ci,omitempty"` // head SHAs whose ci check fails
-	NoCI      []string           `json:"no_ci,omitempty"`  // head SHAs where no check ran
-	Releases  []string           `json:"releases,omitempty"`
-	CIName    string             `json:"ci_name"`
-	FailMerge bool               `json:"fail_merge,omitempty"`
+	Bare     string             `json:"bare"`
+	Repo     string             `json:"repo"`
+	Rules    json.RawMessage    `json:"rules"` // GET rules/branches/main
+	Classic  json.RawMessage    `json:"classic,omitempty"`
+	PRs      map[string]*fakePR `json:"prs"`
+	RedCI    []string           `json:"red_ci,omitempty"` // head SHAs whose ci check fails
+	NoCI     []string           `json:"no_ci,omitempty"`  // head SHAs where no check ran
+	Releases []Release          `json:"releases,omitempty"`
+	// ExtraRuns are more check runs per head SHA (another app's results).
+	ExtraRuns map[string][]CheckRun `json:"extra_runs,omitempty"`
+	CIApp     int                   `json:"ci_app"` // the app id of the fixture's ci check
+	CIName    string                `json:"ci_name"`
+	FailMerge bool                  `json:"fail_merge,omitempty"`
 }
 
 func TestMain(m *testing.M) {
@@ -181,9 +184,8 @@ func fakeGH(statePath string, args []string) int {
 		path, _, _ = strings.Cut(path, "?")
 		parts := strings.Split(path, "/")
 		switch {
-		case parts[0] == "pulls" && len(parts) == 3 && parts[2] == "files":
-			p := pr(parts[1])
-			base, head := rev(p.Base), rev(p.Head)
+		case parts[0] == "compare" && len(parts) == 2:
+			base, head, _ := strings.Cut(parts[1], "...")
 			numstat, _ := gitOut(s.Bare, "diff", "--numstat", "-M", base+"..."+head)
 			status, _ := gitOut(s.Bare, "diff", "--name-status", "-M", base+"..."+head)
 			st := strings.Split(status, "\n")
@@ -211,7 +213,11 @@ func fakeGH(statePath string, args []string) int {
 			if slices.Contains(s.RedCI, parts[1]) {
 				conclusion = "failure"
 			}
-			fmt.Printf(`{"name":%q,"status":"completed","conclusion":%q}`+"\n", s.CIName, conclusion)
+			fmt.Printf(`{"id":100,"name":%q,"app_id":%d,"status":"completed","conclusion":%q}`+"\n", s.CIName, s.CIApp, conclusion)
+			for _, r := range s.ExtraRuns[parts[1]] {
+				out, _ := json.Marshal(r)
+				fmt.Println(string(out))
+			}
 		case parts[0] == "commits" && len(parts) == 3 && parts[2] == "status":
 		case parts[0] == "branches" && len(parts) == 2:
 			fmt.Println(rev(parts[1]))
@@ -231,7 +237,8 @@ func fakeGH(statePath string, args []string) int {
 			}
 		case parts[0] == "releases":
 			for _, r := range s.Releases {
-				fmt.Println(r)
+				out, _ := json.Marshal(r)
+				fmt.Println(string(out))
 			}
 		case parts[0] == "rulesets":
 			fmt.Println("0")

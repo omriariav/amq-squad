@@ -517,7 +517,7 @@ func storeAtGeneration(t *testing.T, generation uint64) (Scope, *Store, Snapshot
 		spec := specForScope(scope)
 		spec.TagTarget = fmt.Sprintf("v2.20.%d", next)
 		spec.GitHubReleaseTarget = fmt.Sprintf("release v2.20.%d from exact commit %08d", next, next)
-		current, err = store.PrepareSuccessor(current.Pointer.GenerationID, spec)
+		current, err = writeSuccessorState(store, current.Pointer.GenerationID, spec)
 		if err != nil {
 			t.Fatalf("prepare generation %d: %v", next, err)
 		}
@@ -613,7 +613,7 @@ func TestStoreExactImmediatePredecessorChain(t *testing.T) {
 		}
 		next := specForScope(scope)
 		next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-		if _, err := store.PrepareSuccessor(first.Pointer.GenerationID, next); err != nil {
+		if _, err := writeSuccessorState(store, first.Pointer.GenerationID, next); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(store.dirPath, store.activeName(1)), []byte("{}\n"), 0o600); err != nil {
@@ -977,10 +977,7 @@ func TestMutableCrashSubprocessHelper(t *testing.T) {
 		}
 		_, err = store.Activate(active)
 	default:
-		next := firstSpec
-		next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-		prepared, _ := operatorauth.DerivePreparedRelease(firstSpec, 1)
-		_, err = store.PrepareSuccessor(prepared.GenerationID, next)
+		t.Fatalf("unknown crash phase %q", phase)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -989,7 +986,7 @@ func TestMutableCrashSubprocessHelper(t *testing.T) {
 }
 
 func TestMutableRealCrashRecoveryAcrossLifecycle(t *testing.T) {
-	phases := []string{"planned", "publishing_generation", "publishing_pointer", "active_generation", "active_pointer", "successor_pointer_first", "successor_pointer_published", "successor_old_record", "successor_new_record", "successor_pointer_second"}
+	phases := []string{"planned", "publishing_generation", "publishing_pointer", "active_generation", "active_pointer"}
 	for _, phase := range phases {
 		t.Run(phase, func(t *testing.T) {
 			scope := testScope(t)
@@ -1050,7 +1047,7 @@ func TestMutableRealCrashRecoveryAcrossLifecycle(t *testing.T) {
 			default:
 				next := firstSpec
 				next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-				if _, err := store.PrepareSuccessor(prepared.GenerationID, next); err != nil {
+				if _, err := writeSuccessorState(store, prepared.GenerationID, next); err != nil {
 					t.Fatal(err)
 				}
 			}

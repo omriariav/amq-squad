@@ -12,6 +12,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
@@ -50,6 +51,14 @@ func (e *repoExec) Release(_ context.Context, repository, tag, notes string) (st
 	}
 	e.releases = append(e.releases, repository+"@"+tag)
 	return "https://example.test/" + repository + "/releases/tag/" + tag, nil
+}
+
+func (e *repoExec) TagCommit(_ context.Context, repository, tag string) (string, error) {
+	out, err := exec.Command("git", "-C", e.bare, "rev-parse", "--verify", "-q", "refs/tags/"+tag+"^{commit}").Output()
+	if err != nil {
+		return "", nil
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 type fixture struct {
@@ -190,5 +199,78 @@ func TestPrepareIsIdempotentAndRefusesAForeignGate(t *testing.T) {
 	snap, err := g.flow.Release.ReadCurrent()
 	if err != nil || snap.Pointer.State != operatorauth.ReleaseStateConflict {
 		t.Fatalf("release state %v %+v", err, snap.Pointer)
+	}
+}
+
+// P1-6: the remote tag is resolved right before the release; a tag moved
+// after the approved tag step is tag_moved, publishes nothing and raises the
+// owner alert.
+func TestReleaseRefusesAMovedTag(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.approved[snap.Active.Children[0].QuestionMessageID] = true
+	if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrNotApproved) || f.exec.tags != 1 {
+		t.Fatalf("tag step: %v", err)
+	}
+	other := run(t, f.exec.bare, "commit-tree", "-m", "other", run(t, f.exec.bare, "rev-parse", "main^{tree}"))
+	run(t, f.exec.bare, "update-ref", "refs/tags/v1.2.0", other) // the seat moves the tag
+	f.approved[snap.Active.Children[1].QuestionMessageID] = true
+	steps, err := f.flow.Publish(context.Background(), f.root)
+	if !errors.Is(err, ErrTagMoved) || len(f.exec.releases) != 0 || steps[len(steps)-1].Status != "refused" {
+		t.Fatalf("moved tag published: %v %+v releases %v", err, steps, f.exec.releases)
+	}
+	if alerts := mergetrain.ReadAlerts(f.root); len(alerts) != 1 || alerts[0].Kind != "tag_moved" || alerts[0].SHA != other {
+		t.Fatalf("owner alert %+v", alerts)
+	}
+}
+
+// P2-10: a crash after the tag and before its marker: the retry finds the
+// tag at the approved commit, reconciles it without tagging again, and
+// continues to the release.
+func TestRetryAfterACrashReconcilesTheTag(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	run(t, f.exec.bare, "update-ref", "refs/tags/v1.2.0", f.commit) // the crashed run's tag, no marker
+	steps, err := f.flow.Publish(context.Background(), f.root)
+	if err != nil || f.exec.tags != 0 || len(f.exec.releases) != 1 || steps[0].Status != "ran" || !strings.Contains(steps[0].Detail, "reconciled") {
+		t.Fatalf("retry: %v %+v tags %d", err, steps, f.exec.tags)
+	}
+}
+
+// The release flow sets its squad identity on both child gates, and a gate
+// under a child's id raised by another squad is a conflict, not adopted.
+func TestReleaseGatesCarryTheSquadIdentity(t *testing.T) {
+	f := newFixture(t)
+	f.flow.Squad = mergetrain.SquadOf(f.root)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		if rec, err := f.flow.Gates.Load(c.QuestionMessageID); err != nil || rec.Squad != f.flow.Squad {
+			t.Fatalf("gate %s squad %q: %v", c.QuestionMessageID, rec.Squad, err)
+		}
+	}
+	g := newFixture(t)
+	g.flow.Squad = mergetrain.SquadOf(g.root)
+	prepared, err := operatorauth.DerivePreparedRelease(g.spec, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := prepared.Children[0]
+	if _, err := g.flow.Raise(gatestore.Spec{GateID: GateID(child), Action: child.Action, Target: child.Target, RaisedBy: "seat", Squad: mergetrain.SquadOf("/other")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.flow.Prepare(g.spec); err == nil {
+		t.Fatal("another squad's gate under the child's id was adopted")
 	}
 }

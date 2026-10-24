@@ -82,14 +82,6 @@ func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, err
 	}
 	pr := PRInfo{Number: v.Number, State: v.State, Draft: v.IsDraft, Repository: repository, BaseRef: v.BaseRefName,
 		BaseSHA: v.BaseRefOid, HeadSHA: v.HeadRefOid, Mergeable: v.Mergeable}
-	raw, err = g.run(ctx, "api", "--paginate", "repos/"+repository+"/pulls/"+n+"/files?per_page=100",
-		"--jq", `.[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}`)
-	if err != nil {
-		return PRInfo{}, err
-	}
-	if pr.Files, err = lines[FileChange](raw); err != nil {
-		return PRInfo{}, fmt.Errorf("decode files of #%d: %w", number, err)
-	}
 	owner, name, _ := strings.Cut(repository, "/")
 	raw, err = g.run(ctx, "api", "graphql", "-F", "o="+owner, "-F", "r="+name, "-F", "n="+n, "-f", "query="+forcePushQuery,
 		"--jq", `.data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}`)
@@ -104,9 +96,20 @@ func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, err
 
 const forcePushQuery = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}}`
 
+// Diff reads the compare endpoint for the exact base...head pair: one
+// snapshot, bound to the SHAs the train checks and pins.
+func (g *GH) Diff(ctx context.Context, repository, base, head string) ([]FileChange, error) {
+	raw, err := g.run(ctx, "api", "repos/"+repository+"/compare/"+base+"..."+head,
+		"--jq", `.files[]? | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}`)
+	if err != nil {
+		return nil, err
+	}
+	return lines[FileChange](raw)
+}
+
 func (g *GH) Checks(ctx context.Context, repository, sha string) ([]CheckRun, error) {
 	raw, err := g.run(ctx, "api", "--paginate", "repos/"+repository+"/commits/"+sha+"/check-runs?per_page=100",
-		"--jq", `.check_runs[] | {name, status, conclusion: (.conclusion // "")}`)
+		"--jq", `.check_runs[] | {id, name, app_id: (.app.id // 0), status, conclusion: (.conclusion // "")}`)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +137,8 @@ type ruleJSON struct {
 	RulesetID  int    `json:"ruleset_id"`
 	Parameters struct {
 		RequiredStatusChecks []struct {
-			Context string `json:"context"`
+			Context       string `json:"context"`
+			IntegrationID int    `json:"integration_id"`
 		} `json:"required_status_checks"`
 	} `json:"parameters"`
 }
@@ -145,6 +149,7 @@ type classicJSON struct {
 		Contexts []string `json:"contexts"`
 		Checks   []struct {
 			Context string `json:"context"`
+			AppID   *int   `json:"app_id"`
 		} `json:"checks"`
 	} `json:"required_status_checks"`
 	RequiredPullRequestReviews *json.RawMessage `json:"required_pull_request_reviews"`
@@ -196,14 +201,15 @@ func (g *GH) Protection(ctx context.Context, repository, branch string) (Protect
 }
 
 // evaluateProtection reads the effective rules and the classic protection
-// together. Direct push counts as refused only when the owner cannot bypass
-// it: a ruleset pull_request rule whose ruleset has no bypass actors, or
-// classic required reviews with enforce_admins on (the owner is the admin).
+// together, as they bind the merging identity (the owner, an admin). A rule
+// from a ruleset with bypass actors binds nobody we can rely on, and classic
+// protection without enforce_admins exempts the owner: neither its required
+// checks nor its PR requirement count, and the note says why.
 func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJSON) Protection {
 	var p Protection
-	addCheck := func(c string) {
-		if c != "" && !slices.Contains(p.RequiredChecks, c) {
-			p.RequiredChecks = append(p.RequiredChecks, c)
+	addCheck := func(c RequiredCheck) {
+		if c.Context != "" && !slices.Contains(p.Checks, c) {
+			p.Checks = append(p.Checks, c)
 		}
 	}
 	for _, r := range rules {
@@ -211,33 +217,47 @@ func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJS
 		if !slices.Contains(p.Sources, src) {
 			p.Sources = append(p.Sources, src)
 		}
+		enforced := bypass[r.RulesetID] == 0
 		switch r.Type {
 		case "required_status_checks":
+			if !enforced {
+				p.Notes = append(p.Notes, src+" has bypass actors: its required checks do not bind the owner")
+				continue
+			}
 			for _, c := range r.Parameters.RequiredStatusChecks {
-				addCheck(c.Context)
+				addCheck(RequiredCheck{Context: c.Context, AppID: c.IntegrationID})
 			}
 		case "pull_request":
-			if bypass[r.RulesetID] == 0 {
+			if enforced {
 				p.DirectPushRefused = true
 			} else {
 				p.Notes = append(p.Notes, src+" has bypass actors: the owner can push directly")
 			}
 		case "non_fast_forward":
-			p.ForcePushRefused = true
+			p.ForcePushRefused = p.ForcePushRefused || enforced
 		}
 	}
 	if classic != nil {
 		p.Sources = append(p.Sources, "classic")
+		admins := classic.EnforceAdmins.Enabled
 		if c := classic.RequiredStatusChecks; c != nil {
-			for _, s := range c.Contexts {
-				addCheck(s)
-			}
-			for _, s := range c.Checks {
-				addCheck(s.Context)
+			if !admins {
+				p.Notes = append(p.Notes, "classic required checks exempt admins (enforce_admins off): they do not bind the owner")
+			} else {
+				for _, s := range c.Contexts {
+					addCheck(RequiredCheck{Context: s})
+				}
+				for _, s := range c.Checks {
+					app := 0
+					if s.AppID != nil && *s.AppID > 0 {
+						app = *s.AppID
+					}
+					addCheck(RequiredCheck{Context: s.Context, AppID: app})
+				}
 			}
 		}
 		switch {
-		case classic.RequiredPullRequestReviews != nil && classic.EnforceAdmins.Enabled:
+		case classic.RequiredPullRequestReviews != nil && admins:
 			p.DirectPushRefused = true
 		case classic.RequiredPullRequestReviews != nil:
 			p.Notes = append(p.Notes, "classic protection requires a PR but not for admins: the owner can push directly")
@@ -278,16 +298,10 @@ func (g *GH) Tags(ctx context.Context, repository string) ([]Tag, error) {
 	return lines[Tag](raw)
 }
 
-func (g *GH) Releases(ctx context.Context, repository string) ([]string, error) {
-	raw, err := g.run(ctx, "api", "--paginate", "repos/"+repository+"/releases?per_page=100", "--jq", `.[] | .tag_name`)
+func (g *GH) Releases(ctx context.Context, repository string) ([]Release, error) {
+	raw, err := g.run(ctx, "api", "--paginate", "repos/"+repository+"/releases?per_page=100", "--jq", `.[] | {id, tag: .tag_name}`)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
-	for _, l := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			out = append(out, l)
-		}
-	}
-	return out, nil
+	return lines[Release](raw)
 }

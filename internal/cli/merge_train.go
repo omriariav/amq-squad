@@ -60,6 +60,15 @@ func runMergeTrain(args []string) error {
 	if err := parseFlags(g.fs, args); err != nil {
 		return err
 	}
+	req, err := readMergeTrainRequest(*reqPath, os.Stdin)
+	if err != nil {
+		return usageErrorf("merge-train: %v", err)
+	}
+	if !*dry {
+		if err := realRunScope(req); err != nil {
+			return err
+		}
+	}
 	if *auditRoot != "" {
 		if !*dry {
 			return usageErrorf("merge-train: --root is for a dry run; a real run resolves its session (gates bind its namespace)")
@@ -72,10 +81,6 @@ func runMergeTrain(args []string) error {
 		}
 		emitContextDiagnostics(resolved)
 		sel = resolved
-	}
-	req, err := readMergeTrainRequest(*reqPath, os.Stdin)
-	if err != nil {
-		return usageErrorf("merge-train: %v", err)
 	}
 	if err := fillDeclaredFiles(sel.Root, &req); err != nil {
 		return err
@@ -150,6 +155,22 @@ func readMergeTrainRequest(path string, stdin io.Reader) (mergetrain.Request, er
 	return req, req.Validate()
 }
 
+// realRunScope (P1-4): in a real run a PR's declared set comes only from the
+// session's task store, the set the commit step checked; a request-supplied
+// set is a dry-run feature (the S6 dry run reads S6-tasklist.md) and is
+// refused, and every PR must name its task.
+func realRunScope(req mergetrain.Request) error {
+	for _, it := range req.PRs {
+		switch {
+		case len(it.DeclaredFiles) > 0:
+			return usageErrorf("merge-train: PR #%d carries declared_files; a real run takes them only from the task store (declared_files in a request is for --dry-run)", it.Number)
+		case strings.TrimSpace(it.Task) == "":
+			return usageErrorf("merge-train: PR #%d names no task; a real run checks each PR against its task's declared files", it.Number)
+		}
+	}
+	return nil
+}
+
 // fillDeclaredFiles takes a PR's declared files from the session's task
 // store when the request names a task and no files (the commit step's set).
 func fillDeclaredFiles(root string, req *mergetrain.Request) error {
@@ -183,7 +204,7 @@ func attachMergeGates(ctx context.Context, t *mergetrain.Train, sel contextResol
 	if core == nil {
 		return
 	}
-	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow}
+	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow, Squad: mergetrain.SquadOf(sel.Root)}
 	if err == nil {
 		esc.Send = core.QuestionSender(ctx)
 	}
@@ -193,7 +214,7 @@ func attachMergeGates(ctx context.Context, t *mergetrain.Train, sel contextResol
 		return
 	}
 	v := gateverify.Verifier{Trust: trust, Pin: core.Pin, Namespace: core.Namespace}
-	t.Gates = mergetrain.AcceptedFunc(func(action, target string) (gatestore.Record, bool) {
+	t.Gates = mergetrain.InSquad(mergetrain.SquadOf(sel.Root), func(action, target string) (gatestore.Record, bool) {
 		return v.AcceptedFor(core.Store, action, target)
 	})
 }
@@ -217,7 +238,7 @@ func printMergeTrain(w io.Writer, r mergetrain.Result) {
 	}
 	fmt.Fprintf(w, "merge train %s (%s) on %s %s at %s\n", r.Run, mode, r.Repository, r.Base, r.BaseSHA)
 	fmt.Fprintf(w, "branch protection met: %v (required checks %v, direct push refused %v) %s\n",
-		r.ProtectionMet, r.Protection.RequiredChecks, r.Protection.DirectPushRefused, strings.Join(r.Protection.Notes, "; "))
+		r.ProtectionMet, r.Protection.Checks, r.Protection.DirectPushRefused, strings.Join(r.Protection.Notes, "; "))
 	for _, p := range r.PRs {
 		line := fmt.Sprintf("#%d\t%s\t%s\t%d lines\t%s", p.Number, orDash(p.Task), shortSHA(p.Head), p.Changed, p.Status)
 		if p.RebaseForCI {

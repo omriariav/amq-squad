@@ -379,6 +379,7 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 	case cmd == "gh" && sub[0] == "auth" && (sub[1] == "token" || sub[1] == "status" && (hasFlagPrefix(args, "-t") || hasFlagPrefix(args, "--show-token"))),
 		cmd == "security" && strings.HasPrefix(sub[0], "find-") && strings.HasSuffix(sub[0], "-password") && (hasFlagPrefix(args, "-w") || hasFlagPrefix(args, "-g")),
 		cmd == "git" && (sub[0] == "credential" && sub[1] == "fill" || strings.HasPrefix(sub[0], "credential-")),
+		strings.HasPrefix(filepath.Base(cmd), "git-credential-"),
 		cmd == "launchctl" && sub[0] == "getenv" && sub[1] == "SSH_AUTH_SOCK":
 		a.credRead = strings.Join(append([]string{cmd}, pos[:min(2, len(pos))]...), " ")
 	case cmd == "git" && sub[0] == "merge" && !hasFlagPrefix(args, "--abort"):

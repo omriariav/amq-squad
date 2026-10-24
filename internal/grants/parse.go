@@ -28,6 +28,7 @@ import (
 //	    ci_required: true
 //	    size_cap_lines: 300       # optional; default 300 (3-2, S6 dry run)
 //	    size_cap_files: 5         # optional; default 5 (3-2, S6 dry run)
+//	    required_companions: [skills/*/SKILL.md]   # optional; default none (the owner names them)
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100
@@ -138,6 +139,8 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 				m.SizeCapLines, err = f.Integer(1)
 			case "merge.size_cap_files":
 				m.SizeCapFiles, err = f.Integer(1)
+			case "merge.required_companions":
+				m.RequiredCompanions, err = f.List()
 			default:
 				// force push and protected-path changes are fixed refusals, not fields
 				err = f.Errf("unknown key")

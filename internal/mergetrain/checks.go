@@ -5,6 +5,7 @@ import (
 	"path"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
@@ -36,7 +37,7 @@ type checkInput struct {
 	pr               PRInfo
 	runs             []CheckRun
 	grant            grants.Resolved
-	required         []string        // the CI checks that must be green
+	required         []RequiredCheck // the CI checks that must be green, with the app the rule pins
 	trainHeads       map[string]bool // heads the train's own rebases produced
 }
 
@@ -96,6 +97,9 @@ func check(in checkInput) []Refusal {
 	if n := len(in.pr.Files); ok && n > merge.SizeCapFiles {
 		add(RuleSizeCap, "%d changed files, cap %d", n, merge.SizeCapFiles)
 	}
+	if len(in.pr.Files) >= MaxCompareFiles {
+		add(RuleSizeCap, "the diff reaches the compare endpoint's %d-file limit and cannot be verified whole", MaxCompareFiles)
+	}
 	for _, fp := range in.pr.ForcePushes {
 		if !in.trainHeads[fp.After] {
 			add(RuleForcePush, "head was force-pushed %s -> %s by %s", short(fp.Before), short(fp.After), orDash(fp.Actor))
@@ -119,29 +123,51 @@ func check(in checkInput) []Refusal {
 }
 
 // ciRed says why the required checks are not all green at the head ("" when
-// they are). A required check with no run is red: CI absent is not green.
-// absent reports that every red check simply has no run at this head.
-func ciRed(required []string, runs []CheckRun) (why string, absent bool) {
+// they are). A required check counts only from the app its rule pins, and
+// only that app's latest result for the name (the highest check-run id); a
+// rule that pins no app needs every result for the name to be green, so a
+// failing app cannot hide behind another app's success. A required check
+// with no result is red: CI absent is not green. absent reports that every
+// red check simply has no result at this head.
+func ciRed(required []RequiredCheck, runs []CheckRun) (why string, absent bool) {
 	if len(required) == 0 {
 		return "no required CI check is known (the server protection names none)", false
 	}
+	stateOf := func(r CheckRun) string {
+		if r.Status != "" && !strings.EqualFold(r.Status, "completed") {
+			return strings.ToLower(r.Status)
+		}
+		return strings.ToLower(r.Conclusion)
+	}
 	var bad []string
-	for _, name := range required {
+	for _, req := range required {
+		label := req.Context
+		if req.AppID != 0 {
+			label += "@app" + strconv.Itoa(req.AppID)
+		}
 		state := "absent"
-		for _, r := range runs {
-			if r.Name != name {
-				continue
+		if req.AppID != 0 {
+			var latest *CheckRun
+			for i, r := range runs {
+				if r.Name == req.Context && r.AppID == req.AppID && (latest == nil || r.ID > latest.ID) {
+					latest = &runs[i]
+				}
 			}
-			state = strings.ToLower(r.Conclusion)
-			if !strings.EqualFold(r.Status, "completed") && r.Status != "" {
-				state = strings.ToLower(r.Status)
+			if latest != nil {
+				state = stateOf(*latest)
 			}
-			if state == "success" {
-				break
+		} else {
+			for _, r := range runs {
+				if r.Name != req.Context {
+					continue
+				}
+				if s := stateOf(r); state == "absent" || state == "success" {
+					state = s
+				}
 			}
 		}
 		if state != "success" {
-			bad = append(bad, name+"="+state)
+			bad = append(bad, label+"="+state)
 		}
 	}
 	if len(bad) == 0 {
@@ -169,9 +195,10 @@ func rules(rs []Refusal) []string {
 // the train sees a diff, not the managed block's text. A trailing / or an
 // existing directory entry covers a tree; * ? [ are globs within a segment.
 func protectedHit(p string, entries []string) (string, bool) {
+	p = strings.ToLower(p) // case-folded: on a case-insensitive checkout Squad.yaml is squad.yaml
 	for _, e := range entries {
 		raw := e
-		e = strings.TrimPrefix(e, grants.ManagedPrefix)
+		e = strings.ToLower(strings.TrimPrefix(e, grants.ManagedPrefix))
 		if strings.HasPrefix(e, "~/") || strings.HasPrefix(e, "/") || e == "" {
 			continue
 		}

@@ -1,0 +1,24 @@
+merge train mt-20261024T174311Z-66a99a53 (dry run) on omriariav/workspace-cli main at 793396c609201d9e2288f9355dc2b46c6ca52733
+branch protection met: false (required checks [], direct push refused false) classic protection requires no PR: direct push is allowed
+#216	W7	351ca6e237a3	119 lines	planned
+#217	W3	eca77d5a1667	143 lines	refused	after [216] (cmd/sheets_test.go)
+	refused ci_green: head eca77d5a1667: required checks not green: build (1.25)=failure
+	gate - dry run: would raise grow merge omriariav/workspace-cli#217 head=eca77d5a16675fb2d86f84041d1569ddc072dd2b rules=ci_green
+#218	W12	586909888e59	43 lines	planned
+#219	W5	bc6c327d1ac5	157 lines	refused	after [218] (internal/client/factory_test.go)
+	refused task_scope: internal/client/factory_test.go is outside task W5's declared files [cmd/root.go internal/client/factory.go]
+	gate - dry run: would raise grow merge omriariav/workspace-cli#219 head=bc6c327d1ac5b85ea2b40abfcb9375f89dc6a6ab rules=task_scope
+#220	W2	229d00554094	141 lines	refused
+	refused ci_green: head 229d00554094: required checks not green: build (1.25)=failure
+	gate - dry run: would raise grow merge omriariav/workspace-cli#220 head=229d005540944194ce6b87a1f9b41b45657f9ef0 rules=ci_green
+#221	W6	8fea3f14a2a1	315 lines	refused
+	refused ci_green: head 8fea3f14a2a1: required checks not green: build (1.25)=failure
+	refused size_cap: 315 changed lines, cap 300
+	gate - dry run: would raise grow merge omriariav/workspace-cli#221 head=8fea3f14a2a1eeb2da38804730c78fda34b04356 rules=ci_green,size_cap
+#222	W4	cf1e5e3a73eb	191 lines	refused
+	refused ci_green: head cf1e5e3a73eb: required checks not green: build (1.25)=failure
+	gate - dry run: would raise grow merge omriariav/workspace-cli#222 head=cf1e5e3a73ebe0fbc275e2e2ac30ac9a542d5387 rules=ci_green
+#223	W8	72fe2b817fda	172 lines	planned
+#224	W9	485cf768ef79	88 lines	planned
+batch digest sha256:d343aae9ee026ad8ffc15b09bbd9405ef6b83f078b778f63a6ed98c3af6cdee0 over 4 PR(s); 5 refused; wall 29146 ms
+exit 0

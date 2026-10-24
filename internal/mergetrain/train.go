@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -161,22 +162,22 @@ func ciAbsentOnly(rs []Refusal) bool {
 
 // Result is a run's outcome (the dry run's plan, or what landed).
 type Result struct {
-	Run           string     `json:"run"`
-	Repository    string     `json:"repository"`
-	Base          string     `json:"base"`
-	BaseSHA       string     `json:"base_sha"`
-	DryRun        bool       `json:"dry_run"`
-	Manual        bool       `json:"manual"`
-	Protection    Protection `json:"protection"`
-	ProtectionMet bool       `json:"protection_met"`
-	CIChecks      []string   `json:"ci_checks"`
-	Pairs         []Pair     `json:"pairs"`
-	Digest        string     `json:"digest"`
-	Digests       []string   `json:"digests,omitempty"` // every digest written, in order
-	Alerts        []Alert    `json:"alerts,omitempty"`  // ungated tags and releases (owner alerts)
-	PRs           []PlanPR   `json:"prs"`
-	Stopped       string     `json:"stopped,omitempty"`
-	WallMS        int64      `json:"wall_ms"`
+	Run           string          `json:"run"`
+	Repository    string          `json:"repository"`
+	Base          string          `json:"base"`
+	BaseSHA       string          `json:"base_sha"`
+	DryRun        bool            `json:"dry_run"`
+	Manual        bool            `json:"manual"`
+	Protection    Protection      `json:"protection"`
+	ProtectionMet bool            `json:"protection_met"`
+	CIChecks      []RequiredCheck `json:"ci_checks"`
+	Pairs         []Pair          `json:"pairs"`
+	Digest        string          `json:"digest"`
+	Digests       []string        `json:"digests,omitempty"` // every digest written, in order
+	Alerts        []Alert         `json:"alerts,omitempty"`  // ungated tags and releases (owner alerts)
+	PRs           []PlanPR        `json:"prs"`
+	Stopped       string          `json:"stopped,omitempty"`
+	WallMS        int64           `json:"wall_ms"`
 }
 
 // Refused lists the refused PR numbers.
@@ -216,9 +217,14 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	}
 	res = Result{Run: runID(start), Repository: req.Repository, Base: req.Base, DryRun: t.DryRun, Manual: t.Manual}
 	defer func() { res.WallMS = t.now().Sub(start).Milliseconds() }()
+	var auditErr error // the first failed append; no merge runs after it (P2-11)
 	entry := func(e Entry) error {
 		e.Run, e.Repository, e.Base, e.DryRun = res.Run, req.Repository, req.Base, t.DryRun
-		return t.Audit.Append(e)
+		err := t.Audit.Append(e)
+		if err != nil && auditErr == nil {
+			auditErr = fmt.Errorf("audit log: %w", err)
+		}
+		return err
 	}
 
 	prot, err := t.Forge.Protection(ctx, req.Repository, req.Base)
@@ -228,7 +234,7 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	res.Protection, res.ProtectionMet = prot, prot.Met()
 	detail := "ok"
 	if !prot.Met() {
-		detail = fmt.Sprintf("unmet: required checks %v, direct push refused %v", prot.RequiredChecks, prot.DirectPushRefused)
+		detail = fmt.Sprintf("unmet: required checks %v, direct push refused %v (%s)", prot.Checks, prot.DirectPushRefused, strings.Join(prot.Notes, "; "))
 	}
 	if err := entry(Entry{Kind: "protection", Detail: detail, Rules: prot.Sources}); err != nil {
 		return res, err
@@ -248,14 +254,19 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		res.Stopped = "branch protection: " + detail
 		return res, ErrProtection
 	}
-	res.CIChecks = union(prot.RequiredChecks, req.RequiredChecks)
+	res.CIChecks = slices.Clone(prot.Checks)
+	for _, name := range req.RequiredChecks {
+		if c := (RequiredCheck{Context: strings.TrimSpace(name)}); c.Context != "" && !slices.Contains(res.CIChecks, c) {
+			res.CIChecks = append(res.CIChecks, c)
+		}
+	}
 	if res.BaseSHA, err = t.Forge.BranchHead(ctx, req.Repository, req.Base); err != nil {
 		return res, fmt.Errorf("read %s head: %w", req.Base, err)
 	}
 
 	// Plan: check every PR at its current head, then order and digest.
 	for _, it := range req.PRs {
-		p, err := t.checkPR(ctx, req, it, res.CIChecks)
+		p, err := t.checkPR(ctx, req, it, res.BaseSHA, res.CIChecks)
 		if err != nil {
 			return res, err
 		}
@@ -280,11 +291,16 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		if p.Status != "planned" {
 			continue
 		}
-		if t.Manual && (t.Confirm == nil || !t.Confirm(Step{Index: i, Number: p.Number, Head: p.Head, Digest: res.Digest})) {
+		if auditErr != nil {
+			res.Stopped = "audit log failed before #" + strconv.Itoa(p.Number)
+			return res, auditErr
+		}
+		err := t.land(ctx, req, &res, p, i, merged, entry, func() error { return auditErr })
+		if errors.Is(err, errManualStop) {
 			res.Stopped = fmt.Sprintf("manual stop before #%d", p.Number)
 			return res, entry(Entry{Kind: "stop", PR: p.Number, Head: p.Head, Detail: res.Stopped})
 		}
-		if err := t.land(ctx, req, &res, p, merged, entry); err != nil {
+		if err != nil {
 			res.Stopped = fmt.Sprintf("#%d: %v", p.Number, err)
 			_ = entry(Entry{Kind: "stop", PR: p.Number, Head: p.Head, Detail: res.Stopped})
 			return res, err
@@ -293,15 +309,37 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	return res, nil
 }
 
-// checkPR reads one PR at its head and runs the rules check.
-func (t *Train) checkPR(ctx context.Context, req Request, it Item, ci []string) (PlanPR, error) {
-	pr, err := t.Forge.PR(ctx, req.Repository, it.Number)
-	if err != nil {
-		return PlanPR{}, fmt.Errorf("read PR #%d: %w", it.Number, err)
-	}
-	runs, err := t.Forge.Checks(ctx, req.Repository, pr.HeadSHA)
-	if err != nil {
-		return PlanPR{}, fmt.Errorf("read checks of #%d at %s: %w", it.Number, short(pr.HeadSHA), err)
+// errManualStop: manual mode's confirmation was not given.
+var errManualStop = errors.New("manual stop")
+
+// checkPR reads one PR at one head and runs the rules check. The diff comes
+// from the compare endpoint for the pinned (base, head) pair, and the head is
+// read again after the checks: a head that moved in between is read again,
+// so the files, the CI and the head checked are one snapshot (P1-3).
+func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, ci []RequiredCheck) (PlanPR, error) {
+	var pr PRInfo
+	var runs []CheckRun
+	for attempt := 0; ; attempt++ {
+		var err error
+		if pr, err = t.Forge.PR(ctx, req.Repository, it.Number); err != nil {
+			return PlanPR{}, fmt.Errorf("read PR #%d: %w", it.Number, err)
+		}
+		if pr.Files, err = t.Forge.Diff(ctx, req.Repository, base, pr.HeadSHA); err != nil {
+			return PlanPR{}, fmt.Errorf("diff of #%d at %s: %w", it.Number, short(pr.HeadSHA), err)
+		}
+		if runs, err = t.Forge.Checks(ctx, req.Repository, pr.HeadSHA); err != nil {
+			return PlanPR{}, fmt.Errorf("read checks of #%d at %s: %w", it.Number, short(pr.HeadSHA), err)
+		}
+		again, err := t.Forge.PR(ctx, req.Repository, it.Number)
+		if err != nil {
+			return PlanPR{}, fmt.Errorf("re-read PR #%d: %w", it.Number, err)
+		}
+		if again.HeadSHA == pr.HeadSHA {
+			break
+		}
+		if attempt == 2 {
+			return PlanPR{}, fmt.Errorf("PR #%d head kept moving while it was checked (%s -> %s)", it.Number, short(pr.HeadSHA), short(again.HeadSHA))
+		}
 	}
 	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", base: pr.BaseSHA}
 	p.Refusals = check(checkInput{repository: req.Repository, base: req.Base, item: it, pr: pr, runs: runs, grant: t.Grants,
@@ -386,14 +424,14 @@ func (t *Train) digest(res *Result, entry func(Entry) error) {
 // land re-checks one PR at its current head, rebases it when it overlaps a PR
 // this run landed or the server reports a conflict, re-checks after a rebase
 // that changed the head, and merges it with the head pinned.
-func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, merged map[string]int, entry func(Entry) error) error {
+func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, index int, merged map[string]int, entry func(Entry) error, audited func() error) error {
 	it := item(req, p.Number)
 	cur, err := t.Forge.PR(ctx, req.Repository, p.Number)
 	if err != nil {
 		return err
 	}
 	rebase := cur.Mergeable == "CONFLICTING" || p.RebaseForCI
-	for _, f := range paths(cur.Files) {
+	for _, f := range p.Files {
 		if _, ok := merged[f]; ok {
 			rebase = true
 		}
@@ -412,7 +450,7 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, m
 			t.waitCI(ctx, req.Repository, cur.HeadSHA, res.CIChecks)
 		}
 	}
-	fresh, err := t.checkPR(ctx, req, it, res.CIChecks)
+	fresh, err := t.checkPR(ctx, req, it, res.BaseSHA, res.CIChecks)
 	if err != nil {
 		return err
 	}
@@ -427,6 +465,14 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, m
 			t.digest(res, entry)
 			return nil
 		}
+	}
+	// Manual mode asks after the final rebase, check and digest, for exactly
+	// the head and digest that will merge (P2-9); the merge pins that head.
+	if t.Manual && (t.Confirm == nil || !t.Confirm(Step{Index: index, Number: p.Number, Head: p.Head, Digest: res.Digest})) {
+		return errManualStop
+	}
+	if err := audited(); err != nil {
+		return err
 	}
 	if p.Draft {
 		if err := t.Forge.Ready(ctx, req.Repository, p.Number); err != nil {
@@ -447,7 +493,7 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, m
 
 // waitCI polls the required checks at a new head until none is pending or
 // the wait ends; the re-check after it decides.
-func (t *Train) waitCI(ctx context.Context, repository, sha string, required []string) {
+func (t *Train) waitCI(ctx context.Context, repository, sha string, required []RequiredCheck) {
 	wait, poll := t.CIWait, t.Poll
 	if wait == 0 {
 		wait = 20 * time.Minute
@@ -469,11 +515,11 @@ func (t *Train) waitCI(ctx context.Context, repository, sha string, required []s
 	}
 }
 
-func pending(required []string, runs []CheckRun) bool {
-	for _, name := range required {
+func pending(required []RequiredCheck, runs []CheckRun) bool {
+	for _, req := range required {
 		done := false
 		for _, r := range runs {
-			if r.Name == name && (r.Status == "" || strings.EqualFold(r.Status, "completed")) {
+			if r.Name == req.Context && (req.AppID == 0 || r.AppID == req.AppID) && (r.Status == "" || strings.EqualFold(r.Status, "completed")) {
 				done = true
 			}
 		}
@@ -499,16 +545,6 @@ func describe(rs []Refusal) string {
 		out = append(out, r.Rule+": "+r.Detail)
 	}
 	return strings.Join(out, "; ")
-}
-
-func union(a, b []string) []string {
-	out := slices.Clone(a)
-	for _, s := range b {
-		if s = strings.TrimSpace(s); s != "" && !slices.Contains(out, s) {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func runID(now time.Time) string {

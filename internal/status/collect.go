@@ -309,9 +309,12 @@ func later(cur *time.Time, t time.Time) *time.Time {
 // collectAlerts reads the owner alerts the merge train and doctor write
 // (mergetrain.Alert: id, kind tag|release, detail, at).
 func collectAlerts(root string, warn func(string, ...any)) []AlertInput {
-	paths, _ := filepath.Glob(filepath.Join(root, "extensions", "amq-squad", "alerts", "ungated-*.json"))
+	paths, _ := filepath.Glob(filepath.Join(root, "extensions", "amq-squad", "alerts", "*.json"))
 	var out []AlertInput
 	for _, p := range paths {
+		if b := filepath.Base(p); strings.HasPrefix(b, "baseline-") || strings.HasPrefix(b, "covered-") {
+			continue
+		}
 		var a struct {
 			ID, Kind, Detail, At string
 		}
@@ -324,7 +327,11 @@ func collectAlerts(root string, warn func(string, ...any)) []AlertInput {
 			warn("alert %s unreadable", filepath.Base(p))
 			continue
 		}
-		out = append(out, AlertInput{ID: a.ID, Kind: "ungated_" + a.Kind, Subject: a.Detail, At: at})
+		kind := a.Kind
+		if kind == "tag" || kind == "release" {
+			kind = "ungated_" + kind
+		}
+		out = append(out, AlertInput{ID: a.ID, Kind: kind, Subject: a.Detail, At: at})
 	}
 	return out
 }

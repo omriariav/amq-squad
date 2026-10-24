@@ -267,20 +267,35 @@ func TestSeatProcessHoldsNoMergePath(t *testing.T) {
 	}
 }
 
-// A seat's push after the plan changes the head: the train re-checks it, and
-// a merge with a stale head is refused by the pinned sha.
+// hookForge runs hook before the n-th PR read (1-based), once.
+type hookForge struct {
+	*GH
+	n, calls int
+	hook     func()
+}
+
+func (h *hookForge) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
+	h.calls++
+	if h.calls == h.n && h.hook != nil {
+		h.hook()
+	}
+	return h.GH.PR(ctx, repository, number)
+}
+
+func (f *fixture) seatPush(branch string) {
+	mustGit(f.t, f.work, "checkout", "-q", branch)
+	writeFile(f.t, f.work+"/pkg/x.go", "package pkg\n")
+	mustGit(f.t, f.work, "add", "-A")
+	mustGit(f.t, f.work, "commit", "-q", "-m", "seat push")
+	mustGit(f.t, f.work, "push", "-q", "origin", branch)
+}
+
+// A seat's push after the plan changes the head: the train re-checks the new
+// head, with a new digest, and refuses it on its new file.
 func TestNewHeadAfterPlanIsRechecked(t *testing.T) {
 	f := newFixture(t)
 	f.req.PRs = f.req.PRs[:1]
-	f.train.Manual = true
-	f.train.Confirm = func(Step) bool {
-		mustGit(t, f.work, "checkout", "-q", "pr1")
-		writeFile(t, f.work+"/pkg/x.go", "package pkg\n")
-		mustGit(t, f.work, "add", "-A")
-		mustGit(t, f.work, "commit", "-q", "-m", "seat push")
-		mustGit(t, f.work, "push", "-q", "origin", "pr1")
-		return true
-	}
+	f.train.Forge = &hookForge{GH: f.gh, n: 3, hook: func() { f.seatPush("pr1") }} // plan reads PR twice
 	res, err := f.train.Run(context.Background(), f.req)
 	if err != nil {
 		t.Fatal(err)
@@ -288,6 +303,50 @@ func TestNewHeadAfterPlanIsRechecked(t *testing.T) {
 	p := res.PRs[0]
 	if p.Status != "refused" || !slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RuleTaskScope }) || len(res.Digests) < 2 {
 		t.Fatalf("the new head was not re-checked: %+v digests %v", p, res.Digests)
+	}
+}
+
+// P1-3: the files, the CI and the head are one snapshot. A push between the
+// head read and the checks makes the check read the PR again; the diff comes
+// from the compare endpoint for the pinned pair, never the live files list.
+func TestHeadMovingDuringTheCheckIsReadAgain(t *testing.T) {
+	f := newFixture(t)
+	f.req.PRs = f.req.PRs[:1]
+	f.train.DryRun = true
+	f.train.Forge = &hookForge{GH: f.gh, n: 2, hook: func() { f.seatPush("pr1") }} // the re-read after the checks
+	res, err := f.train.Run(context.Background(), f.req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.PRs[0]; p.Head != f.head("pr1") || p.Status != "refused" || !slices.Contains(p.Files, "pkg/x.go") {
+		t.Fatalf("the check did not follow the moved head: %+v", p)
+	}
+	if calls := f.calls(); strings.Contains(calls, "/files") || !strings.Contains(calls, "compare/") {
+		t.Fatalf("diff not from the compare endpoint:\n%s", calls)
+	}
+}
+
+// P2-9: manual mode asks after the final rebase, check and digest, for the
+// head that merges; a push after the answer is refused by the pinned head.
+func TestManualConfirmationIsForTheHeadThatMerges(t *testing.T) {
+	f := newFixture(t)
+	f.req.PRs = []Item{f.req.PRs[1], f.req.PRs[3]} // PR 4 rebases after PR 2
+	f.train.Manual = true
+	var steps []Step
+	f.train.Confirm = func(s Step) bool { steps = append(steps, s); return true }
+	res, err := f.train.Run(context.Background(), f.req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 || steps[1].Head != res.PRs[1].Head || steps[1].Digest != res.Digest || res.PRs[1].Status != "merged" {
+		t.Fatalf("PR 4 was confirmed for %+v, merged %+v", steps, res.PRs[1])
+	}
+	g := newFixture(t)
+	g.req.PRs = g.req.PRs[:1]
+	g.train.Manual = true
+	g.train.Confirm = func(Step) bool { g.seatPush("pr1"); return true }
+	if _, err := g.train.Run(context.Background(), g.req); err == nil || strings.Contains(mustGit(t, g.bare, "log", "--format=%s", "main"), "squash") {
+		t.Fatalf("a head pushed after the confirmation merged: %v", err)
 	}
 }
 
@@ -339,7 +398,7 @@ func TestEvaluateProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := evaluateProtection(rules, map[int]int{7: 0}, nil)
-	if !p.Met() || !p.ForcePushRefused || !slices.Equal(p.RequiredChecks, []string{"ci"}) {
+	if !p.Met() || !p.ForcePushRefused || !slices.Equal(p.Checks, []RequiredCheck{{Context: "ci"}}) {
 		t.Fatalf("S2 ruleset: %+v", p)
 	}
 	if evaluateProtection(rules, map[int]int{7: 1}, nil).Met() {
@@ -390,7 +449,7 @@ func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
 	}
 	head := f.head("main")
 	mustGit(t, f.bare, "tag", "v1", "main")
-	f.edit(func(s *fakeState) { s.Releases = []string{"v1"} })
+	f.edit(func(s *fakeState) { s.Releases = []Release{{ID: 11, Tag: "v1"}} })
 	res, err := f.train.Run(context.Background(), f.req)
 	if err != nil || len(res.Alerts) != 2 || res.Alerts[0].Kind != "tag" || res.Alerts[0].SHA != head || res.Alerts[1].Kind != "release" {
 		t.Fatalf("ungated tag and release: %v %+v", err, res.Alerts)

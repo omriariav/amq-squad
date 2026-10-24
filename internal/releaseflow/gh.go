@@ -36,3 +36,20 @@ func (g *GH) Tag(ctx context.Context, repository, tag, commit string) error {
 func (g *GH) Release(ctx context.Context, repository, tag, notes string) (string, error) {
 	return g.run(ctx, "release", "create", tag, "-R", repository, "--verify-tag", "--title", tag, "--notes", notes)
 }
+
+// TagCommit resolves a remote tag to its commit, through an annotated tag
+// object when there is one; "" when the tag does not exist.
+func (g *GH) TagCommit(ctx context.Context, repository, tag string) (string, error) {
+	out, err := g.run(ctx, "api", "repos/"+repository+"/git/ref/tags/"+tag, "--jq", `.object.type + " " + .object.sha`)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return "", nil
+		}
+		return "", err
+	}
+	kind, sha, _ := strings.Cut(out, " ")
+	if kind == "tag" {
+		return g.run(ctx, "api", "repos/"+repository+"/git/tags/"+sha, "--jq", ".object.sha")
+	}
+	return sha, nil
+}

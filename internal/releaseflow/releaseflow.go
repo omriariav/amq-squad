@@ -27,16 +27,20 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
+	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
 
-// Executor performs the two release actions under the owner's identity.
+// Executor performs the two release actions under the owner's identity, and
+// resolves a remote tag to its commit ("" when the tag does not exist).
 type Executor interface {
 	Tag(ctx context.Context, repository, tag, commit string) error
 	Release(ctx context.Context, repository, tag, notes string) (string, error)
+	TagCommit(ctx context.Context, repository, tag string) (string, error)
 }
 
 // Flow is one release series: its compoundrelease store and the session's
@@ -48,6 +52,7 @@ type Flow struct {
 	Accepted func(gatestore.Record) error                   // the full owner check (gateverify.Verifier.Accepted)
 	Exec     Executor
 	Lead     string
+	Squad    string // this squad's identity, set on the gates it raises and read back (mergetrain.Squad)
 	Now      func() time.Time
 }
 
@@ -90,15 +95,15 @@ func GateID(child operatorauth.ReleaseChildPlan) string {
 func (f *Flow) ChildGate(child operatorauth.ReleaseChildPlan) (string, error) {
 	id := GateID(child)
 	check := func(rec gatestore.Record) (string, error) {
-		if rec.Class != child.Action || rec.Target != child.Target {
-			return id, fmt.Errorf("%w: gate %s binds %s %q", compoundrelease.ErrChildConflict, id, rec.Class, rec.Target)
+		if rec.Class != child.Action || rec.Target != child.Target || !mergetrain.SameSquad(rec, f.Squad) {
+			return id, fmt.Errorf("%w: gate %s binds %s %q for squad %q", compoundrelease.ErrChildConflict, id, rec.Class, rec.Target, rec.Squad)
 		}
 		return id, nil
 	}
 	if rec, err := f.Gates.Load(id); err == nil {
 		return check(rec)
 	}
-	rec, err := f.Raise(gatestore.Spec{GateID: id, Action: child.Action, Target: child.Target, RaisedBy: f.Lead})
+	rec, err := f.Raise(gatestore.Spec{GateID: id, Action: child.Action, Target: child.Target, RaisedBy: f.Lead, Squad: f.Squad})
 	if errors.Is(err, fs.ErrExist) {
 		if rec, err = f.Gates.Load(id); err != nil {
 			return id, err
@@ -142,7 +147,7 @@ type Step struct {
 // Publish runs the children of the active release in order: each only with
 // its gate's verified answer. A refused child stops the flow before anything
 // after it runs (the release never precedes its tag).
-func (f *Flow) Publish(ctx context.Context, root string) ([]Step, error) {
+func (f *Flow) Publish(ctx context.Context, root string) (steps []Step, err error) {
 	snap, err := f.Release.ReadCurrent()
 	if err != nil {
 		return nil, err
@@ -150,15 +155,40 @@ func (f *Flow) Publish(ctx context.Context, root string) ([]Step, error) {
 	if snap.Active == nil {
 		return nil, fmt.Errorf("release is %s, not active: prepare it first", snap.Pointer.State)
 	}
+	dir := filepath.Join(root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	// One publication at a time per release: the retry after a crash
+	// reconciles against the remote under the same lock (P2-10).
+	err = flock.WithLock(filepath.Join(dir, "publish.lock"), func() error {
+		steps, err = f.publishLocked(ctx, root, dir, snap)
+		return err
+	})
+	return steps, err
+}
+
+// ErrTagMoved: the remote tag no longer names the approved commit.
+var ErrTagMoved = errors.New("tag_moved")
+
+func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoundrelease.Snapshot) ([]Step, error) {
 	var steps []Step
+	approved := ""
 	for i, child := range snap.Prepared.Children {
 		id := snap.Active.Children[i].QuestionMessageID
 		st := Step{Role: child.Role, GateID: id, Target: child.Target}
 		rec, err := f.Gates.Load(id)
-		if err != nil || rec.Class != child.Action || rec.Target != child.Target {
+		if err != nil || rec.Class != child.Action || rec.Target != child.Target || !mergetrain.SameSquad(rec, f.Squad) {
 			return append(steps, refused(st, fmt.Sprintf("gate %s does not bind this child: %v", id, err))), ErrNotApproved
 		}
-		marker := filepath.Join(root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID, child.Role+".json")
+		repo, tag, commit, err := parseTarget(child)
+		if err != nil {
+			return append(steps, refused(st, err.Error())), err
+		}
+		if commit != "" {
+			approved = commit
+		}
+		marker := filepath.Join(dir, child.Role+".json")
 		if done, err := os.ReadFile(marker); err == nil {
 			var prev Step
 			_ = json.Unmarshal(done, &prev)
@@ -169,15 +199,30 @@ func (f *Flow) Publish(ctx context.Context, root string) ([]Step, error) {
 		if err := f.Accepted(rec); err != nil {
 			return append(steps, refused(st, err.Error())), fmt.Errorf("%s: %w (gate %s): %v", child.Role, ErrNotApproved, id, err)
 		}
-		repo, tag, commit, err := parseTarget(child)
+		// The remote tag is resolved before each step: a tag created by a
+		// crashed run at the approved commit is that run's (reconciled); a tag
+		// at any other commit is tag_moved and raises the owner alert.
+		remote, err := f.Exec.TagCommit(ctx, repo, tag)
 		if err != nil {
-			return append(steps, refused(st, err.Error())), err
+			return append(steps, refused(st, err.Error())), fmt.Errorf("%s: resolve tag %s: %w", child.Role, tag, err)
+		}
+		if remote != "" && remote != approved {
+			f.tagMoved(root, repo, tag, approved, remote)
+			return append(steps, refused(st, fmt.Sprintf("tag %s names %s, approved %s", tag, remote, approved))), fmt.Errorf("%s: %w: tag %s names %s, the owner approved %s", child.Role, ErrTagMoved, tag, remote, approved)
 		}
 		switch child.Role {
 		case operatorauth.ReleaseChildTag:
-			err = f.Exec.Tag(ctx, repo, tag, commit)
+			if remote == "" {
+				err = f.Exec.Tag(ctx, repo, tag, commit)
+			} else {
+				st.Detail = "the tag already named the approved commit (a crashed run's); reconciled"
+			}
 			st.Result = commit
 		default:
+			if remote == "" {
+				err = fmt.Errorf("tag %s does not exist on %s", tag, repo)
+				break
+			}
 			st.Result, err = f.Exec.Release(ctx, repo, tag, snap.Prepared.Spec.Note.Summary)
 		}
 		if err != nil {
@@ -190,6 +235,17 @@ func (f *Flow) Publish(ctx context.Context, root string) ([]Step, error) {
 		steps = append(steps, st)
 	}
 	return steps, nil
+}
+
+// tagMoved raises the owner alert for a tag that left its approved commit.
+func (f *Flow) tagMoved(root, repo, tag, approved, remote string) {
+	now := time.Now()
+	if f.Now != nil {
+		now = f.Now()
+	}
+	sum := sha256.Sum256([]byte(repo + "\x00" + tag + "\x00" + approved + "\x00" + remote))
+	_ = mergetrain.WriteAlert(root, mergetrain.Alert{ID: "tag-moved-" + hex.EncodeToString(sum[:6]), Repository: repo, Kind: "tag_moved", Name: tag, SHA: remote,
+		At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("tag %s on %s moved from the approved %s to %s before the release", tag, repo, approved, remote)})
 }
 
 func refused(st Step, detail string) Step {

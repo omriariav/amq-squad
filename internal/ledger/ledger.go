@@ -31,7 +31,7 @@ func Path(root, handle string) string {
 // OutcomePath is the session's outcome log (2b-4: under the AMQ root per
 // session, beside the hook ledger; the file name is 2b-4's to confirm).
 func OutcomePath(root string) string {
-	return filepath.Join(root, "extensions", "amq-squad", "outcomes.jsonl")
+	return filepath.Join(root, "extensions", "amq-squad", "routing", "outcomes.jsonl")
 }
 
 // Tail returns the last n complete JSON lines of a file, reading at most
@@ -77,36 +77,118 @@ func SecretName(name string) bool {
 	return false
 }
 
-var (
-	secretAssign = []string{"token=", "secret=", "password=", "passwd=", "api-key=", "api_key=", "private-key="}
-	secretFlags  = map[string]bool{"--token": true, "--secret": true, "--password": true, "--api-key": true, "--private-key": true}
-)
+// secretFlag reports a flag that takes a secret (--token, --api-key,
+// --access-token, --password ...): the name after the dashes is a secret name.
+func secretFlag(word string) bool {
+	if !strings.HasPrefix(word, "-") || strings.Contains(word, "=") {
+		return false
+	}
+	return SecretName(strings.ReplaceAll(strings.TrimLeft(word, "-"), "-", "_"))
+}
+
+// assignedSecret returns the offset of the value in a key=value word whose
+// key names a secret (--token=x, password=x, API_KEY=x), or -1.
+func assignedSecret(word string) int {
+	key, _, ok := strings.Cut(word, "=")
+	if !ok || !SecretName(strings.ReplaceAll(strings.TrimLeft(key, "-"), "-", "_")) {
+		return -1
+	}
+	return len(key) + 1
+}
+
+// span is one shell word of a command string: its unquoted text and where it
+// sits in the original, quotes included.
+type span struct {
+	text       string
+	start, end int
+}
+
+// shellWords splits a command line into words, honoring single and double
+// quotes and backslashes, so a quoted secret is one word.
+func shellWords(s string) []span {
+	var out []span
+	var b strings.Builder
+	start, in, quote := 0, false, byte(0)
+	flush := func(end int) {
+		if in {
+			out = append(out, span{b.String(), start, end})
+		}
+		b.Reset()
+		in = false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote != 0:
+			if c == '\\' && quote == '"' && i+1 < len(s) {
+				i++
+				c = s[i]
+			}
+			b.WriteByte(c)
+		case c == '\'' || c == '"':
+			if !in {
+				start, in = i, true
+			}
+			quote = c
+		case c == '\\' && i+1 < len(s):
+			if !in {
+				start, in = i, true
+			}
+			i++
+			b.WriteByte(s[i])
+		case c == ' ' || c == '\t' || c == '\n':
+			flush(i)
+		default:
+			if !in {
+				start, in = i, true
+			}
+			b.WriteByte(c)
+		}
+	}
+	flush(len(s))
+	return out
+}
 
 // scrubArgs is the v2 secret-argument rule (obviousSecretArg) over a command
-// line: a word carrying token=, password=, ... and the word after --token,
-// --password, ... are replaced.
+// line, quote-aware: the word after a secret flag, the value of a secret
+// key=value, the credential after "Bearer"/"Basic" and an
+// "Authorization: ..." header are replaced, the whole quoted word included.
 func scrubArgs(s string) string {
-	words := strings.Fields(s)
-	changed := false
+	words := shellWords(s)
+	type cut struct{ start, end int }
+	var cuts []cut
 	for i, w := range words {
-		lw := strings.ToLower(w)
-		hit := i > 0 && secretFlags[strings.ToLower(words[i-1])]
-		for _, p := range secretAssign {
-			hit = hit || strings.Contains(lw, p)
-		}
-		if hit {
-			words[i], changed = "[redacted]", true
+		lw := strings.ToLower(w.text)
+		switch {
+		case i > 0 && (secretFlag(words[i-1].text) || strings.EqualFold(words[i-1].text, "bearer") || strings.EqualFold(words[i-1].text, "basic")):
+			cuts = append(cuts, cut{w.start, w.end})
+		case strings.HasPrefix(lw, "authorization:"):
+			cuts = append(cuts, cut{w.start, w.end})
+		case assignedSecret(w.text) >= 0 && !strings.ContainsAny(s[w.start:w.end], "'\"\\"):
+			cuts = append(cuts, cut{w.start + assignedSecret(w.text), w.end})
+		case assignedSecret(w.text) >= 0:
+			cuts = append(cuts, cut{w.start, w.end})
 		}
 	}
-	if !changed {
-		return s
+	for i := len(cuts) - 1; i >= 0; i-- {
+		s = s[:cuts[i].start] + "[redacted]" + s[cuts[i].end:]
 	}
-	return strings.Join(words, " ")
+	return s
+}
+
+// countField is a key whose numeric value is a count, not a secret
+// (input_tokens, output_tokens, cache_read_input_tokens, tokens).
+func countField(key string) bool {
+	k := strings.ToLower(key)
+	return k == "tokens" || strings.HasSuffix(k, "_tokens")
 }
 
 // Redact replaces the value of every key that names a secret anywhere in a
-// line, payload included (token counts, numbers, stay), and applies the
-// secret-argument rule to every string.
+// line, payload included (only numeric count fields such as input_tokens
+// stay), applies the secret-argument rule to every string, and in an argv
+// array replaces the element after a secret flag.
 func Redact(raw []byte) json.RawMessage {
 	var v any
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -127,7 +209,7 @@ func redact(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, val := range x {
-			if _, isNumber := val.(json.Number); SecretName(k) && !isNumber {
+			if _, isNumber := val.(json.Number); SecretName(k) && !(isNumber && countField(k)) {
 				x[k] = "[redacted]"
 			} else {
 				x[k] = redact(val)
@@ -135,6 +217,10 @@ func redact(v any) any {
 		}
 	case []any:
 		for i := range x {
+			if prev, ok := x[max(i-1, 0)].(string); i > 0 && ok && secretFlag(prev) {
+				x[i] = "[redacted]"
+				continue
+			}
 			x[i] = redact(x[i])
 		}
 	case string:

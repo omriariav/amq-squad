@@ -29,8 +29,28 @@ func TestRedactKeysAndArguments(t *testing.T) {
 			t.Fatalf("redacted line keeps %s: %s", leak, got)
 		}
 	}
-	if !strings.Contains(got, `"input_tokens":42`) || !strings.Contains(got, "curl --token [redacted] https://x && login [redacted] ok") {
+	if !strings.Contains(got, `"input_tokens":42`) || !strings.Contains(got, "curl --token [redacted] https://x && login password=[redacted] ok") {
 		t.Fatalf("redaction: %s", got)
+	}
+}
+
+// P1-7: argv arrays, quoted values, flag=value, bearer credentials and
+// numeric secrets; only numeric count fields stay.
+func TestRedactArgvQuotesAndNumbers(t *testing.T) {
+	for _, tc := range []struct{ in, leak, keep string }{
+		{`{"argv":["gh","--token","abc123","pr","list"]}`, "abc123", `"pr"`},
+		{`{"argv":["curl","--api-key=k9","x"]}`, "k9", `"--api-key=[redacted]"`},
+		{`{"command":"deploy --password \"two words\" --verbose"}`, "words", "--verbose"},
+		{`{"command":"deploy --access-token 'tail part' next"}`, "tail", "next"},
+		{`{"command":"curl -H \"Authorization: Bearer sekret\" https://x"}`, "sekret", "https://x"},
+		{`{"command":"curl -H Authorization: Bearer sekret2 https://x"}`, "sekret2", "https://x"},
+		{`{"pin_secret":4242,"password":1234,"output_tokens":17}`, "4242", `"output_tokens":17`},
+		{`{"password":1234}`, "1234", `"password":"[redacted]"`},
+	} {
+		got := string(Redact([]byte(tc.in)))
+		if strings.Contains(got, tc.leak) || !strings.Contains(got, tc.keep) {
+			t.Errorf("%s -> %s", tc.in, got)
+		}
 	}
 }
 

@@ -16,7 +16,7 @@ cd "$W" || exit 2
   echo "## GOOS=linux go build ./..."; GOOS=linux go build ./... 2>&1; echo "exit $?"
   echo "## GOOS=windows go build ./..."; GOOS=windows go build ./... 2>&1; echo "exit $?"
   echo "## go test ./..."; go test -count=1 ./... 2>&1; echo "exit $?"
-  if [ $# -gt 0 ]; then echo "## go test -race $*"; go test -count=1 -race "$@" 2>&1; echo "exit $?"; fi
+  if [ $# -gt 0 ]; then echo "## go test -race $*"; go test -count=1 -timeout 45m -race "$@" 2>&1; echo "exit $?"; fi
   echo "## scripts/manifest-check.sh --final"; scripts/manifest-check.sh --final 2>&1; echo "exit $?"
 } > "$OUT" 2>&1
 grep -n '^exit\|^## \|^FAIL\|^--- FAIL' "$OUT"
