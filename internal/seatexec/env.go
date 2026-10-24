@@ -36,13 +36,33 @@ var scrubbedNames = map[string]bool{
 	"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "DOCKER_AUTH_CONFIG": true, "NPM_CONFIG__AUTH": true,
 }
 
+// Host agent-session variables (lead ruling at the 2b-2 end checkpoint): the
+// launcher's own harness session (a Claude Code or Codex session, or a
+// companion plugin) must not hand its identity to a seat. AMQ's tmux server
+// inherits the launching process's environment, so these reach the pane
+// unless seat-exec drops them. Exact names, then prefixes.
+var hostSessionNames = map[string]bool{
+	"CLAUDECODE": true, "AI_AGENT": true, "CLAUDE_PID": true, "CLAUDE_EFFORT": true, "CLAUDE_JOB_DIR": true,
+	"CLAUDE_PLUGIN_DATA": true, "CLAUDE_PLUGIN_ROOT": true, "CLAUDE_PROJECT_DIR": true, "CLAUDE_ENV_FILE": true,
+	"CODEX_THREAD_ID": true, "CODEX_SESSION_ID": true, "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": true,
+}
+
+var hostSessionPrefixes = []string{"CLAUDE_CODE_", "CODEX_COMPANION_", "CODEX_SANDBOX"}
+
 // Scrubbed reports whether a variable name is removed from a seat's
 // environment (plan 4.3, R16): *_API_KEY, *_TOKEN, *_SECRET, names with
-// _SECRET_ or _PASSWORD inside, and the known vendor names.
+// _SECRET_ or _PASSWORD inside, the known vendor names, and the host
+// agent-session variables (CLAUDECODE, CLAUDE_CODE_*, CODEX_COMPANION_* and
+// the names above).
 func Scrubbed(name string) bool {
 	upper := strings.ToUpper(name)
+	for _, p := range hostSessionPrefixes {
+		if strings.HasPrefix(upper, p) {
+			return true
+		}
+	}
 	switch {
-	case scrubbedNames[upper]:
+	case scrubbedNames[upper], hostSessionNames[upper]:
 		return true
 	case strings.HasSuffix(upper, "_API_KEY"), strings.HasSuffix(upper, "_TOKEN"), strings.HasSuffix(upper, "_SECRET"):
 		return true

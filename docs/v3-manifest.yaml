@@ -2446,9 +2446,9 @@ entries:
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
-  current_lines: 105
+  current_lines: 125
   fate: new
-  target_lines: 105
+  target_lines: 125
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"

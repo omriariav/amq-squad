@@ -541,3 +541,19 @@ one Codex seat. N=1 per cell does not support a rate; open item 1.
 5. Milestone B (seat commit, `amq-squad seat commit --seat H`) codes
    against task.Widen's `file_lock_conflict` refusal (2b-1) as the lead
    noted.
+
+## Commit 10: seat-exec scrubs host agent-session variables
+
+Lead ruling on the real-run finding: a seat must not inherit the launcher's
+session identity, and R16's scrub is the place. `seatexec.Scrubbed` now also
+drops the host agent-session variables: the prefixes `CLAUDE_CODE_`,
+`CODEX_COMPANION_`, `CODEX_SANDBOX`, and the names `CLAUDECODE`, `AI_AGENT`,
+`CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_JOB_DIR`, `CLAUDE_PLUGIN_DATA`,
+`CLAUDE_PLUGIN_ROOT`, `CLAUDE_PROJECT_DIR`, `CLAUDE_ENV_FILE`,
+`CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`
+(the names seen in the real run's seat environment plus the documented
+session names of the two harnesses). A runtime that declares one in
+`env_needs` keeps it, as for credentials. Not scrubbed: `CODEX_HOME`, the
+owner's statusline settings, TERM and the AMQ variables AMQ sets in the
+pane. Test: TestSeatExecScrubsHostAgentSession (a launcher environment
+carrying those names yields seat and drain environments without them).
