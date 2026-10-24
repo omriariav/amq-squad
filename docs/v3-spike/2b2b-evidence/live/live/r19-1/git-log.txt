@@ -1,0 +1,4 @@
+132922768dc98bfa8f286f0a6a608f7e408ab2b0 amq-squad harness|t3: Implement IsEven(n int) bool function|t3
+41cef47ca72e2518db5eb49ee1af11309edc4882 amq-squad harness|t2: Implement Reverse(s string) string function|t2
+a1b63d9e9ceb8265adf48bb803be02fcf76fd241 amq-squad harness|t1: Implement Max(a, b int) int function|t1
+7f9fbf7c27e6d77182a087e9380a79cdfab97534 owner|fixture|

@@ -23,7 +23,7 @@ func (s Squad) LaunchSeats(repoRoot string, roleText func(roleID string) (string
 			return nil, fmt.Errorf("seat %s: role %q: %w", seat.Handle, seat.Role, err)
 		}
 		out = append(out, seatlaunch.Seat{Handle: seat.Handle, Runtime: seat.Runtime, Model: seat.Model, Effort: seat.Effort,
-			Role: text, Worktree: SeatWorktree(repoRoot, seat)})
+			Role: text, RoleName: seat.Role, Worktree: SeatWorktree(repoRoot, seat)})
 	}
 	return out, nil
 }

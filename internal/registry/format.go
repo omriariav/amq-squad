@@ -155,6 +155,9 @@ func Format(r Registry) string {
 	}
 	writeList(&b, "tools", len(r.Tools), func(i int) []kv { return r.Tools[i].fields() })
 	writeList(&b, "entries", len(r.Entries), func(i int) []kv { return r.Entries[i].fields() })
+	if len(r.Pins) > 0 { // owner data; absent from a file that has none
+		writeList(&b, "pins", len(r.Pins), func(i int) []kv { return r.Pins[i].fields() })
+	}
 	return b.String()
 }
 
@@ -203,7 +206,7 @@ func Parse(text string) (Registry, error) {
 				}
 			case "host":
 				setter = r.Host.set
-			case "tools", "entries":
+			case "tools", "entries", "pins":
 				if v != "" && v != "[]" {
 					return fail(fmt.Errorf("%s: want a block list", k))
 				}
@@ -224,8 +227,12 @@ func Parse(text string) (Registry, error) {
 				r.Entries = append(r.Entries, Entry{})
 				e := &r.Entries[len(r.Entries)-1]
 				setter = e.set
+			case "pins":
+				r.Pins = append(r.Pins, Pin{})
+				p := &r.Pins[len(r.Pins)-1]
+				setter = p.set
 			default:
-				return fail(fmt.Errorf("list item outside tools or entries"))
+				return fail(fmt.Errorf("list item outside tools, entries or pins"))
 			}
 			if err := setter(k, v); err != nil {
 				return fail(err)

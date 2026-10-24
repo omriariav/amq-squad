@@ -225,3 +225,22 @@ func stagedToken(t *testing.T, q Squad, handle string) string {
 	}
 	return rec.Proof.Token
 }
+
+// Third pass R8: the accepted proof records the pane shell it reached (pid
+// and start stamp) in the launch ledger; the scheduler's decision socket
+// proves the lead against that record and never against a pane label.
+func TestProofRecordsTheLeadPaneShell(t *testing.T) {
+	q := testSquad(t)
+	q.Seats = q.Seats[:1]
+	var p *prover
+	proofLaunch(t, q, func(o *Options) { o.PaneShell = paneOf(os.Getpid()) }, func() {
+		p = prove(t, q, "cto", false, nil)
+	})
+	if !p.reply.OK {
+		t.Fatalf("proof: %+v", p.reply)
+	}
+	e, err := launch.ReadProof(q.SessionRoot(), "cto")
+	if err != nil || e.PaneShell != os.Getpid() || e.PaneShellStart != mustStamp(t, os.Getpid()) {
+		t.Fatalf("the ledger does not carry the pane shell: %+v %v", e, err)
+	}
+}

@@ -30,7 +30,7 @@ import (
 //	    size_cap_files: 5         # optional; default 5 (3-2, S6 dry run)
 //	    required_companions: [skills/*/SKILL.md]   # optional; default none (the owner names them)
 //	    push_url: git@github.com:omriariav/amq-noc.git   # optional: ssh, https://github.com, absolute path or file://
-//	    local_push_ack: false     # optional; a local push target still refuses a real merge-train run
+//	    local_push_ack: false     # required true for a local push_url (grants_invalid without); the merge train still refuses a real run against one
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100
@@ -144,8 +144,8 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 			case "merge.required_companions":
 				m.RequiredCompanions, err = f.List()
 			case "merge.push_url":
-				if m.PushURL, err = f.Scalar(); err == nil && !ValidPushURL(m.PushURL) {
-					err = f.Errf("push_url %q: want ssh://, user@host:path, https://github.com/..., an absolute path or file://", m.PushURL)
+				if m.PushURL, err = f.Scalar(); err == nil && PushKind(m.PushURL) == "" {
+					err = f.Errf("bad push_url %q: an absolute ssh (ssh:// or user@host:path), https://github.com/owner/name, or local (absolute path or file://) URL", m.PushURL)
 				}
 			case "merge.local_push_ack":
 				m.LocalPushAck, err = f.Boolean()
@@ -159,6 +159,9 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 		}
 		if m.Repository == "" || m.BaseBranch == "" {
 			return nil, e.Errf("each merge grant needs repository and base_branch")
+		}
+		if PushKind(m.PushURL) == PushLocal && !m.LocalPushAck {
+			return nil, e.Errf("merge grant for %s: the local push_url %q needs local_push_ack: true (a local target has no server-side ruleset)", m.Repository, m.PushURL)
 		}
 		if _, dup := (Grants{Merge: out}).MergeFor(m.Repository, m.BaseBranch); dup {
 			return nil, e.Errf("merge grant for %s %s repeated", m.Repository, m.BaseBranch)

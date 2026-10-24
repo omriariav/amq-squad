@@ -104,6 +104,10 @@ type ScopeChange struct {
 	At     time.Time `json:"at"`
 	Reason string    `json:"reason"`
 	Added  []string  `json:"added"`
+	// Gates are the growth-gate targets (internal/gatetarget) an accepted
+	// owner gate opened for this widening; the commit step re-verifies each
+	// before it lets a change past a grant limit (2b-2 milestone B).
+	Gates []string `json:"gates,omitempty"`
 }
 
 // Terminal reports whether the state is completed or cancelled.
@@ -282,6 +286,7 @@ func snapshotOnce(dir string) ([]Task, error) {
 type tasks struct {
 	list    []Task
 	changed map[string]bool
+	dir     string // the store directory (seat quarantine lookups under the lock)
 }
 
 func (a *tasks) get(id string) *Task {
@@ -344,7 +349,7 @@ func (s Store) updateWith(lock func(bool, func() error) error, now time.Time, fn
 		if err != nil {
 			return err
 		}
-		all := &tasks{list: list, changed: map[string]bool{}}
+		all := &tasks{list: list, changed: map[string]bool{}, dir: s.Dir}
 		if err := fn(all); err != nil {
 			return err
 		}

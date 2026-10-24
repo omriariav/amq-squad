@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 )
@@ -52,7 +53,7 @@ func newFixture(t *testing.T, runtime string) *fixture {
 	for _, name := range []string{"claude", "codex", "pi"} {
 		write(t, filepath.Join(f.bin, name), "#!/bin/sh\nexit 0\n", 0o700)
 	}
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"owner":true}`, 0o600)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), ownerSettings, 0o600)
 	rules := filepath.Join(base, "proj", "team-rules.md")
 	write(t, rules, "# rules\n", 0o600)
 	f.role = []byte("# Role: cto\n\nYou are the cto seat.\n")
@@ -63,8 +64,25 @@ func newFixture(t *testing.T, runtime string) *fixture {
 		AMQPath: "/fake/amq",
 		Proof:   &launch.ProofTicket{Socket: "/fake/proof.sock", Dir: "/fake", Name: "proof.sock", Token: "tok-0123456789", IssuedAt: time.Now()},
 	}
+	if runtime == "claude" {
+		f.rec.PermissionMode, f.rec.LaunchID = "dontAsk", "launch-1"
+		// The owner's token file (0600 in 0700): a canary that must reach the
+		// provider environment and nothing else.
+		if err := os.MkdirAll(filepath.Join(f.home, ".amq-squad"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		write(t, claudeseat.TokenPath(f.home), canaryToken+"\n", 0o600)
+	}
 	return f
 }
+
+// ownerSettings is the test HOME's ~/.claude/settings.json: the owner's own
+// user-scope allow rule, which never reaches a seat (its config dir is its own).
+// canaryToken is the test token: it may appear only in the provider's
+// environment.
+const canaryToken = "sk-ant-oat01-CANARY-2b2b-9f3c"
+
+const ownerSettings = `{"owner":true,"permissions":{"allow":["Bash(echo:*)"]}}`
 
 func write(t *testing.T, path, body string, mode os.FileMode) {
 	t.Helper()
@@ -75,6 +93,17 @@ func write(t *testing.T, path, body string, mode os.FileMode) {
 
 func (f *fixture) stage() {
 	f.t.Helper()
+	if f.rec.Runtime == "claude" && f.rec.ClaudeConfig == "" {
+		// What the launch writes: the seat's own config dir and its digest.
+		dir := claudeseat.Dir(f.root, "cto", f.rec.LaunchID)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			w, err := claudeseat.Write(dir, f.rec.PermissionMode, f.wt, time.Unix(100, 0))
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			f.rec.ClaudeConfig = w.Digest
+		}
+	}
 	b, err := launch.Marshal(f.rec)
 	if err != nil {
 		f.t.Fatal(err)
@@ -96,6 +125,9 @@ func (f *fixture) run(o Options) error {
 		o.Argv = []string{filepath.Join(f.bin, f.rec.Runtime), "--model", "m"}
 		if f.rec.Runtime == "codex" {
 			o.Argv = append(o.Argv, "--sandbox", "workspace-write", "--ask-for-approval", "on-request")
+		}
+		if f.rec.Runtime == "claude" {
+			o.Argv = append(o.Argv, "--permission-mode", "dontAsk")
 		}
 	}
 	if o.Env == nil {
@@ -155,7 +187,7 @@ func TestSeatExecSetsIdentityRoleAndExecsInPlace(t *testing.T) {
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if f.execPath != filepath.Join(f.bin, "claude") || strings.Join(f.execArgv, " ") != filepath.Join(f.bin, "claude")+" --model m" {
+	if f.execPath != filepath.Join(f.bin, "claude") || strings.Join(f.execArgv, " ") != filepath.Join(f.bin, "claude")+" --model m --permission-mode dontAsk" {
 		t.Fatalf("exec %s %v: the argv must pass through unchanged", f.execPath, f.execArgv)
 	}
 	for name, want := range map[string]string{"AM_ME": "cto", "AM_ROOT": f.root, "AM_BASE_ROOT": filepath.Dir(f.root), "AM_SESSION": "s1",
@@ -351,15 +383,15 @@ func TestSeatExecPreflightCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	copyPath := filepath.Join(PreflightDir(f.home), "claude-settings.json")
-	if b, err := os.ReadFile(copyPath); err != nil || string(b) != `{"owner":true}` {
+	if b, err := os.ReadFile(copyPath); err != nil || string(b) != ownerSettings {
 		t.Fatalf("preflight copy: %q %v", b, err)
 	}
 	// A later seat start never overwrites the copy taken first.
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"changed":true}`, 0o600)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"changed":true,"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(copyPath); string(b) != `{"owner":true}` {
+	if b, _ := os.ReadFile(copyPath); string(b) != ownerSettings {
 		t.Fatalf("seat-exec refreshed the preflight copy: %s", b)
 	}
 	if _, err := os.Stat(filepath.Join(PreflightDir(f.home), "codex-config.toml")); !os.IsNotExist(err) {

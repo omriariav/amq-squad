@@ -39,7 +39,7 @@ func TestIdentityProofRefusesAnEmptySession(t *testing.T) {
 	f := newFixture(t, "claude")
 	f.stage()
 	o := Options{}
-	o.Seat, o.Argv, o.Env, o.Home, o.UID = "cto", []string{filepath.Join(f.bin, "claude")}, f.env(), f.home, 0
+	o.Seat, o.Argv, o.Env, o.Home, o.UID = "cto", []string{filepath.Join(f.bin, "claude"), "--permission-mode", "dontAsk"}, f.env(), f.home, 0
 	err := f.runWith(o, func(env []string) []byte {
 		return []byte(fmt.Sprintf(`{"root":%q,"me":"cto","session_name":""}`, Getenv(env, "AM_ROOT")))
 	})

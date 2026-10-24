@@ -1,0 +1,2 @@
+b9d4236e1eca40ed39b770d43c10b072468f37f5 amq-squad harness|t1: R12 probe: Greeting|t1
+44c8efce92c661c4cb7032a6c3d36ec96c35d956 owner|fixture|

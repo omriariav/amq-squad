@@ -10,6 +10,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 )
 
 // guardEnv answers the guard's questions about the seat's surroundings from
@@ -224,34 +225,7 @@ func managedBlockKept(tool, path, cwd string, args map[string]string) bool {
 			after = strings.Replace(after, ed.Old, ed.New, 1)
 		}
 	}
-	return slices.Equal(managedShape(after), managedShape(before))
-}
-
-// managedShape is every managed block of a text, in order, with the marker
-// sequence: each begin marker opens a block that runs to the next end marker
-// (or the end of the text), and every stray marker is kept in sequence. Two
-// texts with the same shape have the same blocks, byte for byte, in the same
-// order.
-func managedShape(t string) []string {
-	var shape []string
-	for len(t) > 0 {
-		b, e := strings.Index(t, rules.BeginMarker), strings.Index(t, rules.EndMarker)
-		switch {
-		case b < 0 && e < 0:
-			return shape
-		case b < 0 || (e >= 0 && e < b): // a stray end marker
-			shape, t = append(shape, "stray-end"), t[e+len(rules.EndMarker):]
-		default:
-			rest := t[b:]
-			end := strings.Index(rest[len(rules.BeginMarker):], rules.EndMarker)
-			if end < 0 {
-				return append(shape, "open:"+rest)
-			}
-			n := len(rules.BeginMarker) + end + len(rules.EndMarker)
-			shape, t = append(shape, "block:"+rest[:n]), rest[n:]
-		}
-	}
-	return shape
+	return slices.Equal(seatcommit.ManagedShape(after), seatcommit.ManagedShape(before))
 }
 
 var guardCredentialPaths = []string{"~/.ssh/", "~/.aws/", "~/.netrc", "~/.git-credentials", "~/.config/gh/", "~/.docker/config.json", "~/.npmrc", "~/.gnupg/", "~/.kube/config"}

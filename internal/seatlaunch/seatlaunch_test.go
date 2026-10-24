@@ -61,7 +61,7 @@ func TestCompileOneRequestWithTheWrapper(t *testing.T) {
 		t.Fatalf("participants %+v", ps)
 	}
 	want := map[string][]string{
-		"cto": {"--model", "sonnet", "--effort", "medium"},
+		"cto": {"--model", "sonnet", "--effort", "medium", "--permission-mode", "dontAsk"},
 		"dev": {"--model", "gpt-6-astra", "-c", "model_reasoning_effort=medium", "--sandbox", "workspace-write", "--ask-for-approval", "on-request"},
 	}
 	for _, p := range ps[1:] {

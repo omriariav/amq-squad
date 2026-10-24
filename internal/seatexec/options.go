@@ -33,12 +33,18 @@ type Options struct {
 	// SendProof sends the seat's proof to the launcher (default: the Unix
 	// socket named in the staged ticket).
 	SendProof func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error)
+	// Self is the absolute path of this amq-squad binary (AMQ_SQUAD_BIN in the
+	// seat environment); default os.Executable with symlinks resolved.
+	Self string
 	// MutateEnv is a test seam applied to the final environment before the
 	// identity proof (the S6 finding A case removes or changes AM_SESSION here).
 	MutateEnv func([]string) []string
 	// BeforeRecheck is a test seam run after the identity proof and before
 	// the last re-hash of role and rules.
 	BeforeRecheck func()
+	// BeforeFinalCheck is a test seam run after the proof, before the last
+	// hash of the Claude config dir.
+	BeforeFinalCheck func()
 }
 
 func (o Options) withDefaults() Options {
@@ -68,6 +74,14 @@ func (o Options) withDefaults() Options {
 	}
 	if o.SendProof == nil {
 		o.SendProof = sendProofDefault(o.UID)
+	}
+	if o.Self == "" {
+		if self, err := os.Executable(); err == nil {
+			if real, err := filepath.EvalSymlinks(self); err == nil {
+				self = real
+			}
+			o.Self = self
+		}
 	}
 	return o
 }
@@ -152,11 +166,36 @@ func PreflightDiff(home string) ([]ConfigChange, error) {
 			return nil, errB
 		case os.IsNotExist(errA) || os.IsNotExist(errB):
 			out = append(out, ConfigChange{File: live, Preflight: copyPath, Detail: "present on one side only"})
-		case string(a) != string(b):
+		case normalizeConfig(src, a) != normalizeConfig(src, b):
 			out = append(out, ConfigChange{File: live, Preflight: copyPath, Detail: "content differs from the preflight copy"})
 		}
 	}
 	return out, nil
+}
+
+// normalizeConfig drops the one write codex-cli makes to its own config at
+// every start, `last_updated` inside a `[marketplaces.*]` table (plan 4.3,
+// amendment 17: codex-cli owns that file), so a Codex seat's start is not a
+// change. Every other byte of either file counts.
+func normalizeConfig(src string, b []byte) string {
+	if src != ".codex/config.toml" {
+		return string(b)
+	}
+	var out []string
+	inMarket := false
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "[") {
+			inMarket = strings.HasPrefix(t, "[marketplaces.")
+		}
+		if inMarket && strings.HasPrefix(t, "last_updated") {
+			if k, _, ok := strings.Cut(t, "="); ok && strings.TrimSpace(k) == "last_updated" {
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func firstNonEmpty(values ...string) string {

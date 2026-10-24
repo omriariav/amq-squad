@@ -129,7 +129,7 @@ func TestSendOperatorAMQExactNamedContextSkipsResolver(t *testing.T) {
 		t.Fatalf("exact named context used resolver fallback %d times", resolverCalls)
 	}
 	if amqFlagValue(request.Arg, "root") != root || !envHas(request.Env, "AM_ROOT", root) || !envHas(request.Env, "AM_BASE_ROOT", root) || envHasPrefix(request.Env, "AM_SESSION", "") {
-		t.Fatalf("named exact request lost root identity: args=%v env=%v", request.Arg, request.Env)
+		t.Fatalf("named exact request lost root identity: args=%v AM_ROOT=%v AM_BASE_ROOT=%v AM_SESSION set=%v", request.Arg, envHas(request.Env, "AM_ROOT", root), envHas(request.Env, "AM_BASE_ROOT", root), envHasPrefix(request.Env, "AM_SESSION", ""))
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
@@ -114,6 +115,9 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	}
 	out = append(out, grantsCheck(h.Home, projectDir))
 	out = append(out, routingCheck(h.Home, projectDir))
+	out = append(out, claudeAllowRulesCheck(projectDir))
+	out = append(out, pushTargetChecks(h.Home, projectDir)...)
+	out = append(out, claudeTokenCheck(h.Home, time.Now()))
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
@@ -399,6 +403,80 @@ func ownerConfigCheck(d hostcheck.ConfigDiff) doctorCheck {
 // owner file mode (2b-3 ruling 1: an untrusted file fails closed with
 // owner_grants_insecure), the seat cap (amendment 22: default 12 per
 // session) and any squad.yaml field that tried to widen it.
+// claudeAllowRulesCheck warns when the repository's Claude settings files,
+// which still merge into every Claude seat's config, carry permission allow
+// rules: seat-exec refuses Claude seats there (claude_allow_rules_present),
+// because under dontAsk a hook that fails open hands the call to them (2b-2
+// milestone B). The owner's user-scope settings never reach a seat.
+func claudeAllowRulesCheck(projectDir string) doctorCheck {
+	if projectDir == "" {
+		return hostCheck("claude seat allow rules", doctorOK, "no project")
+	}
+	if rules := claudeseat.WorktreeAllowRules(projectDir); len(rules) > 0 {
+		return hostCheck("claude seat allow rules", doctorWarn, "%s carries permission allow rules; Claude seats there are refused (claude_allow_rules_present): %s", projectDir, strings.Join(rules, "; "))
+	}
+	return hostCheck("claude seat allow rules", doctorOK, "no allow rules in .claude/settings.json or settings.local.json")
+}
+
+// pushTargetChecks are doctor's rows of the push target (2b-2 milestone B
+// D2): a local push_url the owner acknowledged has no server-side ruleset
+// (a warning; the merge train refuses a real run against it), and the gh the
+// harness runs is the registry's pin, re-hashed now; with no pin, doctor
+// proposes one from `command -v gh`, but only the owner's registry write
+// counts.
+func pushTargetChecks(home, projectDir string) []doctorCheck {
+	var out []doctorCheck
+	g, err := grants.LoadFrom(hostcheck.GrantsPath(home), projectDir)
+	if err != nil {
+		return nil
+	}
+	https := false
+	for _, m := range g.Merge {
+		switch grants.PushKind(m.PushURL) {
+		case grants.PushLocal:
+			out = append(out, hostCheck("push target", doctorWarn, "push target has no server enforcement: %s pushes to the local %s (merge.local_push_ack); the merge train refuses a real run against it", m.Repository, m.PushURL))
+		case grants.PushHTTPS:
+			https = true
+		}
+	}
+	reg, _ := registry.Read(registry.Path(home))
+	pin, pinned := reg.PinFor("gh")
+	switch {
+	case pinned:
+		if path, sum, code, detail := pin.Verify(); code != "" {
+			out = append(out, hostCheck("gh pin", doctorFail, "%s: %s", code, detail))
+		} else {
+			out = append(out, hostCheck("gh pin", doctorOK, "%s sha256 %s", path, sum))
+		}
+	default:
+		proposal := ""
+		if p, err := exec.LookPath("gh"); err == nil {
+			if real, err := filepath.EvalSymlinks(p); err == nil {
+				if sum, err := registry.FileSHA256(real); err == nil {
+					proposal = fmt.Sprintf("; to pin it, add to %s: pins: - name: gh, path: %s, sha256: %s", registry.Path(home), real, sum)
+				}
+			}
+		}
+		status := doctorWarn
+		if https {
+			status = doctorFail // an https push needs the pinned gh as its credential helper
+		}
+		out = append(out, hostCheck("gh pin", status, "%s: the registry pins no gh (PRs and https pushes use only a pinned gh, never PATH)%s", registry.PinMissing, proposal))
+	}
+	return out
+}
+
+// claudeTokenCheck reports the owner's Claude token file for seats: present,
+// 0600 in an owner-only directory, younger than the rotation window (30 days,
+// a proposal). It never prints the token.
+func claudeTokenCheck(home string, now time.Time) doctorCheck {
+	if ok, detail := claudeseat.TokenStatus(home, now); !ok {
+		return hostCheck("claude seat token", doctorWarn, "%s", detail)
+	} else {
+		return hostCheck("claude seat token", doctorOK, "%s", detail)
+	}
+}
+
 func grantsCheck(home, projectDir string) doctorCheck {
 	path := hostcheck.GrantsPath(home)
 	r, err := grants.LoadFrom(path, projectDir)

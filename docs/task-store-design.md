@@ -66,7 +66,9 @@ The Go form is `internal/task` (`class.go` holds the vocabulary).
 | `report` | object or null | the holder's done report awaiting the commit step: `by`, `at`, `evidence`, `final_head` |
 | `evidence` | string | the accepted completion evidence (copied from the report) |
 | `cancel_reason` | string | why the lead cancelled |
-| `scope_changes` | []object | recorded lead decisions that widened `declared_files`: `actor`, `at`, `reason`, `added` (2b-2's widening path) |
+| `scope_changes` | []object | recorded lead decisions that widened `declared_files`: `actor`, `at`, `reason`, `added`, and `gates` (the growth-gate targets an accepted owner gate opened for it; omitted when none) (2b-2 widening path) |
+| `pr_number` | int | the draft PR the harness commit step opened for the task's pushed seat branch (`seat commit --open-pr`); omitted when none. The merge train (3-2) reads a task only through this binding, never a request-supplied id |
+| `pr_head` | string | the head commit the commit step pushed; with `pr_number` the binding; set by the commit step, re-set only by a later commit step on the same task |
 | `created_by` | string | handle that added the task |
 | `created_at`, `updated_at` | time | RFC 3339 UTC |
 | `closed_at` | time or null | when the task became `completed` or `cancelled` |
@@ -152,7 +154,14 @@ migrated):
   and the commit step runs again. `reset` discards the report. A widening
   of an in-progress or blocked task whose new set overlaps another active
   or blocked task's set is refused under the lock with reason code
-  `file_lock_conflict`, so the exclusion the grant gave holds (finding 2).
+  `file_lock_conflict`, so the exclusion the grant gave holds (finding 2). The store also refuses a widening asked for by the seat that holds or reported the task (`self_widen`: the seat never widens its own set). The grant checks of a widening (protected paths, the size cap) and the commit step itself are `internal/seatcommit` (docs/v3-spike/2b2b-execution.md): a widening past a grant limit is refused with `growth_gate_required`, the growth gate is raised and `Escalate` routes the blocked task to the owner.
+- The commit step's acceptance and its PR binding are one transaction
+  (`CompleteBound`, 2b-2 milestone B fix 1): a PR number another task
+  holds refuses (`pr_bound_elsewhere`) and nothing is written. CleanSeat
+  resets a seat's worktree under the store's lock with the seat free and
+  unquarantined (`WithSeatFree`), so no grant or claim lands mid-reset. The
+  hook path quarantines with a try-lock (`QuarantineNoWait`); the first
+  quarantine's record stays until the owner clears it.
 - A lease with a done report awaiting the commit step does not expire.
 - One seat holds at most one lease (`HeldBy`): a lease, or a blocked task
   whose done report it filed.
@@ -182,6 +191,7 @@ a missed overlap never happens.
 | `task reset ID --me H [--reason R] [--pool r:m:e]` | lead | blocked to pending |
 | `task set ID --me H [--priority N] [--pool r:m:e]` | lead | reprioritize or route |
 | `task cancel ID --me H --reason R` | lead | cancelled |
+| `task widen ID --me H --files globs --reason R` | lead | widen inside the grant; re-arms a refused commit |
 | `task reconcile [--json]` | anyone | replay a committed journal; list expired leases |
 
 The store root comes from `--root`, else `AM_ROOT`, else the AMQ root of

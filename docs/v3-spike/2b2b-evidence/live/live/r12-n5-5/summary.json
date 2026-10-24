@@ -1,0 +1,105 @@
+{
+  "checks": {
+    "completed_through_commit_step": true,
+    "final_line_exact": false,
+    "go_test_confirmed": true,
+    "independent_go_test": true,
+    "read_confirmed": true,
+    "worktree_exact_harness_commit": true
+  },
+  "classed_tasks": 1,
+  "completed_tasks": 1,
+  "decision_kinds": {
+    "completed": 1,
+    "dispatched": 1,
+    "scheduler_started": 1,
+    "scheduler_stopped": 1,
+    "seat_requested": 1,
+    "seat_up": 1
+  },
+  "false_success": false,
+  "harness_commits": 1,
+  "independent_go_test_ok": true,
+  "label": "r12-n5-5",
+  "lead_turns": 0,
+  "mode": "r12",
+  "model": "ollama/qwen3.6:27b",
+  "numstat": "1\t1\tcalc.go",
+  "pass": false,
+  "seconds": 40,
+  "stood_in": [
+    "pi launch: External request file read by this harness, seat_up by scheduler post, one pi run turn per doorbell",
+    "wake: the harness reads the AMQ doorbell from the seat inbox and starts the turn with it",
+    "merge train: the harness fast-forwards main to seat/pi-1 after each completed task"
+  ],
+  "tasks": [
+    {
+      "ID": "t1",
+      "Title": "R12 probe: Greeting",
+      "Class": "implement",
+      "State": "completed",
+      "BlockReason": "",
+      "Files": [
+        "calc.go"
+      ]
+    }
+  ],
+  "worker_calls": [
+    {
+      "turn": 1,
+      "tool": "amq_task_claim",
+      "args": "{\"id\":\"t1\"}",
+      "out": "Claim t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T17:52:38Z"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"ls -la\"}",
+      "out": "total 40\ndrwxr-xr-x@ 7 omri  staff  224 Oct 24 20:42 .\ndrwxr-xr-x@ 9 omri  staff  288 Oct 24 20:42 ..\n-rw-r--r--@ 1 omri  staff   93 Oct 24 20:42 .git\n-rw-r--r--@ 1 omri  staff   13 Oct 24 20:42 .gitignore\n-rw-r--r--@ 1 omri  staff  173 Oct 24 20:42 calc.go\n-rw-r--r--@ 1 omri  staff  288 Oct 24 20:42 calc_test.go\n-rw-r--r--@ 1 omri  staff   38 Oct 24 20:42 go.mod\n"
+    },
+    {
+      "turn": 1,
+      "tool": "read",
+      "args": "{\"path\":\"calc.go\"}",
+      "out": "package calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "read",
+      "args": "{\"path\":\"calc_test.go\"}",
+      "out": "package calc\n\nimport \"testing\"\n\nfunc TestGreeting(t *testing.T) {\n\tif got := Greeting(); got != \"hello, world\" {\n\t\tt.Fatalf(\"Greeting() = %q, want %q\", got, \"hello, world\")\n\t}\n}\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(2, 3); got != 5 {\n\t\tt.Fatalf(\"Add(2, 3) = %d, want 5\", got)\n\t}\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "edit",
+      "args": "{\"path\":\"calc.go\",\"edits\":[{\"newText\":\"return \\\"hello, world\\\"\",\"oldText\":\"return \\\"hello\\\"\"}]}",
+      "out": "Successfully replaced 1 block(s) in calc.go."
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"cd /home/user \u0026\u0026 go test ./...\"}",
+      "out": "/bin/bash: line 0: cd: /home/user: No such file or directory\n\n\nCommand exited with code 1",
+      "is_error": true
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"go test ./...\"}",
+      "out": "ok  \texample.com/probecalc\t0.343s\n"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_task_done",
+      "args": "{\"evidence\":\"go test ./... -\u003e ok  example.com/probecalc  (0.343s)\",\"id\":\"t1\"}",
+      "out": "Done t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T17:52:38Z"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_send",
+      "args": "{\"body\":\"Task t1 done: fixed Greeting() to return \\\"hello, world\\\" — all tests pass.\",\"kind\":\"status\",\"to\":\"pi-lead\",\"subject\":\"t1 complete\"}",
+      "out": "{\n  \"id\": \"2026-10-24T17-43-05.370Z_pid5798_e69f4b6c\",\n  \"outbox\": {\n    \"error\": \"\",\n    \"written\": true\n  },\n  \"root\": \"$JOB/live/r12-n5-5/proj/.agent-mail/collab\",\n  \"session\": \"collab\",\n  \"source_root\": \"$JOB/live/r12-n5-5/proj/.agent-mail/collab\",\n  \"subject\": \"t1 complete\",\n  \"thread\": \"p2p/pi-1__pi-lead\",\n  \"to\": [\n..."
+    }
+  ],
+  "worker_turns": 1
+}

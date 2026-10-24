@@ -1,0 +1,104 @@
+==============================================================================
+ROW CleanSeat keeps the task id and refusal reason with the discarded diff
+fix reverted in internal/seatcommit/commit.go:
+- LedgerDiscard{TaskID: taskID, Reason: why,
++ LedgerDiscard{TaskID: taskID[:0], Reason: why[:0],
+$ go test -count=1 -race -run ^(TestCleanSeatDiscardsALeftoverDiff)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestCleanSeatDiscardsALeftoverDiff (0.40s)
+    commit_test.go:507: ledger evidence: [{TaskID: Reason: Parent:3571d6ac826db7bedb73cdb1e7ff2dc60046f308 Tree:2759f322c6177dce35c68923f3c0045b4faaf879 DiffDigest:sha256:1941cf1beaaf1efbd5f1ed13398375ea6213789c40e4789c5baf875ec0947687 At:2026-10-24 12:00:00 +0000 UTC}] (refused tree 2759f322c6177dce35c68923f3c0045b4faaf879)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.764s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCleanSeatDiscardsALeftoverDiff)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.831s
+
+ROW CleanSeat keeps the task id and refusal reason with the discarded diff: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW CleanSeat never runs mid-task
+fix reverted in internal/seatcommit/commit.go:
+- 		if held := task.HeldBy(handle, list); held != nil {
++ 		if held := task.HeldBy(handle, list); false && held != nil {
+$ go test -count=1 -race -run ^(TestCleanSeatNeverRunsMidTask)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestCleanSeatNeverRunsMidTask (0.24s)
+    commit_test.go:533: mid-task clean: true <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.472s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCleanSeatNeverRunsMidTask)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.437s
+
+ROW CleanSeat never runs mid-task: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the commit step opens and binds the PR
+fix reverted in internal/seatcommit/commit.go:
+- 	res.PRNumber = n
+
++ 	_ = n
+
+$ go test -count=1 -race -run ^(TestCommitStepOpensAndBindsThePR)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestCommitStepOpensAndBindsThePR (0.64s)
+    commit_test.go:555: PR binding: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:9c53e36f3c6da25bbdf40ce940e8bdb08ba773f5 Tree:b93d131f290bd0333a958ba3d36b0b8002c0b416 Commit:d3a06842f22eb094117c3ae255317cb548164599 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:d6b5959798757b792327ccd35ff46a5cf858c0647c63e0635e67bf9076418d34 Violations:[] Config:[] Notes:[] Quarantine:false PRNumber:0 PRHead:d3a06842f22eb094117c3ae255317cb548164599}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.909s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCommitStepOpensAndBindsThePR)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.984s
+
+ROW the commit step opens and binds the PR: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the scheduler binds the task to the PR
+fix reverted in internal/scheduler/scheduler.go:
+- 		if res.PRHead != "" {
+			// The binding the merge train reads
++ 		if false {
+			// The binding the merge train reads
+$ go test -count=1 -race -run ^(TestCommitBindsThePR)$ ./internal/scheduler   (fix reverted)
+--- FAIL: TestCommitBindsThePR (0.11s)
+    milestoneb_test.go:86: decisions: [{Kind:completed TaskID:t1 Seat:seat-a Pool: Reason:}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.360s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCommitBindsThePR)$ ./internal/scheduler   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.370s
+
+ROW the scheduler binds the task to the PR: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW seat commit binds the task to the PR
+fix reverted in internal/cli/seat_commit.go:
+- 			if recErr == nil && res.PRHead != "" {
++ 			if false && recErr == nil && res.PRHead != "" {
+$ go test -count=1 -race -run ^(TestSeatCommitOpenPRBindsTheTask)$ ./internal/cli   (fix reverted)
+--- FAIL: TestSeatCommitOpenPRBindsTheTask (0.57s)
+    seat_commit_pr_test.go:36: binding: pr 0 head "" (want 7, 16e11e6d2e81b6c153ecca41622f4654dbf5febc), state completed
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.920s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatCommitOpenPRBindsTheTask)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.941s
+
+ROW seat commit binds the task to the PR: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED
+==============================================================================
+ROW a failing environment check never prints the environment
+fix reverted in internal/schedproc/envprint_test.go:
+- return "", fmt.Errorf("two AM_ME entries: %q and %q", me, kv)
++ return "", fmt.Errorf("two AM_ME in %v", env)
+$ go test -count=1 -race -run ^(TestEnvironmentCheckNeverPrintsTheEnvironment)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestEnvironmentCheckNeverPrintsTheEnvironment (0.00s)
+    envprint_test.go:32: the failure prints the environment: two AM_ME in [AM_ME=a GEMINI_API_KEY=<redacted> AM_ME=b]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.371s
+FAIL
+
+$ go test -count=1 -race -run ^(TestEnvironmentCheckNeverPrintsTheEnvironment)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.371s
+
+ROW a failing environment check never prints the environment: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

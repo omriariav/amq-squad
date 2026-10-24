@@ -18,6 +18,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/launchintent"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
@@ -25,11 +26,14 @@ import (
 
 // Seat is one typed seat. squad.yaml (2b-5) compiles to this list.
 type Seat struct {
-	Handle   string   `json:"handle"`
-	Runtime  string   `json:"runtime"` // claude | codex | pi
-	Model    string   `json:"model,omitempty"`
-	Effort   string   `json:"effort,omitempty"`
-	Role     string   `json:"-"` // role.md text; required
+	Handle  string `json:"handle"`
+	Runtime string `json:"runtime"` // claude | codex | pi
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Role    string `json:"-"` // role.md text; required
+	// RoleName is the seat's role id (lead, implementer, ...); the launch
+	// record carries it, and status joins it into the seat row.
+	RoleName string   `json:"role,omitempty"`
 	Worktree string   `json:"worktree"`
 	Branch   string   `json:"branch,omitempty"`
 	EnvNeeds []string `json:"env_needs,omitempty"`
@@ -79,6 +83,16 @@ var Runtimes = []string{"claude", "codex", "pi"}
 // pi seats run on the `amq coop exec` fallback (plan 4.3).
 const PiAdapterInLibrary = false
 
+// ClaudePermissionMode is the permission mode every Claude seat is launched
+// with, recorded in its launch record and checked by seat-exec together with
+// the user-scope hook plugin (plan 4.3, R36). dontAsk: guard's explicit allow
+// answers every hooked call; a call nothing approved, such as one whose hook
+// failed open (timeout, exit 1, missing command), is denied rather than
+// prompted, so an unattended seat neither stalls nor runs a call unguarded.
+// AMQ v0.107.0 admits acceptEdits, auto, manual, dontAsk and plan. Explicit,
+// so the owner's settings.json defaultMode never decides it.
+const ClaudePermissionMode = "dontAsk"
+
 // CodexSandboxArgs are the Codex sandbox and approval flags (plan 4.3, 7.3).
 var CodexSandboxArgs = []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"}
 
@@ -99,6 +113,7 @@ func ProviderArgs(s Seat) []string {
 		if s.Effort != "" {
 			args = append(args, "--effort", s.Effort)
 		}
+		args = append(args, "--permission-mode", ClaudePermissionMode)
 	case "codex":
 		if s.Model != "" {
 			args = append(args, "--model", s.Model)
@@ -109,6 +124,23 @@ func ProviderArgs(s Seat) []string {
 		args = append(args, CodexSandboxArgs...)
 	}
 	return args
+}
+
+// credentialSource is the launch record's note of a runtime's credential:
+// a Claude seat's token comes from the owner's token file (never its value).
+func credentialSource(runtime string) string {
+	if runtime == "claude" {
+		return claudeseat.CredentialSource
+	}
+	return ""
+}
+
+// permissionMode is the launch record's permission mode for a runtime.
+func permissionMode(runtime string) string {
+	if runtime == "claude" {
+		return ClaudePermissionMode
+	}
+	return ""
 }
 
 // SessionRoot is <base root>/<session>.
@@ -235,8 +267,8 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			Handle: s.Handle, Root: q.SessionRoot(), BaseRoot: q.BaseRoot, Session: q.Session,
 			Runtime: s.Runtime, Model: s.Model, Effort: s.Effort, RoleSHA256: digest(role),
 			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
-			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID,
-			CWD: s.Worktree, Binary: s.Runtime, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
+			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID, PermissionMode: permissionMode(s.Runtime), Credential: credentialSource(s.Runtime),
+			CWD: s.Worktree, Binary: s.Runtime, Role: s.RoleName, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
 		})
 	}
 	intent, target, err := launchintent.Compile(launchintent.Input{

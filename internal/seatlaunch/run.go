@@ -17,7 +17,10 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -49,6 +52,22 @@ type Options struct {
 	PaneShell    func(handle string) (pid int, start string, ok bool)
 	CloseProcess func(pid int, start string) error
 	ProofClock   func() time.Time // the token window's clock (default time.Now, monotonic)
+	// KeepPreflight fills only missing preflight copies instead of
+	// refreshing them (the scheduler process, which refreshes once at start).
+	KeepPreflight bool
+	// Standing maps a required action kind to the owner's standing choice
+	// for it (the scheduler process: `scheduler run --trust` is the owner's
+	// standing trust of this squad's launch subjects). An explicit Decisions
+	// entry wins; a standing choice the action does not allow is not used.
+	Standing map[string]string
+	// PermitWorktreeAllowRules relaxes seat-exec's claude_allow_rules_present
+	// refusal (the one named switch of the 2026-10-24 ruling, for when the
+	// live probes show a launch can override worktree allow rules).
+	PermitWorktreeAllowRules bool
+	// Target is the launch's record of the owner's grant for the commit
+	// step's push (repository, base branch, push URL); nil reads the grant
+	// of the squad's project root.
+	Target *seatcommit.Target
 }
 
 // SeatState is one seat's state after the launch.
@@ -150,7 +169,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := CheckArgumentForms(q, prepared.Preview.Capabilities); err != nil {
 		return res, err
 	}
-	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, o.Decisions)
+	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, o.Standing))
 	if err != nil {
 		return res, err
 	}
@@ -165,7 +184,10 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		res.NextActions = nextActions(q, missing, prepared.SubjectDigest)
 		return res, nil
 	}
-	if err := seatexec.WritePreflight(o.Home, true); err != nil {
+	// The scheduler refreshes the preflight copies once at its start; a
+	// refresh per seat launch would absorb a change a running seat made
+	// before that seat's exit diff (amendment 28).
+	if err := seatexec.WritePreflight(o.Home, !o.KeepPreflight); err != nil {
 		return res, err
 	}
 	// The proof socket and the seats' one-time tokens (item 4): a seat
@@ -178,9 +200,52 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	for i := range c.Records {
 		c.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)
 	}
+	// Each Claude seat gets its own CLAUDE_CONFIG_DIR for this launch: the
+	// hooks plugin and the permission mode as one unit, no owner rules.
+	for i, rec := range c.Records {
+		if rec.Runtime != "claude" {
+			continue
+		}
+		w, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, o.Now())
+		if err != nil {
+			srv.close()
+			return res, fmt.Errorf("seat %s: the Claude config dir: %w", rec.Handle, err)
+		}
+		c.Records[i].ClaudeConfig = w.Digest
+		if o.PermitWorktreeAllowRules {
+			c.Records[i].AllowRules = "permit"
+		}
+	}
 	if err := Stage(c); err != nil {
 		srv.close()
 		return res, err
+	}
+	// The commit step's diff base is the core's observation of each seat
+	// worktree before the seat runs (internal/seatcommit ledger). A worktree
+	// that is not a git checkout records nothing; its commit step refuses
+	// with base_unrecorded.
+	// With it the launch records the owner's grant for the push (R2 of the
+	// milestone B first pass): the repository, base branch, push URL and
+	// local ack, and the pinned gh (D2). A target the launch refuses
+	// (push_target_unacknowledged, an unpinned gh for an https push) stops
+	// the launch before any seat applies.
+	target := seatcommit.Target{}
+	if o.Target != nil {
+		target = *o.Target
+	} else if g, err := grants.Load(q.ProjectRoot); err == nil {
+		if target, err = seatcommit.LaunchTarget(g, o.Home, seatcommit.ToolsDir(q.SessionRoot())); err != nil {
+			srv.close()
+			return res, err
+		}
+	}
+	if err := seatcommit.CheckTarget(target); err != nil {
+		srv.close()
+		return res, err
+	}
+	for _, rec := range c.Records {
+		if rec.Branch != "" {
+			_, _ = seatcommit.RecordWorktreeBase("", rec.Root, rec.Handle, rec.Worktree, rec.Branch, target, o.Now())
+		}
 	}
 	apply := launchapi.ApplyRequestV1{
 		RequestVersion: launchapi.RequestVersionV1, Prepare: c.Request,
@@ -365,6 +430,25 @@ func ResolveDecisions(actions []launchapi.RequiredActionV1, supplied map[string]
 		decisions = append(decisions, launchapi.DecisionV1{ActionID: a.ActionID, Choice: launchapi.DecisionChoiceV1(raw)})
 	}
 	return decisions, missing, nil
+}
+
+// withStanding adds the owner's standing choice for each required action
+// that has no explicit answer, when the action allows that choice.
+func withStanding(actions []launchapi.RequiredActionV1, supplied, standing map[string]string) map[string]string {
+	if len(standing) == 0 {
+		return supplied
+	}
+	out := map[string]string{}
+	for k, v := range supplied {
+		out[k] = v
+	}
+	for _, a := range actions {
+		choice, ok := standing[string(a.Kind)]
+		if _, answered := out[a.ActionID]; ok && !answered && slices.Contains(a.AllowedDecisions, launchapi.DecisionChoiceV1(choice)) {
+			out[a.ActionID] = choice
+		}
+	}
+	return out
 }
 
 // nextActions names only flags and commands that work on this path (R50).

@@ -113,7 +113,7 @@ var (
 )
 
 // grantKeys are the keys grants.ParseSquadNarrowing reads.
-var grantKeys = []string{"mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines"}
+var grantKeys = []string{"mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines", "merge_size_cap_files"}
 
 // LoadSquad reads <repoRoot>/squad.yaml against the owner grant at
 // grants.OwnerPath. A missing file is fs.ErrNotExist.
@@ -427,6 +427,9 @@ func Render(s Squad) string {
 	list("merge_repositories", g.MergeRepositories)
 	if g.MergeSizeCapLines > 0 {
 		line("merge_size_cap_lines", strconv.Itoa(g.MergeSizeCapLines))
+	}
+	if g.MergeSizeCapFiles > 0 {
+		line("merge_size_cap_files", strconv.Itoa(g.MergeSizeCapFiles))
 	}
 	if s.Defaults != (SeatDefaults{}) {
 		b.WriteString("defaults:\n")

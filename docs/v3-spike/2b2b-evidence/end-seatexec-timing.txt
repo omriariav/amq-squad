@@ -1,0 +1,5 @@
+=== RUN   TestSeatExecWallTimeToExec
+    timing_test.go:76: seat-exec wall time to exec: median 50.8ms (wrapped 54.1ms, provider alone 3.3ms; drain proof with /opt/homebrew/bin/amq)
+--- PASS: TestSeatExecWallTimeToExec (2.66s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	3.004s

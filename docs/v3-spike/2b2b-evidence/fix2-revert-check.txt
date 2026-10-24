@@ -1,0 +1,430 @@
+==============================================================================
+ROW R4 the decision socket accepts only the lead pane chain
+fix reverted in internal/schedproc/decide.go:
+- 	if pane == nil {
+		return DecideReply{Code: RefusedNotLead,
++ 	if pane == nil && false {
+		return DecideReply{Code: RefusedNotLead,
+$ go test -count=1 -race -run ^(TestDecisionSocketAcceptsOnlyTheLeadsPaneChain)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestDecisionSocketAcceptsOnlyTheLeadsPaneChain (0.01s)
+    --- FAIL: TestDecisionSocketAcceptsOnlyTheLeadsPaneChain/no_pane_reached (0.00s)
+        fix2_test.go:75: want not_lead and nothing applied, got {OK:true Code: Detail:applied by lead Data:null} (applied 1)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.272s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDecisionSocketAcceptsOnlyTheLeadsPaneChain)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.307s
+
+ROW R4 the decision socket accepts only the lead pane chain: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R4 through the verb: a seat process is not_lead whatever its AM_ME
+fix reverted in internal/schedproc/decide.go:
+- 	if pane == nil {
+		return DecideReply{Code: RefusedNotLead,
++ 	if pane == nil && false {
+		return DecideReply{Code: RefusedNotLead,
+$ go test -count=1 -race -run ^(TestTaskWidenIsAcceptedOnlyFromTheLeadsPane)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestTaskWidenIsAcceptedOnlyFromTheLeadsPane (0.06s)
+    seat_fix1b_test.go:141: a seat's widening: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.405s
+FAIL
+
+$ go test -count=1 -race -run ^(TestTaskWidenIsAcceptedOnlyFromTheLeadsPane)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.437s
+
+ROW R4 through the verb: a seat process is not_lead whatever its AM_ME: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R5 a controlling terminal that is a seat pane pty is refused
+fix reverted in internal/cli/seat_owner.go:
+- 		if pd == dev {
++ 		if false && pd == dev {
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestSeatClearNeedsTheOwnersOwnTerminal (0.31s)
+    seat_fix1b_test.go:516: a process on the lead's pty cleared: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.680s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.660s
+
+ROW R5 a controlling terminal that is a seat pane pty is refused: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R5 an unreadable tmux server is owner_proof_unknown
+fix reverted in internal/cli/seat_owner.go:
+- 	panes, err := seatPanes()
+	if err != nil {
+		return fmt.Errorf("%s: %w: %v", verb, errOwnerUnknown, err)
++ 	panes, err := seatPanes()
+	if err != nil && false {
+		return fmt.Errorf("%s: %w: %v", verb, errOwnerUnknown, err)
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestSeatClearNeedsTheOwnersOwnTerminal (0.30s)
+    seat_fix1b_test.go:522: an unreadable tmux server passed: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.652s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.682s
+
+ROW R5 an unreadable tmux server is owner_proof_unknown: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R5 the confirmation typed on the terminal
+fix reverted in internal/cli/seat_owner.go:
+- 	if strings.TrimSpace(line) != handle {
++ 	if false {
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestSeatClearNeedsTheOwnersOwnTerminal (0.31s)
+    seat_fix1b_test.go:528: a wrong confirmation cleared: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.675s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.669s
+
+ROW R5 the confirmation typed on the terminal: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R6 push_url is an absolute URL of the admitted schemes at parse
+fix reverted in internal/grants/grants.go:
+- 		return PushSSH
+	}
+	return ""
+}
++ 		return PushSSH
+	}
+	return PushSSH
+}
+$ go test -count=1 -race -run ^(TestPushURLSchemesAtParse)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestPushURLSchemesAtParse (0.00s)
+    fix2_test.go:64: origin admitted
+    fix2_test.go:64: ../r.git admitted
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.391s
+FAIL
+
+$ go test -count=1 -race -run ^(TestPushURLSchemesAtParse)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.405s
+
+ROW R6 push_url is an absolute URL of the admitted schemes at parse: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R7 PR provenance is the store binding only
+fix reverted in internal/seatcommit/commit.go:
+- 		case b == "":
+			why = "is bound to no task in the store"
+		case b != o.Task.ID:
++ 		case b != "" && b != o.Task.ID:
+$ go test -count=1 -race -run ^(TestOpenPRThatIsNotThisTasksIsNeverReused)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestOpenPRThatIsNotThisTasksIsNeverReused (3.70s)
+    --- FAIL: TestOpenPRThatIsNotThisTasksIsNeverReused/bound_to_no_task,_whatever_its_body_says (0.72s)
+        commit_test.go:657: want pr_bound_elsewhere, got {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:4720549fb33531eca51409fdde703ed503c341a3 Tree:b93d131f290bd0333a958ba3d36b0b8002c0b416 Commit:4720549fb33531eca51409fdde703ed503c341a3 Pushed:true Changes:[] Lines:0 Files:0 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 Violations:[] Config:[] Notes:[the harness commit 4720549fb33531eca51409fdde703ed503c341a3 was already recorded] Quarantine:false PRNumber:42 PRHead:4720549fb33531eca51409fdde703ed503c341a3}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	4.099s
+FAIL
+
+$ go test -count=1 -race -run ^(TestOpenPRThatIsNotThisTasksIsNeverReused)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	4.995s
+
+ROW R7 PR provenance is the store binding only: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW P1-6 an unconfirmed close keeps the slot until seat_gone
+fix reverted in internal/schedproc/slots.go:
+- 	if err == nil && !l.CloseUnconfirmed(handle) {
++ 	if err == nil {
+$ go test -count=1 -race -run ^(TestExternalSlotIsReleasedOnlyAtSeatGone)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestExternalSlotIsReleasedOnlyAtSeatGone (0.08s)
+    fix2_test.go:131: a replacement took the slot before the old seat's seat_gone
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.355s
+FAIL
+
+$ go test -count=1 -race -run ^(TestExternalSlotIsReleasedOnlyAtSeatGone)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.358s
+
+ROW P1-6 an unconfirmed close keeps the slot until seat_gone: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N2 a restart rebuilds the seat map from the launch ledger
+fix reverted in internal/schedproc/process.go:
+- 	for _, ls := range LiveSeats(o.Root) {
++ 	for _, ls := range LiveSeats(o.Root)[:0] {
+$ go test -count=1 -race -run ^(TestRestartAdoptsALiveSeatAndClosesItBeforeAnyDispatch)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestRestartAdoptsALiveSeatAndClosesItBeforeAnyDispatch (0.09s)
+    fix2_test.go:185: the live seat of the previous incarnation was not closed: []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.342s
+FAIL
+
+$ go test -count=1 -race -run ^(TestRestartAdoptsALiveSeatAndClosesItBeforeAnyDispatch)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.371s
+
+ROW N2 a restart rebuilds the seat map from the launch ledger: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW P1-9 every seat_gone runs the exit check
+fix reverted in internal/scheduler/scheduler.go:
+- 			s.queueExit(ev.Handle, held, "gone")
++ 			if s.seats[ev.Handle] != nil {
+				s.queueExit(ev.Handle, held, "gone")
+			}
+$ go test -count=1 -race -run ^(TestEverySeatGoneRunsTheExitCheck)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestEverySeatGoneRunsTheExitCheck (0.00s)
+    fix1b_test.go:176: an unknown seat's gone: calls [], decisions []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.253s
+FAIL
+
+$ go test -count=1 -race -run ^(TestEverySeatGoneRunsTheExitCheck)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.260s
+
+ROW P1-9 every seat_gone runs the exit check: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW P1-9 the exit check runs after a confirmed close
+fix reverted in internal/scheduler/exits.go:
+- 		if st := s.seats[it.handle]; st != nil && st.closing != "" {
++ 		if st := s.seats[it.handle]; false && st != nil {
+$ go test -count=1 -race -run ^(TestExitCheckRunsOnEveryTerminalPath)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestExitCheckRunsOnEveryTerminalPath (0.29s)
+    fix1b_test.go:82: the exit check ran before the close was confirmed: [seat-a/t1/failed seat-b/t1/gone seat-b/t1/unclaimed seat-c/t2/expired]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.543s
+FAIL
+
+$ go test -count=1 -race -run ^(TestExitCheckRunsOnEveryTerminalPath)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.539s
+
+ROW P1-9 the exit check runs after a confirmed close: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N3 a deferred exit check keeps the seat reserved
+fix reverted in internal/scheduler/scheduler.go:
+-  && !s.exitPending(h) {
++  {
+$ go test -count=1 -race -run ^(TestDeferredExitCheckKeepsTheSeatReserved)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestDeferredExitCheckKeepsTheSeatReserved (0.15s)
+    fix1b_test.go:213: a seat with a deferred exit check was prepared or dispatched to: [{Kind:exit_check_deferred TaskID:t1 Seat:seat-a Pool: Reason:the preflight copy is unreadable} {Kind:dispatched TaskID:t1 Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:seat_requested TaskID:t2 Seat: Pool:claude:sonnet:medium Reason:}] [seat-a seat-a]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.403s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDeferredExitCheckKeepsTheSeatReserved)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.430s
+
+ROW N3 a deferred exit check keeps the seat reserved: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW P1-10 the config dir hashed last before exec
+fix reverted in internal/seatexec/seatexec_unix.go:
+- claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
+			return plan, refusef(code, "the seat's Claude config dir changed before exec
++ claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); false && code != "" {
+			return plan, refusef(code, "the seat's Claude config dir changed before exec
+$ go test -count=1 -race -run ^(TestClaudeConfigDirIsHashedLastBeforeExec)$ ./internal/seatexec/   (fix reverted)
+--- FAIL: TestClaudeConfigDirIsHashedLastBeforeExec (0.04s)
+    fix1b_test.go:93: a change after the proof reached exec: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeConfigDirIsHashedLastBeforeExec3087424483/001/bin/claude")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.304s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeConfigDirIsHashedLastBeforeExec)$ ./internal/seatexec/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.312s
+
+ROW P1-10 the config dir hashed last before exec: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW P1-10 the digest through descriptors, no symlink followed
+fix reverted in internal/claudeseat/claudeseat.go:
+- 		case "settings.json":
+			f, kind, _, mode, err := d.OpenEntry(name)
++ 		case "settings.json":
+			f, kind, _, mode, err := func() (*os.File, fsanchor.EntryKind, int64, uint32, error) {
+				f, err := os.Open(filepath.Join(dir, name))
+				if err != nil {
+					return nil, 0, 0, 0, err
+				}
+				st, _ := f.Stat()
+				return f, fsanchor.KindRegular, st.Size(), uint32(st.Mode().Perm()), nil
+			}()
+$ go test -count=1 -race -run ^(TestDigestRefusesASymlinkedManagedFile)$ ./internal/claudeseat/   (fix reverted)
+--- FAIL: TestDigestRefusesASymlinkedManagedFile (0.01s)
+    claudeseat_test.go:138: a symlinked settings.json was hashed
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.261s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDigestRefusesASymlinkedManagedFile)$ ./internal/claudeseat/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	1.255s
+
+ROW P1-10 the digest through descriptors, no symlink followed: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW P1-10 a silent hook quarantines at the exit
+fix reverted in internal/seatcommit/commit.go:
+- proof.At); err != nil || n == 0 {
++ proof.At); false && (err != nil || n == 0) {
+$ go test -count=1 -race -run ^(TestClaudeSeatWithNoHookReportIsQuarantinedAtExit)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestClaudeSeatWithNoHookReportIsQuarantinedAtExit (0.18s)
+    fix2_test.go:247: a silent seat: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch: Parent: Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[] Notes:[] Quarantine:false PRNumber:0 PRHead:}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.574s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatWithNoHookReportIsQuarantinedAtExit)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.673s
+
+ROW P1-10 a silent hook quarantines at the exit: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N1 a filename never goes through quoted stdin
+fix reverted in internal/seatcommit/git.go:
+- 		sums, err := g.run(nil, nil, append([]string{"hash-object", "-w", "--no-filters", "--"}, batch...)...)
++ 		sums, err := g.run([]byte(strings.Join(batch, "\n")+"\n"), nil, "hash-object", "-w", "--no-filters", "--stdin-paths")
+$ go test -count=1 -race -run ^(TestQuotedFilenameIsHashedAsItself)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestQuotedFilenameIsHashedAsItself (0.34s)
+    fix2_test.go:39: the blob under "\057etc\057hosts" is 213 bytes, not the file's own 2 (<nil>); its content is not printed
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.735s
+FAIL
+
+$ go test -count=1 -race -run ^(TestQuotedFilenameIsHashedAsItself)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.634s
+
+ROW N1 a filename never goes through quoted stdin: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW ruling 18: no numeric exemption under a credential name
+fix reverted in internal/redact/redact.go:
+- 	// name (locationSuffixes: _TOKENS and the like).
+	return true
++ 	// name (locationSuffixes: _TOKENS and the like).
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return true
+		}
+	}
+	return false
+$ go test -count=1 -race -run ^(TestFindRules)$ ./internal/redact/   (fix reverted)
+--- FAIL: TestFindRules (0.00s)
+    repo_test.go:131: not found: 20-byte line "DB_PASSWORD="...
+    repo_test.go:134: Line left a finding in "DB_PASSWORD="...
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.283s
+FAIL
+
+$ go test -count=1 -race -run ^(TestFindRules)$ ./internal/redact/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	1.233s
+
+ROW ruling 18: no numeric exemption under a credential name: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW D1 status names a seat with no push URL
+fix reverted in internal/status/collect.go:
+- 	in.PushURLMissing = pushURLMissing(o.Root)
+
++ 
+$ go test -count=1 -race -run ^(TestStatusNamesASeatWithNoPushURL)$ ./internal/status/   (fix reverted)
+--- FAIL: TestStatusNamesASeatWithNoPushURL (0.00s)
+    pushurl_test.go:30: push_url_missing for []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/status	0.265s
+FAIL
+
+$ go test -count=1 -race -run ^(TestStatusNamesASeatWithNoPushURL)$ ./internal/status/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	1.283s
+
+ROW D1 status names a seat with no push URL: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW D2 the launch refuses a local target without the ack
+fix reverted in internal/seatcommit/ledger.go:
+- 		if !t.LocalPushAck {
++ 		if false {
+$ go test -count=1 -race -run ^(TestLaunchRefusesAnUnacknowledgedPushTarget)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestLaunchRefusesAnUnacknowledgedPushTarget (0.20s)
+    fix2_test.go:104: target {Repository:o/r BaseBranch:main PushURL:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLaunchRefusesAnUnacknowledgedPushTarget2623790157/001/origin.git LocalPushAck:false GhPath: GhSHA256:}: <nil> (want "push_target_unacknowledged")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.589s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLaunchRefusesAnUnacknowledgedPushTarget)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.461s
+
+ROW D2 the launch refuses a local target without the ack: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW D2 the commit step refuses a target the grant no longer names
+fix reverted in internal/seatcommit/commit.go:
+- 	if want := TargetFor(o.Grants); ledger.Target.grantPart() != want.grantPart() {
++ 	if want := TargetFor(o.Grants); false && ledger.Target.grantPart() != want.grantPart() {
+$ go test -count=1 -race -run ^(TestCommitRefusesATargetTheGrantNoLongerNames)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestCommitRefusesATargetTheGrantNoLongerNames (0.34s)
+    fix2_test.go:118: a changed grant: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:50dffa9222564dde76f5b08f11233d7aa56dcc35 Tree:613be7dd60ff57f8773624543394567b648e1925 Commit:cd3fd237c20f986bedf2fb9b9c9d31ff4f94a065 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:991eae11727064969a3fc4cd8c3f18ec2b947c6e70e81cab5b4733ed972363b6 Violations:[] Config:[] Notes:[] Quarantine:false PRNumber:0 PRHead:cd3fd237c20f986bedf2fb9b9c9d31ff4f94a065} (origin "cd3fd237c20f986bedf2fb9b9c9d31ff4f94a065")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.735s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCommitRefusesATargetTheGrantNoLongerNames)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.592s
+
+ROW D2 the commit step refuses a target the grant no longer names: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW D2 the pinned gh re-hashed before use
+fix reverted in internal/seatcommit/commit.go:
+- 	if err != nil || sum != l.GhSHA256 {
++ 	if err != nil || sum != l.GhSHA256 && false {
+$ go test -count=1 -race -run ^(TestPinnedGhIsReHashedBeforeUse)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestPinnedGhIsReHashedBeforeUse (0.16s)
+    fix2_test.go:146: a swapped gh passed: ""
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.555s
+FAIL
+
+$ go test -count=1 -race -run ^(TestPinnedGhIsReHashedBeforeUse)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.466s
+
+ROW D2 the pinned gh re-hashed before use: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW D2 the https push uses only the pinned gh credential helper
+fix reverted in internal/seatcommit/commit.go:
+- 	args = []string{"-c", "credential.helper=", "-c", "credential.helper=!" + shellQuote(gh) + " auth git-credential"}
++ 	args = []string{"-c", "credential.helper="}
+	_ = gh
+$ go test -count=1 -race -run ^(TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper (0.39s)
+    fix2_test.go:212: the https push: {OK:false Deferred:true ReasonCode: Route: Detail:push: git -c credential.helper= push --porcelain --no-verify http://127.0.0.1:55798/r.git 52b389735a9634f64059b73a7e51db4626b6db13:refs/heads/seat/s1: exit 128: fatal: could not read Username for 'http://127.0.0.1:55798': terminal prompts disabled Task:t1 Seat:s1 Branch:seat/s1 Parent:06c40ca34e7af0b90b59d88e4dfa5d40343a92e7 Tree:66b9f633c4d4d6e2356ebf1658404bf7dfe06fa4 Commit:52b389735a9634f64059b73a7e51db4626b6db13 Pushed:false Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:170c6406df9abefdc340697f27fad4fa2859b19f3d8cfb17e1ce1271097719f6 Violations:[] Config:[] Notes:[] Quarantine:false PRNumber:0 PRHead:}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.762s
+FAIL
+
+$ go test -count=1 -race -run ^(TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.985s
+
+ROW D2 the https push uses only the pinned gh credential helper: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW D2 gh retains nothing of gh
+fix reverted in internal/seatcommit/commit.go:
+-  || strings.HasPrefix(name, "GH_") || strings.HasPrefix(name, "GITHUB_") {
++  {
+$ go test -count=1 -race -run ^(TestGhEnvRetainsNothingOfGh)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestGhEnvRetainsNothingOfGh (0.00s)
+    fix2_test.go:268: GH_CONFIG_DIR reached gh
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.393s
+FAIL
+
+$ go test -count=1 -race -run ^(TestGhEnvRetainsNothingOfGh)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.301s
+
+ROW D2 gh retains nothing of gh: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW D2 doctor warns of a local push target
+fix reverted in internal/cli/doctor_host.go:
+- 		case grants.PushLocal:
+			out = append(out, hostCheck("push target"
++ 		case "never":
+			out = append(out, hostCheck("push target"
+$ go test -count=1 -race -run ^(TestDoctorWarnsOfALocalPushTargetAndTheGhPin)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestDoctorWarnsOfALocalPushTargetAndTheGhPin (0.03s)
+    seat_fix1b_test.go:554: local push target row: {Name: Status: Detail: Kind:}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.388s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDoctorWarnsOfALocalPushTargetAndTheGhPin)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.417s
+
+ROW D2 doctor warns of a local push target: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

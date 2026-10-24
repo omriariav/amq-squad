@@ -3,10 +3,12 @@
 package seatlaunch
 
 import (
+	"context"
 	"net"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
@@ -52,4 +54,25 @@ func tmuxPaneShell(handle string, env []string) (int, string, bool) {
 	}
 	start, ok := procinfo.StartToken(found)
 	return found, start, ok
+}
+
+// paneIDOf is the tmux pane id whose shell is pid ("" when unknown), from a
+// read-only list-panes (evidence beside the shell's pid and stamp).
+func paneIDOf(shell int) string {
+	if shell <= 0 {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_pid} #{pane_id}").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == strconv.Itoa(shell) {
+			return f[1]
+		}
+	}
+	return ""
 }

@@ -249,6 +249,51 @@ entries:
   extract: ""
   reason: "role catalog"
   status: keep
+- path: internal/claudeseat/claudeseat.go
+  v2_lines: 0
+  current_lines: 390
+  fate: new
+  target_lines: 390
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: a Claude seat's own CLAUDE_CONFIG_DIR per launch: the hooks plugin and dontAsk with no allow rule, its digest and the check"
+  status: new
+- path: internal/claudeseat/owner_other.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: owner uid of the seat config dir (other platforms: not checked)"
+  status: new
+- path: internal/claudeseat/owner_unix.go
+  v2_lines: 0
+  current_lines: 16
+  fate: new
+  target_lines: 16
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: owner uid of the seat config dir (unix)"
+  status: new
+- path: internal/claudeseat/reports.go
+  v2_lines: 0
+  current_lines: 71
+  fate: new
+  target_lines: 71
+  cluster: claudeseat
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (P1-10): the hook digest reports; a silent hook is the drift signal"
+  status: new
+- path: internal/claudeseat/token.go
+  v2_lines: 0
+  current_lines: 100
+  fate: new
+  target_lines: 100
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: the owner's Claude token file for seats (claude_token_insecure, the rotation window, the residual)"
+  status: new
 - path: internal/cli/agent_args.go
   v2_lines: 235
   current_lines: 88
@@ -435,7 +480,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 109
+  current_lines: 113
   fate: keep
   target_lines: 101
   cluster: C29
@@ -498,9 +543,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 511
+  current_lines: 589
   fate: new
-  target_lines: 511
+  target_lines: 589
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -748,9 +793,9 @@ entries:
   status: deleted
 - path: internal/cli/hook_context.go
   v2_lines: 0
-  current_lines: 184
+  current_lines: 258
   fate: new
-  target_lines: 184
+  target_lines: 258
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
@@ -766,18 +811,18 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 502
+  current_lines: 526
   fate: new
-  target_lines: 502
+  target_lines: 526
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 369
+  current_lines: 343
   fate: new
-  target_lines: 369
+  target_lines: 343
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split; 4-5: ~/.amq-squad/buzz/ protected"
@@ -872,6 +917,15 @@ entries:
   extract: "sameFilesystemPath, currentWorkingDirMatches"
   reason: "lead is built-in pi (R2)"
   status: deleted
+- path: internal/cli/lead_scheduler.go
+  v2_lines: 0
+  current_lines: 112
+  fate: new
+  target_lines: 112
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the lead's team mode starts and supervises the scheduler process (ruling 15)"
+  status: new
 - path: internal/cli/list.go
   v2_lines: 226
   fate: delete
@@ -1311,9 +1365,9 @@ entries:
   status: new
 - path: internal/cli/pi_lead.go
   v2_lines: 0
-  current_lines: 226
+  current_lines: 241
   fate: new
-  target_lines: 226
+  target_lines: 241
   cluster: pi
   extract: ""
   reason: "4-1: lead verb: solo first run under ~/.amq-squad only (R7) and the team lead (R19, amendment 26)"
@@ -1574,6 +1628,24 @@ entries:
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
   status: deleted
+- path: internal/cli/scheduler_run.go
+  v2_lines: 0
+  current_lines: 295
+  fate: new
+  target_lines: 295
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler run and scheduler post verbs (wiring the real hooks)"
+  status: new
+- path: internal/cli/seat_commit.go
+  v2_lines: 0
+  current_lines: 380
+  fate: new
+  target_lines: 380
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
+  status: new
 - path: internal/cli/seat_exec.go
   v2_lines: 0
   current_lines: 70
@@ -1582,6 +1654,51 @@ entries:
   cluster: verbs
   extract: ""
   reason: "2b-2: the seat-exec verb (argument parsing; the wrapper lives in internal/seatexec)"
+  status: new
+- path: internal/cli/seat_owner.go
+  v2_lines: 0
+  current_lines: 190
+  fate: new
+  target_lines: 190
+  cluster: seatcommit
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1: the owner-terminal proof of seat clear (R1), the signed clear key and trust store, the PR binding lookup"
+  status: new
+- path: internal/cli/seat_owner_other.go
+  v2_lines: 0
+  current_lines: 16
+  fate: new
+  target_lines: 16
+  cluster: seatcommit
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R5): the non-unix stub of the owner terminal"
+  status: new
+- path: internal/cli/seat_owner_tty_darwin.go
+  v2_lines: 0
+  current_lines: 10
+  fate: new
+  target_lines: 10
+  cluster: misc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2"
+  status: new
+- path: internal/cli/seat_owner_tty_linux.go
+  v2_lines: 0
+  current_lines: 10
+  fate: new
+  target_lines: 10
+  cluster: misc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2"
+  status: new
+- path: internal/cli/seat_owner_unix.go
+  v2_lines: 0
+  current_lines: 80
+  fate: new
+  target_lines: 80
+  cluster: seatcommit
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R5): the owner controlling terminal and its device for seat clear"
   status: new
 - path: internal/cli/session_notifier.go
   v2_lines: 866
@@ -1681,7 +1798,7 @@ entries:
 
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 526
+  current_lines: 529
   fate: shrink
   target_lines: 800
   cluster: C19
@@ -1689,6 +1806,15 @@ entries:
   reason: "keep lifecycle CLI, drop pane nudges"
   status: shrunk
 
+- path: internal/cli/task_widen.go
+  v2_lines: 0
+  current_lines: 218
+  fate: new
+  target_lines: 218
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the task widen verb (the lead widening path inside the grant, the growth gate past it)"
+  status: new
 - path: internal/cli/team_autonomous.go
   v2_lines: 147
   fate: delete
@@ -2463,9 +2589,9 @@ entries:
   note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
-  current_lines: 148
+  current_lines: 156
   fate: new
-  target_lines: 148
+  target_lines: 156
   cluster: gatetarget
   extract: ""
   reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
@@ -2535,9 +2661,9 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 402
+  current_lines: 457
   fate: new
-  target_lines: 402
+  target_lines: 457
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
@@ -2616,9 +2742,9 @@ entries:
   status: new
 - path: internal/launch/proof.go
   v2_lines: 0
-  current_lines: 191
+  current_lines: 197
   fate: new
-  target_lines: 191
+  target_lines: 197
   cluster: launch
   extract: ""
   reason: "2b-2 item 4: the proof ticket, message, launch ledger and alarms"
@@ -2688,9 +2814,9 @@ entries:
   status: new
 - path: internal/mergetrain/checks.go
   v2_lines: 0
-  current_lines: 283
+  current_lines: 243
   fate: new
-  target_lines: 283
+  target_lines: 243
   cluster: mergetrain
   extract: ""
   reason: "3-2: the six grant limits and the task scope, checked by the core"
@@ -2925,6 +3051,15 @@ entries:
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
   status: keep
+- path: internal/panechain/panechain.go
+  v2_lines: 0
+  current_lines: 127
+  fate: new
+  target_lines: 127
+  cluster: seatexec
+  extract: ""
+  reason: "brief 2b-2 milestone B rebase: the seat-pane lookup and the stamped parent chain (amendment 28 proof) for the owner proof and the scheduler"
+  status: new
 - path: internal/piruntime/embed_amqpi.go
   v2_lines: 0
   current_lines: 23
@@ -3083,6 +3218,15 @@ entries:
   extract: ""
   reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
   status: new
+- path: internal/redact/redact.go
+  v2_lines: 0
+  current_lines: 333
+  fate: new
+  target_lines: 333
+  cluster: redact
+  extract: ""
+  reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
+  status: new
 - path: internal/registry/build.go
   v2_lines: 0
   current_lines: 256
@@ -3112,9 +3256,9 @@ entries:
   status: new
 - path: internal/registry/format.go
   v2_lines: 0
-  current_lines: 341
+  current_lines: 348
   fate: new
-  target_lines: 341
+  target_lines: 348
   cluster: registry
   extract: ""
   reason: "2b-3: registry.yaml strict YAML subset, format and parse"
@@ -3127,6 +3271,15 @@ entries:
   cluster: registry
   extract: ""
   reason: "2b-3: direct TTFT against Ollama, the isolated pi probe environment, the pi command"
+  status: new
+- path: internal/registry/pins.go
+  v2_lines: 0
+  current_lines: 212
+  fate: new
+  target_lines: 212
+  cluster: registry
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (D2): owner-pinned harness tools (gh) with the launch re-hash"
   status: new
 - path: internal/registry/probe.go
   v2_lines: 0
@@ -3403,20 +3556,110 @@ entries:
   extract: ""
   reason: "terminal capability registry"
   status: deleted
+- path: internal/schedproc/amq.go
+  v2_lines: 0
+  current_lines: 132
+  fate: new
+  target_lines: 132
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the AMQ doorbell and the lead notice, sent from the scheduler mailbox"
+  status: new
+- path: internal/schedproc/committer.go
+  v2_lines: 0
+  current_lines: 77
+  fate: new
+  target_lines: 77
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler's Committer over the seat commit step, deferrals to commit_failed"
+  status: new
+- path: internal/schedproc/decide.go
+  v2_lines: 0
+  current_lines: 265
+  fate: new
+  target_lines: 265
+  cluster: schedproc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R4): the scheduler decision socket; a widening only from the lead pane chain"
+  status: new
+- path: internal/schedproc/limits.go
+  v2_lines: 0
+  current_lines: 45
+  fate: new
+  target_lines: 45
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the usage-limit source over the owner's home and every Claude seat's config dir"
+  status: new
+- path: internal/schedproc/prepare.go
+  v2_lines: 0
+  current_lines: 47
+  fate: new
+  target_lines: 47
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler's SeatPreparer: a seat's worktree back to the commit parent before a new lease"
+  status: new
+- path: internal/schedproc/process.go
+  v2_lines: 0
+  current_lines: 306
+  fate: new
+  target_lines: 306
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler process of one squad (ruling 15): one per squad, the tick loop, the usage-limit window, the external event drain"
+  status: new
+- path: internal/schedproc/rebuild.go
+  v2_lines: 0
+  current_lines: 51
+  fate: new
+  target_lines: 51
+  cluster: schedproc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (N2): the seat map rebuilt from the launch ledger at a restart"
+  status: new
+- path: internal/schedproc/requests.go
+  v2_lines: 0
+  current_lines: 75
+  fate: new
+  target_lines: 75
+  cluster: schedproc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1 (R1): the scheduler launch record and the drain of the lead widening messages"
+  status: new
+- path: internal/schedproc/slots.go
+  v2_lines: 0
+  current_lines: 321
+  fate: new
+  target_lines: 321
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: seat slots from the typed seat list, worktrees, the runtime launcher router, the external (pi stand-in) launcher"
+  status: new
+- path: internal/scheduler/exits.go
+  v2_lines: 0
+  current_lines: 391
+  fate: new
+  target_lines: 391
+  cluster: scheduler
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
+  status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 97
+  current_lines: 132
   fate: new
-  target_lines: 97
+  target_lines: 132
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 721
+  current_lines: 854
   fate: new
-  target_lines: 721
+  target_lines: 854
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3430,6 +3673,51 @@ entries:
   extract: ""
   reason: "2b-1: usage-limit event interface (2b-3 implements the detector)"
   status: new
+- path: internal/seatcommit/commit.go
+  v2_lines: 0
+  current_lines: 980
+  fate: new
+  target_lines: 980
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
+  status: new
+- path: internal/seatcommit/git.go
+  v2_lines: 0
+  current_lines: 520
+  fate: new
+  target_lines: 520
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the harness git runner (hooks off, no GIT_* redirection) and diff parsers"
+  status: new
+- path: internal/seatcommit/ledger.go
+  v2_lines: 0
+  current_lines: 413
+  fate: new
+  target_lines: 413
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
+  status: new
+- path: internal/seatcommit/policy.go
+  v2_lines: 0
+  current_lines: 330
+  fate: new
+  target_lines: 330
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: declared-files, protected-path, managed-block and size-cap checks; growth-gate targets"
+  status: new
+- path: internal/seatcommit/widen.go
+  v2_lines: 0
+  current_lines: 166
+  fate: new
+  target_lines: 166
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the widening check against the grant (protected paths, size cap on the dry-run diff)"
+  status: new
 - path: internal/seatexec/anchor_unix.go
   v2_lines: 0
   current_lines: 173
@@ -3438,6 +3726,15 @@ entries:
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/claude.go
+  v2_lines: 0
+  current_lines: 63
+  fate: new
+  target_lines: 63
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: Claude seat preflight: the user-scope hook plugin and the recorded permission mode as one unit (claude_hooks_missing, R36)"
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
@@ -3450,9 +3747,9 @@ entries:
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 177
+  current_lines: 213
   fate: new
-  target_lines: 177
+  target_lines: 213
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3477,18 +3774,18 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 504
+  current_lines: 562
   fate: new
-  target_lines: 504
+  target_lines: 562
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 346
+  current_lines: 378
   fate: new
-  target_lines: 346
+  target_lines: 378
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -3502,6 +3799,24 @@ entries:
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
   status: new
+- path: internal/seatlaunch/private_socket_other.go
+  v2_lines: 0
+  current_lines: 23
+  fate: new
+  target_lines: 23
+  cluster: seatlaunch
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R4): the non-unix stub of the private socket"
+  status: new
+- path: internal/seatlaunch/private_socket_unix.go
+  v2_lines: 0
+  current_lines: 59
+  fate: new
+  target_lines: 59
+  cluster: seatlaunch
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R4): the proof socket bind shared with the scheduler decision socket"
+  status: new
 - path: internal/seatlaunch/proof_other.go
   v2_lines: 0
   current_lines: 26
@@ -3513,18 +3828,18 @@ entries:
   status: new
 - path: internal/seatlaunch/proof_peer_unix.go
   v2_lines: 0
-  current_lines: 55
+  current_lines: 78
   fate: new
-  target_lines: 55
+  target_lines: 78
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
   status: new
 - path: internal/seatlaunch/proof_unix.go
   v2_lines: 0
-  current_lines: 559
+  current_lines: 575
   fate: new
-  target_lines: 559
+  target_lines: 575
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
@@ -3540,9 +3855,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 393
+  current_lines: 477
   fate: new
-  target_lines: 393
+  target_lines: 477
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -3649,18 +3964,18 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 408
+  current_lines: 418
   fate: new
-  target_lines: 408
+  target_lines: 418
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
-  current_lines: 337
+  current_lines: 393
   fate: new
-  target_lines: 337
+  target_lines: 393
   cluster: status
   extract: ""
   reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"
@@ -3703,9 +4018,9 @@ entries:
   status: new
 - path: internal/task/bind.go
   v2_lines: 0
-  current_lines: 30
+  current_lines: 42
   fate: new
-  target_lines: 30
+  target_lines: 42
   cluster: task
   extract: ""
   reason: "3-2 fix 4: Store.BindPR, the PR binding inside the store's transaction (milestone B's names)"
@@ -3743,9 +4058,9 @@ entries:
 
 - path: internal/task/files.go
   v2_lines: 0
-  current_lines: 109
+  current_lines: 147
   fate: new
-  target_lines: 109
+  target_lines: 147
   cluster: task
   extract: ""
   reason: "2b-1: declared_files normalization and the conservative file-lock overlap"
@@ -3763,9 +4078,9 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 528
+  current_lines: 472
   fate: new
-  target_lines: 528
+  target_lines: 472
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
@@ -3791,6 +4106,15 @@ entries:
   status: deleted
   replaced_by: "internal/task/lease.go"
   retired_in: 2b-1
+- path: internal/task/quarantine.go
+  v2_lines: 0
+  current_lines: 149
+  fate: new
+  target_lines: 149
+  cluster: task
+  extract: ""
+  reason: "2b-2 B: seat quarantine after a global config change: no new lease until the owner clears it"
+  status: new
 - path: internal/task/reconcile.go
   v2_lines: 239
   fate: shrink
@@ -3810,6 +4134,15 @@ entries:
   cluster: task
   extract: ""
   reason: "4-1 review 2 (amendment 26): a lead resets only its own squad's task, never an owner-routed block"
+  status: new
+- path: internal/task/scope.go
+  v2_lines: 0
+  current_lines: 188
+  fate: new
+  target_lines: 188
+  cluster: task
+  extract: ""
+  reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"
   status: new
 - path: internal/task/task.go
   v2_lines: 807
@@ -3859,7 +4192,7 @@ entries:
   status: new
 - path: internal/team/squad.go
   v2_lines: 0
-  current_lines: 489
+  current_lines: 492
   fate: new
   target_lines: 489
   cluster: team

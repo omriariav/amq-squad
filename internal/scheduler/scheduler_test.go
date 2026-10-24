@@ -298,7 +298,15 @@ func TestSeatCapAndUsageLimitStop(t *testing.T) {
 		h.clk.Add(4 * time.Hour)
 		h.s.Post(Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "seat-a"})
 		h.tick()
-		if len(h.l.requests) == 0 || h.l.requests[len(h.l.requests)-1].Pool != gpt {
+		// (seat-a's claimed lease expired in the four hours, so the seat is
+		// closed through the launcher (R3 of the 2b-2 B first pass) and t1 and
+		// t4 ask for seats too; the order of the requests is the dispatch
+		// order.)
+		requested := false
+		for _, r := range h.l.requests {
+			requested = requested || (r.Pool == gpt && r.TaskID == "t3")
+		}
+		if !requested {
 			t.Fatalf("after the window reset a seat should be requested for t3: %+v", h.l.requests)
 		}
 	})

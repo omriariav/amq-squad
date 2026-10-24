@@ -65,6 +65,15 @@ test("context section states what AMQ is, the task and gates", () => {
 	assert.match(roleMessage(cfg("x"), "# Role\nDo work."), /Agent Message Queue/);
 });
 
+// 2b-2 milestone B: a seat starts in its own working tree, never the
+// repository root a task's project_path names (the R12 live finding).
+test("context section names the seat's working tree", () => {
+	const s = contextSection(cfg("x"), { worktree: "/w/wt-pi-1", task: null });
+	assert.match(s, /Your working tree is \/w\/wt-pi-1/);
+	assert.match(s, /project_path names the repository, not your working tree/);
+	assert.doesNotMatch(contextSection(cfg("x"), { task: null }), /working tree/);
+});
+
 test("evidence ingest gets one tool_result payload with an outcome", async () => {
 	const dir = tmpdir();
 	const out = path.join(dir, "payload");

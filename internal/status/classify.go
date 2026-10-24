@@ -59,8 +59,12 @@ type Input struct {
 	Alerts                                      []AlertInput // owner alerts (3-2: ungated tags and releases)
 	Scheduler                                   scheduler.State
 	LaunchAlarms                                []launch.Alarm // 2b-2 item 4: identity_forged and the like, routed to the owner
-	Capabilities                                []string
-	Warnings                                    []string
+	// PushURLMissing are the seats whose commit ledger records no push URL
+	// (2b-2 milestone B D1: the grant names no merge.push_url; the harness
+	// commits and does not push).
+	PushURLMissing []string
+	Capabilities   []string
+	Warnings       []string
 }
 
 // BaseCapabilities are the features every schema 1 producer fills.
@@ -157,6 +161,12 @@ func Build(in Input) Status {
 				Subject: "seat " + sv.Handle + " could not be closed (" + sv.Closing + "); it counts against max_seats until it is", Bucket: BucketNeedsYou,
 			})
 		}
+	}
+	for _, h := range in.PushURLMissing {
+		s.Attention = append(s.Attention, Attention{
+			ID: "seat:" + h + ":push_url_missing", Kind: "push_url_missing", Severity: "medium", Since: in.Now.UTC(), Seat: h,
+			Subject: "seat " + h + " commits without pushing: the owner's grant names no merge.push_url", Bucket: BucketNeedsYou,
+		})
 	}
 	if since := in.Scheduler.UsageLimitSince; since != nil && (in.Scheduler.UsageLimitUntil == nil || in.Now.Before(*in.Scheduler.UsageLimitUntil)) {
 		s.Attention = append(s.Attention, Attention{

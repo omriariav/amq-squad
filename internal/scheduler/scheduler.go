@@ -31,6 +31,8 @@ type Config struct {
 	IdleTimeout      time.Duration // R18: an idle seat closes after this
 	SeatStartTimeout time.Duration // a requested seat that never joins is forgotten
 	StatePath        string        // optional: where the status-side view is written
+	ExitsPath        string        // optional: the exits ledger, the pending exit checks (N3)
+	Lead             string        // the lead handle: widening is the lead's decision (2b-2); written to the state file
 }
 
 // EventKind orders events applied in one tick.
@@ -76,6 +78,7 @@ type seat struct {
 	lastActivity time.Time
 	unresponsive bool   // held a lease it never claimed; no dispatch until it shows activity
 	closing      string // a close the launcher could not do yet: counted, never dispatched, retried each tick
+	awaitGone    bool   // closed, termination not yet confirmed: counted and never dispatched until SeatGone
 }
 
 type request struct {
@@ -98,7 +101,10 @@ type Scheduler struct {
 	Doorbell  Doorbell         // nil: no doorbell
 	Router    Router           // nil: DefaultRouter
 	Committer Committer        // nil: done reports complete at once
+	Lead      LeadNotifier     // nil: no message to the lead on a refusal
+	Preparer  SeatPreparer     // nil: a seat is dispatched to as it is
 	Limits    UsageLimitSource // nil: no usage-limit events
+	Exits     ExitChecker      // nil: no exit check off the done path (R3)
 	Config    Config
 	// Incarnation qualifies every request id (seat-req-<incarnation>-<n>) so
 	// an arrival from before a restart never matches a new reservation. New
@@ -109,15 +115,24 @@ type Scheduler struct {
 	mu      sync.Mutex
 	pending []Event
 
-	seats      map[string]*seat
-	requests   []request
-	requested  int             // request ids issued
-	cancelled  map[string]bool // request ids the launcher confirmed cancelled or terminated
-	refused    []RefusedSeat   // the last refused arrivals, for status
-	limitSince time.Time
-	limitUntil time.Time
-	limitOpen  bool // an event gave no reset time: stopped until restart
-	polledTo   time.Time
+	seats       map[string]*seat
+	requests    []request
+	requested   int             // request ids issued
+	cancelled   map[string]bool // request ids the launcher confirmed cancelled or terminated
+	refused     []RefusedSeat   // the last refused arrivals, for status
+	limitSince  time.Time
+	limitUntil  time.Time
+	limitOpen   bool // an event gave no reset time: stopped until restart
+	polledTo    time.Time
+	exitSeen    map[string]bool // attempts whose exit check is queued or done
+	exitQueue   []exitItem
+	exitsLoaded bool
+	// exitsErr is the exits ledger's last load or write failure: dispatch
+	// stops (exits_ledger_unwritable) until a load and a write succeed.
+	exitsErr error
+	// toRelease are gone seats whose checks were decided: their slots are
+	// released once nothing for them is queued and the ledger says so.
+	toRelease map[string]bool
 }
 
 // Options configure a production scheduler (New).
@@ -128,7 +143,10 @@ type Options struct {
 	Doorbell    Doorbell
 	Router      Router
 	Committer   Committer
+	Lead        LeadNotifier
+	Preparer    SeatPreparer
 	Limits      UsageLimitSource
+	Exits       ExitChecker
 	Config      Config
 	Incarnation string // default: a fresh random nonce
 }
@@ -154,7 +172,7 @@ func New(o Options) (*Scheduler, error) {
 		return nil, errors.New("scheduler: the incarnation may not contain '-'")
 	}
 	return &Scheduler{Store: o.Store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Limits: o.Limits, Config: o.Config, Incarnation: o.Incarnation}, nil
+		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: o.Limits, Exits: o.Exits, Config: o.Config, Incarnation: o.Incarnation}, nil
 }
 
 const requestIDPrefix = "seat-req-"
@@ -225,10 +243,26 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 			st.unresponsive = true
 		}
 		log(Decision{Kind: "lease_expired", TaskID: t.ID, Seat: a.Holder, Reason: a.Outcome})
+		// R3: a seat that claimed and ran past its lease may still be working
+		// in its worktree; it is closed through the launcher and forgotten only
+		// once its termination is confirmed, so CleanSeat and a new dispatch
+		// never touch a live worktree.
+		if st := s.seats[a.Holder]; st != nil && a.Outcome == task.OutcomeExpired && st.closing == "" {
+			st.closing = closeExpired
+			log(Decision{Kind: "seat_closing", TaskID: t.ID, Seat: a.Holder, Reason: closeExpired})
+		}
 	}
 	list, err := s.Store.List()
 	if err != nil {
 		return out, err
+	}
+	// R3: the exit check on every terminal path that is not a done report.
+	s.loadExits()
+	if s.exitsLoaded {
+		s.scanAttempts(list, now)
+		if err := s.runExits(now, log); err != nil {
+			return out, err
+		}
 	}
 	for _, t := range list {
 		if t.State == task.StateInProgress && t.Report != nil {
@@ -239,6 +273,20 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	if list, err = s.Store.List(); err != nil {
 		return out, err
+	}
+	// N3 (b): an exits ledger that cannot be read or written stops dispatch
+	// until it can.
+	if s.exitsErr != nil {
+		log(Decision{Kind: "exits_ledger_unwritable", Reason: s.exitsErr.Error()})
+		s.closeIdle(list, now, cfg, log)
+		return out, s.writeState(now, cfg)
+	}
+	// N2: the seats a previous incarnation left running are closed and
+	// confirmed gone before the first dispatch.
+	if s.closeAdopted(log) {
+		log(Decision{Kind: "dispatch_held", Reason: "a seat of the previous incarnation is not closed yet"})
+		s.closeIdle(list, now, cfg, log)
+		return out, s.writeState(now, cfg)
 	}
 	if err := s.dispatch(list, now, cfg, log); err != nil {
 		return out, err
@@ -319,6 +367,25 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				delete(s.seats, ev.Handle)
 				log(Decision{Kind: "seat_gone", Seat: ev.Handle})
 			}
+			// R3, P1-9: the exit check at every gone seat, known to this
+			// incarnation or not (after a restart the map starts empty), before
+			// anything else reuses its handle; the slot is released only now
+			// (P1-6).
+			held := ""
+			if list, err := s.Store.List(); err == nil {
+				if t := task.HeldBy(ev.Handle, list); t != nil {
+					held = t.ID
+				}
+			}
+			if s.Exits == nil {
+				if g, ok := s.Launcher.(SeatGoneObserver); ok {
+					g.SeatGone(ev.Handle)
+				}
+			} else {
+				// N3: the slot (and the seat's staged evidence) stays held until
+				// this check is decided; runExits releases it.
+				s.queueExit(exitItem{Handle: ev.Handle, TaskID: held, Why: "gone", Gone: true, At: ev.At})
+			}
 		case SeatActivity:
 			st := s.seats[ev.Handle]
 			if st == nil {
@@ -398,17 +465,49 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		return nil
 	}
 	res := s.Committer.Commit(holder, t)
-	if res.OK {
-		if _, err := s.Store.Complete(t.ID, now); err != nil {
-			return err
-		}
-		log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
+	if res.Deferred {
+		log(Decision{Kind: "commit_deferred", TaskID: t.ID, Seat: holder, Reason: res.Detail})
 		return nil
 	}
-	if _, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now); err != nil {
+	if res.OK {
+		// The acceptance and the binding the merge train reads (3-2) are one
+		// store transaction (P2 of the milestone B first pass); a PR number
+		// another task holds refuses for the lead.
+		_, err := s.Store.CompleteBound(t.ID, res.PRRepository, res.PRNumber, res.PRHead, now)
+		if errors.Is(err, task.ErrPRBoundElsewhere) {
+			res = CommitResult{ReasonCode: task.RefusalPRBoundElsewhere, Detail: err.Error(), Route: task.RouteLead}
+		} else if err != nil {
+			return err
+		} else {
+			log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
+			if res.PRNumber > 0 {
+				log(Decision{Kind: "pr_bound", TaskID: t.ID, Seat: holder, Reason: fmt.Sprintf("%s pr %d head %s", res.PRRepository, res.PRNumber, res.PRHead)})
+			}
+			return nil
+		}
+	}
+	refused, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now)
+	if err != nil {
 		return err
 	}
 	log(Decision{Kind: "commit_refused", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
+	if res.Quarantine {
+		// No new lease for the seat until the owner clears it, and the seat
+		// closes (retried each tick while the close fails).
+		if err := s.Store.Quarantine(task.Quarantine{Handle: holder, Reason: res.ReasonCode, Detail: res.Detail, TaskID: t.ID, At: now}); err != nil {
+			return err
+		}
+		log(Decision{Kind: "seat_quarantined", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
+		if st := s.seats[holder]; st != nil && st.closing == "" {
+			st.closing = "quarantined"
+		}
+	}
+	// The store record first, then the lead's message (a hint).
+	if s.Lead != nil {
+		if err := s.Lead.CommitRefused(refused); err != nil {
+			log(Decision{Kind: "lead_notice_failed", TaskID: t.ID, Reason: err.Error()})
+		}
+	}
 	return nil
 }
 
@@ -420,6 +519,18 @@ func (s *Scheduler) router() Router {
 }
 
 func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log func(Decision)) error {
+	// A quarantined seat is never dispatched to and is closed (2b-2: the
+	// store refuses it any lease until the owner clears it).
+	qs, err := task.Quarantined(s.Store.Dir)
+	if err != nil {
+		return err
+	}
+	for _, q := range qs {
+		if st := s.seats[q.Handle]; st != nil && st.closing == "" {
+			st.closing = "quarantined"
+			log(Decision{Kind: "seat_quarantined", Seat: q.Handle, Reason: q.Reason})
+		}
+	}
 	// A request that never joined is released only after the launcher
 	// confirms it is cancelled or terminated; until then it keeps its place
 	// under the seat cap, so a late join can never exceed the cap.
@@ -479,6 +590,12 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			continue
 		}
 		if handle := s.idleSeat(list, t, *r.Pool); handle != "" {
+			if s.Preparer != nil {
+				if err := s.Preparer.PrepareSeat(handle); err != nil {
+					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+					continue
+				}
+			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
 			if err != nil {
 				return err
@@ -545,7 +662,7 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 	}
 	var handles []string
 	for h, st := range s.seats {
-		if st.pool == p && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil {
+		if st.pool == p && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
 			handles = append(handles, h)
 		}
 	}
@@ -573,12 +690,27 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 	for _, h := range handles {
 		st := s.seats[h]
 		if st.closing != "" {
-			// Retry the close that failed; the seat counts until it works.
+			// Retry the close that failed (or the first close of a
+			// quarantined seat); the seat counts until it works.
+			if st.awaitGone {
+				continue // closed; counted until its SeatGone confirms it
+			}
+			if s.Launcher == nil {
+				delete(s.seats, h)
+				log(Decision{Kind: "seat_closed", Seat: h, Reason: st.closing})
+				continue
+			}
 			if err := s.Launcher.CloseSeat(h, st.closing); err != nil {
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
+			if (st.closing == closeExpired || st.closing == closeRestart) && s.closeUnconfirmed(h) {
+				st.awaitGone = true
+				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
+				continue
+			}
 			delete(s.seats, h)
+			s.holdForExit(h)
 			log(Decision{Kind: "seat_closed", Seat: h, Reason: st.closing})
 			continue
 		}
@@ -608,6 +740,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 // State is the scheduler-side view that status reads.
 type State struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
+	Lead            string     `json:"lead,omitempty"`
 	MaxSeats        int        `json:"max_seats"`
 	LiveSeats       int        `json:"live_seats"`
 	RequestedSeats  int        `json:"requested_seats"`
@@ -663,7 +796,7 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	if cfg.StatePath == "" {
 		return nil
 	}
-	st := State{UpdatedAt: now, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...)}
+	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...)}
 	if !s.limitSince.IsZero() {
 		since := s.limitSince
 		st.UsageLimitSince = &since

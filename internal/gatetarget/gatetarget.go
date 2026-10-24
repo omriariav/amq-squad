@@ -146,3 +146,11 @@ func ReleaseTag(repository, tag, commit string) string {
 func ReleaseCreate(repository, tag string) string {
 	return "gh release create " + tag + " on " + repository
 }
+
+// GrowTask is the target of a growth gate for one task's widening past a
+// grant limit (2b-2 milestone B): "grow <root> task=<id> <limit>=<value>",
+// where value is a one-line JSON value (protected_paths: the widened globs
+// that cross the grant's protected paths; size_cap: {"lines":N,"files":M}).
+func GrowTask(root, taskID, limit, value string) string {
+	return fmt.Sprintf("grow %s task=%s %s=%s", root, taskID, limit, value)
+}

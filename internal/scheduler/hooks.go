@@ -31,6 +31,10 @@ type SeatLauncher interface {
 	CloseSeat(handle, reason string) error
 }
 
+// SenderHandle is the scheduler process's own AMQ mailbox, the sender of its
+// doorbells and lead notices (2b-2 milestone B). It is not a seat.
+const SenderHandle = "scheduler"
+
 // Doorbell tells a seat that it holds a new lease (an AMQ message). It is a
 // hint only: a lost or unread doorbell loses nothing, because the seat sees
 // its lease through `context` and the lease expires if never claimed.
@@ -58,7 +62,9 @@ type Router interface {
 // seat-side failures (failed or expired attempts) reach MaxAttempts.
 // Unclaimed and released attempts do not count: they are seat or lead
 // events, not failures of the work.
-type DefaultRouter struct{ MaxAttempts int }
+type DefaultRouter struct {
+	MaxAttempts int
+}
 
 func (r DefaultRouter) Route(t task.Task) Route {
 	max := r.MaxAttempts
@@ -87,6 +93,36 @@ type CommitResult struct {
 	ReasonCode string // on a refusal, e.g. outside_declared_files
 	Detail     string
 	Route      string // task.RouteLead (default) or task.RouteOwner (a growth gate)
+	// Deferred is a step that could not run to a decision (a git or push
+	// failure): nothing is written, the report stays, and the next tick runs
+	// the step again. The committer turns a deferral that repeats into a
+	// refusal.
+	Deferred bool
+	// Quarantine: the refusal quarantines the seat (global_config_changed):
+	// the store refuses it any new lease until the owner clears it, and the
+	// scheduler closes it.
+	Quarantine bool
+	// PRNumber and PRHead: the PR the commit step opened (0 when none) and
+	// the head it pushed; the scheduler binds them to the task (3-2).
+	PRRepository string
+	PRNumber     int
+	PRHead       string
+}
+
+// SeatPreparer readies an idle seat for a new lease (2b-2 milestone B: the
+// seat's worktree returns to the core's commit parent, so an earlier
+// attempt's uncommitted diff never rides into the next task). An error keeps
+// the seat out of this tick's dispatch.
+type SeatPreparer interface {
+	PrepareSeat(handle string) error
+}
+
+// LeadNotifier tells the lead that the commit step refused a task (2b-2:
+// the store record is written first, then this AMQ message to the lead's
+// handle). Like the doorbell it is a hint: a lost message loses nothing,
+// because the blocked task in the store is the truth.
+type LeadNotifier interface {
+	CommitRefused(t task.Task) error
 }
 
 // Committer runs the harness-side commit step for a done report (2b-2's

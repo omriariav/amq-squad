@@ -122,6 +122,7 @@ export type ContextData = {
 	task?: { id: string; title: string; status: string; class: string; declared_files?: string[]; lease_expires_at?: string; lease_claimed?: boolean; block_reason?: string } | null;
 	open_gates?: { gate_id: string; class: string; digest: string; state: string }[];
 	warnings?: string[];
+	worktree?: string;
 };
 
 export async function contextOf(cfg: Config, runner: Runner = run): Promise<{ ok: true; data: ContextData } | { ok: false; why: string }> {
@@ -145,6 +146,7 @@ export const AMQ_DEFINITION =
 export function contextSection(cfg: Config, d: ContextData): string {
 	const lines = [`You are seat ${cfg.me} of an amq-squad team${d.seat?.session ? ` (session ${d.seat.session})` : ""}.`, AMQ_DEFINITION];
 	if (d.rules?.path) lines.push(`Team rules: ${d.rules.path} (sha256 ${d.rules.sha256 ?? "?"}). Read them before you act on a task.`);
+	if (d.worktree) lines.push(`Your working tree is ${d.worktree}: run every command and make every change there. A task's project_path names the repository, not your working tree.`);
 	const t = d.task;
 	if (t) {
 		const files = t.declared_files?.length ? ` Declared files: ${t.declared_files.join(", ")}; touch nothing else.` : "";

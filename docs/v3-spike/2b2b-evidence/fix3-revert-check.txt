@@ -1,0 +1,256 @@
+==============================================================================
+ROW R8 the lead pane is the one the launch ledger recorded, never a label
+fix reverted in internal/schedproc/decide.go:
+- 	if o.LeadPane == nil {
+		o.LeadPane = RecordedLeadPane
+	}
++ 	if o.LeadPane == nil {
+		o.LeadPane = func(_, lead string) (panechain.Pane, error) {
+			ps, err := panechain.List()
+			for _, p := range ps {
+				if p.Agent == lead {
+					return p, nil
+				}
+			}
+			return panechain.Pane{}, fmt.Errorf("no labelled lead pane: %v", err)
+		}
+	}
+$ go test -count=1 -race -run ^(TestDecisionSocketProvesTheLeadAgainstTheLedger)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestDecisionSocketProvesTheLeadAgainstTheLedger (0.01s)
+    fix2_test.go:128: entry {Handle:lead LaunchID: RequestID: PID:79457 Start:x At:0001-01-01 00:00:00 +0000 UTC CloseEscalated:false ClosedAt:<nil> PaneShell:79432 PaneShellStart:darwin-tv:1792877617.460273 PaneID:}: {OK:false Code:origin_unknown Detail:the decision's origin cannot be established: no labelled lead pane: <nil>; refused Data:null} (applied 0)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.407s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDecisionSocketProvesTheLeadAgainstTheLedger)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.312s
+
+ROW R8 the lead pane is the one the launch ledger recorded, never a label: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R8 the proof records the pane shell it reached
+fix reverted in internal/seatlaunch/proof_unix.go:
+- 		PaneShell: shell, PaneShellStart: shellStart, PaneID: paneIDOf(shell)}); err != nil {
++ 		PaneID: paneIDOf(shell)}); err != nil {
+$ go test -count=1 -race -run ^(TestProofRecordsTheLeadPaneShell)$ ./internal/seatlaunch/   (fix reverted)
+--- FAIL: TestProofRecordsTheLeadPaneShell (0.07s)
+    proof_test.go:244: the ledger does not carry the pane shell: {Handle:cto LaunchID:9a9564560cc42d1b3132596dab570373 RequestID: PID:79532 Start:darwin-tv:1792877620.414585 At:2026-10-24 21:33:40.436245 +0000 UTC CloseEscalated:false ClosedAt:<nil> PaneShell:0 PaneShellStart: PaneID:} <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.449s
+FAIL
+
+$ go test -count=1 -race -run ^(TestProofRecordsTheLeadPaneShell)$ ./internal/seatlaunch/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.460s
+
+ROW R8 the proof records the pane shell it reached: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R9 a stdin that is not a real pty is refused
+fix reverted in internal/cli/seat_owner_unix.go:
+- 	if st.Mode&unix.S_IFMT != unix.S_IFCHR {
+		return nil, errNoPTY
+	}
+	old, err := unix.IoctlGetTermios(0, getTermios)
+	if err != nil {
+		return nil, errNoPTY
+	}
++ 	old, err := unix.IoctlGetTermios(0, getTermios)
+	if err != nil {
+		old, err = &unix.Termios{}, nil
+	}
+$ go test -count=1 -race -run ^(TestOwnerTerminalIsTheRealPtyOfStdin)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestOwnerTerminalIsTheRealPtyOfStdin (0.00s)
+    seat_fix1b_test.go:584: a non-pty stdin: echo cannot be turned off: operation not supported by device
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.455s
+FAIL
+
+$ go test -count=1 -race -run ^(TestOwnerTerminalIsTheRealPtyOfStdin)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.847s
+
+ROW R9 a stdin that is not a real pty is refused: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R9 the confirmation waits at most the timeout
+fix reverted in internal/cli/seat_owner.go:
+- 	case <-time.After(confirmTimeout):
++ 	case <-time.After(time.Hour):
+$ go test -count=1 -race -run ^(TestOwnerTerminalIsTheRealPtyOfStdin)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestOwnerTerminalIsTheRealPtyOfStdin (10.28s)
+    seat_fix1b_test.go:601: the confirmation waited past its timeout
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	10.734s
+FAIL
+
+$ go test -count=1 -race -run ^(TestOwnerTerminalIsTheRealPtyOfStdin)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.830s
+
+ROW R9 the confirmation waits at most the timeout: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R9 an open failure is owner_proof_unknown
+fix reverted in internal/cli/seat_owner.go:
+- 		return fmt.Errorf("%s: %w: the owner's terminal cannot be opened: %v", verb, errOwnerUnknown, err)
++ 		return fmt.Errorf("%s: %w: the owner's terminal cannot be opened: %v", verb, errNotOwner, err)
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestSeatClearNeedsTheOwnersOwnTerminal (0.27s)
+    seat_fix1b_test.go:515: an unopenable terminal: seat clear: not_owner_terminal: the owner's terminal cannot be opened: device not configured
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.709s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatClearNeedsTheOwnersOwnTerminal)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.692s
+
+ROW R9 an open failure is owner_proof_unknown: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N2 adoption holds the slot
+fix reverted in internal/scheduler/exits.go:
+- 		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, closing: closeRestart}
+		s.reserve(handle)
++ 		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, closing: closeRestart}
+$ go test -count=1 -race -run ^(TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch (0.00s)
+    fix1b_test.go:252: the adopted slot was not held: []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.264s
+FAIL
+
+$ go test -count=1 -race -run ^(TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.301s
+
+ROW N2 adoption holds the slot: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N2 no dispatch before every adopted seat is confirmed gone
+fix reverted in internal/scheduler/scheduler.go:
+- 	if s.closeAdopted(log) {
++ 	if s.closeAdopted(log) && false {
+$ go test -count=1 -race -run ^(TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch (0.05s)
+    fix1b_test.go:257: a dispatch before the adopted seat closed: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:seat_close_failed TaskID: Seat:old-1 Pool: Reason:not confirmed yet} {Kind:dispatched TaskID:t1 Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:seat_closed TaskID: Seat:old-1 Pool: Reason:scheduler_restart}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.305s
+FAIL
+
+$ go test -count=1 -race -run ^(TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.312s
+
+ROW N2 no dispatch before every adopted seat is confirmed gone: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N3 a gone seat keeps its slot until its check is decided
+fix reverted in internal/scheduler/scheduler.go:
+- 			if s.Exits == nil {
+				if g, ok := s.Launcher.(SeatGoneObserver); ok {
++ 			if g, ok := s.Launcher.(SeatGoneObserver); ok {
+				g.SeatGone(ev.Handle)
+			}
+			if s.Exits == nil {
+				if g, ok := s.Launcher.(SeatGoneObserver); ok {
+$ go test -count=1 -race -run ^(TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart (0.00s)
+    fix1b_test.go:282: the slot was released while the check deferred: [seat-a]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.259s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.273s
+
+ROW N3 a gone seat keeps its slot until its check is decided: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N3 the deferred queue survives a restart (the exits ledger)
+fix reverted in internal/scheduler/scheduler.go:
+- 	s.loadExits()
+
++ 
+$ go test -count=1 -race -run ^(TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart (0.00s)
+    fix1b_test.go:290: the restart lost the pending gone check: reserved []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.260s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.268s
+
+ROW N3 the deferred queue survives a restart (the exits ledger): reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW pins: the pin is opened without following a symlink
+fix reverted in internal/registry/pins.go:
+- 	d, err := fsanchor.OpenAnchored(filepath.Dir(path), nil, false)
+	if err != nil {
++ 	if real, rerr := filepath.EvalSymlinks(path); rerr == nil {
+		path = real
+	}
+	d, err := fsanchor.OpenAnchored(filepath.Dir(path), nil, false)
+	if err != nil {
+$ go test -count=1 -race -run ^(TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation (0.16s)
+    fix2_test.go:298: a symlinked pin path was opened: &{/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation1671742171/001/gh-real 68445ef76cb5447414cde7aaa919909207e2211c29498f42803d71caed9d97f7 0xc0000023b8} 
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.454s
+FAIL
+
+$ go test -count=1 -race -run ^(TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.969s
+
+ROW pins: the pin is opened without following a symlink: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW pins: every gh invocation re-verifies the pin
+fix reverted in internal/seatcommit/commit.go:
+- 		if o.Gh != "" {
+			cmd = exec.Command(o.Gh, args...) // a test seam
+		} else {
++ 		if o.Gh == "" {
+			o.Gh = l.GhPath
+		}
+		if o.Gh != "" {
+			cmd = exec.Command(o.Gh, args...) // a test seam
+		} else {
+$ go test -count=1 -race -run ^(TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation (0.70s)
+    fix2_test.go:322: a gh swapped after the list ran: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:1df0d9cdb3714006ab68624e4cc48e50f75e5d0a Tree:33a4a2489a61d9b02065b69744157c284ff0414d Commit:f8fca9e810403cbdaeff7cd7267f1d7e8019b1d3 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:14eaf79e30a5e51bb9aa850ee100dc4e7dc77fbd97e8217cea4d442c81b5f8e1 Violations:[] Config:[] Notes:[] Quarantine:false PRNumber:66 PRHead:f8fca9e810403cbdaeff7cd7267f1d7e8019b1d3}
+        pr list
+        evil-ran
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.992s
+FAIL
+
+$ go test -count=1 -race -run ^(TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.953s
+
+ROW pins: every gh invocation re-verifies the pin: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW socket: at most 8 connections, excess refused and counted, a read deadline
+fix reverted in internal/schedproc/decide.go:
+- 		select {
+		case s.slots <- struct{}{}:
+		default:
++ 		select {
+		case s.slots <- struct{}{}:
+		case s.slots <- struct{}{}:
+$ go test -count=1 -race -run ^(TestDecisionSocketLimitsConnections)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestDecisionSocketLimitsConnections (0.51s)
+    fix2_test.go:229: the ninth connection: {OK:true Code: Detail:applied by lead Data:null} <nil> (overflow 5)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.888s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDecisionSocketLimitsConnections)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	2.299s
+
+ROW socket: at most 8 connections, excess refused and counted, a read deadline: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW socket: the tmux query is bounded
+fix reverted in internal/panechain/panechain.go:
+- 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
++ 	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+$ go test -count=1 -race -run ^(TestListTimesOutOnAHungServer)$ ./internal/panechain/   (fix reverted)
+--- FAIL: TestListTimesOutOnAHungServer (30.19s)
+    panechain_test.go:86: a hung server: <nil> after 30.183318292s
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/panechain	30.419s
+FAIL
+
+$ go test -count=1 -race -run ^(TestListTimesOutOnAHungServer)$ ./internal/panechain/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/panechain	1.560s
+
+ROW socket: the tmux query is bounded: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

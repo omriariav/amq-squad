@@ -122,6 +122,9 @@ type Registry struct {
 	Host    Host
 	Tools   []Tool
 	Entries []Entry
+	// Pins are the owner's pinned harness tools (pins.go): owner data that
+	// detection never writes and Build carries forward.
+	Pins []Pin
 }
 
 // Path is ~/.amq-squad/registry.yaml under home ("" home: the user's home).

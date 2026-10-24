@@ -439,7 +439,7 @@ func TestPrepareScrubsAndRestricts(t *testing.T) {
 	for _, want := range []string{"PI_TELEMETRY=0", "PI_OFFLINE=1", "PI_SKIP_VERSION_CHECK=1", "KEEP=1", "ANTHROPIC_API_KEY=a",
 		"PI_CODING_AGENT_DIR=" + filepath.Join(home, ".amq-squad", "pi-agent", "pi-1"), "AMQ_SQUAD_MODELS=ollama/qwen3.6:27b"} {
 		if !strings.Contains(env, want) {
-			t.Fatalf("missing %s in %s", want, env)
+			t.Fatalf("missing %s in the pi environment", want)
 		}
 	}
 	if l.Path != rt.Exe() || l.Argv[0] != rt.Exe() || l.Argv[2] != "-e" || l.Argv[3] != rt.PackageDir() || l.Argv[len(l.Argv)-1] != "n1" {

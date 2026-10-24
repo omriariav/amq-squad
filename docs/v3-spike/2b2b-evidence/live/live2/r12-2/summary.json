@@ -1,0 +1,92 @@
+{
+  "checks": {
+    "completed_through_commit_step": true,
+    "final_line_exact": true,
+    "go_test_confirmed": true,
+    "independent_go_test": true,
+    "read_confirmed": true,
+    "worktree_exact_harness_commit": true
+  },
+  "classed_tasks": 1,
+  "completed_tasks": 1,
+  "decision_kinds": {
+    "completed": 1,
+    "dispatched": 1,
+    "scheduler_started": 1,
+    "scheduler_stopped": 1,
+    "seat_requested": 1,
+    "seat_up": 1
+  },
+  "false_success": false,
+  "harness_commits": 1,
+  "independent_go_test_ok": true,
+  "label": "p2-r12-2",
+  "lead_turns": 0,
+  "mode": "r12",
+  "model": "ollama/qwen3.6:27b",
+  "numstat": "1\t1\tcalc.go",
+  "pass": true,
+  "seconds": 39,
+  "stood_in": [
+    "pi launch: External request file read by this harness, seat_up by scheduler post, one pi run turn per doorbell",
+    "wake: the harness reads the AMQ doorbell from the seat inbox and starts the turn with it",
+    "merge train: the harness fast-forwards main to seat/pi-1 after each completed task"
+  ],
+  "tasks": [
+    {
+      "ID": "t1",
+      "Title": "R12 probe: Greeting",
+      "Class": "implement",
+      "State": "completed",
+      "BlockReason": "",
+      "Files": [
+        "calc.go"
+      ]
+    }
+  ],
+  "worker_calls": [
+    {
+      "turn": 1,
+      "tool": "amq_task_claim",
+      "args": "{\"id\":\"t1\"}",
+      "out": "Claim t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T18:40:14Z"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_task_list",
+      "args": "{\"state\":\"in_progress\"}",
+      "out": "{\n  \"schema_version\": 1,\n  \"kind\": \"tasks\",\n  \"data\": {\n    \"root\": \"$JOB/live2/r12-2/proj/.agent-mail/collab\",\n    \"tasks\": [\n      {\n        \"schema\": 1,\n        \"id\": \"t1\",\n        \"title\": \"R12 probe: Greeting\",\n        \"description\": \"You are working in a Go module in the current directory.\\n1. Read the file calc.go.\\n2. Make exactly one one-line edit: ch..."
+    },
+    {
+      "turn": 1,
+      "tool": "read",
+      "args": "{\"path\":\"calc.go\"}",
+      "out": "package calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "edit",
+      "args": "{\"path\":\"calc.go\",\"edits\":[{\"newText\":\"\\treturn \\\"hello, world\\\"\",\"oldText\":\"\\treturn \\\"hello\\\"\"}]}",
+      "out": "Successfully replaced 1 block(s) in calc.go."
+    },
+    {
+      "turn": 1,
+      "tool": "read",
+      "args": "{\"path\":\"calc.go\"}",
+      "out": "package calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello, world\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"go test ./...\"}",
+      "out": "ok  \texample.com/probecalc\t0.361s\n"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_task_done",
+      "args": "{\"evidence\":\"ok\\texample.com/probecalc\\t0.361s\",\"id\":\"t1\"}",
+      "out": "Done t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T18:40:14Z"
+    }
+  ],
+  "worker_turns": 1
+}

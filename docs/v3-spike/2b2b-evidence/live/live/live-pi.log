@@ -1,0 +1,9 @@
+r12 run 1 exit 0
+r12 run 2 exit 0
+r12 run 3 exit 0
+r12 run 4 exit 0
+r12 run 5 exit 0
+r19 run 1 exit 0
+$JOB/live-pi.sh: line 10: 31606 Terminated: 15          $B/sched-live -mode r19 -dir $d -bin $B/amq-squad -home $B/home -label r19-$i -rounds 60 > $d.out 2>&1
+r19 run 2 exit 143
+ALL-DONE
