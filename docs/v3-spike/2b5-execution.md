@@ -296,3 +296,56 @@ Deviations:
   (the drafting package) rather than staying in team_rules_draft.go; they
   serve brief, team-rules and role drafting alike. Named here because a
   move into a new row lowers the counted total.
+
+## End checkpoint
+
+Gate on 8eb5e564: green (docs/v3-spike/2b5-evidence/end-go-test.txt,
+end-manifest-check.txt; linux and windows builds; `go test -race` clean on
+team, grants, drafter, namespace).
+
+Acceptance:
+1. Widening is a named parse error: `TestSquadWideningIsANamedParseError`
+   (internal/team/squad_test.go), ten cases. Pass.
+2. The 2a-3 guard tests for squad.yaml narrowing (fix9 row included) pass
+   unchanged; `TestSquadNarrowingMatchesGuardReader`. Pass.
+3. `team propose` prints one digest and writes nothing; `team apply
+   --digest` writes: `TestTeamProposeWritesNothingApplyWritesDigestedFiles`
+   (internal/cli/team_test.go). Pass.
+4. One Claude, one Codex and one pi seat compile to one typed seat list,
+   pi with no provider arguments: `TestSquadCompilesToOneLaunchSeatList`.
+   Pass on this branch; "compiles once 2b-2 merges" (the seatlaunch adapter
+   is the follow-up, lead ruling 1).
+5. A form the fixture advertisement does not list is refused:
+   `TestArgumentFormsComeFromTheAdvertisement`. Pass.
+6. No reference to the v2 profile model: `TestNoV2ProfileModelLeft`
+   (22 removed names across every Go file). Pass.
+
+The four deferred-2b rows (before -> after / target):
+- internal/cli/team.go 1931 -> 335 / 350, shrunk.
+- internal/team/team.go 1313 -> 360 / 631, shrunk.
+- internal/cli/team_rules.go 512 -> 251 / 300, shrunk.
+- internal/cli/team_rules_draft.go 296 -> 147 / 150, shrunk.
+Also owned: context_resolution.go 846 -> 368 / 551 shrunk; role_draft.go
+494 -> 150 / 150 shrunk; roles.go 146 -> 69 / 80 shrunk; model_defaults.go
+186 -> 84 / 130 shrunk; agent_catalog.go 145 deleted; execution_mode.go
+331 -> 282 / 331 shrunk; init.go, team_operator.go, effort.go deleted. New:
+team/squad.go, team/digest.go, team/launch.go, yamlsub/yamlsub.go,
+drafter/text.go. Class 1 (deferred-2b) total: 6300 lines / 3468 over at the
+start of 2b, 1394 lines / 544 over now (the rows left are other briefs':
+launch/record.go, doctor.go).
+
+Removed team verbs: `team init`, `team rules` (`init`, `show`,
+`templates`), `team sync`, `team operator set`, and the `team resume`
+redirect; the top-level `init` digest code. Each v2 verb is a usage error
+naming its replacement. The 3.0 verbs: `team propose`, `team apply
+--digest`, `team show`, `team check`, `team draft-rules`; bare `team` prints
+usage.
+
+Follow-ups:
+- After 2b-2 merges: the one-function adapter `LaunchSeat` ->
+  `seatlaunch.Seat` (role.md text from the staged custom role or the
+  catalog stub) and one ProviderArgs/CheckArgumentForms (2b-2's or this
+  branch's, not both); `model_defaults.go` and `team_launch_launchapi.go`
+  are deleted by 2b-2.
+- `internal/role/parse.go` (`ParseDocument`) has no caller left after the
+  role draft rewrite; its row is not this brief's.
