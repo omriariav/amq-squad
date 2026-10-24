@@ -135,7 +135,7 @@ func TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause(t *testin
 	go func() {
 		done <- runTaskAdd([]string{
 			"--project", fx.project, "--profile", fx.source.Profile,
-			"--session", fx.source.Session, "--title", "unchanged context",
+			"--session", fx.source.Session, "--title", "unchanged context", "--class", "script",
 		})
 	}()
 	<-resolved

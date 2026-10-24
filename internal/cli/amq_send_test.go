@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 func TestRunOwnedAMQSendUsesTransportAcceptanceWithoutLocalReceipt(t *testing.T) {
@@ -90,10 +88,6 @@ func TestRunOwnedAMQSendBindsCommittedEvidenceToSendRequest(t *testing.T) {
 	if !errors.Is(err, sendErr) || result.MessageID != "msg-committed" || !result.Invoked {
 		t.Fatalf("err=%v result=%+v", err, result)
 	}
-	outcome := taskAMQDeliveryOutcome(result, err)
-	if outcome.State != taskstore.DeliveryDelivered || outcome.MessageID != "msg-committed" {
-		t.Fatalf("genuine committed-indeterminate outcome = %+v", outcome)
-	}
 }
 
 func TestRunOwnedAMQSendRejectsCommittedEvidenceUnboundFromRequest(t *testing.T) {
@@ -130,10 +124,6 @@ func TestRunOwnedAMQSendRejectsCommittedEvidenceUnboundFromRequest(t *testing.T)
 			})
 			if !errors.Is(err, sendErr) || result.MessageID != "" || !result.Invoked {
 				t.Fatalf("err=%v result=%+v", err, result)
-			}
-			outcome := taskAMQDeliveryOutcome(result, err)
-			if outcome.State != taskstore.DeliveryUncertain || outcome.MessageID != "" {
-				t.Fatalf("unbound committed evidence outcome = %+v", outcome)
 			}
 		})
 	}

@@ -61,7 +61,117 @@ Decisions taken in this commit (reported as open rulings below):
   scheduler dispatches it. Plan 4.7 says "dispatches through the kept dispatch verb"; `dispatch`
   needs a team role, which a command-center row does not have.
 
+Lead rulings on commit 1 (2026-10-24): both decisions accepted. Five store states, v2's
+`failed` an attempt outcome, with the v2-to-3.0 state mapping recorded in the design doc (done
+in commit 2). The new-task action runs `task add`; dispatch is the scheduler's act, and plan 2.7
+corrects amendment 24's wording.
+
+### Commit 2: the 3.0 task store (internal/task rewritten, the task verbs on it)
+
+Built:
+- `internal/task/task.go` rewritten: the schema 1 `Task`, `Lease`, `Attempt`, `Report`,
+  `ScopeChange` types; `Store` opened on an AMQ session root (`Open`, `DirFor`:
+  `<root>/extensions/amq-squad/tasks/`, dir 0700, files 0600); `Add` (class required from the
+  closed list, dependencies must exist, declared files normalized), `List`, `Get`; `Snapshot`,
+  the lock-free read that overlays a committed journal and never writes; `DispatchOrder`
+  (priority, then id); `ValidID`.
+- `internal/task/transaction.go`: the v2 journal commit protocol kept (journal temp, rename,
+  dir fsync as the commit point, after-images, journal removal), on 0600 files, with a fault seam
+  at the commit boundaries.
+- `internal/task/lease.go` (new): `Blocker` (dependencies, file locks), `HeldBy` (one seat, one
+  lease; a seat whose done report was refused stays reserved), `Grant`, `Claim` (own lease, or
+  pull the next eligible task of a pool in one transaction), `Renew` (claimed leases only, a
+  lock-free pre-check and a minimum interval so the hook path rarely writes), `Done` (completes
+  at once without declared files, else waits for the commit step), `Complete` and
+  `RefuseCommit` (the commit step's two answers, for 2b-2), `Fail`, `Block`, `Release`,
+  `Reset`, `Set`, `Cancel`, `Widen` (records the lead decision, re-arms a refused commit),
+  `SetWait` (writes only on change), `ExpireDue` (unclaimed and expired leases back to the pool,
+  never a lease whose done report waits for the commit step).
+- `internal/task/files.go` (new): `CleanDeclaredFiles` and `FilesOverlap`, the conservative
+  glob overlap (segment-wise; `**`, tree suffixes; two globs in one segment count as overlapping).
+- `internal/cli/task.go` rewritten on the store: add, list, show, claim, renew, done (alias
+  complete), fail, block, release, reset, set, cancel, reconcile. Store root from `--root`, else
+  `AM_ROOT`, else the AMQ root of `--project/--profile/--session`; a scoped mutation holds the
+  namespace writer admission as `gate raise` does. The operator handle is refused as an actor.
+- `dispatch --create-task/--task` on the new store: the task is created with `--task-class`
+  (required), `--task-files`, `--task-pool`, and its lease granted to the child before the AMQ
+  send; the message is a doorbell. `--task` accepts a pending task or a lease the child already
+  holds. The planner-lead refusal now keys on class `implement`.
+- `context` (hook_context.go) reads the current task from the store under the session root:
+  the task whose lease the seat holds (`HeldBy`), lock-free; it reports `class`,
+  `declared_files`, `lease_claimed`, and prints the claim command for an unclaimed lease. It
+  never writes (acceptance 7; the test compares the task file bytes before and after).
+- `gate raise --task` checks the task in the store under the session root (two-line change in
+  gate.go, kept small for 3-1). internal/state's snapshot task activity reads the new store.
+- docs/task-store-design.md: the v2-to-3.0 state mapping (lead ruling), and the commit-refusal
+  rule (the report stays, the seat stays reserved, `Widen` re-arms).
+
+Rows retired (status, with the ledger reason quoted):
+- internal/task/task.go "five states and leases exist; pools are new": shrunk, 702 to 389
+  (target 676).
+- internal/task/transaction.go, same reason: shrunk, 216 to 177 (target 183).
+- internal/task/command_evidence.go, completion_reconcile.go, lifecycle_event.go,
+  leadership.go, reconcile.go (same reason) and lifecycle.go (reviewed in the same pass, as the
+  brief says): deleted. The command-evidence links, completion reconcile, lifecycle events,
+  leadership epochs, outbox delivery and v2 reconcile have no place in the 3.0 schema.
+- internal/cli/task.go "keep lifecycle CLI, drop pane nudges": shrunk, 1296 to 523 (target 800).
+- internal/cli/task_selection.go and task_completion_evidence.go, same reason: deleted (the
+  namespace task selection and the AMQ-message completion reconcile are v2-only).
+- New rows: internal/task/lease.go (434), internal/task/files.go (109).
+- Touched rows synced: dispatch.go 440 to 391 (shrunk, target 450), hook_context.go 174 (new),
+  evidence.go 777 to 47 (deferred-replace), gate.go 175 to 174, mutation_json.go 61 to 57,
+  status.go 838 to 809, state/snapshot.go 282 to 275, command_registry.go (summary only).
+
+Behavior changes named:
+1. The task store moves from `<team home>/.amq-squad/tasks/<profile>/<session>/` to
+   `<AM_ROOT>/extensions/amq-squad/tasks/` (ruling E2). v2 task files are not read or migrated.
+2. Verbs removed with the v2 store: `task event`, `deliver`, `retry-delivery`, `leadership`,
+   `handoff`, `reconcile <id> --evidence-id` (completion reconcile); flags removed:
+   `--dispatch-next`, `--no-notify`, `--override-dependencies`, `--replacement`, `--review-of`,
+   `--assign`, the gate/completion-generation flags of done. New verb `task set`.
+3. `task add` requires `--class`. `dispatch --create-task` requires `--task-class`; the
+   structured intent flags (`--task-intent`, `--task-artifact`, `--task-expected-base`,
+   `--task-implementer`, `--task-reviewer`, `--task-parallel-work`) are gone.
+4. `evidence run`, `show`, `list`, `recover`, `lookup` are cut: they bound command evidence to a
+   v2 task through its namespace, its command-evidence links and its dispatch thread, none of
+   which exist in 3.0. `evidence ingest` stays. evidence.go is 3-2's deferred-replace row ("3-2
+   deletes it, with evidenceSecretName and evidenceTaskLink moved into the ledger readers");
+   `evidenceSecretName` is kept in place for 3-2; `evidenceTaskLink` mapped a command outcome
+   to the v2 link fields (attempt id, actor, subject, process and finalization state, manifest,
+   outcome and summary paths and sha256), recorded here because the function went with the
+   v2 `CommandEvidenceLink` type. Open ruling 3 below.
+5. A claim lease defaults to 10 minutes (was 2 hours), and an unclaimed lease is never
+   renewed.
+6. `status` (still the v2 renderer until commit 4) drops the `task_legacy_status` warning and
+   reads current-task activity from the new store.
+
+Tests: internal/task rewritten (11 tests): validation, lease lifecycle (grant, claim by the
+holder only, renewal interval, done), the commit-step path (file lock held through a refusal,
+seat reserved, widen re-arms, complete releases the lock), dependency gating and one lease per
+seat, `ExpireDue` (unclaimed vs expired outcomes, re-grant), fail/block/release/reset/set/cancel,
+dispatch order and pool filter, `SetWait`, the file-overlap table (13 pairs, both orders), the
+journal crash cases (after the commit point: the lock-free snapshot overlays and the locked read
+replays; before it: nothing visible), and acceptance 8 (below). internal/cli: task_test.go
+(3 tests: the CLI flow at the session root, 11 refusals, reconcile), dispatch_task_test.go
+(6 tests: lease before the doorbell, class required, a failed send keeps the lease, five
+refusals before send, the leadership-epoch refusal, the review-actor refusal on both paths), the
+context test seeded through the store with the no-write check and an unclaimed lease for qa.
+Retired with the v2 store: 98 test functions (the v2 internal/task suites; the cli task,
+completion evidence, completion gate, t44, v228 contract and operator-guard suites; the v2
+dispatch task tests; four status tests of v2 task warnings; the v2 evidence suite; the two
+outbox-outcome assertions in amq_send_test.go). The operator-guard case is kept as a refusal row
+of TestTaskCLIRefusals.
+
+Acceptance 8 (concurrency): `TestConcurrentClaimsEightProcesses` starts 8 processes of the test
+binary against one store with 40 tasks; each loops pull-claim and done. Result: every task
+completed with `attempt` 1 and one attempt row, no task claimed twice, 5 tasks per process. With
+the store lock replaced by a direct call the test fails (a rename race on the after-image),
+checked by hand. Windows: skipped (the lock is a no-op there, internal/flock).
+
 ## Open rulings
 
-1. New-task action: `task add` (above) against plan 4.7's "kept dispatch verb".
-2. Five store states with `failed` folded into attempts (above).
+1. (closed) New-task action: `task add`.
+2. (closed) Five store states.
+3. `evidence run/show/list/recover/lookup` cut in 2b-1 with the v2 store (behavior change 4),
+   ahead of 3-2's delete of evidence.go. The plugin skill docs under plugins/ still describe
+   `evidence run` and the v2 task verbs; the skills are rewritten by the phase 4 plugin briefs.

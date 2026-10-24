@@ -4,12 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -89,68 +87,6 @@ func withDispatchAMQCommandErrorSeam(t *testing.T, env amqEnv, output string, se
 		runAMQCommand = prevRun
 	})
 	return &calls
-}
-
-func TestSimpleTaskDispatchFailureLeavesPlainClaimAndAllowsSecondSend(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	calls := withDispatchAMQCommandErrorSeam(t,
-		amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "", nil,
-	)
-	attempt := 0
-	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
-		*calls = append(*calls, req)
-		attempt++
-		if attempt == 1 {
-			return nil, errors.New("transport unavailable")
-		}
-		return []byte("Sent msg-second to qa\n"), nil
-	}
-
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{
-			"--session", "issue-96", "--role", "qa", "--subject", "plain task",
-			"--body", "do the work", "--create-task",
-		})
-	})
-	if err == nil || !strings.Contains(err.Error(), "task remains in_progress") {
-		t.Fatalf("first dispatch error = %v, want visible in_progress recovery guidance", err)
-	}
-	tasks, err := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tasks) != 1 {
-		t.Fatalf("tasks = %+v, want one created task", tasks)
-	}
-	created := tasks[0]
-	if created.Status != taskstore.StatusInProgress || created.AssignedTo != "qa" {
-		t.Fatalf("task after failed send = %+v, want qa/in_progress", created)
-	}
-	if len(created.Outbox) != 0 || created.Dispatch != nil || created.CompletionReconcile != nil || created.CompletionLifecycle != nil {
-		t.Fatalf("failed simple dispatch persisted retry/delivery state: %+v", created)
-	}
-
-	_, _, err = captureOutput(t, func() error {
-		return runDispatch([]string{
-			"--session", "issue-96", "--role", "qa", "--subject", "plain task",
-			"--body", "do the work", "--task", created.ID,
-		})
-	})
-	if err != nil {
-		t.Fatalf("second dispatch of already-claimed task: %v", err)
-	}
-	after, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Status != taskstore.StatusInProgress || after.AssignedTo != "qa" || len(after.Outbox) != 0 || after.Dispatch != nil {
-		t.Fatalf("second dispatch changed plain task authority: %+v", after)
-	}
-	if attempt != 2 {
-		t.Fatalf("AMQ send attempts = %d, want 2 explicit attempts", attempt)
-	}
 }
 
 func TestDispatchDrainCommandQuotesScope(t *testing.T) {
@@ -258,28 +194,6 @@ func TestRunDispatchWorktreeMemberUsesCanonicalTeamRoot(t *testing.T) {
 	}
 }
 
-func TestRunDispatchRejectsLegacyLeadershipEpochBeforeArtifacts(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-epoch to qa\n")
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--leadership-epoch", "1", "--subject", "legacy", "--body", "run", "--create-task"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "--leadership-epoch is unavailable in simple task mode") {
-		t.Fatalf("legacy leadership flag err=%v", err)
-	}
-	if tasks, err := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96"); err != nil || len(tasks) != 0 {
-		t.Fatalf("legacy flag refusal persisted tasks: %+v err=%v", tasks, err)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("legacy flag refusal invoked AMQ: %d", len(*calls))
-	}
-	if _, err := os.Stat(filepath.Join(dir, team.DirName, "receipts", "issue-96")); !os.IsNotExist(err) {
-		t.Fatalf("legacy flag refusal persisted receipt artifact: %v", err)
-	}
-}
-
 func writeDispatchActorContractTeam(t *testing.T, dir string) {
 	t.Helper()
 	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
@@ -289,20 +203,6 @@ func writeDispatchActorContractTeam(t *testing.T, dir string) {
 			{Role: "dev", Binary: "codex", Handle: "dev", Session: "actor-contract", ActorMode: team.ActorModeImplementation},
 			{Role: "reviewer", Binary: "codex", Handle: "reviewer", Session: "actor-contract", ActorMode: team.ActorModeReview},
 		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func addClaimedDispatchTask(t *testing.T) {
-	t.Helper()
-	if _, _, err := captureOutput(t, func() error {
-		return runTask([]string{"add", "--title", "existing", "--assign", "qa", "--session", "issue-96"})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runTask([]string{"claim", "t1", "--me", "qa", "--session", "issue-96"})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -486,195 +386,6 @@ func TestRunDispatchAnswerWaitTimeoutHumanOutputWarnsDoNotResend(t *testing.T) {
 	}
 }
 
-func TestRunDispatchCreateTaskClaimsBeforeMessageWithoutTaskDeliveryState(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-abc to qa\n")
-	previousRun := runAMQCommand
-	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
-		committed, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", "t1")
-		if err != nil {
-			t.Fatalf("task must exist before AMQ send: %v", err)
-		}
-		if committed.Status != taskstore.StatusInProgress || committed.AssignedTo != "qa" || committed.Lease == nil {
-			t.Fatalf("AMQ send ran before the atomic task claim: %+v", committed)
-		}
-		if len(committed.Outbox) != 0 || committed.Dispatch != nil {
-			t.Fatalf("simple claim persisted prepared delivery state before AMQ send: %+v", committed)
-		}
-		return previousRun(req)
-	}
-	t.Cleanup(func() { runAMQCommand = previousRun })
-
-	stdout, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task", "--json"})
-	})
-	if err != nil {
-		t.Fatalf("dispatch --create-task: %v", err)
-	}
-	result := decodeJSONEnvelope[mutationResult](t, stdout).Data
-	if result.TaskID != "t1" || result.MessageID != "msg-abc" {
-		t.Fatalf("simple dispatch result = %+v", result)
-	}
-	persisted, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", "t1")
-	if err != nil || persisted.Status != taskstore.StatusInProgress || persisted.AssignedTo != "qa" || len(persisted.Outbox) != 0 || persisted.Dispatch != nil {
-		t.Fatalf("simple dispatch task state = %+v err=%v", persisted, err)
-	}
-}
-
-func TestRunDispatchTaskRejectsMismatchedAssigneeBeforeSend(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	if _, _, err := captureOutput(t, func() error {
-		return runTask([]string{"add", "--title", "existing", "--assign", "cto", "--session", "issue-96"})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-json to qa\n")
-
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--task", "t1"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "task t1 is assigned to cto") {
-		t.Fatalf("dispatch should reject mismatched task owner before send, got %v", err)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("mismatched task owner must not send AMQ, got %d calls", len(*calls))
-	}
-}
-
-func TestRunDispatchTaskRejectsBlockedAndTerminalStatusesBeforeSend(t *testing.T) {
-	cases := []struct {
-		name  string
-		setup func(t *testing.T) string
-		want  string
-	}{
-		{
-			name: "dependency blocked",
-			setup: func(t *testing.T) string {
-				t.Helper()
-				if _, _, err := captureOutput(t, func() error {
-					return runTask([]string{"add", "--title", "dependency", "--assign", "cto", "--session", "issue-96"})
-				}); err != nil {
-					t.Fatal(err)
-				}
-				if _, _, err := captureOutput(t, func() error {
-					return runTask([]string{"add", "--title", "blocked child", "--assign", "qa", "--depends-on", "t1", "--session", "issue-96"})
-				}); err != nil {
-					t.Fatal(err)
-				}
-				return "t2"
-			},
-			want: "task t2 is blocked on t1 (pending); complete it before dispatch",
-		},
-		{
-			name: "completed terminal",
-			setup: func(t *testing.T) string {
-				t.Helper()
-				addClaimedDispatchTask(t)
-				if _, _, err := captureOutput(t, func() error {
-					return runTask([]string{"done", "t1", "--me", "qa", "--evidence", "accepted", "--session", "issue-96"})
-				}); err != nil {
-					t.Fatal(err)
-				}
-				return "t1"
-			},
-			want: "task t1 is completed; dispatch requires pending or in_progress",
-		},
-		{
-			name: "failed terminal",
-			setup: func(t *testing.T) string {
-				t.Helper()
-				addClaimedDispatchTask(t)
-				if _, _, err := captureOutput(t, func() error {
-					return runTask([]string{"fail", "t1", "--me", "qa", "--reason", "failed", "--session", "issue-96"})
-				}); err != nil {
-					t.Fatal(err)
-				}
-				return "t1"
-			},
-			want: "task t1 is failed; dispatch requires pending or in_progress",
-		},
-		{
-			name: "blocked terminal",
-			setup: func(t *testing.T) string {
-				t.Helper()
-				addClaimedDispatchTask(t)
-				if _, _, err := captureOutput(t, func() error {
-					return runTask([]string{"block", "t1", "--me", "qa", "--reason", "blocked", "--session", "issue-96"})
-				}); err != nil {
-					t.Fatal(err)
-				}
-				return "t1"
-			},
-			want: "task t1 is blocked; dispatch requires pending or in_progress",
-		},
-		{
-			name: "cancelled terminal",
-			setup: func(t *testing.T) string {
-				t.Helper()
-				addClaimedDispatchTask(t)
-				if _, _, err := captureOutput(t, func() error {
-					return runTask([]string{"cancel", "t1", "--me", "qa", "--reason", "superseded", "--session", "issue-96"})
-				}); err != nil {
-					t.Fatal(err)
-				}
-				return "t1"
-			},
-			want: "task t1 is cancelled; dispatch requires pending or in_progress",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			chdir(t, dir)
-			writeDispatchTeam(t, dir)
-			taskID := tc.setup(t)
-			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-json to qa\n")
-
-			_, _, err := captureOutput(t, func() error {
-				return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--task", taskID})
-			})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("dispatch error = %v, want %q", err, tc.want)
-			}
-			if len(*calls) != 0 {
-				t.Fatalf("blocked/terminal task must not send AMQ, got %d calls", len(*calls))
-			}
-		})
-	}
-}
-
-func TestRunDispatchTaskJSONEnvelope(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	if _, _, err := captureOutput(t, func() error {
-		return runTask([]string{"add", "--title", "existing", "--assign", "qa", "--session", "issue-96"})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-json to qa\n")
-
-	stdout, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--task", "t1", "--json"})
-	})
-	if err != nil {
-		t.Fatalf("dispatch --task --json: %v", err)
-	}
-	for _, want := range []string{"\"kind\": \"dispatch\"", "\"task_id\": \"t1\"", "\"message_id\": \"msg-json\"", "\"assignee\": \"qa\""} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("dispatch json missing %q:\n%s", want, stdout)
-		}
-	}
-	persisted, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", "t1")
-	if err != nil || persisted.Status != taskstore.StatusInProgress || persisted.AssignedTo != "qa" || len(persisted.Outbox) != 0 || persisted.Dispatch != nil {
-		t.Fatalf("dispatch --task should leave one plain claimed task: %+v err=%v", persisted, err)
-	}
-}
-
 // TestDispatchMismatchedSenderSetsFromInTask is the production-path test for
 // #176: when dispatch --from orchestrator is used with a team whose lead is cto,
 // the AMQ message is sent with --me orchestrator so the task's From field is
@@ -781,62 +492,6 @@ func TestRunDispatchSendsDurably(t *testing.T) {
 	}
 	if strings.Contains(stderr, "Nudged") || strings.Contains(stderr, "pane") {
 		t.Fatalf("3.0 dispatch never nudges a pane, got:\n%s", stderr)
-	}
-}
-
-func TestRunDispatchRejectsReviewActorImplementAndLifecycleBeforeSideEffects(t *testing.T) {
-	for _, intent := range []string{taskstore.IntentImplement, taskstore.IntentLifecycle} {
-		for _, path := range []string{"create-task", "existing-task"} {
-			t.Run(intent+"_"+path, func(t *testing.T) {
-				dir := t.TempDir()
-				chdir(t, dir)
-				writeDispatchActorContractTeam(t, dir)
-				calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent forbidden to reviewer\n")
-				args := []string{
-					"--session", "actor-contract", "--role", "reviewer", "--subject", "Forbidden", "--body", "do not run",
-				}
-				var before taskstore.Task
-				if path == "create-task" {
-					args = append(args,
-						"--create-task", "--task-intent", intent, "--task-artifact", "artifact",
-						"--task-expected-base", strings.Repeat("a", 40), "--task-implementer", "reviewer", "--task-reviewer", "cto",
-					)
-				} else {
-					created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "actor-contract", taskstore.AddInput{
-						Title: "existing forbidden", Intent: intent, Artifact: "artifact", ExpectedBaseSHA: strings.Repeat("a", 40),
-						Implementer: "reviewer", Reviewer: "cto", AssignTo: "reviewer",
-					}, taskNow())
-					if err != nil {
-						t.Fatalf("seed existing task: %v", err)
-					}
-					before = created
-					args = append(args, "--task", created.ID)
-				}
-				_, _, err := captureOutput(t, func() error { return runDispatch(args) })
-				if err == nil || !strings.Contains(err.Error(), "EffectiveActorMode=review") || !strings.Contains(err.Error(), "current_actor_implementation_allowed=false") {
-					t.Fatalf("review actor %s %s refusal = %v", intent, path, err)
-				}
-				if len(*calls) != 0 {
-					t.Fatalf("review actor refusal crossed send/pane boundary: amq=%v", *calls)
-				}
-				tasks, listErr := taskstore.ListForProfile(dir, team.DefaultProfile, "actor-contract")
-				if listErr != nil {
-					t.Fatal(listErr)
-				}
-				if path == "create-task" && len(tasks) != 0 {
-					t.Fatalf("create-task refusal persisted task/outbox: %+v", tasks)
-				}
-				if path == "existing-task" {
-					after, showErr := taskstore.ShowForProfile(dir, team.DefaultProfile, "actor-contract", before.ID)
-					if showErr != nil || !reflect.DeepEqual(after, before) {
-						t.Fatalf("existing-task refusal mutated task/outbox: before=%+v after=%+v err=%v", before, after, showErr)
-					}
-				}
-				if _, statErr := os.Stat(filepath.Join(dir, team.DirName, "receipts", "actor-contract")); !os.IsNotExist(statErr) {
-					t.Fatalf("review actor refusal persisted receipt artifact: %v", statErr)
-				}
-			})
-		}
 	}
 }
 

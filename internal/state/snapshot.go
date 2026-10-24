@@ -56,7 +56,7 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	for _, key := range order {
 		b := bySession[key]
 		sortAgents(b.agents)
-		attachTaskStoreActivities(projectRoot, b.teamProfile, b.session, b.agents, now)
+		attachTaskStoreActivities(b.root, b.agents, now)
 
 		coord := coordinateSession(b.root, b.agents, now, th)
 		sessions = append(sessions, Session{
@@ -72,34 +72,27 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	return Snapshot{BaseRoot: baseRoot, Sessions: sessions}, nil
 }
 
-func attachTaskStoreActivities(projectRoot, profile, session string, agents []Agent, now time.Time) {
-	tasks, err := taskstore.ListForProfile(projectRoot, profile, session)
+// attachTaskStoreActivities seeds the current-task activity of agents with no
+// heartbeat from the 3.0 task store under the session root: the task whose
+// lease the handle holds.
+func attachTaskStoreActivities(root string, agents []Agent, now time.Time) {
+	tasks, err := taskstore.Snapshot(taskstore.DirFor(root))
 	if err != nil {
 		return
-	}
-	active := map[string]taskstore.Task{}
-	for _, t := range tasks {
-		if t.Status != taskstore.StatusInProgress || strings.TrimSpace(t.AssignedTo) == "" {
-			continue
-		}
-		cur, ok := active[t.AssignedTo]
-		if !ok || t.UpdatedAt.After(cur.UpdatedAt) || (t.UpdatedAt.Equal(cur.UpdatedAt) && t.ID > cur.ID) {
-			active[t.AssignedTo] = t
-		}
 	}
 	for i := range agents {
 		if agents[i].Activity != nil {
 			continue
 		}
-		t, ok := active[agents[i].Handle]
-		if !ok {
+		t := taskstore.HeldBy(agents[i].Handle, tasks)
+		if t == nil || t.Lease == nil {
 			continue
 		}
 		detail := strings.TrimSpace(t.Title)
 		if detail == "" {
 			detail = "current task from task store; no fresh activity heartbeat"
 		}
-		act := activity.TaskStoreSnapshot(t.AssignedTo, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
+		act := activity.TaskStoreSnapshot(agents[i].Handle, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
 		agents[i].Activity = &act
 	}
 }

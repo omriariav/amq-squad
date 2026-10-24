@@ -281,11 +281,6 @@ func statusWorktreeColumns(status *worktreeplan.MemberStatus) (string, string, s
 
 func statusWarnings(projectDir, profile, session string, now time.Time) ([]statusWarning, error) {
 	var warnings []statusWarning
-	taskWarnings, err := statusTaskWarnings(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	warnings = append(warnings, taskWarnings...)
 	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
 	return warnings, nil
 }
@@ -341,27 +336,6 @@ func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statu
 		})
 	}
 	return warnings
-}
-
-func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, error) {
-	tasks, err := taskstore.ListForProfile(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	var warnings []statusWarning
-	for _, t := range tasks {
-		if t.Status == taskstore.StatusCompletedPendingReconcile {
-			warnings = append(warnings, statusWarning{
-				Kind:    "task_legacy_status",
-				Session: session,
-				Detail: fmt.Sprintf(
-					"task %s retains legacy status completed_pending_reconcile; simple mode does not inspect completion evidence or run reconciliation, so use task list and make the next transition explicitly",
-					t.ID,
-				),
-			})
-		}
-	}
-	return warnings, nil
 }
 
 func statusCanonicalThread(raw string) string {
@@ -494,18 +468,15 @@ func attachStatusActivities(projectDir, profile, workstream string, rows []statu
 }
 
 func activeTasksByAssignee(projectDir, profile, workstream string) map[string]taskstore.Task {
-	tasks, err := taskstore.ListForProfile(projectDir, profile, workstream)
-	if err != nil {
+	root := squadnamespace.Resolve(projectDir, profile, workstream).AMQRoot
+	tasks, err := taskstore.Snapshot(taskstore.DirFor(root))
+	if err != nil || root == "" {
 		return nil
 	}
 	out := map[string]taskstore.Task{}
 	for _, t := range tasks {
-		if (t.Status != taskstore.StatusInProgress && t.Status != taskstore.StatusCompletedPendingReconcile) || strings.TrimSpace(t.AssignedTo) == "" {
-			continue
-		}
-		cur, ok := out[t.AssignedTo]
-		if !ok || t.UpdatedAt.After(cur.UpdatedAt) || (t.UpdatedAt.Equal(cur.UpdatedAt) && t.ID > cur.ID) {
-			out[t.AssignedTo] = t
+		if t.State == taskstore.StateInProgress && t.Lease != nil {
+			out[t.Lease.Holder] = t
 		}
 	}
 	return out
@@ -516,7 +487,7 @@ func taskStoreActivity(t taskstore.Task, now time.Time) *activity.Snapshot {
 	if detail == "" {
 		detail = "current task from task store; no fresh activity heartbeat"
 	}
-	act := activity.TaskStoreSnapshot(t.AssignedTo, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
+	act := activity.TaskStoreSnapshot(t.Lease.Holder, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
 	return &act
 }
 

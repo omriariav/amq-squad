@@ -8,11 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -131,11 +129,4 @@ func namespaceMigrationBaseRoot(ref squadnamespace.Ref) string {
 		return filepath.Dir(ref.AMQRoot)
 	}
 	return ref.AMQRoot
-}
-
-// taskDoneForTest completes a task the way the cut taskstore.DoneForProfile
-// wrapper did.
-func taskDoneForTest(projectDir, profile, session, id, actor, evidence string, now time.Time) (taskstore.Task, error) {
-	result, err := taskstore.DoneAtomicForProfile(projectDir, profile, session, id, taskstore.DoneOptions{Actor: actor, Evidence: evidence, Notify: true, Now: now})
-	return result.Task, err
 }

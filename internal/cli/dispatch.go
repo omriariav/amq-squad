@@ -18,10 +18,6 @@ const (
 	dispatchAnswerDefaultWaitAfter = 60 * time.Second
 )
 
-// dispatchClaimTask is the simple-mode atomic claim seam. The AMQ message is
-// deliberately separate from task-store state.
-var dispatchClaimTask = taskstore.ClaimForProfile
-
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "workstream session of the team")
@@ -41,14 +37,11 @@ func runDispatch(args []string) error {
 	waitTimeoutFlag := fs.Duration("wait-timeout", dispatchAnswerDefaultWaitAfter, "maximum time to wait for the AMQ receipt stage")
 	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
 	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
-	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
-	taskIDFlag := fs.String("task", "", "link dispatch metadata to an existing native task id")
-	taskIntent := fs.String("task-intent", "", "structured created-task intent: implement|review|audit|lifecycle")
-	taskArtifact := fs.String("task-artifact", "", "structured created-task artifact")
-	taskExpectedBase := fs.String("task-expected-base", "", "structured created-task expected base SHA")
-	taskImplementer := fs.String("task-implementer", "", "structured created-task implementer")
-	taskReviewer := fs.String("task-reviewer", "", "structured created-task reviewer")
-	taskParallelWork := fs.Bool("task-parallel-work", false, "explicitly allow competing implementation for the artifact")
+	createTaskFlag := fs.Bool("create-task", false, "create a task in the squad's task store and lease it to the child before dispatch")
+	taskIDFlag := fs.String("task", "", "lease an existing pending task (or confirm the child's lease) before dispatch")
+	taskClass := fs.String("task-class", "", "class of the created task (required with --create-task): "+strings.Join(taskstore.Classes, ", "))
+	taskFiles := fs.String("task-files", "", "comma-separated declared file globs of the created task")
+	taskPool := fs.String("task-pool", "", "runtime:model:effort of the created task")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad dispatch - queue a durable task for a child
@@ -59,7 +52,7 @@ Usage:
                      (--body TEXT | --body-file FILE) [--priority P]
                      [--wait-for STAGE] [--wait-timeout DURATION]
                      [--override-wait-posture --wait-posture-reason WHY]
-                     [--create-task | --task ID] [--json]
+                     [--create-task --task-class C [--task-files G,...] [--task-pool P] | --task ID] [--json]
 
 The deterministic lead-to-child dispatch: it sends a DURABLE AMQ message to
 the workstream's resolved root (the single source of truth), so the task
@@ -72,11 +65,12 @@ the printed root-correct 'amq drain --include-body --root ... --me ...' command.
 Draining the task message does not prove the task is complete; wait for the
 child's explicit report on the durable task thread.
 
-With --create-task or --task ID, dispatch creates (when requested) and atomically
-claims the native task before sending AMQ. Task state and message delivery are
-separate in simple mode: a failed send leaves the task in_progress, with no
-outbox, delivery state, or automatic retry. Inspect the AMQ mailbox before
-deciding whether to send again.
+With --create-task or --task ID, dispatch creates (when requested) the task in
+the squad's task store and grants its lease to the child before sending AMQ.
+Dispatch is tracked by the lease, not by the mail: the message is a doorbell.
+The child claims the lease (amq-squad task claim); if it never does, the lease
+expires and the task returns to the pool for another seat. A failed send
+leaves the lease in place; it expires the same way.
 
 Use --body-file FILE or --body-file - (stdin) for task bodies containing code,
 commands, backticks, or $() syntax. Inline --body is suitable only for short
@@ -171,43 +165,41 @@ Examples:
 	ctx.Me = from
 
 	taskID := strings.TrimSpace(*taskIDFlag)
-	var createInput *taskstore.AddInput
-	if *createTaskFlag && dispatchIntentRequiresImplementation(strings.TrimSpace(*taskIntent)) && !currentActorImplementationAllowed {
-		return dispatchActorIntentRefusal("create-task", strings.TrimSpace(*taskIntent), currentActorContract, currentActorMode)
+	if *createTaskFlag && !taskstore.ValidClass(strings.TrimSpace(*taskClass)) {
+		return usageErrorf("dispatch --create-task requires --task-class (one of %s)", strings.Join(taskstore.Classes, ", "))
 	}
-	if *createTaskFlag {
-		createInput = &taskstore.AddInput{
-			Title: *subjectFlag, Description: taskBody, AssignTo: member.Handle,
-			Intent: *taskIntent, Artifact: *taskArtifact, ExpectedBaseSHA: *taskExpectedBase,
-			Implementer: *taskImplementer, Reviewer: *taskReviewer, ParallelWorkExplicit: *taskParallelWork,
-		}
+	if *createTaskFlag && dispatchClassRequiresImplementation(strings.TrimSpace(*taskClass)) && !currentActorImplementationAllowed {
+		return dispatchActorIntentRefusal("create-task", strings.TrimSpace(*taskClass), currentActorContract, currentActorMode)
 	}
-	if taskID != "" {
-		currentTask, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID)
+	pool, err := parsePoolFlag(*taskPool)
+	if err != nil {
+		return err
+	}
+	var leased *taskstore.Task
+	if taskID != "" || *createTaskFlag {
+		store, err := taskstore.Open(absAMQRoot(projectDir, ctx.Root))
 		if err != nil {
 			return err
 		}
-		if err := validateDispatchTask(currentTask, member.Handle, projectDir, profile, workstream); err != nil {
-			return err
-		}
-		if dispatchIntentRequiresImplementation(currentTask.Intent) && !currentActorImplementationAllowed {
-			return dispatchActorIntentRefusal("task "+currentTask.ID, currentTask.Intent, currentActorContract, currentActorMode)
-		}
-	}
-	var claimedTask *taskstore.Task
-	if taskID != "" || createInput != nil {
-		if createInput != nil {
-			created, addErr := taskstore.AddForProfile(projectDir, profile, workstream, *createInput, taskNow())
+		if *createTaskFlag {
+			created, addErr := store.Add(taskstore.AddInput{
+				Title: *subjectFlag, Description: taskBody, Class: strings.TrimSpace(*taskClass),
+				DeclaredFiles: splitList(*taskFiles), Pool: pool, ProjectPath: projectDir, CreatedBy: from,
+			}, taskNow())
 			if addErr != nil {
-				return fmt.Errorf("create native task before dispatch: %w", addErr)
+				return fmt.Errorf("create task before dispatch: %w", addErr)
 			}
 			taskID = created.ID
+		} else if current, getErr := store.Get(taskID); getErr != nil {
+			return getErr
+		} else if dispatchClassRequiresImplementation(current.Class) && !currentActorImplementationAllowed {
+			return dispatchActorIntentRefusal("task "+current.ID, current.Class, currentActorContract, currentActorMode)
 		}
-		claimed, _, claimErr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
-		if claimErr != nil {
-			return fmt.Errorf("claim native task %s before dispatch: %w", taskID, claimErr)
+		got, leaseErr := leaseDispatchedTask(store, taskID, member.Handle, taskNow())
+		if leaseErr != nil {
+			return fmt.Errorf("lease task %s before dispatch: %w", taskID, leaseErr)
 		}
-		claimedTask = &claimed
+		leased = &got
 	}
 
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
@@ -218,8 +210,8 @@ Examples:
 	msgID := sendResult.MessageID
 	if err != nil {
 		if !dispatchSendWaitTimedOut(out, err, waitFor) {
-			if claimedTask != nil {
-				return fmt.Errorf("dispatch send to %s failed after task %s was claimed; the task remains in_progress and no automatic retry will occur (inspect AMQ before deciding whether to send again): %w", *roleFlag, taskID, err)
+			if leased != nil {
+				return fmt.Errorf("dispatch send to %s failed after task %s was leased to %s; the lease stays and returns the task to the pool if it is never claimed: %w", *roleFlag, taskID, member.Handle, err)
 			}
 			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 		}
@@ -273,71 +265,30 @@ Examples:
 	return nil
 }
 
-func dispatchIntentRequiresImplementation(intent string) bool {
-	intent = strings.TrimSpace(intent)
-	return intent == taskstore.IntentImplement || intent == taskstore.IntentLifecycle
+func dispatchClassRequiresImplementation(class string) bool {
+	return strings.TrimSpace(class) == "implement"
 }
 
-func dispatchActorIntentRefusal(subject, intent string, actor actorExecutionData, actorMode string) error {
-	return fmt.Errorf("%s dispatch refused: intent %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation or lifecycle work to an implementation actor", subject, intent, actor.ActorRole, actor.ActorHandle, actorMode)
+func dispatchActorIntentRefusal(subject, class string, actor actorExecutionData, actorMode string) error {
+	return fmt.Errorf("%s dispatch refused: class %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation work to an implementation actor", subject, class, actor.ActorRole, actor.ActorHandle, actorMode)
 }
 
-func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, session string) error {
-	assignee = strings.TrimSpace(assignee)
-	if authority := taskstore.AuthorityActor(t); authority != "" && authority != assignee {
-		return fmt.Errorf("task %s %s authority actor is %s; dispatch target uses handle %s", t.ID, t.Intent, authority, assignee)
-	}
-	assigned := strings.TrimSpace(t.AssignedTo)
-	if assigned != "" && assigned != assignee {
-		return fmt.Errorf("task %s is assigned to %s; dispatch target uses handle %s", t.ID, assigned, assignee)
-	}
-	switch t.Status {
-	case taskstore.StatusPending:
-		tasks, err := taskstore.ListForProfile(projectDir, profile, session)
-		if err != nil {
-			return err
-		}
-		byID := make(map[string]taskstore.Task, len(tasks))
-		for _, task := range tasks {
-			byID[task.ID] = task
-		}
-		for _, dep := range t.DependsOn {
-			d, ok := byID[dep]
-			if !ok {
-				return fmt.Errorf("task %s depends on %s, which does not exist", t.ID, dep)
-			}
-			if d.Status != taskstore.StatusCompleted {
-				return fmt.Errorf("task %s is blocked on %s (%s); complete it before dispatch", t.ID, dep, d.Status)
-			}
-		}
-		return nil
-	case taskstore.StatusInProgress:
-		return nil
-	case taskstore.StatusCompletedPendingReconcile, taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked, taskstore.StatusCancelled:
-		return fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", t.ID, t.Status)
-	default:
-		return fmt.Errorf("task %s has unknown status %q; dispatch requires pending or in_progress", t.ID, t.Status)
-	}
-}
-
-func autoClaimDispatchedTask(projectDir, profile, session, taskID, assignee string, now time.Time) (taskstore.Task, bool, error) {
-	current, err := taskstore.ShowForProfile(projectDir, profile, session, taskID)
+// leaseDispatchedTask grants a pending task's lease to the assignee, or
+// accepts a lease the assignee already holds. Any other state refuses.
+func leaseDispatchedTask(store taskstore.Store, id, assignee string, now time.Time) (taskstore.Task, error) {
+	current, err := store.Get(id)
 	if err != nil {
-		return taskstore.Task{}, false, err
+		return taskstore.Task{}, err
 	}
-	if err := validateDispatchTask(current, assignee, projectDir, profile, session); err != nil {
-		return taskstore.Task{}, false, err
-	}
-	switch current.Status {
-	case taskstore.StatusPending:
-		claimed, err := dispatchClaimTask(projectDir, profile, session, taskID, assignee, now)
-		return claimed, err == nil, err
-	case taskstore.StatusInProgress:
-		return current, false, nil
-	case taskstore.StatusCompletedPendingReconcile:
-		return taskstore.Task{}, false, fmt.Errorf("task %s is completed_pending_reconcile; exact evidence reconciliation is required before dispatch", current.ID)
+	switch {
+	case current.State == taskstore.StatePending:
+		return store.Grant(id, assignee, nil, taskLeaseDuration, now)
+	case current.State == taskstore.StateInProgress && current.Lease != nil && current.Lease.Holder == assignee:
+		return current, nil
+	case current.State == taskstore.StateInProgress && current.Lease != nil:
+		return taskstore.Task{}, fmt.Errorf("task %s is leased to %s, not %s", id, current.Lease.Holder, assignee)
 	default:
-		return taskstore.Task{}, false, fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", current.ID, current.Status)
+		return taskstore.Task{}, fmt.Errorf("task %s is %s; dispatch requires pending, or a lease the target already holds", id, current.State)
 	}
 }
 

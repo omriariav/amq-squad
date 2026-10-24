@@ -99,7 +99,21 @@ in a new directory, so there is nothing to migrate in place.
 v2's `failed` is not a task state in 3.0: a failed attempt ends the lease,
 is recorded in `attempts`, and the task returns to `pending`, where the
 retry rule of 6.2 (2b-4's router hook) picks the next pool or, when no
-retry is left, blocks the task with `retries_exhausted` for the lead.
+retry is left, blocks the task with `retries_exhausted` for the lead
+(lead ruling, 2026-10-24).
+
+Mapping from the v2 states (for readers of v2 docs; v2 files are not
+migrated):
+
+| v2 state | 3.0 |
+| --- | --- |
+| `pending` | `pending` |
+| `in_progress` | `in_progress` (the lease says claimed or not) |
+| `completed_pending_reconcile` | `in_progress` with a `report` awaiting the commit step |
+| `completed` | `completed` |
+| `failed` | an attempt row with outcome `failed`; the task goes back to `pending`, or to `blocked` with `retries_exhausted` |
+| `blocked` | `blocked` with `block_route: lead` |
+| `cancelled` | `cancelled` |
 
 ## Leases
 
@@ -121,8 +135,15 @@ retry is left, blocks the task with `retries_exhausted` for the lead.
 - Done: the holder files a report (`task done`). A task with no
   `declared_files` completes at once. A task with declared files waits,
   still `in_progress`, for the scheduler's commit step (2b-2's `seat
-  commit`); success completes it, a refusal blocks it with the refusal's
-  reason code, routed to the lead.
+  commit`); success completes it (`Complete`), a refusal blocks it with
+  the refusal's reason code, routed to the lead (`RefuseCommit`). After a
+  refusal the report stays and the reporting seat stays reserved (no new
+  lease; its worktree diff waits). A recorded lead widening (`Widen`)
+  re-arms the commit: the lease goes back to the reporting seat, claimed,
+  and the commit step runs again. `reset` discards the report.
+- A lease with a done report awaiting the commit step does not expire.
+- One seat holds at most one lease (`HeldBy`): a lease, or a blocked task
+  whose done report it filed.
 - Fail, block, release, cancel end the lease and append the attempt row.
 
 ## File locks

@@ -169,14 +169,34 @@ func TestContextReportsSeededRoleRulesTaskAndGates(t *testing.T) {
 	mustWrite(t, role.Path(f.agentDir), "# Role: CTO\nOwn the architecture.\n")
 	mustWrite(t, filepath.Join(f.agentDir, "extensions", role.LayerName, "launch.json"), fmt.Sprintf(`{"schema":1,"handle":"cto","session":"s1","root":%q,"team_home":%q,"started_at":"2026-10-23T11:00:00Z"}`, f.root, f.project))
 	mustWrite(t, filepath.Join(f.project, ".amq-squad", "team-rules.md"), "# Team Rules\n")
-	lease := func(owner string, renewed time.Time) string {
-		return fmt.Sprintf(`"lease":{"owner":%q,"issued_at":%q,"renewed_at":%q,"expires_at":%q}`, owner, renewed.Format(time.RFC3339), renewed.Format(time.RFC3339), renewed.Add(time.Hour).Format(time.RFC3339))
+	// The 3.0 store under the session root (acceptance 7): cto finished t1,
+	// holds a claimed lease on t2; qa holds t3; t4 waits in the pool.
+	store, err := taskstore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	tasks := taskstore.DirForProfile(f.project, "", "s1")
-	mustWrite(t, filepath.Join(tasks, "t1.json"), `{"id":"t1","title":"old","status":"in_progress","depends_on":[],`+lease("cto", f.now.Add(-2*time.Hour))+`}`)
-	mustWrite(t, filepath.Join(tasks, "t2.json"), `{"id":"t2","title":"build the verbs","status":"in_progress","depends_on":[],`+lease("cto", f.now.Add(-time.Minute))+`}`)
-	mustWrite(t, filepath.Join(tasks, "t3.json"), `{"id":"t3","title":"qa's","status":"in_progress","depends_on":[],`+lease("qa", f.now)+`}`)
-	mustWrite(t, filepath.Join(tasks, "t4.json"), `{"id":"t4","title":"done","status":"completed","depends_on":[]}`)
+	for _, title := range []string{"old", "build the verbs", "qa's", "queued"} {
+		if _, err := store.Add(taskstore.AddInput{Title: title, Class: "implement"}, f.now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps := []func() (taskstore.Task, error){
+		func() (taskstore.Task, error) { return store.Claim("t1", "cto", nil, time.Hour, f.now.Add(-time.Hour)) },
+		func() (taskstore.Task, error) { return store.Done("t1", "cto", "ok", "", f.now.Add(-30*time.Minute)) },
+		func() (taskstore.Task, error) {
+			return store.Claim("t2", "cto", nil, time.Hour, f.now.Add(-time.Minute))
+		},
+		func() (taskstore.Task, error) { return store.Grant("t3", "qa", nil, time.Hour, f.now) },
+	}
+	for _, step := range steps {
+		if _, err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t2Before, err := os.ReadFile(filepath.Join(taskstore.DirFor(f.root), "t2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.gate(t, "g-open", "tag", "tag:v1", answerNone, "cto")
 	f.gate(t, "g-forged", "tag", "tag:v3", answerForged, "")
 	f.gate(t, "g-qa", "tag", "tag:v2", answerNone, "qa")
@@ -200,8 +220,15 @@ func TestContextReportsSeededRoleRulesTaskAndGates(t *testing.T) {
 	if d.Rules.Path != filepath.Join(f.project, ".amq-squad", "team-rules.md") || d.Rules.SHA256 != "sha256:"+sha256Hex("# Team Rules\n") {
 		t.Errorf("rules = %+v", d.Rules)
 	}
-	if d.Task == nil || d.Task.ID != "t2" || d.Task.Expired {
-		t.Errorf("task = %+v, want t2 (the most recently renewed cto lease)", d.Task)
+	if d.Task == nil || d.Task.ID != "t2" || d.Task.Expired || !d.Task.Claimed || d.Task.Class != "implement" {
+		t.Errorf("task = %+v, want t2 (the lease cto holds)", d.Task)
+	}
+	if after, _ := os.ReadFile(filepath.Join(taskstore.DirFor(f.root), "t2.json")); string(after) != string(t2Before) {
+		t.Error("context wrote the task store (it must never renew a lease)")
+	}
+	qa := buildHookContext(hookIdentity{Handle: "qa", Root: f.root, AgentDir: filepath.Join(f.root, "agents", "qa")}, f.project, f.now)
+	if qa.Task == nil || qa.Task.ID != "t3" || qa.Task.Claimed {
+		t.Errorf("qa task = %+v, want the unclaimed t3", qa.Task)
 	}
 	// g-forged stays open: an answer file whose envelope does not verify never counts.
 	if len(d.OpenGates) != 2 || d.OpenGates[0].GateID != "g-forged" || d.OpenGates[1].GateID != "g-open" {
@@ -226,7 +253,7 @@ func TestContextWithoutLaunchRecordHasNoTaskAndRulesFromEnv(t *testing.T) {
 	rulesPath := filepath.Join(f.project, "rules.md")
 	mustWrite(t, rulesPath, "r")
 	t.Setenv("AMQ_SQUAD_RULES_PATH", rulesPath)
-	d := buildHookContext(f.id(), "", "", f.now)
+	d := buildHookContext(f.id(), "", f.now)
 	if d.Task != nil || d.Rules.Path != rulesPath || len(d.OpenGates) != 0 {
 		t.Fatalf("context = %+v", d)
 	}
@@ -815,7 +842,7 @@ func TestHookVerbsColdRunBound(t *testing.T) {
 			t.Fatalf("fixture verdict = %+v", v)
 		}
 	}
-	context := func() { buildHookContext(f.id(), f.project, "", f.now) }
+	context := func() { buildHookContext(f.id(), f.project, f.now) }
 	for name, fn := range map[string]func(){"guard": guard, "context": context} {
 		start := time.Now()
 		fn()

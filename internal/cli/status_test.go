@@ -206,135 +206,6 @@ printf '{"root":"%s","base_root":"%s","me":"%s"}\n' "$root" "$AMQ_FAKE_BASE" "${
 	return base
 }
 
-func TestStatusIgnoresUnstructuredWorkerCompletionReport(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	})
-	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
-	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
-		Title:    "review result",
-		AssignTo: "qa",
-	}, now.Add(-2*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
-		Sender:    "cto",
-		Assignee:  "qa",
-		Thread:    "p2p/cto__qa",
-		Kind:      "todo",
-		Subject:   "Validate",
-		MessageID: "msg-dispatch",
-	}, now.Add(-90*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "qa", now.Add(-80*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	ctoDir := filepath.Join(dir, ".agent-mail", "issue-96", "agents", "cto")
-	seedThreadMessage(t, ctoDir, "new", "msg-done", "qa", []string{"cto"},
-		"p2p/cto__qa", "DONE t1", string(state.KindStatus), now.Add(-5*time.Minute))
-
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            statusProbe(nil, nil, now),
-	})
-	if err != nil {
-		t.Fatalf("status --json: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if w := findStatusWarning(env.Data.Warnings, "task_completion_reconcile_ready"); w != nil {
-		t.Fatalf("unstructured DONE prose triggered completion warning: %+v", w)
-	}
-}
-
-func TestStatusDoesNotTreatAckStartCompleteProseAsCompletion(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "platform-dev", Binary: "codex", Handle: "platform-dev", Session: "issue-96"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	})
-	now := time.Date(2026, 7, 15, 19, 4, 54, 0, time.UTC)
-	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{Title: "wizard slice", AssignTo: "platform-dev"}, now.Add(-time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
-		Sender: "cto", Assignee: "platform-dev", Thread: "p2p/cto__platform-dev", Kind: "todo", Subject: "TASK t2", MessageID: "dispatch-t2",
-	}, now.Add(-50*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "platform-dev", now.Add(-40*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	ctoDir := filepath.Join(dir, ".agent-mail", "issue-96", "agents", "cto")
-	seedThreadMessage(t, ctoDir, "new", "2026-07-15T21-21-59.878Z_pid32072_1f1baa43", "platform-dev", []string{"cto"},
-		"p2p/cto__platform-dev", "ACK #477 final hardening matrix", string(state.KindStatus), now,
-		"ACK #477 core acceptance/hardening: complete the negative evidence/apply matrix for t1 and completion reconciliation.")
-
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir: dir, RequestedSession: "issue-96", ExplicitSession: true, JSON: true,
-		Probe: statusProbe(nil, nil, now.Add(time.Minute)),
-	})
-	if err != nil {
-		t.Fatalf("status --json: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	for _, warning := range env.Data.Warnings {
-		if warning.Kind == "task_report_pending_completion" || strings.Contains(warning.SuggestedCommand, "task done") || strings.Contains(warning.Detail, "task done") {
-			t.Fatalf("ACK/start prose must not be completion evidence or blind-close guidance: %+v", warning)
-		}
-	}
-}
-
-func TestStatusTaskWarningsSuppressClosedAndSupersededTasks(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
-	link := func(tk taskstore.Task) {
-		t.Helper()
-		if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "s", tk.ID, taskstore.Dispatch{Sender: "cto", Assignee: "qa", Thread: "p2p/cto__qa", MessageID: "dispatch-" + tk.ID}, now); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	completed, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "completed", AssignTo: "qa"}, now)
-	link(completed)
-	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", completed.ID, "qa", now)
-	if _, err := taskDoneForTest(dir, team.DefaultProfile, "s", completed.ID, "qa", "done", now); err != nil {
-		t.Fatal(err)
-	}
-	cancelled, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "cancelled", AssignTo: "qa"}, now)
-	link(cancelled)
-	if _, err := taskstore.CancelForProfile(dir, team.DefaultProfile, "s", cancelled.ID, "qa", "obsolete", "", now); err != nil {
-		t.Fatal(err)
-	}
-	superseded, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "superseded", AssignTo: "qa"}, now)
-	link(superseded)
-	replacement, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "replacement"}, now)
-	if _, err := taskstore.CancelForProfile(dir, team.DefaultProfile, "s", superseded.ID, "qa", "replaced", replacement.ID, now); err != nil {
-		t.Fatal(err)
-	}
-
-	warnings, err := statusTaskWarnings(dir, team.DefaultProfile, "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("terminal attention lifecycle emitted status warnings: %+v", warnings)
-	}
-}
-
 func TestStatusWarnsAgedOperatorGate(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
@@ -571,14 +442,15 @@ func TestStatusJSONUsesTaskStoreActivityFallback(t *testing.T) {
 		},
 	})
 	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
-	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
-		Title:    "review fix",
-		AssignTo: "qa",
-	}, now.Add(-time.Minute))
+	store, err := taskstore.Open(squadnamespace.Resolve(dir, team.DefaultProfile, "issue-96").AMQRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "qa", now.Add(-30*time.Second)); err != nil {
+	created, err := store.Add(taskstore.AddInput{Title: "review fix", Class: "review"}, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(created.ID, "qa", nil, time.Hour, now.Add(-30*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1049,56 +921,6 @@ func TestExecuteStatusDefaultWorkstreamFallthrough(t *testing.T) {
 	}
 	if !strings.Contains(out, workstream) {
 		t.Errorf("default workstream %q not in output:\n%s", workstream, out)
-	}
-}
-
-func TestStatusUsesPlainTaskStateAndOmitsGoalSupervision(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	})
-	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
-	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
-		Title:    "pending dispatch",
-		AssignTo: "qa",
-	}, now.Add(-time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
-		Sender:    "cto",
-		Assignee:  "qa",
-		Thread:    "p2p/cto__qa",
-		Kind:      "todo",
-		Subject:   "Validate",
-		MessageID: "msg-pending",
-	}, now.Add(-30*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            statusProbe(nil, nil, now),
-	})
-	if err != nil {
-		t.Fatalf("status --json: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if w := findStatusWarning(env.Data.Warnings, "task_dispatched_pending"); w != nil {
-		t.Fatalf("simple status interpreted legacy dispatch metadata: %+v", w)
-	}
-	if strings.Contains(out, `"goal_supervision"`) {
-		t.Fatalf("simple status projected goal-supervision machinery: %s", out)
-	}
-	if strings.Contains(out, `"open_gates"`) {
-		t.Fatalf("scoped status emitted an unobserved hardcoded gate count: %s", out)
 	}
 }
 

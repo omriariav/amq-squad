@@ -639,7 +639,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		"--project", project, "--profile", profile, "--session", session,
 		"--role", "qa", "--from", "cto", "--thread", "p2p/cto__qa",
 		"--subject", "real dispatch contract", "--body", "real simple dispatch body",
-		"--create-task", "--json",
+		"--create-task", "--task-class", "review", "--json",
 	}
 	stdout, stderr, err := captureOutput(t, func() error { return runDispatch(args) })
 	if err != nil {
@@ -658,12 +658,16 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	if !strings.Contains(drained, dispatch.MessageID) || !strings.Contains(drained, "real simple dispatch body") {
 		t.Fatalf("real dispatch drain missing message evidence:\n%s", drained)
 	}
-	task, err := taskstore.ShowForProfile(project, profile, session, dispatch.TaskID)
+	store, err := taskstore.Open(absAMQRoot(project, ctx.Root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.Get(dispatch.TaskID)
 	if err != nil {
 		t.Fatalf("show real dispatched task: %v", err)
 	}
-	if task.Status != taskstore.StatusInProgress || task.AssignedTo != "qa" || task.Lease == nil || task.Dispatch != nil || len(task.Outbox) != 0 {
-		t.Fatalf("real simple dispatched task state = %+v", task)
+	if task.State != taskstore.StateInProgress || task.Lease == nil || task.Lease.Holder != "qa" || task.Lease.ClaimedAt != nil {
+		t.Fatalf("real dispatched task state = %+v", task)
 	}
 
 	const gate = "gate/real-amq-471"
