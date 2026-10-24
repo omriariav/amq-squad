@@ -242,6 +242,9 @@ func LoadFrom(ownerPath, repoRoot string) (Resolved, error) {
 	if repoRoot == "" {
 		return r, nil
 	}
+	// A repository's grant is a squad grant: the fleet grant is the operator
+	// session's alone (plan 3.5, R39; 4-3), so a squad lead never holds it.
+	r.Fleet = Fleet{}
 	p := filepath.Join(repoRoot, "squad.yaml")
 	raw, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -285,6 +288,16 @@ func (g Grants) MergeFor(repository, base string) (Merge, bool) {
 		}
 	}
 	return Merge{}, false
+}
+
+// FleetScope reports whether the grant is a fleet grant: the operator
+// session's (plan 3.5). A squad grant (Load with a repository root) never is.
+func (r Resolved) FleetScope() bool { return !r.Insecure && r.Fleet.MaxSquads > 0 }
+
+// RepositoryPermitted reports whether the fleet grant permits a repository
+// (owner/name, case-insensitive). An empty list permits none.
+func (f Fleet) RepositoryPermitted(repository string) bool {
+	return slices.ContainsFunc(f.PermittedRepositories, func(r string) bool { return strings.EqualFold(r, repository) })
 }
 
 // RuntimePermitted reports whether a runtime may start a seat.

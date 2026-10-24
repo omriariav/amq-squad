@@ -17,7 +17,8 @@ change is version 2. Nullable fields are always present and `null` when
 unknown; lists are always present, possibly empty. The nullable fields are
 exactly: seat `last_activity_at`, `last_message_at`, `tokens_in`,
 `tokens_out`; task `pool`, `lease_expires_at`; attention `action`; scheduler
-`usage_limit_since`, `usage_limit_until` (`status.NullableFields`). Null
+`usage_limit_since`, `usage_limit_until`; document `lead_handle`
+(`status.NullableFields`). Null
 anywhere else, or a null document, fails the check.
 
 ## Document
@@ -29,6 +30,7 @@ anywhere else, or a null document, fails the check.
 | `generated_at` | RFC 3339 UTC |
 | `root`, `session` | the AMQ session root and session name |
 | `project_path` | the squad's repository root, when known |
+| `lead_handle` | the handle of the seat whose role is `lead`, `null` when no seat has it; in the fleet form, fleet.yaml's lead handle fills a null one (additive; 4-3 acceptance 7) |
 | `capabilities[]` | what this producer fills; see below |
 | `buckets[]` | the four buckets in display order: `id`, `label`, `rule` |
 | `counts` | rows per bucket: `all`, `needs_you`, `working`, `ready`, `inactive`; a row is a task, or a seat that holds no task |
@@ -107,3 +109,25 @@ is absent is present with its empty or null value. Schema 1 names:
 runtime reports no number (Claude Code hook payloads carry none; briefs
 lead ruling 5), and `seat.tokens:evidence_ledger` means the producer sums
 token counts found in evidence ledger payloads.
+
+## Fleet form
+
+`amq-squad status --fleet --json` reads the fleet registry
+`~/.amq-squad/fleet.yaml` (plan 16.3) and prints one document (briefs ruling
+16):
+
+```
+{"schema_version": 1, "kind": "fleet", "producer": "amq-squad",
+ "producer_version": "...", "generated_at": "<RFC 3339 UTC>",
+ "squads": [<one schema 1 status document per squad, unchanged>]}
+```
+
+The squads are in registry order. Each is the single-squad document of its
+root, unchanged except that a null `lead_handle` takes the squad's lead
+handle from fleet.yaml. The single-squad document carries no `kind`; a
+reader treats a document with `squads` as a fleet and anything else as one
+squad (`status.IsFleet`). The reference is
+`internal/status/testdata/status-fleet-v1.golden.json`, whose one squad is
+the single-squad golden with `lead_handle` null; a test keeps the two in
+step. The operator mailbox is the owner's `user` handle; the contract
+carries no operator field.

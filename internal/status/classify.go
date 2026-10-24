@@ -58,6 +58,9 @@ var BaseCapabilities = []string{"tasks", "leases", "pools", "attention", "gates"
 
 const lastMessageLimit = 200
 
+// LeadRole is the seat role whose handle is the document's lead_handle.
+const LeadRole = "lead"
+
 // Build classifies every task and seat, builds the attention queue, counts
 // the buckets and returns the contract document. The same input gives the
 // same output.
@@ -144,6 +147,12 @@ func Build(in Input) Status {
 			ID: "scheduler:usage_limit", Kind: "usage_limit", Severity: "medium", Since: *since,
 			Subject: "a usage-limit event stopped new seats", Bucket: BucketWorking,
 		})
+	}
+	for _, st := range s.Seats {
+		if st.Role == LeadRole && s.LeadHandle == nil {
+			h := st.Handle
+			s.LeadHandle = &h
+		}
 	}
 	sortAttention(s.Attention)
 	for _, t := range s.Tasks {

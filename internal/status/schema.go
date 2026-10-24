@@ -125,23 +125,27 @@ type Pool struct {
 
 // Status is the whole `status --json` document.
 type Status struct {
-	SchemaVersion   int          `json:"schema_version"`
-	Producer        string       `json:"producer"`
-	ProducerVersion string       `json:"producer_version"`
-	GeneratedAt     time.Time    `json:"generated_at"`
-	Root            string       `json:"root"`
-	Session         string       `json:"session"`
-	ProjectPath     string       `json:"project_path"`
-	Capabilities    []string     `json:"capabilities"`
-	Buckets         []BucketInfo `json:"buckets"`
-	Counts          Counts       `json:"counts"`
-	Seats           []Seat       `json:"seats"`
-	Tasks           []Task       `json:"tasks"`
-	Attention       []Attention  `json:"attention"`
-	Gates           []Gate       `json:"gates"`
-	Actions         Actions      `json:"actions"`
-	Scheduler       Scheduler    `json:"scheduler"`
-	Warnings        []string     `json:"warnings"`
+	SchemaVersion   int       `json:"schema_version"`
+	Producer        string    `json:"producer"`
+	ProducerVersion string    `json:"producer_version"`
+	GeneratedAt     time.Time `json:"generated_at"`
+	Root            string    `json:"root"`
+	Session         string    `json:"session"`
+	ProjectPath     string    `json:"project_path"`
+	// LeadHandle is the handle of the seat whose role is lead, null when no
+	// seat has that role (additive; 4-3 acceptance 7, from 2b-4's row 8). In
+	// the fleet form, fleet.yaml's lead handle fills it when it is null.
+	LeadHandle   *string      `json:"lead_handle"`
+	Capabilities []string     `json:"capabilities"`
+	Buckets      []BucketInfo `json:"buckets"`
+	Counts       Counts       `json:"counts"`
+	Seats        []Seat       `json:"seats"`
+	Tasks        []Task       `json:"tasks"`
+	Attention    []Attention  `json:"attention"`
+	Gates        []Gate       `json:"gates"`
+	Actions      Actions      `json:"actions"`
+	Scheduler    Scheduler    `json:"scheduler"`
+	Warnings     []string     `json:"warnings"`
 }
 
 // Counts is the number of rows (seats with no task, plus tasks) per bucket.

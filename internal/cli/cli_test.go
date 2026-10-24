@@ -285,6 +285,7 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"gate":      true,
 		"operator":  true,
 		"status":    true,
+		"fleet":     true,
 		"dispatch":  true,
 		"amq":       true,
 		"doctor":    true,
