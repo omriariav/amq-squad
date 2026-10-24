@@ -1,0 +1,561 @@
+========================================================================
+## rule: strict subset read
+## test: ./internal/routing/ TestRoutingFileRefusals/malformed_line$
+## edit internal/routing/file.go:
+-yamlsub.Split(text, source, true)
++yamlsub.Split(text, source, false)
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/malformed_line
+    file_test.go:154: err = <nil>, want "malformed line"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/malformed_line (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.238s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/malformed_line
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/malformed_line (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.235s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: unknown top-level key
+## test: ./internal/routing/ TestRoutingFileRefusals/unknown_key$
+## edit internal/routing/file.go:
+-		default:
+			err = e.Errf("unknown key")
+		}
+		if err != nil {
+			return fail(err)
++		default:
+		}
+		if err != nil {
+			return fail(err)
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/unknown_key
+    file_test.go:154: err = <nil>, want "unknown key"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/unknown_key (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.233s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/unknown_key
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_key (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.225s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: schema required
+## test: ./internal/routing/ TestRoutingFileRefusals/missing_schema$
+## edit internal/routing/file.go:
+-	if !sawSchema {
++	if false && !sawSchema {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/missing_schema
+    file_test.go:154: err = <nil>, want "schema: missing"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/missing_schema (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.225s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/missing_schema
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/missing_schema (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.229s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: schema 1 only
+## test: ./internal/routing/ TestRoutingFileRefusals/schema_2$
+## edit internal/routing/file.go:
+-err == nil && n != Schema {
++err == nil && false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/schema_2
+    file_test.go:154: err = <nil>, want "not supported"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/schema_2 (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.215s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/schema_2
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/schema_2 (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.230s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: share 0 to 1
+## test: ./internal/routing/ TestRoutingFileRefusals/share_above_1$
+## edit internal/routing/file.go:
+-if err != nil || v < 0 || v > 1 {
++if err != nil {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/share_above_1
+    file_test.go:154: err = routing.yaml: exploration_share 1.5 outside 0 to 1, want "share from 0 to 1"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/share_above_1 (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.230s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/share_above_1
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_above_1 (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.234s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: closed class list
+## test: ./internal/routing/ TestRoutingFileRefusals/unknown_class$
+## edit internal/routing/file.go:
+-		if !task.ValidClass(class) {
+			return row.Errf
++		if false {
+			return row.Errf
+## edit internal/routing/table.go:
+-		if !task.ValidClass(k) {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/unknown_class
+    file_test.go:154: err = <nil>, want "closed list"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/unknown_class (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.335s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/unknown_class
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_class (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.233s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: known tiers only
+## test: ./internal/routing/ TestRoutingFileRefusals/unknown_tier$
+## edit internal/routing/file.go:
+-		if TierRank(tier) < 0 {
+			return row.Errf
++		if false {
+			return row.Errf
+## edit internal/routing/table.go:
+-		if TierRank(k) < 0 {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/unknown_tier
+    file_test.go:154: err = <nil>, want "unknown tier"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/unknown_tier (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.335s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/unknown_tier
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_tier (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.231s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: plan never routes down
+## test: ./internal/routing/ TestRoutingFileRefusals/plan_routed_down$
+## edit internal/routing/table.go:
+-if TierRank(s.Tier) < TierRank(d.Tier) && !def.MayRouteDown(c) {
++if false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/plan_routed_down
+    file_test.go:154: err = <nil>, want "never routes below"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/plan_routed_down (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.233s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/plan_routed_down
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/plan_routed_down (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.234s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: review never routes down
+## test: ./internal/routing/ TestRoutingFileRefusals/review_routed_down$
+## edit internal/routing/table.go:
+-if TierRank(s.Tier) < TierRank(d.Tier) && !def.MayRouteDown(c) {
++if false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/review_routed_down
+    file_test.go:154: err = routing.yaml: class review: only review runs on the advisor tier, want "never routes below"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/review_routed_down (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.232s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/review_routed_down
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/review_routed_down (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.225s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: advisor is review only
+## test: ./internal/routing/ TestRoutingFileRefusals/implement_on_advisor$
+## edit internal/routing/table.go:
+-if (c == "review") != (s.Tier == TierAdvisor) {
++if false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/implement_on_advisor
+    file_test.go:154: err = <nil>, want "only review runs on the advisor"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/implement_on_advisor (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.232s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/implement_on_advisor
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/implement_on_advisor (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.240s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: verifier fixed
+## test: ./internal/routing/ TestRoutingFileRefusals/verifier_changed$
+## edit internal/routing/file.go:
+-err = f.Errf("the verifier is fixed by plan 6.1")
++err = nil
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/verifier_changed
+    file_test.go:154: err = <nil>, want "fixed by plan 6.1"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/verifier_changed (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.226s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/verifier_changed
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/verifier_changed (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.236s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: chain entry form
+## test: ./internal/routing/ TestRoutingFileRefusals/bad_chain_entry$
+## edit internal/routing/file.go:
+-if perr != nil || pl.Effort == "" {
++if false && perr != nil {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/bad_chain_entry
+    file_test.go:154: err = <nil>, want "runtime:model:effort"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/bad_chain_entry (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.339s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/bad_chain_entry
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/bad_chain_entry (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.235s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: chain not empty
+## test: ./internal/routing/ TestRoutingFileRefusals/empty_chain$
+## edit internal/routing/table.go:
+-if !ok || len(s.Chain) == 0 {
++if !ok {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/empty_chain
+    file_test.go:154: err = <nil>, want "has no chain"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/empty_chain (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.232s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/empty_chain
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/empty_chain (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.228s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: chain entry unique
+## test: ./internal/routing/ TestRoutingFileRefusals/repeated_chain_entry$
+## edit internal/routing/table.go:
+-			if seen[e] {
+				return fmt.Errorf
++			if false {
+				return fmt.Errorf
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/repeated_chain_entry
+    file_test.go:154: err = <nil>, want "repeated"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/repeated_chain_entry (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.235s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/repeated_chain_entry
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_chain_entry (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.227s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: cost cap not negative
+## test: ./internal/routing/ TestRoutingFileRefusals/negative_cost_cap$
+## edit internal/routing/file.go:
+-if err != nil || v < 0 {
+		return 0, e.Errf("want a number at or above 0
++if err != nil {
+		return 0, e.Errf("want a number at or above 0
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/negative_cost_cap
+    file_test.go:154: err = routing.yaml: tier plan: max_cost_index below 0, want "at or above 0"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/negative_cost_cap (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.209s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/negative_cost_cap
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/negative_cost_cap (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.214s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: repository-only keys
+## test: ./internal/routing/ TestRoutingFileRefusals/privacy_in_user_file$
+## edit internal/routing/file.go:
+-			if !repo {
+
++			if false {
+
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_in_user_file
+    file_test.go:154: err = <nil>, want "only the repository file"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/privacy_in_user_file (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	1.089s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_in_user_file
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_in_user_file (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.376s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: privacy class closed
+## test: ./internal/routing/ TestRoutingFileRefusals/privacy_class_unknown$
+## edit internal/routing/file.go:
+-r.Class, err = f.OneOf(grants.PrivacyLocal, grants.PrivacyVendor)
++r.Class, err = f.Scalar()
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_class_unknown
+    file_test.go:154: err = <nil>, want "want one of"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/privacy_class_unknown (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.213s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_class_unknown
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_class_unknown (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.220s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: privacy glob relative
+## test: ./internal/routing/ TestRoutingFileRefusals/privacy_path_escapes$
+## edit internal/routing/file.go:
+-if clean, err = task.CleanDeclaredFiles([]string{g}); err == nil && len(clean) == 1 {
++if clean, err = []string{g}, nil; err == nil && len(clean) == 1 {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_path_escapes
+    file_test.go:154: err = <nil>, want "relative to the repository root"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/privacy_path_escapes (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.206s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_path_escapes
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_path_escapes (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.200s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: privacy rule complete
+## test: ./internal/routing/ TestRoutingFileRefusals/privacy_rule_incomplete$
+## edit internal/routing/file.go:
+-if r.Glob == "" || r.Class == "" {
++if false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_rule_incomplete
+    file_test.go:154: err = <nil>, want "needs glob and class"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/privacy_rule_incomplete (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.212s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/privacy_rule_incomplete
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_rule_incomplete (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.400s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: local path rule matches
+## test: ./internal/routing/ TestLoadOverlaysUserThenRepository$
+## edit internal/routing/file.go:
+-if r.Class == grants.PrivacyLocal && mayTouch(files, r.Glob) {
++if false {
+## reverted run (exit 1):
+=== RUN   TestLoadOverlaysUserThenRepository
+    file_test.go:102: privacy = vendor 
+--- FAIL: TestLoadOverlaysUserThenRepository (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.442s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLoadOverlaysUserThenRepository
+--- PASS: TestLoadOverlaysUserThenRepository (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.382s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: companions from the class row
+## test: ./internal/routing/ TestRequiredCompanionsDefaultEmptyAndRepositoryList$
+## edit internal/routing/table.go:
+-for _, c := range t.Classes[class].RequiredCompanions {
++for _, c := range []string(nil) {
+## reverted run (exit 1):
+=== RUN   TestRequiredCompanionsDefaultEmptyAndRepositoryList
+    file_test.go:52: companions = []
+--- FAIL: TestRequiredCompanionsDefaultEmptyAndRepositoryList (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.397s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRequiredCompanionsDefaultEmptyAndRepositoryList
+--- PASS: TestRequiredCompanionsDefaultEmptyAndRepositoryList (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.464s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: no max effort default
+## test: ./internal/routing/ TestDefaultTableHoldsThePlanInvariants$
+## edit internal/routing/table.go:
+-pool("claude", "opus", "xhigh"),
++pool("claude", "opus", "max"),
+## reverted run (exit 1):
+=== RUN   TestDefaultTableHoldsThePlanInvariants
+    file_test.go:25: tier advisor: claude:opus:max: max effort is never a default (6.2)
+--- FAIL: TestDefaultTableHoldsThePlanInvariants (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.392s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDefaultTableHoldsThePlanInvariants
+--- PASS: TestDefaultTableHoldsThePlanInvariants (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.374s
+
+## verdict: OK (fails reverted, passes restored)

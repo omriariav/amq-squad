@@ -1,0 +1,49 @@
+routing report 2026-10-17 to 2026-10-24: 28 rows in the window, 25 used
+excluded runtime codex: 3 of 3 rows lack token evidence (plan 16.8)
+entries with no owner price (cost unknown, no budget stop): pi:ollama/qwen3.6:27b:low
+
+extract smol band 1
+  attempts 4, tasks 4, redone at a higher tier 2 (50%)
+  cost per task 0.0060 USD, one tier up n/a
+  wait mean 1s, max 1s; reasons: none
+  review findings traced to its smol outputs: 0
+  proposal: raise extract size band 1 from smol to task: 2 of 4 tasks redone at a higher tier
+extract task band 1
+  attempts 2, tasks 2, redone at a higher tier 0 (0%)
+  cost per task n/a, one tier up n/a
+  wait mean 1s, max 1s; reasons: none
+  proposal: no change: 2 task(s), too few to judge
+summarize smol band 1
+  attempts 3, tasks 3, redone at a higher tier 0 (0%)
+  cost per task n/a, one tier up n/a
+  wait mean 1s, max 1s; reasons: none
+  review findings traced to its smol outputs: 4
+  proposal: raise summarize size band 1 from smol to task: 4 review finding(s) traced to its smol outputs
+script smol band 2-3
+  attempts 4, tasks 4, redone at a higher tier 0 (0%)
+  cost per task 0.0100 USD, one tier up 0.0050 USD, dominated
+  wait mean 1s, max 1s; reasons: none
+  review findings traced to its smol outputs: 0
+  proposal: raise script size band 2-3 from smol to task: cost with redo 0.0100 USD a task against 0.0050 USD one tier up
+script task band 2-3
+  attempts 3, tasks 3, redone at a higher tier 0 (0%)
+  cost per task 0.0050 USD, one tier up n/a
+  wait mean 1s, max 1s; reasons: none
+  proposal: no change: 3 tasks, no signal
+implement task band 1
+  attempts 5, tasks 5, redone at a higher tier 0 (0%)
+  cost per task 0.0200 USD, one tier up n/a
+  wait mean 1s, max 1s; reasons: none
+  proposal: try implement size band 1 on smol, one tier down: no redo in 5 tasks
+implement task band 2-3
+  attempts 3, tasks 3, redone at a higher tier 0 (0%)
+  cost per task 0.0500 USD, one tier up n/a
+  wait mean 20m0s, max 20m0s; reasons: concurrency_cap 3
+  proposal: change the task chain: mean wait 20m0s, mostly concurrency_cap; add or reorder an entry that passes
+review advisor band 1
+  attempts 1, tasks 1, redone at a higher tier 0 (0%)
+  cost per task 0.2000 USD, one tier up n/a
+  wait mean 1s, max 1s; reasons: none
+  proposal: no change: 1 task(s), too few to judge
+
+proposals are for the owner; none is applied (plan 6.4, R28)

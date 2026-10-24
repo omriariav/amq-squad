@@ -1,0 +1,664 @@
+========================================================================
+## rule: explore down only with a mechanical verifier
+## test: ./internal/routing/ TestAcceptance1ClassTable$
+## edit internal/routing/router.go:
+-if r.o.Table.MayRouteDown(t.Class) && !escalated {
++if !escalated {
+## reverted run (exit 1):
+=== RUN   TestAcceptance1ClassTable
+    router_test.go:134: summarize (tier "task"): used smol policy explore, want plan explore
+    router_test.go:137: summarize routed below its tier: smol < task
+--- FAIL: TestAcceptance1ClassTable (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	4.394s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance1ClassTable
+--- PASS: TestAcceptance1ClassTable (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	2.478s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: plan and review never explored
+## test: ./internal/routing/ TestAcceptance1ClassTable$
+## edit internal/routing/router.go:
+-if t.Class != "plan" && t.Class != "review" && share > 0 {
++if share > 0 {
+## edit internal/routing/table.go:
+-	case TierTask:
+		return TierPlan
+	}
+	return t
+}
+
+// down
++	case TierTask:
+		return TierPlan
+	case TierPlan:
+		return TierAdvisor
+	}
+	return t
+}
+
+// down
+## reverted run (exit 1):
+=== RUN   TestAcceptance1ClassTable
+    router_test.go:134: plan (tier ""): used advisor policy explore, want plan table
+--- FAIL: TestAcceptance1ClassTable (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.647s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance1ClassTable
+--- PASS: TestAcceptance1ClassTable (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.356s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: reviewer family differs
+## test: ./internal/routing/ TestAcceptance1ReviewerFamilyDiffers$
+## edit internal/routing/router.go:
+-if impl != "" && Family(e) == impl {
++if false {
+## reverted run (exit 1):
+=== RUN   TestAcceptance1ReviewerFamilyDiffers
+    router_test.go:165: review of codex:gpt-5.6-terra:medium: {Task:t2 Attempt:1 Class:review Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:openai} TableTier:advisor UsedTier:advisor Entry:0x820c8011b30 Skipped:[] Policy:table Propensity:1 ExplorationShare:0.05 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestAcceptance1ReviewerFamilyDiffers (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.241s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance1ReviewerFamilyDiffers
+--- PASS: TestAcceptance1ReviewerFamilyDiffers (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.241s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: implementer family from the dependency
+## test: ./internal/routing/ TestAcceptance1ReviewerFamilyDiffers$
+## edit internal/routing/router.go:
+-		impl = implementerFamily(t, list)
+
++		impl = ""
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance1ReviewerFamilyDiffers
+    router_test.go:168: implementer family = ""
+--- FAIL: TestAcceptance1ReviewerFamilyDiffers (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.239s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance1ReviewerFamilyDiffers
+--- PASS: TestAcceptance1ReviewerFamilyDiffers (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.238s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: implement over 3 files escalates
+## test: ./internal/routing/ TestImplementEscalatesToPlan$
+## edit internal/routing/router.go:
+-f.DeclaredFiles > ImplementFileLimit || f.Sensitive
++f.Sensitive
+## reverted run (exit 1):
+=== RUN   TestImplementEscalatesToPlan
+    router_test.go:193: 4 files: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:4 SizeBand:4+ InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:task Entry:0x414402e9dcb0 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestImplementEscalatesToPlan (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.248s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestImplementEscalatesToPlan
+--- PASS: TestImplementEscalatesToPlan (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.287s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: implement sensitive escalates
+## test: ./internal/routing/ TestImplementEscalatesToPlan$
+## edit internal/routing/router.go:
+-f.DeclaredFiles > ImplementFileLimit || f.Sensitive || f.NoTests
++f.DeclaredFiles > ImplementFileLimit || f.NoTests
+## reverted run (exit 1):
+=== RUN   TestImplementEscalatesToPlan
+    router_test.go:196: sensitive: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:1 SizeBand:1 InputTokens:0 Sensitive:true NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:task Entry:0x7088cab9fe60 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestImplementEscalatesToPlan (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.289s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestImplementEscalatesToPlan
+--- PASS: TestImplementEscalatesToPlan (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.245s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: implement no tests escalates
+## test: ./internal/routing/ TestImplementEscalatesToPlan$
+## edit internal/routing/router.go:
+-f.DeclaredFiles > ImplementFileLimit || f.Sensitive || f.NoTests
++f.DeclaredFiles > ImplementFileLimit || f.Sensitive
+## reverted run (exit 1):
+=== RUN   TestImplementEscalatesToPlan
+    router_test.go:200: no tests, explored: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:1 SizeBand:1 InputTokens:0 Sensitive:false NoTests:true Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:smol Entry:0x27ce2d46c1e0 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:explore Propensity:1 ExplorationShare:1 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestImplementEscalatesToPlan (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.300s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestImplementEscalatesToPlan
+--- PASS: TestImplementEscalatesToPlan (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.271s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: escalated implement not explored down
+## test: ./internal/routing/ TestImplementEscalatesToPlan$
+## edit internal/routing/router.go:
+-if r.o.Table.MayRouteDown(t.Class) && !escalated {
++if r.o.Table.MayRouteDown(t.Class) {
+## reverted run (exit 1):
+=== RUN   TestImplementEscalatesToPlan
+    router_test.go:200: no tests, explored: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:1 SizeBand:1 InputTokens:0 Sensitive:false NoTests:true Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:plan UsedTier:task Entry:0x4f96e1f781e0 Skipped:[] Policy:explore Propensity:1 ExplorationShare:1 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestImplementEscalatesToPlan (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.241s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestImplementEscalatesToPlan
+--- PASS: TestImplementEscalatesToPlan (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.251s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: local path never to a vendor
+## test: ./internal/routing/ TestAcceptance2LocalOnlyPathNeverGoesToAVendor$
+## edit internal/routing/router.go:
+-if required == grants.PrivacyLocal && privacy != grants.PrivacyLocal {
++if false && privacy != "" {
+## reverted run (exit 1):
+=== RUN   TestAcceptance2LocalOnlyPathNeverGoesToAVendor
+    router_test.go:213: route = {Pool:0x1815ee891a40 Wait: Block: Detail:routing: task table}
+--- FAIL: TestAcceptance2LocalOnlyPathNeverGoesToAVendor (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.515s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance2LocalOnlyPathNeverGoesToAVendor
+--- PASS: TestAcceptance2LocalOnlyPathNeverGoesToAVendor (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.253s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: local grant is local-only
+## test: ./internal/routing/ TestAcceptance2LocalOnlyPathNeverGoesToAVendor$
+## edit internal/routing/router.go:
+-	if r.o.Grants.PrivacyClass == grants.PrivacyLocal {
+		required = grants.PrivacyLocal
++	if false {
+		required = grants.PrivacyLocal
+## reverted run (exit 1):
+=== RUN   TestAcceptance2LocalOnlyPathNeverGoesToAVendor
+    router_test.go:241: local grant: {Pool:0x35bdd61722a0 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestAcceptance2LocalOnlyPathNeverGoesToAVendor (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.360s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance2LocalOnlyPathNeverGoesToAVendor
+--- PASS: TestAcceptance2LocalOnlyPathNeverGoesToAVendor (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.237s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: privacy names the wait
+## test: ./internal/routing/ TestAcceptance2LocalOnlyPathNeverGoesToAVendor$
+## edit internal/routing/router.go:
+-for _, r := range []string{SkipConcurrencyCap, SkipCostCap, SkipPrivacyClass, SkipReviewerFamily} {
++for _, r := range []string{SkipConcurrencyCap, SkipCostCap, SkipReviewerFamily} {
+## reverted run (exit 1):
+=== RUN   TestAcceptance2LocalOnlyPathNeverGoesToAVendor
+    router_test.go:213: route = {Pool:<nil> Wait:no_route Block: Detail:routing: claude:sonnet:medium privacy_class; codex:gpt-5.6-terra:medium privacy_class; pi:anthropic/sonnet:medium privacy_class; pi:ollama/qwen3.6:27b:high unverified}
+--- FAIL: TestAcceptance2LocalOnlyPathNeverGoesToAVendor (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.514s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance2LocalOnlyPathNeverGoesToAVendor
+--- PASS: TestAcceptance2LocalOnlyPathNeverGoesToAVendor (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.211s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: above 32k skips Ollama
+## test: ./internal/routing/ TestAcceptance3Escalation$
+## edit internal/routing/router.go:
+-if Family(e) == "ollama" && f.InputTokens > OllamaTokenLimit {
++if false {
+## reverted run (exit 1):
+=== RUN   TestAcceptance3Escalation
+    router_test.go:256: 40k: {Task:t1 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:40000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:0x599eb8411b60 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestAcceptance3Escalation (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.229s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance3Escalation
+--- PASS: TestAcceptance3Escalation (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.245s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: above 100k skips Haiku
+## test: ./internal/routing/ TestAcceptance3Escalation$
+## edit internal/routing/router.go:
+-if strings.Contains(e.Model, "haiku") && f.InputTokens > HaikuTokenLimit {
++if false {
+## reverted run (exit 1):
+=== RUN   TestAcceptance3Escalation
+    router_test.go:261: 120k: {Task:t1 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:120000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:0x1da78d883cb0 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:input_over_32k} {Entry:pi:ollama/qwen3.6:27b:low Reason:input_over_32k} {Entry:pi:anthropic/haiku:low Reason:not_in_registry}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestAcceptance3Escalation (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.482s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance3Escalation
+--- PASS: TestAcceptance3Escalation (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.242s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: retry one tier up
+## test: ./internal/routing/ TestAcceptance3Escalation$
+## edit internal/routing/router.go:
+-		tier = up(tier)
+
++		_ = up(tier)
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance3Escalation
+    router_test.go:271: retry 1: first {Task:t1 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:1000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:0x26b8bcf11e00 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC} second {Task:t1 Attempt:2 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:1000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:0x26b8bd06a0c0 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified} {Entry:pi:ollama/qwen3.6:27b:low Reason:used_before} {Entry:pi:anthropic/haiku:low Reason:not_in_registry}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestAcceptance3Escalation (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.362s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance3Escalation
+--- PASS: TestAcceptance3Escalation (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.598s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: retry never repeats an entry
+## test: ./internal/routing/ TestAcceptance3Escalation$
+## edit internal/routing/router.go:
+-	if used[e] {
+		return SkipUsedBefore
++	if false {
+		return SkipUsedBefore
+## reverted run (exit 1):
+=== RUN   TestAcceptance3Escalation
+    router_test.go:282: plan retry: {Task:t2 Attempt:2 Class:plan Features:{DeclaredFiles:0 SizeBand:1 InputTokens:1000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:plan UsedTier:plan Entry:0x3cc8a371c450 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestAcceptance3Escalation (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.360s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance3Escalation
+--- PASS: TestAcceptance3Escalation (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.338s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: retry skip list grows
+## test: ./internal/routing/ TestAcceptance3Escalation$
+## edit internal/routing/router.go:
+-			d.Skipped = append(d.Skipped, pd.Skipped...)
+
++			_ = pd
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance3Escalation
+    router_test.go:271: retry 1: first {Task:t1 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:1000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:0x3cb10c7d9e00 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC} second {Task:t1 Attempt:2 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:1000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:task Entry:0x3cb10c99a0c0 Skipped:[{Entry:pi:ollama/qwen3.6:27b:low Reason:used_before}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestAcceptance3Escalation (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.327s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance3Escalation
+--- PASS: TestAcceptance3Escalation (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.357s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: unclaimed is not a failure
+## test: ./internal/routing/ TestAcceptance3Escalation$
+## edit internal/routing/router.go:
+-case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeCommitRefused, task.OutcomeBlocked:
++case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeCommitRefused, task.OutcomeBlocked, task.OutcomeUnclaimed:
+## reverted run (exit 1):
+=== RUN   TestAcceptance3Escalation
+    router_test.go:292: after unclaimed: {Task:t3 Attempt:2 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:1000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:task Entry:0x250f866f67b0 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified} {Entry:pi:ollama/qwen3.6:27b:low Reason:used_before}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestAcceptance3Escalation (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.902s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance3Escalation
+--- PASS: TestAcceptance3Escalation (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.590s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: chain used up blocks
+## test: ./internal/routing/ TestAcceptance3Escalation$
+## edit internal/routing/router.go:
+-if allUsed && len(chain) > 0 {
++if false && allUsed {
+## reverted run (exit 1):
+=== RUN   TestAcceptance3Escalation
+    router_test.go:286: plan chain used up: {Pool:<nil> Wait:no_route Block: Detail:routing: claude:opus:high used_before; codex:gpt-5.6-sol:high used_before}
+--- FAIL: TestAcceptance3Escalation (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.343s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance3Escalation
+--- PASS: TestAcceptance3Escalation (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.310s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: max attempts block
+## test: ./internal/routing/ TestRetriesExhaustedAfterMaxAttempts$
+## edit internal/routing/router.go:
+-if failures >= r.o.MaxAttempts {
++if false {
+## reverted run (exit 1):
+=== RUN   TestRetriesExhaustedAfterMaxAttempts
+    router_test.go:397: route = {Pool:0x234796c99a40 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestRetriesExhaustedAfterMaxAttempts (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.263s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRetriesExhaustedAfterMaxAttempts
+--- PASS: TestRetriesExhaustedAfterMaxAttempts (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.252s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: verified check
+## test: ./internal/routing/ TestFourChecks$
+## edit internal/routing/router.go:
+-	if !reg.Verified {
+		return SkipUnverified
++	if false {
+		return SkipUnverified
+## reverted run (exit 1):
+=== RUN   TestFourChecks
+    router_test.go:313: unverified: []
+--- FAIL: TestFourChecks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.237s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFourChecks
+--- PASS: TestFourChecks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.228s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: registry entry required
+## test: ./internal/routing/ TestFourChecks$
+## edit internal/routing/router.go:
+-	if !inReg {
+		return SkipNotInRegistry
++	if false {
+		return SkipNotInRegistry
+## reverted run (exit 1):
+=== RUN   TestFourChecks
+    router_test.go:317: not in registry: [{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:input_over_32k} {Entry:pi:ollama/qwen3.6:27b:low Reason:input_over_32k} {Entry:pi:anthropic/haiku:low Reason:unverified}]
+--- FAIL: TestFourChecks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.246s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFourChecks
+--- PASS: TestFourChecks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.522s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: grant permitted runtimes
+## test: ./internal/routing/ TestFourChecks$
+## edit internal/routing/router.go:
+-	if !r.o.Grants.RuntimePermitted(e.Runtime) {
++	if false {
+## reverted run (exit 1):
+=== RUN   TestFourChecks
+    router_test.go:323: permitted runtimes: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:task Entry:0x372646b1dcb0 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestFourChecks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.267s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFourChecks
+--- PASS: TestFourChecks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.250s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: concurrency cap
+## test: ./internal/routing/ TestFourChecks$
+## edit internal/routing/router.go:
+-if reg.ConcurrencyCap > 0 && r.inUse(reg, list) >= reg.ConcurrencyCap {
++if false {
+## reverted run (exit 1):
+=== RUN   TestFourChecks
+    router_test.go:333: concurrency: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:task Entry:0x5aac7cb7a030 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestFourChecks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.233s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFourChecks
+--- PASS: TestFourChecks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.234s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: cost_index cap
+## test: ./internal/routing/ TestFourChecks$
+## edit internal/routing/router.go:
+-max > 0 && reg.CostIndex > max {
++max > 0 && false {
+## reverted run (exit 1):
+=== RUN   TestFourChecks
+    router_test.go:344: cost_index cap: {Task:t1 Attempt:1 Class:plan Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:plan UsedTier:plan Entry:0x4b291dff2240 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestFourChecks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.352s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFourChecks
+--- PASS: TestFourChecks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.288s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: grant per-day budget
+## test: ./internal/routing/ TestGrantDailyBudgetStops$
+## edit internal/routing/router.go:
+-if b := r.o.Grants.CostPerDayUSD; b > 0 && reg.CostTier != "free" && r.spent[now.UTC().Format(time.DateOnly)] >= b {
++if false {
+## reverted run (exit 1):
+=== RUN   TestGrantDailyBudgetStops
+    router_test.go:357: over budget: {Pool:0x40f77aa11a10 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestGrantDailyBudgetStops (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	1.003s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestGrantDailyBudgetStops
+--- PASS: TestGrantDailyBudgetStops (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.360s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: budget is per UTC day
+## test: ./internal/routing/ TestGrantDailyBudgetStops$
+## edit internal/routing/router.go:
+-if b := r.o.Grants.CostPerDayUSD; b > 0 && reg.CostTier != "free" && r.spent[now.UTC().Format(time.DateOnly)] >= b {
++if b := r.o.Grants.CostPerDayUSD; b > 0 && reg.CostTier != "free" && r.spent[now.UTC().Format(time.DateOnly)]+r.spent[now.UTC().Add(-24*time.Hour).Format(time.DateOnly)] >= b {
+## reverted run (exit 1):
+=== RUN   TestGrantDailyBudgetStops
+    router_test.go:365: yesterday's spend stopped today: {Pool:<nil> Wait:cost_cap Block: Detail:routing: claude:opus:high cost_cap; codex:gpt-5.6-sol:high cost_cap}
+--- FAIL: TestGrantDailyBudgetStops (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.436s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestGrantDailyBudgetStops
+--- PASS: TestGrantDailyBudgetStops (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.422s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: probation never first
+## test: ./internal/routing/ TestProbationNeverFirst$
+## edit internal/routing/router.go:
+-if reg.Probation && n == 1 {
++if false {
+## reverted run (exit 1):
+=== RUN   TestProbationNeverFirst
+    router_test.go:413: first attempt: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:task Entry:0x4920c9a19a10 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC} {Pool:0x4920c9a19a10 Wait: Block: Detail:routing: task table}
+--- FAIL: TestProbationNeverFirst (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.399s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestProbationNeverFirst
+--- PASS: TestProbationNeverFirst (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.237s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: pin never routes plan down
+## test: ./internal/routing/ TestLeadPin$
+## edit internal/routing/router.go:
+-TierRank(pinTier) >= TierRank(tableTier) || tbl.MayRouteDown(t.Class)
++true
+## reverted run (exit 1):
+=== RUN   TestLeadPin
+    router_test.go:380: plan pinned down: {Task:t2 Attempt:1 Class:plan Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:plan UsedTier:smol Entry:0xecfdd605bc0 Skipped:[] Policy:lead_pin Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestLeadPin (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.246s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLeadPin
+--- PASS: TestLeadPin (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.262s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: pin is still checked
+## test: ./internal/routing/ TestLeadPin$
+## edit internal/routing/router.go:
+-d.Policy, d.Propensity, chain = PolicyLeadPin, 1, []task.Pool{*t.Pool}
++d.Policy, d.Propensity, chain = PolicyLeadPin, 1, nil
+			return d, scheduler.Route{Pool: t.Pool}
+## reverted run (exit 1):
+=== RUN   TestLeadPin
+    router_test.go:79: route {Pool:0x19877d5978f0 Wait: Block: Detail:} without an entry
+--- FAIL: TestLeadPin (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.264s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLeadPin
+--- PASS: TestLeadPin (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.283s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: router answers the scheduler
+## test: ./internal/routing/ TestRouterInsideTheScheduler$
+## edit internal/routing/router.go:
+-		return d, scheduler.Route{Pool: &pick, Detail:
++		_ = pick
+		return d, scheduler.Route{Wait: task.WaitNoRoute, Detail:
+## reverted run (exit 1):
+=== RUN   TestRouterInsideTheScheduler
+    scheduler_test.go:52: seat requests = []
+--- FAIL: TestRouterInsideTheScheduler (0.10s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.330s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRouterInsideTheScheduler
+--- PASS: TestRouterInsideTheScheduler (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.377s
+
+## verdict: OK (fails reverted, passes restored)

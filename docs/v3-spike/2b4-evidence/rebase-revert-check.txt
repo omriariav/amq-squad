@@ -1,0 +1,105 @@
+========================================================================
+## rule: rebase: a link component is found by readlinkat, never followed
+## test: ./internal/routing/ TestFix1PrivacyMatchesTheCanonicalPath$
+## edit internal/routing/canon.go:
+-			if _, lerr := d.Readlink(name); lerr == nil {
+				return Canonical{Path: strings.Join(out, "/"), Alias:
++			if _, lerr := d.Readlink(name); lerr == nil && false {
+				return Canonical{Path: strings.Join(out, "/"), Alias:
+## reverted run (exit 1):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath3848836954/001: true
+    fix1_test.go:61: alias/vault.go: vendor (), want local
+    fix1_test.go:61: alias/: vendor (), want local
+    fix1_test.go:61: out/x.go: vendor (), want local
+    fix1_test.go:61: ALIAS/vault.go: vendor (), want local
+    fix1_test.go:70: alias route: {Pool:<nil> Wait: Block:declared_tree_unchecked Detail:routing: alias/vault.go: cannot open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath3848836954/001/alias: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath3848836954/001/alias: too many levels of symbolic links (a symlink or unreadable)}
+--- FAIL: TestFix1PrivacyMatchesTheCanonicalPath (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.371s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath1457353512/001: true
+--- PASS: TestFix1PrivacyMatchesTheCanonicalPath (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.323s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: rebase: a link inside a declared tree that leaves it is local-only
+## test: ./internal/routing/ TestFix2DeclaredTreesAreWalked$
+## edit internal/routing/canon.go:
+-err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
++err != nil || rel == "never"
+## reverted run (exit 1):
+=== RUN   TestFix2DeclaredTreesAreWalked
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked610436279/001: public/: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked610436279/001: public/*.go: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked610436279/001: public/**: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked610436279/002/repo-link: public/: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked610436279/002/repo-link: public/*.go: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked610436279/002/repo-link: public/**: vendor (), want local
+--- FAIL: TestFix2DeclaredTreesAreWalked (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.377s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2DeclaredTreesAreWalked
+--- PASS: TestFix2DeclaredTreesAreWalked (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.260s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: rebase: the root is resolved before the anchored open
+## test: ./internal/routing/ TestFix2DeclaredTreesAreWalked$
+## edit internal/routing/canon.go:
+-		return grants.PrivacyVendor, ""
+	}
+	root = ResolveRoot(root)
++		return grants.PrivacyVendor, ""
+	}
+## reverted run (exit 1):
+=== RUN   TestFix2DeclaredTreesAreWalked
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked3618266110/001: public/: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked3618266110/001: public/*.go: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked3618266110/001: public/**: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked3618266110/002/repo-link: public/: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked3618266110/002/repo-link: public/*.go: vendor (), want local
+    fix2_test.go:194: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked3618266110/002/repo-link: public/**: vendor (), want local
+--- FAIL: TestFix2DeclaredTreesAreWalked (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.406s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2DeclaredTreesAreWalked
+--- PASS: TestFix2DeclaredTreesAreWalked (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.266s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: rebase: a tree over the limit is refused on the anchored walk
+## test: ./internal/routing/ TestFix3UncheckedTreeIsARefusal$
+## edit internal/routing/canon.go:
+-		if *n++; *n > MaxTreeEntries {
++		if *n++; *n < 0 {
+## reverted run (exit 1):
+=== RUN   TestFix3UncheckedTreeIsARefusal
+    fix3_test.go:297: route = {Pool:0x49b3fa5c26c0 Wait: Block: Detail:routing: task table}
+--- FAIL: TestFix3UncheckedTreeIsARefusal (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.385s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3UncheckedTreeIsARefusal
+--- PASS: TestFix3UncheckedTreeIsARefusal (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.267s
+
+## verdict: OK (fails reverted, passes restored)

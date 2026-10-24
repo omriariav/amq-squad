@@ -249,15 +249,29 @@ func promptState(event, tool string) string {
 	return "unknown"
 }
 
+// PayloadTokenCounts reads the input and output token counts of one hook
+// payload (its "usage", or "message.usage") and says which of the two it
+// names. The routing outcome log (2b-4) needs both: a payload with one
+// counter is unknown usage there, never a zero for the other (Codex pass 1,
+// P2-5). The status seat row keeps its own rule (either counter).
+func PayloadTokenCounts(raw json.RawMessage) (in, out int64, inOK, outOK bool) {
+	return payloadTokenCounts(raw)
+}
+
 // payloadTokens finds a usage object (usage, message.usage) with input and
-// output token counts in a hook payload.
+// output token counts in a hook payload; ok when it names either.
 func payloadTokens(raw json.RawMessage) (int64, int64, bool) {
+	in, out, inOK, outOK := payloadTokenCounts(raw)
+	return in, out, inOK || outOK
+}
+
+func payloadTokenCounts(raw json.RawMessage) (int64, int64, bool, bool) {
 	if len(raw) == 0 {
-		return 0, 0, false
+		return 0, 0, false, false
 	}
 	var p map[string]json.RawMessage
 	if json.Unmarshal(raw, &p) != nil {
-		return 0, 0, false
+		return 0, 0, false, false
 	}
 	usage := p["usage"]
 	if len(usage) == 0 {
@@ -268,11 +282,11 @@ func payloadTokens(raw json.RawMessage) (int64, int64, bool) {
 	}
 	var u map[string]float64
 	if len(usage) == 0 || json.Unmarshal(usage, &u) != nil {
-		return 0, 0, false
+		return 0, 0, false, false
 	}
 	in, inOK := firstKey(u, "input_tokens", "inputTokens", "input")
 	out, outOK := firstKey(u, "output_tokens", "outputTokens", "output")
-	return int64(in), int64(out), inOK || outOK
+	return int64(in), int64(out), inOK, outOK
 }
 
 func firstKey(m map[string]float64, keys ...string) (float64, bool) {

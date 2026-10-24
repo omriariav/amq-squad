@@ -1,0 +1,453 @@
+========================================================================
+## rule: explore below the share
+## test: ./internal/routing/ TestAcceptance4Exploration$
+## edit internal/routing/router.go:
+-if Draw(r.o.Seed, t.ID) < share {
++if Draw(r.o.Seed, t.ID) < 2*share {
+## reverted run (exit 1):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:93: exploration share over 10000 eligible draws: 985 explored = 0.0985
+    outcome_test.go:95: share = 0.0985, want 0.05 within 0.01
+--- FAIL: TestAcceptance4Exploration (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.266s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:93: exploration share over 10000 eligible draws: 484 explored = 0.0484
+--- PASS: TestAcceptance4Exploration (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.387s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: explore propensity is the share
+## test: ./internal/routing/ TestAcceptance4Exploration$
+## edit internal/routing/router.go:
+-return PolicyExplore, share, away
++return PolicyExplore, 1, away
+## reverted run (exit 1):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:75: explore row {Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t36 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:task Entry:claude:sonnet:medium Runtime:claude Skipped:[] Policy:explore Propensity:1 ExplorationShare:0.05 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> WallMS:60000 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:s GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:01:00 +0000 UTC}
+--- FAIL: TestAcceptance4Exploration (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.266s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:93: exploration share over 10000 eligible draws: 484 explored = 0.0484
+--- PASS: TestAcceptance4Exploration (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.332s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: table propensity is one minus the share
+## test: ./internal/routing/ TestAcceptance4Exploration$
+## edit internal/routing/router.go:
+-return PolicyTable, 1 - share, tableTier
++return PolicyTable, 1, tableTier
+## reverted run (exit 1):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:79: table row {Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:summarize Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:pi:ollama/qwen3.6:27b:low Runtime:pi Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:1 ExplorationShare:0.05 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> WallMS:60000 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:none ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:s GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:01:00 +0000 UTC}
+--- FAIL: TestAcceptance4Exploration (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.339s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:93: exploration share over 10000 eligible draws: 484 explored = 0.0484
+--- PASS: TestAcceptance4Exploration (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.292s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: row records the share in force
+## test: ./internal/routing/ TestAcceptance4Exploration$
+## edit internal/routing/router.go:
+-row.Policy, row.Propensity, row.ExplorationShare = d.Policy, d.Propensity, d.ExplorationShare
++row.Policy, row.Propensity, row.ExplorationShare = d.Policy, d.Propensity, 0
+## reverted run (exit 1):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:86: row t1 records share 0
+--- FAIL: TestAcceptance4Exploration (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.261s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance4Exploration
+    outcome_test.go:93: exploration share over 10000 eligible draws: 484 explored = 0.0484
+--- PASS: TestAcceptance4Exploration (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.272s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: draw is uniform
+## test: ./internal/routing/ TestDrawIsUniform$
+## edit internal/routing/router.go:
+-return float64(binary.BigEndian.Uint64(h[:8])>>11) / float64(uint64(1)<<53)
++return float64(binary.BigEndian.Uint64(h[:8])>>11) / float64(uint64(1)<<53) / 2
+## reverted run (exit 1):
+=== RUN   TestDrawIsUniform
+    outcome_test.go:117: bucket 0 has 20162 of 100000
+--- FAIL: TestDrawIsUniform (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.273s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDrawIsUniform
+--- PASS: TestDrawIsUniform (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.354s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: every ended attempt gets a row
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-			if !r.logged[k] {
+				row := r.row(
++			if !r.logged[k] && a.N == 1 {
+				row := r.row(
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:246: 7 attempts, 6 rows:
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":120000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t4","attempt":1,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":80000,"wait_ms":120000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:03:20Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t5","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":"claude:opus:high","runtime":"claude","skipped":[],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":120000,"wait_ms":120000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat5","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:04:00Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t2","attempt":1,"class":"summarize","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":300000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:05:40Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t3","attempt":1,"class":"script","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"claude:haiku:low","runtime":"claude","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"},{"entry":"pi:ollama/qwen3.6:27b:low","reason":"concurrency_cap"},{"entry":"pi:anthropic/haiku:low","reason":"not_in_registry"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":80000,"wait_ms":300000,"wait_reasons":["seat_starting"],"outcome":"failed","verifier_result":"fail","review_findings":null,"consumed_smol_outputs":[],"holder":"seat6","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:06:20Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t6","attempt":1,"class":"review","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor","implementer_family":"anthropic"},"table_tier":"advisor","used_tier":"advisor","entry":"codex:gpt-5.6-sol:xhigh","runtime":"codex","skipped":[],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":80000,"wait_ms":440000,"wait_reasons":["dependencies","seat_starting"],"outcome":"completed","verifier_result":"none","review_findings":2,"consumed_smol_outputs":[],"holder":"seat8","granted_at":"2026-10-24T12:07:20Z","ended_at":"2026-10-24T12:08:40Z"}
+--- FAIL: TestAcceptance5EveryAttemptHasARow (1.65s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	2.057s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (1.59s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	2.143s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: a restart never logs twice
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-	r.logged[key(row.Task, row.Attempt)] = true
++	r.logged[key(row.Task, row.Attempt)] = row.Task == ""
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:246: 7 attempts, 26 rows:
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":120000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t4","attempt":1,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":80000,"wait_ms":120000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:03:20Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t5","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":"claude:opus:high","runtime":"claude","skipped":[],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":120000,"wait_ms":120000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat5","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:04:00Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t4","attempt":1,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":80000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:03:20Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t5","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":"claude:opus:high","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":120000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat5","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:04:00Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t4","attempt":1,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":80000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:03:20Z"}
+        {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t5","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":"claude:opus:high","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":120000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat5","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:04:00Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t2","attempt":1,"class":"summarize","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":300000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:05:40Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t3","attempt":1,"class":"script","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"claude:haiku:low","runtime":"claude","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"},{"entry":"pi:ollama/qwen3.6:27b:low","reason":"concurrency_cap"},{"entry":"pi:anthropic/haiku:low","reason":"not_in_registry"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":80000,"wait_ms":300000,"wait_reasons":["seat_starting"],"outcome":"failed","verifier_result":"fail","review_findings":null,"consumed_smol_outputs":[],"holder":"seat6","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:06:20Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t4","attempt":1,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":80000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:03:20Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t5","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":"claude:opus:high","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":120000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat5","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:04:00Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t2","attempt":1,"class":"summarize","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":300000,"wait_reasons":[],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:05:40Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t3","attempt":1,"class":"script","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"claude:haiku:low","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":80000,"wait_ms":300000,"wait_reasons":[],"outcome":"failed","verifier_result":"fail","review_findings":null,"consumed_smol_outputs":[],"holder":"seat6","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:06:20Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t4","attempt":1,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":80000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:03:20Z"}
+        {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t5","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":"claude:opus:high","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":120000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat5","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:04:00Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t2","attempt":1,"class":"summarize","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":40000,"wait_ms":300000,"wait_reasons":[],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:05:40Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t3","attempt":1,"class":"script","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"claude:haiku:low","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":80000,"wait_ms":300000,"wait_reasons":[],"outcome":"failed","verifier_result":"fail","review_findings":null,"consumed_smol_outputs":[],"holder":"seat6","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:06:20Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t3","attempt":2,"class":"script","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"},{"entry":"claude:haiku:low","reason":"used_before"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":40000,"wait_ms":60000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:07:20Z","ended_at":"2026-10-24T12:08:00Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t4","attempt":1,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":"claude:sonnet:medium","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":0.006,"wall_ms":80000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat4","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:03:20Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t5","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":"claude:opus:high","runtime":"claude","skipped":[],"policy":"lead_pin","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":120000,"wait_ms":120000,"wait_reasons":[],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat5","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:04:00Z"}
+        {"schema":1,"at":"2026-10-24T12:09:40Z","task":"t6","attempt":1,"class":"review","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor","implementer_family":"anthropic"},"table_tier":"advisor","used_tier":"advisor","entry":"codex:gpt-5.6-sol:xhigh","runtime":"codex","skipped":[],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":1000,"tokens_out":200,"cost_usd":null,"wall_ms":80000,"wait_ms":440000,"wait_reasons":["dependencies","seat_starting"],"outcome":"completed","verifier_result":"none","review_findings":2,"consumed_smol_outputs":[],"holder":"seat8","granted_at":"2026-10-24T12:07:20Z","ended_at":"2026-10-24T12:08:40Z"}
+--- FAIL: TestAcceptance5EveryAttemptHasARow (2.11s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	2.607s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (1.50s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.888s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: decision survives a restart
+## test: ./internal/routing/ TestDecisionSurvivesRestart$
+## edit internal/routing/router.go:
+-			r.decisions[key(d.Task, d.Attempt)] = &d
+
++			_ = d
+
+## reverted run (exit 1):
+=== RUN   TestDecisionSurvivesRestart
+    outcome_test.go:359: rows after restart: [{Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:ty Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:smol Entry:pi:ollama/qwen3.6:27b:low Runtime:pi Skipped:[] Policy:lead_pin Propensity:1 ExplorationShare:0.05 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> WallMS:0 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder: GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC}]
+--- FAIL: TestDecisionSurvivesRestart (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.344s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDecisionSurvivesRestart
+--- PASS: TestDecisionSurvivesRestart (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.298s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: flock serializes appends
+## test: ./internal/routing/ TestAppendWaitsForTheLock$
+## edit internal/routing/outcome.go:
+-	return flock.WithFile(f, path, func() error {
++	_ = flock.WithFile
+	return func(fn func() error) error { return fn() }(func() error {
+## reverted run (exit 1):
+=== RUN   TestAppendWaitsForTheLock
+    outcome_lock_unix_test.go:33: append finished while the lock was held (err <nil>)
+--- FAIL: TestAppendWaitsForTheLock (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.474s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAppendWaitsForTheLock
+--- PASS: TestAppendWaitsForTheLock (0.33s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.904s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: torn tail terminated
+## test: ./internal/routing/ TestOutcomeTornTail$
+## edit internal/routing/outcome.go:
+-			if last[0] != '\n' {
++			if last[0] == 0 {
+## reverted run (exit 1):
+=== RUN   TestOutcomeTornTail
+    outcome_test.go:433: rows [{Schema:1 At:0001-01-01 00:00:00 +0000 UTC Task:t1 Attempt:1 Class: Features:{DeclaredFiles:0 SizeBand: InputTokens:0 Sensitive:false NoTests:false Privacy: PrivacyGlob: ImplementerFamily:} TableTier: UsedTier: Entry: Runtime: Skipped:[] Policy: Propensity:0 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> WallMS:0 WaitMS:0 WaitReasons:[] Outcome: VerifierResult: ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder: GrantedAt:0001-01-01 00:00:00 +0000 UTC EndedAt:0001-01-01 00:00:00 +0000 UTC}] skipped 1 err <nil>
+--- FAIL: TestOutcomeTornTail (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.780s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestOutcomeTornTail
+--- PASS: TestOutcomeTornTail (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	2.570s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: outcome log is private
+## test: ./internal/routing/ TestAcceptance5ConcurrentAppendKeepsLinesWhole$
+## edit internal/routing/outcome.go:
+-os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
++os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+## reverted run (exit 1):
+=== RUN   TestAcceptance5ConcurrentAppendKeepsLinesWhole
+    outcome_test.go:414: outcome log mode -rw-r--r-- (<nil>)
+--- FAIL: TestAcceptance5ConcurrentAppendKeepsLinesWhole (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	2.937s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5ConcurrentAppendKeepsLinesWhole
+--- PASS: TestAcceptance5ConcurrentAppendKeepsLinesWhole (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.151s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: verifier result fail
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-	case task.OutcomeFailed, task.OutcomeCommitRefused, task.OutcomeBlocked:
+		return VerifierFail
++	case task.OutcomeCommitRefused, task.OutcomeBlocked:
+		return VerifierFail
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:277: retry rows: {Schema:1 At:2026-10-24 12:07:20 +0000 UTC Task:t3 Attempt:1 Class:script Features:{DeclaredFiles:0 SizeBand:1 InputTokens:2 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:claude:haiku:low Runtime:claude Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified} {Entry:pi:ollama/qwen3.6:27b:low Reason:concurrency_cap} {Entry:pi:anthropic/haiku:low Reason:not_in_registry}] Policy:table Propensity:1 ExplorationShare:0 TokensIn:0x2bd7c0a9bbb0 TokensOut:0x2bd7c0a9bbb8 CostUSD:<nil> WallMS:80000 WaitMS:300000 WaitReasons:[seat_starting] Outcome:failed VerifierResult:not_run ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:seat6 GrantedAt:2026-10-24 12:05:00 +0000 UTC EndedAt:2026-10-24 12:06:20 +0000 UTC} / {Schema:1 At:2026-10-24 12:09:40 +0000 UTC Task:t3 Attempt:2 Class:script Features:{DeclaredFiles:0 SizeBand:1 InputTokens:2 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:task Entry:claude:sonnet:medium Runtime:claude Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified} {Entry:claude:haiku:low Reason:used_before}] Policy:table Propensity:1 ExplorationShare:0 TokensIn:0x2bd7c0a9bbf0 TokensOut:0x2bd7c0a9bbf8 CostUSD:0x2bd7c0a9bc00 WallMS:40000 WaitMS:60000 WaitReasons:[] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:seat4 GrantedAt:2026-10-24 12:07:20 +0000 UTC EndedAt:2026-10-24 12:08:00 +0000 UTC}
+--- FAIL: TestAcceptance5EveryAttemptHasARow (0.91s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	2.348s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (0.77s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	2.341s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: no verifier, no check
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-	if !Mechanical(verifier) {
+		return VerifierNoCheck
++	if false {
+		return VerifierNoCheck
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:286: summarize row: {Schema:1 At:2026-10-24 12:07:20 +0000 UTC Task:t2 Attempt:1 Class:summarize Features:{DeclaredFiles:0 SizeBand:1 InputTokens:3 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:pi:ollama/qwen3.6:27b:low Runtime:pi Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:1 ExplorationShare:0 TokensIn:0x7bda5342d860 TokensOut:0x7bda5342d868 CostUSD:<nil> WallMS:40000 WaitMS:300000 WaitReasons:[seat_starting] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:seat1 GrantedAt:2026-10-24 12:05:00 +0000 UTC EndedAt:2026-10-24 12:05:40 +0000 UTC}
+--- FAIL: TestAcceptance5EveryAttemptHasARow (0.78s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	2.272s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (0.83s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.164s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: review findings from the evidence
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-		row.ReviewFindings = findings(t.Evidence)
+
++		row.ReviewFindings = nil
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:280: review row: {Schema:1 At:2026-10-24 12:09:40 +0000 UTC Task:t6 Attempt:1 Class:review Features:{DeclaredFiles:0 SizeBand:1 InputTokens:3 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:anthropic} TableTier:advisor UsedTier:advisor Entry:codex:gpt-5.6-sol:xhigh Runtime:codex Skipped:[] Policy:table Propensity:1 ExplorationShare:0 TokensIn:0x1ee9a2593c10 TokensOut:0x1ee9a2593c18 CostUSD:<nil> WallMS:80000 WaitMS:440000 WaitReasons:[dependencies seat_starting] Outcome:completed VerifierResult:none ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:seat8 GrantedAt:2026-10-24 12:07:20 +0000 UTC EndedAt:2026-10-24 12:08:40 +0000 UTC}
+--- FAIL: TestAcceptance5EveryAttemptHasARow (1.35s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	2.120s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (1.45s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.748s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: consumed smol outputs
+## test: ./internal/routing/ TestConsumedSmolOutputs$
+## edit internal/routing/router.go:
+-		if r.usedTier[dep] == TierSmol {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestConsumedSmolOutputs
+    outcome_test.go:327: rows [{Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:pi:ollama/qwen3.6:27b:low Runtime:pi Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:1 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> WallMS:0 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder: GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC} {Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t2 Attempt:1 Class:review Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:advisor UsedTier:advisor Entry:codex:gpt-5.6-sol:xhigh Runtime:codex Skipped:[] Policy:table Propensity:1 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> WallMS:0 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:none ReviewFindings:0x2f86db0992c8 ConsumedSmolOutputs:[] Holder: GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC}]
+--- FAIL: TestConsumedSmolOutputs (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.337s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestConsumedSmolOutputs
+--- PASS: TestConsumedSmolOutputs (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.364s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: ledger tokens in the attempt window
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/usage.go:
+-at.Before(a.GrantedAt) || at.After(a.EndedAt)
++at.IsZero()
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:267: row {"schema":1,"at":"2026-10-24T12:07:20Z","task":"t2","attempt":1,"class":"summarize","features":{"declared_files":0,"size_band":"1","input_tokens":3,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":2000,"tokens_out":400,"cost_usd":null,"wall_ms":40000,"wait_ms":300000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"none","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:05:00Z","ended_at":"2026-10-24T12:05:40Z"}
+--- FAIL: TestAcceptance5EveryAttemptHasARow (1.37s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	1.681s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (1.40s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.697s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: cost from the price
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/usage.go:
+-				u.CostUSD = &c
+
++				_ = c
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:283: implement row cost <nil> wait 120000 wall 80000
+--- FAIL: TestAcceptance5EveryAttemptHasARow (1.14s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	1.622s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (0.81s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.074s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: wait time since pending
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-		row.WaitMS = a.GrantedAt.Sub(pendingSince).Milliseconds()
+
++		row.WaitMS = 0
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:283: implement row cost 0x150799821728 wait 0 wall 80000
+--- FAIL: TestAcceptance5EveryAttemptHasARow (0.77s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.999s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (0.76s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.051s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: wall time
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-		row.WallMS = a.EndedAt.Sub(a.GrantedAt).Milliseconds()
+
++		row.WallMS = 0
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:283: implement row cost 0x1fca4192b398 wait 120000 wall 0
+--- FAIL: TestAcceptance5EveryAttemptHasARow (0.75s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	1.059s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (0.78s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.168s
+
+## verdict: OK (fails reverted, passes restored)

@@ -113,6 +113,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 		out = append(out, ownerConfigCheck(hostcheck.DiffOwnerConfig(c)))
 	}
 	out = append(out, grantsCheck(h.Home, projectDir))
+	out = append(out, routingCheck(h.Home, projectDir))
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)

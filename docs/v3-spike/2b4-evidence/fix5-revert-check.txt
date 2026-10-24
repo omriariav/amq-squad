@@ -1,0 +1,424 @@
+========================================================================
+## rule: (a) the outcome chain must reach the head
+## test: ./internal/routing/ TestFix5TruncationToAValidPrefixAcrossARestart$
+## edit internal/routing/durable.go:
+-	problems = append(problems, shortfall("outcome", head, r.headRec.OutcomeSeq, r.headRec.OutcomeTag)...)
+
++
+## reverted run (exit 1):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+    fix5_test.go:50: keep 1: tampered []
+--- FAIL: TestFix5TruncationToAValidPrefixAcrossARestart (0.06s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.429s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+--- PASS: TestFix5TruncationToAValidPrefixAcrossARestart (0.22s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.478s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (a) the head moves with every outcome append
+## test: ./internal/routing/ TestFix5TruncationToAValidPrefixAcrossARestart$
+## edit internal/routing/router.go:
+-					// The head moves with every append (Codex pass 5, (a)).
+					if err := r.saveHead(); err != nil {
+						return err
+					}
+
++
+## reverted run (exit 1):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+    fix5_test.go:50: keep 1: tampered []
+--- FAIL: TestFix5TruncationToAValidPrefixAcrossARestart (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.394s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+--- PASS: TestFix5TruncationToAValidPrefixAcrossARestart (0.22s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.477s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (a) the decision chain must reach the head
+## test: ./internal/routing/ TestFix5TruncationToAValidPrefixAcrossARestart$
+## edit internal/routing/router.go:
+-	decProblems = append(decProblems, shortfall("decision", decHead, h.DecisionSeq, h.DecisionTag)...)
+
++
+## reverted run (exit 1):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+    fix5_test.go:69: decision truncation: []
+--- FAIL: TestFix5TruncationToAValidPrefixAcrossARestart (0.23s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.593s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+--- PASS: TestFix5TruncationToAValidPrefixAcrossARestart (0.22s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.469s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (a) decisions carry seq and prev
+## test: ./internal/routing/ TestFix5TruncationToAValidPrefixAcrossARestart$
+## edit internal/routing/durable.go:
+-		d.Seq, d.Prev = r.decHead.Seq+1, r.decHead.Tag
+
++		_ = r.decHead
+
+## reverted run (exit 1):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+    fix5_test.go:64: decision lines are not chained:
+        {"task":"t1","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":0,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":{"runtime":"claude","model":"opus","effort":"high"},"skipped":null,"policy":"table","propensity":1,"exploration_share":0.05,"wait_reasons":null,"at":"2026-10-24T12:00:00Z","seq":0,"prev":"","tag":"9d55fc268a5822773f0e91d11f3110718bf3483df12eca267dadc31d57140341"}
+        {"task":"t2","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":0,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":{"runtime":"claude","model":"opus","effort":"high"},"skipped":null,"policy":"table","propensity":1,"exploration_share":0.05,"wait_reasons":null,"at":"2026-10-24T12:00:00Z","seq":0,"prev":"","tag":"0a429c871b36fd0b9f8f2c2110cdb39ba0089a873045538d0bf9261bae233a16"}
+--- FAIL: TestFix5TruncationToAValidPrefixAcrossARestart (0.22s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.585s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5TruncationToAValidPrefixAcrossARestart
+--- PASS: TestFix5TruncationToAValidPrefixAcrossARestart (0.22s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.481s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (a) a missing head in a routed session is invalid
+## test: ./internal/routing/ TestFix5HeadMissingOrBrokenIsInvalid$
+## edit internal/routing/router.go:
+-	case !found && sessionStarted(o.Root):
++	case false && !found && sessionStarted(o.Root):
+## reverted run (exit 1):
+=== RUN   TestFix5HeadMissingOrBrokenIsInvalid
+    fix5_test.go:80: missing head: <nil>
+--- FAIL: TestFix5HeadMissingOrBrokenIsInvalid (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.430s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5HeadMissingOrBrokenIsInvalid
+--- PASS: TestFix5HeadMissingOrBrokenIsInvalid (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.315s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (a) an edited head is invalid
+## test: ./internal/routing/ TestFix5HeadMissingOrBrokenIsInvalid$
+## edit internal/routing/head.go:
+-	if err := json.Unmarshal(raw, &h); err != nil || !h.verify(key) {
++	if err := json.Unmarshal(raw, &h); err != nil {
+## reverted run (exit 1):
+=== RUN   TestFix5HeadMissingOrBrokenIsInvalid
+    fix5_test.go:84: edited head: <nil>
+--- FAIL: TestFix5HeadMissingOrBrokenIsInvalid (0.06s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.419s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5HeadMissingOrBrokenIsInvalid
+--- PASS: TestFix5HeadMissingOrBrokenIsInvalid (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.306s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (e) a replaced seed is refused
+## test: ./internal/routing/ TestFix5SeedReplacedIsRefused$
+## edit internal/routing/router.go:
+-	case found && seedDev != 0 && (h.SeedDev != seedDev || h.SeedIno != seedIno):
++	case false && found && seedDev != 0 && (h.SeedDev != seedDev || h.SeedIno != seedIno):
+## reverted run (exit 1):
+=== RUN   TestFix5SeedReplacedIsRefused
+    fix5_test.go:99: replaced seed: <nil>
+--- FAIL: TestFix5SeedReplacedIsRefused (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.378s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5SeedReplacedIsRefused
+--- PASS: TestFix5SeedReplacedIsRefused (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.266s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (b) the block detail names each break
+## test: ./internal/routing/ TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock$
+## edit internal/routing/tamper.go:
+-		t.ID, strings.Join(named, "; "), t.ID)}, true
++		t.ID, "(breaks)"+strings.Join(named, "")[:0], t.ID)}, true
+## reverted run (exit 1):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+    fix5_test.go:133: A after its attempt ended (no reset): {Pool:<nil> Wait: Block:history_tampered Detail:routing: the outcome history of ta may have lost a row: (breaks). Its remaining history may not forbid a tier the lost row did; review it and `amq-squad task reset ta`}
+--- FAIL: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.06s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.394s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+--- PASS: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.337s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (b) the clearance records the acknowledged ids
+## test: ./internal/routing/ TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock$
+## edit internal/routing/tamper.go:
+-{Kind: tamperClear, Task: t.ID, Acked: acked, At: now}
++{Kind: tamperClear, Task: t.ID, Acked: acked[:0], At: now}
+## reverted run (exit 1):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+    fix5_test.go:152: decision log lacks "acked":["outcome_line::
+        {"task":"tb","attempt":1,"class":"plan","features":{"declared_files":0,"size_band":"1","input_tokens":0,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"plan","used_tier":"plan","entry":{"runtime":"claude","model":"opus","effort":"high"},"skipped":null,"policy":"table","propensity":1,"exploration_share":0.05,"wait_reasons":null,"at":"2026-10-24T12:00:00Z","seq":1,"prev":"","tag":"4d567310124b1a7e45414c32fd685bdb7518f4eeae38d586b4ff33b05603dcbe"}
+        {"kind":"tamper_block","task":"ta","problems":[{"id":"outcome_line:261e73a0069f9182","log":"outcome","task":"ta","what":"a outcome line that does not decode, has another schema, or whose tag fails"},{"id":"lost:ta/1","log":"outcome","task":"ta","attempt":1,"what":"row ta/1 was in the log and is gone"},{"id":"truncated:1","log":"outcome","seq":1,"what":"outcome row 1, recorded in the head, is missing (the log ends at 0)"}],"at":"2026-10-24T12:02:00Z","seq":2,"prev":"4d567310124b1a7e45414c32fd685bdb7518f4eeae38d586b4ff33b05603dcbe","tag":"a223ce04c0bf831605415ddbb10785f83946c9f4e9e622e81337a793ec8ec7f8"}
+        {"kind":"tamper_observed","task":"ta","at":"2026-10-24T12:05:00Z","seq":3,"prev":"a223ce04c0bf831605415ddbb10785f83946c9f4e9e622e81337a793ec8ec7f8","tag":"fb8c8de4741c6f5858cbe565981a4e36a10d8dfef8ad836d873e6019f97b8488"}
+        {"kind":"tamper_clear","task":"ta","at":"2026-10-24T12:07:00Z","seq":4,"prev":"fb8c8de4741c6f5858cbe565981a4e36a10d8dfef8ad836d873e6019f97b8488","tag":"0b5eac534d2627b041c925e84f28900d6fe3e8756dad69391fb10f4403a2b5d9"}
+        {"task":"ta","attempt":3,"class":"implement","features":{"declared_files":0,"size_band":"1","input_tokens":0,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"task","used_tier":"task","entry":{"runtime":"claude","model":"sonnet","effort":"medium"},"skipped":null,"policy":"manual","propensity":0,"exploration_share":0.05,"wait_reasons":null,"at":"2026-10-24T12:07:00Z","seq":5,"prev":"0b5eac534d2627b041c925e84f28900d6fe3e8756dad69391fb10f4403a2b5d9","tag":"8dab538d4851b9a5d57a848ca474c45b50d9a7c50c6d75ddbe91662b2b91abc4"}
+--- FAIL: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.09s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.459s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+--- PASS: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.327s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: L1 clearance keys on the observed block
+## test: ./internal/routing/ TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock$
+## edit internal/routing/tamper.go:
+-	if seen, ok := r.observedAt[t.ID]; ok && t.State == task.StatePending && t.UpdatedAt.After(seen) {
++	if seen, ok := r.tamperBlockedAt[t.ID]; ok && t.State == task.StatePending && t.UpdatedAt.After(seen) {
+## reverted run (exit 1):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+    fix5_test.go:133: A after its attempt ended (no reset): {Pool:0x51bd3d6e5e60 Wait: Block: Detail:routing: task manual}
+--- FAIL: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.429s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+--- PASS: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.347s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: L1 the block is observed
+## test: ./internal/routing/ TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock$
+## edit internal/routing/tamper.go:
+-		if err := r.writeTamper(tamperRecord{Kind: tamperObserved, Task: t.ID, At: now}); err != nil {
++		if err := error(nil); err != nil {
+## reverted run (exit 1):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+    fix5_test.go:141: the block was not observed
+--- FAIL: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.414s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock
+--- PASS: TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock (0.08s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.306s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (c) the torn tail is reported with its length
+## test: ./internal/routing/ TestFix5TornTailAndBadDecisionAreReported$
+## edit internal/routing/durable.go:
+-	r.head, r.loaded, r.tornTail = head, true, tail
++	r.head, r.loaded, r.tornTail = head, true, tail*0
+## reverted run (exit 1):
+=== RUN   TestFix5TornTailAndBadDecisionAreReported
+    fix5_test.go:167: torn tail: {Pool:<nil> Wait:outcome_log_unwritable Block: Detail:routing: outcome log /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix5TornTailAndBadDecisionAreReported2080593836/001/extensions/amq-squad/routing/outcomes.jsonl: the last line is torn (23 bytes after the last newline) or is no row; not appending past it} []
+--- FAIL: TestFix5TornTailAndBadDecisionAreReported (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.399s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5TornTailAndBadDecisionAreReported
+--- PASS: TestFix5TornTailAndBadDecisionAreReported (0.08s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.319s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (c) a bad decision line names its task
+## test: ./internal/routing/ TestFix5TornTailAndBadDecisionAreReported$
+## edit internal/routing/chain.go:
+-			problems = append(problems, Problem{ID: lineID(log+"_line", line), Log: log, Task: task,
++			problems = append(problems, Problem{ID: lineID(log+"_line", line), Log: log, Task: task[:0],
+## reverted run (exit 1):
+=== RUN   TestFix5TornTailAndBadDecisionAreReported
+    fix5_test.go:177: bad decision line: [decision_line:8da83d5bafb39a40 (a decision line that does not decode, has another schema, or whose tag fails; task unknown)]
+--- FAIL: TestFix5TornTailAndBadDecisionAreReported (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.418s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5TornTailAndBadDecisionAreReported
+--- PASS: TestFix5TornTailAndBadDecisionAreReported (0.08s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.332s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (d) Flush reports the holds it created
+## test: ./internal/routing/ TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks$
+## edit internal/routing/router.go:
+-	if len(holds) > 0 {
+		return &HoldsCreated{Problems: holds}
++	if false && len(holds) > 0 {
+		return &HoldsCreated{Problems: holds}
+## reverted run (exit 1):
+=== RUN   TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks
+    fix5_test.go:199: Flush: <nil>
+--- FAIL: TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.406s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks
+--- PASS: TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks (0.08s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.312s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (d) a rooted router needs Tasks
+## test: ./internal/routing/ TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks$
+## edit internal/routing/router.go:
+-	if o.Root != "" && o.Tasks == nil {
++	if false && o.Root != "" && o.Tasks == nil {
+## reverted run (exit 1):
+=== RUN   TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks
+    fix5_test.go:209: rooted router without Tasks: <nil>
+--- FAIL: TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks (0.09s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.457s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks
+--- PASS: TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks (0.08s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.329s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: new 1 a gap is never the successor's
+## test: ./internal/routing/ TestFix5GapIsNotTheSuccessors$
+## edit internal/routing/chain.go:
+-				problems = append(problems, Problem{ID: fmt.Sprintf("gap:%s%d", logPrefix(log), s), Log: log, Seq: s,
++				problems = append(problems, Problem{ID: fmt.Sprintf("gap:%s%d", logPrefix(log), s), Log: log, Seq: s, Task: l.Task,
+## reverted run (exit 1):
+=== RUN   TestFix5GapIsNotTheSuccessors
+    fix5_test.go:221: gap attributed: gap:2 (outcome row 2 is missing before row 3; task t3, outcome seq 2)
+--- FAIL: TestFix5GapIsNotTheSuccessors (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.428s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5GapIsNotTheSuccessors
+--- PASS: TestFix5GapIsNotTheSuccessors (0.07s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.322s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: new 2 breaks persist across reloads
+## test: ./internal/routing/ TestFix5ProblemsPersistUntilAcknowledged$
+## edit internal/routing/durable.go:
+-	r.problems = mergeProblems(r.problems, problems)
+
++	r.problems = problems
+
+## reverted run (exit 1):
+=== RUN   TestFix5ProblemsPersistUntilAcknowledged
+    fix5_test.go:266: a held-nobody break after another reload: []
+--- FAIL: TestFix5ProblemsPersistUntilAcknowledged (0.15s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.507s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5ProblemsPersistUntilAcknowledged
+--- PASS: TestFix5ProblemsPersistUntilAcknowledged (0.15s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.392s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: new 2 breaks persist across restarts
+## test: ./internal/routing/ TestFix5ProblemsPersistUntilAcknowledged$
+## edit internal/routing/router.go:
+-	r.problems = append(r.problems, h.Open...) // open breaks persist across restarts (new 2)
+
++
+## reverted run (exit 1):
+=== RUN   TestFix5ProblemsPersistUntilAcknowledged
+    fix5_test.go:269: a held-nobody break lost across a restart
+--- FAIL: TestFix5ProblemsPersistUntilAcknowledged (0.15s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.582s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5ProblemsPersistUntilAcknowledged
+--- PASS: TestFix5ProblemsPersistUntilAcknowledged (0.15s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.413s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: L2 the sweep skips running attempts
+## test: ./internal/routing/ TestFix5SweepSkipsRunningAttempts$
+## edit internal/routing/tamper.go:
+-			for _, t := range list {
+				for _, a := range t.Attempts { // ended attempts only (L2)
++			for _, t := range list {
+				if t.State == task.StateInProgress {
+					held[t.ID] = true
+				}
+				for _, a := range t.Attempts { // ended attempts only (L2)
+## reverted run (exit 1):
+=== RUN   TestFix5SweepSkipsRunningAttempts
+    fix5_test.go:293: sweep: tr held true, t2 held true
+--- FAIL: TestFix5SweepSkipsRunningAttempts (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.445s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix5SweepSkipsRunningAttempts
+--- PASS: TestFix5SweepSkipsRunningAttempts (0.06s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.314s
+
+## verdict: OK (fails reverted, passes restored)

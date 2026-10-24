@@ -1,0 +1,9 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/omriariav/amq-squad/v3/internal/routing
+cpu: Apple M5 Max
+BenchmarkRouteStore100-18    	     200	   1289340 ns/op
+BenchmarkRouteStore100-18    	     200	   1718205 ns/op
+BenchmarkRouteStore100-18    	     200	   1774610 ns/op
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	37.578s

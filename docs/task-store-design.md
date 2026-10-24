@@ -59,7 +59,7 @@ The Go form is `internal/task` (`class.go` holds the vocabulary).
 | `lease` | object or null | the current lease, below; null when no seat holds the task |
 | `attempt` | int | number of leases granted so far (1 for the first dispatch) |
 | `attempts` | []object | one row per ended attempt: `n`, `holder`, `pool`, `granted_at`, `ended_at`, `outcome`, `detail` |
-| `wait_reason` | string | why a `pending` task is not dispatched: `dependencies`, `file_lock`, `no_route`, `seat_starting`, `seat_cap`, `usage_limit`; 2b-4 adds routing reasons (`privacy_class`, `cost_cap`, ...); empty when not waiting |
+| `wait_reason` | string | why a `pending` task is not dispatched: `dependencies`, `file_lock`, `no_route`, `seat_starting`, `seat_cap`, `usage_limit`; the router (2b-4, `internal/routing`) adds `privacy_class`, `concurrency_cap`, `cost_cap`, `reviewer_family`, and answers `no_route` when no chain entry passed for any other reason (the route detail lists each skipped entry); empty when not waiting |
 | `block_reason` | string | reason code of a `blocked` task (`seat_blocked`, `retries_exhausted`, a commit-step refusal code, `gate_open`, ...) |
 | `block_route` | string | who owes the decision: `lead` or `owner` |
 | `block_detail` | string | human text for the block |
