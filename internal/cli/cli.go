@@ -189,6 +189,7 @@ Examples:
   amq-squad guard --me cto --stdin --json < pretooluse.json
   amq-squad doctor --project ~/Code/app --json | jq .
   amq-squad trust ~/Code/app
+  amq-squad lead --model ollama/qwen3.6:27b
 
 Run 'amq-squad <command> --help' for command-specific options.
 `)

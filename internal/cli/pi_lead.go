@@ -1,0 +1,171 @@
+package cli
+
+import (
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/role"
+)
+
+// `amq-squad lead` starts the lead on the built-in pi (plan 3.1, 3.2, R2,
+// R7). Under an AMQ launch (AM_ME and AM_ROOT set) it is that seat. Without
+// one it is the solo lead of the directory: its AMQ root, role, rules, task
+// store and pi config live under ~/.amq-squad/, and nothing is written inside
+// the repository (R7). --team gives the team-lead role and the dispatch tool
+// (R19: the lead decomposes, labels and converges; it does not code).
+
+//go:embed pi_lead_solo.md
+var leadSoloRole string
+
+//go:embed pi_lead_team.md
+var leadTeamRole string
+
+//go:embed pi_lead_rules.md
+var leadBuiltinRules string
+
+const leadUsage = `amq-squad lead - start the lead on the built-in pi
+
+Usage:
+  amq-squad lead [--team] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
+
+Without an AMQ identity (AM_ME, AM_ROOT) the lead runs in solo mode for this
+directory: its state lives under ~/.amq-squad/solo/<dir>-<digest>/ and nothing
+is written inside the repository. --team starts the team-lead role, which
+decomposes and dispatches through the task store and never edits code.
+--model restricts the lead to these models (default ollama/qwen3.6:27b, the
+locally verified entry); pass pi arguments after "--".
+
+Examples:
+  amq-squad lead
+  amq-squad lead --model ollama/qwen3.6:27b -- -p "What is 17 plus 25?"
+  amq-squad lead --team --model ollama/qwen3.6:27b
+`
+
+// defaultLeadModel is the S5-verified local model (R12 3/3, plan 5).
+const defaultLeadModel = "ollama/qwen3.6:27b"
+
+func runLead(args []string) error {
+	fs := flag.NewFlagSet("lead", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var f piRunFlags
+	team := fs.Bool("team", false, "team-lead role: decompose and dispatch, never edit")
+	fs.Var(&f.models, "model", "PROVIDER/ID the lead may use (repeatable)")
+	fs.StringVar(&f.thinking, "thinking", "", "pi thinking level")
+	fs.BoolVar(&f.dryRun, "dry-run", false, "print the launch as JSON and do not exec")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, leadUsage) }
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.Usage()
+		}
+		return err
+	}
+	if len(f.models) == 0 {
+		f.models = multiFlag{defaultLeadModel}
+	}
+	f.lead = *team
+	piArgs := fs.Args()
+	if *team {
+		// R19: the team lead has no file-writing tools; it dispatches.
+		piArgs = append([]string{"--exclude-tools", "write,edit"}, piArgs...)
+	}
+	if me, root := os.Getenv("AM_ME"), os.Getenv("AM_ROOT"); me != "" && root != "" {
+		return piLaunch(piLaunchSpec{Seat: me, Flags: f, PiArgs: piArgs})
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	text := leadSoloRole
+	if *team {
+		text = leadTeamRole
+	}
+	solo, err := prepareSoloLead(home, cwd, text)
+	if err != nil {
+		return err
+	}
+	return piLaunch(piLaunchSpec{Seat: "lead", Flags: f, PiArgs: piArgs, Overlay: solo})
+}
+
+var soloSlugRE = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// soloHome is ~/.amq-squad/solo/<dir>-<sha256(project)[:12]>, the solo
+// lead's state for one project (the git top level, else the directory).
+func soloHome(home, cwd string) (string, string) {
+	project := projectTop(cwd)
+	sum := sha256.Sum256([]byte(project))
+	slug := strings.Trim(soloSlugRE.ReplaceAllString(strings.ToLower(filepath.Base(project)), "-"), "-")
+	if slug == "" {
+		slug = "root"
+	}
+	if len(slug) > 40 {
+		slug = slug[:40]
+	}
+	return filepath.Join(home, ".amq-squad", "solo", slug+"-"+hex.EncodeToString(sum[:])[:12]), project
+}
+
+// projectTop walks up from dir to the directory holding .git; without one it
+// is dir itself (a directory without git gives solo mode only, plan 3.1).
+func projectTop(dir string) string {
+	dir = filepath.Clean(dir)
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		if parent := filepath.Dir(d); parent == d {
+			return dir
+		}
+	}
+}
+
+// prepareSoloLead creates the solo lead's AMQ root and mailbox, role and
+// rules under ~/.amq-squad/solo/..., and returns the identity overlay. It
+// writes nothing under cwd (R7).
+func prepareSoloLead(home, cwd, roleText string) (map[string]string, error) {
+	dir, project := soloHome(home, cwd)
+	root := filepath.Join(dir, "root")
+	agent := filepath.Join(root, "agents", "lead")
+	for _, sub := range []string{"inbox/new", "inbox/cur", "inbox/tmp", "outbox/sent"} {
+		if err := os.MkdirAll(filepath.Join(agent, filepath.FromSlash(sub)), 0o700); err != nil {
+			return nil, err
+		}
+	}
+	rolePath := role.Path(agent)
+	if err := os.MkdirAll(filepath.Dir(rolePath), 0o700); err != nil {
+		return nil, err
+	}
+	if err := writeIfDifferent(rolePath, roleText); err != nil {
+		return nil, err
+	}
+	rulesPath := filepath.Join(dir, "team-rules.md")
+	if err := writeIfDifferent(rulesPath, leadBuiltinRules); err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"AM_ME": "lead", "AM_ROOT": root, "AM_BASE_ROOT": root, "AM_SESSION": "solo",
+		"AMQ_SQUAD_ROLE_PATH": rolePath, "AMQ_SQUAD_RULES_PATH": rulesPath, "AMQ_SQUAD_PROJECT": project,
+	}, nil
+}
+
+func writeIfDifferent(p, body string) error {
+	if cur, err := os.ReadFile(p); err == nil && string(cur) == body {
+		return nil
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}

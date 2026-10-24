@@ -345,7 +345,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 94
+  current_lines: 98
   fate: keep
   target_lines: 101
   cluster: C29
@@ -414,6 +414,15 @@ entries:
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
+  status: new
+- path: internal/cli/doctor_pi.go
+  v2_lines: 0
+  current_lines: 84
+  fate: new
+  target_lines: 84
+  cluster: pi
+  extract: ""
+  reason: "4-1: doctor pi runtime row: full re-hash, keep the last two, --fix repair"
   status: new
 - path: internal/cli/doctor_status.go
   v2_lines: 0
@@ -1146,6 +1155,42 @@ entries:
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
   status: shrunk
+- path: internal/cli/pi.go
+  v2_lines: 0
+  current_lines: 332
+  fate: new
+  target_lines: 332
+  cluster: pi
+  extract: ""
+  reason: "4-1: pi verb: run (the kept pi command path), verify, path"
+  status: new
+- path: internal/cli/pi_exec_other.go
+  v2_lines: 0
+  current_lines: 11
+  fate: new
+  target_lines: 11
+  cluster: pi
+  extract: ""
+  reason: "4-1: exec stub for non-unix builds"
+  status: new
+- path: internal/cli/pi_exec_unix.go
+  v2_lines: 0
+  current_lines: 11
+  fate: new
+  target_lines: 11
+  cluster: pi
+  extract: ""
+  reason: "4-1: exec of the embedded Node (unix)"
+  status: new
+- path: internal/cli/pi_lead.go
+  v2_lines: 0
+  current_lines: 171
+  fate: new
+  target_lines: 171
+  cluster: pi
+  extract: ""
+  reason: "4-1: lead verb: solo first run under ~/.amq-squad only (R7) and the team lead (R19)"
+  status: new
 - path: internal/cli/plan.go
   v2_lines: 256
   fate: delete
@@ -2418,6 +2463,78 @@ entries:
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
   status: keep
+- path: internal/piruntime/embed_amqpi.go
+  v2_lines: 0
+  current_lines: 23
+  fate: new
+  target_lines: 23
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: go:embed of the payload under the amqpi build tag"
+  status: new
+- path: internal/piruntime/embed_none.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: no-payload stub for default, linux and windows builds"
+  status: new
+- path: internal/piruntime/install.go
+  v2_lines: 0
+  current_lines: 362
+  fate: new
+  target_lines: 362
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: unpack to ~/.amq-squad/runtime with digest checks; full re-hash at every launch"
+  status: new
+- path: internal/piruntime/launch.go
+  v2_lines: 0
+  current_lines: 288
+  fate: new
+  target_lines: 288
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: pi launch: env scrub, PI_* defaults, per-seat agent dir and models, fd/rg links"
+  status: new
+- path: internal/piruntime/manifest.go
+  v2_lines: 0
+  current_lines: 172
+  fate: new
+  target_lines: 172
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: embedded pi payload manifest and its digest, the trust root (R1)"
+  status: new
+- path: internal/piruntime/pack.go
+  v2_lines: 0
+  current_lines: 116
+  fate: new
+  target_lines: 116
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: normalized payload packer used by scripts/build-pi-runtime.sh"
+  status: new
+- path: internal/piruntime/prune.go
+  v2_lines: 0
+  current_lines: 99
+  fate: new
+  target_lines: 99
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: list runtimes and keep the last two (doctor --fix, ruling 3)"
+  status: new
+- path: internal/piruntime/session.go
+  v2_lines: 0
+  current_lines: 147
+  fate: new
+  target_lines: 147
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: pinned pi 1.3.0 session layout and the amendment 23 resume refusal"
+  status: new
 - path: internal/procinfo/native_darwin.go
   v2_lines: 82
   current_lines: 31
