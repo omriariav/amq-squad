@@ -125,7 +125,7 @@ func (s Store) PostQuestion(gateID string, send Sender) (Question, error) {
 // reserveQuestion returns the gate's recorded question, signing and recording
 // it under the gate lock when there is none.
 func (s Store) reserveQuestion(rec Record, send Sender) (Question, error) {
-	if err := os.MkdirAll(s.Dir("consumed", "locks"), 0o700); err != nil {
+	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return Question{}, err
 	}
 	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", rec.GateID+".lock"))
@@ -133,12 +133,14 @@ func (s Store) reserveQuestion(rec Record, send Sender) (Question, error) {
 		return Question{}, err
 	}
 	defer lock.Close()
-	discardBroken(s.Dir("gates", rec.GateID+".question.json"))
 	if q, err := s.Question(rec.GateID); err != nil || q != nil {
 		if q == nil {
 			return Question{}, err
 		}
 		return *q, nil
+	}
+	if err := clearUnusable(s.Dir("gates", rec.GateID+".question.json")); err != nil {
+		return Question{}, err
 	}
 	q, err := send.SignQuestion(rec)
 	if err != nil {
@@ -182,13 +184,11 @@ func (s Store) Question(gateID string) (*Question, error) {
 		return nil, err
 	}
 	var q Question
-	if err := readStrict(filepath.Join(dir, gateID+".question.json"), &q); errors.Is(err, os.ErrNotExist) || brokenReservation(filepath.Join(dir, gateID+".question.json")) {
-		return nil, nil // absent, or a reservation an older binary left empty: PostQuestion repairs it
-	} else if err != nil {
+	if ok, err := readReservation(filepath.Join(dir, gateID+".question.json"), &q); !ok || err != nil {
 		return nil, err
 	}
 	if q.GateID != gateID || !hex64.MatchString(q.EventID) {
-		return nil, errors.New("gate question record is malformed")
+		return nil, nil // not a question of this gate: absent; PostQuestion replaces it under the lock
 	}
 	return &q, nil
 }
@@ -297,7 +297,7 @@ func (s Store) Commit(f AnswerFile) error {
 	if sub == "" || f.Envelope.Payload.Decision != f.Decision || f.Schema != AnswerSchema {
 		return errors.New("answer file decision or schema is invalid")
 	}
-	if err := os.MkdirAll(s.Dir("consumed", "locks"), 0o700); err != nil {
+	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return err
 	}
 	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", id+".lock"))
@@ -352,7 +352,7 @@ func (s Store) Recover(gateID string) error {
 	if err := ValidGateID(gateID); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.Dir("consumed", "locks"), 0o700); err != nil {
+	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return err
 	}
 	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", gateID+".lock"))
@@ -360,8 +360,9 @@ func (s Store) Recover(gateID string) error {
 		return err
 	}
 	defer lock.Close()
+	lockedAt := time.Now()
 	_, _, err = s.recoverLocked(gateID)
-	return err
+	return errors.Join(err, s.sweepTemps(lockedAt))
 }
 
 // recoverLocked finds the gate's durable decision with the lock held. The
@@ -492,7 +493,7 @@ func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, 
 	if err := ValidGateID(gateID); err != nil {
 		return Reask{}, false, err
 	}
-	if err := os.MkdirAll(s.Dir("consumed", "locks"), 0o700); err != nil {
+	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return Reask{}, false, err
 	}
 	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", gateID+".lock"))
@@ -500,12 +501,14 @@ func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, 
 		return Reask{}, false, err
 	}
 	defer lock.Close()
-	discardBroken(s.Dir("reasks", gateID+".json"))
 	if r, err := s.ReadReask(gateID); err != nil || r != nil {
 		if r == nil {
 			return Reask{}, false, err
 		}
 		return *r, false, err
+	}
+	if err := clearUnusable(s.Dir("reasks", gateID+".json")); err != nil {
+		return Reask{}, false, err
 	}
 	r, err := build()
 	if err != nil {
@@ -554,10 +557,11 @@ func (s Store) ReadReask(gateID string) (*Reask, error) {
 		return nil, err
 	}
 	var r Reask
-	if err := readStrict(filepath.Join(dir, gateID+".json"), &r); errors.Is(err, os.ErrNotExist) || brokenReservation(filepath.Join(dir, gateID+".json")) {
-		return nil, nil // absent, or left empty by a kill: ReserveReask repairs it
-	} else if err != nil {
+	if ok, err := readReservation(filepath.Join(dir, gateID+".json"), &r); !ok || err != nil {
 		return nil, err
+	}
+	if r.GateID != gateID || !hex64.MatchString(r.EventID) {
+		return nil, nil // not a re-ask of this gate: absent; ReserveReask replaces it under the lock
 	}
 	return &r, nil
 }
@@ -596,7 +600,7 @@ func readStrict(path string, v any) error {
 // rule), so a kill at any point never leaves an empty or partial file there.
 func writeOnce(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := mkdirDurable(dir); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(path); err == nil {
@@ -607,42 +611,110 @@ func writeOnce(path string, data []byte) error {
 		return err
 	}
 	tmp := f.Name()
-	defer os.Remove(tmp)
 	_, werr := f.Write(data)
 	serr := f.Sync()
 	cerr := f.Close()
 	if err := errors.Join(werr, serr, cerr, os.Chmod(tmp, 0o600)); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Link(tmp, path); err != nil {
-		return err
+	lerr := os.Link(tmp, path)
+	_ = os.Remove(tmp) // before the fsync, so one fsync covers the link and the unlink
+	if lerr != nil {
+		return lerr
 	}
 	return syncDir(dir)
 }
 
-// brokenReservation reports a reservation file that exists but is empty or
-// not one JSON value: it was never a recorded event (nothing was published
-// from it), so readers treat it as absent.
-func brokenReservation(path string) bool {
-	raw, err := os.ReadFile(path)
-	return err == nil && (len(bytes.TrimSpace(raw)) == 0 || !json.Valid(raw))
+// mkdirDurable creates dir and any missing parents, fsyncing each new
+// directory's parent, so a directory created for a reservation survives a
+// power loss with the reservation in it.
+func mkdirDurable(dir string) error {
+	if st, err := os.Stat(dir); err == nil {
+		if !st.IsDir() {
+			return fmt.Errorf("%s is not a directory", dir)
+		}
+		return nil
+	}
+	parent := filepath.Dir(dir)
+	if parent != dir {
+		if err := mkdirDurable(parent); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return syncDir(parent)
 }
 
-// discardBroken removes a reservation file that is empty or not one JSON
-// value (written by an older binary that could be killed mid-write) and
-// reports whether it did. It runs only with the gate lock held.
-func discardBroken(path string) bool {
-	raw, err := os.ReadFile(path)
-	if err != nil || (len(bytes.TrimSpace(raw)) != 0 && json.Valid(raw)) {
-		return false
+// tempGrace is how old a write temp must be, before the gate lock was taken,
+// to count as orphaned: a live writer holds its temp for milliseconds.
+const tempGrace = time.Minute
+
+// sweepTemps removes write temps (.tmp-once-*, .tmp-*) that a killed writer
+// left in the store's directories, older than the lock acquisition by
+// tempGrace, and fsyncs each directory it changed once.
+func (s Store) sweepTemps(lockedAt time.Time) error {
+	cutoff := lockedAt.Add(-tempGrace)
+	var errs []error
+	for _, d := range [][]string{{"gates"}, {"answers"}, {"denials"}, {"reasks"}, {"consumed", "gates"}, {"consumed", "events"}} {
+		dir := s.Dir(d...)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		changed := false
+		for _, e := range entries {
+			if !strings.HasPrefix(e.Name(), ".tmp-") || e.IsDir() {
+				continue
+			}
+			if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) && os.Remove(filepath.Join(dir, e.Name())) == nil {
+				changed = true
+			}
+		}
+		if changed {
+			errs = append(errs, syncDir(dir))
+		}
 	}
-	return os.Remove(path) == nil
+	return errors.Join(errs...)
+}
+
+// readReservation decodes a reservation file into v. It reports absent (false,
+// nil) for a missing file and for any file that does not decode strictly to
+// the expected struct (empty, `[]`, partial, unknown fields): such a file was
+// never a recorded event, and the reserve path replaces it under the gate
+// lock. An I/O error other than absence is returned.
+func readReservation(path string, v any) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if dec.Decode(v) != nil || dec.More() {
+		return false, nil
+	}
+	return true, nil
+}
+
+// clearUnusable removes a reservation file that the reader treats as absent.
+// It runs only with the gate lock held, just before a real reservation is
+// recorded at that name.
+func clearUnusable(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // writeAtomic replaces path durably: temp file, fsync, rename, directory fsync.
 func writeAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := mkdirDurable(dir); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(dir, ".tmp-*")

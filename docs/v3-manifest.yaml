@@ -1934,9 +1934,9 @@ entries:
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 665
+  current_lines: 737
   fate: new
-  target_lines: 665
+  target_lines: 737
   cluster: gatestore
   extract: ""
   reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask"

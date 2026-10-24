@@ -567,3 +567,93 @@ func TestReview8bEmptyQuestionReservationIsRepaired(t *testing.T) {
 		t.Fatalf("repair = %+v %v (signed %d published %v)", q, err, send.signed, send.published)
 	}
 }
+
+// Lead check E2: a reservation that is valid JSON but not the expected
+// struct with an id (here `[]`) reads as absent and is replaced under the
+// gate lock, for the question and for the re-ask.
+func TestReviewE2ArrayReservationIsReplaced(t *testing.T) {
+	s := testStore(t)
+	rec, err := Render(spec("ge2"), testNow, testIdent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.Dir("gates", "ge2.question.json"), []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if q, err := s.Question("ge2"); q != nil || err != nil {
+		t.Fatalf("`[]` question read = %+v %v", q, err)
+	}
+	send := &countingSender{}
+	if q, err := s.PostQuestion("ge2", send); err != nil || send.signed != 1 || !s.QuestionPublished("ge2") {
+		t.Fatalf("question over `[]` = %+v %v", q, err)
+	}
+	if err := os.MkdirAll(s.Dir("reasks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{"[]", "{}", `{"gate_id":"ge2"}`} {
+		if err := os.WriteFile(s.Dir("reasks", "ge2.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := s.ReadReask("ge2"); r != nil || err != nil {
+			t.Fatalf("re-ask %s read = %+v %v", body, r, err)
+		}
+	}
+	r, created, err := s.ReserveReask("ge2", func() (Reask, error) {
+		return Reask{GateID: "ge2", TriggerEventID: strings.Repeat("11", 32), EventID: strings.Repeat("33", 32), RawEvent: "{}", At: testNow.Format(time.RFC3339)}, nil
+	})
+	if err != nil || !created || r.EventID != strings.Repeat("33", 32) {
+		t.Fatalf("re-ask over an unusable reservation = %+v %v %v", r, created, err)
+	}
+}
+
+// Lead check E3: write temps orphaned by a kill are swept under the gate lock
+// by Recover once they are older than the lock acquisition by the grace; a
+// live writer's fresh temp is kept.
+func TestReviewE3OrphanTempsAreSwept(t *testing.T) {
+	s := testStore(t)
+	raised(t, s, "ge3")
+	old := s.Dir("gates", ".tmp-once-orphan")
+	fresh := s.Dir("gates", ".tmp-once-live")
+	oldAnswers := s.Dir("answers", ".tmp-1234")
+	for _, p := range []string{old, fresh, oldAnswers} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-2 * tempGrace)
+	for _, p := range []string{old, oldAnswers} {
+		if err := os.Chtimes(p, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Recover("ge3"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{old, oldAnswers} {
+		if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("orphan %s kept: %v", p, err)
+		}
+	}
+	if _, err := os.Lstat(fresh); err != nil {
+		t.Errorf("a live writer's temp was removed: %v", err)
+	}
+	if rec, err := s.Load("ge3"); err != nil || rec.GateID != "ge3" {
+		t.Fatalf("the record did not survive the sweep: %v", err)
+	}
+	// writeOnce leaves no temp behind on success or on a name that exists
+	if err := writeOnce(s.Dir("gates", "ge3.json"), []byte("{}")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("writeOnce over the record = %v", err)
+	}
+	entries, _ := os.ReadDir(s.Dir("gates"))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-once-") && e.Name() != ".tmp-once-live" {
+			t.Fatalf("writeOnce left %s", e.Name())
+		}
+	}
+}

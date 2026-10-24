@@ -170,6 +170,12 @@ Manifest: verify_action.go accepted-3 -> shrunk (746 -> 699, target 700); verify
 
 ## End checkpoint
 
+Review rounds after the end checkpoint (the commits are logged below):
+- First Codex review of 45ad7409: 7 findings (4 high, 3 medium), fixed in 90085638 (commit 8). The residual I flagged (question published before it was recorded) was fixed in 39ede1f7 (commit 9).
+- Second pass on 39ede1f7: findings 1, 2, 5 and 6 closed; 3, 4, 7 and 8 partial; 1 new defect (question_sent on a publish failure). All fixed in 62fba504 (commit 10).
+- Third pass on 62fba504: the 5 items fixed there are closed; E is partial (directory fsync, `[]` reservations, temp hygiene). Closed by commit 11, which the lead verifies with no further Codex pass.
+- Final head: see the commit 11 section.
+
 Branch `v3-3-1`. Commits on top of `v3` (2736ebdd): 69b1f399 grants; b7e11157 operatorauth taxonomy and deny record; 1ea621d0 gatetarget; a6ad7745 gatestore; 44f30dcc gateverify and nostr; 7e042025 gate CLI and retirements; and this log commit. Every commit passed the standard gate.
 
 | # | acceptance | status | evidence |
@@ -253,3 +259,11 @@ Findings 1, 2, 5 and 6 were closed by the second pass. These are the four partia
 | new: a publish failure printed "question posted" | `question_sent` (raise and status) follows the `.question.published` marker, not the event id. A relay rejection prints "question not sent yet: ..." with "send it with: amq-squad gate post --gate ID"; JSON has `question_sent: false` and the error | cli TestReview9PublishFailureReportsUnsent (json and text raise with a rejecting relay; status false, then gate post publishes the recorded event and status is true) |
 
 Gates: standard gate green. `go test -race -count=1 -v` on gatestore, gateverify, nostr, grants and gatetarget: 48 top-level tests pass, 0 fail.
+
+## Commit 11: E (directory durability, reservation decoding, temp hygiene)
+
+- E1: `mkdirDurable` replaces every `os.MkdirAll` in the gate store. It creates each missing directory (gates/, answers/, denials/, reasks/, consumed/...) and fsyncs its parent, so a directory created for a reservation survives a power loss with the reservation in it. Hard-link-into-place stays.
+- E2: `readReservation` decodes strictly into the expected struct (unknown fields refused, one value). Any reservation that does not decode, or decodes without this gate's id and a 64-hex event id (`[]`, `{}`, `{"gate_id":...}` alone), reads as absent. The reserve path removes it under the gate lock and records a real one. The `brokenReservation`/`discardBroken` pair (invalid JSON only) is gone. Row: gatestore TestReviewE2ArrayReservationIsReplaced (`[]` question replaced and published; `[]`, `{}` and a partial re-ask read as absent and are replaced).
+- E3: `writeOnce` removes its temp before the single directory fsync, so one fsync covers the link and the unlink. `Store.Recover` (under the gate lock) sweeps `.tmp-once-*` and `.tmp-*` files in the store's directories that are older than the lock acquisition minus a one-minute grace, then fsyncs each changed directory once. The grace is my addition, so the sweep never removes a live writer's temp in another gate (writers hold a temp for milliseconds). Row: gatestore TestReviewE3OrphanTempsAreSwept (old orphans in gates/ and answers/ removed, a fresh temp kept, the record intact).
+
+Both rows are mutation-checked. Gates: standard gate green. `go test -race -count=1 -v` on the five gate packages: 50 top-level tests pass, 0 fail.
