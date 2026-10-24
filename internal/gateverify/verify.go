@@ -165,6 +165,15 @@ func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gate
 	if err := checkQuestion(q, rec, pin); err != nil {
 		return Outcome{}, err
 	}
+	// The answer's squad identity: the squad tag of the event it threads to
+	// (the question or the re-ask, both checked against the record below),
+	// and its own squad tag when it carries one, which must be the record's.
+	// Buzz thread replies carry only h, e and p tags (S1 g-owner-02), so a
+	// tag on the answer is checked, not required; a threaded answer always
+	// names one squad's question through its e tag (4-5 re-pass).
+	if tags := nostr.TagValues(e, "squad"); len(tags) > 0 && !slices.Equal(tags, []string{rec.Squad}) {
+		return Outcome{}, reject(RejectNoSquad, "answer carries squad %v, the record is squad %s", tags, rec.Squad)
+	}
 	// Every thread reference (e tags marked reply or root, and unmarked ones)
 	// must name this gate's thread: its question, or its stored re-ask. One
 	// reference to anything else (another gate's question) is a conflicting
@@ -227,6 +236,13 @@ func checkReask(r *gatestore.Reask, q *gatestore.Question, pin Pin) error {
 		return reject(RejectQuestion, "re-ask is not the body's kind 9 in the DM channel")
 	case !slices.Contains(nostr.ThreadRefs(e), q.EventID):
 		return reject(RejectQuestion, "re-ask is not in the gate thread")
+	case !slices.Equal(nostr.TagValues(e, "squad"), nostr.TagValues(mustEvent(q.RawEvent), "squad")):
+		return reject(RejectQuestion, "re-ask does not carry the question's squad identity")
 	}
 	return nil
+}
+
+func mustEvent(raw string) nostr.Event {
+	e, _ := nostr.ParseEvent([]byte(raw))
+	return e
 }

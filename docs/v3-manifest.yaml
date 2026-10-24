@@ -170,18 +170,18 @@ entries:
   status: new
 - path: internal/buzz/leads.go
   v2_lines: 0
-  current_lines: 141
+  current_lines: 144
   fate: new
-  target_lines: 141
+  target_lines: 144
   cluster: buzz
   extract: ""
   reason: "4-5: the lead registry: the fleet registry (operator mode) and the launch records (one squad); routing only to leads"
   status: new
 - path: internal/buzz/presence.go
   v2_lines: 0
-  current_lines: 145
+  current_lines: 158
   fate: new
-  target_lines: 145
+  target_lines: 158
   cluster: buzz
   extract: ""
   reason: "4-5: presence and the activity line derived from the status document (one squad or a fleet, ruling 16)"
@@ -632,9 +632,9 @@ entries:
   status: keep
 - path: internal/cli/gate_store.go
   v2_lines: 0
-  current_lines: 465
+  current_lines: 476
   fate: new
-  target_lines: 465
+  target_lines: 476
   cluster: verbs
   extract: ""
   reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate; 4-5: the transport default is the Buzz share"
@@ -1420,9 +1420,9 @@ entries:
   status: keep
 - path: internal/cli/remote.go
   v2_lines: 0
-  current_lines: 614
+  current_lines: 650
   fate: new
-  target_lines: 614
+  target_lines: 650
   cluster: verbs
   extract: ""
   reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"
@@ -2342,18 +2342,45 @@ entries:
   status: new
 - path: internal/gatestore/record.go
   v2_lines: 0
-  current_lines: 285
+  current_lines: 277
   fate: new
-  target_lines: 285
+  target_lines: 277
   cluster: gatestore
   extract: ""
   reason: "3-1: the immutable gate record, its owner-facing text and the answer tuple; 4-5: squad identity (amendment 28)"
   status: new
+- path: internal/gatestore/squad.go
+  v2_lines: 0
+  current_lines: 31
+  fate: new
+  target_lines: 31
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: the squad identity of a gate store root, canonical (symlinks resolved, device and inode; amendment 28)"
+  status: new
+- path: internal/gatestore/squad_other.go
+  v2_lines: 0
+  current_lines: 9
+  fate: new
+  target_lines: 9
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: off unix, the squad identity is the resolved path alone"
+  status: new
+- path: internal/gatestore/squad_unix.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: the root directory device and inode for the squad identity"
+  status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 727
+  current_lines: 744
   fate: new
-  target_lines: 727
+  target_lines: 744
   cluster: gatestore
   extract: ""
   reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask; 4-5: squad identity (amendment 28)"
@@ -2407,9 +2434,9 @@ entries:
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 287
+  current_lines: 291
   fate: new
-  target_lines: 287
+  target_lines: 291
   cluster: gateverify
   extract: ""
   reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path; 4-5: squad identity (amendment 28)"
@@ -2443,9 +2470,9 @@ entries:
   status: new
 - path: internal/gateverify/verify.go
   v2_lines: 0
-  current_lines: 232
+  current_lines: 248
   fate: new
-  target_lines: 232
+  target_lines: 248
   cluster: gateverify
   extract: ""
   reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread; 4-5: squad identity (amendment 28)"

@@ -121,6 +121,14 @@ answer lines. Answer with a thread reply. An answer typed in the main DM box
 is not accepted; the core re-posts "Reply here to confirm" in the gate thread
 once, and your next thread reply is the answer (amendment 19).
 
+## Upgrade note (squad identity)
+
+Gates raised before the squad field are closed; raise them again under a
+new id. Each gate record and gate question carries its squad's identity
+(amendment 28), and the core refuses a record without one. `gate raise`
+prints this sentence when it meets an old record under the same id. The
+only such records are the spike's and the rehearsals' on this machine.
+
 ## Privacy
 
 Buzz DMs are not end-to-end encrypted. The relay operator can read your

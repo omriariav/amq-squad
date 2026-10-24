@@ -24,7 +24,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -139,13 +138,6 @@ func TextFor(squad, id, typedClass, action, target, digest string) string {
 		fmt.Sprintf("approve %s %s %s", id, typedClass, prefix),
 		fmt.Sprintf("deny %s %s %s", id, typedClass, prefix),
 	), "\n")
-}
-
-// SquadID is the squad identity of a gate store's AMQ root: the SHA-256 of
-// its clean absolute path.
-func SquadID(root string) string {
-	sum := sha256.Sum256([]byte(filepath.Clean(root)))
-	return "root-sha256:" + hex.EncodeToString(sum[:])
 }
 
 // Render builds the record at now; Store.Raise writes it.

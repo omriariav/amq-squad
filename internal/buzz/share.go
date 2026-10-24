@@ -177,7 +177,7 @@ func LoadShare(root, session string) (Share, error) {
 	if err != nil {
 		return Share{}, fmt.Errorf("share %s: body key: %w", session, err)
 	}
-	shareRaw, err := readAnchored(d, "share.json", false)
+	shareRaw, err := readAnchored(d, "share.json", true) // the same rule as body.key
 	if err != nil {
 		return Share{}, fmt.Errorf("share %s: share.json (is the bundle enrolled?): %w", session, err)
 	}

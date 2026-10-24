@@ -18,19 +18,32 @@ import (
 )
 
 // Store is the gate store of one AMQ session root.
-type Store struct{ Root string }
+type Store struct {
+	Root  string
+	squad string // SquadID, computed once at Open when the root exists
+}
 
 // Open returns the store under an AMQ session root (absolute).
 func Open(root string) (Store, error) {
 	if !filepath.IsAbs(root) {
 		return Store{}, fmt.Errorf("gate store root %q must be absolute", root)
 	}
-	return Store{Root: filepath.Clean(root)}, nil
+	st := Store{Root: filepath.Clean(root)}
+	if _, err := os.Stat(st.Root); err == nil {
+		st.squad = SquadID(st.Root)
+	}
+	return st, nil
 }
 
 // Dir is <root>/extensions/amq-squad/<parts...>.
-// Squad is the squad identity of this store's root (SquadID).
-func (s Store) Squad() string { return SquadID(s.Root) }
+// Squad is the squad identity of this store's root (SquadID): the value
+// computed at Open, else computed now.
+func (s Store) Squad() string {
+	if s.squad != "" {
+		return s.squad
+	}
+	return SquadID(s.Root)
+}
 
 func (s Store) Dir(parts ...string) string {
 	return filepath.Join(append([]string{s.Root, "extensions", "amq-squad"}, parts...)...)
@@ -73,6 +86,10 @@ var raiseHook = func(Record) {}
 // send fails the record stays and PostQuestion can retry the send.
 func (s Store) Raise(spec Spec, id Identity, now time.Time, send Sender) (Record, Question, error) {
 	if spec.Squad == "" {
+		// the root exists before its identity is taken (device and inode)
+		if err := os.MkdirAll(s.Root, 0o700); err != nil {
+			return Record{}, Question{}, err
+		}
 		spec.Squad = s.Squad()
 	}
 	rec, err := Render(spec, now, id)

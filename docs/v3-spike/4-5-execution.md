@@ -484,3 +484,57 @@ two goroutine CLI tests. In the owner run, expected outputs now name
 
 The documented limits stand: at most once after a crash between mark and
 action; presence as good as the seat's `live`.
+
+## Narrow Codex pass on c3859fec (fix 4, the last Codex round for 4-5)
+
+Verdict: medium 1, 2 and 5 complete. Item 2, the squad identity, and medium
+3, 4 and 6 partial. Two new defects. Every fix has a test row that fails
+with the fix reverted. The revert run (9 rows) is
+`docs/v3-spike/4-5-evidence/fix4-revert-check.txt`, and the gate is
+`fix4-gate.txt`.
+
+- **Squad identity a.** `gatestore.SquadID` is now the SHA-256 of the root
+  with symlinks resolved, plus the directory's device and inode (unix; the
+  path alone off unix). `Open` computes it once when the root exists, and
+  `Raise` creates the root before taking it. Two paths to one store now give
+  one identity, and a directory replaced at the same path gives another.
+  Test: `TestSquadIDIsCanonical`.
+- **Squad identity b.** The answer's squad is compared too: its own `squad`
+  tag, when it carries one, must be the record's (`no_squad_identity`
+  otherwise). The re-ask now carries the squad tag, and `checkReask` requires
+  it to equal the question's. Together with the question tag check and the
+  store check, all three are compared. Test: `TestAnswerSquadTagMustMatch`.
+  Deviation: the ruling asked that a missing squad tag on the answer be
+  `no_squad_identity`. Buzz thread replies carry only `h`, `e` and `p`
+  (the S1 real-key event `g-owner-02`), so requiring the tag would refuse
+  every phone answer and make acceptance 4 impossible. A threaded answer's
+  squad is the squad of the question or re-ask its `e` tag names, whose tag
+  is checked against the record. A tag on the answer is checked when
+  present. A non-thread answer still goes to the amendment 19 re-ask.
+  Open for the lead.
+- **Squad identity c.** No migration (ruling). `gate raise` over an id held
+  by a record without `squad` fails with "gates raised before the squad
+  field are closed; raise them again under a new id"
+  (`cli.GateUpgradeNote`). The README has the upgrade note. Test:
+  `TestGateRaiseNamesTheUpgradeNote`.
+- **Item 2.** `share.json` is held to the body key's rule (mode 0600 or
+  tighter, on the descriptor). Test: `TestShareJSONMustBePrivate`.
+- **Medium 3.** Lead roles are per squad (`FleetLeads.Roles` keyed by squad
+  name: that squad's squad.yaml lead role, else the default lead roles) and
+  never pooled. Test: `TestFleetLeadRolesArePerSquad`.
+- **Medium 4.** A refresh replaces the routing table with the squads that
+  validate now. A refresh that fails empties the table (no destination, no
+  squad core) until the registry validates again; the previous table is
+  never kept. Test: `TestRemoteRefreshFailureDropsTheRoutingTable`.
+- **New defect.** A squad whose lead seat does not validate (no launch
+  record, wrong role) is left out of the routing table, with a
+  `"squad <name> left out: ..."` problem line on every refresh. The others
+  attach, and a fleet with no valid squad refuses. Test:
+  `TestFleetAttachLeavesOutAnInvalidSquad`.
+- **Medium 6.** A status document whose `generated_at` is older than two
+  tick intervals (and at least 2 s) counts as a miss, so a stale source
+  takes the agent offline like a missing one. `Presence` carries the
+  document's `generated_at`. Test: `TestRemotePresenceExpiresWhenStatusIsStale`.
+
+The owner run's expected outputs are unchanged by this commit (the
+question's `squad:` line was added in fix 3).

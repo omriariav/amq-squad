@@ -38,7 +38,10 @@ type LeadRegistry interface {
 // message goes to the squad's root through AMQ cross-project routing.
 type FleetLeads struct {
 	Registry fleet.Registry
-	Roles    []string
+	// Roles are the lead roles per squad name (that squad's configured lead
+	// role); a squad without an entry uses DefaultLeadRoles. Never pooled
+	// across squads (4-5 re-pass).
+	Roles map[string][]string
 }
 
 // AmbiguousLeadError is a lead handle that more than one squad has.
@@ -74,7 +77,7 @@ func (f FleetLeads) Lead(root, name string) (Destination, error) {
 		return Destination{}, e
 	}
 	s := found[0]
-	roles := f.Roles
+	roles := f.Roles[s.Name]
 	if len(roles) == 0 {
 		roles = DefaultLeadRoles
 	}

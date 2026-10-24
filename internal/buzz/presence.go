@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
@@ -20,6 +21,10 @@ type Presence struct {
 	Squads   int           `json:"squads"`
 	Counts   status.Counts `json:"counts"`
 	Gates    []string      `json:"open_gates"`
+	// GeneratedAt is when the status document was produced (the fleet
+	// header's, else the newest squad document's); a stale document is a
+	// missed status read for the attachment (4-5 re-pass).
+	GeneratedAt time.Time `json:"generated_at"`
 }
 
 // seatPresent reports whether a seat row is a running session: the row's
@@ -69,10 +74,18 @@ func FromStatus(raw []byte, handle string) (Presence, error) {
 	// the fleet form carries the operator session's own row (the user
 	// handle, which squad documents skip; 4-3)
 	var probe struct {
-		Operator *status.Seat `json:"operator"`
+		Operator    *status.Seat `json:"operator"`
+		GeneratedAt time.Time    `json:"generated_at"`
 	}
 	_ = json.Unmarshal(raw, &probe)
-	return derive(docs, probe.Operator, handle), nil
+	p := derive(docs, probe.Operator, handle)
+	p.GeneratedAt = probe.GeneratedAt
+	for _, d := range docs {
+		if d.GeneratedAt.After(p.GeneratedAt) && probe.GeneratedAt.IsZero() {
+			p.GeneratedAt = d.GeneratedAt
+		}
+	}
+	return p, nil
 }
 
 func derive(docs []status.Status, operator *status.Seat, handle string) Presence {

@@ -302,9 +302,10 @@ func newRemoteFlags(name string) remoteFlags {
 // user mailbox over the fleet registry (AttachToOperator, the default), or
 // one squad lead (--lead).
 type remoteMode struct {
-	target buzz.Target
-	fleet  *fleet.Registry // operator mode
-	status func() ([]byte, error)
+	target   buzz.Target
+	fleet    *fleet.Registry // operator mode: the validated squads only
+	status   func() ([]byte, error)
+	problems []string // squads left out of the routing table, and why
 }
 
 func (f remoteFlags) mode(sel contextResolution, version string) (remoteMode, error) {
@@ -322,27 +323,45 @@ func (f remoteFlags) mode(sel contextResolution, version string) (remoteMode, er
 		if r.Operator.Root == "" {
 			return remoteMode{}, errors.New("the fleet registry has no operator session (amq-squad fleet operator), or attach to one squad with --lead")
 		}
+		// the routing table holds the squads that validate now: each squad's
+		// lead role is its own (its squad.yaml lead role, else the default
+		// lead roles), never pooled, and its lead seat must name it; a squad
+		// that fails is left out with a problem, and a fleet with no valid
+		// squad refuses (4-5 re-pass)
+		roles := map[string][]string{}
+		for _, sq := range r.Squads {
+			if tm, err := team.ReadFor(sq.ProjectPath, ""); err == nil && strings.TrimSpace(tm.Lead) != "" {
+				roles[sq.Name] = []string{strings.TrimSpace(tm.Lead)}
+			}
+		}
+		valid := r
+		valid.Squads = nil
+		var problems []string
+		for _, sq := range r.Squads {
+			one := fleet.Registry{Squads: []fleet.Squad{sq}}
+			if _, err := (buzz.FleetLeads{Registry: one, Roles: roles}).Lead(r.Operator.Root, sq.Name+"/"+sq.Lead); err != nil {
+				problems = append(problems, "squad "+sq.Name+" left out: "+err.Error())
+				continue
+			}
+			valid.Squads = append(valid.Squads, sq)
+		}
+		if len(valid.Squads) == 0 {
+			return remoteMode{problems: problems}, fmt.Errorf("no squad of the fleet registry validates: %s", strings.Join(problems, "; "))
+		}
 		if len(leads) == 0 {
-			leads = buzz.FleetDestinations(r)
+			leads = buzz.FleetDestinations(valid)
 		}
 		t, err := buzz.Resolve(r.Operator.Root, "", leads)
 		if err != nil {
 			return remoteMode{}, err
 		}
-		// 4-3's fleet registry is the lead authority, checked against each
-		// lead seat's launch record (4-5 re-pass)
-		roles := slices.Clone(buzz.DefaultLeadRoles)
-		for _, sq := range r.Squads {
-			if tm, err := team.ReadFor(sq.ProjectPath, ""); err == nil && strings.TrimSpace(tm.Lead) != "" && !slices.Contains(roles, strings.TrimSpace(tm.Lead)) {
-				roles = append(roles, strings.TrimSpace(tm.Lead))
-			}
-		}
-		t.Registry = buzz.FleetLeads{Registry: r, Roles: roles}
+		t.Registry = buzz.FleetLeads{Registry: valid, Roles: roles}
 		if err := checkLeads(t); err != nil {
 			return remoteMode{}, err
 		}
+		r = valid
 		path := *f.fleetFile
-		return remoteMode{target: t, fleet: &r, status: func() ([]byte, error) {
+		return remoteMode{target: t, fleet: &r, problems: problems, status: func() ([]byte, error) {
 			_, doc, err := fleetStatus(path, version)
 			if err != nil {
 				return nil, err
@@ -530,8 +549,20 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 		// operator mode: the fleet registry is read again every tick, so a
 		// squad added, removed or given another lead routes at once
 		if m.fleet != nil {
-			if nm, err := f.mode(sel, version); err != nil {
+			nm, err := f.mode(sel, version)
+			for _, pr := range nm.problems {
+				emit("error", map[string]string{"step": "fleet registry", "error": pr})
+			}
+			if err != nil {
+				// the previous routing table is never kept: no destination
+				// and no squad core until the registry validates again
 				emit("error", map[string]string{"step": "fleet registry", "error": err.Error()})
+				t.Leads, t.Registry = nil, buzz.FleetLeads{}
+				empty := fleet.Registry{Operator: m.fleet.Operator}
+				m.fleet, m.target = &empty, t
+				if pump != nil {
+					pump.Target, pump.Cores = t, nil
+				}
 			} else {
 				m, t, statusDoc = nm, nm.target, nm.status
 				if pump != nil {
@@ -548,6 +579,11 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 			var p buzz.Presence
 			if err == nil {
 				p, err = buzz.FromStatus(raw, t.Handle)
+			}
+			// a document older than two tick intervals is a missed read: a
+			// stale source never keeps the agent online (4-5 re-pass)
+			if err == nil && time.Since(p.GeneratedAt) > MissedStatusTicks*(*interval) && time.Since(p.GeneratedAt) > 2*time.Second {
+				err = fmt.Errorf("status document generated at %s is stale", p.GeneratedAt.Format(time.RFC3339))
 			}
 			if err != nil {
 				emit("error", map[string]string{"step": "status", "error": err.Error()})

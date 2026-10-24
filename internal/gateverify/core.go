@@ -210,7 +210,11 @@ func (c *Core) reask(ctx context.Context, rec gatestore.Record, q *gatestore.Que
 		return rejected(rec.GateID, o.Event.ID, reject(RejectThread, "the answer is outside the gate thread and the gate is no longer open"))
 	}
 	r, _, err := c.Store.ReserveReask(rec.GateID, func() (gatestore.Reask, error) {
-		evt, err := c.sign(ReaskText(o.Answer), [][]string{{"e", q.EventID, c.RelayURL, "root"}})
+		extra := [][]string{{"e", q.EventID, c.RelayURL, "root"}}
+		if rec.Squad != "" {
+			extra = append(extra, []string{"squad", rec.Squad})
+		}
+		evt, err := c.sign(ReaskText(o.Answer), extra)
 		if err != nil {
 			return gatestore.Reask{}, err
 		}
