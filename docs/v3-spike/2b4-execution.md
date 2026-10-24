@@ -128,3 +128,14 @@ For milestone B's rebase: construct with `routing.New(routing.Options{Table: rou
 5. Router startup failure (milestone B): when routing.yaml does not load, the proposal is that the scheduler refuses to start, not that it falls back to DefaultRouter without saying so.
 6. Report thresholds (redo rate 0.3, 3 tasks minimum, 5 clean tasks for a tier down, a 10-minute mean wait): proposals under ruling 14, to be adjusted from the first real weeks of the log.
 7. Pinned-task retries: a lead pin governs the first attempt only. Its retries follow the table from the tier the draw gives, not from the pin's tier. Proposal: accept for 3.0.
+
+## Lead rulings at the end checkpoint (2026-10-24, d0b0b39e; to apply in the fix commit after the Codex pass)
+
+1. Class companions and 3-2's per-repository list merge as a union (open ruling 2).
+2. The scheduler refuses to start when routing.yaml does not load, with the named reason `routing_invalid`; it never falls back to the default router silently (open ruling 5). Doctor's routing row already fails on an invalid table.
+3. The report thresholds stay proposals, adjusted from real weeks of the log in phase 5 (open ruling 6).
+4. A lead pin fixes the task's starting tier: retries move one tier up from the pinned tier per the table and never below it, and the table never lowers the pin (open ruling 7; this replaces the commit 2 behavior, where retries of a pinned task followed the drawn tier).
+5. Deviation accepted: the price pair stays in the routing table keyed by entry; the registry format is unchanged (open ruling 3).
+6. Rebase item: 4-1 is merged; take its pi model ids from v3's registry rows in place of the pi + Anthropic placeholders.
+
+Status: holding for the Codex findings; rulings 1, 2, 4 and 6 land in the fix commit.
