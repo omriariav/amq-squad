@@ -271,7 +271,7 @@ entries:
   status: deleted
 - path: internal/cli/cli.go
   v2_lines: 279
-  current_lines: 192
+  current_lines: 194
   fate: keep
   target_lines: 215
   cluster: C29
@@ -312,7 +312,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 84
+  current_lines: 88
   fate: keep
   target_lines: 101
   cluster: C29
@@ -402,7 +402,7 @@ entries:
   status: shrunk
 - path: internal/cli/evidence.go
   v2_lines: 774
-  current_lines: 774
+  current_lines: 777
   fate: replace
   target_lines: 0
   cluster: C20
@@ -558,6 +558,60 @@ entries:
   extract: ""
   reason: "goal supervision removed"
   status: deleted
+- path: internal/cli/hook_context.go
+  v2_lines: 0
+  current_lines: 163
+  fate: keep
+  target_lines: 163
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
+  status: keep
+- path: internal/cli/hook_guard.go
+  v2_lines: 0
+  current_lines: 398
+  fate: keep
+  target_lines: 398
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
+  status: keep
+- path: internal/cli/hook_guard_env.go
+  v2_lines: 0
+  current_lines: 231
+  fate: keep
+  target_lines: 231
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
+  status: keep
+- path: internal/cli/hook_identity.go
+  v2_lines: 0
+  current_lines: 122
+  fate: keep
+  target_lines: 122
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: hook verb identity from AM_ME/AM_ROOT/AM_SESSION (R52), exit contract"
+  status: keep
+- path: internal/cli/hook_ingest.go
+  v2_lines: 0
+  current_lines: 184
+  fate: keep
+  target_lines: 184
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: evidence ingest: append-only seat ledger, seed of the 2b evidence ledger"
+  status: keep
+- path: internal/cli/hook_store.go
+  v2_lines: 0
+  current_lines: 218
+  fate: keep
+  target_lines: 218
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: grants file (provisional) and read-only gate store with verified envelopes"
+  status: keep
 - path: internal/cli/init.go
   v2_lines: 284
   current_lines: 131

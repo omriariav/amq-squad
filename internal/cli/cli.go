@@ -185,6 +185,8 @@ Examples:
   amq-squad status --project ~/Code/app --session issue-435 --json
   amq-squad dispatch --session issue-96 --role qa --subject "Validate" --body-file task.md
   amq-squad task list --session issue-96
+  amq-squad context --me cto --json
+  amq-squad guard --me cto --stdin --json < pretooluse.json
   amq-squad doctor --project ~/Code/app --profile review --json | jq .
 
 Run 'amq-squad <command> --help' for command-specific options.

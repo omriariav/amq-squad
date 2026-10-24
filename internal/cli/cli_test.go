@@ -115,8 +115,10 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 	// runs on any launch-capable path) -- not a silent regression of the
 	// v2.28-pruned command this list originally named. Removed from both
 	// lists below; brief_test.go covers the new command directly.
+	// 2a-3: "context" likewise returns as a new verb, the plan 4.2 hook verb
+	// (hook_context.go), not the v2 context board; hook_verbs_test.go covers it.
 	removed := []string{
-		"context", "activity", "bootstrap", "threads", "thread",
+		"activity", "bootstrap", "threads", "thread",
 		"collect", "prune-panes", "console", "monitor", "notify", "notifications",
 		"history", "fork", "review-worktree", "tmux-harness", "rm", "archive", "next",
 	}
@@ -150,7 +152,7 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		"context.go", "activity.go", "bootstrap_ack.go", "threads.go", "thread.go",
+		"activity.go", "bootstrap_ack.go", "threads.go", "thread.go",
 		"collect.go", "prune_panes.go", "console.go", "monitor.go", "notify.go", "notifications.go",
 		"history.go", "fork.go", "review_worktree.go", "tmux_harness.go", "rm.go", "next.go",
 	} {
@@ -283,6 +285,8 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"team":     true,
 		"task":     true,
 		"evidence": true,
+		"context":  true,
+		"guard":    true,
 		"verify":   true,
 		"gate":     true,
 		"operator": true,
