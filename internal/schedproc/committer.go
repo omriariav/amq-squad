@@ -67,6 +67,10 @@ func (c *Committer) CheckExit(handle, taskID, why string) scheduler.ExitResult {
 		return scheduler.ExitResult{Deferred: true, Detail: res.Detail}
 	case res.Quarantine:
 		return scheduler.ExitResult{Quarantine: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
+	case !res.OK:
+		// a refusal the exit step does not name (ledger_tampered above all)
+		// is a block routed to the owner that quarantines the seat, never OK
+		return scheduler.ExitResult{Quarantine: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
 	}
 	return scheduler.ExitResult{OK: true}
 }

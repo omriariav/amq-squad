@@ -32,6 +32,8 @@ import (
 //	    required_companions: [skills/*/SKILL.md]   # optional; default none (the owner names them)
 //	    push_url: git@github.com:omriariav/amq-noc.git   # optional: ssh, https://github.com, absolute path or file://
 //	    local_push_ack: false     # required true for a local push_url (grants_invalid without); the merge train still refuses a real run against one
+//	clear:                        # optional: how a seat quarantine's clear is signed
+//	  signature: required         # required (default with a Buzz enrolment) | pty_only (only without one; else grants_invalid)
 //	verifiers:                    # optional: the verifier command per class with a mechanical verifier
 //	  implement: go test ./...    # extract, script, implement; a class without one completes on its done report
 //	fleet:                        # reserved for the operator session (4-3)
@@ -109,6 +111,8 @@ func ParseOwner(text, source string) (Grants, error) {
 			g.Merge, err = parseMerge(e)
 		case "fleet":
 			g.Fleet, err = parseFleet(e)
+		case "clear":
+			g.Clear, err = parseClear(e)
 		case "verifiers":
 			g.Verifiers, err = parseVerifiers(e)
 		default:
@@ -240,6 +244,31 @@ func parseFleet(e yamlsub.Entry) (Fleet, error) {
 		}
 	}
 	return f, nil
+}
+
+// parseClear reads `clear:`, whose only key is signature (required |
+// pty_only).
+func parseClear(e yamlsub.Entry) (Clear, error) {
+	var c Clear
+	if e.Value != "" {
+		return c, e.Errf("want a map")
+	}
+	sub, err := yamlsub.Sub(e.Key, e.Block)
+	if err != nil {
+		return c, err
+	}
+	for _, s := range sub {
+		switch s.Key {
+		case "clear.signature":
+			c.Signature, err = s.OneOf(ClearRequired, ClearPtyOnly)
+		default:
+			err = s.Errf("unknown key")
+		}
+		if err != nil {
+			return c, err
+		}
+	}
+	return c, nil
 }
 
 func parseRepositoryPaths(e yamlsub.Entry) ([]RepositoryPath, error) {

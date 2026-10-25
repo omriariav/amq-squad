@@ -190,6 +190,40 @@ type Grants struct {
 	// grant, so their done reports block. A squad.yaml never removes a
 	// class the grant verifies (the reviewer's correction).
 	VerifierGate []string `json:"verifier_gate,omitempty"`
+	// Clear is the owner-file key clear.signature (phase 5, the Buzz-signed
+	// seat clear): how a quarantine's clear is signed.
+	Clear Clear `json:"clear,omitempty"`
+}
+
+// Clear signature modes of the owner file's clear.signature.
+const (
+	// ClearRequired: a clear completes only on the owner's signed Buzz
+	// answer (a typed gate of kind quarantine_clear). The default whenever
+	// the owner's Buzz enrolment exists.
+	ClearRequired = "required"
+	// ClearPtyOnly: the owner's real pty alone clears. Accepted only when no
+	// Buzz enrolment exists; with one the owner file is grants_invalid.
+	ClearPtyOnly = "pty_only"
+	// BindingFile is the owner's Buzz enrolment record, beside the owner
+	// grants file (gateverify.DefaultBindingPath names the same file).
+	BindingFile = "gate-binding.json"
+)
+
+// Clear is the clear.signature grant. Signature "" is the default.
+type Clear struct {
+	Signature string `json:"signature,omitempty"`
+}
+
+// ClearMode is the clear mode in force: the grant's own, else required when
+// the owner's Buzz enrolment exists, else pty_only.
+func (g Grants) ClearMode(enrolled bool) string {
+	switch {
+	case g.Clear.Signature != "":
+		return g.Clear.Signature
+	case enrolled:
+		return ClearRequired
+	}
+	return ClearPtyOnly
 }
 
 // VerifierFor is the class's configured verifier command, "" when none.
@@ -409,6 +443,14 @@ func LoadFrom(ownerPath, repoRoot string) (Resolved, error) {
 			g, err := ParseOwner(string(raw), ownerPath)
 			if err != nil {
 				return Resolved{Source: ownerPath}, err
+			}
+			// pty_only is the owner's choice when no Buzz enrolment exists;
+			// with one present it would switch the second factor off
+			// (grants_invalid, never a silent downgrade).
+			if g.Clear.Signature == ClearPtyOnly {
+				if _, serr := os.Lstat(filepath.Join(filepath.Dir(ownerPath), BindingFile)); serr == nil {
+					return Resolved{Source: ownerPath}, fmt.Errorf("%s: clear.signature pty_only is accepted only when no Buzz enrolment exists, and %s is present: remove the key (the default is required) or un-enrol", ownerPath, BindingFile)
+				}
 			}
 			r.Grants, r.Source = g, ownerPath
 			if why := Insecure(ownerPath); why != "" {

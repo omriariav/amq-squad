@@ -394,6 +394,16 @@ off under a 60 s timeout, and writes a signed clear record; an open or
 lookup failure is `owner_proof_unknown`. By 7.3's model a same-UID shell
 that is no seat pane and not descended from one is the owner; the
 Buzz-signed clear is phase 5's answer (16.4). [2.7, amendment 28]
+With the owner's Buzz enrolment present (grant `clear.signature`:
+`required`, the default then) the pty is only the request half: `seat
+clear` raises a typed gate of kind `quarantine_clear` (nonce, handle,
+seat incarnation, the config diff's digest), posts it over Buzz, and the
+clear completes only when the owner's signed answer to that gate verifies
+as the four typed gates' answers do; the signed clear record then carries
+the gate id and the answer's event id. A clear with no answer is
+`clear_unsigned` and the quarantine stays; Buzz unreachable leaves an open
+gate and no fallback. `pty_only` is accepted only with no enrolment (with
+one it is `grants_invalid`). [5-clear]
 
 A per-seat CODEX_HOME is rejected; the env overlay allowlist cannot carry
 it. [2.3, amendment 4] codex-cli rewrites its own `config.toml` at start
@@ -1562,7 +1572,8 @@ Hardening.
   seat cannot read the owner's gh token (R33). Waits on the choice
   between the two.
 - The Buzz-signed `seat clear`, the second factor that amendment 28 names
-  for the owner proof (4.3). Building 2026-10-25 on branch v3-5-clear:
+  for the owner proof (4.3). Built 2026-10-25 on branch v3-5-clear
+  (docs/v3-spike/5-clear-execution.md):
   the pty clear becomes the request half, written to the gate store as a
   typed gate of kind quarantine_clear (nonce, handle, incarnation, the
   config diff's digest), posted over Buzz through the 3-1 and 4-5 path,

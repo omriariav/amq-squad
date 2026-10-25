@@ -115,6 +115,10 @@ func runSeatClear(args []string, out io.Writer) error {
 	if err := requireOwnerTerminal("seat clear", *seat); err != nil {
 		return err
 	}
+	mode, err := clearModeInForce()
+	if err != nil {
+		return fmt.Errorf("seat clear: %w", err)
+	}
 	signer, err := operatorauth.LoadEd25519Signer(seatClearIssuerKey())
 	if err != nil {
 		return fmt.Errorf("seat clear: the clear is signed with the core's issuer key (enroll it with amq-squad remote): %w", err)
@@ -127,11 +131,30 @@ func runSeatClear(args []string, out io.Writer) error {
 	defer sel.release()
 	home, _ := os.UserHomeDir()
 	data := seatClearData{Root: sel.root, Seat: *seat, Preflight: seatexec.PreflightDir(home)}
+	// The pty is the request half. In required mode nothing below it runs
+	// (not even the preflight refresh) until the owner's signed Buzz answer
+	// to the request verifies (clear_unsigned otherwise; the quarantine stays).
+	var gate *gatedClear
+	if mode == grants.ClearRequired {
+		if gate, err = requestClear(context.Background(), sel, f, *seat, out); err != nil {
+			return err
+		}
+	}
 	if err := seatexec.WritePreflight(home, true); err != nil {
 		return fmt.Errorf("seat clear: refresh the preflight copies: %w", err)
 	}
-	if l, err := seatcommit.ClearQuarantine(sel.root, *seat, signer, taskNow()); err == nil {
+	var authorize func(*seatcommit.LedgerQuarantine) (seatcommit.ClearGate, error)
+	if gate != nil {
+		authorize = gate.authorize
+	}
+	var seed *seatcommit.LedgerQuarantine
+	if gate != nil {
+		seed = gate.id.seed
+	}
+	if l, err := seatcommit.ClearQuarantineSeeded(sel.root, *seat, signer, taskNow(), seed, authorize); err == nil {
 		data.Evidence = l.Quarantine
+	} else if errors.Is(err, seatcommit.ErrAlreadyCleared) {
+		return fmt.Errorf("seat clear: %w: another clear of seat %s lifted this quarantine first; nothing was done by this run", seatcommit.ErrAlreadyCleared, *seat)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("seat clear: %w", err)
 	}
@@ -312,7 +335,7 @@ func commitStep(sel storeSelection, seat string, t task.Task, dryRun, openPR boo
 	g, gerr := grants.Load(t.ProjectPath)
 	return seatcommit.Run(seatcommit.Options{Root: sel.root, Handle: seat, Task: t, Grants: g, GrantsErr: gerr,
 		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow,
-		PRBoundTo: prBoundTo(sel.store), Clear: ownerTrust{},
+		PRBoundTo: prBoundTo(sel.store), Clear: ownerTrust{Root: sel.root},
 		BindPR: func(repository string, n int, head string) error {
 			_, err := sel.store.BindPR(t.ID, repository, n, head, taskNow())
 			return err

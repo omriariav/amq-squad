@@ -41,7 +41,13 @@ const (
 	ReasonClaudeConfig = "claude_config_changed"
 	// ReasonClearUnsigned: a quarantine's clear is not the owner's signed
 	// record; the seat stays quarantined (R1).
-	ReasonClearUnsigned = "quarantine_clear_unsigned"
+	ReasonClearUnsigned = ReasonQuarantineUnverified
+	// ReasonQuarantineUnverified: a cleared quarantine whose ClearRecord does
+	// not verify (the owner's issuer signature, and for a Buzz-signed clear
+	// the owner's answer in the gate store). Every consumer of a clear (the
+	// commit step, the exit check, the widen dry run) refuses with it,
+	// whether the record is bad or the gate store cannot be read.
+	ReasonQuarantineUnverified = "quarantine_unverified"
 	// ReasonPRBoundElsewhere: an open PR on the seat branch is not this
 	// task's harness PR (another task's, another repository's, another base);
 	// it is never reused (P2, the reviewer's pre-clearance).

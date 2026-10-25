@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -667,7 +668,12 @@ func TestOpenPRThatIsNotThisTasksIsNeverReused(t *testing.T) {
 // No core-recorded base: refused, never inferred from the seat's refs.
 func TestNoRecordedBaseIsRefused(t *testing.T) {
 	f := newFixture(t)
+	// a seat that never had a ledger: neither the file nor its sealed head
+	// (a ledger removed alone is ledger_tampered)
 	if err := os.Remove(ledgerPath(f.root, f.handle)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(sealchain.HeadPath(f.root, ledgerHeadName(f.handle))); err != nil {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// b\n")

@@ -206,6 +206,9 @@ func exitChanges(o Options) (string, []seatexec.ConfigChange, error) {
 			}
 		}
 	}
+	if code != "" && clearedOnThisLaunch(o, code) {
+		code, changes = "", nil
+	}
 	if code == "" {
 		qs, err := task.Quarantined(task.DirFor(o.Root))
 		if err != nil {
@@ -233,6 +236,11 @@ func ExitCheck(o Options, why string) Result {
 	err := withLedgerLock(o.Root, o.Handle, func() error {
 		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
 			out = res.tamperedRefusal(terr)
+			return nil
+		}
+		if l, lerr := ReadLedger(o.Root, o.Handle); lerr == nil && l.Quarantine != nil && l.Quarantine.ClearedAt != nil && !l.Quarantine.Clear.Verified(o.Handle, l.Quarantine, o.Clear) {
+			res.Quarantine = true
+			out = res.refuse(ReasonQuarantineUnverified, task.RouteOwner, unverifiedDetail(o.Handle))
 			return nil
 		}
 		code, changes, err := exitChanges(o)
@@ -292,6 +300,9 @@ func run(o Options, res Result) Result {
 	if err != nil {
 		return res.defer_(err.Error())
 	}
+	if ledger.Seeded && ledger.Base == "" {
+		return res.refuse(ReasonBaseUnrecorded, task.RouteLead, "no core-recorded base for seat "+o.Handle+" (its ledger entry is the seed of a clear); the launch records it (seat commit --base SHA records one as a lead decision)")
+	}
 	if ledger.Worktree != rec.Worktree || ledger.Branch != rec.Branch {
 		return res.refuse(ReasonWorktree, task.RouteLead, fmt.Sprintf("the commit ledger records %s on %s, the launch record %s on %s", ledger.Worktree, ledger.Branch, rec.Worktree, rec.Branch))
 	}
@@ -313,22 +324,30 @@ func run(o Options, res Result) Result {
 		return res.defer_("snapshot of the worktree: " + err.Error())
 	}
 	res.Tree = tree
-	if q := ledger.Quarantine; q != nil && !o.DryRun {
+	if q := ledger.Quarantine; q != nil {
 		switch {
+		case q.ClearedAt == nil && o.DryRun:
+			// a dry run of a quarantined seat has nothing to verify
 		case q.ClearedAt == nil:
 			res.Quarantine = true
 			return res.refuse(firstNonEmpty(q.Reason, ReasonGlobalConfig), task.RouteOwner, fmt.Sprintf("seat %s is quarantined since %s (task %s); nothing of its work is committed until the owner clears it (amq-squad seat clear --seat %s)", o.Handle, q.At.Format(time.RFC3339), q.Task, o.Handle))
 		case !q.Clear.Verified(o.Handle, q, o.Clear):
+			// every mode of the commit step, a dry run included, verifies
+			// the clear and refuses on any failure, an unreadable gate store too
 			res.Quarantine = true
-			return res.refuse(ReasonClearUnsigned, task.RouteOwner, fmt.Sprintf("seat %s's quarantine carries a clear that is not the owner's signed record (a trusted key in the owner's trust store); it stays quarantined", o.Handle))
+			return res.refuse(ReasonQuarantineUnverified, task.RouteOwner, unverifiedDetail(o.Handle))
+		case o.DryRun:
 		case q.Task == o.Task.ID && q.Tree != "" && q.Tree != tree:
 			return res.refuse(ReasonQuarantineTree, task.RouteOwner, fmt.Sprintf("the seat's tree changed after the quarantine: the owner cleared %s, the worktree is now %s", q.Tree, tree))
 		}
-		ledger.Quarantine = nil
-		if err := writeLedger(o.Root, ledger); err != nil {
-			return res.defer_("commit ledger: " + err.Error())
+		if !o.DryRun && q.ClearedAt != nil {
+			ledger.Cleared = append(ledger.Cleared, *q)
+			ledger.Quarantine = nil
+			if err := writeLedger(o.Root, ledger); err != nil {
+				return res.defer_("commit ledger: " + err.Error())
+			}
+			res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+q.Task)
 		}
-		res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+q.Task)
 	}
 	raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 	if err != nil {
@@ -409,6 +428,9 @@ func quarantine(o Options, res Result, code string, changes []seatexec.ConfigCha
 	}
 	detail := what + ": " + strings.Join(files, "; ") + "; the seat is quarantined and its diff kept uncommitted until the owner clears it (amq-squad seat clear --seat " + o.Handle + ")"
 	q := LedgerQuarantine{Task: o.Task.ID, Reason: code, Config: changes, At: o.Now().UTC()}
+	if rec, err := stagedRecord(o.Root, o.Handle); err == nil {
+		q.Launch = rec.LaunchID
+	}
 	l, lerr := ReadLedger(o.Root, o.Handle)
 	if lerr == nil && l.Quarantine != nil && l.Quarantine.ClearedAt == nil {
 		return res.refuse(code, task.RouteOwner, detail) // the first evidence stays
@@ -417,6 +439,8 @@ func quarantine(o Options, res Result, code string, changes []seatexec.ConfigCha
 		q.Snapshot = err.Error()
 	} else if lerr != nil {
 		q.Snapshot = "no commit ledger: " + lerr.Error()
+	} else if l.Seeded && l.Base == "" {
+		q.Snapshot = "seed entry: no base recorded yet, no diff yet"
 	} else if rp, err := worktreePaths(rec.Worktree); err != nil {
 		q.Snapshot = err.Error()
 	} else if sh, err := newShadow(o.Git, harnessEnv(o.Env), rp); err != nil {
@@ -443,6 +467,9 @@ func quarantine(o Options, res Result, code string, changes []seatexec.ConfigCha
 		}
 	}
 	if lerr == nil {
+		if l.Quarantine != nil && l.Quarantine.Clear != nil {
+			l.Cleared = append(l.Cleared, *l.Quarantine)
+		}
 		l.Quarantine = &q
 		if err := writeLedger(o.Root, l); err != nil {
 			detail += "; the evidence could not be written: " + err.Error()
@@ -1173,4 +1200,34 @@ func firstLine(s string) string {
 		}
 	}
 	return strings.TrimSpace(s)
+}
+
+func unverifiedDetail(handle string) string {
+	return fmt.Sprintf("seat %s's quarantine carries a clear that is not the owner's verified record (the owner's signature, and for a Buzz-signed clear the owner's answer in the gate store); it stays quarantined", handle)
+}
+
+// clearedOnThisLaunch says whether the owner already cleared this condition
+// on the seat's current launch (a verified ClearRecord, pending or lifted, that
+// names this launch and this condition): the same silence or drift is not
+// raised again, and a new lease is a new launch, so detection runs fresh.
+func clearedOnThisLaunch(o Options, code string) bool {
+	rec, err := stagedRecord(o.Root, o.Handle)
+	if err != nil || rec.LaunchID == "" {
+		return false
+	}
+	l, err := ReadLedger(o.Root, o.Handle)
+	if err != nil {
+		return false
+	}
+	qs := l.Cleared
+	if l.Quarantine != nil {
+		qs = append(append([]LedgerQuarantine{}, qs...), *l.Quarantine)
+	}
+	for i := range qs {
+		q := &qs[i]
+		if q.ClearedAt != nil && q.Clear != nil && q.Clear.Condition == code && q.Clear.Launch == rec.LaunchID && q.Clear.Verified(o.Handle, q, o.Clear) {
+			return true
+		}
+	}
+	return false
 }
