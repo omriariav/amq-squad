@@ -1,0 +1,57 @@
+# amq-squad 3.0: follow-ups after the release
+
+Items deferred out of 3.0 by a recorded decision, each with the plan section
+that records it (docs/v3-plan.md unless named otherwise). They outlive the
+planning sessions that made them; nothing here is a release blocker.
+
+## 3.1
+
+- Read-only runtime image for the embedded pi runtime (the hash-to-exec
+  window, milliseconds, same-UID only). Owner decision 2026-10-25 on launch
+  speed. Plan 4.1 and 16.4 (hardening).
+- GitHub token custody: a dedicated amq-squad keychain item with a
+  fine-grained PAT, or a GitHub App installation token; 3.0 uses the owner's
+  gh CLI login through the pinned gh copy. Owner decision 2026-10-25. Plan
+  R33 and 16.4.
+
+## 3.0.x
+
+- Orphaned-verifier adoption: the exits queue entry for a running commit step
+  records the verifier child's pgid and start time; the adopting scheduler
+  kills that group when the start time matches and re-runs the verifier once
+  on the same sealed snapshot (interrupted_reruns=1 in the sealed bytes); a
+  second interruption defers to the lead as today. Spike log, phase 5
+  hardening list; plan 6.1.
+- Stale verifier waiting-slot rows: a waiting row left by a crash persists
+  until the next step; status marks a row older than the wait bound as stale.
+  Spike log, test-hygiene list.
+- Test flakes still open after the hygiene branches: whichever of
+  internal/cli TestDecisionAdapterKillsAHungGuardGroup (fixed on
+  v3-5-hygiene2 if merged), internal/seatlaunch TestProofConnectionsAreBounded
+  and TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (TempDir cleanup
+  races) remain; keep the failing full-run output before any fix. Spike log,
+  test-hygiene list.
+- `amq-squad uninstall --json`: the verb has no JSON envelope. Plan 16.4
+  (uninstall).
+- YAML redaction trade-offs recorded in internal/redact's package doc: a bare
+  multi-word value under a credential name is skipped by the one-line rule
+  (the shape rules still run inside it) and `${VAR}` is skipped by the
+  alphanumeric test; the per-line prose-scan narrowings (null and booleans,
+  masked values, call expressions without an 8-plus alphanumeric run, the
+  key `key`). Plan 6.1; briefs ruling 18.
+- The Linux CI job for the Claude hook script (claude-hooks-linux on
+  ubuntu-latest under dash) has not had a real run; it runs on the first push.
+  Plan 16.4 (release prep).
+- The amq-noc 1.0 command center lands by PR on amq-noc main on the owner's
+  go, after its fixture refresh for lead_handle and live. Plan 4.7 and 16.4,
+  owner session item 6.
+- MIGRATION.md keeps its v2 sections; the "Moving to 3.0" section points at
+  docs/squad-yaml.md and `amq-squad migrate`; a fuller v2-to-3.0 guide can
+  follow once the first real migration runs. Plan 16.4 (migrate).
+
+## Acceptance rows that wait on the owner session (not deferred, open)
+
+See plan 16.4's table: 3-2 acceptance 4 (the real S6 merge), milestone B's
+Claude live rows and the Codex seat row, 4-1 acceptance 10 (the AMQ release
+carrying PR #1188), 4-5 acceptance 4 and 3-1 acceptance 9 (the Buzz session,
+with the signed seat clear as its third item), 4-2 acceptance 3.
