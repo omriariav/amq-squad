@@ -20,6 +20,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
@@ -68,10 +69,10 @@ type Options struct {
 	// step's push (repository, base branch, push URL); nil reads the grant
 	// of the squad's project root.
 	Target *seatcommit.Target
-	// ProbeMode asks the installed Claude Code for the effective permission
-	// mode of a Claude seat's settings (default claudeseat.ProbeMode); a
-	// test seam.
-	ProbeMode func(ctx context.Context, claude, dir, worktree, home, mode string) (claudeseat.Probe, error)
+	// ProbeMode asks the pinned Claude Code for the effective permission
+	// mode of a Claude seat's config dir (default: the registry's claude
+	// pin through claudeseat.ProbeMode); a test seam.
+	ProbeMode func(ctx context.Context, dir, mode string) (claudeseat.Probe, error)
 }
 
 // SeatState is one seat's state after the launch.
@@ -130,7 +131,10 @@ func (o Options) withDefaults() Options {
 		o.Poll = 100 * time.Millisecond
 	}
 	if o.ProbeMode == nil {
-		o.ProbeMode = claudeseat.ProbeMode
+		home := o.Home
+		o.ProbeMode = func(ctx context.Context, dir, mode string) (claudeseat.Probe, error) {
+			return probePinned(ctx, home, dir, mode)
+		}
 	}
 	return o
 }
@@ -197,8 +201,43 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := seatexec.WritePreflight(o.Home, !o.KeepPreflight); err != nil {
 		return res, err
 	}
+	// Each Claude seat gets its own CLAUDE_CONFIG_DIR for this launch: the
+	// hooks plugin and the permission mode as one unit, no owner rules. The
+	// effective permission mode is probed on the pinned Claude Code before
+	// any ticket is minted and before Apply (the fix round's probe ruling):
+	// a setting that forces another mode would turn dontAsk into prompts.
+	// Seats whose settings are identical are probed once.
+	probed := map[string]claudeseat.Probe{}
+	for i, rec := range c.Records {
+		if rec.Runtime != "claude" {
+			continue
+		}
+		w, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, o.Now())
+		if err != nil {
+			return res, fmt.Errorf("seat %s: the Claude config dir: %w", rec.Handle, err)
+		}
+		c.Records[i].ClaudeConfig = w.Digest
+		kind, err := claudeseat.ProbeKind(w.Dir, rec.PermissionMode)
+		if err != nil {
+			return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
+		}
+		probe, done := probed[kind]
+		if !done {
+			if probe, err = o.ProbeMode(ctx, w.Dir, rec.PermissionMode); err != nil {
+				return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
+			}
+			probed[kind] = probe
+		}
+		if probe.Mode != rec.PermissionMode {
+			return res, fmt.Errorf("seat %s: %s: the pinned Claude Code %s runs the seat's settings in permission mode %q, not the launch's %q", rec.Handle, claudeseat.ModeUnverified, probe.Version, probe.Mode, rec.PermissionMode)
+		}
+		if o.PermitWorktreeAllowRules {
+			c.Records[i].AllowRules = "permit"
+		}
+	}
 	// The proof socket and the seats' one-time tokens (item 4): a seat
-	// counts up only from its proof over this socket.
+	// counts up only from its proof over this socket. Minted only now, after
+	// every probe, so a slow probe never eats a ticket's 60 s window.
 	srv, err := startProofServer(q, launchID, o)
 	if err != nil {
 		return res, fmt.Errorf("proof socket: %w", err)
@@ -206,39 +245,6 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	res.proof = srv // open for the whole token window; WaitProofWindow waits for its end
 	for i := range c.Records {
 		c.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)
-	}
-	// Each Claude seat gets its own CLAUDE_CONFIG_DIR for this launch: the
-	// hooks plugin and the permission mode as one unit, no owner rules.
-	for i, rec := range c.Records {
-		if rec.Runtime != "claude" {
-			continue
-		}
-		w, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, o.Now())
-		if err != nil {
-			srv.close()
-			return res, fmt.Errorf("seat %s: the Claude config dir: %w", rec.Handle, err)
-		}
-		c.Records[i].ClaudeConfig = w.Digest
-		// The effective permission mode on the installed Claude Code, before
-		// any seat applies (phase 5 re-pass of 4-2, P1-2): a setting that
-		// forces another mode would turn dontAsk into prompts or worse.
-		claude, err := o.LookPath("claude")
-		if err != nil {
-			srv.close()
-			return res, fmt.Errorf("seat %s: %s: the installed Claude Code is not on PATH: %v", rec.Handle, claudeseat.ModeUnverified, err)
-		}
-		probe, err := o.ProbeMode(ctx, claude, w.Dir, rec.Worktree, o.Home, rec.PermissionMode)
-		if err != nil {
-			srv.close()
-			return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
-		}
-		if probe.Mode != rec.PermissionMode {
-			srv.close()
-			return res, fmt.Errorf("seat %s: %s: the installed Claude Code %s runs the seat's settings in permission mode %q, not the launch's %q", rec.Handle, claudeseat.ModeUnverified, probe.Version, probe.Mode, rec.PermissionMode)
-		}
-		if o.PermitWorktreeAllowRules {
-			c.Records[i].AllowRules = "permit"
-		}
 	}
 	if err := Stage(c); err != nil {
 		srv.close()
@@ -290,6 +296,25 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	res.Stage = "applied"
 	res.Seats = WaitSeats(ctx, q, launchID, srv, o.Wait, o.Poll)
 	return res, nil
+}
+
+// probePinned runs the mode probe on the registry's pinned claude (opened
+// through the pin and re-hashed, never PATH).
+func probePinned(ctx context.Context, home, dir, mode string) (claudeseat.Probe, error) {
+	reg, err := registry.Read(registry.Path(home))
+	if err != nil {
+		return claudeseat.Probe{}, fmt.Errorf("%s: the registry: %v", registry.PinMissing, err)
+	}
+	pin, ok := reg.PinFor("claude")
+	if !ok {
+		return claudeseat.Probe{}, fmt.Errorf("%s: the registry pins no claude (registry.yaml pins: name claude, its real path and sha256)", registry.PinMissing)
+	}
+	tool, code, detail := registry.OpenPinned("claude", pin.Path, pin.SHA256)
+	if tool == nil {
+		return claudeseat.Probe{}, fmt.Errorf("%s: %s", code, detail)
+	}
+	defer tool.Close()
+	return claudeseat.ProbeMode(ctx, tool.Command, dir, mode)
 }
 
 // LaunchEnv is the environment of the amq launch subprocess: the caller's

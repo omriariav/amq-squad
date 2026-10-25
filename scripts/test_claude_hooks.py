@@ -46,6 +46,21 @@ def hook_entry(event):
     return HOOKS[event][0]["hooks"][0]
 
 
+def shell_argv(command):
+    """The hook command under HOOK_SHELL (dash on Linux CI), else /bin/sh."""
+    return [os.environ.get("HOOK_SHELL") or "/bin/sh", "-c", command]
+
+
+def guard_stub(base, name, body):
+    """A stand-in amq-squad whose guard child runs body; the adapter
+    (guard --decision claude) is the real binary."""
+    p = os.path.join(base, name)
+    with open(p, "w") as f:
+        f.write('#!/bin/sh\nif [ "$2" = --decision ]; then exec %s "$@"; fi\n%s' % (shlex.quote(BIN), body))
+    os.chmod(p, 0o755)
+    return p
+
+
 def run_hook(event, payload, env, timeout=None):
     """Run the plugin's command for event. Returns (rc, stdout, stderr, seconds, timed_out)."""
     entry = hook_entry(event)
@@ -56,7 +71,7 @@ def run_hook(event, payload, env, timeout=None):
     if isinstance(data, str):
         data = data.encode()
     t0 = time.monotonic()
-    p = subprocess.Popen(entry["command"], shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    p = subprocess.Popen(shell_argv(entry["command"]), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, env=e, start_new_session=True)
     try:
         out, err = p.communicate(data, timeout=timeout)
@@ -243,8 +258,7 @@ class FaultTable(unittest.TestCase):
 
     def test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open(self):
         s = Seat(self)
-        slow = os.path.join(s.base, "slow-amq-squad")
-        s.write(slow, "#!/bin/sh\nsleep 30\n", 0o755)
+        slow = guard_stub(s.base, "slow-amq-squad", "sleep 30\n")
         s.env["AMQ_SQUAD_BIN"] = slow
         configured = hook_entry("PreToolUse")["timeout"]
         self.assertEqual(configured, 5)
@@ -292,7 +306,7 @@ class FaultTable(unittest.TestCase):
         s = Seat(self)
         e = dict(s.env, CLAUDE_PLUGIN_ROOT=os.path.join(s.base, "gone"))
         t0 = time.monotonic()
-        p = subprocess.run(hook_entry("PreToolUse")["command"], shell=True, input=b"{}", capture_output=True, env=e)
+        p = subprocess.run(shell_argv(hook_entry("PreToolUse")["command"]), input=b"{}", capture_output=True, env=e)
         secs = time.monotonic() - t0
         self.assertNotIn(p.returncode, (0, 2))
         self.assertEqual(claude_decision(p.returncode, p.stdout.decode(), False), "proceed")
@@ -412,8 +426,7 @@ class Repass5(unittest.TestCase):
         # the whole group, and the shell's job report never reaches stderr.
         s = Seat(self)
         pidf = os.path.join(s.base, "sleeper.pid")
-        stub = os.path.join(s.base, "hung-amq-squad")
-        s.write(stub, "#!/bin/sh\nsleep 30 &\necho $! > %s\nwait\n" % pidf, 0o755)
+        stub = guard_stub(s.base, "hung-amq-squad", "sleep 30 &\necho $! > %s\nwait\n" % pidf)
         s.env["AMQ_SQUAD_BIN"] = stub
         rc, out, err, _, to = s.pre(*bash("go test ./..."), timeout=20)
         self.assertFalse(to)

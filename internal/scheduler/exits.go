@@ -230,7 +230,18 @@ func (s *Scheduler) loadExits() {
 	}
 	var l exitsLedger
 	if err == nil {
-		if uerr := json.Unmarshal(raw, &l); uerr != nil {
+		uerr := json.Unmarshal(raw, &l)
+		if uerr == nil && l.Schema != 1 {
+			uerr = fmt.Errorf("schema %d", l.Schema)
+		}
+		switch {
+		case uerr != nil && s.Config.SealRoot != "":
+			// A sealed record that does not decode, or carries another
+			// schema, is ledger_tampered for the owner (the fix round's
+			// item 25).
+			s.exitsErr = sealchain.Tampered("the exits ledger "+p, uerr)
+			return
+		case uerr != nil:
 			s.exitsErr = fmt.Errorf("the exits ledger %s cannot be parsed: %v", p, uerr)
 			return
 		}

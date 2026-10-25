@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // The head record (Codex pass 5, (a), (e), new 2): one signed file under the
@@ -78,8 +79,12 @@ func checkHead(root string, key []byte, seedDev, seedIno uint64) (headRecord, bo
 		return headRecord{}, found, &InvalidError{Err: err}
 	case !found && sessionStarted(root):
 		return headRecord{}, false, &InvalidError{Err: fmt.Errorf("routing head %s is missing in a session that has routed before", HeadPath(root))}
-	case found && seedDev != 0 && (h.SeedDev != seedDev || h.SeedIno != seedIno):
-		return headRecord{}, true, &InvalidError{Err: fmt.Errorf("routing seed %s is not the file the head recorded (device and inode differ)", SeedPath(root))}
+	case found:
+		// The seed-identity rule is sealchain's, which the sealed heads of
+		// the commits ledger and the exits queue share.
+		if err := sealchain.CheckSeedIdentity(SeedPath(root), h.SeedDev, h.SeedIno, seedDev, seedIno); err != nil {
+			return headRecord{}, true, &InvalidError{Err: err}
+		}
 	}
 	return h, found, nil
 }

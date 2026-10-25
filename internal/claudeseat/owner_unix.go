@@ -19,7 +19,6 @@ func ownerUID(st os.FileInfo) (int, bool) {
 // probeGroup runs the mode probe in its own process group, killed whole.
 func probeGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { killProbe(cmd); return nil }
 }
 
 func killProbe(cmd *exec.Cmd) {

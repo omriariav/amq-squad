@@ -197,7 +197,11 @@ type LedgerDiscard struct {
 // grace period. The ref stays until RetainUntil, the explicit retention
 // expiry; a quarantine's ref stays while it is not cleared.
 type EvidenceRef struct {
-	Ref         string     `json:"ref,omitempty"`
+	Ref string `json:"ref,omitempty"`
+	// RefTree is the tree the ref was set to; the sealed ledger records it,
+	// and every commit step and exit check verifies the ref still resolves
+	// to it (a deleted or moved ref is ledger_tampered).
+	RefTree     string     `json:"ref_tree,omitempty"`
 	RetainUntil *time.Time `json:"retain_until,omitempty"`
 }
 
@@ -338,11 +342,14 @@ func ReadLedger(root, handle string) (Ledger, error) {
 	if err != nil {
 		return l, err
 	}
+	// A sealed record that does not decode, or carries another schema or
+	// handle, is ledger_tampered for the owner, never a deferral (the fix
+	// round's item 25).
 	if err := json.Unmarshal(raw, &l); err != nil {
-		return l, fmt.Errorf("commit ledger %s: %w", handle, err)
+		return l, sealchain.Tampered("commit ledger "+handle+" does not decode", err)
 	}
 	if l.Schema != LedgerSchema || l.Handle != handle {
-		return l, fmt.Errorf("commit ledger %s: schema %d for %q", handle, l.Schema, l.Handle)
+		return l, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))
 	}
 	// The seal: a hand edit, an older copy, a stripped seal or a deleted
 	// head is ledger_tampered (sealchain.ErrTampered).

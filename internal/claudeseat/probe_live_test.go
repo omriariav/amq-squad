@@ -21,14 +21,13 @@ func TestModeProbeOnTheInstalledClaude(t *testing.T) {
 	if err != nil {
 		t.Skip("no claude on PATH")
 	}
+	run := func(args ...string) *exec.Cmd { return exec.Command(claude, args...) }
 	base, _ := filepath.EvalSymlinks(t.TempDir())
-	wt := filepath.Join(base, "wt")
-	os.MkdirAll(wt, 0o700)
 	dir := filepath.Join(base, "cfg", "launch-1")
-	if _, err := Write(dir, "dontAsk", wt, time.Now()); err != nil {
+	if _, err := Write(dir, "dontAsk", filepath.Join(base, "wt"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	p, err := ProbeMode(context.Background(), claude, dir, wt, base, "dontAsk")
+	p, err := ProbeMode(context.Background(), run, dir, "dontAsk")
 	if err != nil || p.Mode != "dontAsk" {
 		t.Fatalf("the seat's settings on Claude Code %s: mode %q, %v", p.Version, p.Mode, err)
 	}
@@ -36,7 +35,7 @@ func TestModeProbeOnTheInstalledClaude(t *testing.T) {
 	forced := filepath.Join(base, "forced")
 	os.MkdirAll(forced, 0o700)
 	os.WriteFile(filepath.Join(forced, "settings.json"), []byte(`{"permissions":{"defaultMode":"dontAsk","allow":[]},"env":{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB":"1"}}`), 0o600)
-	if p, err := ProbeMode(context.Background(), claude, forced, wt, base, "dontAsk"); err != nil || p.Mode == "dontAsk" {
+	if p, err := ProbeMode(context.Background(), run, forced, "dontAsk"); err != nil || p.Mode == "dontAsk" {
 		t.Logf("the scrub setting no longer forces another mode on %s (%q, %v)", p.Version, p.Mode, err)
 	}
 }

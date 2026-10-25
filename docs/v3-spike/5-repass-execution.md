@@ -116,8 +116,8 @@ The reviewer's correction to `verifier_classes` (a superset only) and the store-
 
 ## Seat, hook, fleet, Buzz and milestone B re-passes (branch v3-5-repass-2b2)
 
-Five commits, cut from `v3` at 1bc8c680 and rebased onto 1608eaba (after the
-routing re-pass merge); lines in the findings refer to 1bc8c680. Each item has
+Six commits: five cut from `v3` at 1bc8c680 and rebased onto 1608eaba (after
+the routing re-pass merge), and the fix round; lines in the findings refer to 1bc8c680. Each item has
 one test row that fails with its fix reverted in place and passes restored
 (run with -race); the revert checks and gates are under
 `docs/v3-spike/5-repass-evidence/`, every file through
@@ -159,7 +159,7 @@ The fake tmux and amq in these rows are local scripts under the test's
 temporary directory, the proofs come from in-process stubs or a prover child
 of the test binary; no row reaches the network.
 
-## Commit 2: 4-2 (the Claude hooks plugin, claudeseat, the hook verbs)
+### Commit 2: 4-2 (the Claude hooks plugin, claudeseat, the hook verbs)
 
 Revert check: `5-repass-evidence/4-2-revert-check.txt` (10 reverts, all as
 required; the Go rows under -race, the shell rows through
@@ -189,7 +189,7 @@ Judgment calls, stated:
 - P2-4: `set -m` is POSIX job control in a non-interactive shell (checked on
   macOS /bin/sh); not executed on Linux dash in this run.
 
-## Commit 3: 4-3 (the fleet registry, the mayor, the operator and fleet CLI)
+### Commit 3: 4-3 (the fleet registry, the mayor, the operator and fleet CLI)
 
 Revert check: `5-repass-evidence/4-3-revert-check.txt` (7 reverts, all as
 required). Gate: `5-repass-evidence/4-3-gate.txt`.
@@ -213,7 +213,7 @@ Judgment calls, stated:
   registry's own fields included (an owner-written root path is shown
   escaped too); JSON output is unchanged (encoding/json escapes controls).
 
-## Commit 4: 4-5 (the gateverify relay, the owner script)
+### Commit 4: 4-5 (the gateverify relay, the owner script)
 
 Revert check: `5-repass-evidence/4-5-revert-check.txt` (9 reverts, all as
 required). Gate: `5-repass-evidence/4-5-gate.txt`. Every relay in these
@@ -238,7 +238,7 @@ Judgment calls, stated:
 - The pump keeps its rule: a Query error returns before the cursor moves
   (pump.go:85-88); no pump code changed.
 
-## Commit 5: 2b-2 milestone B (the commit step, the exits queue, the redaction, task files, the sealed ledgers)
+### Commit 5: 2b-2 milestone B (the commit step, the exits queue, the redaction, task files, the sealed ledgers)
 
 Revert check: `5-repass-evidence/2b2b-revert-check.txt` (15 reverts, all
 as required). Gate: `5-repass-evidence/2b2b-gate.txt`.
@@ -280,3 +280,70 @@ Judgment calls, stated:
 - P1-2: the allowlist entries are the exact pairs the committed docs and
   evidence carried; a doc that adds another fixture under a credential name
   adds its pair or is redacted.
+
+### Rebase onto v3 1608eaba and the fix round (the narrow pass on f3754b73)
+
+The five commits were replayed onto v3 1608eaba (the routing and 3-2
+re-pass merge 53c348f1 and its docs commit). Conflicts were resolved in the
+replayed commits:
+- `docs/v3-spike/5-repass-execution.md` (add/add): v3's routing sections are
+  kept and this branch's sections follow them under one heading.
+- `docs/v3-manifest.yaml`: current_lines of routing/outcome.go and seed.go,
+  refreshed against the merged files.
+- routing's seed.go auto-merged: the routing branch's `checkHead` and its
+  `VerifySessionLog` changes stand, and the seed read and first write were
+  moved as before.
+
+Every replayed commit passed build, vet, the linux and windows builds and the
+manifest check. The routing branch's additions to the touched packages
+(`task.Store.Verifiers`, `grants.TaskVerifier`, `openTaskStore`,
+`Scheduler.Occupancy`, `--lead-pool`) and the hygiene merge's mergetrain fake
+gh needed no change here; the full suite passed on the rebased head before
+the fix round.
+
+The fix round is one commit: the sealchain extraction redone over routing's
+final code, and the six partial and four new items of the narrow pass. Revert
+check: `5-repass-evidence/fix-round-revert-check.txt` (23 reverts, all as
+required). Gate: `5-repass-evidence/fix-round-gate.txt` (it also runs the hook
+script tests under /bin/sh and /bin/dash).
+
+| item | fix | test row |
+| --- | --- | --- |
+| sealchain over routing's final code | routing's tag, seed read and first write, and key were already sealchain's after the replay. Now the seed-identity rule that `checkHead` applies (a head valid only under the seed file whose device and inode it recorded) is `sealchain.CheckSeedIdentity`; `checkHead` calls it, and every sealed head records the seed's device and inode and is checked by the same rule. Tag bytes and the routing head record are byte-identical; one seed per session root, whichever of routing or a sealed file writes it first | TestSealchainKeepsRoutingTagsAndOneSeed (the outcome row's and the head's tags against an independent HMAC; one seed, routing first and sealed first); TestRepassReportRunsTheStartChecks (routing's, now through sealchain) |
+| probe (item 8, N2, N3; ruling) | the launch probes the registry's pinned claude (`registry.OpenPinned`, re-hashed, run through `VerifiedTool.Command`; no pin is `tool_unpinned`, then claude_mode_unverified), never PATH. HOME is a fresh scratch dir, CLAUDE_CONFIG_DIR a full copy of the seat's config dir (settings.json and the plugin install, its paths rewritten to the copy), cwd an empty scratch dir. `disableAllHooks` is written only into the probe's copy of the seat settings: the probe measures the mode, and the seat keeps its hooks. The probes run before the proof server mints any ticket and before Apply, once per seat kind (the digest of settings.json and the mode); a probe over 5 s is claude_mode_unverified | TestProbeRunsThePinnedClaudeNeverPath, TestProbeIsIsolated, TestProbeRunsBeforeTicketsAndOncePerSeatKind, TestSlowProbeIsModeUnverified; the live row TestModeProbeOnTheInstalledClaude (AMQ_SQUAD_LIVE=1: dontAsk on 2.1.310, through the copy with hooks disabled) |
+| Linux watchdog (item 10, N4; ruling) | the hook script runs no watchdog: its pre-tool branch is one call, `amq-squad guard --decision claude --me $AM_ME --stdin`. The Go adapter reads the payload, runs `guard` (AMQ_SQUAD_BIN, else itself) as a child in its own process group through the Go exec API, kills the group at 4.8 s and once more after the reap, parses the complete verdict and prints the decision; a timeout, a guard exit or an unparsable verdict is no decision with one log line | TestDecisionAdapterKillsAHungGuardGroup (Go, unix: a hung guard and the sleeper it started are gone within the watchdog); the hook script rows under /bin/sh and /bin/dash (scripts/test_claude_hooks.py with `HOOK_SHELL`) |
+| ambiguous Apply (item 3; ruling) | after the token window (the latest ticket deadline) plus the close grace, the cancel of an apply_ambiguous request with no proof counts the panes labelled with its handle (a read-only `tmux list-panes -a`, 2 s bound, "no server" is none): none confirmed releases the slot as apply_abandoned; a pane that exists, or an unknown answer, keeps it held | TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists |
+| evidence refs (item 22, N1; ruling) | `refs/amq-squad/evidence/<seat>/<task>/<n>`; the sealed commits ledger records each ref with its tree (`ref_tree`); the commit step and the exit check verify every recorded ref still resolves to its tree, and a missing or moved ref is ledger_tampered for the owner | TestEvidenceRefsAreSeatScoped, TestMovedOrDeletedEvidenceRefIsTampered |
+| item 19 | a JSON value under a credential name is any scalar string or number; the redaction keeps the line JSON (`"<redacted>"`). Token counts and timings (a plural `tokens`, or a `_ms`, `_s`, `_median`, `_in`, `_out` measure) are not credential names, and the ledger reader's two numeric fixtures in 3-2's revert log are allowlisted pairs | TestJSONNumberUnderACredentialName |
+| item 25 | a sealed commits ledger or exits queue that does not decode, or has another schema or handle, is ledger_tampered for the owner (`sealchain.Tampered`), never a deferral | TestUndecodableOrWrongSchemaLedgerIsTampered, TestUndecodableSealedExitsQueueIsTampered |
+| question 6 | the fixture allowlist is an exact match with no quote stripping: only the redaction's own placeholder forms (bare or in the quotes it replaced) and exact pairs pass; a JSON string is compared by its content | TestQuotedFixtureIsNotExempt |
+
+Recorded by the reviewer and unchanged: one seed per session root shared with
+routing, tag bytes and the routing head unchanged; the exits queue sealed on
+every production path (schedproc sets `SealRoot`), unsealed only in library
+use by tests.
+
+The dash row: /bin/dash is on this Mac, and the hook script
+rows pass under it. But the f3754b73 shell watchdog (set -m and
+`kill -- -PID`) also passes under this dash, so the failing-when-reverted
+shell row cannot be shown here: the finding is Linux dash. The revert-checked
+row is the Go one. The CI row for Linux, where /bin/sh is dash:
+
+    ubuntu-latest: go build -o amq-squad ./cmd/amq-squad && HOOK_SHELL=dash python3 scripts/test_claude_hooks.py ./amq-squad Repass5
+
+plus `GOOS=linux go build ./...` and `GOOS=linux go test -c ./internal/cli`
+here (compiled, not run).
+
+Judgment calls, stated:
+- The probe needs a `claude` pin in registry.yaml (`pins: name claude, path,
+  sha256`), as gh needs one for an https push: a launch with a Claude seat
+  and no claude pin is refused claude_mode_unverified (tool_unpinned). The
+  pin names the real binary (the versioned file a `~/.local/bin/claude` link
+  points to).
+- The adapter's guard child is AMQ_SQUAD_BIN (seat-exec pins it to the
+  launching binary, and P1-1 of 4-2 refuses a settings env that changes it),
+  else the adapter's own executable.
+- Abandonment is decided at a cancel call (the scheduler retries the cancel
+  of a request that never came up); the launcher runs no timer of its own.
+- A test's isolation row raises the probe bound to 60 s for a loaded host;
+  the 5 s bound is its own row.

@@ -4,6 +4,7 @@ package seatlaunch
 
 import (
 	"errors"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
@@ -22,5 +23,7 @@ func (s *proofServer) state(handle string) (bool, int, string, string, string) {
 }
 
 func (s *proofServer) close() {}
+
+func (s *proofServer) windowEnd() time.Time { return time.Time{} }
 
 func (s *proofServer) wait() {}

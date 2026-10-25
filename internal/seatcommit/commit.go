@@ -231,6 +231,10 @@ func ExitCheck(o Options, why string) Result {
 	o = o.withDefaults()
 	var out Result
 	err := withLedgerLock(o.Root, o.Handle, func() error {
+		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
+			out = res.tamperedRefusal(terr)
+			return nil
+		}
 		code, changes, err := exitChanges(o)
 		switch {
 		case err != nil:
@@ -257,6 +261,9 @@ func run(o Options, res Result) Result {
 	// is committed. A change blocks before the commit step and quarantines
 	// the seat.
 	if !o.DryRun {
+		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
+			return res.tamperedRefusal(terr)
+		}
 		code, changes, err := exitChanges(o)
 		if err != nil {
 			return res.defer_("exit check: " + err.Error())
@@ -280,7 +287,7 @@ func run(o Options, res Result) Result {
 	if errors.Is(err, sealchain.ErrTampered) {
 		// The ledger's tag or chain failed: a block for the owner, never a
 		// pass and never a retry into the same file (ruling).
-		return res.refuse(ReasonLedgerTampered, task.RouteOwner, err.Error()+"; nothing is committed or pushed until the owner inspects the commits ledger")
+		return res.tamperedRefusal(err)
 	}
 	if err != nil {
 		return res.defer_(err.Error())
@@ -570,17 +577,22 @@ const EvidenceRetention = 30 * 24 * time.Hour
 
 // evidenceRefName is refs/amq-squad/evidence/<task>/<n>; a task id
 // character a ref name cannot carry becomes "_".
-func evidenceRefName(taskID string, n int) string {
-	clean := strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			return r
+func evidenceRefName(seat, taskID string, n int) string {
+	clean := func(v string) string {
+		v = strings.Map(func(r rune) rune {
+			if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+				return r
+			}
+			return '_'
+		}, v)
+		if v == "" {
+			return "none"
 		}
-		return '_'
-	}, taskID)
-	if clean == "" {
-		clean = "none"
+		return v
 	}
-	return "refs/amq-squad/evidence/" + clean + "/" + strconv.Itoa(n)
+	// The seat is part of the name (the fix round's item 22): two seats on
+	// one repository never share a ref, whatever their counters say.
+	return "refs/amq-squad/evidence/" + clean(seat) + "/" + clean(taskID) + "/" + strconv.Itoa(n)
 }
 
 // anchorEvidence points a new evidence ref at a kept tree in the seat
@@ -588,12 +600,67 @@ func evidenceRefName(taskID string, n int) string {
 // until the retention expiry (P2-5).
 func anchorEvidence(repo git, l *Ledger, taskID, tree string, now time.Time) (EvidenceRef, error) {
 	l.EvidenceSeq++
-	ref := evidenceRefName(taskID, l.EvidenceSeq)
+	ref := evidenceRefName(l.Handle, taskID, l.EvidenceSeq)
 	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad evidence "+taskID, ref, tree); err != nil {
 		return EvidenceRef{}, err
 	}
 	until := now.UTC().Add(EvidenceRetention)
-	return EvidenceRef{Ref: ref, RetainUntil: &until}, nil
+	return EvidenceRef{Ref: ref, RefTree: tree, RetainUntil: &until}, nil
+}
+
+// verifyEvidence checks every evidence ref the sealed ledger records: it
+// must still resolve to the tree recorded with it. A ref that is gone or
+// points elsewhere (a same-UID seat can edit its repository's refs) is
+// ledger_tampered (the fix round's item 22).
+func verifyEvidence(o Options) error {
+	if o.Git == "" {
+		return nil // no git binary: the step defers on its own
+	}
+	l, err := ReadLedger(o.Root, o.Handle)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var refs []EvidenceRef
+	for _, d := range l.Discarded {
+		refs = append(refs, d.EvidenceRef)
+	}
+	if q := l.Quarantine; q != nil {
+		refs = append(refs, q.EvidenceRef)
+	}
+	var live []EvidenceRef
+	for _, e := range refs {
+		if e.Ref != "" {
+			live = append(live, e)
+		}
+	}
+	if len(live) == 0 {
+		return nil
+	}
+	rec, err := stagedRecord(o.Root, o.Handle)
+	if err != nil {
+		return err
+	}
+	rp, err := worktreePaths(rec.Worktree)
+	if err != nil {
+		return err
+	}
+	repo := seatRepo(o.Git, harnessEnv(o.Env), rp)
+	for _, e := range live {
+		got, err := repo.line("rev-parse", "--verify", "-q", e.Ref+"^{tree}")
+		if err != nil || got != e.RefTree {
+			return fmt.Errorf("%w: the evidence ref %s no longer resolves to the kept tree %s (now %q)", sealchain.ErrTampered, e.Ref, e.RefTree, got)
+		}
+	}
+	return nil
+}
+
+// tamperedRefusal is the owner's block for a sealed ledger or an evidence
+// ref that fails its check.
+func (r Result) tamperedRefusal(err error) Result {
+	return r.refuse(ReasonLedgerTampered, task.RouteOwner, err.Error()+"; nothing is committed or pushed until the owner inspects the commits ledger and the evidence refs")
 }
 
 // expireEvidence deletes the evidence refs whose retention has expired (the

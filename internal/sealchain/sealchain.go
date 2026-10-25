@@ -175,28 +175,47 @@ func EnsureSeed(root string, started bool) (string, uint64, uint64, error) {
 	return ReadSeed(path)
 }
 
-// SessionKey is the key of a session root's sealed files, the seed written
-// once when absent (a session that has routed before and lost its seed is
-// refused, as routing refuses it).
-func SessionKey(root string) ([]byte, error) {
-	seed, _, _, err := EnsureSeed(root, RoutingStarted(root) || headsExist(root))
-	if err != nil {
-		return nil, err
+// CheckSeedIdentity is the seed-identity rule of a head (routing's head and
+// every sealed head share it): a head that recorded the seed file's device
+// and inode is valid only under that same file; a copy of the seed onto
+// another inode is refused. A zero recorded or current identity (no fstat
+// identity on this platform) is not compared.
+func CheckSeedIdentity(path string, recordedDev, recordedIno, dev, ino uint64) error {
+	if dev != 0 && (recordedDev != dev || recordedIno != ino) {
+		return fmt.Errorf("routing seed %s is not the file the head recorded (device and inode differ)", path)
 	}
-	return Key(seed), nil
+	return nil
 }
 
-// ReadKey is the key of a session root's sealed files without writing a
-// seed: ok false when the session has none.
-func ReadKey(root string) (key []byte, ok bool, err error) {
-	seed, _, _, err := ReadSeed(SeedPath(root))
+// Seed is a session root's seed as the sealed files use it: the HMAC key
+// and the seed file's device and inode.
+type Seed struct {
+	Key      []byte
+	Dev, Ino uint64
+}
+
+// SessionKey is the seed of a session root's sealed files, written once
+// when absent (a session that has routed before, or has sealed heads, and
+// lost its seed is refused, as routing refuses it).
+func SessionKey(root string) (Seed, error) {
+	seed, dev, ino, err := EnsureSeed(root, RoutingStarted(root) || headsExist(root))
+	if err != nil {
+		return Seed{}, err
+	}
+	return Seed{Key: Key(seed), Dev: dev, Ino: ino}, nil
+}
+
+// ReadKey is the seed of a session root's sealed files without writing
+// one: ok false when the session has none.
+func ReadKey(root string) (s Seed, ok bool, err error) {
+	seed, dev, ino, err := ReadSeed(SeedPath(root))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
+		return Seed{}, false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return Seed{}, false, err
 	}
-	return Key(seed), true, nil
+	return Seed{Key: Key(seed), Dev: dev, Ino: ino}, true, nil
 }
 
 // Link is a sealed file's place in its chain.
@@ -240,12 +259,14 @@ func headsExist(root string) bool {
 }
 
 type head struct {
-	Schema int       `json:"schema"`
-	Name   string    `json:"name"`
-	Seq    int       `json:"seq"`
-	Link   string    `json:"link_tag"`
-	At     time.Time `json:"at"`
-	Tag    string    `json:"tag,omitempty"`
+	Schema  int       `json:"schema"`
+	Name    string    `json:"name"`
+	Seq     int       `json:"seq"`
+	Link    string    `json:"link_tag"`
+	SeedDev uint64    `json:"seed_dev"`
+	SeedIno uint64    `json:"seed_ino"`
+	At      time.Time `json:"at"`
+	Tag     string    `json:"tag,omitempty"`
 }
 
 func (h head) sign(key []byte) head {
@@ -254,13 +275,13 @@ func (h head) sign(key []byte) head {
 	return h
 }
 
-// WriteHead records that the named file is now at link l (atomicfile; the
-// caller writes the file first).
-func WriteHead(root, name string, key []byte, l *Link, now time.Time) error {
+// WriteHead records that the named file is now at link l, under the seed
+// file s names (atomicfile; the caller writes the file first).
+func WriteHead(root, name string, s Seed, l *Link, now time.Time) error {
 	if !headName.MatchString(name) || l == nil || l.Seq < 0 {
 		return fmt.Errorf("sealed head %q", name)
 	}
-	raw, err := json.Marshal(head{Schema: 1, Name: name, Seq: l.Seq, Link: l.Tag, At: now.UTC()}.sign(key))
+	raw, err := json.Marshal(head{Schema: 1, Name: name, Seq: l.Seq, Link: l.Tag, SeedDev: s.Dev, SeedIno: s.Ino, At: now.UTC()}.sign(s.Key))
 	if err != nil {
 		return err
 	}
@@ -276,26 +297,27 @@ func WriteHead(root, name string, key []byte, l *Link, now time.Time) error {
 // first version), saves the file through save, then moves the head to the
 // new link. A crash leaves the file at most one link ahead of its head,
 // which Check accepts; a head always exists once a sealed file does. A head
-// whose tag fails is ErrTampered, and nothing is written.
-func Write(root, name string, key []byte, label string, body any, save func(*Link) error, now time.Time) (*Link, error) {
-	h, found, err := readHead(root, name, key)
+// whose tag or seed identity fails is ErrTampered, and nothing is written.
+func Write(root, name string, s Seed, label string, body any, save func(*Link) error, now time.Time) (*Link, error) {
+	h, found, err := readHead(root, name, s)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
-		if err := WriteHead(root, name, key, &Link{}, now); err != nil {
+		if err := WriteHead(root, name, s, &Link{}, now); err != nil {
 			return nil, err
 		}
 	}
-	l := Seal(key, label, &Link{Seq: h.Seq, Tag: h.Link}, body)
+	l := Seal(s.Key, label, &Link{Seq: h.Seq, Tag: h.Link}, body)
 	if err := save(l); err != nil {
 		return nil, err
 	}
-	return l, WriteHead(root, name, key, l, now)
+	return l, WriteHead(root, name, s, l, now)
 }
 
-// readHead reads and verifies a file's head; found false when there is none.
-func readHead(root, name string, key []byte) (head, bool, error) {
+// readHead reads and verifies a file's head (its tag and its seed
+// identity); found false when there is none.
+func readHead(root, name string, s Seed) (head, bool, error) {
 	var h head
 	raw, err := os.ReadFile(HeadPath(root, name))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -304,16 +326,19 @@ func readHead(root, name string, key []byte) (head, bool, error) {
 	if err != nil {
 		return h, false, err
 	}
-	if json.Unmarshal(raw, &h) != nil || h.Schema != 1 || h.Name != name || h.Tag == "" || !hmac.Equal([]byte(h.sign(key).Tag), []byte(h.Tag)) {
+	if json.Unmarshal(raw, &h) != nil || h.Schema != 1 || h.Name != name || h.Tag == "" || !hmac.Equal([]byte(h.sign(s.Key).Tag), []byte(h.Tag)) {
 		return h, true, fmt.Errorf("%w: the head of %s does not decode or its tag fails", ErrTampered, name)
+	}
+	if err := CheckSeedIdentity(SeedPath(root), h.SeedDev, h.SeedIno, s.Dev, s.Ino); err != nil {
+		return h, true, fmt.Errorf("%w: the head of %s: %v", ErrTampered, name, err)
 	}
 	return h, true, nil
 }
 
 // Absent checks a sealed file that is missing: with a head past link 0 it
 // existed, so its removal is ErrTampered.
-func Absent(root, name string, key []byte) error {
-	h, found, err := readHead(root, name, key)
+func Absent(root, name string, s Seed) error {
+	h, found, err := readHead(root, name, s)
 	if err != nil || !found {
 		return err
 	}
@@ -328,8 +353,8 @@ func Absent(root, name string, key []byte) error {
 // link must be the head's, or the one right after it (the file was written
 // and its head write was lost). A missing head, an unsealed file or any
 // other link is ErrTampered.
-func Check(root, name string, key []byte, label string, l *Link, body any) error {
-	h, found, err := readHead(root, name, key)
+func Check(root, name string, s Seed, label string, l *Link, body any) error {
+	h, found, err := readHead(root, name, s)
 	if err != nil {
 		return err
 	}
@@ -337,7 +362,7 @@ func Check(root, name string, key []byte, label string, l *Link, body any) error
 	switch {
 	case l == nil:
 		return fmt.Errorf("%w: %s carries no seal", ErrTampered, name)
-	case !l.Verify(key, label, body):
+	case !l.Verify(s.Key, label, body):
 		return fmt.Errorf("%w: the tag of %s link %d fails", ErrTampered, name, l.Seq)
 	case headMissing:
 		return fmt.Errorf("%w: %s is at link %d and its head is gone", ErrTampered, name, l.Seq)
@@ -347,4 +372,10 @@ func Check(root, name string, key []byte, label string, l *Link, body any) error
 		return nil // the head write after the file's was lost
 	}
 	return fmt.Errorf("%w: %s is at link %d, its head records link %d", ErrTampered, name, l.Seq, h.Seq)
+}
+
+// Tampered wraps a sealed record that cannot be decoded or has the wrong
+// schema: it is ledger_tampered, never a generic error to retry.
+func Tampered(what string, err error) error {
+	return fmt.Errorf("%w: %s: %v", ErrTampered, what, err)
 }

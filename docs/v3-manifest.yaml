@@ -269,18 +269,18 @@ entries:
   status: new
 - path: internal/claudeseat/owner_unix.go
   v2_lines: 0
-  current_lines: 29
+  current_lines: 28
   fate: new
-  target_lines: 29
+  target_lines: 28
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: owner uid of the seat config dir (unix)"
   status: new
 - path: internal/claudeseat/probe.go
   v2_lines: 0
-  current_lines: 107
+  current_lines: 186
   fate: new
-  target_lines: 107
+  target_lines: 186
   cluster: seatexec
   extract: ""
   reason: "phase 5 re-pass of 4-2: the launch's probe of the effective permission mode on the installed Claude Code"
@@ -820,12 +820,30 @@ entries:
   status: new
 - path: internal/cli/hook_decision.go
   v2_lines: 0
-  current_lines: 68
+  current_lines: 145
   fate: new
-  target_lines: 68
+  target_lines: 145
   cluster: verbs
   extract: ""
   reason: "phase 5 re-pass of 4-2: the Go adapter from a guard verdict to the Claude PreToolUse decision"
+  status: new
+- path: internal/cli/hook_decision_other.go
+  v2_lines: 0
+  current_lines: 14
+  fate: new
+  target_lines: 14
+  cluster: verbs
+  extract: ""
+  reason: "phase 5 re-pass fix round: the PreToolUse adapter's guard child killed by its handle off unix"
+  status: new
+- path: internal/cli/hook_decision_unix.go
+  v2_lines: 0
+  current_lines: 19
+  fate: new
+  target_lines: 19
+  cluster: verbs
+  extract: ""
+  reason: "phase 5 re-pass fix round: the PreToolUse adapter's guard child in its own process group, killed whole"
   status: new
 - path: internal/cli/hook_evidence_list.go
   v2_lines: 0
@@ -838,9 +856,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 539
+  current_lines: 542
   fate: new
-  target_lines: 539
+  target_lines: 542
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
@@ -3247,9 +3265,9 @@ entries:
   status: new
 - path: internal/redact/redact.go
   v2_lines: 0
-  current_lines: 360
+  current_lines: 411
   fate: new
-  target_lines: 360
+  target_lines: 411
   cluster: redact
   extract: ""
   reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
@@ -3445,9 +3463,9 @@ entries:
   status: new
 - path: internal/routing/head.go
   v2_lines: 0
-  current_lines: 134
+  current_lines: 139
   fate: new
-  target_lines: 134
+  target_lines: 139
   cluster: routing
   extract: ""
   reason: "2b-4 fix 5: the signed head record (chain heads, seed identity, open breaks)"
@@ -3648,9 +3666,9 @@ entries:
   status: new
 - path: internal/scheduler/exits.go
   v2_lines: 0
-  current_lines: 442
+  current_lines: 453
   fate: new
-  target_lines: 442
+  target_lines: 453
   cluster: scheduler
   extract: ""
   reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
@@ -3684,9 +3702,9 @@ entries:
   status: new
 - path: internal/sealchain/sealchain.go
   v2_lines: 0
-  current_lines: 350
+  current_lines: 381
   fate: new
-  target_lines: 350
+  target_lines: 381
   cluster: routing
   extract: ""
   reason: "phase 5 re-pass of 2b-2 B (ruling): the routing chain's tag, seed and signed-head rule as a leaf package, shared by routing and the sealed commits ledger and exits queue"
@@ -3711,9 +3729,9 @@ entries:
   status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 1109
+  current_lines: 1176
   fate: new
-  target_lines: 1109
+  target_lines: 1176
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
@@ -3729,9 +3747,9 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 473
+  current_lines: 480
   fate: new
-  target_lines: 473
+  target_lines: 480
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
@@ -3828,9 +3846,9 @@ entries:
   status: new
 - path: internal/seatlaunch/launcher.go
   v2_lines: 0
-  current_lines: 489
+  current_lines: 560
   fate: new
-  target_lines: 489
+  target_lines: 560
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
@@ -3855,9 +3873,9 @@ entries:
   status: new
 - path: internal/seatlaunch/proof_other.go
   v2_lines: 0
-  current_lines: 26
+  current_lines: 29
   fate: new
-  target_lines: 26
+  target_lines: 29
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
@@ -3873,9 +3891,9 @@ entries:
   status: new
 - path: internal/seatlaunch/proof_unix.go
   v2_lines: 0
-  current_lines: 608
+  current_lines: 622
   fate: new
-  target_lines: 608
+  target_lines: 622
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
@@ -3891,9 +3909,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 501
+  current_lines: 526
   fate: new
-  target_lines: 501
+  target_lines: 526
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

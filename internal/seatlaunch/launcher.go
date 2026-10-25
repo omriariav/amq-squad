@@ -41,6 +41,13 @@ type Launcher struct {
 	// false when that cannot be determined. Default: a read-only tmux
 	// list-panes query.
 	PaneGone func(resource string) (gone, ok bool)
+	// PanesFor counts the panes labelled with a handle (@amq_pane_agent);
+	// ok is false when that cannot be determined. Default: a read-only tmux
+	// list-panes query bounded at 2 s (the fix round's item 3).
+	PanesFor func(handle string) (n int, ok bool)
+	// Clock is the clock the token window is compared on (default
+	// time.Now, monotonic; the proof server's ProofClock in tests).
+	Clock func() time.Time
 	// closeSeat replaces CloseSeat in closeOwed (tests).
 	closeSeat func(handle, reason string) error
 
@@ -281,7 +288,71 @@ func (l *Launcher) cancelAmbiguous(r *request) error {
 			return l.closeOwed(r)
 		}
 	}
-	return fmt.Errorf("seat request %s: apply_ambiguous: AMQ observed more than one pane for %s, or a pane for an unknown handle; only its proof or a confirmed close settles it", id, handle)
+	// After the token window plus the close grace no seat-exec can prove
+	// any more (the socket is closed): a request with no pane for its handle
+	// is abandoned and its slot released; a pane that exists stays held
+	// until it is closed (the fix round's item 3, ruling).
+	if srv != nil {
+		if end := srv.windowEnd(); !end.IsZero() && !l.clock().Before(end.Add(l.closeWait())) {
+			if n, known := l.panesFor(handle); known && n == 0 {
+				l.mu.Lock()
+				r.state, r.err = stateCancelled, fmt.Errorf("apply_abandoned: no proof within the token window and no pane for %s", handle)
+				l.mu.Unlock()
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("seat request %s: apply_ambiguous: AMQ observed more than one pane for %s, or a pane for an unknown handle; only its proof, a confirmed close, or (after the token window) a confirmed absence of its pane settles it", id, handle)
+}
+
+func (l *Launcher) clock() time.Time {
+	if l.Clock != nil {
+		return l.Clock()
+	}
+	return time.Now()
+}
+
+func (l *Launcher) closeWait() time.Duration {
+	if l.CloseWait > 0 {
+		return l.CloseWait
+	}
+	return closeGrace
+}
+
+func (l *Launcher) panesFor(handle string) (int, bool) {
+	if l.PanesFor != nil {
+		return l.PanesFor(handle)
+	}
+	return tmuxPanesFor(handle, l.Options.Env)
+}
+
+// tmuxPanesFor counts the panes AMQ labelled with the handle, from a
+// read-only `tmux list-panes -a` bounded at 2 s; no tmux server is no pane;
+// any other failure is unknown.
+func tmuxPanesFor(handle string, env []string) (int, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{@amq_pane_agent}")
+	cmd.WaitDelay = 500 * time.Millisecond
+	if env != nil {
+		cmd.Env = env
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == nil && strings.Contains(stderr.String(), "no server running") {
+			return 0, true
+		}
+		return 0, false
+	}
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == handle {
+			n++
+		}
+	}
+	return n, true
 }
 
 // CloseSeat stops the seat's provider: SIGTERM to the pid the launcher holds

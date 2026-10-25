@@ -85,3 +85,27 @@ func sealOf(t *testing.T, raw []byte) []byte {
 	b, _ := json.Marshal(l.Seal)
 	return b
 }
+
+// The fix round's item 25: a sealed exits queue that does not decode, or
+// carries another schema, is ledger_tampered (dispatch stops, logged for the
+// owner), never a plain parse error.
+func TestUndecodableSealedExitsQueueIsTampered(t *testing.T) {
+	for _, body := range []string{"{", `{"schema":2,"queue":[]}`} {
+		root := t.TempDir()
+		ledger := filepath.Join(t.TempDir(), "exits.json")
+		cfg := Config{IdleTimeout: time.Hour, ExitsPath: ledger, SealRoot: root}
+		h := newHarness(t, cfg)
+		h.s.Exits = &deferringExits{}
+		h.s.AdoptClosing("old-1", sonnet, h.clk.Now())
+		if err := os.WriteFile(ledger, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		g := newHarness(t, cfg)
+		g.s.Exits = &deferringExits{}
+		g.add("work", &sonnet)
+		g.up("seat-a", sonnet)
+		if d := g.tick(); !has(d, "ledger_tampered", "", "") || has(d, "dispatched", "", "") || !errors.Is(g.s.exitsErr, sealchain.ErrTampered) {
+			t.Fatalf("%q: %+v (%v)", body, d, g.s.exitsErr)
+		}
+	}
+}

@@ -52,7 +52,33 @@ func CredentialName(name string) bool {
 	if strings.Contains(upper, "PUBKEY") || strings.Contains(upper, "PUBLIC_KEY") || strings.Contains(upper, "PUBLICKEY") {
 		return false // a public key is published, not secret
 	}
-	return LedgerSecretName(upper) || strings.HasSuffix(upper, "KEY") || strings.Contains(upper, "NSEC")
+	other := strings.HasSuffix(upper, "KEY") || strings.Contains(upper, "NSEC")
+	for _, m := range ledgerMarkers {
+		if m != "TOKEN" && strings.Contains(upper, m) {
+			other = true
+		}
+	}
+	if !other && strings.Contains(upper, "TOKEN") && tokenMeasure(upper) {
+		// A count or a timing of tokens (totalTokens, tokens_in,
+		// first_token_ms), which a JSON number now reaches (the fix round's
+		// item 19), never a token itself.
+		return false
+	}
+	return LedgerSecretName(upper) || other
+}
+
+// tokenMeasure reports a token name that measures tokens: the plural (a
+// count) or a measurement suffix.
+func tokenMeasure(upper string) bool {
+	if strings.Contains(upper, "TOKENS") {
+		return true
+	}
+	for _, s := range []string{"_MS", "_S", "_SECONDS", "_MEDIAN", "_IN", "_OUT", "_COUNT"} {
+		if strings.HasSuffix(upper, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProviderToken matches the known provider credential prefixes wherever
@@ -81,7 +107,9 @@ var RealCredentialShapes = []*regexp.Regexp{
 // flag (--api-key=v) names its credential with hyphens.
 var (
 	assignRE = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_-]*)=("(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[^\s"'\[\](){},;<>|&` + "`" + `]+)`)
-	jsonRE   = regexp.MustCompile(`"([A-Za-z0-9_.-]+)"\s*:\s*"((?:[^"\\\n]|\\.)*)"`)
+	// The value is any JSON scalar: a string (group 2, with its quotes) or
+	// a number (the fix round's item 19: {"password":123456} is a value).
+	jsonRE = regexp.MustCompile(`"([A-Za-z0-9_.-]+)"\s*:\s*("(?:[^"\\\n]|\\.)*"|-?[0-9][0-9.eE+-]*)`)
 )
 
 // minSecretLen: a shorter value is a flag, a switch or a placeholder.
@@ -129,12 +157,20 @@ func secretValue(v string) bool {
 // name are exempt. No shape (length, first character, a placeholder word)
 // exempts a value any more.
 func namedSecret(name, v string) bool {
-	v = strings.Trim(v, `"'`)
-	switch v {
-	case "", Placeholder, "[redacted]":
+	// Exact match, no quote stripping (the fix round's question 6: a quoted
+	// 'hunter2' is not the allowlisted hunter2): only the redaction's own
+	// placeholder forms and an exact allowlisted pair are exempt.
+	if v == "" || placeholderForms[v] {
 		return false
 	}
 	return !AllowedFixtures[name+"="+v]
+}
+
+// placeholderForms are the exact values the redaction itself writes (bare,
+// and in the quotes of the value it replaced).
+var placeholderForms = map[string]bool{
+	Placeholder: true, `"` + Placeholder + `"`: true, `'` + Placeholder + `'`: true,
+	"[redacted]": true, `"[redacted]"`: true,
 }
 
 // AllowedFixtures are the exact NAME=value pairs the repository's docs and
@@ -146,6 +182,7 @@ var AllowedFixtures = map[string]bool{
 	"CLAUDE_CODE_OAUTH_TOKEN=parent-token": true, "GEMINI_API_KEY=private-value": true,
 	"API_KEY=k77": true, "GH_TOKEN=t": true, "api_key=k1": true, "secret=s": true, "password=hunter2": true,
 	"password=...": true, "apiKey=ollama": true,
+	"password=1234": true, "pin_secret=4242": true, // the ledger reader's numeric fixtures in 3-2's revert log
 }
 
 // Finding is one credential-shaped value: its line and the rule that found
@@ -173,8 +210,12 @@ func spans(line string) (out [][2]int, found []Finding) {
 		if strings.EqualFold(name, "key") {
 			continue // a map entry's key, not a credential's name
 		}
-		if CredentialName(name) && namedSecret(name, val) {
-			out = append(out, [2]int{m[4] - 1, m[5] + 1}) // with its quotes
+		inner := val
+		if strings.HasPrefix(val, `"`) {
+			inner = val[1 : len(val)-1] // the JSON string's content, compared exactly
+		}
+		if CredentialName(name) && namedSecret(name, inner) {
+			out = append(out, [2]int{m[4], m[5]}) // the whole value, quotes included
 			found = append(found, Finding{Rule: "json", Name: name})
 		}
 	}
@@ -247,12 +288,22 @@ func Line(line string) string {
 	for i := len(merged) - 1; i >= 0; i-- {
 		s := merged[i]
 		rep := Placeholder
-		if s[1]-s[0] >= 2 && line[s[0]] == '"' && line[s[1]-1] == '"' {
-			rep = `"` + Placeholder + `"`
+		if s[1]-s[0] >= 2 && line[s[0]] == '"' && line[s[1]-1] == '"' || jsonValueAt(line, s[0]) {
+			rep = `"` + Placeholder + `"` // a JSON value stays a JSON string
 		}
 		line = line[:s[0]] + rep + line[s[1]:]
 	}
 	return line
+}
+
+// jsonValueAt reports whether the span at i is a JSON object value (the
+// first non-space byte before it is a colon after a quoted name).
+func jsonValueAt(line string, i int) bool {
+	j := i - 1
+	for j >= 0 && (line[j] == ' ' || line[j] == '\t') {
+		j--
+	}
+	return j > 0 && line[j] == ':' && strings.TrimRight(line[:j], " \t") != "" && strings.HasSuffix(strings.TrimRight(line[:j], " \t"), `"`)
 }
 
 func mergeSpans(sp [][2]int) [][2]int {

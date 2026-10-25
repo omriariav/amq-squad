@@ -20,7 +20,7 @@ const guardUsage = `amq-squad guard - one verdict for one tool call: allow, need
 Usage:
   amq-squad guard --me HANDLE --stdin     (the hook payload: Claude Code PreToolUse or pi tool_call)
   amq-squad guard --me HANDLE --tool NAME [--arg KEY=VALUE]... [--cwd DIR]     (tests, manual checks)
-  amq-squad guard --decision claude       (a verdict on stdin -> Claude Code's PreToolUse decision)
+  amq-squad guard --decision claude --me HANDLE --stdin     (the Claude PreToolUse adapter: payload in, decision out)
 
 Guard is the in-session advisory check. Enforcement stays at the harness-side
 commit and the core merge; the model is never the enforcement point.
@@ -40,8 +40,11 @@ model call.
 Output: one JSON object on stdout {verdict, reason_code, reason, action_class,
 target_digest, ...}, exit 0 for allow, needs_gate and deny alike. Any error
 exits 1 with no verdict (the hook's fail-open path, R36). --decision claude
-maps one complete verdict object to the PreToolUse decision; an unparsable
-verdict prints nothing (no decision) and one line on stderr.
+is the Claude hook's adapter: it runs guard as a child in its own process
+group under a 4.8 s watchdog (the group is killed and reaped), maps one
+complete verdict object to the PreToolUse decision, and on a timeout, a guard
+error or an unparsable verdict prints nothing (no decision), logs one line on
+stderr and exits 0.
 
 Examples:
   amq-squad guard --me cto --stdin < pretooluse.json
@@ -102,7 +105,7 @@ func runGuardVerdict(args []string) error {
 		return err
 	}
 	if *decision != "" {
-		return runGuardDecision(*decision)
+		return runGuardDecision(*decision, strings.TrimSpace(*h.me))
 	}
 	id, change, err := h.seatIdentity(hookNow())
 	if err != nil {

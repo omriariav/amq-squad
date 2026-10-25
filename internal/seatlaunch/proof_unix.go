@@ -592,6 +592,20 @@ type proofLimits struct {
 }
 
 // windowOver reports whether every minted ticket's deadline has passed.
+// windowEnd is the latest ticket deadline (zero when no ticket was minted):
+// after it no proof is accepted.
+func (s *proofServer) windowEnd() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var end time.Time
+	for _, seat := range s.seats {
+		if seat.deadline.After(end) {
+			end = seat.deadline
+		}
+	}
+	return end
+}
+
 func (s *proofServer) windowOver() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

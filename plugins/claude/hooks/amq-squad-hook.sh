@@ -7,8 +7,9 @@
 # before anything else runs. In a seat the three verbs do the work:
 #   session-start, user-prompt  amq-squad context --me $AM_ME --json
 #                               injected as additionalContext, every turn (R35)
-#   pre-tool                    amq-squad guard --me $AM_ME --stdin, verdict
-#                               mapped to the PreToolUse decision (below)
+#   pre-tool                    amq-squad guard --decision claude --me $AM_ME
+#                               --stdin: the Go adapter runs guard under its
+#                               watchdog and prints the PreToolUse decision
 #   post-tool                   amq-squad evidence ingest --me $AM_ME
 #
 # Verdict mapping (guard exits 0 for every verdict):
@@ -74,46 +75,13 @@ session-start | user-prompt)
 	printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$name" "$body"
 	;;
 pre-tool)
-	# guard runs in the background under a watchdog at the configured hook
-	# timeout (5 s) minus 200 ms: Claude kills a hook at the deadline without
-	# giving it a chance to write its log line, so the hook ends itself first.
-	tmpd=$(umask 077; mktemp -d 2>/dev/null) || { log "fail-open: mktemp failed"; exit 0; }
-	trap 'rm -rf "$tmpd"' EXIT
-	cat >"$tmpd/in"
-	# guard runs as its own process group (job control on), so the watchdog
-	# kills it with anything it started, and the reap's job report ("Killed:
-	# 9") goes to the log, never to the hook's stderr (4-2 re-pass P2-4).
-	set -m
-	"$bin" guard --me "$AM_ME" --stdin <"$tmpd/in" >"$tmpd/out" 2>&3 &
-	gpid=$!
-	(
-		sleep 4.8 &
-		sid=$!
-		trap 'kill "$sid" 2>/dev/null; exit 0' TERM
-		if wait "$sid"; then
-			: >"$tmpd/timeout"
-			kill -9 -- "-$gpid" 2>/dev/null
-		fi
-	) >/dev/null 2>&1 </dev/null &
-	wpid=$!
-	{ wait "$gpid"; } 2>&3
-	rc=$?
-	kill "$wpid" 2>/dev/null
-	{ wait "$wpid"; } 2>&3
-	kill -9 -- "-$gpid" 2>/dev/null
-	set +m
-	if [ -e "$tmpd/timeout" ]; then
-		log "fail-open: guard timeout after 4.8 s (killed; no decision)"
-		exit 0
-	fi
-	if [ "$rc" -ne 0 ]; then
-		log "fail-open: guard exit $rc"
-		exit 0
-	fi
-	# The Go adapter parses the complete verdict object and prints the
-	# decision; anything unparsable is no decision, logged (4-2 re-pass P2-5).
-	dec=$("$bin" guard --decision claude <"$tmpd/out" 2>"$tmpd/derr")
-	[ -s "$tmpd/derr" ] && log "$(head -c 2000 "$tmpd/derr" | tr '\n' ' ')"
+	# The adapter is the whole PreToolUse path: amq-squad guard --decision
+	# claude runs guard as a child in its own process group under the 4.8 s
+	# watchdog (200 ms inside the 5 s hook timeout), kills and reaps the
+	# group, parses the complete verdict and prints the decision. The shell
+	# runs no watchdog and reads no verdict, so dash and bash behave alike
+	# (the fix round's watchdog ruling); its log lines go to the log fd.
+	dec=$("$bin" guard --decision claude --me "$AM_ME" --stdin 2>&3)
 	[ -n "$dec" ] && printf '%s\n' "$dec"
 	;;
 post-tool)
