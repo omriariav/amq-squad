@@ -1627,6 +1627,13 @@ Release prep.
   seconds wide). doctor says "pinned claude is behind the installed
   claude" with the re-pin command when the hard link's bytes are older
   than the installed version. [2.7, reviewer, 2026-10-25]
+  Done 2026-10-25 and merged as 0243b631 (branch v3-5-relprep) with
+  the Linux CI job for the hook tests under dash, the hooks-API re-check
+  (docs/v3-spike/5-hooks-api-recheck.md) and the Claude plugin at
+  3.0.0; doctor resolves the installed claude's symlink chain through the
+  fsanchor walk one component at a time, under HOME or /opt/homebrew
+  only, eight hops, with quoted re-pin operands and a same-filesystem
+  check. [2.7, phase 5 relprep result]
 - Re-check the Claude hooks API facts the plugin relies on (hooks.json
   shape, CLAUDE_PLUGIN_ROOT, hookSpecificOutput fields, exit 2
   behaviour). They were checked against the installed Claude Code
