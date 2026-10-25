@@ -14,4 +14,4 @@ ok .github/workflows/ci.yml
 release metadata matches v3.0.0
 == go test -count=1 ./... (failures only)
 go test exit 0
-packages ok: 55
+packages ok: 56

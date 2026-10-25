@@ -59,3 +59,10 @@ The tag stays as a trailing `# vN` comment on each line.
 manifest-check --final (OK), workflow YAML parse (ruby; PyYAML absent),
 check-release-version, go test -count=1 ./... (exit 0, 55 packages ok), run on
 a quiet host.
+
+## Rebase commit (onto v3 at f337b4a5, after the uninstall merge 889c5cd6)
+
+- docs/v3.0.0-release-notes.md: uninstall line replaced, class-verifier line and
+  Claude registry-pinned-binary line added, manifest line refreshed to 79,815.
+- MIGRATION.md: "Moving to 3.0" section added at the top; v2 sections unchanged.
+- Gate re-run (gate.txt, version-check.txt): all green, 56 packages ok.
