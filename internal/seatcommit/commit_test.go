@@ -516,6 +516,7 @@ func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// in scope\n")
 	f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now)
+	harnessPass(t, f.store, tk.ID, f.now)
 	again, _ := f.store.Done(tk.ID, f.handle, "ok", "", f.now)
 	if res := f.run(again); !res.OK {
 		t.Fatalf("the next attempt was refused for the old diff: %+v", res)
@@ -639,6 +640,7 @@ func TestOpenPRThatIsNotThisTasksIsNeverReused(t *testing.T) {
 			default:
 				other, _ := f.store.Add(task.AddInput{Title: "other", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
 				f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
+				harnessPass(t, f.store, other.ID, f.now)
 				f.store.Done(other.ID, "s9", "ok", "", f.now)
 				f.store.CompleteBound(other.ID, fixtureRepo, 42, strings.Repeat("a", 40), f.now)
 			}

@@ -23,6 +23,16 @@ func i64(v int64) *int64     { return &v }
 func f64(v float64) *float64 { return &v }
 func iptr(v int) *int        { return &v }
 
+// fixtureAttempt is an attempt of the fixture: a completion carries the
+// harness's pass verdict (the completion gate admits no other).
+func fixtureAttempt(outcome string) task.Attempt {
+	a := task.Attempt{Outcome: outcome}
+	if outcome == task.OutcomeCompleted {
+		a.Verdict = &task.Verdict{Result: task.VerdictPass}
+	}
+	return a
+}
+
 // fixtureWeek is the fixture log of acceptance 6: seven buckets, each built
 // to call for a different proposal, plus a runtime (codex) whose rows lack
 // token evidence and an entry (local pi) with no owner price.
@@ -37,7 +47,7 @@ func fixtureWeek() []Row {
 			TableTier: tier, UsedTier: tier, Entry: entry, Runtime: strings.SplitN(entry, ":", 2)[0], Skipped: []Skip{},
 			Policy: PolicyTable, Propensity: 0.95, ExplorationShare: 0.05, CostUSD: cost, WallMS: 60_000, WaitMS: waitMS,
 			WaitReasons: append([]string{}, waits...), Outcome: outcome, ConsumedSmolOutputs: []string{},
-			VerifierResult: verifierResult(Default().Classes[class].Verifier, outcome), Holder: "seat", GrantedAt: at, EndedAt: at.Add(time.Minute)}
+			VerifierResult: verifierResult(Default().Classes[class].Verifier, fixtureAttempt(outcome)), Holder: "seat", GrantedAt: at, EndedAt: at.Add(time.Minute)}
 		if tokens {
 			r.TokensIn, r.TokensOut = i64(1000), i64(200)
 		}

@@ -108,6 +108,7 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	}
 	mustWrite(t, filepath.Join(wt, "cmd", "root.go"), "package cmd\n// tuned\n")
 	mustWrite(t, filepath.Join(wt, ".claude", "settings.json"), `{"permissions":{"allow":["Bash(*)"]}}`+"\n")
+	harnessPass(t, s, tk.ID, time.Now())
 	if _, err := s.Done(tk.ID, "s1", "ok", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +162,7 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	if got.State != task.StateInProgress || len(got.ScopeChanges) != 1 || got.ScopeChanges[0].Gates[0] != target {
 		t.Fatalf("after the widening: %+v", got)
 	}
+	harnessPass(t, s, tk.ID, time.Now()) // the re-armed attempt's own verdict
 	if out, _, err := captureOutput(t, func() error { return runSeatCommit(append([]string{"--seat", "s1", "--json"}, scoped...), os.Stdout) }); err != nil {
 		t.Fatalf("seat commit after the gate: %v\n%s", err, out)
 	}

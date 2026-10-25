@@ -50,6 +50,7 @@ func TestCommitDeferralAndTheLeadNotice(t *testing.T) {
 	if _, err := h.store.Claim("t1", "seat-a", nil, 0, t0); err != nil {
 		t.Fatal(err)
 	}
+	harnessPass(t, h.store, "t1", t0)
 	if _, err := h.store.Done("t1", "seat-a", "ok", "", t0); err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +84,7 @@ func TestCommitBindsThePR(t *testing.T) {
 	h.up("seat-a", sonnet)
 	h.tick()
 	h.store.Claim("t1", "seat-a", nil, 0, t0)
+	harnessPass(t, h.store, "t1", t0)
 	h.store.Done("t1", "seat-a", "ok", "", t0)
 	if d := h.tick(); !has(d, "pr_bound", "t1", "seat-a") {
 		t.Fatalf("decisions: %+v", d)
@@ -136,6 +138,7 @@ func TestQuarantineClosesTheSeatAndDispatchesElsewhere(t *testing.T) {
 	if _, err := h.store.Claim("t1", "seat-a", nil, 0, t0); err != nil {
 		t.Fatal(err)
 	}
+	harnessPass(t, h.store, "t1", t0)
 	if _, err := h.store.Done("t1", "seat-a", "ok", "", t0); err != nil {
 		t.Fatal(err)
 	}

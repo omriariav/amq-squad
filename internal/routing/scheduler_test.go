@@ -8,14 +8,17 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-type recordingLauncher struct{ requests []scheduler.SeatRequest }
+type recordingLauncher struct {
+	requests []scheduler.SeatRequest
+	closeErr error // a close the launcher cannot do yet: the seat stays closing
+}
 
 func (l *recordingLauncher) RequestSeat(r scheduler.SeatRequest) error {
 	l.requests = append(l.requests, r)
 	return nil
 }
 func (l *recordingLauncher) CancelSeatRequest(scheduler.SeatRequest) error { return nil }
-func (l *recordingLauncher) CloseSeat(string, string) error                { return nil }
+func (l *recordingLauncher) CloseSeat(string, string) error                { return l.closeErr }
 
 // The Router drops into the scheduler in place of DefaultRouter (lead ruling
 // 15): a routed task gets a seat request for the chosen pool, a local-only

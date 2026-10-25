@@ -91,8 +91,9 @@ type Row struct {
 	ExplorationShare    float64   `json:"exploration_share"`
 	TokensIn            *int64    `json:"tokens_in"`
 	TokensOut           *int64    `json:"tokens_out"`
-	CostUSD             *float64  `json:"cost_usd"`   // null without tokens or without an owner price
-	CostIndex           float64   `json:"cost_index"` // the registry's relative cost of the entry
+	CostUSD             *float64  `json:"cost_usd"`                // null without tokens or without an owner price
+	UsageInvalid        string    `json:"usage_invalid,omitempty"` // why the usage is unknown: a counter that was not a count
+	CostIndex           float64   `json:"cost_index"`              // the registry's relative cost of the entry
 	WallMS              int64     `json:"wall_ms"`
 	WaitMS              int64     `json:"wait_ms"`
 	WaitReasons         []string  `json:"wait_reasons"`

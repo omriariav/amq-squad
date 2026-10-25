@@ -47,6 +47,11 @@ type repoExec struct {
 	failRead    map[int]bool // the n-th ReadDraft errors
 	reads       int
 	nextID      int64
+	bodies      map[int64]string
+	loseCreate  int // the n-th CreateDraft (1-based) creates the draft and loses its response
+	losePublish int // the n-th PublishDraft publishes and loses its response
+	creates     int
+	publishes   int
 }
 
 func (e *repoExec) Tag(_ context.Context, repository, tag, commit string) error {
@@ -72,10 +77,28 @@ func (e *repoExec) CreateDraft(_ context.Context, repository, tag, commit, notes
 	e.nextID++
 	d := Draft{ID: e.nextID, Tag: tag, TargetCommitish: commit, Draft: true}
 	e.drafts[d.ID] = d
+	if e.bodies == nil {
+		e.bodies = map[int64]string{}
+	}
+	e.bodies[d.ID] = notes
 	if e.onDraft != nil {
 		e.onDraft()
 	}
+	if e.creates++; e.creates == e.loseCreate {
+		return Draft{}, errors.New("connection reset by peer")
+	}
 	return d, nil
+}
+
+func (e *repoExec) FindDrafts(_ context.Context, _ string, nonce string) ([]Draft, error) {
+	var out []Draft
+	for id, d := range e.drafts {
+		if strings.Contains(e.bodies[id], NonceMarker(nonce)) {
+			out = append(out, d)
+		}
+	}
+	slices.SortFunc(out, func(a, b Draft) int { return int(a.ID - b.ID) })
+	return out, nil
 }
 
 func (e *repoExec) ReadDraft(_ context.Context, _ string, id int64) (Draft, bool, error) {
@@ -90,11 +113,28 @@ func (e *repoExec) ReadDraft(_ context.Context, _ string, id int64) (Draft, bool
 	return d, ok, nil
 }
 
+// PublishDraft publishes as GitHub does: the release stays at its id, now
+// with draft false (5 re-pass, P1-1: the fake used to remove it).
 func (e *repoExec) PublishDraft(_ context.Context, repository string, id int64) (string, error) {
 	d := e.drafts[id]
-	delete(e.drafts, id)
+	d.Draft, d.URL = false, "https://example.test/"+repository+"/releases/tag/"+d.Tag
+	e.drafts[id] = d
 	e.releases = append(e.releases, repository+"@"+d.Tag)
-	return "https://example.test/" + repository + "/releases/tag/" + d.Tag, nil
+	if e.publishes++; e.publishes == e.losePublish {
+		return "", errors.New("connection reset by peer")
+	}
+	return d.URL, nil
+}
+
+// published counts the releases the fake holds as published.
+func (e *repoExec) published() int {
+	n := 0
+	for _, d := range e.drafts {
+		if !d.Draft {
+			n++
+		}
+	}
+	return n
 }
 
 func (e *repoExec) DeleteRelease(_ context.Context, _ string, id int64) error {
@@ -492,5 +532,118 @@ func TestOrphanDraftIsRecoveredOnTheNextRun(t *testing.T) {
 	}
 	if _, err := os.Stat(record); !os.IsNotExist(err) {
 		t.Fatalf("the lock record stayed after publication: %v", err)
+	}
+}
+
+// 5 re-pass, P1-1: the publish request succeeds and its response is lost.
+// The retry finds the release published at its id with the approved tag and
+// commit: that is completion, never a deletion.
+func TestRepassLostPublishResponseIsCompletionNotDeletion(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.exec.losePublish = 1
+	if _, err := f.flow.Publish(context.Background(), f.root); err == nil {
+		t.Fatal("a lost publish response was reported as success")
+	}
+	steps, err := f.flow.Publish(context.Background(), f.root)
+	if err != nil || len(steps) != 2 || steps[1].Status != "ran" || !strings.Contains(steps[1].Result, "/releases/tag/v1.2.0") {
+		t.Fatalf("retry: %v %+v", err, steps)
+	}
+	if f.exec.deleted != 0 || f.exec.published() != 1 || f.exec.nextID != 1 || len(f.exec.releases) != 1 {
+		t.Fatalf("the published release was deleted or published again: deleted %d published %d drafts %d", f.exec.deleted, f.exec.published(), f.exec.nextID)
+	}
+	raw, _ := os.ReadFile(filepath.Join(f.root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID, "audit.jsonl"))
+	if !strings.Contains(string(raw), "recovered: the release was already published") {
+		t.Fatalf("audit %s", raw)
+	}
+}
+
+// 5 re-pass, P2-4: the draft POST succeeds and its response is lost (no
+// record written). The creation intent was written first and the draft
+// carries its nonce, so the retry adopts that draft and creates no second.
+func TestRepassLostDraftCreationIsAdoptedByItsNonce(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.exec.loseCreate = 1
+	if _, err := f.flow.Publish(context.Background(), f.root); err == nil {
+		t.Fatal("a lost creation response was reported as success")
+	}
+	if _, err := f.flow.Publish(context.Background(), f.root); err != nil || f.exec.nextID != 1 || f.exec.published() != 1 || len(f.exec.drafts) != 1 {
+		t.Fatalf("retry: %v drafts created %d published %d held %d", err, f.exec.nextID, f.exec.published(), len(f.exec.drafts))
+	}
+	dir := filepath.Join(f.root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID)
+	if _, err := os.Stat(filepath.Join(dir, "draft-intent.json")); !os.IsNotExist(err) {
+		t.Fatalf("the intent stayed after publication: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "draft.json")); !os.IsNotExist(err) {
+		t.Fatalf("the lock record stayed after publication: %v", err)
+	}
+}
+
+// Narrow pass, coverage, and 3-2 P1-1's alert write: the recorded draft id
+// is found published (Draft false) with another tag or another commit. It
+// is never deleted: the mismatch is audited and an owner alert raised, and
+// an alert that cannot be written is itself an error.
+func TestRepassPublishedMismatchIsNeverDeleted(t *testing.T) {
+	for _, tc := range []struct{ name, tag, commit string }{{"wrong tag", "v0.9.0", ""}, {"wrong commit", "v1.2.0", strings.Repeat("e", 40)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, alertFails := range []bool{false, true} {
+				f := newFixture(t)
+				snap, err := f.flow.Prepare(f.spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.approved[snap.Active.Children[0].QuestionMessageID] = true
+				if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrNotApproved) {
+					t.Fatalf("tag step: %v", err)
+				}
+				dir := filepath.Join(f.root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID)
+				rec, _ := json.Marshal(Draft{ID: 1, Tag: "v1.2.0", TargetCommitish: f.commit, Draft: true})
+				if err := os.WriteFile(filepath.Join(dir, "draft.json"), rec, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				commit := tc.commit
+				if commit == "" {
+					commit = f.commit
+				}
+				f.exec.drafts = map[int64]Draft{1: {ID: 1, Tag: tc.tag, TargetCommitish: commit, Draft: false}}
+				if alertFails {
+					alerts := filepath.Join(f.root, "extensions", "amq-squad", "alerts")
+					if err := os.WriteFile(alerts, []byte("not a directory"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				f.approved[snap.Active.Children[1].QuestionMessageID] = true
+				_, err = f.flow.Publish(context.Background(), f.root)
+				if !errors.Is(err, ErrDraftEdited) || f.exec.deleted != 0 || len(f.exec.drafts) != 1 {
+					t.Fatalf("alert fails %v: %v deleted %d", alertFails, err, f.exec.deleted)
+				}
+				if alertFails {
+					if !errors.Is(err, ErrAlertUnwritten) {
+						t.Fatalf("an unwritten owner alert passed silently: %v", err)
+					}
+					continue
+				}
+				if alerts := mergetrain.ReadAlerts(f.root); len(alerts) != 1 || alerts[0].Kind != "draft_edited" || !strings.Contains(alerts[0].Detail, "not deleted") {
+					t.Fatalf("owner alert %+v", alerts)
+				}
+				raw, _ := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+				if !strings.Contains(string(raw), `"kind":"release_mismatch"`) {
+					t.Fatalf("audit %s", raw)
+				}
+			}
+		})
 	}
 }

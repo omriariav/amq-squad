@@ -14,6 +14,7 @@ package releaseflow
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -54,15 +55,34 @@ type Executor interface {
 	ReadDraft(ctx context.Context, repository string, id int64) (d Draft, found bool, err error)
 	PublishDraft(ctx context.Context, repository string, id int64) (string, error)
 	DeleteRelease(ctx context.Context, repository string, id int64) error
+	// FindDrafts lists the repository's releases whose body carries the
+	// creation nonce (5 re-pass, P2-4): a draft whose POST succeeded but
+	// whose response or record was lost.
+	FindDrafts(ctx context.Context, repository, nonce string) ([]Draft, error)
 }
 
-// Draft is a release as the flow created and reads it back.
+// Draft is a release as the flow created and reads it back. GitHub keeps a
+// published release at its id: a read after publication finds it with
+// Draft false.
 type Draft struct {
 	ID              int64  `json:"id"`
 	Tag             string `json:"tag"`
 	TargetCommitish string `json:"target_commitish"`
 	Draft           bool   `json:"draft"`
+	URL             string `json:"html_url,omitempty"`
 }
+
+// intent is the creation intent written before the draft's POST (5 re-pass,
+// P2-4): the tag, the target and the nonce the draft's body carries.
+type intent struct {
+	Tag    string `json:"tag"`
+	Target string `json:"target"`
+	Nonce  string `json:"nonce"`
+}
+
+// NonceMarker is how the draft's body carries the creation nonce: an HTML
+// comment, invisible in the rendered notes.
+func NonceMarker(nonce string) string { return "<!-- amq-squad-release-nonce: " + nonce + " -->" }
 
 // ErrDraftEdited: the draft was changed between creation and publication.
 var ErrDraftEdited = errors.New("draft_edited")
@@ -244,8 +264,8 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 			return append(steps, refused(st, err.Error())), fmt.Errorf("%s: resolve tag %s: %w", child.Role, tag, err)
 		}
 		if remote != "" && remote != approved {
-			f.tagMoved(root, repo, tag, approved, remote)
-			return append(steps, refused(st, fmt.Sprintf("tag %s names %s, approved %s", tag, remote, approved))), fmt.Errorf("%s: %w: tag %s names %s, the owner approved %s", child.Role, ErrTagMoved, tag, remote, approved)
+			aerr := f.tagMoved(root, repo, tag, approved, remote)
+			return append(steps, refused(st, fmt.Sprintf("tag %s names %s, approved %s", tag, remote, approved))), errors.Join(fmt.Errorf("%s: %w: tag %s names %s, the owner approved %s", child.Role, ErrTagMoved, tag, remote, approved), aerr)
 		}
 		switch child.Role {
 		case operatorauth.ReleaseChildTag:
@@ -298,22 +318,30 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 	same := func(a, b Draft) bool {
 		return a.ID == b.ID && a.Tag == b.Tag && a.TargetCommitish == b.TargetCommitish && a.Draft && b.Draft
 	}
+	intentPath := filepath.Join(dir, "draft-intent.json")
 	discard := func(d Draft, cause error, why, remote string) (string, error) {
+		if !d.Draft {
+			// A published release is never deleted (5 re-pass, P1-1): it is
+			// reported for the owner.
+			alertErr := f.alert(root, repo, "draft_edited", tag, approved, fmt.Sprintf("published release %d for %s on %s does not match the approved one (%s); it was not deleted", d.ID, tag, repo, why))
+			return "", errors.Join(fmt.Errorf("%w: published release %d: %s", ErrDraftEdited, d.ID, why), note("release_mismatch", d, why+"; not deleted"), alertErr)
+		}
 		derr := f.Exec.DeleteRelease(ctx, repo, d.ID)
 		result := "deleted"
+		var orphanErr, alertErr error
 		if derr != nil {
 			result = "deletion failed: " + derr.Error()
-			f.alert(root, repo, "draft_orphan", tag, approved, fmt.Sprintf("draft release %d for %s on %s could not be deleted after %s: %v", d.ID, tag, repo, why, derr))
+			orphanErr = f.alert(root, repo, "draft_orphan", tag, approved, fmt.Sprintf("draft release %d for %s on %s could not be deleted after %s: %v", d.ID, tag, repo, why, derr))
 		} else {
 			_ = os.Remove(record)
 		}
 		aerr := note("draft_"+strings.TrimPrefix(cause.Error(), "draft_"), d, why+"; "+result)
 		if errors.Is(cause, ErrTagMoved) {
-			f.tagMoved(root, repo, tag, approved, remote)
+			alertErr = f.tagMoved(root, repo, tag, approved, remote)
 		} else {
-			f.alert(root, repo, "draft_edited", tag, approved, fmt.Sprintf("draft release %d for %s on %s was edited before publication: %s", d.ID, tag, repo, why))
+			alertErr = f.alert(root, repo, "draft_edited", tag, approved, fmt.Sprintf("draft release %d for %s on %s was edited before publication: %s", d.ID, tag, repo, why))
 		}
-		return "", errors.Join(fmt.Errorf("%w: draft %d: %s", cause, d.ID, why), derr, aerr)
+		return "", errors.Join(fmt.Errorf("%w: draft %d: %s", cause, d.ID, why), derr, aerr, orphanErr, alertErr)
 	}
 
 	var d Draft
@@ -329,6 +357,13 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		case !found:
 			_ = os.Remove(record)
 			_ = note("draft_gone", prev, "the recorded draft no longer exists; a new draft is created")
+		case !got.Draft && got.ID == prev.ID && got.Tag == want.Tag && got.TargetCommitish == want.TargetCommitish:
+			// The publish request succeeded and its response was lost (5
+			// re-pass, P1-1): GitHub keeps the published release at its id.
+			// The same id, tag and commit is completion, never a deletion.
+			_ = os.Remove(record)
+			_ = os.Remove(intentPath)
+			return got.URL, note("draft_published", got, "recovered: the release was already published at its id ("+got.URL+")")
 		case !same(got, prev) || got.Tag != want.Tag || got.TargetCommitish != want.TargetCommitish:
 			return discard(got, ErrDraftEdited, fmt.Sprintf("the recorded draft now names %s at %s", got.Tag, got.TargetCommitish), "")
 		default:
@@ -337,8 +372,31 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		}
 	}
 	if d.ID == 0 {
-		created, err := f.Exec.CreateDraft(ctx, repo, tag, approved, notes)
+		// The creation intent first (5 re-pass, P2-4): a draft whose POST
+		// succeeded but whose response or record was lost carries the nonce
+		// in its body, and is adopted here, never created twice.
+		in, err := readIntent(intentPath, tag, approved)
 		if err != nil {
+			return "", err
+		}
+		matches, err := f.Exec.FindDrafts(ctx, repo, in.Nonce)
+		if err != nil {
+			return "", fmt.Errorf("find drafts of intent %s: %w", in.Nonce, err)
+		}
+		var created Draft
+		for _, c := range matches {
+			switch {
+			case created.ID == 0 && c.Draft && c.Tag == tag && c.TargetCommitish == approved:
+				created = c
+			case c.Draft:
+				// another draft of the same intent: a duplicate, or edited
+				derr := f.Exec.DeleteRelease(ctx, repo, c.ID)
+				_ = note("draft_duplicate", c, fmt.Sprintf("a further draft of intent %s; deleted: %v", in.Nonce, derr))
+			}
+		}
+		if created.ID != 0 {
+			_ = note("draft_adopted", created, "the draft of intent "+in.Nonce+" was created by a run whose response or record was lost")
+		} else if created, err = f.Exec.CreateDraft(ctx, repo, tag, approved, strings.TrimSpace(notes+"\n\n"+NonceMarker(in.Nonce))); err != nil {
 			return "", err
 		}
 		if err := writeOnce(record, created); err != nil {
@@ -388,29 +446,66 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		return "", err
 	}
 	_ = os.Remove(record)
+	_ = os.Remove(intentPath)
 	return url, note("draft_published", d, "published "+url)
 }
 
-// alert raises one owner alert of a kind.
-func (f *Flow) alert(root, repo, kind, tag, approved, detail string) {
+// readIntent reads the creation intent, or writes a new one with a fresh
+// nonce; an intent for another tag or commit is refused.
+func readIntent(path, tag, target string) (intent, error) {
+	var in intent
+	raw, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if json.Unmarshal(raw, &in) != nil || in.Nonce == "" {
+			return in, fmt.Errorf("creation intent %s is unreadable", path)
+		}
+		if in.Tag != tag || in.Target != target {
+			return in, fmt.Errorf("creation intent %s is for %s at %s, not %s at %s", path, in.Tag, in.Target, tag, target)
+		}
+		return in, nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return in, err
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return in, err
+	}
+	in = intent{Tag: tag, Target: target, Nonce: hex.EncodeToString(b[:])}
+	return in, writeOnce(path, in)
+}
+
+// ErrAlertUnwritten: an owner alert could not be written; the mismatch it
+// reports never passes silently (narrow pass, 3-2 P1-1).
+var ErrAlertUnwritten = errors.New("owner_alert_unwritten")
+
+// alert raises one owner alert of a kind; a failed write is an error.
+func (f *Flow) alert(root, repo, kind, tag, approved, detail string) error {
 	now := time.Now()
 	if f.Now != nil {
 		now = f.Now()
 	}
 	sum := sha256.Sum256([]byte(repo + "\x00" + kind + "\x00" + tag + "\x00" + approved + "\x00" + detail))
-	_ = mergetrain.WriteAlert(root, mergetrain.Alert{ID: strings.ReplaceAll(kind, "_", "-") + "-" + hex.EncodeToString(sum[:6]), Repository: repo, Kind: kind, Name: tag,
-		At: now.UTC().Format(time.RFC3339), Detail: detail})
+	if err := mergetrain.WriteAlert(root, mergetrain.Alert{ID: strings.ReplaceAll(kind, "_", "-") + "-" + hex.EncodeToString(sum[:6]), Repository: repo, Kind: kind, Name: tag,
+		At: now.UTC().Format(time.RFC3339), Detail: detail}); err != nil {
+		return fmt.Errorf("%w: %s alert: %v", ErrAlertUnwritten, kind, err)
+	}
+	return nil
 }
 
-// tagMoved raises the owner alert for a tag that left its approved commit.
-func (f *Flow) tagMoved(root, repo, tag, approved, remote string) {
+// tagMoved raises the owner alert for a tag that left its approved commit;
+// a failed write is an error.
+func (f *Flow) tagMoved(root, repo, tag, approved, remote string) error {
 	now := time.Now()
 	if f.Now != nil {
 		now = f.Now()
 	}
 	sum := sha256.Sum256([]byte(repo + "\x00" + tag + "\x00" + approved + "\x00" + remote))
-	_ = mergetrain.WriteAlert(root, mergetrain.Alert{ID: "tag-moved-" + hex.EncodeToString(sum[:6]), Repository: repo, Kind: "tag_moved", Name: tag, SHA: remote,
-		At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("tag %s on %s moved from the approved %s to %s before the release", tag, repo, approved, remote)})
+	if err := mergetrain.WriteAlert(root, mergetrain.Alert{ID: "tag-moved-" + hex.EncodeToString(sum[:6]), Repository: repo, Kind: "tag_moved", Name: tag, SHA: remote,
+		At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("tag %s on %s moved from the approved %s to %s before the release", tag, repo, approved, remote)}); err != nil {
+		return fmt.Errorf("%w: tag_moved alert: %v", ErrAlertUnwritten, err)
+	}
+	return nil
 }
 
 func refused(st Step, detail string) Step {

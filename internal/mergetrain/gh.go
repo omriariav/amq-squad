@@ -25,7 +25,14 @@ type GH struct {
 	// runner, when set, answers a gh command line in this process instead of
 	// starting the gh executable (a test seam; never set in production).
 	runner func(ctx context.Context, args []string) (stdout []byte, stderr string, err error)
+	// MaxTimelinePages bounds the force-push timeline read (default
+	// DefaultMaxTimelinePages pages of 100).
+	MaxTimelinePages int
 }
+
+// DefaultMaxTimelinePages is how many pages of 100 force-push events a PR's
+// timeline read takes before it stops as history_incomplete.
+const DefaultMaxTimelinePages = 50
 
 func (g *GH) run(ctx context.Context, args ...string) ([]byte, error) {
 	g.Calls++
@@ -79,7 +86,7 @@ func lines[T any](raw []byte) ([]T, error) {
 
 func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
 	n := strconv.Itoa(number)
-	raw, err := g.run(ctx, "pr", "view", n, "-R", repository, "--json", "number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable")
+	raw, err := g.run(ctx, "pr", "view", n, "-R", repository, "--json", "number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable,mergeCommit")
 	if err != nil {
 		return PRInfo{}, err
 	}
@@ -91,25 +98,80 @@ func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, err
 		BaseRefOid  string `json:"baseRefOid"`
 		HeadRefOid  string `json:"headRefOid"`
 		Mergeable   string `json:"mergeable"`
+		MergeCommit *struct {
+			Oid string `json:"oid"`
+		} `json:"mergeCommit"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return PRInfo{}, fmt.Errorf("decode PR #%d: %w", number, err)
 	}
 	pr := PRInfo{Number: v.Number, State: v.State, Draft: v.IsDraft, Repository: repository, BaseRef: v.BaseRefName,
 		BaseSHA: v.BaseRefOid, HeadSHA: v.HeadRefOid, Mergeable: v.Mergeable}
-	owner, name, _ := strings.Cut(repository, "/")
-	raw, err = g.run(ctx, "api", "graphql", "-F", "o="+owner, "-F", "r="+name, "-F", "n="+n, "-f", "query="+forcePushQuery,
-		"--jq", `.data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}`)
-	if err != nil {
-		return PRInfo{}, err
+	if v.MergeCommit != nil {
+		pr.MergeCommit = v.MergeCommit.Oid
 	}
-	if pr.ForcePushes, err = lines[ForcePush](raw); err != nil {
-		return PRInfo{}, fmt.Errorf("decode force pushes of #%d: %w", number, err)
+	if pr.ForcePushes, pr.HistoryIncomplete, err = g.forcePushes(ctx, repository, n); err != nil {
+		return PRInfo{}, fmt.Errorf("force pushes of #%d: %w", number, err)
 	}
 	return pr, nil
 }
 
-const forcePushQuery = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}}`
+// forcePushes reads the PR's whole force-push timeline, page by page with
+// the cursor (5 re-pass, P1-2: a single page hid every event after the
+// first 100, the train's own audited rebases included). A read that the page
+// bound or a rate limit leaves partial returns the reason, which the check
+// refuses as history_incomplete; any other error is an error.
+func (g *GH) forcePushes(ctx context.Context, repository, n string) ([]ForcePush, string, error) {
+	owner, name, _ := strings.Cut(repository, "/")
+	maxPages := g.MaxTimelinePages
+	if maxPages <= 0 {
+		maxPages = DefaultMaxTimelinePages
+	}
+	var out []ForcePush
+	cursor := ""
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return out, fmt.Sprintf("the force-push timeline has more than %d pages of 100 events; %d read", maxPages, len(out)), nil
+		}
+		args := []string{"api", "graphql", "-F", "o=" + owner, "-F", "r=" + name, "-F", "n=" + n}
+		if cursor != "" {
+			args = append(args, "-F", "c="+cursor)
+		}
+		args = append(args, "-f", "query="+forcePushQuery, "--jq", forcePushJQ)
+		raw, err := g.run(ctx, args...)
+		if err != nil {
+			if rateLimited(err) {
+				return out, fmt.Sprintf("a rate limit stopped the force-push timeline at page %d (%d events read): %v", page, len(out), err), nil
+			}
+			return nil, "", err
+		}
+		var pg struct {
+			Nodes  []ForcePush `json:"nodes"`
+			Next   bool        `json:"next"`
+			Cursor string      `json:"cursor"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(raw), &pg); err != nil {
+			return nil, "", fmt.Errorf("decode timeline page %d: %w", page, err)
+		}
+		out = append(out, pg.Nodes...)
+		if !pg.Next {
+			return out, "", nil
+		}
+		if pg.Cursor == "" || pg.Cursor == cursor {
+			return out, fmt.Sprintf("the force-push timeline page %d has no new cursor", page), nil
+		}
+		cursor = pg.Cursor
+	}
+}
+
+func rateLimited(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "rate limit") || strings.Contains(s, "ratelimited")
+}
+
+const forcePushQuery = `query($o:String!,$r:String!,$n:Int!,$c:String){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100,after:$c){pageInfo{hasNextPage endCursor} nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}}`
+
+const forcePushJQ = `.data.repository.pullRequest.timelineItems | {nodes: [.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}], next: .pageInfo.hasNextPage, cursor: (.pageInfo.endCursor // "")}`
 
 // Diff reads the compare endpoint for the exact base...head pair: one
 // snapshot, bound to the SHAs the train checks and pins.

@@ -63,7 +63,7 @@ func TestRedactURLsNestedShellAndCountList(t *testing.T) {
 		{`{"command":"sh -c 'curl --token abc9 https://x'"}`, "abc9", "https://x"},
 		{`{"command":"bash -c \"export API_KEY=k77 && run\""}`, "k77", "run"},
 		{`{"command":"zsh -c \"sh -c 'deploy --password p55 now'\""}`, "p55", "now"},
-		{`{"command":"deploy --token t88 'unterminated"}`, "t88", "unterminated"},
+		{`{"command":"deploy --token t88 'unterminated"}`, "t88", "deploy --token [redacted]"},
 		{`{"reset_tokens":999,"cache_read_input_tokens":12,"input_tokens":3}`, "999", `"cache_read_input_tokens":12`},
 	} {
 		got := string(Redact([]byte(tc.in)))
@@ -84,7 +84,7 @@ func TestForTaskKeepsLeaseWindowsOnly(t *testing.T) {
 	tk := task.Task{ID: "t-1", Attempt: 2,
 		Attempts: []task.Attempt{{N: 1, Holder: "seat-a", GrantedAt: t0, EndedAt: t0.Add(10 * time.Minute)}},
 		Lease:    &task.Lease{Holder: "seat-b", GrantedAt: t0.Add(12 * time.Minute)}}
-	lines, err := ForTask(root, tk, t0.Add(30*time.Minute))
+	lines, _, err := ForTask(root, tk, t0.Add(30*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +98,11 @@ func TestForTaskKeepsLeaseWindowsOnly(t *testing.T) {
 
 func TestOutcomesNameTheTask(t *testing.T) {
 	root := t.TempDir()
-	if rows, err := Outcomes(root, "t-1"); err != nil || rows != nil {
+	if rows, _, err := Outcomes(root, "t-1"); err != nil || rows != nil {
 		t.Fatalf("absent log: %v %v", rows, err)
 	}
 	write(t, OutcomePath(root), `{"task":"t-1","attempt":1,"outcome":"done","secret":"s"}`, `{"task":"t-2"}`, `torn`)
-	rows, err := Outcomes(root, "t-1")
+	rows, _, err := Outcomes(root, "t-1")
 	if err != nil || len(rows) != 1 || strings.Contains(string(rows[0]), `"s"`) {
 		t.Fatalf("rows %s %v", rows, err)
 	}

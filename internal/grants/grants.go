@@ -16,10 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 const (
@@ -177,6 +180,41 @@ type Grants struct {
 	ProtectedPaths    []string `json:"protected_paths,omitempty"`
 	Merge             []Merge  `json:"merge,omitempty"`
 	Fleet             Fleet    `json:"fleet"`
+	// Verifiers are the per-class verifier commands (`verifiers:`, keyed by
+	// a class with a mechanical verifier: extract, script, implement). A
+	// class with a command requires the harness's verdict to complete and
+	// may route below its tier (phase 5 re-pass, ruling on ruling 1).
+	Verifiers map[string]string `json:"verifiers,omitempty"`
+	// VerifierGate are the classes a squad.yaml added to the verifier gate
+	// (verifier_classes): they require a verdict too, with no command in the
+	// grant, so their done reports block. A squad.yaml never removes a
+	// class the grant verifies (the reviewer's correction).
+	VerifierGate []string `json:"verifier_gate,omitempty"`
+}
+
+// VerifierFor is the class's configured verifier command, "" when none.
+func (g Grants) VerifierFor(class string) string { return g.Verifiers[class] }
+
+// VerifierRequired says whether the class's done reports need the
+// harness's verdict: the grant names its command, or a squad.yaml added it.
+func (g Grants) VerifierRequired(class string) bool {
+	return g.Verifiers[class] != "" || slices.Contains(g.VerifierGate, class)
+}
+
+// TaskVerifier is the task store's verifier source in production
+// (task.VerifierSource): the owner grant, narrowed by the squad.yaml of the
+// task's project path (the repository the lead named at task add), never a
+// seat's tree. An untrusted owner file is an error, so the store fails
+// closed and requires the verdict.
+func TaskVerifier(t task.Task) (command string, required bool, err error) {
+	g, err := Load(t.ProjectPath)
+	if err != nil {
+		return "", true, err
+	}
+	if g.Insecure {
+		return "", true, fmt.Errorf("the owner grants file is untrusted: %s", g.InsecureWhy)
+	}
+	return g.VerifierFor(t.Class), g.VerifierRequired(t.Class), nil
 }
 
 // Defaults are the built-in grants when no owner file exists.
@@ -232,6 +270,11 @@ type Narrowing struct {
 	// FleetKeys are fleet-grant keys a squad.yaml named. A repository's grant
 	// is a squad grant, so Narrow ignores each one by name (4-3).
 	FleetKeys []string
+	// VerifierClasses, when non-nil, is the squad's verifier gate
+	// (verifier_classes): a superset of the classes the grant verifies. A
+	// class it adds requires a verdict with no grant command; a class the
+	// grant verifies that it omits is refused (grants_invalid).
+	VerifierClasses []string
 }
 
 // ReasonFleetInSquad is the Ignored entry of a squad.yaml fleet key.
@@ -245,6 +288,8 @@ func Narrow(g Grants, n Narrowing) (Grants, []string) {
 	out.PermittedRuntimes = slices.Clone(g.PermittedRuntimes)
 	out.ProtectedPaths = slices.Clone(g.ProtectedPaths)
 	out.Merge = slices.Clone(g.Merge)
+	out.Verifiers = maps.Clone(g.Verifiers)
+	out.VerifierGate = slices.Clone(g.VerifierGate)
 	var ignored []string
 	switch n.Mode {
 	case "", g.Mode:
@@ -289,6 +334,17 @@ func Narrow(g Grants, n Narrowing) (Grants, []string) {
 		ignored = append(ignored, k+" "+ReasonFleetInSquad)
 	}
 	out.ProtectedPaths = append(out.ProtectedPaths, n.ProtectedPaths...)
+	if n.VerifierClasses != nil {
+		// a stricter gate only: a class is added, never removed
+		if omitted := VerifierOmissions(g, n); len(omitted) > 0 {
+			ignored = append(ignored, "verifier_classes omits "+strings.Join(omitted, ", ")+" (the owner grant verifies it; a squad.yaml never removes a verifier)")
+		}
+		for _, c := range n.VerifierClasses {
+			if g.Verifiers[c] == "" && !slices.Contains(out.VerifierGate, c) {
+				out.VerifierGate = append(out.VerifierGate, c)
+			}
+		}
+	}
 	if n.MergeRepositories != nil {
 		out.Merge = slices.DeleteFunc(out.Merge, func(m Merge) bool {
 			return !slices.ContainsFunc(n.MergeRepositories, func(r string) bool { return strings.EqualFold(r, m.Repository) })
@@ -379,6 +435,9 @@ func LoadFrom(ownerPath, repoRoot string) (Resolved, error) {
 	if err != nil {
 		return Resolved{Source: r.Source + "+" + p}, err
 	}
+	if omitted := VerifierOmissions(r.Grants, n); len(omitted) > 0 {
+		return Resolved{Source: r.Source + "+" + p}, fmt.Errorf("%s: verifier_classes omits %s, which the owner grant verifies: a squad.yaml may add classes to the verifier gate, never remove one", p, strings.Join(omitted, ", "))
+	}
 	r.Grants, r.Ignored = Narrow(r.Grants, n)
 	r.Source += "+" + p
 	return r, nil
@@ -394,6 +453,22 @@ func failClosed(g Grants, path, why string) Resolved {
 	d.PermittedRuntimes = []string{}
 	d.ProtectedPaths = slices.Clone(g.ProtectedPaths)
 	return Resolved{Grants: d, Source: path, ReasonCode: ReasonInsecure, Insecure: true, InsecureWhy: why}
+}
+
+// VerifierOmissions are the classes the grant verifies that a squad.yaml's
+// verifier_classes list leaves out, sorted; none when it names no list.
+func VerifierOmissions(g Grants, n Narrowing) []string {
+	if n.VerifierClasses == nil {
+		return nil
+	}
+	var out []string
+	for c := range g.Verifiers {
+		if !slices.Contains(n.VerifierClasses, c) {
+			out = append(out, c)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ProtectedEntries is the implicit set followed by the grant's own list.

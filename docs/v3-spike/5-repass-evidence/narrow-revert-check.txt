@@ -1,0 +1,540 @@
+========================================================================
+## rule: switch: route below the tier only with a configured verifier
+## test: ./internal/routing/ TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes$
+## edit internal/routing/router.go:
+-	return r.o.Table.MayRouteDown(class) && r.verifierConfigured(class)
++	return r.o.Table.MayRouteDown(class)
+## reverted run (exit 1):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+    repass_test.go:363: an explored implement with no verifier: smol explore, want plan explore
+--- FAIL: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.337s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+--- PASS: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.07s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.328s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: switch: no configured verifier records none
+## test: ./internal/routing/ TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes$
+## edit internal/routing/router.go:
+-	if !r.o.Grants.VerifierRequired(t.Class) {
++	if false && !r.o.Grants.VerifierRequired(t.Class) {
+## reverted run (exit 1):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+    repass_test.go:395: row: [{Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:2 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:task UsedTier:task Entry:claude:sonnet:medium Runtime:claude Skipped:[] Policy:table Propensity:1 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> UsageInvalid: CostIndex:0 WallMS:1000 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:not_run ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:seat-1 GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:01 +0000 UTC Seq:0 Prev: Tag:}]
+--- FAIL: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.425s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+--- PASS: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.07s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.316s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: switch: the store gate only for a configured verifier
+## test: ./internal/task/ TestRepassGateOnlyForAConfiguredVerifier$
+## edit internal/task/lease.go:
+-	return required, ""
++	return required || true, ""
+## reverted run (exit 1):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+    verdict_test.go:121: no verifier configured: blocked verdict_missing
+--- FAIL: TestRepassGateOnlyForAConfiguredVerifier (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.408s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+--- PASS: TestRepassGateOnlyForAConfiguredVerifier (0.25s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.487s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: switch (router row): done completes with no verifier
+## test: ./internal/routing/ TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes$
+## edit internal/task/lease.go:
+-	return required, ""
++	return required || true, ""
+## reverted run (exit 1):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+    repass_test.go:389: done with no verifier configured: blocked verdict_missing <nil>
+--- FAIL: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.406s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+--- PASS: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.06s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.316s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: switch: an unreadable source fails closed
+## test: ./internal/task/ TestRepassGateOnlyForAConfiguredVerifier$
+## edit internal/task/lease.go:
+-		return true, " (the verifier configuration could not be read: " + err.Error() + ")"
++		return false, ""
+## reverted run (exit 1):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+    verdict_test.go:133: an unreadable source: completed 
+--- FAIL: TestRepassGateOnlyForAConfiguredVerifier (0.25s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.655s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+--- PASS: TestRepassGateOnlyForAConfiguredVerifier (0.25s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.484s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: switch: verifiers only for classes with a mechanical verifier
+## test: ./internal/grants/ TestVerifiersFromTheGrantAndOnlyNarrowed$
+## edit internal/grants/parse.go:
+-		if !verifierClass(class) {
++		if false && !verifierClass(class) {
+## reverted run (exit 1):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+    verifiers_test.go:30: a class with no verifier accepted: map[plan:run]
+    verifiers_test.go:30: an unknown class accepted: map[deploy:run]
+--- FAIL: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.349s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+--- PASS: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	0.226s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: correction: a squad.yaml omitting a verified class is grants_invalid
+## test: ./internal/grants/ TestVerifiersFromTheGrantAndOnlyNarrowed$
+## edit internal/grants/grants.go:
+-	if omitted := VerifierOmissions(r.Grants, n); len(omitted) > 0 {
+		return Resolved
++	if omitted := VerifierOmissions(r.Grants, n); false && len(omitted) > 0 {
+		return Resolved
+## reverted run (exit 1):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+    verifiers_test.go:61: verifier_classes [] omitting implement: map[implement:go test ./...] <nil>
+--- FAIL: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.353s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+--- PASS: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	0.232s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: correction: an added class joins the gate
+## test: ./internal/grants/ TestVerifiersFromTheGrantAndOnlyNarrowed$
+## edit internal/grants/grants.go:
+-			if g.Verifiers[c] == "" && !slices.Contains(out.VerifierGate, c) {
++			if false && g.Verifiers[c] == "" && !slices.Contains(out.VerifierGate, c) {
+## reverted run (exit 1):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+    verifiers_test.go:40: superset: verifiers map[implement:go test ./... script:make check] gate [] ignored []
+--- FAIL: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.335s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+--- PASS: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	0.232s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: correction: Narrow keeps a verified class a list omits
+## test: ./internal/grants/ TestVerifiersFromTheGrantAndOnlyNarrowed$
+## edit internal/grants/grants.go:
+-	out.Verifiers = maps.Clone(g.Verifiers)
+
++	out.Verifiers = maps.Clone(g.Verifiers)
+	if n.VerifierClasses != nil {
+		maps.DeleteFunc(out.Verifiers, func(c, _ string) bool { return !slices.Contains(n.VerifierClasses, c) })
+	}
+
+## reverted run (exit 1):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+    verifiers_test.go:53: omission: verifiers map[script:make check] ignored [verifier_classes omits implement (the owner grant verifies it; a squad.yaml never removes a verifier)]
+--- FAIL: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.344s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifiersFromTheGrantAndOnlyNarrowed
+--- PASS: TestVerifiersFromTheGrantAndOnlyNarrowed (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	0.230s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: correction: a gated class with no grant command blocks, named
+## test: ./internal/task/ TestRepassGateOnlyForAConfiguredVerifier$
+## edit internal/task/lease.go:
+-	if required && cmd == "" {
++	if false && required && cmd == "" {
+## reverted run (exit 1):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+    verdict_test.go:129: a gated class with no grant command: blocked verdict_missing "class implement completes only on a recorded tests verdict from the harness; the done report has none"
+--- FAIL: TestRepassGateOnlyForAConfiguredVerifier (0.20s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.539s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+--- PASS: TestRepassGateOnlyForAConfiguredVerifier (0.25s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.489s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: coverage: the CLI and scheduler run stores read the grant
+## test: ./internal/cli/ TestRepassCLIStoresReadTheVerifierGrant$
+## edit internal/cli/task.go:
+-	s.Verifiers = grants.TaskVerifier
+	return s, nil
++	_ = grants.TaskVerifier
+	return s, nil
+## reverted run (exit 1):
+=== RUN   TestRepassCLIStoresReadTheVerifierGrant
+    repass_routing_test.go:161: task verbs, script: blocked verdict_missing <nil>
+--- FAIL: TestRepassCLIStoresReadTheVerifierGrant (0.13s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.525s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassCLIStoresReadTheVerifierGrant
+--- PASS: TestRepassCLIStoresReadTheVerifierGrant (0.25s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.553s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2a an idle seat of the pool is capacity
+## test: ./internal/routing/ TestRepassSchedulerSeatViewHoldsTheCap$/idle_seat
+## edit internal/routing/router.go:
+-			if idle && s.Pool == own {
++			if false && idle && s.Pool == own {
+## reverted run (exit 1):
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap/idle_seat
+    repass_test.go:440: t1 not dispatched to seat-a: pending <nil>
+--- FAIL: TestRepassSchedulerSeatViewHoldsTheCap (0.05s)
+    --- FAIL: TestRepassSchedulerSeatViewHoldsTheCap/idle_seat (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.404s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap/idle_seat
+--- PASS: TestRepassSchedulerSeatViewHoldsTheCap (0.15s)
+    --- PASS: TestRepassSchedulerSeatViewHoldsTheCap/idle_seat (0.15s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.413s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 the scheduler's view holds a closing seat
+## test: ./internal/routing/ TestRepassSchedulerSeatViewHoldsTheCap$/closing_seat
+## edit internal/routing/router.go:
+-	if r.o.Seats != nil {
+		for _, s := range r.o.Seats() {
++	if false {
+		for _, s := range r.o.Seats() {
+## reverted run (exit 1):
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap/closing_seat
+    repass_test.go:469: a new task went to the GPU a closing seat holds: [{ID:seat-req-ccf40826d6b2-1 Pool:{Runtime:pi Model:ollama/qwen3.6:27b Effort:low} TaskID:t1} {ID:seat-req-ccf40826d6b2-2 Pool:{Runtime:claude Model:sonnet Effort:medium} TaskID:t1} {ID:seat-req-ccf40826d6b2-3 Pool:{Runtime:pi Model:ollama/qwen3.6:27b Effort:low} TaskID:t2}]
+--- FAIL: TestRepassSchedulerSeatViewHoldsTheCap (0.17s)
+    --- FAIL: TestRepassSchedulerSeatViewHoldsTheCap/closing_seat (0.17s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.538s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap
+=== RUN   TestRepassSchedulerSeatViewHoldsTheCap/closing_seat
+--- PASS: TestRepassSchedulerSeatViewHoldsTheCap (0.17s)
+    --- PASS: TestRepassSchedulerSeatViewHoldsTheCap/closing_seat (0.17s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.417s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2b --lead-pool only from the lead's team mode
+## test: ./internal/cli/ TestRepassLeadPoolOnlyFromTheLeadsTeamMode$
+## edit internal/cli/scheduler_run.go:
+-	if len(leadPoolFlags) > 0 && !startedByLeadTeam() {
++	if false && len(leadPoolFlags) > 0 && !startedByLeadTeam() {
+## reverted run (exit 1):
+=== RUN   TestRepassLeadPoolOnlyFromTheLeadsTeamMode
+    repass_routing_test.go:49: --lead-pool from a process the lead did not start: <nil>
+--- FAIL: TestRepassLeadPoolOnlyFromTheLeadsTeamMode (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.459s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLeadPoolOnlyFromTheLeadsTeamMode
+--- PASS: TestRepassLeadPoolOnlyFromTheLeadsTeamMode (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.327s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: coverage: scheduler run's seat-view wiring
+## test: ./internal/cli/ TestRepassSchedulerRunSeatViewWiring$
+## edit internal/cli/scheduler_run.go:
+-		return (*sched).Occupancy()
++		return nil
+## reverted run (exit 1):
+=== RUN   TestRepassSchedulerRunSeatViewWiring
+    repass_routing_test.go:83: seat view: []
+--- FAIL: TestRepassSchedulerRunSeatViewWiring (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.420s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassSchedulerRunSeatViewWiring
+--- PASS: TestRepassSchedulerRunSeatViewWiring (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.315s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: coverage: the lead forwards its pools
+## test: ./internal/cli/ TestRepassLeadForwardsItsPools$
+## edit internal/cli/lead_scheduler.go:
+-			args = append(args, "--lead-pool", p)
++			_ = p
+## reverted run (exit 1):
+=== RUN   TestRepassLeadForwardsItsPools
+    repass_routing_test.go:61: child argv ["/bin/amq-squad" "scheduler" "run" "--seats" "/p/seats.json" "--lead" "lead-1"], want ["/bin/amq-squad" "scheduler" "run" "--seats" "/p/seats.json" "--lead" "lead-1" "--lead-pool" "pi:ollama/qwen3.6:27b:high" "--lead-pool" "pi:ollama/qwen3.6:35b-a3b:high"]
+--- FAIL: TestRepassLeadForwardsItsPools (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.420s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLeadForwardsItsPools
+--- PASS: TestRepassLeadForwardsItsPools (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.291s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: coverage: verify --task carries incomplete
+## test: ./internal/cli/ TestRepassVerifyTaskEvidenceIncomplete$
+## edit internal/cli/verify.go:
+-		res.Incomplete = len(res.IncompleteReasons) > 0
++		res.Incomplete = false
+## reverted run (exit 1):
+=== RUN   TestRepassVerifyTaskEvidenceIncomplete
+    repass_routing_test.go:112: JSON: {
+          "schema_version": 1,
+          "kind": "verify_merge",
+          "data": {
+            "ok": false,
+            "kind": "merge",
+            "subject": "o/r#7",
+            "audit": [
+              {
+                "schema": "amq-squad-merge-audit/1",
+                "at": "2026-10-25T02:04:31.874817Z",
+                "run": "",
+                "kind": "merge",
+                "repository": "o/r",
+                "base": "main",
+                "pr": 7,
+                "head": "h1",
+                "merged": "m1"
+              }
+            ],
+            "outcomes": [
+              {
+                "attempt": 1,
+                "task": "t1"
+              }
+            ],
+            "incomplete_reasons": [
+              "outcomes.jsonl line 1 is over 4194304 bytes and was not read"
+            ],
+            "failures": [
+              {
+                "code": "digest_mismatch",
+                "detail": "the merged head h1 is not the head of the last batch digest ()"
+              }
+            ]
+          }
+        }
+--- FAIL: TestRepassVerifyTaskEvidenceIncomplete (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.456s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassVerifyTaskEvidenceIncomplete
+--- PASS: TestRepassVerifyTaskEvidenceIncomplete (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.337s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: coverage: verify --task prints the reasons
+## test: ./internal/cli/ TestRepassVerifyTaskEvidenceIncomplete$
+## edit internal/cli/verify.go:
+-			fmt.Printf("- incomplete evidence: %s\n", why)
++			_ = why
+## reverted run (exit 1):
+=== RUN   TestRepassVerifyTaskEvidenceIncomplete
+    repass_routing_test.go:114: text: merge evidence for o/r#7: ok false (1 audit entries, 0 release steps, 0 ledger lines, 1 outcome rows)
+        - digest_mismatch: the merged head h1 is not the head of the last batch digest ()
+--- FAIL: TestRepassVerifyTaskEvidenceIncomplete (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.455s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassVerifyTaskEvidenceIncomplete
+--- PASS: TestRepassVerifyTaskEvidenceIncomplete (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.355s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: coverage: the spend guard in note()
+## test: ./internal/routing/ TestRepassNegativeCostRowNeverLowersTheSpend$
+## edit internal/routing/router.go:
+-	if row.CostUSD != nil && validCost(*row.CostUSD) {
++	if row.CostUSD != nil {
+## reverted run (exit 1):
+=== RUN   TestRepassNegativeCostRowNeverLowersTheSpend
+    repass_test.go:508: the day's spend after a negative-cost row: -5
+--- FAIL: TestRepassNegativeCostRowNeverLowersTheSpend (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.404s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassNegativeCostRowNeverLowersTheSpend
+--- PASS: TestRepassNegativeCostRowNeverLowersTheSpend (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.289s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 the first attempt's bucket is instantiated
+## test: ./internal/routing/ TestRepassTaskHistoriesKeepTheFirstAttempt$
+## edit internal/routing/report.go:
+-			get(first)
+
++
+## reverted run (exit 1):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+    repass_test.go:251: first attempt last week: the smol cost is not reported: [implement task band 1]
+--- FAIL: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.363s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+--- PASS: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.247s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-2 P1-1 a published release is never deleted
+## test: ./internal/releaseflow/ TestRepassPublishedMismatchIsNeverDeleted$
+## edit internal/releaseflow/releaseflow.go:
+-		if !d.Draft {
++		if false && !d.Draft {
+## reverted run (exit 1):
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_tag
+    releaseflow_test.go:631: alert fails false: github_release: draft_edited: draft 1: the recorded draft now names v0.9.0 at 6a2c963b75a8158750daaf3d8e5a5c32e629bfc6 deleted 1
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_commit
+    releaseflow_test.go:631: alert fails false: github_release: draft_edited: draft 1: the recorded draft now names v1.2.0 at eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee deleted 1
+--- FAIL: TestRepassPublishedMismatchIsNeverDeleted (0.61s)
+    --- FAIL: TestRepassPublishedMismatchIsNeverDeleted/wrong_tag (0.32s)
+    --- FAIL: TestRepassPublishedMismatchIsNeverDeleted/wrong_commit (0.29s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.952s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_tag
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_commit
+--- PASS: TestRepassPublishedMismatchIsNeverDeleted (1.16s)
+    --- PASS: TestRepassPublishedMismatchIsNeverDeleted/wrong_tag (0.60s)
+    --- PASS: TestRepassPublishedMismatchIsNeverDeleted/wrong_commit (0.57s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.417s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-2 P1-1 an unwritten owner alert is an error
+## test: ./internal/releaseflow/ TestRepassPublishedMismatchIsNeverDeleted$
+## edit internal/releaseflow/releaseflow.go:
+-		return fmt.Errorf("%w: %s alert: %v", ErrAlertUnwritten, kind, err)
++		return nil
+## reverted run (exit 1):
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_tag
+    releaseflow_test.go:635: an unwritten owner alert passed silently: github_release: draft_edited: published release 1: the recorded draft now names v0.9.0 at af111ac6f1d015e77860aea93b9c65ee2063bb37
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_commit
+    releaseflow_test.go:635: an unwritten owner alert passed silently: github_release: draft_edited: published release 1: the recorded draft now names v1.2.0 at eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+--- FAIL: TestRepassPublishedMismatchIsNeverDeleted (1.19s)
+    --- FAIL: TestRepassPublishedMismatchIsNeverDeleted/wrong_tag (0.60s)
+    --- FAIL: TestRepassPublishedMismatchIsNeverDeleted/wrong_commit (0.59s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.546s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_tag
+=== RUN   TestRepassPublishedMismatchIsNeverDeleted/wrong_commit
+--- PASS: TestRepassPublishedMismatchIsNeverDeleted (1.17s)
+    --- PASS: TestRepassPublishedMismatchIsNeverDeleted/wrong_tag (0.59s)
+    --- PASS: TestRepassPublishedMismatchIsNeverDeleted/wrong_commit (0.58s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.426s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## summary: 22 rule(s), 0 not OK

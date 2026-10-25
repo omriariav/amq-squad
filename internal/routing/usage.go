@@ -22,7 +22,7 @@ func LedgerUsage(root string, prices map[task.Pool]Price) func(task.Task, task.A
 			return u
 		}
 		var in, out int64
-		seen, partial := false, false
+		seen, partial, invalid := false, false, ""
 		path := filepath.Join(root, "extensions", "amq-squad", "ledger", a.Holder+".jsonl")
 		_ = readLines(path, func(line []byte) {
 			var l struct {
@@ -36,15 +36,26 @@ func LedgerUsage(root string, prices map[task.Pool]Price) func(task.Task, task.A
 			if err != nil || at.Before(a.GrantedAt) || at.After(a.EndedAt) {
 				return
 			}
-			switch i, o, inOK, outOK := status.PayloadTokenCounts(l.Payload); {
-			case inOK && outOK:
-				in, out, seen = in+i, out+o, true
-			case inOK || outOK:
+			switch c := status.PayloadTokenCounts(l.Payload); {
+			case c.Invalid != "":
+				// A negative, fractional or out-of-range counter is no
+				// count: it never subtracts from the spend (phase 5
+				// re-pass, P2-4).
+				if invalid == "" {
+					invalid = c.Invalid
+				}
+			case c.InOK && c.OutOK:
+				in, out, seen = in+c.In, out+c.Out, true
+			case c.InOK || c.OutOK:
 				partial = true // one counter: never a zero for the other
 			}
 		})
 		// Both counters or unknown usage; unknown usage is incomplete
-		// evidence (Codex pass 1, P2-5).
+		// evidence (Codex pass 1, P2-5), and an invalid counter is reported.
+		if invalid != "" {
+			u.Invalid = invalid
+			return u
+		}
 		if !seen || partial {
 			return u
 		}

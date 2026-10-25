@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -45,11 +47,33 @@ const (
 // block the task with retries_exhausted.
 const DefaultMaxAttempts = 3
 
-// Usage is one attempt's evidence: nil fields are unknown.
+// Usage is one attempt's evidence: nil fields are unknown. Invalid says why
+// the usage is unknown when a counter was not a count (negative, fractional,
+// out of range): the row reports it.
 type Usage struct {
 	TokensIn, TokensOut *int64
 	CostUSD             *float64
+	Invalid             string
 }
+
+// checked is the usage a row may carry (phase 5 re-pass, P2-4): a negative
+// or out-of-range token count, or a cost that is negative or not finite, is
+// no evidence, so unknown usage, and the reason is kept.
+func (u Usage) checked() Usage {
+	bad := func(n *int64) bool { return n != nil && (*n < 0 || *n > status.MaxTokenCount) }
+	switch {
+	case u.Invalid != "":
+	case bad(u.TokensIn) || bad(u.TokensOut):
+		u.Invalid = "a token count is negative or out of range"
+	case u.CostUSD != nil && !validCost(*u.CostUSD):
+		u.Invalid = "the cost is negative or not finite"
+	default:
+		return u
+	}
+	return Usage{Invalid: u.Invalid}
+}
+
+func validCost(c float64) bool { return c >= 0 && !math.IsInf(c, 0) && !math.IsNaN(c) }
 
 // Options configure a Router.
 type Options struct {
@@ -76,6 +100,14 @@ type Options struct {
 	MaxAttempts int
 	// OnRow observes every outcome row after it is written (nil: none).
 	OnRow func(Row)
+	// Seats is the scheduler's seat view (Scheduler.Occupancy), what a
+	// concurrency cap counts (phase 5 re-pass, ruling 2): every live seat,
+	// pending seat request and closing seat, each once. nil: the holders of
+	// the leased tasks stand in (tests, routing explain).
+	Seats func() []scheduler.SeatView
+	// LeadPools are the pools of the lead's own seat: it occupies a
+	// concurrency pool it shares (a lead on the Ollama GPU), once.
+	LeadPools []task.Pool
 }
 
 // Decision is the router's choice for one attempt of one task.
@@ -187,7 +219,7 @@ func (r *Router) classTiers(class, tableTier string, escalated bool) []string {
 	}
 	var out []string
 	for _, tier := range []string{TierSmol, TierTask, TierPlan} {
-		if TierRank(tier) >= TierRank(tableTier) || (r.o.Table.MayRouteDown(class) && !escalated) {
+		if TierRank(tier) >= TierRank(tableTier) || (r.mayRouteDown(class) && !escalated) {
 			out = append(out, tier)
 		}
 	}
@@ -208,6 +240,17 @@ func entryTier(t Table, allowed []string, recorded string, entry task.Pool) stri
 	}
 	return ""
 }
+
+// mayRouteDown: a class runs below its tier only when its verifier is
+// mechanical and its command is configured in the grant (phase 5 re-pass,
+// ruling on ruling 1): a verifier nobody runs is no verifier, so the class
+// routes at its tier and never below.
+func (r *Router) mayRouteDown(class string) bool {
+	return r.o.Table.MayRouteDown(class) && r.verifierConfigured(class)
+}
+
+// verifierConfigured: the grant names a verifier command for the class.
+func (r *Router) verifierConfigured(class string) bool { return r.o.Grants.VerifierFor(class) != "" }
 
 // pinTier resolves a lead pin to the lowest tier the class may run on whose
 // chain lists the pinned entry; "" and the reason when there is none.
@@ -272,14 +315,9 @@ func New(o Options) (*Router, error) {
 	}
 	// The head record first (Codex pass 5, (a), (e)): how far each chain
 	// must reach, and which seed file signs them.
-	h, found, err := readHead(o.Root, r.key)
-	switch {
-	case err != nil:
-		return nil, &InvalidError{Err: err}
-	case !found && sessionStarted(o.Root):
-		return nil, &InvalidError{Err: fmt.Errorf("routing head %s is missing in a session that has routed before", HeadPath(o.Root))}
-	case found && seedDev != 0 && (h.SeedDev != seedDev || h.SeedIno != seedIno):
-		return nil, &InvalidError{Err: fmt.Errorf("routing seed %s is not the file the head recorded (device and inode differ)", SeedPath(o.Root))}
+	h, found, err := checkHead(o.Root, r.key, seedDev, seedIno)
+	if err != nil {
+		return nil, err
 	}
 	r.headRec = h
 	r.problems = append(r.problems, h.Open...) // open breaks persist across restarts (new 2)
@@ -347,7 +385,7 @@ func (r *Router) note(row Row) {
 	if row.Outcome == task.OutcomeCompleted && row.UsedTier == TierSmol {
 		r.smolDone[row.Task] = key(row.Task, row.Attempt)
 	}
-	if row.CostUSD != nil {
+	if row.CostUSD != nil && validCost(*row.CostUSD) { // a cost never subtracts from the day's spend
 		r.spent[row.EndedAt.UTC().Format(time.DateOnly)] += *row.CostUSD
 	}
 }
@@ -591,22 +629,68 @@ func (r *Router) check(e task.Pool, n int, f Features, impl, required string, us
 	return ""
 }
 
-// inUse counts the leased tasks whose pool shares the entry's concurrency pool.
+// inUse counts the seats that occupy the entry's concurrency pool (phase 5
+// re-pass, ruling 2): the scheduler's seat view, each seat once (busy,
+// pending launch, closing: a seat whose task expired holds the GPU until
+// its process is gone), the holder of every leased task the view does not
+// name, and the lead's own seat when it shares the pool. Tasks are never
+// what is counted: one seat is one occupant. An idle seat of the entry's
+// own pool is capacity for the pending task, which the scheduler dispatches
+// to it, not a consumer of the cap (narrow pass, R2 (a)); an idle seat of
+// another pool in the same concurrency pool still holds its share.
 func (r *Router) inUse(reg registry.Entry, list []task.Task) int {
-	n := 0
+	own := task.Pool{Runtime: reg.Runtime, Model: reg.Model, Effort: reg.Effort}
+	shares := func(p task.Pool) bool {
+		if p == own {
+			return true
+		}
+		other, ok := r.concurrencyEntry(p)
+		return ok && reg.ConcurrencyPool != "" && other.ConcurrencyPool == reg.ConcurrencyPool
+	}
+	seen := map[string]bool{}
+	count := func(occupant string, p task.Pool) {
+		if !seen[occupant] && shares(p) {
+			seen[occupant] = true
+		}
+	}
+	if r.o.Seats != nil {
+		for _, s := range r.o.Seats() {
+			idle := s.Closing == "" && s.RequestID == "" && task.HeldBy(s.Handle, list) == nil
+			if idle && s.Pool == own {
+				continue
+			}
+			count("seat:"+s.Handle, s.Pool)
+		}
+	}
 	for _, t := range list {
 		if t.State != task.StateInProgress || t.Pool == nil {
 			continue
 		}
-		other, ok := r.o.Registry.Lookup(t.Pool.Runtime, t.Pool.Model, t.Pool.Effort)
-		switch {
-		case ok && reg.ConcurrencyPool != "" && other.ConcurrencyPool == reg.ConcurrencyPool:
-			n++
-		case *t.Pool == (task.Pool{Runtime: reg.Runtime, Model: reg.Model, Effort: reg.Effort}):
-			n++
+		holder := "task:" + t.ID
+		if t.Lease != nil {
+			holder = "seat:" + t.Lease.Holder
+		}
+		count(holder, *t.Pool)
+	}
+	for _, p := range r.o.LeadPools {
+		count("lead", p)
+	}
+	return len(seen)
+}
+
+// concurrencyEntry is the registry entry that places a pool in a
+// concurrency pool: the exact entry, else one of the same runtime and model
+// (a lead whose effort the registry does not list).
+func (r *Router) concurrencyEntry(p task.Pool) (registry.Entry, bool) {
+	if e, ok := r.o.Registry.Lookup(p.Runtime, p.Model, p.Effort); ok {
+		return e, true
+	}
+	for _, e := range r.o.Registry.Entries {
+		if e.Runtime == p.Runtime && e.Model == p.Model {
+			return e, true
 		}
 	}
-	return n
+	return registry.Entry{}, false
 }
 
 // addSkip records a skip; an entry skipped before keeps one row with the
@@ -664,7 +748,7 @@ func (r *Router) explore(t task.Task, tableTier string, escalated bool) (policy 
 	share := r.o.Table.ExplorationShare
 	away := ""
 	if t.Class != "plan" && t.Class != "review" && share > 0 {
-		if r.o.Table.MayRouteDown(t.Class) && !escalated {
+		if r.mayRouteDown(t.Class) && !escalated {
 			away = down(tableTier)
 		}
 		if away == "" && up(tableTier) != tableTier {
@@ -874,10 +958,14 @@ func (r *Router) row(t task.Task, a task.Attempt, pendingSince time.Time, list [
 		row.WaitMS = a.GrantedAt.Sub(pendingSince).Milliseconds()
 	}
 	if r.o.Usage != nil {
-		u := r.o.Usage(t, a)
-		row.TokensIn, row.TokensOut, row.CostUSD = u.TokensIn, u.TokensOut, u.CostUSD
+		u := r.o.Usage(t, a).checked()
+		row.TokensIn, row.TokensOut, row.CostUSD, row.UsageInvalid = u.TokensIn, u.TokensOut, u.CostUSD, u.Invalid
 	}
-	row.VerifierResult = verifierResult(r.o.Table.Classes[t.Class].Verifier, a.Outcome)
+	verifier := r.o.Table.Classes[t.Class].Verifier
+	if !r.o.Grants.VerifierRequired(t.Class) {
+		verifier = VerifierNone // not in the verifier gate: the result is none, never pass
+	}
+	row.VerifierResult = verifierResult(verifier, a)
 	if t.Class == "review" && a.Outcome == task.OutcomeCompleted {
 		row.ReviewFindings = findings(t.Evidence)
 	}
@@ -889,13 +977,24 @@ func (r *Router) row(t task.Task, a task.Attempt, pendingSince time.Time, list [
 	return row
 }
 
-func verifierResult(verifier, outcome string) string {
+// verifierResult is the row's verifier result. A pass is only ever the
+// harness's recorded pass verdict on the attempt (phase 5 re-pass, ruling
+// 1): a completion with no verdict (a store from before the gate) is
+// not_run, never pass.
+func verifierResult(verifier string, a task.Attempt) string {
 	if !Mechanical(verifier) {
 		return VerifierNoCheck
 	}
-	switch outcome {
-	case task.OutcomeCompleted:
-		return VerifierPass
+	if a.Verdict != nil {
+		if a.Verdict.Result == task.VerdictPass {
+			return VerifierPass
+		}
+		return VerifierFail
+	}
+	if a.Outcome == task.OutcomeBlocked && a.Detail == task.BlockVerdictMissing {
+		return VerifierNotRun // the harness never ran the verifier
+	}
+	switch a.Outcome {
 	case task.OutcomeFailed, task.OutcomeCommitRefused, task.OutcomeBlocked:
 		return VerifierFail
 	}

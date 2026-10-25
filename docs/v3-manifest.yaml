@@ -919,9 +919,9 @@ entries:
   status: deleted
 - path: internal/cli/lead_scheduler.go
   v2_lines: 0
-  current_lines: 112
+  current_lines: 149
   fate: new
-  target_lines: 112
+  target_lines: 149
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the lead's team mode starts and supervises the scheduler process (ruling 15)"
@@ -1630,9 +1630,9 @@ entries:
   status: deleted
 - path: internal/cli/scheduler_run.go
   v2_lines: 0
-  current_lines: 295
+  current_lines: 332
   fate: new
-  target_lines: 295
+  target_lines: 332
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler run and scheduler post verbs (wiring the real hooks)"
@@ -1798,7 +1798,7 @@ entries:
 
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 529
+  current_lines: 543
   fate: shrink
   target_lines: 800
   cluster: C19
@@ -2065,7 +2065,7 @@ entries:
 
 - path: internal/cli/verify.go
   v2_lines: 611
-  current_lines: 218
+  current_lines: 228
   fate: shrink
   target_lines: 500
   cluster: C13
@@ -2661,18 +2661,18 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 457
+  current_lines: 532
   fate: new
-  target_lines: 457
+  target_lines: 532
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 299
+  current_lines: 350
   fate: new
-  target_lines: 299
+  target_lines: 350
   cluster: grants
   extract: ""
   reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
@@ -2779,9 +2779,9 @@ entries:
   status: new
 - path: internal/ledger/ledger.go
   v2_lines: 0
-  current_lines: 339
+  current_lines: 370
   fate: new
-  target_lines: 339
+  target_lines: 370
   cluster: ledger
   extract: ""
   reason: "3-2: the readers of the hook ledger and the outcome log: redaction and the task link (replaces commandevidence/evidence.go)"
@@ -2796,9 +2796,9 @@ entries:
   status: deleted
 - path: internal/mergetrain/audit.go
   v2_lines: 0
-  current_lines: 158
+  current_lines: 171
   fate: new
-  target_lines: 158
+  target_lines: 171
   cluster: mergetrain
   extract: ""
   reason: "3-2: batch digest (S1 merge formula) and the append-only audit log"
@@ -2814,9 +2814,9 @@ entries:
   status: new
 - path: internal/mergetrain/checks.go
   v2_lines: 0
-  current_lines: 243
+  current_lines: 249
   fate: new
-  target_lines: 243
+  target_lines: 249
   cluster: mergetrain
   extract: ""
   reason: "3-2: the six grant limits and the task scope, checked by the core"
@@ -2850,27 +2850,27 @@ entries:
   status: new
 - path: internal/mergetrain/forge.go
   v2_lines: 0
-  current_lines: 91
+  current_lines: 96
   fate: new
-  target_lines: 91
+  target_lines: 96
   cluster: mergetrain
   extract: ""
   reason: "3-2: the train's view of the code host"
   status: new
 - path: internal/mergetrain/gh.go
   v2_lines: 0
-  current_lines: 348
+  current_lines: 410
   fate: new
-  target_lines: 333
+  target_lines: 410
   cluster: mergetrain
   extract: ""
   reason: "3-2: the Forge over the owner's gh; branch protection read"
   status: new
 - path: internal/mergetrain/train.go
   v2_lines: 0
-  current_lines: 606
+  current_lines: 679
   fate: new
-  target_lines: 606
+  target_lines: 679
   cluster: mergetrain
   extract: ""
   reason: "3-2: the deterministic merge train loop (plan 7.2, 7.3, R34)"
@@ -3337,18 +3337,18 @@ entries:
   status: new
 - path: internal/releaseflow/gh.go
   v2_lines: 0
-  current_lines: 192
+  current_lines: 216
   fate: new
-  target_lines: 192
+  target_lines: 216
   cluster: releaseflow
   extract: ""
   reason: "3-2: the release executor over the owner's gh"
   status: new
 - path: internal/releaseflow/releaseflow.go
   v2_lines: 0
-  current_lines: 447
+  current_lines: 542
   fate: new
-  target_lines: 447
+  target_lines: 542
   cluster: releaseflow
   extract: ""
   reason: "3-2: the release gate flow: typed tag and release gates, then the compoundrelease writer's release"
@@ -3418,54 +3418,54 @@ entries:
   status: new
 - path: internal/routing/head.go
   v2_lines: 0
-  current_lines: 115
+  current_lines: 134
   fate: new
-  target_lines: 115
+  target_lines: 134
   cluster: routing
   extract: ""
   reason: "2b-4 fix 5: the signed head record (chain heads, seed identity, open breaks)"
   status: new
 - path: internal/routing/open.go
   v2_lines: 0
-  current_lines: 52
+  current_lines: 57
   fate: new
-  target_lines: 52
+  target_lines: 57
   cluster: routing
   extract: ""
   reason: "2b-4 fix 1: the scheduler start step; routing_invalid refuses the start"
   status: new
 - path: internal/routing/outcome.go
   v2_lines: 0
-  current_lines: 268
+  current_lines: 269
   fate: new
-  target_lines: 268
+  target_lines: 269
   cluster: routing
   extract: ""
   reason: "2b-4: outcome log row (6.4 fields), append-only JSONL with flock and fsync"
   status: new
 - path: internal/routing/report.go
   v2_lines: 0
-  current_lines: 368
+  current_lines: 416
   fate: new
-  target_lines: 368
+  target_lines: 416
   cluster: routing
   extract: ""
   reason: "2b-4: weekly routing report per class, tier and size band; one proposal per bucket, never applied"
   status: new
 - path: internal/routing/router.go
   v2_lines: 0
-  current_lines: 924
+  current_lines: 1023
   fate: new
-  target_lines: 924
+  target_lines: 1023
   cluster: routing
   extract: ""
   reason: "2b-4: scheduler.Router: chain selection with the four checks, escalation, family rule, exploration, outcome rows"
   status: new
 - path: internal/routing/seed.go
   v2_lines: 0
-  current_lines: 179
+  current_lines: 183
   fate: new
-  target_lines: 179
+  target_lines: 183
   cluster: routing
   extract: ""
   reason: "2b-4 fix 1: random exploration seed per session, persisted under the AMQ root"
@@ -3490,9 +3490,9 @@ entries:
   status: new
 - path: internal/routing/table.go
   v2_lines: 0
-  current_lines: 328
+  current_lines: 327
   fate: new
-  target_lines: 328
+  target_lines: 327
   cluster: routing
   extract: ""
   reason: "2b-4: routing class table, tiers, default chains v1, required companions, size bands"
@@ -3508,9 +3508,9 @@ entries:
   status: new
 - path: internal/routing/usage.go
   v2_lines: 0
-  current_lines: 60
+  current_lines: 71
   fate: new
-  target_lines: 60
+  target_lines: 71
   cluster: routing
   extract: ""
   reason: "2b-4: attempt tokens and cost from the hook ledger and a price table"
@@ -3603,9 +3603,9 @@ entries:
   status: new
 - path: internal/schedproc/process.go
   v2_lines: 0
-  current_lines: 306
+  current_lines: 310
   fate: new
-  target_lines: 306
+  target_lines: 310
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler process of one squad (ruling 15): one per squad, the tick loop, the usage-limit window, the external event drain"
@@ -3657,9 +3657,9 @@ entries:
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 854
+  current_lines: 889
   fate: new
-  target_lines: 854
+  target_lines: 889
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3973,9 +3973,9 @@ entries:
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
-  current_lines: 393
+  current_lines: 451
   fate: new
-  target_lines: 393
+  target_lines: 451
   cluster: status
   extract: ""
   reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"
@@ -4027,9 +4027,9 @@ entries:
   status: new
 - path: internal/task/class.go
   v2_lines: 0
-  current_lines: 96
+  current_lines: 143
   fate: new
-  target_lines: 96
+  target_lines: 143
   cluster: task
   extract: ""
   reason: "2b-1: 3.0 task schema vocabulary: states, classes, wait reasons, outcomes, pool"
@@ -4078,9 +4078,9 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 472
+  current_lines: 545
   fate: new
-  target_lines: 472
+  target_lines: 545
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
@@ -4146,7 +4146,7 @@ entries:
   status: new
 - path: internal/task/task.go
   v2_lines: 807
-  current_lines: 474
+  current_lines: 498
   fate: shrink
   target_lines: 676
   cluster: task

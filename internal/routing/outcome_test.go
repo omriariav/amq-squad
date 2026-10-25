@@ -227,6 +227,7 @@ func TestAcceptance5EveryAttemptHasARow(t *testing.T) {
 			if tk.Class == "review" {
 				ev = "findings=2"
 			}
+			harnessPass(t, store, tk.ID, now)
 			if _, err := store.Done(tk.ID, h, ev, "", now); err != nil {
 				t.Fatal(err)
 			}

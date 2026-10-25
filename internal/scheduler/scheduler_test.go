@@ -202,6 +202,7 @@ func TestDoorbellDroppedMidTurnLosesNothing(t *testing.T) {
 		if d := h.tick(); has(d, "lease_expired", "t1", "") || !has(d, "lease_renewed", "t1", "seat-a") {
 			t.Fatalf("claimed lease: %+v", d)
 		}
+		harnessPass(t, h.store, "t1", h.clk.Now())
 		if _, err := h.store.Done("t1", "seat-a", "ok", "", h.clk.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -272,6 +273,7 @@ func TestSeatCapAndUsageLimitStop(t *testing.T) {
 		if _, err := h.store.Claim("t1", "seat-a", nil, 10*time.Minute, h.clk.Now()); err != nil {
 			t.Fatal(err)
 		}
+		harnessPass(t, h.store, "t2", h.clk.Now())
 		if _, err := h.store.Done("t2", "seat-b", "", "", h.clk.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -355,6 +357,7 @@ func TestCommitStepAndRetryHook(t *testing.T) {
 	if _, err := h.store.Claim("t1", "seat-a", nil, 0, t0); err != nil {
 		t.Fatal(err)
 	}
+	harnessPass(t, h.store, "t1", t0)
 	if _, err := h.store.Done("t1", "seat-a", "ok", "", t0); err != nil {
 		t.Fatal(err)
 	}
@@ -367,6 +370,7 @@ func TestCommitStepAndRetryHook(t *testing.T) {
 	if _, err := h.store.Widen("t1", "lead", "README belongs to it", []string{"README.md"}, 0, t0); err != nil {
 		t.Fatal(err)
 	}
+	harnessPass(t, h.store, "t1", t0) // the re-armed attempt's own verdict
 	if d := h.tick(); !has(d, "completed", "t1", "seat-a") {
 		t.Fatalf("re-armed commit: %+v", d)
 	}

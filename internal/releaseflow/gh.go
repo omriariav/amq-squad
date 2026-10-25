@@ -35,7 +35,31 @@ func (g *GH) Tag(ctx context.Context, repository, tag, commit string) error {
 	return err
 }
 
-const draftJQ = `{id, tag: .tag_name, target_commitish, draft}`
+const draftJQ = `{id, tag: .tag_name, target_commitish, draft, html_url}`
+
+// FindDrafts lists the releases (every page) whose body carries the nonce.
+func (g *GH) FindDrafts(ctx context.Context, repository, nonce string) ([]Draft, error) {
+	if strings.Trim(nonce, "0123456789abcdef") != "" {
+		return nil, fmt.Errorf("nonce %q is not hex", nonce)
+	}
+	out, err := g.run(ctx, "api", "--paginate", "repos/"+repository+"/releases?per_page=100",
+		"--jq", `.[] | select((.body // "") | contains("`+NonceMarker(nonce)+`")) | `+draftJQ)
+	if err != nil {
+		return nil, err
+	}
+	var ds []Draft
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		d, err := decodeDraft(ln)
+		if err != nil {
+			return nil, err
+		}
+		ds = append(ds, d)
+	}
+	return ds, nil
+}
 
 func decodeDraft(out string) (Draft, error) {
 	var d Draft

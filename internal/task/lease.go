@@ -105,7 +105,7 @@ func endAttempt(t *Task, outcome, detail string, now time.Time) {
 	if t.Lease == nil {
 		return
 	}
-	t.Attempts = append(t.Attempts, Attempt{N: t.Attempt, Holder: t.Lease.Holder, Pool: t.Pool, GrantedAt: t.Lease.GrantedAt, EndedAt: now, Outcome: outcome, Detail: detail})
+	t.Attempts = append(t.Attempts, Attempt{N: t.Attempt, Holder: t.Lease.Holder, Pool: t.Pool, GrantedAt: t.Lease.GrantedAt, EndedAt: now, Outcome: outcome, Detail: detail, Verdict: t.Lease.Verdict})
 	t.Lease = nil
 }
 
@@ -259,7 +259,8 @@ var renewAfterPrecheck func()
 
 // Done files the holder's done report. A task with no declared files
 // completes at once; one with declared files waits, in progress, for the
-// harness commit step (Complete or RefuseCommit).
+// harness commit step (Complete or RefuseCommit). Either way a class with a
+// mechanical verifier completes only on the harness's verdict (complete).
 func (s Store) Done(id, holder, evidence, finalHead string, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		if err := requireLiveHolder(t, holder, now); err != nil {
@@ -274,17 +275,89 @@ func (s Store) Done(id, holder, evidence, finalHead string, now time.Time) (Task
 		}
 		t.Report = &Report{By: t.Lease.Holder, At: now, Evidence: strings.TrimSpace(evidence), FinalHead: strings.TrimSpace(finalHead)}
 		if len(t.DeclaredFiles) == 0 {
-			complete(t, now)
+			s.complete(t, now)
 		}
 		return nil
 	})
 }
 
-func complete(t *Task, now time.Time) {
+// complete accepts a done report. A class whose verifier command is
+// configured (Store.Verifiers: the grant, narrowed by squad.yaml) completes
+// only on the harness's recorded pass verdict on this attempt
+// (RecordVerdict), never on the seat's report (phase 5 re-pass, ruling 1 and
+// its ruling): with no verdict the task blocks for the lead with
+// verdict_missing, and the attempt ends blocked, which the router counts as
+// a failed attempt. A class with no configured verifier completes on the
+// done report. A recorded fail verdict always blocks (verdict_failed). The
+// report stays, as on a commit refusal, until the lead's reset.
+func (s Store) complete(t *Task, now time.Time) {
+	var v *Verdict
+	if t.Lease != nil {
+		v = t.Lease.Verdict
+	}
+	if required, why := s.verifierRequired(*t); required || v != nil {
+		switch {
+		case v == nil:
+			endAttempt(t, OutcomeBlocked, BlockVerdictMissing, now)
+			_ = block(t, BlockVerdictMissing, fmt.Sprintf("class %s completes only on a recorded %s verdict from the harness; the done report has none%s", t.Class, ClassVerifier(t.Class), why), RouteLead)
+			return
+		case v.Result != VerdictPass:
+			endAttempt(t, OutcomeBlocked, BlockVerdictFailed, now)
+			_ = block(t, BlockVerdictFailed, fmt.Sprintf("the %s verdict from %s is %s: %s", v.Verifier, v.Source, v.Result, v.Detail), RouteLead)
+			return
+		}
+	}
 	t.Evidence = t.Report.Evidence
 	endAttempt(t, OutcomeCompleted, "", now)
 	at := now
 	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail = StateCompleted, &at, "", "", ""
+}
+
+// verifierRequired says whether the task's class needs the harness's
+// verdict: a mechanical verifier whose command is configured, or, with no
+// source or a source that fails, every mechanical verifier (fail closed).
+func (s Store) verifierRequired(t Task) (bool, string) {
+	if !MechanicalVerifier(ClassVerifier(t.Class)) {
+		return false, ""
+	}
+	if s.Verifiers == nil {
+		return true, ""
+	}
+	cmd, required, err := s.Verifiers(t)
+	if err != nil {
+		return true, " (the verifier configuration could not be read: " + err.Error() + ")"
+	}
+	if required && cmd == "" {
+		return true, " (the squad's verifier gate names the class, but the owner grant names no verifier command for it)"
+	}
+	return required, ""
+}
+
+// RecordVerdict records the harness's verdict on the current attempt of a
+// task whose class has a mechanical verifier: the commit step's test run or
+// the probe's predicate. It is the harness's call, never the seat's; one
+// verdict per attempt, of the class's own verifier.
+func (s Store) RecordVerdict(id string, v Verdict, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		want := ClassVerifier(t.Class)
+		switch {
+		case !MechanicalVerifier(want):
+			return fmt.Errorf("task %s: class %s has no mechanical verifier", t.ID, t.Class)
+		case t.State != StateInProgress || t.Lease == nil:
+			return fmt.Errorf("task %s is %s with no attempt to record a verdict on", t.ID, t.State)
+		case t.Lease.Verdict != nil:
+			return fmt.Errorf("task %s attempt %d already has a %s verdict", t.ID, t.Attempt, t.Lease.Verdict.Result)
+		case v.Verifier != want:
+			return fmt.Errorf("task %s: verdict of verifier %q, class %s is verified by %s", t.ID, v.Verifier, t.Class, want)
+		case v.Result != VerdictPass && v.Result != VerdictFail:
+			return fmt.Errorf("verdict result %q: want pass or fail", v.Result)
+		case strings.TrimSpace(v.Source) == "":
+			return fmt.Errorf("a verdict names the harness step that ran the verifier")
+		}
+		v.Source, v.Detail, v.At = strings.TrimSpace(v.Source), strings.TrimSpace(v.Detail), now
+		t.Lease.Verdict = &v
+		return nil
+	})
 }
 
 // Complete is the commit step's acceptance of a done report.
@@ -293,7 +366,7 @@ func (s Store) Complete(id string, now time.Time) (Task, error) {
 		if t.State != StateInProgress || t.Report == nil {
 			return fmt.Errorf("task %s has no done report awaiting the commit step", t.ID)
 		}
-		complete(t, now)
+		s.complete(t, now)
 		return nil
 	})
 }

@@ -41,10 +41,13 @@ type Options struct {
 	Doorbell    scheduler.Doorbell
 	Lead        scheduler.LeadNotifier
 	Router      scheduler.Router // DefaultRouter until 2b-4 merges; one line to swap
-	Committer   scheduler.Committer
-	Preparer    scheduler.SeatPreparer // nil: seats are dispatched to as they are
-	Limits      scheduler.UsageLimitSource
-	Exits       scheduler.ExitChecker // the exit check off the done path (R3); nil: none
+	// Verifiers is the task store's verifier source (grants.TaskVerifier in
+	// the verb); nil is strict: every mechanical class needs a verdict.
+	Verifiers task.VerifierSource
+	Committer scheduler.Committer
+	Preparer  scheduler.SeatPreparer // nil: seats are dispatched to as they are
+	Limits    scheduler.UsageLimitSource
+	Exits     scheduler.ExitChecker // the exit check off the done path (R3); nil: none
 	// Admitted runs once the process holds the squad's lock, before anything
 	// else (the preflight baseline: a rejected duplicate process never
 	// touches it, P1 of the milestone B first pass). An error stops the run.
@@ -117,6 +120,7 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	store.Verifiers = o.Verifiers
 	if o.Now == nil {
 		o.Now = time.Now
 	}

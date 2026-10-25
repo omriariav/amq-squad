@@ -6,6 +6,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -37,6 +38,10 @@ type StartOptions struct {
 	Grants   grants.Grants
 	Tasks    func() ([]task.Task, error) // task.Snapshot(store.Dir)
 	Now      func() time.Time
+	// Seats is the scheduler's seat view and LeadPools the lead's own seat
+	// (Options): what a concurrency cap counts.
+	Seats     func() []scheduler.SeatView
+	LeadPools []task.Pool
 }
 
 // Open is the scheduler process's start step: it loads the effective table
@@ -48,5 +53,5 @@ func Open(o StartOptions) (*Router, error) {
 		return nil, &InvalidError{Err: err}
 	}
 	return New(Options{Table: tbl, Registry: o.Registry, Grants: o.Grants, Root: o.Root, RepoRoot: o.RepoRoot,
-		Tasks: o.Tasks, Now: o.Now})
+		Tasks: o.Tasks, Now: o.Now, Seats: o.Seats, LeadPools: o.LeadPools})
 }

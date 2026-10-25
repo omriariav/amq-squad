@@ -51,7 +51,16 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) *fixture {
-	return &fixture{t: t, tbl: Default(), reg: fixtureRegistry(), g: grants.Defaults()}
+	return &fixture{t: t, tbl: Default(), reg: fixtureRegistry(), g: verifiedGrants()}
+}
+
+// verifiedGrants are the default grants with a verifier command configured
+// for every class with a mechanical verifier: the setting under which those
+// classes may route below their tier (phase 5 re-pass, ruling on ruling 1).
+func verifiedGrants() grants.Grants {
+	g := grants.Defaults()
+	g.Verifiers = map[string]string{"extract": "check-schema", "script": "run-script", "implement": "go test ./..."}
+	return g
 }
 
 func (f *fixture) apply(text string) *fixture {
@@ -323,10 +332,12 @@ func TestFourChecks(t *testing.T) {
 		t.Fatalf("permitted runtimes: %+v", d)
 	}
 	f.g.PermittedRuntimes = nil
-	// concurrency: six Claude seats busy.
+	// concurrency: six Claude seats busy (one seat each: the cap counts
+	// seats, phase 5 re-pass ruling 2).
 	for i := 0; i < 6; i++ {
-		b := newTask("b", "implement")
+		b := newTask("b"+string(rune('1'+i)), "implement")
 		b.State, b.Pool = task.StateInProgress, pl("claude:haiku:low")
+		b.Lease = &task.Lease{Holder: "seat-b" + string(rune('1'+i))}
 		f.list = append(f.list, b)
 	}
 	if d := f.decide(newTask("t1", "implement")); d.Entry.Key() != "codex:gpt-5.6-terra:medium" || !hasSkip(d, "claude:sonnet:medium", SkipConcurrencyCap) {

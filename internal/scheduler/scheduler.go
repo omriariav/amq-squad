@@ -458,10 +458,11 @@ func (s *Scheduler) pollLimits(now time.Time, log func(Decision)) error {
 func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error {
 	holder := t.Report.By
 	if s.Committer == nil {
-		if _, err := s.Store.Complete(t.ID, now); err != nil {
+		got, err := s.Store.Complete(t.ID, now)
+		if err != nil {
 			return err
 		}
-		log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
+		logAccepted(got, holder, log)
 		return nil
 	}
 	res := s.Committer.Commit(holder, t)
@@ -473,11 +474,14 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		// The acceptance and the binding the merge train reads (3-2) are one
 		// store transaction (P2 of the milestone B first pass); a PR number
 		// another task holds refuses for the lead.
-		_, err := s.Store.CompleteBound(t.ID, res.PRRepository, res.PRNumber, res.PRHead, now)
+		got, err := s.Store.CompleteBound(t.ID, res.PRRepository, res.PRNumber, res.PRHead, now)
 		if errors.Is(err, task.ErrPRBoundElsewhere) {
 			res = CommitResult{ReasonCode: task.RefusalPRBoundElsewhere, Detail: err.Error(), Route: task.RouteLead}
 		} else if err != nil {
 			return err
+		} else if got.State == task.StateBlocked {
+			logAccepted(got, holder, log)
+			return nil
 		} else {
 			log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
 			if res.PRNumber > 0 {
@@ -509,6 +513,16 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		}
 	}
 	return nil
+}
+
+// logAccepted logs an accepted done report: completed, or blocked by the
+// store's completion gate (a mechanical verifier with no pass verdict).
+func logAccepted(got task.Task, holder string, log func(Decision)) {
+	if got.State == task.StateBlocked {
+		log(Decision{Kind: "blocked", TaskID: got.ID, Seat: holder, Reason: got.BlockReason})
+		return
+	}
+	log(Decision{Kind: "completed", TaskID: got.ID, Seat: holder})
 }
 
 func (s *Scheduler) router() Router {
@@ -772,6 +786,27 @@ type SeatView struct {
 	Unresponsive bool      `json:"unresponsive"`
 	Closing      string    `json:"closing,omitempty"`    // a failed close being retried; still counted
 	RequestID    string    `json:"request_id,omitempty"` // a request whose cancel is pending (its seat not confirmed gone)
+}
+
+// Occupancy is the scheduler's seat view, what a router's concurrency cap
+// counts (phase 5 re-pass, ruling 2): every seat it knows, each once: live
+// seats, closing ones (a failed close, or a close whose termination is not
+// confirmed yet, as after a lease expiry) and every pending seat request.
+// Tick calls the router, so the view is read on the tick's goroutine.
+func (s *Scheduler) Occupancy() []SeatView {
+	out := []SeatView{}
+	for h, v := range s.seats {
+		closing := v.closing
+		if closing == "" && v.awaitGone {
+			closing = "awaiting seat_gone"
+		}
+		out = append(out, SeatView{Handle: h, Pool: v.pool, Unresponsive: v.unresponsive, Closing: closing})
+	}
+	for _, r := range s.requests {
+		out = append(out, SeatView{Handle: "request " + r.req.ID, RequestID: r.req.ID, Pool: r.req.Pool, Closing: r.closing})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })
+	return out
 }
 
 // StatePathFor is the scheduler state file under an AMQ session root.

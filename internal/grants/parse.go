@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/yamlsub"
 )
 
@@ -31,6 +32,8 @@ import (
 //	    required_companions: [skills/*/SKILL.md]   # optional; default none (the owner names them)
 //	    push_url: git@github.com:omriariav/amq-noc.git   # optional: ssh, https://github.com, absolute path or file://
 //	    local_push_ack: false     # required true for a local push_url (grants_invalid without); the merge train still refuses a real run against one
+//	verifiers:                    # optional: the verifier command per class with a mechanical verifier
+//	  implement: go test ./...    # extract, script, implement; a class without one completes on its done report
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100
@@ -106,6 +109,8 @@ func ParseOwner(text, source string) (Grants, error) {
 			g.Merge, err = parseMerge(e)
 		case "fleet":
 			g.Fleet, err = parseFleet(e)
+		case "verifiers":
+			g.Verifiers, err = parseVerifiers(e)
 		default:
 			err = e.Errf("unknown key")
 		}
@@ -114,6 +119,37 @@ func ParseOwner(text, source string) (Grants, error) {
 		}
 	}
 	return g, nil
+}
+
+// verifierClass is a class with a mechanical verifier (plan 6.1).
+func verifierClass(c string) bool { return task.MechanicalVerifier(task.ClassVerifier(c)) }
+
+// parseVerifiers reads `verifiers:`, a map of class to command: each key a
+// class with a mechanical verifier, each command a non-empty single line.
+func parseVerifiers(e yamlsub.Entry) (map[string]string, error) {
+	if e.Value != "" {
+		return nil, e.Errf("want a map of class to command")
+	}
+	sub, err := yamlsub.Sub(e.Key, e.Block)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, s := range sub {
+		class := strings.TrimPrefix(s.Key, "verifiers.")
+		if !verifierClass(class) {
+			return nil, s.Errf("class %q has no mechanical verifier (want extract, script or implement)", class)
+		}
+		cmd, err := s.Scalar()
+		if err == nil && (strings.TrimSpace(cmd) == "" || strings.ContainsAny(cmd, "\x00\r\n")) {
+			err = s.Errf("want a non-empty one-line command")
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[class] = cmd
+	}
+	return out, nil
 }
 
 func parseMerge(e yamlsub.Entry) ([]Merge, error) {
@@ -249,7 +285,8 @@ func parseRepositoryPaths(e yamlsub.Entry) ([]RepositoryPath, error) {
 // with a bad value is an error, never silently dropped. Grant keys: mode,
 // max_seats, cost_per_day_usd, permitted_runtimes, privacy_class,
 // protected_paths, merge_repositories, merge_size_cap_lines,
-// merge_size_cap_files. default_branch
+// merge_size_cap_files, verifier_classes (the squad's verifier gate, a
+// superset of the classes the grant verifies). default_branch
 // is the owner's alone and is ignored here.
 func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 	var n Narrowing
@@ -261,7 +298,7 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 	for _, e := range entries {
 		var err error
 		switch e.Key {
-		case "mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines", "merge_size_cap_files":
+		case "mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines", "merge_size_cap_files", "verifier_classes":
 			// a repeated grant key is an error even in this lenient read: a later
 			// value must never replace an earlier, narrower one
 			if seen[e.Key] {
@@ -291,6 +328,17 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 			n.MergeSizeCapLines, err = e.Integer(1)
 		case "merge_size_cap_files":
 			n.MergeSizeCapFiles, err = e.Integer(1)
+		case "verifier_classes":
+			if n.VerifierClasses, err = e.List(); err == nil {
+				for _, c := range n.VerifierClasses {
+					if !verifierClass(c) {
+						err = e.Errf("class %q has no mechanical verifier", c)
+					}
+				}
+			}
+			if n.VerifierClasses == nil && err == nil {
+				n.VerifierClasses = []string{} // an empty list: valid only when the grant verifies no class
+			}
 		case "fleet", "max_squads", "permitted_repositories":
 			n.FleetKeys = append(n.FleetKeys, e.Key)
 		}
