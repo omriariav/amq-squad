@@ -26,6 +26,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/status"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
 )
 
@@ -125,6 +126,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	out = append(out, claudeTokenCheck(h.Home, time.Now()))
 	out = append(out, claudePinCheck(h.Home, env.LookPath)...)
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
+	out = append(out, squadGoldenCheck(team.GoldenYAML, team.GoldenExpected))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
 	}

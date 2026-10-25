@@ -1,0 +1,50 @@
+schema: 1
+session: golden-session
+lead: lead
+lead_mode: planner
+execution_mode: project_team
+control_root: /golden/control
+target_project_root: /golden/target
+shared_cwd_exception: golden exception
+operator_interaction: lead_pane
+mode: manual
+max_seats: 6
+cost_per_day_usd: 20
+permitted_runtimes:
+  - claude
+  - codex
+  - pi
+privacy_class: local
+protected_paths:
+  - docs/adr/
+merge_repositories:
+  - golden/repo
+merge_size_cap_lines: 200
+merge_size_cap_files: 4
+verifier_classes:
+  - implement
+defaults:
+  runtime: claude
+  model: golden-model
+  effort: medium
+  tools: coding
+seats:
+  - handle: lead
+    role: cto
+    runtime: claude
+    model: opus
+    effort: high
+    worktree: lead-tree
+    tools: full
+    actor_mode: review
+  - handle: dev
+    role: senior-dev
+    runtime: codex
+    model: gpt-5.5
+    effort: medium
+    worktree: /golden/dev-tree
+    tools: coding
+    actor_mode: implementation
+  - handle: scout
+    role: researcher
+    runtime: pi

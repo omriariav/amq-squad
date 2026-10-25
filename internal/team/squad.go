@@ -113,7 +113,7 @@ var (
 )
 
 // grantKeys are the keys grants.ParseSquadNarrowing reads.
-var grantKeys = []string{"mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines", "merge_size_cap_files"}
+var grantKeys = grantKeyNames()
 
 // LoadSquad reads <repoRoot>/squad.yaml against the owner grant at
 // grants.OwnerPath. A missing file is fs.ErrNotExist.
@@ -143,15 +143,27 @@ func ParseSquad(text, source string, owner grants.Grants) (Squad, error) {
 		return s, err
 	}
 	wrap := func(err error) error { return fmt.Errorf("%s: %w", source, err) }
+	// A schema this build does not read is named first, whatever else the
+	// file holds: a newer file's keys are unknown here, and the version is
+	// the reason (final form A3).
+	for _, e := range entries {
+		if e.Key != "schema" {
+			continue
+		}
+		if v, verr := e.Integer(1); verr == nil && v != SquadSchema {
+			return s, &SchemaError{Source: source, Version: v}
+		}
+	}
 	sawSchema := false
 	for _, e := range entries {
 		var err error
+		if IsNeverSettable(e.Key) {
+			// an owner-only key: refused at parse, named as written (A4)
+			return s, &WidenError{Source: source, Field: neverSettablePath(e), Detail: "only the owner files ~/.amq-squad/grants.yaml and registry.yaml set it"}
+		}
 		switch e.Key {
 		case "schema":
-			var v int
-			if v, err = e.Integer(1); err == nil && v != SquadSchema {
-				err = e.Errf("schema %d is not %d", v, SquadSchema)
-			}
+			_, err = e.Integer(1)
 			sawSchema = true
 		case "session":
 			if s.Session, err = e.Scalar(); err == nil && !handlePattern.MatchString(s.Session) {
@@ -179,9 +191,6 @@ func ParseSquad(text, source string, owner grants.Grants) (Squad, error) {
 			s.Seats, err = parseSeats(e)
 		case "protected_paths":
 			err = noRemoval(e, source)
-		case "unprotected_paths", "remove_protected_paths", "default_branch", "merge":
-			// owner-only keys, or a removal: each would widen the grant
-			err = &WidenError{Source: source, Field: e.Key, Detail: "only the owner file ~/.amq-squad/grants.yaml sets it"}
 		default:
 			if !slices.Contains(grantKeys, e.Key) {
 				err = e.Errf("unknown key")
@@ -431,6 +440,7 @@ func Render(s Squad) string {
 	if g.MergeSizeCapFiles > 0 {
 		line("merge_size_cap_files", strconv.Itoa(g.MergeSizeCapFiles))
 	}
+	list("verifier_classes", g.VerifierClasses)
 	if s.Defaults != (SeatDefaults{}) {
 		b.WriteString("defaults:\n")
 		for _, kv := range [][2]string{{"runtime", s.Defaults.Runtime}, {"model", s.Defaults.Model}, {"effort", s.Defaults.Effort}, {"tools", s.Defaults.Tools}} {

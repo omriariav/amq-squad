@@ -1,0 +1,53 @@
+{
+  "schema": 6,
+  "workstream": "feature-x",
+  "trust": "sandboxed",
+  "operator": {
+    "enabled": true,
+    "handle": "user",
+    "interaction_mode": "lead_pane",
+    "participant": true,
+    "kind": "operator",
+    "poll_required": true,
+    "notifications": {"enabled": true, "delivery_semantics": "attention_only"}
+  },
+  "binary_args": {"codex": ["--search"]},
+  "members": [
+    {
+      "role": "cto",
+      "binary": "claude",
+      "handle": "lead",
+      "session": "feature-x",
+      "model": "opus",
+      "actor_mode": "review",
+      "claude_args": ["--settings", "/opt/overlay/settings.json"]
+    },
+    {
+      "role": "fullstack",
+      "binary": "codex",
+      "handle": "dev",
+      "session": "dev-session",
+      "model": "gpt-5.5",
+      "cwd": "{{PROJECT}}/dev-tree",
+      "actor_mode": "implementation",
+      "tool_profile": "full",
+      "spawn_depth": 1
+    },
+    {
+      "role": "legal",
+      "binary": "claude",
+      "handle": "counsel",
+      "session": "feature-x",
+      "actor_mode": "review"
+    }
+  ],
+  "orchestrated": true,
+  "lead": "cto",
+  "composition": "seeded",
+  "execution_mode": "project_team",
+  "control_root": "{{PROJECT}}",
+  "lead_mode": "planner",
+  "max_spawn_depth": 2,
+  "created_at": "2026-01-02T03:04:05Z",
+  "shared_cwd_exception": "only one seat mutates at a time"
+}

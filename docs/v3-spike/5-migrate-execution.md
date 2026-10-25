@@ -1,0 +1,316 @@
+# Brief v3-5-migrate execution log: squad.yaml final form and `migrate`
+
+Branch `v3-5-migrate` from `v3` at 6d5090b2 (the verifier producer merge,
+38eafc83, plus the plan and spike log commit). Implementer: Sonnet 5.5.
+Brief: `docs/v3-plan.md` section 16.4 (phase 5 additions, the migrate
+paragraph), decision 6 (a converter, not a compatibility layer).
+
+## Part A: the squad.yaml final form (schema 1 frozen for 3.0)
+
+Built:
+- `docs/squad-yaml.md` rewritten: the complete key table (key, type, default,
+  relation to the owner grant), the never-settable table, "Who reads it",
+  "Changing it", schema and codes, "From v2".
+- `internal/team/squad_keys.go` (new): `SquadKeys` (the key list with each
+  key's relation: plain, narrow, add), `NeverSettableKeys` / `IsNeverSettable`
+  / `NeverSettableOwner`, the codes (`squad_yaml_invalid`, `grants_invalid`,
+  `squad_yaml_schema_unsupported`, `squad_yaml_golden_drift`), `SchemaError`,
+  `CodeOf`.
+- `internal/team/squad.go`: a schema other than 1 is a `SchemaError` named
+  before any other key is read; a never-settable key is a `WidenError` naming
+  the key as written; `verifier_classes` is accepted (it was accepted by
+  `grants.ParseSquadNarrowing` and guard but refused as an unknown key by the
+  strict `ParseSquad`) and rendered, so the documented list and the parser
+  agree.
+- `internal/team/golden.go` and `golden/squad-v1.yaml`,
+  `golden/squad-v1.expected.json` (new): the embedded golden and the
+  structure it must parse to; `GoldenCheck` also requires every key of
+  `SquadKeys` in the golden and a Render round trip.
+- `internal/cli/doctor_squad.go` (new) and a row in `doctor_host.go`: the
+  `squad.yaml golden` check; a drift is a failing row of kind
+  `squad_yaml_golden_drift`.
+
+The never-settable set as found (the keys only the owner's files set; each
+refused at parse, flat, dotted or as a block): `merge`, `merge.push_url`,
+`merge.local_push_ack`, `push_url`, `local_push_ack`, `clear`,
+`clear.signature`, `verifiers`, `verifier_goproxy`, `verifier_timeout`,
+`verifier_output_limit`, `verifier_parallelism`, `default_branch`, `fleet`,
+`max_squads`, `permitted_repositories`, `pins`, `registry`,
+`unprotected_paths`, `remove_protected_paths` (20 keys). It was found as:
+the keys of `grants.ParseOwner` that `grants.ParseSquadNarrowing` does not
+read (default_branch, merge, fleet, clear, verifiers, verifier_*), the
+registry's owner data (pins), and the two removal keys 2b-5 already refused.
+Before this brief only `merge`, `default_branch` and the two removal keys were
+refused by name; the rest were "unknown key".
+
+Rows (test, in `internal/team` unless noted):
+- A1 `TestSquadYamlKeyListIsDocumentedKeyForKey` (docs table row per key with
+  its relation, and per never-settable key);
+  `TestSquadYamlSchemaIsRequiredAndAnUnknownKeyIsRefused`;
+  `TestSquadYamlVerifierClassesOnlyAdd`.
+- A2 `TestSquadYamlGoldenParsesToTheExpectedStructure`;
+  `TestDoctorSquadYamlGoldenSelfCheck` (internal/cli).
+- A3 `TestSquadYamlSchemaTwoIsRefusedAndNamed`.
+- A4 `TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed` (one subtest per
+  key, plus the block forms), `TestNeverSettableCoversTheKeysUnderOne`.
+- A5 `TestSeatDiffTouchingSquadYamlRaisesTheGrowthGate`
+  (internal/seatcommit). squad.yaml was already in `grants.Implicit` (R37);
+  the row is new and the docs name the reader.
+- A6 `TestSquadYamlHandEditIsNamedByTheDigestFlow` (internal/cli).
+
+A6 as ruled in the fix round: the digest token is `sha256:<content>@<disk>`
+(content of the planned files, and the sha256 of the squad.yaml on disk at
+propose time or `absent`); `Plan` exposes both parts. `Plan.Apply` refuses
+`squad_yaml_digest_mismatch` when the content part differs (the options
+changed; 2b-5's prose `digest mismatch` is now this code) and
+`squad_yaml_changed`, naming both disk digests, when the file moved, re-reading
+it under the lock it writes with. The in-apply "changed since the proposal"
+check stays as the second guard. The one other caller of `NewPlan`/`Plan.Apply`
+is the fleet adapter (4-3, `teamSquadWriter`), which applies the stored
+proposal and so goes through the same guard (`TestTeamSquadWriterRefusesAnEditAfterThePropose`);
+no 4-1 pi lead call site exists in this tree (`internal/cli/pi_lead*.go` plans
+nothing through `team`). Row: `TestSquadYamlHandEditIsRefusedByApplyAndShownByThePropose`.
+
+## Part B: migrate
+
+`amq-squad migrate [--write] <v2 profile path>` and `--remove-v2 [--write]`
+(`internal/cli/migrate.go`, `internal/migrate`).
+
+### The v2 loaders read from main (B5, B6)
+
+main at 8fd51b93; the last commit touching each file in brackets. Field names
+are copied from these, never guessed.
+
+| File on main | Last commit | What migrate takes from it |
+| --- | --- | --- |
+| `internal/team/team.go` | c0a616f3 | `Team`, `Member`, `OperatorConfig`, `SelfOperatorPolicy`, `AutonomousPolicy`, `GoalSupervisionPolicy`, `LeadExecution` JSON tags; `ProfilePath` (`.amq-squad/team.json`, `.amq-squad/teams/<name>.json`); `EffectiveActorMode`; `Validate` (trust values, handle and role slugs) |
+| `internal/cli/execution_mode.go` | cfa2c355 | the four execution modes |
+| `internal/namespace/namespace.go` | e30b9ebb | `BriefPath` (`.amq-squad/briefs/[<profile>/]<session>.md`) |
+| `internal/cli/briefs.go` | e30b9ebb | `briefsDirName` |
+| `internal/rules/rules.go` | a5838218 | `Path` (`.amq-squad/team-rules.md`) |
+| `internal/role/role.go` | 33d3f801 | `Path`, `LegacyPath` (role.md under `extensions/io.github.omriariav.amq-squad/` or directly in the agent dir) |
+| `internal/cli/launch.go` | 22278eb0 | `seedRoleStub`: staged custom roles at `.amq-squad/roles/<id>.md` seed role.md |
+| `internal/cli/cli.go` | 14dd95f7 | the agents directories at `<project>/.agent-mail/<session>/agents/<handle>` |
+| `internal/userconfig/config.go` | ccede332 | read, not migrated: `~/.config/amq-squad/config.json` is user-level and kept by 3.0 |
+| `internal/launch/record.go` | main | read, not migrated: `launch.json` is a runtime record in an AMQ mailbox, not project configuration (decision 6) |
+
+`launch.local.json`: the brief names it, but no loader on main reads a file of
+that name (`git grep -i 'launch.local'` on main finds nothing). Judgment call:
+migrate reads `.amq-squad/launch.local.json` if it is present, only as raw JSON
+for the credential scan, never maps a key from it (no field names to take), lists
+the file as unmapped and as dead, and copies no value. Likewise
+`launcher_preference` is not a field on main; migrate refuses any v2 key of that
+name (a safety key by name) rather than guess where it lives.
+
+### Mapping
+
+Profile keys (JSON field names of `Team`), with where each goes:
+- `workstream` or the one session every member shares -> `session`;
+  `lead_mode`, `execution_mode` (one of the four), `control_root`,
+  `target_project_root` (relative paths joined to the project),
+  `shared_cwd_exception` -> the same squad.yaml keys; `lead` (a role) -> `lead`
+  (the handle of the seat with that role); `operator.interaction_mode`
+  (`lead_pane`, `separate_terminal`, `noc`) -> `operator_interaction`;
+  `schema` and `orchestrated` are consumed.
+- `members[]`: `role`, `binary` (runtime; claude or codex), `handle`
+  (default role), `model`, `cwd` (-> `worktree`, repo-relative inside the
+  project), `actor_mode` (else v2's `EffectiveActorMode`: a planner lead reviews),
+  `tool_profile` (the five standard names; `custom` is reported).
+- Unmapped (named in the report, by key path or by file): `trust` when
+  `sandboxed`, `binary_args`, `drafter`, `composition`, `autonomous.*` except
+  `max_active_agents`, `goal_supervision`, `target_contract`, `lead_execution`,
+  `max_spawn_depth`, `created_at`, `operator.{enabled,handle,kind,participant,
+  runnable,assignable,wake_supported,poll_required,notifications}`,
+  `members[h].{session when it differs,tool_config,tool_mcp_config,
+  tool_blocklist,tool_policy_sources,tool_policy_drift,tool_disable_all_hooks,
+  spawn_origin,spawn_depth,claude_args,codex_args}`, any key main's loader does
+  not know, and by file: `team-rules.md`, `launch.local.json`, a catalog role's
+  role.md or one that differs from its staged prompt, and the briefs of a named
+  profile. A field that is empty (null, "", false, 0, [], {}) is not set and is
+  not reported.
+- Kept (3.0 reads them at the same path): the default profile's briefs and
+  `.amq-squad/roles/*.md`. Dead under decision 6 (left in place): the profile,
+  `launch.local.json`, and the agents' role.md files. `team-rules.md` is neither:
+  `team propose` regenerates it at the same path.
+- Role prompts: a custom role's role.md becomes `.amq-squad/roles/<id>.md` when
+  none is staged; migrate prints `amq-squad trust <project>` and runs nothing.
+- `grants.yaml.proposed` (0600, beside the owner's grants.yaml): `permitted_runtimes`
+  from the seats, `max_seats` from `autonomous.max_active_agents` when it is
+  within the default cap of 12. It parses as an owner file (checked at plan time).
+
+Refusals (`migrate_refused_safety_default`, naming the outermost field path):
+a launcher or `launcher_args` on a member; any set key whose name contains
+`allow` (not `disallow`, `deny`, `block`), at any depth, including
+`tool_allowlist`, `permission_allowlist` and `autonomous.allowed_roles`;
+`launcher_preference`; `trust` of `trusted` or `approve-for-me`;
+`operator.self_operator` or the `self_operator` interaction mode;
+`goal_supervision.mode` of `safe-auto`; a `claude_args`, `codex_args` or
+`binary_args` argument containing one of `dangerous`, `bypass`,
+`danger-full-access`, `yolo`, `full-auto`, `allowedtools`, `allowed-tools`,
+`permission-mode` (a closed list); `autonomous.max_active_agents` above 12.
+There is no override flag; the remedy printed is to remove the field from the
+v2 profile or set the authority in grants.yaml by hand. Other refusals:
+`squad_yaml_exists`, `migrate_proposed_exists`, `migrate_refused_credential`,
+`migrate_input_invalid`, `migrate_squad_invalid` (the output does not load
+against the owner's grant), `migrate_remove_needs_squad`.
+
+Writes are create-only: temp file beside the target, mode set explicitly,
+hard-linked into place (fails if the target exists); a failure removes what the
+call created. A dry run reads only.
+
+### Judgment calls
+
+1. The key is `schema`, not `schema_version`: 2b-5 and the owner file use
+   `schema`, and schema 1 is frozen; a rename would break existing files. The
+   brief's "schema_version required" is this key.
+2. `launch.local.json` and `launcher_preference`: not on main, see above.
+3. `tool_allowlist` is an allow list, so any v2 member with a non-empty one is
+   refused even when it is the materialization of a standard tool profile. The
+   brief says "any allow list".
+4. Native CLI arguments (`claude_args`, `codex_args`, `binary_args`) are reported
+   as unmapped, and refused only when they match the closed widening list above.
+5. `max_seats` in the proposal comes only from `autonomous.max_active_agents`;
+   no merge or protected-path proposal is invented.
+6. `--remove-v2` also refuses a squad.yaml that does not load (the brief says
+   absent); it never removes `team-rules.md`, the briefs or the staged roles.
+7. Pools: the brief lists pools among narrowing keys; schema 1 has no pool key
+   (pools are registry entries), so the docs say so.
+8. The verb is registered as `migrate` in the command catalog and the help
+   example list; `team.ErrNamedProfile` still says "(phase 5)" and now points at
+   a verb that exists (text unchanged).
+
+### Rows (migrate)
+
+- B1 `TestMigrateFixtureProfileMapsToTheGoldenSquadYaml` (byte-exact golden
+  `testdata/expected-squad.yaml`, 0644, loads), `TestMigrateReadsTheV2FilesReadOnly`
+  (dev+inode+mtime+content unchanged), `TestMigrateRefusesAnExistingSquadYaml`.
+- B2 `TestMigrateUnmappedReportIsExactAndComplete` (exact list, and every fixture
+  key is mapped or reported).
+- B3 `TestMigrateNeverWritesTheOwnerFilesAndProposesBesideThem` (grants.yaml and
+  registry.yaml dev+inode+mtime unchanged, proposal 0600, parses),
+  `TestMigrateRefusesASafetyDefaultNamingTheField` (14 cases).
+- B6 `TestMigrateStagesRolePromptsAndLeavesTrustToTheOwner`.
+- B7 `TestMigrateDryRunChangesNothingOnDisk` (dev+inode+mtime across project and
+  HOME), `TestMigrateVerb` (internal/cli).
+- B8 `TestMigrateRefusesACredentialAndWritesNothing` (the ghp_ shape built at run
+  time; launch.local.json, a profile field and a role.md).
+- B9 `TestMigrateDeletesNothingWithoutTheRemoveFlag`,
+  `TestMigrateRemoveRefusesASquadYamlThatDoesNotLoad`.
+- Named profile: `TestMigrateNamedProfile`.
+
+## Fix round (reviewer narrow pass on eeaa86a4)
+
+One fix commit. Each item has one failing-when-reverted row in
+`5-migrate-evidence/revert-check.txt`.
+- A6 (composite digest): see Part A above.
+- P1-1: a credential shape in a key name, in launch.local.json keys, in an
+  input file name or in the project or profile path is `migrate_refused_credential`
+  naming the location (`<file>: a key name under <parent>`, `the name of input
+  file #n`, `the profile path`), never the text. Every file migrate would write
+  and both renderings of the report must also be unchanged by `redact.Block`
+  (`unsafeText`), else the same refusal names the output. Tests:
+  `TestMigrateRefusesACredentialInAKeyOrAPath`.
+- P1-2: `--remove-v2` plans through `noSymlinkBelow` (a symlink at any directory
+  on the way is `migrate_refused_symlink`) and unlinks through
+  `fsanchor.OpenAnchored` from the project root with `unix.Unlinkat` on the parent
+  descriptor (`unlink_unix.go`; `unlink_other.go` is the Lstat-checked twin).
+  Agent role.md reads refuse a symlinked directory the same way. The project
+  root itself is the anchor (resolved with EvalSymlinks). Test:
+  `TestMigrateRemoveRefusesASymlinkOnTheWay` (symlink at plan time, appearing
+  after the plan, and the walk alone; the outside file survives).
+- P2-1: a named profile's agent directories are
+  `.agent-mail/<profile>/<session>/agents/<handle>` (main namespace.AMQRoot at
+  8fd51b93). Test: `TestMigrateNamedProfileFindsItsAgentRoleFiles`.
+- P2-2: `widensArgs` normalizes argv (`--flag=value` into two tokens) and keeps the
+  substring list besides the (flag, value) pairs `--ask-for-approval never|on-failure`,
+  `-a never`, `--approval-policy never`, `--sandbox danger-full-access`,
+  `--permission-mode bypassPermissions|dontAsk`. The bare `permission-mode`
+  substring is gone (the pairs replace it); `--dangerously-skip-permissions`, `--yolo`
+  and `--full-auto` stay substrings. Test: `TestMigrateRefusesPromptSkippingFlagValuePairs`.
+- P2-3: `grantKeys` is built from `SquadKeys`; `TestSquadKeyTableAndTheParserAgreeBothWays`
+  drives the parser with every table key and an unknown one and reads the case
+  labels of `ParseSquad`, `parseDefaults` and `parseSeats` from the source: a case
+  without a table entry fails.
+- P3: a nested owner key is named by its full path (`merge.push_url`,
+  `merge.local_push_ack`, `clear.signature`); a block under `verifiers` or
+  `fleet` names the parent, which is all the table lists.
+
+## Structural round (re-pass on 9845e0b1: M1 and M2)
+
+One commit. The re-pass found seven inputs around the two fixes; the fixes
+became structure instead of per-call-site patches.
+- M1, one output funnel (`runMigrate` in `internal/cli/migrate.go`): the verb
+  collects stdout and the error it would return and passes both through
+  `migrate.UnsafeText` (a credential shape or anything `redact.Block` changes)
+  once; unsafe output is the fixed line `migrate_refused_credential: <class>`,
+  exit 2, nothing else. The classes are closed words (`leak.go`). The flag
+  package prints nothing of its own (its output is discarded; only `-h` prints
+  the static usage). Closes at once: the refusal strings that embed a parent
+  key or a leaf, the filename-carrying errors, the absent-profile error, the
+  `--remove-v2` listing, and anything added later. `BuildRemove` also refuses a
+  credential-shaped removal path before anything is removed (the funnel alone
+  would hide the report after the file was gone). Rows:
+  `TestMigrateVerbFunnelsEveryByteThroughOneCheck` (`{S:{S:1}}`, `{S:S}`, a
+  briefs entry named S that is not a file, an absent profile under a directory
+  named S with a relative argument, a role under `.agent-mail/S` for plan and
+  removal, a flag named S), S built at run time and never on either stream.
+- M2, one root descriptor (`root.go`, `root_unix.go`, `root_other.go`): the
+  project root is resolved once, opened `O_DIRECTORY|O_NOFOLLOW` and kept across
+  plan and apply. Every read (profile, launch.local.json, team-rules.md, briefs,
+  staged roles, every role.md including the layered extensions path), every
+  create and every unlink goes through it, so a symlinked `agents/dev/extensions`
+  refuses at the read. The absolute paths are derived from the resolved root and
+  checked for a credential shape before any read. `root.changed()` compares the
+  descriptor's dev+inode with the path and the apply refuses `root_changed`.
+  `RemovePlan.Apply` and `Plan.Apply` no longer roll back or pre-walk: they stop at
+  the first refusal and return what was done; the verb prints a partial report
+  and exits 3 when anything was done (exit 1 when nothing was). The "nothing
+  removed" wording applies to the plan's refusals only. Rows:
+  `TestMigrateRefusesASymlinkAtTheReadNotOnlyAtRemoval`,
+  `TestMigrateRetargetingTheRootSymlinkChangesNothing`,
+  `TestMigrateApplyRefusesAMovedRoot`,
+  `TestMigrateRemovalStopsAtASymlinkIntroducedAfterThePlan` (a partial result, not
+  a silent continue), `TestMigrateStoppedIsAPartialResultWithExitThree`,
+  `TestRootCreateNeverReplacesAFile`.
+
+## Last round (re-pass on 88488ce2, five items)
+
+One commit. Each has one failing-when-reverted row.
+1. `pathIdentity` uses Lstat and a symlink at the root path is `root_changed`
+   (renaming the project aside and placing a symlink to it passed Stat). Row:
+   `TestMigrateApplyRefusesASymlinkAtTheRootPath`.
+2. `BuildRemove` reads squad.yaml through the root descriptor
+   (`root.read`, a symlinked squad.yaml is `migrate_refused_symlink`) and parses
+   the bytes against the owner's grant, as `team.LoadSquadWith` does. Row:
+   `TestMigrateRemoveReadsSquadYamlThroughTheDescriptor`.
+3. Every path component is checked for a credential shape before it is opened
+   (`checkName` in `walk`, `read`, `isDir`, `create`); a refusal names "the name
+   of an input file". This replaces the after-the-fact check and the removal-path
+   check, which are gone. Row: `TestMigrateChecksInputNamesBeforeOpeningThem` (a
+   credential-named directory with no permission is the credential refusal, not
+   an open error).
+4. The partial report takes the planned paths and lists `done:` and `not done:`.
+   Row: `TestMigrateRemovalStopsAtASymlinkIntroducedAfterThePlan`.
+5. A panic in the verb is recovered to the constant line `migrate: internal
+   error`, exit 2, nothing else (`migrateRunner` is the seam the test uses). Row:
+   `TestMigrateVerbRecoversAPanicToOneConstantLine`.
+Docs only (accepted): the CLI's constant `error: ` prefix before the fixed line,
+exit 2 for system errors against exit 1 for plan refusals with nothing done, and a
+symlink leaf unlinked as a link and never followed (docs/squad-yaml.md "From v2").
+
+## Gate
+
+Quiet host (0 matching processes). Gate head a0d67794 (the last round); the
+evidence commit after it adds only the two evidence files and this section.
+`docs/v3-spike/5-migrate-evidence/gate.txt` (through `scripts/redact-evidence`,
+0 values replaced): go build, go vet, GOOS=linux and GOOS=windows builds,
+`scripts/manifest-check.sh --final` (OK), `go test -count=1 ./...`, and
+`go test -count=1 -race -timeout 45m` on internal/team, internal/migrate,
+internal/seatcommit, internal/cli: all exit 0. Revert check
+(`revert-check.txt`, run on a0d67794): 52 rows, every one FAILS when its line is
+reverted, 0 rows not biting (one revert string went stale with the squad.yaml
+read and was updated).
+
+Not done: nothing in A1 to A6, B1 to B9, the fix round, M1, M2 or the last round
+is left out. `uninstall` is out of scope; a rebase onto it touches the manifest,
+command_registry.go and cli_test.go.

@@ -1,0 +1,4 @@
+{
+  "wake": {"inject_via": "tmux"},
+  "env": {"AM_ME": "lead", "EDITOR": "vi"}
+}

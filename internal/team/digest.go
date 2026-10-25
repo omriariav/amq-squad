@@ -33,11 +33,16 @@ type PlannedFile struct {
 
 // Plan is a proposal: the planned files and their digest.
 type Plan struct {
-	ProjectDir string        `json:"project_dir"`
-	Digest     string        `json:"digest"`
-	Seats      int           `json:"seats"`
-	Files      []PlannedFile `json:"files"`
-	pointers   []rules.SyncPlan
+	ProjectDir string `json:"project_dir"`
+	// Digest is the one token apply takes: "sha256:<content>@<disk>" where
+	// <content> is the digest of the planned files and <disk> the sha256 of
+	// the squad.yaml on disk when planned ("absent" when there is none).
+	Digest   string        `json:"digest"`
+	Content  string        `json:"content_digest"`
+	Disk     string        `json:"squad_yaml_disk"`
+	Seats    int           `json:"seats"`
+	Files    []PlannedFile `json:"files"`
+	pointers []rules.SyncPlan
 }
 
 // NewPlan plans squad.yaml (squadText, already parsed into t), team-rules.md
@@ -60,8 +65,24 @@ func NewPlan(projectDir, squadText string, t Team, rulesText string) (Plan, erro
 	for _, f := range p.Files {
 		fmt.Fprintf(sum, "%s\x00%s\x00", f.Path, f.content)
 	}
-	p.Digest = "sha256:" + hex.EncodeToString(sum.Sum(nil))
+	p.Content = "sha256:" + hex.EncodeToString(sum.Sum(nil))
+	p.Disk = diskDigest(p.Files[0].before)
+	p.Digest = p.Content + "@" + p.Disk
 	return p, nil
+}
+
+// diskDigest is the sha256 of a file's content, "absent" for none.
+func diskDigest(before *string) string {
+	if before == nil {
+		return "absent"
+	}
+	sum := sha256.Sum256([]byte(*before))
+	return hex.EncodeToString(sum[:])
+}
+
+// SplitDigest splits an apply token into its content and disk parts.
+func SplitDigest(token string) (content, disk string, ok bool) {
+	return strings.Cut(strings.TrimSpace(token), "@")
 }
 
 func (p *Plan) add(path, content string) {
@@ -97,10 +118,21 @@ func pointerDirs(projectDir string, members []Member) []string {
 // plan, and then the temps are renamed in order; a failed rename restores
 // the files already replaced (atomicfile.Tx).
 func (p Plan) Apply(digest string) error {
-	if strings.TrimSpace(digest) != p.Digest {
-		return fmt.Errorf("digest mismatch: the planned files changed since the proposal (now %s); run team propose again", p.Digest)
+	content, disk, ok := SplitDigest(digest)
+	if !ok || content != p.Content {
+		return fmt.Errorf("%s: the planned files changed since the proposal (now %s); run team propose again", CodeDigestMismatch, p.Digest)
 	}
 	return WithLock(p.ProjectDir, func() error {
+		// the file as it is now, under the lock the write takes: an edit made
+		// after the proposal is refused, and the next propose shows it
+		var now *string
+		if raw, err := os.ReadFile(SquadPath(p.ProjectDir)); err == nil {
+			now = new(string)
+			*now = string(raw)
+		}
+		if got := diskDigest(now); got != disk || got != p.Disk {
+			return fmt.Errorf("%s: %s was proposed over %s and is now %s; run team propose again to see the edit", CodeSquadChanged, SquadPath(p.ProjectDir), disk, got)
+		}
 		var tx atomicfile.Tx
 		defer tx.Abort()
 		for _, f := range p.Files[:2] {
