@@ -146,7 +146,7 @@ func prepare(o Options) (execPlan, error) {
 		if base := filepath.Base(o.Argv[0]); base != rec.Runtime {
 			err = refusef("runtime_mismatch", "provider %q is not the recorded runtime %q", base, rec.Runtime)
 		} else {
-			plan.provider, err = pinnedProvider(o.Home, o.Argv[0])
+			plan.provider, err = pinnedProvider(o.Home, o.Argv[0], rec.ClaudePin)
 		}
 	} else {
 		plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
@@ -249,7 +249,7 @@ func prepare(o Options) (execPlan, error) {
 		// The pin re-opened and re-hashed as the last step: a file replaced
 		// after the launch's probe is refused (the window to execve is the
 		// same-UID limit, as for the pinned gh).
-		if _, err := pinnedProvider(o.Home, o.Argv[0]); err != nil {
+		if _, err := pinnedProvider(o.Home, o.Argv[0], rec.ClaudePin); err != nil {
 			return plan, err
 		}
 	}
@@ -260,10 +260,20 @@ func prepare(o Options) (execPlan, error) {
 // claude pin, or whose pinned file does not hash to the pin.
 const ToolUnpinned = "tool_unpinned"
 
+// PinChangedSinceProbe refuses a Claude seat whose registry claude pin is no
+// longer the digest the launch probed (phase 5 release prep).
+const PinChangedSinceProbe = "pin_changed_since_probe"
+
 // pinnedProvider is a Claude seat's executable: argv[0] must be the path the
 // registry pins for claude, opened through the anchored walk and hashed to
 // the pin's sha256 (registry.OpenPinned).
-func pinnedProvider(home, argv0 string) (string, error) {
+//
+// probed is the digest of the claude pin the launch probed, from the staged
+// record: a registry whose claude pin differs now (re-pinned between the
+// launch and this exec, to another file or another digest) is refused
+// pin_changed_since_probe before the pin's own file is checked, because the
+// probe's verdict about the permission mode belongs to the probed bytes.
+func pinnedProvider(home, argv0, probed string) (string, error) {
 	reg, err := registry.Read(registry.Path(home))
 	if err != nil {
 		return "", refusef(ToolUnpinned, "the registry: %v", err)
@@ -271,6 +281,9 @@ func pinnedProvider(home, argv0 string) (string, error) {
 	pin, ok := reg.PinFor("claude")
 	if !ok {
 		return "", refusef(ToolUnpinned, "the registry pins no claude")
+	}
+	if probed == "" || pin.SHA256 != probed {
+		return "", refusef(PinChangedSinceProbe, "the registry's claude pin is not the one the launch probed (the staged record carries digest %q, the pin is %q)", probed, pin.SHA256)
 	}
 	if filepath.Clean(argv0) != pin.Path {
 		return "", refusef(ToolUnpinned, "the provider %s is not the pinned claude %s", argv0, pin.Path)

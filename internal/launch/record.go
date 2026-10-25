@@ -48,6 +48,7 @@ type Record struct {
 	Resume         bool         `json:"resume,omitempty"`               // the launch asked AMQ to resume
 	PermissionMode string       `json:"permission_mode,omitempty"`      // Claude's, checked with the hook plugin as one unit (R36)
 	ClaudeConfig   string       `json:"claude_config_sha256,omitempty"` // digest of the seat's CLAUDE_CONFIG_DIR managed files
+	ClaudePin      string       `json:"claude_pin_sha256,omitempty"`    // sha256 of the pinned claude the launch probed; seat-exec refuses pin_changed_since_probe when the registry's pin differs
 	AllowRules     string       `json:"claude_allow_rules,omitempty"`   // "permit": worktree allow rules do not refuse the seat
 	Credential     string       `json:"credential_source,omitempty"`    // where a seat credential comes from, never its value
 	PiAgentDir     string       `json:"pi_agent_dir,omitempty"`

@@ -108,6 +108,9 @@ func TestLaunchRecordsTheCommitBaseAndKeepsPreflight(t *testing.T) {
 	if d, _ := claudeseat.Digest(claudeseat.Dir(q.SessionRoot(), "cto", second.LaunchID)); rec.ClaudeConfig == "" || rec.ClaudeConfig != d || rec.LaunchID != second.LaunchID {
 		t.Fatalf("the record's config digest %q is not the launch dir's %q", rec.ClaudeConfig, d)
 	}
+	if rec.ClaudePin == "" || rec.ClaudePin != testPin.SHA256 {
+		t.Fatalf("the staged record carries the probed pin digest %q, want %q", rec.ClaudePin, testPin.SHA256)
+	}
 	if dev, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "dev"), launch.FileName)); strings.Contains(string(dev), "claude_config") {
 		t.Fatal("a Codex seat got a Claude config dir")
 	}

@@ -122,6 +122,12 @@ func (f *fixture) stage() {
 			f.rec.ClaudeConfig = w.Digest
 		}
 	}
+	if f.rec.Runtime == "claude" && f.rec.ClaudePin == "" {
+		// What the launch records: the digest of the claude pin it probed.
+		if pin, ok := f.pinOf(); ok {
+			f.rec.ClaudePin = pin.SHA256
+		}
+	}
 	b, err := launch.Marshal(f.rec)
 	if err != nil {
 		f.t.Fatal(err)
@@ -479,4 +485,14 @@ func TestScrubbedNames(t *testing.T) {
 			t.Errorf("Scrubbed(%s) = %v", name, !want)
 		}
 	}
+}
+
+// pinOf is the fixture registry's claude pin.
+func (f *fixture) pinOf() (registry.Pin, bool) {
+	f.t.Helper()
+	reg, err := registry.Read(registry.Path(f.home))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return reg.PinFor("claude")
 }
