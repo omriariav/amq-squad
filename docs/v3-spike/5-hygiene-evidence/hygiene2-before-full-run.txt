@@ -1,0 +1,5 @@
+# hygiene2 before: the failing block of the full-run gate log (merge gate of 2026-10-25, m-5relc test-all.log)
+--- FAIL: TestDecisionAdapterKillsAHungGuardGroup (1.00s)
+    repass5_fix_test.go:39: no sleeper pid: ""
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	112.005s
