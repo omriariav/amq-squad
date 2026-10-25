@@ -713,7 +713,7 @@ entries:
   status: keep
 - path: internal/cli/gate.go
   v2_lines: 178
-  current_lines: 213
+  current_lines: 216
   fate: keep
   target_lines: 160
   cluster: C21
@@ -722,9 +722,9 @@ entries:
   status: keep
 - path: internal/cli/gate_store.go
   v2_lines: 0
-  current_lines: 476
+  current_lines: 479
   fate: new
-  target_lines: 476
+  target_lines: 479
   cluster: verbs
   extract: ""
   reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate; 4-5: the transport default is the Buzz share"
@@ -1711,9 +1711,9 @@ entries:
   status: new
 - path: internal/cli/seat_commit.go
   v2_lines: 0
-  current_lines: 409
+  current_lines: 406
   fate: new
-  target_lines: 409
+  target_lines: 406
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
@@ -2596,9 +2596,9 @@ entries:
   status: new
 - path: internal/gatestore/clear.go
   v2_lines: 0
-  current_lines: 125
+  current_lines: 84
   fate: new
-  target_lines: 125
+  target_lines: 84
   cluster: gatestore
   extract: ""
   reason: "5-clear: the seat clear request file and the single-use mark of a gate a clear consumed"
@@ -2697,9 +2697,9 @@ entries:
   status: new
 - path: internal/gateverify/clear.go
   v2_lines: 0
-  current_lines: 132
+  current_lines: 141
   fate: new
-  target_lines: 132
+  target_lines: 141
   cluster: gateverify
   extract: ""
   reason: "5-clear: AuthorizeClear and CheckClear: a quarantine_clear gate verified as the typed gates are, for one handle, nonce and quarantine"
@@ -3080,7 +3080,7 @@ entries:
   status: keep
 - path: internal/operatorauth/policy.go
   v2_lines: 280
-  current_lines: 288
+  current_lines: 301
   fate: keep
   target_lines: 248
   cluster: operatorauth
@@ -3774,9 +3774,9 @@ entries:
   status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 1176
+  current_lines: 1233
   fate: new
-  target_lines: 1176
+  target_lines: 1233
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
@@ -3792,27 +3792,27 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 507
+  current_lines: 572
   fate: new
-  target_lines: 507
+  target_lines: 572
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
   status: new
 - path: internal/seatcommit/policy.go
   v2_lines: 0
-  current_lines: 330
+  current_lines: 336
   fate: new
-  target_lines: 330
+  target_lines: 336
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: declared-files, protected-path, managed-block and size-cap checks; growth-gate targets"
   status: new
 - path: internal/seatcommit/widen.go
   v2_lines: 0
-  current_lines: 166
+  current_lines: 170
   fate: new
-  target_lines: 166
+  target_lines: 170
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the widening check against the grant (protected paths, size cap on the dry-run diff)"

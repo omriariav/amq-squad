@@ -74,7 +74,8 @@ func clearConfigDigest(changes []seatexec.ConfigChange) string {
 // clearIdentity is what a request names about the quarantine.
 type clearIdentity struct {
 	incarnation, config string
-	ledger              bool // the quarantine is on the seat's commit ledger
+	ledger              bool                         // the quarantine is on the seat's commit ledger
+	seed                *seatcommit.LedgerQuarantine // a task-store quarantine, recorded on the ledger by the clear
 }
 
 // quarantineIdentity reads the seat's quarantine: the commit ledger's when
@@ -94,7 +95,12 @@ func quarantineIdentity(root string, store task.Store, seat string) (clearIdenti
 	}
 	for _, q := range list {
 		if q.Handle == seat {
-			return clearIdentity{incarnation: clearIncarnation(q.TaskID, q.At), config: clearConfigDigest(nil)}, nil
+			launch := ""
+			if rec, err := seatcommit.StagedSeat(root, seat); err == nil {
+				launch = rec.LaunchID
+			}
+			return clearIdentity{incarnation: clearIncarnation(q.TaskID, q.At), config: clearConfigDigest(nil),
+				seed: &seatcommit.LedgerQuarantine{Task: q.TaskID, Reason: q.Reason, At: q.At, Launch: launch, Config: []seatexec.ConfigChange{}}}, nil
 		}
 	}
 	return clearIdentity{}, fmt.Errorf("seat %s is not quarantined", seat)
@@ -107,29 +113,25 @@ type gatedClear struct {
 	verifier gateverify.Verifier
 	seat     string
 	gateID   string
+	root     string
 }
 
 // authorize decides the clear of the quarantine q now (the ledger lock is
-// held by the caller) and consumes the gate: the answer lifts this
-// quarantine, once.
+// held by the caller). It writes nothing: the sealed ClearRecord that the
+// caller signs and writes in one durable ledger write is what uses the
+// answer, so a failure before that write leaves the answer usable.
 func (g *gatedClear) authorize(q *seatcommit.LedgerQuarantine) (seatcommit.ClearGate, error) {
 	id := clearIdentity{incarnation: clearIncarnation(q.Task, q.At), config: clearConfigDigest(q.Config)}
-	return g.consume(id)
-}
-
-func (g *gatedClear) consume(id clearIdentity) (seatcommit.ClearGate, error) {
-	p, err := g.verifier.AuthorizeClear(g.store, g.seat, g.gateID, id.incarnation, id.config)
+	p, err := g.verifier.AuthorizeClear(g.store, g.seat, g.gateID, id.incarnation, id.config, g.used)
 	if err != nil {
 		return seatcommit.ClearGate{}, err
 	}
-	use := gatestore.ClearUse{GateID: p.GateID, Handle: g.seat, EventID: p.EventID, At: taskNow().UTC().Format(time.RFC3339)}
-	if err := g.store.MarkClearUsed(use); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return seatcommit.ClearGate{}, fmt.Errorf("%s: gate %s already lifted a quarantine", gatestore.RejectReplayed, p.GateID)
-		}
-		return seatcommit.ClearGate{}, err
-	}
 	return seatcommit.ClearGate{GateID: p.GateID, EventID: p.EventID, ConfigDigest: id.config}, nil
+}
+
+// used asks the seat's sealed ledger whether a ClearRecord carries the event.
+func (g *gatedClear) used(eventID string) (bool, error) {
+	return seatcommit.ClearEventUsed(g.root, g.seat, eventID)
 }
 
 // requestClear is the request half for a quarantined seat: it reuses the
@@ -163,7 +165,7 @@ func requestClear(ctx context.Context, sel storeSelection, f taskFlags, seat str
 	if err != nil {
 		return nil, fmt.Errorf("seat clear: the owner's trust store: %w", err)
 	}
-	g := &gatedClear{id: id, store: store, seat: seat, verifier: gateverify.Verifier{Trust: trust, Pin: core.Pin}}
+	g := &gatedClear{id: id, store: store, seat: seat, root: sel.root, verifier: gateverify.Verifier{Trust: trust, Pin: core.Pin}}
 
 	req, err := store.ReadClearRequest(seat)
 	if err != nil {
@@ -171,10 +173,8 @@ func requestClear(ctx context.Context, sel storeSelection, f taskFlags, seat str
 	}
 	reuse := false
 	if req != nil && req.Incarnation == id.incarnation && req.ConfigDigest == id.config {
-		if used, uerr := store.ClearUsed(req.GateID); uerr == nil && used == nil {
-			if rec, lerr := store.Load(req.GateID); lerr == nil && store.State(rec, taskNow()) != gatestore.StateExpired && store.State(rec, taskNow()) != gatestore.StateDenied {
-				reuse = true
-			}
+		if rec, lerr := store.Load(req.GateID); lerr == nil && store.State(rec, taskNow()) != gatestore.StateExpired && store.State(rec, taskNow()) != gatestore.StateDenied {
+			reuse = true
 		}
 	}
 	if !reuse {
@@ -183,7 +183,7 @@ func requestClear(ctx context.Context, sel storeSelection, f taskFlags, seat str
 		}
 	}
 	g.gateID = req.GateID
-	if _, err := g.verifier.AuthorizeClear(store, seat, req.GateID, id.incarnation, id.config); err != nil {
+	if _, err := g.verifier.AuthorizeClear(store, seat, req.GateID, id.incarnation, id.config, g.used); err != nil {
 		rec, _ := store.Load(req.GateID)
 		sent := store.QuestionPublished(req.GateID)
 		if !sent && terr == nil {

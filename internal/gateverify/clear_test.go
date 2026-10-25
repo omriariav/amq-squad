@@ -2,6 +2,7 @@ package gateverify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -12,6 +13,8 @@ import (
 // The Buzz-signed seat clear's rows (phase 5): a quarantine_clear gate is
 // answered and verified as the four typed gates are, and a clear completes
 // only for the handle, nonce and quarantine the request named.
+
+func never(string) (bool, error) { return false, nil }
 
 const (
 	clearInc = "t1@1761350000000000000"
@@ -46,34 +49,27 @@ func TestClearCompletesOnlyOnTheOwnersVerifiedAnswer(t *testing.T) {
 	rec, q := f.clearRequest("s1", 1)
 	v := f.verifier()
 	// no answer: the clear waits as an open gate
-	if _, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg); Code(err) != RejectClearUnsigned {
+	if _, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg, never); Code(err) != RejectClearUnsigned {
 		t.Fatalf("before any answer: %v", err)
 	}
 	// a seat's own key (not the owner's) never opens it
 	if res := f.core.HandleEvent(context.Background(), f.answer(f.seat, tuple("approve", rec), q.EventID, f.clock)); res.Outcome != "rejected" {
 		t.Fatalf("a non-owner answer: %+v", res)
 	}
-	if _, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg); Code(err) != RejectClearUnsigned {
+	if _, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg, never); Code(err) != RejectClearUnsigned {
 		t.Fatalf("after a non-owner answer: %v", err)
 	}
 	// a plain DM answer (outside the gate thread) is re-asked, not accepted
 	if res := f.core.HandleEvent(context.Background(), f.answer(f.owner, tuple("approve", rec), "", f.clock)); res.Outcome != "reasked" {
 		t.Fatalf("a plain DM answer: %+v", res)
 	}
-	if _, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg); Code(err) != RejectClearUnsigned {
+	if _, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg, never); Code(err) != RejectClearUnsigned {
 		t.Fatalf("after a plain DM answer: %v", err)
 	}
 	event := f.approve(rec, q)
-	p, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg)
+	p, err := v.AuthorizeClear(f.store, "s1", rec.GateID, clearInc, clearCfg, never)
 	if err != nil || p.GateID != rec.GateID || p.EventID != event {
 		t.Fatalf("the owner's answer: %+v, %v", p, err)
-	}
-	// the record check at the commit step needs the mark a completed clear leaves
-	if err := v.CheckClear(f.store, "s1", rec.GateID, event, clearInc, clearCfg); Code(err) != RejectClearUnsigned {
-		t.Fatalf("a clear without its mark verified: %v", err)
-	}
-	if err := f.store.MarkClearUsed(gatestore.ClearUse{GateID: rec.GateID, Handle: "s1", EventID: event, At: "2026-10-24T12:00:00Z"}); err != nil {
-		t.Fatal(err)
 	}
 	if err := v.CheckClear(f.store, "s1", rec.GateID, event, clearInc, clearCfg); err != nil {
 		t.Fatalf("the record's proof: %v", err)
@@ -90,31 +86,35 @@ func TestClearAnswerWithAnOldNonceIsRefusedAsReplayed(t *testing.T) {
 	event := f.approve(old, oq)
 	// a second quarantine of the seat: request 2 supersedes request 1
 	cur, _ := f.clearRequest("s1", 2)
-	if _, err := v.AuthorizeClear(f.store, "s1", old.GateID, clearInc, clearCfg); Code(err) != RejectReplayed {
+	if _, err := v.AuthorizeClear(f.store, "s1", old.GateID, clearInc, clearCfg, never); Code(err) != RejectReplayed {
 		t.Fatalf("the old nonce's accepted answer cleared the new request: %v", err)
 	}
-	if _, err := v.AuthorizeClear(f.store, "s1", cur.GateID, clearInc, clearCfg); Code(err) != RejectClearUnsigned {
+	if _, err := v.AuthorizeClear(f.store, "s1", cur.GateID, clearInc, clearCfg, never); Code(err) != RejectClearUnsigned {
 		t.Fatalf("the new request without its own answer: %v", err)
 	}
-	// an answer that already lifted a quarantine lifts no second one
+	// an answer that already lifted a quarantine lifts no second one: used
+	// is the seat's sealed ledger holding a ClearRecord with the event id
 	f2 := newFixture(t)
 	r1, q1 := f2.clearRequest("s1", 1)
 	e1 := f2.approve(r1, q1)
-	if _, err := f2.verifier().AuthorizeClear(f2.store, "s1", r1.GateID, clearInc, clearCfg); err != nil {
+	if _, err := f2.verifier().AuthorizeClear(f2.store, "s1", r1.GateID, clearInc, clearCfg, never); err != nil {
 		t.Fatal(err)
 	}
-	if err := f2.store.MarkClearUsed(gatestore.ClearUse{GateID: r1.GateID, Handle: "s1", EventID: e1, At: "2026-10-24T12:00:00Z"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f2.verifier().AuthorizeClear(f2.store, "s1", r1.GateID, clearInc, clearCfg); Code(err) != RejectReplayed {
+	onLedger := func(id string) (bool, error) { return id == e1, nil }
+	if _, err := f2.verifier().AuthorizeClear(f2.store, "s1", r1.GateID, clearInc, clearCfg, onLedger); Code(err) != RejectReplayed {
 		t.Fatalf("a used answer cleared again: %v", err)
+	}
+	// a ledger that cannot be read refuses
+	broken := func(string) (bool, error) { return false, errors.New("ledger unreadable") }
+	if _, err := f2.verifier().AuthorizeClear(f2.store, "s1", r1.GateID, clearInc, clearCfg, broken); Code(err) != RejectClearUnsigned {
+		t.Fatalf("an unreadable ledger: %v", err)
 	}
 	// the owner's event itself is single use in the store, as for any typed gate
 	if res := f2.core.HandleEvent(context.Background(), f2.answer(f2.owner, tuple("approve", r1), q1.EventID, f2.clock)); res.Code != RejectReplayed {
 		t.Fatalf("a re-sent answer: %+v", res)
 	}
 	// an answer for an earlier quarantine of the seat (another incarnation)
-	if _, err := f.verifier().AuthorizeClear(f.store, "s1", old.GateID, "t1@1", clearCfg); Code(err) != RejectReplayed {
+	if _, err := f.verifier().AuthorizeClear(f.store, "s1", old.GateID, "t1@1", clearCfg, never); Code(err) != RejectReplayed {
 		t.Fatalf("an answer for another incarnation: %v", err)
 	}
 	_ = event
@@ -126,19 +126,19 @@ func TestClearAnswerForAnotherHandleIsRefused(t *testing.T) {
 	other, oq := f.clearRequest("s2", 7)
 	f.approve(other, oq)
 	mine, _ := f.clearRequest("s1", 8)
-	if _, err := v.AuthorizeClear(f.store, "s1", other.GateID, clearInc, clearCfg); Code(err) != RejectClearHandle {
+	if _, err := v.AuthorizeClear(f.store, "s1", other.GateID, clearInc, clearCfg, never); Code(err) != RejectClearHandle {
 		t.Fatalf("seat s2's answer cleared s1: %v", err)
 	}
 	if err := v.CheckClear(f.store, "s1", other.GateID, "", clearInc, clearCfg); Code(err) != RejectClearHandle {
 		t.Fatalf("seat s2's answer verified as s1's record: %v", err)
 	}
-	if _, err := v.AuthorizeClear(f.store, "s1", mine.GateID, clearInc, clearCfg); Code(err) != RejectClearUnsigned {
+	if _, err := v.AuthorizeClear(f.store, "s1", mine.GateID, clearInc, clearCfg, never); Code(err) != RejectClearUnsigned {
 		t.Fatalf("s1's own request without an answer: %v", err)
 	}
 	// a gate of another class is no clear
 	rel, rq := f.raise("rel-1", "tag", gatetarget.Command("git tag", "v1"))
 	f.approve(rel, rq)
-	if _, err := v.AuthorizeClear(f.store, "s1", rel.GateID, clearInc, clearCfg); Code(err) != RejectClearUnsigned {
+	if _, err := v.AuthorizeClear(f.store, "s1", rel.GateID, clearInc, clearCfg, never); Code(err) != RejectClearUnsigned {
 		t.Fatalf("a tag gate cleared a seat: %v", err)
 	}
 }

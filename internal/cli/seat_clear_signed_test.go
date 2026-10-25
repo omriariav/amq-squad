@@ -11,6 +11,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -143,17 +144,17 @@ func TestSignedClearRecordCarriesGateAndEventAndVerifies(t *testing.T) {
 	if got, _ := s.Get(tk.ID); got.State != task.StateInProgress {
 		t.Fatalf("not re-armed: %+v", got)
 	}
-	// the answer lifted this quarantine once
-	store, _ := gatestore.Open(f.root)
-	if u, _ := store.ClearUsed(rec.GateID); u == nil || u.EventID != event {
-		t.Fatalf("the gate's mark: %+v", u)
+	// the answer is used once: the ClearRecord on the sealed ledger says so
+	if used, err := seatcommit.ClearEventUsed(f.root, "s1", event); err != nil || !used {
+		t.Fatalf("the ledger does not hold the used answer: %v %v", used, err)
 	}
 	if _, err := signedClear(t, f); err == nil {
 		t.Fatal("a second clear of a cleared seat succeeded")
 	}
 	// a record whose gate proof no longer stands in the gate store (the
-	// answer's mark gone, or the answer file itself) does not count
-	for _, rel := range []string{filepath.Join("clears", "used", rec.GateID+".json"), filepath.Join("answers", rec.GateID+".json")} {
+	// answer file gone) does not count
+	store, _ := gatestore.Open(f.root)
+	for _, rel := range []string{filepath.Join("answers", rec.GateID+".json")} {
 		p := store.Dir(rel)
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -248,5 +249,126 @@ func TestDoctorNamesTheClearModeAndAWaitingClear(t *testing.T) {
 	}
 	if checks := doctorClearChecks(f.root); len(checks) != 2 || !strings.Contains(checks[1].Detail, "waiting for the owner's signed answer") {
 		t.Fatalf("doctor after the post: %+v", checks)
+	}
+}
+
+// A seat quarantined in the task store alone (no ledger record) is found, is
+// cleared only through the signed path, and the clear writes a signed
+// ClearRecord into a seed entry it creates on the ledger for the handle. The
+// quarantine is built the way the scheduler builds it: by the exit check.
+func TestTaskStoreOnlyQuarantineClearsThroughTheSignedPathAndLeavesARecord(t *testing.T) {
+	f := newGateCLIFixture(t)
+	ownerProcess(t, nil, false)
+	mustWrite(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	mustWrite(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
+	mustWrite(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
+	s, _ := task.Open(f.root)
+	r := seatcommit.ExitCheck(seatcommit.Options{Root: f.root, Handle: "s1", Task: task.Task{ID: "t-hs"}, Now: taskNow, Clear: ownerTrust{Root: f.root}}, "gone")
+	if !r.Quarantine {
+		t.Fatalf("the exit check did not quarantine: %+v", r)
+	}
+	if err := s.Quarantine(task.Quarantine{Handle: "s1", Reason: r.ReasonCode, Detail: r.Detail, TaskID: "t-hs", At: taskNow()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seatcommit.ReadLedger(f.root, "s1"); !os.IsNotExist(err) {
+		t.Fatalf("the exit check left a ledger: %v", err)
+	}
+	if _, err := signedClear(t, f); !errors.Is(err, errClearUnsigned) {
+		t.Fatalf("an unsigned clear: %v", err)
+	}
+	if q, _ := task.Quarantined(s.Dir); len(q) != 1 {
+		t.Fatalf("the quarantine was lifted without the answer: %+v", q)
+	}
+	if _, err := seatcommit.ReadLedger(f.root, "s1"); !os.IsNotExist(err) {
+		t.Fatalf("a refused clear created a ledger: %v", err)
+	}
+	rec, q := clearGateOf(t, f)
+	event := ownerApproves(t, f, rec, q)
+	if out, err := signedClear(t, f); err != nil {
+		t.Fatalf("the clear after the answer: %v\n%s", err, out)
+	}
+	l, err := seatcommit.ReadLedger(f.root, "s1")
+	if err != nil || !l.Seeded || l.Quarantine == nil || l.Quarantine.Clear == nil {
+		t.Fatalf("no seed entry for the handle: %+v %v", l, err)
+	}
+	c := l.Quarantine.Clear
+	if c.GateID != rec.GateID || c.EventID != event || c.Condition != r.ReasonCode || !c.Verified("s1", l.Quarantine, ownerTrust{Root: f.root}) {
+		t.Fatalf("the signed record: %+v", c)
+	}
+	if q, _ := task.Quarantined(s.Dir); len(q) != 0 {
+		t.Fatalf("the task-store quarantine stayed: %+v", q)
+	}
+	// a seat with neither record is not quarantined
+	if _, err := signedClear(t, f); err == nil || !strings.Contains(err.Error(), "not quarantined") {
+		t.Fatalf("a cleared seat: %v", err)
+	}
+}
+
+// F1 through the gate store: after a completed clear, the exit check, the
+// commit step (a dry run included) and the widen dry run each verify the
+// owner's answer and refuse when it is gone or the gate store is unreadable.
+func TestEveryConsumerRefusesAClearWhoseAnswerIsGone(t *testing.T) {
+	f, s, tk := signedClearSeat(t)
+	ownerProcess(t, nil, false)
+	if _, err := signedClear(t, f); !errors.Is(err, errClearUnsigned) {
+		t.Fatalf("request: %v", err)
+	}
+	rec, q := clearGateOf(t, f)
+	ownerApproves(t, f, rec, q)
+	if out, err := signedClear(t, f); err != nil {
+		t.Fatalf("the clear: %v\n%s", err, out)
+	}
+	cur, _ := s.Get(tk.ID)
+	g, _ := grants.Load(cur.ProjectPath)
+	o := seatcommit.Options{Root: f.root, Handle: "s1", Task: cur, Grants: g, Now: taskNow, Clear: ownerTrust{Root: f.root}}
+	dry := o
+	dry.DryRun = true
+	consumers := map[string]func() string{
+		"exit check": func() string { return seatcommit.ExitCheck(o, "gone").ReasonCode },
+		"commit dry": func() string { return seatcommit.Run(dry).ReasonCode },
+		"widen": func() string {
+			return seatcommit.CheckWiden(seatcommit.WidenOptions{Root: f.root, Task: cur, Added: []string{"cmd/other.go"}, Grants: g, RepoRoot: cur.ProjectPath, Commit: &o}).ReasonCode
+		},
+	}
+	for name, run := range consumers {
+		if got := run(); got == seatcommit.ReasonQuarantineUnverified {
+			t.Fatalf("%s refused a verified clear", name)
+		}
+	}
+	store, _ := gatestore.Open(f.root)
+	answer := store.Dir("answers", rec.GateID+".json")
+	raw, err := os.ReadFile(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gates := store.Dir("gates")
+	breakages := map[string]struct{ break_, restore func() }{
+		"answer file deleted":   {func() { os.Remove(answer) }, func() { os.WriteFile(answer, raw, 0o600) }},
+		"gate store unreadable": {func() { os.Chmod(gates, 0) }, func() { os.Chmod(gates, 0o700) }},
+	}
+	for what, b := range breakages {
+		b.break_()
+		for name, run := range consumers {
+			if got := run(); got != seatcommit.ReasonQuarantineUnverified {
+				t.Errorf("%s with the %s: reason %q", name, what, got)
+			}
+		}
+		b.restore()
+	}
+}
+
+// F2: quarantine_clear is raised only by seat clear, after the pty proof; the
+// generic gate raise refuses it, whoever runs it.
+func TestGenericGateRaiseRefusesTheReservedClearAction(t *testing.T) {
+	f := newGateCLIFixture(t)
+	_, _, err := captureOutput(t, func() error {
+		return runGate([]string{"raise", "--project", f.project, "--session", "s", "--me", "cto", "--gate", "spam-1", "--action", "quarantine_clear", "--target", "clear s1 nonce=a incarnation=b config=c"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "action_reserved") {
+		t.Fatalf("gate raise of a reserved action: %v", err)
+	}
+	store, _ := gatestore.Open(f.root)
+	if ids, _ := store.IDs(); len(ids) != 0 {
+		t.Fatalf("a gate was written: %v", ids)
 	}
 }

@@ -67,9 +67,10 @@ func clearGate(store gatestore.Store, handle, gateID, incarnation, configDigest 
 // presents for handle's quarantine (incarnation and config digest as the
 // ledger holds them now). It returns the proof for the signed clear record.
 // In order: the gate is the clear of this seat and this quarantine; its
-// nonce is the seat's current request's and no clear has used the gate (an
-// old nonce is a replay); the owner's answer verifies in full.
-func (v Verifier) AuthorizeClear(store gatestore.Store, handle, gateID, incarnation, configDigest string) (ClearProof, error) {
+// nonce is the seat's current request's (an old nonce is a replay); the
+// owner's answer verifies in full; and no ClearRecord on the seat's ledger
+// carries the answer's event id (used says so).
+func (v Verifier) AuthorizeClear(store gatestore.Store, handle, gateID, incarnation, configDigest string, used func(eventID string) (bool, error)) (ClearProof, error) {
 	rec, nonce, err := clearGate(store, handle, gateID, incarnation, configDigest)
 	if err != nil {
 		return ClearProof{}, err
@@ -81,10 +82,21 @@ func (v Verifier) AuthorizeClear(store gatestore.Store, handle, gateID, incarnat
 	if req == nil || req.GateID != gateID || req.Nonce != nonce {
 		return ClearProof{}, reject(gatestore.RejectReplayed, "the answer carries a nonce that is not seat %s's current request's: it is refused as replayed", handle)
 	}
-	if u, err := store.ClearUsed(gateID); err != nil || u != nil {
-		return ClearProof{}, reject(gatestore.RejectReplayed, "gate %s already lifted a quarantine", gateID)
+	p, err := v.clearAnswer(store, rec)
+	if err != nil {
+		return ClearProof{}, err
 	}
-	return v.clearAnswer(store, rec)
+	// "used" is a ClearRecord with this event id on the seat's sealed ledger;
+	// a ledger that cannot be read refuses
+	if used == nil {
+		return ClearProof{}, reject(RejectClearUnsigned, "no use check was given for gate %s", gateID)
+	}
+	if u, err := used(p.EventID); err != nil {
+		return ClearProof{}, reject(RejectClearUnsigned, "the seat's ledger cannot say whether the answer was used: %v", err)
+	} else if u {
+		return ClearProof{}, reject(gatestore.RejectReplayed, "the answer %s already lifted a quarantine", p.EventID)
+	}
+	return p, nil
 }
 
 // clearAnswer is the full consumer check on the clear gate's approval.
@@ -124,9 +136,6 @@ func (v Verifier) CheckClear(store gatestore.Store, handle, gateID, eventID, inc
 	}
 	if p.EventID != eventID {
 		return reject(RejectClearUnsigned, "the clear names event %s, the verified answer is %s", eventID, p.EventID)
-	}
-	if u, err := store.ClearUsed(gateID); err != nil || u == nil || u.EventID != eventID || u.Handle != handle {
-		return reject(RejectClearUnsigned, "gate %s has no clear mark for event %s", gateID, eventID)
 	}
 	return nil
 }

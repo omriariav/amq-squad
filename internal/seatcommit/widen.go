@@ -119,6 +119,10 @@ func CheckWiden(o WidenOptions) WidenDecision {
 			d.ReasonCode, d.Detail = "widen_check_failed", "the dry run of the commit step failed: "+res.Detail
 			return d
 		}
+		if !res.OK && res.ReasonCode == ReasonQuarantineUnverified {
+			d.ReasonCode, d.Detail = res.ReasonCode, res.Detail
+			return d
+		}
 		for _, v := range res.Violations {
 			switch v.Reason {
 			case ReasonSizeCap:

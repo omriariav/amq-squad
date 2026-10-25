@@ -13,7 +13,10 @@ import (
 // consumed:
 //
 //	clears/<handle>.json        the current request (replaced by a new quarantine's)
-//	clears/used/<gate id>.json  the clear that consumed the gate, created once
+//
+// Whether an owner answer was used is not recorded here: the sealed
+// ClearRecord on the seat's commits ledger carries the answer's event id and
+// is the only use mark (seatcommit.ClearEventUsed).
 
 // ClearRequestSchema names the request file format.
 const ClearRequestSchema = "amq-squad-clear-request/1"
@@ -78,48 +81,4 @@ func (s Store) PutClearRequest(r ClearRequest) error {
 		return err
 	}
 	return writeAtomic(p, mustJSON(r))
-}
-
-// ClearUse is the mark of a gate a clear consumed.
-type ClearUse struct {
-	GateID  string `json:"gate_id"`
-	Handle  string `json:"handle"`
-	EventID string `json:"event_id"`
-	At      string `json:"at"`
-}
-
-func (s Store) usedPath(gateID string) (string, error) {
-	if err := ValidGateID(gateID); err != nil {
-		return "", err
-	}
-	return s.Dir("clears", "used", gateID+".json"), nil
-}
-
-// ClearUsed reads the mark of a gate, nil when no clear used it.
-func (s Store) ClearUsed(gateID string) (*ClearUse, error) {
-	p, err := s.usedPath(gateID)
-	if err != nil {
-		return nil, err
-	}
-	var u ClearUse
-	if err := readStrict(p, &u); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("clear mark %s: %w", gateID, err)
-	}
-	return &u, nil
-}
-
-// MarkClearUsed records that a clear consumed the gate; a second mark for the
-// same gate fails (os.ErrExist): an answer lifts one quarantine, once.
-func (s Store) MarkClearUsed(u ClearUse) error {
-	p, err := s.usedPath(u.GateID)
-	if err != nil {
-		return err
-	}
-	if !handleRe.MatchString(u.Handle) || !hex64.MatchString(u.EventID) {
-		return errors.New("clear mark names no handle or event")
-	}
-	return writeOnce(p, mustJSON(u))
 }

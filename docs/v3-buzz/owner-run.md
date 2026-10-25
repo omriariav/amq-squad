@@ -291,8 +291,9 @@ and the thread reply `approved, verified by the core.` Record T13.
 Expected: `seat q1 cleared (signed by ...)`, exit 0. Then the lead:
 
 ```
+jq '.quarantine.clear | {gate_id, event_id, config_digest, launch, condition}' "$R/extensions/amq-squad/commits/q1.json"
 amq-squad seat commit --seat q1 --root "$R"      # commits the kept tree only
-jq '.quarantine.clear | {gate_id, event_id, config_digest}' "$R/extensions/amq-squad/commits/q1.json"
+jq '.cleared[0].clear.event_id' "$R/extensions/amq-squad/commits/q1.json"   # the record stays on the ledger
 ```
 
 Expected: the clear record names the gate and the answer's event id (the

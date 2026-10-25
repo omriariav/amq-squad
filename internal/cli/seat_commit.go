@@ -147,17 +147,14 @@ func runSeatClear(args []string, out io.Writer) error {
 	if gate != nil {
 		authorize = gate.authorize
 	}
-	if l, err := seatcommit.ClearQuarantineWith(sel.root, *seat, signer, taskNow(), authorize); err == nil {
+	var seed *seatcommit.LedgerQuarantine
+	if gate != nil {
+		seed = gate.id.seed
+	}
+	if l, err := seatcommit.ClearQuarantineSeeded(sel.root, *seat, signer, taskNow(), seed, authorize); err == nil {
 		data.Evidence = l.Quarantine
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("seat clear: %w", err)
-	}
-	if gate != nil && !gate.id.ledger {
-		// a quarantine of the task store alone has no ledger record to carry
-		// the proof; the answer is consumed here
-		if _, err := gate.consume(gate.id); err != nil {
-			return fmt.Errorf("seat clear: %w", err)
-		}
 	}
 	if data.Cleared, err = sel.store.ClearQuarantine(*seat); err != nil {
 		return fmt.Errorf("seat clear: %w", err)

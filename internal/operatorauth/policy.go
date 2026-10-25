@@ -286,3 +286,16 @@ func Evaluate(kind, action string, allowlist []string) error {
 	}
 	return nil
 }
+
+// ReasonActionReserved is the refusal of a generic raise of a reserved
+// action.
+const ReasonActionReserved = "action_reserved"
+
+// Reserved reports whether an action may be raised only by its own verb: the
+// Buzz-signed seat clear's quarantine_clear gate is raised by `seat clear`
+// after the owner's pty proof, never by the generic `gate raise`, which any
+// process with the session flags can run.
+func Reserved(action string) bool {
+	canonical, err := CanonicalAction(action)
+	return err == nil && canonical == "quarantine_clear"
+}
