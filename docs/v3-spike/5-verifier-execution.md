@@ -130,7 +130,7 @@ Judgment call: the reservation is a file in the store (written and read under it
 
 ## The fourth round on the re-pass of e9ddc66c
 
-One short commit on e9ddc66c: five items of the lead's re-pass (items 2 and 3 and item 1's lock discipline held; the reservation's semantics and a continued quoted scalar did not). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix4-revert-check.txt` (every case of `tools/cases_verifier.py`). Gate on a quiet host: `5-verifier-evidence/fix4-gate.txt`. Lines refer to the e9ddc66c export.
+One short commit on e9ddc66c: five items of the lead's re-pass (items 2 and 3 and item 1's lock discipline held; the reservation's semantics and a continued quoted scalar did not). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix4-revert-check.txt` (75 rules, all OK, every case of `tools/cases_verifier.py`, run on 376f053c; the earlier rows' cases of the reservation and the quoted-colon rule rewritten for the new code). Gate on a quiet host: `5-verifier-evidence/fix4-gate.txt` (at 376f053c, clean tree: gate OK, 3814 PASS, 0 FAIL; race on task, grants, routing, scheduler, schedproc, seatcommit, status, ledger, registry, redact, cli with `-timeout 45m`). Lines refer to the e9ddc66c export.
 
 | # | finding | fix | test row |
 | --- | --- | --- | --- |
