@@ -86,14 +86,14 @@ The README describes the latest release only. Earlier releases live in
 Install the v2 module path:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@latest
 amq-squad version
 ```
 
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.31.0
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the

@@ -1,0 +1,1 @@
+release metadata matches v3.0.0
