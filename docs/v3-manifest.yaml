@@ -489,7 +489,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 115
+  current_lines: 117
   fate: keep
   target_lines: 101
   cluster: C29
