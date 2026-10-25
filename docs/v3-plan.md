@@ -1771,8 +1771,11 @@ Release prep.
   probe is strict (a probe failure is busy); the verified worktree is
   held by descriptor from verification to removal with the parent entry
   re-checked by dev+inode (worktree_replaced otherwise); every candidate
-  appears in the report with a reason. [2.7, reviewer plan and narrow
-  passes, 2026-10-25]
+  appears in the report with a reason. Merged 2026-10-25 as 889c5cd6
+  (branch v3-5-uninstall, five commits, three Codex narrow passes, 54
+  reverting rules, lead final read and gate on the merge result; size of
+  3.0 79,815). Phase 5's code side is complete with it; the release
+  commit follows. [2.7, phase 5 uninstall result]
 - After migrate and uninstall merge: the release commit from the
   recorded list, the release gate owner-signed through 7.3's tag-rule
   path, then the owner session rows. Nothing else is planned on the code
