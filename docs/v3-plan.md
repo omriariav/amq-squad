@@ -1809,8 +1809,17 @@ Release prep.
   descriptor from plan to apply and reads and removes only through it
   (root_changed when the path no longer matches), the plan refusing
   before anything is touched and a change during apply stopping at the
-  first refusal with a partial report. [2.7, reviewer plan and narrow
-  passes, 2026-10-25]
+  first refusal with a partial report. Merged 2026-10-25 as bee6ffd5
+  (branch v3-5-migrate, four commits after the base, three Codex narrow
+  passes, 52 reverting rules, lead final read and gate on the merge
+  result; size of 3.0 77,852): docs/squad-yaml.md with the key list and
+  the 20 never-settable keys named on refusal, the golden self-check,
+  schema 2 refused, squad.yaml a protected path, the composite apply
+  digest with squad_yaml_changed and squad_yaml_digest_mismatch, and
+  `amq-squad migrate` as a dry run by default with --write, --remove-v2,
+  the exact unmapped report, grants.yaml.proposed, the safety-default and
+  credential refusals, the one output funnel and the one root
+  descriptor. [2.7, phase 5 migrate result]
 
 Owner session. Each item needs the owner at the keyboard; agents prepare
 the runs and record them.
