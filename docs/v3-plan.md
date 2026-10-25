@@ -1754,7 +1754,18 @@ Release prep.
   removal runs through the fsanchor descriptor walk and a symlink in
   place of an expected directory is uninstall_refused_symlink with
   nothing removed; idempotent, a partial failure leaves a report and a
-  non-zero exit. [2.7, reviewer plan, 2026-10-25]
+  non-zero exit. Rulings from its narrow pass: evidence refs are
+  enumerated from git (for-each-ref with symref), never from the ledger,
+  a symbolic ref refuses the repository's purge and deletion is
+  `update-ref --no-deref -d <ref> <oldoid>`; every read, open, list or
+  probe error in the busy check is busy with the path named; a worktree is
+  removed only when its project root is the task's project_path from the
+  task store, `git worktree list` of that project names it and its .git
+  file resolves back into that project; records are removed after
+  everything they describe; every named directory is opened O_NOFOLLOW
+  before any removal; a hard-linked secret is unlinked without zeroing;
+  the uninstall holds the scheduler's own lock for its run; only ENOENT
+  is absent. [2.7, reviewer plan and narrow pass, 2026-10-25]
 - After migrate and uninstall merge: the release commit from the
   recorded list, the release gate owner-signed through 7.3's tag-rule
   path, then the owner session rows. Nothing else is planned on the code
