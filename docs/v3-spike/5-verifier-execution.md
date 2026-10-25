@@ -142,6 +142,26 @@ One short commit on e9ddc66c: five items of the lead's re-pass (items 2 and 3 an
 
 Recorded limit, beside the others: a same-UID process can plant a marker and keep a seat from every lease until a CleanSeat takes it over (malformed or older than the TTL) or the lead removes it. Hygiene list: `internal/seatlaunch` TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists failed once in a full local run on a TempDir cleanup race (`launch/cto: directory not empty`, the class of the hygiene log's item 3), passing alone three times; the package is untouched by this branch.
 
+## The fifth round on the re-pass of 5303cba7
+
+One short commit on 5303cba7: the P1 and the small items of the lead's re-pass (items 1, 2 and 4 of the fourth round held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix5-revert-check.txt` (every case of `tools/cases_verifier.py`). Gate on a quiet host: `5-verifier-evidence/fix5-gate.txt`. Lines refer to the 5303cba7 export.
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| P1 | plain YAML on one line was not redacted at all (redact.go:199, :354, :377, :397): a bare key, a quoted key, a flow mapping, an indentless list under the key | a per-line rule (`yamlLineRE`): a credential-named key, bare or quoted, after the line's start, a blank, `{` or `,` and an optional `- `, with a quoted scalar, or a bare one up to a flow delimiter or a comment; an indentless list item at the key's column belongs to the key's block | TestBlockRedactsOneLineYAML (the four inputs); TestOneLineYAMLCredentialNeverReachesTheEvidence (the verifier's capture in the ledger and the lead's tail, four subtests); TestOneLineYAMLCredentialNeverReachesTheHookLedger (a ledger line) |
+| (a) | the closing-quote search stopped at 64 lines and fell back to indentation (:425, :397) | the search runs to the closing quote or the end of the buffer (capped already at the source); an unclosed quote is redacted to the end of the buffer, never back to indentation | TestQuotedScalarHasNoLineBound; TestBlockRedactsAContinuedQuotedYAMLScalar (unclosed) |
+| (b) | quote tracking ran inside a block scalar (:383, :438), so `password: \|` then a quoted line swallowed the next key | a block scalar's lines are text: only the indentation rule applies | TestBlockScalarQuotesAreText |
+| (c) | property | Block(Block(x)) holds no fixture value Block(x) removed (equality not required), over the corpus of every shape the rows use | TestBlockOfBlockKeepsRemovedValuesOut |
+| (d) | a far-future marker held the seat forever, silently (unclean.go:62, :106, :170) | a marker dated more than one TTL ahead is invalid: `unclean_marker_invalid` with the attention row, and open to takeover like a malformed one | TestFarFutureMarkerIsInvalidAndTakenOver |
+| (e) | the marker was a truncating WriteFile (:113) | written through `atomicfile.Write` (temp, fsync, rename, directory fsync) | TestMarkerWritesAreNeverSeenPartial (a reader racing 1,500 takeovers never reads a partial marker) |
+| (f) | ReserveSeat kept blanks, grant trimmed (:113, lease.go:53) | one normalizer, `task.SeatHandle` (trimmed, one path component), for ReserveSeat, ReleaseSeat and grant | TestMarkerHandleIsNormalizedOnce |
+| (g) | prepare skipped CleanSeat on a ledger-read error and Grant leased an uncleaned seat (prepare.go:37) | only a missing ledger (no recorded base) leaves the seat as it is; any other read error is `seat_prepare_failed`, no grant | TestPrepareRefusesALedgerReadError |
+| structure | the marker check was one of two calls in grant | every new lease passes `seatLeasable` (quarantine and marker, one place); the existing-lease paths (a claim of an already granted lease, a widening, a re-armed commit) do not consult the marker: recorded, a marker beside a live lease is a planted one (the same-UID limit) | the existing rows |
+
+Judgment calls of the one-line rule (the repository scan runs the same rule over the docs and the evidence, so prose had to stay legal): a bare value is a credential only when it is one token with a letter or digit, not a YAML null or boolean, not a masked value (`***`), not a call expression (`credentialSource(rt)`); a quoted value always is; the key `key` is skipped, as the JSON rule skips it.
+
+Hygiene list: `internal/cli` TestDecisionAdapterKillsAHungGuardGroup failed once in a full local run (its stand-in had not written the sleeper's pid within the 1 s watchdog under load), passing alone three times; the package's code is untouched by this round.
+
 ## Behavior changes
 
 - `seat commit` runs the class's configured verifier on the snapshot tree before it pushes; a fail is `verdict_failed` for the lead and nothing is pushed; a pass completes.

@@ -50,9 +50,9 @@ func HeldBy(holder string, all []Task) *Task {
 }
 
 func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, now time.Time) error {
-	holder = strings.TrimSpace(holder)
-	if holder == "" {
-		return fmt.Errorf("a lease needs a holder handle")
+	holder, err := SeatHandle(holder)
+	if err != nil {
+		return fmt.Errorf("a lease needs a holder handle: %w", err)
 	}
 	if t.State != StatePending {
 		return fmt.Errorf("task %s is %s, not pending", t.ID, t.State)
@@ -64,10 +64,7 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 		return fmt.Errorf("seat %s already holds task %s", holder, busy.ID)
 	}
 	if all.dir != "" {
-		if err := quarantined(all.dir, holder); err != nil {
-			return err
-		}
-		if err := unclean(all.dir, holder); err != nil {
+		if err := seatLeasable(all.dir, holder); err != nil {
 			return err
 		}
 	}

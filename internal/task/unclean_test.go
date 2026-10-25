@@ -56,7 +56,7 @@ func TestMalformedOrUnreadableMarkerIsUnclean(t *testing.T) {
 	if _, err := s.Claim(a.ID, "seat-1", nil, time.Hour, t0); !errors.Is(err, ErrSeatUnclean) {
 		t.Fatalf("a claim over a malformed marker: %v", err)
 	}
-	if ps := SeatMarkerProblems(s.Dir); len(ps) != 1 || ps[0].Handle != "seat-1" || ps[0].Path != p || !strings.Contains(ps[0].Problem, "malformed") {
+	if ps := SeatMarkerProblems(s.Dir, t0); len(ps) != 1 || ps[0].Handle != "seat-1" || ps[0].Path != p || !strings.Contains(ps[0].Problem, "malformed") {
 		t.Fatalf("the marker problems: %+v", ps)
 	}
 	if err := os.Chmod(p, 0o000); err != nil {
@@ -69,7 +69,7 @@ func TestMalformedOrUnreadableMarkerIsUnclean(t *testing.T) {
 	if _, err := s.Claim(a.ID, "seat-1", nil, time.Hour, t0); !errors.Is(err, ErrSeatUnclean) {
 		t.Fatalf("a claim over an unreadable marker: %v", err)
 	}
-	if ps := SeatMarkerProblems(s.Dir); len(ps) != 1 || !strings.Contains(ps[0].Problem, "cannot be read") {
+	if ps := SeatMarkerProblems(s.Dir, t0); len(ps) != 1 || !strings.Contains(ps[0].Problem, "cannot be read") {
 		t.Fatalf("the unreadable marker's problem: %+v", ps)
 	}
 }

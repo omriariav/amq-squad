@@ -67,7 +67,7 @@ func Collect(o CollectOptions) Input {
 	}
 	in.PushURLMissing = pushURLMissing(o.Root)
 	in.VerifierWaiting = seatcommit.VerifierWaiting(o.Root)
-	in.SeatMarkers = task.SeatMarkerProblems(task.DirFor(o.Root))
+	in.SeatMarkers = task.SeatMarkerProblems(task.DirFor(o.Root), o.Now)
 	msgs, scanWarnings := state.ScanSessionMessages(o.Root, func() time.Time { return o.Now })
 	if len(scanWarnings) > 0 {
 		warn("mailbox scan: %d unreadable messages skipped", len(scanWarnings))

@@ -1,7 +1,9 @@
 package schedproc
 
 import (
+	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
@@ -34,8 +36,13 @@ func (c *CleanSeats) PrepareSeat(handle string) error {
 	if c.now != nil {
 		now = c.now
 	}
-	if _, err := seatcommit.ReadLedger(c.Root, handle); err != nil {
+	// No commit ledger (no recorded base) leaves the seat as it is; any other
+	// read error (a tampered or unreadable ledger) is seat_prepare_failed:
+	// no grant of a seat whose cleanliness is unknown (the fifth round's (g)).
+	if _, err := seatcommit.ReadLedger(c.Root, handle); os.IsNotExist(err) {
 		return nil
+	} else if err != nil {
+		return fmt.Errorf("the commit ledger of seat %s: %w", handle, err)
 	}
 	discarded, err := seatcommit.CleanSeat(c.Root, handle, c.Git, nil, c.Clear, now())
 	if err == nil && discarded && c.log != nil {

@@ -3319,9 +3319,9 @@ entries:
   status: new
 - path: internal/redact/redact.go
   v2_lines: 0
-  current_lines: 587
+  current_lines: 638
   fate: new
-  target_lines: 587
+  target_lines: 638
   cluster: redact
   extract: ""
   reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
@@ -3684,9 +3684,9 @@ entries:
   status: new
 - path: internal/schedproc/prepare.go
   v2_lines: 0
-  current_lines: 47
+  current_lines: 54
   fate: new
-  target_lines: 47
+  target_lines: 54
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler's SeatPreparer: a seat's worktree back to the commit parent before a new lease"
@@ -4222,9 +4222,9 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 547
+  current_lines: 544
   fate: new
-  target_lines: 547
+  target_lines: 544
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
@@ -4299,9 +4299,9 @@ entries:
   status: new
 - path: internal/task/unclean.go
   v2_lines: 0
-  current_lines: 184
+  current_lines: 234
   fate: new
-  target_lines: 184
+  target_lines: 234
   cluster: task
   extract: ""
   reason: "v3-5-verifier fourth round: the unclean marker of a seat CleanSeat cleans (nonce, takeover after the TTL, fail closed)"

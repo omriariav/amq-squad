@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 )
 
 // The unclean marker (v3-5-verifier, the fourth round). CleanSeat's git work
@@ -24,6 +27,15 @@ import (
 // only when the first cleaner is dead or lost the ledger). A marker that is
 // malformed or cannot be read is seat_unclean too, never a free seat, and
 // status names it to the lead (SeatMarkerProblems).
+//
+// A marker whose time is more than one TTL in the future is invalid like a
+// malformed one (status names it, a CleanSeat takes it over): it would
+// otherwise hold the seat forever.
+//
+// Every new lease goes through seatLeasable (grant: Grant, and Claim of a
+// pending task). The existing-lease paths (a claim of an already granted
+// lease, a widening, a re-armed commit) do not consult the marker: a marker
+// beside a live lease is a planted one, the same-UID limit.
 //
 // Limit, recorded with the others: a same-UID process can plant a marker and
 // keep a seat from every lease until the lead removes it or a CleanSeat runs.
@@ -45,6 +57,30 @@ type seatMarker struct {
 }
 
 func reservedDir(dir string) string { return filepath.Join(dir, "reserved") }
+
+// SeatHandle is the one normalizer of a seat handle for the marker and the
+// lease (the fifth round's (f)): trimmed, non-empty, one path component.
+func SeatHandle(h string) (string, error) {
+	h = strings.TrimSpace(h)
+	if h == "" || h == "." || h == ".." || strings.ContainsAny(h, "/\\\x00") {
+		return "", fmt.Errorf("seat handle %q is not one plain name", h)
+	}
+	return h, nil
+}
+
+// seatLeasable is the one check a new lease of a seat passes: not
+// quarantined, not unclean.
+func seatLeasable(dir, holder string) error {
+	if err := quarantined(dir, holder); err != nil {
+		return err
+	}
+	return unclean(dir, holder)
+}
+
+// futureMarker reports a marker time more than one TTL ahead of now.
+func futureMarker(m *seatMarker, now time.Time) bool {
+	return m != nil && m.At.After(now.Add(SeatReservationTTL))
+}
 
 func markerPath(dir, handle string) string { return filepath.Join(reservedDir(dir), handle) }
 
@@ -87,7 +123,11 @@ func unclean(dir, holder string) error {
 func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, string, error) {
 	var out []Task
 	nonce := newNonce()
-	err := s.withLock(true, func() error {
+	handle, err := SeatHandle(handle)
+	if err != nil {
+		return nil, "", err
+	}
+	err = s.withLock(true, func() error {
 		list, err := readDir(s.Dir)
 		if err != nil {
 			return err
@@ -103,14 +143,15 @@ func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, string, error)
 			if _, rerr := os.ReadFile(markerPath(s.Dir, handle)); rerr != nil {
 				return fmt.Errorf("%w: %v", ErrSeatUnclean, merr) // unreadable: never overwritten blind
 			}
-		} else if m != nil && now.Sub(m.At) < SeatReservationTTL {
+		} else if m != nil && now.Sub(m.At) < SeatReservationTTL && !futureMarker(m, now) {
 			return fmt.Errorf("%w: seat %s is being cleaned since %s", ErrSeatCleaning, handle, m.At.UTC().Format(time.RFC3339))
 		}
 		raw, _ := json.Marshal(seatMarker{Nonce: nonce, At: now.UTC()})
 		if err := os.MkdirAll(reservedDir(s.Dir), 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(markerPath(s.Dir, handle), raw, 0o600); err != nil {
+		// The one durable writer (temp, fsync, rename, fsync of the directory).
+		if err := atomicfile.Write(markerPath(s.Dir, handle), raw, 0o600); err != nil {
 			return err
 		}
 		out = list
@@ -124,6 +165,10 @@ func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, string, error)
 // cleaner took it over; its git work was serialized by the ledger, so this
 // is a report, not a corruption), with the seat re-checked.
 func (s Store) ReleaseSeat(handle, nonce string) error {
+	handle, err := SeatHandle(handle)
+	if err != nil {
+		return err
+	}
 	return s.withLock(true, func() error {
 		m, err := readMarker(s.Dir, handle)
 		switch {
@@ -155,9 +200,9 @@ type SeatMarkerProblem struct {
 	Problem string `json:"problem"`
 }
 
-// SeatMarkerProblems lists the store's malformed or unreadable markers,
-// sorted by seat.
-func SeatMarkerProblems(dir string) []SeatMarkerProblem {
+// SeatMarkerProblems lists the store's malformed or unreadable markers, and
+// those dated more than one TTL after now, sorted by seat.
+func SeatMarkerProblems(dir string, now time.Time) []SeatMarkerProblem {
 	entries, err := os.ReadDir(reservedDir(dir))
 	if err != nil {
 		return nil
@@ -167,8 +212,13 @@ func SeatMarkerProblems(dir string) []SeatMarkerProblem {
 		if e.IsDir() {
 			continue
 		}
-		if _, err := readMarker(dir, e.Name()); err != nil {
+		m, err := readMarker(dir, e.Name())
+		switch {
+		case err != nil:
 			out = append(out, SeatMarkerProblem{Handle: e.Name(), Path: markerPath(dir, e.Name()), Problem: err.Error()})
+		case futureMarker(m, now):
+			out = append(out, SeatMarkerProblem{Handle: e.Name(), Path: markerPath(dir, e.Name()),
+				Problem: fmt.Sprintf("the unclean marker %s is dated %s, more than %s ahead", markerPath(dir, e.Name()), m.At.UTC().Format(time.RFC3339), SeatReservationTTL)})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })

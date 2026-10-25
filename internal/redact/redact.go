@@ -207,6 +207,28 @@ func spans(line string) (out [][2]int, found []Finding) {
 			found = append(found, Finding{Rule: "NAME=value", Name: name})
 		}
 	}
+	for _, m := range yamlLineRE.FindAllStringSubmatchIndex(line, -1) {
+		open, name, closeQ := line[m[2]:m[3]], line[m[4]:m[5]], line[m[6]:m[7]]
+		if open != closeQ {
+			continue
+		}
+		a, b := m[8], m[9]
+		val := line[a:b]
+		if q := val[0]; q != '\'' && q != '"' {
+			if c := strings.Index(val, " #"); c >= 0 {
+				val = val[:c] // a comment
+			}
+			val = strings.TrimRight(val, " \t\r")
+			b = a + len(val)
+		}
+		if val == "" || strings.EqualFold(name, "key") || !yamlValue(val) {
+			continue
+		}
+		if CredentialName(name) && !countValue(name, val) && namedSecret(name, strings.Trim(val, `"'`)) {
+			out = append(out, [2]int{a, b})
+			found = append(found, Finding{Rule: "yaml", Name: name})
+		}
+	}
 	for _, m := range jsonRE.FindAllStringSubmatchIndex(line, -1) {
 		name, val := line[m[2]:m[3]], line[m[4]:m[5]]
 		if strings.EqualFold(name, "key") {
@@ -238,6 +260,29 @@ func spans(line string) (out [][2]int, found []Finding) {
 	}
 	return out, found
 }
+
+// yamlValue reports whether a one-line YAML value can be a credential: a
+// quoted scalar always; a bare one when it is a single token with a letter
+// or digit, and not a YAML null or boolean, a masked value (***) or a call
+// expression (Go or code in prose: "Key: the owner's key", "Credential:
+// credentialSource(rt)", "Token: gho_****").
+func yamlValue(v string) bool {
+	if v[0] == '\'' || v[0] == '"' {
+		return true
+	}
+	switch strings.ToLower(v) {
+	case "null", "~", "true", "false":
+		return false
+	}
+	if strings.ContainsAny(v, " \t") || strings.Contains(v, "***") || callRE.MatchString(v) {
+		return false
+	}
+	return strings.IndexFunc(v, func(r rune) bool { return r < 128 && isAlnum(byte(r)) && r != '_' }) >= 0
+}
+
+// callRE is a call expression: an identifier (dotted) and a parenthesized
+// argument list.
+var callRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*\(.*\)$`)
 
 func isAlnum(c byte) bool {
 	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
@@ -350,43 +395,47 @@ func mergeSpans(sp [][2]int) [][2]int {
 // group 3 what follows the colon); yamlBlockIndicatorRE a block scalar's
 // indicator (| or >).
 var (
-	jsonBlockRE          = regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\n]|\\.)*"|-?[0-9][0-9.eE+-]*)`)
-	yamlKeyRE            = regexp.MustCompile(`^([ \t]*(?:- )?)([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*:[ \t]*(.*)$`)
+	jsonBlockRE = regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\n]|\\.)*"|-?[0-9][0-9.eE+-]*)`)
+	yamlKeyRE   = regexp.MustCompile(`^([ \t]*(?:- )?)(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)['"]?[ \t]*:[ \t]*(.*)$`)
+	// yamlLineRE is a YAML key: value on one line (the fifth round's P1): a
+	// bare or quoted key, after the line's start, a blank, "{" or "," and an
+	// optional "- "; a quoted scalar, or a bare one up to a flow delimiter.
+	// Group 1 and 3 are the key's quotes, group 2 the name, group 4 the value.
+	yamlLineRE           = regexp.MustCompile(`(?:^|[\s{,])(?:- )?(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)(['"]?)[ \t]*:[ \t]+('(?:[^'\n]|'')*'|"(?:[^"\\\n]|\\.)*"|[^\s'"#,{}\[\]][^\n,{}]*)`)
 	yamlBlockIndicatorRE = regexp.MustCompile(`^[|>][-+0-9]*[ \t]*(#.*)?$`)
 )
-
-// yamlQuotedMax bounds the lines a quoted scalar opened on a credential
-// key's value line is followed to its closing quote.
-const yamlQuotedMax = 64
 
 // yamlBlocks redacts the value of every credential-named YAML key whose
 // value is not on its own line (v3-5-verifier, the fourth round): a key owns
 // its block. A quoted scalar opened on the value line is redacted through
-// its closing quote across lines (at most yamlQuotedMax lines); then every
-// line indented deeper than the key is redacted whole until the indentation
-// returns (a bare scalar, a nested mapping, an unclosed quoted scalar, a
-// block scalar).
+// its closing quote across lines, or to the end of the buffer when it never
+// closes (the buffer is capped already; no fall back to indentation while a
+// quote is open); then every line indented deeper than the key is redacted
+// whole until the indentation returns (a bare scalar, a nested mapping, a
+// block scalar, whose quotes are text, not scalars), and so is an
+// indentless list item at the key's own column.
 func yamlBlocks(text string) string {
 	lines := strings.Split(text, "\n")
 	changed := false
 	for i := 0; i < len(lines); i++ {
 		m := yamlKeyRE.FindStringSubmatch(strings.TrimRight(lines[i], "\r"))
-		if m == nil || !CredentialName(m[2]) {
+		if m == nil || !CredentialName(m[3]) {
 			continue
 		}
-		if rest := strings.TrimSpace(m[3]); rest != "" && !strings.HasPrefix(rest, "#") && !yamlBlockIndicatorRE.MatchString(rest) {
+		rest := strings.TrimSpace(m[4])
+		blockScalar := yamlBlockIndicatorRE.MatchString(rest)
+		if rest != "" && !strings.HasPrefix(rest, "#") && !blockScalar {
 			continue // the value is on the key's line (Line's rules)
 		}
 		keyCol := len(m[1])
 		j := i + 1
-		if j < len(lines) {
+		if j < len(lines) && !blockScalar {
 			if q := quoteOpen(lines[j]); q != 0 {
-				if end := closingLine(lines, j, q); end >= 0 {
-					for k := j; k <= end; k++ {
-						lines[k] = redactLineContent(lines[k])
-					}
-					changed, j = true, end+1
+				end := closingLine(lines, j, q)
+				for k := j; k <= end; k++ {
+					lines[k] = redactLineContent(lines[k])
 				}
+				changed, j = true, end+1
 			}
 		}
 		for ; j < len(lines); j++ {
@@ -394,8 +443,9 @@ func yamlBlocks(text string) string {
 			if strings.TrimSpace(l) == "" {
 				continue
 			}
-			if indentOf(l) <= keyCol {
-				break
+			ind := indentOf(l)
+			if ind < keyCol || ind == keyCol && !strings.HasPrefix(strings.TrimSpace(l), "- ") {
+				break // the indentation returned (an indentless list item stays the key's)
 			}
 			lines[j] = redactLineContent(lines[j])
 			changed = true
@@ -418,11 +468,12 @@ func quoteOpen(line string) byte {
 }
 
 // closingLine is the index of the line that closes the quoted scalar opened
-// on lines[j] (a ” inside single quotes and a backslash escape inside double
-// quotes do not close), -1 when none within yamlQuotedMax lines.
+// on lines[j] (a doubled single quote inside single quotes and a backslash
+// escape inside double quotes do not close); the last line of the buffer when
+// it never closes.
 func closingLine(lines []string, j int, q byte) int {
 	start := strings.IndexByte(lines[j], q) + 1
-	for k := j; k < len(lines) && k < j+yamlQuotedMax; k++ {
+	for k := j; k < len(lines); k++ {
 		l := lines[k]
 		from := 0
 		if k == j {
@@ -440,7 +491,7 @@ func closingLine(lines []string, j int, q byte) int {
 			}
 		}
 	}
-	return -1
+	return len(lines) - 1
 }
 
 func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, " \t")) }
