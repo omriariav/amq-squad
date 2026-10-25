@@ -162,6 +162,18 @@ Judgment calls of the one-line rule (the repository scan runs the same rule over
 
 Hygiene list: `internal/cli` TestDecisionAdapterKillsAHungGuardGroup failed once in a full local run (its stand-in had not written the sleeper's pid within the 1 s watchdog under load), passing alone three times; the package's code is untouched by this round.
 
+## The last round on the re-pass of 9d33cf55
+
+One last commit on 9d33cf55, the lead's read only: three residuals of the one-line YAML rule. Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix6-revert-check.txt`. Gate on a quiet host: `5-verifier-evidence/fix6-gate.txt`. Lines refer to the 9d33cf55 export.
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 1 | `password: x` TAB `# comment` kept x: the comment was found after a space only, and the tab made the value two tokens (redact.go:218, :277) | a comment starts at a # after any blank (space or tab); trailing blanks are trimmed before the single-token test | TestYAMLCommentAfterATab |
+| 2 | a quoted scalar opened on the key's line and continued (`password: 'Ab9x` then `Y7qR'`) kept both halves: the block pass skipped a non-empty inline value (:427) and the one-line rule wants its closing quote on the line (:404) | an inline value that opens a quote and does not close it there hands over to the quote search from that line (the rule of a value on the next line, to the closing quote or the end of the buffer) | TestInlineQuotedScalarContinued (both quote kinds) |
+| 3 | the call exemption took any identifier with parentheses (:277, :285), so `password: evil(<long run>)` survived | the exemption holds only when the parenthesised text carries no run of 8 or more letters and digits; otherwise the whole value is redacted | TestCallExemptionNeedsNoLongRun (that input redacted, `credentialSource(rt)` kept) |
+
+The prose-scan trade-off is recorded in redact's package doc: a bare multi-word value is skipped by the single-token narrowing (the shape rules still run inside it), and a value with no letter or digit (`${VAR}`) by the alphanumeric test. The phase 5 list keeps the hygiene rows (the adapter watchdog load flake, the seatlaunch TempDir race, the stale waiting slot row) and the post-merge orphan-adoption row.
+
 ## Behavior changes
 
 - `seat commit` runs the class's configured verifier on the snapshot tree before it pushes; a fail is `verdict_failed` for the lead and nothing is pushed; a pass completes.

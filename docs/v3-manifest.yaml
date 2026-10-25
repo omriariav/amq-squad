@@ -3319,9 +3319,9 @@ entries:
   status: new
 - path: internal/redact/redact.go
   v2_lines: 0
-  current_lines: 638
+  current_lines: 688
   fate: new
-  target_lines: 638
+  target_lines: 688
   cluster: redact
   extract: ""
   reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"

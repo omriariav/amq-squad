@@ -12,6 +12,13 @@
 // can split a value from what its matcher needs (a closing quote, the next
 // line), so the cut comes after the redaction and drops the line it lands
 // in. Capped is that rule.
+//
+// The prose-scan trade-off of the one-line YAML rule (v3-5-verifier): the
+// repository scan runs the same rules over the docs and the evidence, so a
+// bare one-line value counts only when it is a single token with a letter or
+// digit. A bare multi-word value (`password: x y`) is therefore skipped by
+// the one-line rule, the shape rules still running inside it, and so is a
+// value with no letter or digit (`${VAR}`); a quoted value always counts.
 package redact
 
 import (
@@ -215,8 +222,8 @@ func spans(line string) (out [][2]int, found []Finding) {
 		a, b := m[8], m[9]
 		val := line[a:b]
 		if q := val[0]; q != '\'' && q != '"' {
-			if c := strings.Index(val, " #"); c >= 0 {
-				val = val[:c] // a comment
+			if c := yamlComment(val); c >= 0 {
+				val = val[:c] // a comment: # after any blank
 			}
 			val = strings.TrimRight(val, " \t\r")
 			b = a + len(val)
@@ -274,15 +281,37 @@ func yamlValue(v string) bool {
 	case "null", "~", "true", "false":
 		return false
 	}
-	if strings.ContainsAny(v, " \t") || strings.Contains(v, "***") || callRE.MatchString(v) {
+	if strings.ContainsAny(v, " \t") || strings.Contains(v, "***") || callExpression(v) {
 		return false
 	}
 	return strings.IndexFunc(v, func(r rune) bool { return r < 128 && isAlnum(byte(r)) && r != '_' }) >= 0
 }
 
 // callRE is a call expression: an identifier (dotted) and a parenthesized
-// argument list.
-var callRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*\(.*\)$`)
+// argument list; longRunRE a run of 8 or more letters and digits.
+var (
+	callRE    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*\((.*)\)$`)
+	longRunRE = regexp.MustCompile(`[A-Za-z0-9]{8,}`)
+)
+
+// callExpression reports a call expression whose arguments carry no run of
+// 8 or more letters and digits (credentialSource(rt)); one that does
+// (evil(Ab9xY7qRLm2W)) is a value like any other.
+func callExpression(v string) bool {
+	m := callRE.FindStringSubmatch(v)
+	return m != nil && !longRunRE.MatchString(m[1])
+}
+
+// yamlComment is the index of a comment's # in a bare one-line value (a #
+// after a space or a tab), -1 when none.
+func yamlComment(v string) int {
+	for i := 1; i < len(v); i++ {
+		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
+			return i - 1
+		}
+	}
+	return -1
+}
 
 func isAlnum(c byte) bool {
 	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
@@ -418,12 +447,28 @@ func yamlBlocks(text string) string {
 	lines := strings.Split(text, "\n")
 	changed := false
 	for i := 0; i < len(lines); i++ {
-		m := yamlKeyRE.FindStringSubmatch(strings.TrimRight(lines[i], "\r"))
-		if m == nil || !CredentialName(m[3]) {
+		line := strings.TrimRight(lines[i], "\r")
+		mi := yamlKeyRE.FindStringSubmatchIndex(line)
+		if mi == nil || !CredentialName(line[mi[6]:mi[7]]) {
 			continue
 		}
+		m := []string{line, line[mi[2]:mi[3]], line[mi[4]:mi[5]], line[mi[6]:mi[7]], line[mi[8]:mi[9]]}
 		rest := strings.TrimSpace(m[4])
 		blockScalar := yamlBlockIndicatorRE.MatchString(rest)
+		if q := quoteOpen(rest); q != 0 {
+			// A quoted scalar opened on the key's line: closed there, it is the
+			// one-line rule's; left open, the quote search runs from it, the
+			// rule of a value on the next line.
+			at := mi[8] + strings.Index(m[4], rest)
+			if end := closingFrom(lines, i, at+1, q); end > i {
+				lines[i] = lines[i][:at] + Placeholder
+				for k := i + 1; k <= end; k++ {
+					lines[k] = redactLineContent(lines[k])
+				}
+				changed, i = true, end
+			}
+			continue
+		}
 		if rest != "" && !strings.HasPrefix(rest, "#") && !blockScalar {
 			continue // the value is on the key's line (Line's rules)
 		}
@@ -472,7 +517,12 @@ func quoteOpen(line string) byte {
 // escape inside double quotes do not close); the last line of the buffer when
 // it never closes.
 func closingLine(lines []string, j int, q byte) int {
-	start := strings.IndexByte(lines[j], q) + 1
+	return closingFrom(lines, j, strings.IndexByte(lines[j], q)+1, q)
+}
+
+// closingFrom is closingLine with the search starting at byte start of
+// lines[j] (just after the opening quote).
+func closingFrom(lines []string, j, start int, q byte) int {
 	for k := j; k < len(lines); k++ {
 		l := lines[k]
 		from := 0

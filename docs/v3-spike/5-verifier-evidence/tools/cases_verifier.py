@@ -315,4 +315,14 @@ CASES = [
     ("5-g a ledger-read error in prepare is seat_prepare_failed, no grant", "internal/schedproc/prepare.go",
      "\t} else if err != nil {\n\t\treturn fmt.Errorf(\"the commit ledger of seat %s: %w\", handle, err)\n\t}", "\t} else if err != nil {\n\t\t_ = fmt.Sprint(err)\n\t\treturn nil\n\t}",
      "TestPrepareRefusesALedgerReadError$", "./internal/schedproc/"),
+    # the last round
+    ("6-1 a comment starts at a # after any blank (a tab)", "internal/redact/redact.go",
+     "\t\t\tif c := yamlComment(val); c >= 0 {", "\t\t\tif c := strings.Index(val, \" #\"); c >= 0 {",
+     "TestYAMLCommentAfterATab$", "./internal/redact/"),
+    ("6-2 an inline quoted scalar left open hands over to the quote search", "internal/redact/redact.go",
+     "\t\t\tif end := closingFrom(lines, i, at+1, q); end > i {", "\t\t\tif end := closingFrom(lines, i, at+1, q); false && end > i {",
+     "TestInlineQuotedScalarContinued$", "./internal/redact/"),
+    ("6-3 the call exemption needs arguments with no long alphanumeric run", "internal/redact/redact.go",
+     "\treturn m != nil && !longRunRE.MatchString(m[1])", "\treturn m != nil",
+     "TestCallExemptionNeedsNoLongRun$", "./internal/redact/"),
 ]
