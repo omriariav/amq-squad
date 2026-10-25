@@ -4336,9 +4336,9 @@ entries:
   status: deleted
 - path: internal/team/digest.go
   v2_lines: 0
-  current_lines: 131
+  current_lines: 163
   fate: new
-  target_lines: 131
+  target_lines: 163
   cluster: team
   extract: ""
   reason: "2b-5: the digest flow of R8: plan every file the squad writes, one digest, apply on a matching digest"
@@ -4589,9 +4589,9 @@ entries:
   status: new
 - path: internal/team/squad_keys.go
   v2_lines: 0
-  current_lines: 158
+  current_lines: 194
   fate: new
-  target_lines: 158
+  target_lines: 194
   cluster: team
   extract: ""
   reason: "v3-5-migrate: squad.yaml schema 1 final form, the key list with each key's relation to the grant, the never-settable keys, the error codes"
@@ -4634,9 +4634,9 @@ entries:
   status: new
 - path: internal/migrate/plan.go
   v2_lines: 0
-  current_lines: 227
+  current_lines: 249
   fate: new
-  target_lines: 227
+  target_lines: 249
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: the migrate plan, unmapped report data, output validation"
@@ -4652,28 +4652,46 @@ entries:
   status: new
 - path: internal/migrate/safety.go
   v2_lines: 0
-  current_lines: 123
+  current_lines: 191
   fate: new
-  target_lines: 123
+  target_lines: 191
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: refusal codes, safety-default and credential checks"
   status: new
 - path: internal/migrate/v2.go
   v2_lines: 0
-  current_lines: 279
+  current_lines: 321
   fate: new
-  target_lines: 279
+  target_lines: 321
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: the v2 file readers (read-only) and the field names read from main"
   status: new
 - path: internal/migrate/write.go
   v2_lines: 0
-  current_lines: 131
+  current_lines: 144
   fate: new
-  target_lines: 131
+  target_lines: 144
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: write-when-absent, the removal flag"
+  status: new
+- path: internal/migrate/unlink_unix.go
+  v2_lines: 0
+  current_lines: 49
+  fate: new
+  target_lines: 49
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: removal through the fsanchor descriptor walk, a symlink on the way is refused"
+  status: new
+- path: internal/migrate/unlink_other.go
+  v2_lines: 0
+  current_lines: 16
+  fate: new
+  target_lines: 16
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the non-unix twin of the removal walk (Lstat-checked)"
   status: new

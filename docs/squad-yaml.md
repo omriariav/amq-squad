@@ -4,7 +4,7 @@
 standing grant for this repository (plan 3.3, 3.4, 4.3, 7.2; briefs 2b-5 and
 v3-5-migrate). The Go form is `internal/team` (`squad.go`, `squad_keys.go`,
 `golden.go`): `ParseSquad`, `LoadSquad`, `Render`, `ExampleSquad`,
-`SquadKeys`, `NeverSettableKeys`, `GoldenCheck`.
+`SquadKeys`, `NeverSettableKeys`, `GoldenCheck`. `SquadKeys` is the one list: the parser's grant keys are built from it and a test proves the parser and the table agree both ways.
 
 **Schema 1 is frozen for 3.0.** The key list below is complete; a 3.0.x
 build adds no key to it, and a file of any other schema is refused
@@ -62,17 +62,23 @@ propose` shows it, the owner (manual) or the grant (auto) approves the
 digest, `team apply --digest` writes it. The file plus that flow are the
 final form. What a hand edit produces:
 
-- 2b-5's refusal is `digest mismatch`: `team apply --digest D` recomputes the
-  plan from its options and writes nothing unless the recomputed digest is D.
-  It is error text, not a code token. The digest covers the content the flow
-  would write, so it changes when the options change, never when the file on
-  disk is edited by hand.
-- A hand edit is therefore not refused by the apply. It is visible: the next
-  `team propose` lists squad.yaml as `replace`, and a `team apply` after it
-  rewrites the file from the proposal's options, so a change belongs in the
-  options, not in the file. Between its read and its rename the apply also
-  checks that the file is still the one it planned over (`<path> changed
-  since the proposal; run team propose again`, nothing written).
+- The token `team propose` prints and `team apply --digest` takes is one
+  string, `sha256:<content>@<disk>`: the digest of the files the flow would
+  write, and the sha256 of the squad.yaml on disk when it was proposed
+  (`absent` when there was none). `team apply` recomputes both, and the
+  mutating step re-reads squad.yaml under the lock it writes with.
+- Options changed after the proposal: the content part differs and the apply
+  refuses with `squad_yaml_digest_mismatch` (it was the prose `digest
+  mismatch` in 2b-5). Nothing is written.
+- squad.yaml edited by hand after the proposal: the content part still
+  matches, the disk part does not, and the apply refuses with
+  `squad_yaml_changed`, naming the path and both disk digests. Nothing is
+  written and the edit stays. The next `team propose` lists squad.yaml as
+  `replace` and prints the new disk digest, so the edit is the diff the owner
+  sees and decides on; approving that proposal replaces it. The same guard
+  runs for every caller of `Plan.Apply` (the fleet adapter of 4-3 included).
+  Between its read and its rename the apply also checks that the file is
+  still the one it planned over (`<path> changed since the proposal`).
 - Until an apply replaces it, an edit outside the flow is read as it stands at
   the next squad load: within the rules it takes effect.
 - An edit that widens the owner grant, or sets a never-settable key, makes
@@ -150,7 +156,7 @@ and `max_seats`.
 
 These keys are the owner's alone. A squad.yaml that carries one, at any
 value and in any spelling (flat, dotted, or as a block), is refused at parse
-with the key named as written, as `grants_invalid` (`team.WidenError`). The
+with the key named as written (a key nested under one by its full path, `merge.push_url`), as `grants_invalid` (`team.WidenError`). The
 test `TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed` has one case
 per key.
 
@@ -186,7 +192,9 @@ error (`squad_yaml_invalid`).
   reader as `squad_yaml_schema_unsupported`, naming the version, before any
   other key is read (`team.SchemaError`).
 - A parse or validation error is `squad_yaml_invalid`; a widening or
-  never-settable key is `grants_invalid` (`team.CodeOf`).
+  never-settable key is `grants_invalid` (`team.CodeOf`). `team apply` refuses
+  with `squad_yaml_digest_mismatch` (the options changed) or `squad_yaml_changed`
+  (the file changed), see "Changing it".
 - `amq-squad doctor` embeds a golden squad.yaml (`internal/team/golden`) and
   the structure it must parse to; a build whose parse drifted from it fails
   the `squad.yaml golden` row with kind `squad_yaml_golden_drift`. The golden

@@ -147,9 +147,15 @@ func ownerPath(opts Options) string {
 // owner's grant, and the proposal must parse as an owner file.
 func validateOutputs(p *Plan, opts Options) error {
 	var fields []string
-	for _, w := range p.Writes {
-		if looksLikeCredential(string(w.Content)) {
-			fields = append(fields, "output "+filepath.Base(w.Path))
+	for i, w := range p.Writes {
+		if unsafeText(string(w.Content)) {
+			fields = append(fields, fmt.Sprintf("output file #%d (%s)", i+1, w.Note))
+		}
+	}
+	for _, wrote := range []bool{false, true} {
+		if unsafeText(p.Report(wrote)) {
+			fields = append(fields, "the printed report")
+			break
 		}
 	}
 	if len(fields) > 0 {
@@ -176,7 +182,9 @@ func validateOutputs(p *Plan, opts Options) error {
 // refuses, naming the field and never the value (B8).
 func checkCredentials(in *inputs) error {
 	rp := func(p string) string { return rel(in.Project, p) }
-	fields := credentialFields(rp(in.ProfilePath), in.Profile)
+	fields := pathCredentialFields(in)
+	fields = append(fields, credentialFields(rp(in.ProfilePath), in.Profile)...)
+	fields = append(fields, credentialKeyFields(rp(in.ProfilePath), in.Profile)...)
 	if in.LaunchLocal != nil {
 		fields = append(fields, scanFile(rp(in.LaunchLocal.Path), in.LaunchLocal.Data)...)
 	}
@@ -213,7 +221,21 @@ func scanFile(name string, data []byte) []string {
 		}
 		return nil
 	}
-	return credentialFields(name, v)
+	return append(credentialFields(name, v), credentialKeyFields(name, v)...)
+}
+
+// pathCredentialFields names a credential-shaped input file name without
+// printing it: the number of the input file (the order Plan.Read lists them).
+// A credential-shaped profile or project path is refused earlier, by
+// readInputs, as "the profile path".
+func pathCredentialFields(in *inputs) []string {
+	var out []string
+	for i, p := range in.Read {
+		if looksLikeCredential(p) {
+			out = append(out, fmt.Sprintf("the name of input file #%d", i+1))
+		}
+	}
+	return out
 }
 
 func rel(project, path string) string {

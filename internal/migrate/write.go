@@ -115,14 +115,27 @@ func BuildRemove(opts Options) (*RemovePlan, error) {
 	}
 	sort.Strings(rp.Files)
 	rp.Files = dedupe(rp.Files)
+	for _, f := range rp.Files {
+		if err := noSymlinkBelow(in.Project, f); err != nil {
+			return nil, err
+		}
+	}
 	return rp, nil
 }
 
-// Apply removes the files; it returns the ones removed.
+// Apply removes the files through the descriptor walk from the project root
+// (unlinkUnder); it first walks every file's directories, so a symlink on the
+// way to any of them refuses the whole removal before the first unlink. It
+// returns the files removed.
 func (r *RemovePlan) Apply() ([]string, error) {
+	for _, f := range r.Files {
+		if err := noSymlinkBelow(r.Project, f); err != nil {
+			return nil, err
+		}
+	}
 	var removed []string
 	for _, f := range r.Files {
-		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+		if err := unlinkUnder(r.Project, f); err != nil {
 			return removed, err
 		}
 		removed = append(removed, f)

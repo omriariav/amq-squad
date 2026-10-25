@@ -165,10 +165,11 @@ func TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed(t *testing.T) {
 		})
 	}
 	nested := map[string]string{
-		"merge":     "merge:\n  - repository: o/r\n    push_url: git@github.com:o/r.git\n    local_push_ack: true\n",
-		"clear":     "clear:\n  signature: pty_only\n",
-		"verifiers": "verifiers:\n  implement: go test ./...\n",
-		"fleet":     "fleet:\n  max_squads: 4\n",
+		"merge.push_url":       "merge:\n  - repository: o/r\n    push_url: git@github.com:o/r.git\n    local_push_ack: true\n",
+		"merge.local_push_ack": "merge:\n  - repository: o/r\n    local_push_ack: true\n",
+		"clear.signature":      "clear:\n  signature: pty_only\n",
+		"verifiers":            "verifiers:\n  implement: go test ./...\n",
+		"fleet":                "fleet:\n  max_squads: 4\n",
 	}
 	for key, block := range nested {
 		_, err := ParseSquad(block+minimalSquad, "squad.yaml", grants.Defaults())

@@ -172,7 +172,7 @@ func TestTeamProposeWritesNothingApplyWritesDigestedFiles(t *testing.T) {
 	if again := teamProposeJSON(t, append([]string{"propose"}, args...)...); again.Digest != p.Digest {
 		t.Fatal("the digest is not deterministic")
 	}
-	if _, _, err := captureOutput(t, func() error { return runTeam(append([]string{"apply", "--digest", "sha256:stale"}, args...)) }); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+	if _, _, err := captureOutput(t, func() error { return runTeam(append([]string{"apply", "--digest", "sha256:stale"}, args...)) }); err == nil || !strings.Contains(err.Error(), "squad_yaml_digest_mismatch") {
 		t.Fatalf("stale digest = %v", err)
 	}
 	if !reflect.DeepEqual(snapshotTree(t, project), before) {

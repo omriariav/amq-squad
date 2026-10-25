@@ -58,14 +58,18 @@ Rows (test, in `internal/team` unless noted):
   the row is new and the docs name the reader.
 - A6 `TestSquadYamlHandEditIsNamedByTheDigestFlow` (internal/cli).
 
-Finding on A6: 2b-5's refusal is the text `digest mismatch` (no code token).
-The digest covers the content the flow would write, not the file on disk, so
-a hand edit between propose and apply is not refused by the apply; it shows
-as `replace` in the next proposal and the apply rewrites the file from its
-options. The docs state exactly this. The only in-apply guard on squad.yaml is
-the check, between the apply's read and its rename, that the file is still
-the one it planned over. I did not change the digest flow (brief: do not
-widen); if the lead wants a hand edit refused at apply, it is a 2b-5 follow-up.
+A6 as ruled in the fix round: the digest token is `sha256:<content>@<disk>`
+(content of the planned files, and the sha256 of the squad.yaml on disk at
+propose time or `absent`); `Plan` exposes both parts. `Plan.Apply` refuses
+`squad_yaml_digest_mismatch` when the content part differs (the options
+changed; 2b-5's prose `digest mismatch` is now this code) and
+`squad_yaml_changed`, naming both disk digests, when the file moved, re-reading
+it under the lock it writes with. The in-apply "changed since the proposal"
+check stays as the second guard. The one other caller of `NewPlan`/`Plan.Apply`
+is the fleet adapter (4-3, `teamSquadWriter`), which applies the stored
+proposal and so goes through the same guard (`TestTeamSquadWriterRefusesAnEditAfterThePropose`);
+no 4-1 pi lead call site exists in this tree (`internal/cli/pi_lead*.go` plans
+nothing through `team`). Row: `TestSquadYamlHandEditIsRefusedByApplyAndShownByThePropose`.
 
 ## Part B: migrate
 
@@ -193,6 +197,43 @@ call created. A dry run reads only.
 - B9 `TestMigrateDeletesNothingWithoutTheRemoveFlag`,
   `TestMigrateRemoveRefusesASquadYamlThatDoesNotLoad`.
 - Named profile: `TestMigrateNamedProfile`.
+
+## Fix round (reviewer narrow pass on eeaa86a4)
+
+One fix commit. Each item has one failing-when-reverted row in
+`5-migrate-evidence/revert-check.txt`.
+- A6 (composite digest): see Part A above.
+- P1-1: a credential shape in a key name, in launch.local.json keys, in an
+  input file name or in the project or profile path is `migrate_refused_credential`
+  naming the location (`<file>: a key name under <parent>`, `the name of input
+  file #n`, `the profile path`), never the text. Every file migrate would write
+  and both renderings of the report must also be unchanged by `redact.Block`
+  (`unsafeText`), else the same refusal names the output. Tests:
+  `TestMigrateRefusesACredentialInAKeyOrAPath`.
+- P1-2: `--remove-v2` plans through `noSymlinkBelow` (a symlink at any directory
+  on the way is `migrate_refused_symlink`) and unlinks through
+  `fsanchor.OpenAnchored` from the project root with `unix.Unlinkat` on the parent
+  descriptor (`unlink_unix.go`; `unlink_other.go` is the Lstat-checked twin).
+  Agent role.md reads refuse a symlinked directory the same way. The project
+  root itself is the anchor (resolved with EvalSymlinks). Test:
+  `TestMigrateRemoveRefusesASymlinkOnTheWay` (symlink at plan time, appearing
+  after the plan, and the walk alone; the outside file survives).
+- P2-1: a named profile's agent directories are
+  `.agent-mail/<profile>/<session>/agents/<handle>` (main namespace.AMQRoot at
+  8fd51b93). Test: `TestMigrateNamedProfileFindsItsAgentRoleFiles`.
+- P2-2: `widensArgs` normalizes argv (`--flag=value` into two tokens) and keeps the
+  substring list besides the (flag, value) pairs `--ask-for-approval never|on-failure`,
+  `-a never`, `--approval-policy never`, `--sandbox danger-full-access`,
+  `--permission-mode bypassPermissions|dontAsk`. The bare `permission-mode`
+  substring is gone (the pairs replace it); `--dangerously-skip-permissions`, `--yolo`
+  and `--full-auto` stay substrings. Test: `TestMigrateRefusesPromptSkippingFlagValuePairs`.
+- P2-3: `grantKeys` is built from `SquadKeys`; `TestSquadKeyTableAndTheParserAgreeBothWays`
+  drives the parser with every table key and an unknown one and reads the case
+  labels of `ParseSquad`, `parseDefaults` and `parseSeats` from the source: a case
+  without a table entry fails.
+- P3: a nested owner key is named by its full path (`merge.push_url`,
+  `merge.local_push_ack`, `clear.signature`); a block under `verifiers` or
+  `fleet` names the parent, which is all the table lists.
 
 ## Gate
 

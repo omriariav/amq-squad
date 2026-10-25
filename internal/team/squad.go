@@ -113,7 +113,7 @@ var (
 )
 
 // grantKeys are the keys grants.ParseSquadNarrowing reads.
-var grantKeys = []string{"mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines", "merge_size_cap_files", "verifier_classes"}
+var grantKeys = grantKeyNames()
 
 // LoadSquad reads <repoRoot>/squad.yaml against the owner grant at
 // grants.OwnerPath. A missing file is fs.ErrNotExist.
@@ -159,7 +159,7 @@ func ParseSquad(text, source string, owner grants.Grants) (Squad, error) {
 		var err error
 		if IsNeverSettable(e.Key) {
 			// an owner-only key: refused at parse, named as written (A4)
-			return s, &WidenError{Source: source, Field: e.Key, Detail: "only the owner files ~/.amq-squad/grants.yaml and registry.yaml set it"}
+			return s, &WidenError{Source: source, Field: neverSettablePath(e), Detail: "only the owner files ~/.amq-squad/grants.yaml and registry.yaml set it"}
 		}
 		switch e.Key {
 		case "schema":

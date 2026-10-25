@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/yamlsub"
 )
 
 // The final form of squad.yaml schema 1 (brief v3-5-migrate, part A; frozen
@@ -118,6 +120,38 @@ func NeverSettableOwner(key string) string {
 	return ""
 }
 
+// neverSettablePath is the full path of the never-settable key entry e
+// carries: for a block (`merge:` with `push_url:` under it) the first nested
+// key the table lists exactly (merge.push_url), else the entry's own key.
+func neverSettablePath(e yamlsub.Entry) string {
+	for _, b := range e.Block {
+		sub, _, ok := strings.Cut(strings.TrimPrefix(b.Text, "- "), ":")
+		if !ok {
+			continue
+		}
+		path := e.Key + "." + strings.TrimSpace(sub)
+		for _, k := range neverSettable {
+			if k.Key == path {
+				return path
+			}
+		}
+	}
+	return e.Key
+}
+
+// grantKeyNames are the top-level keys of the table that touch the grant
+// (narrow or add): the keys grants.ParseSquadNarrowing reads. The parser's
+// accepted set is built from SquadKeys, not listed a second time.
+func grantKeyNames() []string {
+	var out []string
+	for _, k := range SquadKeys {
+		if k.Relation == RelNarrow || k.Relation == RelAdd {
+			out = append(out, k.Name)
+		}
+	}
+	return out
+}
+
 // IsNeverSettable reports whether key, or the key it is nested under, is one
 // only the owner's files set.
 func IsNeverSettable(key string) bool { return NeverSettableOwner(key) != "" }
@@ -128,6 +162,8 @@ const (
 	CodeGrantsInvalid     = "grants_invalid"                // a field that would widen, or set, the owner grant
 	CodeSchemaUnsupported = "squad_yaml_schema_unsupported" // a schema this build does not read
 	CodeGoldenDrift       = "squad_yaml_golden_drift"       // doctor's self-check: the embedded parse drifted
+	CodeDigestMismatch    = "squad_yaml_digest_mismatch"    // apply: the proposal's content digest is not the plan's
+	CodeSquadChanged      = "squad_yaml_changed"            // apply: squad.yaml on disk is not the file the proposal read
 )
 
 // SchemaError is a squad.yaml of a schema this build does not read (a 3.0.x

@@ -112,6 +112,9 @@ func readFile(path string) (*file, error) {
 
 // readInputs reads the profile and every v2 file that sits with it.
 func readInputs(profilePath string) (*inputs, error) {
+	if looksLikeCredential(profilePath) {
+		return nil, &Refusal{Code: CodeCredential, Fields: []string{"the profile path"}, Detail: "the profile path has the shape of a real credential; nothing is read or written"}
+	}
 	project, name, err := locate(profilePath)
 	if err != nil {
 		return nil, err
@@ -167,7 +170,10 @@ func readInputs(profilePath string) (*inputs, error) {
 		}
 	}
 	for _, h := range memberHandles(in.Profile) {
-		for _, dir := range agentDirs(project, h) {
+		for _, dir := range agentDirs(project, name, h) {
+			if err := noSymlinkBelow(project, dir); err != nil {
+				return nil, err
+			}
 			for _, p := range []string{filepath.Join(dir, "extensions", roleLayer, roleFile), filepath.Join(dir, roleFile)} {
 				f, err := optional(p)
 				if err != nil {
@@ -189,10 +195,46 @@ func globSorted(pattern string) []string {
 }
 
 // agentDirs are the agent mailbox directories of handle under the project:
-// <project>/.agent-mail/<session>/agents/<handle> (main's cli.go scans
-// <base root>/<session>/agents).
-func agentDirs(project, handle string) []string {
-	return globSorted(filepath.Join(project, agentMailDir, "*", "agents", handle))
+// <project>/.agent-mail/<session>/agents/<handle> for the default profile and
+// <project>/.agent-mail/<profile>/<session>/agents/<handle> for a named one
+// (main's namespace.AMQRoot at 8fd51b93; cli.go scans <base root>/<session>/agents).
+func agentDirs(project, profile, handle string) []string {
+	if profile == defaultProfile {
+		return globSorted(filepath.Join(project, agentMailDir, "*", "agents", handle))
+	}
+	return globSorted(filepath.Join(project, agentMailDir, profile, "*", "agents", handle))
+}
+
+// noSymlinkBelow refuses a path that reaches the project through a symlink
+// at any component below the project root: a v2 input is read, and a v2 file
+// removed, only inside the project (migrate_refused_symlink).
+func noSymlinkBelow(project, path string) error {
+	r, err := filepath.Rel(project, path)
+	if err != nil || strings.HasPrefix(r, "..") {
+		return &Refusal{Code: CodeSymlink, Fields: []string{"a path outside the project"}, Detail: "a v2 file is outside the project root; nothing is read, written or removed"}
+	}
+	cur := project
+	for _, part := range strings.Split(r, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return &Refusal{Code: CodeInput, Detail: fmt.Sprintf("stat %s: %v", cur, err)}
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return &Refusal{Code: CodeSymlink, Fields: []string{filepath.ToSlash(rel0(project, cur))}, Detail: "a symlink on the way to a v2 file; migrate follows none and removes nothing through one"}
+		}
+	}
+	return nil
+}
+
+func rel0(project, path string) string {
+	if r, err := filepath.Rel(project, path); err == nil {
+		return r
+	}
+	return path
 }
 
 // memberHandles are the handles of the profile's members (a member without a

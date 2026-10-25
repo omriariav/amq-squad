@@ -17,6 +17,7 @@ const (
 	CodeInput         = "migrate_input_invalid"          // the v2 files are not a readable profile
 	CodeSquadInvalid  = "migrate_squad_invalid"          // the squad.yaml migrate would write does not load
 	CodeRemoveNoSquad = "migrate_remove_needs_squad"     // --remove-v2 with no (valid) squad.yaml
+	CodeSymlink       = "migrate_refused_symlink"        // a symlink on the way to a v2 file
 )
 
 // Refusal is a migrate refusal. Fields names the v2 fields (or files) behind
@@ -37,17 +38,42 @@ func (r *Refusal) Error() string {
 
 // wideningFlag are the substrings of a native CLI argument that change a
 // safety default: a flag that skips permission or approval prompts, widens
-// the sandbox or pre-allows tools. The list is closed and lower-case; an
-// argument that matches none of it is only reported as unmapped.
-var wideningFlag = []string{"dangerous", "bypass", "danger-full-access", "yolo", "full-auto", "allowedtools", "allowed-tools", "permission-mode"}
+// the sandbox or pre-allows tools. wideningPair are (flag, value) pairs,
+// matched on normalized argv tokens: "--flag value" and "--flag=value" are
+// the same pair. Both lists are closed and lower-case, and over-refusal is
+// accepted; an argument that matches neither is only reported as unmapped.
+var wideningFlag = []string{"dangerous", "bypass", "danger-full-access", "yolo", "full-auto", "allowedtools", "allowed-tools"}
 
-// widensArgs reports the first argument that matches wideningFlag.
+var wideningPair = []struct{ Flag, Value string }{
+	{"--ask-for-approval", "never"}, {"--ask-for-approval", "on-failure"}, {"-a", "never"},
+	{"--approval-policy", "never"},
+	{"--sandbox", "danger-full-access"},
+	{"--permission-mode", "bypasspermissions"}, {"--permission-mode", "dontask"},
+}
+
+// widensArgs reports the first argument (or flag and value) that matches
+// wideningFlag or wideningPair.
 func widensArgs(args []string) (string, bool) {
+	toks := make([]string, 0, len(args))
 	for _, a := range args {
-		l := strings.ToLower(a)
+		l := strings.ToLower(strings.TrimSpace(a))
+		if strings.HasPrefix(l, "-") {
+			if flag, value, ok := strings.Cut(l, "="); ok {
+				toks = append(toks, flag, value)
+				continue
+			}
+		}
+		toks = append(toks, l)
+	}
+	for i, t := range toks {
 		for _, w := range wideningFlag {
-			if strings.Contains(l, w) {
-				return a, true
+			if strings.Contains(t, w) {
+				return t, true
+			}
+		}
+		for _, pair := range wideningPair {
+			if t == pair.Flag && i+1 < len(toks) && toks[i+1] == pair.Value {
+				return t + " " + pair.Value, true
 			}
 		}
 	}
@@ -121,3 +147,45 @@ func looksLikeCredential(s string) bool {
 	}
 	return false
 }
+
+// walkKeys calls fn for every object key under v with the path of its parent.
+func walkKeys(path string, v any, fn func(parent, key string)) {
+	switch x := v.(type) {
+	case []any:
+		for i, e := range x {
+			walkKeys(fmt.Sprintf("%s[%d]", path, i), e, fn)
+		}
+	case map[string]any:
+		for _, k := range sortedKeys(x) {
+			fn(path, k)
+			next := k
+			if path != "" {
+				next = path + "." + k
+			}
+			walkKeys(next, x[k], fn)
+		}
+	}
+}
+
+// credentialKeyFields names the places where an object KEY has a real
+// credential shape. The location is the parent path and "a key name", never
+// the key's text, which is itself the credential.
+func credentialKeyFields(where string, v any) []string {
+	var out []string
+	walkKeys("", v, func(parent, key string) {
+		if looksLikeCredential(key) {
+			loc := parent
+			if loc == "" {
+				loc = "top level"
+			}
+			out = append(out, where+": a key name under "+loc)
+		}
+	})
+	sort.Strings(out)
+	return dedupe(out)
+}
+
+// unsafeText reports text migrate must not print or write: a real credential
+// shape, or anything redact.Block would change (rule 18: every byte migrate
+// prints or writes passes redact.Block).
+func unsafeText(s string) bool { return looksLikeCredential(s) || redact.Block(s) != s }

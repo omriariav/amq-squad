@@ -23,13 +23,16 @@ type fixture struct {
 	owner   string // ~/.amq-squad/grants.yaml
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { return newFixtureNamed(t, "project") }
+
+// newFixtureNamed is newFixture with the project directory called name.
+func newFixtureNamed(t *testing.T, name string) *fixture {
 	t.Helper()
 	root := t.TempDir()
 	if real, err := filepath.EvalSymlinks(root); err == nil {
 		root = real
 	}
-	f := &fixture{t: t, project: filepath.Join(root, "project"), home: filepath.Join(root, "home")}
+	f := &fixture{t: t, project: filepath.Join(root, name), home: filepath.Join(root, "home")}
 	t.Setenv("HOME", f.home)
 	v2 := filepath.Join(f.project, ".amq-squad")
 	f.profile = filepath.Join(v2, "team.json")

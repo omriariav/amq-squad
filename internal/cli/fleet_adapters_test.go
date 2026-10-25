@@ -44,6 +44,28 @@ func TestTeamSquadWriterIsTheDigestFlow(t *testing.T) {
 	}
 }
 
+// The mayor's adapter applies through the same guard: a squad.yaml edited
+// after the proposal is refused as squad_yaml_changed and left as edited.
+func TestTeamSquadWriterRefusesAnEditAfterThePropose(t *testing.T) {
+	t.Setenv("HOME", fleetTempDir(t))
+	repo := fleetTempDir(t)
+	path := filepath.Join(repo, "squad.yaml")
+	w := &teamSquadWriter{}
+	digest, err := w.Propose(repo, adapterSquadYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# written by hand\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Apply(repo, digest); err == nil || !strings.Contains(err.Error(), "squad_yaml_changed") {
+		t.Fatalf("apply over a file that appeared after the proposal: %v", err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "# written by hand\n" {
+		t.Fatalf("squad.yaml = %q", b)
+	}
+}
+
 // The RosterLauncher adapter compiles squad.yaml into 2b-2's typed squad and
 // maps the seat launch's outcome to the mayor's: all up, partial, none.
 func TestSeatRosterCompilesAndMapsOutcomes(t *testing.T) {
