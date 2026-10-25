@@ -33,8 +33,12 @@ anything else runs. Measured cost on this Mac: p50 6 ms, p95 7 ms per call.
 
 ## Verdict mapping
 
-`guard` exits 0 for every verdict. The hook turns the JSON line into the
-PreToolUse decision:
+`guard` exits 0 for every verdict. The hook hands the JSON line to the Go
+adapter, `amq-squad guard --decision claude`, which parses the complete verdict
+object and prints the PreToolUse decision (the shell never reads the verdict;
+anything that does not parse is no decision, logged). guard runs in its own
+process group: the watchdog kills the group, and the reap's report goes to the
+hook log, never to stderr.
 
 | guard verdict (reason codes) | hook output |
 | --- | --- |

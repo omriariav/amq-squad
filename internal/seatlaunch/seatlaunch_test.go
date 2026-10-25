@@ -183,7 +183,7 @@ func preparedResult() launchapi.PrepareResultV1 {
 
 func launchOpts(t *testing.T, f *fakeAMQ, decisions map[string]string) Options {
 	return Options{Decisions: decisions, Home: t.TempDir(), LookPath: lookPath, RunAMQ: f.run, Wait: 2 * time.Second, Poll: 10 * time.Millisecond,
-		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}, PaneShell: paneOf(os.Getpid())}
+		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}, PaneShell: paneOf(os.Getpid()), ProbeMode: probeAsLaunched}
 }
 
 func TestPendingDecisionsStopBeforeApplyAndSendNothing(t *testing.T) {

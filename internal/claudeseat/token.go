@@ -43,12 +43,15 @@ const CredentialSource = "owner token file"
 // TokenRotation is the age past which doctor warns (a proposal).
 const TokenRotation = 30 * 24 * time.Hour
 
-// SessionEnv is the per-seat settings.json "env" block. Reviewer condition
-// 3: if Claude Code scrubs credentials from its Bash tool's environment on a
-// setting, the seat sets it. CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is the
-// candidate (to be confirmed at the live Claude session with the Claude Code
-// version; if the Bash tool still sees the token, the limit is recorded).
-var SessionEnv = map[string]string{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"}
+// Reviewer condition 3 (a Bash-tool credential scrub, if Claude Code has
+// one) is withdrawn for Claude Code 2.1.310 (phase 5 re-pass of 4-2, P1-2):
+// its candidate, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1, forces the permission
+// mode to default (measured: the stream-json init reports
+// permissionMode "default" and warns "Permission mode forced to default"),
+// which defeats dontAsk. The seat's settings.json carries no env block, and
+// the token's visibility to the seat's Bash children is the recorded limit
+// of R33. The launch probes the effective permission mode of the installed
+// Claude Code against the seat's settings (ProbeMode).
 
 // TokenPath is ~/.amq-squad/claude-token.
 func TokenPath(home string) string { return filepath.Join(home, ".amq-squad", "claude-token") }

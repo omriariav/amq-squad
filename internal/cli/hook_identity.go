@@ -108,6 +108,19 @@ func (h hookFlags) identity() (hookIdentity, error) {
 	return hookIdentity{Handle: me, Root: root, Session: vals[2], AgentDir: agentDir}, nil
 }
 
+// seatIdentity is identity plus the seat's config-dir check and digest
+// report (checkClaudeConfig), the one check every hook verb runs (phase 5
+// re-pass of 4-2, P2-3): context through buildHookContext, guard and
+// evidence ingest here. A changed config dir quarantines the seat and is
+// returned to the caller.
+func (h hookFlags) seatIdentity(now time.Time) (hookIdentity, *hookConfigChange, error) {
+	id, err := h.identity()
+	if err != nil {
+		return id, nil, err
+	}
+	return id, checkClaudeConfig(id, now), nil
+}
+
 // readHookPayload reads one hook payload from stdin, refusing more than
 // hookMaxPayload bytes.
 func readHookPayload(verb string) ([]byte, error) {

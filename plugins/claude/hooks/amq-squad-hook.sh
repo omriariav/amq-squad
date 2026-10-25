@@ -17,6 +17,8 @@
 #   needs_gate  -> permissionDecision deny, reason "raise the gate for
 #                  <action_class> <target>"; never ask, an unattended seat
 #                  must not stop on a prompt (2a-3 notes, open question 9)
+#   (the mapping is the Go adapter's: amq-squad guard --decision claude parses
+#   the complete verdict object; the shell never reads the verdict)
 #   guard exit != 0, unparsable output, missing binary, guard still running
 #                  after 4.8 s (watchdog, 200 ms inside the 5 s hook timeout)
 #                  -> no decision, exit 0 (fail open, as Claude Code does), one
@@ -78,6 +80,10 @@ pre-tool)
 	tmpd=$(umask 077; mktemp -d 2>/dev/null) || { log "fail-open: mktemp failed"; exit 0; }
 	trap 'rm -rf "$tmpd"' EXIT
 	cat >"$tmpd/in"
+	# guard runs as its own process group (job control on), so the watchdog
+	# kills it with anything it started, and the reap's job report ("Killed:
+	# 9") goes to the log, never to the hook's stderr (4-2 re-pass P2-4).
+	set -m
 	"$bin" guard --me "$AM_ME" --stdin <"$tmpd/in" >"$tmpd/out" 2>&3 &
 	gpid=$!
 	(
@@ -86,14 +92,16 @@ pre-tool)
 		trap 'kill "$sid" 2>/dev/null; exit 0' TERM
 		if wait "$sid"; then
 			: >"$tmpd/timeout"
-			kill -9 "$gpid" 2>/dev/null
+			kill -9 -- "-$gpid" 2>/dev/null
 		fi
 	) >/dev/null 2>&1 </dev/null &
 	wpid=$!
-	wait "$gpid"
+	{ wait "$gpid"; } 2>&3
 	rc=$?
 	kill "$wpid" 2>/dev/null
-	wait "$wpid" 2>/dev/null
+	{ wait "$wpid"; } 2>&3
+	kill -9 -- "-$gpid" 2>/dev/null
+	set +m
 	if [ -e "$tmpd/timeout" ]; then
 		log "fail-open: guard timeout after 4.8 s (killed; no decision)"
 		exit 0
@@ -102,26 +110,11 @@ pre-tool)
 		log "fail-open: guard exit $rc"
 		exit 0
 	fi
-	out=$(cat "$tmpd/out")
-	verdict=$(printf '%s\n' "$out" | sed -n -E 's/^\{"verdict":"([a-z_]+)".*/\1/p')
-	str='(([^"\\]|\\.)*)'
-	case "$verdict" in
-	allow)
-		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"amq-squad guard: allowed"}}\n'
-		;;
-	deny)
-		reason=$(printf '%s\n' "$out" | sed -n -E "s/.*,\"reason\":\"$str\".*/\\1/p")
-		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"amq-squad guard: %s"}}\n' "$reason"
-		;;
-	needs_gate)
-		class=$(printf '%s\n' "$out" | sed -n -E 's/.*,"action_class":"([^"]*)".*/\1/p')
-		target=$(printf '%s\n' "$out" | sed -n -E "s/.*,\"target\":\"$str\".*/\\1/p")
-		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"raise the gate for %s %s"}}\n' "$class" "$target"
-		;;
-	*)
-		log "fail-open: unparsable guard output"
-		;;
-	esac
+	# The Go adapter parses the complete verdict object and prints the
+	# decision; anything unparsable is no decision, logged (4-2 re-pass P2-5).
+	dec=$("$bin" guard --decision claude <"$tmpd/out" 2>"$tmpd/derr")
+	[ -s "$tmpd/derr" ] && log "$(head -c 2000 "$tmpd/derr" | tr '\n' ' ')"
+	[ -n "$dec" ] && printf '%s\n' "$dec"
 	;;
 post-tool)
 	"$bin" evidence ingest --me "$AM_ME" >/dev/null 2>&3

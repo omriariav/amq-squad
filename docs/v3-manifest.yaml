@@ -251,30 +251,39 @@ entries:
   status: keep
 - path: internal/claudeseat/claudeseat.go
   v2_lines: 0
-  current_lines: 390
+  current_lines: 560
   fate: new
-  target_lines: 390
+  target_lines: 560
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: a Claude seat's own CLAUDE_CONFIG_DIR per launch: the hooks plugin and dontAsk with no allow rule, its digest and the check"
   status: new
 - path: internal/claudeseat/owner_other.go
   v2_lines: 0
-  current_lines: 7
+  current_lines: 18
   fate: new
-  target_lines: 7
+  target_lines: 18
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: owner uid of the seat config dir (other platforms: not checked)"
   status: new
 - path: internal/claudeseat/owner_unix.go
   v2_lines: 0
-  current_lines: 16
+  current_lines: 29
   fate: new
-  target_lines: 16
+  target_lines: 29
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: owner uid of the seat config dir (unix)"
+  status: new
+- path: internal/claudeseat/probe.go
+  v2_lines: 0
+  current_lines: 107
+  fate: new
+  target_lines: 107
+  cluster: seatexec
+  extract: ""
+  reason: "phase 5 re-pass of 4-2: the launch's probe of the effective permission mode on the installed Claude Code"
   status: new
 - path: internal/claudeseat/reports.go
   v2_lines: 0
@@ -287,9 +296,9 @@ entries:
   status: new
 - path: internal/claudeseat/token.go
   v2_lines: 0
-  current_lines: 100
+  current_lines: 103
   fate: new
-  target_lines: 100
+  target_lines: 103
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: the owner's Claude token file for seats (claude_token_insecure, the rotation window, the residual)"
@@ -800,6 +809,15 @@ entries:
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
   status: new
+- path: internal/cli/hook_decision.go
+  v2_lines: 0
+  current_lines: 68
+  fate: new
+  target_lines: 68
+  cluster: verbs
+  extract: ""
+  reason: "phase 5 re-pass of 4-2: the Go adapter from a guard verdict to the Claude PreToolUse decision"
+  status: new
 - path: internal/cli/hook_evidence_list.go
   v2_lines: 0
   current_lines: 117
@@ -811,9 +829,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 526
+  current_lines: 539
   fate: new
-  target_lines: 526
+  target_lines: 539
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
@@ -829,18 +847,18 @@ entries:
   status: new
 - path: internal/cli/hook_identity.go
   v2_lines: 0
-  current_lines: 127
+  current_lines: 140
   fate: new
-  target_lines: 127
+  target_lines: 140
   cluster: verbs
   extract: ""
   reason: "2a-3: hook verb identity from AM_ME/AM_ROOT/AM_SESSION (R52), exit contract"
   status: new
 - path: internal/cli/hook_ingest.go
   v2_lines: 0
-  current_lines: 233
+  current_lines: 235
   fate: new
-  target_lines: 233
+  target_lines: 235
   cluster: verbs
   extract: ""
   reason: "2a-3: evidence ingest: append-only seat ledger, seed of the 2b evidence ledger"
@@ -3855,9 +3873,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 477
+  current_lines: 501
   fate: new
-  target_lines: 477
+  target_lines: 501
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

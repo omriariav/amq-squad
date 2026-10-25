@@ -158,3 +158,33 @@ Judgment calls, stated:
 The fake tmux and amq in these rows are local scripts under the test's
 temporary directory, the proofs come from in-process stubs or a prover child
 of the test binary; no row reaches the network.
+
+## Commit 2: 4-2 (the Claude hooks plugin, claudeseat, the hook verbs)
+
+Revert check: `5-repass-evidence/4-2-revert-check.txt` (10 reverts, all as
+required; the Go rows under -race, the shell rows through
+`scripts/test_claude_hooks.py` against a binary built from this tree). Gate:
+`5-repass-evidence/4-2-gate.txt` (it adds the hook script tests).
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P1-1 | claudeseat.go:368 checked the worktree settings for allow rules only; `{"env":{"AMQ_SQUAD_BIN":"/tmp/allow"}}` in `.claude/settings.json` replaced the pinned hook binary (Claude's settings env wins over the launch value), and those files sat outside the digest | `ForbiddenSettingsEnv`: an env key naming AMQ_SQUAD_BIN, AM_*, AMQ_SQUAD_* or CLAUDE_CODE_* in any settings source Claude merges for the seat (the config dir's settings.json, the worktree's .claude/settings.json and settings.local.json) refuses the seat as claude_settings_env_forbidden, inside `claudeseat.Check`, so at all three of seat-exec's checks; an unparsable source is refused. The launch records the worktree in the config dir (`amq-squad-worktree.json`, a managed file) and the digest covers the worktree's two settings files, present or absent, read through descriptors with no symlink followed, so a file written after the launch is claude_config_changed for the hooks and a refusal for seat-exec | TestWorktreeSettingsEnvAndDigest |
+| P1-2 | token.go:51 set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1, which on Claude Code 2.1.310 forces permission mode default and defeats dontAsk | the setting is removed and the seat's settings.json carries no env block; condition 3 is withdrawn for 2.1.310 and the token's visibility to the seat's Bash children is R33's recorded limit. Measured on this host (2.1.310, scratch config dir, no credential): with the setting the stream-json init event reports `permissionMode: "default"` and warns "Permission mode forced to default"; without it, `"dontAsk"`. The launch now probes every Claude seat (`claudeseat.ProbeMode`): the installed claude with a scratch copy of the seat's settings.json, in the seat's worktree, `-p --output-format stream-json --verbose --permission-mode <mode>`, no credential; the init event's permissionMode is read and the process group killed before any model request. Another mode, or no answer within 15 s, refuses the launch (claude_mode_unverified) before any seat applies | TestLaunchRefusesAClaudeSeatWhoseModeIsForced; the probe row TestModeProbeOnTheInstalledClaude (AMQ_SQUAD_LIVE=1; passed here on 2.1.310: dontAsk) |
+| P2-3 | hook_guard.go:101 and hook_ingest.go:64 resolved identity without the config-dir check hook_context.go:185 runs | `hookFlags.seatIdentity` is identity plus `checkClaudeConfig` (the digest report and, on a change, the quarantine); guard and evidence ingest call it, context runs the same check through buildHookContext. A changed dir makes guard deny with claude_config_changed; ingest still records the payload | TestGuardAndIngestRunTheSharedConfigDirCheck |
+| P2-4 | amq-squad-hook.sh:89 killed only the guard pid, and :93 waited without a redirection, so a stub's sleep survived and "Killed: 9" reached the hook's stderr | `set -m` around the guard job, so it runs as its own process group; the watchdog and the post-reap cleanup kill the group (`kill -9 -- -PGID`); both waits send the shell's job report to the log descriptor | Repass5.test_hung_guard_group_is_killed_and_the_reap_stays_out_of_stderr (scripts/test_claude_hooks.py) |
+| P2-5 | amq-squad-hook.sh:106 mapped a prefix match of the verdict, so a truncated `{"verdict":"allow"` became an allow | the mapping moved to Go: `amq-squad guard --decision claude` reads the verdict, requires one complete JSON object with a known verdict, and prints the decision (encoded by encoding/json); anything else prints nothing and one line the hook logs. The shell no longer reads the verdict | Repass5.test_truncated_verdict_is_no_decision_and_logged; TestClaudeDecisionNeedsTheCompleteVerdict (Go) |
+
+Judgment calls, stated:
+- P1-1: a worktree settings file is digested by content, so a seat that edits
+  its own `.claude/settings*.json` during the run is quarantined
+  (claude_config_changed). Claude Code's managed (system) settings are the
+  owner's and are not read.
+- P1-2: the probe runs the installed claude once per Claude seat at launch
+  (about 0.3 s measured); it reads only the init event and sends no
+  credential. The probe row against the real binary is opt-in
+  (AMQ_SQUAD_LIVE=1), so the default suite starts no claude; the default row
+  stubs the probe.
+- P2-3: on a changed config dir guard denies every call (the seat is
+  quarantined); ingest keeps recording, so the ledger stays complete.
+- P2-4: `set -m` is POSIX job control in a non-interactive shell (checked on
+  macOS /bin/sh); not executed on Linux dash in this run.

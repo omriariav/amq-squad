@@ -396,6 +396,54 @@ class Manifest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(PLUGIN, ".claude")))
 
 
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+class Repass5(unittest.TestCase):
+    """Phase 5 re-pass of 4-2: the guard's process group and the Go verdict adapter."""
+
+    def test_hung_guard_group_is_killed_and_the_reap_stays_out_of_stderr(self):
+        # P2-4: a stub guard that starts a sleeper and hangs; the watchdog kills
+        # the whole group, and the shell's job report never reaches stderr.
+        s = Seat(self)
+        pidf = os.path.join(s.base, "sleeper.pid")
+        stub = os.path.join(s.base, "hung-amq-squad")
+        s.write(stub, "#!/bin/sh\nsleep 30 &\necho $! > %s\nwait\n" % pidf, 0o755)
+        s.env["AMQ_SQUAD_BIN"] = stub
+        rc, out, err, _, to = s.pre(*bash("go test ./..."), timeout=20)
+        self.assertFalse(to)
+        self.assertEqual((rc, out, err), (0, "", ""))
+        pid = int(read(pidf).strip())
+        deadline = time.monotonic() + 2
+        while alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        survived = alive(pid)
+        if survived:
+            os.kill(pid, signal.SIGKILL)
+        self.assertFalse(survived, "the guard's sleeper survived the watchdog")
+        self.assertIn("fail-open: guard timeout after 4.8 s", s.log())
+
+    def test_truncated_verdict_is_no_decision_and_logged(self):
+        # P2-5: a truncated {"verdict":"allow" is not an allow; the Go adapter
+        # parses the complete object and logs anything else as no decision.
+        s = Seat(self)
+        stub = os.path.join(s.base, "truncating-amq-squad")
+        s.write(stub, '#!/bin/sh\nif [ "$1" = guard ] && [ "$2" = --me ]; then cat >/dev/null; printf \'{"verdict":"allow"\'; exit 0; fi\nexec %s "$@"\n' % shlex.quote(BIN), 0o755)
+        s.env["AMQ_SQUAD_BIN"] = stub
+        rc, out, err, _, to = s.pre(*bash("git push --force origin seat-cto"))
+        self.assertEqual((rc, out, to), (0, "", False))
+        self.assertIn("unparsable guard output", s.log())
+        # the complete verdict still maps (the real guard: deny)
+        s.env["AMQ_SQUAD_BIN"] = BIN
+        rc, out, _, _, to = s.pre(*bash("git push --force origin seat-cto"))
+        self.assertEqual(decision(out)["permissionDecision"], "deny")
+
+
 def tearDownModule():
     if REPORT:
         with open(REPORT, "w") as f:

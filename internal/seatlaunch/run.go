@@ -68,6 +68,10 @@ type Options struct {
 	// step's push (repository, base branch, push URL); nil reads the grant
 	// of the squad's project root.
 	Target *seatcommit.Target
+	// ProbeMode asks the installed Claude Code for the effective permission
+	// mode of a Claude seat's settings (default claudeseat.ProbeMode); a
+	// test seam.
+	ProbeMode func(ctx context.Context, claude, dir, worktree, home, mode string) (claudeseat.Probe, error)
 }
 
 // SeatState is one seat's state after the launch.
@@ -124,6 +128,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Poll == 0 {
 		o.Poll = 100 * time.Millisecond
+	}
+	if o.ProbeMode == nil {
+		o.ProbeMode = claudeseat.ProbeMode
 	}
 	return o
 }
@@ -212,6 +219,23 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 			return res, fmt.Errorf("seat %s: the Claude config dir: %w", rec.Handle, err)
 		}
 		c.Records[i].ClaudeConfig = w.Digest
+		// The effective permission mode on the installed Claude Code, before
+		// any seat applies (phase 5 re-pass of 4-2, P1-2): a setting that
+		// forces another mode would turn dontAsk into prompts or worse.
+		claude, err := o.LookPath("claude")
+		if err != nil {
+			srv.close()
+			return res, fmt.Errorf("seat %s: %s: the installed Claude Code is not on PATH: %v", rec.Handle, claudeseat.ModeUnverified, err)
+		}
+		probe, err := o.ProbeMode(ctx, claude, w.Dir, rec.Worktree, o.Home, rec.PermissionMode)
+		if err != nil {
+			srv.close()
+			return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
+		}
+		if probe.Mode != rec.PermissionMode {
+			srv.close()
+			return res, fmt.Errorf("seat %s: %s: the installed Claude Code %s runs the seat's settings in permission mode %q, not the launch's %q", rec.Handle, claudeseat.ModeUnverified, probe.Version, probe.Mode, rec.PermissionMode)
+		}
 		if o.PermitWorktreeAllowRules {
 			c.Records[i].AllowRules = "permit"
 		}
