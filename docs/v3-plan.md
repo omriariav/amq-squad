@@ -1031,7 +1031,7 @@ Gates and security
 Fleet, mayor, remote
 - R38 One operator session holds the fleet registry and receives all gates and status through AMQ routing.
 - R39 The operator session and a squad lead are the same program with different grants.
-- R40 In auto mode the operator session, the mayor, starts squads inside a fleet grant: maximum squads, cost per day, permitted repositories; the Go core provisions the roster through the launch API package, and where a new project root needs `amq launch` to provision an unknown session (upstream ask 2) the fallback is: the mayor proposes, the owner starts.
+- R40 In auto mode the operator session, the mayor, starts squads inside a fleet grant: maximum squads, cost per day, permitted repositories; a cap with no meter is fail-open, so when the grant sets cost_per_day and no meter can read the outcome log the mayor holds every start with wait_reason cost_unmetered and the status says so, and the owner removes the cap to proceed (4-3 re-pass ruling, 2026-10-25) [2.7, 4-3 re-pass]; the Go core provisions the roster through the launch API package, and where a new project root needs `amq launch` to provision an unknown session (upstream ask 2) the fallback is: the mayor proposes, the owner starts.
 - R41 The mayor never approves a typed gate.
 - R42 `amq-remote` plus Buzz is the remote face; Buzz attaches to the operator session. Enrollment defaults to `--enable buzz-profile --presence`, at the cost of one extra owner signature. [2.5, amendment 19]
 - R43 `status --json` is the versioned contract in 4.6 with a golden fixture in CI; it carries the command-center fields, the bucket table and the "new task" argv. [2.6, amendment 24] The fleet form is the document of 4.6. [2.7, briefs ruling 16]
