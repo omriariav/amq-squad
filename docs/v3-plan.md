@@ -1803,7 +1803,14 @@ Release prep.
   but writes grants.yaml.proposed (0600) beside them for the owner to
   read and move, and refuses when a v2 field would change a safety
   default (launcher_preference, any allow list) rather than dropping it.
-  [2.7, reviewer plan, 2026-10-25]
+  Every byte the verb emits passes one redaction funnel at the verb
+  boundary (a match prints a fixed migrate_refused_credential line with a
+  closed location class, exit 2, nothing else); the run holds one root
+  descriptor from plan to apply and reads and removes only through it
+  (root_changed when the path no longer matches), the plan refusing
+  before anything is touched and a change during apply stopping at the
+  first refusal with a partial report. [2.7, reviewer plan and narrow
+  passes, 2026-10-25]
 
 Owner session. Each item needs the owner at the keyboard; agents prepare
 the runs and record them.
