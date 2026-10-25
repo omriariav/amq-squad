@@ -1,12 +1,14 @@
 package status
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -63,8 +65,11 @@ type Input struct {
 	// (2b-2 milestone B D1: the grant names no merge.push_url; the harness
 	// commits and does not push).
 	PushURLMissing []string
-	Capabilities   []string
-	Warnings       []string
+	// VerifierWaiting are the commit steps waiting for a verifier slot
+	// (verifier_parallelism, v3-5-verifier rule 12).
+	VerifierWaiting []seatcommit.VerifierWait
+	Capabilities    []string
+	Warnings        []string
 }
 
 // BaseCapabilities are the features every schema 1 producer fills.
@@ -166,6 +171,12 @@ func Build(in Input) Status {
 		s.Attention = append(s.Attention, Attention{
 			ID: "seat:" + h + ":push_url_missing", Kind: "push_url_missing", Severity: "medium", Since: in.Now.UTC(), Seat: h,
 			Subject: "seat " + h + " commits without pushing: the owner's grant names no merge.push_url", Bucket: BucketNeedsYou,
+		})
+	}
+	for _, w := range in.VerifierWaiting {
+		s.Attention = append(s.Attention, Attention{
+			ID: "seat:" + w.Seat + ":verifier_waiting", Kind: "verifier_waiting", Severity: "low", Since: w.Since, Seat: w.Seat,
+			Subject: fmt.Sprintf("the commit step of task %s waits for a verifier slot (%d run at once)", w.Task, w.Parallelism), Bucket: BucketWorking,
 		})
 	}
 	if since := in.Scheduler.UsageLimitSince; since != nil && (in.Scheduler.UsageLimitUntil == nil || in.Now.Before(*in.Scheduler.UsageLimitUntil)) {

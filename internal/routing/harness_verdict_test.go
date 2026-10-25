@@ -20,7 +20,11 @@ func harnessPass(t testing.TB, s task.Store, id string, now time.Time) {
 	if !task.MechanicalVerifier(v) {
 		return
 	}
-	if _, err := s.RecordVerdict(id, task.Verdict{Verifier: v, Result: task.VerdictPass, Source: "test harness"}, now); err != nil {
+	// The harness records the tree first, then the sealed verdict on it.
+	if _, err := s.RecordSnapshot(id, "test-tree", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordVerdict(id, task.Verdict{Verifier: v, Result: task.VerdictPass, Source: "test harness", Tree: "test-tree", CommandDigest: task.CommandDigest("test")}, now); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,0 +1,145 @@
+# Revert cases of v3-5-verifier, for docs/v3-spike/5-repass-evidence/tools/routing/revert.py
+# (the shared harness: undo one rule, the row must fail on its assertion, restore, it must pass).
+SC = "./internal/seatcommit/"
+TK = "./internal/task/"
+R = "./internal/routing/"
+SD = "./internal/scheduler/"
+CLI = "./internal/cli/"
+RG = "./internal/registry/"
+ST = "./internal/status/"
+GR = "./internal/grants/"
+V = "internal/seatcommit/verifier.go"
+VD = "internal/task/verdict.go"
+LS = "internal/task/lease.go"
+PV = "internal/registry/probeverdict.go"
+CASES = [
+    # rule 1
+    ("1 shadow worktree at the snapshot tree, never the live worktree", V,
+     "\tcmd.Dir, cmd.Env, cmd.Stdin = work, verifierEnv(o.Root, private), nil",
+     "\tcmd.Dir, cmd.Env, cmd.Stdin = sh.rp.Worktree, verifierEnv(o.Root, private), nil",
+     "TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree$", SC),
+    ("1 the exit code is the verdict", V,
+     "\tif run.exit == 0 && run.reason == \"\" {", "\tif run.reason == \"\" {",
+     "TestVerifierExitCodeIsTheVerdict$", SC),
+    ("1 the wall-time bound is a fail verdict (verifier_timeout)", V,
+     "\ttimer := time.AfterFunc(p.timeout, func() { kill(ReasonVerifierTimeout) })",
+     "\ttimer := time.AfterFunc(p.timeout+time.Hour, func() { kill(ReasonVerifierTimeout) })",
+     "TestVerifierTimeoutIsAFailVerdict$", SC),
+    ("1 the bounds are the grant's (verifier_timeout)", V,
+     "\ttimeout, limit, par := g.VerifierBounds()", "\tg.VerifierTimeout = 0\n\ttimeout, limit, par := g.VerifierBounds()",
+     "TestVerifierTimeoutIsAFailVerdict$", SC),
+    ("1 the output bound is a fail verdict (verifier_output_exceeded), truncated with the marker", V,
+     "\tif len(p) > room {", "\tif false && len(p) > room {",
+     "TestVerifierOutputIsBoundedAndRedactedIntoTheLedger$", SC),
+    ("1 the output goes through the redaction step", V,
+     "\trun.output = []byte(redact.Text(string(raw)))", "\trun.output = []byte(redact.Placeholder[:0] + string(raw))",
+     "TestVerifierOutputIsBoundedAndRedactedIntoTheLedger$", SC),
+    ("1 the output goes to the evidence ledger", V,
+     "\tif err := writeVerifierEvidence(path, o, cur, out, run.output); err != nil {",
+     "\tif err := error(nil); err != nil {",
+     "TestVerifierOutputIsBoundedAndRedactedIntoTheLedger$", SC),
+    ("1 the grant keys verifier_timeout parse", "internal/grants/parse.go",
+     "\t\tcase \"verifier_timeout\":", "\t\tcase \"verifier_timeout_x\":",
+     "TestVerifierBoundsFromTheGrant$", GR),
+    # rule 2
+    ("2 a verdict on another tree than the lease's snapshot is verdict_tree_mismatch", VD,
+     "\t\tcase v.Tree != t.Lease.Snapshot:", "\t\tcase false:",
+     "TestVerdictTreeMustBeTheLeasesSnapshot$", TK),
+    ("2 the snapshot never moves under a recorded verdict", VD,
+     "\t\tcase t.Lease.Verdict != nil && t.Lease.Verdict.Tree != tree:", "\t\tcase false:",
+     "TestVerdictTreeMustBeTheLeasesSnapshot$", TK),
+    ("2 guard denies a seat's call of the commit step (harness_only)", "internal/cli/hook_guard.go",
+     "\t\tif a.harness != \"\" {", "\t\tif false && a.harness != \"\" {",
+     "TestSeatCannotRecordAVerdict$", CLI),
+    ("2 seat commit refuses inside a seat", "internal/cli/seat_commit.go",
+     "\tif os.Getenv(\"AMQ_SQUAD_SEAT\") != \"\" {\n\t\treturn usageErrorf(\"seat commit: harness_only",
+     "\tif false {\n\t\treturn usageErrorf(\"seat commit: harness_only",
+     "TestSeatCannotRecordAVerdict$", CLI),
+    # rule 3
+    ("3 the probe's verdict is pass exactly when the predicate holds", PV,
+     "\tif r.Pass {\n\t\tv.Result = task.VerdictPass", "\tif true {\n\t\tv.Result = task.VerdictPass",
+     "TestProbeRunsRecordTheirPredicateAsAVerdict$", RG),
+    ("3 a scheduled probe task's verdict is recorded on its lease as the class's verifier", PV,
+     "\treturn s.RecordVerdict(id, run.PredicateVerdict(task.ClassVerifier(t.Class), ProbeSourceScheduled), now)",
+     "\treturn s.RecordVerdict(id, run.PredicateVerdict(ProbeVerifier, ProbeSourceScheduled), now)",
+     "TestScheduledProbeTaskCompletesOnlyOnItsPredicateVerdict$", RG),
+    # rule 4
+    ("4 the start check refuses a gated class with no command", "internal/routing/router.go",
+     "\tr.unverified = o.Grants.UnconfiguredGate()", "\tr.unverified = nil",
+     "TestVerifierGateWithNoCommandIsRefusedAtTheStart$", R),
+    ("4 the claim path refuses a gated class with no command", VD,
+     "\tif err == nil && required && cmd == \"\" {\n\t\treturn &VerifierUnconfiguredError",
+     "\tif false && err == nil && required && cmd == \"\" {\n\t\treturn &VerifierUnconfiguredError",
+     "TestClaimRefusesAGatedClassWithNoCommand$", TK),
+    ("4 the scheduler blocks the claim path's refusal for the lead", "internal/scheduler/scheduler.go",
+     "\t\t\tif errors.As(err, &unverified) {", "\t\t\tif false && errors.As(err, &unverified) {",
+     "TestSchedulerBlocksAGatedClassWithNoCommandAtTheGrant$", SD),
+    ("4 a lease-time change still blocks at the commit step (verdict_missing, no push)", V,
+     "\t\tif g.VerifierRequired(class) {", "\t\tif false {",
+     "TestLeaseTimeVerifierChangeStillBlocksTheDoneReport$", SC),
+    ("4 a lease-time change still blocks the done report (the store, named)", LS,
+     "\tif required && cmd == \"\" {", "\tif false && required && cmd == \"\" {",
+     "TestRepassGateOnlyForAConfiguredVerifier$", TK),
+    # rule 5
+    ("5 unconfigured and ungated completes with none (routing row)", LS,
+     "\treturn required, \"\"", "\treturn required || true, \"\"",
+     "TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes$", R),
+    ("5 unconfigured and ungated runs nothing at the commit step", V,
+     "\t\tif g.VerifierRequired(class) {", "\t\tif true {",
+     "TestUnconfiguredVerifierRunsNothingAtTheCommitStep$", SC),
+    # rule 6
+    ("6 the block detail is the output's tail within 4 KiB", V,
+     "\tif room := task.VerdictDetailCap - len(head); len(tail) > room {",
+     "\tif room := task.VerdictDetailCap - len(head); false && len(tail) > room {",
+     "TestFailVerdictBlocksWithTheTailAndNoPush$", SC),
+    ("6 a fail verdict means no push", V,
+     "\tif out.Result != task.VerdictPass {\n\t\treturn res.refuse(task.BlockVerdictFailed",
+     "\tif false {\n\t\treturn res.refuse(task.BlockVerdictFailed",
+     "TestFailVerdictBlocksWithTheTailAndNoPush$", SC),
+    ("6 the fail verdict stays on the attempt (a failed attempt for escalation)", LS,
+     "Outcome: outcome, Detail: detail, Verdict: t.Lease.Verdict})",
+     "Outcome: outcome, Detail: detail, Verdict: nil})",
+     "TestFailVerdictBlocksWithTheTailAndNoPush$", SC),
+    ("6 a pass verdict is recorded and completion proceeds to the push", V,
+     "\tif _, err := store.RecordVerdict(o.Task.ID, v, o.Now()); err != nil {",
+     "\tif _, err := store.Get(o.Task.ID); v.Tree == \"\" && err != nil {",
+     "TestPassVerdictCompletesAndPushes$", SC),
+    # rule 7
+    ("7 the diff check refuses before the verifier runs", "internal/seatcommit/commit.go",
+     "\tres.Violations = check(o, g, rec, repoRoot, parent, tree, entries, declared, &res)",
+     "\tif r, done := verify(o, sh, res); done && !o.DryRun {\n\t\treturn r\n\t}\n\tres.Violations = check(o, g, rec, repoRoot, parent, tree, entries, declared, &res)",
+     "TestVerifierOrderInsideTheCommitStep$", SC),
+    # rule 8
+    ("8 the verifier's environment is built from nothing (a seat's)", V,
+     "\treturn append(env, hardenedVars...)\n}", "\treturn append(append(os.Environ(), env...), hardenedVars...)\n}",
+     "TestVerifierEnvironmentIsASeats$", SC),
+    # rule 9
+    ("9 argv[0] is an absolute path or a registry pin; go test with no pin is grants_invalid", V,
+     "\t\tif err != nil || !ok {\n\t\t\treturn nil, ReasonGrants", "\t\tif false && (err != nil || !ok) {\n\t\t\treturn nil, ReasonGrants",
+     "TestVerifierToolIsAnAbsolutePathOrAPin$", SC),
+    # rule 10
+    ("10 the owner's config is diffed again after the verifier", V,
+     "\tif code != \"\" {\n\t\tres.Verifier.Result = \"discarded\"", "\tif false && code != \"\" {\n\t\tres.Verifier.Result = \"discarded\"",
+     "TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict$", SC),
+    # rule 11
+    ("11 completion verifies the seal: an inserted verdict is verdict_missing", LS,
+     "\t\tif unsealed = s.verdictInvalid(*t); unsealed != \"\" {", "\t\tif unsealed = \"\"; false {",
+     "TestUnsealedVerdictIsVerdictMissing$", TK),
+    ("11 the tree and the command digest are inside the signed bytes", VD,
+     "\tcase !hmac.Equal([]byte(sealchain.Tag(key.Key, verdictLabel, sealBody(t, *v))), []byte(v.Tag)):",
+     "\tcase false && !hmac.Equal([]byte(sealchain.Tag(key.Key, verdictLabel, sealBody(t, *v))), []byte(v.Tag)):",
+     "TestUnsealedVerdictIsVerdictMissing$", TK),
+    # rule 12
+    ("12 the process group is killed whole at the bound", "internal/seatcommit/verifier_unix.go",
+     "\t\t_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)", "\t\t_ = cmd.Process.Kill()",
+     "TestVerifierProcessGroupKilledWholeAtTheBound$", SC),
+    ("12 an escaped descendant holding stdout does not extend the bound (WaitDelay)", V,
+     "\tcmd.WaitDelay = verifierWaitDelay", "\tcmd.WaitDelay = 0",
+     "TestVerifierProcessGroupKilledWholeAtTheBound$", SC),
+    ("12 at most verifier_parallelism run at once; the step waits with a status row", V,
+     "\t\tfor i := 0; i < p.parallelism; i++ {", "\t\tfor i := 0; i < p.parallelism+1; i++ {",
+     "TestVerifierParallelismWaitsWithAStatusRow$", SC),
+    ("12 the waiting row is a status attention row", "internal/status/classify.go",
+     "\tfor _, w := range in.VerifierWaiting {", "\tfor _, w := range in.VerifierWaiting[:0] {",
+     "TestStatusNamesACommitStepWaitingForAVerifierSlot$", ST),
+]

@@ -620,6 +620,18 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				}
 			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
+			var unverified *task.VerifierUnconfiguredError
+			if errors.As(err, &unverified) {
+				// The claim path's refusal (v3-5-verifier rule 4): the grant
+				// changed since the start; the task blocks for the lead.
+				got, err := s.Store.Block(t.ID, "", task.ReasonGrantsInvalid, err.Error(), task.RouteLead, now)
+				if err != nil {
+					return err
+				}
+				list = replace(list, got)
+				log(Decision{Kind: "blocked", TaskID: t.ID, Reason: task.ReasonGrantsInvalid})
+				continue
+			}
 			if err != nil {
 				return err
 			}

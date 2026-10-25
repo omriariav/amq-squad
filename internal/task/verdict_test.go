@@ -18,7 +18,11 @@ func harnessPass(t testing.TB, s Store, id string, now time.Time) {
 	if !MechanicalVerifier(ClassVerifier(got.Class)) {
 		return
 	}
-	if _, err := s.RecordVerdict(id, Verdict{Verifier: ClassVerifier(got.Class), Result: VerdictPass, Source: "test harness"}, now); err != nil {
+	// The harness records the tree first, then the sealed verdict on it.
+	if _, err := s.RecordSnapshot(id, "test-tree", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordVerdict(id, Verdict{Verifier: ClassVerifier(got.Class), Result: VerdictPass, Source: "test harness", Tree: "test-tree", CommandDigest: CommandDigest("test")}, now); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -64,10 +68,13 @@ func TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict(t *testing.T) {
 	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierTests, Result: VerdictPass, Source: "x"}, t0); err == nil {
 		t.Fatal("a verdict of another verifier was recorded")
 	}
-	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierExitCode, Result: VerdictFail, Source: "probe", Detail: "exit 1"}, t0); err != nil {
+	if _, err := s.RecordSnapshot(c.ID, "test-tree", t0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierExitCode, Result: VerdictPass, Source: "probe"}, t0); err == nil {
+	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierExitCode, Result: VerdictFail, Source: "probe", Detail: "exit 1", Tree: "test-tree", CommandDigest: CommandDigest("test")}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierExitCode, Result: VerdictPass, Source: "probe", Tree: "test-tree", CommandDigest: CommandDigest("test")}, t0); err == nil {
 		t.Fatal("a second verdict replaced the first")
 	}
 	if got, err := s.Done(c.ID, "seat-3", "", "", t0); err != nil || got.State != StateBlocked || got.BlockReason != BlockVerdictFailed {
@@ -105,11 +112,16 @@ func TestRepassGateOnlyForAConfiguredVerifier(t *testing.T) {
 	s := newStore(t)
 	cmd, gated, srcErr := "", false, error(nil)
 	s.Verifiers = func(Task) (string, bool, error) { return cmd, cmd != "" || gated, srcErr }
+	var duringLease func() // a configuration change while the seat holds the lease
 	run := func(title string) Task {
 		t.Helper()
 		a := mustAdd(t, s, AddInput{Title: title})
 		if _, err := s.Claim(a.ID, "seat-"+a.ID, nil, time.Minute, t0); err != nil {
 			t.Fatal(err)
+		}
+		if duringLease != nil {
+			duringLease()
+			duringLease = nil
 		}
 		got, err := s.Done(a.ID, "seat-"+a.ID, "", "", t0)
 		if err != nil {
@@ -124,7 +136,10 @@ func TestRepassGateOnlyForAConfiguredVerifier(t *testing.T) {
 	if got := run("configured"); got.State != StateBlocked || got.BlockReason != BlockVerdictMissing {
 		t.Fatalf("a configured verifier: %s %s", got.State, got.BlockReason)
 	}
-	cmd, gated = "", true // the squad's gate adds the class; the grant names no command
+	// The squad's gate adds the class and the grant names no command: such a
+	// task is never dispatched (v3-5-verifier rule 4), so the done-report gate
+	// fires on a configuration change during the lease.
+	duringLease = func() { cmd, gated = "", true }
 	if got := run("gated, no command"); got.State != StateBlocked || got.BlockReason != BlockVerdictMissing || !strings.Contains(got.BlockDetail, "names no verifier command") {
 		t.Fatalf("a gated class with no grant command: %s %s %q", got.State, got.BlockReason, got.BlockDetail)
 	}

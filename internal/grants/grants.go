@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -193,6 +194,13 @@ type Grants struct {
 	// Clear is the owner-file key clear.signature (phase 5, the Buzz-signed
 	// seat clear): how a quarantine's clear is signed.
 	Clear Clear `json:"clear,omitempty"`
+	// The verifier's bounds (v3-5-verifier rules 1 and 12), owner-settable:
+	// wall time (verifier_timeout, a duration such as 10m), combined output
+	// in bytes (verifier_output_limit) and how many verifiers run at once
+	// (verifier_parallelism). Zero is the default.
+	VerifierTimeout     time.Duration `json:"verifier_timeout,omitempty"`
+	VerifierOutputLimit int           `json:"verifier_output_limit,omitempty"`
+	VerifierParallelism int           `json:"verifier_parallelism,omitempty"`
 }
 
 // Clear signature modes of the owner file's clear.signature.
@@ -224,6 +232,44 @@ func (g Grants) ClearMode(enrolled bool) string {
 		return ClearRequired
 	}
 	return ClearPtyOnly
+}
+
+// The verifier's default bounds: 10 minutes, 1 MiB of combined output, two
+// verifiers at once.
+const (
+	DefaultVerifierTimeout     = 10 * time.Minute
+	DefaultVerifierOutputLimit = 1 << 20
+	DefaultVerifierParallelism = 2
+)
+
+// VerifierBounds are the verifier's wall time, output limit and
+// parallelism, the defaults where the grant sets none.
+func (g Grants) VerifierBounds() (timeout time.Duration, outputLimit, parallelism int) {
+	timeout, outputLimit, parallelism = g.VerifierTimeout, g.VerifierOutputLimit, g.VerifierParallelism
+	if timeout <= 0 {
+		timeout = DefaultVerifierTimeout
+	}
+	if outputLimit <= 0 {
+		outputLimit = DefaultVerifierOutputLimit
+	}
+	if parallelism <= 0 {
+		parallelism = DefaultVerifierParallelism
+	}
+	return timeout, outputLimit, parallelism
+}
+
+// UnconfiguredGate are the classes in the verifier gate with no command,
+// sorted: a squad.yaml added them, the grant names no command. A task of
+// such a class is never dispatched (v3-5-verifier rule 4).
+func (g Grants) UnconfiguredGate() []string {
+	var out []string
+	for _, c := range g.VerifierGate {
+		if g.Verifiers[c] == "" && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // VerifierFor is the class's configured verifier command, "" when none.

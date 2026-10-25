@@ -115,6 +115,9 @@ type Result struct {
 	PRRepository string `json:"pr_repository,omitempty"`
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRHead       string `json:"pr_head,omitempty"`
+	// Verifier is the class verifier's run on the snapshot tree
+	// (v3-5-verifier), nil when the class has none configured.
+	Verifier *VerifierOutcome `json:"verifier,omitempty"`
 }
 
 func (r Result) refuse(code, route, detail string) Result {
@@ -397,6 +400,12 @@ func run(o Options, res Result) Result {
 	}
 	if err := CheckTarget(ledger.Target); err != nil {
 		return res.refuse(ReasonPushTargetUnacknowledged, task.RouteOwner, err.Error())
+	}
+	// v3-5-verifier rule 7: the class's verifier on the snapshot tree, the
+	// owner-config diff again, the verdict; only a pass reaches the push.
+	res, done := verify(o, sh, res)
+	if done {
+		return res
 	}
 	return commitAndPush(o, sh, ledger, rec, res)
 }

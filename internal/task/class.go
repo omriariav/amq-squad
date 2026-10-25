@@ -54,6 +54,9 @@ const (
 const (
 	BlockVerdictMissing = "verdict_missing" // a done report with no harness verdict
 	BlockVerdictFailed  = "verdict_failed"  // the harness's verdict was fail
+	// BlockVerdictTreeMismatch refuses a verdict whose tree is not the
+	// lease's snapshot (v3-5-verifier rule 2).
+	BlockVerdictTreeMismatch = "verdict_tree_mismatch"
 )
 
 // Verdict is the harness's verdict on one attempt of a class with a
@@ -65,6 +68,18 @@ type Verdict struct {
 	Source   string    `json:"source"`   // what ran it: the commit step's test run, the probe
 	Detail   string    `json:"detail,omitempty"`
 	At       time.Time `json:"at"`
+	// Tree is the tree the verifier ran on: the commit step's snapshot tree
+	// id (the object store's digest of the tree), which must be the lease's
+	// Snapshot (verdict_tree_mismatch otherwise); CommandDigest is the
+	// sha256 of the command that ran (CommandDigest). Both are inside the
+	// signed bytes.
+	Tree          string `json:"tree,omitempty"`
+	CommandDigest string `json:"command_digest,omitempty"`
+	// Tag is the harness's seal (sealchain.Tag under the session seed) over
+	// the verdict with its task, attempt and holder; completion verifies it,
+	// so a verdict written into the store without the seed is
+	// verdict_missing.
+	Tag string `json:"tag,omitempty"`
 }
 
 // ValidClass reports whether c is in the closed class list.

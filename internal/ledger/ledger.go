@@ -4,7 +4,7 @@
 // store (internal/commandevidence/evidence.go, retired by 3-2) and carries its
 // two semantics: redaction (the secret-name rule and the secret-argument
 // rule) and the task link (the lines a task's lease holders wrote inside
-// their lease windows). It never writes.
+// their lease windows). Its readers never write; append.go is the one writer.
 package ledger
 
 import (

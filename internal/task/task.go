@@ -77,6 +77,9 @@ type Lease struct {
 	ClaimedAt *time.Time `json:"claimed_at"`
 	RenewedAt *time.Time `json:"renewed_at"`
 	Renewals  int        `json:"renewals"`
+	// Snapshot is the tree the harness's verifier runs on in this attempt
+	// (RecordSnapshot: the commit step's snapshot, the probe's checkout).
+	Snapshot string `json:"snapshot,omitempty"`
 	// Verdict is the harness's verdict on this attempt (RecordVerdict): the
 	// only way a class with a mechanical verifier completes.
 	Verdict *Verdict `json:"verdict,omitempty"`

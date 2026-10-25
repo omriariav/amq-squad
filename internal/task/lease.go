@@ -139,7 +139,13 @@ func requireLiveHolder(t *Task, holder string, now time.Time) error {
 // Grant leases a pending task to a seat (the scheduler, or `dispatch`).
 // The lease is unclaimed until the seat claims it.
 func (s Store) Grant(id, holder string, pool *Pool, dur time.Duration, now time.Time) (Task, error) {
-	return s.mutate(id, now, func(t *Task, all *tasks) error { return grant(t, all, holder, pool, dur, now) })
+	return s.mutate(id, now, func(t *Task, all *tasks) error {
+		// A gated class with no verifier command never reaches a seat (rule 4).
+		if err := s.dispatchable(*t); err != nil {
+			return err
+		}
+		return grant(t, all, holder, pool, dur, now)
+	})
 }
 
 // Claim claims the holder's lease on id. With an empty id it claims the
@@ -156,6 +162,9 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 				return fmt.Errorf("%w: %q", ErrNotFound, id)
 			}
 			if t.State == StatePending {
+				if err := s.dispatchable(*t); err != nil {
+					return err
+				}
 				if err := grant(t, all, holder, pool, dur, now); err != nil {
 					return err
 				}
@@ -174,7 +183,7 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 			order := append([]Task(nil), all.list...)
 			DispatchOrder(order)
 			for _, c := range order {
-				if c.State == StatePending && Blocker(c, all.list) == "" && (pool == nil || c.Pool == nil || *c.Pool == *pool) {
+				if c.State == StatePending && Blocker(c, all.list) == "" && (pool == nil || c.Pool == nil || *c.Pool == *pool) && s.dispatchable(c) == nil {
 					t = all.get(c.ID)
 					break
 				}
@@ -292,14 +301,22 @@ func (s Store) Done(id, holder, evidence, finalHead string, now time.Time) (Task
 // report stays, as on a commit refusal, until the lead's reset.
 func (s Store) complete(t *Task, now time.Time) {
 	var v *Verdict
-	if t.Lease != nil {
-		v = t.Lease.Verdict
+	unsealed := ""
+	if t.Lease != nil && t.Lease.Verdict != nil {
+		// The seal and the tree (rule 11): a verdict the harness did not seal
+		// is no verdict, and is not carried to the attempt as one.
+		if unsealed = s.verdictInvalid(*t); unsealed != "" {
+			t.Lease.Verdict = nil
+			unsealed = " (" + unsealed + ")"
+		} else {
+			v = t.Lease.Verdict
+		}
 	}
 	if required, why := s.verifierRequired(*t); required || v != nil {
 		switch {
 		case v == nil:
 			endAttempt(t, OutcomeBlocked, BlockVerdictMissing, now)
-			_ = block(t, BlockVerdictMissing, fmt.Sprintf("class %s completes only on a recorded %s verdict from the harness; the done report has none%s", t.Class, ClassVerifier(t.Class), why), RouteLead)
+			_ = block(t, BlockVerdictMissing, fmt.Sprintf("class %s completes only on a recorded %s verdict from the harness; the done report has none%s%s", t.Class, ClassVerifier(t.Class), why, unsealed), RouteLead)
 			return
 		case v.Result != VerdictPass:
 			endAttempt(t, OutcomeBlocked, BlockVerdictFailed, now)
@@ -331,33 +348,6 @@ func (s Store) verifierRequired(t Task) (bool, string) {
 		return true, " (the squad's verifier gate names the class, but the owner grant names no verifier command for it)"
 	}
 	return required, ""
-}
-
-// RecordVerdict records the harness's verdict on the current attempt of a
-// task whose class has a mechanical verifier: the commit step's test run or
-// the probe's predicate. It is the harness's call, never the seat's; one
-// verdict per attempt, of the class's own verifier.
-func (s Store) RecordVerdict(id string, v Verdict, now time.Time) (Task, error) {
-	return s.mutate(id, now, func(t *Task, _ *tasks) error {
-		want := ClassVerifier(t.Class)
-		switch {
-		case !MechanicalVerifier(want):
-			return fmt.Errorf("task %s: class %s has no mechanical verifier", t.ID, t.Class)
-		case t.State != StateInProgress || t.Lease == nil:
-			return fmt.Errorf("task %s is %s with no attempt to record a verdict on", t.ID, t.State)
-		case t.Lease.Verdict != nil:
-			return fmt.Errorf("task %s attempt %d already has a %s verdict", t.ID, t.Attempt, t.Lease.Verdict.Result)
-		case v.Verifier != want:
-			return fmt.Errorf("task %s: verdict of verifier %q, class %s is verified by %s", t.ID, v.Verifier, t.Class, want)
-		case v.Result != VerdictPass && v.Result != VerdictFail:
-			return fmt.Errorf("verdict result %q: want pass or fail", v.Result)
-		case strings.TrimSpace(v.Source) == "":
-			return fmt.Errorf("a verdict names the harness step that ran the verifier")
-		}
-		v.Source, v.Detail, v.At = strings.TrimSpace(v.Source), strings.TrimSpace(v.Detail), now
-		t.Lease.Verdict = &v
-		return nil
-	})
 }
 
 // Complete is the commit step's acceptance of a done report.

@@ -205,6 +205,12 @@ func runSeatCommit(args []string, out io.Writer) error {
 	if strings.TrimSpace(*seat) == "" || f.fs.NArg() > 0 {
 		return usageErrorf("seat commit: --seat HANDLE is required and takes no positional arguments")
 	}
+	// v3-5-verifier rule 2: the commit step runs the verifier and records
+	// the verdict; it is the harness's (the scheduler process, or the owner
+	// or lead by hand), never a seat's.
+	if os.Getenv("AMQ_SQUAD_SEAT") != "" {
+		return usageErrorf("seat commit: harness_only: AMQ_SQUAD_SEAT is set; the commit step and its verdict are never a seat's")
+	}
 	sel, err := f.selection(!*dryRun)
 	if err != nil {
 		return err

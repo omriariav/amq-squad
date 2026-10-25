@@ -16,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -65,6 +66,7 @@ func Collect(o CollectOptions) Input {
 		warn("launch alarms: %v", err)
 	}
 	in.PushURLMissing = pushURLMissing(o.Root)
+	in.VerifierWaiting = seatcommit.VerifierWaiting(o.Root)
 	msgs, scanWarnings := state.ScanSessionMessages(o.Root, func() time.Time { return o.Now })
 	if len(scanWarnings) > 0 {
 		warn("mailbox scan: %d unreadable messages skipped", len(scanWarnings))
@@ -251,8 +253,8 @@ func readLedgerTail(path string) (ledgerTail, error) {
 			Tool    string          `json:"tool"`
 			Payload json.RawMessage `json:"payload"`
 		}
-		if len(bytes.TrimSpace(ln)) == 0 || json.Unmarshal(ln, &l) != nil {
-			continue
+		if len(bytes.TrimSpace(ln)) == 0 || json.Unmarshal(ln, &l) != nil || l.Event == seatcommit.EventVerifier {
+			continue // the harness's verifier line is not the seat's activity
 		}
 		if at, err := time.Parse(time.RFC3339Nano, l.At); err == nil && !at.Before(t.last) {
 			t.last, t.prompt = at, promptState(l.Event, l.Tool)

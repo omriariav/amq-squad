@@ -174,6 +174,23 @@ migrated):
   attempt ends `blocked` (a failed attempt for the router's escalation) and
   the report stays until the lead's reset. A re-armed commit (a widening, a
   cleared quarantine) is a new lease and needs its own verdict.
+- The sealed verdict (v3-5-verifier): the harness first records the tree
+  its verifier runs on (`RecordSnapshot`, `lease.snapshot`: the commit
+  step's snapshot tree, the probe's checkout), then the verdict, which must
+  name that tree (`verdict.tree`, else `verdict_tree_mismatch`) and the
+  digest of the command that ran (`verdict.command_digest`). The store seals
+  it with the session seed (`verdict.tag`, over the verdict, its task,
+  attempt and holder); completion verifies the seal and the tree, and a
+  verdict without them is `verdict_missing`. A verdict's detail is at most
+  4 KiB. No task verb records a snapshot or a verdict: the commit step does
+  (`seat commit`, run by the scheduler process), and guard denies a seat's
+  call of it (`harness_only`). Same-UID limit: a process that reads the seed
+  can forge a verdict, as every sealed record.
+- Dispatch refusal: a class in the squad's verifier gate with no command in
+  the owner grant is never leased (`Grant`, `Claim`: `grants_invalid`, the
+  class and the missing `verifiers.<class>` named; a pull skips it), so
+  `verdict_missing` at the done report means the grant changed during the
+  lease.
 - One seat holds at most one lease (`HeldBy`): a lease, or a blocked task
   whose done report it filed.
 - Fail, block, release, cancel end the lease and append the attempt row.

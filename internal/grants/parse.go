@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/yamlsub"
@@ -36,6 +37,9 @@ import (
 //	  signature: required         # required (default with a Buzz enrolment) | pty_only (only without one; else grants_invalid)
 //	verifiers:                    # optional: the verifier command per class with a mechanical verifier
 //	  implement: go test ./...    # extract, script, implement; a class without one completes on its done report
+//	verifier_timeout: 10m         # optional: the verifier's wall time (default 10m, at most 24h)
+//	verifier_output_limit: 1048576   # optional: the verifier's combined output in bytes (default 1 MiB)
+//	verifier_parallelism: 2       # optional: verifiers running at once (default 2)
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100
@@ -115,6 +119,12 @@ func ParseOwner(text, source string) (Grants, error) {
 			g.Clear, err = parseClear(e)
 		case "verifiers":
 			g.Verifiers, err = parseVerifiers(e)
+		case "verifier_timeout":
+			g.VerifierTimeout, err = parseTimeout(e)
+		case "verifier_output_limit":
+			g.VerifierOutputLimit, err = e.Integer(1024)
+		case "verifier_parallelism":
+			g.VerifierParallelism, err = e.Integer(1)
 		default:
 			err = e.Errf("unknown key")
 		}
@@ -123,6 +133,19 @@ func ParseOwner(text, source string) (Grants, error) {
 		}
 	}
 	return g, nil
+}
+
+// parseTimeout reads a duration above zero and at most a day.
+func parseTimeout(e yamlsub.Entry) (time.Duration, error) {
+	s, err := e.Scalar()
+	if err != nil {
+		return 0, err
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 || d > 24*time.Hour {
+		return 0, e.Errf("want a duration above 0 and at most 24h, got %q", s)
+	}
+	return d, nil
 }
 
 // verifierClass is a class with a mechanical verifier (plan 6.1).
