@@ -1441,6 +1441,8 @@ Codex re-passes of merged heads. Findings become fix commits before the
   returned; a head stays on this list until its re-pass is recorded as
   complete.
 - The 2b-2 fix merge dc7eedab: fixes 3b and 3c, the proof-window wait.
+  Covered by the 2b-2 A re-pass at the tip (same three packages; six
+  findings on the phase 5 fix branch). [2.7, reviewer, 2026-10-25]
 - The 2b-4 merge d04932d1: fix 5's head record, the observed-then-reset
   clearance, chained decisions.
 - The 3-2 merge 2756d88d: fix 4's binding in the task store, the pinned
