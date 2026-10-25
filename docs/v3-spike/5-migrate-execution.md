@@ -275,22 +275,22 @@ became structure instead of per-call-site patches.
 
 ## Gate
 
-Quiet host (0 matching processes). Gate head 73aa1ed1 (the fix commit); the
-evidence commit after it adds only the two evidence files and this section.
+Quiet host (0 matching processes). Gate head becc3b44 (the structural round);
+the evidence commit after it adds only the two evidence files and this section.
 `docs/v3-spike/5-migrate-evidence/gate.txt` (through `scripts/redact-evidence`,
 0 values replaced): go build, go vet, GOOS=linux and GOOS=windows builds,
 `scripts/manifest-check.sh --final` (OK), `go test -count=1 ./...`, and
 `go test -count=1 -race -timeout 45m` on internal/team, internal/migrate,
 internal/seatcommit, internal/cli: all exit 0. Revert check
-(`revert-check.txt`, run on 73aa1ed1): 42 rows, every one FAILS when its line is
-reverted, 0 rows not biting. The first revert pass of the original delivery found
-five weak rows (golden key coverage, doctor wiring, a never-settable key covered
-by its parent, the create-only write behind a pre-check, the absent-squad refusal
-behind the load check), each given a sharper test; the fix round's first pass
-found two more that had a redundant layer (the plan-time symlink check, the pair
-row), handled by reverting both layers in one row and fixing a revert that did
-not build.
+(`revert-check.txt`, run on becc3b44): 49 rows, every one FAILS when its line is
+reverted, 0 rows not biting. Weak rows found along the way and fixed: in the
+original delivery five (golden key coverage, doctor wiring, a never-settable key
+covered by its parent, the create-only write behind a pre-check, the
+absent-squad refusal behind the load check); in the fix round two (the plan-time
+symlink check had a second layer, a revert that did not build); in the
+structural round three revert strings that no longer matched the code after the
+refactor and one revert that did not build.
 
-Not done: nothing in A1 to A6, B1 to B9 or the fix round is left out. `uninstall`
-is out of scope; a rebase onto it touches the manifest, command_registry.go and
-cli_test.go.
+Not done: nothing in A1 to A6, B1 to B9, the fix round or M1 and M2 is left out.
+`uninstall` is out of scope; a rebase onto it touches the manifest,
+command_registry.go and cli_test.go.
