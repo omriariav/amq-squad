@@ -262,3 +262,33 @@ func TestProofRecordsTheLeadPaneShell(t *testing.T) {
 		t.Fatalf("the ledger does not carry the pane shell: %+v %v", e, err)
 	}
 }
+
+// Item 4 tightening 1, the former contract as a deterministic row: a token
+// minted 61 s before its message is judged (the message read after the window
+// has run out, with no clock hook between the read and the judgement) is
+// refused as proof_expired, and a retry of the same token stays refused.
+func TestTokenMintedSixtyOneSecondsEarlierIsExpired(t *testing.T) {
+	q := shortSquad(t)
+	var mu sync.Mutex
+	now := time.Now()
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	launchID := newLaunchID()
+	srv, err := startProofServer(q, launchID, Options{Now: time.Now, ProofClock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.close)
+	ticket := srv.ticket("cto", "req-1")
+	mu.Lock()
+	now = now.Add(launch.ProofTTL + time.Second)
+	mu.Unlock()
+	m := launch.ProofMessage{LaunchID: launchID, RequestID: "req-1", Handle: "cto", Token: ticket.Token}
+	for i := 0; i < 2; i++ {
+		if r := srv.judge(m, 1, true); r.OK || r.Code != "proof_expired" {
+			t.Fatalf("attempt %d: %+v", i+1, r)
+		}
+	}
+	if up, _, _, refused, _ := srv.state("cto"); up || refused != "proof_expired" {
+		t.Fatalf("state: up %v refused %q", up, refused)
+	}
+}

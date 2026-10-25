@@ -60,7 +60,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 	}
 	tmuxEnv = append(tmuxEnv, "TMUX_TMPDIR="+tmuxTmp)
 	tmuxRun := func(args ...string) ([]byte, error) {
-		cmd := exec.Command(tmux, append([]string{"-L", socket}, args...)...)
+		cmd := exec.Command(tmux, append([]string{"-f", "/dev/null", "-L", socket}, args...)...)
 		cmd.Dir = dir
 		cmd.Env = tmuxEnv
 		return cmd.CombinedOutput()
