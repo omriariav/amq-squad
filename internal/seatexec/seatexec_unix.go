@@ -27,6 +27,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 const maxFile = 4 << 20
@@ -138,7 +139,18 @@ func prepare(o Options) (execPlan, error) {
 	if err := ValidateNeeds(rec.EnvNeeds, rec.CredNeeds); err != nil {
 		return plan, err
 	}
-	plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
+	if rec.Runtime == "claude" {
+		// A Claude seat runs the registry's claude pin, the bytes the launch
+		// probed (the narrow pass's HIGH): argv[0] must be the pinned path
+		// and hash to the pin; checked again immediately before exec.
+		if base := filepath.Base(o.Argv[0]); base != rec.Runtime {
+			err = refusef("runtime_mismatch", "provider %q is not the recorded runtime %q", base, rec.Runtime)
+		} else {
+			plan.provider, err = pinnedProvider(o.Home, o.Argv[0])
+		}
+	} else {
+		plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
+	}
 	if err != nil {
 		return plan, err
 	}
@@ -234,8 +246,41 @@ func prepare(o Options) (execPlan, error) {
 		if code, detail := claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
 			return plan, refusef(code, "the seat's Claude config dir changed before exec: %s", detail)
 		}
+		// The pin re-opened and re-hashed as the last step: a file replaced
+		// after the launch's probe is refused (the window to execve is the
+		// same-UID limit, as for the pinned gh).
+		if _, err := pinnedProvider(o.Home, o.Argv[0]); err != nil {
+			return plan, err
+		}
 	}
 	return plan, nil
+}
+
+// ToolUnpinned refuses a Claude seat whose argv[0] is not the registry's
+// claude pin, or whose pinned file does not hash to the pin.
+const ToolUnpinned = "tool_unpinned"
+
+// pinnedProvider is a Claude seat's executable: argv[0] must be the path the
+// registry pins for claude, opened through the anchored walk and hashed to
+// the pin's sha256 (registry.OpenPinned).
+func pinnedProvider(home, argv0 string) (string, error) {
+	reg, err := registry.Read(registry.Path(home))
+	if err != nil {
+		return "", refusef(ToolUnpinned, "the registry: %v", err)
+	}
+	pin, ok := reg.PinFor("claude")
+	if !ok {
+		return "", refusef(ToolUnpinned, "the registry pins no claude")
+	}
+	if filepath.Clean(argv0) != pin.Path {
+		return "", refusef(ToolUnpinned, "the provider %s is not the pinned claude %s", argv0, pin.Path)
+	}
+	tool, code, detail := registry.OpenPinned("claude", pin.Path, pin.SHA256)
+	if tool == nil {
+		return "", refusef(ToolUnpinned, "%s: %s", code, detail)
+	}
+	tool.Close()
+	return pin.Path, nil
 }
 
 // sendProof is the last step before exec (item 4, lead ruling): seat-exec

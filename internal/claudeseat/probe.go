@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -30,15 +31,42 @@ type Probe struct {
 	Version string // claude_code_version of the same event
 }
 
-// ProbeKind keys one probe per launch: seats whose settings.json and mode
-// are identical are probed once.
-func ProbeKind(dir, mode string) (string, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+// ProbeKind keys one probe per launch: seats with the same mode, the same
+// pinned claude (its sha256) and the same config dir as the probe copies it
+// (settings.json and the plugin install, the seat's own dir path taken out)
+// are probed once; a pin or a plugin that differs re-probes (the narrow
+// pass's item 5).
+func ProbeKind(dir, mode, pinSHA256 string) (string, error) {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00", mode, pinSHA256)
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		rel = filepath.ToSlash(rel)
+		if rel != "." && rel != "settings.json" && rel != "plugins" && !strings.HasPrefix(rel, "plugins/") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		raw = []byte(strings.ReplaceAll(string(raw), dir, ""))
+		fmt.Fprintf(h, "%d:%s\x00%d:", len(rel), rel, len(raw))
+		h.Write(raw)
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(append([]byte(mode+"\x00"), raw...))
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // ProbeMode asks the pinned Claude Code (command builds its invocation:
@@ -90,15 +118,37 @@ func ProbeMode(ctx context.Context, command func(args ...string) *exec.Cmd, dir,
 	if err := cmd.Start(); err != nil {
 		return p, err
 	}
-	timedOut := make(chan struct{})
-	timer := time.AfterFunc(ProbeTimeout, func() { close(timedOut); killProbe(cmd) })
-	stop := context.AfterFunc(ctx, func() { killProbe(cmd) })
-	defer func() {
-		timer.Stop()
-		stop()
-		killProbe(cmd)
-		_ = cmd.Wait()
+	// The stream is read in a goroutine under the deadline (the narrow
+	// pass's item 4): a descendant that left the group and holds the pipe
+	// cannot keep the probe past ProbeTimeout; after the kill, Wait's
+	// WaitDelay closes the pipe and the reader returns.
+	type result struct {
+		p   Probe
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		pr, err := readInit(out)
+		done <- result{pr, err}
 	}()
+	deadline := time.NewTimer(ProbeTimeout)
+	defer deadline.Stop()
+	var r result
+	select {
+	case r = <-done:
+	case <-deadline.C:
+		r.err = fmt.Errorf("the pinned Claude Code reported no init event within %s", ProbeTimeout)
+	case <-ctx.Done():
+		r.err = ctx.Err()
+	}
+	killProbe(cmd)
+	_ = cmd.Wait()
+	return r.p, r.err
+}
+
+// readInit reads the stream-json output up to the init event.
+func readInit(out io.Reader) (Probe, error) {
+	var p Probe
 	sc := bufio.NewScanner(out)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	for sc.Scan() {
@@ -116,11 +166,6 @@ func ProbeMode(ctx context.Context, command func(args ...string) *exec.Cmd, dir,
 			return p, fmt.Errorf("the pinned Claude Code (%s) reported no permission mode", orUnknown(p.Version))
 		}
 		return p, nil
-	}
-	select {
-	case <-timedOut:
-		return p, fmt.Errorf("the pinned Claude Code reported no init event within %s", ProbeTimeout)
-	default:
 	}
 	return p, fmt.Errorf("the pinned Claude Code exited without an init event")
 }

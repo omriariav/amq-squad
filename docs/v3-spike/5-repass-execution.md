@@ -347,3 +347,45 @@ Judgment calls, stated:
   of a request that never came up); the launcher runs no timer of its own.
 - A test's isolation row raises the probe bound to 60 s for a loaded host;
   the 5 s bound is its own row.
+
+### The narrow pass on 59859bde (the probe and the watchdog)
+
+One commit on 59859bde; lines refer to that export. Revert check:
+`5-repass-evidence/fix2-revert-check.txt` (11 reverts, all as required).
+Gate: `5-repass-evidence/fix2-gate.txt` (it also runs the hook script tests
+under /bin/sh and /bin/dash).
+
+| item | fix | test row |
+| --- | --- | --- |
+| HIGH: the probe certified another executable than the seat ran | a Claude seat's executable is the registry's claude pin. The launch resolves each Claude seat's pin (`Options.PinFor`, default the registry under HOME, read once) into `Squad.ClaudePins`; Compile names the pin as the seat's executable and refuses a non-empty `Seat.Provider` that is not the same file as the pin (device and inode) with provider_not_pinned, and a pin whose file name is not `claude` (AMQ selects the provider by it); the probe runs that pin; seat-exec requires argv[0] to be the pinned path and re-opens it through `registry.OpenPinned` (path and sha256) when it resolves the provider and again as the last step before exec, refusing tool_unpinned on any mismatch, so the probed bytes are the executed bytes | TestClaudeProviderMustBeThePin (provider B with pin A refused at compile; the pinned file under another name is the pin), TestClaudeSeatExecsOnlyThePinnedBytes (a provider that is not the pin; the pinned file replaced between the proof and exec) |
+| 1 | the adapter's 4.8 s clock starts at its entry and the stdin read runs under it (in a goroutine on a captured reader); a timeout anywhere logs one line | TestAdapterTimesOutOnAnOpenStdin (stdin never closed) |
+| 2 | the guard child's stdout is capped at 64 KiB; past the cap the group is killed and the step is no decision, logged | TestAdapterCapsTheGuardOutput (a child writing stdout in a loop) |
+| 3 | the post-reap group kill is gone: the group is killed once, before Wait returns, when the watchdog fires or the cap is passed (the identity proof's pattern) | (no row; TestDecisionAdapterKillsAHungGuardGroup stands) |
+| 4 | the probe reads its stream in a goroutine under the deadline; after the kill, Wait's 1 s WaitDelay closes the pipe a descendant that left the group still holds | TestProbeDeadlineHoldsAgainstAnEscapedDescendant (a stand-in that starts a `setsid`'d sleeper holding stdout and exits) |
+| 5 | the probe kind is the mode, the pin's sha256 and the digest of the config dir as the probe copies it (settings.json and the plugin install, the seat's own dir path taken out); every seat's dir is written at one launch time, so equal seats are equal | TestTwoPinsAreProbedTwice (two seats, same settings, two pin digests: two probes), TestProbeKindTracksThePinAndThePlugin |
+| 6 | the probed claude runs under Setsid: a new session with no controlling terminal (kill -pgid unchanged, the session id is the group id) | TestProbeChildIsASessionLeaderWithNoTTY (the child is its session's leader and cannot open /dev/tty) |
+| item 19 (ruling) | the count exemption is an explicit list of exact field names (`redact.CountFields`): input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, the cache_*_input_tokens counters, and the count and timing fields the committed evidence carries (totalTokens, maxTokens, max_tokens, tokens_in, tokens_out, first_token_ms, first_token_s, cold_prompt_first_token_s, warm_prompt_first_token_s_median, cached_input_tokens, cache_write_input_tokens, ephemeral_5m_input_tokens, ephemeral_1h_input_tokens, reasoning_output_tokens, thinking_tokens, reset_tokens). It holds for numeric values only: a string under a listed name is still redacted, and any other credential-class name redacts whatever its type. The `_TOKENS` location suffix is gone (a count was exempt by shape there) | TestCountFieldExemptionIsExactNumericOnly |
+
+Claim corrected (no code change): the adapter's no decision (a truncated
+or absent verdict, a timeout, a guard error) is fail-open by design, as the
+tree and plan 4.3 say: the hooks are UX, enforcement is in the core.
+
+Accepted limits, recorded and not fixed: the probe keeps the owner's UID;
+the network is reachable during the probe; a forged hook environment
+choosing AMQ_SQUAD_BIN is same-UID; the probe deadline is 5 s in
+production (60 s is the bound of two stand-in rows on a loaded host only).
+The Linux CI row for dash stands as written above.
+
+Judgment calls, stated:
+- The pin must name a file called `claude`: AMQ selects the provider by the
+  executable's file name and seat-exec checks it, while the pin's walk
+  refuses a symlink, so the owner pins a hard link named `claude` to the
+  versioned binary (on this host `~/.local/bin/claude` is a symlink to
+  `versions/2.1.310`). A pin with another file name is refused at compile.
+- seat-exec reads the claude pin from the registry under its HOME, as the
+  launch does; the staged record does not carry it (the HIGH fix stays in
+  compile.go, run.go and seatexec_unix.go). A re-pin between launch and
+  exec is refused unless the new pin is the file argv[0] names.
+- The final re-hash uses the existing BeforeFinalCheck seam in its row; the
+  window from that hash to execve is the same-UID limit, as for the pinned
+  gh.

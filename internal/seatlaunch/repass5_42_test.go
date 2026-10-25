@@ -15,9 +15,15 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
+// testPin is the tests' registry pin of claude (the path the fake lookPath
+// names; nothing execs it).
+var testPin = registry.Pin{Name: "claude", Path: "/usr/local/bin/claude", SHA256: "test"}
+
+func testClaudePin(Seat) (registry.Pin, error) { return testPin, nil }
+
 // probeAsLaunched is the tests' mode probe: the pinned Claude Code runs the
 // seat in the launch's mode.
-func probeAsLaunched(_ context.Context, _, mode string) (claudeseat.Probe, error) {
+func probeAsLaunched(_ context.Context, _ registry.Pin, _, mode string) (claudeseat.Probe, error) {
 	return claudeseat.Probe{Mode: mode, Version: "test"}, nil
 }
 
@@ -29,7 +35,7 @@ func TestLaunchRefusesAClaudeSeatWhoseModeIsForced(t *testing.T) {
 	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}}
 	o := launchOpts(t, f, map[string]string{"sha256:a1": "trust_exact_subject"})
 	var probed []string
-	o.ProbeMode = func(_ context.Context, dir, mode string) (claudeseat.Probe, error) {
+	o.ProbeMode = func(_ context.Context, _ registry.Pin, dir, mode string) (claudeseat.Probe, error) {
 		probed = append(probed, dir)
 		return claudeseat.Probe{Mode: "default", Version: "2.1.310"}, nil
 	}
@@ -61,7 +67,7 @@ func TestProbeRunsBeforeTicketsAndOncePerSeatKind(t *testing.T) {
 	o.Wait = 50 * time.Millisecond
 	calls := 0
 	var probeEnd time.Time
-	o.ProbeMode = func(_ context.Context, dir, mode string) (claudeseat.Probe, error) {
+	o.ProbeMode = func(_ context.Context, _ registry.Pin, dir, mode string) (claudeseat.Probe, error) {
 		calls++
 		time.Sleep(300 * time.Millisecond)
 		probeEnd = time.Now()
@@ -102,7 +108,7 @@ func TestProbeRunsThePinnedClaudeNeverPath(t *testing.T) {
 	if _, err := claudeseat.Write(dir, "dontAsk", filepath.Join(base, "wt"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := probePinned(context.Background(), home, dir, "dontAsk"); err == nil || !strings.Contains(err.Error(), registry.PinMissing) {
+	if _, err := registryClaudePin(home); err == nil || !strings.Contains(err.Error(), registry.PinMissing) {
 		t.Fatalf("no claude pin: %v", err)
 	}
 	pinned := filepath.Join(base, "pinned-claude")
@@ -111,7 +117,11 @@ func TestProbeRunsThePinnedClaudeNeverPath(t *testing.T) {
 	if err := registry.Write(registry.Path(home), registry.Registry{Schema: 1, Pins: []registry.Pin{{Name: "claude", Path: pinned, SHA256: sum}}}); err != nil {
 		t.Fatal(err)
 	}
-	p, err := probePinned(context.Background(), home, dir, "dontAsk")
+	pin, err := registryClaudePin(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := probePinned(context.Background(), pin, dir, "dontAsk")
 	if err != nil || p.Version != "pinned" || p.Mode != "dontAsk" {
 		t.Fatalf("the pinned probe: %+v %v", p, err)
 	}

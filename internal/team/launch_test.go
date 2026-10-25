@@ -11,6 +11,7 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 )
 
@@ -95,6 +96,9 @@ func TestSquadCompilesToOneLaunchRequest(t *testing.T) {
 	if err := seatlaunch.CheckArgumentForms(q, fixtureCaps()); err != nil {
 		t.Fatalf("advertised forms refused: %v", err)
 	}
+	// A Claude seat's executable is the registry's claude pin (the launch
+	// resolves it; the phase 5 re-pass's HIGH).
+	q.ClaudePins = map[string]registry.Pin{"lead": {Name: "claude", Path: "/usr/local/bin/claude", SHA256: "test"}}
 	_, err := seatlaunch.Compile(q, "", lookPath, time.Unix(1, 0))
 	if seatlaunch.PiAdapterInLibrary {
 		if err != nil {

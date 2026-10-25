@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
@@ -72,7 +73,10 @@ type Options struct {
 	// ProbeMode asks the pinned Claude Code for the effective permission
 	// mode of a Claude seat's config dir (default: the registry's claude
 	// pin through claudeseat.ProbeMode); a test seam.
-	ProbeMode func(ctx context.Context, dir, mode string) (claudeseat.Probe, error)
+	ProbeMode func(ctx context.Context, pin registry.Pin, dir, mode string) (claudeseat.Probe, error)
+	// PinFor is the registry's claude pin for a Claude seat (default: the
+	// registry under Home, read once per launch); a test seam.
+	PinFor func(s Seat) (registry.Pin, error)
 }
 
 // SeatState is one seat's state after the launch.
@@ -131,9 +135,16 @@ func (o Options) withDefaults() Options {
 		o.Poll = 100 * time.Millisecond
 	}
 	if o.ProbeMode == nil {
+		o.ProbeMode = probePinned
+	}
+	if o.PinFor == nil {
 		home := o.Home
-		o.ProbeMode = func(ctx context.Context, dir, mode string) (claudeseat.Probe, error) {
-			return probePinned(ctx, home, dir, mode)
+		var once sync.Once
+		var pin registry.Pin
+		var perr error
+		o.PinFor = func(Seat) (registry.Pin, error) {
+			once.Do(func() { pin, perr = registryClaudePin(home) })
+			return pin, perr
 		}
 	}
 	return o
@@ -151,6 +162,22 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	rulesSHA, err := FileDigest(q.RulesPath)
 	if err != nil {
 		return res, fmt.Errorf("rules file: %w", err)
+	}
+	// A Claude seat's executable is the registry's claude pin (the narrow
+	// pass's HIGH): Compile names it and refuses another provider, the probe
+	// runs it, and seat-exec re-hashes it before exec.
+	for _, s := range q.Seats {
+		if s.Runtime != "claude" {
+			continue
+		}
+		pin, err := o.PinFor(s)
+		if err != nil {
+			return res, fmt.Errorf("seat %s: %w", s.Handle, err)
+		}
+		if q.ClaudePins == nil {
+			q.ClaudePins = map[string]registry.Pin{}
+		}
+		q.ClaudePins[s.Handle] = pin
 	}
 	c, err := Compile(q, rulesSHA, o.LookPath, o.Now())
 	if err != nil {
@@ -208,22 +235,24 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	// a setting that forces another mode would turn dontAsk into prompts.
 	// Seats whose settings are identical are probed once.
 	probed := map[string]claudeseat.Probe{}
+	writtenAt := o.Now() // one time for every seat's config dir, so equal seats are equal
 	for i, rec := range c.Records {
 		if rec.Runtime != "claude" {
 			continue
 		}
-		w, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, o.Now())
+		w, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, writtenAt)
 		if err != nil {
 			return res, fmt.Errorf("seat %s: the Claude config dir: %w", rec.Handle, err)
 		}
 		c.Records[i].ClaudeConfig = w.Digest
-		kind, err := claudeseat.ProbeKind(w.Dir, rec.PermissionMode)
+		pin := q.ClaudePins[rec.Handle]
+		kind, err := claudeseat.ProbeKind(w.Dir, rec.PermissionMode, pin.SHA256)
 		if err != nil {
 			return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
 		}
 		probe, done := probed[kind]
 		if !done {
-			if probe, err = o.ProbeMode(ctx, w.Dir, rec.PermissionMode); err != nil {
+			if probe, err = o.ProbeMode(ctx, pin, w.Dir, rec.PermissionMode); err != nil {
 				return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
 			}
 			probed[kind] = probe
@@ -298,17 +327,22 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	return res, nil
 }
 
-// probePinned runs the mode probe on the registry's pinned claude (opened
-// through the pin and re-hashed, never PATH).
-func probePinned(ctx context.Context, home, dir, mode string) (claudeseat.Probe, error) {
+// registryClaudePin is the claude pin of the registry under home.
+func registryClaudePin(home string) (registry.Pin, error) {
 	reg, err := registry.Read(registry.Path(home))
 	if err != nil {
-		return claudeseat.Probe{}, fmt.Errorf("%s: the registry: %v", registry.PinMissing, err)
+		return registry.Pin{}, fmt.Errorf("%s: the registry: %v", registry.PinMissing, err)
 	}
 	pin, ok := reg.PinFor("claude")
 	if !ok {
-		return claudeseat.Probe{}, fmt.Errorf("%s: the registry pins no claude (registry.yaml pins: name claude, its real path and sha256)", registry.PinMissing)
+		return registry.Pin{}, fmt.Errorf("%s: the registry pins no claude (registry.yaml pins: name claude, its real path and sha256)", registry.PinMissing)
 	}
+	return pin, nil
+}
+
+// probePinned runs the mode probe on the seat's pinned claude (opened
+// through the pin and re-hashed, never PATH).
+func probePinned(ctx context.Context, pin registry.Pin, dir, mode string) (claudeseat.Probe, error) {
 	tool, code, detail := registry.OpenPinned("claude", pin.Path, pin.SHA256)
 	if tool == nil {
 		return claudeseat.Probe{}, fmt.Errorf("%s: %s", code, detail)

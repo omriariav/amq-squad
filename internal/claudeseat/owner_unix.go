@@ -16,9 +16,11 @@ func ownerUID(st os.FileInfo) (int, bool) {
 	return int(sys.Uid), true
 }
 
-// probeGroup runs the mode probe in its own process group, killed whole.
+// probeGroup runs the mode probe as the leader of a new session (Setsid,
+// the narrow pass's item 6): it has no controlling terminal to prompt on,
+// and its process group (the session id) is killed whole.
 func probeGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
 func killProbe(cmd *exec.Cmd) {

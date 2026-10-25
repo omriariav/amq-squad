@@ -14,6 +14,7 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 var advertised = []launchapi.ProviderCapabilitiesV1{
@@ -42,6 +43,7 @@ func testSquad(t *testing.T) Squad {
 	if err != nil {
 		t.Fatal(err)
 	}
+	q.ClaudePins = map[string]registry.Pin{"cto": testPin}
 	return q
 }
 
@@ -183,7 +185,7 @@ func preparedResult() launchapi.PrepareResultV1 {
 
 func launchOpts(t *testing.T, f *fakeAMQ, decisions map[string]string) Options {
 	return Options{Decisions: decisions, Home: t.TempDir(), LookPath: lookPath, RunAMQ: f.run, Wait: 2 * time.Second, Poll: 10 * time.Millisecond,
-		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}, PaneShell: paneOf(os.Getpid()), ProbeMode: probeAsLaunched}
+		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}, PaneShell: paneOf(os.Getpid()), ProbeMode: probeAsLaunched, PinFor: testClaudePin}
 }
 
 func TestPendingDecisionsStopBeforeApplyAndSendNothing(t *testing.T) {

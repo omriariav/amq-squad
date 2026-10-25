@@ -34,10 +34,30 @@ func LedgerSecretName(name string) bool {
 	return false
 }
 
-// locationSuffixes name where a credential lives or how many there are,
-// never the credential itself (CLAUDE_TOKEN_FILE, SSH_AUTH_SOCK,
-// input_tokens).
-var locationSuffixes = []string{"_FILE", "_PATH", "_DIR", "_SOCK", "_TOKENS", "_NAME", "_ENV", "_VAR"}
+// locationSuffixes name where a credential lives, never the credential
+// itself (CLAUDE_TOKEN_FILE, SSH_AUTH_SOCK). A count of tokens is exempt only
+// by its exact name, in CountFields.
+var locationSuffixes = []string{"_FILE", "_PATH", "_DIR", "_SOCK", "_NAME", "_ENV", "_VAR"}
+
+// CountFields are the exact field names whose numeric value counts or times
+// tokens, never a token (ruling 18 and 3-2's P1-7: an explicit list, never
+// a shape; the narrow pass on the fix round): the usage counters and the
+// count and timing fields the committed evidence carries. The exemption is
+// for a number only: a string under one of these names is still redacted,
+// and any other credential-class name redacts whatever its value's type.
+var CountFields = map[string]bool{
+	"input_tokens": true, "output_tokens": true, "cache_read_tokens": true, "cache_creation_tokens": true,
+	"cache_read_input_tokens": true, "cache_creation_input_tokens": true,
+	"totalTokens": true, "maxTokens": true, "max_tokens": true, "tokens_in": true, "tokens_out": true,
+	"first_token_ms": true, "first_token_s": true, "cold_prompt_first_token_s": true, "warm_prompt_first_token_s_median": true,
+	"cached_input_tokens": true, "cache_write_input_tokens": true, "ephemeral_5m_input_tokens": true, "ephemeral_1h_input_tokens": true,
+	"reasoning_output_tokens": true, "thinking_tokens": true, "reset_tokens": true,
+}
+
+var numberRE = regexp.MustCompile(`^-?[0-9][0-9.eE+-]*$`)
+
+// countValue reports a number under an exact CountFields name.
+func countValue(name, value string) bool { return CountFields[name] && numberRE.MatchString(value) }
 
 // CredentialName is the ledger's rule plus a name ending in KEY or
 // containing NSEC: the names whose NAME=value the scan rejects and the
@@ -52,33 +72,7 @@ func CredentialName(name string) bool {
 	if strings.Contains(upper, "PUBKEY") || strings.Contains(upper, "PUBLIC_KEY") || strings.Contains(upper, "PUBLICKEY") {
 		return false // a public key is published, not secret
 	}
-	other := strings.HasSuffix(upper, "KEY") || strings.Contains(upper, "NSEC")
-	for _, m := range ledgerMarkers {
-		if m != "TOKEN" && strings.Contains(upper, m) {
-			other = true
-		}
-	}
-	if !other && strings.Contains(upper, "TOKEN") && tokenMeasure(upper) {
-		// A count or a timing of tokens (totalTokens, tokens_in,
-		// first_token_ms), which a JSON number now reaches (the fix round's
-		// item 19), never a token itself.
-		return false
-	}
-	return LedgerSecretName(upper) || other
-}
-
-// tokenMeasure reports a token name that measures tokens: the plural (a
-// count) or a measurement suffix.
-func tokenMeasure(upper string) bool {
-	if strings.Contains(upper, "TOKENS") {
-		return true
-	}
-	for _, s := range []string{"_MS", "_S", "_SECONDS", "_MEDIAN", "_IN", "_OUT", "_COUNT"} {
-		if strings.HasSuffix(upper, s) {
-			return true
-		}
-	}
-	return false
+	return LedgerSecretName(upper) || strings.HasSuffix(upper, "KEY") || strings.Contains(upper, "NSEC")
 }
 
 // ProviderToken matches the known provider credential prefixes wherever
@@ -200,7 +194,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 			continue // the tail of a longer word
 		}
 		name, val := line[m[2]:m[3]], line[m[4]:m[5]]
-		if CredentialName(name) && namedSecret(name, val) {
+		if CredentialName(name) && !countValue(name, val) && namedSecret(name, val) {
 			out = append(out, [2]int{m[4], m[5]})
 			found = append(found, Finding{Rule: "NAME=value", Name: name})
 		}
@@ -214,7 +208,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 		if strings.HasPrefix(val, `"`) {
 			inner = val[1 : len(val)-1] // the JSON string's content, compared exactly
 		}
-		if CredentialName(name) && namedSecret(name, inner) {
+		if CredentialName(name) && !countValue(name, val) && namedSecret(name, inner) {
 			out = append(out, [2]int{m[4], m[5]}) // the whole value, quotes included
 			found = append(found, Finding{Rule: "json", Name: name})
 		}
