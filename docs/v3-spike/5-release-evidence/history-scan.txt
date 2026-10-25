@@ -17,3 +17,17 @@ shape hits: 3, all the same literal in three historical blobs of
   GitHub push protection may flag the historical blobs as a Google API key
   pattern; the owner decides between a bypass ("used in tests") and a rewrite
   of the three commits before the first push.
+
+# Addendum, same day: the 1Password environment id (26 characters) removed by the
+# filter-repo rewrite recorded at spike-log.md:243 (v3 ec6aaee -> f8af8a2,
+# v3-2a1 f0e8b94 -> 180f2d8). Literal read from the planning session's
+# expressions file, verified by sha256 against the reviewer's record
+# (917eef89811ebf0b8220d072b6c63276b790524e0a62bfdb30590c95a745bfc1), never
+# written here.
+vault-id hits over the 18,873 objects: 0
+pre-rewrite commits ec6aaee, f0e8b94: absent from the repository (not merely unreachable)
+rewritten commits f8af8a2, 180f2d8: present, ancestors of v3
+# Reviewer decision on the canary blobs: (a) no rewrite. Owner push order carries
+# the line: a push-protection hit for a Google API key pattern on the first push
+# is the canary in those three blobs, bypass with "used in tests"; any other
+# push-protection hit means stop and send the reviewer the path.
