@@ -1737,6 +1737,29 @@ Release prep.
   by briefs ruling 4.
 - Stale v2 verb names outside internal/ (README, operator cookbook,
   plugin skills, release docs) go to the 3.0 docs pass (phase 2a row).
+- `amq-squad uninstall` (phase 5, branch v3-5-uninstall, 2026-10-25): a
+  dry run by default that prints every path it would remove, grouped
+  (session state under the AMQ root's extensions/amq-squad, per-seat
+  config dirs, the core tools dir, worktrees it created, and under
+  ~/.amq-squad the registry, grants, claude-token, gate-binding.json and
+  the verifier module cache) and the commands it will not run; --write
+  removes, the owner files only with --owner-files as well; it refuses
+  while anything runs (uninstall_busy naming the live scheduler, seat,
+  proof window or commit step); it never writes the owner's global agent
+  config (R16) and prints the `claude plugin uninstall` command and the
+  codex trust entries to remove by hand; sealed ledgers, evidence and
+  the gate store are kept unless --purge, which removes the evidence refs
+  through the hardened git only; secrets go first under --owner-files,
+  overwritten once (best effort on APFS) then unlinked, never printed;
+  removal runs through the fsanchor descriptor walk and a symlink in
+  place of an expected directory is uninstall_refused_symlink with
+  nothing removed; idempotent, a partial failure leaves a report and a
+  non-zero exit. [2.7, reviewer plan, 2026-10-25]
+- After migrate and uninstall merge: the release commit from the
+  recorded list, the release gate owner-signed through 7.3's tag-rule
+  path, then the owner session rows. Nothing else is planned on the code
+  side; the orphan-adoption row and the hygiene rows go to 3.0.x unless
+  the owner session surfaces them. [2.7, reviewer plan, 2026-10-25]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
