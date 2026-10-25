@@ -22,14 +22,32 @@ type GH struct {
 	Env []string
 	// Calls counts gh invocations (measured in the S6 dry run).
 	Calls int
+	// runner, when set, answers a gh command line in this process instead of
+	// starting the gh executable (a test seam; never set in production).
+	runner func(ctx context.Context, args []string) (stdout []byte, stderr string, err error)
 }
 
 func (g *GH) run(ctx context.Context, args ...string) ([]byte, error) {
+	g.Calls++
+	var out []byte
+	var stderr string
+	var err error
+	if g.runner != nil {
+		out, stderr, err = g.runner(ctx, args)
+	} else {
+		out, stderr, err = g.exec(ctx, args)
+	}
+	if err != nil {
+		return out, fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(len(args), 3)], " "), err, strings.TrimSpace(stderr))
+	}
+	return out, nil
+}
+
+func (g *GH) exec(ctx context.Context, args []string) ([]byte, string, error) {
 	bin := g.Bin
 	if bin == "" {
 		bin = "gh"
 	}
-	g.Calls++
 	cmd := exec.CommandContext(ctx, bin, args...)
 	if g.Env != nil {
 		cmd.Env = g.Env
@@ -37,10 +55,7 @@ func (g *GH) run(ctx context.Context, args ...string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err != nil {
-		return out, fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(len(args), 3)], " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return out, nil
+	return out, stderr.String(), err
 }
 
 // lines decodes one JSON value per line (the --jq '.[]' form of a paginated

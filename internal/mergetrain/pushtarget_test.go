@@ -15,6 +15,7 @@ import (
 // target is refused (push_target_local) whatever the ack says; a dry run
 // proceeds.
 func TestLocalPushTargetRefusesARealRun(t *testing.T) {
+	t.Parallel()
 	grant := func(url string) string {
 		return "merge:\n  - repository: owner/fixture\n    base_branch: main\n    push_url: " + url + "\n    local_push_ack: true\n"
 	}

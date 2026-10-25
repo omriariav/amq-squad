@@ -65,6 +65,7 @@ func TestClassicPRBypassAllowancesAreUnmet(t *testing.T) {
 // binding with no pr_head, is task_unbound; a head other than pr_head is
 // pr_head_moved; a binding for another repository does not count.
 func TestRealRunReadsTheTaskBoundToThePR(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
 	f.bindTask(3, strings.Repeat("0", 40), []string{"pkg/c.go"}) // the PR's head is not the pushed one
@@ -93,6 +94,7 @@ func TestRealRunReadsTheTaskBoundToThePR(t *testing.T) {
 
 // fix 4, item 4: a task with pr_number but no pr_head is task_unbound.
 func TestBindingWithoutAHeadIsUnbound(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
 	raw, err := os.ReadFile(filepath.Join(f.tasks().Dir, id+".json"))
@@ -117,6 +119,7 @@ func TestBindingWithoutAHeadIsUnbound(t *testing.T) {
 // rewritten in the object form; a baseline that does not decode stops the
 // run with drift_baseline_invalid.
 func TestDriftBaselineMigratesOnceAndAnInvalidOneStops(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	root := filepath.Join(f.dir, "root")
 	f.train.ReleaseGates, f.train.Root, f.train.DryRun = &f.store, root, true

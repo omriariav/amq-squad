@@ -17,6 +17,7 @@ import (
 // that app's latest result; a rule with no app needs every same-named result
 // green.
 func TestRequiredCheckIsBoundToItsAppAndLatestResult(t *testing.T) {
+	t.Parallel()
 	trusted := []RequiredCheck{{Context: "ci", AppID: 77}}
 	for _, tc := range []struct {
 		name     string
@@ -44,7 +45,7 @@ func TestRequiredCheckIsBoundToItsAppAndLatestResult(t *testing.T) {
 	}
 	// end to end on the fixture: the trusted app fails, a second app's
 	// same-named success does not make CI green
-	f := newFixture(t)
+	f := newSubprocessFixture(t) // subprocess row: gh through the real exec path
 	f.edit(func(s *fakeState) {
 		s.Rules = json.RawMessage(`[{"type":"pull_request","ruleset_id":7},{"type":"required_status_checks","ruleset_id":7,"parameters":{"required_status_checks":[{"context":"ci","integration_id":77}]}}]`)
 		s.CIApp, s.RedCI = 77, []string{f.head("pr1")}
@@ -90,6 +91,7 @@ func TestProtectedPathsAreCaseFolded(t *testing.T) {
 
 // P2-11: an audit append that fails stops the run before any merge.
 func TestAuditFailureStopsBeforeAnyMerge(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.req.PRs = []Item{f.req.PRs[0], {Number: 2, Task: "T2", DeclaredFiles: []string{"pkg/b.go"}}} // PR 2 is refused in the plan
 	audit := f.train.Audit.Path
@@ -111,6 +113,7 @@ func TestAuditFailureStopsBeforeAnyMerge(t *testing.T) {
 // recreated under the same tag has a new id and needs a new gate; a tag
 // moved to another commit too.
 func TestDriftBindsAGateToOneReleaseAndOneTagCommit(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	root := filepath.Join(f.dir, "root")
 	f.train.ReleaseGates, f.train.Root, f.train.DryRun = &f.store, root, true

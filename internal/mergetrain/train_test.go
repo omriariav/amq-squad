@@ -128,7 +128,7 @@ func newFixture(t *testing.T) *fixture {
 		st.PRs[string(rune('0'+i))] = &fakePR{Head: "pr" + string(rune('0'+i)), Base: "main", Draft: true, State: "OPEN"}
 	}
 	st.save(f.state)
-	f.gh = &GH{Bin: os.Args[0], Env: append(os.Environ(), "FAKE_GH_STATE="+f.state)}
+	f.gh = &GH{runner: inProcessRunner(f.state)}
 	store, err := gatestore.Open(filepath.Join(dir, "root"))
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +145,20 @@ func newFixture(t *testing.T) *fixture {
 		{Number: 4, Task: "T4", DeclaredFiles: []string{"pkg/d.go", "shared.txt"}},
 		{Number: 5, Task: "T5", DeclaredFiles: []string{"pkg/"}},
 	}}
+	return f
+}
+
+// newSubprocessFixture is newFixture with gh reached as gh is in production:
+// the test binary re-executed as the gh process (TestMain), arguments through
+// the real exec path. Only the few rows that cover gh's command arguments and
+// output parsing end to end use it; every other test runs the same fake in
+// process (GH.runner), which keeps the race-instrumented binary from being
+// started once per gh call.
+func newSubprocessFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := newFixture(t)
+	f.gh.runner = nil
+	f.gh.Bin, f.gh.Env = os.Args[0], append(os.Environ(), "FAKE_GH_STATE="+f.state)
 	return f
 }
 

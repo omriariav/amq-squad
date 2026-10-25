@@ -33,6 +33,16 @@ func proofLaunch(t *testing.T, q Squad, mutate func(*Options), onApply func()) R
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Launch returns with the proof socket's window still open: a goroutine
+	// polls the window and, when it ends, closes the socket and marks every
+	// unused token expired (a write under launch/<handle>). Left alone it
+	// writes after the test returns, racing TempDir's RemoveAll ("directory
+	// not empty"). Close it in a cleanup: close is synchronous (handlers finish, tokens
+	// marked, socket removed) and idempotent, and cleanups run last-in
+	// first-out, so it finishes before TempDir is removed.
+	if res.proof != nil {
+		t.Cleanup(res.proof.close)
+	}
 	return res
 }
 
@@ -114,10 +124,18 @@ func TestExpiredTokenIsRefused(t *testing.T) {
 	offset := time.Duration(0)
 	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return time.Now().Add(offset) }
 	var p *prover
-	res := proofLaunch(t, q, func(o *Options) { o.ProofClock = now }, func() {
+	// The clock jumps past the TTL only once the proof message has been read
+	// (judgeHook runs between the read and the judgement). Jumping before the
+	// prover process was even started let the window poll, on the same clock,
+	// see every ticket expired and close the socket while the prover (slow to
+	// start under load) was still dialling: helper_dial_failed.
+	judgeHook = func() {
 		mu.Lock()
 		offset = launch.ProofTTL + time.Second
 		mu.Unlock()
+	}
+	t.Cleanup(func() { judgeHook = nil })
+	res := proofLaunch(t, q, func(o *Options) { o.ProofClock = now }, func() {
 		p = prove(t, q, "cto", false, nil)
 	})
 	if p.reply.OK || p.reply.Code != "proof_expired" {
@@ -242,5 +260,35 @@ func TestProofRecordsTheLeadPaneShell(t *testing.T) {
 	e, err := launch.ReadProof(q.SessionRoot(), "cto")
 	if err != nil || e.PaneShell != os.Getpid() || e.PaneShellStart != mustStamp(t, os.Getpid()) {
 		t.Fatalf("the ledger does not carry the pane shell: %+v %v", e, err)
+	}
+}
+
+// Item 4 tightening 1, the former contract as a deterministic row: a token
+// minted 61 s before its message is judged (the message read after the window
+// has run out, with no clock hook between the read and the judgement) is
+// refused as proof_expired, and a retry of the same token stays refused.
+func TestTokenMintedSixtyOneSecondsEarlierIsExpired(t *testing.T) {
+	q := shortSquad(t)
+	var mu sync.Mutex
+	now := time.Now()
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	launchID := newLaunchID()
+	srv, err := startProofServer(q, launchID, Options{Now: time.Now, ProofClock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.close)
+	ticket := srv.ticket("cto", "req-1")
+	mu.Lock()
+	now = now.Add(launch.ProofTTL + time.Second)
+	mu.Unlock()
+	m := launch.ProofMessage{LaunchID: launchID, RequestID: "req-1", Handle: "cto", Token: ticket.Token}
+	for i := 0; i < 2; i++ {
+		if r := srv.judge(m, 1, true); r.OK || r.Code != "proof_expired" {
+			t.Fatalf("attempt %d: %+v", i+1, r)
+		}
+	}
+	if up, _, _, refused, _ := srv.state("cto"); up || refused != "proof_expired" {
+		t.Fatalf("state: up %v refused %q", up, refused)
 	}
 }
