@@ -1,9 +1,15 @@
 # squad.yaml, schema 1
 
 `squad.yaml` describes one squad: its seats and the narrowing of the owner's
-standing grant for this repository (plan 3.3, 3.4, 4.3, 7.2; brief 2b-5).
-The Go form is `internal/team` (`squad.go`): `ParseSquad`, `LoadSquad`,
-`Render`, `ExampleSquad`.
+standing grant for this repository (plan 3.3, 3.4, 4.3, 7.2; briefs 2b-5 and
+v3-5-migrate). The Go form is `internal/team` (`squad.go`, `squad_keys.go`,
+`golden.go`): `ParseSquad`, `LoadSquad`, `Render`, `ExampleSquad`,
+`SquadKeys`, `NeverSettableKeys`, `GoldenCheck`.
+
+**Schema 1 is frozen for 3.0.** The key list below is complete; a 3.0.x
+build adds no key to it, and a file of any other schema is refused
+(`squad_yaml_schema_unsupported`, below). A v2 checkout becomes a squad.yaml
+with `amq-squad migrate` (see "From v2").
 
 ## Location and writer
 
@@ -18,6 +24,26 @@ The Go form is `internal/team` (`squad.go`): `ParseSquad`, `LoadSquad`,
   matches. `amq-squad team show` prints the parsed file and its effective
   grant; `amq-squad team check` validates it.
 
+## Who reads it
+
+squad.yaml is a repository file, so a seat can put it in its diff. Three
+things follow, and each is a rule with a test:
+
+- **The reader is the lead's checkout.** The file is read at
+  `project_path`, the lead's checkout, at squad load and at scheduler start
+  (`grants.Load`, `team.LoadSquad`). A seat's worktree copy is never read:
+  an edit a seat makes there changes nothing until the lead merges it, and
+  the merge is a protected-path crossing.
+- **A seat diff touching squad.yaml is a crossing.** The commit step
+  (`internal/seatcommit`) checks every changed path of a seat's diff against
+  the protected set, which holds `squad.yaml` by default
+  (`grants.Implicit`). A diff that touches it is refused as `protected_path`
+  and raises the protected-paths growth gate; only the owner's answer to that
+  exact gate lets it through (plan 4.3, 7.2).
+- **No key of it sets an owner value.** The never-settable keys below are
+  refused at parse, so even an accepted edit cannot carry a push target, a
+  signature mode, a verifier command or a pin.
+
 ## The digest
 
 `team propose` plans, in this order, `squad.yaml`, `.amq-squad/team-rules.md`
@@ -29,36 +55,86 @@ only when the digest is equal; the pointer stubs are refused if they
 changed since the plan. The Go form is `team.NewPlan` and `Plan.Apply`
 (`internal/team/digest.go`); the pi lead of 4-1 uses the same function.
 
+## Changing it
+
+A change lands through the digest flow above and no other way: `team
+propose` shows it, the owner (manual) or the grant (auto) approves the
+digest, `team apply --digest` writes it. The file plus that flow are the
+final form. What a hand edit produces:
+
+- 2b-5's refusal is `digest mismatch`: `team apply --digest D` recomputes the
+  plan from its options and writes nothing unless the recomputed digest is D.
+  It is error text, not a code token. The digest covers the content the flow
+  would write, so it changes when the options change, never when the file on
+  disk is edited by hand.
+- A hand edit is therefore not refused by the apply. It is visible: the next
+  `team propose` lists squad.yaml as `replace`, and a `team apply` after it
+  rewrites the file from the proposal's options, so a change belongs in the
+  options, not in the file. Between its read and its rename the apply also
+  checks that the file is still the one it planned over (`<path> changed
+  since the proposal; run team propose again`, nothing written).
+- Until an apply replaces it, an edit outside the flow is read as it stands at
+  the next squad load: within the rules it takes effect.
+- An edit that widens the owner grant, or sets a never-settable key, makes
+  the file fail to load: `team check`, `team show` and the launch refuse it
+  with the field named (`grants_invalid`, `team.WidenError`). guard reads the
+  same keys leniently, ignores the widening field and names it in the
+  resolved grant's `ignored` list, so a hand edit never widens what a seat
+  may do.
+- An edit by a seat is the protected-path crossing described under "Who
+  reads it".
+
 ## Format
 
 The strict YAML subset of `internal/yamlsub` (the same reader as the owner
 file `~/.amq-squad/grants.yaml`): `#` comments, `key: value`, `key: [a, b]`,
 and indented blocks of `- item`, `- key: value` maps, or `key: value` maps.
 No tabs. An unknown key, a repeated key, a malformed line or a bad value is
-a parse error.
+a parse error, and so are anchors, aliases, tags and a second document.
 
 ## Keys
 
-| Key | Value | Notes |
-| --- | --- | --- |
-| `schema` | `1` | required |
-| `session` | AMQ session name | optional |
-| `lead` | a seat handle | the visible lead seat |
-| `lead_mode` | `builder` or `planner` | was `team init --lead-mode` |
-| `execution_mode` | `global_orchestrator`, `project_lead`, `project_team`, `direct_lead_session` | was `team init --mode` |
-| `control_root`, `target_project_root` | absolute paths | were `team init --control-root`, `--target-project-root` |
-| `shared_cwd_exception` | text | the recorded reason for two mutation-capable seats sharing a tree |
-| `operator_interaction` | `lead_pane`, `separate_terminal`, `noc` | how the owner answers gates; was `team operator set --mode` |
-| `defaults` | map of `runtime`, `model`, `effort`, `tools` | filled into a seat that leaves the field empty; a pi seat never takes model or effort |
-| `seats` | list of maps | at least one |
-| `mode`, `max_seats`, `cost_per_day_usd`, `permitted_runtimes`, `privacy_class`, `protected_paths`, `merge_repositories`, `merge_size_cap_lines` | as in the owner file | grant narrowing, below |
+Every key of schema 1. The Relation column is the key's relation to the
+owner grant: `plain` (describes the squad, touches no grant), `narrow` (can
+only narrow the owner's value) or `add` (can only add). Keys of `defaults`
+and of a seat are written `defaults.x` and `seats[].x`. `schema` is the
+required version key (`schema: 1`); a file without it is refused.
 
-Seat keys: `handle` (required, `[a-z0-9][a-z0-9_-]*`, unique, not the
-operator's `user`), `role` (catalog or custom role id; default the handle),
-`runtime` (`claude`, `codex`, `pi`), `model`, `effort`, `worktree`
-(repo-relative or absolute; default the repo root), `tools` (tool policy:
-`minimal`, `coding`, `browser`, `data`, `full`), `actor_mode`
-(`implementation` or `review`).
+| Key | Type | Default | Relation |
+| --- | --- | --- | --- |
+| `schema` | the integer 1 | none, required | plain |
+| `session` | AMQ session name | none | plain |
+| `lead` | a seat handle | none | plain |
+| `lead_mode` | `builder` or `planner` | `builder` | plain |
+| `execution_mode` | `global_orchestrator`, `project_lead`, `project_team` or `direct_lead_session` | none | plain |
+| `control_root` | absolute path | none | plain |
+| `target_project_root` | absolute path | none | plain |
+| `shared_cwd_exception` | text, the reason two mutation-capable seats share a tree | none | plain |
+| `operator_interaction` | `lead_pane`, `separate_terminal` or `noc` | none | plain |
+| `defaults` | map of runtime, model, effort, tools | empty | plain |
+| `seats` | list of seat maps, at least one | none, required | plain |
+| `mode` | `auto` or `manual` | the owner's | narrow |
+| `max_seats` | integer, at least 1 | the owner's | narrow |
+| `cost_per_day_usd` | number | the owner's | narrow |
+| `permitted_runtimes` | list of runtimes | the owner's | narrow |
+| `privacy_class` | `vendor` or `local` | the owner's | narrow |
+| `protected_paths` | list of paths | empty | add |
+| `merge_repositories` | list of owner/name | the owner's merge grants | narrow |
+| `merge_size_cap_lines` | integer, at least 1 | the owner's | narrow |
+| `merge_size_cap_files` | integer, at least 1 | the owner's | narrow |
+| `verifier_classes` | list of verifier classes | the owner's | add |
+| `defaults.runtime` | `claude`, `codex` or `pi` | none | plain |
+| `defaults.model` | token | none | plain |
+| `defaults.effort` | token | none | plain |
+| `defaults.tools` | `minimal`, `coding`, `browser`, `data` or `full` | `full` | plain |
+| `seats[].handle` | `[a-z0-9][a-z0-9_-]*`, unique, not the operator's `user` | none, required | plain |
+| `seats[].role` | catalog or staged custom role id | the handle | plain |
+| `seats[].runtime` | `claude`, `codex` or `pi` | `defaults.runtime` | plain |
+| `seats[].model` | token; a pi seat takes none | `defaults.model` | plain |
+| `seats[].effort` | token; a pi seat takes none | `defaults.effort` | plain |
+| `seats[].worktree` | repo-relative or absolute path | the repository root | plain |
+| `seats[].tools` | `minimal`, `coding`, `browser`, `data` or `full` | `defaults.tools` | plain |
+| `seats[].actor_mode` | `implementation` or `review` | derived from the lead and lead mode | plain |
 
 A seat's fields are the typed seat list of the 2b-2 launch compiler. Model
 and effort travel as provider arguments for Claude and Codex seats only;
@@ -66,7 +142,55 @@ pi admits none (plan 4.3, amendment 23), so a pi seat with a model or effort
 is a parse error. The argument forms are the ones AMQ advertises
 (`ProviderCapabilitiesV1.AllowedArgumentForms`, amendment 20 (b)); amq-squad
 keeps no list of its own, and a form AMQ does not list is refused before the
-launch.
+launch. Quota and concurrency pools are registry entries (plan 5), not
+squad.yaml keys: a squad narrows what it uses through `permitted_runtimes`
+and `max_seats`.
+
+### Never settable
+
+These keys are the owner's alone. A squad.yaml that carries one, at any
+value and in any spelling (flat, dotted, or as a block), is refused at parse
+with the key named as written, as `grants_invalid` (`team.WidenError`). The
+test `TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed` has one case
+per key.
+
+| Key | Where the owner sets it |
+| --- | --- |
+| `merge` | grants.yaml: the standing merge grants, with merge.push_url and merge.local_push_ack |
+| `merge.push_url` | grants.yaml: the push target |
+| `merge.local_push_ack` | grants.yaml: the owner's acknowledgement of a local push target |
+| `push_url` | grants.yaml: the push target (merge.push_url) |
+| `local_push_ack` | grants.yaml: merge.local_push_ack |
+| `clear` | grants.yaml: how a seat quarantine's clear is signed |
+| `clear.signature` | grants.yaml: the clear signature mode |
+| `verifiers` | grants.yaml: the verifier command per class |
+| `verifier_goproxy` | grants.yaml: the verifier's GOPROXY |
+| `verifier_timeout` | grants.yaml: the verifier's wall time |
+| `verifier_output_limit` | grants.yaml: the verifier's output bound |
+| `verifier_parallelism` | grants.yaml: verifiers running at once |
+| `default_branch` | grants.yaml: the default branch |
+| `fleet` | grants.yaml: the operator session's fleet grant |
+| `max_squads` | grants.yaml: fleet.max_squads |
+| `permitted_repositories` | grants.yaml: fleet.permitted_repositories |
+| `pins` | registry.yaml: the owner-pinned harness tools |
+| `registry` | registry.yaml: the registry and its pins |
+| `unprotected_paths` | a removal from the protected set; squad.yaml only adds |
+| `remove_protected_paths` | a removal from the protected set; squad.yaml only adds |
+
+Any other key that is not in the Keys table is an unknown key and a parse
+error (`squad_yaml_invalid`).
+
+### Schema and codes
+
+- A squad.yaml of schema 2 (or any schema but 1) is refused by a 3.0.x
+  reader as `squad_yaml_schema_unsupported`, naming the version, before any
+  other key is read (`team.SchemaError`).
+- A parse or validation error is `squad_yaml_invalid`; a widening or
+  never-settable key is `grants_invalid` (`team.CodeOf`).
+- `amq-squad doctor` embeds a golden squad.yaml (`internal/team/golden`) and
+  the structure it must parse to; a build whose parse drifted from it fails
+  the `squad.yaml golden` row with kind `squad_yaml_golden_drift`. The golden
+  carries every key of the table.
 
 ## Grant narrowing
 
@@ -85,6 +209,8 @@ narrow the grant and never widen it:
   effective list. `privacy_class: local` narrows `vendor`.
 - `protected_paths` adds paths. An entry starting with `!` or `-`, or a
   removal key such as `unprotected_paths`, widens.
+- `verifier_classes` adds verifier classes to the gate: a list that leaves
+  out a class the owner grant verifies widens and is refused.
 - `default_branch` and `merge` are the owner's alone.
 
 A widening field is a parse error that names the field (`team.WidenError`,
@@ -92,6 +218,14 @@ A widening field is a parse error that names the field (`team.WidenError`,
 the same function (`grants.ParseSquadNarrowing`) but leniently: a widening
 field there is ignored and named in the resolved grant's `ignored` list, so a
 hand-edited squad.yaml can never widen what a seat may do.
+
+## From v2
+
+`amq-squad migrate <v2 profile path>` converts a v2 checkout once. It is a
+dry run unless `--write` is given, writes squad.yaml only when absent, never
+writes the owner files (`grants.yaml`, `registry.yaml`), and prints every v2
+key it did not map. See `docs/v3-spike/5-migrate-execution.md` for the field
+by field mapping.
 
 ## Example
 
