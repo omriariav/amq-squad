@@ -1781,6 +1781,17 @@ Release prep.
   path, then the owner session rows. Nothing else is planned on the code
   side; the orphan-adoption row and the hygiene rows go to 3.0.x unless
   the owner session surfaces them. [2.7, reviewer plan, 2026-10-25]
+- The release commit merged 2026-10-25 as d56d7a0c (branch v3-5-release,
+  two commits, reviewer read, lead gate on the merge result): the codex
+  plugin manifest and the fourteen skill files at 3.0.0, the README,
+  skills docs and RELEASING.md on the /v3 module path, check-release-version
+  passing for 3.0.0 with the /v3 install path, docs/v3.0.0-release-notes.md,
+  MIGRATION.md's "Moving to 3.0" section, and the eleven CI actions pinned
+  to commit SHAs read from the GitHub API with the responses' digests in
+  the log. Phase 5's code side is complete; what remains is the owner's:
+  the owner-signed release gate (the tag ruleset of 7.3, then the tag and
+  release through the release flow) and the owner session rows of this
+  section. [2.7, phase 5 release result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
