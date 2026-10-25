@@ -16,7 +16,10 @@ What it proves:
   path (the gate store, the core's question through the share body, the
   verifier, the answer file);
 - 4-5 acceptance 5 on the real Buzz profile (the dry run met it against a
-  local relay): online while the operator session runs, offline after.
+  local relay): online while the operator session runs, offline after;
+- the third item (phase 5): the Buzz-signed `seat clear` answered from the
+  phone, with the clear record carrying the gate id and the answer's event
+  id.
 
 Each step lists who acts, the command, the expected output and what to
 record. Write the times into the table at the end (wall clock, HH:MM:SS).
@@ -236,6 +239,75 @@ printf '{"status":"stopped","last_seen":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)
 Expected: an attach `presence` line `"action":"stopped","present":false`;
 the phone shows the agent offline. Record T10 (offline seen).
 
+### Third item: the Buzz-signed seat clear (phase 5; owner at the Mac terminal and on the phone, about 3 minutes)
+
+The live row of the Buzz-signed `seat clear` (plan 4.3, amendment 28's second
+factor). The code rows run against the gateverify fixtures and a fake relay
+(`docs/v3-spike/5-clear-execution.md`); this item is the same flow with the
+real Buzz key, from the owner's real pty and the owner's phone. It runs after
+section 7 with the operator session still attached (presence on), so the
+attach tick verifies the owner's answer.
+
+9.1 Lead, before the owner types: put a seat in a config-change quarantine in
+the scratch session (the steps of the test fixture `signedClearSeat`: a
+scratch repository and worktree for seat `q1`, a task claimed by `q1` with a
+done report filed, then a harmless key added to `~/.claude/settings.json`
+and `amq-squad seat commit --seat q1 --root "$R"`, which refuses with
+`global_config_changed` and quarantines `q1`). Remove the key again after the
+run. Check the mode in force: `amq-squad doctor` shows `seat clear signature:
+required` (the Buzz enrolment exists and the owner file has no `clear`
+block). A `pty_only` key beside the enrolment is `grants_invalid`.
+
+9.2 Owner, at the Mac terminal (a real pty that is no seat's pane):
+
+```
+amq-squad seat clear --seat q1 --root "$R" --project "$P" --session owner45
+```
+
+Type `q1` at the prompt. Expected: the verb exits non-zero with
+`clear_unsigned`, prints `seat q1 stays quarantined: clear request
+clear-<32 hex>` and that the owner's answer is awaited on Buzz. The
+quarantine stays: `amq-squad seat commit --seat q1 --root "$R"` still
+refuses with the quarantine. Record T11 (request).
+
+9.3 Owner, on the phone: the question appears in the DM:
+
+```
+amq-squad gate clear-<32 hex>
+squad: root-sha256:<64 hex of the squad root>
+class: clear (quarantine_clear)
+target: clear q1 nonce=<32 hex> incarnation=<task>@<unix nanos> config=sha256:<64 hex>
+digest: sha256:<64 hex>
+Reply in this thread with one line:
+approve clear-<32 hex> clear <16 hex>
+deny clear-<32 hex> clear <16 hex>
+```
+
+Reply IN THE THREAD with the approve line exactly. Record T12 (sent).
+Expected within one attach tick: a `handled` line with `"outcome":"approved"`
+and the thread reply `approved, verified by the core.` Record T13.
+
+9.4 Owner, at the Mac terminal: run the 9.2 command again and type `q1`.
+Expected: `seat q1 cleared (signed by ...)`, exit 0. Then the lead:
+
+```
+amq-squad seat commit --seat q1 --root "$R"      # commits the kept tree only
+jq '.quarantine.clear | {gate_id, event_id, config_digest}' "$R/extensions/amq-squad/commits/q1.json"
+```
+
+Expected: the clear record names the gate and the answer's event id (the
+phone reply's event id). Record T14 (cleared).
+
+9.5 Negative, optional (owner, 30 s): send the same approve line again in the
+thread. Expected reply: `answer not accepted (already_consumed)`. A second
+`seat clear --seat q1` says the seat is not quarantined.
+
+9.6 Buzz unreachable, optional (lead): repeat 9.1 and 9.2 with the relay
+blocked. Expected: `clear_unsigned`, the question reported as not on Buzz
+with `amq-squad gate post --gate <id>`, and `amq-squad doctor` showing
+`seat clear q1` as a warning that names why it waits. There is no pty-only
+fallback.
+
 ### 8. Wrap up (lead, 2 minutes; the owner may leave)
 
 Ctrl-C the attach. Copy the evidence (all public):
@@ -274,5 +346,10 @@ the pipe. The no-secret-output evidence is the dry run's canary test
 | T9 routed message in cto's inbox | |
 | phone to lead, T9 - T8 | |
 | T10 offline on the phone | |
-| owner minutes, T0 to T10 (target about 15) | |
+| T11 seat clear requested (clear_unsigned, quarantine stays) | |
+| T12 owner's clear answer sent | |
+| T13 clear answer verified (attach handled line) | |
+| T14 seat cleared (record names gate and event) | |
+| clear answer event id = record event_id | |
+| owner minutes, T0 to T10 (target about 15; the third item adds about 3) | |
 | frictions | |

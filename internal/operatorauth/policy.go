@@ -21,6 +21,9 @@ const (
 	// GateCredential is the credential-change typed gate (plan 7.1, R30;
 	// S1 open question 5).
 	GateCredential = "credential"
+	// GateQuarantineClear is the Buzz-signed seat clear (phase 5): the
+	// owner's signed answer that lifts a seat's config-change quarantine.
+	GateQuarantineClear = "quarantine_clear"
 )
 
 // ActionCapability is one atomic action admitted by the taxonomy. The catalog
@@ -43,6 +46,7 @@ var actionCatalog = mustActionCatalog([]ActionCapability{
 	{Action: "github_release", GateKind: GateRelease, Aliases: []string{"gh_release"}, HumanOnly: true},
 	{Action: "package_publish", GateKind: GatePublish, HumanOnly: true},
 	{Action: "protected_branch_push", GateKind: GateMerge, Aliases: []string{"push_protected_branch"}, SelfEligible: true},
+	{Action: "quarantine_clear", GateKind: GateQuarantineClear, HumanOnly: true},
 	{Action: "spawn", GateKind: GateSpawn, HumanOnly: true, SelfEligible: false},
 	{Action: "tag", GateKind: GateTag, Aliases: []string{"tag_push", "create_tag", "push_tag"}, HumanOnly: true},
 })

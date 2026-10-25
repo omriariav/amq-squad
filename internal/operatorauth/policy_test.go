@@ -15,6 +15,7 @@ func TestActionCatalogIsTheAllowedPairAuthority(t *testing.T) {
 		{Action: "github_release", GateKind: GateRelease, Aliases: []string{"gh_release"}, HumanOnly: true},
 		{Action: "package_publish", GateKind: GatePublish, HumanOnly: true},
 		{Action: "protected_branch_push", GateKind: GateMerge, Aliases: []string{"push_protected_branch"}, SelfEligible: true},
+		{Action: "quarantine_clear", GateKind: GateQuarantineClear, HumanOnly: true},
 		{Action: "spawn", GateKind: GateSpawn, HumanOnly: true},
 		{Action: "tag", GateKind: GateTag, Aliases: []string{"create_tag", "push_tag", "tag_push"}, HumanOnly: true},
 	}

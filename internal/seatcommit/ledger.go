@@ -252,7 +252,14 @@ type ClearRecord struct {
 	QuarantinedAt time.Time `json:"quarantined_at"`
 	ClearedAt     time.Time `json:"cleared_at"`
 	KeyID         string    `json:"key_id"`
-	Signature     string    `json:"signature,omitempty"` // base64 Ed25519 over Payload()
+	// GateID, EventID and ConfigDigest are the Buzz-signed clear's proof
+	// (phase 5): the quarantine_clear gate, the id of the owner's answer
+	// event, and the digest of the config diff the request named. They are
+	// inside the signed bytes; a clear without them is the pty-only clear.
+	GateID       string `json:"gate_id,omitempty"`
+	EventID      string `json:"event_id,omitempty"`
+	ConfigDigest string `json:"config_digest,omitempty"`
+	Signature    string `json:"signature,omitempty"` // base64 Ed25519 over Payload()
 }
 
 // Payload is the signed bytes: the record without its signature.
@@ -277,6 +284,19 @@ func (c *ClearRecord) Verified(seat string, q *LedgerQuarantine, v ClearVerifier
 // the next commit step for that task commits the kept tree only. Without a
 // signer nothing is cleared.
 func ClearQuarantine(root, handle string, signer ClearSigner, now time.Time) (Ledger, error) {
+	return ClearQuarantineWith(root, handle, signer, now, nil)
+}
+
+// ClearGate is the owner's answer a Buzz-signed clear carries into its record.
+type ClearGate struct {
+	GateID, EventID, ConfigDigest string
+}
+
+// ClearQuarantineWith is ClearQuarantine whose record also carries the
+// answer's proof: authorize runs under the ledger lock on the quarantine
+// being cleared and returns the proof, or refuses, in which case nothing is
+// written. A nil authorize is the pty-only clear.
+func ClearQuarantineWith(root, handle string, signer ClearSigner, now time.Time, authorize func(q *LedgerQuarantine) (ClearGate, error)) (Ledger, error) {
 	var out Ledger
 	if signer == nil {
 		return out, fmt.Errorf("seat clear needs the owner's signing key")
@@ -293,6 +313,13 @@ func ClearQuarantine(root, handle string, signer ClearSigner, now time.Time) (Le
 		q := l.Quarantine
 		at := now.UTC()
 		c := ClearRecord{Schema: ClearSchema, Seat: handle, Task: q.Task, Tree: q.Tree, DiffDigest: q.DiffDigest, QuarantinedAt: q.At, ClearedAt: at, KeyID: signer.KeyID()}
+		if authorize != nil {
+			g, err := authorize(q)
+			if err != nil {
+				return err
+			}
+			c.GateID, c.EventID, c.ConfigDigest = g.GateID, g.EventID, g.ConfigDigest
+		}
 		sig, err := signer.Sign(c.Payload())
 		if err != nil {
 			return fmt.Errorf("sign the clear: %w", err)

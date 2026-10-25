@@ -163,14 +163,20 @@ func clearVerifier() seatcommit.ClearVerifier {
 
 // ownerTrust verifies a signed clear against the owner's trust store as it
 // stands at each check (the store is read every time).
-type ownerTrust struct{}
+// A clear that carries an owner answer (the Buzz-signed clear) also has the
+// answer re-verified against the gate store of Root; in required mode a
+// clear without one does not count (clear_unsigned).
+type ownerTrust struct{ Root string }
 
-func (ownerTrust) Verify(keyID string, payload, signature []byte) error {
+func (o ownerTrust) Verify(keyID string, payload, signature []byte) error {
 	v := clearVerifier()
 	if v == nil {
 		return errors.New("the owner's trust store cannot be read")
 	}
-	return v.Verify(keyID, payload, signature)
+	if err := v.Verify(keyID, payload, signature); err != nil {
+		return err
+	}
+	return checkClearRecord(o.Root, payload)
 }
 
 // prBoundTo answers which task the store binds a repository's PR number to.

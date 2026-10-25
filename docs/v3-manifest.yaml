@@ -1700,11 +1700,20 @@ entries:
   extract: ""
   reason: "2b-2 B: the scheduler run and scheduler post verbs (wiring the real hooks)"
   status: new
+- path: internal/cli/seat_clear_gate.go
+  v2_lines: 0
+  current_lines: 337
+  fate: new
+  target_lines: 337
+  cluster: seatcommit
+  extract: ""
+  reason: "5-clear: the Buzz-signed seat clear: the request half (the quarantine_clear gate raised and posted), the answer check, the commit-time proof check, doctor rows"
+  status: new
 - path: internal/cli/seat_commit.go
   v2_lines: 0
-  current_lines: 380
+  current_lines: 409
   fate: new
-  target_lines: 380
+  target_lines: 409
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
@@ -1720,9 +1729,9 @@ entries:
   status: new
 - path: internal/cli/seat_owner.go
   v2_lines: 0
-  current_lines: 190
+  current_lines: 196
   fate: new
-  target_lines: 190
+  target_lines: 196
   cluster: seatcommit
   extract: ""
   reason: "brief 2b-2 milestone B fix 1: the owner-terminal proof of seat clear (R1), the signed clear key and trust store, the PR binding lookup"
@@ -2585,6 +2594,15 @@ entries:
   extract: ""
   reason: "2b-3 walkAnchored and readEntry, the manifest skip as a parameter (shared with 4-3)"
   status: new
+- path: internal/gatestore/clear.go
+  v2_lines: 0
+  current_lines: 125
+  fate: new
+  target_lines: 125
+  cluster: gatestore
+  extract: ""
+  reason: "5-clear: the seat clear request file and the single-use mark of a gate a clear consumed"
+  status: new
 - path: internal/gatestore/record.go
   v2_lines: 0
   current_lines: 277
@@ -2652,9 +2670,9 @@ entries:
   note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
-  current_lines: 156
+  current_lines: 186
   fate: new
-  target_lines: 156
+  target_lines: 186
   cluster: gatetarget
   extract: ""
   reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
@@ -2676,6 +2694,15 @@ entries:
   cluster: gateverify
   extract: ""
   reason: "3-1: the owner's gate binding file (relay, channel, owner and body keys, carriers, issuer key); 4-5: share_root and share_session"
+  status: new
+- path: internal/gateverify/clear.go
+  v2_lines: 0
+  current_lines: 132
+  fate: new
+  target_lines: 132
+  cluster: gateverify
+  extract: ""
+  reason: "5-clear: AuthorizeClear and CheckClear: a quarantine_clear gate verified as the typed gates are, for one handle, nonce and quarantine"
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
@@ -2724,18 +2751,18 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 532
+  current_lines: 574
   fate: new
-  target_lines: 532
+  target_lines: 574
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 350
+  current_lines: 379
   fate: new
-  target_lines: 350
+  target_lines: 379
   cluster: grants
   extract: ""
   reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
@@ -3053,7 +3080,7 @@ entries:
   status: keep
 - path: internal/operatorauth/policy.go
   v2_lines: 280
-  current_lines: 284
+  current_lines: 288
   fate: keep
   target_lines: 248
   cluster: operatorauth
@@ -3765,9 +3792,9 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 480
+  current_lines: 507
   fate: new
-  target_lines: 480
+  target_lines: 507
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
