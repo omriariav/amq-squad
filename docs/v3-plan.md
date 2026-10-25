@@ -1,6 +1,9 @@
-# amq-squad 3.0 plan, revision 2.6
+# amq-squad 3.0 plan, revision 2.7
 
-Date: 2026-10-24. Status: the phase 1 spike has reported.
+Date: 2026-10-25. Status: phase 2 is closed. Brief 2b-2 milestone B
+merged at 84f1524b on 2026-10-25, and phase 5 is next; its inputs and
+the open acceptance rows of phases 2 to 4 are in 16.4. [2.7, milestone B
+result] The phase 1 spike has reported.
 docs/v3-spike/spike-report.md holds the single five-criteria table. As of
 that table: criterion 1 (S1) passed with the owner's real Buzz key on
 2026-10-22 (gate g-owner-02, S1 report section 12); criterion 2 (S2)
@@ -14,8 +17,11 @@ research) is the history behind this document. Revision 2.1 added section
 "[2.3, amendment N]". Revision 2.4 integrated the day-2 owner rulings of
 2026-10-22 the same way, tagged "[2.4, <source>]". Revision 2.5
 integrated amendments 19 to 22 and the 2a-1 result, tagged
-"[2.5, <source>]". Revision 2.6 integrates amendments 23 and 24, the phase 2a close and the phase 2b/3/4 briefs, tagged
-"[2.6, <source>]". Section 17 lists every change of each revision.
+"[2.5, <source>]". Revision 2.6 integrated amendments 23 and 24, the phase 2a close and the phase 2b/3/4 briefs, tagged
+"[2.6, <source>]". Revision 2.7 integrates amendments 25 to 30, briefs
+rulings 15 to 19 and the phase 2 results, tagged "[2.7, <source>]"; some
+2.7 tags were written merge by merge before the revision. Section 17
+lists every change of each revision.
 
 Amit, Taboola's pi distribution, is inspiration only. We do not copy its
 code and we do not touch its repository.
@@ -73,6 +79,9 @@ signed and notarized, the install paths are `go install` and brew only. [2.3, am
 The lead is the built-in pi with the amq-squad package. You work with it
 as with any coding agent. The hooks inject the rules, record evidence,
 and guard the four typed gates and the merge grant. [2.4, S2 report owner decision]
+The solo lead keeps a coding agent's tools, Bash included. The team lead
+of 3.3 has no Bash tool and dispatches anything that runs a command to a
+seat (R19). [2.7, amendment 26]
 
 ### 3.3 Team mode
 
@@ -182,8 +191,10 @@ package files through held descriptors, and a one-purpose preload that
 node loads before pi's entry re-hashes every manifest file as its first
 statement and exits with a named reason on mismatch, which the launcher
 (now the parent of the pi process) turns into a seat refusal written to
-the ledger; the window between those two checks, about 221 ms, is the
-accepted same-user limit. Measured on brief 4-1 (2026-10-24, medians of
+the ledger; the window between those two checks is the accepted
+same-user limit: about 221 ms as 4-1 measured it at its end, about 295 ms
+at the second Codex pass, and the larger figure is the one amendment 25
+records. [2.7, amendment 25 addendum] Measured on brief 4-1 (2026-10-24, medians of
 five cold starts with the runtime unpacked and the model loaded, final
 build): the full re-hash is 147.3 ms over 6,441 files through the
 descriptor walk; the launch rest is 56.7 ms, of which 42.3 ms hashes
@@ -215,6 +226,8 @@ our side and needs no new upstream ask: `seat-exec` refuses a
 pi resume when the evidence ledger shows at least one tool result and the
 session file for the recorded id is missing. That is the only case where
 create-if-missing loses context silently, and `doctor` reports the condition. It lands in phase 2b (brief 2b-2). [2.6, amendment 23] [2.6, review]
+It landed in 2b-2 milestone A as the refusal `pi_resume_context_lost`,
+tested with a fake pi. [2.7, 2b-2 milestone A result]
 
 ### 4.2 The three verbs
 
@@ -246,7 +259,19 @@ there is no `--root` flag, and `AM_ME` and `AM_ROOT` come from the
 environment. [2.3, amendment 7] It
 writes the launch record and the role into the seat's extension directory,
 sets the seat environment, and execs the provider in place. It never adds
-provider flags. The Claude Code hooks come from a user-scope plugin that
+provider flags. Two exceptions are recorded. The built-in pi runtime is
+not exec'd in place: its launcher supervises node as the parent,
+forwards signals, passes the exit code through, and turns the preload's
+exit 70 into a seat refusal written to the ledger; for a pi seat the pid
+and birth time seat-exec records are the launcher's, and CloseSeat
+targets it. [2.7, amendment 26] For a Codex seat seat-exec adds the two
+config pins that only narrow the sandbox
+(`sandbox_workspace_write.writable_roots=[]` and
+`sandbox_workspace_write.network_access=false`), which AMQ 0.107.0 does
+not admit into the trust digest, and it refuses an argv that sets
+`sandbox_workspace_write` itself; upstream ask 17 asks AMQ to admit the
+two keys as provider arguments so the exception can go. [2.7, amendment
+28] The Claude Code hooks come from a user-scope plugin that
 reads the seat environment; the Claude grammar has no plugin or settings
 flag. The hook ships as that user-scope plugin, never as a project-scope
 stub. [2.3, amendment 7] In a seat the permission boundary is guard: the
@@ -254,7 +279,17 @@ plugin answers an allowed call with an explicit allow, so Claude's own
 permission prompt and permission rules never stop an unattended seat;
 seat-exec sets the Claude permission mode and the hook as one unit at
 launch and refuses to start a Claude seat whose plugin is absent (a
-preflight check with a reason). [2.7, 4-2 result]
+preflight check with a reason). [2.7, 4-2 result] Since milestone B the
+unit is permission mode dontAsk with a core-written seat settings file
+and a per-seat CLAUDE_CONFIG_DIR, and the seat authenticates with the
+owner's `claude setup-token` file; R36 holds the rule. [2.7, milestone B
+ruling] The Bash-tool scrub candidate (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)
+is withdrawn for Claude Code 2.1.310, where it forces permission mode
+`default` and defeats dontAsk; the token's visibility to the seat's Bash
+children is the recorded limit (R33). The hooks report the config-dir
+digest so that a removed hook is itself the drift signal: the context
+call reports it today, guard and ingest report from the phase 5 re-pass
+fix. [2.7, 4-2 re-pass]
 
 The admitted argument forms come from upstream. AMQ derives
 `AllowedArgumentForms` from its own validation tables and settles the
@@ -279,7 +314,9 @@ solve it. [2.3, amendment 2]
 `seat-exec` anchors directory traversal to the verified AMQ root and
 follows no symlink in the initial path. It checks the ownership and
 permissions of directories that already exist. These fixes land before
-its first use in phase 2b. [2.3, amendment 7]
+its first use in phase 2b. [2.3, amendment 7] They landed with 2b-2
+milestone A, on 2b-3's descriptor-anchored traversal. [2.7, 2b-2
+milestone A and 2b-3 results]
 
 `seat-exec` execs the provider with a scrubbed environment. It removes
 `*_API_KEY`, `*_TOKEN`, `*_SECRET` and the known vendor variable names,
@@ -294,12 +331,33 @@ added `GEMINI_API_KEY` inside the Codex seat's shell tool. `doctor`
 therefore checks the owner's shell profile for exported `*_API_KEY`,
 `*_TOKEN` and `*_SECRET` names and warns, and the pi package's tool
 shell runs without the profile. `SSH_AUTH_SOCK` reaches both seats and
-is a phase 2b decision. [2.4, amendment 17]
+is a phase 2b decision. [2.4, amendment 17] Decided in 2b-2 milestone A:
+the scrub removes `SSH_AUTH_SOCK` and `SSH_AGENT_PID` (2b-2 ruling 3).
+`launchctl getenv SSH_AUTH_SOCK` re-exposes the launchd agent socket, so
+guard denies it as a credential read (3-2, R33). [2.7, 2b-2 and 3-2
+results]
 
 `seat-exec` denies writes to the owner's global agent config,
 `~/.claude/settings.json` and `~/.codex/config.toml`. `doctor` diffs
 that config against the preflight copy. Evidence: S6 finding B, where
 `~/.claude/settings.json` changed during the run at 06:56, unattributed. [2.4, amendment 18]
+No same-UID process can truly deny another's write, so that enforcement
+is layered and named. For a Codex seat the sandbox is the enforcement,
+and seat-exec refuses to start a Codex seat without it. For a Claude seat
+guard denies the write, and the harness runs doctor's config diff
+against the preflight copy, with the Claude config-dir digest, on every
+terminal path of a seat (done, fail, gone, expired). A change blocks the
+task with `global_config_changed` routed to the owner, before the commit
+step: the seat's diff stays uncommitted and unpushed under the commits
+ledger, the seat is quarantined (no new lease for its handle), and the
+config diff is the block's evidence. Only the owner clears it, with
+`seat clear`: it takes no identity from flags or the environment, runs
+only from the real pty of stdin, compared by device number against
+every tmux pane pty and refused on a match, reads the handle with echo
+off under a 60 s timeout, and writes a signed clear record; an open or
+lookup failure is `owner_proof_unknown`. By 7.3's model a same-UID shell
+that is no seat pane and not descended from one is the owner; the
+Buzz-signed clear is phase 5's answer (16.4). [2.7, amendment 28]
 
 A per-seat CODEX_HOME is rejected; the env overlay allowlist cannot carry
 it. [2.3, amendment 4] codex-cli rewrites its own `config.toml` at start
@@ -311,6 +369,9 @@ is trusted in the owner's Codex config. amq-squad never writes the
 owner's Codex config and never answers the prompt for the owner. Phase 2b
 adds an owner-run `amq-squad trust <repo>` step and a doctor check that
 lists untrusted roots before a Codex seat launches. [2.3, amendment 1]
+Both landed in 2b-3. codex-cli trusts by repository root (7.3), so each
+seat repository needs its own trust step. [2.7, 2b-3 and milestone B
+results]
 
 A seat never commits. A Codex seat under `--sandbox workspace-write`
 cannot write `.git`. This was measured on codex-cli 0.163.0 in a linked
@@ -325,11 +386,31 @@ reported to the lead; the lead may widen the task's declared file set as
 a recorded lead decision, inside the grant's limits (protected paths and
 the size cap still apply); the harness then commits; a widening that
 would cross a grant limit escalates to the owner-signed gate. The seat
-never widens its own set. [2.5, amendment 21] Claude seats take the same path,
+never widens its own set. [2.5, amendment 21] The widening reaches the
+core as `task widen` over the scheduler's own Unix socket (7.2). [2.7,
+amendment 28] Claude seats take the same path,
 although Claude can commit: one commit path, not two. `seat-exec` execs
 the provider in place, so the commit runs as its own harness step after
 the done report; the exact shape of that step is a phase 2b design
-item. [2.5, amendment 21]
+item. [2.5, amendment 21] The shape, from 2b-2 milestone B: the
+scheduler process (4.5) runs `seat commit` on the done report. It
+matches the seat diff against the task-declared file set, snapshots the
+tree with `hash-object --no-filters` and `update-index` into a temporary
+index (never `git add`), and pushes only to the grant's `merge.push_url`
+(7.2) from a per-step shadow git directory. The harness never reads
+configuration from the seat repository: every harness git call runs
+with GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_NOSYSTEM=1,
+GIT_NO_REPLACE_OBJECTS=1, GIT_ATTR_NOSYSTEM=1, empty attributes and
+hooks paths and every `filter.*` unset, and the push URL and base branch
+come from the core-written launch ledger. [2.7, amendment 28] The step
+then opens the draft PR as the harness, inside the standing grant's
+"open PR", and binds the task through `task.Store.BindPR`
+(`pr_repository`, `pr_number`, `pr_head`) in one transaction with
+completion. An open PR on that branch bound to another task is refused
+(`pr_bound_elsewhere`), never reused, and the binding in the store,
+never a body trailer, is the PR's provenance. [2.7, briefs ruling 19;
+amendment 28] Between leases CleanSeat resets the seat and keeps the
+discarded diff on the ledger. [2.7, milestone B result]
 
 pi seats start through the launch API like Claude and Codex seats, with
 the upstream mint-mode adapter in 4.1 (issue #1153, PR #1188). The caveats
@@ -362,6 +443,9 @@ models Claude's decision rule, hook process time alone: deny 19 ms, timeout
 5.002 s at the 5 s setting, exit 1 17 ms, missing command 10 ms, outside a
 seat p95 6.4 ms; the live confirmation against a real Claude seat is owed
 to 2b-2 milestone B's live run (deviation recorded). [2.7, 4-2 result]
+Milestone B's live run did not reach the Claude rows; they wait for the
+owner's `claude setup-token` file and are a phase 5 owner-session item
+(16.4). [2.7, milestone B result]
 
 In the built-in pi the hold seam works with no pi change and fails
 closed. pi 1.3.0 emits `tool_execution_start` before the hook runs, so a
@@ -387,6 +471,19 @@ dropped a task. This is direct evidence for D5. [2.3, amendment 11]
 
 The task store is the simplified v2 store: five states, dependency
 gating, file locks, plus leases and pools.
+
+The scheduler runs as its own process, `amq-squad scheduler run`,
+started and supervised by the lead's team mode (`lead --team
+--scheduler-seats`). It is wired to 2b-2's seat launcher, uses the AMQ
+wake as the doorbell, runs 2b-4's router and its Flush every tick and
+the milestone B commit step, and takes 2b-3's usage-limit source. At
+start it holds a barrier: adopted seats are closed and their close
+confirmed, the exits ledger is loaded and writable, and its decision
+socket stays closed until then, so nothing is dispatched before. A slot
+is released only at seat_gone, deferred exit checks are persisted, and
+the seat cap counts the seat list's slots. Restart recovery from the
+task store stays phase 5 (16.4). [2.7, briefs rulings 15 and 19;
+milestone B result]
 
 ### 4.6 Status contract
 
@@ -419,6 +516,17 @@ reads it. [2.6, amendment 24, briefs ruling 6]
 Two classifier states fit no rule above: `blocked` and `waiting`. The
 proposal: `blocked` goes to Needs you only when routed to the owner, else
 to Working; `waiting` goes to Working. 2b-1 fixes the table. [2.6, briefs 2b-1 and 4-4]
+2b-1 fixed it as proposed, and the contract carries both the classifier
+state and the bucket per row. [2.7, 2b-1 result]
+
+The fleet form, `status --fleet --json`, is one document:
+`{"schema_version": 1, "kind": "fleet", "producer": "amq-squad",
+"producer_version": "...", "generated_at": "<RFC 3339 UTC>", "squads":
+[...]}`, with one unchanged schema 1 status document per squad. The
+single-squad document carries no `kind`; a reader treats a document with
+`squads` as a fleet and anything else as one squad. The operator mailbox
+is the owner's `user` handle, and the contract carries no operator
+field. [2.7, briefs ruling 16]
 
 ### 4.7 amq-noc
 
@@ -446,10 +554,19 @@ ended. [2.6, amendment 24]
 
 Its controls are four. Copy the action from the contract. Open the AMQ
 conversation with enter; it does not focus a tmux pane. Show a gate. Press
-`n` for a new task: that dispatches through the kept `dispatch` verb, and
-the contract carries the command as argv, so the renderer never composes
-one. Gate answers follow the signed path. It keeps the fleet registry view
-and the action log. [2.6, amendment 24, briefs ruling 6]
+`n` for a new task: that runs `task add` from the argv the contract
+carries, so the renderer never composes a command, and dispatch is then
+the scheduler's act (amendment 25 corrects the earlier "dispatches
+through the kept `dispatch` verb"). [2.7, amendment 25] Gate answers
+follow the signed path. It keeps the fleet registry view and the action
+log. [2.6, amendment 24, briefs ruling 6]
+
+The old board's delete list is 124 files and 57,610 lines: everything
+reachable only from the board or from verbs that read `.amq-squad/` or
+composed amq-squad commands. The 4-4 execution log names where each
+removed verb's job lives in 3.0. Measured frame time: 0.29 ms at 250
+rows against the 100 ms limit. [2.7, briefs ruling 17] amq-noc 1.0
+lands by PR on the release train (16.4). [2.7, 4-4 status]
 
 ## 5. Registry and detection
 
@@ -629,7 +746,19 @@ the six named limits at the merge. Task scope is enforced earlier, at the
 harness-side commit (4.3): the Go core refuses a seat diff outside the
 task-declared file set before it is committed, and the refusal goes to
 the lead, who may widen the set inside the grant (4.3); the widening is accepted only from the scheduler process, which verifies the lead's decision as the lead's AMQ message against the lead handle in the launch record and the task's squad, never from a `--me` flag or the environment (milestone B review, ruling R1). Evidence: S6
-task W5, a file outside its task. [2.5, amendment 21]
+task W5, a file outside its task. [2.5, amendment 21] Later passes
+tightened that path (rulings R4, R5, R8, R9). The scheduler's mailbox is
+same-UID writable and AMQ derives a sender from the caller's AM_ME, so
+the AMQ message is the lead's record of the decision, never its
+authority. The decision reaches the scheduler as `task widen` over the
+scheduler's own Unix socket and is accepted only when the connecting
+process's stamped parent chain reaches the lead's recorded incarnation:
+the pane id, pane shell pid and start stamp written to the launch ledger
+when the lead seat proved up, re-proved after the request. A pane label
+is not an identity and is never consulted after launch; a chain that
+reaches no recorded lead is `origin_unknown`, a refusal and never an
+alarm, and a lead that did not prove up through the seat launch cannot
+widen. [2.7, amendment 28]
 
 ### 7.3 Enforcement outside hooks
 
@@ -654,7 +783,9 @@ task W5, a file outside its task. [2.5, amendment 21]
   `.git` write, in a linked worktree and in a plain checkout, with and
   without `--add-dir` (codex-cli 0.163.0, `index.lock: Operation not
   permitted`). The harness commits and pushes the seat branch (4.3), and
-  ask 5 is withdrawn. [2.5, amendment 21]
+  ask 5 is withdrawn. [2.5, amendment 21] seat-exec refuses to start a
+  Codex seat without the sandbox and adds the two narrowing sandbox pins
+  of 4.3 (upstream ask 17). [2.7, amendment 28]
 - Merges go through the merge train under the standing merge grant: the
   lead decides an ordered set of PRs inside the grant, and a deterministic
   merge train lands it. The batch digest over the ordered (PR, head SHA)
@@ -666,7 +797,9 @@ task W5, a file outside its task. [2.5, amendment 21]
   measured a 422 on the `merge_queue` rule), so the train is our Go
   loop. [2.4, S2 report owner decision]
   The train reads a task only through the binding the harness commit
-  step writes (the PR number and the pushed head, 4.3): a request names
+  step writes (the PR number and the pushed head, 4.3; keyed by
+  repository and PR number through `task.Store.BindPR` [2.7, 3-2 and
+  milestone B results]): a request names
   the PR, never the task, and a PR with no bound task is refused
   (`task_unbound`); a PR head that differs from the bound head is refused
   (`pr_head_moved`); when the train itself rebases and pushes, it re-binds
@@ -704,7 +837,13 @@ task W5, a file outside its task. [2.5, amendment 21]
   owner and body key, DM channel, gate e-tag or thread, nonce, window,
   edit and delete history, single use. The S1 verifier already does
   resolve, fetch and verify, so the gate transport is confirmed, not
-  changed. [2.5, amendment 20]
+  changed. [2.5, amendment 20] The signed question text and its tags
+  carry the squad identity (the AMQ root digest or the namespace id), and
+  the gate record stores it. The verifier selects the record by squad
+  identity plus gate id plus thread, never by gate id alone, and a record
+  without squad identity is unverifiable. Evidence: two squads raising
+  the same gate id, action and target in the same second produced
+  identical question event ids (4-5 re-pass). [2.7, amendment 30]
 - The gate text says "reply in this thread", and thread binding stays
   on. A plain DM answer is never accepted as the "only candidate". When
   the core sees a non-thread answer that matches an open gate (gate id,
@@ -801,6 +940,14 @@ They landed in releases v0.106.0 to v0.107.0 and on main. Ask 14 (#1159) is
 open with PR #1186. Issue #1178 is open for the pi bridge part of ask 8.
 Criterion 4 passed on v0.106.1 on 2026-10-23. [2.6, upstream status]
 
+Phase 2 drafted three more asks in `docs/v3-upstream-issues/`. None is
+filed, and none is yet in the status table of `docs/v3-upstream-asks.md`.
+Ask 15: a mailbox adapter kind in amq-remote for a strict relay share
+(4-5 deviation 1). Ask 16: amq-owner-sign sets RLIMIT_CORE to 0 before
+it reads the owner key (4-5 review). Ask 17: admit the two workspace-write
+sandbox pins as Codex provider arguments (4.3, amendment 28). Filing
+waits for the owner (16.4). [2.7, upstream drafts]
+
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
 | 1 | pi adapter in the launch API | merged, PR #1188, unreleased after v0.107.0 | filed as #1153: mint-mode adapter (4.1) [2.5, amendment 20]; shipped as PR #1188, on main after v0.107.0, issue closed; its resume is create-if-missing, not fail-closed (4.1) [2.6, amendment 23] |
@@ -833,7 +980,7 @@ Core and launch
 - R1 One Go executable with a pinned pi runtime and the amq-squad pi package; the pi is `@earendil-works/pi-coding-agent` pinned with a committed lockfile on Node 22.19.0 or later, packaged as option (a) with (b2) as the only fallback, with fd and ripgrep embedded as digest-pinned copies, no run-time download, and a launch-time integrity check against the cold-install manifest. [2.3, amendment 8] The upstream pi adapter pins a verified pi version (issue #1153); the embedded pi stays on a version that adapter verifies. [2.5, amendment 20] Upstream refuses pi below 1.2.0 and non-release builds; the embedded 1.3.0 passes and the pin stays. [2.6, amendment 23]
 - R2 The lead and all pi seats use the built-in pi only.
 - R3 Claude Code and Codex seats start through the AMQ launch API with the wrapper `seat-exec`.
-- R4 Model, effort, and sandbox flags are AMQ provider arguments; the wrapper takes only `--seat <handle>`, sets the seat environment and the role, and execs the provider in place. The role comes only from `role.md`, whose SHA-256 the Go core records in the launch record and `seat-exec` checks before exec [2.3, amendment 2]; `seat-exec` anchors traversal to the verified AMQ root and checks directory ownership and permissions [2.3, amendment 7]; a per-seat CODEX_HOME is rejected [2.3, amendment 4]; amq-squad never writes the owner's Codex config, and `amq-squad trust <repo>` is an owner-run step [2.3, amendment 1]. A seat never commits: the harness commits and pushes the seat branch (`seat-exec` on the seat's done report, or the lead), for Claude and Codex seats alike, and the Go core enforces the task-declared file set on that commit. [2.5, amendment 21] pi seats admit no provider arguments, so the provider-argument rule applies to Claude and Codex seats only (4.3). [2.6, amendment 23]
+- R4 Model, effort, and sandbox flags are AMQ provider arguments; the wrapper takes only `--seat <handle>`, sets the seat environment and the role, and execs the provider in place. The role comes only from `role.md`, whose SHA-256 the Go core records in the launch record and `seat-exec` checks before exec [2.3, amendment 2]; `seat-exec` anchors traversal to the verified AMQ root and checks directory ownership and permissions [2.3, amendment 7]; a per-seat CODEX_HOME is rejected [2.3, amendment 4]; amq-squad never writes the owner's Codex config, and `amq-squad trust <repo>` is an owner-run step [2.3, amendment 1]. A seat never commits: the harness commits and pushes the seat branch (`seat-exec` on the seat's done report, or the lead), for Claude and Codex seats alike, and the Go core enforces the task-declared file set on that commit. [2.5, amendment 21] pi seats admit no provider arguments, so the provider-argument rule applies to Claude and Codex seats only (4.3). [2.6, amendment 23] The built-in pi runtime is the one provider not exec'd in place: its launcher supervises node (4.3). [2.7, amendment 26] The one provider flag seat-exec adds is the pair of Codex sandbox pins, until upstream ask 17 ships. [2.7, amendment 28] The harness commit step is `seat commit`, with the hardened git environment, the push to `merge.push_url` only, and the draft PR bound to the task (4.3, 7.2). [2.7, milestone B result]
 - R5 pi seats launch and resume through the upstream pi mint-mode adapter (`pi --session-id <launch nonce>`; issue #1153, PR #1188); `amq coop exec` is the fallback. Upstream refuses pi below 1.2.0 and non-release builds, and our pin stays. Upstream resume is create-if-missing, not fail-closed, so `seat-exec` or `doctor` refuses a pi resume when the evidence ledger shows a tool result and the session file for the recorded id is missing. Model and effort cannot travel as provider arguments for pi seats; the model restriction stays on the registry side (R16) plus pi's config, with a watch item for upstream pi forms. [2.6, amendment 23]
 - R6 amq-squad never creates, moves, resizes, focuses, or closes a pane.
 - R7 First run without `.amq-squad` starts solo mode and writes nothing inside the repository; it writes only under `~/.amq-squad/`.
@@ -842,7 +989,7 @@ Core and launch
 - R49 Sending a launch decision never registers the lead as live. The duplicate-live preflight counts only a seat process, not the decision send. Evidence: spike log 08:07, where a decision send wrote an active `lead` presence and the next `--apply` was refused with `duplicate_live` for 90 s. [2.3, spike log 08:07]
 - R50 "Next actions" and every suggested action name only flags and commands that work on the current path; a deprecated flag never appears. Evidence: spike log 08:07, where 2.31 suggested `--force-duplicate`, which does nothing on the launchapi path. [2.3, spike log 08:07]
 - R51 A launch started from the amq-squad binary always hands the AMQ launch library a real `amq` executable path, or amq-squad itself serves the `coop exec` contract. The library resolves `os.Executable()` when no path is given, and inside amq-squad that is amq-squad. Evidence: spike log 2026-10-22 06:24, where every launchapi start from 2.31 failed at tmux Create because the pane ran `amq-squad coop exec`; the legacy pane driver, which calls `amq` from PATH, launched the same roster at once. Upstream ask 14 asks for an explicit path on the request. [2.4, spike log 2026-10-22 06:24]
-- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one `amq drain` before it reports the seat as up; a seat never chooses or repairs its own pin (five of six S6 seats exported `AM_SESSION` themselves, which is the model acting as the enforcement point; the one seat that followed the team rules lost its task). Evidence from the other side: AMQ v0.107.0 #1176 gives every Codex seat its AMQ identity in shell commands. [2.6, amendment 23] Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.4, S6 report finding A]
+- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves its identity with one read-only check (`amq env --me H --json`), never a drain, and sends the up proof over the launcher's socket before it reports the seat as up [2.7, amendment 28]; a seat never chooses or repairs its own pin (five of six S6 seats exported `AM_SESSION` themselves, which is the model acting as the enforcement point; the one seat that followed the team rules lost its task). Evidence from the other side: AMQ v0.107.0 #1176 gives every Codex seat its AMQ identity in shell commands. [2.6, amendment 23] Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.4, S6 report finding A] Corrected in phase 2b: the proof is one read-only identity proof that never drains the mailbox (a drain between the waiting-mail check and the proof consumed and lost a message). The up signal is that proof sent over the launcher-owned Unix socket with the one-time token, valid 60 s from staging, accepted once per launch id and token and only from a pid whose parent chain reaches the pane's shell. The seat's published record is evidence only, and the launcher never re-reads pid or birth time from it. [2.7, amendment 28; briefs ruling 19]
 
 Detection and registry
 - R9 First run and `doctor` detect tools, versions, login state, Ollama models, RAM, GPU, and latency; `doctor` lists project roots codex-cli does not trust [2.3, amendment 1]; latency is direct text TTFT [2.3, amendment 10].
@@ -854,10 +1001,10 @@ Modes, lead, scheduler
 - R13 Two modes, auto and manual, set globally, per repository, by flag, or by lead command.
 - R14 In auto mode the lead chooses runtime, model, and effort per task; a deterministic filter checks the choice against the grant.
 - R15 In manual mode a new seat starts only after approval; dispatch to a running seat needs none.
-- R16 A standing grant per session sets maximum seats (default 12 per session [2.5, amendment 22]), cost per day, permitted runtimes, permitted privacy class; grants and mode live only in the guarded owner file `~/.amq-squad/grants.yaml`, and `squad.yaml` can only narrow them. The privacy class is enforced in two layers: `seat-exec` execs the provider with an environment scrubbed of `*_API_KEY`, `*_TOKEN`, `*_SECRET` and known vendor names unless the runtime declares a need, and the pi package restricts the model list to the seat's registry entry. [2.3, amendment 12] `seat-exec` denies writes to the owner's global agent config (`~/.claude/settings.json`, `~/.codex/config.toml`), and `doctor` diffs that config against the preflight copy. Evidence: S6 finding B, 2026-10-22, an unattributed change to `~/.claude/settings.json` during the run. [2.4, amendment 18] `doctor` checks the owner's shell profile for exported `*_API_KEY`, `*_TOKEN` and `*_SECRET` names and warns, because provider tool shells source the profile and bypass the process-level scrub; the pi package's tool shell runs without the profile; whether `SSH_AUTH_SOCK` reaches a seat is a phase 2b decision. [2.4, amendment 17] After the first usage-limit event in the window the scheduler starts no new seat; the usage-limit signal, not RAM, is the enforced stop. [2.5, amendment 22]
-- R17 The scheduler is deterministic Go with queue, leases, retries, and pools keyed by runtime x model x effort; dispatch is tracked by task leases, not by mail. [2.3, amendment 11]
+- R16 A standing grant per session sets maximum seats (default 12 per session [2.5, amendment 22]), cost per day, permitted runtimes, permitted privacy class; grants and mode live only in the guarded owner file `~/.amq-squad/grants.yaml`, and `squad.yaml` can only narrow them. The privacy class is enforced in two layers: `seat-exec` execs the provider with an environment scrubbed of `*_API_KEY`, `*_TOKEN`, `*_SECRET` and known vendor names unless the runtime declares a need, and the pi package restricts the model list to the seat's registry entry. [2.3, amendment 12] `seat-exec` denies writes to the owner's global agent config (`~/.claude/settings.json`, `~/.codex/config.toml`), and `doctor` diffs that config against the preflight copy. Evidence: S6 finding B, 2026-10-22, an unattributed change to `~/.claude/settings.json` during the run. [2.4, amendment 18] `doctor` checks the owner's shell profile for exported `*_API_KEY`, `*_TOKEN` and `*_SECRET` names and warns, because provider tool shells source the profile and bypass the process-level scrub; the pi package's tool shell runs without the profile; whether `SSH_AUTH_SOCK` reaches a seat is a phase 2b decision. [2.4, amendment 17] The scrub removes `SSH_AUTH_SOCK` (4.3). [2.7, 2b-2 milestone A result] The config-write rule is enforced in layers (4.3): the Codex sandbox for Codex seats; guard plus the post-exit diff on every terminal path, with the owner-cleared quarantine, for Claude seats. [2.7, amendment 28] The grant files are the strict YAML subset of 7.2. [2.7, amendment 27] After the first usage-limit event in the window the scheduler starts no new seat; the usage-limit signal, not RAM, is the enforced stop. [2.5, amendment 22]
+- R17 The scheduler is deterministic Go with queue, leases, retries, and pools keyed by runtime x model x effort; dispatch is tracked by task leases, not by mail. [2.3, amendment 11] It runs as the process `amq-squad scheduler run` (4.5). [2.7, briefs ruling 15]
 - R18 Idle seats close after a timeout.
-- R19 The lead does not poll tasks; it decomposes, labels, prioritizes, converges. The lead loop test is "the lead does not start coding". [2.3, amendment 11]
+- R19 The lead does not poll tasks; it decomposes, labels, prioritizes, converges. The lead loop test is "the lead does not start coding". [2.3, amendment 11] The team lead has no Bash tool. Its tools are the native amq tools, the task verbs through the scheduler, a read-only file read and directory list scoped to the repository root, and `amq-squad status --json`; anything that runs a command is dispatched to a seat. The solo lead keeps its tools. [2.7, amendment 26]
 
 Routing
 - R20 Each task carries one class from the closed list with a verifier.
@@ -874,8 +1021,8 @@ Routing
 Gates and security
 - R30 Four actions always stop for the owner: tag and release, external send, credential change, growth beyond the grant. Merge to the default branch moves to the standing merge grant in 7.2: a rules decision by the lead inside limits the Go core enforces; a merge outside the grant is refused by the core, and that refusal escalates to an owner-signed gate; manual mode keeps the per-merge stop. [2.4, S2 report owner decision]
 - R31 A typed gate binds one action to one target digest.
-- R32 A typed-gate answer is owner-signed with the Buzz key (BIP-340) over gate id, action class, and target digest; `amq-remote` is transport only; the Go core verifies it and records it in an operatorauth envelope; a seat or a model cannot produce a valid answer. The typed prefix stays 16 hex and is checked only against the immutable gate record, which holds the full digest and is written before the question is sent; the verifier follows the conformance rules in 7.3. [2.3, amendment 13] Enforcement stays in the Go core; hooks are UX and evidence. [2.3, amendment 3] The gate text says "reply in this thread"; thread binding stays on; a non-thread answer that matches an open gate (gate id, class, prefix, owner pubkey) makes the core re-post "reply here to confirm" in the gate thread, and the next thread reply is the answer; there is no "only candidate" acceptance. [2.5, amendment 19] A mailbox-binding answer arrives as a `nostr:<eventID>` label, and the layer verifies the event against the relay with the Claude-hook checks. [2.5, amendment 20]
-- R33 Seats hold no default-branch or release credentials. The Buzz nsec enters only `amq-owner-sign`, once, and is written nowhere. [2.3, amendment 14] It reaches the signer only through a password-manager pipe, never a terminal, a log or a file. [2.5, amendment 19] Measured and reworded (3-2, 2026-10-24): seats are given no default-branch or release credential; their reads of the owner's credentials are denied by guard (credential_read: gh auth token, security find-*-password -w, git credential fill and credential-*, launchctl getenv SSH_AUTH_SOCK) and scrubbed from the environment (GIT_ASKPASS and SSH_ASKPASS included); the server-side CI-only ruleset is the enforcement for the default branch; for tags and releases the enforcement in 3.0 is detection, not prevention: doctor and the merge train compare the repository's tags and releases against the gate store at every run and raise an owner alert on any tag or release without an accepted gate; the same-UID threat model of 7.3 covers the rest (a same-UID seat can read the owner's gh token from the login keychain today), and phase 5 adds a harness-held GitHub App token or a separate keychain. [2.7, 3-2 result] The harness is the owner-identity actor, and the push is where that identity is used (milestone B review, ruling D2): every harness git call runs with GIT_CONFIG_GLOBAL=/dev/null and the hardened set of amendment 28, so no credential helper is read from any config file; for an HTTPS github.com push_url the harness itself passes `-c credential.helper=` (clearing the list) and then `-c credential.helper=!<pinned gh> auth git-credential`, with gh at the absolute path from the registry entry, never PATH, GIT_TERMINAL_PROMPT=0 so a failing helper is a push error and never a prompt, and GH_TOKEN and GITHUB_TOKEN kept on the push call only from the harness environment, never a seat's; an SSH push_url uses the agent and GIT_SSH_COMMAND from the harness environment, with core.sshCommand never read from the seat repository; doctor runs `gh auth status --hostname github.com` when a grant names an HTTPS push_url. Recorded same-UID limit (milestone B fourth pass, beside 4-1's item 2): git itself executes the credential helper by pathname after the harness's check, so a same-UID replacement between the check and git's exec, or between git's get and store calls, runs unverified; the mitigation is the launch-time copy of the pinned gh into the core-written 0700 directory, hashed there (never the registry path a seat can see), the re-hash immediately before the push, and the push-only token exception. [2.7, milestone B review]
+- R32 A typed-gate answer is owner-signed with the Buzz key (BIP-340) over gate id, action class, and target digest; `amq-remote` is transport only; the Go core verifies it and records it in an operatorauth envelope; a seat or a model cannot produce a valid answer. The typed prefix stays 16 hex and is checked only against the immutable gate record, which holds the full digest and is written before the question is sent; the verifier follows the conformance rules in 7.3. [2.3, amendment 13] Enforcement stays in the Go core; hooks are UX and evidence. [2.3, amendment 3] The gate text says "reply in this thread"; thread binding stays on; a non-thread answer that matches an open gate (gate id, class, prefix, owner pubkey) makes the core re-post "reply here to confirm" in the gate thread, and the next thread reply is the answer; there is no "only candidate" acceptance. [2.5, amendment 19] A mailbox-binding answer arrives as a `nostr:<eventID>` label, and the layer verifies the event against the relay with the Claude-hook checks. [2.5, amendment 20] The signed question carries the squad identity, and the verifier selects the gate record by squad identity, gate id and thread (7.3). [2.7, amendment 30]
+- R33 Seats hold no default-branch or release credentials. The Buzz nsec enters only `amq-owner-sign`, once, and is written nowhere. [2.3, amendment 14] It reaches the signer only through a password-manager pipe, never a terminal, a log or a file. [2.5, amendment 19] Measured and reworded (3-2, 2026-10-24): seats are given no default-branch or release credential; their reads of the owner's credentials are denied by guard (credential_read: gh auth token, security find-*-password -w, git credential fill and credential-*, launchctl getenv SSH_AUTH_SOCK) and scrubbed from the environment (GIT_ASKPASS and SSH_ASKPASS included); the server-side CI-only ruleset is the enforcement for the default branch; for tags and releases the enforcement in 3.0 is detection, not prevention: doctor and the merge train compare the repository's tags and releases against the gate store at every run and raise an owner alert on any tag or release without an accepted gate; the same-UID threat model of 7.3 covers the rest (a same-UID seat can read the owner's gh token from the login keychain today), and phase 5 adds a harness-held GitHub App token or a separate keychain. [2.7, 3-2 result] The harness is the owner-identity actor, and the push is where that identity is used (milestone B review, ruling D2): every harness git call runs with GIT_CONFIG_GLOBAL=/dev/null and the hardened set of amendment 28, so no credential helper is read from any config file; for an HTTPS github.com push_url the harness itself passes `-c credential.helper=` (clearing the list) and then `-c credential.helper=!<pinned gh> auth git-credential`, with gh at the launch-time copy of the registry entry's binary inside the core-written tools directory (hashed at launch and re-hashed before the push), never PATH, GIT_TERMINAL_PROMPT=0 so a failing helper is a push error and never a prompt, and GH_TOKEN and GITHUB_TOKEN kept on the push call only from the harness environment, never a seat's; an SSH push_url uses the agent and GIT_SSH_COMMAND from the harness environment, with core.sshCommand never read from the seat repository; doctor runs `gh auth status --hostname github.com` when a grant names an HTTPS push_url. Recorded same-UID limit (milestone B fourth pass, beside 4-1's item 2): git itself executes the credential helper by pathname after the harness's check, so a same-UID replacement between the check and git's exec, or between git's get and store calls, runs unverified; the mitigation is the launch-time copy of the pinned gh into the core-written 0700 directory, hashed there (never the registry path a seat can see), the re-hash immediately before the push, and the push-only token exception. [2.7, milestone B review]
 - R34 Merges go through the standing merge grant and a deterministic merge train; the batch digest covers the ordered (PR, head SHA) pairs plus the base SHA and is written to the audit log, unsigned; any rebase that changes a tree re-runs the rules check; CI-only branch protection on the server stays, and no seat process holds a merge path to the default branch. [2.4, S2 report owner decision]
 - R35 In the built-in pi and Claude Code, hooks inject role and rules every turn and record evidence on every tool result; Codex, Grok Build, and Cursor receive role and rules at launch only, and Codex evidence comes from AMQ capture or Codex session files.
 - R36 In the built-in pi a guard failure blocks the call; Claude Code PreToolUse fails open on timeout, on non-zero exit without a deny, and on a missing command, a timeout costs exactly the configured timeout, and the docs say so; no other runtime blocks in session. [2.3, amendment 3] In a Claude seat the permission boundary is guard: an allowed call carries an explicit allow and Claude's own permission prompt never stops the seat; the plugin's presence is a seat-exec preflight check. [2.7, 4-2 result] A Claude seat runs under permission mode dontAsk with a seat-specific settings file written by the core (the permission mode and an empty allow list, its digest in the launch record), so a hook failure leaves the call to Claude's permission rules, which deny anything that would have prompted; the hook's fail-open never becomes an unguarded call, and doctor warns when the owner's user-scope settings carry allow rules. [2.7, milestone B ruling] Claude seats authenticate with a long-lived token from `claude setup-token` held in the guarded owner file `~/.amq-squad/claude-token` (0600, in the protected set, checked like grants.yaml, refused as claude_token_insecure when missing or insecure), reaching the seat as CLAUDE_CODE_OAUTH_TOKEN through the runtime's credential need, never the owner's config dir, because a fresh per-seat config dir cannot use the Keychain login; the token sits in the seat process environment (the same-UID limit of 7.3, bounded to the owner's subscription), never in a record, ledger or log, and doctor warns past the rotation window. [2.7, milestone B ruling]
@@ -887,8 +1034,8 @@ Fleet, mayor, remote
 - R40 In auto mode the operator session, the mayor, starts squads inside a fleet grant: maximum squads, cost per day, permitted repositories; the Go core provisions the roster through the launch API package, and where a new project root needs `amq launch` to provision an unknown session (upstream ask 2) the fallback is: the mayor proposes, the owner starts.
 - R41 The mayor never approves a typed gate.
 - R42 `amq-remote` plus Buzz is the remote face; Buzz attaches to the operator session. Enrollment defaults to `--enable buzz-profile --presence`, at the cost of one extra owner signature. [2.5, amendment 19]
-- R43 `status --json` is the versioned contract in 4.6 with a golden fixture in CI; it carries the command-center fields, the bucket table and the "new task" argv. [2.6, amendment 24]
-- R44 amq-noc reads that contract and AMQ primitives only; amq-noc 1.0 is the command center and its only view (4.7). [2.6, amendment 24]
+- R43 `status --json` is the versioned contract in 4.6 with a golden fixture in CI; it carries the command-center fields, the bucket table and the "new task" argv. [2.6, amendment 24] The fleet form is the document of 4.6. [2.7, briefs ruling 16]
+- R44 amq-noc reads that contract and AMQ primitives only; amq-noc 1.0 is the command center and its only view (4.7). [2.6, amendment 24] The old board goes by the delete list of 4.7. [2.7, briefs ruling 17]
 
 Scale and host
 - R45 The Mac is the supported host; `doctor` warns on sleep and missing login service.
@@ -907,7 +1054,7 @@ wall time, and upstream changes are the only hard limits.
 | 2b Core | task store with leases and pools; status contract with the classifier moved in; registry and detection; routing table and outcome log; `seat-exec` hardening before first use [2.3, amendment 7]; `amq-squad trust <repo>` and the doctor trust check [2.3, amendment 1]; provider environment scrub [2.3, amendment 12]; hold-seam and role-delivery tests [2.3, amendments 11 and 15] Status 2026-10-24: brief 2b-1 merged (606b63a6): task store with leases and pools under the AMQ root, scheduler with request ids per incarnation and launcher-confirmed cancellation, status contract schema 1 with the four buckets and argv actions, evidence list over the hook ledger; ten review findings closed with test rows; band gate MET at 35,807. 2b-2 milestone A merged (f4d3dc13, 2026-10-24): seat-exec with the scrubbed environment (indirect credential sources included), identity at launch from the record only, the read-only identity proof with a launch nonce, the Codex sandbox refusal and the preflight diff (amendment 28), exact birth-time checks and the pending, closing and cancelled launcher states; criterion 4 passed from the v3 binary with real Claude and Codex seats; band MET at 33,723; Codex pass plus the lead's narrow pass (amendment 29). 2b-5 merged (fbf56347, 2026-10-24): squad.yaml schema 1 with the strict YAML subset (amendment 27), the team model as squad.yaml in memory with propose, apply, show, check and draft-rules through the digest flow, the team rows rewritten, internal/atomicfile as the one durable writer, the LaunchSeats adapter onto 2b-2's typed seat list; two Codex passes plus the lead's verification. At this merge the band's floor is retired (a v2 row rewritten below target or deleted with its function in a fate-new row is 2b's intended outcome, so a sub-floor total measures nothing) and manifest check 8 replaces it: every row retired from 2b on names its replacement in replaced_by; the report prints v2 rows kept 29,426 against the ceiling 36,410, 3.0 additions 11,926 lines, size of 3.0 41,352 lines. 2b-3 merged (fec06084, 2026-10-24): registry.yaml with the full runtime re-hash at every launch, the R12 probe at N=5 with the setsid-descendant kill and the pristine copy made only after it, descriptor-anchored traversal, the usage-limit detector behind 2b-1's scheduler interface, amq-squad trust, the doctor rows with the status contract self-check against the embedded golden fixture; three Codex passes with fixes and reverting tests, lead verification; v2 rows kept 29,138, size of 3.0 45,577. 2b-2 fix merged (dc7eedab, 2026-10-24): fixes 3b and 3c from the third and fourth Codex passes on milestone A (the up signal over the launcher-owned Unix socket with the one-time 60 s token bound to the pane chain, the live-socket abort, hop re-read, sender re-check, consumed and expired markers, amendment 28), upstream ask 17 (Codex sandbox pins as provider arguments), and the one-shot proof-window wait (`operator start-squad` keeps the proof socket open until the token window ends; a session mayor sets LongRunning and returns at once); 30 reverting rows re-run on the rebased head; the merged head is on the phase 5 re-pass list. 2b-4 merged (d04932d1, 2026-10-24): the class table with tier chains and routing.yaml, chain selection with escalation and the reviewer family, exploration and the outcome log as a signed hash chain (seq and prev inside the signed bytes), the signed head record through atomicfile (both chains must reach it, the seed's device and inode, the open breaks), the history_tampered hold as a block routed to the lead that clears only on a reset after the router observed the block, the weekly report with owner prices and `routing report --week`, the canonical walk on fsanchor with readlinkat; five Codex passes with fixes and reverting rows (27, 15, 20, 16, 19), lead final read; recorded same-UID limits: forged tags, chains and head, a torn tail stopping routing; v2 rows kept 28,639, size of 3.0 58,207; the merged head is on the phase 5 re-pass list; milestone B removes its temporary `--default-pool` at its merge. 2b-2 milestone B merged (84f1524b, 2026-10-25), and **phase 2 closes**: the harness commit step (`seat commit`: the seat diff against the task-declared file set through task.MatchPath, snapshot by hash-object --no-filters into a temporary index, the push to the grant's push_url only from a per-step shadow git directory with the hardened environment, the draft PR opened and bound to the task through task.Store.BindPR with pr_repository, pr_number and pr_head in one transaction with completion), the lead widening path (`task widen` over the scheduler's own Unix socket, accepted only from a sender whose stamped parent chain reaches the lead's recorded incarnation, re-proved after the request; the AMQ message is the record, never the authority), the growth gate for protected-path and managed-block crossings, the global-config quarantine with the preflight diff and the Claude config-dir digest on every terminal path (done, fail, gone, expired) and `seat clear` as the owner's verb from a real pty that is no pane's, with a signed clear record; `amq-squad scheduler run` as the scheduler process supervised by `lead --team --scheduler-seats`, with 2b-4's router and Flush per tick, the start-up barrier (adopted seats closed and confirmed, exits ledger loaded and writable, decision socket closed until then), slots released only at seat_gone, deferred exit checks persisted; CleanSeat between leases with the discarded diff kept on the ledger; the per-seat CLAUDE_CONFIG_DIR, the owner token file, AMQ_SQUAD_BIN, claude_hooks_missing and claude_hooks_silent; merge.push_url and merge.local_push_ack as grant fields with the pinned gh copied at launch into the core-written tools directory as the only credential helper for an HTTPS push; internal/redact with the real-shape rule used by the redaction step, the docs and evidence scan and the source scan (ruling 18). Live: R19 2 of 2 on CleanSeat, R12 10 of 10 complete through the commit step with exact diffs (strict 3 of 5 with the probe role, misses final-line only); seat-exec to exec 50.8 ms median, commit and push 256 ms, refuse 103 ms, tick at 100 tasks 12.1 ms. Four Codex passes with fixes and reverting rows (24, 24, 13, 9, plus the canary row), rulings R1 to R9 and D1, D2 recorded in 7.2, 7.3, R33 and amendment 28, lead final read. Behaviour changes: `task widen` is accepted only from a lead that proved up through the seat launch (origin_unknown otherwise); `seat clear` needs a real pty on stdin and times out after 60 s; after a restart nothing is dispatched until every adopted seat's close is confirmed. Not run: the Claude live rows (plugin load, probes a and b, the S4 fault table under dontAsk, the Bash-tool scrub candidate, the Claude half of the role matrix) wait for the owner's `claude setup-token` file; 7.5 waits for the owner's `amq-squad trust` of the fixture; both are the first items of phase 5's owner session. Recorded limits: same-UID AMQ mail as the lead, same-UID owner shell by 7.3's model, the credential helper executed by git by pathname, SHA-1 repositories only, the external stand-in's termination by seat_gone, hook reports forgeable by a same-UID process. v2 rows kept 27,783 against the ceiling 36,410; 3.0 additions 40,942 lines in 205 files; size of 3.0 68,725. The merged head is on the phase 5 re-pass list. [milestone B result] | 2 to 3 days |
 | 3 Security | credential custody; branch protection and merge-train checks; Codex sandbox defaults; signed gates for the four typed classes; standing grants, including the per-repository merge grant [2.4, S2 report owner decision]; release gate flow. Status 2026-10-24: brief 3-1 merged (beabeadc): grants schema and narrowing, fail-closed insecure owner file, credential_change class, signed deny record, target-string table and digest, core-written gate store with durable one-decision recovery, verifier and relay client ported from S1 with reviewed libraries, one typed-gate system on v3 (the v2 AMQ-answer path for typed actions deleted). Three Codex review rounds, 18 review test rows. Window until 4-5: a typed gate is recorded but not sent or answered, like the R51 launch window. 3-2 pending. [3-1 result] 3-2 merged (2756d88d, 2026-10-25): the merge train under the standing merge grant (ordered PR set, batch digest in the audit log, rebase through updatePullRequestBranch with the head pinned, task read only through the PR binding keyed by repository and PR number with pr_head_moved and task_unbound, the train's own re-bind after its rebase with the audit entry first, a real run refused against a local push target), the branch and tag protection checks (app-bound required checks only, bypass allowances and actors unmet, the narrow tag-pattern grammar), the release flow (draft created at the approved target_commitish, read back and re-read before publish with the tag resolved twice, audited deletions, orphan recovery through the publication lock record), the Git transport and trust variables in the never-needed set, redaction of URL userinfo and nested shell strings, the drift baseline migration; pr_repository, pr_number, pr_head on task.Task with Store.BindPR; three Codex passes with fixes and reverting rows (14, 2, 16, 2), lead final read; v2 rows kept 27,771, size of 3.0 60,852; the merged head is on the phase 5 re-pass list; acceptance 4 (the real merge of the clean S6 PRs) waits on the owner's merge grant and rulesets; the GraphQL rebase liveness check is on the S6 dry-run list. The gated merge's first parent is 3e17beba; the one docs commit made on v3 during the gate was replayed on top as 85c4149b (rule from here: no commit on v3 while a merge gate runs). [3-2 result] | 3 days |
 | 4 Faces | built-in pi package with hooks and native AMQ tools [2.3, amendment 11]; pi seat launch and resume through the upstream mint-mode adapter, `coop exec` as the fallback [2.6, amendment 23]; Claude Code hooks plugin; operator session and mayor; amq-noc 1.0 as the command center and its only view (4.7) [2.6, amendment 24]; Buzz attachment. Status 2026-10-24: 4-2 merged (6b27c0c4): the user-scope Claude Code hooks plugin injects the seat context every turn, maps guard verdicts (needs_gate to deny with the gate reason, never ask; a guard failure fails open and is logged), ingests evidence, and is silent outside a seat; fault table measured through the hook runner, live confirmation at milestone B's live run. 4-1 merged (0ded255d, 2026-10-24): the embedded pi runtime verified against the digest baked into the binary at every launch with the content re-check before launch and the preload self-check (amendment 25), the pi and lead verbs, the team lead's tool set (amendment 26), the @amq-squad/pi package with hooks, native tools and the hold seam, the forced environment with the transpile cache off and a private TMPDIR per seat, internal/fsanchor shared with 2b-3 and 4-3, atomicfile's anchored writer; two Codex passes plus the lead's verification; acceptance 10 (pi launch through AMQ) blocked on the AMQ release carrying PR #1188; v2 rows kept 29,154, size of 3.0 48,363. 4-3 merged (1a74858d, 2026-10-24): one lead-session entrypoint for a squad lead and the operator with the grant alone giving the scope; the fleet registry through fsanchor; status --fleet --json with lead_handle, the operator row and waiting rows; the operator inbox; the mayor inside the fleet grant with owner-controlled repository identity (the grant's repository_paths and the protected identity file, never the checkout's remote), locked admission with fenced reservations that expire only on a gone incarnation or a stalled phase, the squad.yaml digest flow and the roster launcher as adapters, and no path to a typed gate answer; two Codex passes, the lead's pass and a Codex re-pass on the rebased head; v2 rows kept 28,641, size of 3.0 50,464. 4-5 merged (b7522370, 2026-10-24): the owner enrollment script with profile and presence on by default, the key only through a password-manager pipe, no core dump and a filtered signer output; the Buzz agent bound to the operator session's mailbox with presence from the fleet document's live field; gate questions carrying "reply in this thread" and the squad identity (amendment 30) with answers verified in the raising squad's store through the thread's e-tag binding; phone messages routed to squad leads across projects as @squad/lead; the share root under the guarded Buzz directory through the anchored walk; two Codex passes, the lead's pass, a Codex re-pass on the rebased head and a narrow pass; acceptance 4 (one typed gate answered from the phone, one message routed to a lead, real key) is the owner session; v2 rows kept 28,644, size of 3.0 52,810. 4-4 (amq-noc command center) review-complete on its branch in amq-noc, held for the release train by owner decision; its fixture refresh for lead_handle and live follows. [4-5 result] | 3 to 4 days |
-| 5 Release 3.0 | `squad.yaml` final form; `migrate` from v2 profiles; real-AMQ CI; release smoke; local-model eval; Jev shadow behind a flag; signed and notarized launcher [2.3, amendment 9] | 2 days |
+| 5 Release 3.0 | `squad.yaml` final form; `migrate` from v2 profiles; real-AMQ CI; release smoke; local-model eval; Jev shadow behind a flag; signed and notarized launcher [2.3, amendment 9]; the phase 2 inputs and the open acceptance rows of 16.4 [2.7, spike log phase 5 lists] | 2 days |
 
 `docs/v3-phase2-briefs.md` is the execution document for 2b, 3 and 4.
 The first-wave rule: two implementers start first (2b-1 and 3-1), and a
@@ -918,6 +1065,19 @@ effort. High effort is for 2b-1 and for the 2b-2 commit step only. The
 dependency order from its overview: 2b-1, 2b-2, 2b-3, 3-1 and 4-1 start
 now; 2b-4 follows 2b-3; 2b-5, 4-3 and 4-4 follow 2b-1; 4-5 follows 3-1;
 3-2 and 4-2 follow 3-1 and 2b-2. [2.6, phase 2b/3/4 briefs]
+
+Evidence hygiene binds every brief from 2026-10-24. No test formats the
+environment into a failure message or a log line. Every evidence file
+passes the hook ledger's redaction before it is committed. A
+repository-wide test fails on a credential-shaped value under docs/ or
+an evidence directory. No test reaches the network: every remote is a
+fake script or a bare repository under the test's temporary directory.
+[2.7, briefs ruling 18] The lead's merge gate also scans the whole diff
+for the real credential shapes of `redact.RealCredentialShapes`. Every
+gate run keeps its full go test output under the brief's evidence
+directory, no gate run overlaps a live seat session on the host, and no
+commit lands on v3 while a merge gate runs. [2.7, spike log; 3-2
+result]
 
 Phase 1 runs first because its numbers set the limits for everything after
 it. Phase 2a runs alone and next, because it deletes code the other phases
@@ -944,6 +1104,17 @@ silently, an Opus background agent blocked by the worktree guard and by
 deletion denials); the fourth, an Opus background agent with the branch
 checked out in its own worktree, worked. [2.4, roster rule]
 
+Review (owner rule, 2026-10-24): Codex reviews whenever it has capacity,
+and the lead session is the final reviewer on every merge. A Codex pass
+is an input. The merge decision is the lead's, made on its own gate
+(build, vet, cross-builds, manifest, full tests, race on the touched
+packages, the merge result gated in a scratch worktree before v3 moves),
+its own reading of the diff, and the kept revert checks. When Codex is
+out, the lead's narrow pass replaces the Codex pass and is recorded as
+such. That is a recorded deviation from the cross-family review rule of
+6.1, and the Codex re-pass list in 16.4 settles it before release. [2.7,
+amendment 29]
+
 Phase 2a, step 0 changes the module path from `/v2` to `/v3`.
 `go install .../v3/...@$(VERSION)` cannot pass until the first v3 tag
 exists, so `make release-smoke` is expected red on `v3` until phase 5.
@@ -953,7 +1124,9 @@ owner's go on the spike table. [2.3, amendment 16] Fact at the time of
 this revision: the branch is merged into `v3` as 422199d.
 
 Phase 2b also runs the controlled role-delivery matrix; the spike
-comparison was not controlled. [2.3, amendment 15]
+comparison was not controlled. [2.3, amendment 15] Milestone A's pointer
+arm stands at N=1; the N=3 matrix waits for the owner's Claude token and
+the Codex trust step (16.4). [2.7, milestone B result]
 
 First action: the load test. Two repositories, amq-noc and workspace-cli,
 two squads of three seats mixed Claude Code and Codex, 25 small real
@@ -981,7 +1154,9 @@ the 0.147.0 pin. [2.4, ask 9 shipped] AMQ v0.104.0 shipped on
   The harness commits and pushes for every seat, and the Go core checks
   the task-declared file set on that commit (4.3, 7.2). Until that
   harness step exists in phase 2b, a Codex seat's work reaches a branch
-  only by hand. [2.5, amendment 21]
+  only by hand. [2.5, amendment 21] The step landed with 2b-2 milestone
+  B (`seat commit`); the live Codex row waits for the owner's trust of
+  the fixture (16.4). [2.7, milestone B result]
 - The lead and the mayor run on API keys; name their default model in the registry.
 - GitHub merge queue on user-owned repositories: not available. S2
   measured a 422 on the `merge_queue` rule, so the train is our Go
@@ -1009,6 +1184,8 @@ the 0.147.0 pin. [2.4, ask 9 shipped] AMQ v0.104.0 shipped on
   saw `~/.claude/settings.json` change at 06:56, unattributed; the
   preflight kept only a hash, so the change could not be shown.
   `seat-exec` denies the write and `doctor` diffs the file (R16). [2.4, amendment 18]
+  The enforcement is layered (4.3): the Codex sandbox, or guard plus the
+  post-exit diff and the quarantine. [2.7, amendment 28]
 - A repository-local `.amq/launch.local.json` picks the AMQ library's
   launcher backend. With `launcher_preference: [tmux, commands]`, the
   pinned library (agent-message-queue v0.75.0, in process) ran its own
@@ -1140,6 +1317,22 @@ the 0.147.0 pin. [2.4, ask 9 shipped] AMQ v0.104.0 shipped on
   5, and R4's seat-exec work is phase 2b. Section 13 names
   `docs/v3-phase2-briefs.md` as the execution document and its first-wave
   rule. Section 11 records the upstream status of 2026-10-24.
+- 2026-10-25, revision 2.7: phase 2 closed with the merge of 2b-2
+  milestone B (84f1524b). Amendments 25 to 30, briefs rulings 15 to 19
+  and the phase 2 results are integrated in place, tagged
+  "[2.7, <source>]"; no ruling changes. Amendment 25 lands in 4.7 ("n"
+  runs `task add`). Amendment 26 (the team lead has no Bash tool; the pi
+  launcher supervises node) lands in 3.2, 4.3, R4 and R19. Amendment 27
+  lands in 7.2 and R16. Amendment 28 with its addenda (layered config
+  enforcement, the read-only identity proof, the up signal over the
+  launcher socket, the Codex sandbox pins and ask 17, the widen
+  authority over the scheduler socket, `seat clear`, harness git
+  hardening, terminal paths, pane labels) lands in 4.3, 7.2, 7.3, 11,
+  14, R4, R16 and R52. Amendment 29 lands in the section 13 roster.
+  Amendment 30 lands in 7.3 and R32. Rulings 15 to 19 land in 4.3, 4.5,
+  4.6, 4.7, 13, 16.5, R17, R43, R44 and R52. 16.1 records the phase 2
+  size line, and 16.4 lists the phase 5 inputs and the open acceptance
+  rows.
 
 ## 16. Amendments from the final review (revision 2.1, 2026-10-20)
 
@@ -1150,6 +1343,8 @@ section's decisions; it tags the spike amendments that touch it.
 Revision 2.4 did the same for the day-2 owner rulings. Revision 2.5 does
 the same for amendments 19 to 22 and the 2a-1 result. Revision 2.6 tags the
 rest and corrects 16.6 (briefs rulings 9 and 10). [2.6, briefs rulings]
+Revision 2.7 adds the phase 2 size line to 16.1 and the phase 5 inputs
+and open acceptance rows to 16.4, and changes no decision here. [2.7]
 
 ### 16.1 Keep/delete manifest
 
@@ -1185,6 +1380,19 @@ v2 rows kept 29,426; 3.0 additions 11,926 (55 fate-new files); size of 3.0
 
 2a-3 result (2026-10-24): the three verbs are in; phase 2a is closed at 44,496 non-test lines with the 2a-2 ledger and the 2a-3 open questions as the named inputs to 2b and phase 3. [2a-3 result]
 
+Phase 2 close (2b-2 milestone B merged as 84f1524b, 2026-10-25). The
+size line:
+
+| Measure | Lines |
+| --- | --- |
+| v2 rows kept | 27,783 against the ceiling 36,410 |
+| 3.0 additions | 40,942 in 205 files |
+| size of 3.0 | 68,725 (v2 rows kept plus 3.0 additions, as manifest-check --final prints it) |
+
+The band floor stays retired from the 2b-5 merge, and manifest check 8
+is in force: every row retired from 2b on names its replacement in
+`replaced_by`. [2.7, milestone B result]
+
 ### 16.2 doctor
 
 `doctor` survives as the probe in section 5: tool detection, versions,
@@ -1205,7 +1413,8 @@ v2 team, pane, and wake-mirror checks go.
   tools, and delivers the role in the first message and the system
   prompt. [2.3, amendment 11]
 - `amq-squad status --fleet --json` reads `~/.amq-squad/fleet.yaml` and
-  is the only fleet input for amq-noc.
+  is the only fleet input for amq-noc. Its document shape is in 4.6.
+  [2.7, briefs ruling 16]
 - R7 and R8 (solo first run, digest before any write) are delivered here
   with the built-in pi package.
 
@@ -1220,10 +1429,120 @@ The launcher ships signed and notarized. Release-smoke includes a
 browser-download start on a clean user account that cold-launches through
 the extracted children. [2.3, amendment 9]
 
+Inputs from phase 2 (2026-10-25). They come from the spike log's phase 5
+lists and the phase rows of section 13, and each names what it waits on.
+[2.7, spike log phase 5 lists]
+
+Codex re-passes of merged heads. Findings become fix commits before the
+3.0 tag. Each waits on Codex capacity (amendment 29).
+
+- The amendment 29 heads: 2b-2 milestone A and its fixes, 4-2 and the 4-2
+  fix, 4-3, 4-5. The spike log moved these to 2026-10-24, when Codex
+  returned; a head stays on this list until its re-pass is recorded as
+  complete.
+- The 2b-2 fix merge dc7eedab: fixes 3b and 3c, the proof-window wait.
+- The 2b-4 merge d04932d1: fix 5's head record, the observed-then-reset
+  clearance, chained decisions.
+- The 3-2 merge 2756d88d: fix 4's binding in the task store, the pinned
+  GraphQL rebase, the draft read-back.
+- The milestone B merge 84f1524b: the commit step, the decision socket,
+  the exits queue, the pins.
+
+Test hygiene. Each waits on a fix commit only, with no row weakened.
+
+- internal/mergetrain under -race takes 940 s against 60 to 125 s
+  without, because the fake gh re-executes the race-instrumented test
+  binary per call and runs real git each time. Keep about three
+  subprocess rows for gh's arguments and JSON parsing, and run the rest
+  through an in-process fake over the same bare-repo state; target under
+  2 minutes.
+- internal/seatlaunch TestExpiredTokenIsRefused failed once in TempDir
+  cleanup ("directory not empty") with no assertion failing. It is a
+  cleanup race: find the late writer and close it.
+- internal/cli TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout ran
+  out its 9 s real-PTY deadline once under full-suite load. The fix is a
+  deadline scaled by a load factor or a serial test group, not a longer
+  constant.
+
+Hardening.
+
+- The runtime executed from a read-only mounted image (hdiutil attach
+  -readonly). It closes the verify-to-exec window of amendment 25 (4.1),
+  because a same-UID writer must detach the volume and the path then
+  fails verification. Waits on the bundle work of this phase.
+- A harness-held GitHub App token or a separate keychain, so a same-UID
+  seat cannot read the owner's gh token (R33). Waits on the choice
+  between the two.
+- The Buzz-signed `seat clear`, the second factor that amendment 28 names
+  for the owner proof (4.3). Waits on the owner's Buzz session.
+
+Release prep.
+
+- Bump the Claude plugin version (plugins/claude, 2.31.0 today). Claude
+  Code caches plugins by version, so the 3.0 hooks need a new version to
+  install over 2.31. Waits on the release version.
+- Re-check the Claude hooks API facts the plugin relies on (hooks.json
+  shape, CLAUDE_PLUGIN_ROOT, hookSpecificOutput fields, exit 2
+  behaviour). They were checked against the installed Claude Code
+  2.1.310. Waits on the release's Claude Code version.
+- The brief-drafting rows no brief retired (workstream.go,
+  briefs_seed.go, drafter/run.go, drafter/config.go), assigned to phase 5
+  by briefs ruling 4.
+- Stale v2 verb names outside internal/ (README, operator cookbook,
+  plugin skills, release docs) go to the 3.0 docs pass (phase 2a row).
+
+Owner session. Each item needs the owner at the keyboard; agents prepare
+the runs and record them.
+
+1. The Buzz owner run with the real key: one session for 4-5 acceptance
+   4 (one typed gate answered from the phone, one message routed to a
+   lead) and 3-1 acceptance 9. The runbook is `docs/v3-buzz/owner-run.md`.
+2. The `claude setup-token` file `~/.amq-squad/claude-token`. It unblocks
+   milestone B's Claude live rows and 4-2's live fault table.
+3. `amq-squad trust` of the milestone B fixture path. It unblocks
+   acceptance 7.5 with a real Codex seat (codex-cli trusts by repository
+   root, 7.3).
+4. The S6 dry run of the merge train against the 18 open S6 draft PRs,
+   then the real run for 3-2 acceptance 4 after the owner sets the merge
+   grant and the CI-only rulesets for amq-noc and workspace-cli. Both
+   runs include the GraphQL rebase liveness check: if a PR that needs a
+   rebase never lands, the rebase moves to the local form (fetch, rebase,
+   push --force-with-lease, bind the pushed SHA).
+5. The AMQ release that carries PR #1188, installed by the owner, then 4-1
+   acceptance 10 (pi launch through `amq launch`).
+6. amq-noc 4-4 lands by PR on the release train (held by owner decision),
+   after its fixture refresh for lead_handle and live.
+7. Upstream asks 15 to 17 filed under the owner's login (section 11).
+8. The reflog expiry and gc of the shared object store after the
+   milestone B exposure, and the rotation of both credentials (briefs
+   ruling 18).
+9. The Codex notify line: the owner makes the fan-out script Codex's
+   notify command in `config.toml`, from the candidate line `amq-squad
+   trust <repo>` prints; `doctor` checks its presence (16.8).
+
+Open acceptance rows of phases 2 to 4. The last column points at the
+owner-session item above.
+
+| Brief | Row | State | Waits on |
+| --- | --- | --- | --- |
+| 2b-2 | 9 role-delivery matrix, N=3 over Claude and Codex | milestone A's pointer arm at N=1 only | items 2 and 3 |
+| 2b-2 milestone B | 7.5 a Codex seat under workspace-write ends with a harness-pushed branch | fixture only | item 3 |
+| 2b-2 milestone B | Claude live rows: plugin load, probes a and b, the S4 fault table under dontAsk, the Claude half of the role matrix (the Bash-tool scrub candidate CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is withdrawn for Claude Code 2.1.310, where it forces permission mode default; the token's visibility to the seat's Bash children is R33's recorded limit) | not run | item 2 |
+| 3-1 | 9 owner run with the real Buzz key | pending | item 1 |
+| 3-2 | 4 real merge of the clean S6 PRs | not run | item 4 |
+| 4-1 | 10 pi launch through `amq launch` | blocked on the AMQ release | item 5 |
+| 4-2 | 3 the fault table against a real Claude seat | owed to milestone B's live run | item 2 |
+| 4-4 | amq-noc 1.0 command center on amq-noc main | review-complete on its branch | item 6 |
+| 4-5 | 4 owner run with the real key | prepared, not run | item 1 |
+
+[2.7, phase 2 results]
+
 ### 16.5 Process ownership
 
 The amq-squad binary starts and supervises one scheduler per squad. The
-scheduler recovers from the task store on restart. The lead and the
+scheduler recovers from the task store on restart. The scheduler is
+`amq-squad scheduler run`, supervised by the lead's team mode (4.5);
+restart recovery is phase 5 (16.4). [2.7, briefs ruling 15] The lead and the
 mayor run on the built-in pi with a named default model from the
 registry, on API keys. The fleet registry is `~/.amq-squad/fleet.yaml`.
 
@@ -1283,12 +1602,13 @@ session-identity capture. The maintainer declined it on 2026-10-22:
 `config.toml` belongs to Codex, and a forward failure must not block
 AMQ's capture. The Codex notify design uses a small fan-out script as
 the notify command, so AMQ's capture and a second receiver both run.
-amq-squad never writes `config.toml` (4.3); how the script becomes the
-notify command under that rule is a phase 2b item. Candidate direction,
-not decided: the owner-run trust step of risk 16 (`amq-squad trust
-<repo>`) is the one place the owner already edits Codex config on
-amq-squad's instruction, so an owner-written notify line there, checked
-by `doctor`, is the natural home. [2.5, amendment 20, candidate] Until then Codex
+amq-squad never writes `config.toml` (4.3). Decided in 2b-3: `amq-squad
+trust <repo>` prints the owner-written notify line as a candidate and
+`doctor` checks its presence only; nothing writes `config.toml`; making
+it Codex's notify command is the owner's config step, listed under the
+owner session as item 9 of 16.4. [2.7, 2b-3 ruling 2] (The 2.5 candidate
+direction, the trust step as the natural home, is what was decided.)
+[2.5, amendment 20, candidate] Until then Codex
 evidence comes from AMQ capture or the Codex session files, and the
 weekly routing report uses only runtimes with complete evidence. [2.5, amendment 20]
 
@@ -1408,4 +1728,24 @@ weekly routing report uses only runtimes with complete evidence. [2.5, amendment
 - 14: pi launch risk restated (amendment 23).
 - 15: a 2026-10-24 revision 2.6 entry appended.
 - 16: intro notes 2.6; 16.6 corrected: Jev (R29) to phase 5, R4 split between phase 2b (seat-exec) and phase 4 (hook side) (briefs rulings 9 and 10).
+- 17: this list.
+
+### 17.5 Revision 2.7 change list
+
+- Header: revision 2.7, date 2026-10-25, phase 2 closed (milestone B result); intro names amendments 25 to 30, briefs rulings 15 to 19 and the phase 2 results, tag form "[2.7, <source>]".
+- 3.2: the solo lead keeps its tools; the team lead has no Bash tool (amendment 26).
+- 4.1: the pi resume refusal landed in milestone A as `pi_resume_context_lost` (2b-2 milestone A result).
+- 4.3: the pi launcher supervises node (amendment 26); the Codex sandbox pins as the one added provider flag, ask 17 (amendment 28); dontAsk, the seat settings file, the per-seat config dir and the token file (milestone B ruling); `SSH_AUTH_SOCK` scrubbed and `launchctl getenv` denied (2b-2 and 3-2 results); layered config enforcement, the quarantine on every terminal path and `seat clear` from the owner's real pty (amendment 28); trust step and traversal fixes landed (2b-3, milestone A); `task widen` over the scheduler socket (amendment 28); the shape of the harness commit step, hardened git, the draft PR bound through BindPR, CleanSeat (amendment 28, briefs ruling 19, milestone B result).
+- 4.4: the Claude live rows wait for the token file (milestone B result).
+- 4.5: the scheduler process, its barrier and slots (briefs rulings 15 and 19, milestone B result).
+- 4.6: the bucket table fixed by 2b-1 (2b-1 result); the fleet document (briefs ruling 16).
+- 4.7: "n" runs `task add`, dispatch is the scheduler's (amendment 25); the old board's delete list and frame time (briefs ruling 17); amq-noc lands by PR on the release train (4-4 status).
+- 7.2: the widen path after rulings R4, R5, R8 and R9, the lead's recorded incarnation, pane label not an identity (amendment 28).
+- 7.3: Codex sandbox and pins (amendment 28); the PR binding keyed by repository and PR number (3-2 and milestone B results); squad identity in signed gate questions (amendment 30).
+- 11: asks 15 to 17 drafted, not filed (upstream drafts).
+- 12: R4 (amendments 26, 28, milestone B result), R16 (amendments 27, 28, milestone A result), R17 (briefs ruling 15), R19 (amendment 26), R32 (amendment 30), R43 (briefs ruling 16), R44 (briefs ruling 17), R52 (amendment 28, briefs ruling 19).
+- 13: the phase 5 row points at 16.4; evidence hygiene and the gate process rules (briefs ruling 18, spike log, 3-2 result); the review rule (amendment 29); the role-delivery matrix status (milestone B result).
+- 14: the harness step landed (milestone B result); layered config enforcement (amendment 28).
+- 15: a 2026-10-25 revision 2.7 entry appended.
+- 16: intro notes 2.7; 16.1 the phase 2 size line (milestone B result); 16.3 the fleet document (briefs ruling 16); 16.4 the phase 5 inputs, the owner session and the open acceptance rows (spike log phase 5 lists, phase 2 results); 16.5 the scheduler process (briefs ruling 15).
 - 17: this list.

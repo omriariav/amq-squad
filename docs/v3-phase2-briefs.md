@@ -102,7 +102,11 @@ Implementer-days. Elapsed time is shorter because briefs run in parallel.
 
 - One implementer per brief, in its own worktree with the work branch
   checked out (phase 2 roster rule, section 13). No helper agents without
-  the lead's ruling (2a-2 ruling 5). Codex reviews the branch at merge.
+  the lead's ruling (2a-2 ruling 5). Codex reviews the branch at merge
+  when it has capacity, and the lead session is the final reviewer on
+  every merge, on its own gate, its own reading of the diff and the kept
+  revert checks (amendment 29, owner rule of 2026-10-24); when Codex is
+  out, the lead's narrow pass stands in and is recorded as such.
 - No v2 code comes back. A file that 2a deleted stays deleted. The spike
   code under `spike/` (seatexec, gateverify, embedpi, pi-hold-ext,
   pi-lead-loop, piprobe, loadtest) is a reference to port with tests, not
