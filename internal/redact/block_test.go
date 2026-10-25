@@ -37,8 +37,37 @@ func TestBlockRedactsAQuotedYAMLScalarWithAColon(t *testing.T) {
 			t.Fatal("a quoted YAML value with a colon survived")
 		}
 	}
-	if out := Block("password:\n  nested: map\n"); !strings.Contains(out, "nested: map") {
-		t.Fatal("a bare nested map entry was taken for the key's scalar")
+}
+
+// The fourth round, item 4: a quoted scalar opened on a credential key's
+// value line is redacted through its closing quote across lines, in both
+// quote kinds, and an unclosed one through the last more-indented line.
+func TestBlockRedactsAContinuedQuotedYAMLScalar(t *testing.T) {
+	head, tail := "Ab9"+"x", "Y7"+"qR" // built at run time, never a literal
+	for _, q := range []string{"'", `"`} {
+		in := "password:\n  " + q + head + "\n    " + tail + q + "\nnext: kept\n"
+		out := Block(in)
+		if strings.Contains(out, head) || strings.Contains(out, tail) || !strings.Contains(out, "next: kept") {
+			t.Fatalf("a continued %s-quoted scalar: the value survived or the next key went", q)
+		}
+	}
+	if out := Block("password:\n  '" + head + "\n    " + tail + "\nnext: kept\n"); strings.Contains(out, tail) || !strings.Contains(out, "next: kept") {
+		t.Fatal("an unclosed quoted scalar: not redacted through its more-indented lines")
+	}
+	// The closing quote bounds the scalar, not the indentation: a
+	// continuation line back at the key's column is still the value.
+	if out := Block("password:\n  '" + head + "\n" + tail + "'\nnext: kept\n"); strings.Contains(out, tail) || !strings.Contains(out, "next: kept") {
+		t.Fatal("a quoted scalar continued at the key's column: redacted short of its closing quote")
+	}
+}
+
+// The fourth round, item 5: a credential key owns its block: every line
+// indented deeper than the key is redacted until the indentation returns.
+func TestBlockRedactsANestedMappingUnderACredentialKey(t *testing.T) {
+	value := "Ab9" + "xY7qR"
+	out := Block("password:\n  nested:\n    '" + value + "'\nuser: kept\n")
+	if strings.Contains(out, value) || strings.Contains(out, "nested:") || !strings.Contains(out, "user: kept") {
+		t.Fatal("a nested mapping under a credential key survived, or the next key went")
 	}
 }
 

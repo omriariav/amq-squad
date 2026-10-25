@@ -58,7 +58,7 @@ func TestCleanSeatHoldsNoStoreLockAcrossGit(t *testing.T) {
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("a store read took %s during CleanSeat's git work", took.Round(time.Millisecond))
 	}
-	if _, err := f.store.Claim(other.ID, f.handle, nil, time.Hour, f.now); !errors.Is(err, task.ErrSeatReserved) {
+	if _, err := f.store.Claim(other.ID, f.handle, nil, time.Hour, f.now); !errors.Is(err, task.ErrSeatUnclean) {
 		t.Fatalf("a claim by the seat being cleaned: %v", err)
 	}
 	if err := <-done; err != nil {

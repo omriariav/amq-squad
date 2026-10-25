@@ -67,7 +67,7 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 		if err := quarantined(all.dir, holder); err != nil {
 			return err
 		}
-		if err := reserved(all.dir, holder, now); err != nil {
+		if err := unclean(all.dir, holder); err != nil {
 			return err
 		}
 	}

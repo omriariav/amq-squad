@@ -536,21 +536,23 @@ func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, n
 	// busy ledger is ErrLedgerBusy, never a wait.
 	err = withLedgerTryLock(root, handle, func() error {
 		// Only between leases, never mid-task (condition 2 of the ruling):
-		// the store lock covers the state read with the seat's reservation
-		// and, in a second take, its release with the seat re-checked; the git
-		// work runs between them, outside the lock (the third round: no lock
-		// reachable from the tick is held across a subprocess). A grant or a
-		// claim of the reserved seat is refused meanwhile.
-		list, err := store.ReserveSeat(handle, now)
+		// the store lock covers the state read with the seat's unclean marker
+		// and, in a second take, the marker's removal with the seat
+		// re-checked; the git work runs between them, outside the lock (no
+		// lock reachable from the tick is held across a subprocess). While
+		// the marker exists no grant or claim leases the seat; only a
+		// completed clean removes it, and only its own (the nonce): a clean
+		// that fails or dies leaves the seat unclean for the next CleanSeat.
+		list, nonce, err := store.ReserveSeat(handle, now)
 		if err != nil {
 			return err
 		}
 		var derr error
 		discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
-		if rerr := store.ReleaseSeat(handle); derr == nil {
-			derr = rerr
+		if derr != nil {
+			return derr
 		}
-		return derr
+		return store.ReleaseSeat(handle, nonce)
 	})
 	return discarded, err
 }

@@ -1,10 +1,7 @@
 package task
 
 import (
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -156,78 +153,6 @@ func (s Store) CompleteBound(id, repository string, number int, head string, now
 		s.complete(t, now)
 		return nil
 	})
-}
-
-// ReserveSeat is CleanSeat's reservation of a free seat (R3 of the milestone
-// B first pass, and the third round of v3-5-verifier: no lock reachable from
-// the tick is held across a subprocess): under the store lock it checks that
-// the seat holds nothing and is not quarantined, records the reservation
-// (Grant and Claim refuse a reserved seat) and returns the store's tasks;
-// the caller's git work then runs outside the lock, and ReleaseSeat ends the
-// reservation under a second take. A reservation older than
-// SeatReservationTTL (a harness that died mid-clean) no longer reserves.
-func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, error) {
-	var out []Task
-	err := s.withLock(true, func() error {
-		list, err := readDir(s.Dir)
-		if err != nil {
-			return err
-		}
-		if held := HeldBy(handle, list); held != nil {
-			return fmt.Errorf("seat %s holds task %s; its worktree is cleaned only between leases", handle, held.ID)
-		}
-		if err := quarantined(s.Dir, handle); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(reservedDir(s.Dir), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(reservedDir(s.Dir), handle), []byte(now.UTC().Format(time.RFC3339Nano)+"\n"), 0o600); err != nil {
-			return err
-		}
-		out = list
-		return nil
-	})
-	return out, err
-}
-
-// ReleaseSeat ends a ReserveSeat reservation under the store lock, the seat
-// re-checked: a seat that holds a task now (a lease landed by a path that
-// ignored the reservation) is an error.
-func (s Store) ReleaseSeat(handle string) error {
-	return s.withLock(true, func() error {
-		os.Remove(filepath.Join(reservedDir(s.Dir), handle))
-		list, err := readDir(s.Dir)
-		if err != nil {
-			return err
-		}
-		if held := HeldBy(handle, list); held != nil {
-			return fmt.Errorf("seat %s got task %s while its worktree was being cleaned", handle, held.ID)
-		}
-		return nil
-	})
-}
-
-// SeatReservationTTL bounds a CleanSeat reservation.
-const SeatReservationTTL = 10 * time.Minute
-
-// ErrSeatReserved is a lease refused for a seat whose worktree is being
-// cleaned.
-var ErrSeatReserved = errors.New("seat_reserved")
-
-func reservedDir(dir string) string { return filepath.Join(dir, "reserved") }
-
-// reserved refuses a lease for a seat under a fresh CleanSeat reservation.
-func reserved(dir, holder string, now time.Time) error {
-	raw, err := os.ReadFile(filepath.Join(reservedDir(dir), holder))
-	if err != nil {
-		return nil
-	}
-	at, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(raw)))
-	if perr == nil && now.Sub(at) > SeatReservationTTL {
-		return nil
-	}
-	return fmt.Errorf("%w: seat %s's worktree is being cleaned", ErrSeatReserved, holder)
 }
 
 // Escalate routes a blocked task to the owner: a widening the lead asked for

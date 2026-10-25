@@ -68,8 +68,11 @@ type Input struct {
 	// VerifierWaiting are the commit steps waiting for a verifier slot
 	// (verifier_parallelism, v3-5-verifier rule 12).
 	VerifierWaiting []seatcommit.VerifierWait
-	Capabilities    []string
-	Warnings        []string
+	// SeatMarkers are the malformed or unreadable unclean markers of the
+	// task store (their seats are refused every lease until cleaned).
+	SeatMarkers  []task.SeatMarkerProblem
+	Capabilities []string
+	Warnings     []string
 }
 
 // BaseCapabilities are the features every schema 1 producer fills.
@@ -171,6 +174,12 @@ func Build(in Input) Status {
 		s.Attention = append(s.Attention, Attention{
 			ID: "seat:" + h + ":push_url_missing", Kind: "push_url_missing", Severity: "medium", Since: in.Now.UTC(), Seat: h,
 			Subject: "seat " + h + " commits without pushing: the owner's grant names no merge.push_url", Bucket: BucketNeedsYou,
+		})
+	}
+	for _, m := range in.SeatMarkers {
+		s.Attention = append(s.Attention, Attention{
+			ID: "seat:" + m.Handle + ":unclean_marker_invalid", Kind: "unclean_marker_invalid", Severity: "high", Since: in.Now.UTC(), Seat: m.Handle,
+			Subject: "seat " + m.Handle + " is refused every lease: " + m.Problem + " (a CleanSeat takes a malformed marker over; the lead removes an unreadable one)", Bucket: BucketNeedsYou,
 		})
 	}
 	for _, w := range in.VerifierWaiting {

@@ -128,6 +128,20 @@ The invariant, as restated: no lock reachable from the tick is held across a sub
 
 Judgment call: the reservation is a file in the store (written and read under its lock), so a claim from another process (the seat's `task claim`) honours it too; a harness that dies mid-clean leaves it to expire after 10 minutes.
 
+## The fourth round on the re-pass of e9ddc66c
+
+One short commit on e9ddc66c: five items of the lead's re-pass (items 2 and 3 and item 1's lock discipline held; the reservation's semantics and a continued quoted scalar did not). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix4-revert-check.txt` (every case of `tools/cases_verifier.py`). Gate on a quiet host: `5-verifier-evidence/fix4-gate.txt`. Lines refer to the e9ddc66c export.
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 1 | a reservation older than its 10-minute timestamp let Grant and a direct Claim lease the worktree, re-running nothing (scope.go:227, lease.go:70, :81, :180, :206) | the file is an unclean marker, not a timed lock (`internal/task/unclean.go`): while it exists, whatever its age, Grant and Claim refuse `seat_unclean`; only a completed CleanSeat removes it (a clean that fails or dies leaves it); the TTL means one thing: after it, another CleanSeat may take the marker over (the ledger try-lock keeps two cleaners apart, so a takeover happens only when the first is dead or lost the ledger). The scheduler's prepare path is unchanged in effect (it cleans before every lease); the direct claim is what closes | TestInterruptedCleanLeavesTheSeatUnclean (a clean that dies mid-checkout; past the TTL a direct claim is refused; the next clean takes over, cleans, the lease follows); TestLiveCleanerPastTheTTLHoldsTheSeat (a cleaner alive past the TTL keeps the ledger: a claim is refused, a second cleaner is ErrLedgerBusy, the lease follows its end) |
+| 2 | ReleaseSeat removed the file unconditionally (scope.go:199, :204) | the marker carries a nonce (`{nonce, at}`); a cleaner releases only its own, else `release_lost` (reported through CleanSeat's error, which the scheduler logs as `seat_prepare_failed`); ReserveSeat refuses to overwrite a fresh marker (`seat_cleaning`) | TestOnlyTheCleanersOwnMarkerIsReleased (A reserves, B takes over after the TTL, A's release is lost, B's marker stands, B's release frees the seat) |
+| 3 | a malformed marker refused forever with no alarm, a read error failed open (scope.go:223, :226, :230) | malformed or unreadable is `seat_unclean`, never a free seat; status shows an attention row for the lead naming the file (`unclean_marker_invalid`, needs_you); a CleanSeat takes a malformed marker over, an unreadable one is the lead's | TestMalformedOrUnreadableMarkerIsUnclean; TestStatusNamesAnInvalidUncleanMarker |
+| 4 | a quoted scalar continued on the next line kept its continuation (redact.go:352, :386) | YAML is redacted per key block (`yamlBlocks`): a quoted scalar opened on a credential key's value line is redacted through its closing quote across lines (at most 64 lines; a '' or a backslash escape does not close), an unclosed one through the last more-indented line | TestBlockRedactsAContinuedQuotedYAMLScalar (both quote kinds; unclosed; a continuation back at the key's column) |
+| 5 | a nested mapping under a credential key survived (redact.go:382) | a credential key owns its block: every line indented deeper than the key (or a block scalar, `|` or `>`) is redacted whole until the indentation returns; the next key stays | TestBlockRedactsANestedMappingUnderACredentialKey |
+
+Recorded limit, beside the others: a same-UID process can plant a marker and keep a seat from every lease until a CleanSeat takes it over (malformed or older than the TTL) or the lead removes it. Hygiene list: `internal/seatlaunch` TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists failed once in a full local run on a TempDir cleanup race (`launch/cto: directory not empty`, the class of the hygiene log's item 3), passing alone three times; the package is untouched by this branch.
+
 ## Behavior changes
 
 - `seat commit` runs the class's configured verifier on the snapshot tree before it pushes; a fail is `verdict_failed` for the lead and nothing is pushed; a pass completes.
@@ -136,7 +150,7 @@ Judgment call: the reservation is a file in the store (written and read under it
 - The scheduler runs the commit step off its tick (`commit_running`, `commit_adopted`, `commit_cancelling`, `commit_cancelled`, the exits queue's `commit` entries with their `deferrals`); an interrupted verifier run defers as `verifier_interrupted`, and at the deferral limit the task blocks for the lead.
 - The verifier has its own module cache under the session root; hook ledger lines are redacted on write (`redact.Block` over the whole value); malformed payloads are kept as a redacted prefix, not base64.
 - An attempt archives an unsealed verdict as `invalid`; routing reports `verifier_result: invalid` for it.
-- CleanSeat reserves the seat (`seat_reserved`) instead of holding the store lock across its git work; redaction of capped text follows the cap rule (`redact.Capped`).
+- CleanSeat marks the seat unclean (`seat_unclean` until a completed clean, `seat_cleaning`, `release_lost`) instead of holding the store lock across its git work; status names a malformed or unreadable marker (`unclean_marker_invalid`); redaction of capped text follows the cap rule (`redact.Capped`), and a credential-named YAML key owns its block.
 - A gated class with no verifier command is never dispatched (`grants_invalid`).
 - guard denies a seat's `amq-squad seat commit` and `scheduler run` (`harness_only`); `seat commit` refuses inside a seat.
 - Status attention `verifier_waiting`; the evidence ledger gains `harness_verifier` lines.

@@ -345,18 +345,126 @@ func mergeSpans(sp [][2]int) [][2]int {
 
 // jsonBlockRE is jsonRE across lines: JSON whitespace, newlines included,
 // between the quoted name, the colon and the value (a pretty-printed or
-// wrapped object); yamlSplitRE is a YAML key whose scalar value sits on the
-// next, more indented line. Group 1 is the name, group 2 the value.
+// wrapped object). Group 1 is the name, group 2 the value. yamlKeyRE is a
+// YAML key line (group 1 the indentation up to the name, group 2 the name,
+// group 3 what follows the colon); yamlBlockIndicatorRE a block scalar's
+// indicator (| or >).
 var (
-	jsonBlockRE = regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\n]|\\.)*"|-?[0-9][0-9.eE+-]*)`)
-	yamlSplitRE = regexp.MustCompile(`(?m)^[ \t]*(?:- )?([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*:[ \t]*\r?\n[ \t]+([^ \t\r\n#][^\r\n]*?)[ \t]*\r?$`)
+	jsonBlockRE          = regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\n]|\\.)*"|-?[0-9][0-9.eE+-]*)`)
+	yamlKeyRE            = regexp.MustCompile(`^([ \t]*(?:- )?)([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*:[ \t]*(.*)$`)
+	yamlBlockIndicatorRE = regexp.MustCompile(`^[|>][-+0-9]*[ \t]*(#.*)?$`)
 )
+
+// yamlQuotedMax bounds the lines a quoted scalar opened on a credential
+// key's value line is followed to its closing quote.
+const yamlQuotedMax = 64
+
+// yamlBlocks redacts the value of every credential-named YAML key whose
+// value is not on its own line (v3-5-verifier, the fourth round): a key owns
+// its block. A quoted scalar opened on the value line is redacted through
+// its closing quote across lines (at most yamlQuotedMax lines); then every
+// line indented deeper than the key is redacted whole until the indentation
+// returns (a bare scalar, a nested mapping, an unclosed quoted scalar, a
+// block scalar).
+func yamlBlocks(text string) string {
+	lines := strings.Split(text, "\n")
+	changed := false
+	for i := 0; i < len(lines); i++ {
+		m := yamlKeyRE.FindStringSubmatch(strings.TrimRight(lines[i], "\r"))
+		if m == nil || !CredentialName(m[2]) {
+			continue
+		}
+		if rest := strings.TrimSpace(m[3]); rest != "" && !strings.HasPrefix(rest, "#") && !yamlBlockIndicatorRE.MatchString(rest) {
+			continue // the value is on the key's line (Line's rules)
+		}
+		keyCol := len(m[1])
+		j := i + 1
+		if j < len(lines) {
+			if q := quoteOpen(lines[j]); q != 0 {
+				if end := closingLine(lines, j, q); end >= 0 {
+					for k := j; k <= end; k++ {
+						lines[k] = redactLineContent(lines[k])
+					}
+					changed, j = true, end+1
+				}
+			}
+		}
+		for ; j < len(lines); j++ {
+			l := strings.TrimRight(lines[j], "\r")
+			if strings.TrimSpace(l) == "" {
+				continue
+			}
+			if indentOf(l) <= keyCol {
+				break
+			}
+			lines[j] = redactLineContent(lines[j])
+			changed = true
+		}
+		i = j - 1
+	}
+	if !changed {
+		return text
+	}
+	return strings.Join(lines, "\n")
+}
+
+// quoteOpen is the quote a line's content opens with (0 when none).
+func quoteOpen(line string) byte {
+	t := strings.TrimLeft(line, " \t")
+	if t != "" && (t[0] == '\'' || t[0] == '"') {
+		return t[0]
+	}
+	return 0
+}
+
+// closingLine is the index of the line that closes the quoted scalar opened
+// on lines[j] (a ” inside single quotes and a backslash escape inside double
+// quotes do not close), -1 when none within yamlQuotedMax lines.
+func closingLine(lines []string, j int, q byte) int {
+	start := strings.IndexByte(lines[j], q) + 1
+	for k := j; k < len(lines) && k < j+yamlQuotedMax; k++ {
+		l := lines[k]
+		from := 0
+		if k == j {
+			from = start
+		}
+		for p := from; p < len(l); p++ {
+			c := l[p]
+			switch {
+			case q == '"' && c == '\\':
+				p++
+			case c == q && q == '\'' && p+1 < len(l) && l[p+1] == '\'':
+				p++
+			case c == q:
+				return k
+			}
+		}
+	}
+	return -1
+}
+
+func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, " \t")) }
+
+// redactLineContent replaces a line's content (after its indentation) with
+// Placeholder; a line that is already a placeholder stays.
+func redactLineContent(line string) string {
+	ind := line[:indentOf(line)]
+	content := strings.TrimRight(line[len(ind):], "\r")
+	if content == "" || placeholderForms[content] {
+		return line
+	}
+	cr := ""
+	if strings.HasSuffix(line, "\r") {
+		cr = "\r"
+	}
+	return ind + Placeholder + cr
+}
 
 // Block redacts a whole text (v3-5-verifier, P1-2 of the second pass): the
 // credential-name rules run over the text as one buffer, so a value split
 // from its name across lines (`{"password":` then the value on the next
-// line, or a YAML key line and its value line) is replaced; then every line
-// passes Line's rules as well.
+// line, or a YAML key that owns the block under it, yamlBlocks) is replaced;
+// then every line passes Line's rules as well.
 func Block(text string) string {
 	type span struct{ a, b int }
 	var sp []span
@@ -370,19 +478,6 @@ func Block(text string) string {
 			inner = val[1 : len(val)-1]
 		}
 		if CredentialName(name) && !countValue(name, val) && namedSecret(name, inner) {
-			sp = append(sp, span{m[4], m[5]})
-		}
-	}
-	for _, m := range yamlSplitRE.FindAllStringSubmatchIndex(text, -1) {
-		name, val := text[m[2]:m[3]], text[m[4]:m[5]]
-		// A quoted scalar is bounded by its quotes and is a value whatever it
-		// holds; only a bare one that looks like a list item or a map entry is
-		// the start of a nested block, not the key's scalar.
-		quoted := strings.HasPrefix(val, `"`) || strings.HasPrefix(val, "'")
-		if !quoted && (strings.HasPrefix(val, "- ") || strings.Contains(val, ": ") || strings.HasSuffix(val, ":")) {
-			continue
-		}
-		if CredentialName(name) && !countValue(name, val) && namedSecret(name, strings.Trim(val, `"'`)) {
 			sp = append(sp, span{m[4], m[5]})
 		}
 	}
@@ -402,7 +497,7 @@ func Block(text string) string {
 		at = s.b
 	}
 	out.WriteString(text[at:])
-	return Text(out.String())
+	return Text(yamlBlocks(out.String()))
 }
 
 // Text redacts every line of a text.
