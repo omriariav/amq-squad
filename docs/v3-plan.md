@@ -661,7 +661,12 @@ concurrency cap, cost cap. No passing entry: the task waits and the
 status names the reason. Pool occupancy against the concurrency cap is
 the scheduler's seat view, each seat counted once: live, pending launch,
 closing, and the lead's own seat when it shares the pool; tasks are not
-the unit. [2.7, 2b-4 re-pass ruling, 2026-10-25] Local-only paths never go to a vendor.
+the unit. An idle seat of the pool is capacity for that pool's pending
+task, not a consumer of it; an asynchronous launch failure holds its
+occupancy until the timeout and the confirmed cancellation. The lead's
+pool reaches the scheduler process through `--lead-pool`, refused when the
+process was not started by the lead's team mode. [2.7, 2b-4 re-pass
+ruling, 2026-10-25] Local-only paths never go to a vendor.
 
 Default chains, version 1 (from the routing research; adjust from the
 log):
