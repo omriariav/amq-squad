@@ -89,7 +89,10 @@ func AuditFor(root string) Audit {
 	return Audit{Path: filepath.Join(root, "extensions", "amq-squad", "mergetrain", "audit.jsonl")}
 }
 
-// Append writes one entry and fsyncs it.
+// Append writes one entry and fsyncs it. Under the append lock the tail is
+// checked first, the rule of the outcome log (2b-4 AppendJSONL): a torn last
+// line (no newline) is terminated before the entry, so the entry stays one
+// whole line and Read skips only the torn one (5 re-pass, P2-6).
 func (a Audit) Append(e Entry) error {
 	if a.Path == "" {
 		return errors.New("merge train: no audit log path")
@@ -108,12 +111,22 @@ func (a Audit) Append(e Entry) error {
 		return err
 	}
 	return flock.WithLock(a.Path+".lock", func() error {
-		f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 		if err != nil {
 			return err
 		}
-		if _, err = f.Write(append(line, '\n')); err == nil {
-			err = f.Sync()
+		out := append(line, '\n')
+		st, err := f.Stat()
+		if err == nil && st.Size() > 0 {
+			last := make([]byte, 1)
+			if _, err = f.ReadAt(last, st.Size()-1); err == nil && last[0] != '\n' {
+				out = append([]byte{'\n'}, out...)
+			}
+		}
+		if err == nil {
+			if _, err = f.Write(out); err == nil {
+				err = f.Sync()
+			}
 		}
 		return errors.Join(err, f.Close())
 	})

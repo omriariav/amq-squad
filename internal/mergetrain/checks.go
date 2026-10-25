@@ -25,6 +25,9 @@ const (
 	RulePRState       = "pr_state"
 	RuleTaskUnbound   = "task_unbound"
 	RulePRHeadMoved   = "pr_head_moved"
+	// RuleHistoryIncomplete: the force-push timeline was not read whole, so
+	// an unauthorized force push could be hidden (5 re-pass, P1-2).
+	RuleHistoryIncomplete = "history_incomplete"
 )
 
 // Refusal is one failed rule for one PR.
@@ -102,6 +105,9 @@ func check(in checkInput) []Refusal {
 	}
 	if len(in.pr.Files) >= MaxCompareFiles {
 		add(RuleSizeCap, "the diff reaches the compare endpoint's %d-file limit and cannot be verified whole", MaxCompareFiles)
+	}
+	if in.pr.HistoryIncomplete != "" {
+		add(RuleHistoryIncomplete, "%s", in.pr.HistoryIncomplete)
 	}
 	for _, fp := range in.pr.ForcePushes {
 		if !in.trainHeads[fp.After] {

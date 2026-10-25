@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -195,15 +196,21 @@ func scrubArgs(s string) string {
 	return s
 }
 
-// scrubFields is the whitespace fallback for a line that does not parse.
+// scrubFields is the fallback for a line that does not parse (an open
+// quote): the word boundaries are unknown, so everything after a secret flag,
+// "Bearer"/"Basic" or a secret key= is redacted, to the end of the line; an
+// unterminated quoted secret ('alpha beta) never leaves its tail behind (5
+// re-pass, P1-3).
 func scrubFields(s string) string {
 	words := strings.Fields(s)
 	for i, w := range words {
 		switch {
 		case i > 0 && (secretFlag(words[i-1]) || strings.EqualFold(words[i-1], "bearer") || strings.EqualFold(words[i-1], "basic")):
-			words[i] = "[redacted]"
+			return strings.Join(append(words[:i:i], "[redacted]"), " ")
 		case assignedSecret(strings.TrimLeft(w, "'\"")) >= 0:
-			words[i] = "[redacted]"
+			bare := strings.TrimLeft(w, "'\"")
+			key := w[:len(w)-len(bare)] + bare[:assignedSecret(bare)]
+			return strings.Join(append(words[:i:i], key+"[redacted]"), " ")
 		}
 	}
 	return strings.Join(words, " ")
@@ -268,10 +275,18 @@ type TaskLine struct {
 	Line    json.RawMessage `json:"line"`
 }
 
+// MaxLine bounds one evidence line a task read keeps; a longer line is
+// skipped and named as incomplete evidence.
+const MaxLine = 4 << 20
+
 // ForTask is the task link (v2 evidenceTaskLink, rebuilt on 3.0's stores):
 // for every ended attempt and the live lease, the holder's ledger lines whose
-// time falls in the lease window.
-func ForTask(root string, t task.Task, now time.Time) ([]TaskLine, error) {
+// time falls in the lease window. The live lease's window ends at its expiry
+// or now, whichever is first: a line written after an expiry the scheduler
+// has not processed yet is not the task's (5 re-pass, P2-8). Each ledger is
+// streamed whole; whatever could not be read is returned as incomplete, with
+// the reason, never dropped in silence (P2-7).
+func ForTask(root string, t task.Task, now time.Time) (out []TaskLine, incomplete []string, err error) {
 	type window struct {
 		holder   string
 		n        int
@@ -282,18 +297,14 @@ func ForTask(root string, t task.Task, now time.Time) ([]TaskLine, error) {
 		ws = append(ws, window{a.Holder, a.N, a.GrantedAt, a.EndedAt})
 	}
 	if l := t.Lease; l != nil {
-		ws = append(ws, window{l.Holder, t.Attempt, l.GrantedAt, now})
+		end := now
+		if !l.ExpiresAt.IsZero() && l.ExpiresAt.Before(end) {
+			end = l.ExpiresAt
+		}
+		ws = append(ws, window{l.Holder, t.Attempt, l.GrantedAt, end})
 	}
-	var out []TaskLine
 	for _, w := range ws {
-		lines, _, err := Tail(Path(root, w.holder), 0)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return out, err
-		}
-		for _, ln := range lines {
+		why, err := streamLines(Path(root, w.holder), func(ln []byte) {
 			var head struct {
 				At string `json:"at"`
 			}
@@ -304,14 +315,34 @@ func ForTask(root string, t task.Task, now time.Time) ([]TaskLine, error) {
 			if perr == nil && !at.Before(w.from) && !at.After(w.to) {
 				out = append(out, TaskLine{Holder: w.holder, Attempt: w.n, Line: Redact(ln)})
 			}
+		})
+		incomplete = append(incomplete, why...)
+		if err != nil {
+			return out, incomplete, err
 		}
 	}
-	return out, nil
+	return out, incomplete, nil
 }
 
-// Outcomes are the redacted outcome log rows that name a task (field "task").
-func Outcomes(root, taskID string) ([]json.RawMessage, error) {
-	f, err := os.Open(OutcomePath(root))
+// Outcomes are the redacted outcome log rows that name a task (field
+// "task"), from the whole log, streamed (5 re-pass, P2-7: no read bound
+// drops a later row); lines that could not be read are named as incomplete.
+func Outcomes(root, taskID string) (out []json.RawMessage, incomplete []string, err error) {
+	incomplete, err = streamLines(OutcomePath(root), func(ln []byte) {
+		var row struct {
+			Task string `json:"task"`
+		}
+		if json.Unmarshal(ln, &row) == nil && row.Task == taskID {
+			out = append(out, Redact(ln))
+		}
+	})
+	return out, incomplete, err
+}
+
+// streamLines calls fn with each line of a file, the whole file, in order. A
+// missing file is no lines. A line longer than MaxLine is skipped and named.
+func streamLines(path string, fn func([]byte)) ([]string, error) {
+	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -319,16 +350,21 @@ func Outcomes(root, taskID string) ([]json.RawMessage, error) {
 		return nil, err
 	}
 	defer f.Close()
-	var out []json.RawMessage
-	sc := bufio.NewScanner(io.LimitReader(f, MaxRead))
-	sc.Buffer(make([]byte, 64<<10), 4<<20)
-	for sc.Scan() {
-		var row struct {
-			Task string `json:"task"`
+	var incomplete []string
+	r := bufio.NewReaderSize(f, 64<<10)
+	for n := 1; ; n++ {
+		ln, err := r.ReadBytes('\n')
+		switch {
+		case len(ln) > MaxLine:
+			incomplete = append(incomplete, fmt.Sprintf("%s line %d is over %d bytes and was not read", filepath.Base(path), n, MaxLine))
+		case len(bytes.TrimSpace(ln)) > 0:
+			fn(bytes.TrimRight(ln, "\r\n"))
 		}
-		if json.Unmarshal(sc.Bytes(), &row) == nil && row.Task == taskID {
-			out = append(out, Redact(append([]byte(nil), sc.Bytes()...)))
+		if err == io.EOF {
+			return incomplete, nil
+		}
+		if err != nil {
+			return incomplete, err
 		}
 	}
-	return out, sc.Err()
 }

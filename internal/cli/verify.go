@@ -71,6 +71,10 @@ type verifyEvidenceResult struct {
 	Release  []releaseflow.Step   `json:"release,omitempty"`
 	Ledger   []ledger.TaskLine    `json:"ledger,omitempty"`
 	Outcomes []json.RawMessage    `json:"outcomes,omitempty"`
+	// Incomplete says the task's evidence could not be read whole, with the
+	// reasons (5 re-pass, P2-7): it is never dropped in silence.
+	Incomplete        bool     `json:"incomplete,omitempty"`
+	IncompleteReasons []string `json:"incomplete_reasons,omitempty"`
 	Failures []verifyMergeFailure `json:"failures,omitempty"`
 }
 
@@ -114,12 +118,15 @@ func runVerifyEvidence(kind string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("verify %s: task %s: %w", kind, *taskID, err)
 		}
-		if res.Ledger, err = ledger.ForTask(r, t, hookNow()); err != nil {
+		var why, more []string
+		if res.Ledger, why, err = ledger.ForTask(r, t, hookNow()); err != nil {
 			return err
 		}
-		if res.Outcomes, err = ledger.Outcomes(r, t.ID); err != nil {
+		if res.Outcomes, more, err = ledger.Outcomes(r, t.ID); err != nil {
 			return err
 		}
+		res.IncompleteReasons = append(why, more...)
+		res.Incomplete = len(res.IncompleteReasons) > 0
 	}
 	if *jsonOut {
 		if err := printJSONEnvelope("verify_"+kind, res); err != nil {
@@ -130,6 +137,9 @@ func runVerifyEvidence(kind string, args []string) error {
 			kind, res.Subject, res.OK, len(res.Audit), len(res.Release), len(res.Ledger), len(res.Outcomes))
 		for _, f := range res.Failures {
 			fmt.Printf("- %s: %s\n", f.Code, f.Detail)
+		}
+		for _, why := range res.IncompleteReasons {
+			fmt.Printf("- incomplete evidence: %s\n", why)
 		}
 	}
 	if !res.OK {

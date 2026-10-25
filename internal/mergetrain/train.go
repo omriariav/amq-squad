@@ -292,8 +292,22 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		return res, fmt.Errorf("read %s head: %w", req.Base, err)
 	}
 
+	// A merge the server made whose response was lost is reconciled from the
+	// journal before anything else (5 re-pass, P2-5); a PR the train already
+	// merged is reported merged, never re-checked and refused.
+	landed := map[int]string{}
+	if !t.DryRun {
+		if landed, err = t.reconcileMerges(ctx, req, entry); err != nil {
+			return res, err
+		}
+	}
+
 	// Plan: check every PR at its current head, then order and digest.
 	for _, it := range req.PRs {
+		if sha, ok := landed[it.Number]; ok {
+			res.PRs = append(res.PRs, PlanPR{Number: it.Number, Task: it.Task, Status: "merged", Merged: sha})
+			continue
+		}
 		p, err := t.checkPR(ctx, req, it, res.BaseSHA, res.CIChecks)
 		if err != nil {
 			return res, err
@@ -531,16 +545,75 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			return fmt.Errorf("mark ready: %w", err)
 		}
 	}
+	// The intent is journaled before the PUT (5 re-pass, P2-5): a merge the
+	// server makes whose response is lost is found again, here or at the
+	// next run, never taken for a refusal.
+	if err := entry(Entry{Kind: "merge_intent", PR: p.Number, Task: p.Task, Head: p.Head, Digest: res.Digest}); err != nil {
+		return err
+	}
+	detail := ""
 	sha, err := t.Forge.Merge(ctx, req.Repository, p.Number, p.Head)
 	if err != nil {
-		return fmt.Errorf("merge: %w", err)
+		got, ok := t.mergedAt(ctx, req.Repository, p.Number, p.Head)
+		if !ok {
+			return fmt.Errorf("merge: %w", err)
+		}
+		sha, detail = got, "reconciled: the server merged the pinned head; its response was lost ("+err.Error()+")"
 	}
 	p.Status, p.Merged = "merged", sha
 	for _, f := range p.Files {
 		merged[f] = p.Number
 	}
 	res.BaseSHA = sha
-	return entry(Entry{Kind: "merge", PR: p.Number, Task: p.Task, Head: p.Head, Merged: sha, Digest: res.Digest})
+	return entry(Entry{Kind: "merge", PR: p.Number, Task: p.Task, Head: p.Head, Merged: sha, Digest: res.Digest, Detail: detail})
+}
+
+// mergedAt reads the PR back: its merge commit when the server merged it at
+// exactly the pinned head.
+func (t *Train) mergedAt(ctx context.Context, repository string, pr int, head string) (string, bool) {
+	cur, err := t.Forge.PR(ctx, repository, pr)
+	if err != nil || cur.State != "MERGED" || cur.HeadSHA != head || cur.MergeCommit == "" {
+		return "", false
+	}
+	return cur.MergeCommit, true
+}
+
+// reconcileMerges reads the journal at the start of a real run (5 re-pass,
+// P2-5): a merge intent with no merge entry after it is checked against the
+// server, and a PR the server merged at the intent's head gets its merge
+// entry now (the verify verb reads it). It returns every PR of the request
+// whose last journaled merge step is a merge, with its merge commit.
+func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Entry) error) (map[int]string, error) {
+	entries, err := t.Audit.Read()
+	if err != nil {
+		return nil, err
+	}
+	last := map[int]Entry{} // the last merge_intent or merge of each PR
+	for _, e := range entries {
+		if !e.DryRun && e.Repository == req.Repository && (e.Kind == "merge_intent" || e.Kind == "merge") {
+			last[e.PR] = e
+		}
+	}
+	out := map[int]string{}
+	for _, it := range req.PRs {
+		e, ok := last[it.Number]
+		switch {
+		case !ok:
+		case e.Kind == "merge":
+			out[it.Number] = e.Merged
+		default:
+			sha, merged := t.mergedAt(ctx, req.Repository, it.Number, e.Head)
+			if !merged {
+				continue // not merged: the PR is checked again and a new intent journaled
+			}
+			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: e.Task, Head: e.Head, Merged: sha, Digest: e.Digest,
+				Detail: "reconciled at the next run: the server merged the journaled head (intent of run " + e.Run + ")"}); err != nil {
+				return nil, err
+			}
+			out[it.Number] = sha
+		}
+	}
+	return out, nil
 }
 
 // waitCI polls the required checks at a new head until none is pending or

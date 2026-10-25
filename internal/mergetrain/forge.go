@@ -49,6 +49,11 @@ type PRInfo struct {
 	Mergeable   string       `json:"mergeable"` // MERGEABLE, CONFLICTING, UNKNOWN
 	Files       []FileChange `json:"files"`
 	ForcePushes []ForcePush  `json:"force_pushes,omitempty"`
+	// HistoryIncomplete says the force-push timeline could not be read whole
+	// (the page bound, a rate limit), with the reason: history_incomplete.
+	HistoryIncomplete string `json:"history_incomplete,omitempty"`
+	// MergeCommit is the merge commit of a MERGED PR ("" otherwise).
+	MergeCommit string `json:"merge_commit,omitempty"`
 }
 
 // Protection is the server's branch protection for one branch as it binds

@@ -31,6 +31,7 @@ type fakePR struct {
 	Draft       bool        `json:"draft"`
 	State       string      `json:"state"`
 	ForcePushes []ForcePush `json:"force_pushes,omitempty"`
+	MergeCommit string      `json:"merge_commit,omitempty"`
 }
 
 type fakeState struct {
@@ -50,7 +51,16 @@ type fakeState struct {
 	PushAfterRebase []string `json:"push_after_rebase,omitempty"`
 	CIName          string   `json:"ci_name"`
 	FailMerge       bool     `json:"fail_merge,omitempty"`
+	// LoseMergeResponse: the merge happens on the server, then the
+	// connection fails before the response (5 re-pass, P2-5).
+	LoseMergeResponse bool `json:"lose_merge_response,omitempty"`
+	// RateLimitPage: the timeline read of that page (1-based) answers a rate
+	// limit (5 re-pass, P1-2).
+	RateLimitPage int `json:"rate_limit_page,omitempty"`
 }
+
+// timelinePage is GitHub's page size of the force-push timeline query.
+const timelinePage = 100
 
 func TestMain(m *testing.M) {
 	if path := os.Getenv("FAKE_GH_STATE"); path != "" {
@@ -139,8 +149,12 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		}
 		n, _ := strconv.Atoi(args[2])
 		mb, _ := gitOut(s.Bare, "merge-base", base, head)
-		out, _ := json.Marshal(map[string]any{"number": n, "state": p.State, "isDraft": p.Draft, "baseRefName": p.Base,
-			"baseRefOid": mb, "headRefOid": head, "mergeable": mergeable})
+		view := map[string]any{"number": n, "state": p.State, "isDraft": p.Draft, "baseRefName": p.Base,
+			"baseRefOid": mb, "headRefOid": head, "mergeable": mergeable, "mergeCommit": nil}
+		if p.MergeCommit != "" {
+			view["mergeCommit"] = map[string]string{"oid": p.MergeCommit}
+		}
+		out, _ := json.Marshal(view)
 		fmt.Fprintln(stdout, string(out))
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "ready":
 		pr(args[2]).Draft = false
@@ -188,16 +202,25 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		s.save(statePath)
 		fmt.Fprintln(stdout, after)
 	case len(args) >= 2 && args[0] == "api" && args[1] == "graphql":
-		n := ""
+		// The force-push timeline, a page of 100 at a time behind a cursor,
+		// as GitHub's connection answers it.
+		n, from := "", 0
 		for _, a := range args {
 			if v, ok := strings.CutPrefix(a, "n="); ok {
 				n = v
 			}
+			if v, ok := strings.CutPrefix(a, "c="); ok {
+				from, _ = strconv.Atoi(strings.TrimPrefix(v, "cursor-"))
+			}
 		}
-		for _, fp := range pr(n).ForcePushes {
-			out, _ := json.Marshal(fp)
-			fmt.Fprintln(stdout, string(out))
+		if s.RateLimitPage > 0 && from/timelinePage+1 == s.RateLimitPage {
+			return fail("gh: API rate limit exceeded for user ID 1 (HTTP 403)")
 		}
+		all := pr(n).ForcePushes
+		end := min(from+timelinePage, len(all))
+		page := map[string]any{"nodes": append([]ForcePush{}, all[min(from, len(all)):end]...), "next": end < len(all), "cursor": fmt.Sprintf("cursor-%d", end)}
+		out, _ := json.Marshal(page)
+		fmt.Fprintln(stdout, string(out))
 	case len(args) >= 3 && args[0] == "api" && args[1] == "-X" && args[2] == "PUT":
 		path := strings.TrimPrefix(args[3], repoPrefix)
 		n := strings.TrimSuffix(strings.TrimPrefix(path, "pulls/"), "/merge")
@@ -228,8 +251,11 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		if out, err := gitOut(w, "push", "-q", "origin", p.Base); err != nil {
 			return fail("push: %s", out)
 		}
-		p.State = "MERGED"
+		p.State, p.MergeCommit = "MERGED", rev(p.Base)
 		s.save(statePath)
+		if s.LoseMergeResponse {
+			return fail("gh: connection reset by peer")
+		}
 		fmt.Fprintln(stdout, rev(p.Base))
 	case len(args) >= 2 && args[0] == "api":
 		rest := slices.DeleteFunc(slices.Clone(args[1:]), func(a string) bool { return a == "--paginate" })
