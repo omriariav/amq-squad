@@ -726,8 +726,19 @@ supersedes the earlier one, the supersession inside the sealed bytes, and
 the newest verdict is authoritative at completion; a grant command may be
 a string or a YAML list; the hook ledger's one writer redacts on write
 and keeps a malformed payload as length, sha256 and a redacted printable
-prefix. Phase 5 branch v3-5-verifier. [2.7, reviewer ruling and Codex
-pass, 2026-10-25]
+prefix. Nothing on the scheduler's tick path takes a blocking lock: the
+exit check for a seat with a running step is deferred without touching
+the ledger, and every ledger lock on the tick path is a try-lock whose
+busy result is a deferral; redaction of a capture runs over the whole
+retained buffer with the key rule allowing JSON whitespace between key,
+colon and value, and per line as well; a cancel during a running step
+kills the verifier group and frees the handle when the step ends; an
+attempt archives a verdict only after its seal check, else "invalid"; a
+finished step's result is dropped only after the store transaction
+commits, and a failed application is retried, never the step; the
+deferral count lives in the exits entry and at the limit the task is
+blocked verifier_interrupted for the lead's reset. Phase 5 branch
+v3-5-verifier. [2.7, reviewer ruling and Codex passes, 2026-10-25]
 
 ### 6.2 Chains
 
