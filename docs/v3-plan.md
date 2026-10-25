@@ -740,7 +740,12 @@ lock: while it exists Grant and Claim refuse seat_unclean whatever its
 age, only a completed CleanSeat removes its own nonce, after the TTL
 another cleaner may take the marker over, and a malformed, unreadable or
 far-future marker is seat_unclean with an attention row, never fail-open;
-a ledger-read error in prepare is seat_prepare_failed, no grant); wherever a capture has a cap,
+a ledger-read error in prepare is seat_prepare_failed, no grant). Merged
+2026-10-25 as 38eafc83 (branch v3-5-verifier, fifteen commits, six Codex
+passes with fix rounds, 91 reverting rules, lead final read and gate on
+the merge result; size of 3.0 75,399); the merged head joins no re-pass
+list; the orphan-adoption row and the hygiene rows stay on the phase 5
+lists. [2.7, phase 5 verifier result] wherever a capture has a cap,
 redaction runs first, then the cut, and a partial last line is never
 kept (the verifier capture, the lead's tail, the ingest prefix); a one-line
 YAML `key: value` under a credential name is redacted in every form (bare
