@@ -293,7 +293,17 @@ fix. [2.7, 4-2 re-pass] The launch probes every Claude seat's effective
 permission mode by running the installed claude with no credential and
 reading its stream-json init event, then killing it, about 0.3 s per
 Claude seat, accepted inside the launch budget; a forced mode refuses
-the seat. [2.7, 4-2 re-pass, reviewer]
+the seat. The probe runs the pinned claude (the registry pin, never
+PATH) with a scratch HOME, the full per-seat config dir as the seat will
+see it, a scratch cwd with no project files and hooks disabled by the
+seat's own settings; it runs before any ticket is minted and before
+Apply, once per seat kind per launch when the settings are identical,
+and a probe over 5 s is claude_mode_unverified. The Claude hook script
+implements no watchdog in shell: `guard --decision claude` owns the
+timeout, runs the guard in its own process group through the Go exec
+API and kills and reaps the group on both platforms; the script only
+pipes stdin to the adapter and prints its output. [2.7, 4-2 re-pass,
+reviewer]
 
 The admitted argument forms come from upstream. AMQ derives
 `AllowedArgumentForms` from its own validation tables and settles the
@@ -1515,9 +1525,9 @@ Release prep.
 - Bump the Claude plugin version (plugins/claude, 2.31.0 today). Claude
   Code caches plugins by version, so the 3.0 hooks need a new version to
   install over 2.31. Waits on the release version.
-- The hook script's process-group change (`set -m`, kill and reap the
-  group) was checked on macOS /bin/sh only; run it on Linux dash before
-  the release, since the hook script runs on Linux hosts too. [2.7, 4-2
+- The Claude hook watchdog moved from shell to the Go adapter (`guard
+  --decision claude`); its Linux row runs under dash in CI before the
+  release, since the hook script runs on Linux hosts too. [2.7, 4-2
   re-pass]
 - Re-check the Claude hooks API facts the plugin relies on (hooks.json
   shape, CLAUDE_PLUGIN_ROOT, hookSpecificOutput fields, exit 2
