@@ -2,8 +2,10 @@ package routing
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -167,7 +169,10 @@ func TestRepassInvalidCountersAreUnknownUsageAndReported(t *testing.T) {
 	tk := newTask("t1", "plan")
 	r, err := New(Options{Table: f.tbl, Registry: f.reg, Grants: f.g, Seed: "repass", Now: func() time.Time { return t0 },
 		Tasks: func() ([]task.Task, error) { return []task.Task{tk}, nil }, OnRow: func(row Row) { rows = append(rows, row) },
-		Usage: func(task.Task, task.Attempt) Usage { in, out := int64(10), int64(-1); return Usage{TokensIn: &in, TokensOut: &out, CostUSD: &neg} }})
+		Usage: func(task.Task, task.Attempt) Usage {
+			in, out := int64(10), int64(-1)
+			return Usage{TokensIn: &in, TokensOut: &out, CostUSD: &neg}
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +239,16 @@ func TestRepassTaskHistoriesKeepTheFirstAttempt(t *testing.T) {
 		mk("t2", 1, "claude:haiku:low", TierSmol, task.OutcomeFailed, f64(0.001), true, now.Add(-8*24*time.Hour)),
 		mk("t2", 2, "claude:sonnet:medium", TierTask, task.OutcomeCompleted, f64(0.01), true, day),
 	}
-	if b := taskBucket(Weekly(boundary, now, Default())); b == nil || b.CostUSD != nil {
+	rep = Weekly(boundary, now, Default())
+	if b := taskBucket(rep); b == nil || b.CostUSD != nil {
 		t.Fatalf("first attempt last week: the retry's bucket books the task's cost: %+v", b)
+	}
+	// ... and the first attempt's bucket, with no row in this week, reports
+	// the task's whole cost (narrow pass, P2-5).
+	if !slices.ContainsFunc(rep.Buckets, func(b BucketStats) bool {
+		return b.Tier == TierSmol && b.CostUSD != nil && *b.CostUSD > 0.0109 && *b.CostUSD < 0.0111
+	}) {
+		t.Fatalf("first attempt last week: the smol cost is not reported: %+v", rep.Buckets)
 	}
 	// A first attempt with no row at all (the history starts at attempt 2).
 	if b := taskBucket(Weekly(boundary[1:], now, Default())); b == nil || b.CostUSD != nil {
@@ -319,4 +332,182 @@ func deref(p *int64) any {
 		return nil
 	}
 	return *p
+}
+
+// Ruling on ruling 1: a class whose verifier command the grant does not
+// configure routes at its tier and never below (an exploration draw goes up,
+// a pin below the tier is refused), completes on the done report, and its
+// row's verifier_result is none, never pass. With a verifier configured the
+// rows above stand (TestRepassVerdictMissingIsNeverAPassAndEscalates).
+func TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes(t *testing.T) {
+	store, err := task.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t)
+	f.g.Verifiers = nil
+	store.Verifiers = func(tk task.Task) (string, bool, error) {
+		return f.g.VerifierFor(tk.Class), f.g.VerifierRequired(tk.Class), nil
+	}
+	var rows []Row
+	mk := func(share float64) *Router {
+		f.tbl.ExplorationShare = share
+		r, err := New(Options{Table: f.tbl, Registry: f.reg, Grants: f.g, Seed: "repass", Now: func() time.Time { return t0 },
+			Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) }, OnRow: func(row Row) { rows = append(rows, row) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if d, _ := mk(1).Decide(newTask("x1", "implement"), nil); d.UsedTier != TierPlan || d.Policy != PolicyExplore {
+		t.Fatalf("an explored implement with no verifier: %s %s, want plan explore", d.UsedTier, d.Policy)
+	}
+	pinned := newTask("x2", "script")
+	pinned.Pool = pl("claude:sonnet:medium")
+	if _, route := mk(0).Decide(pinned, nil); route.Pool == nil {
+		t.Fatalf("a script pinned at task tier: %+v", route)
+	}
+	smol := newTask("x3", "implement")
+	smol.Pool = pl("claude:haiku:low")
+	if _, route := mk(0).Decide(smol, nil); route.Block != BlockPinUnresolved {
+		t.Fatalf("an implement with no verifier pinned below its tier: %+v", route)
+	}
+	r := mk(0)
+	tk, err := store.Add(task.AddInput{Title: "implement", Class: "implement"}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := r.Route(tk)
+	if route.Pool == nil || route.Pool.Key() != "claude:sonnet:medium" {
+		t.Fatalf("at-tier route: %+v", route)
+	}
+	if _, err := store.Claim(tk.ID, "seat-1", route.Pool, time.Minute, t0); err != nil {
+		t.Fatal(err)
+	}
+	done, err := store.Done(tk.ID, "seat-1", "", "", t0.Add(time.Second))
+	if err != nil || done.State != task.StateCompleted {
+		t.Fatalf("done with no verifier configured: %s %s %v", done.State, done.BlockReason, err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].VerifierResult != VerifierNoCheck || rows[0].Outcome != task.OutcomeCompleted {
+		t.Fatalf("row: %+v", rows)
+	}
+}
+
+// Narrow pass R2 (a) and the seat-view wiring, through a real scheduler
+// whose router counts the scheduler's own Occupancy (the local entry's cap
+// is 1): a seat still closing after its claimed lease expired holds the GPU,
+// so the pending task's retry goes to the next entry; an idle seat of the
+// local pool is capacity, so a new task is dispatched to it.
+func TestRepassSchedulerSeatViewHoldsTheCap(t *testing.T) {
+	local := "pi:ollama/qwen3.6:27b:low"
+	run := func(t *testing.T) (task.Store, *scheduler.Scheduler, *recordingLauncher, *time.Time) {
+		store, err := task.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := t0
+		f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+		var s *scheduler.Scheduler
+		r, err := New(Options{Table: f.tbl, Registry: f.reg, Grants: f.g, Seed: "repass", Now: func() time.Time { return now },
+			Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) }, InputTokens: func(task.Task) int { return 10 },
+			Seats: func() []scheduler.SeatView { return s.Occupancy() }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l := &recordingLauncher{}
+		s, err = scheduler.New(scheduler.Options{Store: store, Now: func() time.Time { return now }, Launcher: l, Router: r,
+			Config: scheduler.Config{MaxSeats: 4, LeaseDuration: time.Minute}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Add(task.AddInput{Title: "one", Class: "script"}, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Tick(); err != nil {
+			t.Fatal(err)
+		}
+		if len(l.requests) != 1 || l.requests[0].Pool.Key() != local {
+			t.Fatalf("first request: %+v", l.requests)
+		}
+		s.Post(scheduler.Event{Kind: scheduler.SeatUp, At: now, Handle: "seat-a", Pool: l.requests[0].Pool, RequestID: l.requests[0].ID})
+		if _, err := s.Tick(); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := store.Get("t1"); got.State != task.StateInProgress || got.Lease.Holder != "seat-a" {
+			t.Fatalf("t1 not dispatched to seat-a: %s %+v", got.State, got.Lease)
+		}
+		return store, s, l, &now
+	}
+	t.Run("closing seat", func(t *testing.T) {
+		store, s, l, now := run(t)
+		if _, err := store.Claim("t1", "seat-a", nil, time.Minute, *now); err != nil {
+			t.Fatal(err)
+		}
+		l.closeErr = errors.New("still running") // its process is still closing
+		*now = now.Add(2 * time.Minute)          // the claimed lease expires; seat-a closes
+		if _, err := s.Tick(); err != nil {
+			t.Fatal(err)
+		}
+		// t1's retry moves a tier up; a new smol task t2 would take the GPU,
+		// which the closing seat still holds
+		if _, err := store.Add(task.AddInput{Title: "two", Class: "script"}, *now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Tick(); err != nil {
+			t.Fatal(err)
+		}
+		var t2 *scheduler.SeatRequest
+		for i := range l.requests {
+			if l.requests[i].TaskID == "t2" {
+				t2 = &l.requests[i]
+			}
+		}
+		if t2 == nil || t2.Pool.Key() == local {
+			t.Fatalf("a new task went to the GPU a closing seat holds: %+v", l.requests)
+		}
+	})
+	t.Run("idle seat", func(t *testing.T) {
+		store, s, l, now := run(t)
+		harnessPass(t, store, "t1", *now)
+		if _, err := store.Done("t1", "seat-a", "", "", *now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Add(task.AddInput{Title: "two", Class: "script"}, *now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Tick(); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := store.Get("t2"); got.State != task.StateInProgress || got.Lease.Holder != "seat-a" || len(l.requests) != 1 {
+			t.Fatalf("an idle seat of the pool was not capacity: t2 %s %+v requests %+v", got.State, got.Lease, l.requests)
+		}
+	})
+}
+
+// Narrow pass, coverage: a signed outcome row with a negative cost, read
+// back at a restart, never lowers the day's spend.
+func TestRepassNegativeCostRowNeverLowersTheSpend(t *testing.T) {
+	h := newFix3(t, "")
+	h.cur = []task.Task{ended("t1", "plan", "claude:opus:high", task.OutcomeCompleted)}
+	if err := h.r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	day := t0.UTC().Format(time.DateOnly)
+	neg := -5.0
+	row := Row{Schema: RowSchema, At: t0, Task: "t2", Attempt: 1, Class: "plan", Outcome: task.OutcomeFailed, Policy: PolicyManual,
+		Skipped: []Skip{}, WaitReasons: []string{}, ConsumedSmolOutputs: []string{}, CostUSD: &neg, EndedAt: t0,
+		Seq: h.r.head.Seq + 1, Prev: h.r.head.Tag}
+	if err := AppendRow(h.root, row.Sign(h.key())); err != nil {
+		t.Fatal(err)
+	}
+	r := h.open("")
+	if got := r.spent[day]; got < 0 {
+		t.Fatalf("the day's spend after a negative-cost row: %v", got)
+	}
+	if ids := r.Tampered(); len(ids) != 0 {
+		t.Fatalf("the signed row did not verify: %v", ids)
+	}
 }

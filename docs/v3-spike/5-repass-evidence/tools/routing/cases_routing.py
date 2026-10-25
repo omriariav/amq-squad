@@ -13,8 +13,9 @@ R2 = "TestRepassConcurrencyCountsSeatsNotTasks$"
 P3 = "TestRepassUsageCountersByNameNestedFlatAndAliases$"
 P4 = "TestRepassInvalidCountersAreUnknownUsageAndReported$"
 P5 = "TestRepassTaskHistoriesKeepTheFirstAttempt$"
-GATE = "\tif MechanicalVerifier(ClassVerifier(t.Class)) {\n\t\tvar v *Verdict"
-GATE_OFF = "\tif false && MechanicalVerifier(ClassVerifier(t.Class)) {\n\t\tvar v *Verdict"
+# the gate as it stands after the class switch (the ruling on ruling 1)
+GATE = "\tif required, why := s.verifierRequired(*t); required || v != nil {"
+GATE_OFF = "\tif required, why := s.verifierRequired(*t); false && (required || v != nil) {"
 CASES = [
     # ruling 1
     ("R1 the store completes a mechanical class only on a verdict", L, GATE, GATE_OFF, R1T, TK),

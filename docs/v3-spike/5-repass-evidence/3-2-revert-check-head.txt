@@ -1,0 +1,320 @@
+========================================================================
+## rule: P1-1 a published release at its id is completion, never a deletion
+## test: ./internal/releaseflow/ TestRepassLostPublishResponseIsCompletionNotDeletion$
+## edit internal/releaseflow/releaseflow.go:
+-		case !got.Draft && got.ID == prev.ID && got.Tag == want.Tag && got.TargetCommitish == want.TargetCommitish:
++		case false && !got.Draft && got.ID == prev.ID && got.Tag == want.Tag && got.TargetCommitish == want.TargetCommitish:
+## reverted run (exit 1):
+=== RUN   TestRepassLostPublishResponseIsCompletionNotDeletion
+    releaseflow_test.go:556: retry: github_release: draft_edited: published release 1: the recorded draft now names v1.2.0 at 5ef31419a9e3bd348b4b8e937bb9ca638fe64305 [{Role:tag GateID:rel-tag-c70377ac988a037fbb83 Target:git tag v1.2.0 5ef31419a9e3bd348b4b8e937bb9ca638fe64305 on owner/fixture Status:done Result:5ef31419a9e3bd348b4b8e937bb9ca638fe64305 Detail:} {Role:github_release GateID:rel-gh-0fde54db3602125bee2a Target:gh release create v1.2.0 on owner/fixture Status:refused Result: Detail:draft_edited: published release 1: the recorded draft now names v1.2.0 at 5ef31419a9e3bd348b4b8e937bb9ca638fe64305}]
+--- FAIL: TestRepassLostPublishResponseIsCompletionNotDeletion (0.34s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.698s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLostPublishResponseIsCompletionNotDeletion
+--- PASS: TestRepassLostPublishResponseIsCompletionNotDeletion (0.32s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.549s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the timeline is paginated with the cursor
+## test: ./internal/mergetrain/ TestRepassForcePushTimelineIsReadWhole$/whole_timeline
+## edit internal/mergetrain/gh.go:
+-		if !pg.Next {
++		if true {
+## reverted run (exit 1):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/whole_timeline
+    repass_test.go:48: PR 1: merged [], want force_push
+--- FAIL: TestRepassForcePushTimelineIsReadWhole (1.27s)
+    --- FAIL: TestRepassForcePushTimelineIsReadWhole/whole_timeline (1.27s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.609s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/whole_timeline
+--- PASS: TestRepassForcePushTimelineIsReadWhole (1.13s)
+    --- PASS: TestRepassForcePushTimelineIsReadWhole/whole_timeline (1.13s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.377s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the page bound is history_incomplete
+## test: ./internal/mergetrain/ TestRepassForcePushTimelineIsReadWhole$/page_bound
+## edit internal/mergetrain/gh.go:
+-		if page > maxPages {
++		if false && page > maxPages {
+## reverted run (exit 1):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/page_bound
+    repass_test.go:52: PR 1: refused [force_push], want history_incomplete
+--- FAIL: TestRepassForcePushTimelineIsReadWhole (1.12s)
+    --- FAIL: TestRepassForcePushTimelineIsReadWhole/page_bound (1.12s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.471s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/page_bound
+--- PASS: TestRepassForcePushTimelineIsReadWhole (1.12s)
+    --- PASS: TestRepassForcePushTimelineIsReadWhole/page_bound (1.12s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.365s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 a rate limit is history_incomplete
+## test: ./internal/mergetrain/ TestRepassForcePushTimelineIsReadWhole$/rate_limit
+## edit internal/mergetrain/gh.go:
+-			if rateLimited(err) {
++			if false && rateLimited(err) {
+## reverted run (exit 1):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/rate_limit
+    repass_test.go:57: run: read PR #1: force pushes of #1: gh api graphql -F: exit status 1: gh: API rate limit exceeded for user ID 1 (HTTP 403)
+--- FAIL: TestRepassForcePushTimelineIsReadWhole (1.07s)
+    --- FAIL: TestRepassForcePushTimelineIsReadWhole/rate_limit (1.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.410s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/rate_limit
+--- PASS: TestRepassForcePushTimelineIsReadWhole (1.13s)
+    --- PASS: TestRepassForcePushTimelineIsReadWhole/rate_limit (1.13s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.356s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the check refuses history_incomplete
+## test: ./internal/mergetrain/ TestRepassForcePushTimelineIsReadWhole$/page_bound
+## edit internal/mergetrain/checks.go:
+-	if in.pr.HistoryIncomplete != "" {
++	if false && in.pr.HistoryIncomplete != "" {
+## reverted run (exit 1):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/page_bound
+    repass_test.go:52: PR 1: merged [], want history_incomplete
+--- FAIL: TestRepassForcePushTimelineIsReadWhole (1.26s)
+    --- FAIL: TestRepassForcePushTimelineIsReadWhole/page_bound (1.26s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.614s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassForcePushTimelineIsReadWhole
+=== RUN   TestRepassForcePushTimelineIsReadWhole/page_bound
+--- PASS: TestRepassForcePushTimelineIsReadWhole (1.13s)
+    --- PASS: TestRepassForcePushTimelineIsReadWhole/page_bound (1.13s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.370s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-3 an open quote redacts the rest from the secret flag
+## test: ./internal/ledger/ TestRepassUnterminatedQuotedSecretIsRedactedWhole$
+## edit internal/ledger/ledger.go:
+-			return strings.Join(append(words[:i:i], "[redacted]"), " ")
++			words[i] = "[redacted]"
+## edit internal/ledger/ledger.go:
+-			return strings.Join(append(words[:i:i], key+"[redacted]"), " ")
++			words[i] = key + "[redacted]"
+## reverted run (exit 1):
+=== RUN   TestRepassUnterminatedQuotedSecretIsRedactedWhole
+    repass_test.go:24: {"command":"deploy --password 'alpha beta"} -> {"command":"deploy --password [redacted] beta"}
+    repass_test.go:24: {"command":"deploy --password \"alpha beta"} -> {"command":"deploy --password [redacted] beta"}
+    repass_test.go:24: {"command":"run PASSWORD='alpha beta"} -> {"command":"run PASSWORD=[redacted] beta"}
+    repass_test.go:24: {"command":"curl -H 'Authorization: Bearer alpha beta"} -> {"command":"curl -H 'Authorization: Bearer [redacted] beta"}
+--- FAIL: TestRepassUnterminatedQuotedSecretIsRedactedWhole (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.343s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUnterminatedQuotedSecretIsRedactedWhole
+--- PASS: TestRepassUnterminatedQuotedSecretIsRedactedWhole (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.232s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 a lost draft creation is adopted by its nonce
+## test: ./internal/releaseflow/ TestRepassLostDraftCreationIsAdoptedByItsNonce$
+## edit internal/releaseflow/releaseflow.go:
+-		matches, err := f.Exec.FindDrafts(ctx, repo, in.Nonce)
++		matches, err := []Draft(nil), error(nil)
+## reverted run (exit 1):
+=== RUN   TestRepassLostDraftCreationIsAdoptedByItsNonce
+    releaseflow_test.go:584: retry: <nil> drafts created 2 published 1 held 2
+--- FAIL: TestRepassLostDraftCreationIsAdoptedByItsNonce (0.35s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.709s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLostDraftCreationIsAdoptedByItsNonce
+--- PASS: TestRepassLostDraftCreationIsAdoptedByItsNonce (0.34s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.590s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 the same run reconciles a lost merge response
+## test: ./internal/mergetrain/ TestRepassLostMergeResponseIsReconciled$
+## edit internal/mergetrain/train.go:
+-		got, ok := t.mergedAt(ctx, req.Repository, p.Number, p.Head)
++		got, ok := "", false
+## reverted run (exit 1):
+=== RUN   TestRepassLostMergeResponseIsReconciled
+    repass_test.go:106: same run: merge: gh api -X PUT: exit status 1: gh: connection reset by peer [{Number:1 Task:T1 Head:d9d429990e5b44aa29fc9250a9762657dbe3885c Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:planned Merged: base:5bbea29e8988bffe47c944d82e4c7c5c42d03282}]
+--- FAIL: TestRepassLostMergeResponseIsReconciled (0.65s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.998s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLostMergeResponseIsReconciled
+--- PASS: TestRepassLostMergeResponseIsReconciled (1.40s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.648s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 the next run reconciles the journaled intent
+## test: ./internal/mergetrain/ TestRepassLostMergeResponseIsReconciled$
+## edit internal/mergetrain/train.go:
+-		if landed, err = t.reconcileMerges(ctx, req, entry); err != nil {
++		if landed, err = map[int]string{}, error(nil); err != nil {
+## reverted run (exit 1):
+=== RUN   TestRepassLostMergeResponseIsReconciled
+    repass_test.go:122: next run: <nil> [{Number:1 Task:T1 Head:ec6a2e66488f3d919319a286540d991c7f475096 Draft:false Changed:2 Files:[pkg/a.go] Refusals:[{Rule:pr_state Detail:PR #1 is MERGED}] GateID:merge-b8c8b0df022c56ed GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:5f5757c77a19683cf517614fbb9228de3edb46cb}]
+--- FAIL: TestRepassLostMergeResponseIsReconciled (1.38s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.724s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLostMergeResponseIsReconciled
+--- PASS: TestRepassLostMergeResponseIsReconciled (1.33s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.576s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 the intent is journaled before the PUT
+## test: ./internal/mergetrain/ TestRepassLostMergeResponseIsReconciled$
+## edit internal/mergetrain/train.go:
+-	if err := entry(Entry{Kind: "merge_intent", PR: p.Number,
++	if err := entry(Entry{Kind: "merge_note", PR: p.Number,
+## reverted run (exit 1):
+=== RUN   TestRepassLostMergeResponseIsReconciled
+    repass_test.go:122: next run: <nil> [{Number:1 Task:T1 Head:863a6dc765aace781a5d7563806ee8c7b79ac665 Draft:false Changed:2 Files:[pkg/a.go] Refusals:[{Rule:pr_state Detail:PR #1 is MERGED}] GateID:merge-9cbdc6a1ac8dea35 GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:c756d7c42433cc512e28d0053e36f250fa53058a}]
+--- FAIL: TestRepassLostMergeResponseIsReconciled (1.35s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.714s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLostMergeResponseIsReconciled
+--- PASS: TestRepassLostMergeResponseIsReconciled (1.32s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.567s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-6 the audit tail is repaired before an append
+## test: ./internal/mergetrain/ TestRepassAuditTornTailIsRepaired$
+## edit internal/mergetrain/audit.go:
+-err == nil && last[0] != '\n' {
++err == nil && last[0] != '\n' && false {
+## reverted run (exit 1):
+=== RUN   TestRepassAuditTornTailIsRepaired
+    repass_test.go:147: entries after a torn tail: [{Schema:amq-squad-merge-audit/1 At:2026-10-25T02:05:44.18609Z Run: Kind:protection Repository: Base: BaseSHA: Pairs:[] Digest: PR:0 Task: Head: NewHead: Merged: Rules:[] Detail: GateID: DryRun:false}] <nil>
+--- FAIL: TestRepassAuditTornTailIsRepaired (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.372s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassAuditTornTailIsRepaired
+--- PASS: TestRepassAuditTornTailIsRepaired (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.258s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-7 the task-filtered read streams the whole file
+## test: ./internal/ledger/ TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete$
+## edit internal/ledger/ledger.go:
+-	r := bufio.NewReaderSize(f, 64<<10)
++	r := bufio.NewReaderSize(io.LimitReader(f, MaxRead), 64<<10)
+## reverted run (exit 1):
+=== RUN   TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete
+    repass_test.go:43: outcome row past 8 MiB: 0 rows, incomplete [], <nil>
+--- FAIL: TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.361s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete
+--- PASS: TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.247s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-7 unread evidence is incomplete with its reason
+## test: ./internal/ledger/ TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete$
+## edit internal/ledger/ledger.go:
+-			incomplete = append(incomplete, fmt.Sprintf(
++			_ = append(incomplete, fmt.Sprintf(
+## reverted run (exit 1):
+=== RUN   TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete
+    repass_test.go:53: ledger: 1 lines, incomplete [], <nil>
+--- FAIL: TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.356s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete
+--- PASS: TestRepassTaskEvidenceIsReadWholeOrMarkedIncomplete (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.227s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-8 the live lease window ends at its expiry
+## test: ./internal/ledger/ TestRepassLiveLeaseWindowEndsAtItsExpiry$
+## edit internal/ledger/ledger.go:
+-		if !l.ExpiresAt.IsZero() && l.ExpiresAt.Before(end) {
++		if false && !l.ExpiresAt.IsZero() && l.ExpiresAt.Before(end) {
+## reverted run (exit 1):
+=== RUN   TestRepassLiveLeaseWindowEndsAtItsExpiry
+    repass_test.go:68: lines {"at":"2026-10-24T10:05:00Z","handle":"s1","seq":1}
+        {"at":"2026-10-24T10:25:00Z","handle":"s1","seq":2}
+         <nil>
+--- FAIL: TestRepassLiveLeaseWindowEndsAtItsExpiry (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.339s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassLiveLeaseWindowEndsAtItsExpiry
+--- PASS: TestRepassLiveLeaseWindowEndsAtItsExpiry (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.232s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## summary: 14 rule(s), 0 not OK

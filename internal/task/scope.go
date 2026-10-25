@@ -150,7 +150,7 @@ func (s Store) CompleteBound(id, repository string, number int, head string, now
 				return err
 			}
 		}
-		complete(t, now)
+		s.complete(t, now)
 		return nil
 	})
 }

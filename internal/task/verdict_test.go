@@ -1,6 +1,7 @@
 package task
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -92,5 +93,43 @@ func TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict(t *testing.T) {
 	}
 	if got, err := s.Done(p.ID, "seat-5", "", "", t0); err != nil || got.State != StateCompleted {
 		t.Fatalf("a plan task did not complete on its report: %s %v", got.State, err)
+	}
+}
+
+// Ruling on ruling 1, the store side: the completion gate applies only to a
+// class in the verifier gate (Store.Verifiers: the grant's commands, plus
+// the classes a squad.yaml adds); a class outside it completes on the done
+// report. A gated class with no grant command blocks, and the message names
+// the missing command. A source that cannot be read fails closed.
+func TestRepassGateOnlyForAConfiguredVerifier(t *testing.T) {
+	s := newStore(t)
+	cmd, gated, srcErr := "", false, error(nil)
+	s.Verifiers = func(Task) (string, bool, error) { return cmd, cmd != "" || gated, srcErr }
+	run := func(title string) Task {
+		t.Helper()
+		a := mustAdd(t, s, AddInput{Title: title})
+		if _, err := s.Claim(a.ID, "seat-"+a.ID, nil, time.Minute, t0); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Done(a.ID, "seat-"+a.ID, "", "", t0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := run("none configured"); got.State != StateCompleted {
+		t.Fatalf("no verifier configured: %s %s", got.State, got.BlockReason)
+	}
+	cmd = "go test ./..."
+	if got := run("configured"); got.State != StateBlocked || got.BlockReason != BlockVerdictMissing {
+		t.Fatalf("a configured verifier: %s %s", got.State, got.BlockReason)
+	}
+	cmd, gated = "", true // the squad's gate adds the class; the grant names no command
+	if got := run("gated, no command"); got.State != StateBlocked || got.BlockReason != BlockVerdictMissing || !strings.Contains(got.BlockDetail, "names no verifier command") {
+		t.Fatalf("a gated class with no grant command: %s %s %q", got.State, got.BlockReason, got.BlockDetail)
+	}
+	cmd, gated, srcErr = "", false, errors.New("owner grants file unreadable")
+	if got := run("unreadable"); got.State != StateBlocked || !strings.Contains(got.BlockDetail, "could not be read") {
+		t.Fatalf("an unreadable source: %s %s", got.State, got.BlockDetail)
 	}
 }

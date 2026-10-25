@@ -64,18 +64,18 @@ type verifyMergeFailure struct {
 
 // verifyEvidenceResult is the evidence of one merge or one release.
 type verifyEvidenceResult struct {
-	OK       bool                 `json:"ok"`
-	Kind     string               `json:"kind"` // merge | release
-	Subject  string               `json:"subject"`
-	Audit    []mergetrain.Entry   `json:"audit,omitempty"`
-	Release  []releaseflow.Step   `json:"release,omitempty"`
-	Ledger   []ledger.TaskLine    `json:"ledger,omitempty"`
-	Outcomes []json.RawMessage    `json:"outcomes,omitempty"`
+	OK       bool               `json:"ok"`
+	Kind     string             `json:"kind"` // merge | release
+	Subject  string             `json:"subject"`
+	Audit    []mergetrain.Entry `json:"audit,omitempty"`
+	Release  []releaseflow.Step `json:"release,omitempty"`
+	Ledger   []ledger.TaskLine  `json:"ledger,omitempty"`
+	Outcomes []json.RawMessage  `json:"outcomes,omitempty"`
 	// Incomplete says the task's evidence could not be read whole, with the
 	// reasons (5 re-pass, P2-7): it is never dropped in silence.
-	Incomplete        bool     `json:"incomplete,omitempty"`
-	IncompleteReasons []string `json:"incomplete_reasons,omitempty"`
-	Failures []verifyMergeFailure `json:"failures,omitempty"`
+	Incomplete        bool                 `json:"incomplete,omitempty"`
+	IncompleteReasons []string             `json:"incomplete_reasons,omitempty"`
+	Failures          []verifyMergeFailure `json:"failures,omitempty"`
 }
 
 func runVerifyEvidence(kind string, args []string) error {

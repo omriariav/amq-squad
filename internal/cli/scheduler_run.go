@@ -57,8 +57,9 @@ dispatched to again. The lead's widening arrives as the lead's AMQ message
 record.
 
 --lead-pool names the pool of the lead's own seat (repeatable; the lead's
-team mode passes its models): a concurrency cap counts the lead's seat when
-it shares the pool, as a pi lead on the Ollama GPU does. A routing.yaml that
+team mode passes its models, and only a process the lead's team mode started
+may pass it): a concurrency cap counts the lead's seat when it shares the
+pool, as a pi lead on the Ollama GPU does. A routing.yaml that
 does not load refuses the start with routing_invalid.
 
 --trust is the owner's standing answer trust_exact_subject to AMQ's
@@ -110,6 +111,12 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	fs.Var(&leadPoolFlags, "lead-pool", "runtime:model:effort of the lead's own seat (repeatable)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if len(leadPoolFlags) > 0 && !startedByLeadTeam() {
+		// The lead's team mode is the only starter that passes its own
+		// pools (narrow pass, R2 (b)): anyone else could name a pool to
+		// fill or free a concurrency cap.
+		return usageErrorf("scheduler run --lead-pool: only the lead's team mode (amq-squad lead --team) passes the lead's pools")
 	}
 	var leadPools []task.Pool
 	for _, s := range leadPoolFlags {
@@ -177,7 +184,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		byRuntime["pi"] = schedproc.External{Slots: slots, Root: root}
 	}
 	sender := schedproc.Sender{AMQ: q.AMQPath, Root: root, BaseRoot: q.BaseRoot, Session: q.Session, Run: schedulerSendRun}
-	store, err := task.Open(root)
+	store, err := openTaskStore(root) // the completion gate reads the grant (phase 5 re-pass)
 	if err != nil {
 		return err
 	}
@@ -192,12 +199,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	var sched *scheduler.Scheduler
 	router, err := routing.Open(routing.StartOptions{Home: home, RepoRoot: q.ProjectRoot, Root: root, Registry: reg, Grants: g.Grants,
 		Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) },
-		Seats: func() []scheduler.SeatView {
-			if sched == nil {
-				return nil
-			}
-			return sched.Occupancy()
-		}, LeadPools: leadPools})
+		Seats: schedulerSeatView(&sched), LeadPools: leadPools})
 	if err != nil {
 		return fmt.Errorf("scheduler run: the router: %w", err)
 	}
@@ -235,6 +237,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Doorbell:  schedproc.Doorbell{Sender: sender},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
 		Router:    router, // the process calls its Flush each tick
+		Verifiers: store.Verifiers,
 		Committer: committer,
 		Preparer:  &schedproc.CleanSeats{Root: root, Clear: ownerTrust{}},
 		Limits:    limits,
@@ -258,6 +261,18 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("scheduler run: %w (session root %s)", err, root)
 	}
 	return err
+}
+
+// schedulerSeatView is the router's seat view in scheduler run: the
+// scheduler's Occupancy once it exists (bound at Started, before the first
+// tick), nothing before.
+func schedulerSeatView(sched **scheduler.Scheduler) func() []scheduler.SeatView {
+	return func() []scheduler.SeatView {
+		if *sched == nil {
+			return nil
+		}
+		return (*sched).Occupancy()
+	}
 }
 
 func insecureNote(g grants.Resolved) string {

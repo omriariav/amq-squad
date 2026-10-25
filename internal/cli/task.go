@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -172,7 +173,7 @@ func (f taskFlags) store(mutate bool) (s task.Store, root string, release func()
 		}
 		root = absAMQRoot(ctx.ProjectDir, ctx.Root)
 	}
-	if s, err = task.Open(root); err != nil {
+	if s, err = openTaskStore(root); err != nil {
 		release()
 		return task.Store{}, "", func() {}, usageErrorf("%s: %v", f.fs.Name(), err)
 	}
@@ -207,6 +208,19 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+// openTaskStore opens a session's task store with the production verifier
+// source: its completion gate reads the owner grant and the task's
+// squad.yaml (grants.TaskVerifier; phase 5 re-pass, ruling on ruling 1).
+// The task verbs and scheduler run open their stores here.
+func openTaskStore(root string) (task.Store, error) {
+	s, err := task.Open(root)
+	if err != nil {
+		return s, err
+	}
+	s.Verifiers = grants.TaskVerifier
+	return s, nil
 }
 
 func runTaskAdd(args []string) error {

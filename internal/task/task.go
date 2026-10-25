@@ -118,7 +118,22 @@ type ScopeChange struct {
 func Terminal(state string) bool { return state == StateCompleted || state == StateCancelled }
 
 // Store is one squad's task store.
-type Store struct{ Dir string }
+type Store struct {
+	Dir string
+	// Verifiers says whether a task's class is in the verifier gate and with
+	// which command: the owner grant, with the task's squad.yaml adding
+	// classes, never the seat's tree (phase 5 re-pass, ruling on ruling 1).
+	// Only a gated class needs the harness's verdict to complete. nil is
+	// strict: every class with a mechanical verifier needs one (an opener
+	// that does not read the grant never completes such a task on the
+	// seat's word).
+	Verifiers VerifierSource
+}
+
+// VerifierSource is a task's class's verifier command ("" when the grant
+// names none) and whether its done reports need a verdict. An error is
+// treated as required (fail closed).
+type VerifierSource func(Task) (command string, required bool, err error)
 
 // DirFor is the store directory under an AMQ session root.
 func DirFor(root string) string {

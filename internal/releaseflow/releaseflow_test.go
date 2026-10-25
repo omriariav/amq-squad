@@ -591,3 +591,59 @@ func TestRepassLostDraftCreationIsAdoptedByItsNonce(t *testing.T) {
 		t.Fatalf("the lock record stayed after publication: %v", err)
 	}
 }
+
+// Narrow pass, coverage, and 3-2 P1-1's alert write: the recorded draft id
+// is found published (Draft false) with another tag or another commit. It
+// is never deleted: the mismatch is audited and an owner alert raised, and
+// an alert that cannot be written is itself an error.
+func TestRepassPublishedMismatchIsNeverDeleted(t *testing.T) {
+	for _, tc := range []struct{ name, tag, commit string }{{"wrong tag", "v0.9.0", ""}, {"wrong commit", "v1.2.0", strings.Repeat("e", 40)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, alertFails := range []bool{false, true} {
+				f := newFixture(t)
+				snap, err := f.flow.Prepare(f.spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.approved[snap.Active.Children[0].QuestionMessageID] = true
+				if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrNotApproved) {
+					t.Fatalf("tag step: %v", err)
+				}
+				dir := filepath.Join(f.root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID)
+				rec, _ := json.Marshal(Draft{ID: 1, Tag: "v1.2.0", TargetCommitish: f.commit, Draft: true})
+				if err := os.WriteFile(filepath.Join(dir, "draft.json"), rec, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				commit := tc.commit
+				if commit == "" {
+					commit = f.commit
+				}
+				f.exec.drafts = map[int64]Draft{1: {ID: 1, Tag: tc.tag, TargetCommitish: commit, Draft: false}}
+				if alertFails {
+					alerts := filepath.Join(f.root, "extensions", "amq-squad", "alerts")
+					if err := os.WriteFile(alerts, []byte("not a directory"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				f.approved[snap.Active.Children[1].QuestionMessageID] = true
+				_, err = f.flow.Publish(context.Background(), f.root)
+				if !errors.Is(err, ErrDraftEdited) || f.exec.deleted != 0 || len(f.exec.drafts) != 1 {
+					t.Fatalf("alert fails %v: %v deleted %d", alertFails, err, f.exec.deleted)
+				}
+				if alertFails {
+					if !errors.Is(err, ErrAlertUnwritten) {
+						t.Fatalf("an unwritten owner alert passed silently: %v", err)
+					}
+					continue
+				}
+				if alerts := mergetrain.ReadAlerts(f.root); len(alerts) != 1 || alerts[0].Kind != "draft_edited" || !strings.Contains(alerts[0].Detail, "not deleted") {
+					t.Fatalf("owner alert %+v", alerts)
+				}
+				raw, _ := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+				if !strings.Contains(string(raw), `"kind":"release_mismatch"`) {
+					t.Fatalf("audit %s", raw)
+				}
+			}
+		})
+	}
+}

@@ -219,7 +219,7 @@ func (r *Router) classTiers(class, tableTier string, escalated bool) []string {
 	}
 	var out []string
 	for _, tier := range []string{TierSmol, TierTask, TierPlan} {
-		if TierRank(tier) >= TierRank(tableTier) || (r.o.Table.MayRouteDown(class) && !escalated) {
+		if TierRank(tier) >= TierRank(tableTier) || (r.mayRouteDown(class) && !escalated) {
 			out = append(out, tier)
 		}
 	}
@@ -240,6 +240,17 @@ func entryTier(t Table, allowed []string, recorded string, entry task.Pool) stri
 	}
 	return ""
 }
+
+// mayRouteDown: a class runs below its tier only when its verifier is
+// mechanical and its command is configured in the grant (phase 5 re-pass,
+// ruling on ruling 1): a verifier nobody runs is no verifier, so the class
+// routes at its tier and never below.
+func (r *Router) mayRouteDown(class string) bool {
+	return r.o.Table.MayRouteDown(class) && r.verifierConfigured(class)
+}
+
+// verifierConfigured: the grant names a verifier command for the class.
+func (r *Router) verifierConfigured(class string) bool { return r.o.Grants.VerifierFor(class) != "" }
 
 // pinTier resolves a lead pin to the lowest tier the class may run on whose
 // chain lists the pinned entry; "" and the reason when there is none.
@@ -619,11 +630,14 @@ func (r *Router) check(e task.Pool, n int, f Features, impl, required string, us
 }
 
 // inUse counts the seats that occupy the entry's concurrency pool (phase 5
-// re-pass, ruling 2): the scheduler's seat view, each seat once (live,
+// re-pass, ruling 2): the scheduler's seat view, each seat once (busy,
 // pending launch, closing: a seat whose task expired holds the GPU until
 // its process is gone), the holder of every leased task the view does not
 // name, and the lead's own seat when it shares the pool. Tasks are never
-// what is counted: one seat is one occupant.
+// what is counted: one seat is one occupant. An idle seat of the entry's
+// own pool is capacity for the pending task, which the scheduler dispatches
+// to it, not a consumer of the cap (narrow pass, R2 (a)); an idle seat of
+// another pool in the same concurrency pool still holds its share.
 func (r *Router) inUse(reg registry.Entry, list []task.Task) int {
 	own := task.Pool{Runtime: reg.Runtime, Model: reg.Model, Effort: reg.Effort}
 	shares := func(p task.Pool) bool {
@@ -641,6 +655,10 @@ func (r *Router) inUse(reg registry.Entry, list []task.Task) int {
 	}
 	if r.o.Seats != nil {
 		for _, s := range r.o.Seats() {
+			idle := s.Closing == "" && s.RequestID == "" && task.HeldBy(s.Handle, list) == nil
+			if idle && s.Pool == own {
+				continue
+			}
 			count("seat:"+s.Handle, s.Pool)
 		}
 	}
@@ -730,7 +748,7 @@ func (r *Router) explore(t task.Task, tableTier string, escalated bool) (policy 
 	share := r.o.Table.ExplorationShare
 	away := ""
 	if t.Class != "plan" && t.Class != "review" && share > 0 {
-		if r.o.Table.MayRouteDown(t.Class) && !escalated {
+		if r.mayRouteDown(t.Class) && !escalated {
 			away = down(tableTier)
 		}
 		if away == "" && up(tableTier) != tableTier {
@@ -943,7 +961,11 @@ func (r *Router) row(t task.Task, a task.Attempt, pendingSince time.Time, list [
 		u := r.o.Usage(t, a).checked()
 		row.TokensIn, row.TokensOut, row.CostUSD, row.UsageInvalid = u.TokensIn, u.TokensOut, u.CostUSD, u.Invalid
 	}
-	row.VerifierResult = verifierResult(r.o.Table.Classes[t.Class].Verifier, a)
+	verifier := r.o.Table.Classes[t.Class].Verifier
+	if !r.o.Grants.VerifierRequired(t.Class) {
+		verifier = VerifierNone // not in the verifier gate: the result is none, never pass
+	}
+	row.VerifierResult = verifierResult(verifier, a)
 	if t.Class == "review" && a.Outcome == task.OutcomeCompleted {
 		row.ReviewFindings = findings(t.Evidence)
 	}

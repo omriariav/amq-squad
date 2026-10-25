@@ -51,7 +51,16 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) *fixture {
-	return &fixture{t: t, tbl: Default(), reg: fixtureRegistry(), g: grants.Defaults()}
+	return &fixture{t: t, tbl: Default(), reg: fixtureRegistry(), g: verifiedGrants()}
+}
+
+// verifiedGrants are the default grants with a verifier command configured
+// for every class with a mechanical verifier: the setting under which those
+// classes may route below their tier (phase 5 re-pass, ruling on ruling 1).
+func verifiedGrants() grants.Grants {
+	g := grants.Defaults()
+	g.Verifiers = map[string]string{"extract": "check-schema", "script": "run-script", "implement": "go test ./..."}
+	return g
 }
 
 func (f *fixture) apply(text string) *fixture {

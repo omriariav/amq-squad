@@ -6,9 +6,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
 // The lead's team mode starts and supervises its squad's scheduler process
@@ -93,6 +98,38 @@ func (s *supervisor) count() int {
 	return s.starts
 }
 
+// leadPools are the lead's own pools for --lead-pool: one per model it may
+// use, at its thinking level.
+func leadPools(models []string, thinking string) []string {
+	var out []string
+	for _, m := range models {
+		out = append(out, "pi:"+m+":"+thinking)
+	}
+	return out
+}
+
+// leadSchedulerCommand is the child the lead's team mode runs: `scheduler
+// run` with the lead's handle and one --lead-pool per lead pool.
+func leadSchedulerCommand(self, seats, lead string, pools []string) func(ctx context.Context) *exec.Cmd {
+	return func(ctx context.Context) *exec.Cmd {
+		args := []string{"scheduler", "run", "--seats", seats, "--lead", lead}
+		for _, p := range pools {
+			args = append(args, "--lead-pool", p)
+		}
+		return exec.CommandContext(ctx, self, args...)
+	}
+}
+
+// startedByLeadTeam reports whether this process's parent is the lead's
+// team mode (`amq-squad lead --team`), the only starter allowed to pass
+// --lead-pool (narrow pass, R2 (b)).
+var startedByLeadTeam = func() bool {
+	return procinfo.Match(os.Getppid(), func(args string) bool {
+		f := strings.Fields(args)
+		return len(f) > 1 && filepath.Base(f[0]) == "amq-squad" && f[1] == "lead" && slices.Contains(f, "--team")
+	})
+}
+
 // startLeadScheduler supervises `amq-squad scheduler run` for the lead;
 // leadPools are the lead's own pools, which the router's concurrency caps
 // count (a pi lead on the Ollama GPU).
@@ -106,13 +143,7 @@ func startLeadScheduler(seats, lead string, leadPools []string) (*supervisor, er
 		return nil, err
 	}
 	s := &supervisor{log: logf, backoff: time.Second, maxDelay: 30 * time.Second, fastFail: 10 * time.Second, maxFast: 5,
-		command: func(ctx context.Context) *exec.Cmd {
-			args := []string{"scheduler", "run", "--seats", seats, "--lead", lead}
-			for _, p := range leadPools {
-				args = append(args, "--lead-pool", p)
-			}
-			return exec.CommandContext(ctx, self, args...)
-		}}
+		command: leadSchedulerCommand(self, seats, lead, leadPools)}
 	s.start()
 	return s, nil
 }

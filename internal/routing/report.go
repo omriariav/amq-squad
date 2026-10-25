@@ -245,7 +245,11 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 			total += *r.CostUSD
 		}
 		if known {
+			// The first attempt's bucket is instantiated here: one that ran
+			// in an earlier week has no row of this window, and its cost must
+			// still be reported (narrow pass, P2-5).
 			first := bucketOf(h[0])
+			get(first)
 			costSum[first] += total
 			costN[first]++
 		}

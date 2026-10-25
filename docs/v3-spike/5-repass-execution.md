@@ -63,3 +63,53 @@ Behavior changes:
 - `verify --task` reads the whole ledger and outcome log, reports incomplete evidence, and ends a live lease's window at its expiry.
 
 Recorded limits stand: first-observation baselines, same-UID, the owner's tag-protection bypass, dry runs persisting the drift baseline.
+
+## The class switch and the narrow pass (branch v3-5-repass-routing, third commit)
+
+One commit after 15782597 (after the rebase onto v3 at 9fc4dc34, after 71224047). It carries the lead's ruling on ruling 1's consequence, and the rest of the reviewer's narrow pass on 15782597: twelve of sixteen were complete; R1, R2, P2-5 and 3-2 P1-1 were not, and five coverage rows were asked for. Each item has a test row that fails when its fix is reverted and passes when restored: `docs/v3-spike/5-repass-evidence/narrow-revert-check.txt` (22 rules, all OK, the reviewer's correction and the store-wiring row included; cases in `tools/routing/cases_narrow.py`). All three revert checks were rerun on the rebased head: `routing-revert-check-head.txt` (25 rules, all OK; the two ruling-1 gate cases now name the gate as it stands after the switch) and `3-2-revert-check-head.txt` (14 rules, all OK). The gate is committed and runs from the tree: `tools/routing/gate.sh` (with `quiet_gate.sh`, which waits for 60 s of quiet first); its output is `narrow-gate.txt`, written outside the tree and copied in through the redaction step. Line numbers are against the 15782597 export.
+
+### The class switch (the lead's ruling on ruling 1)
+
+- The configuration key: `verifiers:` in the owner grant (`~/.amq-squad/grants.yaml`), a map from class to verifier command. Only the classes with a mechanical verifier (extract, script, implement) are accepted, each command a non-empty single line, read through the same strict yamlsub subset (a scalar, an unknown or verifier-less class, an empty command and a repeated class are refused). squad.yaml may only make the gate stricter, with `verifier_classes: [class, ...]` (the reviewer's correction at the rebase): the list is the squad's verifier gate and must be a superset of the classes the grant verifies. A class it adds with no grant command still requires a verdict, so its done reports block with `verdict_missing` and the block detail names the missing grant command; a list that omits a class the grant verifies is refused (`grants_invalid`: `LoadFrom` fails, and `Narrow` keeps the grant's verifier and names the attempt); a verifier-less class is refused. `Grants.VerifierFor(class)` is the command, `Grants.VerifierRequired(class)` the gate.
+- The task store: `task.Store.Verifiers` (a `VerifierSource`) gives a task's class its command and whether it is in the verifier gate. The completion gate (`verdict_missing`) applies only to a gated class; a class outside it completes on the done report. A recorded fail verdict always blocks (`verdict_failed`). A source that errors fails closed and requires the verdict, with the reason in the block detail. A nil source is strict (every mechanical class needs a verdict), so an opener that does not read the grant never completes such a task on the seat's word.
+- Production source: `grants.TaskVerifier`, the owner grant with the squad.yaml of the task's `project_path` (the repository the lead named at `task add`), never a seat's tree; an untrusted owner file is an error, so the store fails closed. The CLI's task stores (`task done`, `seat commit`) and `scheduler run`'s (the process's and the commit step's) open through `openTaskStore`, which sets it; row `TestRepassCLIStoresReadTheVerifierGrant` (a grant verifying implement: an implement done report blocks, a script one completes, no verdict helper).
+- The router: a class runs below its tier only when its verifier is mechanical and its command is in the grant (`mayRouteDown`): a class with no command routes at its tier and never below (an exploration draw goes up, a pin below the tier is `pin_unresolved`); a class outside the gate records `verifier_result: none`, never pass. `table.go:243` still fixes each class's verifier kind (plan 6.1); the switch is whether its command is configured.
+- The producer that runs the command (records `RecordVerdict`) is v3-5-verifier's, not this branch's.
+- Rows: `TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes` (routing: at tier, explored up, a pin below the tier refused, done completes, result none), `TestRepassGateOnlyForAConfiguredVerifier` (task: outside the gate completes, a command blocks, a gated class with no command blocks and the detail names it, an unreadable source blocks), `TestVerifiersFromTheGrantAndOnlyNarrowed` (grants: the superset adds a class; a list omitting implement, which the grant verifies, is refused through `LoadFrom`). With a verifier configured the earlier rows stand (`TestRepassVerdictMissingIsNeverAPassAndEscalates`, `TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict`); the routing fixtures now configure a verifier for the three classes (`verifiedGrants`).
+
+### The narrow pass
+
+| # | Finding | Fix | Test row |
+| --- | --- | --- | --- |
+| R1 | every extract, script and implement done report blocked with verdict_missing (lease.go:277, :298) | the class switch above | the switch rows |
+| R2 (a) | router.go:605 counted idle seats against the cap before scheduler.go:606 could reuse one: with cap 1 and one idle seat a pending task waited or routed elsewhere | Occupancy counts busy (holding a task), closing and requested seats; an idle seat of the entry's own pool is capacity for its pending task and is not counted; an idle seat of another pool in the same concurrency pool still holds its share | `TestRepassSchedulerSeatViewHoldsTheCap/idle_seat` (a real scheduler whose router reads its Occupancy, cap 1: the second task is dispatched to the idle seat) |
+| R2 (b) | `--lead-pool` was settable by whoever runs `scheduler run` | the flag is refused unless the process's parent is the lead's team mode (`amq-squad lead --team`, read from the parent's arguments). Recorded: a same-UID process can still run its own `amq-squad lead --team` to start one; the scheduler process is the harness's | `TestRepassLeadPoolOnlyFromTheLeadsTeamMode` |
+| R2 (c) | asynchronous launch failures hold occupancy until the request's timeout and its confirmed cancellation | recorded as right: a request keeps its place under the cap until the launcher confirms no seat will join, so a late join never exceeds the cap | none (no change) |
+| P2-5 | report.go:248, :276 accumulated a cross-week first attempt's cost into a bucket never instantiated for output, so the smol cost of a task completed this week on the task tier disappeared | the first attempt's bucket is instantiated when its cost is accumulated | `TestRepassTaskHistoriesKeepTheFirstAttempt` (the smol bucket of a task whose first attempt ended last week reports 0.011 USD) |
+| 3-2 P1-1 | releaseflow.go:484 ignored the alert-write error | `alert` and `tagMoved` return `ErrAlertUnwritten` on a failed write, and every caller joins it into its error: a mismatch never passes silently | `TestRepassPublishedMismatchIsNeverDeleted` (the alert directory unwritable) |
+
+Coverage rows asked for:
+- Seat-view wiring: `TestRepassSchedulerSeatViewHoldsTheCap` (cap 1: a seat still closing after its claimed lease expired holds the GPU, so a new smol task goes to the next entry; the idle-seat case above) and `TestRepassSchedulerRunSeatViewWiring` (`scheduler run`'s `schedulerSeatView`: nothing before the scheduler exists, then its Occupancy).
+- `--lead-pool` forwarding: `TestRepassLeadForwardsItsPools` (two models, thinking `high`, the child argv `leadSchedulerCommand` builds).
+- `verify --task` incomplete: `TestRepassVerifyTaskEvidenceIncomplete` (a 4 MiB outcome line: `incomplete: true` and the reason in the JSON, the reason in the text).
+- The spend guard in `note()`: `TestRepassNegativeCostRowNeverLowersTheSpend` (a signed row with cost -5 at the head's next seq, read back at a restart: it verifies, and the day's spend stays 0).
+- The published-deletion guard: `TestRepassPublishedMismatchIsNeverDeleted` (the recorded draft id found published with another tag, and with another commit: zero deletes, the `draft_edited` owner alert saying "not deleted", the `release_mismatch` audit line).
+
+Rows: current_lines refreshed for internal/task/task.go, lease.go, scope.go; internal/grants/grants.go, parse.go; internal/routing/router.go, report.go; internal/cli/task.go, scheduler_run.go, lead_scheduler.go, pi_lead.go, verify.go; internal/schedproc/process.go; internal/releaseflow/releaseflow.go.
+
+Behavior changes:
+- With no `verifiers:` in the owner grant, extract, script and implement tasks complete on the done report and route at their tier, never below; their rows say `verifier_result: none`. With a verifier configured for a class, the earlier gate stands for it.
+- New grant key `verifiers:` and squad.yaml key `verifier_classes:` (a superset of the grant's classes; omitting one is `grants_invalid`).
+- An idle seat of the pool no longer counts against its concurrency cap.
+- `scheduler run --lead-pool` is refused outside the lead's team mode.
+- A release-flow owner alert that cannot be written is an error.
+
+Recorded limits stand: unpriced and zero-price entries by price policy; same-UID forgery and torn-tail denial; the same-UID start of a team mode for `--lead-pool`.
+
+### Rebase onto v3 at 9fc4dc34
+
+The three commits were replayed onto v3 at 9fc4dc34, which carries the phase 5 test-hygiene merge (186fe04c). Conflicts, in the 3-2 commit only, resolved keeping both sides' intent:
+- `internal/mergetrain/gh.go`: the hygiene branch's unexported `GH.runner` seam and shared error formatting stay; `MaxTimelinePages` sits beside it, and the paginated timeline read goes through the same `run`, so the in-process fake answers it.
+- `internal/mergetrain/fakegh_test.go`: the in-process `fakeGHRun` split (writers, `t.Parallel`, the three subprocess rows) stays; the paged timeline, the rate-limit page, `mergeCommit` and the lost merge response write to its `stdout` writer.
+- `docs/v3-manifest.yaml`: the gh.go counts, refreshed from the file.
+The reviewer's correction to `verifier_classes` (a superset only) and the store-wiring row are folded into the third commit.
