@@ -1776,9 +1776,18 @@ Release prep.
   verifier's add-only classes first. The final form freezes schema 1 for
   3.0: the complete key list in docs with each key's relation to the
   grant (narrow only; add only for verifier_classes; never widen),
-  schema_version required, unknown keys refused (the strict subset), an
+  the schema key required, unknown keys refused (the strict subset), an
   embedded golden fixture that doctor self-checks against as 2b-3 did for
   the status contract, and a row that a 3.0.x reader refuses schema 2.
+  The digest flow is the only legitimate writer: propose records the
+  sha256 of the on-disk squad.yaml (or absent) in the proposal, apply
+  re-reads the file under the lock it writes with and refuses
+  squad_yaml_changed with both digests when they differ, and a mismatch
+  of the proposed content is squad_yaml_digest_mismatch, both code
+  tokens; squad.yaml is a protected path in the commit step's policy, so
+  a seat diff touching it raises the growth gate, and it is read from the
+  lead's checkout at project_path at squad load and scheduler start.
+  [2.7, reviewer ruling, 2026-10-25]
   migrate is a one-shot converter from v2 profiles (decision 6): reads
   the v2 files read-only with the field names from main's profile loader,
   writes squad.yaml only when absent (an existing file is refused, never
