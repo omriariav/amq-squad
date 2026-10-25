@@ -1491,7 +1491,10 @@ Codex re-passes of merged heads. Findings become fix commits before the
 - The amendment 29 heads: 2b-2 milestone A and its fixes, 4-2 and the 4-2
   fix, 4-3, 4-5. The spike log moved these to 2026-10-24, when Codex
   returned; a head stays on this list until its re-pass is recorded as
-  complete.
+  complete. Done 2026-10-25: all four re-passed at the tip, 17 findings
+  fixed and merged as 9e8b0921 with the milestone B re-pass (branch
+  v3-5-repass-2b2, seven commits, 92 reverting rules, two Codex narrow
+  passes, lead gate on the merge result). [2.7, phase 5 re-pass result]
 - The 2b-2 fix merge dc7eedab: fixes 3b and 3c, the proof-window wait.
   Covered by the 2b-2 A re-pass at the tip (same three packages; six
   findings on the phase 5 fix branch). [2.7, reviewer, 2026-10-25]
@@ -1508,7 +1511,12 @@ Codex re-passes of merged heads. Findings become fix commits before the
   lease window ending at expiry) merged as 53c348f1. [2.7, phase 5
   re-pass result]
 - The milestone B merge 84f1524b: the commit step, the decision socket,
-  the exits queue, the pins.
+  the exits queue, the pins. Done 2026-10-25: eight findings fixed and
+  merged as 9e8b0921 (the commits ledger and the exits queue sealed
+  through internal/sealchain, evidence refs seat-scoped and verified,
+  pr_pending, the managed path a regular file, canonical declared-set
+  digests, every value under a credential name redacted). [2.7, phase 5
+  re-pass result] All eight re-passes of this list are done.
 
 Test hygiene. Each waits on a fix commit only, with no row weakened.
 Done 2026-10-25: all three merged as 186fe04c (mergetrain under -race 944 s
@@ -1550,6 +1558,12 @@ Release prep.
   --decision claude`); its Linux row runs under dash in CI before the
   release, since the hook script runs on Linux hosts too. [2.7, 4-2
   re-pass]
+- The staged launch record carries the probed claude pin's sha256 and
+  seat-exec refuses pin_changed_since_probe when the registry's pin
+  differs from it (an owner re-pin between launch and exec, same-UID,
+  seconds wide). doctor says "pinned claude is behind the installed
+  claude" with the re-pin command when the hard link's bytes are older
+  than the installed version. [2.7, reviewer, 2026-10-25]
 - Re-check the Claude hooks API facts the plugin relies on (hooks.json
   shape, CLAUDE_PLUGIN_ROOT, hookSpecificOutput fields, exit 2
   behaviour). They were checked against the installed Claude Code
@@ -1588,6 +1602,14 @@ the runs and record them.
 9. The Codex notify line: the owner makes the fan-out script Codex's
    notify command in `config.toml`, from the candidate line `amq-squad
    trust <repo>` prints; `doctor` checks its presence (16.8).
+10. The claude pin: a hard link named `claude` to the versioned Claude
+   Code binary on the same filesystem (a symlink is refused), for example
+   `ln ~/.local/share/claude/versions/<version> ~/.amq-squad/bin/claude`,
+   pinned in `~/.amq-squad/registry.yaml` with its absolute path and
+   sha256; re-pin after every Claude Code update (the hard link keeps the
+   old bytes until then, by the digest-pin design). Without it a launch
+   with a Claude seat is refused (tool_unpinned). The gh pin the same way
+   for an HTTPS push_url. [2.7, phase 5 re-pass]
 
 Open acceptance rows of phases 2 to 4. The last column points at the
 owner-session item above.
