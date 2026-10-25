@@ -73,8 +73,13 @@ func runUninstall(args []string) error {
 		fmt.Fprintln(os.Stdout, "\n--owner-files and --purge take effect only with --write; this was a dry run")
 	}
 	var ue *uninstall.Error
-	if errors.As(err, &ue) && ue.Code == uninstall.CodePartial {
-		return &PartialError{Message: err.Error(), Cause: err}
+	if errors.As(err, &ue) {
+		switch ue.Code {
+		case uninstall.CodePartial:
+			return &PartialError{Message: err.Error(), Cause: err}
+		case uninstall.CodeBusy, uninstall.CodeSymlink:
+			return &codedExitError{code: ExitSystem, msg: err.Error()}
+		}
 	}
 	return err
 }

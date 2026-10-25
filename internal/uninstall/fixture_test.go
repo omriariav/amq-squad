@@ -111,7 +111,7 @@ func newFixture(t *testing.T) *fixture {
 	write(t, filepath.Join(f.x, "launch", "seat-a", "claude-config", "L1", "settings.json"), "{}\n", 0o600)
 	write(t, filepath.Join(f.x, "tools", "gh"), "gh-copy\n", 0o700)
 	write(t, filepath.Join(f.x, "tools", "claude"), "claude-copy\n", 0o700)
-	write(t, filepath.Join(f.x, "tasks", "t1.json"), "{}\n", 0o600)
+	writeJSON(t, filepath.Join(f.x, "tasks", "t1.json"), map[string]any{"id": "t1", "project_path": f.proj, "attempts": []map[string]any{{"holder": "seat-a"}}})
 	write(t, filepath.Join(f.x, "verifiers", "gomodcache", "mod", "m.go"), "package m\n", 0o444)
 	if err := os.Chmod(filepath.Join(f.x, "verifiers", "gomodcache", "mod"), 0o555); err != nil {
 		t.Fatal(err)
@@ -142,12 +142,14 @@ func (f *fixture) writeExits(body string) {
 
 // unlock makes every directory writable again so TempDir cleanup works.
 func (f *fixture) unlock() {
-	filepath.WalkDir(f.root, func(p string, d os.DirEntry, err error) error {
-		if err == nil && d.IsDir() {
-			os.Chmod(p, 0o700)
-		}
-		return nil
-	})
+	for _, top := range []string{f.root, f.outside} {
+		filepath.WalkDir(top, func(p string, d os.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				os.Chmod(p, 0o700)
+			}
+			return nil
+		})
+	}
 }
 
 func (f *fixture) all() Options {

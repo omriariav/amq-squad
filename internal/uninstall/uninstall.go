@@ -75,6 +75,8 @@ type Result struct {
 	Groups      []Group
 	ByHand      []string
 	Left        []string // entries of ~/.amq-squad this verb does not own
+	NotRemoved  []string // worktrees listed but not removed, with the reason
+	Notes       []string // what a run did differently from the plan (a hard-linked secret)
 	Removed     []string
 	Remaining   []string
 	Failures    []string
@@ -88,22 +90,35 @@ func (o Options) now() time.Time {
 }
 
 // Run builds the plan and, with Write, executes it. A refusal (busy, symlink)
-// returns the Result so far with the error and removes nothing.
+// returns the Result so far with the error and removes nothing. A writing run
+// holds the scheduler's own lock for its whole length (it only probed it
+// before), so a scheduler cannot start and a second uninstall is refused
+// while it runs; the busy check runs again with the lock held.
 func Run(o Options) (Result, error) {
 	if o.Root == "" || o.Home == "" {
 		return Result{}, fmt.Errorf("uninstall: the session root and the home are required")
 	}
-	p, err := discover(o)
 	res := Result{Root: o.Root, Written: o.Write}
+	p, err := discover(o)
 	if err != nil {
 		return res, err
 	}
 	res.fill(p, o)
-	live, berr := busy(o)
-	if berr != nil {
-		return res, berr
+	var held *schedLock
+	if o.Write && !res.NothingToDo {
+		var why string
+		if held, why = takeSchedulerLock(o); why != "" {
+			return res, &Error{Code: CodeBusy, Detail: why}
+		}
+		defer held.release()
+		// with the lock held, plan again: nothing changed since is trusted
+		if p, err = discover(o); err != nil {
+			return res, err
+		}
+		res = Result{Root: o.Root, Written: o.Write}
+		res.fill(p, o)
 	}
-	if len(live) > 0 {
+	if live := busy(o, held != nil); len(live) > 0 {
 		return res, &Error{Code: CodeBusy, Detail: joinList(live)}
 	}
 	if !o.Write || res.NothingToDo {

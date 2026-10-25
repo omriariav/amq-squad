@@ -10,7 +10,7 @@ Branch `v3-5-uninstall`, from `v3` at 76f9c896. Plan 4.3 (per-seat config dirs, 
 
 ## Rules and rows
 
-One failing-when-reverted row per rule and sub-rule (`5-uninstall-evidence/revert-check.txt`, 23 reverts, each seen to fail on its assertion and not at the build, then restored and seen to pass).
+One failing-when-reverted row per rule and sub-rule (`5-uninstall-evidence/revert-check.txt`, 40 reverts after the fix round, each seen to fail on its assertion and not at the build, then restored and seen to pass).
 
 | rule | row (test) |
 | --- | --- |
@@ -40,6 +40,24 @@ The fixtures are real: a git repository with a linked worktree under `.claude/wo
 - `~/.amq-squad` entries that are not the four owner files (`bin`, `runtime`, `fleet.yaml`, `authorization-trust.json`, `issuer-key.pem`, ...) are listed as "left in place", not removed.
 - The extension directory, and `tools/`, are removed when empty after the run; the AMQ mailboxes and the seat-exec published copies of launch records in them are AMQ's and stay.
 - The seatcommit helper is the one edit outside the listed packages (a new file, additive), so the purge reuses the commit step's hardened git instead of a second copy.
+
+## Fix round (reviewer's narrow pass on 829c108f)
+
+One fix commit; each item has a failing-when-reverted row (`5-uninstall-evidence/revert-check.txt`, 40 reverts in all, none a build failure).
+
+| item | fix | row |
+| --- | --- | --- |
+| P1-1 a symbolic evidence ref deleted a branch | refs are listed by git itself (`for-each-ref --format='%(refname) %(objectname) %(symref)'`, this squad's seats only), never taken from a ledger; a symbolic ref refuses the repository (`evidence_ref_symbolic`, nothing deleted there); deletion is `update-ref --no-deref -d <ref> <oid>` | TestASymbolicEvidenceRefNeverDeletesABranch, TestARefReplacedSinceItWasListedIsLeft, TestALedgerNamingABranchAsEvidenceDeletesNothing |
+| P1-2 busy failed open | every read, open, list or probe error in busy.go is busy with the path; unsupported locking is busy; the live-seat check is `schedproc.LiveSeats` | TestEveryUnreadableBusyInputRefuses (five inputs) |
+| P1-3 a staged record aimed the removal elsewhere | a worktree is removed only when its project is a `project_path` the task store records for the seat, `git worktree list --porcelain` of that project (hardened) names it, and its `.git` resolves into the project's `.git/worktrees` (`seatcommit.VerifyWorktree`); the rest is listed "not removed" with the reason | TestAStagedRecordCannotAimTheRemovalAtAnotherProject (a real worktree of another project; a plain directory in the right one) |
+| P2-1 retry information destroyed | a failed evidence group holds back the worktrees and the records (ledgers, staged records, tasks); a failed worktree group holds back the records; held-back entries are in the report | TestAFailedEvidenceGroupKeepsTheRecordsAndTheRetryFinishes |
+| P2-2 nested symlinks | every directory below the extension directory to three levels is opened O_NOFOLLOW in the discovery pass | TestASymlinkedNestedDirectoryIsRefused |
+| P2-3 hard-linked secret | a link count above one: unlinked without zeroing, a note says why; documented | TestAHardLinkedSecretIsUnlinkedWithoutZeroing |
+| P2-4 no exclusion | a writing run that has work takes the scheduler's own lock (`scheduler/run.lock`, created if absent and removed again if it created it), plans again and re-runs the busy check with it held; a second uninstall or a scheduler gets the lock refusal | TestAWritingRunHoldsTheSchedulersLock, TestTheBusyCheckRunsAgainWithTheLockHeld |
+| P2-5 false success | only a missing entry is absent; any other open error is a failed entry (partial, exit 3) | TestAnUnreadableTargetIsAFailedEntry |
+| codes | busy and symlink are an explicit `codedExitError` with `ExitSystem` | TestUninstallVerbRefusalsExitWithTheSystemCode |
+
+Judgment calls of the round: (a) a run whose plan is empty takes no lock, so the idempotent second run touches nothing; (b) if the lock file or its directory cannot be created or opened the run is refused as busy rather than run unlocked; (c) the task store is read through `task.Snapshot` (no lock, no write); a seat with no task naming its project keeps its worktrees, listed; (d) the first-round rows are re-confirmed against the changed code, with the patterns that moved updated in the revert script.
 
 ## Not done
 

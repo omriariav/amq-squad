@@ -3,10 +3,13 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
 func uninstallHost(t *testing.T) (home, root string) {
@@ -88,6 +91,9 @@ func TestUninstallVerbPartialFailureExitsNonZero(t *testing.T) {
 	}
 	_, root := uninstallHost(t)
 	x := filepath.Join(root, "extensions", "amq-squad")
+	if err := os.MkdirAll(filepath.Join(x, "scheduler"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(x, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -99,5 +105,35 @@ func TestUninstallVerbPartialFailureExitsNonZero(t *testing.T) {
 	})
 	if ExitCode(err) != ExitPartial || !strings.Contains(out, "what remains") {
 		t.Errorf("want exit %d and a report of what remains, got %v:\n%s", ExitPartial, err, out)
+	}
+}
+
+// A busy refusal and a symlink refusal exit with the explicit system code.
+func TestUninstallVerbRefusalsExitWithTheSystemCode(t *testing.T) {
+	_, root := uninstallHost(t)
+	sd := filepath.Join(root, "extensions", "amq-squad", "scheduler")
+	if err := os.MkdirAll(sd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock, ok, err := flock.TryExclusive(filepath.Join(sd, "run.lock"), true)
+	if err != nil || !ok {
+		t.Fatalf("hold the lock: %v", err)
+	}
+	var busyErr error
+	captureOutput(t, func() error { busyErr = Run([]string{"uninstall", "--root", root, "--write"}, "v-test"); return nil })
+	lock.Close()
+	var ce *codedExitError
+	if !errors.As(busyErr, &ce) || ce.code != ExitSystem || !strings.Contains(busyErr.Error(), "uninstall_busy") {
+		t.Errorf("busy: want an explicit system exit, got %v", busyErr)
+	}
+	tasks := filepath.Join(root, "extensions", "amq-squad", "tasks")
+	os.RemoveAll(tasks)
+	if err := os.Symlink(t.TempDir(), tasks); err != nil {
+		t.Fatal(err)
+	}
+	var linkErr error
+	captureOutput(t, func() error { linkErr = Run([]string{"uninstall", "--root", root, "--write"}, "v-test"); return nil })
+	if !errors.As(linkErr, &ce) || ce.code != ExitSystem || !strings.Contains(linkErr.Error(), "uninstall_refused_symlink") {
+		t.Errorf("symlink: want an explicit system exit, got %v", linkErr)
 	}
 }

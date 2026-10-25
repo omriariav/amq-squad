@@ -13,7 +13,7 @@ root of `--project/--profile/--session`.
 | session state | `<root>/extensions/amq-squad`: tasks, staged launch records and proofs, alerts, releases, merge-train audit, the scheduler directory (but its exits queue), the verifier directory with its module cache (`verifiers/gomodcache`) | `--write` |
 | per-seat config dirs | `launch/<seat>/claude-config/<launch id>` | `--write` |
 | core tools dir | `tools/`: the copies of gh and claude | `--write` |
-| worktrees | the seat worktrees recorded in the commits ledger and the staged launch records, only when they are `<project>/.claude/worktrees/<name>` (uncommitted work in them is lost) | `--write` |
+| worktrees | the seat worktrees the commits ledgers and staged launch records name, only when the path is `<project>/.claude/worktrees/<name>`, the project is a `project_path` the task store records for that seat, `git worktree list` of the project names it and its `.git` resolves back into the project's `.git/worktrees`; anything else is listed as not removed, with the reason (uncommitted work in a removed one is lost) | `--write` |
 | owner files | `~/.amq-squad`: `registry.yaml`, `grants.yaml`, `claude-token`, `gate-binding.json` | `--write --owner-files` |
 | sealed ledgers | the commits ledger, the exits queue, the outcome log and the session seed under `routing/`, the hook ledger | `--write --purge` |
 | evidence refs | `refs/amq-squad/evidence/...` in the seat repositories | `--write --purge` |
@@ -37,10 +37,16 @@ and no object of a seat repository is touched.
   or the decision socket is present and the scheduler's pid is alive), a live
   seat (an accepted proof whose process is alive), an open proof window (a staged
   ticket neither used up nor expired), or a commit step (a `why: commit` entry in
-  the exits queue; an unreadable queue counts). The message names what is live.
+  the exits queue). The check fails closed: a file that cannot be opened, read or
+  parsed, a directory that cannot be listed, a lock that cannot be opened or
+  probed is busy, naming the path. The message names what is live. A writing run
+  holds the scheduler's own lock (`scheduler/run.lock`) for its whole length and
+  checks again once it holds it, so a scheduler cannot start and a second
+  uninstall is refused (`uninstall_busy`) meanwhile.
 - `uninstall_refused_symlink`: a symlink (or a non-directory) stands where a
-  directory is expected, in the AMQ root, the worktrees, or `~/.amq-squad`.
-  Nothing is removed. Removal runs through the descriptor walk (`internal/fsanchor`)
+  directory is expected, in the AMQ root (nested directories to three levels
+  included, such as `verifiers/gomodcache`), the worktrees, or `~/.amq-squad`.
+  Nothing is removed. Both refusals exit 2. Removal runs through the descriptor walk (`internal/fsanchor`)
   from the anchored roots, one component at a time with no link followed; a
   path whose ancestors cross a symlink (for example `/tmp` on macOS) is refused,
   so pass the resolved path.
@@ -52,7 +58,11 @@ first and unconditionally (before any other group, and whatever else fails):
 overwritten once with zeros, then unlinked. Their contents are never printed.
 The files are 0600; on APFS and other copy-on-write file systems the overwrite is
 best effort, because the file system may keep the old blocks. Rotate the token
-(`claude setup-token`) if that matters.
+(`claude setup-token`) if that matters. A secret with another hard link is not
+zeroed (that would destroy the other name's contents): it is unlinked as it is,
+the report says so, and the other name keeps the bytes. Removing
+`gate-binding.json` leaves any open clear gate unanswerable until a binding is
+restored (enrol again with `amq-squad remote`).
 
 ## Done by hand
 
@@ -67,6 +77,8 @@ amq-squad never writes the owner's global agent config (R16). The verb prints:
 
 ## Idempotent
 
-A second run reports "nothing to do". If a removal fails the others still run,
-the report lists what remains and the exit code is 3; run it again after fixing
-the cause.
+A second run reports "nothing to do". If a removal fails the others in its group
+still run, the records that name a failed group are held back (and listed), the
+report lists what remains and the exit code is 3; an entry that cannot be
+opened for any reason but not existing is a failed entry, never "already gone".
+Run it again after fixing the cause.

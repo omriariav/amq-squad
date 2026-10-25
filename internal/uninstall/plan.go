@@ -7,12 +7,14 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 const (
@@ -27,6 +29,7 @@ var errAbsent = errors.New("absent")
 type op struct {
 	group   string
 	display string
+	lines   []string // display lines of an evidence op, one per ref
 	note    string
 	secret  bool
 	base    string
@@ -35,16 +38,22 @@ type op struct {
 	ev      *evidenceOp
 }
 
-// evidenceOp deletes the evidence refs one ledger records.
+// evidenceOp deletes the evidence refs git lists in one repository.
 type evidenceOp struct {
 	checkouts []string
-	refs      []string
+	refs      []seatcommit.EvidenceRefInfo
+	err       error // the refs could not be listed: the entry fails
 }
 
+// wtCand is a worktree a ledger or a staged record names for a seat.
+type wtCand struct{ handle, path string }
+
 type plan struct {
-	ops    []op
-	byHand []string
-	left   []string
+	ops     []op
+	byHand  []string
+	left    []string
+	kept    []string // worktrees listed but not removed, with the reason
+	handles map[string]bool
 }
 
 var (
@@ -85,19 +94,25 @@ func isLink(d *fsanchor.AnchoredDir, name string) bool {
 	return err == nil
 }
 
-// kindOf reports what name is below d without following a link.
-func kindOf(d *fsanchor.AnchoredDir, name string) (fsanchor.EntryKind, bool) {
+// kindOf reports what name is below d without following a link. Only a
+// missing entry is absent (exists false, err nil); any other open error is
+// returned.
+func kindOf(d *fsanchor.AnchoredDir, name string) (fsanchor.EntryKind, bool, error) {
 	f, kind, _, _, err := d.OpenEntry(name)
 	if err != nil {
-		return fsanchor.KindOther, false
+		if errors.Is(err, fs.ErrNotExist) {
+			return fsanchor.KindOther, false, nil
+		}
+		return fsanchor.KindOther, false, err
 	}
 	if f != nil {
 		f.Close()
 	}
-	return kind, true
+	return kind, true, nil
 }
 
-// subOf opens a child directory; ok is false when it is not a directory.
+// subOf opens a child directory; ok is false when it is not a directory or
+// cannot be opened (the caller decides whether that matters).
 func subOf(d *fsanchor.AnchoredDir, name string) (*fsanchor.AnchoredDir, bool) {
 	s, err := d.Sub(name)
 	if err != nil {
@@ -117,13 +132,35 @@ func sortedNames(d *fsanchor.AnchoredDir) []string {
 	return names
 }
 
+// noLinks opens every directory below d, to depth levels, through the
+// descriptor walk: a symlink at any of them refuses the whole plan.
+func noLinks(d *fsanchor.AnchoredDir, disp string, depth int) error {
+	for _, n := range sortedNames(d) {
+		if isLink(d, n) {
+			return symlinkErr(filepath.Join(disp, n))
+		}
+		if depth <= 1 {
+			continue
+		}
+		if s, ok := subOf(d, n); ok {
+			err := noLinks(s, filepath.Join(disp, n), depth-1)
+			s.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // discover reads the layout (read only) and returns the removal plan. A
-// symlink where a directory is expected, anywhere in the layout, refuses the
-// whole plan.
+// symlink where a directory is expected, anywhere in the layout, nested ones
+// included, refuses the whole plan before anything is removed.
 func discover(o Options) (*plan, error) {
-	p := &plan{}
+	p := &plan{handles: map[string]bool{}}
 	var checkouts []string
-	var worktrees []string
+	var cands []wtCand
+	var seeds []evidenceSeed
 	xrel := []string{extDir, amqDir}
 	xpath := filepath.Join(o.Root, extDir, amqDir)
 	x, err := openDir(o.Root, xrel)
@@ -144,28 +181,33 @@ func discover(o Options) (*plan, error) {
 			checkouts = append(checkouts, sch.ProjectRoot)
 		}
 		for _, name := range sortedNames(x) {
-			if isLink(x, name) {
-				return nil, symlinkErr(filepath.Join(xpath, name))
-			}
 			disp := filepath.Join(xpath, name)
+			if isLink(x, name) {
+				return nil, symlinkErr(disp)
+			}
+			if sub, ok := subOf(x, name); ok {
+				err := noLinks(sub, disp, 3)
+				sub.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
 			switch {
 			case name == "launch":
 				w, err := p.launch(o.Root, x, xrel, disp)
 				if err != nil {
 					return nil, err
 				}
-				worktrees = append(worktrees, w...)
+				cands = append(cands, w...)
 			case name == "scheduler":
-				if err := p.scheduler(o.Root, x, xrel, disp); err != nil {
-					return nil, err
-				}
+				p.scheduler(o.Root, x, xrel, disp)
 			case name == "tools":
-				p.children(o.Root, x, xrel, name, GroupTools, "")
+				p.children(o.Root, x, xrel, name, GroupTools)
 			case sealedNames[name]:
 				if name == "commits" {
-					ws, evs := p.commits(x, o.Root, xrel, checkouts)
-					worktrees = append(worktrees, ws...)
-					p.ops = append(p.ops, evs...)
+					ws, sd := p.commits(x, o.Root, xrel, checkouts)
+					cands = append(cands, ws...)
+					seeds = append(seeds, sd...)
 				}
 				p.ops = append(p.ops, op{group: GroupSealed, display: disp, base: o.Root, rel: xrel, name: name, note: sealNote[name]})
 			case gateNames[name]:
@@ -179,13 +221,14 @@ func discover(o Options) (*plan, error) {
 			}
 		}
 	}
-	if err := p.worktreeOps(worktrees); err != nil {
+	p.evidence(o, seeds)
+	if err := p.worktreeOps(o, cands); err != nil {
 		return nil, err
 	}
 	if err := p.ownerOps(o); err != nil {
 		return nil, err
 	}
-	p.manual(o, worktrees)
+	p.manual(o, p.removableWorktrees())
 	return p, nil
 }
 
@@ -195,9 +238,8 @@ var sealNote = map[string]string{
 	"routing": "the outcome log and the session seed that seals the ledgers",
 }
 
-// children adds one op per entry of x/name (a refusal-free listing: the
-// caller already knows name is not a link).
-func (p *plan) children(root string, x *fsanchor.AnchoredDir, xrel []string, name, group, note string) {
+// children adds one op per entry of x/name.
+func (p *plan) children(root string, x *fsanchor.AnchoredDir, xrel []string, name, group string) {
 	sd, ok := subOf(x, name)
 	if !ok {
 		p.ops = append(p.ops, op{group: group, display: filepath.Join(root, extDir, amqDir, name), base: root, rel: xrel, name: name})
@@ -206,42 +248,30 @@ func (p *plan) children(root string, x *fsanchor.AnchoredDir, xrel []string, nam
 	defer sd.Close()
 	rel := append(append([]string{}, xrel...), name)
 	for _, c := range sortedNames(sd) {
-		p.ops = append(p.ops, op{group: group, display: filepath.Join(root, extDir, amqDir, name, c), base: root, rel: rel, name: c, note: note})
+		p.ops = append(p.ops, op{group: group, display: filepath.Join(root, extDir, amqDir, name, c), base: root, rel: rel, name: c})
 	}
 }
 
 // launch lists the staged state of the launch directory: the per-seat
 // config dirs of every launch as their own group, the directory itself as
 // session state, and returns the worktrees the staged records name.
-func (p *plan) launch(root string, x *fsanchor.AnchoredDir, xrel []string, disp string) ([]string, error) {
-	var worktrees []string
+func (p *plan) launch(root string, x *fsanchor.AnchoredDir, xrel []string, disp string) ([]wtCand, error) {
+	var cands []wtCand
 	ld, ok := subOf(x, "launch")
 	if ok {
 		defer ld.Close()
 		for _, h := range sortedNames(ld) {
-			if isLink(ld, h) {
-				return nil, symlinkErr(filepath.Join(disp, h))
-			}
 			hd, ok := subOf(ld, h)
 			if !ok {
 				continue
 			}
 			var rec launch.Record
 			if readJSON(hd, launch.FileName, &rec) && rec.Worktree != "" {
-				worktrees = append(worktrees, rec.Worktree)
-			}
-			if isLink(hd, "claude-config") {
-				hd.Close()
-				return nil, symlinkErr(filepath.Join(disp, h, "claude-config"))
+				cands = append(cands, wtCand{h, rec.Worktree})
 			}
 			if cd, ok := subOf(hd, "claude-config"); ok {
 				rel := append(append([]string{}, xrel...), "launch", h, "claude-config")
 				for _, id := range sortedNames(cd) {
-					if isLink(cd, id) {
-						cd.Close()
-						hd.Close()
-						return nil, symlinkErr(filepath.Join(disp, h, "claude-config", id))
-					}
 					p.ops = append(p.ops, op{group: GroupSeatCfg, display: filepath.Join(disp, h, "claude-config", id), base: root, rel: rel, name: id})
 				}
 				cd.Close()
@@ -250,64 +280,141 @@ func (p *plan) launch(root string, x *fsanchor.AnchoredDir, xrel []string, disp 
 		}
 	}
 	p.ops = append(p.ops, op{group: GroupSession, display: disp, note: "staged launch records, proofs, alarms", base: root, rel: xrel, name: "launch"})
-	return worktrees, nil
+	return cands, nil
 }
 
 // scheduler lists the scheduler directory: the exits queue is a sealed
 // ledger, everything else session state.
-func (p *plan) scheduler(root string, x *fsanchor.AnchoredDir, xrel []string, disp string) error {
+func (p *plan) scheduler(root string, x *fsanchor.AnchoredDir, xrel []string, disp string) {
 	sd, ok := subOf(x, "scheduler")
 	if !ok {
 		p.ops = append(p.ops, op{group: GroupSession, display: disp, base: root, rel: xrel, name: "scheduler"})
-		return nil
+		return
 	}
 	defer sd.Close()
 	rel := append(append([]string{}, xrel...), "scheduler")
 	for _, c := range sortedNames(sd) {
-		if isLink(sd, c) {
-			return symlinkErr(filepath.Join(disp, c))
-		}
 		o := op{group: GroupSession, display: filepath.Join(disp, c), base: root, rel: rel, name: c}
 		if c == "exits.json" {
 			o.group, o.note = GroupSealed, "the exits queue (sealed)"
 		}
 		p.ops = append(p.ops, o)
 	}
-	return nil
 }
 
-// commits reads the commit ledgers for the worktrees and evidence refs they
-// record.
-func (p *plan) commits(x *fsanchor.AnchoredDir, root string, xrel, checkouts []string) ([]string, []op) {
+// evidenceSeed is what one commits ledger contributes to the evidence
+// enumeration: the checkouts that can reach its repository.
+type evidenceSeed struct {
+	handle    string
+	checkouts []string
+	err       error
+}
+
+// commits reads the commit ledgers for the worktrees they name. The refs
+// themselves are never taken from a ledger: git is asked (evidence).
+func (p *plan) commits(x *fsanchor.AnchoredDir, root string, xrel, checkouts []string) ([]wtCand, []evidenceSeed) {
 	cd, ok := subOf(x, "commits")
 	if !ok {
 		return nil, nil
 	}
 	defer cd.Close()
-	var worktrees []string
-	var evs []op
+	var cands []wtCand
+	var seeds []evidenceSeed
 	for _, n := range sortedNames(cd) {
 		var l seatcommit.Ledger
 		if !readJSON(cd, n, &l) {
+			seeds = append(seeds, evidenceSeed{handle: n, err: fmt.Errorf("the commits ledger %s cannot be read, so its evidence refs cannot be located", n)})
 			continue
 		}
-		cos := append([]string{l.Worktree}, checkouts...)
+		p.handles[l.Handle] = true
 		if l.Worktree != "" {
-			worktrees = append(worktrees, l.Worktree)
+			cands = append(cands, wtCand{l.Handle, l.Worktree})
 		}
-		for _, ref := range l.EvidenceRefs() {
-			evs = append(evs, op{group: GroupEvidence, display: ref + " (" + l.Handle + ")", ev: &evidenceOp{checkouts: cos, refs: []string{ref}}})
-		}
+		seeds = append(seeds, evidenceSeed{handle: l.Handle, checkouts: append([]string{l.Worktree}, checkouts...)})
 	}
-	return worktrees, evs
+	return cands, seeds
 }
 
-// worktreeOps plans the worktrees the core created: a seat worktree is
-// <project>/.claude/worktrees/<name>, opened from the project root.
-func (p *plan) worktreeOps(paths []string) error {
+// evidence lists the evidence refs of the seats' repositories from git itself
+// (for-each-ref), one op per repository. A symbolic ref is shown as refused.
+func (p *plan) evidence(o Options, seeds []evidenceSeed) {
 	seen := map[string]bool{}
-	byProject := map[string][]string{}
-	for _, w := range paths {
+	for _, s := range seeds {
+		if s.err != nil {
+			p.ops = append(p.ops, op{group: GroupEvidence, display: s.err.Error(), ev: &evidenceOp{err: s.err}})
+			continue
+		}
+		common, refs, err := seatcommit.ListEvidenceRefs(o.git(), s.checkouts)
+		if err != nil {
+			p.ops = append(p.ops, op{group: GroupEvidence, display: "evidence refs of " + s.handle + ": " + err.Error(), ev: &evidenceOp{err: err}})
+			continue
+		}
+		if seen[common] {
+			continue
+		}
+		seen[common] = true
+		var keep []seatcommit.EvidenceRefInfo
+		var lines []string
+		for _, r := range refs {
+			if !p.ownsRef(r.Name) {
+				continue
+			}
+			keep = append(keep, r)
+			line := r.Name + " (" + common + ")"
+			if r.Symref != "" {
+				line += "   REFUSED: a symbolic ref to " + r.Symref
+			}
+			lines = append(lines, line)
+		}
+		if len(keep) > 0 {
+			p.ops = append(p.ops, op{group: GroupEvidence, display: common, lines: lines, ev: &evidenceOp{checkouts: s.checkouts, refs: keep}})
+		}
+	}
+}
+
+// ownsRef: the ref's seat segment is one of this squad's seats.
+func (p *plan) ownsRef(name string) bool {
+	seg, _, _ := strings.Cut(strings.TrimPrefix(name, seatcommit.EvidencePrefix), "/")
+	for h := range p.handles {
+		if seatcommit.EvidenceSeatSegment(h) == seg {
+			return true
+		}
+	}
+	return false
+}
+
+// seatProjects are the project paths the task store records for a seat: the
+// only projects whose worktrees the seat may have had.
+func seatProjects(tasksDir string) (func(handle string) map[string]bool, error) {
+	list, err := task.Snapshot(tasksDir)
+	if err != nil {
+		return nil, err
+	}
+	return func(h string) map[string]bool {
+		out := map[string]bool{}
+		for _, t := range list {
+			involved := t.Lease != nil && t.Lease.Holder == h || t.Report != nil && t.Report.By == h
+			for _, a := range t.Attempts {
+				involved = involved || a.Holder == h
+			}
+			if involved && t.ProjectPath != "" {
+				out[filepath.Clean(t.ProjectPath)] = true
+			}
+		}
+		return out
+	}, nil
+}
+
+// worktreeOps plans the worktrees the core created. A candidate is removed
+// only when its project is a project_path the task store records for the
+// seat, the project's `git worktree list` names it, and its .git resolves
+// back into that project; anything else is listed as not removed.
+func (p *plan) worktreeOps(o Options, cands []wtCand) error {
+	projectsOf, perr := seatProjects(filepath.Join(o.Root, extDir, amqDir, "tasks"))
+	seen := map[string]bool{}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].path < cands[j].path })
+	for _, c := range cands {
+		w := c.path
 		if !filepath.IsAbs(w) || filepath.Clean(w) != w || seen[w] {
 			continue
 		}
@@ -317,14 +424,15 @@ func (p *plan) worktreeOps(paths []string) error {
 			continue // not one the core created under .claude/worktrees
 		}
 		proj := filepath.Dir(filepath.Dir(wt))
-		byProject[proj] = append(byProject[proj], filepath.Base(w))
-	}
-	projs := make([]string, 0, len(byProject))
-	for k := range byProject {
-		projs = append(projs, k)
-	}
-	sort.Strings(projs)
-	for _, proj := range projs {
+		skip := func(why string) { p.kept = append(p.kept, w+": not removed, "+why) }
+		if perr != nil {
+			skip("the task store cannot be read: " + perr.Error())
+			continue
+		}
+		if !projectsOf(c.handle)[proj] {
+			skip("its project is not a project_path the task store records for seat " + c.handle)
+			continue
+		}
 		rel := []string{".claude", "worktrees"}
 		d, err := openDir(proj, rel)
 		if errors.Is(err, errAbsent) {
@@ -333,21 +441,36 @@ func (p *plan) worktreeOps(paths []string) error {
 		if err != nil {
 			return err
 		}
-		names := byProject[proj]
-		sort.Strings(names)
-		for _, n := range names {
-			disp := filepath.Join(proj, ".claude", "worktrees", n)
-			if isLink(d, n) {
-				d.Close()
-				return symlinkErr(disp)
-			}
-			if kind, ok := kindOf(d, n); ok && kind == fsanchor.KindDir {
-				p.ops = append(p.ops, op{group: GroupWorktree, display: disp, note: "uncommitted work in it is lost", base: proj, rel: rel, name: n})
-			}
+		name := filepath.Base(w)
+		if isLink(d, name) {
+			d.Close()
+			return symlinkErr(w)
 		}
+		kind, ok, kerr := kindOf(d, name)
 		d.Close()
+		switch {
+		case kerr != nil:
+			skip("it cannot be opened: " + kerr.Error())
+		case !ok || kind != fsanchor.KindDir:
+		default:
+			if err := seatcommit.VerifyWorktree(o.git(), proj, w); err != nil {
+				skip(err.Error())
+				continue
+			}
+			p.ops = append(p.ops, op{group: GroupWorktree, display: w, note: "uncommitted work in it is lost", base: proj, rel: rel, name: name})
+		}
 	}
 	return nil
+}
+
+func (p *plan) removableWorktrees() []string {
+	var out []string
+	for _, o := range p.ops {
+		if o.group == GroupWorktree {
+			out = append(out, o.display)
+		}
+	}
+	return out
 }
 
 // ownerOps plans the owner files under ~/.amq-squad and names what else is
@@ -369,13 +492,17 @@ func (p *plan) ownerOps(o Options) error {
 		if isLink(d, f.name) {
 			return symlinkErr(disp)
 		}
-		if kind, ok := kindOf(d, f.name); ok && kind == fsanchor.KindRegular {
-			note := ""
-			if f.secret {
-				note = "secret: overwritten once with zeros, then unlinked; never printed"
-			}
-			p.ops = append(p.ops, op{group: GroupOwner, display: disp, secret: f.secret, note: note, base: o.Home, rel: rel, name: f.name})
+		kind, ok, kerr := kindOf(d, f.name)
+		if kerr == nil && (!ok || kind != fsanchor.KindRegular) {
+			continue
 		}
+		note := ""
+		if f.secret {
+			note = "secret: overwritten once with zeros (unless hard-linked), then unlinked; never printed"
+		}
+		// an entry that cannot be opened is still planned: removing it fails
+		// and is reported, never assumed gone
+		p.ops = append(p.ops, op{group: GroupOwner, display: disp, secret: f.secret, note: note, base: o.Home, rel: rel, name: f.name})
 	}
 	for _, n := range sortedNames(d) {
 		if !mine[n] {
@@ -400,9 +527,7 @@ func (p *plan) manual(o Options, worktrees []string) {
 	repos := map[string]bool{}
 	for _, w := range worktrees {
 		wt := filepath.Dir(w)
-		if filepath.Base(wt) == "worktrees" && filepath.Base(filepath.Dir(wt)) == ".claude" {
-			repos[filepath.Dir(filepath.Dir(wt))] = true
-		}
+		repos[filepath.Dir(filepath.Dir(wt))] = true
 	}
 	list := make([]string, 0, len(repos))
 	for r := range repos {
