@@ -121,6 +121,33 @@ func secretValue(v string) bool {
 	return true
 }
 
+// namedSecret reports whether a value under a credential-class name is a
+// credential: every value is, whatever its length or first character
+// (phase 5 re-pass of 2b-2 B, P1-2: DB_PASSWORD=p4ss7! and
+// DB_PASSWORD=/Ab9xY7q are credentials); only the redaction's own
+// placeholders, an empty value, or an exact AllowedFixtures entry for that
+// name are exempt. No shape (length, first character, a placeholder word)
+// exempts a value any more.
+func namedSecret(name, v string) bool {
+	v = strings.Trim(v, `"'`)
+	switch v {
+	case "", Placeholder, "[redacted]":
+		return false
+	}
+	return !AllowedFixtures[name+"="+v]
+}
+
+// AllowedFixtures are the exact NAME=value pairs the repository's docs and
+// evidence carry as fixtures or examples (help text, test values in revert
+// logs): a whole pair, never a pattern. A new fixture under a credential
+// name is added here by its exact pair, or redacted.
+var AllowedFixtures = map[string]bool{
+	"key=value": true, "ckey=value": true, // codex -c key=value help text and its argv evidence
+	"CLAUDE_CODE_OAUTH_TOKEN=parent-token": true, "GEMINI_API_KEY=private-value": true,
+	"API_KEY=k77": true, "GH_TOKEN=t": true, "api_key=k1": true, "secret=s": true, "password=hunter2": true,
+	"password=...": true, "apiKey=ollama": true,
+}
+
 // Finding is one credential-shaped value: its line and the rule that found
 // it. The value itself is never carried.
 type Finding struct {
@@ -136,7 +163,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 			continue // the tail of a longer word
 		}
 		name, val := line[m[2]:m[3]], line[m[4]:m[5]]
-		if CredentialName(name) && secretValue(val) {
+		if CredentialName(name) && namedSecret(name, val) {
 			out = append(out, [2]int{m[4], m[5]})
 			found = append(found, Finding{Rule: "NAME=value", Name: name})
 		}
@@ -146,7 +173,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 		if strings.EqualFold(name, "key") {
 			continue // a map entry's key, not a credential's name
 		}
-		if CredentialName(name) && secretValue(val) {
+		if CredentialName(name) && namedSecret(name, val) {
 			out = append(out, [2]int{m[4] - 1, m[5] + 1}) // with its quotes
 			found = append(found, Finding{Rule: "json", Name: name})
 		}

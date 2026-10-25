@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -46,6 +47,9 @@ type Ledger struct {
 	// lease (a refused, failed or expired attempt's leftovers), kept as
 	// evidence.
 	Discarded []LedgerDiscard `json:"discarded,omitempty"`
+	// EvidenceSeq numbers the evidence refs (refs/amq-squad/evidence/<task>/<n>)
+	// that anchor the kept trees in the seat repository (P2-5).
+	EvidenceSeq int `json:"evidence_seq,omitempty"`
 	// Target is the launch's record of the owner's grant (R2 of the
 	// milestone B first pass, D1 and D2 of the second): the merge grant's
 	// repository, base branch, push URL and local ack, and the pinned gh with
@@ -53,7 +57,20 @@ type Ledger struct {
 	// repository (whose remote.origin.pushurl the seat can rewrite), and
 	// refuses when they differ from the grant at commit time.
 	Target
+	// Seal is the ledger's link in its chain (the ruling of the phase 5
+	// re-pass): an HMAC tag keyed by the session seed over the ledger
+	// without its seal, its seq and the previous version's tag; the signed
+	// head under the routing directory names the link the ledger must be at.
+	Seal *sealchain.Link `json:"seal,omitempty"`
 }
+
+// ReasonLedgerTampered blocks a step whose commits ledger fails its tag or
+// its chain: routed to the owner, never a silent pass.
+const ReasonLedgerTampered = "ledger_tampered"
+
+const ledgerLabel = "amq-squad commits ledger v1"
+
+func ledgerHeadName(handle string) string { return "commits." + handle }
 
 // Target is the part of the owner's grant the launch records for a seat's
 // commit step, with the gh pin the launch verified (evidence).
@@ -171,6 +188,17 @@ type LedgerDiscard struct {
 	Tree       string    `json:"tree"`
 	DiffDigest string    `json:"diff_digest"`
 	At         time.Time `json:"at"`
+	EvidenceRef
+}
+
+// EvidenceRef is the ref that anchors a kept tree in the seat repository's
+// object store (P2-5 of the phase 5 re-pass): git gc keeps an object only
+// while a ref reaches it, so a tree named in JSON alone is pruned after the
+// grace period. The ref stays until RetainUntil, the explicit retention
+// expiry; a quarantine's ref stays while it is not cleared.
+type EvidenceRef struct {
+	Ref         string     `json:"ref,omitempty"`
+	RetainUntil *time.Time `json:"retain_until,omitempty"`
 }
 
 // LedgerQuarantine is one quarantine of a seat's branch.
@@ -185,6 +213,7 @@ type LedgerQuarantine struct {
 	At         time.Time               `json:"at"`
 	ClearedAt  *time.Time              `json:"cleared_at,omitempty"`
 	ClearedBy  string                  `json:"cleared_by,omitempty"`
+	EvidenceRef
 	// Clear is the owner's signed clear record (R1 of the milestone B first
 	// pass): a clear counts only when its signature verifies against a
 	// trusted key of the owner's trust store.
@@ -280,6 +309,13 @@ type LedgerCommit struct {
 	Tree   string    `json:"tree"`
 	At     time.Time `json:"at"`
 	Pushed bool      `json:"pushed"`
+	// The diff the step checked before it committed (P2-6 of the phase 5
+	// re-pass): a retry after a deferred push or PR reuses it, never a diff
+	// recomputed against the new ledger parent (the commit itself, so empty).
+	DeclaredDigest string   `json:"declared_digest,omitempty"`
+	DiffDigest     string   `json:"diff_digest,omitempty"`
+	Lines          int      `json:"lines,omitempty"`
+	Changes        []Change `json:"changes,omitempty"`
 }
 
 // LedgerDir is the ledger directory under an AMQ session root.
@@ -308,21 +344,45 @@ func ReadLedger(root, handle string) (Ledger, error) {
 	if l.Schema != LedgerSchema || l.Handle != handle {
 		return l, fmt.Errorf("commit ledger %s: schema %d for %q", handle, l.Schema, l.Handle)
 	}
+	// The seal: a hand edit, an older copy, a stripped seal or a deleted
+	// head is ledger_tampered (sealchain.ErrTampered).
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil {
+		return l, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, err)
+	}
+	if !ok {
+		return l, fmt.Errorf("commit ledger %s: %w: the session seed that seals it is gone", handle, sealchain.ErrTampered)
+	}
+	body := l
+	body.Seal = nil
+	if err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, body); err != nil {
+		return l, fmt.Errorf("commit ledger %s: %w", handle, err)
+	}
 	return l, nil
 }
 
 func writeLedger(root string, l Ledger) error {
 	l.Schema = LedgerSchema
-	raw, err := json.MarshalIndent(l, "", "  ")
+	l.Seal = nil
+	key, err := sealchain.SessionKey(root)
 	if err != nil {
-		return err
+		return fmt.Errorf("commit ledger %s: the session seed: %w", l.Handle, err)
 	}
 	dir := LedgerDir(root)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	// One durable writer (2b-5): temp in the directory, fsync, rename, fsync.
-	return atomicfile.Write(ledgerPath(root, l.Handle), append(raw, '\n'), 0o600)
+	_, err = sealchain.Write(root, ledgerHeadName(l.Handle), key, ledgerLabel, l, func(link *sealchain.Link) error {
+		sealed := l
+		sealed.Seal = link
+		raw, err := json.MarshalIndent(sealed, "", "  ")
+		if err != nil {
+			return err
+		}
+		// One durable writer (2b-5): temp in the directory, fsync, rename, fsync.
+		return atomicfile.Write(ledgerPath(root, l.Handle), append(raw, '\n'), 0o600)
+	}, time.Now())
+	return err
 }
 
 // withLedgerLock serializes the commit step for one seat (the scheduler's

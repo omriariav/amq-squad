@@ -323,8 +323,9 @@ func TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation(t *testing.T) {
 	if strings.Contains(string(raw), "evil-ran") || res.PRNumber != 0 {
 		t.Fatalf("a gh swapped after the list ran: %+v\n%s", res, raw)
 	}
-	if !strings.Contains(strings.Join(res.Notes, " "), registry.PinMismatch) {
-		t.Fatalf("the swap was not named: %v", res.Notes)
+	// with --open-pr the failed PR call defers the completion (pr_pending, phase 5 re-pass P2-3)
+	if !res.Deferred || res.ReasonCode != ReasonPRPending || !strings.Contains(res.Detail, registry.PinMismatch) {
+		t.Fatalf("the swap was not named, or the step completed: %+v", res)
 	}
 }
 

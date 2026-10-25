@@ -133,6 +133,9 @@ func Run(ctx context.Context, o Options) error {
 	if o.Config.ExitsPath == "" {
 		o.Config.ExitsPath = filepath.Join(Dir(o.Root), "exits.json")
 	}
+	if o.Config.SealRoot == "" {
+		o.Config.SealRoot = o.Root // the exits ledger is sealed under the session seed
+	}
 	if o.Router == nil {
 		o.Router = scheduler.DefaultRouter{}
 	}

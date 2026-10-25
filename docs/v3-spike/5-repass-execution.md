@@ -237,3 +237,46 @@ Judgment calls, stated:
   refused for ws://); `ws://[::1]:PORT` is admitted.
 - The pump keeps its rule: a Query error returns before the cursor moves
   (pump.go:85-88); no pump code changed.
+
+## Commit 5: 2b-2 milestone B (the commit step, the exits queue, the redaction, task files, the sealed ledgers)
+
+Revert check: `5-repass-evidence/2b2b-revert-check.txt` (15 reverts, all
+as required). Gate: `5-repass-evidence/2b2b-gate.txt`.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P1-1 | commit.go:625, :667 compared managed-block shapes but not file types, so a declared AGENTS.md (or CLAUDE.md) replaced by a symlink whose target text matched passed while the effective file was a broken link | a protected or managed path must be a regular file in the snapshot: a new mode that is not 100644 or 100755 (a symlink 120000, a gitlink 160000) or a mode change of an existing file there is protected_path, gated or not; a deletion is left to the content checks | TestManagedPathMustStayARegularFile (a symlink whose target text is the file's own content; a chmod +x) |
+| P1-2 | redact.go:99, :111: short and path-like values under explicit credential names survived (a DB_PASSWORD of `p4ss7!` or `/Ab9xY7q`) | under a credential-class name (NAME=value and JSON) every non-empty value is a credential, whatever its length or first character; the redaction's own placeholders pass, and fixtures pass only as exact pairs in `redact.AllowedFixtures` (the help text's key and value pair and the ten fixture pairs the committed docs and evidence carry), never by shape. The provider-token rule keeps its own shape checks | TestCredentialNameRedactsEveryValue; TestFindRules updated (a reference such as `$(gh auth token)`, `${SECRET}`, `xxxx` or a short value under a credential name is now found) |
+| P2-3 | commit.go:879, :913 with scheduler.go:476: a push followed by a gh failure returned success, and the task completed unbound with no retry | with --open-pr every way the PR binding cannot be made (no repository recorded, the pin failing, gh pr list or create failing, no PR number) defers the step as pr_pending (the push stays recorded); the scheduler's commit_deferred path retries next tick, and the committer's repeated-deferral rule still turns an endless one into a refusal | TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff |
+| P2-4 | exits.go:162 wrote the queue to a fixed `<path>.tmp` and renamed it, with no fsync | `atomicfile.Write` (an exclusive temp file, file fsync, rename, directory fsync) | TestExitsLedgerIsWrittenByTheDurableWriter (a leftover at `exits.json.tmp` no longer stops the write) |
+| P2-5 | commit.go:417, :513: kept evidence trees were named in JSON only, so a gc pruned them after the grace period | each kept tree (a quarantine's, a CleanSeat discard's) is anchored by `refs/amq-squad/evidence/<task>/<n>` (n from the ledger's `evidence_seq`), with `retain_until` 30 days on; the ref is deleted at that explicit expiry (an uncleared quarantine's never), the record stays | TestKeptTreesAreAnchoredUntilTheirRetention (the tree survives a gc with prune=now; the expiry drops the ref) |
+| P2-6 | commit.go:341, :709, :912: a deferred push or PR recomputed the diff on retry against the new ledger parent (the harness commit itself), so the PR carried an empty-diff digest | the ledger's commit entry keeps the checked diff (declared digest, diff digest, lines, changes); a retry of a recorded commit reuses it for the result and the PR body | TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff |
+| P2-7 | commit.go:340 and task/files.go:17: the declared-set digest hashed a newline join, the same for `["a","b"]` and `["a\nb"]` | `seatcommit.DeclaredDigest` is sha256 over the set's canonical JSON array, and `task.CleanDeclaredFiles` refuses an entry carrying a newline or any control character | TestDeclaredSetDigestIsCanonical |
+| ruling | ledger.go:305 and exits.go:188: a same-UID edit of the commits ledger's head or of the exits queue changed authority with no alarm | the commits ledger and the exits queue are sealed: every version carries a link (seq, the previous version's tag, an HMAC tag keyed by the session seed over the file without its link), and a signed head per file (`<root>/extensions/amq-squad/routing/heads/`) records the link the file must be at; a genesis head is written before a file's first version, so a head exists once the file does. A failed tag, a link the head does not reach (an older copy), a stripped seal, a deleted head, or a removed exits queue whose head says it existed is ledger_tampered: the commit step refuses it routed to the owner (nothing committed or pushed), the scheduler stops dispatch and logs `ledger_tampered` for the owner. The machinery is not forked: the routing log's tag, seed read, first seed write and key moved into the leaf package `internal/sealchain` (routing depends on seatcommit and the scheduler, so they cannot import routing), and routing's outcome rows, decisions, head and seed now call it | TestSealedCommitsLedgerDetectsASameUIDEdit, TestSealedExitsQueueDetectsASameUIDEdit |
+
+Rows adapted to the fixes: TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation
+(the pin swap now defers as pr_pending and names the mismatch in the
+detail), TestUnsignedClearKeepsTheSeatQuarantined (the hand-edited clear is
+now caught first by the ledger's seal, ledger_tampered for the owner),
+TestFindRules (above).
+
+Judgment calls, stated:
+- P2-5: the evidence refs live in the seat repository's own refs, the
+  object store the shadow writes to (the shadow's git dir is temporary, and
+  a gc honours only the refs of the repository that owns the objects).
+  Retention is 30 days (`EvidenceRetention`); expired refs are deleted when
+  the next evidence of that seat is recorded.
+- P2-3: the configuration cases (no repository recorded, the pin failing)
+  defer too: with --open-pr the completion never happens unbound.
+- The ruling: a missing commits ledger stays base_unrecorded (a refusal for
+  the lead; deleting it gains no authority); the exits queue, whose deletion
+  would drop deferred checks, is tampered when its head says it existed. A
+  file one link ahead of its head (the head write lost in a crash) is
+  accepted. The exits queue is sealed when the scheduler has a `SealRoot`
+  (the scheduler process sets its session root); the in-package scheduler
+  tests without one keep the unsealed file. The recorded limit is the
+  routing chain's: a same-UID process that reads the seed can forge a file
+  and its head.
+- P1-2: the allowlist entries are the exact pairs the committed docs and
+  evidence carried; a doc that adds another fixture under a credential name
+  adds its pair or is redacted.

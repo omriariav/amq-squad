@@ -18,6 +18,11 @@ func CleanDeclaredFiles(in []string) ([]string, error) {
 	seen := map[string]bool{}
 	out := []string{}
 	for _, raw := range in {
+		// A newline (or any control byte) in an entry is refused: the
+		// declared set is one entry per path (phase 5 re-pass of 2b-2 B, P2-7).
+		if strings.ContainsFunc(raw, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+			return nil, fmt.Errorf("declared file %q carries a newline or a control character", raw)
+		}
 		p := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
 		if p == "" {
 			continue

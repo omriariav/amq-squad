@@ -3247,9 +3247,9 @@ entries:
   status: new
 - path: internal/redact/redact.go
   v2_lines: 0
-  current_lines: 333
+  current_lines: 360
   fate: new
-  target_lines: 333
+  target_lines: 360
   cluster: redact
   extract: ""
   reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
@@ -3463,9 +3463,9 @@ entries:
   status: new
 - path: internal/routing/outcome.go
   v2_lines: 0
-  current_lines: 269
+  current_lines: 254
   fate: new
-  target_lines: 269
+  target_lines: 254
   cluster: routing
   extract: ""
   reason: "2b-4: outcome log row (6.4 fields), append-only JSONL with flock and fsync"
@@ -3490,30 +3490,12 @@ entries:
   status: new
 - path: internal/routing/seed.go
   v2_lines: 0
-  current_lines: 183
+  current_lines: 91
   fate: new
-  target_lines: 183
+  target_lines: 91
   cluster: routing
   extract: ""
   reason: "2b-4 fix 1: random exploration seed per session, persisted under the AMQ root"
-  status: new
-- path: internal/routing/seed_other.go
-  v2_lines: 0
-  current_lines: 26
-  fate: new
-  target_lines: 26
-  cluster: routing
-  extract: ""
-  reason: "2b-4 fix 3: the seed opened after an Lstat link refusal (no O_NOFOLLOW)"
-  status: new
-- path: internal/routing/seed_unix.go
-  v2_lines: 0
-  current_lines: 26
-  fate: new
-  target_lines: 26
-  cluster: routing
-  extract: ""
-  reason: "2b-4 fix 3: the seed opened with O_NOFOLLOW"
   status: new
 - path: internal/routing/table.go
   v2_lines: 0
@@ -3630,9 +3612,9 @@ entries:
   status: new
 - path: internal/schedproc/process.go
   v2_lines: 0
-  current_lines: 310
+  current_lines: 313
   fate: new
-  target_lines: 310
+  target_lines: 313
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler process of one squad (ruling 15): one per squad, the tick loop, the usage-limit window, the external event drain"
@@ -3666,9 +3648,9 @@ entries:
   status: new
 - path: internal/scheduler/exits.go
   v2_lines: 0
-  current_lines: 391
+  current_lines: 442
   fate: new
-  target_lines: 391
+  target_lines: 442
   cluster: scheduler
   extract: ""
   reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
@@ -3684,9 +3666,9 @@ entries:
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 889
+  current_lines: 898
   fate: new
-  target_lines: 889
+  target_lines: 898
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3700,11 +3682,38 @@ entries:
   extract: ""
   reason: "2b-1: usage-limit event interface (2b-3 implements the detector)"
   status: new
+- path: internal/sealchain/sealchain.go
+  v2_lines: 0
+  current_lines: 350
+  fate: new
+  target_lines: 350
+  cluster: routing
+  extract: ""
+  reason: "phase 5 re-pass of 2b-2 B (ruling): the routing chain's tag, seed and signed-head rule as a leaf package, shared by routing and the sealed commits ledger and exits queue"
+  status: new
+- path: internal/sealchain/seed_other.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 3 (moved from internal/routing by the phase 5 re-pass of 2b-2 B): the seed opened after an Lstat link refusal (no O_NOFOLLOW)"
+  status: new
+- path: internal/sealchain/seed_unix.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 3 (moved from internal/routing by the phase 5 re-pass of 2b-2 B): the seed opened with O_NOFOLLOW"
+  status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 980
+  current_lines: 1109
   fate: new
-  target_lines: 980
+  target_lines: 1109
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
@@ -3720,9 +3729,9 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 413
+  current_lines: 473
   fate: new
-  target_lines: 413
+  target_lines: 473
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
@@ -4085,9 +4094,9 @@ entries:
 
 - path: internal/task/files.go
   v2_lines: 0
-  current_lines: 147
+  current_lines: 152
   fate: new
-  target_lines: 147
+  target_lines: 152
   cluster: task
   extract: ""
   reason: "2b-1: declared_files normalization and the conservative file-lock overlap"

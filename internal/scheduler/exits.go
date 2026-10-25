@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -132,7 +134,17 @@ func (s *Scheduler) queueExit(it exitItem) {
 type exitsLedger struct {
 	Schema int        `json:"schema"`
 	Queue  []exitItem `json:"queue"`
+	// Seal: with Config.SealRoot the queue is a sealed file (the ruling of
+	// the phase 5 re-pass): an HMAC tag keyed by the session seed and a
+	// signed head, so a same-UID edit of the queue, an older copy or its
+	// removal is ledger_tampered (dispatch stops, routed to the owner).
+	Seal *sealchain.Link `json:"seal,omitempty"`
 }
+
+const (
+	exitsLabel    = "amq-squad exits queue v1"
+	exitsHeadName = "exits"
+)
 
 // errExitsNotLoaded: the queue is never written over a ledger not read yet.
 var errExitsNotLoaded = errors.New("the exits ledger is not loaded yet")
@@ -154,15 +166,48 @@ func (s *Scheduler) writeExits() error {
 	if !s.exitsLoaded {
 		return errExitsNotLoaded
 	}
-	raw, _ := json.MarshalIndent(exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}, "", "  ")
+	l := exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	if root := s.Config.SealRoot; root != "" {
+		key, err := sealchain.SessionKey(root)
+		if err != nil {
+			return err
+		}
+		_, err = sealchain.Write(root, exitsHeadName, key, exitsLabel, l, func(link *sealchain.Link) error {
+			sealed := l
+			sealed.Seal = link
+			raw, _ := json.MarshalIndent(sealed, "", "  ")
+			return atomicfile.Write(p, raw, 0o600)
+		}, time.Now())
 		return err
 	}
-	return os.Rename(tmp, p)
+	raw, _ := json.MarshalIndent(l, "", "  ")
+	// The one durable writer (P2-4 of the phase 5 re-pass): an exclusive
+	// temp file, fsync, rename, then the directory fsync, so a deferred
+	// gone-only check survives a power loss after the write returns.
+	return atomicfile.Write(p, raw, 0o600)
+}
+
+// checkExitsSeal checks the sealed exits queue against its head: a tag or
+// chain that fails, a removed queue whose head says it existed, or a
+// missing seed is ledger_tampered.
+func (s *Scheduler) checkExitsSeal(root string, l exitsLedger, present bool) error {
+	key, ok, err := sealchain.ReadKey(root)
+	switch {
+	case err != nil:
+		return fmt.Errorf("%w: the exits ledger's session seed: %v", sealchain.ErrTampered, err)
+	case !ok && present:
+		return fmt.Errorf("%w: the session seed that seals the exits ledger is gone", sealchain.ErrTampered)
+	case !ok:
+		return nil // no seed, no queue yet: the first write seals it
+	case !present:
+		return sealchain.Absent(root, exitsHeadName, key)
+	}
+	body := l
+	body.Seal = nil
+	return sealchain.Check(root, exitsHeadName, key, exitsLabel, l.Seal, body)
 }
 
 // loadExits rebuilds the queue once (before adoption, else at the first
@@ -187,6 +232,12 @@ func (s *Scheduler) loadExits() {
 	if err == nil {
 		if uerr := json.Unmarshal(raw, &l); uerr != nil {
 			s.exitsErr = fmt.Errorf("the exits ledger %s cannot be parsed: %v", p, uerr)
+			return
+		}
+	}
+	if root := s.Config.SealRoot; root != "" {
+		if serr := s.checkExitsSeal(root, l, err == nil); serr != nil {
+			s.exitsErr = serr
 			return
 		}
 	}

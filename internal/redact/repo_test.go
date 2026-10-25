@@ -188,6 +188,10 @@ func TestFindRules(t *testing.T) {
 		"sk-" + "ant-oat01-" + strings.Repeat("z9", 6),
 		"NOSTR_NSEC=nsec1" + strings.Repeat("q", 40),
 		"--api-key=abcdefgh12345678",
+		// phase 5 re-pass of 2b-2 B, P1-2: no length or first-character
+		// exemption under a credential name
+		"DB_PASSWORD=p4ss7!", "DB_PASSWORD=/Ab9xY7q", "GH_TOKEN=$(gh auth token)", "SECRET=${SECRET}",
+		"API_KEY=xxxxxxxxxxxx", "MONKEY=short", "KEY=...",
 	}
 	for _, s := range must {
 		if len(Find(s)) == 0 {
@@ -198,9 +202,9 @@ func TestFindRules(t *testing.T) {
 		}
 	}
 	pass := []string{
-		"GH_TOKEN=$(gh auth token)", "TOKEN=<redacted>", `"token": "[redacted]"`, "CLAUDE_TOKEN_FILE=/home/u/.amq-squad/claude-token",
-		"input_tokens=123456789", "API_KEY=xxxxxxxxxxxx", "SECRET=${SECRET}", "SSH_AUTH_SOCK=/tmp/ssh-x/agent.1", "task-sk-abcdefghijk",
-		"MONKEY=short", "KEY=...", `"max_tokens": 4096`,
+		"TOKEN=<redacted>", `"token": "[redacted]"`, "CLAUDE_TOKEN_FILE=/home/u/.amq-squad/claude-token",
+		"input_tokens=123456789", "SSH_AUTH_SOCK=/tmp/ssh-x/agent.1", "task-sk-abcdefghijk",
+		`"max_tokens": 4096`, "key=value", "TOKEN=",
 	}
 	for _, s := range pass {
 		if f := Find(s); len(f) != 0 {
