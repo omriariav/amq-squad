@@ -729,10 +729,16 @@ supersedes the earlier one, the supersession inside the sealed bytes, and
 the newest verdict is authoritative at completion; a grant command may be
 a string or a YAML list; the hook ledger's one writer redacts on write
 and keeps a malformed payload as length, sha256 and a redacted printable
-prefix. Nothing on the scheduler's tick path takes a blocking lock: the
-exit check for a seat with a running step is deferred without touching
-the ledger, and every ledger lock on the tick path is a try-lock whose
-busy result is a deferral; redaction of a capture runs over the whole
+prefix. No lock reachable from the scheduler's tick is held across a
+subprocess, a network call or a wait on another lock (the task-store lock
+stays blocking and its holders stay short): the exit check for a seat
+with a running step is deferred without touching the ledger, every
+ledger lock on the tick path is a try-lock whose busy result is a
+deferral, and CleanSeat's git work runs outside the store lock with the
+seat re-checked under the second take; wherever a capture has a cap,
+redaction runs first, then the cut, and a partial last line is never
+kept (the verifier capture, the lead's tail, the ingest prefix); a quoted
+YAML scalar is redacted whatever it contains; redaction of a capture runs over the whole
 retained buffer with the key rule allowing JSON whitespace between key,
 colon and value, and per line as well; a cancel during a running step
 kills the verifier group and frees the handle when the step ends; an
