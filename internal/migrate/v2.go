@@ -3,8 +3,7 @@ package migrate
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -43,6 +42,7 @@ const (
 
 // inputs is everything migrate reads of one v2 checkout.
 type inputs struct {
+	Root         *root
 	Project      string
 	ProfilePath  string
 	ProfileName  string
@@ -66,92 +66,82 @@ type roleMD struct {
 	file
 }
 
-// locate derives the project and the profile name from a profile path:
-// <project>/.amq-squad/team.json (the default profile) or
-// <project>/.amq-squad/teams/<name>.json.
-func locate(profile string) (project, name string, err error) {
-	abs, err := filepath.Abs(profile)
-	if err != nil {
-		return "", "", err
-	}
+// locate derives the project and the profile name from an absolute profile
+// path: <project>/.amq-squad/team.json (the default profile) or
+// <project>/.amq-squad/teams/<name>.json. The profile's project-relative path
+// is returned too.
+func locate(abs string) (project, name, rel string, err error) {
 	dir, base := filepath.Dir(abs), filepath.Base(abs)
 	switch {
 	case base == teamFile && filepath.Base(dir) == dirName:
-		return filepath.Dir(dir), defaultProfile, nil
+		return filepath.Dir(dir), defaultProfile, dirName + "/" + teamFile, nil
 	case strings.HasSuffix(base, ".json") && filepath.Base(dir) == teamsDir && filepath.Base(filepath.Dir(dir)) == dirName:
-		return filepath.Dir(filepath.Dir(dir)), strings.TrimSuffix(base, ".json"), nil
+		name = strings.TrimSuffix(base, ".json")
+		return filepath.Dir(filepath.Dir(dir)), name, dirName + "/" + teamsDir + "/" + base, nil
 	}
-	return "", "", &Refusal{Code: CodeInput, Detail: fmt.Sprintf("%s is not a v2 profile path (want <project>/.amq-squad/team.json or <project>/.amq-squad/teams/<name>.json)", profile)}
+	return "", "", "", &Refusal{Code: CodeInput, Fields: []string{"the profile path"}, Detail: "the argument is not a v2 profile path (want <project>/.amq-squad/team.json or <project>/.amq-squad/teams/<name>.json)"}
 }
 
-// readFile opens path read-only (O_RDONLY, never written) and returns its
-// bytes; a missing file is (nil, nil). It refuses a file that is not regular
-// or is larger than maxInputBytes.
-func readFile(path string) (*file, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY, 0)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+// readInputs opens the project root once and reads the profile and every v2
+// file that sits with it through that descriptor (M2). The caller closes
+// in.Root. The absolute paths are checked for a credential shape before
+// anything is read (M1).
+func readInputs(profilePath string) (in *inputs, err error) {
+	abs, err := filepath.Abs(profilePath)
 	if err != nil {
-		return nil, &Refusal{Code: CodeInput, Detail: fmt.Sprintf("open %s: %v", path, err)}
+		return nil, &Refusal{Code: CodeInput, Fields: []string{"the profile path"}, Detail: "the profile path cannot be made absolute"}
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, &Refusal{Code: CodeInput, Detail: fmt.Sprintf("stat %s: %v", path, err)}
-	}
-	if !info.Mode().IsRegular() || info.Size() > maxInputBytes {
-		return nil, &Refusal{Code: CodeInput, Detail: fmt.Sprintf("%s is not a regular file of at most %d bytes", path, maxInputBytes)}
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxInputBytes+1))
-	if err != nil {
-		return nil, &Refusal{Code: CodeInput, Detail: fmt.Sprintf("read %s: %v", path, err)}
-	}
-	return &file{Path: path, Data: data}, nil
-}
-
-// readInputs reads the profile and every v2 file that sits with it.
-func readInputs(profilePath string) (*inputs, error) {
-	if looksLikeCredential(profilePath) {
+	if looksLikeCredential(abs) {
 		return nil, &Refusal{Code: CodeCredential, Fields: []string{"the profile path"}, Detail: "the profile path has the shape of a real credential; nothing is read or written"}
 	}
-	project, name, err := locate(profilePath)
+	project, name, profileRel, err := locate(abs)
 	if err != nil {
 		return nil, err
 	}
-	abs, _ := filepath.Abs(profilePath)
-	in := &inputs{Project: project, ProfilePath: abs, ProfileName: name, StagedRoles: map[string]file{}}
-	prof, err := readFile(abs)
+	r, err := openRoot(project)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			r.Close()
+		}
+	}()
+	in = &inputs{Root: r, Project: r.path, ProfileName: name, ProfilePath: r.abs(profileRel), StagedRoles: map[string]file{}}
+	prof, err := r.read(profileRel)
 	if err != nil {
 		return nil, err
 	}
 	if prof == nil {
-		return nil, &Refusal{Code: CodeInput, Detail: fmt.Sprintf("%s does not exist", abs)}
+		return nil, &Refusal{Code: CodeInput, Fields: []string{"the profile"}, Detail: "the v2 profile does not exist"}
 	}
-	in.Read = append(in.Read, abs)
+	in.Read = append(in.Read, in.ProfilePath)
 	in.ProfileText = prof.Data
 	if err := json.Unmarshal(prof.Data, &in.Profile); err != nil || in.Profile == nil {
-		return nil, &Refusal{Code: CodeInput, Detail: fmt.Sprintf("%s is not a v2 profile (a JSON object): %v", abs, err)}
+		return nil, &Refusal{Code: CodeInput, Fields: []string{"the profile"}, Detail: "the profile is not a v2 profile (a JSON object)"}
 	}
-	v2 := filepath.Join(project, dirName)
-	optional := func(path string) (*file, error) {
-		f, err := readFile(path)
+	optional := func(rel string) (*file, error) {
+		f, err := r.read(rel)
 		if f != nil {
-			in.Read = append(in.Read, path)
+			in.Read = append(in.Read, f.Path)
 		}
 		return f, err
 	}
-	if in.LaunchLocal, err = optional(filepath.Join(v2, launchLocalFile)); err != nil {
+	if in.LaunchLocal, err = optional(dirName + "/" + launchLocalFile); err != nil {
 		return nil, err
 	}
-	if in.TeamRules, err = optional(filepath.Join(v2, rulesFile)); err != nil {
+	if in.TeamRules, err = optional(dirName + "/" + rulesFile); err != nil {
 		return nil, err
 	}
-	briefs := filepath.Join(v2, briefsDir)
+	briefs := dirName + "/" + briefsDir
 	if name != defaultProfile {
-		briefs = filepath.Join(briefs, name)
+		briefs += "/" + name
 	}
-	for _, p := range globSorted(filepath.Join(briefs, "*.md")) {
+	matches, err := r.glob(briefs, "*.md")
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range matches {
 		f, err := optional(p)
 		if err != nil {
 			return nil, err
@@ -160,21 +150,25 @@ func readInputs(profilePath string) (*inputs, error) {
 			in.Briefs = append(in.Briefs, *f)
 		}
 	}
-	for _, p := range globSorted(filepath.Join(v2, rolesDir, "*.md")) {
+	if matches, err = r.glob(dirName+"/"+rolesDir, "*.md"); err != nil {
+		return nil, err
+	}
+	for _, p := range matches {
 		f, err := optional(p)
 		if err != nil {
 			return nil, err
 		}
 		if f != nil {
-			in.StagedRoles[strings.TrimSuffix(filepath.Base(p), ".md")] = *f
+			in.StagedRoles[strings.TrimSuffix(path.Base(p), ".md")] = *f
 		}
 	}
 	for _, h := range memberHandles(in.Profile) {
-		for _, dir := range agentDirs(project, name, h) {
-			if err := noSymlinkBelow(project, dir); err != nil {
-				return nil, err
-			}
-			for _, p := range []string{filepath.Join(dir, "extensions", roleLayer, roleFile), filepath.Join(dir, roleFile)} {
+		dirs, err := agentDirs(r, name, h)
+		if err != nil {
+			return nil, err
+		}
+		for _, dir := range dirs {
+			for _, p := range []string{dir + "/extensions/" + roleLayer + "/" + roleFile, dir + "/" + roleFile} {
 				f, err := optional(p)
 				if err != nil {
 					return nil, err
@@ -188,53 +182,33 @@ func readInputs(profilePath string) (*inputs, error) {
 	return in, nil
 }
 
-func globSorted(pattern string) []string {
-	m, _ := filepath.Glob(pattern)
-	sort.Strings(m)
-	return m
-}
-
-// agentDirs are the agent mailbox directories of handle under the project:
-// <project>/.agent-mail/<session>/agents/<handle> for the default profile and
-// <project>/.agent-mail/<profile>/<session>/agents/<handle> for a named one
-// (main's namespace.AMQRoot at 8fd51b93; cli.go scans <base root>/<session>/agents).
-func agentDirs(project, profile, handle string) []string {
-	if profile == defaultProfile {
-		return globSorted(filepath.Join(project, agentMailDir, "*", "agents", handle))
+// agentDirs are the agent mailbox directories of handle below the root:
+// .agent-mail/<session>/agents/<handle> for the default profile and
+// .agent-mail/<profile>/<session>/agents/<handle> for a named one (main's
+// namespace.AMQRoot at 8fd51b93; cli.go scans <base root>/<session>/agents).
+// A symlink among them is a refusal; a plain file is skipped.
+func agentDirs(r *root, profile, handle string) ([]string, error) {
+	base := agentMailDir
+	if profile != defaultProfile {
+		base += "/" + profile
 	}
-	return globSorted(filepath.Join(project, agentMailDir, profile, "*", "agents", handle))
-}
-
-// noSymlinkBelow refuses a path that reaches the project through a symlink
-// at any component below the project root: a v2 input is read, and a v2 file
-// removed, only inside the project (migrate_refused_symlink).
-func noSymlinkBelow(project, path string) error {
-	r, err := filepath.Rel(project, path)
-	if err != nil || strings.HasPrefix(r, "..") {
-		return &Refusal{Code: CodeSymlink, Fields: []string{"a path outside the project"}, Detail: "a v2 file is outside the project root; nothing is read, written or removed"}
+	sessions, err := r.names(base)
+	if err != nil {
+		return nil, err
 	}
-	cur := project
-	for _, part := range strings.Split(r, string(filepath.Separator)) {
-		cur = filepath.Join(cur, part)
-		info, err := os.Lstat(cur)
-		if os.IsNotExist(err) {
-			return nil
-		}
+	sort.Strings(sessions)
+	var out []string
+	for _, s := range sessions {
+		dir := base + "/" + s + "/agents/" + handle
+		isDir, err := r.isDir(dir)
 		if err != nil {
-			return &Refusal{Code: CodeInput, Detail: fmt.Sprintf("stat %s: %v", cur, err)}
+			return nil, err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return &Refusal{Code: CodeSymlink, Fields: []string{filepath.ToSlash(rel0(project, cur))}, Detail: "a symlink on the way to a v2 file; migrate follows none and removes nothing through one"}
+		if isDir {
+			out = append(out, dir)
 		}
 	}
-	return nil
-}
-
-func rel0(project, path string) string {
-	if r, err := filepath.Rel(project, path); err == nil {
-		return r
-	}
-	return path
+	return out, nil
 }
 
 // memberHandles are the handles of the profile's members (a member without a

@@ -235,6 +235,44 @@ One fix commit. Each item has one failing-when-reverted row in
   `merge.local_push_ack`, `clear.signature`); a block under `verifiers` or
   `fleet` names the parent, which is all the table lists.
 
+## Structural round (re-pass on 9845e0b1: M1 and M2)
+
+One commit. The re-pass found seven inputs around the two fixes; the fixes
+became structure instead of per-call-site patches.
+- M1, one output funnel (`runMigrate` in `internal/cli/migrate.go`): the verb
+  collects stdout and the error it would return and passes both through
+  `migrate.UnsafeText` (a credential shape or anything `redact.Block` changes)
+  once; unsafe output is the fixed line `migrate_refused_credential: <class>`,
+  exit 2, nothing else. The classes are closed words (`leak.go`). The flag
+  package prints nothing of its own (its output is discarded; only `-h` prints
+  the static usage). Closes at once: the refusal strings that embed a parent
+  key or a leaf, the filename-carrying errors, the absent-profile error, the
+  `--remove-v2` listing, and anything added later. `BuildRemove` also refuses a
+  credential-shaped removal path before anything is removed (the funnel alone
+  would hide the report after the file was gone). Rows:
+  `TestMigrateVerbFunnelsEveryByteThroughOneCheck` (`{S:{S:1}}`, `{S:S}`, a
+  briefs entry named S that is not a file, an absent profile under a directory
+  named S with a relative argument, a role under `.agent-mail/S` for plan and
+  removal, a flag named S), S built at run time and never on either stream.
+- M2, one root descriptor (`root.go`, `root_unix.go`, `root_other.go`): the
+  project root is resolved once, opened `O_DIRECTORY|O_NOFOLLOW` and kept across
+  plan and apply. Every read (profile, launch.local.json, team-rules.md, briefs,
+  staged roles, every role.md including the layered extensions path), every
+  create and every unlink goes through it, so a symlinked `agents/dev/extensions`
+  refuses at the read. The absolute paths are derived from the resolved root and
+  checked for a credential shape before any read. `root.changed()` compares the
+  descriptor's dev+inode with the path and the apply refuses `root_changed`.
+  `RemovePlan.Apply` and `Plan.Apply` no longer roll back or pre-walk: they stop at
+  the first refusal and return what was done; the verb prints a partial report
+  and exits 3 when anything was done (exit 1 when nothing was). The "nothing
+  removed" wording applies to the plan's refusals only. Rows:
+  `TestMigrateRefusesASymlinkAtTheReadNotOnlyAtRemoval`,
+  `TestMigrateRetargetingTheRootSymlinkChangesNothing`,
+  `TestMigrateApplyRefusesAMovedRoot`,
+  `TestMigrateRemovalStopsAtASymlinkIntroducedAfterThePlan` (a partial result, not
+  a silent continue), `TestMigrateStoppedIsAPartialResultWithExitThree`,
+  `TestRootCreateNeverReplacesAFile`.
+
 ## Gate
 
 Quiet host (0 matching processes). Gate head 73aa1ed1 (the fix commit); the

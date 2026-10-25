@@ -38,6 +38,7 @@ type Unmapped struct {
 
 // Write is one file migrate would write.
 type Write struct {
+	Rel     string // project-relative slash path; "" for a file outside the project (the proposal)
 	Path    string
 	Mode    os.FileMode
 	Content []byte
@@ -58,7 +59,11 @@ type Plan struct {
 	Dead        []string // v2 files dead under decision 6, left in place
 	Writes      []Write
 	TrustCmd    string // the owner-run command, "" when no role prompt was found
+	root        *root  // the one project-root descriptor of the run; Close releases it
 }
+
+// Close releases the project-root descriptor.
+func (p *Plan) Close() { p.root.Close() }
 
 const (
 	reasonNoMeaning = "no 3.0 meaning"
@@ -100,14 +105,23 @@ var memberReasons = map[string]string{
 }
 
 // Build reads the v2 files and plans the migration. It writes nothing.
-func Build(opts Options) (*Plan, error) {
+func Build(opts Options) (plan *Plan, err error) {
 	in, err := readInputs(opts.Profile)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			in.Root.Close()
+		}
+	}()
 	squadPath := team.SquadPath(in.Project)
-	if _, err := os.Lstat(squadPath); err == nil {
-		return nil, &Refusal{Code: CodeSquadExists, Fields: []string{rel(in.Project, squadPath)}, Detail: "squad.yaml is already present; migrate never overwrites it"}
+	top, err := in.Root.names("")
+	if err != nil {
+		return nil, err
+	}
+	if contains(top, team.SquadFileName) {
+		return nil, &Refusal{Code: CodeSquadExists, Fields: []string{team.SquadFileName}, Detail: "squad.yaml is already present; migrate never overwrites it"}
 	}
 	if err := checkCredentials(in); err != nil {
 		return nil, err
@@ -116,9 +130,9 @@ func Build(opts Options) (*Plan, error) {
 	if err := m.run(); err != nil {
 		return nil, err
 	}
-	p := &Plan{Project: in.Project, ProfilePath: in.ProfilePath, ProfileName: in.ProfileName, Read: in.Read, Squad: m.squad}
+	p := &Plan{Project: in.Project, ProfilePath: in.ProfilePath, ProfileName: in.ProfileName, Read: in.Read, Squad: m.squad, root: in.Root}
 	p.SquadText = team.Render(m.squad)
-	p.Writes = append(p.Writes, Write{Path: squadPath, Mode: 0o644, Content: []byte(p.SquadText), Note: fmt.Sprintf("squad.yaml, %d seats", len(m.squad.Seats))})
+	p.Writes = append(p.Writes, Write{Rel: team.SquadFileName, Path: squadPath, Mode: 0o644, Content: []byte(p.SquadText), Note: fmt.Sprintf("squad.yaml, %d seats", len(m.squad.Seats))})
 	m.rolePrompts(p)
 	m.files(p)
 	m.proposal(p, opts)

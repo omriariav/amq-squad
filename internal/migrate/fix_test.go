@@ -115,7 +115,13 @@ func TestMigrateRemoveRefusesASymlinkOnTheWay(t *testing.T) {
 		f, outside := setup(t)
 		swap(t, f, outside)
 		target := filepath.Join(f.project, ".agent-mail", "feature-x", "agents", "counsel", "extensions", roleLayer, "role.md")
-		refusal(t, unlinkUnder(f.project, target), CodeSymlink)
+		r, err := openRoot(f.project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		rel, _ := r.rel(target)
+		refusal(t, r.remove(rel), CodeSymlink)
 		survives(t, f, outside)
 	})
 }

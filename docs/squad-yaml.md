@@ -235,6 +235,27 @@ writes the owner files (`grants.yaml`, `registry.yaml`), and prints every v2
 key it did not map. See `docs/v3-spike/5-migrate-execution.md` for the field
 by field mapping.
 
+- **One root descriptor.** The project root is resolved once (EvalSymlinks) and
+  opened `O_DIRECTORY|O_NOFOLLOW`; the descriptor is kept from the plan to the
+  apply. Every v2 file is read, every project file is created and every v2 file
+  is removed relative to it, one `O_NOFOLLOW` component at a time, so a symlink
+  on the way refuses at the read (`migrate_refused_symlink`), and retargeting
+  the project symlink between plan and apply changes nothing. If the directory
+  at the root path is no longer the one the descriptor holds, the apply
+  refuses `root_changed`.
+- **Refuses before it touches anything; stops at the first refusal after.**
+  The plan's refusals say nothing was written or removed. There is no
+  transaction: a change during `--write` or `--remove-v2` (a file that
+  appeared, a symlink introduced, a root that moved) stops at the first refusal
+  with a partial report of what was already done, which stays done, and exit 3
+  (as uninstall).
+- **One output funnel.** Everything the verb prints, on stdout or as the error
+  the CLI renders, passes `redact.Block` once at the verb boundary. If any of
+  it would change, the verb prints `migrate_refused_credential: <class>` (a
+  closed word: profile path, project path, a key under the profile, a value
+  under the profile, a key under launch.local.json, an input file name, a
+  removal path, the output), exits 2 and prints nothing else.
+
 ## Example
 
 ```yaml

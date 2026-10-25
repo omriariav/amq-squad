@@ -21,6 +21,7 @@ func mustBuild(t *testing.T, f *fixture) *Plan {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	t.Cleanup(p.Close)
 	return p
 }
 

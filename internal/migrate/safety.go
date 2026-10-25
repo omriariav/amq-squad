@@ -18,6 +18,7 @@ const (
 	CodeSquadInvalid  = "migrate_squad_invalid"          // the squad.yaml migrate would write does not load
 	CodeRemoveNoSquad = "migrate_remove_needs_squad"     // --remove-v2 with no (valid) squad.yaml
 	CodeSymlink       = "migrate_refused_symlink"        // a symlink on the way to a v2 file
+	CodeRootChanged   = "root_changed"                   // the project root is no longer the directory the run opened
 )
 
 // Refusal is a migrate refusal. Fields names the v2 fields (or files) behind

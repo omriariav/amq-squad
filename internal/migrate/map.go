@@ -382,7 +382,7 @@ func (m *mapper) rolePrompts(p *Plan) {
 			m.unmap(name, "a second role.md for role "+role+" differs from the one staged")
 		case planned[role] == nil:
 			planned[role] = r.Data
-			p.Writes = append(p.Writes, Write{Path: filepath.Join(m.in.Project, dirName, rolesDir, role+".md"), Mode: 0o644, Content: r.Data, Note: "role prompt " + role + " from " + name})
+			p.Writes = append(p.Writes, Write{Rel: dirName + "/" + rolesDir + "/" + role + ".md", Path: filepath.Join(m.in.Project, dirName, rolesDir, role+".md"), Mode: 0o644, Content: r.Data, Note: "role prompt " + role + " from " + name})
 		}
 	}
 	if len(m.in.AgentRoleMDs) > 0 {
