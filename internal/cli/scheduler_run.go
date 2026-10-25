@@ -207,7 +207,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if c, err := schedulerContext(q); err == nil {
 		sel.ctx = &c
 	}
-	committer := &schedproc.Committer{Step: func(handle string, t task.Task) seatcommit.Result {
+	committer := &schedproc.Committer{Root: root, Step: func(handle string, t task.Task) seatcommit.Result {
 		return commitStep(sel, handle, t, false, *openPR)
 	}, ExitStep: func(handle, taskID, why string) seatcommit.Result {
 		return seatcommit.ExitCheck(seatcommit.Options{Root: root, Handle: handle, Task: task.Task{ID: taskID}, Now: taskNow, Clear: ownerTrust{Root: root}}, why)

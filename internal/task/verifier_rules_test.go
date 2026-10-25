@@ -39,7 +39,7 @@ func TestVerdictTreeMustBeTheLeasesSnapshot(t *testing.T) {
 	if _, err := s.RecordVerdict(a.ID, v, t0); !errors.Is(err, ErrVerdictTreeMismatch) {
 		t.Fatalf("a verdict with no snapshot recorded: %v", err)
 	}
-	if _, err := s.RecordSnapshot(a.ID, "tree-b", t0); err != nil {
+	if _, err := s.RecordSnapshot(a.ID, "tree-b", CommandDigest("/opt/verify"), t0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.RecordVerdict(a.ID, v, t0); !errors.Is(err, ErrVerdictTreeMismatch) {
@@ -49,7 +49,7 @@ func TestVerdictTreeMustBeTheLeasesSnapshot(t *testing.T) {
 	if _, err := s.RecordVerdict(a.ID, v, t0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordSnapshot(a.ID, "tree-c", t0); !errors.Is(err, ErrVerdictTreeMismatch) {
+	if _, err := s.RecordSnapshot(a.ID, "tree-c", CommandDigest("/opt/verify"), t0); !errors.Is(err, ErrVerdictTreeMismatch) {
 		t.Fatalf("the snapshot moved under a recorded verdict: %v", err)
 	}
 	got, err := s.Done(a.ID, "seat-1", "", "", t0)
@@ -120,7 +120,7 @@ func TestUnsealedVerdictIsVerdictMissing(t *testing.T) {
 	check(a.ID, "seat-1", "a verdict inserted with no tag")
 
 	b := claimed(t, s, "seat-2")
-	if _, err := s.RecordSnapshot(b.ID, "tree-y", t0); err != nil {
+	if _, err := s.RecordSnapshot(b.ID, "tree-y", CommandDigest("/opt/verify"), t0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.RecordVerdict(b.ID, Verdict{Verifier: VerifierTests, Result: VerdictFail, Source: "seat commit verifier", Tree: "tree-y", CommandDigest: CommandDigest("/opt/verify")}, t0); err != nil {
@@ -130,7 +130,7 @@ func TestUnsealedVerdictIsVerdictMissing(t *testing.T) {
 	check(b.ID, "seat-2", "a sealed fail edited to pass")
 
 	c := claimed(t, s, "seat-3")
-	if _, err := s.RecordSnapshot(c.ID, "tree-z", t0); err != nil {
+	if _, err := s.RecordSnapshot(c.ID, "tree-z", CommandDigest("/opt/verify"), t0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierTests, Result: VerdictPass, Source: "seat commit verifier", Tree: "tree-z", CommandDigest: CommandDigest("/opt/verify")}, t0); err != nil {

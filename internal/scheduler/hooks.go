@@ -98,6 +98,9 @@ type CommitResult struct {
 	// the step again. The committer turns a deferral that repeats into a
 	// refusal.
 	Deferred bool
+	// Running is a step still running off the tick (Detail names its state:
+	// running, waiting for a verifier slot); the next tick asks again.
+	Running bool
 	// Quarantine: the refusal quarantines the seat (global_config_changed):
 	// the store refuses it any new lease until the owner clears it, and the
 	// scheduler closes it.

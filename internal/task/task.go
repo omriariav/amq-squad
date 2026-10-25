@@ -80,6 +80,13 @@ type Lease struct {
 	// Snapshot is the tree the harness's verifier runs on in this attempt
 	// (RecordSnapshot: the commit step's snapshot, the probe's checkout).
 	Snapshot string `json:"snapshot,omitempty"`
+	// SnapshotTag seals the snapshot (the session seed over task, attempt,
+	// holder and tree): a sealed snapshot with no verdict is a verifier run
+	// that started and never recorded, which never runs again by itself.
+	SnapshotTag string `json:"snapshot_tag,omitempty"`
+	// SnapshotCommand is the digest of the command announced with the
+	// snapshot (inside its seal): the verdict on it is of that command.
+	SnapshotCommand string `json:"snapshot_command,omitempty"`
 	// Verdict is the harness's verdict on this attempt (RecordVerdict): the
 	// only way a class with a mechanical verifier completes.
 	Verdict *Verdict `json:"verdict,omitempty"`

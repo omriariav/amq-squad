@@ -174,11 +174,15 @@ migrated):
   attempt ends `blocked` (a failed attempt for the router's escalation) and
   the report stays until the lead's reset. A re-armed commit (a widening, a
   cleared quarantine) is a new lease and needs its own verdict.
-- The sealed verdict (v3-5-verifier): the harness first records the tree
-  its verifier runs on (`RecordSnapshot`, `lease.snapshot`: the commit
-  step's snapshot tree, the probe's checkout), then the verdict, which must
-  name that tree (`verdict.tree`, else `verdict_tree_mismatch`) and the
-  digest of the command that ran (`verdict.command_digest`). The store seals
+- The sealed verdict (v3-5-verifier): just before its verifier starts the
+  harness records, sealed, the tree and the command digest it runs
+  (`RecordSnapshot`, `lease.snapshot`, `snapshot_command`, `snapshot_tag`),
+  then the verdict, which must name that tree (`verdict.tree`, else
+  `verdict_tree_mismatch`) and that command (`verdict.command_digest`). A
+  sealed snapshot with no verdict of it is a run that never recorded: it is
+  never run again on that snapshot (`verifier_interrupted` until the lead's
+  reset). On the same tree a verdict of another command (the grant changed)
+  is superseded by the new run (`prev_command_digest`). The store seals
   it with the session seed (`verdict.tag`, over the verdict, its task,
   attempt and holder); completion verifies the seal and the tree, and a
   verdict without them is `verdict_missing`. A verdict's detail is at most

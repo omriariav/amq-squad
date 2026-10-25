@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -67,56 +66,5 @@ func TestProbeRunsRecordTheirPredicateAsAVerdict(t *testing.T) {
 	}
 	if v.Tag != "" || !strings.Contains(v.Source, "unsealed") {
 		t.Fatalf("doctor's verdict does not say it is unsealed: %q %q", v.Source, v.Tag)
-	}
-}
-
-// v3-5-verifier rule 3 (the coordinator's addition): a probe run as a
-// scheduled task completes only on the predicate verdict the harness
-// recorded on its lease, sealed with the session seed: no verdict blocks
-// (verdict_missing), a failed predicate blocks (verdict_failed), a held
-// predicate completes.
-func TestScheduledProbeTaskCompletesOnlyOnItsPredicateVerdict(t *testing.T) {
-	tree, err := probeTree(context.Background(), probeCheckout(t, expectedFiles(), false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := task.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.Verifiers = func(tk task.Task) (string, bool, error) { return "r12-probe", tk.Class == "implement", nil }
-	now := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
-	probeTask := func(holder string) task.Task {
-		t.Helper()
-		a, err := s.Add(task.AddInput{Title: "r12 probe", Class: "implement"}, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Claim(a.ID, holder, nil, time.Hour, now); err != nil {
-			t.Fatal(err)
-		}
-		return a
-	}
-	a := probeTask("probe-1")
-	if got, err := s.Done(a.ID, "probe-1", "RESULT: PASS", "", now); err != nil || got.BlockReason != task.BlockVerdictMissing {
-		t.Fatalf("a probe task's report with no predicate verdict: %s %s %v", got.State, got.BlockReason, err)
-	}
-	b := probeTask("probe-2")
-	if _, err := RecordProbeVerdict(s, b.ID, ProbeRun{Tree: tree, Checks: map[string]bool{"go_test_confirmed": false}}, now); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := s.Done(b.ID, "probe-2", "RESULT: PASS", "", now); err != nil || got.BlockReason != task.BlockVerdictFailed {
-		t.Fatalf("a probe task whose predicate failed: %s %s %v", got.State, got.BlockReason, err)
-	}
-	c := probeTask("probe-3")
-	if _, err := RecordProbeVerdict(s, c.ID, ProbeRun{Pass: true, Tree: tree}, now); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.Done(c.ID, "probe-3", "RESULT: PASS", "", now)
-	if err != nil || got.State != task.StateCompleted {
-		t.Fatalf("a probe task whose predicate held: %s %s %v", got.State, got.BlockReason, err)
-	}
-	if v := got.Attempts[0].Verdict; v == nil || v.Tag == "" || v.Tree != tree || v.Source != ProbeSourceScheduled || v.Verifier != task.VerifierTests {
-		t.Fatalf("the completed probe task's verdict: %+v", v)
 	}
 }

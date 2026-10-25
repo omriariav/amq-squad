@@ -201,6 +201,21 @@ type Grants struct {
 	VerifierTimeout     time.Duration `json:"verifier_timeout,omitempty"`
 	VerifierOutputLimit int           `json:"verifier_output_limit,omitempty"`
 	VerifierParallelism int           `json:"verifier_parallelism,omitempty"`
+	// VerifierArgv is a class's argv when the grant names its command as a
+	// list (an item may hold a blank); Verifiers then holds its JSON array.
+	VerifierArgv map[string][]string `json:"verifier_argv,omitempty"`
+	// VerifierGoproxy is the verifier's GOPROXY (verifier_goproxy); "" is
+	// Go's own default.
+	VerifierGoproxy string `json:"verifier_goproxy,omitempty"`
+}
+
+// VerifierArgs is the class's verifier argv: the grant's list, else its
+// command split on blanks; nil when none.
+func (g Grants) VerifierArgs(class string) []string {
+	if a := g.VerifierArgv[class]; len(a) > 0 {
+		return slices.Clone(a)
+	}
+	return strings.Fields(g.Verifiers[class])
 }
 
 // Clear signature modes of the owner file's clear.signature.
@@ -369,6 +384,7 @@ func Narrow(g Grants, n Narrowing) (Grants, []string) {
 	out.ProtectedPaths = slices.Clone(g.ProtectedPaths)
 	out.Merge = slices.Clone(g.Merge)
 	out.Verifiers = maps.Clone(g.Verifiers)
+	out.VerifierArgv = maps.Clone(g.VerifierArgv)
 	out.VerifierGate = slices.Clone(g.VerifierGate)
 	var ignored []string
 	switch n.Mode {

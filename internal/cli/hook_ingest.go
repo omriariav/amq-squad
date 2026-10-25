@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/ledger"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -47,10 +47,10 @@ type hookLedgerLine struct {
 	PayloadSHA256 string          `json:"payload_sha256"`    // over the full raw stdin bytes
 	PayloadBytes  int64           `json:"payload_bytes"`
 	Malformed     bool            `json:"malformed,omitempty"`
-	Truncated     bool            `json:"truncated,omitempty"`     // over 1 MiB: only the first 64 KiB kept
-	Payload       json.RawMessage `json:"payload,omitempty"`       // the compacted payload
-	PayloadBase64 string          `json:"payload_b64,omitempty"`   // raw bytes when malformed or truncated
-	LeaseRenewal  string          `json:"lease_renewal,omitempty"` // renewed | skipped (store lock busy); 2b-1
+	Truncated     bool            `json:"truncated,omitempty"`      // over 1 MiB: only the first 64 KiB kept
+	Payload       json.RawMessage `json:"payload,omitempty"`        // the compacted payload
+	PayloadPrefix string          `json:"payload_prefix,omitempty"` // malformed or truncated: the redacted printable prefix, never the bytes
+	LeaseRenewal  string          `json:"lease_renewal,omitempty"`  // renewed | skipped (store lock busy); 2b-1
 }
 
 const hookTruncatedPrefix = 64 << 10
@@ -79,7 +79,7 @@ func runEvidenceIngest(args []string) error {
 		}
 		line = newHookLedgerLine(id, head[:hookTruncatedPrefix], hookNow())
 		line.Truncated, line.Malformed, line.Payload = true, false, nil
-		line.PayloadBase64 = base64.StdEncoding.EncodeToString(head[:hookTruncatedPrefix])
+		line.PayloadPrefix = printablePrefix(head[:hookTruncatedPrefix])
 		line.PayloadBytes, line.PayloadSHA256 = int64(len(head))+rest, "sha256:"+hex.EncodeToString(sum.Sum(nil))
 	}
 	line.LeaseRenewal = renewLeaseOnToolResult(id, line)
@@ -128,7 +128,7 @@ func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLin
 	line := hookLedgerLine{Schema: hookLedgerSchema, At: now.UTC().Format(time.RFC3339Nano), Handle: id.Handle, Session: id.Session, PayloadSHA256: "sha256:" + hex.EncodeToString(sum[:]), PayloadBytes: int64(len(raw))}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err != nil {
-		line.Malformed, line.PayloadBase64 = true, base64.StdEncoding.EncodeToString(raw)
+		line.Malformed, line.PayloadPrefix = true, printablePrefix(raw)
 		return line
 	}
 	line.Payload = compact.Bytes()
@@ -157,6 +157,29 @@ func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLin
 		line.Outcome = "error"
 	}
 	return line
+}
+
+// hookPrefixKeep is how much of a malformed or truncated payload the line
+// keeps, as printable redacted text.
+const hookPrefixKeep = 4 << 10
+
+// printablePrefix is a payload kept only as evidence of its shape (v3-5
+// verifier fix, (ii)): its first hookPrefixKeep bytes, every byte that is not
+// printable ASCII, a tab or a newline replaced by '.', then redacted. With
+// the length and the sha256 beside it, never the bytes themselves.
+func printablePrefix(raw []byte) string {
+	if len(raw) > hookPrefixKeep {
+		raw = raw[:hookPrefixKeep]
+	}
+	b := make([]byte, len(raw))
+	for i, c := range raw {
+		if c == '\n' || c == '\t' || (c >= 0x20 && c < 0x7f) {
+			b[i] = c
+		} else {
+			b[i] = '.'
+		}
+	}
+	return redact.Text(string(b))
 }
 
 // appendHookLedger appends line through the ledger's one writer

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -22,11 +21,9 @@ import (
 // model's processes are gone, its git metadata left out: it is the model's
 // to edit), and the command digest over the predicate version and the
 // prompt. doctor runs the probe outside any session: its verdicts carry no
-// seal and say so. When the probe runs as a scheduled task (milestone B's
-// probe role through the scheduler and the commit step) the harness records
-// the run's verdict on that task's lease with RecordProbeVerdict: the
-// session seed seals it through task.Store.RecordVerdict like any verifier's,
-// and the task completes only on it.
+// seal and say so (ProbeRecord.Verdicts through Tally). The per-run tree and
+// verdict wiring of RunProbe is an owner-session acceptance row (it needs
+// the pi seat and a local model).
 
 // ProbeVerifier is the verifier name of a probe run's own verdict.
 const ProbeVerifier = "r12"
@@ -34,16 +31,12 @@ const ProbeVerifier = "r12"
 // ProbeSourceUnsealed is the source of a doctor probe run's verdict.
 const ProbeSourceUnsealed = "r12 probe predicate " + ProbePredicate + " (doctor, outside a session: unsealed)"
 
-// ProbeSourceScheduled is the source of a scheduled probe task's verdict.
-const ProbeSourceScheduled = "r12 probe predicate " + ProbePredicate + " (scheduled task)"
-
 // PredicateDigest is the probe's command digest: the predicate version and
 // the prompt.
 func PredicateDigest() string { return task.CommandDigest(ProbePredicate + "\n" + ProbePrompt) }
 
 // PredicateVerdict is the run's predicate as a verdict of the named verifier
-// (ProbeVerifier for doctor's record; the task class's verifier for a
-// scheduled probe task), unsealed.
+// (ProbeVerifier for doctor's record), unsealed.
 func (r ProbeRun) PredicateVerdict(verifier, source string) task.Verdict {
 	v := task.Verdict{Verifier: verifier, Result: task.VerdictFail, Source: source, Tree: r.Tree, CommandDigest: PredicateDigest()}
 	if r.Pass {
@@ -63,24 +56,6 @@ func (r ProbeRun) PredicateVerdict(verifier, source string) task.Verdict {
 		v.Detail = strings.TrimSpace(v.Detail + "; a false success")
 	}
 	return v
-}
-
-// RecordProbeVerdict is the harness's record of a scheduled probe task's
-// run: the probe checkout's tree as the lease's snapshot, then the run's
-// predicate as the verdict of the task class's verifier, sealed by the
-// store with the session seed.
-func RecordProbeVerdict(s task.Store, id string, run ProbeRun, now time.Time) (task.Task, error) {
-	t, err := s.Get(id)
-	if err != nil {
-		return t, err
-	}
-	if run.Tree == "" {
-		return t, fmt.Errorf("the probe run carries no checkout tree")
-	}
-	if _, err := s.RecordSnapshot(id, run.Tree, now); err != nil {
-		return t, err
-	}
-	return s.RecordVerdict(id, run.PredicateVerdict(task.ClassVerifier(t.Class), ProbeSourceScheduled), now)
 }
 
 // probeTree is the tree of a probe run directory: every regular file and

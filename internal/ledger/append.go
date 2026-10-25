@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	redactrule "github.com/omriariav/amq-squad/v3/internal/redact"
 )
 
 // The one writer of a seat's hook ledger (moved here from the evidence
 // ingest verb by v3-5-verifier, so the commit step writes the verifier's
-// evidence line through the same append): the package's readers are
-// unchanged and still never write.
+// evidence line through the same append). Every line is redacted on its way
+// to disk (RedactForWrite), not only when it is read.
 
 // LineSchema is the schema of a hook ledger line (the ingest verb's
 // hookLedgerLine; the verifier's line uses it too).
@@ -44,17 +45,68 @@ func Append(path string, line func(seq uint64) any) (uint64, error) {
 		if torn {
 			buf.WriteByte('\n')
 		}
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(line(seq)); err != nil {
+		raw, err := json.Marshal(line(seq))
+		if err != nil {
 			return err
 		}
+		red, err := RedactForWrite(raw)
+		if err != nil {
+			return err
+		}
+		buf.Write(red)
+		buf.WriteByte('\n')
 		if _, err := f.Write(buf.Bytes()); err != nil {
 			return err
 		}
 		return f.Sync()
 	})
 	return seq, err
+}
+
+// RedactForWrite is the redaction a ledger line passes before it is
+// written: every value under a secret-class name that is not a number
+// becomes [redacted]; every other string passes the secret-argument rule
+// and the credential-shape rule (redact.Text), an argv's element after a
+// secret flag included; numbers stay (the usage counters status and routing
+// read). The line is re-encoded without HTML escaping (its keys sorted).
+func RedactForWrite(raw []byte) ([]byte, error) {
+	var v any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(redactWrite(v)); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+func redactWrite(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			if _, isNumber := val.(json.Number); SecretName(k) && !isNumber {
+				x[k] = "[redacted]"
+			} else {
+				x[k] = redactWrite(val)
+			}
+		}
+	case []any:
+		for i := range x {
+			if prev, ok := x[max(i-1, 0)].(string); i > 0 && ok && secretFlag(prev) {
+				x[i] = "[redacted]"
+				continue
+			}
+			x[i] = redactWrite(x[i])
+		}
+	case string:
+		return redactrule.Text(scrubArgs(x))
+	}
+	return v
 }
 
 // lastSeq finds the seq of the last parseable line, reading backwards in

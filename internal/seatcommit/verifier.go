@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +63,11 @@ const (
 	ReasonVerifierTimeout = "verifier_timeout"
 	ReasonVerifierOutput  = "verifier_output_exceeded"
 	ReasonVerifierStart   = "verifier_start_failed"
+	// ReasonVerifierInterrupted defers a step whose verifier started on this
+	// snapshot and never recorded (the harness stopped mid-run): it never
+	// runs again on the same snapshot by itself; the lead's reset (a new
+	// lease) or the committer's deferral limit (commit_failed) ends it.
+	ReasonVerifierInterrupted = "verifier_interrupted"
 )
 
 // VerifierSource is the source the commit step's verdicts carry.
@@ -123,7 +129,7 @@ func planVerifier(o Options) (*verifierPlan, string, string, string) {
 		return nil, "", "", ""
 	}
 	timeout, limit, par := g.VerifierBounds()
-	p := &verifierPlan{class: class, command: cmd, digest: task.CommandDigest(cmd), argv: strings.Fields(cmd), timeout: timeout, limit: limit, parallelism: par}
+	p := &verifierPlan{class: class, command: cmd, digest: task.CommandDigest(cmd), argv: g.VerifierArgs(class), timeout: timeout, limit: limit, parallelism: par}
 	name := p.argv[0]
 	switch {
 	case filepath.IsAbs(name):
@@ -178,23 +184,41 @@ func verify(o Options, sh *shadow, res Result) (Result, bool) {
 	}
 	out := &VerifierOutcome{Class: p.class, CommandDigest: p.digest, Tree: res.Tree}
 	// A re-run of the step (a deferred push or PR) finds the attempt's
-	// verdict on this tree and this command: it is not run again.
-	if v := cur.Lease.Verdict; v != nil && v.Tree == res.Tree && v.CommandDigest == p.digest {
+	// verdict on this tree and this command: it is not run again. Only a
+	// sealed verdict is reused (P1-a): one written into the lease without
+	// the session seed is no verdict, and the verifier runs.
+	v, unsealed := store.SealedVerdict(cur)
+	if v != nil && v.Tree == res.Tree && v.CommandDigest == p.digest {
 		out.Result, out.Reused = v.Result, true
 		res.Verifier = out
 		if v.Result != task.VerdictPass {
 			return res.refuse(task.BlockVerdictFailed, task.RouteLead, v.Detail), true
 		}
-		res.Notes = append(res.Notes, "the verifier's pass verdict on tree "+res.Tree+" was already recorded")
+		res.Notes = append(res.Notes, "the verifier's sealed pass verdict on tree "+res.Tree+" was already recorded")
 		return res, false
 	}
-	if _, err := store.RecordSnapshot(o.Task.ID, res.Tree, o.Now()); err != nil {
-		if errors.Is(err, task.ErrVerdictTreeMismatch) {
-			return res.refuse(task.BlockVerdictTreeMismatch, task.RouteLead, err.Error()), true
-		}
-		return res.defer_("the verifier's snapshot: " + err.Error()), true
+	if cur.Lease.Verdict != nil && v == nil {
+		res.Notes = append(res.Notes, task.BlockVerdictMissing+": the lease's verdict is not the harness's ("+unsealed+"); the verifier runs")
 	}
-	run, err := runVerifier(o, sh, res.Tree, p)
+	// A sealed snapshot of this tree and command with no verdict of it: the
+	// verifier started and never recorded (the harness stopped mid-run). It
+	// never runs again on the same snapshot by itself.
+	if cur.Lease.Snapshot == res.Tree && cur.Lease.SnapshotCommand == p.digest && store.SnapshotSealed(cur) {
+		r := res.defer_(fmt.Sprintf("%s: the verifier started on tree %s and recorded no verdict (the harness stopped mid-run); it does not run again on this snapshot: the lead's reset gives a new lease", ReasonVerifierInterrupted, res.Tree))
+		r.ReasonCode = ReasonVerifierInterrupted
+		return r, true
+	}
+	// The snapshot is recorded, sealed, just before the verifier starts.
+	started := func() error {
+		if _, err := store.RecordSnapshot(o.Task.ID, res.Tree, p.digest, o.Now()); err != nil {
+			return err
+		}
+		return nil
+	}
+	run, err := runVerifier(o, sh, res.Tree, p, started)
+	if errors.Is(err, task.ErrVerdictTreeMismatch) {
+		return res.refuse(task.BlockVerdictTreeMismatch, task.RouteLead, err.Error()), true
+	}
 	if err != nil {
 		return res.defer_("the verifier: " + err.Error()), true
 	}
@@ -222,8 +246,8 @@ func verify(o Options, sh *shadow, res Result) (Result, bool) {
 		return quarantine(o, res, code, changes, "while the verifier ran (its verdict is discarded, nothing is pushed)"), true
 	}
 	detail = verdictDetail(p, run)
-	v := task.Verdict{Verifier: task.ClassVerifier(p.class), Result: out.Result, Source: VerifierSource, Detail: detail, Tree: res.Tree, CommandDigest: p.digest}
-	if _, err := store.RecordVerdict(o.Task.ID, v, o.Now()); err != nil {
+	verdict := task.Verdict{Verifier: task.ClassVerifier(p.class), Result: out.Result, Source: VerifierSource, Detail: detail, Tree: res.Tree, CommandDigest: p.digest}
+	if _, err := store.RecordVerdict(o.Task.ID, verdict, o.Now()); err != nil {
 		if errors.Is(err, task.ErrVerdictTreeMismatch) {
 			return res.refuse(task.BlockVerdictTreeMismatch, task.RouteLead, err.Error()), true
 		}
@@ -250,7 +274,13 @@ func verdictDetail(p *verifierPlan, run verifierRun) string {
 	head += "; the full redacted output is in the seat's evidence ledger; output tail:\n"
 	tail := string(run.output)
 	if room := task.VerdictDetailCap - len(head); len(tail) > room {
+		// The tail never starts inside a line (P1-b).
 		tail = tail[len(tail)-max(room, 0):]
+		if i := strings.IndexByte(tail, '\n'); i >= 0 {
+			tail = tail[i+1:]
+		} else {
+			tail = ""
+		}
 	}
 	return strings.TrimRight(head+tail, "\n")
 }
@@ -267,7 +297,7 @@ type verifierRun struct {
 
 // runVerifier takes a slot, checks the tree out into a fresh shadow
 // worktree under a private TMPDIR, and runs the command there.
-func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan) (verifierRun, error) {
+func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan, started func() error) (verifierRun, error) {
 	release, err := verifierSlot(o, p)
 	if err != nil {
 		return verifierRun{}, err
@@ -296,7 +326,11 @@ func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan) (verifierR
 	} else {
 		cmd = exec.Command(p.argv[0], p.argv[1:]...)
 	}
-	cmd.Dir, cmd.Env, cmd.Stdin = work, verifierEnv(o.Root, private), nil
+	modcache, err := verifierModCache(o.Root)
+	if err != nil {
+		return verifierRun{}, err
+	}
+	cmd.Dir, cmd.Env, cmd.Stdin = work, verifierEnv(o.Root, private, modcache, o.Grants.Grants.VerifierGoproxy), nil
 	buf := &boundedOutput{limit: p.limit}
 	cmd.Stdout, cmd.Stderr = buf, buf
 	cmd.WaitDelay = verifierWaitDelay
@@ -313,6 +347,9 @@ func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan) (verifierR
 		}
 	}
 	buf.over = func() { kill(ReasonVerifierOutput) }
+	if err := started(); err != nil {
+		return verifierRun{}, err
+	}
 	start := time.Now()
 	run := verifierRun{}
 	if err := cmd.Start(); err != nil {
@@ -334,11 +371,40 @@ func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan) (verifierR
 	}
 	raw, truncated := buf.bytes()
 	run.truncated = truncated
-	if truncated {
-		raw = append(raw, []byte(fmt.Sprintf("\n[amq-squad: verifier output truncated at %d bytes]\n", p.limit))...)
-	}
-	run.output = []byte(redact.Text(string(raw))) // binary output too: no NUL exemption
+	run.output = boundedRedacted(raw, truncated, p.limit)
 	return run, nil
+}
+
+// boundedRedacted is the output as the ledger keeps it (P1-b): a truncated
+// capture loses its partial last line first (a value cut at the cap would
+// escape the redaction's matchers), then every line is redacted (binary
+// output too: no NUL exemption), then the result is cut again at a line end
+// within the limit, and the marker says so.
+func boundedRedacted(raw []byte, truncated bool, limit int) []byte {
+	if truncated {
+		if i := bytes.LastIndexByte(raw, '\n'); i >= 0 {
+			raw = raw[:i+1]
+		} else {
+			raw = nil
+		}
+	}
+	out := redact.Text(string(raw))
+	if len(out) > limit {
+		out = out[:limit]
+		truncated = true
+		if i := strings.LastIndexByte(out, '\n'); i >= 0 {
+			out = out[:i+1]
+		} else {
+			out = ""
+		}
+	}
+	if truncated {
+		if out != "" && !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+		out += fmt.Sprintf("[amq-squad: verifier output truncated at %d bytes; the partial last line was dropped]\n", limit)
+	}
+	return []byte(out)
 }
 
 // boundedOutput keeps the first limit bytes of the combined output and
@@ -377,8 +443,13 @@ func (b *boundedOutput) bytes() ([]byte, bool) {
 }
 
 // verifierEnv is the seat class of environment, built from nothing (rule
-// 8): no variable of the harness's own environment is carried.
-func verifierEnv(root, private string) []string {
+// 8): no variable of the harness's own environment is carried. GOCACHE,
+// GOTMPDIR and GOPATH are private per run; the module cache is the
+// verifier's own under the session root (never the owner's or the
+// harness's), read-only to the build (-mod=readonly), checked against the
+// checksum database (GOSUMDB is left at Go's default, on); GOPROXY is the
+// grant's verifier_goproxy, else Go's default.
+func verifierEnv(root, private, modcache, goproxy string) []string {
 	tmp := filepath.Join(private, "tmp")
 	env := []string{
 		"PATH=" + ToolsDir(root),
@@ -386,10 +457,36 @@ func verifierEnv(root, private string) []string {
 		"TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp,
 		"LC_ALL=C", "LANG=C",
 		"GOENV=off", "GOCACHE=" + filepath.Join(private, "gocache"), "GOTMPDIR=" + filepath.Join(private, "gotmp"),
-		"GOPATH=" + filepath.Join(private, "gopath"), "GOWORK=off", "GOTOOLCHAIN=local", "GOFLAGS=",
+		"GOPATH=" + filepath.Join(private, "gopath"), "GOMODCACHE=" + modcache, "GOWORK=off", "GOTOOLCHAIN=local", "GOFLAGS=-mod=readonly",
 		"GIT_TERMINAL_PROMPT=0", "GIT_CEILING_DIRECTORIES=" + private,
 	}
+	if goproxy != "" {
+		env = append(env, "GOPROXY="+goproxy)
+	}
 	return append(env, hardenedVars...)
+}
+
+// verifierModCache is the verifier-only module cache under the session root
+// (verifiers/gomodcache, 0700): created when absent; a symbolic link, a
+// non-directory or a directory open to others is refused.
+func verifierModCache(root string) (string, error) {
+	dir := filepath.Join(VerifierDir(root), "gomodcache")
+	if err := os.MkdirAll(VerifierDir(root), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+		return "", err
+	}
+	st, err := os.Lstat(dir)
+	switch {
+	case err != nil:
+		return "", err
+	case !st.IsDir():
+		return "", fmt.Errorf("the verifier's module cache %s is not a plain directory", dir)
+	case st.Mode().Perm()&0o077 != 0 && runtime.GOOS != "windows":
+		return "", fmt.Errorf("the verifier's module cache %s has mode %04o, want 0700", dir, st.Mode().Perm())
+	}
+	return dir, nil
 }
 
 // verifierSlot takes one of the parallelism lock-file slots under the

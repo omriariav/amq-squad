@@ -137,6 +137,8 @@ type Scheduler struct {
 	// toRelease are gone seats whose checks were decided: their slots are
 	// released once nothing for them is queued and the ledger says so.
 	toRelease map[string]bool
+	// commitState is each running commit step's last reported state (v3-5-verifier).
+	commitState map[string]string
 }
 
 // Options configure a production scheduler (New).
@@ -474,11 +476,18 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		logAccepted(got, holder, log)
 		return nil
 	}
+	s.noteAdopted(holder, t.ID, log)
 	res := s.Committer.Commit(holder, t)
+	if res.Running {
+		s.commitRunning(holder, t.ID, res.Detail, now, log)
+		return nil
+	}
 	if res.Deferred {
 		log(Decision{Kind: "commit_deferred", TaskID: t.ID, Seat: holder, Reason: res.Detail})
 		return nil
 	}
+	// The step decided: its exits-queue entry goes as the result is recorded.
+	defer s.commitEnded(t.ID)
 	if res.OK {
 		// The acceptance and the binding the merge train reads (3-2) are one
 		// store transaction (P2 of the milestone B first pass); a PR number

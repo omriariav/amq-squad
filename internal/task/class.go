@@ -80,6 +80,10 @@ type Verdict struct {
 	// so a verdict written into the store without the seed is
 	// verdict_missing.
 	Tag string `json:"tag,omitempty"`
+	// PrevCommandDigest is the command digest of the verdict this one
+	// superseded on the same tree (the grant's command changed between two
+	// runs of one attempt), inside the signed bytes.
+	PrevCommandDigest string `json:"prev_command_digest,omitempty"`
 }
 
 // ValidClass reports whether c is in the closed class list.

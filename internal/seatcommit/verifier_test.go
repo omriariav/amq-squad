@@ -209,10 +209,10 @@ func TestVerifierOutputIsBoundedAndRedactedIntoTheLedger(t *testing.T) {
 		t.Fatal("no verifier line in the evidence ledger")
 	}
 	out := l.Payload.Output
-	if strings.Contains(out, shaped) || !strings.Contains(out, redact.Placeholder) {
+	if strings.Contains(out, shaped) || !(strings.Contains(out, redact.Placeholder) || strings.Contains(out, "token=[redacted]")) {
 		t.Fatal("the ledger's verifier output did not pass the redaction step")
 	}
-	if !strings.Contains(out, "[amq-squad: verifier output truncated at 4096 bytes]") || len(out) > 4096+200 {
+	if !strings.Contains(out, "[amq-squad: verifier output truncated at 4096 bytes; the partial last line was dropped]") || len(out) > 4096+200 {
 		t.Fatalf("the output is not truncated at the limit with the marker (%d bytes)", len(out))
 	}
 }
@@ -260,7 +260,8 @@ func TestUnconfiguredVerifierRunsNothingAtTheCommitStep(t *testing.T) {
 func TestFailVerdictBlocksWithTheTailAndNoPush(t *testing.T) {
 	f := newFixture(t)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n\n// red\n")
-	f.verifying(f.script("v", "echo FIRST-LINE\ni=0\nwhile [ $i -lt 400 ]; do echo line-$i-0123456789abcdef; i=$((i+1)); done\necho LAST-LINE\nexit 1\n"))
+	shaped := "xox" + "b-" + "Zq81Rt0LmN4pW7" // built at run time, never a literal
+	f.verifying(f.script("v", "echo FIRST-LINE\ni=0\nwhile [ $i -lt 400 ]; do echo line-$i-0123456789abcdef; i=$((i+1)); done\necho seen "+shaped+"\necho LAST-LINE\nexit 1\n"))
 	tk := f.reportedBare("cmd/**")
 	res := f.run(tk)
 	if res.ReasonCode != task.BlockVerdictFailed || res.Pushed || f.originBranch() != "" {
@@ -272,6 +273,9 @@ func TestFailVerdictBlocksWithTheTailAndNoPush(t *testing.T) {
 	}
 	if after.BlockReason != task.BlockVerdictFailed || after.BlockRoute != task.RouteLead || len(after.BlockDetail) > task.VerdictDetailCap {
 		t.Fatalf("the block: %s %s, %d bytes of detail", after.BlockReason, after.BlockRoute, len(after.BlockDetail))
+	}
+	if strings.Contains(after.BlockDetail, shaped) {
+		t.Fatal("the block detail carries a credential: the tail is not the redacted output")
 	}
 	if !strings.Contains(after.BlockDetail, "LAST-LINE") || strings.Contains(after.BlockDetail, "FIRST-LINE") {
 		t.Fatal("the block detail is not the output's tail")

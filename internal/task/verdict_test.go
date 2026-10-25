@@ -19,7 +19,7 @@ func harnessPass(t testing.TB, s Store, id string, now time.Time) {
 		return
 	}
 	// The harness records the tree first, then the sealed verdict on it.
-	if _, err := s.RecordSnapshot(id, "test-tree", now); err != nil {
+	if _, err := s.RecordSnapshot(id, "test-tree", CommandDigest("test"), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.RecordVerdict(id, Verdict{Verifier: ClassVerifier(got.Class), Result: VerdictPass, Source: "test harness", Tree: "test-tree", CommandDigest: CommandDigest("test")}, now); err != nil {
@@ -68,7 +68,7 @@ func TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict(t *testing.T) {
 	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierTests, Result: VerdictPass, Source: "x"}, t0); err == nil {
 		t.Fatal("a verdict of another verifier was recorded")
 	}
-	if _, err := s.RecordSnapshot(c.ID, "test-tree", t0); err != nil {
+	if _, err := s.RecordSnapshot(c.ID, "test-tree", CommandDigest("test"), t0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.RecordVerdict(c.ID, Verdict{Verifier: VerifierExitCode, Result: VerdictFail, Source: "probe", Detail: "exit 1", Tree: "test-tree", CommandDigest: CommandDigest("test")}, t0); err != nil {
