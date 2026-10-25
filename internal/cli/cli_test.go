@@ -302,6 +302,7 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"pi":          true,
 		"remote":      true,
 		"scheduler":   true,
+		"uninstall":   true,
 	}
 	for _, c := range commandNames("") {
 		if !expected[c] {

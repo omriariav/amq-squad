@@ -489,7 +489,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 115
+  current_lines: 117
   fate: keep
   target_lines: 101
   cluster: C29
@@ -2093,6 +2093,15 @@ entries:
   extract: "briefCandidateEnvelope (:424)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
   status: deleted
+- path: internal/cli/uninstall.go
+  v2_lines: 0
+  current_lines: 108
+  fate: new
+  target_lines: 108
+  cluster: cli
+  extract: ""
+  reason: "5-uninstall: amq-squad uninstall verb, dry run by default; --write, --owner-files, --purge"
+  status: new
 - path: internal/cli/v3_holding.go
   v2_lines: 832
   fate: shrink
@@ -2560,9 +2569,9 @@ entries:
   status: new
 - path: internal/fsanchor/pi_extra_unix.go
   v2_lines: 0
-  current_lines: 104
+  current_lines: 148
   fate: new
-  target_lines: 104
+  target_lines: 148
   cluster: fsanchor
   extract: ""
   reason: "4-1 review 2: descriptor-relative staging (mkdir, create, lock, rename, remove) for the pi cold install"
@@ -3702,9 +3711,9 @@ entries:
   status: new
 - path: internal/schedproc/rebuild.go
   v2_lines: 0
-  current_lines: 51
+  current_lines: 104
   fate: new
-  target_lines: 51
+  target_lines: 104
   cluster: schedproc
   extract: ""
   reason: "brief 2b-2 milestone B fix 2 (N2): the seat map rebuilt from the launch ledger at a restart"
@@ -3825,6 +3834,15 @@ entries:
   cluster: seatcommit
   extract: ""
   reason: "v3-5-verifier: the verifier process kill (non-unix)"
+  status: new
+- path: internal/seatcommit/evidence_purge.go
+  v2_lines: 0
+  current_lines: 167
+  fate: new
+  target_lines: 167
+  cluster: seatcommit
+  extract: ""
+  reason: "5-uninstall: delete the evidence refs a ledger records, through the hardened git (uninstall --purge)"
   status: new
 - path: internal/seatcommit/git.go
   v2_lines: 0
@@ -4411,6 +4429,96 @@ entries:
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
   status: deleted
+- path: internal/uninstall/uninstall.go
+  v2_lines: 0
+  current_lines: 145
+  fate: new
+  target_lines: 145
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: options, coded errors, Run (plan, busy check, execute)"
+  status: new
+- path: internal/uninstall/plan.go
+  v2_lines: 0
+  current_lines: 609
+  fate: new
+  target_lines: 609
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: the layout discovery through the fsanchor walk and the grouped removal plan"
+  status: new
+- path: internal/uninstall/busy.go
+  v2_lines: 0
+  current_lines: 194
+  fate: new
+  target_lines: 194
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: uninstall_busy checks (scheduler lock and socket, live seat, proof window, commit step)"
+  status: new
+- path: internal/uninstall/execute.go
+  v2_lines: 0
+  current_lines: 362
+  fate: new
+  target_lines: 362
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: group order, removal through anchored descriptors, secret overwrite, report"
+  status: new
+- path: internal/uninstall/lock.go
+  v2_lines: 0
+  current_lines: 104
+  fate: new
+  target_lines: 104
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: the scheduler lock held for a writing run (excludes a scheduler and a second uninstall)"
+  status: new
+- path: internal/uninstall/nlink_unix.go
+  v2_lines: 0
+  current_lines: 20
+  fate: new
+  target_lines: 20
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: link count of an open file (a hard-linked secret is not zeroed)"
+  status: new
+- path: internal/uninstall/nlink_other.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: link count of an open file, non-unix twin"
+  status: new
+- path: internal/uninstall/worktree_id.go
+  v2_lines: 0
+  current_lines: 92
+  fate: new
+  target_lines: 92
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: the verified worktree directory (gitdir by inode) and its removal through the descriptor"
+  status: new
+- path: internal/uninstall/worktree_unix.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: fstatat identity of the entry at the parent and rmdir (unix)"
+  status: new
+- path: internal/uninstall/worktree_other.go
+  v2_lines: 0
+  current_lines: 29
+  fate: new
+  target_lines: 29
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: path-compared identity and rmdir, non-unix twin"
+  status: new
 - path: internal/usagelimit/codex.go
   v2_lines: 0
   current_lines: 161

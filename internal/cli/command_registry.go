@@ -42,6 +42,7 @@ var commandCatalog = []struct {
 	{Name: "pi", Summary: "The built-in pi runtime (run a pi seat, verify the unpacked runtime)"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
 	{Name: "remote", Summary: "Buzz attachment: bind the enrolled share, attach it to a mailbox, show presence"},
+	{Name: "uninstall", Summary: "Remove what amq-squad put on this host (dry run by default; --write, --owner-files, --purge)"},
 }
 
 func commandSummary(name string) string {
@@ -84,6 +85,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "lead", Summary: commandSummary("lead"), Run: runLead},
 		{Name: "pi", Summary: commandSummary("pi"), Run: runPi},
 		{Name: "remote", Summary: commandSummary("remote"), Run: func(args []string) error { return runRemote(args, version) }},
+		{Name: "uninstall", Summary: commandSummary("uninstall"), Run: runUninstall},
 	}
 }
 
