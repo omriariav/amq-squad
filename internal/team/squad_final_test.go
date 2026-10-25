@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -93,6 +94,17 @@ func TestSquadYamlGoldenParsesToTheExpectedStructure(t *testing.T) {
 	if err := GoldenCheck([]byte(dropped), GoldenExpected); err == nil {
 		t.Fatal("a golden fixture that lost a key passed")
 	}
+	// a fixture that parses to its own expected structure but lacks a key of
+	// the list is also drift
+	trimmed := strings.Replace(string(GoldenYAML), "  effort: medium\n  tools: coding\n", "  tools: coding\n", 1)
+	parsed, err := ParseSquad(trimmed, "trimmed", goldenOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	regenerated, _ := json.Marshal(parsed)
+	if err := GoldenCheck([]byte(trimmed), regenerated); err == nil || !strings.Contains(err.Error(), "lacks the schema 1 key defaults.effort") {
+		t.Fatalf("a golden fixture without defaults.effort, with a matching expected structure: %v", err)
+	}
 	lacking := strings.Replace(string(GoldenYAML), "  effort: medium\n  tools: coding\n", "  tools: coding\n", 1)
 	if lacking == string(GoldenYAML) {
 		t.Fatal("the fixture edit did not apply")
@@ -124,10 +136,22 @@ func TestSquadYamlSchemaTwoIsRefusedAndNamed(t *testing.T) {
 // A4: a squad.yaml that tries any never-settable key is refused at parse
 // with the key named, one case per key, flat and (for the map keys) nested.
 func TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed(t *testing.T) {
+	// the brief's set, written out: the code's list may grow, never shrink
+	required := []string{"merge", "merge.push_url", "merge.local_push_ack", "push_url", "local_push_ack", "clear", "clear.signature",
+		"verifiers", "verifier_goproxy", "verifier_timeout", "verifier_output_limit", "verifier_parallelism", "default_branch", "fleet",
+		"max_squads", "permitted_repositories", "pins", "registry", "unprotected_paths", "remove_protected_paths"}
 	keys := NeverSettableKeys()
-	if len(keys) < 19 {
-		t.Fatalf("the never-settable set shrank to %d keys: %v", len(keys), keys)
+	for _, k := range required {
+		if !slices.Contains(keys, k) {
+			t.Errorf("%s left the never-settable set", k)
+		}
+		if !IsNeverSettable(k) {
+			t.Errorf("%s is not never-settable", k)
+		}
 	}
+	keys = append(slices.Clone(required), keys...)
+	slices.Sort(keys)
+	keys = slices.Compact(keys)
 	for _, key := range keys {
 		t.Run(key, func(t *testing.T) {
 			_, err := ParseSquad(key+": x\n"+minimalSquad, "squad.yaml", grants.Defaults())

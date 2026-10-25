@@ -417,7 +417,9 @@ func TestMigrateDeletesNothingWithoutTheRemoveFlag(t *testing.T) {
 	before := exists()
 	// --remove-v2 with no squad.yaml: refused, nothing removed
 	_, err := BuildRemove(f.opts())
-	refusal(t, err, CodeRemoveNoSquad)
+	if r := refusal(t, err, CodeRemoveNoSquad); !strings.Contains(r.Detail, "squad.yaml is absent") {
+		t.Fatalf("detail %q", r.Detail)
+	}
 	if !reflect.DeepEqual(before, exists()) {
 		t.Fatal("a refused removal deleted files")
 	}
@@ -461,6 +463,29 @@ func TestMigrateDeletesNothingWithoutTheRemoveFlag(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.project, "squad.yaml")); err != nil {
 		t.Fatal("squad.yaml is gone")
+	}
+}
+
+// B1: the write itself never replaces a file: createNew over an existing path
+// fails with os.ErrExist and leaves it as it was, whatever races the plan.
+func TestCreateNewNeverReplacesAFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "squad.yaml")
+	if err := os.WriteFile(path, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshot(t, path)
+	if err := createNew(path, []byte("theirs\n"), 0o644); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("createNew over an existing file: %v", err)
+	}
+	if c := changed(before, snapshot(t, path)); len(c) > 0 {
+		t.Fatalf("createNew changed %v", c)
+	}
+	fresh := filepath.Join(filepath.Dir(path), "fresh")
+	if err := createNew(fresh, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(fresh); info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", info.Mode().Perm())
 	}
 }
 
