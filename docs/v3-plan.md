@@ -639,7 +639,19 @@ verdict is recorded: a class with a mechanical verifier completes only on
 a verdict the harness recorded (the commit step's test run or the
 probe's predicate), never on the seat's report; a done report with no
 verdict is blocked (`verdict_missing`) and the attempt counts as failed
-for escalation. [2.7, 2b-4 re-pass ruling, 2026-10-25]
+for escalation. [2.7, 2b-4 re-pass ruling, 2026-10-25] That applies only
+to a class whose verifier command is configured, in the grant or
+squad.yaml and never read from the seat's tree; a class with no
+configured verifier routes at its tier and never below, completes on the
+done report, and records verifier_result "none", never "pass". The
+producer is `seat commit`: after the snapshot it runs the class's verifier
+in the shadow worktree, bounded (10 minutes and 1 MiB of output by
+default, grant-settable), with the command and arguments from the grant
+or squad.yaml only and the hardened harness environment, and records the
+verdict with the digest of the tree it ran on; the R12 probe records its
+predicate the same way; RecordVerdict is reachable only from the harness
+(the scheduler process), never from a seat verb. Phase 5 branch
+v3-5-verifier. [2.7, reviewer ruling, 2026-10-25]
 
 ### 6.2 Chains
 
