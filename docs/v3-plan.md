@@ -1604,7 +1604,19 @@ Release prep.
 
 - Bump the Claude plugin version (plugins/claude, 2.31.0 today). Claude
   Code caches plugins by version, so the 3.0 hooks need a new version to
-  install over 2.31. Waits on the release version.
+  install over 2.31. Waits on the release version. Done for the Claude
+  plugin (3.0.0, branch v3-5-relprep); the release commit still carries
+  the codex plugin manifest, fourteen SKILL.md version lines, the README
+  install lines, and scripts/check-release-version.py learning the 3.0
+  install path; optional for that commit: pin the ci.yml actions to commit
+  SHAs. [2.7, relprep pass, 2026-10-25]
+- Recorded limit, with the read-only image question: seat-exec execs the
+  provider by pathname after the descriptor hash, so a same-UID
+  replacement between the final check and exec runs unverified; closing
+  it means exec through the hashed descriptor (fexecve on Linux, /dev/fd/N
+  on macOS, where Claude's own re-exec may not survive). It stays
+  recorded and is part of the owner's decision on the image. [2.7,
+  relprep pass, 2026-10-25]
 - The Claude hook watchdog moved from shell to the Go adapter (`guard
   --decision claude`); its Linux row runs under dash in CI before the
   release, since the hook script runs on Linux hosts too. [2.7, 4-2
