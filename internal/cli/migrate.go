@@ -18,9 +18,16 @@ import (
 // migrate.UnsafeText once, here; if any of it would change under redact.Block
 // the verb prints a fixed line naming only a location class and exits 2,
 // and nothing else.
-func runMigrate(args []string) error {
+func runMigrate(args []string) (result error) {
+	// a panic anywhere below prints a stack with paths outside the funnel;
+	// it becomes one constant line and exit 2, nothing else
+	defer func() {
+		if recover() != nil {
+			result = &codedExitError{code: ExitSystem, msg: "migrate: internal error"}
+		}
+	}()
 	var out strings.Builder
-	profile, remove, err := migrateRun(args, &out)
+	profile, remove, err := migrateRunner(args, &out)
 	text := out.String()
 	errText := ""
 	if err != nil {
@@ -32,6 +39,9 @@ func runMigrate(args []string) error {
 	fmt.Print(text)
 	return err
 }
+
+// migrateRunner is migrateRun; a test replaces it to drive the recover above.
+var migrateRunner = migrateRun
 
 func migrateRun(args []string, out *strings.Builder) (profile string, remove bool, err error) {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
@@ -90,7 +100,7 @@ Examples:
 		if *write {
 			removed, err := rp.Apply()
 			if err != nil {
-				return opts.Profile, true, migrateStopped("--remove-v2", removed, len(rp.Files), err, out)
+				return opts.Profile, true, migrateStopped("--remove-v2", removed, rp.Files, err, out)
 			}
 		}
 		out.WriteString(rp.Report(*write))
@@ -104,7 +114,7 @@ Examples:
 	if *write {
 		done, err := plan.Apply()
 		if err != nil {
-			return opts.Profile, false, migrateStopped("--write", done, len(plan.Writes), err, out)
+			return opts.Profile, false, migrateStopped("--write", done, plan.Paths(), err, out)
 		}
 	}
 	out.WriteString(plan.Report(*write))
@@ -114,11 +124,11 @@ Examples:
 // migrateStopped is the error of an apply that stopped at its first refusal.
 // When something was already done it prints the partial report and is a
 // PartialError (exit 3, as uninstall); when nothing was, it is the refusal.
-func migrateStopped(verb string, done []string, total int, err error, out *strings.Builder) error {
+func migrateStopped(verb string, done, planned []string, err error, out *strings.Builder) error {
 	if len(done) == 0 {
 		return migrateError(err)
 	}
-	out.WriteString(migrate.PartialReport(verb, done, total, err))
+	out.WriteString(migrate.PartialReport(verb, done, planned, err))
 	return &PartialError{Message: err.Error(), Cause: err}
 }
 

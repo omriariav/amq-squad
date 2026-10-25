@@ -249,6 +249,13 @@ by field mapping.
   appeared, a symlink introduced, a root that moved) stops at the first refusal
   with a partial report of what was already done, which stays done, and exit 3
   (as uninstall).
+- **Exit codes and what the CLI adds.** A plan refusal with nothing done is exit
+  1; a system error (for example ENOSPC on the first write) is exit 2; a stop
+  after something was done is exit 3 with a partial report that lists what was
+  done and what was not. The CLI puts its constant `error: ` prefix in front of
+  the fixed refusal line. A symlink that is the leaf (the file itself) is
+  unlinked as a link and the run continues: it is never followed. A panic is one
+  line, `migrate: internal error`, exit 2.
 - **One output funnel.** Everything the verb prints, on stdout or as the error
   the CLI renders, passes `redact.Block` once at the verb boundary. If any of
   it would change, the verb prints `migrate_refused_credential: <class>` (a

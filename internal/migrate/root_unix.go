@@ -20,11 +20,16 @@ func dirIdentity(d *fsanchor.AnchoredDir, _ string) (uint64, uint64, error) {
 	return uint64(st.Dev), st.Ino, nil
 }
 
-// pathIdentity is the device and inode the path names now.
+// pathIdentity is the device and inode the path names now, not following a
+// symlink: a symlink at the root path is an error (root_changed), however it
+// is retargeted.
 func pathIdentity(path string) (uint64, uint64, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return 0, 0, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return 0, 0, syscall.ELOOP
 	}
 	st := info.Sys().(*syscall.Stat_t)
 	return uint64(st.Dev), st.Ino, nil

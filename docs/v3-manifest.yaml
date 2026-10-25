@@ -4616,9 +4616,9 @@ entries:
   status: new
 - path: internal/cli/migrate.go
   v2_lines: 0
-  current_lines: 132
+  current_lines: 142
   fate: new
-  target_lines: 132
+  target_lines: 142
   cluster: cli
   extract: ""
   reason: "v3-5-migrate: the migrate verb (dry run, --write, --remove-v2)"
@@ -4634,9 +4634,9 @@ entries:
   status: new
 - path: internal/migrate/plan.go
   v2_lines: 0
-  current_lines: 263
+  current_lines: 258
   fate: new
-  target_lines: 263
+  target_lines: 258
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: the migrate plan, unmapped report data, output validation"
@@ -4670,27 +4670,27 @@ entries:
   status: new
 - path: internal/migrate/write.go
   v2_lines: 0
-  current_lines: 156
+  current_lines: 163
   fate: new
-  target_lines: 156
+  target_lines: 163
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: write-when-absent, the removal flag"
   status: new
 - path: internal/migrate/root.go
   v2_lines: 0
-  current_lines: 296
+  current_lines: 320
   fate: new
-  target_lines: 296
+  target_lines: 320
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: the one project-root descriptor of a run; reads, creates and removes through it, a symlink on the way is refused"
   status: new
 - path: internal/migrate/root_unix.go
   v2_lines: 0
-  current_lines: 42
+  current_lines: 47
   fate: new
-  target_lines: 42
+  target_lines: 47
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: descriptor identity, unlinkat and linkat for the root walk"
@@ -4706,9 +4706,9 @@ entries:
   status: new
 - path: internal/migrate/leak.go
   v2_lines: 0
-  current_lines: 118
+  current_lines: 127
   fate: new
-  target_lines: 118
+  target_lines: 127
   cluster: migrate
   extract: ""
   reason: "v3-5-migrate: the output funnel helpers, location classes, the partial report"

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -115,7 +116,18 @@ func BuildRemove(opts Options) (rp *RemovePlan, err error) {
 	if !contains(top, team.SquadFileName) {
 		return nil, &Refusal{Code: CodeRemoveNoSquad, Fields: []string{team.SquadFileName}, Detail: "squad.yaml is absent; run `amq-squad migrate --write` first. Nothing is removed"}
 	}
-	if _, err := team.LoadSquadWith(ownerPath(opts), in.Project); err != nil {
+	// the bytes come through the root descriptor (a symlinked squad.yaml is a
+	// refusal, not followed) and are parsed against the owner's grant, as
+	// team.LoadSquadWith does
+	raw, err := in.Root.read(team.SquadFileName)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := grants.LoadFrom(ownerPath(opts), "")
+	if err == nil && raw != nil {
+		_, err = team.ParseSquad(string(raw.Data), team.SquadPath(in.Project), owner.Grants)
+	}
+	if err != nil || raw == nil {
 		return nil, &Refusal{Code: CodeRemoveNoSquad, Fields: []string{team.SquadFileName}, Detail: fmt.Sprintf("squad.yaml does not load, so it cannot replace the v2 files: %v. Nothing is removed", err)}
 	}
 	rp = &RemovePlan{Project: in.Project, Files: []string{in.ProfilePath}, root: in.Root}
@@ -127,11 +139,6 @@ func BuildRemove(opts Options) (rp *RemovePlan, err error) {
 	}
 	sort.Strings(rp.Files)
 	rp.Files = dedupe(rp.Files)
-	for _, f := range rp.Files {
-		if looksLikeCredential(f) {
-			return nil, &Refusal{Code: CodeCredential, Fields: []string{"a removal path"}, Detail: "a path to be removed has the shape of a real credential; nothing is removed"}
-		}
-	}
 	return rp, nil
 }
 

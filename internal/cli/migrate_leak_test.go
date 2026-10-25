@@ -68,7 +68,9 @@ func TestMigrateVerbFunnelsEveryByteThroughOneCheck(t *testing.T) {
 		dir, profile := project(t, "p")
 		os.MkdirAll(filepath.Join(dir, ".amq-squad", "briefs", secret+".md"), 0o755)
 		out, err := run(t, profile)
-		fixed(t, out, err, "an input file name")
+		if err == nil || ExitCode(err) != ExitUser || !strings.Contains(err.Error(), "the name of an input file") || strings.TrimSpace(out) != "" {
+			t.Fatalf("a credential-shaped name is refused before it is opened: %v, stdout %q", err, out)
+		}
 	})
 	t.Run("an absent profile under a credential-shaped directory, relative argument", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
@@ -86,16 +88,11 @@ func TestMigrateVerbFunnelsEveryByteThroughOneCheck(t *testing.T) {
 		role := filepath.Join(dir, ".agent-mail", secret, "agents", "dev", "extensions", "io.github.omriariav.amq-squad")
 		os.MkdirAll(role, 0o755)
 		os.WriteFile(filepath.Join(role, "role.md"), []byte("# dev\n"), 0o644)
-		out, err := run(t, profile)
-		if err == nil || ExitCode(err) != ExitUser || !strings.Contains(err.Error(), "migrate_refused_credential") || strings.TrimSpace(out) != "" {
-			t.Fatalf("plan over a credential-shaped input file name: %v, stdout %q", err, out)
-		}
-		// removal needs a squad.yaml that loads; write one by hand
 		os.WriteFile(filepath.Join(dir, "squad.yaml"), []byte("schema: 1\nseats:\n  - handle: dev\n    runtime: codex\n"), 0o644)
-		for _, args := range [][]string{{"--remove-v2", profile}, {"--remove-v2", "--write", profile}} {
-			out, err = run(t, args...)
-			if err == nil || ExitCode(err) != ExitUser || !strings.Contains(err.Error(), "migrate_refused_credential") || !strings.Contains(err.Error(), "a removal path") || strings.TrimSpace(out) != "" {
-				t.Fatalf("removal over a credential-shaped path: %v, stdout %q", err, out)
+		for _, args := range [][]string{{profile}, {"--remove-v2", profile}, {"--remove-v2", "--write", profile}} {
+			out, err := run(t, args...)
+			if err == nil || ExitCode(err) != ExitUser || !strings.Contains(err.Error(), "the name of an input file") || strings.TrimSpace(out) != "" {
+				t.Fatalf("%v over a credential-shaped session directory: %v, stdout %q", args, err, out)
 			}
 		}
 		if _, statErr := os.Stat(filepath.Join(role, "role.md")); statErr != nil {
@@ -120,13 +117,26 @@ func TestMigrateVerbFunnelsEveryByteThroughOneCheck(t *testing.T) {
 func TestMigrateStoppedIsAPartialResultWithExitThree(t *testing.T) {
 	refusal := &migrate.Refusal{Code: migrate.CodeSymlink, Fields: []string{"agents/lead"}, Detail: "a symlink on the way"}
 	var out strings.Builder
-	err := migrateStopped("--remove-v2", []string{"/p/a"}, 3, refusal, &out)
-	if ExitCode(err) != ExitPartial || !strings.Contains(out.String(), "stopped at the first refusal after 1 of 3") || !strings.Contains(out.String(), "/p/a") || !strings.Contains(out.String(), "migrate_refused_symlink") {
+	err := migrateStopped("--remove-v2", []string{"/p/a"}, []string{"/p/a", "/p/b", "/p/c"}, refusal, &out)
+	if ExitCode(err) != ExitPartial || !strings.Contains(out.String(), "stopped at the first refusal after 1 of 3") || !strings.Contains(out.String(), "done: /p/a") || !strings.Contains(out.String(), "not done: /p/b") || !strings.Contains(out.String(), "not done: /p/c") || !strings.Contains(out.String(), "migrate_refused_symlink") {
 		t.Fatalf("partial: %v (exit %d)\n%s", err, ExitCode(err), out.String())
 	}
 	out.Reset()
-	err = migrateStopped("--remove-v2", nil, 3, refusal, &out)
+	err = migrateStopped("--remove-v2", nil, []string{"/p/a", "/p/b", "/p/c"}, refusal, &out)
 	if ExitCode(err) != ExitUser || out.Len() != 0 {
 		t.Fatalf("nothing done: %v (exit %d), out %q", err, ExitCode(err), out.String())
+	}
+}
+
+// A panic in the verb is one constant line and exit 2: no stack, no path, no
+// panic value on either stream.
+func TestMigrateVerbRecoversAPanicToOneConstantLine(t *testing.T) {
+	secret := "/private/" + "gh" + "p_" + strings.Repeat("a1B2c3", 6)
+	old := migrateRunner
+	migrateRunner = func([]string, *strings.Builder) (string, bool, error) { panic("boom at " + secret) }
+	t.Cleanup(func() { migrateRunner = old })
+	stdout, stderr, err := captureOutput(t, func() error { return runMigrate([]string{"x"}) })
+	if err == nil || err.Error() != "migrate: internal error" || ExitCode(err) != ExitSystem || stdout != "" || stderr != "" || strings.Contains(err.Error(), "boom") {
+		t.Fatalf("got %v (exit %d), stdout %q, stderr %q", err, ExitCode(err), stdout, stderr)
 	}
 }

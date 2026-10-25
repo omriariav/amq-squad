@@ -100,11 +100,25 @@ func classify(err error, rel string) error {
 	return &Refusal{Code: CodeInput, Fields: []string{rel}, Detail: fmt.Sprintf("cannot open the file: %v", err)}
 }
 
+// checkName refuses a path component with the shape of a real credential
+// before anything is opened under it (M1): the refusal names a class, never
+// the name.
+func checkName(part string) error {
+	if looksLikeCredential(part) {
+		return &Refusal{Code: CodeCredential, Fields: []string{"the name of an input file"}, Detail: "a file or directory name has the shape of a real credential; nothing is read or written"}
+	}
+	return nil
+}
+
 // walk opens the directory rel (slash path, "" for the root) below the root
 // descriptor; the returned close func must be called.
 func (r *root) walk(rel string) (*fsanchor.AnchoredDir, func(), error) {
 	cur, closeCur := r.dir, func() {}
 	for i, part := range splitRel(rel) {
+		if err := checkName(part); err != nil {
+			closeCur()
+			return nil, func() {}, err
+		}
 		next, err := cur.Sub(part)
 		closeCur()
 		if err != nil {
@@ -131,6 +145,9 @@ func (r *root) read(rel string) (*file, error) {
 		return nil, err
 	}
 	defer closeDir()
+	if err := checkName(path.Base(rel)); err != nil {
+		return nil, err
+	}
 	f, kind, size, _, err := dir.OpenEntry(path.Base(rel))
 	if err != nil {
 		if err = classify(err, rel); errors.Is(err, errAbsent) {
@@ -222,6 +239,10 @@ func (r *root) create(rel string, data []byte, mode os.FileMode) error {
 		parts = nil
 	}
 	for i, part := range parts {
+		if err := checkName(part); err != nil {
+			closeCur()
+			return err
+		}
 		next, err := cur.StageMkdir(part, 0o755)
 		closeCur()
 		if err != nil {
@@ -268,6 +289,9 @@ func (r *root) isDir(rel string) (bool, error) {
 	cur, closeCur := r.dir, func() {}
 	defer func() { closeCur() }()
 	for i, part := range splitRel(rel) {
+		if err := checkName(part); err != nil {
+			return false, err
+		}
 		f, kind, _, _, err := cur.OpenEntry(part)
 		if err != nil {
 			err = classify(err, strings.Join(splitRel(rel)[:i+1], "/"))

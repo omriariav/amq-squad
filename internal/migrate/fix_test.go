@@ -47,7 +47,7 @@ func TestMigrateRefusesACredentialInAKeyOrAPath(t *testing.T) {
 	f4 := newFixture(t)
 	f4.put(filepath.Join(f4.project, ".amq-squad", "briefs", secret+".md"), "# brief\n", 0o644)
 	_, err = Build(f4.opts())
-	if r := refusal(t, err, CodeCredential); strings.Contains(err.Error(), secret) || len(r.Fields) != 1 || !strings.HasPrefix(r.Fields[0], "the name of input file #") {
+	if r := refusal(t, err, CodeCredential); strings.Contains(err.Error(), secret) || len(r.Fields) != 1 || r.Fields[0] != "the name of an input file" {
 		t.Fatalf("input file name: %v", err)
 	}
 	// the profile path argument, before anything is read

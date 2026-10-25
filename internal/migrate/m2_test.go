@@ -188,8 +188,9 @@ func TestMigrateRemovalStopsAtASymlinkIntroducedAfterThePlan(t *testing.T) {
 		t.Fatal("the files after the refusal were removed")
 	}
 	// and the verb reports it as a partial result: see TestMigrateVerbReportsAPartialRemoval
-	if !strings.Contains(PartialReport("--remove-v2", removed, len(rp.Files), err), "stopped at the first refusal after 1 of") {
-		t.Fatal("the partial report does not say where it stopped")
+	report := PartialReport("--remove-v2", removed, rp.Files, err)
+	if !strings.Contains(report, "stopped at the first refusal after 1 of") || !strings.Contains(report, "done: "+counsel) || !strings.Contains(report, "not done: "+f.profile) || strings.Contains(report, "not done: "+counsel) {
+		t.Fatalf("the partial report does not list what was done and what remains:\n%s", report)
 	}
 }
 
@@ -215,5 +216,71 @@ func TestRootCreateNeverReplacesAFile(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(f.project, ".amq-squad", "roles", "new.md")); err != nil || info.Mode().Perm() != 0o644 {
 		t.Fatalf("created file: %v %v", err, info)
+	}
+}
+
+// A symlink placed at the root path itself, pointing at the very directory the
+// descriptor holds, is root_changed: the identity check does not follow it.
+func TestMigrateApplyRefusesASymlinkAtTheRootPath(t *testing.T) {
+	f := newFixture(t)
+	p := mustBuild(t, f)
+	moved := f.project + ".moved"
+	if err := os.Rename(f.project, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, f.project); err != nil {
+		t.Fatal(err)
+	}
+	done, err := p.Apply()
+	refusal(t, err, CodeRootChanged)
+	if len(done) != 0 {
+		t.Fatalf("done %v", done)
+	}
+	if _, err := os.Stat(filepath.Join(moved, "squad.yaml")); err == nil {
+		t.Fatal("squad.yaml was written through the symlink")
+	}
+}
+
+// BuildRemove reads squad.yaml through the root descriptor: a symlinked
+// squad.yaml is a refusal, not followed.
+func TestMigrateRemoveReadsSquadYamlThroughTheDescriptor(t *testing.T) {
+	f := newFixture(t)
+	p := mustBuild(t, f)
+	if _, err := p.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	squad := filepath.Join(f.project, "squad.yaml")
+	body, _ := os.ReadFile(squad)
+	elsewhere := filepath.Join(filepath.Dir(f.project), "squad-elsewhere.yaml")
+	f.put(elsewhere, string(body), 0o644)
+	os.Remove(squad)
+	if err := os.Symlink(elsewhere, squad); err != nil {
+		t.Fatal(err)
+	}
+	_, err := BuildRemove(f.opts())
+	refusal(t, err, CodeSymlink)
+	if _, err := os.Stat(f.profile); err != nil {
+		t.Fatal("the profile was removed")
+	}
+}
+
+// A name with the shape of a credential is refused before it is opened: a
+// directory that could not be opened (no permission) is still the credential
+// refusal, not an open error.
+func TestMigrateChecksInputNamesBeforeOpeningThem(t *testing.T) {
+	secret := "gh" + "p_" + strings.Repeat("a1B2c3", 6)
+	f := newFixture(t)
+	dir := filepath.Join(f.project, ".agent-mail", secret)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	_, err := Build(f.opts())
+	r := refusal(t, err, CodeCredential)
+	if len(r.Fields) != 1 || r.Fields[0] != "the name of an input file" || strings.Contains(err.Error(), secret) {
+		t.Fatalf("fields %q, error %v", r.Fields, err)
 	}
 }

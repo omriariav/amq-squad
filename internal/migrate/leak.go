@@ -107,11 +107,20 @@ func LeakClass(profile string, remove bool) string {
 // PartialReport is the report of an apply that stopped at its first refusal
 // (M2): what was done, what was planned, and the refusal. There is no
 // transaction, so the files named were written or removed and stay so.
-func PartialReport(verb string, done []string, total int, err error) string {
+func PartialReport(verb string, done, planned []string, err error) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "amq-squad migrate: %s stopped at the first refusal after %d of %d; the files below were done and stay so.\n", verb, len(done), total)
+	fmt.Fprintf(&b, "amq-squad migrate: %s stopped at the first refusal after %d of %d; the files below were done and stay so.\n", verb, len(done), len(planned))
 	for _, f := range done {
-		fmt.Fprintf(&b, "  %s\n", f)
+		fmt.Fprintf(&b, "  done: %s\n", f)
+	}
+	doneSet := map[string]bool{}
+	for _, f := range done {
+		doneSet[f] = true
+	}
+	for _, f := range planned {
+		if !doneSet[f] {
+			fmt.Fprintf(&b, "  not done: %s\n", f)
+		}
 	}
 	fmt.Fprintf(&b, "refusal: %v\n", err)
 	return b.String()

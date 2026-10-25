@@ -273,6 +273,31 @@ became structure instead of per-call-site patches.
   a silent continue), `TestMigrateStoppedIsAPartialResultWithExitThree`,
   `TestRootCreateNeverReplacesAFile`.
 
+## Last round (re-pass on 88488ce2, five items)
+
+One commit. Each has one failing-when-reverted row.
+1. `pathIdentity` uses Lstat and a symlink at the root path is `root_changed`
+   (renaming the project aside and placing a symlink to it passed Stat). Row:
+   `TestMigrateApplyRefusesASymlinkAtTheRootPath`.
+2. `BuildRemove` reads squad.yaml through the root descriptor
+   (`root.read`, a symlinked squad.yaml is `migrate_refused_symlink`) and parses
+   the bytes against the owner's grant, as `team.LoadSquadWith` does. Row:
+   `TestMigrateRemoveReadsSquadYamlThroughTheDescriptor`.
+3. Every path component is checked for a credential shape before it is opened
+   (`checkName` in `walk`, `read`, `isDir`, `create`); a refusal names "the name
+   of an input file". This replaces the after-the-fact check and the removal-path
+   check, which are gone. Row: `TestMigrateChecksInputNamesBeforeOpeningThem` (a
+   credential-named directory with no permission is the credential refusal, not
+   an open error).
+4. The partial report takes the planned paths and lists `done:` and `not done:`.
+   Row: `TestMigrateRemovalStopsAtASymlinkIntroducedAfterThePlan`.
+5. A panic in the verb is recovered to the constant line `migrate: internal
+   error`, exit 2, nothing else (`migrateRunner` is the seam the test uses). Row:
+   `TestMigrateVerbRecoversAPanicToOneConstantLine`.
+Docs only (accepted): the CLI's constant `error: ` prefix before the fixed line,
+exit 2 for system errors against exit 1 for plan refusals with nothing done, and a
+symlink leaf unlinked as a link and never followed (docs/squad-yaml.md "From v2").
+
 ## Gate
 
 Quiet host (0 matching processes). Gate head becc3b44 (the structural round);

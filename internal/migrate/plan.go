@@ -65,6 +65,15 @@ type Plan struct {
 // Close releases the project-root descriptor.
 func (p *Plan) Close() { p.root.Close() }
 
+// Paths are the files the plan would write, in order.
+func (p *Plan) Paths() []string {
+	out := make([]string, len(p.Writes))
+	for i, w := range p.Writes {
+		out[i] = w.Path
+	}
+	return out
+}
+
 const (
 	reasonNoMeaning = "no 3.0 meaning"
 )
@@ -196,7 +205,7 @@ func validateOutputs(p *Plan, opts Options) error {
 // refuses, naming the field and never the value (B8).
 func checkCredentials(in *inputs) error {
 	rp := func(p string) string { return rel(in.Project, p) }
-	fields := pathCredentialFields(in)
+	var fields []string
 	fields = append(fields, credentialFields(rp(in.ProfilePath), in.Profile)...)
 	fields = append(fields, credentialKeyFields(rp(in.ProfilePath), in.Profile)...)
 	if in.LaunchLocal != nil {
@@ -236,20 +245,6 @@ func scanFile(name string, data []byte) []string {
 		return nil
 	}
 	return append(credentialFields(name, v), credentialKeyFields(name, v)...)
-}
-
-// pathCredentialFields names a credential-shaped input file name without
-// printing it: the number of the input file (the order Plan.Read lists them).
-// A credential-shaped profile or project path is refused earlier, by
-// readInputs, as "the profile path".
-func pathCredentialFields(in *inputs) []string {
-	var out []string
-	for i, p := range in.Read {
-		if looksLikeCredential(p) {
-			out = append(out, fmt.Sprintf("the name of input file #%d", i+1))
-		}
-	}
-	return out
 }
 
 func rel(project, path string) string {
