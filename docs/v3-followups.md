@@ -25,12 +25,12 @@ planning sessions that made them; nothing here is a release blocker.
 - Stale verifier waiting-slot rows: a waiting row left by a crash persists
   until the next step; status marks a row older than the wait bound as stale.
   Spike log, test-hygiene list.
-- Test flakes still open after the hygiene branches: whichever of
-  internal/cli TestDecisionAdapterKillsAHungGuardGroup (fixed on
-  v3-5-hygiene2 if merged), internal/seatlaunch TestProofConnectionsAreBounded
-  and TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (TempDir cleanup
-  races) remain; keep the failing full-run output before any fix. Spike log,
-  test-hygiene list.
+- Test flakes still open after the hygiene branches: internal/seatlaunch
+  TestProofConnectionsAreBounded and
+  TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (TempDir cleanup
+  races); the internal/cli hung-guard row was fixed on v3-5-hygiene2
+  (merged c15ac65b). Keep the failing full-run output before any fix. Spike
+  log, test-hygiene list.
 - `amq-squad uninstall --json`: the verb has no JSON envelope. Plan 16.4
   (uninstall).
 - YAML redaction trade-offs recorded in internal/redact's package doc: a bare

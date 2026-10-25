@@ -1792,6 +1792,14 @@ Release prep.
   the owner-signed release gate (the tag ruleset of 7.3, then the tag and
   release through the release flow) and the owner session rows of this
   section. [2.7, phase 5 release result]
+- The hung-guard test flake merged 2026-10-25 as c15ac65b (branch
+  v3-5-hygiene2, reviewer read, lead gate on the merge result): the last
+  code merge before the tag, test synchronisation only (the stand-in's
+  readiness by rename, a measured watchdog floor, a hang guard on the
+  pid file). The object-store purge (owner session item 8) is done and
+  the pre-push history scan is clean (spike log, release-prep list;
+  docs/v3-spike/5-release-evidence/history-scan.txt). The tag target is
+  the v3 tip after this entry's commit. [2.7, phase 5 hygiene2 result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
