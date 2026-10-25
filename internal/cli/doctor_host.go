@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/omriariav/amq-squad/v3/internal/buzz"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,10 +15,12 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
@@ -118,6 +123,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	out = append(out, claudeAllowRulesCheck(projectDir))
 	out = append(out, pushTargetChecks(h.Home, projectDir)...)
 	out = append(out, claudeTokenCheck(h.Home, time.Now()))
+	out = append(out, claudePinCheck(h.Home, env.LookPath)...)
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
@@ -586,4 +592,97 @@ func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detectio
 	}
 	cfg := registry.ProbeConfig{Pi: cmd, Env: piEnv, Model: model, WorkDir: work, VerifyRoot: verify}
 	return registry.Tally(ctx, cfg, h.ProbeRuns, "pi "+rt.Manifest.Version)
+}
+
+// claudePinCheck warns when the registry's claude pin is behind the claude
+// the owner's PATH resolves to (phase 5 release prep): the pin is a hard
+// link that keeps the old bytes until the owner re-pins, by the digest-pin
+// design, so after every Claude Code update the seats still run the old
+// version. The installed binary is found through PATH and its symlink chain
+// is followed and hashed read-only; it is never executed. The warning
+// carries the re-pin command: the hard link and the registry line.
+func claudePinCheck(home string, lookPath func(string) (string, error)) []doctorCheck {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	found, err := lookPath("claude")
+	if err != nil {
+		return nil // no installed claude to compare with
+	}
+	real, installed, err := resolveInstalledClaude(found, home)
+	if err != nil {
+		return []doctorCheck{hostCheck("claude pin", doctorWarn, "the installed claude %s is unresolvable, so the pin is not compared with it: %v", found, err)}
+	}
+	reg, _ := registry.Read(registry.Path(home))
+	pin, ok := reg.PinFor("claude")
+	if !ok || pin.Path == "" {
+		return nil // the unpinned case is the launch's tool_unpinned, not a stale pin
+	}
+	if pin.SHA256 == installed {
+		return []doctorCheck{hostCheck("claude pin", doctorOK, "the pinned claude matches the installed claude (sha256 %s)", installed)}
+	}
+	return []doctorCheck{hostCheck("claude pin", doctorWarn, "the pinned claude is behind the installed claude (%s sha256 %s, installed %s sha256 %s); to re-pin, run: ln -f %s %s, then set the claude pin's sha256 in %s to %s", pin.Path, pin.SHA256, real, installed, real, pin.Path, registry.Path(home), installed)}
+}
+
+// claudeMaxHops bounds the installed claude's symlink chain.
+const claudeMaxHops = 8
+
+// resolveInstalledClaude follows the symlink chain from the claude PATH
+// found to the regular file at its end and hashes that file's descriptor. It
+// reads a path a same-UID writer controls, so every step is anchored: the
+// parent directory is opened by the fsanchor walk (no symlinked ancestor),
+// the link is read with readlinkat through that descriptor, and a hop whose
+// path leaves the owner's HOME or /opt/homebrew, or a chain longer than
+// claudeMaxHops, is an error, never followed. Nothing is executed.
+func resolveInstalledClaude(found, home string) (real, digest string, err error) {
+	roots := []string{"/opt/homebrew"}
+	if home != "" {
+		roots = append(roots, filepath.Clean(home))
+	}
+	within := func(p string) bool {
+		for _, r := range roots {
+			if p == r || strings.HasPrefix(p, r+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+	cur := filepath.Clean(found)
+	for hop := 0; hop <= claudeMaxHops; hop++ {
+		if !filepath.IsAbs(cur) || !within(cur) {
+			return "", "", fmt.Errorf("%s is outside the owner's HOME and /opt/homebrew (not followed)", cur)
+		}
+		dir, err := fsanchor.OpenAnchored(filepath.Dir(cur), nil, false)
+		if err != nil {
+			return "", "", err
+		}
+		target, lerr := dir.Readlink(filepath.Base(cur))
+		if lerr == nil {
+			dir.Close()
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(cur), target)
+			}
+			cur = filepath.Clean(target)
+			continue
+		}
+		if !errors.Is(lerr, syscall.EINVAL) { // EINVAL: not a symlink, the end of the chain
+			dir.Close()
+			return "", "", lerr
+		}
+		f, kind, _, _, oerr := dir.OpenEntry(filepath.Base(cur))
+		dir.Close()
+		if oerr != nil {
+			return "", "", oerr
+		}
+		defer f.Close()
+		if kind != fsanchor.KindRegular {
+			return "", "", fmt.Errorf("%s is not a regular file", cur)
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			return "", "", err
+		}
+		return cur, hex.EncodeToString(h.Sum(nil)), nil
+	}
+	return "", "", fmt.Errorf("more than %d symlink hops from %s", claudeMaxHops, found)
 }
