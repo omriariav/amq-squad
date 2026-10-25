@@ -112,6 +112,22 @@ One commit on e7ea6b47: seven items and one small one of the lead's re-pass (P1-
 
 Judgment calls of this round: a seat whose commit step is pending (running or deferred) has its exit checks deferred until the step is decided (the conservative reading of "a seat with a running step"). The seat launch's base record (`RecordWorktreeBase`, on the launch path) keeps the blocking ledger lock: a seat being launched has no commit step. `CommitResult.Deferred` now carries its reason code. Post-merge follow-up, not in this commit (the lead's list): adopt an orphaned verifier by pgid and start time, one re-run with `interrupted_reruns=1`.
 
+## The third round on the re-pass of 159a58d2
+
+One short commit on 159a58d2: five items of the lead's re-pass (P1-1, P1-2 and P2-3 held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix3-revert-check.txt` (every case of `tools/cases_verifier.py`). Gate on a quiet host: `5-verifier-evidence/fix3-gate.txt`. Lines refer to the 159a58d2 export.
+
+The invariant, as restated: no lock reachable from the tick is held across a subprocess, a network call or a wait on another lock; the task-store lock stays blocking on every tick path while its holders are short.
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 1 | CleanSeat's WithSeatFree held the store lock across its git work (task/scope.go:163, commit.go:540) | `Store.ReserveSeat` takes the store lock for the state read (the seat free and not quarantined) and records a reservation (`<store>/reserved/<seat>`, a fresh one refuses Grant and Claim with `seat_reserved`; older than `SeatReservationTTL`, 10 minutes, it no longer reserves); the git work runs outside the lock; `ReleaseSeat` ends it under a second take with the seat re-checked. `WithSeatFree` is gone | TestCleanSeatHoldsNoStoreLockAcrossGit (a git stand-in that takes 10 s in the checkout: a store read returns at once, a claim by the seat is refused, the claim after the clean succeeds) |
+| 2 | a quoted YAML scalar holding ": " or ending in a colon was skipped (redact.go:354) | a quoted scalar (single or double quotes) is a value whatever it holds; the nested-block skip applies to bare scalars only | TestBlockRedactsAQuotedYAMLScalarWithAColon (redact); TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted (evidence and tail) |
+| 3 | the ingest prefix cut at 4 KiB before Block ran (hook_ingest.go:172) | the cap rule, written once in redact's package doc: redact first, then cut, and never keep a partial last line (`redact.Capped`); the ingest prefix uses it (a truncated payload's head, itself a cut, loses its partial last line first); the verifier capture and the tail already follow it. A one-line payload over 4 KiB now keeps an empty prefix (the oversize ingest row is updated) | TestIngestPrefixRedactsBeforeTheCut (4,070 spaces, then a split JSON credential: nothing on disk); TestCappedRedactsBeforeTheCut |
+| 4 | Block was quadratic on one long line with many values (redact.go:283, :305: a string rebuilt per span, an insertion sort) | `Line` is one builder pass over the spans, sorted with `sort.Slice` and merged | TestBlockIsLinearOnALongLine (a 1 MiB line of 95,325 assignments of a credential name to a one-letter value: about 180 ms on this host; the bound is 2 s, 20 s under the race detector, where the same line takes about 4 s) |
+| 5 | the deferral limit's refusal was not retained (committer.go:89, scheduler.go:513): a transient RefuseCommit failure started another step | the scheduler hands the limit's refusal to the committer (`CommitDecider.Decide`), which retains it like any decided result until `Applied` | TestDeferralLimitRefusalIsRetained (a failed refusal at the limit, applied at the next tick, no new step) |
+
+Judgment call: the reservation is a file in the store (written and read under its lock), so a claim from another process (the seat's `task claim`) honours it too; a harness that dies mid-clean leaves it to expire after 10 minutes.
+
 ## Behavior changes
 
 - `seat commit` runs the class's configured verifier on the snapshot tree before it pushes; a fail is `verdict_failed` for the lead and nothing is pushed; a pass completes.
@@ -120,6 +136,7 @@ Judgment calls of this round: a seat whose commit step is pending (running or de
 - The scheduler runs the commit step off its tick (`commit_running`, `commit_adopted`, `commit_cancelling`, `commit_cancelled`, the exits queue's `commit` entries with their `deferrals`); an interrupted verifier run defers as `verifier_interrupted`, and at the deferral limit the task blocks for the lead.
 - The verifier has its own module cache under the session root; hook ledger lines are redacted on write (`redact.Block` over the whole value); malformed payloads are kept as a redacted prefix, not base64.
 - An attempt archives an unsealed verdict as `invalid`; routing reports `verifier_result: invalid` for it.
+- CleanSeat reserves the seat (`seat_reserved`) instead of holding the store lock across its git work; redaction of capped text follows the cap rule (`redact.Capped`).
 - A gated class with no verifier command is never dispatched (`grants_invalid`).
 - guard denies a seat's `amq-squad seat commit` and `scheduler run` (`harness_only`); `seat commit` refuses inside a seat.
 - Status attention `verifier_waiting`; the evidence ledger gains `harness_verifier` lines.

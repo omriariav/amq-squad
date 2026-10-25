@@ -59,6 +59,8 @@ func TestMultiLineCredentialNeverReachesTheEvidence(t *testing.T) {
 	for name, print := range map[string]string{
 		"json": "printf '%s\\n' '{\"password\":' '  \"" + value + "\"}'",
 		"yaml": "printf '%s\\n' 'password:' '  " + value + "'",
+		// a quoted scalar with a colon and a blank (the third round's item 2)
+		"yaml_quoted": "printf '%s\\n' 'password:' \"  '" + value + ": uv'\"",
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)

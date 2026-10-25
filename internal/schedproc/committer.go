@@ -109,6 +109,22 @@ func (c *Committer) Applied(taskID string) {
 	}
 }
 
+// Decide retains a decision the scheduler made for a task's step (the
+// deferral limit's refusal, the third round's item 5) like every decided
+// result: the next Commit returns it, and it goes only at Applied, so a
+// failed application is retried, never a new step started.
+func (c *Committer) Decide(taskID string, res scheduler.CommitResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.jobs == nil {
+		c.jobs = map[string]*commitJob{}
+	}
+	done := make(chan struct{})
+	close(done)
+	r := res
+	c.jobs[taskID] = &commitJob{done: done, cancel: func() {}, final: &r}
+}
+
 // CancelCommit cancels the running step of a task that no longer waits for
 // it (cancelled, P2-1 of the second pass): its verifier's group is killed
 // and its result discarded. ended reports that no step of the task runs.

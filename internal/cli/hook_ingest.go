@@ -79,7 +79,7 @@ func runEvidenceIngest(args []string) error {
 		}
 		line = newHookLedgerLine(id, head[:hookTruncatedPrefix], hookNow())
 		line.Truncated, line.Malformed, line.Payload = true, false, nil
-		line.PayloadPrefix = printablePrefix(head[:hookTruncatedPrefix])
+		line.PayloadPrefix = printablePrefix(head[:hookTruncatedPrefix], true)
 		line.PayloadBytes, line.PayloadSHA256 = int64(len(head))+rest, "sha256:"+hex.EncodeToString(sum.Sum(nil))
 	}
 	line.LeaseRenewal = renewLeaseOnToolResult(id, line)
@@ -128,7 +128,7 @@ func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLin
 	line := hookLedgerLine{Schema: hookLedgerSchema, At: now.UTC().Format(time.RFC3339Nano), Handle: id.Handle, Session: id.Session, PayloadSHA256: "sha256:" + hex.EncodeToString(sum[:]), PayloadBytes: int64(len(raw))}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err != nil {
-		line.Malformed, line.PayloadPrefix = true, printablePrefix(raw)
+		line.Malformed, line.PayloadPrefix = true, printablePrefix(raw, false)
 		return line
 	}
 	line.Payload = compact.Bytes()
@@ -167,10 +167,11 @@ const hookPrefixKeep = 4 << 10
 // verifier fix, (ii)): its first hookPrefixKeep bytes, every byte that is not
 // printable ASCII, a tab or a newline replaced by '.', then redacted. With
 // the length and the sha256 beside it, never the bytes themselves.
-func printablePrefix(raw []byte) string {
-	if len(raw) > hookPrefixKeep {
-		raw = raw[:hookPrefixKeep]
-	}
+//
+// The cap rule (redact.Capped): the payload is redacted first, then cut at
+// a line end within hookPrefixKeep; a payload that is itself a cut (the head
+// of a truncated one) loses its partial last line before the redaction.
+func printablePrefix(raw []byte, cut bool) string {
 	b := make([]byte, len(raw))
 	for i, c := range raw {
 		if c == '\n' || c == '\t' || (c >= 0x20 && c < 0x7f) {
@@ -179,7 +180,15 @@ func printablePrefix(raw []byte) string {
 			b[i] = '.'
 		}
 	}
-	return redact.Block(string(b))
+	if cut {
+		if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
+			b = b[:i+1]
+		} else {
+			b = nil
+		}
+	}
+	out, _ := redact.Capped(string(b), hookPrefixKeep)
+	return out
 }
 
 // appendHookLedger appends line through the ledger's one writer

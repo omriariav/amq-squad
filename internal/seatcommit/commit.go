@@ -535,13 +535,22 @@ func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, n
 	// CleanSeat runs on the tick (the seat's preparation before a lease): a
 	// busy ledger is ErrLedgerBusy, never a wait.
 	err = withLedgerTryLock(root, handle, func() error {
-		// Only between leases, never mid-task (condition 2 of the ruling),
-		// with the store locked for the whole reset.
-		return store.WithSeatFree(handle, func(list []task.Task) error {
-			var derr error
-			discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
-			return derr
-		})
+		// Only between leases, never mid-task (condition 2 of the ruling):
+		// the store lock covers the state read with the seat's reservation
+		// and, in a second take, its release with the seat re-checked; the git
+		// work runs between them, outside the lock (the third round: no lock
+		// reachable from the tick is held across a subprocess). A grant or a
+		// claim of the reserved seat is refused meanwhile.
+		list, err := store.ReserveSeat(handle, now)
+		if err != nil {
+			return err
+		}
+		var derr error
+		discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
+		if rerr := store.ReleaseSeat(handle); derr == nil {
+			derr = rerr
+		}
+		return derr
 	})
 	return discarded, err
 }

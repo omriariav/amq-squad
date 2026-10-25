@@ -511,6 +511,11 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 			code = ReasonVerifierInterrupted
 		}
 		res = CommitResult{ReasonCode: code, Route: task.RouteLead, Detail: fmt.Sprintf("the commit step deferred %d times in a row, counted across restarts; last: %s", n, res.Detail)}
+		// A decided result like any other: retained until applied, so a failed
+		// application never starts another step (the third round's item 5).
+		if d, ok := s.Committer.(CommitDecider); ok {
+			d.Decide(t.ID, res)
+		}
 	}
 	// The result is applied in the store first; the step and its entry are
 	// forgotten only after the transaction committed (P2-3 of the second

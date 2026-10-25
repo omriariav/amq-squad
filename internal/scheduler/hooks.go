@@ -142,6 +142,12 @@ type CommitApplier interface {
 	Applied(taskID string)
 }
 
+// CommitDecider is a Committer that retains a result the scheduler decided
+// for a step (the deferral limit's refusal) until Applied.
+type CommitDecider interface {
+	Decide(taskID string, res CommitResult)
+}
+
 // CommitCanceller is a Committer that cancels the running step of a task
 // that no longer waits for it; ended reports that no step of it runs.
 type CommitCanceller interface {

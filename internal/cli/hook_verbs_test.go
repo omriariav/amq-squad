@@ -704,8 +704,9 @@ func TestEvidenceIngestOversizeIsRecordedTruncated(t *testing.T) {
 	}
 	lines := readLedger(t, hookExtPath(f.root, "ledger", "cto.jsonl"))
 	l := lines[0]
+	// One line cut at the cap: the cap rule keeps no partial line.
 	prefix := []byte(l.PayloadPrefix)
-	if !l.Truncated || l.Malformed || l.Payload != nil || l.PayloadBytes != int64(len(big)) || l.PayloadSHA256 != "sha256:"+sha256Hex(string(big)) || !bytes.Equal(prefix, big[:hookPrefixKeep]) || l.Seq != 1 {
+	if !l.Truncated || l.Malformed || l.Payload != nil || l.PayloadBytes != int64(len(big)) || l.PayloadSHA256 != "sha256:"+sha256Hex(string(big)) || len(prefix) != 0 || l.Seq != 1 {
 		t.Fatalf("truncated record = seq %d truncated %v malformed %v bytes %d sha %s prefix %d", l.Seq, l.Truncated, l.Malformed, l.PayloadBytes, l.PayloadSHA256, len(prefix))
 	}
 	if m := lines[1]; m.Truncated || !m.Malformed || m.PayloadBytes != hookMaxPayload {

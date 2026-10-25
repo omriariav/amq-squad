@@ -5,6 +5,13 @@
 // strip of every harness subprocess. The repository scan (repo_test.go)
 // fails on anything Find reports under docs/ or an evidence directory, so
 // what Text redacts and what the scan rejects are one rule.
+//
+// The cap rule (v3-5-verifier): wherever a size cap applies to redacted
+// text (the verifier's capture and its 4 KiB tail, the hook ingest's
+// prefix), redact first, then cut, and never keep a partial last line: a cut
+// can split a value from what its matcher needs (a closing quote, the next
+// line), so the cut comes after the redaction and drops the line it lands
+// in. Capped is that rule.
 package redact
 
 import (
@@ -273,22 +280,43 @@ func Find(text string) []Finding {
 }
 
 // Line redacts one line: every credential-shaped value becomes Placeholder
-// (a JSON string value stays a JSON string).
+// (a JSON string value stays a JSON string). One builder pass over the
+// sorted, merged spans: linear in the line, however many values it holds.
 func Line(line string) string {
 	sp, _ := spans(line)
 	if len(sp) == 0 {
 		return line
 	}
 	merged := mergeSpans(sp)
-	for i := len(merged) - 1; i >= 0; i-- {
-		s := merged[i]
+	var out strings.Builder
+	out.Grow(len(line))
+	at := 0
+	for _, s := range merged {
 		rep := Placeholder
 		if s[1]-s[0] >= 2 && line[s[0]] == '"' && line[s[1]-1] == '"' || jsonValueAt(line, s[0]) {
 			rep = `"` + Placeholder + `"` // a JSON value stays a JSON string
 		}
-		line = line[:s[0]] + rep + line[s[1]:]
+		out.WriteString(line[at:s[0]])
+		out.WriteString(rep)
+		at = s[1]
 	}
-	return line
+	out.WriteString(line[at:])
+	return out.String()
+}
+
+// Capped is the cap rule: the text is redacted whole (Block), then cut to at
+// most limit bytes at a line end (the line the cut lands in is dropped).
+// cut reports that something was dropped.
+func Capped(text string, limit int) (out string, cut bool) {
+	out = Block(text)
+	if len(out) <= limit {
+		return out, false
+	}
+	out = out[:limit]
+	if i := strings.LastIndexByte(out, '\n'); i >= 0 {
+		return out[:i+1], true
+	}
+	return "", true
 }
 
 // jsonValueAt reports whether the span at i is a JSON object value (the
@@ -302,11 +330,7 @@ func jsonValueAt(line string, i int) bool {
 }
 
 func mergeSpans(sp [][2]int) [][2]int {
-	for i := 1; i < len(sp); i++ { // a handful of spans: insertion sort
-		for j := i; j > 0 && sp[j][0] < sp[j-1][0]; j-- {
-			sp[j], sp[j-1] = sp[j-1], sp[j]
-		}
-	}
+	sort.Slice(sp, func(i, j int) bool { return sp[i][0] < sp[j][0] })
 	out := [][2]int{sp[0]}
 	for _, s := range sp[1:] {
 		last := &out[len(out)-1]
@@ -351,8 +375,12 @@ func Block(text string) string {
 	}
 	for _, m := range yamlSplitRE.FindAllStringSubmatchIndex(text, -1) {
 		name, val := text[m[2]:m[3]], text[m[4]:m[5]]
-		if strings.HasPrefix(val, "- ") || strings.Contains(val, ": ") || strings.HasSuffix(val, ":") {
-			continue // a nested list or map, not the key's scalar
+		// A quoted scalar is bounded by its quotes and is a value whatever it
+		// holds; only a bare one that looks like a list item or a map entry is
+		// the start of a nested block, not the key's scalar.
+		quoted := strings.HasPrefix(val, `"`) || strings.HasPrefix(val, "'")
+		if !quoted && (strings.HasPrefix(val, "- ") || strings.Contains(val, ": ") || strings.HasSuffix(val, ":")) {
+			continue
 		}
 		if CredentialName(name) && !countValue(name, val) && namedSecret(name, strings.Trim(val, `"'`)) {
 			sp = append(sp, span{m[4], m[5]})
