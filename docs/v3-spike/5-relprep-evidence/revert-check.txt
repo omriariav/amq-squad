@@ -22,3 +22,27 @@ FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.351s
 FAIL
 == restored
 ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.237s
+
+# fix round (row 2)
+== fix revert: operands unquoted
+--- FAIL: TestDoctorClaudePinQuotesTheCommandAndNamesADeviceMismatch (0.09s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	4.731s
+FAIL
+== fix revert: device mismatch not named
+--- FAIL: TestDoctorClaudePinQuotesTheCommandAndNamesADeviceMismatch (0.19s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	2.731s
+FAIL
+== fix revert: dotdot after a link followed
+--- FAIL: TestDoctorClaudePinResolvesLikeTheKernel (0.15s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	1.227s
+FAIL
+== fix revert: hop bound off by one
+--- FAIL: TestDoctorClaudePinResolvesLikeTheKernel (0.17s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	1.095s
+FAIL
+== restored
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.896s

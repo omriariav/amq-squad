@@ -28,3 +28,37 @@ Judgment calls:
   example /usr/local/bin) is reported unresolvable by design.
 - Manifest current_lines (and target_lines of the fate-new rows) refreshed
   for doctor_host.go, launch/record.go, seatexec_unix.go, seatlaunch/run.go.
+
+## Fix round (reviewer's narrow pass on 35238073, row 2)
+
+- Fix 1: the printed `ln -f` operands go through the package's `shellQuote`
+  (single quotes, the `'\''` escape); when the installed binary and the pin's
+  directory are on different devices doctor says "the pin must be on the same
+  filesystem as the installed binary" and prints no command (`fileDevice`, a
+  var over `statDevice` in doctor_device_unix.go and its non-unix twin).
+  Row: TestDoctorClaudePinQuotesTheCommandAndNamesADeviceMismatch.
+- Fix 2: `resolveInstalledClaude` no longer joins and Cleans. It resolves
+  component by component through the fsanchor walk (Sub for directories,
+  readlinkat for links), splices a link's target in front of the remaining
+  components, refuses a `..` that follows a symlinked component of its own
+  path, and refuses the ninth link before following it. Row:
+  TestDoctorClaudePinResolvesLikeTheKernel (os.SameFile on os.Stat is the
+  oracle; the tricky input is refused, a plain `../versions/new` link
+  resolves to the kernel's file, eight links pass and nine are refused).
+- Revert checks (quoting, device note, the `..` rule, the hop bound): in
+  5-relprep-evidence/revert-check.txt; gate re-run in gate.txt.
+
+## Release commit list (not changed here; confirmed by grep for 2.31.0 and /v2)
+
+- plugins/codex/.codex-plugin/plugin.json:3 (`"version": "2.31.0"`).
+- Fourteen SKILL.md version lines, line 4 each: seven under
+  plugins/claude/skills (amq-squad, amq-squad-orchestrator,
+  amq-squad-role-creator, amq-team-setup, cli, orchestrator, wizard) and seven
+  under plugins/codex/skills (the same seven names).
+- README.md:96 and README.html:409 (`go install .../v2/cmd/amq-squad@v2.31.0`);
+  also the `@latest` lines README.md:89 and README.html:405 carry the /v2
+  module path, which is the v3 module path now.
+- scripts/check-release-version.py hardcodes the /v2 install paths at :127 and
+  :141 and must learn the 3.0 path before the release gate.
+- Optional hardening: pin the actions in .github/workflows/ci.yml (checkout,
+  setup-go, upload-artifact, and the new job's) to commit SHAs.

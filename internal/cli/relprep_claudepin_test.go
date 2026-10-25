@@ -102,3 +102,111 @@ func TestDoctorClaudePinRefusesAnUnresolvableInstalledChain(t *testing.T) {
 		t.Fatalf("a link loop: %+v", rows)
 	}
 }
+
+// The printed re-pin command is pasted into a shell: both operands are
+// single-quoted, so an installed path with a space, a quote or $( ) neither
+// breaks nor runs. When the pin's directory is on another device a hard link
+// cannot be made, and doctor says so instead of printing a failing command.
+func TestDoctorClaudePinQuotesTheCommandAndNamesADeviceMismatch(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	home := filepath.Join(base, "home")
+	versions := filepath.Join(home, "v $(id) it's")
+	pinDir := filepath.Join(home, ".amq-squad", "bin")
+	for _, d := range []string{versions, pinDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldBin, newBin := filepath.Join(home, "old"), filepath.Join(versions, "new")
+	os.WriteFile(oldBin, []byte("old\n"), 0o700)
+	os.WriteFile(newBin, []byte("new\n"), 0o700)
+	pinPath := filepath.Join(pinDir, "claude")
+	if err := os.Link(oldBin, pinPath); err != nil {
+		t.Fatal(err)
+	}
+	oldSum, _ := registry.FileSHA256(oldBin)
+	if err := registry.Write(registry.Path(home), registry.Registry{Schema: 1, Pins: []registry.Pin{{Name: "claude", Path: pinPath, SHA256: oldSum}}}); err != nil {
+		t.Fatal(err)
+	}
+	look := func(string) (string, error) { return newBin, nil }
+	rows := claudePinCheck(home, look)
+	if len(rows) != 1 || rows[0].Status != doctorWarn {
+		t.Fatalf("the stale pin row: %+v", rows)
+	}
+	wantReal := "'" + strings.ReplaceAll(newBin, "'", `'\''`) + "'"
+	if !strings.Contains(rows[0].Detail, "ln -f "+wantReal+" ") || strings.Contains(rows[0].Detail, "ln -f "+newBin) {
+		t.Fatalf("the ln operands are not shell-quoted: %s", rows[0].Detail)
+	}
+
+	saved := fileDevice
+	defer func() { fileDevice = saved }()
+	fileDevice = func(p string) (uint64, bool) {
+		if p == newBin {
+			return 1, true
+		}
+		return 2, true
+	}
+	rows = claudePinCheck(home, look)
+	if len(rows) != 1 || !strings.Contains(rows[0].Detail, "the pin must be on the same filesystem as the installed binary") || strings.Contains(rows[0].Detail, "ln -f") {
+		t.Fatalf("a device mismatch: %+v", rows)
+	}
+}
+
+// The chain is resolved component by component, never Clean'd across a
+// symlinked component: bin/claude -> ../jump/../versions/new with jump a
+// symlink would collapse lexically to home/versions/new, a file the kernel
+// does not open (it opens elsewhere/versions/new). The kernel's answer
+// (os.Stat dev+inode) is the oracle: the input is refused or resolves to that
+// file. A plain relative link still resolves.
+func TestDoctorClaudePinResolvesLikeTheKernel(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	home := filepath.Join(base, "home")
+	for _, d := range []string{"bin", "versions", "elsewhere/deep", "elsewhere/versions"} {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(home, "versions", "new"), []byte("lexical\n"), 0o700)
+	os.WriteFile(filepath.Join(home, "elsewhere", "versions", "new"), []byte("kernel\n"), 0o700)
+	if err := os.Symlink(filepath.Join(home, "elsewhere", "deep"), filepath.Join(home, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	tricky := filepath.Join(home, "bin", "claude")
+	if err := os.Symlink("../jump/../versions/new", tricky); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(home, "bin", "plain")
+	if err := os.Symlink("../versions/new", plain); err != nil {
+		t.Fatal(err)
+	}
+	same := func(a, b string) bool {
+		sa, err1 := os.Stat(a)
+		sb, err2 := os.Stat(b)
+		return err1 == nil && err2 == nil && os.SameFile(sa, sb)
+	}
+	if real, _, err := resolveInstalledClaude(tricky, home); err == nil && !same(real, tricky) {
+		t.Fatalf("resolved %s, but the kernel opens another file", real)
+	}
+	if _, _, err := resolveInstalledClaude(tricky, home); err == nil {
+		t.Fatal("a .. after a symlinked component was followed")
+	}
+	real, _, err := resolveInstalledClaude(plain, home)
+	if err != nil || !same(real, plain) || real != filepath.Join(home, "versions", "new") {
+		t.Fatalf("a plain relative link: %s %v", real, err)
+	}
+	// Nine links in a row: the ninth is refused before it is followed.
+	prev := filepath.Join(home, "versions", "new")
+	for i := 1; i <= 9; i++ {
+		l := filepath.Join(home, "bin", "hop"+string(rune('0'+i)))
+		if err := os.Symlink(prev, l); err != nil {
+			t.Fatal(err)
+		}
+		prev = l
+	}
+	if _, _, err := resolveInstalledClaude(filepath.Join(home, "bin", "hop8"), home); err != nil {
+		t.Fatalf("eight links: %v", err)
+	}
+	if _, _, err := resolveInstalledClaude(filepath.Join(home, "bin", "hop9"), home); err == nil || !strings.Contains(err.Error(), "hops") {
+		t.Fatalf("nine links: %v", err)
+	}
+}

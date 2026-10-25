@@ -552,12 +552,30 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 688
+  current_lines: 759
   fate: new
-  target_lines: 688
+  target_lines: 759
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
+  status: new
+- path: internal/cli/doctor_device_other.go
+  v2_lines: 0
+  current_lines: 6
+  fate: new
+  target_lines: 6
+  cluster: cli
+  extract: ""
+  reason: "phase 5 release prep: device number of a file, for doctor's claude pin hard-link note"
+  status: new
+- path: internal/cli/doctor_device_unix.go
+  v2_lines: 0
+  current_lines: 21
+  fate: new
+  target_lines: 21
+  cluster: cli
+  extract: ""
+  reason: "phase 5 release prep: device number of a file, for doctor's claude pin hard-link note"
   status: new
 - path: internal/cli/doctor_pi.go
   v2_lines: 0
