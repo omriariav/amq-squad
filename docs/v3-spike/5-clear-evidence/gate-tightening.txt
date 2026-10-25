@@ -1,0 +1,28 @@
+head-parent 9ef6c616b84d91cc85133a841a8d13c5602f148c
+quiet-host:        0 matching processes
+### go build ./...
+exit 0
+### go vet ./...
+exit 0
+### scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a971248c13578082b/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        84      43515        21719
+replace        2       2431            0
+review         4       3687         2803
+delete       140      49894            0
+new          216          0        45041
+TOTAL        504     111761        80211
+target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+v2 rows kept: 27,847, ceiling 36,410 (deferred-replace rows excluded: 0 lines) [--final]
+3.0 additions: 216 files, 45,048 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 72,895 lines (v2 rows kept plus 3.0 additions)
+like for like, class 1 and 2 rows and their targets removed: 27847 lines against a target sum of 35170 (-20.8 percent over)
+class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 0 lines, 0 over target; class 3 (accepted-3 and other non-keep rows): 772 over target
+manifest-check: OK
+exit 0
+### go test -count=1 -race -timeout 45m ./internal/seatcommit ./internal/cli
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	37.905s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	42.775s
+exit 0

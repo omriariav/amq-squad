@@ -123,7 +123,7 @@ func CheckWiden(o WidenOptions) WidenDecision {
 		// violations below turn into crossings, can allow a widening; every
 		// other refusal (an unverified clear, a missing base, a tampered
 		// ledger, ...) refuses it with its own code.
-		if !res.OK && len(res.Violations) == 0 {
+		if !res.OK && !diffPolicyRefusal(res) {
 			d.ReasonCode, d.Detail = firstNonEmpty(res.ReasonCode, "widen_check_failed"), res.Detail
 			return d
 		}
@@ -171,4 +171,12 @@ func CheckWiden(o WidenOptions) WidenDecision {
 	}
 	d.Allowed = true
 	return d
+}
+
+// diffPolicyRefusal reports whether a dry run was refused by the diff policy:
+// it carries violations and its code is the first violation's (what Run sets).
+// Only those refusals are turned into crossings; any other refusal, one that
+// carries violations under another code included, refuses the widening.
+func diffPolicyRefusal(res Result) bool {
+	return len(res.Violations) > 0 && res.ReasonCode == res.Violations[0].Reason
 }

@@ -3,9 +3,9 @@ row 1: same-UID pty clear without a signature is clear_unsigned
   revert: 'if mode == grants.ClearRequired {\n\t\tif gate, err = requestClear' -> 'if false && mode == grants.ClearRequired {\n\t\tif ga'
   test: TestSeatClearWithoutTheOwnersSignatureIsClearUnsigned
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestSeatClearWithoutTheOwnersSignatureIsClearUnsigned (0.37s)
+  --- FAIL: TestSeatClearWithoutTheOwnersSignatureIsClearUnsigned (0.38s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.693s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.701s
   FAIL
 row 2a: answer with an old nonce / superseded request (current-request check)
   file: internal/gateverify/clear.go
@@ -14,25 +14,25 @@ row 2a: answer with an old nonce / superseded request (current-request check)
   result: FAILS when reverted (the row bites)
   --- FAIL: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed (0.14s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.421s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.411s
   FAIL
 row 2b: answer already used by a ClearRecord on the ledger (replayed from the ledger alone)
   file: internal/gateverify/clear.go
   revert: '} else if u {' -> '} else if false && u {'
   test: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed (0.24s)
+  --- FAIL: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed (0.23s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.520s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.506s
   FAIL
 row 3: answer for another handle
   file: internal/gateverify/clear.go
   revert: 'case h != handle:' -> 'case false:'
   test: TestClearAnswerForAnotherHandleIsRefused
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestClearAnswerForAnotherHandleIsRefused (0.14s)
+  --- FAIL: TestClearAnswerForAnotherHandleIsRefused (0.13s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.421s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.381s
   FAIL
 row 4: pty_only grant with an enrolment present is grants_invalid
   file: internal/grants/grants.go
@@ -41,7 +41,7 @@ row 4: pty_only grant with an enrolment present is grants_invalid
   result: FAILS when reverted (the row bites)
   --- FAIL: TestClearSignatureModes (0.00s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.228s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.214s
   --- FAIL: TestPtyOnlyGrantWithAnEnrolmentIsGrantsInvalid (0.37s)
 row 5: request half keeps the owner proof (pty, AM_ME)
   file: internal/cli/seat_commit.go
@@ -50,7 +50,7 @@ row 5: request half keeps the owner proof (pty, AM_ME)
   result: FAILS when reverted (the row bites)
   --- FAIL: TestSignedClearRequestHalfKeepsTheOwnerProof (0.38s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.681s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.677s
   FAIL
 row 6a: the record carries gate id and event id (ClearQuarantineWith)
   file: internal/seatcommit/ledger.go
@@ -59,16 +59,16 @@ row 6a: the record carries gate id and event id (ClearQuarantineWith)
   result: FAILS when reverted (the row bites)
   --- FAIL: TestSignedClearRecordCarriesGateAndEventAndVerifies (0.47s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.780s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.778s
   FAIL
 row 6b: a record that names a gate is re-verified against the gate store
   file: internal/cli/seat_clear_gate.go
   revert: 'if err := v.CheckClear(store, rec.Seat, rec.GateID, rec.EventID, clear' -> '_, _ = v.CheckClear, store\n\tif err := error(nil); '
   test: TestSignedClearRecordCarriesGateAndEventAndVerifies
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestSignedClearRecordCarriesGateAndEventAndVerifies (0.46s)
+  --- FAIL: TestSignedClearRecordCarriesGateAndEventAndVerifies (0.47s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.786s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.776s
   FAIL
 F1a: the exit check verifies a cleared quarantine
   file: internal/seatcommit/commit.go
@@ -77,34 +77,34 @@ F1a: the exit check verifies a cleared quarantine
   result: FAILS when reverted (the row bites)
   --- FAIL: TestEveryConsumerOfAClearVerifiesIt (0.34s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.612s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.604s
   FAIL
 F1b: the commit step verifies under a dry run too
   file: internal/seatcommit/commit.go
   revert: 'if q := ledger.Quarantine; q != nil {\n\t\tswitch {' -> 'if q := ledger.Quarantine; q != nil && !o.DryRun {'
   test: TestEveryConsumerOfAClearVerifiesIt
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestEveryConsumerOfAClearVerifiesIt (0.39s)
+  --- FAIL: TestEveryConsumerOfAClearVerifiesIt (0.38s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.662s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.639s
   FAIL
 F1c: the widen dry run refuses an unverified clear
   file: internal/seatcommit/widen.go
-  revert: 'if !res.OK && len(res.Violations) == 0 {' -> 'if false {'
+  revert: 'if !res.OK && !diffPolicyRefusal(res) {' -> 'if false {'
   test: TestEveryConsumerOfAClearVerifiesIt
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestEveryConsumerOfAClearVerifiesIt (0.39s)
+  --- FAIL: TestEveryConsumerOfAClearVerifiesIt (0.40s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.753s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.668s
   FAIL
 F1d: through the gate store, answer gone or store unreadable, at all three consumers
   file: internal/cli/seat_clear_gate.go
   revert: 'if err := v.CheckClear(store, rec.Seat, rec.GateID, rec.EventID, clear' -> '_, _ = v.CheckClear, store\n\tif err := error(nil); '
   test: TestEveryConsumerRefusesAClearWhoseAnswerIsGone
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestEveryConsumerRefusesAClearWhoseAnswerIsGone (0.72s)
+  --- FAIL: TestEveryConsumerRefusesAClearWhoseAnswerIsGone (0.70s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	1.044s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	1.018s
   FAIL
 F2: gate raise refuses the reserved quarantine_clear (action_reserved)
   file: internal/operatorauth/policy.go
@@ -113,7 +113,7 @@ F2: gate raise refuses the reserved quarantine_clear (action_reserved)
   result: FAILS when reverted (the row bites)
   --- FAIL: TestGenericGateRaiseRefusesTheReservedClearAction (0.08s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.399s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.386s
   FAIL
 F3a: a failure between authorization and the one ledger write burns the answer (record written before the signature)
   file: internal/seatcommit/ledger.go
@@ -122,7 +122,7 @@ F3a: a failure between authorization and the one ledger write burns the answer (
   result: FAILS when reverted (the row bites)
   --- FAIL: TestClearRecordOnTheLedgerIsTheOnlyUseMark (0.33s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.611s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.597s
   FAIL
 F3b: used means a ClearRecord with the event id on the ledger
   file: internal/seatcommit/ledger.go
@@ -131,16 +131,16 @@ F3b: used means a ClearRecord with the event id on the ledger
   result: FAILS when reverted (the row bites)
   --- FAIL: TestClearRecordOnTheLedgerIsTheOnlyUseMark (0.34s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.601s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.593s
   --- FAIL: TestSignedClearRecordCarriesGateAndEventAndVerifies (0.47s)
 F4: a cleared hooks-silent condition is not raised again on its launch
   file: internal/seatcommit/commit.go
   revert: 'if code != "" && clearedOnThisLaunch(o, code) {' -> 'if false {'
   test: TestClearedHooksSilenceIsNotRaisedAgainOnTheSameIncarnation
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestClearedHooksSilenceIsNotRaisedAgainOnTheSameIncarnation (0.42s)
+  --- FAIL: TestClearedHooksSilenceIsNotRaisedAgainOnTheSameIncarnation (0.43s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.678s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.686s
   FAIL
 seed a: RecordBase continues a seed entry and keeps the clear
   file: internal/seatcommit/ledger.go
@@ -149,7 +149,7 @@ seed a: RecordBase continues a seed entry and keeps the clear
   result: FAILS when reverted (the row bites)
   --- FAIL: TestSeedEntryIsContinuedByRecordBaseAndKeepsTheClear (0.33s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.614s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.597s
   FAIL
 seed b: a seed with a diff and no RecordBase is base_unrecorded
   file: internal/seatcommit/commit.go
@@ -158,16 +158,16 @@ seed b: a seed with a diff and no RecordBase is base_unrecorded
   result: FAILS when reverted (the row bites)
   --- FAIL: TestSeedEntryIsContinuedByRecordBaseAndKeepsTheClear (0.31s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.572s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.575s
   FAIL
 seed c: a task-store-only quarantine is cleared into a seed entry carrying the record
   file: internal/cli/seat_commit.go
   revert: 'seed = gate.id.seed' -> '_ = gate.id.seed'
   test: TestTaskStoreOnlyQuarantineClearsThroughTheSignedPathAndLeavesARecord
   result: FAILS when reverted (the row bites)
-  --- FAIL: TestTaskStoreOnlyQuarantineClearsThroughTheSignedPathAndLeavesARecord (0.14s)
+  --- FAIL: TestTaskStoreOnlyQuarantineClearsThroughTheSignedPathAndLeavesARecord (0.13s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.454s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.447s
   FAIL
 P1: a deleted ledger whose sealed head says it existed is ledger_tampered
   file: internal/seatcommit/ledger.go
@@ -176,16 +176,16 @@ P1: a deleted ledger whose sealed head says it existed is ledger_tampered
   result: FAILS when reverted (the row bites)
   --- FAIL: TestDeletedLedgerIsTamperedNotUnused (0.16s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.480s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.475s
   FAIL
 P2: widen allows only on a clean dry run (every other refusal refuses with its code)
   file: internal/seatcommit/widen.go
-  revert: 'if !res.OK && len(res.Violations) == 0 {' -> 'if !res.OK && res.ReasonCode == ReasonQuarantineUn'
+  revert: 'if !res.OK && !diffPolicyRefusal(res) {' -> 'if !res.OK && res.ReasonCode == ReasonQuarantineUn'
   test: TestWidenRefusesWhatTheDryRunRefuses
   result: FAILS when reverted (the row bites)
   --- FAIL: TestWidenRefusesWhatTheDryRunRefuses (0.31s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.591s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.679s
   FAIL
 P3: the scheduler exit step turns an unnamed refusal into a block, never OK
   file: internal/schedproc/committer.go
@@ -194,7 +194,7 @@ P3: the scheduler exit step turns an unnamed refusal into a block, never OK
   result: FAILS when reverted (the row bites)
   --- FAIL: TestExitCheckRefusalIsABlockNotOK (0.00s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.257s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.255s
   FAIL
 P4: an already-lifted quarantine is already_cleared, never success
   file: internal/seatcommit/ledger.go
@@ -203,5 +203,14 @@ P4: an already-lifted quarantine is already_cleared, never success
   result: FAILS when reverted (the row bites)
   --- FAIL: TestConcurrentClearsWriteOneRecordAndOneIsAlreadyCleared (0.34s)
   FAIL
-  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.614s
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.605s
+  FAIL
+P2b: the whitelist is the diff-policy code with violations, not any violations
+  file: internal/seatcommit/widen.go
+  revert: 'res.ReasonCode == res.Violations[0].Reason' -> 'true'
+  test: TestOnlyTheDiffPolicyRefusalIsTurnedIntoCrossings
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestOnlyTheDiffPolicyRefusalIsTurnedIntoCrossings (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.240s
   FAIL

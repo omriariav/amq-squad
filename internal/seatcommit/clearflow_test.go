@@ -336,3 +336,20 @@ func TestConcurrentClearsWriteOneRecordAndOneIsAlreadyCleared(t *testing.T) {
 		t.Fatalf("not exactly one record: %+v", l)
 	}
 }
+
+// The diff-policy whitelist is exact: violations under another code refuse.
+func TestOnlyTheDiffPolicyRefusalIsTurnedIntoCrossings(t *testing.T) {
+	v := []Violation{{Reason: ReasonSizeCap}}
+	if !diffPolicyRefusal(Result{ReasonCode: ReasonSizeCap, Violations: v}) {
+		t.Fatal("a size-cap refusal is diff policy")
+	}
+	for name, res := range map[string]Result{
+		"violations under another code": {ReasonCode: ReasonQuarantineUnverified, Violations: v},
+		"no violations":                 {ReasonCode: ReasonBaseUnrecorded},
+		"clean":                         {OK: true},
+	} {
+		if diffPolicyRefusal(res) {
+			t.Errorf("%s was taken for diff policy", name)
+		}
+	}
+}

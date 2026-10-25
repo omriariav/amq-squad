@@ -3810,9 +3810,9 @@ entries:
   status: new
 - path: internal/seatcommit/widen.go
   v2_lines: 0
-  current_lines: 174
+  current_lines: 182
   fate: new
-  target_lines: 174
+  target_lines: 182
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the widening check against the grant (protected paths, size cap on the dry-run diff)"
