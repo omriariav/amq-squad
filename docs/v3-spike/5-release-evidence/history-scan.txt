@@ -1,0 +1,19 @@
+# Credential scan over the full history reachable from v3, 2026-10-25
+# Run before the first push (reviewer's push-order rule). Tree: v3 at 20e8e3e4.
+# Method: git rev-list --objects v3 | git cat-file --batch, every object (18,873),
+# matched against redact.RealCredentialShapes' six patterns
+# (AKIA[0-9A-Z]{16}; sk-[A-Za-z0-9]{20,}; ghp_[A-Za-z0-9]{30,};
+#  AIza[0-9A-Za-z_-]{30,}; nsec1[a-z0-9]{20,}; BEGIN ... PRIVATE KEY)
+# and, as literal checks, the two values exposed in the milestone B evidence
+# (GEMINI_API_KEY, CLAUDE_CODE_MESSAGING_TOKEN of the lead session). Values are
+# never written here; the known values were compared in memory.
+objects scanned: 18873
+known-value hits (the two milestone B values): 0   -> the branch rewrite held; no object reachable from v3 carries either value
+shape hits: 3, all the same literal in three historical blobs of
+  internal/seatexec/fix1b_test.go (commits from 0d11b6a8 to before 8fbfdd56,
+  the milestone B fix rounds): the test canary "AIzaSyCANARY..." (a labelled
+  fake provider key, 39 characters, carrying the word CANARY), replaced by a
+  non-key-shaped canary in 8fbfdd56. Not a credential. Noted for the first push:
+  GitHub push protection may flag the historical blobs as a Google API key
+  pattern; the owner decides between a bypass ("used in tests") and a rewrite
+  of the three commits before the first push.
