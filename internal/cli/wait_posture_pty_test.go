@@ -96,10 +96,47 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		ID: "pty-gate", From: "cto", To: "user", Thread: "gate/pty", Subject: "APPROVAL: real PTY wait", Kind: "question", Created: time.Now().UTC(),
 	})
 
+	// Synchronise on the pane's shell before timing anything: a fresh tmux pane
+	// starts the user's login shell (rc files, prompt hooks), and under full-suite
+	// load that start alone took most of the old fixed 5 s. Run the binary once
+	// through the pane, wait for its marker with a generous bound, and keep the
+	// measured time as the load yardstick for the real step's deadline.
+	readyPath := filepath.Join(dir, "ready.done")
+	warm := fmt.Sprintf("%s version >/dev/null 2>&1; : >%s", shellQuote(binary), shellQuote(readyPath))
+	if out, err := tmuxRun("send-keys", "-t", paneID, warm, "C-m"); err != nil {
+		t.Fatalf("submit PTY warm-up: %v\n%s", err, out)
+	}
+	warmStart := time.Now()
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Since(warmStart) > 2*time.Minute {
+			pane, _ := tmuxRun("capture-pane", "-p", "-t", paneID, "-S", "-80")
+			t.Fatalf("pane shell never ran the warm-up command; pane:\n%s", pane)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	warmed := time.Since(warmStart)
+	// The refusal is a fast pre-send check; the failure being guarded against is
+	// the dispatch blocking until --wait-timeout. The deadline is the larger of
+	// 5 s and ten times the measured warm step, and stays well below the wait
+	// timeout, so a load spike moves it while a real block (60 s) still fails.
+	const waitTimeout = 60 * time.Second
+	limit := 10 * warmed
+	if limit < 5*time.Second {
+		limit = 5 * time.Second
+	}
+	if limit > waitTimeout/2 {
+		limit = waitTimeout / 2
+	}
+
 	outputPath := filepath.Join(dir, "watch.out")
 	donePath := filepath.Join(dir, "watch.done")
 	command := fmt.Sprintf(
-		"env AM_SESSION=s AM_ME=cto AM_ROOT=%s AM_BASE_ROOT=%s %s dispatch --project %s --session s --role qa --subject %s --body %s --wait-for drained --wait-timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
+		"env AM_SESSION=s AM_ME=cto AM_ROOT=%s AM_BASE_ROOT=%s %s dispatch --project %s --session s --role qa --subject %s --body %s --wait-for drained --wait-timeout 60s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
 		shellQuote(root), shellQuote(base), shellQuote(binary), shellQuote(dir), shellQuote("real PTY wait"), shellQuote("plain prose"), shellQuote(outputPath), shellQuote(donePath),
 	)
 	if out, err := tmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
@@ -107,7 +144,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 	}
 
 	started := time.Now()
-	deadline := started.Add(5 * time.Second)
+	deadline := started.Add(limit)
 	for {
 		if _, err := os.Stat(donePath); err == nil {
 			break
@@ -137,7 +174,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 			t.Fatalf("PTY output missing %q:\n%s", want, got)
 		}
 	}
-	if elapsed := time.Since(started); elapsed >= 5*time.Second {
-		t.Fatalf("named-gate refusal took %s, want fast pre-send refusal", elapsed)
+	if elapsed := time.Since(started); elapsed >= limit {
+		t.Fatalf("named-gate refusal took %s, want fast pre-send refusal (limit %s, warm step %s)", elapsed, limit, warmed)
 	}
 }
