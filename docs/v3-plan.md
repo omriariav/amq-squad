@@ -1584,6 +1584,15 @@ Hardening.
   unreachable, the clear waits as an open gate and doctor says why. The
   live row is the third item of the owner's Buzz session. [2.7, reviewer
   plan, 2026-10-25]
+  Merged 2026-10-25 as 4d154b8e (branch v3-5-clear, Codex narrow pass
+  with two fix rounds, lead gate on the merge result; size of 3.0 72,895):
+  every consumer verifies the clear (quarantine_unverified), the sealed
+  ClearRecord is the use mark, quarantine_clear is action_reserved for the
+  generic raise, the clear is scoped to the launch and condition, a
+  task-store-only quarantine gets a typed seeded ledger entry, a missing
+  ledger with a sealed head is ledger_tampered, widen whitelists only the
+  diff-policy refusal, the exit step blocks on any unnamed refusal, and a
+  second completion is already_cleared. [2.7, phase 5 clear result]
 - Decision for the owner (A/B): the read-only runtime image. A
   (recommended by the reviewer): defer the image to 3.1 and record the
   hash-to-exec window (milliseconds, same-UID only, whose writer could

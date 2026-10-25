@@ -280,6 +280,7 @@ orchestrator had overestimated elapsed time by up to three hours.
 - 2026-10-24 `TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout` (internal/cli): a 9 s real-PTY deadline ran out once under full-suite load during the 2b-5 fix gate and passed alone (17.7 s) and on rerun; output kept as `docs/v3-spike/2b5-evidence/fix2-run1-pty-flake-go-test.txt`. Fix shape (reviewer): a deadline scaled by a load factor or a serial test group, not a longer constant.
 
 ## Phase 5 list (hardening)
+- 2026-10-25 The Buzz-signed seat clear merged as 4d154b8e (branch v3-5-clear; 25 reverting rules; the live phone row is owner-run.md item 9). Amendment 28's clear addendum holds the rules.
 
 - 2026-10-24 Runtime from a read-only mounted image (hdiutil attach -readonly): closes the amendment 25 verify-to-exec window (about 295 ms, same UID), because a writer must detach the volume and the path then fails verification. Source: 4-1 second Codex pass.
 - 2026-10-24 Codex re-pass of the heads merged under amendment 29 (2b-2, 4-3, 4-5 narrow items) after the Codex limit resets on 2026-10-31; findings become fix commits before the 3.0 tag. Superseded the same day: see the entry below (moved to now).
