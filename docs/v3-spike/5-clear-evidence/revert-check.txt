@@ -1,0 +1,72 @@
+row 1: same-UID pty clear without a signature is clear_unsigned
+  file: internal/cli/seat_commit.go
+  revert: 'if mode == grants.ClearRequired {\n\t\tif gate, err = requestClear' -> 'if false && mode == grants.ClearRequired {\n\t\tif ga'
+  test: TestSeatClearWithoutTheOwnersSignatureIsClearUnsigned
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSeatClearWithoutTheOwnersSignatureIsClearUnsigned (0.37s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.784s
+  FAIL
+row 2a: answer with an old nonce / superseded request (current-request check)
+  file: internal/gateverify/clear.go
+  revert: 'if req == nil || req.GateID != gateID || req.Nonce != nonce {' -> 'if req == nil || nonce == "" {'
+  test: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed (0.14s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.415s
+  FAIL
+row 2b: answer already used by a clear (single-use mark check)
+  file: internal/gateverify/clear.go
+  revert: 'if u, err := store.ClearUsed(gateID); err != nil || u != nil {' -> 'if false {'
+  test: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestClearAnswerWithAnOldNonceIsRefusedAsReplayed (0.25s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.519s
+  FAIL
+row 3: answer for another handle
+  file: internal/gateverify/clear.go
+  revert: 'case h != handle:' -> 'case false:'
+  test: TestClearAnswerForAnotherHandleIsRefused
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestClearAnswerForAnotherHandleIsRefused (0.14s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.390s
+  FAIL
+row 4: pty_only grant with an enrolment present is grants_invalid
+  file: internal/grants/grants.go
+  revert: 'if g.Clear.Signature == ClearPtyOnly {' -> 'if false {'
+  test: TestClearSignatureModes|TestPtyOnlyGrantWithAnEnrolmentIsGrantsInvalid
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestClearSignatureModes (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.205s
+  --- FAIL: TestPtyOnlyGrantWithAnEnrolmentIsGrantsInvalid (0.36s)
+row 5: request half keeps the owner proof (pty, AM_ME)
+  file: internal/cli/seat_commit.go
+  revert: 'if err := requireOwnerTerminal("seat clear", *seat); err != nil {\n\t\tre' -> 'if false {\n\t\treturn nil\n\t}'
+  test: TestSignedClearRequestHalfKeepsTheOwnerProof
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSignedClearRequestHalfKeepsTheOwnerProof (0.39s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.803s
+  FAIL
+row 6a: the record carries gate id and event id (ClearQuarantineWith)
+  file: internal/seatcommit/ledger.go
+  revert: 'c.GateID, c.EventID, c.ConfigDigest = g.GateID, g.EventID, g.ConfigDig' -> '_ = g'
+  test: TestSignedClearRecordCarriesGateAndEventAndVerifies
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSignedClearRecordCarriesGateAndEventAndVerifies (0.47s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.863s
+  FAIL
+row 6b: a record that names a gate is re-verified against the gate store
+  file: internal/cli/seat_clear_gate.go
+  revert: 'if err := v.CheckClear(store, rec.Seat, rec.GateID, rec.EventID, clear' -> '_, _ = v.CheckClear, store\n\tif err := error(nil); '
+  test: TestSignedClearRecordCarriesGateAndEventAndVerifies
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSignedClearRecordCarriesGateAndEventAndVerifies (0.48s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.905s
+  FAIL
