@@ -1061,13 +1061,17 @@ They landed in releases v0.106.0 to v0.107.0 and on main. Ask 14 (#1159) is
 open with PR #1186. Issue #1178 is open for the pi bridge part of ask 8.
 Criterion 4 passed on v0.106.1 on 2026-10-23. [2.6, upstream status]
 
-Phase 2 drafted three more asks in `docs/v3-upstream-issues/`. None is
-filed, and none is yet in the status table of `docs/v3-upstream-asks.md`.
+Phase 2 drafted three more asks in `docs/v3-upstream-issues/`. Filed
+2026-10-25 under the owner's login: ask 15 = #1210, 16 = #1211, 17 =
+#1212; the status table of `docs/v3-upstream-asks.md` carries them. [2.7,
+upstream status 2026-10-25] As drafted:
 Ask 15: a mailbox adapter kind in amq-remote for a strict relay share
 (4-5 deviation 1). Ask 16: amq-owner-sign sets RLIMIT_CORE to 0 before
 it reads the owner key (4-5 review). Ask 17: admit the two workspace-write
-sandbox pins as Codex provider arguments (4.3, amendment 28). Filing
-waits for the owner (16.4). [2.7, upstream drafts]
+sandbox pins as Codex provider arguments (4.3, amendment 28). [2.7,
+upstream drafts] PR #1188 (ask 1) and PR #1186 (ask 14) are merged on
+main and unreleased after v0.107.0 as of 2026-10-25; the release ask to
+the maintainer stands. [2.7, upstream status 2026-10-25]
 
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
@@ -1763,6 +1767,7 @@ the runs and record them.
 6. amq-noc 4-4 lands by PR on the release train (held by owner decision),
    after its fixture refresh for lead_handle and live.
 7. Upstream asks 15 to 17 filed under the owner's login (section 11).
+   Done 2026-10-25: #1210, #1211, #1212.
 8. The reflog expiry and gc of the shared object store after the
    milestone B exposure, and the rotation of both credentials (briefs
    ruling 18).

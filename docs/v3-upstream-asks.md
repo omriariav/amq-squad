@@ -12,6 +12,8 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 
 **Filed 2026-10-22 under the owner's login after both planning sessions reviewed the drafts:** ask 1 = #1153, 4 = #1154, 8 = #1155, 11 = #1156, 12 = #1157, 13 = #1158, 14 = #1159 (texts in `docs/v3-upstream-issues/`). Ask 5 withdrawn after the `--add-dir` run; 7 dropped; 2, 3, 6, 9 no action; 10 waits for the phone-side signing decision. Ask 7 is dropped per the maintainer; 2, 3, 6, 9 need no action; 10 waits for the phone-side signing decision.
 
+**Filed 2026-10-25 under the owner's login (amq-main session, owner approved):** ask 15 = #1210, 16 = #1211, 17 = #1212, bodies from the v3 drafts with the title line removed, unlabelled like #1153 to #1159. Also at that date: PR #1188 (ask 1) and PR #1186 (ask 14) are merged on main but unreleased after v0.107.0; #1178 (Aviv's pi-bridge follow-up to #1155) and #1155 are open.
+
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
 | 1 | pi adapter in the launch API | not shipped | **filed as #1153** (2026-10-22). file, reframed per maintainer (2026-10-22): mint-mode adapter like Grok, `pi --session-id <launch nonce>`, pinned verified pi version, fail-closed resume; reverses `docs/launch-api.md:210` "Pi stays direct-only"; core launch work, drop the layer-extensions note |
@@ -28,6 +30,9 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | **confirmed open on v0.104.0** (re-run 2026-10-22: `reconcile.go:792-797` byte-identical to 0.102.0; `execution.go:870-871` still matches only `pending`; two live notify calls recorded nothing). #1137 fixed only the nonce/ticket binding | **filed as #1157** (2026-10-22). file, with the title-thread caveat below |
 | 13 | Claude mint-path conversation record hardcodes `backend: commands` | **confirmed open on v0.104.0** (`execution.go:681` still `CommandsBackendName`; Claude record says `commands`, Codex record on the same tmux launch says `tmux`) | **filed as #1158** (2026-10-22). file, minor |
 | 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped (same on main 2026-10-22) | **filed as #1159** (2026-10-22). file (S6 launch blocker) |
+| 15 | amq-remote: a `mailbox` adapter kind for a strict relay share | not shipped (v0.107.0) | **filed as #1210** (2026-10-25). text in `docs/v3-upstream-issues/15-amq-remote-mailbox-adapter.md` (4-5 deviation 1) |
+| 16 | amq-owner-sign sets RLIMIT_CORE to 0 before reading the owner key | not shipped (v0.107.0) | **filed as #1211** (2026-10-25). text in `docs/v3-upstream-issues/16-owner-sign-no-core-dump.md` (4-5 review) |
+| 17 | Admit the two Codex workspace-write sandbox pins as provider arguments | not shipped (v0.107.0 allowlist is model_reasoning_effort and approvals_reviewer only; main has no sandbox_workspace_write) | **filed as #1212** (2026-10-25). text in `docs/v3-upstream-issues/17-codex-sandbox-pins-as-provider-arguments.md` (amendment 28) |
 
 ---
 
