@@ -194,7 +194,10 @@ statement and exits with a named reason on mismatch, which the launcher
 the ledger; the window between those two checks is the accepted
 same-user limit: about 221 ms as 4-1 measured it at its end, about 295 ms
 at the second Codex pass, and the larger figure is the one amendment 25
-records. [2.7, amendment 25 addendum] Measured on brief 4-1 (2026-10-24, medians of
+records. [2.7, amendment 25 addendum] The read-only runtime image that
+would close it is deferred to 3.1 by owner decision (2026-10-25, launch
+speed); the window stays a recorded same-UID limit of 3.0. [2.7, owner
+decision] Measured on brief 4-1 (2026-10-24, medians of
 five cold starts with the runtime unpacked and the model loaded, final
 build): the full re-hash is 147.3 ms over 6,441 files through the
 descriptor walk; the launch rest is 56.7 ms, of which 42.3 ms hashes
@@ -1628,10 +1631,14 @@ Hardening.
   ledger with a sealed head is ledger_tampered, widen whitelists only the
   diff-policy refusal, the exit step blocks on any unnamed refusal, and a
   second completion is already_cleared. [2.7, phase 5 clear result]
-- Decision for the owner (A/B): the read-only runtime image. A
+- Decided by the owner, 2026-10-25: A. The read-only runtime image moves
+  to 3.1; the hash-to-exec window (milliseconds, same-UID only, whose
+  writer could also replace the hashing binary) is a recorded same-UID
+  limit of 3.0, and the launch path stays as measured with no mount per
+  launch (the owner's ground: launch speed). [2.7, owner decision]
+  The question as it was put: A
   (recommended by the reviewer): defer the image to 3.1 and record the
-  hash-to-exec window (milliseconds, same-UID only, whose writer could
-  also replace the hashing binary) as a same-UID limit in 4.1 and R33;
+  hash-to-exec window as a same-UID limit in 4.1 and R33;
   grounds: amendment 25's full re-hash at every launch covers everything
   before the launch, the image is macOS only (hdiutil), mounts a visible
   volume per launch and waits on the bundle work, so it would be the last
