@@ -98,7 +98,7 @@ Judgment calls of the fix: the snapshot's seal covers the command digest too, so
 
 ## The second fix round on the re-pass of e7ea6b47
 
-One commit on e7ea6b47: seven items and one small one of the lead's re-pass (P1-a and P1-b held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix2-revert-check.txt` (every case of `tools/cases_verifier.py`: the earlier rules with their strings updated, and this round's). Gate on a quiet host: `5-verifier-evidence/fix2-gate.txt`. Lines in the findings refer to the e7ea6b47 export.
+One commit on e7ea6b47: seven items and one small one of the lead's re-pass (P1-a and P1-b held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix2-revert-check.txt` (59 rules, all OK: every case of `tools/cases_verifier.py`, the earlier rules with their strings updated, and this round's). Gate on a quiet host: `5-verifier-evidence/fix2-gate.txt` (at 71edc6c6, clean tree: gate OK, 3786 PASS, 0 FAIL; race on task, grants, routing, scheduler, schedproc, seatcommit, status, ledger, registry, redact, cli with `-timeout 45m`). Lines in the findings refer to the e7ea6b47 export.
 
 | # | finding | fix | test row |
 | --- | --- | --- | --- |
