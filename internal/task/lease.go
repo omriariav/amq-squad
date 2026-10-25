@@ -105,7 +105,7 @@ func endAttempt(t *Task, outcome, detail string, now time.Time) {
 	if t.Lease == nil {
 		return
 	}
-	t.Attempts = append(t.Attempts, Attempt{N: t.Attempt, Holder: t.Lease.Holder, Pool: t.Pool, GrantedAt: t.Lease.GrantedAt, EndedAt: now, Outcome: outcome, Detail: detail})
+	t.Attempts = append(t.Attempts, Attempt{N: t.Attempt, Holder: t.Lease.Holder, Pool: t.Pool, GrantedAt: t.Lease.GrantedAt, EndedAt: now, Outcome: outcome, Detail: detail, Verdict: t.Lease.Verdict})
 	t.Lease = nil
 }
 
@@ -259,7 +259,8 @@ var renewAfterPrecheck func()
 
 // Done files the holder's done report. A task with no declared files
 // completes at once; one with declared files waits, in progress, for the
-// harness commit step (Complete or RefuseCommit).
+// harness commit step (Complete or RefuseCommit). Either way a class with a
+// mechanical verifier completes only on the harness's verdict (complete).
 func (s Store) Done(id, holder, evidence, finalHead string, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		if err := requireLiveHolder(t, holder, now); err != nil {
@@ -280,11 +281,61 @@ func (s Store) Done(id, holder, evidence, finalHead string, now time.Time) (Task
 	})
 }
 
+// complete accepts a done report. A class with a mechanical verifier (plan
+// 6.1: extract, script, implement) completes only on the harness's recorded
+// pass verdict on this attempt (RecordVerdict), never on the seat's report
+// (phase 5 re-pass, ruling 1): with no verdict the task blocks for the lead
+// with verdict_missing, with a fail verdict with verdict_failed, and the
+// attempt ends blocked, which the router counts as a failed attempt. The
+// report stays, as on a commit refusal, until the lead's reset.
 func complete(t *Task, now time.Time) {
+	if MechanicalVerifier(ClassVerifier(t.Class)) {
+		var v *Verdict
+		if t.Lease != nil {
+			v = t.Lease.Verdict
+		}
+		switch {
+		case v == nil:
+			endAttempt(t, OutcomeBlocked, BlockVerdictMissing, now)
+			_ = block(t, BlockVerdictMissing, fmt.Sprintf("class %s completes only on a recorded %s verdict from the harness; the done report has none", t.Class, ClassVerifier(t.Class)), RouteLead)
+			return
+		case v.Result != VerdictPass:
+			endAttempt(t, OutcomeBlocked, BlockVerdictFailed, now)
+			_ = block(t, BlockVerdictFailed, fmt.Sprintf("the %s verdict from %s is %s: %s", v.Verifier, v.Source, v.Result, v.Detail), RouteLead)
+			return
+		}
+	}
 	t.Evidence = t.Report.Evidence
 	endAttempt(t, OutcomeCompleted, "", now)
 	at := now
 	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail = StateCompleted, &at, "", "", ""
+}
+
+// RecordVerdict records the harness's verdict on the current attempt of a
+// task whose class has a mechanical verifier: the commit step's test run or
+// the probe's predicate. It is the harness's call, never the seat's; one
+// verdict per attempt, of the class's own verifier.
+func (s Store) RecordVerdict(id string, v Verdict, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		want := ClassVerifier(t.Class)
+		switch {
+		case !MechanicalVerifier(want):
+			return fmt.Errorf("task %s: class %s has no mechanical verifier", t.ID, t.Class)
+		case t.State != StateInProgress || t.Lease == nil:
+			return fmt.Errorf("task %s is %s with no attempt to record a verdict on", t.ID, t.State)
+		case t.Lease.Verdict != nil:
+			return fmt.Errorf("task %s attempt %d already has a %s verdict", t.ID, t.Attempt, t.Lease.Verdict.Result)
+		case v.Verifier != want:
+			return fmt.Errorf("task %s: verdict of verifier %q, class %s is verified by %s", t.ID, v.Verifier, t.Class, want)
+		case v.Result != VerdictPass && v.Result != VerdictFail:
+			return fmt.Errorf("verdict result %q: want pass or fail", v.Result)
+		case strings.TrimSpace(v.Source) == "":
+			return fmt.Errorf("a verdict names the harness step that ran the verifier")
+		}
+		v.Source, v.Detail, v.At = strings.TrimSpace(v.Source), strings.TrimSpace(v.Detail), now
+		t.Lease.Verdict = &v
+		return nil
+	})
 }
 
 // Complete is the commit step's acceptance of a done report.

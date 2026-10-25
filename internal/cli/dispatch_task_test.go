@@ -151,6 +151,7 @@ func TestDispatchTaskRefusesBeforeSend(t *testing.T) {
 			if _, err := s.Claim("t1", "qa", nil, time.Hour, now); err != nil {
 				t.Fatal(err)
 			}
+			harnessPass(t, s, "t1", now)
 			if _, err := s.Done("t1", "qa", "ok", "", now); err != nil {
 				t.Fatal(err)
 			}

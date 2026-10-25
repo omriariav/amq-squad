@@ -58,9 +58,9 @@ The Go form is `internal/task` (`class.go` holds the vocabulary).
 | `pool` | object or null | `{runtime, model, effort}`, the runtime x model x effort key (4.5); set by the lead or by the router (2b-4); null until routed |
 | `lease` | object or null | the current lease, below; null when no seat holds the task |
 | `attempt` | int | number of leases granted so far (1 for the first dispatch) |
-| `attempts` | []object | one row per ended attempt: `n`, `holder`, `pool`, `granted_at`, `ended_at`, `outcome`, `detail` |
+| `attempts` | []object | one row per ended attempt: `n`, `holder`, `pool`, `granted_at`, `ended_at`, `outcome`, `detail`, and `verdict` when the harness recorded one |
 | `wait_reason` | string | why a `pending` task is not dispatched: `dependencies`, `file_lock`, `no_route`, `seat_starting`, `seat_cap`, `usage_limit`; the router (2b-4, `internal/routing`) adds `privacy_class`, `concurrency_cap`, `cost_cap`, `reviewer_family`, and answers `no_route` when no chain entry passed for any other reason (the route detail lists each skipped entry); empty when not waiting |
-| `block_reason` | string | reason code of a `blocked` task (`seat_blocked`, `retries_exhausted`, a commit-step refusal code, `gate_open`, ...) |
+| `block_reason` | string | reason code of a `blocked` task (`seat_blocked`, `retries_exhausted`, a commit-step refusal code, `gate_open`, `verdict_missing`, `verdict_failed`, ...) |
 | `block_route` | string | who owes the decision: `lead` or `owner` |
 | `block_detail` | string | human text for the block |
 | `report` | object or null | the holder's done report awaiting the commit step: `by`, `at`, `evidence`, `final_head` |
@@ -163,6 +163,17 @@ migrated):
   hook path quarantines with a try-lock (`QuarantineNoWait`); the first
   quarantine's record stays until the owner clears it.
 - A lease with a done report awaiting the commit step does not expire.
+- The completion gate (phase 5 re-pass, ruling 1): a class with a
+  mechanical verifier (extract schema, script exit_code, implement tests)
+  completes only on the harness's recorded verdict on the current attempt
+  (`lease.verdict`: `verifier`, `result` pass or fail, `source`, `detail`,
+  `at`; `RecordVerdict`, the commit step's test run or the probe's
+  predicate, never the seat). A done report with no verdict, at `done` with
+  no declared files or at the commit step's acceptance, blocks the task for
+  the lead with `verdict_missing`; a fail verdict with `verdict_failed`. The
+  attempt ends `blocked` (a failed attempt for the router's escalation) and
+  the report stays until the lead's reset. A re-armed commit (a widening, a
+  cleared quarantine) is a new lease and needs its own verdict.
 - One seat holds at most one lease (`HeldBy`): a lease, or a blocked task
   whose done report it filed.
 - Fail, block, release, cancel end the lease and append the attempt row.

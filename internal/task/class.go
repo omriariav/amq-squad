@@ -3,6 +3,7 @@ package task
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // The 3.0 task schema vocabulary (docs/task-store-design.md). 2b-2, 2b-4,
@@ -19,6 +20,52 @@ const (
 
 // Classes is the closed class list of plan 6.1, in table order.
 var Classes = []string{"extract", "summarize", "script", "implement", "plan", "review"}
+
+// Verifiers of plan 6.1. A verifier is mechanical when a program decides it.
+const (
+	VerifierSchema   = "schema"
+	VerifierExitCode = "exit_code"
+	VerifierTests    = "tests"
+	VerifierNone     = "none"
+)
+
+// classVerifiers is each class's verifier, fixed by plan 6.1.
+var classVerifiers = map[string]string{
+	"extract": VerifierSchema, "summarize": VerifierNone, "script": VerifierExitCode,
+	"implement": VerifierTests, "plan": VerifierNone, "review": VerifierNone,
+}
+
+// ClassVerifier is the class's verifier ("" for a class outside the list).
+func ClassVerifier(class string) string { return classVerifiers[class] }
+
+// MechanicalVerifier reports whether a program decides the verifier.
+func MechanicalVerifier(v string) bool {
+	return v == VerifierSchema || v == VerifierExitCode || v == VerifierTests
+}
+
+// Verdict results.
+const (
+	VerdictPass = "pass"
+	VerdictFail = "fail"
+)
+
+// Block reasons of the completion gate (phase 5 re-pass, ruling 1): a class
+// with a mechanical verifier completes only on the harness's recorded pass.
+const (
+	BlockVerdictMissing = "verdict_missing" // a done report with no harness verdict
+	BlockVerdictFailed  = "verdict_failed"  // the harness's verdict was fail
+)
+
+// Verdict is the harness's verdict on one attempt of a class with a
+// mechanical verifier: the commit step's test run or the probe's predicate,
+// never the seat's own report.
+type Verdict struct {
+	Verifier string    `json:"verifier"` // the class's verifier (tests, exit_code, schema)
+	Result   string    `json:"result"`   // pass | fail
+	Source   string    `json:"source"`   // what ran it: the commit step's test run, the probe
+	Detail   string    `json:"detail,omitempty"`
+	At       time.Time `json:"at"`
+}
 
 // ValidClass reports whether c is in the closed class list.
 func ValidClass(c string) bool {

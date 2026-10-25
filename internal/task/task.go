@@ -77,6 +77,9 @@ type Lease struct {
 	ClaimedAt *time.Time `json:"claimed_at"`
 	RenewedAt *time.Time `json:"renewed_at"`
 	Renewals  int        `json:"renewals"`
+	// Verdict is the harness's verdict on this attempt (RecordVerdict): the
+	// only way a class with a mechanical verifier completes.
+	Verdict *Verdict `json:"verdict,omitempty"`
 }
 
 // Attempt is one ended lease.
@@ -88,6 +91,7 @@ type Attempt struct {
 	EndedAt   time.Time `json:"ended_at"`
 	Outcome   string    `json:"outcome"`
 	Detail    string    `json:"detail,omitempty"`
+	Verdict   *Verdict  `json:"verdict,omitempty"` // the harness's verdict, when one was recorded
 }
 
 // Report is the holder's done report, kept until the commit step decides.

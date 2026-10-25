@@ -108,6 +108,7 @@ func TestLeaseLifecycle(t *testing.T) {
 	if err != nil || !renewed || r.Lease.Renewals != 1 || !r.Lease.ExpiresAt.Equal(t0.Add(90*time.Second)) {
 		t.Fatalf("renew: %+v %v %v", r.Lease, renewed, err)
 	}
+	harnessPass(t, s, a.ID, t0.Add(39*time.Second))
 	d, err := s.Done(a.ID, "impl-1", "go test ok", "abc", t0.Add(40*time.Second))
 	if err != nil || d.State != StateCompleted || d.Lease != nil || d.Evidence != "go test ok" || len(d.Attempts) != 1 || d.Attempts[0].Outcome != OutcomeCompleted {
 		t.Fatalf("done without declared files should complete: %+v %v", d, err)
@@ -149,6 +150,7 @@ func TestDoneWithDeclaredFilesWaitsForTheCommitStep(t *testing.T) {
 	if err != nil || w.State != StateInProgress || w.Lease.Holder != "impl-1" || w.Lease.ClaimedAt == nil || len(w.ScopeChanges) != 1 {
 		t.Fatalf("widen: %+v %v", w, err)
 	}
+	harnessPass(t, s, a.ID, t0.Add(4*time.Second))
 	c, err := s.Complete(a.ID, t0.Add(4*time.Second))
 	if err != nil || c.State != StateCompleted || c.ClosedAt == nil {
 		t.Fatalf("complete: %+v %v", c, err)
@@ -171,6 +173,7 @@ func TestDependenciesGateTheLease(t *testing.T) {
 	if _, err := s.Claim("", "h", nil, 0, t0); err == nil {
 		t.Fatal("a seat claimed a second lease")
 	}
+	harnessPass(t, s, a.ID, t0)
 	if _, err := s.Done(a.ID, "h", "", "", t0); err != nil {
 		t.Fatal(err)
 	}
@@ -441,6 +444,7 @@ func TestClaimWorkerProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		fmt.Printf("CLAIMED %s\n", got.ID)
+		harnessPass(t, s, got.ID, now)
 		if _, err := s.Done(got.ID, handle, "", "", now); err != nil {
 			t.Fatal(err)
 		}

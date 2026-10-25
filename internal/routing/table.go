@@ -60,17 +60,16 @@ func down(t string) string {
 }
 
 // Verifiers of plan 6.1. A verifier is mechanical when a program decides it.
+// The task store holds the list: its completion gate keys on it.
 const (
-	VerifierSchema   = "schema"
-	VerifierExitCode = "exit_code"
-	VerifierTests    = "tests"
-	VerifierNone     = "none"
+	VerifierSchema   = task.VerifierSchema
+	VerifierExitCode = task.VerifierExitCode
+	VerifierTests    = task.VerifierTests
+	VerifierNone     = task.VerifierNone
 )
 
 // Mechanical reports whether the verifier is decided by a program.
-func Mechanical(v string) bool {
-	return v == VerifierSchema || v == VerifierExitCode || v == VerifierTests
-}
+func Mechanical(v string) bool { return task.MechanicalVerifier(v) }
 
 // ClassSpec is one row of the class table.
 type ClassSpec struct {

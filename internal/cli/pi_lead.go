@@ -96,7 +96,11 @@ func runLead(args []string) error {
 		if !*team {
 			return usageErrorf("lead: --scheduler-seats needs --team")
 		}
-		sup, err := startLeadScheduler(*schedSeats, firstOf(os.Getenv("AM_ME"), "lead"))
+		var leadPools []string
+		for _, m := range f.models {
+			leadPools = append(leadPools, "pi:"+m+":"+f.thinking)
+		}
+		sup, err := startLeadScheduler(*schedSeats, firstOf(os.Getenv("AM_ME"), "lead"), leadPools)
 		if err != nil {
 			return fmt.Errorf("lead: start the scheduler process: %w", err)
 		}

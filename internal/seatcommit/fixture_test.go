@@ -171,6 +171,7 @@ func (f *fixture) reported(files ...string) task.Task {
 	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now); err != nil {
 		f.t.Fatal(err)
 	}
+	harnessPass(f.t, f.store, tk.ID, f.now)
 	tk, err = f.store.Done(tk.ID, f.handle, "go test ok", "", f.now)
 	if err != nil {
 		f.t.Fatal(err)

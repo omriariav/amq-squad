@@ -95,7 +95,8 @@ func SessionSeedID(root string) (string, uint64, uint64, error) {
 }
 
 // VerifySessionLog reads the session's outcome log under its seed, never
-// creating one: with a seed, it walks the hash chain and returns the good
+// creating one: with a seed, it runs the start's head and seed-identity
+// checks (checkHead), then walks the hash chain and returns the good
 // rows and every break (history_tampered); without a seed file nothing can
 // be verified (verified false, every readable row returned). A seed file
 // that is present but malformed is an error.
@@ -104,7 +105,7 @@ func SessionSeedID(root string) (string, uint64, uint64, error) {
 // the head's open breaks (they persist until acknowledged), and a torn tail
 // with its byte length.
 func VerifySessionLog(root string) (good []Row, problems []Problem, verified bool, err error) {
-	seed, _, _, err := readSeed(SeedPath(root))
+	seed, dev, ino, err := readSeed(SeedPath(root))
 	if errors.Is(err, fs.ErrNotExist) {
 		rows, _, rerr := ReadRows(OutcomePath(root))
 		return rows, nil, false, rerr
@@ -113,13 +114,16 @@ func VerifySessionLog(root string) (good []Row, problems []Problem, verified boo
 		return nil, nil, false, &InvalidError{Err: err}
 	}
 	key := SeedKey(seed)
+	// The start's head and seed-identity checks first (phase 5 re-pass,
+	// P2-7): a log cut to a valid prefix with its head removed, or a seed
+	// copied to another inode, is refused here as it is at the start.
+	h, found, herr := checkHead(root, key, dev, ino)
+	if herr != nil {
+		return nil, nil, true, herr
+	}
 	good, problems, head, tail, err := verifyChain(OutcomePath(root), key)
 	if err != nil {
 		return nil, nil, true, err
-	}
-	h, found, herr := readHead(root, key)
-	if herr != nil {
-		return nil, nil, true, &InvalidError{Err: herr}
 	}
 	if found {
 		problems = mergeProblems(h.Open, append(problems, shortfall("outcome", head, h.OutcomeSeq, h.OutcomeTag)...))

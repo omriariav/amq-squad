@@ -75,6 +75,9 @@ type Report struct {
 	Used     int        `json:"rows_used"`
 	Excluded []Excluded `json:"excluded_runtimes"`
 	Unpriced []string   `json:"unpriced_entries"` // entries with rows but no owner price: their cost is unknown
+	// UsageInvalid counts rows in the window whose usage is unknown because a
+	// token counter was not a count (negative, fractional, out of range).
+	UsageInvalid int `json:"usage_invalid_rows"`
 	// HistoryTampered counts rows left out because their tag failed under
 	// the session seed; Unverified says no seed was there to check them.
 	HistoryTampered int           `json:"history_tampered"`
@@ -102,6 +105,15 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 		if !r.EvidenceComplete() {
 			e.Incomplete++
 		}
+		if r.UsageInvalid != "" {
+			rep.UsageInvalid++
+		}
+		// Unpriced entries come from every verified row of the window, before
+		// the runtime filter (phase 5 re-pass, P2-6): known tokens with no
+		// cost is a missing owner price.
+		if r.CostUSD == nil && r.TokensIn != nil && r.TokensOut != nil && r.Entry != "" && !containsStr(rep.Unpriced, r.Entry) {
+			rep.Unpriced = append(rep.Unpriced, r.Entry)
+		}
 	}
 	rep.Rows = len(win)
 	var used []Row
@@ -119,11 +131,33 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 	rep.Used = len(used)
 
 	byTask := map[string][]Row{}
+	usedRow := map[string]bool{}
 	for _, r := range used {
 		byTask[r.Task] = append(byTask[r.Task], r)
+		usedRow[key(r.Task, r.Attempt)] = true
+	}
+	// Whole task histories (phase 5 re-pass, P2-5): every verified row of a
+	// task, in the window or before it, so an attempt left out (an excluded
+	// runtime, an earlier week) never makes a later attempt the task's
+	// first: redo and cost are attributed from the history.
+	hist := map[string][]Row{}
+	for _, r := range rows {
+		hist[r.Task] = append(hist[r.Task], r)
 	}
 	for _, rs := range byTask {
 		sort.Slice(rs, func(i, j int) bool { return rs[i].Attempt < rs[j].Attempt })
+	}
+	for _, rs := range hist {
+		sort.Slice(rs, func(i, j int) bool { return rs[i].Attempt < rs[j].Attempt })
+	}
+	inWindow := func(r Row) bool { return !r.EndedAt.Before(rep.Since) && r.EndedAt.Before(now) }
+	// excluded: the attempt's evidence does not count (its runtime is left out
+	// of this window, or, before the window, the row itself is incomplete).
+	excluded := func(r Row) bool {
+		if inWindow(r) {
+			return perRuntime[r.Runtime].Incomplete > 0
+		}
+		return !r.EvidenceComplete()
 	}
 	bucketOf := func(r Row) Bucket {
 		return Bucket{Class: r.Class, Tier: r.UsedTier, Band: SizeBand(r.Features.DeclaredFiles)}
@@ -147,7 +181,7 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 	costSum, costN := map[Bucket]float64{}, map[Bucket]int{}
 	smolOut := map[string]Bucket{} // task -> bucket of its completed smol attempt
 	for id, rs := range byTask {
-		for i, r := range rs {
+		for _, r := range rs {
 			b := bucketOf(r)
 			s := get(b)
 			s.Attempts++
@@ -159,7 +193,10 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 				passed[b][id] = true
 			}
 			if failure(r.Outcome) || r.VerifierResult == VerifierFail {
-				for _, later := range rs[i+1:] {
+				for _, later := range hist[id] {
+					if later.Attempt <= r.Attempt {
+						continue
+					}
 					if TierRank(later.UsedTier) > TierRank(r.UsedTier) {
 						redone[b][id] = true
 						break
@@ -188,23 +225,27 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 			if r.Outcome == task.OutcomeCompleted && r.UsedTier == TierSmol {
 				smolOut[key(id, r.Attempt)] = b
 			}
-			if r.CostUSD == nil && r.Entry != "" && !containsStr(rep.Unpriced, r.Entry) {
-				rep.Unpriced = append(rep.Unpriced, r.Entry)
-			}
 		}
-		// The cost of a completed task, redo included, by the bucket of its
-		// first attempt; a task with any unpriced attempt has no known cost.
-		last := rs[len(rs)-1]
+	}
+	for _, h := range hist {
+		// The cost of a task completed in this window, redo included, by the
+		// bucket of its first attempt. Every attempt from the first to the
+		// completion is required: one missing, excluded or unpriced makes the
+		// task's cost unknown, never the cost of the attempts that remain.
+		last := h[len(h)-1]
+		if last.Outcome != task.OutcomeCompleted || !usedRow[key(last.Task, last.Attempt)] {
+			continue
+		}
 		total, known := 0.0, true
-		for _, r := range rs {
-			if r.CostUSD == nil {
+		for i, r := range h {
+			if r.Attempt != i+1 || r.CostUSD == nil || excluded(r) {
 				known = false
 				break
 			}
 			total += *r.CostUSD
 		}
-		if last.Outcome == task.OutcomeCompleted && known {
-			first := bucketOf(rs[0])
+		if known {
+			first := bucketOf(h[0])
 			costSum[first] += total
 			costN[first]++
 		}
@@ -329,6 +370,9 @@ func (r Report) Print(w io.Writer) {
 	}
 	if r.Unverified {
 		fmt.Fprintln(w, "rows not verified: the session has no seed file")
+	}
+	if r.UsageInvalid > 0 {
+		fmt.Fprintf(w, "usage_invalid: %d row(s) with a token counter that is not a count (negative, fractional, out of range): usage unknown\n", r.UsageInvalid)
 	}
 	if len(r.Unpriced) > 0 {
 		fmt.Fprintf(w, "entries with no owner price (cost unknown, no budget stop): %s\n", strings.Join(r.Unpriced, ", "))

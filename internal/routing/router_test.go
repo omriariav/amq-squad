@@ -323,10 +323,12 @@ func TestFourChecks(t *testing.T) {
 		t.Fatalf("permitted runtimes: %+v", d)
 	}
 	f.g.PermittedRuntimes = nil
-	// concurrency: six Claude seats busy.
+	// concurrency: six Claude seats busy (one seat each: the cap counts
+	// seats, phase 5 re-pass ruling 2).
 	for i := 0; i < 6; i++ {
-		b := newTask("b", "implement")
+		b := newTask("b"+string(rune('1'+i)), "implement")
 		b.State, b.Pool = task.StateInProgress, pl("claude:haiku:low")
+		b.Lease = &task.Lease{Holder: "seat-b" + string(rune('1'+i))}
 		f.list = append(f.list, b)
 	}
 	if d := f.decide(newTask("t1", "implement")); d.Entry.Key() != "codex:gpt-5.6-terra:medium" || !hasSkip(d, "claude:sonnet:medium", SkipConcurrencyCap) {

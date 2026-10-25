@@ -93,8 +93,10 @@ func (s *supervisor) count() int {
 	return s.starts
 }
 
-// startLeadScheduler supervises `amq-squad scheduler run` for the lead.
-func startLeadScheduler(seats, lead string) (*supervisor, error) {
+// startLeadScheduler supervises `amq-squad scheduler run` for the lead;
+// leadPools are the lead's own pools, which the router's concurrency caps
+// count (a pi lead on the Ollama GPU).
+func startLeadScheduler(seats, lead string, leadPools []string) (*supervisor, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -105,7 +107,11 @@ func startLeadScheduler(seats, lead string) (*supervisor, error) {
 	}
 	s := &supervisor{log: logf, backoff: time.Second, maxDelay: 30 * time.Second, fastFail: 10 * time.Second, maxFast: 5,
 		command: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, self, "scheduler", "run", "--seats", seats, "--lead", lead)
+			args := []string{"scheduler", "run", "--seats", seats, "--lead", lead}
+			for _, p := range leadPools {
+				args = append(args, "--lead-pool", p)
+			}
+			return exec.CommandContext(ctx, self, args...)
 		}}
 	s.start()
 	return s, nil

@@ -24,6 +24,7 @@ func TestSeatCommitOpenPRBindsTheTask(t *testing.T) {
 	tk, _ := s.Add(task.AddInput{Title: "x", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
 	s.Claim(tk.ID, "s1", nil, time.Hour, time.Now())
 	mustWrite(t, filepath.Join(wt, "cmd", "root.go"), "package cmd\n// pr\n")
+	harnessPass(t, s, tk.ID, time.Now())
 	s.Done(tk.ID, "s1", "ok", "", time.Now())
 	if out, _, err := captureOutput(t, func() error {
 		return runSeatCommit([]string{"--seat", "s1", "--root", root, "--open-pr"}, os.Stdout)

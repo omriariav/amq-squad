@@ -29,6 +29,7 @@ func TestSeatCommitQuarantineAndOwnerClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(wt, "cmd", "root.go"), "package cmd\n// w\n")
+	harnessPass(t, s, tk.ID, time.Now())
 	if _, err := s.Done(tk.ID, "s1", "ok", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +61,7 @@ func TestSeatCommitQuarantineAndOwnerClear(t *testing.T) {
 	if got, _ := s.Get(tk.ID); got.State != task.StateInProgress || got.Report == nil {
 		t.Fatalf("not re-armed: %+v", got)
 	}
+	harnessPass(t, s, tk.ID, time.Now()) // the re-armed attempt's own verdict
 	if out, _, err := captureOutput(t, func() error { return runSeatCommit([]string{"--seat", "s1", "--root", root}, os.Stdout) }); err != nil {
 		t.Fatalf("seat commit after the clear: %v\n%s", err, out)
 	}

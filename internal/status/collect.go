@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -255,7 +257,7 @@ func readLedgerTail(path string) (ledgerTail, error) {
 		if at, err := time.Parse(time.RFC3339Nano, l.At); err == nil && !at.Before(t.last) {
 			t.last, t.prompt = at, promptState(l.Event, l.Tool)
 		}
-		if in, out, ok := payloadTokens(l.Payload); ok {
+		if in, out, ok := payloadTokens(l.Payload); ok { // an invalid counter is no count (phase 5 re-pass, P2-4)
 			t.tokens, t.in, t.out = true, t.in+in, t.out+out
 		}
 	}
@@ -276,53 +278,109 @@ func promptState(event, tool string) string {
 	return "unknown"
 }
 
+// MaxTokenCount bounds one payload's token counter: a larger value is out of
+// range (no provider reports it for one turn), and a window's sum stays far
+// from overflow.
+const MaxTokenCount = 1 << 40
+
+// TokenCounts is what one hook payload says about token usage: each counter
+// and whether the payload names it, or, when a named counter is not a
+// count (negative, fractional, out of range, not a number), why the
+// payload's usage is unknown.
+type TokenCounts struct {
+	In, Out     int64
+	InOK, OutOK bool
+	Invalid     string
+}
+
+// The counters by name (phase 5 re-pass, P2-3): the Anthropic and pi names,
+// their camel-case forms and the OpenAI-style aliases. A bare "input" or
+// "output" is read only inside a usage object, never from a flat payload,
+// where it names the tool's input or output.
+var (
+	inputCounters  = []string{"input_tokens", "inputTokens", "prompt_tokens", "promptTokens"}
+	outputCounters = []string{"output_tokens", "outputTokens", "completion_tokens", "completionTokens"}
+)
+
 // PayloadTokenCounts reads the input and output token counts of one hook
-// payload (its "usage", or "message.usage") and says which of the two it
-// names. The routing outcome log (2b-4) needs both: a payload with one
-// counter is unknown usage there, never a zero for the other (Codex pass 1,
-// P2-5). The status seat row keeps its own rule (either counter).
-func PayloadTokenCounts(raw json.RawMessage) (in, out int64, inOK, outOK bool) {
-	return payloadTokenCounts(raw)
+// payload: its "usage" object, else "message.usage", else counters flat on
+// the payload. Only the known counters are decoded, so a usage object that
+// also carries nested objects (input_tokens_details) is read; the aliases
+// prompt_tokens and completion_tokens are the input and output counters
+// (phase 5 re-pass, P2-3). A named counter that is negative, fractional or
+// out of range makes the payload's usage unknown, with the reason (P2-4).
+// The routing outcome log (2b-4) needs both counters: a payload with one is
+// unknown usage there, never a zero for the other (Codex pass 1, P2-5). The
+// status seat row keeps its own rule (either counter).
+func PayloadTokenCounts(raw json.RawMessage) TokenCounts {
+	var c TokenCounts
+	p := jsonObject(raw)
+	if p == nil {
+		return c
+	}
+	in, out := inputCounters, outputCounters
+	usage := jsonObject(p["usage"])
+	if usage == nil {
+		if msg := jsonObject(p["message"]); msg != nil {
+			usage = jsonObject(msg["usage"])
+		}
+	}
+	if usage != nil {
+		in, out = append(slices.Clone(in), "input"), append(slices.Clone(out), "output")
+	} else {
+		usage = p
+	}
+	var bad string
+	if c.In, c.InOK, bad = counter(usage, in); bad != "" {
+		return TokenCounts{Invalid: bad}
+	}
+	if c.Out, c.OutOK, bad = counter(usage, out); bad != "" {
+		return TokenCounts{Invalid: bad}
+	}
+	return c
 }
 
 // payloadTokens finds a usage object (usage, message.usage) with input and
 // output token counts in a hook payload; ok when it names either.
 func payloadTokens(raw json.RawMessage) (int64, int64, bool) {
-	in, out, inOK, outOK := payloadTokenCounts(raw)
-	return in, out, inOK || outOK
+	c := PayloadTokenCounts(raw)
+	return c.In, c.Out, c.Invalid == "" && (c.InOK || c.OutOK)
 }
 
-func payloadTokenCounts(raw json.RawMessage) (int64, int64, bool, bool) {
+func jsonObject(raw json.RawMessage) map[string]json.RawMessage {
 	if len(raw) == 0 {
-		return 0, 0, false, false
+		return nil
 	}
-	var p map[string]json.RawMessage
-	if json.Unmarshal(raw, &p) != nil {
-		return 0, 0, false, false
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
 	}
-	usage := p["usage"]
-	if len(usage) == 0 {
-		var msg map[string]json.RawMessage
-		if json.Unmarshal(p["message"], &msg) == nil {
-			usage = msg["usage"]
-		}
-	}
-	var u map[string]float64
-	if len(usage) == 0 || json.Unmarshal(usage, &u) != nil {
-		return 0, 0, false, false
-	}
-	in, inOK := firstKey(u, "input_tokens", "inputTokens", "input")
-	out, outOK := firstKey(u, "output_tokens", "outputTokens", "output")
-	return int64(in), int64(out), inOK, outOK
+	return m
 }
 
-func firstKey(m map[string]float64, keys ...string) (float64, bool) {
-	for _, k := range keys {
-		if v, ok := m[k]; ok {
-			return v, true
+// counter is the first of names the object carries, as a count; a null is
+// absent. The reason is set when the value is not a count.
+func counter(m map[string]json.RawMessage, names []string) (int64, bool, string) {
+	for _, k := range names {
+		v, ok := m[k]
+		if !ok || string(bytes.TrimSpace(v)) == "null" {
+			continue
 		}
+		var f float64
+		if err := json.Unmarshal(v, &f); err != nil {
+			return 0, false, k + " is not a number"
+		}
+		switch {
+		case math.IsNaN(f) || f != math.Trunc(f):
+			return 0, false, k + " is fractional"
+		case f < 0:
+			return 0, false, k + " is negative"
+		case f > MaxTokenCount:
+			return 0, false, k + " is out of range"
+		}
+		return int64(f), true, ""
 	}
-	return 0, false
+	return 0, false, ""
 }
 
 func later(cur *time.Time, t time.Time) *time.Time {

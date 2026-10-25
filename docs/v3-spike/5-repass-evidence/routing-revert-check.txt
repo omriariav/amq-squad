@@ -1,0 +1,571 @@
+========================================================================
+## rule: R1 the store completes a mechanical class only on a verdict
+## test: ./internal/task/ TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict$
+## edit internal/task/lease.go:
+-	if MechanicalVerifier(ClassVerifier(t.Class)) {
+		var v *Verdict
++	if false && MechanicalVerifier(ClassVerifier(t.Class)) {
+		var v *Verdict
+## reverted run (exit 1):
+=== RUN   TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict
+    verdict_test.go:45: a done report with no verdict completed: state completed reason  attempts [{N:1 Holder:seat-1 Pool:0x23a2c8b1d830 GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:01 +0000 UTC Outcome:completed Detail: Verdict:<nil>}]
+--- FAIL: TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict (0.32s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.551s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict
+--- PASS: TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict (1.48s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	1.708s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 (router row) a done report with no verdict is no pass
+## test: ./internal/routing/ TestRepassVerdictMissingIsNeverAPassAndEscalates$
+## edit internal/task/lease.go:
+-	if MechanicalVerifier(ClassVerifier(t.Class)) {
+		var v *Verdict
++	if false && MechanicalVerifier(ClassVerifier(t.Class)) {
+		var v *Verdict
+## reverted run (exit 1):
+=== RUN   TestRepassVerdictMissingIsNeverAPassAndEscalates
+    repass_test.go:50: an implement done report with no verdict completed: completed 
+--- FAIL: TestRepassVerdictMissingIsNeverAPassAndEscalates (0.25s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.491s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassVerdictMissingIsNeverAPassAndEscalates
+--- PASS: TestRepassVerdictMissingIsNeverAPassAndEscalates (0.28s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.662s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 a fail verdict never completes
+## test: ./internal/task/ TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict$
+## edit internal/task/lease.go:
+-		case v.Result != VerdictPass:
+			endAttempt
++		case false:
+			endAttempt
+## reverted run (exit 1):
+=== RUN   TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict
+    verdict_test.go:73: a fail verdict completed: completed  <nil>
+--- FAIL: TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict (0.53s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.847s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict
+--- PASS: TestRepassMechanicalClassCompletesOnlyOnAHarnessVerdict (1.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	1.496s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 verifier_result pass only from a recorded verdict
+## test: ./internal/routing/ TestRepassVerdictMissingIsNeverAPassAndEscalates$
+## edit internal/routing/router.go:
+-	if a.Verdict != nil {
+		if a.Verdict.Result == task.VerdictPass {
++	if a.Outcome == task.OutcomeCompleted {
+		return VerifierPass
+	}
+	if a.Verdict != nil {
+		if a.Verdict.Result == task.VerdictPass {
+## reverted run (exit 1):
+=== RUN   TestRepassVerdictMissingIsNeverAPassAndEscalates
+    repass_test.go:66: a completion with no verdict is "pass"
+--- FAIL: TestRepassVerdictMissingIsNeverAPassAndEscalates (0.17s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.401s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassVerdictMissingIsNeverAPassAndEscalates
+--- PASS: TestRepassVerdictMissingIsNeverAPassAndEscalates (0.20s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.430s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 the cap counts the scheduler's seat view (a closing seat)
+## test: ./internal/routing/ TestRepassConcurrencyCountsSeatsNotTasks$
+## edit internal/routing/router.go:
+-	if r.o.Seats != nil {
+		for _, s := range r.o.Seats() {
++	if false {
+		for _, s := range r.o.Seats() {
+## reverted run (exit 1):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+    repass_test.go:103: a closing seat occupied nothing: {Task:t1 Attempt:1 Class:script Features:{DeclaredFiles:0 SizeBand:1 InputTokens:10000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:smol UsedTier:smol Entry:0x44b07e7bd0b0 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:0.95 ExplorationShare:0.05 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC Seq:0 Prev: Tag:}
+--- FAIL: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	1.234s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+--- PASS: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.564s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 the lead's seat counts when it shares the pool
+## test: ./internal/routing/ TestRepassConcurrencyCountsSeatsNotTasks$
+## edit internal/routing/router.go:
+-	for _, p := range r.o.LeadPools {
++	for _, p := range r.o.LeadPools[:0] {
+## reverted run (exit 1):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+    repass_test.go:109: the lead's seat occupied nothing: {Task:t1 Attempt:1 Class:script Features:{DeclaredFiles:0 SizeBand:1 InputTokens:10000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:smol UsedTier:smol Entry:0x7dd1dc80d350 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:0.95 ExplorationShare:0.05 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC Seq:0 Prev: Tag:}
+--- FAIL: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.304s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+--- PASS: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.808s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 each seat once (a seat and its leased task)
+## test: ./internal/routing/ TestRepassConcurrencyCountsSeatsNotTasks$
+## edit internal/routing/router.go:
+-			count("seat:"+s.Handle, s.Pool)
++			count("view:"+s.Handle, s.Pool)
+## reverted run (exit 1):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+    repass_test.go:124: one seat with its task counted twice: {Task:t1 Attempt:1 Class:script Features:{DeclaredFiles:0 SizeBand:1 InputTokens:10000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:smol UsedTier:smol Entry:0x1b8e8783d5f0 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified} {Entry:pi:ollama/qwen3.6:27b:low Reason:concurrency_cap}] Policy:table Propensity:0.95 ExplorationShare:0.05 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC Seq:0 Prev: Tag:}
+--- FAIL: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.329s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+--- PASS: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.791s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 the lead's pool by runtime and model
+## test: ./internal/routing/ TestRepassConcurrencyCountsSeatsNotTasks$
+## edit internal/routing/router.go:
+-		if e.Runtime == p.Runtime && e.Model == p.Model {
++		if false && e.Runtime == p.Runtime && e.Model == p.Model {
+## reverted run (exit 1):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+    repass_test.go:109: the lead's seat occupied nothing: {Task:t1 Attempt:1 Class:script Features:{DeclaredFiles:0 SizeBand:1 InputTokens:10000 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:smol UsedTier:smol Entry:0x3298576bf350 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:0.95 ExplorationShare:0.05 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC Seq:0 Prev: Tag:}
+--- FAIL: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.218s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassConcurrencyCountsSeatsNotTasks
+--- PASS: TestRepassConcurrencyCountsSeatsNotTasks (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.249s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 the scheduler's view lists pending requests
+## test: ./internal/scheduler/ TestRepassOccupancyNamesLiveClosingAndRequestedSeats$
+## edit internal/scheduler/scheduler.go:
+-	for _, r := range s.requests {
+		out = append(out, SeatView{Handle: "request "
++	for _, r := range s.requests[:0] {
+		out = append(out, SeatView{Handle: "request "
+## reverted run (exit 1):
+=== RUN   TestRepassOccupancyNamesLiveClosingAndRequestedSeats
+    occupancy_test.go:43: seat view after the expiry: [{Handle:seat-a Pool:{Runtime:claude Model:sonnet Effort:medium} Unresponsive:false Closing:lease_expired RequestID:}]
+--- FAIL: TestRepassOccupancyNamesLiveClosingAndRequestedSeats (0.28s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.900s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassOccupancyNamesLiveClosingAndRequestedSeats
+--- PASS: TestRepassOccupancyNamesLiveClosingAndRequestedSeats (0.28s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.501s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-3 counters by name beside nested objects
+## test: ./internal/routing/ TestRepassUsageCountersByNameNestedFlatAndAliases$
+## edit internal/status/collect.go:
+-	var bad string
+	if c.In, c.InOK, bad = counter(usage, in); bad != "" {
++	var bad string
+	if b, _ := json.Marshal(usage); json.Unmarshal(b, new(map[string]float64)) != nil {
+		return c
+	}
+	if c.In, c.InOK, bad = counter(usage, in); bad != "" {
+## reverted run (exit 1):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+    repass_test.go:145: usage: in <nil> out <nil> cost <nil> invalid ""
+--- FAIL: TestRepassUsageCountersByNameNestedFlatAndAliases (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.261s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+--- PASS: TestRepassUsageCountersByNameNestedFlatAndAliases (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.267s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-3 the prompt_tokens alias
+## test: ./internal/routing/ TestRepassUsageCountersByNameNestedFlatAndAliases$
+## edit internal/status/collect.go:
+-"input_tokens", "inputTokens", "prompt_tokens", "promptTokens"}
++"input_tokens", "inputTokens"}
+## reverted run (exit 1):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+    repass_test.go:145: usage: in <nil> out <nil> cost <nil> invalid ""
+--- FAIL: TestRepassUsageCountersByNameNestedFlatAndAliases (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.259s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+--- PASS: TestRepassUsageCountersByNameNestedFlatAndAliases (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.871s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-3 the completion_tokens alias
+## test: ./internal/routing/ TestRepassUsageCountersByNameNestedFlatAndAliases$
+## edit internal/status/collect.go:
+-"output_tokens", "outputTokens", "completion_tokens", "completionTokens"}
++"output_tokens", "outputTokens"}
+## reverted run (exit 1):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+    repass_test.go:145: usage: in <nil> out <nil> cost <nil> invalid ""
+--- FAIL: TestRepassUsageCountersByNameNestedFlatAndAliases (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.239s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+--- PASS: TestRepassUsageCountersByNameNestedFlatAndAliases (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.697s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-3 counters flat on the payload
+## test: ./internal/routing/ TestRepassUsageCountersByNameNestedFlatAndAliases$
+## edit internal/status/collect.go:
+-	} else {
+		usage = p
+	}
++	} else {
+		return c
+	}
+## reverted run (exit 1):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+    repass_test.go:145: usage: in 1100 out 220 cost 0x72fbd808f948 invalid ""
+--- FAIL: TestRepassUsageCountersByNameNestedFlatAndAliases (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.239s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUsageCountersByNameNestedFlatAndAliases
+--- PASS: TestRepassUsageCountersByNameNestedFlatAndAliases (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.516s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 a negative counter is no count
+## test: ./internal/routing/ TestRepassInvalidCountersAreUnknownUsageAndReported$
+## edit internal/status/collect.go:
+-		case f < 0:
++		case f < -1e18:
+## reverted run (exit 1):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+    repass_test.go:161: counter -500: in 500 cost 0x4906b778f900 invalid ""
+--- FAIL: TestRepassInvalidCountersAreUnknownUsageAndReported (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.817s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+--- PASS: TestRepassInvalidCountersAreUnknownUsageAndReported (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.326s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 a fractional counter is no count
+## test: ./internal/routing/ TestRepassInvalidCountersAreUnknownUsageAndReported$
+## edit internal/status/collect.go:
+-		case math.IsNaN(f) || f != math.Trunc(f):
++		case math.IsNaN(f):
+## reverted run (exit 1):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+    repass_test.go:161: counter 12.5: in 1012 cost 0x699bb3419978 invalid ""
+--- FAIL: TestRepassInvalidCountersAreUnknownUsageAndReported (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.298s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+--- PASS: TestRepassInvalidCountersAreUnknownUsageAndReported (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.248s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 an out-of-range counter is no count
+## test: ./internal/routing/ TestRepassInvalidCountersAreUnknownUsageAndReported$
+## edit internal/status/collect.go:
+-		case f > MaxTokenCount:
++		case f > 1e300:
+## reverted run (exit 1):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+    repass_test.go:161: counter 1e15: in 1000000000001000 cost 0x47284700fa30 invalid ""
+--- FAIL: TestRepassInvalidCountersAreUnknownUsageAndReported (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.441s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+--- PASS: TestRepassInvalidCountersAreUnknownUsageAndReported (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.259s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 a row carries no negative usage or cost
+## test: ./internal/routing/ TestRepassInvalidCountersAreUnknownUsageAndReported$
+## edit internal/routing/router.go:
+-	case bad(u.TokensIn) || bad(u.TokensOut):
++	case bad(nil):
+## edit internal/routing/router.go:
+-	case u.CostUSD != nil && !validCost(*u.CostUSD):
++	case u.CostUSD == nil && false:
+## reverted run (exit 1):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+    repass_test.go:179: row: [{Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:plan Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:plan UsedTier:plan Entry:claude:opus:high Runtime:claude Skipped:[] Policy:manual Propensity:0 ExplorationShare:0.05 TokensIn:0x24c03aa0fa50 TokensOut:0x24c03aa0fa58 CostUSD:0x24c03aa0fa28 UsageInvalid: CostIndex:0 WallMS:60000 WaitMS:0 WaitReasons:[] Outcome:failed VerifierResult:none ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:s GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:01:00 +0000 UTC Seq:0 Prev: Tag:}]
+--- FAIL: TestRepassInvalidCountersAreUnknownUsageAndReported (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.345s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+--- PASS: TestRepassInvalidCountersAreUnknownUsageAndReported (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.255s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 the report counts usage_invalid rows
+## test: ./internal/routing/ TestRepassInvalidCountersAreUnknownUsageAndReported$
+## edit internal/routing/report.go:
+-		if r.UsageInvalid != "" {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+    repass_test.go:186: report usage_invalid = 0
+--- FAIL: TestRepassInvalidCountersAreUnknownUsageAndReported (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.247s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassInvalidCountersAreUnknownUsageAndReported
+--- PASS: TestRepassInvalidCountersAreUnknownUsageAndReported (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.314s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 whole task histories (no attempt becomes the first)
+## test: ./internal/routing/ TestRepassTaskHistoriesKeepTheFirstAttempt$
+## edit internal/routing/report.go:
+-	for _, r := range rows {
+		hist[r.Task] = append(hist[r.Task], r)
++	for _, r := range used {
+		hist[r.Task] = append(hist[r.Task], r)
+## edit internal/routing/report.go:
+-			if r.Attempt != i+1 || r.CostUSD == nil || excluded(r) {
++			if r.CostUSD == nil || excluded(r) || i < 0 {
+## reverted run (exit 1):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+    repass_test.go:225: excluded first attempt: the retry's bucket books the task's cost: implement task band 1
+--- FAIL: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.228s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+--- PASS: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.383s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 an excluded required attempt makes the cost unknown
+## test: ./internal/routing/ TestRepassTaskHistoriesKeepTheFirstAttempt$
+## edit internal/routing/report.go:
+-			if r.Attempt != i+1 || r.CostUSD == nil || excluded(r) {
++			if r.Attempt != i+1 || r.CostUSD == nil || (excluded(r) && false) {
+## reverted run (exit 1):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+    repass_test.go:229: excluded first attempt: the task's cost is not unknown: implement smol band 1
+--- FAIL: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.343s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+--- PASS: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.616s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 a missing first attempt makes the cost unknown
+## test: ./internal/routing/ TestRepassTaskHistoriesKeepTheFirstAttempt$
+## edit internal/routing/report.go:
+-			if r.Attempt != i+1 || r.CostUSD == nil || excluded(r) {
++			if r.CostUSD == nil || excluded(r) || i < 0 {
+## reverted run (exit 1):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+    repass_test.go:242: missing first attempt: implement task band 1
+--- FAIL: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.233s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassTaskHistoriesKeepTheFirstAttempt
+--- PASS: TestRepassTaskHistoriesKeepTheFirstAttempt (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.293s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-6 unpriced names before the runtime filter
+## test: ./internal/routing/ TestRepassUnpricedEntriesBeforeTheRuntimeFilter$
+## edit internal/routing/report.go:
+-		if r.CostUSD == nil && r.TokensIn != nil && r.TokensOut != nil && r.Entry != "" && !containsStr(rep.Unpriced, r.Entry) {
++		if false && r.CostUSD == nil && r.TokensIn != nil && r.TokensOut != nil && r.Entry != "" && !containsStr(rep.Unpriced, r.Entry) {
+## edit internal/routing/report.go:
+-		if perRuntime[r.Runtime].Incomplete == 0 {
+			used = append(used, r)
+
++		if perRuntime[r.Runtime].Incomplete == 0 {
+			used = append(used, r)
+			if r.CostUSD == nil && r.Entry != "" && !containsStr(rep.Unpriced, r.Entry) {
+				rep.Unpriced = append(rep.Unpriced, r.Entry)
+			}
+
+## reverted run (exit 1):
+=== RUN   TestRepassUnpricedEntriesBeforeTheRuntimeFilter
+    repass_test.go:268: excluded [{Runtime:pi Rows:2 Incomplete:1}] unpriced []
+--- FAIL: TestRepassUnpricedEntriesBeforeTheRuntimeFilter (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.339s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUnpricedEntriesBeforeTheRuntimeFilter
+--- PASS: TestRepassUnpricedEntriesBeforeTheRuntimeFilter (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.254s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-7 the report refuses a missing head
+## test: ./internal/routing/ TestRepassReportRunsTheStartChecks$
+## edit internal/routing/seed.go:
+-	if herr != nil {
+		return nil, nil, true, herr
++	if herr != nil && found {
+		return nil, nil, true, herr
+## reverted run (exit 1):
+=== RUN   TestRepassReportRunsTheStartChecks
+    repass_test.go:285: cut log with its head removed: <nil>
+--- FAIL: TestRepassReportRunsTheStartChecks (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.313s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassReportRunsTheStartChecks
+--- PASS: TestRepassReportRunsTheStartChecks (0.14s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.506s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-7 the report checks the seed identity
+## test: ./internal/routing/ TestRepassReportRunsTheStartChecks$
+## edit internal/routing/seed.go:
+-checkHead(root, key, dev, ino)
++checkHead(root, key, 0*dev, 0*ino)
+## reverted run (exit 1):
+=== RUN   TestRepassReportRunsTheStartChecks
+    repass_test.go:295: replaced seed: <nil>
+--- FAIL: TestRepassReportRunsTheStartChecks (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.316s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassReportRunsTheStartChecks
+--- PASS: TestRepassReportRunsTheStartChecks (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.318s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-8 scheduler run refuses with routing_invalid
+## test: ./internal/cli/ TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid$
+## edit internal/cli/scheduler_run.go:
+-		return fmt.Errorf("scheduler run: the router: %w", err)
++		return fmt.Errorf("scheduler run: the router: %v", err)
+## reverted run (exit 1):
+=== RUN   TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid
+    repass_routing_test.go:24: an invalid routing.yaml: scheduler run: the router: routing_invalid: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid2915828697/002/.amq-squad/routing.yaml: line 2: unknown_key: unknown key
+--- FAIL: TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.301s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid
+--- PASS: TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.481s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## summary: 25 rule(s), 0 not OK

@@ -65,6 +65,25 @@ func readHead(root string, key []byte) (headRecord, bool, error) {
 	return h, true, nil
 }
 
+// checkHead reads the head record and runs the checks of a session that has
+// routed: a head that does not verify, a head missing beside an outcome log,
+// decision log or head, and a seed file other than the one the head
+// recorded (device and inode; seedDev 0 when unknown) are each
+// routing_invalid. The router's start and the weekly report run this one
+// check (phase 5 re-pass, P2-7).
+func checkHead(root string, key []byte, seedDev, seedIno uint64) (headRecord, bool, error) {
+	h, found, err := readHead(root, key)
+	switch {
+	case err != nil:
+		return headRecord{}, found, &InvalidError{Err: err}
+	case !found && sessionStarted(root):
+		return headRecord{}, false, &InvalidError{Err: fmt.Errorf("routing head %s is missing in a session that has routed before", HeadPath(root))}
+	case found && seedDev != 0 && (h.SeedDev != seedDev || h.SeedIno != seedIno):
+		return headRecord{}, true, &InvalidError{Err: fmt.Errorf("routing seed %s is not the file the head recorded (device and inode differ)", SeedPath(root))}
+	}
+	return h, found, nil
+}
+
 // saveHead rewrites the head record from what the router holds now.
 func (r *Router) saveHead() error {
 	if r.o.Root == "" {

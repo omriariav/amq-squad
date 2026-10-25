@@ -182,7 +182,10 @@ func TestContextReportsSeededRoleRulesTaskAndGates(t *testing.T) {
 	}
 	steps := []func() (taskstore.Task, error){
 		func() (taskstore.Task, error) { return store.Claim("t1", "cto", nil, time.Hour, f.now.Add(-time.Hour)) },
-		func() (taskstore.Task, error) { return store.Done("t1", "cto", "ok", "", f.now.Add(-30*time.Minute)) },
+		func() (taskstore.Task, error) {
+			harnessPass(t, store, "t1", f.now.Add(-30*time.Minute))
+			return store.Done("t1", "cto", "ok", "", f.now.Add(-30*time.Minute))
+		},
 		func() (taskstore.Task, error) {
 			return store.Claim("t2", "cto", nil, time.Hour, f.now.Add(-time.Minute))
 		},
