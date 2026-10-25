@@ -654,8 +654,10 @@ a verdict the harness recorded (the commit step's test run or the
 probe's predicate), never on the seat's report; a done report with no
 verdict is blocked (`verdict_missing`) and the attempt counts as failed
 for escalation. [2.7, 2b-4 re-pass ruling, 2026-10-25] That applies only
-to a class whose verifier command is configured, in the grant or
-squad.yaml and never read from the seat's tree; a class with no
+to a class whose verifier command is configured in the owner grant
+(`verifiers:`, class to command; squad.yaml may add classes to the gate
+but never remove one the grant names, and a list that omits a configured
+class is grants_invalid), never read from the seat's tree; a class with no
 configured verifier routes at its tier and never below, completes on the
 done report, and records verifier_result "none", never "pass". The
 producer is `seat commit`: after the snapshot it runs the class's verifier
