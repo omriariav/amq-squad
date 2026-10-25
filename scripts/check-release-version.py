@@ -124,7 +124,7 @@ def main() -> int:
                 )
 
     readme = os.path.join(root, "README.md")
-    fail_if_missing(readme, f"go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
+    fail_if_missing(readme, f"go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@{tag}", failures)
     fail_if_missing(readme, f"- `amq` {AMQ_MIN_VERSION} on `PATH`", failures)
     for rel in (
         "README.md",
@@ -138,7 +138,7 @@ def main() -> int:
 
     readme_html = os.path.join(root, "README.html")
     if os.path.exists(readme_html):
-        fail_if_missing(readme_html, f"github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
+        fail_if_missing(readme_html, f"github.com/omriariav/amq-squad/v3/cmd/amq-squad@{tag}", failures)
         fail_if_missing(
             readme_html,
             f"<li><code>amq</code> {AMQ_MIN_VERSION} on <code>PATH</code></li>",

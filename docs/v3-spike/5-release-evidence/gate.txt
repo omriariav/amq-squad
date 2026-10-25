@@ -1,0 +1,17 @@
+== go build
+ok
+== go vet
+ok
+== GOOS=linux
+ok
+== GOOS=windows
+ok
+== manifest-check --final
+manifest-check: OK
+== yaml parse
+ok .github/workflows/ci.yml
+== check-release-version 3.0.0
+release metadata matches v3.0.0
+== go test -count=1 ./... (failures only)
+go test exit 0
+packages ok: 55
