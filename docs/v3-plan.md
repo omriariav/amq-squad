@@ -298,12 +298,19 @@ PATH) with a scratch HOME, the full per-seat config dir as the seat will
 see it, a scratch cwd with no project files and hooks disabled by the
 seat's own settings; it runs before any ticket is minted and before
 Apply, once per seat kind per launch when the settings are identical,
-and a probe over 5 s is claude_mode_unverified. The Claude hook script
-implements no watchdog in shell: `guard --decision claude` owns the
+and a probe over 5 s is claude_mode_unverified. For a Claude seat the
+executable is the registry pin, never a provider path: the compiler takes
+the pin as the executable and refuses a provider path that is not the
+same file (provider_not_pinned), and seat-exec re-opens argv[0] through
+the pin (path and sha256) immediately before exec and refuses a mismatch
+(tool_unpinned), so the probed bytes are the executed bytes. The Claude
+hook script implements no watchdog in shell: `guard --decision claude` owns the
 timeout, runs the guard in its own process group through the Go exec
 API and kills and reaps the group on both platforms; the script only
-pipes stdin to the adapter and prints its output. [2.7, 4-2 re-pass,
-reviewer]
+pipes stdin to the adapter and prints its output. The adapter's
+no-decision (a timeout, a truncated or absent verdict, output over 64
+KiB) is fail-open and logged by design: hooks are UX, enforcement is in
+the core. [2.7, 4-2 re-pass, reviewer]
 
 The admitted argument forms come from upstream. AMQ derives
 `AllowedArgumentForms` from its own validation tables and settles the
