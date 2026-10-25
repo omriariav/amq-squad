@@ -193,3 +193,27 @@ call created. A dry run reads only.
 - B9 `TestMigrateDeletesNothingWithoutTheRemoveFlag`,
   `TestMigrateRemoveRefusesASquadYamlThatDoesNotLoad`.
 - Named profile: `TestMigrateNamedProfile`.
+
+## Gate
+
+Quiet host (0 matching processes). Head 2375e600. Output in
+`docs/v3-spike/5-migrate-evidence/gate.txt` (copied through
+`scripts/redact-evidence`, 0 values replaced): go build, go vet, GOOS=linux and
+GOOS=windows builds, `scripts/manifest-check.sh --final` (OK; 10 new rows, four
+rows refreshed: squad.go, doctor_host.go, command_registry.go, cli.go),
+`go test -count=1 ./...` and `go test -count=1 -race -timeout 45m` on
+internal/team, internal/migrate, internal/seatcommit, internal/cli: all exit 0.
+Revert check: `docs/v3-spike/5-migrate-evidence/revert-check.txt`, 29 rows (one
+or more per rule A1 to A6 and B1 to B9), each FAILS when its line is reverted,
+0 rows not biting. The first revert pass found five weak rows (the golden key
+coverage hidden by the structure compare, the doctor wiring revert that did not
+build, a never-settable key covered by its parent, the create-only write
+hidden by the pre-check, the absent-squad refusal hidden by the load check);
+each got a sharper test (`TestSquadYamlGoldenParsesToTheExpectedStructure`
+regenerated-expected case, `TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed`
+literal key list, `TestCreateNewNeverReplacesAFile`, the detail assertion in
+`TestMigrateDeletesNothingWithoutTheRemoveFlag`) and the pass above is the rerun.
+
+Not done: nothing in the brief is left out. Open for the lead: the A6 finding
+(a hand edit of squad.yaml is not refused by the apply, only shown as
+`replace`), and the unmerged `uninstall` (out of scope).

@@ -1,0 +1,263 @@
+head 2375e600dfa83404723990184bd0f3b8dedceb56
+row A1 the key list is documented key for key with its relation
+  file: docs/squad-yaml.md
+  revert: '| `verifier_classes` | list of verifier classes |' -> '| `verifier_clazzes` | list of verifier classes |'
+  test: TestSquadYamlKeyListIsDocumentedKeyForKey
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlKeyListIsDocumentedKeyForKey (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.267s
+  FAIL
+row A1 schema is required
+  file: internal/team/squad.go
+  revert: '\\tif !sawSchema {' -> '\\tif false && !sawSchema {'
+  test: TestSquadYamlSchemaIsRequiredAndAnUnknownKeyIsRefused
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlSchemaIsRequiredAndAnUnknownKeyIsRefused (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.329s
+  FAIL
+row A1 an unknown key is refused
+  file: internal/team/squad.go
+  revert: '\\t\\t\\tif !slices.Contains(grantKeys, e.Key) {' -> '\\t\\t\\tif false && !slices.Contains(grantKeys, e.Key) {'
+  test: TestSquadYamlSchemaIsRequiredAndAnUnknownKeyIsRefused
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlSchemaIsRequiredAndAnUnknownKeyIsRefused (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.331s
+  FAIL
+row A1 verifier_classes is a schema 1 key (add only)
+  file: internal/team/squad.go
+  revert: '"merge_size_cap_files", "verifier_classes"}' -> '"merge_size_cap_files"}'
+  test: TestSquadYamlVerifierClassesOnlyAdd
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlVerifierClassesOnlyAdd (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.339s
+  FAIL
+row A2 the embedded parse must equal the expected structure
+  file: internal/team/golden.go
+  revert: '\\tif !bytes.Equal(got, want.Bytes()) {' -> '\\tif false && !bytes.Equal(got, want.Bytes()) {'
+  test: TestSquadYamlGoldenParsesToTheExpectedStructure
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlGoldenParsesToTheExpectedStructure (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.336s
+  FAIL
+row A2 every schema 1 key is in the golden
+  file: internal/team/golden.go
+  revert: '\\t\\tif !found {' -> '\\t\\tif false && !found {'
+  test: TestSquadYamlGoldenParsesToTheExpectedStructure
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlGoldenParsesToTheExpectedStructure (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.334s
+  FAIL
+row A2 doctor runs the golden self-check
+  file: internal/cli/doctor_host.go
+  revert: '\\tout = append(out, squadGoldenCheck(team.GoldenYAML, team.GoldenExpected))\\n' -> '\\t_ = team.GoldenYAML\\n'
+  test: TestDoctorSquadYamlGoldenSelfCheck
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestDoctorSquadYamlGoldenSelfCheck (0.02s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.440s
+  FAIL
+row A2 a drift fails doctor with squad_yaml_golden_drift
+  file: internal/cli/doctor_squad.go
+  revert: 'Status: doctorFail, Kind: team.CodeGoldenDrift' -> 'Status: doctorOK, Kind: team.CodeGoldenDrift'
+  test: TestDoctorSquadYamlGoldenSelfCheck
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestDoctorSquadYamlGoldenSelfCheck (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.309s
+  FAIL
+row A3 a 3.0.x reader refuses schema 2 and names the version
+  file: internal/team/squad.go
+  revert: 'verr == nil && v != SquadSchema {' -> 'verr == nil && v != SquadSchema && false {'
+  test: TestSquadYamlSchemaTwoIsRefusedAndNamed
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlSchemaTwoIsRefusedAndNamed (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.372s
+  FAIL
+row A4 a never-settable key is refused at parse with the key named
+  file: internal/team/squad.go
+  revert: '\\t\\tif IsNeverSettable(e.Key) {' -> '\\t\\tif false && IsNeverSettable(e.Key) {'
+  test: TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.367s
+  FAIL
+row A4 the never-settable set covers push_url
+  file: internal/team/squad_keys.go
+  revert: '\\t{"push_url", "grants.yaml: the push target (merge.push_url)"},\\n' -> ''
+  test: TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/team	0.360s
+  FAIL
+row A5 squad.yaml is a protected path by default (a seat diff raises the growth gate)
+  file: internal/grants/grants.go
+  revert: '\\t"squad.yaml",\\n' -> ''
+  test: TestSeatDiffTouchingSquadYamlRaisesTheGrowthGate
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSeatDiffTouchingSquadYamlRaisesTheGrowthGate (0.34s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.613s
+  FAIL
+row A6 a stale digest is refused as digest mismatch
+  file: internal/team/digest.go
+  revert: 'digest mismatch: the planned files' -> 'digest differs: the planned files'
+  test: TestSquadYamlHandEditIsNamedByTheDigestFlow
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSquadYamlHandEditIsNamedByTheDigestFlow (0.04s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.347s
+  FAIL
+row B1 the v2 files are only read (a reader that touches one fails)
+  file: internal/migrate/v2.go
+  revert: '\\tdefer f.Close()\\n\\tinfo, err := f.Stat()' -> '\\tdefer f.Close()\\n\\t_ = os.Chtimes(path, time.Now(), time.Now())\\n\\tinfo, err := f.Stat()'
+  test: TestMigrateReadsTheV2FilesReadOnly
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateReadsTheV2FilesReadOnly (0.03s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.377s
+  FAIL
+row B1 squad.yaml is written only when absent (the link, not a rename)
+  file: internal/migrate/write.go
+  revert: '\\treturn os.Link(name, path)' -> '\\treturn os.Rename(name, path)'
+  test: TestCreateNewNeverReplacesAFile
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestCreateNewNeverReplacesAFile (0.01s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.361s
+  FAIL
+row B1 an existing squad.yaml is refused at plan time
+  file: internal/migrate/plan.go
+  revert: '\\tif _, err := os.Lstat(squadPath); err == nil {' -> '\\tif _, err := os.Lstat(squadPath); err == nil && false {'
+  test: TestMigrateRefusesAnExistingSquadYaml
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateRefusesAnExistingSquadYaml (0.01s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.353s
+  FAIL
+row B1 squad.yaml is written 0644
+  file: internal/migrate/plan.go
+  revert: 'Write{Path: squadPath, Mode: 0o644,' -> 'Write{Path: squadPath, Mode: 0o600,'
+  test: TestMigrateFixtureProfileMapsToTheGoldenSquadYaml
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateFixtureProfileMapsToTheGoldenSquadYaml (0.03s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.380s
+  FAIL
+row B2 the unmapped report names every key with no 3.0 meaning
+  file: internal/migrate/map.go
+  revert: '\\tif in.TeamRules != nil {' -> '\\tif false && in.TeamRules != nil {'
+  test: TestMigrateUnmappedReportIsExactAndComplete
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateUnmappedReportIsExactAndComplete (0.01s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.363s
+  FAIL
+row B3 grants.yaml.proposed is written 0600
+  file: internal/migrate/map.go
+  revert: 'Mode: 0o600, Content: []byte(b.String())' -> 'Mode: 0o644, Content: []byte(b.String())'
+  test: TestMigrateNeverWritesTheOwnerFilesAndProposesBesideThem
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateNeverWritesTheOwnerFilesAndProposesBesideThem (0.02s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.377s
+  FAIL
+row B3 the proposal goes beside grants.yaml, never into it
+  file: internal/migrate/map.go
+  revert: 'filepath.Join(filepath.Dir(ownerPath(opts)), proposedName)' -> 'ownerPath(opts)'
+  test: TestMigrateNeverWritesTheOwnerFilesAndProposesBesideThem
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateNeverWritesTheOwnerFilesAndProposesBesideThem (0.02s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.359s
+  FAIL
+row B3 a safety-default field is refused, not dropped
+  file: internal/migrate/map.go
+  revert: '\\tif len(m.safety) > 0 {' -> '\\tif false && len(m.safety) > 0 {'
+  test: TestMigrateRefusesASafetyDefaultNamingTheField
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateRefusesASafetyDefaultNamingTheField (0.06s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.418s
+  FAIL
+row B3 the refusal names the field
+  file: internal/migrate/map.go
+  revert: 'Fields: outermost(m.safety),' -> 'Fields: nil,'
+  test: TestMigrateRefusesASafetyDefaultNamingTheField
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateRefusesASafetyDefaultNamingTheField (0.04s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.377s
+  FAIL
+row B3 an allow list or launcher preference key is a safety key
+  file: internal/migrate/safety.go
+  revert: 'return l == "launcher_preference" || strings.Contains(l, "allow")' -> 'return false'
+  test: TestMigrateRefusesASafetyDefaultNamingTheField
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateRefusesASafetyDefaultNamingTheField (0.06s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.439s
+  FAIL
+row B6 a custom role.md becomes a staged role prompt
+  file: internal/migrate/map.go
+  revert: '\\t\\tcase planned[role] == nil:' -> '\\t\\tcase false:'
+  test: TestMigrateStagesRolePromptsAndLeavesTrustToTheOwner
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateStagesRolePromptsAndLeavesTrustToTheOwner (0.03s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.398s
+  FAIL
+row B6 migrate prints the trust command for the owner to run
+  file: internal/migrate/map.go
+  revert: '\\t\\tp.TrustCmd = "amq-squad trust " + m.in.Project' -> '\\t\\tp.TrustCmd = ""'
+  test: TestMigrateStagesRolePromptsAndLeavesTrustToTheOwner
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateStagesRolePromptsAndLeavesTrustToTheOwner (0.03s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.379s
+  FAIL
+row B7 without --write nothing on disk changes
+  file: internal/cli/migrate.go
+  revert: '\\tif *write {\\n\\t\\tif _, err := plan.Apply()' -> '\\tif true {\\n\\t\\tif _, err := plan.Apply()'
+  test: TestMigrateVerb
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateVerb (0.01s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.337s
+  FAIL
+row B8 a credential-shaped value is refused and nothing is written
+  file: internal/migrate/plan.go
+  revert: '\\tif err := checkCredentials(in); err != nil {' -> '\\tif err := checkCredentials(in); err != nil && false {'
+  test: TestMigrateRefusesACredentialAndWritesNothing
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateRefusesACredentialAndWritesNothing (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.364s
+  FAIL
+row B9 nothing is removed from a checkout without squad.yaml
+  file: internal/migrate/write.go
+  revert: '\\tif _, err := os.Lstat(path); err != nil {' -> '\\tif _, err := os.Lstat(path); err != nil && false {'
+  test: TestMigrateDeletesNothingWithoutTheRemoveFlag
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateDeletesNothingWithoutTheRemoveFlag (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.391s
+  FAIL
+row B9 --remove-v2 refuses a squad.yaml that does not load
+  file: internal/migrate/write.go
+  revert: '\\tif _, err := team.LoadSquadWith(ownerPath(opts), in.Project); err != nil {' -> '\\tif _, err := team.LoadSquadWith(ownerPath(opts), in.Project); err != nil && false {'
+  test: TestMigrateRemoveRefusesASquadYamlThatDoesNotLoad
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestMigrateRemoveRefusesASquadYamlThatDoesNotLoad (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/migrate	0.349s
+  FAIL
+rows that did not bite: 0
