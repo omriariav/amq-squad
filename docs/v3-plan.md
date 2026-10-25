@@ -692,8 +692,9 @@ but never remove one the grant names, and a list that omits a configured
 class is grants_invalid), never read from the seat's tree; a class with no
 configured verifier routes at its tier and never below, completes on the
 done report, and records verifier_result "none", never "pass". The
-producer is `seat commit`: after the snapshot it runs the class's verifier
-in the shadow worktree, bounded (10 minutes and 1 MiB of output by
+producer is `seat commit`: in the order exit check, snapshot, diff checks
+on the snapshot, verifier, second PreflightDiff, sealed verdict, push and
+PR, it runs the class's verifier in the shadow worktree, bounded (10 minutes and 1 MiB of output by
 default, grant-settable), with the command and arguments from the grant
 or squad.yaml only and the hardened harness environment, and records the
 verdict with the digest of the tree it ran on; the R12 probe records its
@@ -716,8 +717,17 @@ seats; a restart adopts a running step through the exits queue as a
 deferred check and never re-runs the verifier on the same snapshot. An
 escaped descendant that leaves the process group is a recorded limit on
 unix (the bound stops the wait, the orphan belongs to the seat_gone sweep
-or the owner); no seat host exists off unix in 3.0. Phase 5 branch
-v3-5-verifier. [2.7, reviewer ruling, 2026-10-25]
+or the owner); no seat host exists off unix in 3.0. A verdict is reused
+only when its tag verifies (an untagged or wrong-tagged one is
+verdict_missing and the verifier runs again); the capture is redacted
+before it is truncated and a truncated capture ends at a line boundary
+with a marker; a verdict for the same tree with another command digest
+supersedes the earlier one, the supersession inside the sealed bytes, and
+the newest verdict is authoritative at completion; a grant command may be
+a string or a YAML list; the hook ledger's one writer redacts on write
+and keeps a malformed payload as length, sha256 and a redacted printable
+prefix. Phase 5 branch v3-5-verifier. [2.7, reviewer ruling and Codex
+pass, 2026-10-25]
 
 ### 6.2 Chains
 
