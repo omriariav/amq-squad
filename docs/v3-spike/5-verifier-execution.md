@@ -144,7 +144,7 @@ Recorded limit, beside the others: a same-UID process can plant a marker and kee
 
 ## The fifth round on the re-pass of 5303cba7
 
-One short commit on 5303cba7: the P1 and the small items of the lead's re-pass (items 1, 2 and 4 of the fourth round held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix5-revert-check.txt` (every case of `tools/cases_verifier.py`). Gate on a quiet host: `5-verifier-evidence/fix5-gate.txt`. Lines refer to the 5303cba7 export.
+One short commit on 5303cba7: the P1 and the small items of the lead's re-pass (items 1, 2 and 4 of the fourth round held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix5-revert-check.txt` (88 rules, all OK, every case of `tools/cases_verifier.py`, run on 610e457c; the earlier YAML and marker cases rewritten for the new code). Gate on a quiet host: `5-verifier-evidence/fix5-gate.txt` (at 610e457c, clean tree: gate OK, 3842 PASS, 0 FAIL; race on task, grants, routing, scheduler, schedproc, seatcommit, status, ledger, registry, redact, cli with `-timeout 45m`). Lines refer to the 5303cba7 export.
 
 | # | finding | fix | test row |
 | --- | --- | --- | --- |
