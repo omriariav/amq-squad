@@ -98,7 +98,7 @@ CASES = [
      "TestFailVerdictBlocksWithTheTailAndNoPush$", SC),
     ("6 a pass verdict is recorded and completion proceeds to the push", V,
      "\tif _, err := store.RecordVerdict(o.Task.ID, verdict, o.Now()); err != nil {",
-     "\tif _, err := store.Get(o.Task.ID); v.Tree == \"\" && err != nil {",
+     "\tif _, err := store.Get(o.Task.ID); verdict.Tree == \"\" && err != nil {",
      "TestPassVerdictCompletesAndPushes$", SC),
     # rule 7
     ("7 the diff check refuses before the verifier runs", "internal/seatcommit/commit.go",

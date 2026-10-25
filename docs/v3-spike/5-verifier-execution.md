@@ -74,7 +74,7 @@ Rows: current_lines refreshed for internal/task/class.go, task.go, lease.go; int
 
 ## The fix commit on the Codex pass of d3dc2d59
 
-One commit on v3-5-verifier after d3dc2d59: the lead's rulings on the four points of the first report, the Codex pass findings, and three small items. Each item has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix-revert-check.txt` (every case of `tools/cases_verifier.py`, the first commit's rules with their strings updated and the fix's rows added). Gate on a quiet host: `5-verifier-evidence/fix-gate.txt`. Lines in the findings refer to the d3dc2d59 export.
+One commit on v3-5-verifier after d3dc2d59: the lead's rulings on the four points of the first report, the Codex pass findings, and three small items. Each item has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix-revert-check.txt` (44 rules, all OK: every case of `tools/cases_verifier.py`, the first commit's rules with their strings updated and the fix's rows added; one case string was corrected after a first run where its revert did not build, then the whole check was rerun). Gate on a quiet host: `5-verifier-evidence/fix-gate.txt` (at d7378e32, the fix commit, clean tree: gate OK, 3753 PASS, 0 FAIL; race on task, grants, routing, scheduler, schedproc, seatcommit, status, ledger, registry, cli with `-timeout 45m`). Lines in the findings refer to the d3dc2d59 export.
 
 | # | finding or ruling | fix | test row |
 | --- | --- | --- | --- |
