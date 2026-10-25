@@ -282,6 +282,7 @@ orchestrator had overestimated elapsed time by up to three hours.
 
 ## Phase 5 list (hardening)
 - 2026-10-25 The Buzz-signed seat clear merged as 4d154b8e (branch v3-5-clear; 25 reverting rules; the live phone row is owner-run.md item 9). Amendment 28's clear addendum holds the rules.
+- 2026-10-25 Verifier follow-up row after the v3-5-verifier merge (reviewer): the exits queue entry for a running commit step records the verifier child's pgid and start time; on adoption the new scheduler kills that group when the start time matches and re-runs the verifier once on the same sealed snapshot with interrupted_reruns=1 inside the sealed bytes; a second interruption defers to the lead as today. This converts the orphaned-verifier limit after a scheduler death into a handled case on unix; the deferral as merged is fail-closed and stays until then.
 
 - 2026-10-24 Runtime from a read-only mounted image (hdiutil attach -readonly): closes the amendment 25 verify-to-exec window (about 295 ms, same UID), because a writer must detach the volume and the path then fails verification. Source: 4-1 second Codex pass.
 - 2026-10-24 Codex re-pass of the heads merged under amendment 29 (2b-2, 4-3, 4-5 narrow items) after the Codex limit resets on 2026-10-31; findings become fix commits before the 3.0 tag. Superseded the same day: see the entry below (moved to now).
