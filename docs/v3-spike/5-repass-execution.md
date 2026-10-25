@@ -188,3 +188,27 @@ Judgment calls, stated:
   quarantined); ingest keeps recording, so the ledger stays complete.
 - P2-4: `set -m` is POSIX job control in a non-interactive shell (checked on
   macOS /bin/sh); not executed on Linux dash in this run.
+
+## Commit 3: 4-3 (the fleet registry, the mayor, the operator and fleet CLI)
+
+Revert check: `5-repass-evidence/4-3-revert-check.txt` (7 reverts, all as
+required). Gate: `5-repass-evidence/4-3-gate.txt`.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P2-1 | registry.go:276-312 checked duplicate names but not root identity: two squads on one root, or a root and its symlink alias, both validated, fleet status duplicated the session and status.go:107-110 gave both copies' questions to the first | `fleet.SameRoot`: the same clean path, the same canonical path, or (both existing) the same device and inode via os.SameFile. `Registry.Validate` refuses two squads on one root (so every Read and every locked `Update`, `fleet add` included), and the mayor's admission inside the registry lock refuses a start on a registered root as squad_registered | TestRootIdentityIsUniqueAcrossTheRegistry |
+| P2-2 | fleet.go:222 printed a question subject with %s, so escape sequences in a lead's subject could clear and repaint the owner's terminal | `termSafe` (internal/cli/termsafe.go) is the one escaping at the output boundary: every C0 control (ESC, CR, LF and TAB included), DEL, every C1 control (U+0080 to U+009F) and every invalid UTF-8 byte (a raw 0x9b is an 8-bit CSI) is shown as a visible `\xNN` or `\u00NN`. Every human line of the fleet and operator verbs passes it: `fleet list`, `status --fleet` (session, lead), `operator inbox` (gate squad, id, class, raiser; question squad, seat, subject; now `renderInbox`) and `operator start-squad` (name, outcome, reason, detail, the owner's steps) | TestInboxEscapesTerminalControls (a `\x1b[2J` subject, an OSC in a handle, a raw 0x9b, U+0085) |
+| ruling | mayor.go:331 skipped the cost check with no meter, and fleet.go:281 always builds the mayor that way, so a positive cost_per_day_usd permitted starts with no accounting | a cap with no meter holds every start: reason and waiting cap cost_unmetered (the CLI verb, which has no session, refuses by that name and records the waiting row; a session queues it), and `status --fleet` shows `wait_reason: cost_unmetered` (new `status.WaitReasonCostUnmetered`); the registry admits the cap value. With the cap removed the start proceeds | TestCostCapWithoutAMeterHoldsEveryStart |
+
+Test fixtures: the mayor tests' default grant had cost_per_day_usd 50 and no
+meter, which the ruling now holds; the default grant carries no cost cap, and
+the two cost tests (TestMayorCostAndScope, the CLI-path row of
+TestMayorWithoutSessionRefusesTheFleetCap) set the cap with their meter.
+
+Judgment calls, stated:
+- P2-1: a root that does not exist yet is compared by clean and canonical
+  path only (no inode to compare); the operator's own root is not part of
+  the rule.
+- P2-2: the escape is applied to every field of those human lines, the
+  registry's own fields included (an owner-written root path is shown
+  escaped too); JSON output is unchanged (encoding/json escapes controls).

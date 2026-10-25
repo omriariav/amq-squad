@@ -45,7 +45,7 @@ func (s spend) SpentToday(_ time.Time) float64 { return float64(s) }
 
 func fleetGrant(maxSquads int, repos ...string) grants.Resolved {
 	g := grants.Defaults()
-	g.Fleet = grants.Fleet{MaxSquads: maxSquads, CostPerDayUSD: 50, PermittedRepositories: repos}
+	g.Fleet = grants.Fleet{MaxSquads: maxSquads, PermittedRepositories: repos} // no cost cap: a cap needs a meter (cost_unmetered); the cost tests set both
 	return grants.Resolved{Grants: g, Source: "test"}
 }
 
@@ -186,7 +186,7 @@ func TestMayorInsideTheGrant(t *testing.T) {
 
 func TestMayorCostAndScope(t *testing.T) {
 	f := newMayor(t, fleetGrant(4, "owner/app"))
-	f.m.Cost = spend(60)
+	f.grant.Grants.Fleet.CostPerDayUSD, f.m.Cost = 50, spend(60)
 	if r := mustStart(t, f.m, f.request(t, "app", false)); r.Outcome != OutcomeWaiting || r.Reason != ReasonCostPerDay {
 		t.Fatalf("over the day's cost: %+v", r)
 	}

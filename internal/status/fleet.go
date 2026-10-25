@@ -65,13 +65,18 @@ func OperatorSeat(o CollectOptions) *Seat {
 // grant's max_squads or cost_per_day_usd.
 const WaitReasonFleetCap = "fleet_cap"
 
+// WaitReasonCostUnmetered is the wait reason of a squad held because the
+// fleet grant sets cost_per_day_usd and no meter can read the outcome log
+// (phase 5 re-pass of 4-3, ruling): the owner removes the cap to proceed.
+const WaitReasonCostUnmetered = "cost_unmetered"
+
 // FleetWaiting is one squad that is not up because of the fleet cap.
 type FleetWaiting struct {
 	Squad       string    `json:"squad"`
 	Repository  string    `json:"repository"`
 	ProjectPath string    `json:"project_path"`
-	WaitReason  string    `json:"wait_reason"` // fleet_cap
-	Cap         string    `json:"cap"`         // max_squads | cost_per_day
+	WaitReason  string    `json:"wait_reason"` // fleet_cap | cost_unmetered
+	Cap         string    `json:"cap"`         // max_squads | cost_per_day | cost_unmetered
 	Since       time.Time `json:"since"`
 	Detail      string    `json:"detail"`
 }

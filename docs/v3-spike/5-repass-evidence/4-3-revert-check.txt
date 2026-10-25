@@ -1,0 +1,77 @@
+# phase 5 re-pass, 4-3 (fleet, the operator and fleet CLI): revert check (each fix reverted in place, its test row run with -race, the fix restored, the row run again)
+
+## P2-1 (root identity is unique at validation): TestRootIdentityIsUniqueAcrossTheRegistry (internal/fleet/registry.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tif SameRoot(a.Root, b.Root) {' -> '\t\t\tif false && SameRoot(a.Root, b.Root) {'
+reverted run (last lines):
+    --- FAIL: TestRootIdentityIsUniqueAcrossTheRegistry (0.04s)
+        repass5_test.go:32: roots /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRootIdentityIsUniqueAcrossTheRegistry2143496200/001/app/.agent-mail/app and /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRootIdentityIsUniqueAcrossTheRegistry2143496200/001/app/.agent-mail/app validated: <nil>
+        repass5_test.go:32: roots /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRootIdentityIsUniqueAcrossTheRegistry2143496200/001/app/.agent-mail/app and /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRootIdentityIsUniqueAcrossTheRegistry2143496200/001/alias validated: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.443s
+    FAIL
+
+## P2-1 (root identity inside the locked admission): TestRootIdentityIsUniqueAcrossTheRegistry (internal/fleet/mayor.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'x.ProjectPath == s.ProjectPath || SameRoot(x.Root, s.Root)' -> 'x.ProjectPath == s.ProjectPath'
+reverted run (last lines):
+    --- FAIL: TestRootIdentityIsUniqueAcrossTheRegistry (0.03s)
+        repass5_test.go:51: fleet.yaml: squads app and web share the session root /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRootIdentityIsUniqueAcrossTheRegistry20036564/002/app/.agent-mail/app (root identity: one squad per root)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.478s
+    FAIL
+
+## P2-1 (SameRoot: a symlink alias is the same root): TestRootIdentityIsUniqueAcrossTheRegistry (internal/fleet/registry.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif errA == nil && errB == nil && ca == cb {\n\t\treturn true\n\t}\n\tfa, errA := os.Stat(a)\n\tfb, errB := os.Stat(b)\n\treturn errA == nil && errB == nil && os.SameFile(fa, fb)' -> '\t_, _ = ca, cb\n\treturn false'
+reverted run (last lines):
+    FAIL	github.com/omriariav/amq-squad/v3/internal/fleet [build failed]
+    FAIL
+    # github.com/omriariav/amq-squad/v3/internal/fleet [github.com/omriariav/amq-squad/v3/internal/fleet.test]
+    internal/fleet/registry.go:264:6: declared and not used: errA
+    internal/fleet/registry.go:265:6: declared and not used: errB
+
+## P2-2 (one escaping function at the output boundary): TestInboxEscapesTerminalControls (internal/cli/termsafe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif clean {\n\t\treturn s\n\t}' -> '\tif clean || true {\n\t\treturn s\n\t}'
+reverted run (last lines):
+    --- FAIL: TestInboxEscapesTerminalControls (0.00s)
+        repass5_43_test.go:28: the inbox prints a raw control "\x1b":
+            "SQUAD  GATE    CLASS  RAISED BY       SINCE\napp    g-1\x9b2J  tag    lead\x1b]0;owned\a  1970-01-01T02:00Z\nquestion [app] lead\r: \x1b[2J\x1b[Hall gates approved by the owner\u0085\n"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.500s
+    FAIL
+
+## P2-2 (the inbox prints through it): TestInboxEscapesTerminalControls (internal/cli/fleet.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'fmt.Fprintf(out, "question [%s] %s: %s\\n", termSafe(q.Squad), termSafe(q.Attention.Seat), termSafe(q.Attention.Subject))' -> 'fmt.Fprintf(out, "question [%s] %s: %s\\n", q.Squad, q.Attention.Seat, q.Attention.Subject)'
+reverted run (last lines):
+    --- FAIL: TestInboxEscapesTerminalControls (0.00s)
+        repass5_43_test.go:28: the inbox prints a raw control "\x1b":
+            "SQUAD  GATE       CLASS  RAISED BY             SINCE\napp    g-1\\x9b2J  tag    lead\\x1b]0;owned\\x07  1970-01-01T02:00Z\nquestion [app] lead\r: \x1b[2J\x1b[Hall gates approved by the owner\u0085\n"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.448s
+    FAIL
+
+## ruling (a cost cap with no meter holds every start): TestCostCapWithoutAMeterHoldsEveryStart (internal/fleet/mayor.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif fleet.CostPerDayUSD > 0 && m.Cost == nil {' -> '\tif false && fleet.CostPerDayUSD > 0 && m.Cost == nil {'
+revert: '\tif fleet.CostPerDayUSD > 0 {\n\t\tif spent' -> '\tif fleet.CostPerDayUSD > 0 && m.Cost != nil {\n\t\tif spent'
+reverted run (last lines):
+    --- FAIL: TestCostCapWithoutAMeterHoldsEveryStart (0.04s)
+        repass5_test.go:67: an unmetered cap: {Outcome:started Reason: Detail: Digest:sha256:app Proposal:<nil>} (launched 1)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.455s
+    FAIL
+
+## ruling (the status says cost_unmetered): TestCostCapWithoutAMeterHoldsEveryStart (internal/fleet/status.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\treason = status.WaitReasonCostUnmetered // the status says why: the cap has no meter\n' -> ''
+reverted run (last lines):
+    --- FAIL: TestCostCapWithoutAMeterHoldsEveryStart (0.01s)
+        repass5_test.go:75: fleet status waiting: [{Squad:app Repository:owner/app ProjectPath:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestCostCapWithoutAMeterHoldsEveryStart1341074215/001/app WaitReason:fleet_cap Cap:cost_unmetered Since:2026-10-25 01:09:31 +0000 UTC Detail:cost_per_day_usd 50 is set and no meter can read the outcome log; remove the cap from grants.yaml to proceed}]
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.505s
+    FAIL
+
+summary: 7 reverts, all as required

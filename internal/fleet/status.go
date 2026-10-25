@@ -32,8 +32,12 @@ func Status(r Registry, collect Collector, version string, now time.Time) status
 	var waiting []status.FleetWaiting
 	for _, w := range r.Waiting {
 		since, _ := time.Parse(time.RFC3339, w.Since) // Validate checked it
+		reason := status.WaitReasonFleetCap
+		if w.Cap == ReasonCostUnmetered {
+			reason = status.WaitReasonCostUnmetered // the status says why: the cap has no meter
+		}
 		waiting = append(waiting, status.FleetWaiting{Squad: w.Name, Repository: w.Repository, ProjectPath: w.ProjectPath,
-			WaitReason: status.WaitReasonFleetCap, Cap: w.Cap, Since: since.UTC(), Detail: w.Detail})
+			WaitReason: reason, Cap: w.Cap, Since: since.UTC(), Detail: w.Detail})
 	}
 	return status.BuildFleet(version, now, squads, waiting)
 }

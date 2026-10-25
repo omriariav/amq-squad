@@ -668,12 +668,21 @@ entries:
   status: new
 - path: internal/cli/fleet.go
   v2_lines: 0
-  current_lines: 302
+  current_lines: 310
   fate: new
-  target_lines: 302
+  target_lines: 310
   cluster: cli
   extract: ""
   reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
+  status: new
+- path: internal/cli/termsafe.go
+  v2_lines: 0
+  current_lines: 43
+  fate: new
+  target_lines: 43
+  cluster: cli
+  extract: ""
+  reason: "phase 5 re-pass of 4-3: the one escaping of untrusted fields printed to a human (C0, C1, DEL, invalid UTF-8)"
   status: new
 - path: internal/cli/gate_close.go
   v2_lines: 253
@@ -2389,27 +2398,27 @@ entries:
   status: new
 - path: internal/fleet/mayor.go
   v2_lines: 0
-  current_lines: 653
+  current_lines: 663
   fate: new
-  target_lines: 653
+  target_lines: 663
   cluster: fleet
   extract: ""
   reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
   status: new
 - path: internal/fleet/registry.go
   v2_lines: 0
-  current_lines: 490
+  current_lines: 518
   fate: new
-  target_lines: 490
+  target_lines: 518
   cluster: fleet
   extract: ""
   reason: "4-3: the fleet registry ~/.amq-squad/fleet.yaml (renamed from the global_noc.go extract): strict schema 1, locked atomic update"
   status: new
 - path: internal/fleet/status.go
   v2_lines: 0
-  current_lines: 125
+  current_lines: 129
   fate: new
-  target_lines: 125
+  target_lines: 129
   cluster: fleet
   extract: ""
   reason: "4-3: status --fleet over the registry (ruling 16) and the manual-mode inbox: open gates of all squads in one list, lead questions"
@@ -4009,9 +4018,9 @@ entries:
   status: new
 - path: internal/status/fleet.go
   v2_lines: 0
-  current_lines: 95
+  current_lines: 100
   fate: new
-  target_lines: 95
+  target_lines: 100
   cluster: status
   extract: ""
   reason: "4-3: the fleet form of the status contract (ruling 16) and IsFleet"
