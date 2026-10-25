@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // The R12 probe (plan 5, amendments 10 and 15; ported from
@@ -158,6 +160,11 @@ type ProbeRun struct {
 	Tools              []string
 	Errors             []string
 	FirstTextMS        int
+	// Tree is the probe checkout's tree after the run (probeTree) and
+	// Verdict the predicate as a verdict on it (PredicateVerdict): doctor's
+	// is unsealed (v3-5-verifier rule 3).
+	Tree    string
+	Verdict task.Verdict
 }
 
 type piEvent struct {
@@ -414,7 +421,13 @@ func RunProbe(ctx context.Context, cfg ProbeConfig) (ProbeRun, error) {
 	wt := WorktreeState{Mismatch: checkFiles(dir)}
 	wt.FilesExact = len(wt.Mismatch) == 0
 	wt.IndependentTestOK = pristineTest(ctx, cfg.VerifyRoot, dir, env)
-	return Evaluate(events, wt), nil
+	run := Evaluate(events, wt)
+	// The checkout's tree, read after the model's processes are gone.
+	if run.Tree, err = probeTree(ctx, dir); err != nil {
+		return run, fmt.Errorf("probe: the checkout's tree: %w", err)
+	}
+	run.Verdict = run.PredicateVerdict(ProbeVerifier, ProbeSourceUnsealed)
+	return run, nil
 }
 
 func runIn(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
@@ -434,6 +447,7 @@ func Tally(ctx context.Context, cfg ProbeConfig, n int, version string) (ProbeRe
 			return rec, err
 		}
 		rec.Runs++
+		rec.Verdicts = append(rec.Verdicts, run.Verdict)
 		if run.Pass {
 			rec.Passes++
 		}

@@ -67,6 +67,9 @@ type exitItem struct {
 	Why    string    `json:"why"`
 	Gone   bool      `json:"gone,omitempty"`
 	At     time.Time `json:"at"`
+	// Deferrals counts a commit step's deferrals in a row (why commit),
+	// persisted so the limit holds across restarts.
+	Deferrals int `json:"deferrals,omitempty"`
 }
 
 // SeatGoneObserver is a SeatLauncher told when a gone seat may be forgotten
@@ -317,6 +320,18 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 		}
 	}()
 	for i, it := range queue {
+		if it.Why == whyCommit {
+			s.exitQueue = append(s.exitQueue, it) // a running commit step, not a check
+			continue
+		}
+		// P1-1 of the second pass: the exit check of a seat whose commit step
+		// is pending would wait on the ledger that step holds; it is deferred
+		// to a later tick without touching the ledger.
+		if s.commitPending(it.Handle) {
+			s.exitQueue = append(s.exitQueue, it)
+			log(Decision{Kind: "exit_check_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: "a commit step of the seat is pending"})
+			continue
+		}
 		// P1-9: a seat being closed (an expired claimed lease, a restart) is
 		// checked only once its termination is confirmed and it is forgotten.
 		if st := s.seats[it.Handle]; st != nil && st.closing != "" {
@@ -443,6 +458,137 @@ func (s *Scheduler) closeAdopted(log func(Decision)) bool {
 		log(Decision{Kind: "seat_closed", Seat: h, Reason: closeRestart})
 	}
 	return open
+}
+
+// whyCommit marks a commit step running off the tick in the exits queue: the
+// seat stays reserved while it runs, and a restart finds it (v3-5-verifier,
+// the liveness ruling): the next incarnation's commit step for that task is
+// the adoption, and a verifier that started and never recorded is never run
+// again on the same snapshot (seatcommit's verifier_interrupted).
+const whyCommit = "commit"
+
+// commitEntry writes a commit step's exits-queue entry once, before the
+// step starts.
+func (s *Scheduler) commitEntry(handle, taskID string, now time.Time) {
+	if it := (exitItem{Handle: handle, TaskID: taskID, Why: whyCommit, At: now}); !s.exitPendingItem(it) {
+		s.queueExit(it)
+	}
+}
+
+// commitPending reports whether a commit step of the seat is pending.
+func (s *Scheduler) commitPending(handle string) bool {
+	for _, it := range s.exitQueue {
+		if it.Why == whyCommit && it.Handle == handle {
+			return true
+		}
+	}
+	return false
+}
+
+// commitDeferred counts one more deferral of a task's commit step in its
+// exits entry (in memory with no exits ledger) and returns the count.
+func (s *Scheduler) commitDeferred(taskID string) int {
+	for i := range s.exitQueue {
+		if it := &s.exitQueue[i]; it.Why == whyCommit && it.TaskID == taskID {
+			it.Deferrals++
+			s.saveExits()
+			return it.Deferrals
+		}
+	}
+	if s.commitDeferrals == nil {
+		s.commitDeferrals = map[string]int{}
+	}
+	s.commitDeferrals[taskID]++
+	return s.commitDeferrals[taskID]
+}
+
+// sweepCommits ends the commit steps whose task no longer waits for them
+// (P2-1 of the second pass: a task cancelled while its step ran): the step
+// is cancelled (its verifier's group killed, its result discarded) and its
+// entry dropped once it ended, which frees the seat.
+func (s *Scheduler) sweepCommits(list []task.Task, log func(Decision)) {
+	waiting := map[string]bool{}
+	for _, t := range list {
+		if t.State == task.StateInProgress && t.Report != nil {
+			waiting[t.ID] = true
+		}
+	}
+	var stale []exitItem
+	for _, it := range s.exitQueue {
+		if it.Why == whyCommit && !waiting[it.TaskID] {
+			stale = append(stale, it)
+		}
+	}
+	for _, it := range stale {
+		ended := true
+		if c, ok := s.Committer.(CommitCanceller); ok {
+			ended = c.CancelCommit(it.TaskID)
+		}
+		if !ended {
+			if s.commitState[it.TaskID] != "cancelling" {
+				if s.commitState == nil {
+					s.commitState = map[string]string{}
+				}
+				s.commitState[it.TaskID] = "cancelling"
+				log(Decision{Kind: "commit_cancelling", TaskID: it.TaskID, Seat: it.Handle, Reason: "the task no longer waits for its commit step"})
+			}
+			continue
+		}
+		s.commitEnded(it.TaskID)
+		log(Decision{Kind: "commit_cancelled", TaskID: it.TaskID, Seat: it.Handle, Reason: "the step ended; its result is discarded"})
+	}
+}
+
+// commitRunning records a running commit step's state: a decision whenever
+// it changes.
+func (s *Scheduler) commitRunning(handle, taskID, state string, now time.Time, log func(Decision)) {
+	if s.commitState == nil {
+		s.commitState = map[string]string{}
+	}
+	s.commitEntry(handle, taskID, now)
+	prev := s.commitState[taskID]
+	if prev != state {
+		s.commitState[taskID] = state
+		log(Decision{Kind: "commit_running", TaskID: taskID, Seat: handle, Reason: state})
+	}
+}
+
+// noteAdopted logs, once, a commit step the exits queue carries from a
+// previous incarnation: this incarnation's step for the task is its
+// adoption (deferred as verifier_interrupted when its verifier had started).
+func (s *Scheduler) noteAdopted(handle, taskID string, log func(Decision)) {
+	if _, seen := s.commitState[taskID]; seen || !s.exitPendingItem(exitItem{Handle: handle, TaskID: taskID, Why: whyCommit}) {
+		return
+	}
+	if s.commitState == nil {
+		s.commitState = map[string]string{}
+	}
+	s.commitState[taskID] = "adopted"
+	log(Decision{Kind: "commit_adopted", TaskID: taskID, Seat: handle, Reason: "a commit step of the previous incarnation"})
+}
+
+// commitEnded drops a decided commit step's exits-queue entry.
+func (s *Scheduler) commitEnded(taskID string) {
+	delete(s.commitState, taskID)
+	delete(s.commitDeferrals, taskID)
+	kept, dropped := s.exitQueue[:0], false
+	for _, it := range s.exitQueue {
+		if it.Why == whyCommit && it.TaskID == taskID {
+			dropped = true
+			if it.Gone {
+				if s.toRelease == nil {
+					s.toRelease = map[string]bool{}
+				}
+				s.toRelease[it.Handle] = true
+			}
+			continue
+		}
+		kept = append(kept, it)
+	}
+	s.exitQueue = kept
+	if dropped && s.saveExits() == nil {
+		s.releaseDecided()
+	}
 }
 
 // closeUnconfirmed reports whether the launcher's nil close of a seat does

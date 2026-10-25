@@ -1,10 +1,12 @@
 package grants
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/yamlsub"
@@ -36,6 +38,11 @@ import (
 //	  signature: required         # required (default with a Buzz enrolment) | pty_only (only without one; else grants_invalid)
 //	verifiers:                    # optional: the verifier command per class with a mechanical verifier
 //	  implement: go test ./...    # extract, script, implement; a class without one completes on its done report
+//	  script: [/opt/check, "two words"]   # or the argv as a list: an argument may hold a blank
+//	verifier_goproxy: https://proxy.golang.org,direct   # optional: the verifier's GOPROXY (default: Go's own)
+//	verifier_timeout: 10m         # optional: the verifier's wall time (default 10m, at most 24h)
+//	verifier_output_limit: 1048576   # optional: the verifier's combined output in bytes (default 1 MiB)
+//	verifier_parallelism: 2       # optional: verifiers running at once (default 2)
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100
@@ -114,7 +121,15 @@ func ParseOwner(text, source string) (Grants, error) {
 		case "clear":
 			g.Clear, err = parseClear(e)
 		case "verifiers":
-			g.Verifiers, err = parseVerifiers(e)
+			g.Verifiers, g.VerifierArgv, err = parseVerifiers(e)
+		case "verifier_goproxy":
+			g.VerifierGoproxy, err = parseGoproxy(e)
+		case "verifier_timeout":
+			g.VerifierTimeout, err = parseTimeout(e)
+		case "verifier_output_limit":
+			g.VerifierOutputLimit, err = e.Integer(1024)
+		case "verifier_parallelism":
+			g.VerifierParallelism, err = e.Integer(1)
 		default:
 			err = e.Errf("unknown key")
 		}
@@ -125,35 +140,94 @@ func ParseOwner(text, source string) (Grants, error) {
 	return g, nil
 }
 
+// parseTimeout reads a duration above zero and at most a day.
+func parseTimeout(e yamlsub.Entry) (time.Duration, error) {
+	s, err := e.Scalar()
+	if err != nil {
+		return 0, err
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 || d > 24*time.Hour {
+		return 0, e.Errf("want a duration above 0 and at most 24h, got %q", s)
+	}
+	return d, nil
+}
+
 // verifierClass is a class with a mechanical verifier (plan 6.1).
 func verifierClass(c string) bool { return task.MechanicalVerifier(task.ClassVerifier(c)) }
 
 // parseVerifiers reads `verifiers:`, a map of class to command: each key a
-// class with a mechanical verifier, each command a non-empty single line.
-func parseVerifiers(e yamlsub.Entry) (map[string]string, error) {
+// class with a mechanical verifier, each command a non-empty single line
+// split on blanks, or the argv as a flow list (`[go, test, "./a b"]`), whose
+// items may hold blanks. A list's command string is its JSON array, so the
+// command digest covers the exact argv.
+func parseVerifiers(e yamlsub.Entry) (map[string]string, map[string][]string, error) {
 	if e.Value != "" {
-		return nil, e.Errf("want a map of class to command")
+		return nil, nil, e.Errf("want a map of class to command")
 	}
 	sub, err := yamlsub.Sub(e.Key, e.Block)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := map[string]string{}
+	out, argv := map[string]string{}, map[string][]string{}
 	for _, s := range sub {
 		class := strings.TrimPrefix(s.Key, "verifiers.")
 		if !verifierClass(class) {
-			return nil, s.Errf("class %q has no mechanical verifier (want extract, script or implement)", class)
+			return nil, nil, s.Errf("class %q has no mechanical verifier (want extract, script or implement)", class)
+		}
+		if strings.HasPrefix(strings.TrimSpace(s.Value), "[") {
+			items, err := s.List()
+			if err == nil && len(items) == 0 {
+				err = s.Errf("want a non-empty argv")
+			}
+			for _, it := range items {
+				if err == nil && strings.ContainsAny(it, "\x00\r\n") {
+					err = s.Errf("an argv item holds a control character")
+				}
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+			raw, _ := json.Marshal(items)
+			out[class], argv[class] = string(raw), items
+			continue
 		}
 		cmd, err := s.Scalar()
 		if err == nil && (strings.TrimSpace(cmd) == "" || strings.ContainsAny(cmd, "\x00\r\n")) {
 			err = s.Errf("want a non-empty one-line command")
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out[class] = cmd
 	}
-	return out, nil
+	if len(argv) == 0 {
+		argv = nil
+	}
+	return out, argv, nil
+}
+
+// parseGoproxy reads verifier_goproxy: GOPROXY's list syntax (entries
+// separated by "," or "|"), each entry an https:// or file:// URL, direct or
+// off.
+func parseGoproxy(e yamlsub.Entry) (string, error) {
+	v, err := e.Scalar()
+	if err != nil {
+		return "", err
+	}
+	for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == '|' }) {
+		switch {
+		case part == "direct", part == "off":
+		case strings.HasPrefix(part, "https://") && len(part) > len("https://") && !strings.ContainsAny(part, " @"):
+		case strings.HasPrefix(part, "file:///") && !strings.ContainsAny(part, " "):
+		default:
+			return "", e.Errf("verifier_goproxy entry %q: want an https:// or file:/// URL, direct or off", part)
+		}
+	}
+	if strings.TrimSpace(v) == "" {
+		return "", e.Errf("want a GOPROXY list")
+	}
+	return v, nil
 }
 
 func parseMerge(e yamlsub.Entry) ([]Merge, error) {

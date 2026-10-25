@@ -3,16 +3,15 @@ package cli
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/ledger"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -33,7 +32,7 @@ Examples:
 
 // hookLedgerSchema versions hookLedgerLine, the seed of the 2b evidence
 // ledger: one line per ingested payload.
-const hookLedgerSchema = 1
+const hookLedgerSchema = ledger.LineSchema
 
 type hookLedgerLine struct {
 	Schema        int             `json:"schema"`
@@ -48,10 +47,10 @@ type hookLedgerLine struct {
 	PayloadSHA256 string          `json:"payload_sha256"`    // over the full raw stdin bytes
 	PayloadBytes  int64           `json:"payload_bytes"`
 	Malformed     bool            `json:"malformed,omitempty"`
-	Truncated     bool            `json:"truncated,omitempty"`     // over 1 MiB: only the first 64 KiB kept
-	Payload       json.RawMessage `json:"payload,omitempty"`       // the compacted payload
-	PayloadBase64 string          `json:"payload_b64,omitempty"`   // raw bytes when malformed or truncated
-	LeaseRenewal  string          `json:"lease_renewal,omitempty"` // renewed | skipped (store lock busy); 2b-1
+	Truncated     bool            `json:"truncated,omitempty"`      // over 1 MiB: only the first 64 KiB kept
+	Payload       json.RawMessage `json:"payload,omitempty"`        // the compacted payload
+	PayloadPrefix string          `json:"payload_prefix,omitempty"` // malformed or truncated: the redacted printable prefix, never the bytes
+	LeaseRenewal  string          `json:"lease_renewal,omitempty"`  // renewed | skipped (store lock busy); 2b-1
 }
 
 const hookTruncatedPrefix = 64 << 10
@@ -80,7 +79,7 @@ func runEvidenceIngest(args []string) error {
 		}
 		line = newHookLedgerLine(id, head[:hookTruncatedPrefix], hookNow())
 		line.Truncated, line.Malformed, line.Payload = true, false, nil
-		line.PayloadBase64 = base64.StdEncoding.EncodeToString(head[:hookTruncatedPrefix])
+		line.PayloadPrefix = printablePrefix(head[:hookTruncatedPrefix], true)
 		line.PayloadBytes, line.PayloadSHA256 = int64(len(head))+rest, "sha256:"+hex.EncodeToString(sum.Sum(nil))
 	}
 	line.LeaseRenewal = renewLeaseOnToolResult(id, line)
@@ -129,7 +128,7 @@ func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLin
 	line := hookLedgerLine{Schema: hookLedgerSchema, At: now.UTC().Format(time.RFC3339Nano), Handle: id.Handle, Session: id.Session, PayloadSHA256: "sha256:" + hex.EncodeToString(sum[:]), PayloadBytes: int64(len(raw))}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err != nil {
-		line.Malformed, line.PayloadBase64 = true, base64.StdEncoding.EncodeToString(raw)
+		line.Malformed, line.PayloadPrefix = true, printablePrefix(raw, false)
 		return line
 	}
 	line.Payload = compact.Bytes()
@@ -160,76 +159,44 @@ func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLin
 	return line
 }
 
-// appendHookLedger appends line under an exclusive flock on the ledger file
-// itself, numbered one past the last parseable line, and fsyncs. A torn last
-// line (a crash mid-write) is terminated first and skipped.
-func appendHookLedger(path string, line hookLedgerLine) (uint64, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return 0, err
+// hookPrefixKeep is how much of a malformed or truncated payload the line
+// keeps, as printable redacted text.
+const hookPrefixKeep = 4 << 10
+
+// printablePrefix is a payload kept only as evidence of its shape (v3-5
+// verifier fix, (ii)): its first hookPrefixKeep bytes, every byte that is not
+// printable ASCII, a tab or a newline replaced by '.', then redacted. With
+// the length and the sha256 beside it, never the bytes themselves.
+//
+// The cap rule (redact.Capped): the payload is redacted first, then cut at
+// a line end within hookPrefixKeep; a payload that is itself a cut (the head
+// of a truncated one) loses its partial last line before the redaction.
+func printablePrefix(raw []byte, cut bool) string {
+	b := make([]byte, len(raw))
+	for i, c := range raw {
+		if c == '\n' || c == '\t' || (c >= 0x20 && c < 0x7f) {
+			b[i] = c
+		} else {
+			b[i] = '.'
+		}
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
-	if err != nil {
-		return 0, err
+	if cut {
+		if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
+			b = b[:i+1]
+		} else {
+			b = nil
+		}
 	}
-	defer f.Close()
-	err = flock.WithFile(f, path, func() error {
-		last, torn, err := lastHookLedgerSeq(f)
-		if err != nil {
-			return err
-		}
-		line.Seq = last + 1
-		// An Encoder without HTML escaping: json.Marshal would grow a payload of
-		// '<' sixfold (<). The Encoder appends the newline.
-		var buf bytes.Buffer
-		if torn {
-			buf.WriteByte('\n')
-		}
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(line); err != nil {
-			return err
-		}
-		if _, err := f.Write(buf.Bytes()); err != nil {
-			return err
-		}
-		return f.Sync()
-	})
-	return line.Seq, err
+	out, _ := redact.Capped(string(b), hookPrefixKeep)
+	return out
 }
 
-// lastHookLedgerSeq finds the seq of the last parseable line, reading
-// backwards in 64 KiB chunks until one parses, with no bound on line length.
-// No side file, so no drift.
-func lastHookLedgerSeq(f *os.File) (seq uint64, torn bool, err error) {
-	st, err := f.Stat()
-	if err != nil || st.Size() == 0 {
-		return 0, false, err
-	}
-	last := make([]byte, 1)
-	if _, err := f.ReadAt(last, st.Size()-1); err != nil {
-		return 0, false, err
-	}
-	torn = last[0] != '\n'
-	var tail []byte // the unexamined, possibly partial, first line of what was read
-	for off := st.Size(); off > 0; {
-		n := min(int64(64<<10), off)
-		off -= n
-		chunk := make([]byte, n, n+int64(len(tail)))
-		if _, err := f.ReadAt(chunk, off); err != nil {
-			return 0, torn, err
-		}
-		lines := bytes.Split(append(chunk, tail...), []byte{'\n'})
-		first := 1 // lines[0] may continue in the previous chunk
-		if off == 0 {
-			first = 0
-		}
-		for i := len(lines) - 1; i >= first; i-- {
-			var l struct{ Schema, Seq uint64 }
-			if json.Unmarshal(lines[i], &l) == nil && l.Schema == hookLedgerSchema && l.Seq > 0 {
-				return l.Seq, torn, nil
-			}
-		}
-		tail = lines[0]
-	}
-	return 0, torn, nil // nothing parseable: numbering starts over at 1
+// appendHookLedger appends line through the ledger's one writer
+// (ledger.Append: a flock on the file, numbered one past the last parseable
+// line, fsynced; a torn last line terminated first).
+func appendHookLedger(path string, line hookLedgerLine) (uint64, error) {
+	return ledger.Append(path, func(seq uint64) any {
+		line.Seq = seq
+		return line
+	})
 }

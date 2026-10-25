@@ -123,22 +123,28 @@ func TestExternalLauncherStagesAndWritesTheRequest(t *testing.T) {
 	}
 }
 
-// The committer turns repeated deferrals into commit_failed for the lead,
-// and passes the quarantine of a global_config_changed refusal through.
+// The committer passes a deferral through with its reason (the scheduler
+// counts deferrals in the step's exits entry, v3-5-verifier P2-4), reruns a
+// deferred step at the next call, and passes the quarantine of a
+// global_config_changed refusal through.
 func TestCommitterDeferralsAndQuarantine(t *testing.T) {
-	results := []seatcommit.Result{{Deferred: true, Detail: "push"}, {Deferred: true, Detail: "push"}, {Deferred: true, Detail: "push"}}
-	c := &Committer{MaxDeferrals: 3, Step: func(string, task.Task) seatcommit.Result { r := results[0]; results = results[1:]; return r }}
+	results := []seatcommit.Result{{Deferred: true, ReasonCode: seatcommit.ReasonVerifierInterrupted, Detail: "push"}, {Deferred: true, Detail: "push"}}
+	c := &Committer{Step: func(context.Context, string, task.Task) seatcommit.Result {
+		r := results[0]
+		results = results[1:]
+		return r
+	}}
 	tk := task.Task{ID: "t1"}
-	if r := c.Commit("s1", tk); !r.Deferred {
+	if r := c.Commit("s1", tk); !r.Deferred || r.ReasonCode != seatcommit.ReasonVerifierInterrupted {
 		t.Fatalf("1: %+v", r)
 	}
-	if r := c.Commit("s1", tk); !r.Deferred {
-		t.Fatalf("2: %+v", r)
+	if r := c.Commit("s1", tk); !r.Deferred || len(results) != 0 {
+		t.Fatalf("2: %+v (the deferred step was not run again)", r)
 	}
-	if r := c.Commit("s1", tk); r.Deferred || r.ReasonCode != seatcommit.ReasonCommitFailed || r.Route != task.RouteLead {
-		t.Fatalf("3: %+v", r)
+	if scheduler.ReasonVerifierInterrupted != seatcommit.ReasonVerifierInterrupted || scheduler.ReasonCommitFailed != seatcommit.ReasonCommitFailed {
+		t.Fatal("the scheduler's limit codes are not seatcommit's")
 	}
-	q := &Committer{Step: func(string, task.Task) seatcommit.Result {
+	q := &Committer{Step: func(context.Context, string, task.Task) seatcommit.Result {
 		return seatcommit.Result{ReasonCode: seatcommit.ReasonGlobalConfig, Route: task.RouteOwner, Quarantine: true, Detail: "x"}
 	}}
 	if r := q.Commit("s1", tk); !r.Quarantine || r.Route != task.RouteOwner {

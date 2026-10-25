@@ -174,6 +174,7 @@ type guardAction struct {
 	action, target string // typed gate: the operatorauth action and the target it binds
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
 	credRead       string // a read of the owner's GitHub or release credential (3-2)
+	harness        string // a harness-only verb (the commit step, the scheduler process): v3-5-verifier rule 2
 	push           guardPush
 	writes         []string
 	blockSafe      bool // a Write/Edit known to keep the file's managed block
@@ -241,6 +242,9 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	for _, a := range actions {
 		if a.credRead != "" {
 			return out("deny", "credential_read", a.credRead+" reads the owner's credential; seats hold none (R33): the harness pushes and the merge train merges under the owner's identity")
+		}
+		if a.harness != "" {
+			return out("deny", "harness_only", a.harness+" is the harness's: the commit step runs the verifier and records the verdict, never a seat (v3-5-verifier rule 2)")
 		}
 	}
 	for _, a := range actions {
@@ -422,6 +426,8 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 		strings.HasPrefix(filepath.Base(cmd), "git-credential-"),
 		cmd == "launchctl" && sub[0] == "getenv" && sub[1] == "SSH_AUTH_SOCK":
 		a.credRead = strings.Join(append([]string{cmd}, pos[:min(2, len(pos))]...), " ")
+	case cmd == "amq-squad" && (sub[0] == "seat" && sub[1] == "commit" || sub[0] == "scheduler" && sub[1] == "run"):
+		a.harness = "amq-squad " + sub[0] + " " + sub[1]
 	case cmd == "git" && sub[0] == "merge" && !hasFlagPrefix(args, "--abort"):
 		a.merge = "git"
 	case cmd == "git" && sub[0] == "push":

@@ -46,6 +46,7 @@ const (
 	VerifierFail    = "fail"    // the verifier (tests, exit code, schema) or the commit step refused it
 	VerifierNotRun  = "not_run" // the attempt ended before a verdict (expired, released, ...)
 	VerifierNoCheck = "none"    // the class has no verifier (summarize, plan, review)
+	VerifierInvalid = "invalid" // the attempt's archived verdict is not the harness's (its seal failed)
 )
 
 // Skip is one chain entry the router passed over, with the reason code.

@@ -874,9 +874,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 542
+  current_lines: 548
   fate: new
-  target_lines: 542
+  target_lines: 548
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
@@ -901,9 +901,9 @@ entries:
   status: new
 - path: internal/cli/hook_ingest.go
   v2_lines: 0
-  current_lines: 235
+  current_lines: 202
   fate: new
-  target_lines: 235
+  target_lines: 202
   cluster: verbs
   extract: ""
   reason: "2a-3: evidence ingest: append-only seat ledger, seed of the 2b evidence ledger"
@@ -1711,9 +1711,9 @@ entries:
   status: new
 - path: internal/cli/seat_commit.go
   v2_lines: 0
-  current_lines: 408
+  current_lines: 414
   fate: new
-  target_lines: 408
+  target_lines: 414
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
@@ -2751,18 +2751,18 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 574
+  current_lines: 636
   fate: new
-  target_lines: 574
+  target_lines: 636
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 379
+  current_lines: 453
   fate: new
-  target_lines: 379
+  target_lines: 453
   cluster: grants
   extract: ""
   reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
@@ -2875,6 +2875,15 @@ entries:
   cluster: ledger
   extract: ""
   reason: "3-2: the readers of the hook ledger and the outcome log: redaction and the task link (replaces commandevidence/evidence.go)"
+  status: new
+- path: internal/ledger/append.go
+  v2_lines: 0
+  current_lines: 147
+  fate: new
+  target_lines: 147
+  cluster: ledger
+  extract: ""
+  reason: "v3-5-verifier: the one writer of a seat hook ledger (moved from the ingest verb), the verifier evidence line uses it"
   status: new
 - path: internal/liveidentity/identity.go
   v2_lines: 257
@@ -3310,18 +3319,18 @@ entries:
   status: new
 - path: internal/redact/redact.go
   v2_lines: 0
-  current_lines: 405
+  current_lines: 688
   fate: new
-  target_lines: 405
+  target_lines: 688
   cluster: redact
   extract: ""
   reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
   status: new
 - path: internal/registry/build.go
   v2_lines: 0
-  current_lines: 256
+  current_lines: 261
   fate: new
-  target_lines: 256
+  target_lines: 261
   cluster: registry
   extract: ""
   reason: "2b-3: registry entries from detection; R12 verified rule; concurrency caps; launch check"
@@ -3373,12 +3382,21 @@ entries:
   status: new
 - path: internal/registry/probe.go
   v2_lines: 0
-  current_lines: 446
+  current_lines: 460
   fate: new
-  target_lines: 446
+  target_lines: 460
   cluster: registry
   extract: ""
   reason: "2b-3: the R12 probe: predicate v2 (S5), fixture repo, pi JSON events, tally"
+  status: new
+- path: internal/registry/probeverdict.go
+  v2_lines: 0
+  current_lines: 134
+  fate: new
+  target_lines: 134
+  cluster: registry
+  extract: ""
+  reason: "v3-5-verifier rule 3: the R12 probe predicate as a verdict on the checkout tree; the scheduled probe task record"
   status: new
 - path: internal/registry/probe_proc_other.go
   v2_lines: 0
@@ -3526,9 +3544,9 @@ entries:
   status: new
 - path: internal/routing/outcome.go
   v2_lines: 0
-  current_lines: 254
+  current_lines: 255
   fate: new
-  target_lines: 254
+  target_lines: 255
   cluster: routing
   extract: ""
   reason: "2b-4: outcome log row (6.4 fields), append-only JSONL with flock and fsync"
@@ -3544,9 +3562,9 @@ entries:
   status: new
 - path: internal/routing/router.go
   v2_lines: 0
-  current_lines: 1023
+  current_lines: 1036
   fate: new
-  target_lines: 1023
+  target_lines: 1036
   cluster: routing
   extract: ""
   reason: "2b-4: scheduler.Router: chain selection with the four checks, escalation, family rule, exploration, outcome rows"
@@ -3639,9 +3657,9 @@ entries:
   status: new
 - path: internal/schedproc/committer.go
   v2_lines: 0
-  current_lines: 81
+  current_lines: 202
   fate: new
-  target_lines: 81
+  target_lines: 202
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler's Committer over the seat commit step, deferrals to commit_failed"
@@ -3666,9 +3684,9 @@ entries:
   status: new
 - path: internal/schedproc/prepare.go
   v2_lines: 0
-  current_lines: 47
+  current_lines: 54
   fate: new
-  target_lines: 47
+  target_lines: 54
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler's SeatPreparer: a seat's worktree back to the commit parent before a new lease"
@@ -3711,27 +3729,27 @@ entries:
   status: new
 - path: internal/scheduler/exits.go
   v2_lines: 0
-  current_lines: 453
+  current_lines: 599
   fate: new
-  target_lines: 453
+  target_lines: 599
   cluster: scheduler
   extract: ""
   reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
   status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 132
+  current_lines: 165
   fate: new
-  target_lines: 132
+  target_lines: 165
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 898
+  current_lines: 967
   fate: new
-  target_lines: 898
+  target_lines: 967
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3774,12 +3792,39 @@ entries:
   status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 1233
+  current_lines: 1271
   fate: new
-  target_lines: 1233
+  target_lines: 1271
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
+  status: new
+- path: internal/seatcommit/verifier.go
+  v2_lines: 0
+  current_lines: 767
+  fate: new
+  target_lines: 767
+  cluster: seatcommit
+  extract: ""
+  reason: "v3-5-verifier: the verdict producer: the class verifier in the shadow worktree, seat-class environment, bounds, slots, evidence"
+  status: new
+- path: internal/seatcommit/verifier_unix.go
+  v2_lines: 0
+  current_lines: 19
+  fate: new
+  target_lines: 19
+  cluster: seatcommit
+  extract: ""
+  reason: "v3-5-verifier: the verifier process group (unix)"
+  status: new
+- path: internal/seatcommit/verifier_other.go
+  v2_lines: 0
+  current_lines: 15
+  fate: new
+  target_lines: 15
+  cluster: seatcommit
+  extract: ""
+  reason: "v3-5-verifier: the verifier process kill (non-unix)"
   status: new
 - path: internal/seatcommit/git.go
   v2_lines: 0
@@ -3792,9 +3837,9 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 595
+  current_lines: 619
   fate: new
-  target_lines: 595
+  target_lines: 619
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
@@ -4063,18 +4108,18 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 418
+  current_lines: 438
   fate: new
-  target_lines: 418
+  target_lines: 438
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
-  current_lines: 451
+  current_lines: 454
   fate: new
-  target_lines: 451
+  target_lines: 454
   cluster: status
   extract: ""
   reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"
@@ -4126,9 +4171,9 @@ entries:
   status: new
 - path: internal/task/class.go
   v2_lines: 0
-  current_lines: 143
+  current_lines: 165
   fate: new
-  target_lines: 143
+  target_lines: 165
   cluster: task
   extract: ""
   reason: "2b-1: 3.0 task schema vocabulary: states, classes, wait reasons, outcomes, pool"
@@ -4177,12 +4222,21 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 545
+  current_lines: 544
   fate: new
-  target_lines: 545
+  target_lines: 544
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
+  status: new
+- path: internal/task/verdict.go
+  v2_lines: 0
+  current_lines: 286
+  fate: new
+  target_lines: 286
+  cluster: task
+  extract: ""
+  reason: "v3-5-verifier: the sealed verdict (RecordSnapshot, RecordVerdict, the seal and tree check) and the dispatch refusal of a gated class with no command"
   status: new
 - path: internal/task/lifecycle_event.go
   v2_lines: 216
@@ -4236,16 +4290,25 @@ entries:
   status: new
 - path: internal/task/scope.go
   v2_lines: 0
-  current_lines: 188
+  current_lines: 168
   fate: new
-  target_lines: 188
+  target_lines: 168
   cluster: task
   extract: ""
   reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"
   status: new
+- path: internal/task/unclean.go
+  v2_lines: 0
+  current_lines: 234
+  fate: new
+  target_lines: 234
+  cluster: task
+  extract: ""
+  reason: "v3-5-verifier fourth round: the unclean marker of a seat CleanSeat cleans (nonce, takeover after the TTL, fail closed)"
+  status: new
 - path: internal/task/task.go
   v2_lines: 807
-  current_lines: 498
+  current_lines: 508
   fate: shrink
   target_lines: 676
   cluster: task

@@ -205,6 +205,12 @@ func runSeatCommit(args []string, out io.Writer) error {
 	if strings.TrimSpace(*seat) == "" || f.fs.NArg() > 0 {
 		return usageErrorf("seat commit: --seat HANDLE is required and takes no positional arguments")
 	}
+	// v3-5-verifier rule 2: the commit step runs the verifier and records
+	// the verdict; it is the harness's (the scheduler process, or the owner
+	// or lead by hand), never a seat's.
+	if os.Getenv("AMQ_SQUAD_SEAT") != "" {
+		return usageErrorf("seat commit: harness_only: AMQ_SQUAD_SEAT is set; the commit step and its verdict are never a seat's")
+	}
 	sel, err := f.selection(!*dryRun)
 	if err != nil {
 		return err
@@ -229,7 +235,7 @@ func runSeatCommit(args []string, out io.Writer) error {
 			}
 		}
 	}
-	res := commitStep(sel, *seat, t, *dryRun, *openPR)
+	res := commitStep(context.Background(), sel, *seat, t, *dryRun, *openPR)
 	data := seatCommitData{Root: sel.root, Result: res}
 	var recErr error
 	if !*dryRun && !res.Deferred {
@@ -331,10 +337,10 @@ var seatCommitGh = ""
 // commitStep runs the commit step with the grant of the task's repository
 // and the gate checker of the selection (the scheduler and the verb share
 // it).
-func commitStep(sel storeSelection, seat string, t task.Task, dryRun, openPR bool) seatcommit.Result {
+func commitStep(ctx context.Context, sel storeSelection, seat string, t task.Task, dryRun, openPR bool) seatcommit.Result {
 	g, gerr := grants.Load(t.ProjectPath)
 	return seatcommit.Run(seatcommit.Options{Root: sel.root, Handle: seat, Task: t, Grants: g, GrantsErr: gerr,
-		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow,
+		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow, Ctx: ctx,
 		PRBoundTo: prBoundTo(sel.store), Clear: ownerTrust{Root: sel.root},
 		BindPR: func(repository string, n int, head string) error {
 			_, err := sel.store.BindPR(t.ID, repository, n, head, taskNow())

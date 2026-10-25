@@ -548,8 +548,8 @@ func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det regist
 				if rec.Runs == 0 || rec.Passes < rec.Runs || rec.FalseSuccesses > 0 {
 					status = doctorFail
 				}
-				out = append(out, hostCheck("probe/"+id, status, "R12 %d of %d passes, %d false success(es), %d tool error(s) in %s",
-					rec.Passes, rec.Runs, rec.FalseSuccesses, rec.ToolErrors, time.Since(start).Round(time.Second)))
+				out = append(out, hostCheck("probe/"+id, status, "R12 %d of %d passes, %d false success(es), %d tool error(s) in %s; %d predicate verdict(s), unsealed (doctor probes outside a session)",
+					rec.Passes, rec.Runs, rec.FalseSuccesses, rec.ToolErrors, time.Since(start).Round(time.Second), len(rec.Verdicts)))
 			}
 		}
 		if h.TTFT != nil {

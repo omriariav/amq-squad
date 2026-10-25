@@ -10,6 +10,7 @@
 package seatcommit
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -71,6 +72,10 @@ type Options struct {
 	// Clear verifies the owner's signed clear of a quarantine (the owner's
 	// trust store); nil verifies nothing, so no clear counts.
 	Clear ClearVerifier
+	// Ctx cancels the step (the task was cancelled while the step ran, P2-1
+	// of the second pass): a running verifier's group is killed, no verdict
+	// is recorded and nothing is pushed. nil never cancels.
+	Ctx context.Context
 }
 
 // Change is one changed path of the seat's diff.
@@ -115,6 +120,9 @@ type Result struct {
 	PRRepository string `json:"pr_repository,omitempty"`
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRHead       string `json:"pr_head,omitempty"`
+	// Verifier is the class verifier's run on the snapshot tree
+	// (v3-5-verifier), nil when the class has none configured.
+	Verifier *VerifierOutcome `json:"verifier,omitempty"`
 }
 
 func (r Result) refuse(code, route, detail string) Result {
@@ -154,6 +162,12 @@ func Run(o Options) Result {
 	}
 	return out
 }
+
+// ReasonStepCancelled is the deferral of a step whose task was cancelled
+// while it ran (its result is discarded).
+const ReasonStepCancelled = "commit_cancelled"
+
+func (o Options) cancelled() bool { return o.Ctx != nil && o.Ctx.Err() != nil }
 
 func (o Options) withDefaults() Options {
 	if o.Now == nil {
@@ -233,7 +247,9 @@ func ExitCheck(o Options, why string) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
 	o = o.withDefaults()
 	var out Result
-	err := withLedgerLock(o.Root, o.Handle, func() error {
+	// The exit check runs on the scheduler's tick: it never waits for the
+	// ledger a running commit step holds, it defers (P1-1 of the second pass).
+	err := withLedgerTryLock(o.Root, o.Handle, func() error {
 		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
 			out = res.tamperedRefusal(terr)
 			return nil
@@ -398,6 +414,15 @@ func run(o Options, res Result) Result {
 	if err := CheckTarget(ledger.Target); err != nil {
 		return res.refuse(ReasonPushTargetUnacknowledged, task.RouteOwner, err.Error())
 	}
+	// v3-5-verifier rule 7: the class's verifier on the snapshot tree, the
+	// owner-config diff again, the verdict; only a pass reaches the push.
+	res, done := verify(o, sh, res)
+	if done {
+		return res
+	}
+	if o.cancelled() {
+		return res.defer_(ReasonStepCancelled + ": the task was cancelled while the step ran; nothing is pushed")
+	}
 	return commitAndPush(o, sh, ledger, rec, res)
 }
 
@@ -507,14 +532,27 @@ func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, n
 	if err != nil {
 		return false, err
 	}
-	err = withLedgerLock(root, handle, func() error {
-		// Only between leases, never mid-task (condition 2 of the ruling),
-		// with the store locked for the whole reset.
-		return store.WithSeatFree(handle, func(list []task.Task) error {
-			var derr error
-			discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
+	// CleanSeat runs on the tick (the seat's preparation before a lease): a
+	// busy ledger is ErrLedgerBusy, never a wait.
+	err = withLedgerTryLock(root, handle, func() error {
+		// Only between leases, never mid-task (condition 2 of the ruling):
+		// the store lock covers the state read with the seat's unclean marker
+		// and, in a second take, the marker's removal with the seat
+		// re-checked; the git work runs between them, outside the lock (no
+		// lock reachable from the tick is held across a subprocess). While
+		// the marker exists no grant or claim leases the seat; only a
+		// completed clean removes it, and only its own (the nonce): a clean
+		// that fails or dies leaves the seat unclean for the next CleanSeat.
+		list, nonce, err := store.ReserveSeat(handle, now)
+		if err != nil {
+			return err
+		}
+		var derr error
+		discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
+		if derr != nil {
 			return derr
-		})
+		}
+		return store.ReleaseSeat(handle, nonce)
 	})
 	return discarded, err
 }

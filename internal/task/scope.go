@@ -155,26 +155,6 @@ func (s Store) CompleteBound(id, repository string, number int, head string, now
 	})
 }
 
-// WithSeatFree runs fn under the store's lock while the seat holds nothing
-// and is not quarantined: CleanSeat's reservation of the seat (R3 of the
-// milestone B first pass), so no grant or claim lands between its check and
-// its reset. fn gets the store's tasks and must not call the store.
-func (s Store) WithSeatFree(handle string, fn func(list []Task) error) error {
-	return s.withLock(true, func() error {
-		list, err := readDir(s.Dir)
-		if err != nil {
-			return err
-		}
-		if held := HeldBy(handle, list); held != nil {
-			return fmt.Errorf("seat %s holds task %s; its worktree is cleaned only between leases", handle, held.ID)
-		}
-		if err := quarantined(s.Dir, handle); err != nil {
-			return err
-		}
-		return fn(list)
-	})
-}
-
 // Escalate routes a blocked task to the owner: a widening the lead asked for
 // crosses a grant limit, so the decision is the owner-signed growth gate
 // (plan 4.3). The report stays; the seat stays reserved.

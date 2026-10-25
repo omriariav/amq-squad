@@ -474,6 +474,30 @@ func writeLedger(root string, l Ledger) error {
 	return err
 }
 
+// ErrLedgerBusy is a seat's commit ledger lock held by another step (a
+// running commit step): a tick-path caller defers, never waits (v3-5-verifier
+// P1-1 of the second pass).
+var ErrLedgerBusy = errors.New("the seat's commit ledger is busy (a commit step holds it)")
+
+// withLedgerTryLock is withLedgerLock without waiting: ErrLedgerBusy when it
+// is held. Off unix (no advisory locks) it proceeds, as the store does.
+func withLedgerTryLock(root, handle string, fn func() error) error {
+	if err := os.MkdirAll(LedgerDir(root), 0o700); err != nil {
+		return err
+	}
+	lock, ok, err := flock.TryExclusive(filepath.Join(LedgerDir(root), handle+".lock"), true)
+	switch {
+	case errors.Is(err, flock.ErrUnsupported):
+	case err != nil:
+		return err
+	case !ok:
+		return ErrLedgerBusy
+	default:
+		defer lock.Close()
+	}
+	return fn()
+}
+
 // withLedgerLock serializes the commit step for one seat (the scheduler's
 // run and a lead's manual `seat commit`).
 func withLedgerLock(root, handle string, fn func() error) error {

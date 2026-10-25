@@ -151,6 +151,10 @@ type Router struct {
 	spent     map[string]float64   // UTC day -> known cost
 	hist      map[string]record    // task/attempt -> what its outcome row recorded
 	key       []byte               // HMAC key of rows and decisions: the session seed
+	// unverified are the classes the start found in the squad's verifier gate
+	// with no command in the owner grant (v3-5-verifier rule 4): a task of
+	// one is refused dispatch, grants_invalid, never routed to a seat.
+	unverified []string
 	// The chains (chain.go), the head record (head.go) and the breaks found
 	// so far; problems persist until acknowledged.
 	head     chainHead // the outcome log
@@ -310,6 +314,9 @@ func New(o Options) (*Router, error) {
 		spent: map[string]float64{}, hist: map[string]record{}, key: SeedKey(o.Seed), seedDev: seedDev, seedIno: seedIno,
 		tamperBlockedAt: map[string]time.Time{}, holdProblems: map[string][]Problem{}, observedAt: map[string]time.Time{},
 		acked: map[string]bool{}, knownProblems: map[string]bool{}}
+	// The verifier gate, a start check beside the head's: a gated class with
+	// no command never reaches a seat.
+	r.unverified = o.Grants.UnconfiguredGate()
 	if o.Root == "" {
 		return r, nil
 	}
@@ -449,6 +456,9 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 	spec, ok := tbl.Classes[t.Class]
 	if !ok {
 		return nil, scheduler.Route{Block: "class_unknown", Detail: fmt.Sprintf("class %q is not in the routing table", t.Class)}
+	}
+	if slices.Contains(r.unverified, t.Class) {
+		return nil, scheduler.Route{Block: task.ReasonGrantsInvalid, Detail: (&task.VerifierUnconfiguredError{Class: t.Class}).Error()}
 	}
 	failures := 0
 	used := map[task.Pool]bool{}
@@ -986,8 +996,11 @@ func verifierResult(verifier string, a task.Attempt) string {
 		return VerifierNoCheck
 	}
 	if a.Verdict != nil {
-		if a.Verdict.Result == task.VerdictPass {
+		switch a.Verdict.Result {
+		case task.VerdictPass:
 			return VerifierPass
+		case task.VerdictInvalid:
+			return VerifierInvalid // never a pass from an unverified archive
 		}
 		return VerifierFail
 	}

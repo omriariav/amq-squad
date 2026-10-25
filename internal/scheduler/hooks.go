@@ -98,6 +98,9 @@ type CommitResult struct {
 	// the step again. The committer turns a deferral that repeats into a
 	// refusal.
 	Deferred bool
+	// Running is a step still running off the tick (Detail names its state:
+	// running, waiting for a verifier slot); the next tick asks again.
+	Running bool
 	// Quarantine: the refusal quarantines the seat (global_config_changed):
 	// the store refuses it any new lease until the owner clears it, and the
 	// scheduler closes it.
@@ -131,3 +134,32 @@ type LeadNotifier interface {
 type Committer interface {
 	Commit(handle string, t task.Task) CommitResult
 }
+
+// CommitApplier is a Committer told when a decided step's result is in the
+// store: until then it keeps the result (the application is retried, never
+// the step).
+type CommitApplier interface {
+	Applied(taskID string)
+}
+
+// CommitDecider is a Committer that retains a result the scheduler decided
+// for a step (the deferral limit's refusal) until Applied.
+type CommitDecider interface {
+	Decide(taskID string, res CommitResult)
+}
+
+// CommitCanceller is a Committer that cancels the running step of a task
+// that no longer waits for it; ended reports that no step of it runs.
+type CommitCanceller interface {
+	CancelCommit(taskID string) (ended bool)
+}
+
+// Reason codes of the commit step's deferral limit (the strings
+// internal/seatcommit uses).
+const (
+	ReasonCommitFailed        = "commit_failed"
+	ReasonVerifierInterrupted = "verifier_interrupted"
+)
+
+// DefaultMaxCommitDeferrals is the commit step's deferral limit (Config.MaxCommitDeferrals).
+const DefaultMaxCommitDeferrals = 5

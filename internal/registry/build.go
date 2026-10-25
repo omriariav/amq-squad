@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // ShipN is the R12 pass count before a local entry ships (amendment 10).
@@ -14,6 +15,10 @@ const ShipN = 5
 type ProbeRecord struct {
 	Runs, Passes, FalseSuccesses, ToolErrors int
 	Predicate, Version                       string
+	// Verdicts are the runs' predicates as verdicts (v3-5-verifier rule 3),
+	// unsealed: doctor probes outside any session. Not written to
+	// registry.yaml.
+	Verdicts []task.Verdict
 }
 
 // Latency is one direct TTFT measurement in milliseconds.

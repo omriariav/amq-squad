@@ -33,6 +33,10 @@ type Config struct {
 	SeatStartTimeout time.Duration // a requested seat that never joins is forgotten
 	StatePath        string        // optional: where the status-side view is written
 	ExitsPath        string        // optional: the exits ledger, the pending exit checks (N3)
+	// MaxCommitDeferrals is how many times in a row a commit step may defer
+	// before the task blocks for the lead (default DefaultMaxCommitDeferrals);
+	// the count lives in the step's exits entry.
+	MaxCommitDeferrals int
 	// SealRoot is the AMQ session root whose seed seals the exits ledger and
 	// holds its head (the phase 5 re-pass ruling); "" leaves it unsealed.
 	SealRoot string
@@ -137,6 +141,10 @@ type Scheduler struct {
 	// toRelease are gone seats whose checks were decided: their slots are
 	// released once nothing for them is queued and the ledger says so.
 	toRelease map[string]bool
+	// commitState is each running commit step's last reported state (v3-5-verifier).
+	commitState map[string]string
+	// commitDeferrals counts deferrals with no exits ledger (tests).
+	commitDeferrals map[string]int
 }
 
 // Options configure a production scheduler (New).
@@ -211,6 +219,9 @@ func (s *Scheduler) cfg() Config {
 	if c.SeatStartTimeout <= 0 {
 		c.SeatStartTimeout = DefaultSeatStartTimeout
 	}
+	if c.MaxCommitDeferrals <= 0 {
+		c.MaxCommitDeferrals = DefaultMaxCommitDeferrals
+	}
 	return c
 }
 
@@ -268,6 +279,9 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 			return out, err
 		}
 	}
+	// A commit step whose task no longer waits for it (cancelled) is
+	// cancelled and its entry dropped once it ended (P2-1 of the second pass).
+	s.sweepCommits(list, log)
 	for _, t := range list {
 		if t.State == task.StateInProgress && t.Report != nil {
 			if err := s.commit(t, now, log); err != nil {
@@ -474,11 +488,50 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		logAccepted(got, holder, log)
 		return nil
 	}
+	s.noteAdopted(holder, t.ID, log)
+	// The step's exits entry is written before the step starts, so a crash
+	// in between leaves no step unaccounted.
+	s.commitEntry(holder, t.ID, now)
 	res := s.Committer.Commit(holder, t)
-	if res.Deferred {
-		log(Decision{Kind: "commit_deferred", TaskID: t.ID, Seat: holder, Reason: res.Detail})
+	if res.Running {
+		s.commitRunning(holder, t.ID, res.Detail, now, log)
 		return nil
 	}
+	if res.Deferred {
+		n := s.commitDeferred(t.ID)
+		log(Decision{Kind: "commit_deferred", TaskID: t.ID, Seat: holder, Reason: res.Detail})
+		if n < s.cfg().MaxCommitDeferrals {
+			return nil
+		}
+		// The limit (P2-4 of the second pass): the count lives in the step's
+		// exits entry, so it survives a restart; at the limit the task blocks
+		// for the lead, and the lead's reset applies.
+		code := ReasonCommitFailed
+		if res.ReasonCode == ReasonVerifierInterrupted {
+			code = ReasonVerifierInterrupted
+		}
+		res = CommitResult{ReasonCode: code, Route: task.RouteLead, Detail: fmt.Sprintf("the commit step deferred %d times in a row, counted across restarts; last: %s", n, res.Detail)}
+		// A decided result like any other: retained until applied, so a failed
+		// application never starts another step (the third round's item 5).
+		if d, ok := s.Committer.(CommitDecider); ok {
+			d.Decide(t.ID, res)
+		}
+	}
+	// The result is applied in the store first; the step and its entry are
+	// forgotten only after the transaction committed (P2-3 of the second
+	// pass): a failed application is retried at the next tick, never the step.
+	if err := s.applyCommit(holder, t, res, now, log); err != nil {
+		return err
+	}
+	if a, ok := s.Committer.(CommitApplier); ok {
+		a.Applied(t.ID)
+	}
+	s.commitEnded(t.ID)
+	return nil
+}
+
+// applyCommit records a decided commit step's result in the store.
+func (s *Scheduler) applyCommit(holder string, t task.Task, res CommitResult, now time.Time, log func(Decision)) error {
 	if res.OK {
 		// The acceptance and the binding the merge train reads (3-2) are one
 		// store transaction (P2 of the milestone B first pass); a PR number
@@ -499,17 +552,21 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 			return nil
 		}
 	}
+	if res.Quarantine {
+		// No new lease for the seat until the owner clears it, and the seat
+		// closes (retried each tick while the close fails). Written before the
+		// refusal: the store keeps the first quarantine, so a retried
+		// application records it once.
+		if err := s.Store.Quarantine(task.Quarantine{Handle: holder, Reason: res.ReasonCode, Detail: res.Detail, TaskID: t.ID, At: now}); err != nil {
+			return err
+		}
+	}
 	refused, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now)
 	if err != nil {
 		return err
 	}
 	log(Decision{Kind: "commit_refused", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
 	if res.Quarantine {
-		// No new lease for the seat until the owner clears it, and the seat
-		// closes (retried each tick while the close fails).
-		if err := s.Store.Quarantine(task.Quarantine{Handle: holder, Reason: res.ReasonCode, Detail: res.Detail, TaskID: t.ID, At: now}); err != nil {
-			return err
-		}
 		log(Decision{Kind: "seat_quarantined", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
 		if st := s.seats[holder]; st != nil && st.closing == "" {
 			st.closing = "quarantined"
@@ -620,6 +677,18 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				}
 			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
+			var unverified *task.VerifierUnconfiguredError
+			if errors.As(err, &unverified) {
+				// The claim path's refusal (v3-5-verifier rule 4): the grant
+				// changed since the start; the task blocks for the lead.
+				got, err := s.Store.Block(t.ID, "", task.ReasonGrantsInvalid, err.Error(), task.RouteLead, now)
+				if err != nil {
+					return err
+				}
+				list = replace(list, got)
+				log(Decision{Kind: "blocked", TaskID: t.ID, Reason: task.ReasonGrantsInvalid})
+				continue
+			}
 			if err != nil {
 				return err
 			}

@@ -682,7 +682,7 @@ func TestEvidenceIngestAppendsSchemaLines(t *testing.T) {
 	if lines[1].Outcome != "error" || lines[2].Outcome != "error" || lines[2].Tool != "bash" {
 		t.Errorf("error outcomes = %+v / %+v", lines[1], lines[2])
 	}
-	if m := lines[3]; !m.Malformed || m.PayloadBase64 != "e2Jyb2tlbg==" || m.Payload != nil || m.Seq != 4 {
+	if m := lines[3]; !m.Malformed || m.PayloadPrefix != "{broken" || m.Payload != nil || m.Seq != 4 {
 		t.Errorf("malformed line = %+v", m)
 	}
 	if e := lines[4]; !e.Malformed || e.Seq != 5 {
@@ -704,8 +704,9 @@ func TestEvidenceIngestOversizeIsRecordedTruncated(t *testing.T) {
 	}
 	lines := readLedger(t, hookExtPath(f.root, "ledger", "cto.jsonl"))
 	l := lines[0]
-	prefix, _ := base64.StdEncoding.DecodeString(l.PayloadBase64)
-	if !l.Truncated || l.Malformed || l.Payload != nil || l.PayloadBytes != int64(len(big)) || l.PayloadSHA256 != "sha256:"+sha256Hex(string(big)) || !bytes.Equal(prefix, big[:64<<10]) || l.Seq != 1 {
+	// One line cut at the cap: the cap rule keeps no partial line.
+	prefix := []byte(l.PayloadPrefix)
+	if !l.Truncated || l.Malformed || l.Payload != nil || l.PayloadBytes != int64(len(big)) || l.PayloadSHA256 != "sha256:"+sha256Hex(string(big)) || len(prefix) != 0 || l.Seq != 1 {
 		t.Fatalf("truncated record = seq %d truncated %v malformed %v bytes %d sha %s prefix %d", l.Seq, l.Truncated, l.Malformed, l.PayloadBytes, l.PayloadSHA256, len(prefix))
 	}
 	if m := lines[1]; m.Truncated || !m.Malformed || m.PayloadBytes != hookMaxPayload {
