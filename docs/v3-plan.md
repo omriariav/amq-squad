@@ -702,7 +702,21 @@ predicate the same way; RecordVerdict is reachable only from the harness
 command never reaches a seat: the start checks and the claim path refuse
 dispatch of that class with the class and the missing command named
 (grants_invalid for the verifiers key), so the done-report gate fires
-only on a configuration change during a lease. Phase 5 branch
+only on a configuration change during a lease. The verifier runs with
+the host network like a seat and no credential (a recorded limit: a
+no-network default is not buildable on macOS without a sandbox we do not
+have, and the module fetch needs it); its Go module cache is verifier-only
+under the session root (0700, GOMODCACHE, never the harness's or the
+owner's, GOFLAGS=-mod=readonly, GOSUMDB on, GOPROXY from the grant),
+while GOCACHE and GOTMPDIR stay private per run; cross-seat cache
+corruption is the same-UID limit beside the seed. The commit step runs
+off the scheduler's tick loop under its parallelism slot: the tick
+observes its state and keeps dispatching, cancelling and checking other
+seats; a restart adopts a running step through the exits queue as a
+deferred check and never re-runs the verifier on the same snapshot. An
+escaped descendant that leaves the process group is a recorded limit on
+unix (the bound stops the wait, the orphan belongs to the seat_gone sweep
+or the owner); no seat host exists off unix in 3.0. Phase 5 branch
 v3-5-verifier. [2.7, reviewer ruling, 2026-10-25]
 
 ### 6.2 Chains
