@@ -119,8 +119,12 @@ func CheckWiden(o WidenOptions) WidenDecision {
 			d.ReasonCode, d.Detail = "widen_check_failed", "the dry run of the commit step failed: "+res.Detail
 			return d
 		}
-		if !res.OK && res.ReasonCode == ReasonQuarantineUnverified {
-			d.ReasonCode, d.Detail = res.ReasonCode, res.Detail
+		// Only a clean dry run, or one refused for the diff policy the
+		// violations below turn into crossings, can allow a widening; every
+		// other refusal (an unverified clear, a missing base, a tampered
+		// ledger, ...) refuses it with its own code.
+		if !res.OK && len(res.Violations) == 0 {
+			d.ReasonCode, d.Detail = firstNonEmpty(res.ReasonCode, "widen_check_failed"), res.Detail
 			return d
 		}
 		for _, v := range res.Violations {

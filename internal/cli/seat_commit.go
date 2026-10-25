@@ -153,6 +153,8 @@ func runSeatClear(args []string, out io.Writer) error {
 	}
 	if l, err := seatcommit.ClearQuarantineSeeded(sel.root, *seat, signer, taskNow(), seed, authorize); err == nil {
 		data.Evidence = l.Quarantine
+	} else if errors.Is(err, seatcommit.ErrAlreadyCleared) {
+		return fmt.Errorf("seat clear: %w: another clear of seat %s lifted this quarantine first; nothing was done by this run", seatcommit.ErrAlreadyCleared, *seat)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("seat clear: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -252,4 +253,86 @@ type failingSigner struct{}
 func (failingSigner) KeyID() string { return "test-key" }
 func (failingSigner) Sign([]byte) ([]byte, error) {
 	return nil, errors.New("crash before the ledger write")
+}
+
+// P2: a widening is allowed only on an explicitly clean dry run; every other
+// refusal of the dry run refuses the widening with its own code.
+func TestWidenRefusesWhatTheDryRunRefuses(t *testing.T) {
+	f := newFixture(t)
+	tk, _ := f.seatTwo()
+	o := f.opts(tk)
+	o.Handle = "s2"
+	widen := func(o Options) WidenDecision {
+		return CheckWiden(WidenOptions{Root: f.root, Task: tk, Added: []string{"cmd/other.go"}, Grants: f.grants, RepoRoot: f.main, Home: f.home, Commit: &o})
+	}
+	// a seeded lifted quarantine with no base
+	seed := &LedgerQuarantine{Task: tk.ID, Reason: "claude_hooks_silent", At: f.now.Add(-time.Minute)}
+	if _, err := ClearQuarantineSeeded(f.root, "s2", f.signer, f.now, seed, func(*LedgerQuarantine) (ClearGate, error) {
+		return ClearGate{GateID: "clear-0003", EventID: strings.Repeat("c3", 32)}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if d := widen(o); d.Allowed || d.ReasonCode != ReasonBaseUnrecorded {
+		t.Fatalf("widen on a seed with no base: %+v", d)
+	}
+	// a ledger edited without resealing
+	g := newFixture(t)
+	gtk := g.reported("cmd/")
+	raw, err := os.ReadFile(ledgerPath(g.root, g.handle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath(g.root, g.handle), []byte(strings.Replace(string(raw), `"seat/s1"`, `"seat/s1x"`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go_ := g.opts(gtk)
+	d := CheckWiden(WidenOptions{Root: g.root, Task: gtk, Added: []string{"cmd/other.go"}, Grants: g.grants, RepoRoot: g.main, Home: g.home, Commit: &go_})
+	if d.Allowed || d.ReasonCode != ReasonLedgerTampered {
+		t.Fatalf("widen on a tampered ledger: %+v", d)
+	}
+}
+
+// P4: two callers that authorized the same answer outside the lock: the
+// first writes the one record, the second finds the quarantine lifted and
+// reports already_cleared, never success.
+func TestConcurrentClearsWriteOneRecordAndOneIsAlreadyCleared(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
+	tk := f.reported("cmd/")
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
+	if res := f.run(tk); !res.Quarantine {
+		t.Fatalf("no quarantine: %+v", res)
+	}
+	authorize := func(*LedgerQuarantine) (ClearGate, error) {
+		return ClearGate{GateID: "clear-0004", EventID: strings.Repeat("d4", 32)}, nil
+	}
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = ClearQuarantineWith(f.root, f.handle, f.signer, f.now, authorize)
+		}()
+	}
+	wg.Wait()
+	ok, already := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, ErrAlreadyCleared):
+			already++
+		default:
+			t.Fatalf("unexpected: %v", err)
+		}
+	}
+	if ok != 1 || already != 1 {
+		t.Fatalf("successes %d, already_cleared %d (%v)", ok, already, errs)
+	}
+	if l, _ := ReadLedger(f.root, f.handle); l.Quarantine == nil || l.Quarantine.Clear == nil || len(l.Cleared) != 0 {
+		t.Fatalf("not exactly one record: %+v", l)
+	}
 }

@@ -3,6 +3,7 @@ package seatcommit
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -248,6 +249,10 @@ type (
 	}
 )
 
+// ErrAlreadyCleared: the quarantine was cleared (by another caller) before
+// this one took the ledger lock; the returned ledger carries that record.
+var ErrAlreadyCleared = errors.New("already_cleared")
+
 // ClearSchema versions ClearRecord.
 const ClearSchema = 1
 
@@ -337,7 +342,13 @@ func ClearQuarantineSeeded(root, handle string, signer ClearSigner, now time.Tim
 			sq := *seed
 			l.Quarantine = &sq
 		}
-		if l.Quarantine == nil || l.Quarantine.ClearedAt != nil {
+		if l.Quarantine != nil && l.Quarantine.ClearedAt != nil {
+			// another caller's record is already on the ledger; this caller
+			// authorized nothing, so it is not a success
+			out = l
+			return ErrAlreadyCleared
+		}
+		if l.Quarantine == nil {
 			out = l
 			return nil
 		}
@@ -399,6 +410,18 @@ func ReadLedger(root, handle string) (Ledger, error) {
 	var l Ledger
 	raw, err := os.ReadFile(ledgerPath(root, handle))
 	if err != nil {
+		if os.IsNotExist(err) {
+			// only a ledger with no sealed head is absent; one whose head
+			// says it existed was removed (ledger_tampered, never "no
+			// ledger", "no base" or "unused")
+			if key, ok, kerr := sealchain.ReadKey(root); kerr != nil {
+				return l, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, kerr)
+			} else if ok {
+				if aerr := sealchain.Absent(root, ledgerHeadName(handle), key); aerr != nil {
+					return l, fmt.Errorf("commit ledger %s: %w", handle, aerr)
+				}
+			}
+		}
 		return l, err
 	}
 	// A sealed record that does not decode, or carries another schema or

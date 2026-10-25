@@ -1,4 +1,4 @@
-head dc8d8a4a5ee57e85113243cac3c1507fd84ea550
+head 083d3ba456cdc13503f70231834c256c1c9e1f21
 quiet-host check:        0 matching processes
 ### go build ./...
 exit 0
@@ -16,86 +16,87 @@ shrink        84      43515        21719
 replace        2       2431            0
 review         4       3687         2803
 delete       140      49894            0
-new          216          0        45000
-TOTAL        504     111761        80170
+new          216          0        45033
+TOTAL        504     111761        80203
 target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
 v2 rows kept: 27,847, ceiling 36,410 (deferred-replace rows excluded: 0 lines) [--final]
-3.0 additions: 216 files, 45,007 lines (fate new; outside the target-sum rule and the ceiling)
-size of 3.0: 72,854 lines (v2 rows kept plus 3.0 additions)
+3.0 additions: 216 files, 45,040 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 72,887 lines (v2 rows kept plus 3.0 additions)
 like for like, class 1 and 2 rows and their targets removed: 27847 lines against a target sum of 35170 (-20.8 percent over)
 class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 0 lines, 0 over target; class 3 (accepted-3 and other non-keep rows): 772 over target
 manifest-check: OK
 exit 0
 ### go test -count=1 ./...
-ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.369s
-ok  	github.com/omriariav/amq-squad/v3/internal/activity	0.735s
-ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	1.010s
-ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.316s
-ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	1.624s
-ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	2.039s
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.382s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	0.749s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	1.360s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.013s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	1.664s
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	2.083s
 ?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
-ok  	github.com/omriariav/amq-squad/v3/internal/buzz	45.021s
-ok  	github.com/omriariav/amq-squad/v3/internal/catalog	2.396s
-ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	18.981s
-ok  	github.com/omriariav/amq-squad/v3/internal/cli	84.391s
-ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	8.092s
-ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	37.917s
-ok  	github.com/omriariav/amq-squad/v3/internal/drafter	25.780s
-ok  	github.com/omriariav/amq-squad/v3/internal/fleet	9.553s
-ok  	github.com/omriariav/amq-squad/v3/internal/flock	4.520s
-ok  	github.com/omriariav/amq-squad/v3/internal/fsanchor	4.932s
-ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	10.541s
-ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	5.314s
-ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	15.757s
-ok  	github.com/omriariav/amq-squad/v3/internal/grants	5.765s
-ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	5.802s
-ok  	github.com/omriariav/amq-squad/v3/internal/launch	6.185s
-ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	5.503s
-ok  	github.com/omriariav/amq-squad/v3/internal/leadsession	5.443s
-ok  	github.com/omriariav/amq-squad/v3/internal/ledger	5.338s
-ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	60.506s
-ok  	github.com/omriariav/amq-squad/v3/internal/namespace	4.556s
-ok  	github.com/omriariav/amq-squad/v3/internal/nostr	4.461s
-ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	3.952s
-ok  	github.com/omriariav/amq-squad/v3/internal/panechain	8.259s
-ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	8.569s
-ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	3.710s
-ok  	github.com/omriariav/amq-squad/v3/internal/redact	8.509s
-ok  	github.com/omriariav/amq-squad/v3/internal/registry	63.383s
-ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	49.097s
-ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	6.720s
-ok  	github.com/omriariav/amq-squad/v3/internal/role	3.848s
-ok  	github.com/omriariav/amq-squad/v3/internal/routing	23.178s
-ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.517s
-ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	15.188s
-ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	44.093s
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	45.801s
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	2.628s
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	19.770s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	85.232s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	7.846s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	39.990s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	25.713s
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	6.509s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	4.692s
+ok  	github.com/omriariav/amq-squad/v3/internal/fsanchor	5.157s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	10.400s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	5.601s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	15.327s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	6.100s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	6.156s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	6.354s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	5.816s
+ok  	github.com/omriariav/amq-squad/v3/internal/leadsession	5.742s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	5.654s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	61.326s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	4.657s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	4.489s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	4.053s
+ok  	github.com/omriariav/amq-squad/v3/internal/panechain	8.821s
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	10.583s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	4.083s
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	8.676s
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	64.277s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	50.220s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	7.966s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	4.069s
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	23.502s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.785s
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	15.131s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	44.833s
 ?   	github.com/omriariav/amq-squad/v3/internal/sealchain	[no test files]
-ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	76.327s
-ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	51.703s
-ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	37.773s
-ok  	github.com/omriariav/amq-squad/v3/internal/state	15.538s
-ok  	github.com/omriariav/amq-squad/v3/internal/status	9.410s
-ok  	github.com/omriariav/amq-squad/v3/internal/task	31.068s
-ok  	github.com/omriariav/amq-squad/v3/internal/team	3.379s
-ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	1.105s
-ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	1.255s
-ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	26.102s
-ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	0.910s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	78.038s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	52.353s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	37.802s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	16.170s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	9.557s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	31.956s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	2.952s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	1.111s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	1.182s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	27.641s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	0.810s
 ?   	github.com/omriariav/amq-squad/v3/plugins	[no test files]
-ok  	github.com/omriariav/amq-squad/v3/scripts	2.865s
-ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	0.626s
+ok  	github.com/omriariav/amq-squad/v3/scripts	2.761s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	0.549s
 ?   	github.com/omriariav/amq-squad/v3/scripts/redact-evidence	[no test files]
 ?   	github.com/omriariav/amq-squad/v3/spike/claude-probes	[no test files]
 ?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
 ?   	github.com/omriariav/amq-squad/v3/spike/sched-live	[no test files]
 exit 0
-### go test -count=1 -race -timeout 45m ./internal/cli ./internal/gatestore ./internal/gateverify ./internal/grants ./internal/gatetarget ./internal/operatorauth ./internal/seatcommit
-ok  	github.com/omriariav/amq-squad/v3/internal/cli	43.785s
-ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	5.029s
-ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	26.120s
-ok  	github.com/omriariav/amq-squad/v3/internal/grants	1.375s
-ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	1.687s
-ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	3.709s
-ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	42.090s
+### go test -count=1 -race -timeout 45m ./internal/cli ./internal/gatestore ./internal/gateverify ./internal/grants ./internal/gatetarget ./internal/operatorauth ./internal/seatcommit ./internal/schedproc
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	44.663s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	4.928s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	25.645s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	2.599s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	3.544s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	2.982s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	43.979s
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	7.160s
 exit 0
 DONE

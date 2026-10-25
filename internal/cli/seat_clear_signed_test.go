@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -354,6 +355,47 @@ func TestEveryConsumerRefusesAClearWhoseAnswerIsGone(t *testing.T) {
 			}
 		}
 		b.restore()
+	}
+}
+
+// P1: a commits ledger removed after the clear used an answer is
+// ledger_tampered (its sealed head says it existed), never "no ledger": the
+// task-store fallback cannot recreate the seed and re-authorize the answer.
+func TestDeletedLedgerIsTamperedNotUnused(t *testing.T) {
+	f := newGateCLIFixture(t)
+	ownerProcess(t, nil, false)
+	mustWrite(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	mustWrite(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
+	mustWrite(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
+	s, _ := task.Open(f.root)
+	r := seatcommit.ExitCheck(seatcommit.Options{Root: f.root, Handle: "s1", Task: task.Task{ID: "t-hs"}, Now: taskNow, Clear: ownerTrust{Root: f.root}}, "gone")
+	at := taskNow()
+	if err := s.Quarantine(task.Quarantine{Handle: "s1", Reason: r.ReasonCode, Detail: r.Detail, TaskID: "t-hs", At: at}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := signedClear(t, f); !errors.Is(err, errClearUnsigned) {
+		t.Fatalf("request: %v", err)
+	}
+	rec, q := clearGateOf(t, f)
+	event := ownerApproves(t, f, rec, q)
+	if out, err := signedClear(t, f); err != nil {
+		t.Fatalf("the clear: %v\n%s", err, out)
+	}
+	// stop before the task-store clear: the quarantine is back, the ledger is deleted
+	if err := s.Quarantine(task.Quarantine{Handle: "s1", Reason: r.ReasonCode, Detail: r.Detail, TaskID: "t-hs", At: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(seatcommit.LedgerDir(f.root), "s1.json")); err != nil {
+		t.Fatal(err)
+	}
+	if used, err := seatcommit.ClearEventUsed(f.root, "s1", event); err == nil || used || !errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("a deleted ledger reads as %v, %v", used, err)
+	}
+	if _, err := signedClear(t, f); !errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("the retry of the used answer after the ledger was deleted: %v", err)
+	}
+	if q, _ := task.Quarantined(s.Dir); len(q) != 1 {
+		t.Fatalf("the quarantine was lifted: %+v", q)
 	}
 }
 
