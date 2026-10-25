@@ -666,7 +666,11 @@ default, grant-settable), with the command and arguments from the grant
 or squad.yaml only and the hardened harness environment, and records the
 verdict with the digest of the tree it ran on; the R12 probe records its
 predicate the same way; RecordVerdict is reachable only from the harness
-(the scheduler process), never from a seat verb. Phase 5 branch
+(the scheduler process), never from a seat verb. A gated class with no
+command never reaches a seat: the start checks and the claim path refuse
+dispatch of that class with the class and the missing command named
+(grants_invalid for the verifiers key), so the done-report gate fires
+only on a configuration change during a lease. Phase 5 branch
 v3-5-verifier. [2.7, reviewer ruling, 2026-10-25]
 
 ### 6.2 Chains
