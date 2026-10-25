@@ -738,13 +738,15 @@ deferral, and CleanSeat's git work runs outside the store lock behind an
 unclean marker in the task store (a nonce-carrying file, never a timed
 lock: while it exists Grant and Claim refuse seat_unclean whatever its
 age, only a completed CleanSeat removes its own nonce, after the TTL
-another cleaner may take the marker over, and a malformed or unreadable
-marker is seat_unclean with an attention row, never fail-open); wherever a capture has a cap,
+another cleaner may take the marker over, and a malformed, unreadable or
+far-future marker is seat_unclean with an attention row, never fail-open;
+a ledger-read error in prepare is seat_prepare_failed, no grant); wherever a capture has a cap,
 redaction runs first, then the cut, and a partial last line is never
-kept (the verifier capture, the lead's tail, the ingest prefix); a quoted
-YAML scalar is redacted whatever it contains, through its closing quote
-across lines (bounded at 64) or to the last more-indented line when
-unclosed, and every line indented deeper than a credential-named key is
+kept (the verifier capture, the lead's tail, the ingest prefix); a one-line
+YAML `key: value` under a credential name is redacted in every form (bare
+or quoted key, list item, flow mapping); a quoted YAML scalar is redacted
+whatever it contains, through its closing quote to the end of the capped
+buffer, or to the last more-indented line when unclosed, and every line indented deeper than a credential-named key is
 redacted whole until the indentation returns; redaction of a capture runs over the whole
 retained buffer with the key rule allowing JSON whitespace between key,
 colon and value, and per line as well; a cancel during a running step
