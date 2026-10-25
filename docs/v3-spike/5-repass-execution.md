@@ -212,3 +212,28 @@ Judgment calls, stated:
 - P2-2: the escape is applied to every field of those human lines, the
   registry's own fields included (an owner-written root path is shown
   escaped too); JSON output is unchanged (encoding/json escapes controls).
+
+## Commit 4: 4-5 (the gateverify relay, the owner script)
+
+Revert check: `5-repass-evidence/4-5-revert-check.txt` (9 reverts, all as
+required). Gate: `5-repass-evidence/4-5-gate.txt`. Every relay in these
+rows is an in-process httptest websocket on 127.0.0.1; the script row runs
+against a stand-in `amq-squad` (`/usr/bin/false`); no row reaches the
+network, and the URL rows stop before any Dial when the rule is reverted.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| HIGH | relay.go:87 and enroll.sh:87 allowed plaintext by a loopback prefix of the URL string, so `ws://localhost.attacker.example/` and `ws://127.0.0.1@relay.attacker.example/` passed and carried AUTH and DMs in the clear off the host | `gateverify.CheckRelayURL` parses the URL: userinfo (and an opaque or empty host) is refused; wss:// is required, ws:// only when the hostname is exactly localhost, 127.0.0.1 or ::1. Dial uses it, and a ws:// dial goes through `loopbackOnly`, which keeps a connection only when its remote address is loopback (so a name that resolves elsewhere is refused at connect). enroll.sh applies the same rule (`relay_ok`: scheme, no `@`, plain host characters, an optional numeric port, the exact loopback names for ws://) before the URL reaches amq-remote | TestRelayURLRuleParsesTheHost (Go: the rule, no Dial of a refused URL, a plaintext dial to this host's own non-loopback interface address refused); TestEnrollScriptRelayRule (the script) |
+| MEDIUM 1 | relay.go:133 dropped frames past the 256-frame queue, and a later EOSE let Query report success, so pump.go:161 could move the cursor past a dropped DM for good | backpressure: the reader waits on a full queue (the relay's writes then wait on the socket) and ends only when the connection closes; nothing is dropped, so EOSE follows every event of the answer | TestQueryBurstIsNeverDropped (a 700-event burst against a consumer that pauses on the first event) |
+| MEDIUM 2 | relay.go:277: one REQ accepted unlimited, undeduplicated events, filter strays included, until EOSE or the timeout | `Filter.Matches` is applied on receipt (ids, kinds, authors, `#tag` values, since); an event id already received is not returned twice; the answer is capped at 2,000 events and 8 MiB counted over every EVENT the relay sends for the REQ (kept or not), and the filter's own limit over kept events; an overflow fails the whole query, so the pump's Step returns the error before its cursor moves | TestQueryEnforcesTheFilterDedupsAndCaps |
+
+Judgment calls, stated:
+- MEDIUM 2: the caps count every EVENT frame of the subscription, strays
+  and duplicates included, so a relay cannot stream an unbounded answer of
+  events that are then dropped; stray events are dropped, not an error.
+- MEDIUM 2, the byte row: nostr.ParseEvent already refuses an event over
+  256 KiB, so the row sends forty 220 KB events (about 8.8 MB).
+- HIGH: the hostname match is exact and case-sensitive (`LOCALHOST` is
+  refused for ws://); `ws://[::1]:PORT` is admitted.
+- The pump keeps its rule: a Query error returns before the cursor moves
+  (pump.go:85-88); no pump code changed.

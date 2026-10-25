@@ -2670,9 +2670,9 @@ entries:
   status: new
 - path: internal/gateverify/relay.go
   v2_lines: 0
-  current_lines: 290
+  current_lines: 407
   fate: new
-  target_lines: 290
+  target_lines: 407
   cluster: gateverify
   extract: ""
   reason: "3-1: relay interface and the websocket client with NIP-42 body sign-in (ported from S1)"
