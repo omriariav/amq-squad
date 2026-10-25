@@ -1547,7 +1547,43 @@ Hardening.
   seat cannot read the owner's gh token (R33). Waits on the choice
   between the two.
 - The Buzz-signed `seat clear`, the second factor that amendment 28 names
-  for the owner proof (4.3). Waits on the owner's Buzz session.
+  for the owner proof (4.3). Building 2026-10-25 on branch v3-5-clear:
+  the pty clear becomes the request half, written to the gate store as a
+  typed gate of kind quarantine_clear (nonce, handle, incarnation, the
+  config diff's digest), posted over Buzz through the 3-1 and 4-5 path,
+  completed only on the owner's signed answer carrying the nonce and
+  verified as the four typed gates are; grant key `clear.signature`
+  (`required` by default when the Buzz enrolment exists, `pty_only` only
+  without one, otherwise grants_invalid); no fallback when Buzz is
+  unreachable, the clear waits as an open gate and doctor says why. The
+  live row is the third item of the owner's Buzz session. [2.7, reviewer
+  plan, 2026-10-25]
+- Decision for the owner (A/B): the read-only runtime image. A
+  (recommended by the reviewer): defer the image to 3.1 and record the
+  hash-to-exec window (milliseconds, same-UID only, whose writer could
+  also replace the hashing binary) as a same-UID limit in 4.1 and R33;
+  grounds: amendment 25's full re-hash at every launch covers everything
+  before the launch, the image is macOS only (hdiutil), mounts a visible
+  volume per launch and waits on the bundle work, so it would be the last
+  thing in 3.0 and the first to slip. B: build it in 3.0 (about two
+  days, macOS only, after the bundles). [2.7, reviewer, 2026-10-25]
+- Decision for the owner (A/B): GitHub token custody (R33). Both choices
+  reduce on macOS to a keychain item whose ACL names the amq-squad binary,
+  so a seat's read prompts instead of returning, and guard already denies
+  the security CLI to seats. A (recommended): a fine-grained PAT scoped
+  to the two repositories with contents and pull_requests write only (no
+  release or admin scope), stored once with `amq-squad credential set
+  github` into a dedicated amq-squad keychain and read by the harness at
+  push time only; the tag ruleset with no bypass actors keeps even that
+  token from tagging. B: a GitHub App installed on both repositories,
+  its private key stored, one-hour installation tokens minted by the
+  harness, every merge and PR attributed to the App, the CI-only rulesets
+  admitting it. Recorded limit either way: until the launcher is signed
+  (the bundle item), the keychain ACL binds to the unsigned binary's hash
+  and every rebuild re-prompts the owner once. Credential change is an
+  owner-signed gate kind, so the owner signs this either way; one small
+  brief after the answer (credential verb, keychain read at push, doctor
+  row). [2.7, reviewer, 2026-10-25]
 
 Release prep.
 
@@ -1573,6 +1609,23 @@ Release prep.
   by briefs ruling 4.
 - Stale v2 verb names outside internal/ (README, operator cookbook,
   plugin skills, release docs) go to the 3.0 docs pass (phase 2a row).
+- migrate and the squad.yaml final form (the phase 5 table row), one
+  brief after the verifier merge, because squad.yaml's package takes the
+  verifier's add-only classes first. The final form freezes schema 1 for
+  3.0: the complete key list in docs with each key's relation to the
+  grant (narrow only; add only for verifier_classes; never widen),
+  schema_version required, unknown keys refused (the strict subset), an
+  embedded golden fixture that doctor self-checks against as 2b-3 did for
+  the status contract, and a row that a 3.0.x reader refuses schema 2.
+  migrate is a one-shot converter from v2 profiles (decision 6): reads
+  the v2 files read-only with the field names from main's profile loader,
+  writes squad.yaml only when absent (an existing file is refused, never
+  overwritten), prints an unmapped-fields report naming every v2 key with
+  no 3.0 meaning, never writes grants.yaml or registry.yaml (owner files)
+  but writes grants.yaml.proposed (0600) beside them for the owner to
+  read and move, and refuses when a v2 field would change a safety
+  default (launcher_preference, any allow list) rather than dropping it.
+  [2.7, reviewer plan, 2026-10-25]
 
 Owner session. Each item needs the owner at the keyboard; agents prepare
 the runs and record them.
