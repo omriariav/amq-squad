@@ -1,0 +1,277 @@
+row U1 dry run by default: --write is what removes
+  file: internal/uninstall/uninstall.go
+  revert: 'if !o.Write || res.NothingToDo {' -> 'if res.NothingToDo {'
+  test: TestDryRunChangesNothingAndNamesEveryGroup
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestDryRunChangesNothingAndNamesEveryGroup (0.09s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.412s
+  FAIL
+
+  restored: passes
+
+row U1 owner files only with --owner-files
+  file: internal/uninstall/execute.go
+  revert: 'case GroupOwner:\n\t\treturn o.OwnerFiles' -> 'case GroupOwner:\n\t\treturn true'
+  test: TestSealedLedgersAndEvidenceAreKeptByDefault
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSealedLedgersAndEvidenceAreKeptByDefault (0.08s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.356s
+  FAIL
+
+  restored: passes
+
+row U1 the verb is a dry run unless --write is given
+  file: internal/cli/uninstall.go
+  revert: 'Write: *write,' -> 'Write: true,'
+  test: TestUninstallVerbIsADryRunUnlessWriteIsGiven
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestUninstallVerbIsADryRunUnlessWriteIsGiven (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.522s
+  FAIL
+
+  restored: passes
+
+row U2a busy: the scheduler lock is held
+  file: internal/uninstall/busy.go
+  revert: 'case !acquired:' -> 'case !acquired && false:'
+  test: TestRefusesWhileTheSchedulerLockIsHeld
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestRefusesWhileTheSchedulerLockIsHeld (0.08s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.768s
+  FAIL
+
+  restored: passes
+
+row U2b busy: the decision socket is open
+  file: internal/uninstall/busy.go
+  revert: '} else if procinfo.Alive(rec.PID) {' -> '} else if false && procinfo.Alive(rec.PID) {'
+  test: TestRefusesWhileTheDecisionSocketIsOpen
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestRefusesWhileTheDecisionSocketIsOpen (0.07s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.733s
+  FAIL
+
+  restored: passes
+
+row U2c busy: a live seat
+  file: internal/uninstall/busy.go
+  revert: 'ok && tok == e.Start {' -> 'false && ok && tok == e.Start {'
+  test: TestRefusesWhileASeatIsLive
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestRefusesWhileASeatIsLive (0.08s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.563s
+  FAIL
+
+  restored: passes
+
+row U2d busy: an open proof window
+  file: internal/uninstall/busy.go
+  revert: 'launch.ProofTTL)) {' -> 'launch.ProofTTL)) && false {'
+  test: TestRefusesWhileAProofWindowIsOpen
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestRefusesWhileAProofWindowIsOpen (0.07s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.586s
+  FAIL
+
+  restored: passes
+
+row U2e busy: a commit step in the exits queue
+  file: internal/uninstall/busy.go
+  revert: 'if it.Why == "commit" {' -> 'if it.Why == "commit-x" {'
+  test: TestRefusesWhileACommitStepIsInTheExitsQueue
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestRefusesWhileACommitStepIsInTheExitsQueue (0.06s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.742s
+  FAIL
+
+  restored: passes
+
+row U3a never writes the owner global agent config (a removal of ~/.codex/config.toml added)
+  file: internal/uninstall/plan.go
+  revert: '\tfor _, n := range sortedNames(d) {\n\t\tif !mine[n] {' -> '\tp.ops = append(p.ops, op{group: GroupOwner, display: "x", base: o.Home, rel: []string{".c'
+  test: TestNeverWritesTheOwnersGlobalAgentConfig
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestNeverWritesTheOwnersGlobalAgentConfig (0.09s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.947s
+  FAIL
+
+  restored: passes
+
+row U3b prints the plugin uninstall command for the owner
+  file: internal/uninstall/plan.go
+  revert: '"claude plugin uninstall "+claudeseat.PluginKey+' -> '"claude plugin help "+claudeseat.PluginKey+'
+  test: TestNeverWritesTheOwnersGlobalAgentConfig
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestNeverWritesTheOwnersGlobalAgentConfig (0.09s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.580s
+  FAIL
+
+  restored: passes
+
+row U4a sealed ledgers, evidence and the gate store are kept by default
+  file: internal/uninstall/execute.go
+  revert: 'case GroupSealed, GroupEvidence, GroupGate:\n\t\treturn o.Purge' -> 'case GroupSealed, GroupEvidence, GroupGate:\n\t\treturn true'
+  test: TestSealedLedgersAndEvidenceAreKeptByDefault
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSealedLedgersAndEvidenceAreKeptByDefault (0.09s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.656s
+  FAIL
+
+  restored: passes
+
+row U4b purge deletes refs through the hardened git, not a plain git
+  file: internal/seatcommit/evidence_purge.go
+  revert: '\t\tif _, err := g.run(nil, nil, "update-ref", "-d", r); err != nil {' -> '\t\tg = g\n\t\tif err := exec.Command(gitBin, "-C", rp.Common, "update-ref", "-d", r).Run(); er'
+  test: TestPurgeRemovesEvidenceRefsOnlyAndRunsNoRepositoryHook
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestPurgeRemovesEvidenceRefsOnlyAndRunsNoRepositoryHook (0.65s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	1.105s
+  FAIL
+
+  restored: passes
+
+row U4c purge leaves the evidence refs
+  file: internal/uninstall/plan.go
+  revert: 'for _, ref := range l.EvidenceRefs() {' -> 'for _, ref := range []string{} {'
+  test: TestPurgeRemovesEvidenceRefsOnlyAndRunsNoRepositoryHook
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestPurgeRemovesEvidenceRefsOnlyAndRunsNoRepositoryHook (0.11s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.788s
+  FAIL
+
+  restored: passes
+
+row U5a the secret is overwritten with zeros before the unlink
+  file: internal/uninstall/execute.go
+  revert: '\tif o.secret {\n\t\tif err := zero' -> '\tif false && o.secret {\n\t\tif err := zero'
+  test: TestSecretsAreZeroedThenUnlinkedFirstAndNeverPrinted
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSecretsAreZeroedThenUnlinkedFirstAndNeverPrinted (0.08s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.475s
+  FAIL
+
+  restored: passes
+
+row U5b the secrets are removed first
+  file: internal/uninstall/execute.go
+  revert: 'if op.group != g || op.secret && o.OwnerFiles {' -> 'if op.group != g {'
+  test: TestSecretsAreZeroedThenUnlinkedFirstAndNeverPrinted
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSecretsAreZeroedThenUnlinkedFirstAndNeverPrinted (0.09s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.582s
+  FAIL
+
+  restored: passes
+
+row U5c the contents of a secret are never printed (a note carrying them)
+  file: internal/uninstall/plan.go
+  revert: '\t\t\tp.ops = append(p.ops, op{group: GroupOwner, display: disp, secret: f.secret,' -> '\t\t\tif b, err := fsanchor.ReadEntry(d, f.name); err == nil && f.secret {\n\t\t\t\tnote = string('
+  test: TestSecretsAreZeroedThenUnlinkedFirstAndNeverPrinted
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSecretsAreZeroedThenUnlinkedFirstAndNeverPrinted (0.09s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.451s
+  FAIL
+
+  restored: passes
+
+row U5d the secrets stay without --owner-files
+  file: internal/uninstall/execute.go
+  revert: 'case GroupOwner:\n\t\treturn o.OwnerFiles' -> 'case GroupOwner:\n\t\treturn true'
+  test: TestSecretsStayWithoutOwnerFiles
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestSecretsStayWithoutOwnerFiles (0.11s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.573s
+  FAIL
+
+  restored: passes
+
+row U6a a symlinked worktree dir is refused
+  file: internal/uninstall/plan.go
+  revert: '\t\t\tif isLink(d, n) {\n\t\t\t\td.Close()\n\t\t\t\treturn symlinkErr(disp)\n\t\t\t}\n' -> ''
+  test: TestASymlinkWhereADirectoryIsExpectedIsRefusedAndNothingIsRemoved/worktree_dir
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestASymlinkWhereADirectoryIsExpectedIsRefusedAndNothingIsRemoved (0.08s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.888s
+  FAIL
+
+  restored: passes
+
+row U6b a symlinked entry of the extension dir is refused
+  file: internal/uninstall/plan.go
+  revert: '\t\t\tif isLink(x, name) {\n\t\t\t\treturn nil, symlinkErr(filepath.Join(xpath, name))\n\t\t\t}\n' -> ''
+  test: TestASymlinkWhereADirectoryIsExpectedIsRefusedAndNothingIsRemoved/tools_dir
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestASymlinkWhereADirectoryIsExpectedIsRefusedAndNothingIsRemoved (0.08s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.490s
+  FAIL
+
+  restored: passes
+
+row U6c a symlinked ancestor of an anchored directory is refused
+  file: internal/uninstall/plan.go
+  revert: 'case errors.Is(err, syscall.ELOOP), errors.Is(err, syscall.ENOTDIR):' -> 'case errors.Is(err, syscall.EPERM):'
+  test: TestASymlinkWhereADirectoryIsExpectedIsRefusedAndNothingIsRemoved
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestASymlinkWhereADirectoryIsExpectedIsRefusedAndNothingIsRemoved (0.38s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.796s
+  FAIL
+
+  restored: passes
+
+row U7a a second run has nothing to do
+  file: internal/uninstall/execute.go
+  revert: 'r.NothingToDo = true\n' -> 'r.NothingToDo = false\n'
+  test: TestASecondRunHasNothingToDo
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestASecondRunHasNothingToDo (0.16s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.550s
+  FAIL
+
+  restored: passes
+
+row U7b a partial failure exits non-zero with a report
+  file: internal/uninstall/execute.go
+  revert: '\tif failed {' -> '\tif failed && false {'
+  test: TestAPartialFailureReportsWhatRemainsAndFails
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestAPartialFailureReportsWhatRemainsAndFails (0.07s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/uninstall	0.773s
+  FAIL
+
+  restored: passes
+
+row U7c the verb exits non-zero (3) on a partial failure
+  file: internal/cli/uninstall.go
+  revert: 'return &PartialError{Message: err.Error(), Cause: err}' -> 'return nil'
+  test: TestUninstallVerbPartialFailureExitsNonZero
+  result: FAILS when reverted (the row bites)
+  --- FAIL: TestUninstallVerbPartialFailureExitsNonZero (0.00s)
+  FAIL
+  FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.467s
+  FAIL
+
+  restored: passes
+
+ALL ROWS CONFIRMED
