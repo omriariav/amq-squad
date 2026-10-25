@@ -23,7 +23,7 @@ func TestMayorWithoutSessionRefusesTheFleetCap(t *testing.T) {
 		t.Fatalf("CLI path past max_squads: %+v, waiting %d; want refused max_squads, not queued", r, len(f.m.Waiting))
 	}
 	g := newMayor(t, fleetGrant(4, "owner/app"))
-	g.m.Session, g.m.Cost = false, spend(99)
+	g.m.Session, g.m.Cost, g.grant.Grants.Fleet.CostPerDayUSD = false, spend(99), 50
 	if r := mustStart(t, g.m, g.request(t, "app", false)); r.Outcome != OutcomeRefused || r.Reason != ReasonCostPerDay || len(g.m.Waiting) != 0 {
 		t.Fatalf("CLI path over cost per day: %+v", r)
 	}

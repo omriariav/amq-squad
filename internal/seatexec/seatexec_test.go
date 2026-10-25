@@ -15,6 +15,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 type fixture struct {
@@ -66,6 +67,9 @@ func newFixture(t *testing.T, runtime string) *fixture {
 	}
 	if runtime == "claude" {
 		f.rec.PermissionMode, f.rec.LaunchID = "dontAsk", "launch-1"
+		// A Claude seat runs the registry's claude pin (the phase 5 re-pass's
+		// HIGH): the fixture pins its fake claude.
+		f.pinClaude()
 		// The owner's token file (0600 in 0700): a canary that must reach the
 		// provider environment and nothing else.
 		if err := os.MkdirAll(filepath.Join(f.home, ".amq-squad"), 0o700); err != nil {
@@ -83,6 +87,20 @@ func newFixture(t *testing.T, runtime string) *fixture {
 const canaryToken = "sk-ant-oat01-CANARY-2b2b-9f3c"
 
 const ownerSettings = `{"owner":true,"permissions":{"allow":["Bash(echo:*)"]}}`
+
+// pinClaude writes the registry pin of the fixture's claude (its path and
+// current sha256) into the fixture's HOME.
+func (f *fixture) pinClaude() {
+	f.t.Helper()
+	claude := filepath.Join(f.bin, "claude")
+	sum, err := registry.FileSHA256(claude)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := registry.Write(registry.Path(f.home), registry.Registry{Schema: 1, Pins: []registry.Pin{{Name: "claude", Path: claude, SHA256: sum}}}); err != nil {
+		f.t.Fatal(err)
+	}
+}
 
 func write(t *testing.T, path, body string, mode os.FileMode) {
 	t.Helper()

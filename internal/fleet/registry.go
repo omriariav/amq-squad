@@ -207,7 +207,7 @@ type Waiting struct {
 	Name        string `json:"name"`
 	Repository  string `json:"repository"`
 	ProjectPath string `json:"project_path"`
-	Cap         string `json:"cap"`   // max_squads | cost_per_day
+	Cap         string `json:"cap"`   // max_squads | cost_per_day | cost_unmetered
 	Since       string `json:"since"` // RFC 3339 UTC
 	Detail      string `json:"detail,omitempty"`
 }
@@ -252,6 +252,23 @@ func (s Squad) ProjectName() string {
 		return s.Project
 	}
 	return s.Name
+}
+
+// SameRoot reports whether two session roots are one directory: the same
+// clean path, the same canonical path (symlinks resolved), or, when both
+// exist, the same device and inode.
+func SameRoot(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ca, errA := filepath.EvalSymlinks(a)
+	cb, errB := filepath.EvalSymlinks(b)
+	if errA == nil && errB == nil && ca == cb {
+		return true
+	}
+	fa, errA := os.Stat(a)
+	fb, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(fa, fb)
 }
 
 // Find returns the squad with this name.
@@ -310,6 +327,17 @@ func (r Registry) Validate() error {
 		}
 		seen[s.Name] = true
 	}
+	// One squad per session root (phase 5 re-pass of 4-3, P2-1): two rows on
+	// one root, or on a root and its symlink alias, would make fleet status
+	// show one session twice and attribute both copies' questions to the
+	// first squad.
+	for i, a := range r.Squads {
+		for _, b := range r.Squads[i+1:] {
+			if SameRoot(a.Root, b.Root) {
+				return fmt.Errorf("fleet.yaml: squads %s and %s share the session root %s (root identity: one squad per root)", a.Name, b.Name, a.Root)
+			}
+		}
+	}
 	for _, x := range r.Released {
 		if _, err := time.Parse(time.RFC3339, x.At); err != nil || !namePattern.MatchString(x.Name) || !tokenPattern.MatchString(x.Reservation) ||
 			(x.Reason != ReleaseIncarnationGone && x.Reason != ReleasePhaseStalled && x.Reason != ReleaseLivenessUnknown && x.Reason != ReleaseLaunchFenced) {
@@ -324,8 +352,8 @@ func (r Registry) Validate() error {
 			return fmt.Errorf("fleet.yaml: waiting squad %q is invalid, repeated or registered", w.Name)
 		case !repoPattern.MatchString(w.Repository) || !absClean(w.ProjectPath):
 			return fmt.Errorf("fleet.yaml: waiting squad %s needs owner/name and an absolute project_path", w.Name)
-		case w.Cap != ReasonMaxSquads && w.Cap != ReasonCostPerDay:
-			return fmt.Errorf("fleet.yaml: waiting squad %s cap %q is not max_squads or cost_per_day", w.Name, w.Cap)
+		case w.Cap != ReasonMaxSquads && w.Cap != ReasonCostPerDay && w.Cap != ReasonCostUnmetered:
+			return fmt.Errorf("fleet.yaml: waiting squad %s cap %q is not max_squads, cost_per_day or cost_unmetered", w.Name, w.Cap)
 		case err != nil:
 			return fmt.Errorf("fleet.yaml: waiting squad %s since %q is not RFC 3339", w.Name, w.Since)
 		case strings.ContainsAny(w.Detail, "\"\x00\r\n"):

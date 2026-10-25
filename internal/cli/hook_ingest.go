@@ -61,7 +61,9 @@ func runEvidenceIngest(args []string) error {
 	if err := h.parse(args); err != nil {
 		return err
 	}
-	id, err := h.identity()
+	// the shared config-dir check and digest report (P2-3); a change
+	// quarantines the seat, the payload is still recorded
+	id, _, err := h.seatIdentity(hookNow())
 	if err != nil {
 		return err
 	}

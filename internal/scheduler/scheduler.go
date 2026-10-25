@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -32,7 +33,10 @@ type Config struct {
 	SeatStartTimeout time.Duration // a requested seat that never joins is forgotten
 	StatePath        string        // optional: where the status-side view is written
 	ExitsPath        string        // optional: the exits ledger, the pending exit checks (N3)
-	Lead             string        // the lead handle: widening is the lead's decision (2b-2); written to the state file
+	// SealRoot is the AMQ session root whose seed seals the exits ledger and
+	// holds its head (the phase 5 re-pass ruling); "" leaves it unsealed.
+	SealRoot string
+	Lead     string // the lead handle: widening is the lead's decision (2b-2); written to the state file
 }
 
 // EventKind orders events applied in one tick.
@@ -277,6 +281,11 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	// N3 (b): an exits ledger that cannot be read or written stops dispatch
 	// until it can.
 	if s.exitsErr != nil {
+		if errors.Is(s.exitsErr, sealchain.ErrTampered) {
+			// A failed tag or chain: a block routed to the owner, never a
+			// silent pass (the ruling); dispatch stays stopped.
+			log(Decision{Kind: "ledger_tampered", Reason: "owner: " + s.exitsErr.Error()})
+		}
 		log(Decision{Kind: "exits_ledger_unwritable", Reason: s.exitsErr.Error()})
 		s.closeIdle(list, now, cfg, log)
 		return out, s.writeState(now, cfg)

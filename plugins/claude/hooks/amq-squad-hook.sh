@@ -7,8 +7,9 @@
 # before anything else runs. In a seat the three verbs do the work:
 #   session-start, user-prompt  amq-squad context --me $AM_ME --json
 #                               injected as additionalContext, every turn (R35)
-#   pre-tool                    amq-squad guard --me $AM_ME --stdin, verdict
-#                               mapped to the PreToolUse decision (below)
+#   pre-tool                    amq-squad guard --decision claude --me $AM_ME
+#                               --stdin: the Go adapter runs guard under its
+#                               watchdog and prints the PreToolUse decision
 #   post-tool                   amq-squad evidence ingest --me $AM_ME
 #
 # Verdict mapping (guard exits 0 for every verdict):
@@ -17,6 +18,8 @@
 #   needs_gate  -> permissionDecision deny, reason "raise the gate for
 #                  <action_class> <target>"; never ask, an unattended seat
 #                  must not stop on a prompt (2a-3 notes, open question 9)
+#   (the mapping is the Go adapter's: amq-squad guard --decision claude parses
+#   the complete verdict object; the shell never reads the verdict)
 #   guard exit != 0, unparsable output, missing binary, guard still running
 #                  after 4.8 s (watchdog, 200 ms inside the 5 s hook timeout)
 #                  -> no decision, exit 0 (fail open, as Claude Code does), one
@@ -72,56 +75,14 @@ session-start | user-prompt)
 	printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$name" "$body"
 	;;
 pre-tool)
-	# guard runs in the background under a watchdog at the configured hook
-	# timeout (5 s) minus 200 ms: Claude kills a hook at the deadline without
-	# giving it a chance to write its log line, so the hook ends itself first.
-	tmpd=$(umask 077; mktemp -d 2>/dev/null) || { log "fail-open: mktemp failed"; exit 0; }
-	trap 'rm -rf "$tmpd"' EXIT
-	cat >"$tmpd/in"
-	"$bin" guard --me "$AM_ME" --stdin <"$tmpd/in" >"$tmpd/out" 2>&3 &
-	gpid=$!
-	(
-		sleep 4.8 &
-		sid=$!
-		trap 'kill "$sid" 2>/dev/null; exit 0' TERM
-		if wait "$sid"; then
-			: >"$tmpd/timeout"
-			kill -9 "$gpid" 2>/dev/null
-		fi
-	) >/dev/null 2>&1 </dev/null &
-	wpid=$!
-	wait "$gpid"
-	rc=$?
-	kill "$wpid" 2>/dev/null
-	wait "$wpid" 2>/dev/null
-	if [ -e "$tmpd/timeout" ]; then
-		log "fail-open: guard timeout after 4.8 s (killed; no decision)"
-		exit 0
-	fi
-	if [ "$rc" -ne 0 ]; then
-		log "fail-open: guard exit $rc"
-		exit 0
-	fi
-	out=$(cat "$tmpd/out")
-	verdict=$(printf '%s\n' "$out" | sed -n -E 's/^\{"verdict":"([a-z_]+)".*/\1/p')
-	str='(([^"\\]|\\.)*)'
-	case "$verdict" in
-	allow)
-		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"amq-squad guard: allowed"}}\n'
-		;;
-	deny)
-		reason=$(printf '%s\n' "$out" | sed -n -E "s/.*,\"reason\":\"$str\".*/\\1/p")
-		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"amq-squad guard: %s"}}\n' "$reason"
-		;;
-	needs_gate)
-		class=$(printf '%s\n' "$out" | sed -n -E 's/.*,"action_class":"([^"]*)".*/\1/p')
-		target=$(printf '%s\n' "$out" | sed -n -E "s/.*,\"target\":\"$str\".*/\\1/p")
-		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"raise the gate for %s %s"}}\n' "$class" "$target"
-		;;
-	*)
-		log "fail-open: unparsable guard output"
-		;;
-	esac
+	# The adapter is the whole PreToolUse path: amq-squad guard --decision
+	# claude runs guard as a child in its own process group under the 4.8 s
+	# watchdog (200 ms inside the 5 s hook timeout), kills and reaps the
+	# group, parses the complete verdict and prints the decision. The shell
+	# runs no watchdog and reads no verdict, so dash and bash behave alike
+	# (the fix round's watchdog ruling); its log lines go to the log fd.
+	dec=$("$bin" guard --decision claude --me "$AM_ME" --stdin 2>&3)
+	[ -n "$dec" ] && printf '%s\n' "$dec"
 	;;
 post-tool)
 	"$bin" evidence ingest --me "$AM_ME" >/dev/null 2>&3

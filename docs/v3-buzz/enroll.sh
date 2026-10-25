@@ -84,7 +84,36 @@ case $BUZZ/ in *"/../"* | *"/./"* | *"//"*) echo "BUZZ_HOME must be a clean path
 mkdir -p "$BUZZ" "$ROOT/attach"
 
 case $OWNER_NPUB in npub1*) ;; *) echo "the owner key is given as its npub (npub1...), the public key only" >&2; exit 2 ;; esac
-case $RELAY in wss://*|ws://127.0.0.1*|ws://localhost*) ;; *) echo "relay url must be wss://" >&2; exit 2 ;; esac
+# The relay URL is parsed, not prefix-matched (4-5 re-pass): no userinfo,
+# a host of plain host characters, wss:// required, and ws:// (no TLS) only
+# for exactly localhost, 127.0.0.1 or ::1, the rule gateverify.CheckRelayURL
+# applies in Go. ws://localhost.attacker.example/ and
+# ws://127.0.0.1@relay.attacker.example/ are refused before amq-remote sees
+# the URL.
+relay_ok() {
+  local u=$1 scheme rest hostport host tail re='^[][A-Za-z0-9.:-]+$' port='^:[0-9]+$'
+  case $u in
+    wss://*) scheme=wss rest=${u#wss://} ;;
+    ws://*) scheme=ws rest=${u#ws://} ;;
+    *) return 1 ;;
+  esac
+  hostport=${rest%%[/?#]*}
+  [[ -n $hostport && $hostport != *@* && $hostport =~ $re ]] || return 1
+  if [[ $hostport == \[* ]]; then
+    host=${hostport#\[}
+    [[ $host == *\]* ]] || return 1
+    host=${host%%\]*}
+    tail=${hostport#*\]}
+  else
+    host=${hostport%%:*}
+    tail=${hostport#"$host"}
+  fi
+  [[ -n $host && ( -z $tail || $tail =~ $port ) ]] || return 1
+  [[ $scheme == wss ]] && return 0
+  case $host in localhost | 127.0.0.1 | ::1) return 0 ;; esac
+  return 1
+}
+relay_ok "$RELAY" || { echo "relay url must be wss://HOST (ws:// only for localhost, 127.0.0.1 or ::1; no userinfo)" >&2; exit 2; }
 read -r OWNER_HEX _ < <("$AMQ_SQUAD" remote npub "$OWNER_NPUB") || { echo "bad owner npub (or no $AMQ_SQUAD on PATH)" >&2; exit 2; }
 echo "owner: $OWNER_NPUB ($OWNER_HEX)"
 echo "relay: $RELAY"

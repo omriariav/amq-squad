@@ -114,7 +114,7 @@ func runFleet(args []string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SQUAD\tREPOSITORY\tLEAD\tSESSION\tROOT")
 	for _, x := range r.Squads {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", x.Name, x.Repository, x.Lead, x.SessionName(), x.Root)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", termSafe(x.Name), termSafe(x.Repository), termSafe(x.Lead), termSafe(x.SessionName()), termSafe(x.Root))
 	}
 	return w.Flush()
 }
@@ -173,7 +173,7 @@ func runFleetStatus(out io.Writer, path, version string, jsonOut bool) error {
 			lead = *st.LeadHandle
 		}
 		fmt.Fprintf(out, "  %s (lead %s): %d needs you, %d working, %d ready, %d inactive\n",
-			st.Session, lead, st.Counts.NeedsYou, st.Counts.Working, st.Counts.Ready, st.Counts.Inactive)
+			termSafe(st.Session), termSafe(lead), st.Counts.NeedsYou, st.Counts.Working, st.Counts.Ready, st.Counts.Inactive)
 	}
 	return nil
 }
@@ -210,16 +210,22 @@ func runOperatorInbox(args []string) error {
 	if *jsonOut {
 		return printJSONEnvelope("operator_inbox", in)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	return renderInbox(os.Stdout, in)
+}
+
+// renderInbox is the human inbox. Every field a squad, a lead or a seat
+// wrote passes termSafe at this output boundary (P2-2).
+func renderInbox(out io.Writer, in fleet.Inbox) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SQUAD\tGATE\tCLASS\tRAISED BY\tSINCE")
 	for _, g := range in.Gates {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", g.Squad, g.Gate.ID, g.Gate.ActionClass, g.Gate.RaisedBy, g.Since.Format("2006-01-02T15:04Z"))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", termSafe(g.Squad), termSafe(g.Gate.ID), termSafe(g.Gate.ActionClass), termSafe(g.Gate.RaisedBy), g.Since.Format("2006-01-02T15:04Z"))
 	}
 	if err := w.Flush(); err != nil {
 		return err
 	}
 	for _, q := range in.Questions {
-		fmt.Fprintf(os.Stdout, "question [%s] %s: %s\n", q.Squad, q.Attention.Seat, q.Attention.Subject)
+		fmt.Fprintf(out, "question [%s] %s: %s\n", termSafe(q.Squad), termSafe(q.Attention.Seat), termSafe(q.Attention.Subject))
 	}
 	return nil
 }
@@ -239,9 +245,11 @@ upstream ask 2) and manual mode give a proposal for the owner, never a
 launch. Outcomes: started, refused, proposed. This verb is one start, not a
 running operator session: a start held by max_squads or cost_per_day_usd is
 refused by that name, never queued, and recorded under fleet.yaml waiting,
-which status --fleet shows as wait_reason fleet_cap. It never answers a
-gate. After a launch it stays until the seats' proof window has ended (up
-to 60 s), so a late replayed proof is still heard.
+which status --fleet shows as wait_reason fleet_cap. A cost_per_day_usd cap
+with no meter that can read the outcome log holds every start
+(cost_unmetered, shown as that wait_reason); remove the cap to proceed. It
+never answers a gate. After a launch it stays until the seats' proof window
+has ended (up to 60 s), so a late replayed proof is still heard.
 `
 
 // mayorSquadWriter and mayorLauncher are the CLI's adapters over 2b-5's
@@ -286,10 +294,10 @@ func runOperatorStartSquad(args []string) error {
 	if *jsonOut {
 		return printJSONEnvelope("operator_start_squad", res)
 	}
-	fmt.Fprintf(os.Stdout, "%s %s: %s %s\n", s.Name, res.Outcome, res.Reason, res.Detail)
+	fmt.Fprintf(os.Stdout, "%s %s: %s %s\n", termSafe(s.Name), termSafe(res.Outcome), termSafe(res.Reason), termSafe(res.Detail))
 	if res.Proposal != nil {
 		for _, step := range res.Proposal.Steps {
-			fmt.Fprintln(os.Stdout, "  owner runs: "+strings.Join(step, " "))
+			fmt.Fprintln(os.Stdout, "  owner runs: "+termSafe(strings.Join(step, " ")))
 		}
 	}
 	return nil

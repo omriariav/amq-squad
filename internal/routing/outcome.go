@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +13,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // RowSchema is the outcome log row schema.
@@ -114,18 +113,10 @@ type Row struct {
 	Tag string `json:"tag,omitempty"`
 }
 
-// hmacTag is the hex HMAC-SHA256 of v's JSON under key, after a domain label.
-func hmacTag(key []byte, label string, v any) string {
-	body, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	m := hmac.New(sha256.New, key)
-	m.Write([]byte(label))
-	m.Write([]byte{0})
-	m.Write(body)
-	return hex.EncodeToString(m.Sum(nil))
-}
+// hmacTag is the hex HMAC-SHA256 of v's JSON under key, after a domain
+// label: sealchain.Tag, the one implementation the sealed state files share
+// (phase 5 re-pass of 2b-2 B, ruling).
+func hmacTag(key []byte, label string, v any) string { return sealchain.Tag(key, label, v) }
 
 // Sign returns the row with its tag set.
 func (r Row) Sign(key []byte) Row {
@@ -142,13 +133,7 @@ func (r Row) Verify(key []byte) bool {
 }
 
 // SeedKey is the HMAC key of a session seed (hex).
-func SeedKey(seed string) []byte {
-	raw, err := hex.DecodeString(seed)
-	if err != nil {
-		return []byte(seed)
-	}
-	return raw
-}
+func SeedKey(seed string) []byte { return sealchain.Key(seed) }
 
 // VerifyRows splits rows into the ones whose tag verifies and the rest.
 func VerifyRows(rows []Row, key []byte) (good, tampered []Row) {
@@ -172,7 +157,7 @@ func (r Row) EvidenceComplete() bool {
 
 // Dir is the routing directory under an AMQ session root, beside the hook
 // ledger (briefs ruling 3).
-func Dir(root string) string { return filepath.Join(root, "extensions", "amq-squad", "routing") }
+func Dir(root string) string { return sealchain.Dir(root) }
 
 // OutcomePath is the outcome log of a session root.
 func OutcomePath(root string) string { return filepath.Join(Dir(root), "outcomes.jsonl") }

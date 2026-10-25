@@ -25,13 +25,26 @@ func peerPID(conn *net.UnixConn) (pid int, known bool) {
 	return pid, known
 }
 
+// paneLookupTimeout bounds the proof's tmux pane lookup (the decision socket's
+// 2 s, internal/panechain); paneLookupWaitDelay bounds the output of a killed
+// tmux whose descendant still holds it.
+const (
+	paneLookupTimeout   = 2 * time.Second
+	paneLookupWaitDelay = 500 * time.Millisecond
+)
+
 // tmuxPaneShell finds the pane AMQ labelled with the handle (the
 // @amq_pane_agent pane option AMQ sets) and returns its shell pid and that
 // pid's start stamp, from a read-only `tmux list-panes -a` (R6: amq-squad
 // never creates, moves or closes a pane). Several panes with the handle
 // (another squad's seat of the same name) make the answer unknown.
 func tmuxPaneShell(handle string, env []string) (int, string, bool) {
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_pid} #{@amq_pane_agent}")
+	// P2-6: bounded like the decision socket's lookup (internal/panechain): a
+	// tmux server that does not answer in time is proof_origin_unknown.
+	ctx, cancel := context.WithTimeout(context.Background(), paneLookupTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_pid} #{@amq_pane_agent}")
+	cmd.WaitDelay = paneLookupWaitDelay
 	if env != nil {
 		cmd.Env = env
 	}
@@ -62,9 +75,11 @@ func paneIDOf(shell int) string {
 	if shell <= 0 {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), paneLookupTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_pid} #{pane_id}").Output()
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_pid} #{pane_id}")
+	cmd.WaitDelay = paneLookupWaitDelay
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}

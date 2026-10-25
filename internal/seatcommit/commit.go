@@ -27,6 +27,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -230,6 +231,10 @@ func ExitCheck(o Options, why string) Result {
 	o = o.withDefaults()
 	var out Result
 	err := withLedgerLock(o.Root, o.Handle, func() error {
+		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
+			out = res.tamperedRefusal(terr)
+			return nil
+		}
 		code, changes, err := exitChanges(o)
 		switch {
 		case err != nil:
@@ -256,6 +261,9 @@ func run(o Options, res Result) Result {
 	// is committed. A change blocks before the commit step and quarantines
 	// the seat.
 	if !o.DryRun {
+		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
+			return res.tamperedRefusal(terr)
+		}
 		code, changes, err := exitChanges(o)
 		if err != nil {
 			return res.defer_("exit check: " + err.Error())
@@ -275,6 +283,11 @@ func run(o Options, res Result) Result {
 	ledger, err := ReadLedger(o.Root, o.Handle)
 	if os.IsNotExist(err) {
 		return res.refuse(ReasonBaseUnrecorded, task.RouteLead, "no core-recorded base for seat "+o.Handle+"; the launch records it (seat commit --base SHA records one as a lead decision)")
+	}
+	if errors.Is(err, sealchain.ErrTampered) {
+		// The ledger's tag or chain failed: a block for the owner, never a
+		// pass and never a retry into the same file (ruling).
+		return res.tamperedRefusal(err)
 	}
 	if err != nil {
 		return res.defer_(err.Error())
@@ -337,7 +350,9 @@ func run(o Options, res Result) Result {
 	if o.DryRun && o.Declared != nil {
 		declared = o.Declared
 	}
-	res.DeclaredDigest = digest([]byte(strings.Join(declared, "\n")))
+	// The declared set's digest is over its canonical JSON (an array of
+	// strings), so ["a","b"] and ["a\nb"] never share one (P2-7).
+	res.DeclaredDigest = DeclaredDigest(declared)
 	res.DiffDigest = digest(raw)
 	for _, s := range stats {
 		res.Changes = append(res.Changes, Change{Path: s.Path, Added: s.Added, Deleted: s.Deleted, Binary: s.Binary})
@@ -416,6 +431,15 @@ func quarantine(o Options, res Result, code string, changes []seatexec.ConfigCha
 		} else {
 			q.Tree, q.DiffDigest = tree, digest(raw)
 			res.Parent, res.Tree, res.DiffDigest = q.Parent, tree, q.DiffDigest
+			if lerr == nil {
+				repo := seatRepo(o.Git, harnessEnv(o.Env), rp)
+				expireEvidence(repo, &l, o.Now())
+				if ref, err := anchorEvidence(repo, &l, o.Task.ID, tree, o.Now()); err != nil {
+					detail += "; the kept tree could not be anchored: " + err.Error()
+				} else {
+					q.EvidenceRef = ref
+				}
+			}
 		}
 	}
 	if lerr == nil {
@@ -510,7 +534,12 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	}
 	raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 	taskID, last := lastAttempt(list, handle)
-	l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC()})
+	expireEvidence(repo, &l, now)
+	ref, err := anchorEvidence(repo, &l, taskID, tree, now)
+	if err != nil {
+		return false, fmt.Errorf("anchor the discarded tree: %w", err)
+	}
+	l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
 	if err := writeLedger(root, l); err != nil {
 		return false, err
 	}
@@ -540,6 +569,118 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 		return false, err
 	}
 	return true, nil
+}
+
+// EvidenceRetention is how long a kept tree's evidence ref stays after it is
+// recorded (a quarantine's stays while it is not cleared).
+const EvidenceRetention = 30 * 24 * time.Hour
+
+// evidenceRefName is refs/amq-squad/evidence/<task>/<n>; a task id
+// character a ref name cannot carry becomes "_".
+func evidenceRefName(seat, taskID string, n int) string {
+	clean := func(v string) string {
+		v = strings.Map(func(r rune) rune {
+			if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+				return r
+			}
+			return '_'
+		}, v)
+		if v == "" {
+			return "none"
+		}
+		return v
+	}
+	// The seat is part of the name (the fix round's item 22): two seats on
+	// one repository never share a ref, whatever their counters say.
+	return "refs/amq-squad/evidence/" + clean(seat) + "/" + clean(taskID) + "/" + strconv.Itoa(n)
+}
+
+// anchorEvidence points a new evidence ref at a kept tree in the seat
+// repository (the object store the shadow wrote it to), so git gc keeps it
+// until the retention expiry (P2-5).
+func anchorEvidence(repo git, l *Ledger, taskID, tree string, now time.Time) (EvidenceRef, error) {
+	l.EvidenceSeq++
+	ref := evidenceRefName(l.Handle, taskID, l.EvidenceSeq)
+	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad evidence "+taskID, ref, tree); err != nil {
+		return EvidenceRef{}, err
+	}
+	until := now.UTC().Add(EvidenceRetention)
+	return EvidenceRef{Ref: ref, RefTree: tree, RetainUntil: &until}, nil
+}
+
+// verifyEvidence checks every evidence ref the sealed ledger records: it
+// must still resolve to the tree recorded with it. A ref that is gone or
+// points elsewhere (a same-UID seat can edit its repository's refs) is
+// ledger_tampered (the fix round's item 22).
+func verifyEvidence(o Options) error {
+	if o.Git == "" {
+		return nil // no git binary: the step defers on its own
+	}
+	l, err := ReadLedger(o.Root, o.Handle)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var refs []EvidenceRef
+	for _, d := range l.Discarded {
+		refs = append(refs, d.EvidenceRef)
+	}
+	if q := l.Quarantine; q != nil {
+		refs = append(refs, q.EvidenceRef)
+	}
+	var live []EvidenceRef
+	for _, e := range refs {
+		if e.Ref != "" {
+			live = append(live, e)
+		}
+	}
+	if len(live) == 0 {
+		return nil
+	}
+	rec, err := stagedRecord(o.Root, o.Handle)
+	if err != nil {
+		return err
+	}
+	rp, err := worktreePaths(rec.Worktree)
+	if err != nil {
+		return err
+	}
+	repo := seatRepo(o.Git, harnessEnv(o.Env), rp)
+	for _, e := range live {
+		got, err := repo.line("rev-parse", "--verify", "-q", e.Ref+"^{tree}")
+		if err != nil || got != e.RefTree {
+			return fmt.Errorf("%w: the evidence ref %s no longer resolves to the kept tree %s (now %q)", sealchain.ErrTampered, e.Ref, e.RefTree, got)
+		}
+	}
+	return nil
+}
+
+// tamperedRefusal is the owner's block for a sealed ledger or an evidence
+// ref that fails its check.
+func (r Result) tamperedRefusal(err error) Result {
+	return r.refuse(ReasonLedgerTampered, task.RouteOwner, err.Error()+"; nothing is committed or pushed until the owner inspects the commits ledger and the evidence refs")
+}
+
+// expireEvidence deletes the evidence refs whose retention has expired (the
+// ledger keeps the record, without the ref); an uncleared quarantine's ref
+// never expires.
+func expireEvidence(repo git, l *Ledger, now time.Time) {
+	drop := func(e *EvidenceRef) {
+		if e.Ref == "" || e.RetainUntil == nil || now.Before(*e.RetainUntil) {
+			return
+		}
+		if _, err := repo.run(nil, nil, "update-ref", "-d", e.Ref); err == nil {
+			e.Ref = ""
+		}
+	}
+	for i := range l.Discarded {
+		drop(&l.Discarded[i].EvidenceRef)
+	}
+	if q := l.Quarantine; q != nil && q.ClearedAt != nil {
+		drop(&q.EvidenceRef)
+	}
 }
 
 // lastAttempt is the seat's most recently ended attempt: its task and why it
@@ -620,9 +761,20 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 		if e.NewMode == "160000" || e.OldMode == "160000" {
 			nested = append(nested, p)
 		}
-		if entry, hit := ps.match(p); hit && !matchFold(gated, p) {
+		entry, hit := ps.match(p)
+		name := ps.managedName(p)
+		if (hit || name != "") && !regularInSnapshot(e) {
+			// A protected or managed path must stay a regular file: a symlink
+			// (whose target text could match the block while the effective
+			// file is a broken link), a submodule entry or a mode change there
+			// is protected_path, gated or not (P1-1).
+			protected = append(protected, p+" (not a regular file in the snapshot: mode "+e.OldMode+" -> "+e.NewMode+")")
+			if name != "" {
+				managed = append(managed, p)
+			}
+		} else if hit && !matchFold(gated, p) {
 			protected = append(protected, p+" ("+entry+")")
-		} else if name := ps.managedName(p); name != "" && !matchFold(gated, p) && managedChanged(g, parent, tree, p) {
+		} else if name != "" && !matchFold(gated, p) && managedChanged(g, parent, tree, p) {
 			protected = append(protected, p+" (the managed block of "+name+")")
 			managed = append(managed, p)
 		}
@@ -657,6 +809,23 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 		out = append(out, Violation{Reason: ReasonSizeCap, Detail: strings.Join(over, "; ")})
 	}
 	return out
+}
+
+// regularInSnapshot reports whether a changed entry stays a regular file:
+// its new mode is a regular file's (100644 or 100755) and, when it existed
+// before, its mode did not change; a deletion (000000) is left to the
+// content checks.
+func regularInSnapshot(e rawEntry) bool {
+	regular := func(m string) bool { return m == "100644" || m == "100755" }
+	switch {
+	case e.NewMode == "000000":
+		return e.OldMode == "000000" || regular(e.OldMode)
+	case !regular(e.NewMode):
+		return false
+	case e.OldMode != "000000" && e.OldMode != e.NewMode:
+		return false
+	}
+	return true
 }
 
 // managedChanged reports whether the amq-squad managed block of a file
@@ -709,6 +878,12 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 	case res.Tree == parentTree && last >= 0 && l.Commits[last].Commit == res.Parent && l.Commits[last].Task == o.Task.ID:
 		res.Commit = res.Parent // this task's commit exists; finish its push
 		res.Notes = append(res.Notes, "the harness commit "+res.Parent+" was already recorded")
+		// The diff checked when the commit was made, not the empty one
+		// against the commit itself (P2-6).
+		if c := l.Commits[last]; c.DiffDigest != "" {
+			res.Parent, res.DeclaredDigest, res.DiffDigest, res.Lines = c.Parent, c.DeclaredDigest, c.DiffDigest, c.Lines
+			res.Changes, res.Files = append([]Change{}, c.Changes...), len(c.Changes)
+		}
 	case res.Tree == parentTree:
 		res.Notes = append(res.Notes, "empty diff: nothing to commit")
 		res.OK = true
@@ -723,7 +898,8 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 		}
 		res.Commit = strings.TrimSpace(string(out))
 		l.Head = res.Commit
-		l.Commits = append(l.Commits, LedgerCommit{Task: o.Task.ID, Commit: res.Commit, Parent: res.Parent, Tree: res.Tree, At: o.Now().UTC()})
+		l.Commits = append(l.Commits, LedgerCommit{Task: o.Task.ID, Commit: res.Commit, Parent: res.Parent, Tree: res.Tree, At: o.Now().UTC(),
+			DeclaredDigest: res.DeclaredDigest, DiffDigest: res.DiffDigest, Lines: res.Lines, Changes: res.Changes})
 		last = len(l.Commits) - 1
 		if err := writeLedger(o.Root, l); err != nil {
 			return res.defer_("commit ledger: " + err.Error())
@@ -765,6 +941,10 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 	res.Pushed, res.OK, res.PRHead = true, true, res.Commit
 	return openPR(o, sh, l, rec, res)
 }
+
+// ReasonPRPending defers a pushed step whose PR binding is not made yet
+// (--open-pr): the task completes only with its binding.
+const ReasonPRPending = "pr_pending"
 
 // PushURLMissing is the note (and status attention) of a commit step whose
 // launch recorded no push URL (D1): it commits and does not push.
@@ -836,14 +1016,21 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 	if !o.OpenPR {
 		return res
 	}
+	// With --open-pr the completion waits for the binding (P2-3 of the phase
+	// 5 re-pass): a pushed step whose PR could not be opened, found or read
+	// is deferred as pr_pending (the push is recorded; the next tick retries
+	// the PR only), never a success that completes the task unbound.
+	pending := func(why string) Result {
+		r := res.defer_(ReasonPRPending + ": " + why + " (pushed " + res.Commit + "; the PR is retried next tick)")
+		r.ReasonCode = ReasonPRPending
+		return r
+	}
 	if l.Repository == "" {
-		res.Notes = append(res.Notes, "no PR: the launch recorded no repository from the grant (one merge grant names it)")
-		return res
+		return pending("the launch recorded no repository from the grant (one merge grant names it)")
 	}
 	if o.Gh == "" {
 		if tool, why := pinnedGh(l); why != "" {
-			res.Notes = append(res.Notes, "no PR: "+why)
-			return res
+			return pending(why)
 		} else {
 			tool.Close()
 		}
@@ -877,13 +1064,11 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 	base := l.base(o.Grants)
 	out, err := run("pr", "list", "--head", rec.Branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
 	if err != nil {
-		res.Notes = append(res.Notes, "gh pr list failed: "+firstLine(out))
-		return res
+		return pending("gh pr list failed: " + firstLine(out))
 	}
 	var prs []ghPR
 	if err := json.Unmarshal([]byte(out), &prs); err != nil {
-		res.Notes = append(res.Notes, "gh pr list gave no PR list: "+firstLine(out))
-		return res
+		return pending("gh pr list gave no PR list: " + firstLine(out))
 	}
 	for _, p := range prs {
 		why := ""
@@ -911,16 +1096,14 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 	out, err = run("pr", "create", "--draft", "--head", rec.Branch, "--base", base, "--title", o.Task.ID+": "+strings.Join(strings.Fields(o.Task.Title), " "),
 		"--body", Message(o.Task, o.Handle, res.DeclaredDigest, res.DiffDigest))
 	if err != nil {
-		res.Notes = append(res.Notes, "gh pr create failed: "+firstLine(out))
-		return res
+		return pending("gh pr create failed: " + firstLine(out))
 	}
 	if i := strings.LastIndex(out, "/pull/"); i >= 0 {
 		out = strings.Fields(out[i+len("/pull/"):] + " ")[0]
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(out))
 	if err != nil || n <= 0 {
-		res.Notes = append(res.Notes, "gh gave no PR number: "+firstLine(out))
-		return res
+		return pending("gh gave no PR number: " + firstLine(out))
 	}
 	if t := bound(n); t != "" && t != o.Task.ID {
 		return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("gh answered PR #%d, which the store binds to task %s", n, t))
@@ -956,6 +1139,17 @@ func Message(t task.Task, seat, declaredDigest, diffDigest string) string {
 	title := strings.Join(strings.Fields(t.Title), " ")
 	return fmt.Sprintf("%s: %s\n\nCommitted by the amq-squad harness for seat %s: the seat changed the tree, the Go core checked it against the task's declared files and the grant, then committed (plan 4.3, amendment 21).\n\nAmq-Squad-Task: %s\nAmq-Squad-Seat: %s\nAmq-Squad-Declared-Files: %s\nAmq-Squad-Diff: %s\n",
 		t.ID, title, seat, t.ID, seat, declaredDigest, diffDigest)
+}
+
+// DeclaredDigest is the digest of a declared file set: sha256 over its
+// canonical JSON array (encoding/json, in the order given; the store keeps
+// the set sorted and deduplicated).
+func DeclaredDigest(declared []string) string {
+	if declared == nil {
+		declared = []string{}
+	}
+	raw, _ := json.Marshal(declared)
+	return digest(raw)
 }
 
 func digest(b []byte) string {

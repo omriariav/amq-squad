@@ -41,6 +41,13 @@ type Launcher struct {
 	// false when that cannot be determined. Default: a read-only tmux
 	// list-panes query.
 	PaneGone func(resource string) (gone, ok bool)
+	// PanesFor counts the panes labelled with a handle (@amq_pane_agent);
+	// ok is false when that cannot be determined. Default: a read-only tmux
+	// list-panes query bounded at 2 s (the fix round's item 3).
+	PanesFor func(handle string) (n int, ok bool)
+	// Clock is the clock the token window is compared on (default
+	// time.Now, monotonic; the proof server's ProofClock in tests).
+	Clock func() time.Time
 	// closeSeat replaces CloseSeat in closeOwed (tests).
 	closeSeat func(handle, reason string) error
 
@@ -76,6 +83,11 @@ type request struct {
 	resource  string
 	cancelled bool
 	closing   bool // a close is in flight (closeOwed runs one at a time)
+	// ambiguous: Apply observed more than one pane for the handle, or a pane
+	// for a handle this request does not know (apply_ambiguous); no one
+	// pane is the evidence then, only the proof or a confirmed close.
+	ambiguous bool
+	proof     *proofServer
 	err       error
 }
 
@@ -121,12 +133,18 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 		l.hold(r.handle, seatIdentity{PID: res.Seats[0].PID, Start: res.Seats[0].Start})
 	}
 	l.mu.Lock()
-	r.launchID, r.err = res.LaunchID, err
+	r.launchID, r.err, r.proof = res.LaunchID, err, res.proof
+	mine := 0
 	if res.Apply != nil {
 		for _, o := range res.Apply.Observations {
-			if o.Handle == r.handle {
-				r.resource = o.Resource
+			if o.Handle != r.handle {
+				r.ambiguous = true // a pane for a handle this request does not know
+				continue
 			}
+			if mine++; mine > 1 {
+				r.ambiguous = true // two panes for one handle: neither is the evidence
+			}
+			r.resource = o.Resource
 		}
 	}
 	switch {
@@ -134,6 +152,9 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 		r.state = stateClosing
 	case up:
 		r.state = stateUp
+	case r.ambiguous:
+		// The proof or a confirmed close settles it (CancelSeatRequest).
+		r.state, r.err = stateUnresolved, fmt.Errorf("apply_ambiguous: AMQ observed %d pane(s) for %s and %d other(s); %v", mine, r.handle, len(res.Apply.Observations)-mine, launchFailure(res, err))
 	case placed(res, err):
 		r.state, r.err = stateUnresolved, launchFailure(res, err)
 	default:
@@ -231,6 +252,9 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	case stateClosing:
 		return l.closeOwed(r)
 	}
+	if r.ambiguous {
+		return l.cancelAmbiguous(r)
+	}
 	// unresolved: the proof socket closed with the launch, so a seat that
 	// starts now cannot prove and seat-exec refuses it; the pane is the
 	// evidence that it is gone (the seat's record is never read here).
@@ -242,6 +266,93 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 		return nil
 	}
 	return fmt.Errorf("seat request %s: AMQ placed the seat (%s) and its termination is not confirmed", req.ID, orNone(r.resource))
+}
+
+// cancelAmbiguous settles the cancel of an apply_ambiguous request (phase 5
+// re-pass P1-3). No pane check answers it: with two observations for the
+// handle, or one for a handle the request does not know, the pane checked
+// could be the wrong one while the live one proves. A seat that proved over
+// the launch's socket is closed by its proved identity, and only that
+// confirmed close releases the request; without a proof the request stays
+// unresolved.
+func (l *Launcher) cancelAmbiguous(r *request) error {
+	l.mu.Lock()
+	srv, handle, id := r.proof, r.handle, r.req.ID
+	l.mu.Unlock()
+	if srv != nil {
+		if up, pid, start, _, _ := srv.state(handle); up {
+			l.hold(handle, seatIdentity{PID: pid, Start: start})
+			l.mu.Lock()
+			r.state = stateClosing
+			l.mu.Unlock()
+			return l.closeOwed(r)
+		}
+	}
+	// After the token window plus the close grace no seat-exec can prove
+	// any more (the socket is closed): a request with no pane for its handle
+	// is abandoned and its slot released; a pane that exists stays held
+	// until it is closed (the fix round's item 3, ruling).
+	if srv != nil {
+		if end := srv.windowEnd(); !end.IsZero() && !l.clock().Before(end.Add(l.closeWait())) {
+			if n, known := l.panesFor(handle); known && n == 0 {
+				l.mu.Lock()
+				r.state, r.err = stateCancelled, fmt.Errorf("apply_abandoned: no proof within the token window and no pane for %s", handle)
+				l.mu.Unlock()
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("seat request %s: apply_ambiguous: AMQ observed more than one pane for %s, or a pane for an unknown handle; only its proof, a confirmed close, or (after the token window) a confirmed absence of its pane settles it", id, handle)
+}
+
+func (l *Launcher) clock() time.Time {
+	if l.Clock != nil {
+		return l.Clock()
+	}
+	return time.Now()
+}
+
+func (l *Launcher) closeWait() time.Duration {
+	if l.CloseWait > 0 {
+		return l.CloseWait
+	}
+	return closeGrace
+}
+
+func (l *Launcher) panesFor(handle string) (int, bool) {
+	if l.PanesFor != nil {
+		return l.PanesFor(handle)
+	}
+	return tmuxPanesFor(handle, l.Options.Env)
+}
+
+// tmuxPanesFor counts the panes AMQ labelled with the handle, from a
+// read-only `tmux list-panes -a` bounded at 2 s; no tmux server is no pane;
+// any other failure is unknown.
+func tmuxPanesFor(handle string, env []string) (int, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{@amq_pane_agent}")
+	cmd.WaitDelay = 500 * time.Millisecond
+	if env != nil {
+		cmd.Env = env
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == nil && strings.Contains(stderr.String(), "no server running") {
+			return 0, true
+		}
+		return 0, false
+	}
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == handle {
+			n++
+		}
+	}
+	return n, true
 }
 
 // CloseSeat stops the seat's provider: SIGTERM to the pid the launcher holds

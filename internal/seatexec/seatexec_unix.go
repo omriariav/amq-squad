@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -26,6 +27,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 const maxFile = 4 << 20
@@ -137,7 +139,18 @@ func prepare(o Options) (execPlan, error) {
 	if err := ValidateNeeds(rec.EnvNeeds, rec.CredNeeds); err != nil {
 		return plan, err
 	}
-	plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
+	if rec.Runtime == "claude" {
+		// A Claude seat runs the registry's claude pin, the bytes the launch
+		// probed (the narrow pass's HIGH): argv[0] must be the pinned path
+		// and hash to the pin; checked again immediately before exec.
+		if base := filepath.Base(o.Argv[0]); base != rec.Runtime {
+			err = refusef("runtime_mismatch", "provider %q is not the recorded runtime %q", base, rec.Runtime)
+		} else {
+			plan.provider, err = pinnedProvider(o.Home, o.Argv[0])
+		}
+	} else {
+		plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
+	}
 	if err != nil {
 		return plan, err
 	}
@@ -156,6 +169,9 @@ func prepare(o Options) (execPlan, error) {
 	}
 	if rec.Runtime == "claude" {
 		if err := CheckClaudePermission(rec.PermissionMode, o.Argv[1:]); err != nil {
+			return plan, err
+		}
+		if err := CheckClaudeHooks(o.Argv[1:]); err != nil {
 			return plan, err
 		}
 		// The seat's own CLAUDE_CONFIG_DIR, written by the core for this
@@ -230,8 +246,41 @@ func prepare(o Options) (execPlan, error) {
 		if code, detail := claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
 			return plan, refusef(code, "the seat's Claude config dir changed before exec: %s", detail)
 		}
+		// The pin re-opened and re-hashed as the last step: a file replaced
+		// after the launch's probe is refused (the window to execve is the
+		// same-UID limit, as for the pinned gh).
+		if _, err := pinnedProvider(o.Home, o.Argv[0]); err != nil {
+			return plan, err
+		}
 	}
 	return plan, nil
+}
+
+// ToolUnpinned refuses a Claude seat whose argv[0] is not the registry's
+// claude pin, or whose pinned file does not hash to the pin.
+const ToolUnpinned = "tool_unpinned"
+
+// pinnedProvider is a Claude seat's executable: argv[0] must be the path the
+// registry pins for claude, opened through the anchored walk and hashed to
+// the pin's sha256 (registry.OpenPinned).
+func pinnedProvider(home, argv0 string) (string, error) {
+	reg, err := registry.Read(registry.Path(home))
+	if err != nil {
+		return "", refusef(ToolUnpinned, "the registry: %v", err)
+	}
+	pin, ok := reg.PinFor("claude")
+	if !ok {
+		return "", refusef(ToolUnpinned, "the registry pins no claude")
+	}
+	if filepath.Clean(argv0) != pin.Path {
+		return "", refusef(ToolUnpinned, "the provider %s is not the pinned claude %s", argv0, pin.Path)
+	}
+	tool, code, detail := registry.OpenPinned("claude", pin.Path, pin.SHA256)
+	if tool == nil {
+		return "", refusef(ToolUnpinned, "%s: %s", code, detail)
+	}
+	tool.Close()
+	return pin.Path, nil
 }
 
 // sendProof is the last step before exec (item 4, lead ruling): seat-exec
@@ -320,40 +369,21 @@ func recheck(rec launch.Record, staged, pub *anchor, hasRules bool, uid int) err
 // or with an approval_policy override, is refused (codex_approval_missing).
 func CheckCodexSandbox(argv []string) error {
 	mode, approval := "", ""
-	for i, a := range argv {
-		if a == "--" {
-			break // what follows is the prompt, not options
-		}
-		switch {
-		case (a == "--ask-for-approval" || a == "-a") && i+1 < len(argv):
-			approval = argv[i+1]
-		case strings.HasPrefix(a, "--ask-for-approval="):
-			approval = strings.TrimPrefix(a, "--ask-for-approval=")
-		case strings.HasPrefix(a, "-a="):
-			approval = strings.TrimPrefix(a, "-a=")
-		}
-		switch {
-		case a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo" || strings.HasPrefix(a, "--full-auto"):
-			return refusef("codex_sandbox_missing", "Codex argv carries %s; seat-exec requires the workspace-write sandbox", a)
-		case (a == "--sandbox" || a == "-s") && i+1 < len(argv):
-			mode = argv[i+1]
-		case strings.HasPrefix(a, "--sandbox="):
-			mode = strings.TrimPrefix(a, "--sandbox=")
-		case strings.HasPrefix(a, "-s="):
-			mode = strings.TrimPrefix(a, "-s=")
-		}
-		// A config override of the sandbox, in the short or the long form,
-		// spaced or joined with "=".
-		for _, flag := range []string{"-c", "--config"} {
-			value, joined := strings.CutPrefix(a, flag+"=")
-			if !joined && a == flag && i+1 < len(argv) {
-				value = argv[i+1]
-			}
-			if v := strings.TrimSpace(value); strings.HasPrefix(v, "sandbox_mode") || strings.HasPrefix(v, "sandbox_workspace_write") {
-				return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with %s %s", flag, value)
-			}
-			if strings.HasPrefix(strings.TrimSpace(value), "approval_policy") {
-				return refusef("codex_approval_missing", "Codex argv overrides the approval policy with %s %s", flag, value)
+	for _, o := range codexOptions(argv) {
+		switch o.name {
+		case "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--full-auto":
+			return refusef("codex_sandbox_missing", "Codex argv carries %s; seat-exec requires the workspace-write sandbox", o.raw)
+		case "--sandbox":
+			mode = o.value
+		case "--ask-for-approval":
+			approval = o.value
+		case "--config":
+			// A config override of the sandbox or the approval policy, in
+			// every form Codex admits.
+			if v := strings.TrimSpace(o.value); strings.HasPrefix(v, "sandbox_mode") || strings.HasPrefix(v, "sandbox_workspace_write") {
+				return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with %s", o.raw)
+			} else if strings.HasPrefix(v, "approval_policy") {
+				return refusef("codex_approval_missing", "Codex argv overrides the approval policy with %s", o.raw)
 			}
 		}
 	}
@@ -364,6 +394,72 @@ func CheckCodexSandbox(argv []string) error {
 		return refusef("codex_approval_missing", "Codex argv has approval policy %q; seat-exec requires --ask-for-approval on-request", approval)
 	}
 	return nil
+}
+
+// ownGroup puts the identity proof's amq in its own process group, and a
+// context end kills that whole group (P2-5).
+func ownGroup(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		killGroup(cmd)
+		return nil
+	}
+}
+
+// killGroup kills the proof's process group: amq and any descendant still
+// holding its output.
+func killGroup(cmd *exec.Cmd) {
+	if cmd.Process != nil && cmd.Process.Pid > 0 {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+}
+
+// codexOption is one option occurrence in a Codex argv, named in its long
+// form.
+type codexOption struct{ name, value, raw string }
+
+// codexValueOptions are the Codex value options the sandbox check reads,
+// short letter to long name.
+var codexValueOptions = map[byte]string{'c': "--config", 's': "--sandbox", 'a': "--ask-for-approval"}
+
+// codexOptions scans a Codex argv as Codex's parser reads it, up to "--"
+// (what follows is the prompt). A value option is read in every form Codex
+// admits: spaced (-c X, --config X), joined with "=" (-c=X, --config=X)
+// and, for a short option, attached (-cX). A bypass flag is returned by
+// name (any --full-auto prefix as --full-auto).
+func codexOptions(argv []string) []codexOption {
+	var out []codexOption
+	for i, a := range argv {
+		if a == "--" {
+			break
+		}
+		switch {
+		case a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo":
+			out = append(out, codexOption{name: a, raw: a})
+		case strings.HasPrefix(a, "--full-auto"):
+			out = append(out, codexOption{name: "--full-auto", raw: a})
+		case strings.HasPrefix(a, "--"):
+			for _, long := range codexValueOptions {
+				if v, ok := strings.CutPrefix(a, long+"="); ok {
+					out = append(out, codexOption{name: long, value: v, raw: a})
+				} else if a == long && i+1 < len(argv) {
+					out = append(out, codexOption{name: long, value: argv[i+1], raw: a + " " + argv[i+1]})
+				}
+			}
+		case len(a) >= 2 && a[0] == '-':
+			long, ok := codexValueOptions[a[1]]
+			switch {
+			case !ok:
+			case len(a) == 2 && i+1 < len(argv):
+				out = append(out, codexOption{name: long, value: argv[i+1], raw: a + " " + argv[i+1]})
+			case len(a) > 2 && a[2] == '=':
+				out = append(out, codexOption{name: long, value: a[3:], raw: a})
+			case len(a) > 2: // the attached form, -cX
+				out = append(out, codexOption{name: long, value: a[2:], raw: a})
+			}
+		}
+	}
+	return out
 }
 
 // checkIdentity: the record names this seat and root, carries a session and
@@ -439,6 +535,11 @@ func identityProof(o Options, rec launch.Record, env []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	out, err := o.RunAMQ(ctx, amq, args, env, firstNonEmpty(rec.Worktree, rec.CWD))
+	if err != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
+		// P2-5: amq, or a descendant holding its output, outlived the bound
+		// and its group was killed. A timeout is a refusal, never a pass.
+		return "", refusef("identity_proof_timeout", "amq env did not finish within the proof bound: %v", err)
+	}
 	if err != nil {
 		return "", refusef("identity_proof_failed", "amq env failed: %v: %s", err, trimOut(out))
 	}

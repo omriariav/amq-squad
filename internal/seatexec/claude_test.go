@@ -96,11 +96,12 @@ func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 func TestClaudeSeatRefusesWorktreeAllowRules(t *testing.T) {
 	for _, name := range []string{"settings.json", "settings.local.json"} {
 		f := newFixture(t, "claude")
-		f.stage()
 		if err := os.MkdirAll(filepath.Join(f.wt, ".claude"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		write(t, filepath.Join(f.wt, ".claude", name), `{"permissions":{"allow":["Bash(git:*)"]}}`, 0o600)
+		// staged after: the launch digests the worktree's settings files
+		f.stage()
 		if err := f.run(Options{}); refusalCode(err) != ClaudeAllowRulesPresent || !strings.Contains(err.Error(), "Bash(git:*)") {
 			t.Fatalf("%s: %v", name, err)
 		}

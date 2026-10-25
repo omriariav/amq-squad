@@ -1,22 +1,18 @@
 package routing
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"os"
-	"path/filepath"
-	"runtime"
+
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // SeedBytes is the session seed's size.
-const SeedBytes = 32
+const SeedBytes = sealchain.SeedBytes
 
 // SeedPath is the session's exploration seed under the AMQ root.
-func SeedPath(root string) string { return filepath.Join(Dir(root), "seed") }
+func SeedPath(root string) string { return sealchain.SeedPath(root) }
 
 // SessionSeed is the session's exploration seed, as hex: 32 random bytes
 // from crypto/rand, written raw once under the AMQ root (mode 0600) at the
@@ -37,61 +33,14 @@ func SessionSeed(root string) (string, error) {
 
 // SessionSeedID is SessionSeed with the seed file's device and inode (from
 // fstat of the opened file), which the head record keeps: a seed file
-// replaced by another is refused at the next start (Codex pass 5, (e)).
+// replaced by another is refused at the next start (Codex pass 5, (e)). The
+// seed's read and first write are sealchain's (one implementation).
 func SessionSeedID(root string) (string, uint64, uint64, error) {
-	fresh := func() ([]byte, error) {
-		b := make([]byte, SeedBytes)
-		if _, err := rand.Read(b); err != nil {
-			return nil, fmt.Errorf("routing seed: %w", err)
-		}
-		return b, nil
-	}
-	if root == "" {
-		b, err := fresh()
-		return hex.EncodeToString(b), 0, 0, err
-	}
-	path := SeedPath(root)
-	s, dev, ino, err := readSeed(path)
-	switch {
-	case err == nil:
-		return s, dev, ino, nil
-	case !errors.Is(err, fs.ErrNotExist):
-		return "", 0, 0, &InvalidError{Err: err}
-	case sessionStarted(root):
-		return "", 0, 0, &InvalidError{Err: fmt.Errorf("routing seed %s is missing in a session that has routed before; refusing to draw a new one", path)}
-	}
-	b, err := fresh()
-	if err != nil {
-		return "", 0, 0, err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", 0, 0, err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".seed-*")
-	if err != nil {
-		return "", 0, 0, err
-	}
-	defer os.Remove(tmp.Name())
-	if err = tmp.Chmod(0o600); err == nil {
-		if _, err = tmp.Write(b); err == nil {
-			err = tmp.Sync()
-		}
-	}
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return "", 0, 0, err
-	}
-	// Link never replaces: a concurrent first start keeps one seed.
-	if err := os.Link(tmp.Name(), path); err != nil && !errors.Is(err, fs.ErrExist) {
-		return "", 0, 0, err
-	}
-	s, dev, ino, err = readSeed(path)
-	if err != nil {
+	s, dev, ino, err := sealchain.EnsureSeed(root, root != "" && sessionStarted(root))
+	if err != nil && root != "" {
 		return "", 0, 0, &InvalidError{Err: err}
 	}
-	return s, dev, ino, nil
+	return s, dev, ino, err
 }
 
 // VerifySessionLog reads the session's outcome log under its seed, never
@@ -136,48 +85,7 @@ func VerifySessionLog(root string) (good []Row, problems []Problem, verified boo
 }
 
 // sessionStarted reports whether the session has routed before.
-func sessionStarted(root string) bool {
-	for _, p := range []string{OutcomePath(root), DecisionPath(root), HeadPath(root)} {
-		if _, err := os.Lstat(p); err == nil {
-			return true
-		}
-	}
-	return false
-}
+func sessionStarted(root string) bool { return sealchain.RoutingStarted(root) }
 
-// readSeed reads a seed file through a no-follow, non-blocking open and
-// checks the opened file itself (fstat), so a link, a FIFO or a swap between
-// a stat and the read cannot substitute another file (Codex passes 3 and 4):
-// a regular file of exactly SeedBytes raw bytes, mode 0600 (the mode is not
-// checked on Windows). It returns the seed as hex and the file's device and
-// inode.
-func readSeed(path string) (string, uint64, uint64, error) {
-	f, err := openNoFollow(path)
-	if err != nil {
-		if _, lerr := os.Lstat(path); lerr == nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", 0, 0, fmt.Errorf("routing seed %s: %w (a symlink is refused)", path, err)
-		}
-		return "", 0, 0, err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return "", 0, 0, err
-	}
-	if !st.Mode().IsRegular() {
-		return "", 0, 0, fmt.Errorf("routing seed %s is not a regular file", path)
-	}
-	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
-		return "", 0, 0, fmt.Errorf("routing seed %s has mode %04o, want 0600", path, st.Mode().Perm())
-	}
-	if st.Size() != SeedBytes {
-		return "", 0, 0, fmt.Errorf("routing seed %s has %d bytes, want %d", path, st.Size(), SeedBytes)
-	}
-	raw := make([]byte, SeedBytes+1)
-	n, err := io.ReadFull(f, raw)
-	if n != SeedBytes || !errors.Is(err, io.ErrUnexpectedEOF) {
-		return "", 0, 0, fmt.Errorf("routing seed %s: read %d bytes, want exactly %d", path, n, SeedBytes)
-	}
-	dev, ino := fileID(st)
-	return hex.EncodeToString(raw[:SeedBytes]), dev, ino, nil
-}
+// readSeed is sealchain.ReadSeed.
+func readSeed(path string) (string, uint64, uint64, error) { return sealchain.ReadSeed(path) }

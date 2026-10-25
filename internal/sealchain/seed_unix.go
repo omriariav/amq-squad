@@ -1,6 +1,6 @@
 //go:build unix
 
-package routing
+package sealchain
 
 import (
 	"os"

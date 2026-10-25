@@ -113,3 +113,279 @@ The three commits were replayed onto v3 at 9fc4dc34, which carries the phase 5 t
 - `internal/mergetrain/fakegh_test.go`: the in-process `fakeGHRun` split (writers, `t.Parallel`, the three subprocess rows) stays; the paged timeline, the rate-limit page, `mergeCommit` and the lost merge response write to its `stdout` writer.
 - `docs/v3-manifest.yaml`: the gh.go counts, refreshed from the file.
 The reviewer's correction to `verifier_classes` (a superset only) and the store-wiring row are folded into the third commit.
+
+## Seat, hook, fleet, Buzz and milestone B re-passes (branch v3-5-repass-2b2)
+
+Six commits: five cut from `v3` at 1bc8c680 and rebased onto 1608eaba (after
+the routing re-pass merge), and the fix round; lines in the findings refer to 1bc8c680. Each item has
+one test row that fails with its fix reverted in place and passes restored
+(run with -race); the revert checks and gates are under
+`docs/v3-spike/5-repass-evidence/`, every file through
+`scripts/redact-evidence`. Every gate ran on a quiet host (ps showed none of
+seat-exec, scheduler run, pi run, amq coop, amq-remote or an amq-squad
+lead/team/launch process; an orphaned v2 `_session-notify` with ppid 1 is
+not counted).
+
+### Commit 1: 2b-2 (seat-exec, the seat launch, the launcher)
+
+Revert check: `5-repass-evidence/2b2-revert-check.txt` (11 reverts, all as
+required). Gate: `5-repass-evidence/2b2-gate.txt`.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P1-1 | seatexec_unix.go:347 read `-c VALUE` and `-c=VALUE` but not Codex's attached `-cVALUE`, so `-csandbox_workspace_write.writable_roots='["/"]'` passed and overrode the injected empty roots | one scanner (`codexOptions`) reads every value option the check uses in every form Codex admits, up to `--`: spaced, joined with `=`, and attached for a short option (`-cX`, `-sX`, `-aX`); the protected config keys (sandbox_mode, sandbox_workspace_write.*, approval_policy) are refused in all of them, and an attached `-s`/`-a` is read as the sandbox or approval | TestCodexAttachedShortOptionsAreRead |
+| P1-2 | claude.go:47 accepted `--setting-sources project,local` and `--bare`, which drop the user settings that enable the hooks plugin | `CheckClaudeHooks` refuses, as claude_hooks_missing and before the proof and exec, a `--setting-sources` list without `user` (both forms, an empty list included) and the flags that skip hooks: `--bare` and `--safe-mode` (Claude Code's help: both skip hooks). Their variables, CLAUDE_CODE_SIMPLE and CLAUDE_CODE_SAFE_MODE, are CLAUDE_CODE_* host-session names the scrub already drops | TestClaudeArgvThatDropsTheHooksIsRefused |
+| P1-3 | launcher.go:126 kept the last Apply observation for the handle, so two observations (a live pane and a nonexistent one) let the cancel check the wrong pane (:237), return nil and release the reservation while the live pane proves | an observation for a handle the request does not know, or a second one for its handle, marks the request apply_ambiguous: it stays unresolved and no pane check confirms its cancel. The cancel asks the launch's proof server: a seat that proved is held by its proved pid and stamp and closed, and only that confirmed close releases the request; without a proof the cancel keeps returning apply_ambiguous | TestAmbiguousApplyObservationsKeepTheRequestUnresolved |
+| P2-4 | env.go:70 missed GIT_SSL_NO_VERIFY, GIT_SSL_CAINFO, GIT_SSL_CAPATH | added to NeverNeeded: scrubbed whatever the runtime declares, env_needs or credential_needs naming one is env_needs_invalid | TestGitTLSTrustVariablesNeverReachASeat |
+| P2-5 | options.go:138 ran the identity proof with CombinedOutput and no WaitDelay, so a descendant of `amq env` holding the pipes hung seat-exec past the 20 s context | amq runs in its own process group; WaitDelay 5 s; a context end or a wait-delay expiry kills the whole group; either is identity_proof_timeout, a refusal (the detail names no output) | TestIdentityProofDescendantHoldingThePipesTimesOut |
+| P2-6 | proof_peer_unix.go:34 ran `tmux list-panes` with no deadline while the proof server's mutex was held | the lookup (and the pane id lookup) has a 2 s context, as panechain's lookup for the decision socket, and a 500 ms WaitDelay; a timeout is "not known", so proof_origin_unknown. `judge` runs the lookup before it takes the mutex, and only for a proof whose token is live (a wrong-token sender never makes the server call tmux); the decision then runs under the lock with every check as before | TestPaneLookupIsBoundedAndOutsideTheMutex |
+
+Judgment calls, stated:
+- P1-3: "until the proof or a confirmed close settles it" is read literally.
+  An ambiguous request with no accepted proof stays unresolved after the
+  proof window ends (the scheduler shows it as a closing row from the first
+  failed cancel); it is not released at the window's end, although no
+  seat-exec can exec without a proof then. A late proof is acted on at the
+  next cancel (the scheduler cancels a request that never came up); the
+  launcher does not watch for it between cancels.
+- P1-2: `--safe-mode` is refused beside `--bare`: Claude Code's help says it
+  disables hooks too. The Claude scan, like the existing permission scan,
+  reads the whole argv (it does not stop at `--`), the fail-closed side.
+- P1-1: the attached form is parsed for the three value options the check
+  reads (`-c`, `-s`, `-a`); clustered boolean short flags are not modelled
+  (Codex has none that bear on the sandbox).
+
+The fake tmux and amq in these rows are local scripts under the test's
+temporary directory, the proofs come from in-process stubs or a prover child
+of the test binary; no row reaches the network.
+
+### Commit 2: 4-2 (the Claude hooks plugin, claudeseat, the hook verbs)
+
+Revert check: `5-repass-evidence/4-2-revert-check.txt` (10 reverts, all as
+required; the Go rows under -race, the shell rows through
+`scripts/test_claude_hooks.py` against a binary built from this tree). Gate:
+`5-repass-evidence/4-2-gate.txt` (it adds the hook script tests).
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P1-1 | claudeseat.go:368 checked the worktree settings for allow rules only; `{"env":{"AMQ_SQUAD_BIN":"/tmp/allow"}}` in `.claude/settings.json` replaced the pinned hook binary (Claude's settings env wins over the launch value), and those files sat outside the digest | `ForbiddenSettingsEnv`: an env key naming AMQ_SQUAD_BIN, AM_*, AMQ_SQUAD_* or CLAUDE_CODE_* in any settings source Claude merges for the seat (the config dir's settings.json, the worktree's .claude/settings.json and settings.local.json) refuses the seat as claude_settings_env_forbidden, inside `claudeseat.Check`, so at all three of seat-exec's checks; an unparsable source is refused. The launch records the worktree in the config dir (`amq-squad-worktree.json`, a managed file) and the digest covers the worktree's two settings files, present or absent, read through descriptors with no symlink followed, so a file written after the launch is claude_config_changed for the hooks and a refusal for seat-exec | TestWorktreeSettingsEnvAndDigest |
+| P1-2 | token.go:51 set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1, which on Claude Code 2.1.310 forces permission mode default and defeats dontAsk | the setting is removed and the seat's settings.json carries no env block; condition 3 is withdrawn for 2.1.310 and the token's visibility to the seat's Bash children is R33's recorded limit. Measured on this host (2.1.310, scratch config dir, no credential): with the setting the stream-json init event reports `permissionMode: "default"` and warns "Permission mode forced to default"; without it, `"dontAsk"`. The launch now probes every Claude seat (`claudeseat.ProbeMode`): the installed claude with a scratch copy of the seat's settings.json, in the seat's worktree, `-p --output-format stream-json --verbose --permission-mode <mode>`, no credential; the init event's permissionMode is read and the process group killed before any model request. Another mode, or no answer within 15 s, refuses the launch (claude_mode_unverified) before any seat applies | TestLaunchRefusesAClaudeSeatWhoseModeIsForced; the probe row TestModeProbeOnTheInstalledClaude (AMQ_SQUAD_LIVE=1; passed here on 2.1.310: dontAsk) |
+| P2-3 | hook_guard.go:101 and hook_ingest.go:64 resolved identity without the config-dir check hook_context.go:185 runs | `hookFlags.seatIdentity` is identity plus `checkClaudeConfig` (the digest report and, on a change, the quarantine); guard and evidence ingest call it, context runs the same check through buildHookContext. A changed dir makes guard deny with claude_config_changed; ingest still records the payload | TestGuardAndIngestRunTheSharedConfigDirCheck |
+| P2-4 | amq-squad-hook.sh:89 killed only the guard pid, and :93 waited without a redirection, so a stub's sleep survived and "Killed: 9" reached the hook's stderr | `set -m` around the guard job, so it runs as its own process group; the watchdog and the post-reap cleanup kill the group (`kill -9 -- -PGID`); both waits send the shell's job report to the log descriptor | Repass5.test_hung_guard_group_is_killed_and_the_reap_stays_out_of_stderr (scripts/test_claude_hooks.py) |
+| P2-5 | amq-squad-hook.sh:106 mapped a prefix match of the verdict, so a truncated `{"verdict":"allow"` became an allow | the mapping moved to Go: `amq-squad guard --decision claude` reads the verdict, requires one complete JSON object with a known verdict, and prints the decision (encoded by encoding/json); anything else prints nothing and one line the hook logs. The shell no longer reads the verdict | Repass5.test_truncated_verdict_is_no_decision_and_logged; TestClaudeDecisionNeedsTheCompleteVerdict (Go) |
+
+Judgment calls, stated:
+- P1-1: a worktree settings file is digested by content, so a seat that edits
+  its own `.claude/settings*.json` during the run is quarantined
+  (claude_config_changed). Claude Code's managed (system) settings are the
+  owner's and are not read.
+- P1-2: the probe runs the installed claude once per Claude seat at launch
+  (about 0.3 s measured); it reads only the init event and sends no
+  credential. The probe row against the real binary is opt-in
+  (AMQ_SQUAD_LIVE=1), so the default suite starts no claude; the default row
+  stubs the probe.
+- P2-3: on a changed config dir guard denies every call (the seat is
+  quarantined); ingest keeps recording, so the ledger stays complete.
+- P2-4: `set -m` is POSIX job control in a non-interactive shell (checked on
+  macOS /bin/sh); not executed on Linux dash in this run.
+
+### Commit 3: 4-3 (the fleet registry, the mayor, the operator and fleet CLI)
+
+Revert check: `5-repass-evidence/4-3-revert-check.txt` (7 reverts, all as
+required). Gate: `5-repass-evidence/4-3-gate.txt`.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P2-1 | registry.go:276-312 checked duplicate names but not root identity: two squads on one root, or a root and its symlink alias, both validated, fleet status duplicated the session and status.go:107-110 gave both copies' questions to the first | `fleet.SameRoot`: the same clean path, the same canonical path, or (both existing) the same device and inode via os.SameFile. `Registry.Validate` refuses two squads on one root (so every Read and every locked `Update`, `fleet add` included), and the mayor's admission inside the registry lock refuses a start on a registered root as squad_registered | TestRootIdentityIsUniqueAcrossTheRegistry |
+| P2-2 | fleet.go:222 printed a question subject with %s, so escape sequences in a lead's subject could clear and repaint the owner's terminal | `termSafe` (internal/cli/termsafe.go) is the one escaping at the output boundary: every C0 control (ESC, CR, LF and TAB included), DEL, every C1 control (U+0080 to U+009F) and every invalid UTF-8 byte (a raw 0x9b is an 8-bit CSI) is shown as a visible `\xNN` or `\u00NN`. Every human line of the fleet and operator verbs passes it: `fleet list`, `status --fleet` (session, lead), `operator inbox` (gate squad, id, class, raiser; question squad, seat, subject; now `renderInbox`) and `operator start-squad` (name, outcome, reason, detail, the owner's steps) | TestInboxEscapesTerminalControls (a `\x1b[2J` subject, an OSC in a handle, a raw 0x9b, U+0085) |
+| ruling | mayor.go:331 skipped the cost check with no meter, and fleet.go:281 always builds the mayor that way, so a positive cost_per_day_usd permitted starts with no accounting | a cap with no meter holds every start: reason and waiting cap cost_unmetered (the CLI verb, which has no session, refuses by that name and records the waiting row; a session queues it), and `status --fleet` shows `wait_reason: cost_unmetered` (new `status.WaitReasonCostUnmetered`); the registry admits the cap value. With the cap removed the start proceeds | TestCostCapWithoutAMeterHoldsEveryStart |
+
+Test fixtures: the mayor tests' default grant had cost_per_day_usd 50 and no
+meter, which the ruling now holds; the default grant carries no cost cap, and
+the two cost tests (TestMayorCostAndScope, the CLI-path row of
+TestMayorWithoutSessionRefusesTheFleetCap) set the cap with their meter.
+
+Judgment calls, stated:
+- P2-1: a root that does not exist yet is compared by clean and canonical
+  path only (no inode to compare); the operator's own root is not part of
+  the rule.
+- P2-2: the escape is applied to every field of those human lines, the
+  registry's own fields included (an owner-written root path is shown
+  escaped too); JSON output is unchanged (encoding/json escapes controls).
+
+### Commit 4: 4-5 (the gateverify relay, the owner script)
+
+Revert check: `5-repass-evidence/4-5-revert-check.txt` (9 reverts, all as
+required). Gate: `5-repass-evidence/4-5-gate.txt`. Every relay in these
+rows is an in-process httptest websocket on 127.0.0.1; the script row runs
+against a stand-in `amq-squad` (`/usr/bin/false`); no row reaches the
+network, and the URL rows stop before any Dial when the rule is reverted.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| HIGH | relay.go:87 and enroll.sh:87 allowed plaintext by a loopback prefix of the URL string, so `ws://localhost.attacker.example/` and `ws://127.0.0.1@relay.attacker.example/` passed and carried AUTH and DMs in the clear off the host | `gateverify.CheckRelayURL` parses the URL: userinfo (and an opaque or empty host) is refused; wss:// is required, ws:// only when the hostname is exactly localhost, 127.0.0.1 or ::1. Dial uses it, and a ws:// dial goes through `loopbackOnly`, which keeps a connection only when its remote address is loopback (so a name that resolves elsewhere is refused at connect). enroll.sh applies the same rule (`relay_ok`: scheme, no `@`, plain host characters, an optional numeric port, the exact loopback names for ws://) before the URL reaches amq-remote | TestRelayURLRuleParsesTheHost (Go: the rule, no Dial of a refused URL, a plaintext dial to this host's own non-loopback interface address refused); TestEnrollScriptRelayRule (the script) |
+| MEDIUM 1 | relay.go:133 dropped frames past the 256-frame queue, and a later EOSE let Query report success, so pump.go:161 could move the cursor past a dropped DM for good | backpressure: the reader waits on a full queue (the relay's writes then wait on the socket) and ends only when the connection closes; nothing is dropped, so EOSE follows every event of the answer | TestQueryBurstIsNeverDropped (a 700-event burst against a consumer that pauses on the first event) |
+| MEDIUM 2 | relay.go:277: one REQ accepted unlimited, undeduplicated events, filter strays included, until EOSE or the timeout | `Filter.Matches` is applied on receipt (ids, kinds, authors, `#tag` values, since); an event id already received is not returned twice; the answer is capped at 2,000 events and 8 MiB counted over every EVENT the relay sends for the REQ (kept or not), and the filter's own limit over kept events; an overflow fails the whole query, so the pump's Step returns the error before its cursor moves | TestQueryEnforcesTheFilterDedupsAndCaps |
+
+Judgment calls, stated:
+- MEDIUM 2: the caps count every EVENT frame of the subscription, strays
+  and duplicates included, so a relay cannot stream an unbounded answer of
+  events that are then dropped; stray events are dropped, not an error.
+- MEDIUM 2, the byte row: nostr.ParseEvent already refuses an event over
+  256 KiB, so the row sends forty 220 KB events (about 8.8 MB).
+- HIGH: the hostname match is exact and case-sensitive (`LOCALHOST` is
+  refused for ws://); `ws://[::1]:PORT` is admitted.
+- The pump keeps its rule: a Query error returns before the cursor moves
+  (pump.go:85-88); no pump code changed.
+
+### Commit 5: 2b-2 milestone B (the commit step, the exits queue, the redaction, task files, the sealed ledgers)
+
+Revert check: `5-repass-evidence/2b2b-revert-check.txt` (15 reverts, all
+as required). Gate: `5-repass-evidence/2b2b-gate.txt`.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P1-1 | commit.go:625, :667 compared managed-block shapes but not file types, so a declared AGENTS.md (or CLAUDE.md) replaced by a symlink whose target text matched passed while the effective file was a broken link | a protected or managed path must be a regular file in the snapshot: a new mode that is not 100644 or 100755 (a symlink 120000, a gitlink 160000) or a mode change of an existing file there is protected_path, gated or not; a deletion is left to the content checks | TestManagedPathMustStayARegularFile (a symlink whose target text is the file's own content; a chmod +x) |
+| P1-2 | redact.go:99, :111: short and path-like values under explicit credential names survived (a DB_PASSWORD of `p4ss7!` or `/Ab9xY7q`) | under a credential-class name (NAME=value and JSON) every non-empty value is a credential, whatever its length or first character; the redaction's own placeholders pass, and fixtures pass only as exact pairs in `redact.AllowedFixtures` (the help text's key and value pair and the ten fixture pairs the committed docs and evidence carry), never by shape. The provider-token rule keeps its own shape checks | TestCredentialNameRedactsEveryValue; TestFindRules updated (a reference such as `$(gh auth token)`, `${SECRET}`, `xxxx` or a short value under a credential name is now found) |
+| P2-3 | commit.go:879, :913 with scheduler.go:476: a push followed by a gh failure returned success, and the task completed unbound with no retry | with --open-pr every way the PR binding cannot be made (no repository recorded, the pin failing, gh pr list or create failing, no PR number) defers the step as pr_pending (the push stays recorded); the scheduler's commit_deferred path retries next tick, and the committer's repeated-deferral rule still turns an endless one into a refusal | TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff |
+| P2-4 | exits.go:162 wrote the queue to a fixed `<path>.tmp` and renamed it, with no fsync | `atomicfile.Write` (an exclusive temp file, file fsync, rename, directory fsync) | TestExitsLedgerIsWrittenByTheDurableWriter (a leftover at `exits.json.tmp` no longer stops the write) |
+| P2-5 | commit.go:417, :513: kept evidence trees were named in JSON only, so a gc pruned them after the grace period | each kept tree (a quarantine's, a CleanSeat discard's) is anchored by `refs/amq-squad/evidence/<task>/<n>` (n from the ledger's `evidence_seq`), with `retain_until` 30 days on; the ref is deleted at that explicit expiry (an uncleared quarantine's never), the record stays | TestKeptTreesAreAnchoredUntilTheirRetention (the tree survives a gc with prune=now; the expiry drops the ref) |
+| P2-6 | commit.go:341, :709, :912: a deferred push or PR recomputed the diff on retry against the new ledger parent (the harness commit itself), so the PR carried an empty-diff digest | the ledger's commit entry keeps the checked diff (declared digest, diff digest, lines, changes); a retry of a recorded commit reuses it for the result and the PR body | TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff |
+| P2-7 | commit.go:340 and task/files.go:17: the declared-set digest hashed a newline join, the same for `["a","b"]` and `["a\nb"]` | `seatcommit.DeclaredDigest` is sha256 over the set's canonical JSON array, and `task.CleanDeclaredFiles` refuses an entry carrying a newline or any control character | TestDeclaredSetDigestIsCanonical |
+| ruling | ledger.go:305 and exits.go:188: a same-UID edit of the commits ledger's head or of the exits queue changed authority with no alarm | the commits ledger and the exits queue are sealed: every version carries a link (seq, the previous version's tag, an HMAC tag keyed by the session seed over the file without its link), and a signed head per file (`<root>/extensions/amq-squad/routing/heads/`) records the link the file must be at; a genesis head is written before a file's first version, so a head exists once the file does. A failed tag, a link the head does not reach (an older copy), a stripped seal, a deleted head, or a removed exits queue whose head says it existed is ledger_tampered: the commit step refuses it routed to the owner (nothing committed or pushed), the scheduler stops dispatch and logs `ledger_tampered` for the owner. The machinery is not forked: the routing log's tag, seed read, first seed write and key moved into the leaf package `internal/sealchain` (routing depends on seatcommit and the scheduler, so they cannot import routing), and routing's outcome rows, decisions, head and seed now call it | TestSealedCommitsLedgerDetectsASameUIDEdit, TestSealedExitsQueueDetectsASameUIDEdit |
+
+Rows adapted to the fixes: TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation
+(the pin swap now defers as pr_pending and names the mismatch in the
+detail), TestUnsignedClearKeepsTheSeatQuarantined (the hand-edited clear is
+now caught first by the ledger's seal, ledger_tampered for the owner),
+TestFindRules (above).
+
+Judgment calls, stated:
+- P2-5: the evidence refs live in the seat repository's own refs, the
+  object store the shadow writes to (the shadow's git dir is temporary, and
+  a gc honours only the refs of the repository that owns the objects).
+  Retention is 30 days (`EvidenceRetention`); expired refs are deleted when
+  the next evidence of that seat is recorded.
+- P2-3: the configuration cases (no repository recorded, the pin failing)
+  defer too: with --open-pr the completion never happens unbound.
+- The ruling: a missing commits ledger stays base_unrecorded (a refusal for
+  the lead; deleting it gains no authority); the exits queue, whose deletion
+  would drop deferred checks, is tampered when its head says it existed. A
+  file one link ahead of its head (the head write lost in a crash) is
+  accepted. The exits queue is sealed when the scheduler has a `SealRoot`
+  (the scheduler process sets its session root); the in-package scheduler
+  tests without one keep the unsealed file. The recorded limit is the
+  routing chain's: a same-UID process that reads the seed can forge a file
+  and its head.
+- P1-2: the allowlist entries are the exact pairs the committed docs and
+  evidence carried; a doc that adds another fixture under a credential name
+  adds its pair or is redacted.
+
+### Rebase onto v3 1608eaba and the fix round (the narrow pass on f3754b73)
+
+The five commits were replayed onto v3 1608eaba (the routing and 3-2
+re-pass merge 53c348f1 and its docs commit). Conflicts were resolved in the
+replayed commits:
+- `docs/v3-spike/5-repass-execution.md` (add/add): v3's routing sections are
+  kept and this branch's sections follow them under one heading.
+- `docs/v3-manifest.yaml`: current_lines of routing/outcome.go and seed.go,
+  refreshed against the merged files.
+- routing's seed.go auto-merged: the routing branch's `checkHead` and its
+  `VerifySessionLog` changes stand, and the seed read and first write were
+  moved as before.
+
+Every replayed commit passed build, vet, the linux and windows builds and the
+manifest check. The routing branch's additions to the touched packages
+(`task.Store.Verifiers`, `grants.TaskVerifier`, `openTaskStore`,
+`Scheduler.Occupancy`, `--lead-pool`) and the hygiene merge's mergetrain fake
+gh needed no change here; the full suite passed on the rebased head before
+the fix round.
+
+The fix round is one commit: the sealchain extraction redone over routing's
+final code, and the six partial and four new items of the narrow pass. Revert
+check: `5-repass-evidence/fix-round-revert-check.txt` (23 reverts, all as
+required). Gate: `5-repass-evidence/fix-round-gate.txt` (it also runs the hook
+script tests under /bin/sh and /bin/dash).
+
+| item | fix | test row |
+| --- | --- | --- |
+| sealchain over routing's final code | routing's tag, seed read and first write, and key were already sealchain's after the replay. Now the seed-identity rule that `checkHead` applies (a head valid only under the seed file whose device and inode it recorded) is `sealchain.CheckSeedIdentity`; `checkHead` calls it, and every sealed head records the seed's device and inode and is checked by the same rule. Tag bytes and the routing head record are byte-identical; one seed per session root, whichever of routing or a sealed file writes it first | TestSealchainKeepsRoutingTagsAndOneSeed (the outcome row's and the head's tags against an independent HMAC; one seed, routing first and sealed first); TestRepassReportRunsTheStartChecks (routing's, now through sealchain) |
+| probe (item 8, N2, N3; ruling) | the launch probes the registry's pinned claude (`registry.OpenPinned`, re-hashed, run through `VerifiedTool.Command`; no pin is `tool_unpinned`, then claude_mode_unverified), never PATH. HOME is a fresh scratch dir, CLAUDE_CONFIG_DIR a full copy of the seat's config dir (settings.json and the plugin install, its paths rewritten to the copy), cwd an empty scratch dir. `disableAllHooks` is written only into the probe's copy of the seat settings: the probe measures the mode, and the seat keeps its hooks. The probes run before the proof server mints any ticket and before Apply, once per seat kind (the digest of settings.json and the mode); a probe over 5 s is claude_mode_unverified | TestProbeRunsThePinnedClaudeNeverPath, TestProbeIsIsolated, TestProbeRunsBeforeTicketsAndOncePerSeatKind, TestSlowProbeIsModeUnverified; the live row TestModeProbeOnTheInstalledClaude (AMQ_SQUAD_LIVE=1: dontAsk on 2.1.310, through the copy with hooks disabled) |
+| Linux watchdog (item 10, N4; ruling) | the hook script runs no watchdog: its pre-tool branch is one call, `amq-squad guard --decision claude --me $AM_ME --stdin`. The Go adapter reads the payload, runs `guard` (AMQ_SQUAD_BIN, else itself) as a child in its own process group through the Go exec API, kills the group at 4.8 s and once more after the reap, parses the complete verdict and prints the decision; a timeout, a guard exit or an unparsable verdict is no decision with one log line | TestDecisionAdapterKillsAHungGuardGroup (Go, unix: a hung guard and the sleeper it started are gone within the watchdog); the hook script rows under /bin/sh and /bin/dash (scripts/test_claude_hooks.py with `HOOK_SHELL`) |
+| ambiguous Apply (item 3; ruling) | after the token window (the latest ticket deadline) plus the close grace, the cancel of an apply_ambiguous request with no proof counts the panes labelled with its handle (a read-only `tmux list-panes -a`, 2 s bound, "no server" is none): none confirmed releases the slot as apply_abandoned; a pane that exists, or an unknown answer, keeps it held | TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists |
+| evidence refs (item 22, N1; ruling) | `refs/amq-squad/evidence/<seat>/<task>/<n>`; the sealed commits ledger records each ref with its tree (`ref_tree`); the commit step and the exit check verify every recorded ref still resolves to its tree, and a missing or moved ref is ledger_tampered for the owner | TestEvidenceRefsAreSeatScoped, TestMovedOrDeletedEvidenceRefIsTampered |
+| item 19 | a JSON value under a credential name is any scalar string or number; the redaction keeps the line JSON (`"<redacted>"`). Token counts and timings (a plural `tokens`, or a `_ms`, `_s`, `_median`, `_in`, `_out` measure) are not credential names, and the ledger reader's two numeric fixtures in 3-2's revert log are allowlisted pairs | TestJSONNumberUnderACredentialName |
+| item 25 | a sealed commits ledger or exits queue that does not decode, or has another schema or handle, is ledger_tampered for the owner (`sealchain.Tampered`), never a deferral | TestUndecodableOrWrongSchemaLedgerIsTampered, TestUndecodableSealedExitsQueueIsTampered |
+| question 6 | the fixture allowlist is an exact match with no quote stripping: only the redaction's own placeholder forms (bare or in the quotes it replaced) and exact pairs pass; a JSON string is compared by its content | TestQuotedFixtureIsNotExempt |
+
+Recorded by the reviewer and unchanged: one seed per session root shared with
+routing, tag bytes and the routing head unchanged; the exits queue sealed on
+every production path (schedproc sets `SealRoot`), unsealed only in library
+use by tests.
+
+The dash row: /bin/dash is on this Mac, and the hook script
+rows pass under it. But the f3754b73 shell watchdog (set -m and
+`kill -- -PID`) also passes under this dash, so the failing-when-reverted
+shell row cannot be shown here: the finding is Linux dash. The revert-checked
+row is the Go one. The CI row for Linux, where /bin/sh is dash:
+
+    ubuntu-latest: go build -o amq-squad ./cmd/amq-squad && HOOK_SHELL=dash python3 scripts/test_claude_hooks.py ./amq-squad Repass5
+
+plus `GOOS=linux go build ./...` and `GOOS=linux go test -c ./internal/cli`
+here (compiled, not run).
+
+Judgment calls, stated:
+- The probe needs a `claude` pin in registry.yaml (`pins: name claude, path,
+  sha256`), as gh needs one for an https push: a launch with a Claude seat
+  and no claude pin is refused claude_mode_unverified (tool_unpinned). The
+  pin names the real binary (the versioned file a `~/.local/bin/claude` link
+  points to).
+- The adapter's guard child is AMQ_SQUAD_BIN (seat-exec pins it to the
+  launching binary, and P1-1 of 4-2 refuses a settings env that changes it),
+  else the adapter's own executable.
+- Abandonment is decided at a cancel call (the scheduler retries the cancel
+  of a request that never came up); the launcher runs no timer of its own.
+- A test's isolation row raises the probe bound to 60 s for a loaded host;
+  the 5 s bound is its own row.
+
+### The narrow pass on 59859bde (the probe and the watchdog)
+
+One commit on 59859bde; lines refer to that export. Revert check:
+`5-repass-evidence/fix2-revert-check.txt` (11 reverts, all as required).
+Gate: `5-repass-evidence/fix2-gate.txt` (it also runs the hook script tests
+under /bin/sh and /bin/dash).
+
+| item | fix | test row |
+| --- | --- | --- |
+| HIGH: the probe certified another executable than the seat ran | a Claude seat's executable is the registry's claude pin. The launch resolves each Claude seat's pin (`Options.PinFor`, default the registry under HOME, read once) into `Squad.ClaudePins`; Compile names the pin as the seat's executable and refuses a non-empty `Seat.Provider` that is not the same file as the pin (device and inode) with provider_not_pinned, and a pin whose file name is not `claude` (AMQ selects the provider by it); the probe runs that pin; seat-exec requires argv[0] to be the pinned path and re-opens it through `registry.OpenPinned` (path and sha256) when it resolves the provider and again as the last step before exec, refusing tool_unpinned on any mismatch, so the probed bytes are the executed bytes | TestClaudeProviderMustBeThePin (provider B with pin A refused at compile; the pinned file under another name is the pin), TestClaudeSeatExecsOnlyThePinnedBytes (a provider that is not the pin; the pinned file replaced between the proof and exec) |
+| 1 | the adapter's 4.8 s clock starts at its entry and the stdin read runs under it (in a goroutine on a captured reader); a timeout anywhere logs one line | TestAdapterTimesOutOnAnOpenStdin (stdin never closed) |
+| 2 | the guard child's stdout is capped at 64 KiB; past the cap the group is killed and the step is no decision, logged | TestAdapterCapsTheGuardOutput (a child writing stdout in a loop) |
+| 3 | the post-reap group kill is gone: the group is killed once, before Wait returns, when the watchdog fires or the cap is passed (the identity proof's pattern) | (no row; TestDecisionAdapterKillsAHungGuardGroup stands) |
+| 4 | the probe reads its stream in a goroutine under the deadline; after the kill, Wait's 1 s WaitDelay closes the pipe a descendant that left the group still holds | TestProbeDeadlineHoldsAgainstAnEscapedDescendant (a stand-in that starts a `setsid`'d sleeper holding stdout and exits) |
+| 5 | the probe kind is the mode, the pin's sha256 and the digest of the config dir as the probe copies it (settings.json and the plugin install, the seat's own dir path taken out); every seat's dir is written at one launch time, so equal seats are equal | TestTwoPinsAreProbedTwice (two seats, same settings, two pin digests: two probes), TestProbeKindTracksThePinAndThePlugin |
+| 6 | the probed claude runs under Setsid: a new session with no controlling terminal (kill -pgid unchanged, the session id is the group id) | TestProbeChildIsASessionLeaderWithNoTTY (the child is its session's leader and cannot open /dev/tty) |
+| item 19 (ruling) | the count exemption is an explicit list of exact field names (`redact.CountFields`): input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, the cache_*_input_tokens counters, and the count and timing fields the committed evidence carries (totalTokens, maxTokens, max_tokens, tokens_in, tokens_out, first_token_ms, first_token_s, cold_prompt_first_token_s, warm_prompt_first_token_s_median, cached_input_tokens, cache_write_input_tokens, ephemeral_5m_input_tokens, ephemeral_1h_input_tokens, reasoning_output_tokens, thinking_tokens, reset_tokens). It holds for numeric values only: a string under a listed name is still redacted, and any other credential-class name redacts whatever its type. The `_TOKENS` location suffix is gone (a count was exempt by shape there) | TestCountFieldExemptionIsExactNumericOnly |
+
+Claim corrected (no code change): the adapter's no decision (a truncated
+or absent verdict, a timeout, a guard error) is fail-open by design, as the
+tree and plan 4.3 say: the hooks are UX, enforcement is in the core.
+
+Accepted limits, recorded and not fixed: the probe keeps the owner's UID;
+the network is reachable during the probe; a forged hook environment
+choosing AMQ_SQUAD_BIN is same-UID; the probe deadline is 5 s in
+production (60 s is the bound of two stand-in rows on a loaded host only).
+The Linux CI row for dash stands as written above.
+
+Judgment calls, stated:
+- The pin must name a file called `claude`: AMQ selects the provider by the
+  executable's file name and seat-exec checks it, while the pin's walk
+  refuses a symlink, so the owner pins a hard link named `claude` to the
+  versioned binary (on this host `~/.local/bin/claude` is a symlink to
+  `versions/2.1.310`). A pin with another file name is refused at compile.
+- seat-exec reads the claude pin from the registry under its HOME, as the
+  launch does; the staged record does not carry it (the HIGH fix stays in
+  compile.go, run.go and seatexec_unix.go). A re-pin between launch and
+  exec is refused unless the new pin is the file argv[0] names.
+- The final re-hash uses the existing BeforeFinalCheck seam in its row; the
+  window from that hash to execve is the same-UID limit, as for the pinned
+  gh.

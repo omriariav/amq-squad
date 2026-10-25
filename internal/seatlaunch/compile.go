@@ -21,6 +21,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/launchintent"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -71,7 +72,16 @@ type Squad struct {
 	// Wrapper is the absolute amq-squad executable; AMQPath the real amq (R51).
 	Wrapper string `json:"-"`
 	AMQPath string `json:"-"`
+	// ClaudePins is the registry's claude pin of each Claude seat, by
+	// handle, resolved by the launch: a Claude seat's executable is its pin,
+	// never a provider path (the narrow pass's HIGH: the probe certifies the
+	// bytes the seat runs).
+	ClaudePins map[string]registry.Pin `json:"-"`
 }
+
+// ReasonProviderNotPinned refuses a Claude seat whose provider is not the
+// file the registry pins.
+const ReasonProviderNotPinned = "provider_not_pinned"
 
 // Runtimes the compiler knows. pi admits no provider arguments (amendment
 // 23 (b)); its model restriction stays on the registry side (R16).
@@ -234,6 +244,22 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			return out, fmt.Errorf("seat %s: the pinned AMQ library has no pi launch adapter (upstream PR #1188 is not in a release yet); launch pi seats with the amq coop exec fallback", s.Handle)
 		}
 		provider := s.Provider
+		if s.Runtime == "claude" {
+			pin, ok := q.ClaudePins[s.Handle]
+			if !ok || pin.Path == "" {
+				return out, fmt.Errorf("seat %s: %s: the registry pins no claude (registry.yaml pins: name claude, its real path and sha256)", s.Handle, registry.PinMissing)
+			}
+			if filepath.Base(pin.Path) != "claude" {
+				// AMQ selects the provider by the executable's file name, and
+				// seat-exec checks it: pin a hard link named claude to the
+				// versioned binary (a symlink is refused by the pin's walk).
+				return out, fmt.Errorf("seat %s: %s: the pinned claude %s must have the file name claude (pin a hard link named claude)", s.Handle, registry.PinMissing, pin.Path)
+			}
+			if provider != "" && !sameFile(provider, pin.Path) {
+				return out, fmt.Errorf("seat %s: %s: the provider %s is not the pinned claude %s", s.Handle, ReasonProviderNotPinned, provider, pin.Path)
+			}
+			provider = pin.Path
+		}
 		if provider == "" {
 			p, err := lookPath(s.Runtime)
 			if err != nil {
@@ -284,6 +310,13 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		CallerContext: map[string]string{"caller": "amq-squad", "session": q.Session},
 	}
 	return out, nil
+}
+
+// sameFile reports whether two paths name one file (device and inode).
+func sameFile(a, b string) bool {
+	fa, errA := os.Stat(a)
+	fb, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(fa, fb)
 }
 
 // CheckArgumentForms checks every seat's provider arguments against the

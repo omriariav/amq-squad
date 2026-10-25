@@ -1,0 +1,155 @@
+# phase 5 re-pass, 2b-2 milestone B (seatcommit, scheduler exits, redact, task files, the sealed ledgers): revert check (each fix reverted in place, its test row run with -race, the fix restored, the row run again)
+
+## P1-1 (a protected or managed path must stay a regular file): TestManagedPathMustStayARegularFile (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif (hit || name != "") && !regularInSnapshot(e) {' -> '\t\tif false && (hit || name != "") && !regularInSnapshot(e) {'
+reverted run (last lines):
+    --- FAIL: TestManagedPathMustStayARegularFile (0.42s)
+        repass5_test.go:29: a symlinked managed file: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:d55721609e67cf427b98139c49cbbc36e0bd2b08 Tree:fefc458c52299522b9aa26e6934ae86eda290b46 Commit:25bc54207d7ac51af994c9813f49882944939b06 Pushed:true Changes:[{Path:CLAUDE.md Added:0 Deleted:0 Binary:false}] Lines:0 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4b6a66ec613608d6257b0e3fc012adcb3de7228b8ad408c53508137c336f9604 DiffDigest:sha256:eeb45407f8811c5b8198974bbc67f16737fb83648dc241784b6b48e855684cbb Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:25bc54207d7ac51af994c9813f49882944939b06}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.834s
+    FAIL
+
+## P1-2 (every value under a credential name is redacted): TestCredentialNameRedactsEveryValue (internal/redact/redact.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'namedSecret(name, val) {\n\t\t\tout = append(out, [2]int{m[4], m[5]})' -> 'secretValue(val) {\n\t\t\tout = append(out, [2]int{m[4], m[5]})'
+revert: 'namedSecret(name, val) {\n\t\t\tout = append(out, [2]int{m[4] - 1' -> 'secretValue(val) {\n\t\t\tout = append(out, [2]int{m[4] - 1'
+reverted run (last lines):
+        repass5_test.go:17: Line left a finding in "GH_TOKEN=<redacted>": "GH_TOKEN=<redacted>"
+        repass5_test.go:14: not found: "key=<redacted>"
+        repass5_test.go:17: Line left a finding in "key=<redacted>": "key=<redacted>"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.358s
+    FAIL
+
+## P2-3 (a gh failure after the push defers the completion, pr_pending): TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\treturn pending("gh pr list failed: " + firstLine(out))' -> '\t\tres.Notes = append(res.Notes, "gh pr list failed: "+firstLine(out))\n\t\treturn res'
+reverted run (last lines):
+    --- FAIL: TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff (0.66s)
+        repass5_test.go:57: a gh failure after the push: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:e07aec9e9fcf31ec239f71c7e615b7d308693d21 Tree:6f5b4dada6227b31c939219e08c6b101775395e8 Commit:1b386768b67381043fc6997938428b7859bafe9f Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:484f4ee91c09afb208a7aa30324f5d87524df32f89d4d09b393431e7344c63a9 Violations:[] Config:[] Notes:[gh pr list failed: gh: HTTP 502] Quarantine:false PRRepository: PRNumber:0 PRHead:1b386768b67381043fc6997938428b7859bafe9f}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.121s
+    FAIL
+
+## P2-4 (the exits ledger through atomicfile): TestExitsLedgerIsWrittenByTheDurableWriter (internal/scheduler/exits.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t// gone-only check survives a power loss after the write returns.\n\treturn atomicfile.Write(p, raw, 0o600)\n}' -> '\t// gone-only check survives a power loss after the write returns.\n\ttmp := p + ".tmp"\n\tif err := os.WriteFile(tmp, raw, 0o600); err != nil {\n\t\treturn err\n\t}\n\treturn os.Rename(tmp, p)\n}'
+reverted run (last lines):
+    --- FAIL: TestExitsLedgerIsWrittenByTheDurableWriter (0.00s)
+        repass5_test.go:27: the exits ledger write failed: open /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestExitsLedgerIsWrittenByTheDurableWriter2480046174/001/exits.json.tmp: is a directory
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.407s
+    FAIL
+
+## P2-5 (a kept tree is anchored by an evidence ref): TestKeptTreesAreAnchoredUntilTheirRetention (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tref, err := anchorEvidence(repo, &l, taskID, tree, now)\n\tif err != nil {\n\t\treturn false, fmt.Errorf("anchor the discarded tree: %w", err)\n\t}' -> '\tref := EvidenceRef{}'
+reverted run (last lines):
+    --- FAIL: TestKeptTreesAreAnchoredUntilTheirRetention (0.43s)
+        repass5_test.go:88: ledger evidence: [{TaskID:t1 Reason:commit_refused: outside_declared_files Parent:054912cf4bc65f60781b0cd701f4847b9d05c36f Tree:1ec90313480bbe338d8c0e05c27e48818a0eb25c DiffDigest:sha256:abc2d2615ddea3633291959070b1380fb06f52a7eb1d991de828845ecaab1d88 At:2026-10-24 12:00:00 +0000 UTC EvidenceRef:{Ref: RetainUntil:<nil>}}] <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.934s
+    FAIL
+
+## P2-5 (the ref goes at the retention expiry): TestKeptTreesAreAnchoredUntilTheirRetention (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tdrop(&l.Discarded[i].EvidenceRef)\n' -> ''
+reverted run (last lines):
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit [build failed]
+    FAIL
+    # github.com/omriariav/amq-squad/v3/internal/seatcommit [github.com/omriariav/amq-squad/v3/internal/seatcommit.test]
+    internal/seatcommit/commit.go:611:6: declared and not used: i
+
+## P2-6 (a retry reuses the diff checked at the commit): TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif c := l.Commits[last]; c.DiffDigest != "" {' -> '\t\tif c := l.Commits[last]; false && c.DiffDigest != "" {'
+reverted run (last lines):
+    --- FAIL: TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff (1.03s)
+        repass5_test.go:63: the retry: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:492b9a31d7ed0b5c1480d8325598b737f947e36a Tree:6f5b4dada6227b31c939219e08c6b101775395e8 Commit:492b9a31d7ed0b5c1480d8325598b737f947e36a Pushed:true Changes:[] Lines:0 Files:0 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 Violations:[] Config:[] Notes:[the harness commit 492b9a31d7ed0b5c1480d8325598b737f947e36a was already recorded] Quarantine:false PRRepository:o/r PRNumber:42 PRHead:492b9a31d7ed0b5c1480d8325598b737f947e36a} (first diff sha256:484f4ee91c09afb208a7aa30324f5d87524df32f89d4d09b393431e7344c63a9)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.444s
+    FAIL
+
+## P2-7 (the declared digest over canonical JSON): TestDeclaredSetDigestIsCanonical (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\traw, _ := json.Marshal(declared)\n\treturn digest(raw)\n}' -> '\treturn digest([]byte(strings.Join(declared, "\\n")))\n}'
+reverted run (last lines):
+    --- FAIL: TestDeclaredSetDigestIsCanonical (0.00s)
+        repass5_test.go:111: ["a","b"] and ["a\nb"] share a digest
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.433s
+    FAIL
+
+## P2-7 (a declared entry with a newline is refused): TestDeclaredSetDigestIsCanonical (internal/task/files.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif strings.ContainsFunc(raw, func(r rune) bool { return r < 0x20 || r == 0x7f }) {' -> '\t\tif false && strings.ContainsFunc(raw, func(r rune) bool { return r < 0x20 || r == 0x7f }) {'
+reverted run (last lines):
+    --- FAIL: TestDeclaredSetDigestIsCanonical (0.00s)
+        repass5_test.go:114: a declared entry with a newline was accepted
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.400s
+    FAIL
+
+## ruling (the commits ledger is checked against its seal): TestSealedCommitsLedgerDetectsASameUIDEdit (internal/seatcommit/ledger.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, body); err != nil {' -> '\tif err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, body); false && err != nil {'
+reverted run (last lines):
+        repass5_test.go:154: a hand-edited base: {OK:false Deferred:true ReasonCode: Route: Detail:snapshot of the worktree: git read-tree 0000000000000000000000000000000000000000: exit 128: fatal: failed to unpack tree object 0000000000000000000000000000000000000000 Task:t1 Seat:s1 Branch:seat/s1 Parent:0000000000000000000000000000000000000000 Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:}
+        repass5_test.go:154: an older copy put back: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:1b7089426ffdeda4fe68423cbb961d27d424cf17 Tree:aa4c640c22dc5b778211e628ad7cd1c601d10082 Commit:90aac39b5abbe936ab71e1cd4c27010161c95f2e Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:61a7ece2bcdbbae79546aa7a4fb2e16883d9305e9c17384ee522cb1a11e699c6 Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:90aac39b5abbe936ab71e1cd4c27010161c95f2e}
+        repass5_test.go:154: a deleted head: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:1b7089426ffdeda4fe68423cbb961d27d424cf17 Tree:25e3cbe71efb9394aee4a9f4540f33a40a534f9c Commit:b576143a271c4436c22f561712dbd40a12d5289f Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:354f3c1a84794b2bcec94ebbffe8c82a40bd48f9f3eb88619059938cc79594d7 Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:b576143a271c4436c22f561712dbd40a12d5289f}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.464s
+    FAIL
+
+## ruling (the exits queue is checked against its seal): TestSealedExitsQueueDetectsASameUIDEdit (internal/scheduler/exits.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif serr := s.checkExitsSeal(root, l, err == nil); serr != nil {' -> '\t\tif serr := s.checkExitsSeal(root, l, err == nil); false && serr != nil {'
+reverted run (last lines):
+    --- FAIL: TestSealedExitsQueueDetectsASameUIDEdit (0.22s)
+        repass5_test.go:66: a hand-edited exits queue: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:dispatched TaskID:t1 Seat:seat-a Pool:claude:sonnet:medium Reason:}] (<nil>)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.610s
+    FAIL
+
+## ruling (the record's HMAC tag): TestSealedCommitsLedgerDetectsASameUIDEdit (internal/sealchain/sealchain.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tcase !l.Verify(key, label, body):\n\t\treturn fmt.Errorf("%w: the tag of %s link %d fails", ErrTampered, name, l.Seq)\n' -> ''
+reverted run (last lines):
+    --- FAIL: TestSealedCommitsLedgerDetectsASameUIDEdit (0.71s)
+        repass5_test.go:154: a hand-edited base: {OK:false Deferred:true ReasonCode: Route: Detail:snapshot of the worktree: git read-tree 0000000000000000000000000000000000000000: exit 128: fatal: failed to unpack tree object 0000000000000000000000000000000000000000 Task:t1 Seat:s1 Branch:seat/s1 Parent:0000000000000000000000000000000000000000 Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.139s
+    FAIL
+
+## ruling (the file must reach its signed head): TestSealedCommitsLedgerDetectsASameUIDEdit (internal/sealchain/sealchain.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\treturn fmt.Errorf("%w: %s is at link %d, its head records link %d", ErrTampered, name, l.Seq, h.Seq)\n}' -> '\treturn nil\n}'
+reverted run (last lines):
+    --- FAIL: TestSealedCommitsLedgerDetectsASameUIDEdit (0.84s)
+        repass5_test.go:154: an older copy put back: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:47300e945ef9a3877cd5c4c739bfcd1597874580 Tree:aa4c640c22dc5b778211e628ad7cd1c601d10082 Commit:13bc226e92c6532ec5dc5549430da498e18c0b39 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:61a7ece2bcdbbae79546aa7a4fb2e16883d9305e9c17384ee522cb1a11e699c6 Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:13bc226e92c6532ec5dc5549430da498e18c0b39}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.231s
+    FAIL
+
+## ruling (a deleted head is a tamper): TestSealedCommitsLedgerDetectsASameUIDEdit (internal/sealchain/sealchain.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tcase headMissing:\n\t\treturn fmt.Errorf(' -> '\tcase headMissing:\n\t\treturn nil\n\t\treturn fmt.Errorf('
+reverted run (last lines):
+    --- FAIL: TestSealedCommitsLedgerDetectsASameUIDEdit (0.86s)
+        repass5_test.go:154: a deleted head: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:55512edf2b31a9b0e17093f6a30e28ea10f6c287 Tree:25e3cbe71efb9394aee4a9f4540f33a40a534f9c Commit:2c2b45d0a8ba31f44ec320c49b121cb3f5e7374c Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:354f3c1a84794b2bcec94ebbffe8c82a40bd48f9f3eb88619059938cc79594d7 Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:2c2b45d0a8ba31f44ec320c49b121cb3f5e7374c}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.251s
+    FAIL
+
+## ruling (a removed exits queue whose head says it existed): TestSealedExitsQueueDetectsASameUIDEdit (internal/sealchain/sealchain.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif h.Seq > 0 {\n\t\treturn fmt.Errorf("%w: %s is missing' -> '\tif false && h.Seq > 0 {\n\t\treturn fmt.Errorf("%w: %s is missing'
+reverted run (last lines):
+    --- FAIL: TestSealedExitsQueueDetectsASameUIDEdit (0.24s)
+        repass5_test.go:72: a removed exits queue: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:dispatched TaskID:t1 Seat:seat-a Pool:claude:sonnet:medium Reason:}] (<nil>)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.606s
+    FAIL
+
+summary: 15 reverts, all as required

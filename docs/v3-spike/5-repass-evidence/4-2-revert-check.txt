@@ -1,0 +1,109 @@
+# phase 5 re-pass, 4-2 (claudeseat, the hook verbs, the hook script): revert check (each fix reverted in place, its row run (Go rows with -race), the fix restored, the row run again)
+
+## P1-1 (a forbidden env entry in a settings source Claude merges is refused): TestWorktreeSettingsEnvAndDigest (internal/claudeseat/claudeseat.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif env := ForbiddenSettingsEnv(dir); len(env) > 0 {\n\t\treturn SettingsEnvForbidden, "a settings file Claude merges for the seat sets a forbidden env variable: " + strings.Join(env, "; ")\n\t}\n' -> ''
+reverted run (last lines):
+        repass5_42_test.go:32: settings.local.json env AM_ME: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestWorktreeSettingsEnvAndDigest3543922749/002/bin/claude")
+        repass5_42_test.go:32: settings.json env AMQ_SQUAD_ROLE_PATH: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestWorktreeSettingsEnvAndDigest3543922749/003/bin/claude")
+        repass5_42_test.go:32: settings.local.json env CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestWorktreeSettingsEnvAndDigest3543922749/004/bin/claude")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.559s
+    FAIL
+
+## P1-1 (the worktree's settings files are in the digest): TestWorktreeSettingsEnvAndDigest (internal/claudeseat/claudeseat.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif worktree != "" {\n\t\tfiles, err := readWorktreeSettings(worktree)\n\t\tif err != nil {\n\t\t\treturn "", err\n\t\t}\n\t\tfor _, name' -> '\tif false && worktree != "" {\n\t\tfiles, err := readWorktreeSettings(worktree)\n\t\tif err != nil {\n\t\t\treturn "", err\n\t\t}\n\t\tfor _, name'
+reverted run (last lines):
+    --- FAIL: TestWorktreeSettingsEnvAndDigest (0.14s)
+        repass5_42_test.go:50: a worktree settings file written after the launch: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestWorktreeSettingsEnvAndDigest445125649/006/bin/claude")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.476s
+    FAIL
+
+## P1-2 (the seat's settings carry no scrub env): TestLaunchRefusesAClaudeSeatWhoseModeIsForced (internal/claudeseat/claudeseat.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\t"enabledPlugins": map[string]bool{PluginKey: true},\n\t\t},' -> '\t\t\t"enabledPlugins": map[string]bool{PluginKey: true},\n\t\t\t"env":            map[string]string{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"},\n\t\t},'
+reverted run (last lines):
+    --- FAIL: TestLaunchRefusesAClaudeSeatWhoseModeIsForced (0.01s)
+        repass5_42_test.go:43: the seat's settings.json carries an env block: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.365s
+    FAIL
+
+## P1-2 (the launch refuses a probed mode that is not the launch's): TestLaunchRefusesAClaudeSeatWhoseModeIsForced (internal/seatlaunch/run.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif probe.Mode != rec.PermissionMode {' -> '\t\tif false && probe.Mode != rec.PermissionMode {'
+reverted run (last lines):
+    --- FAIL: TestLaunchRefusesAClaudeSeatWhoseModeIsForced (2.08s)
+        repass5_42_test.go:35: a forced mode: <nil> (applied true)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	2.460s
+    FAIL
+
+## P2-3 (guard denies on a changed config dir): TestGuardAndIngestRunTheSharedConfigDirCheck (internal/cli/hook_guard.go)
+reverted: FAIL; restored: PASS; as required
+revert: "\tif change != nil {\n\t\t// The seat's Claude config dir" -> "\tif false && change != nil {\n\t\t// The seat's Claude config dir"
+reverted run (last lines):
+    --- FAIL: TestGuardAndIngestRunTheSharedConfigDirCheck (0.06s)
+        repass5_42_test.go:67: a changed dir: {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.526s
+    FAIL
+
+## P2-3 (guard runs the shared check and digest report): TestGuardAndIngestRunTheSharedConfigDirCheck (internal/cli/hook_guard.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tid, change, err := h.seatIdentity(hookNow())\n' -> '\tid, err := h.identity()\n\tvar change *hookConfigChange\n'
+reverted run (last lines):
+    --- FAIL: TestGuardAndIngestRunTheSharedConfigDirCheck (0.03s)
+        repass5_42_test.go:63: guard and ingest reported 1 digests, want 2
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.694s
+    FAIL
+
+## P2-3 (evidence ingest runs the shared check and digest report): TestGuardAndIngestRunTheSharedConfigDirCheck (internal/cli/hook_ingest.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tid, _, err := h.seatIdentity(hookNow())\n' -> '\tid, err := h.identity()\n'
+reverted run (last lines):
+    --- FAIL: TestGuardAndIngestRunTheSharedConfigDirCheck (0.03s)
+        repass5_42_test.go:63: guard and ingest reported 1 digests, want 2
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.473s
+    FAIL
+
+## P2-4 (guard in its own process group, the group killed): Repass5.test_hung_guard_group_is_killed_and_the_reap_stays_out_of_stderr (plugins/claude/hooks/amq-squad-hook.sh)
+reverted: FAIL; restored: PASS; as required
+revert: '\tset -m\n' -> '\t:\n'
+revert: '\t\t\tkill -9 -- "-$gpid" 2>/dev/null\n\t\tfi' -> '\t\t\tkill -9 "$gpid" 2>/dev/null\n\t\tfi'
+revert: '\tkill -9 -- "-$gpid" 2>/dev/null\n\tset +m\n' -> '\tset +m\n'
+reverted run (last lines):
+        self.assertFalse(survived, "the guard's sleeper survived the watchdog")
+        ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    AssertionError: True is not false : the guard's sleeper survived the watchdog
+    ----------------------------------------------------------------------
+    Ran 1 test in 6.858s
+    FAILED (failures=1)
+
+## P2-4 (the reap's diagnostics go to the log descriptor): Repass5.test_hung_guard_group_is_killed_and_the_reap_stays_out_of_stderr (plugins/claude/hooks/amq-squad-hook.sh)
+reverted: FAIL; restored: PASS; as required
+revert: '\t{ wait "$gpid"; } 2>&3\n' -> '\twait "$gpid"\n'
+reverted run (last lines):
+    -  '/Users/omri/code/amq-squad/.claude/worktrees/agent-a76d84b5c1d5be1e6/plugins/claude/hooks/amq-squad-hook.sh: '
+    -  'line 99: 74198 Killed: 9               "$bin" guard --me "$AM_ME" --stdin < '
+    -  '"$tmpd/in" > "$tmpd/out" 2>&3\n')
+    ----------------------------------------------------------------------
+    Ran 1 test in 4.837s
+    FAILED (failures=1)
+
+## P2-5 (the Go adapter maps the complete verdict; the shell no longer reads a prefix): Repass5.test_truncated_verdict_is_no_decision_and_logged (plugins/claude/hooks/amq-squad-hook.sh)
+reverted: FAIL; restored: PASS; as required
+revert: '\tdec=$("$bin" guard --decision claude <"$tmpd/out" 2>"$tmpd/derr")\n\t[ -s "$tmpd/derr" ] && log "$(head -c 2000 "$tmpd/derr" | tr \'\\n\' \' \')"\n\t[ -n "$dec" ] && printf \'%s\\n\' "$dec"\n' -> '\tout=$(cat "$tmpd/out")\n\tverdict=$(printf \'%s\\n\' "$out" | sed -n -E \'s/^\\{"verdict":"([a-z_]+)".*/\\1/p\')\n\tcase "$verdict" in\n\tallow)\n\t\tprintf \'{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"amq-squad guard: allowed"}}\\n\'\n\t\t;;\n\t*)\n\t\tlog "fail-open: unparsable guard output"\n\t\t;;\n\tesac\n'
+reverted run (last lines):
+    -  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"amq-squad '
+    -  'guard: allowed"}}\n',
+    -  False)
+    ----------------------------------------------------------------------
+    Ran 1 test in 0.241s
+    FAILED (failures=1)
+
+summary: 10 reverts, all as required

@@ -1,0 +1,116 @@
+# phase 5 re-pass, the narrow pass on the fix round (the pinned claude executable, the adapter's stdin and output, the probe's stream, kind and session, the count list): revert check (each fix reverted in place, its row run with -race, the fix restored, the row run again)
+
+## HIGH (Compile refuses a provider that is not the pinned file): TestClaudeProviderMustBeThePin (internal/seatlaunch/compile.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tif provider != "" && !sameFile(provider, pin.Path) {' -> '\t\t\tif false && provider != "" && !sameFile(provider, pin.Path) {'
+reverted run (last lines):
+    --- FAIL: TestClaudeProviderMustBeThePin (0.00s)
+        repass5_fix2_test.go:33: provider B with pin A: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.379s
+    FAIL
+
+## HIGH (seat-exec runs only the pinned path): TestClaudeSeatExecsOnlyThePinnedBytes (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif filepath.Clean(argv0) != pin.Path {' -> '\tif false && filepath.Clean(argv0) != pin.Path {'
+reverted run (last lines):
+    --- FAIL: TestClaudeSeatExecsOnlyThePinnedBytes (0.05s)
+        repass5_fix2_test.go:23: a provider that is not the pin: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatExecsOnlyThePinnedBytes2548102207/001/bin/claude")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.431s
+    FAIL
+
+## HIGH (seat-exec re-hashes the pin immediately before exec): TestClaudeSeatExecsOnlyThePinnedBytes (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif _, err := pinnedProvider(o.Home, o.Argv[0]); err != nil {' -> '\t\tif _, err := pinnedProvider(o.Home, o.Argv[0]); false && err != nil {'
+reverted run (last lines):
+    --- FAIL: TestClaudeSeatExecsOnlyThePinnedBytes (0.07s)
+        repass5_fix2_test.go:31: a pinned file replaced before exec: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatExecsOnlyThePinnedBytes2181396272/002/bin/claude")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.449s
+    FAIL
+
+## item 1 (the watchdog covers the stdin read): TestAdapterTimesOutOnAnOpenStdin (internal/cli/hook_decision.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tcase <-time.After(time.Until(deadline)):\n\t\treturn timeout("stdin not closed")' -> '\tcase <-make(chan time.Time):\n\t\treturn timeout("stdin not closed")'
+reverted run (last lines):
+      testing.(*T).Run.gowrap1()
+          /opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2258 +0x34
+    ==================
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	3.464s
+    FAIL
+
+## item 2 (the guard's stdout capped at 64 KiB): TestAdapterCapsTheGuardOutput (internal/cli/hook_decision.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif c.buf.Len()+len(p) > c.max {' -> '\tif false && c.buf.Len()+len(p) > c.max {'
+reverted run (last lines):
+    --- FAIL: TestAdapterCapsTheGuardOutput (4.80s)
+        repass5_fix2_test.go:60: a flooding guard: err <nil>, out "", log "2026-10-25T03:14:26Z pre-tool fail-open: guard timeout after 4.8 s (killed; no decision)\n" after 4.804s
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	5.268s
+    FAIL
+
+## item 4 (the probe's stream read under the deadline): TestProbeDeadlineHoldsAgainstAnEscapedDescendant (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tvar r result\n\tselect {\n\tcase r = <-done:' -> '\tvar r result\n\tr = <-done\n\tselect {\n\tcase <-done:'
+reverted run (last lines):
+    --- FAIL: TestProbeDeadlineHoldsAgainstAnEscapedDescendant (8.01s)
+        repass5_fix2_test.go:65: an escaped descendant held the probe past its deadline
+        testing.go:1865: race detected during execution of test
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	8.368s
+    FAIL
+
+## item 5 (the probe kind carries the pin's digest): TestTwoPinsAreProbedTwice (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tfmt.Fprintf(h, "%s\\x00%s\\x00", mode, pinSHA256)' -> '\tfmt.Fprintf(h, "%s\\x00", mode)'
+reverted run (last lines):
+    --- FAIL: TestTwoPinsAreProbedTwice (0.17s)
+        repass5_fix2_test.go:83: two pin digests were probed 1 times: [sha-cto]
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.524s
+    FAIL
+
+## item 5 (the probe kind carries the plugin install): TestProbeKindTracksThePinAndThePlugin (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif d.IsDir() {\n\t\t\treturn nil\n\t\t}\n\t\traw, err := os.ReadFile(path)' -> '\t\tif d.IsDir() || strings.HasPrefix(rel, "plugins/") {\n\t\t\treturn nil\n\t\t}\n\t\traw, err := os.ReadFile(path)'
+reverted run (last lines):
+    --- FAIL: TestProbeKindTracksThePinAndThePlugin (0.01s)
+        repass5_fix2_test.go:138: a plugin change kept the probe kind
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.363s
+    FAIL
+
+## item 6 (the probe child leads a new session, no tty): TestProbeChildIsASessionLeaderWithNoTTY (internal/claudeseat/owner_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tcmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}' -> '\tcmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}'
+reverted run (last lines):
+    --- FAIL: TestProbeChildIsASessionLeaderWithNoTTY (0.36s)
+        repass5_fix2_test.go:114: the probe child is not a session leader (-1)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.611s
+    FAIL
+
+## item 19 (the count exemption is an explicit list, not a _TOKENS shape): TestCountFieldExemptionIsExactNumericOnly (internal/redact/redact.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'var locationSuffixes = []string{"_FILE", "_PATH", "_DIR", "_SOCK", "_NAME", "_ENV", "_VAR"}' -> 'var locationSuffixes = []string{"_FILE", "_PATH", "_DIR", "_SOCK", "_TOKENS", "_NAME", "_ENV", "_VAR"}'
+reverted run (last lines):
+        repass5_fix2_test.go:20: not found: {"api_tokens":"<redacted>"}
+        repass5_fix2_test.go:20: not found: {"input_tokens":"<redacted>"}
+        repass5_fix2_test.go:20: not found: api_tokens=<redacted>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.375s
+    FAIL
+
+## item 19 (numeric values only): TestCountFieldExemptionIsExactNumericOnly (internal/redact/redact.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'func countValue(name, value string) bool { return CountFields[name] && numberRE.MatchString(value) }' -> 'func countValue(name, value string) bool { return CountFields[name] }'
+reverted run (last lines):
+    --- FAIL: TestCountFieldExemptionIsExactNumericOnly (0.00s)
+        repass5_fix2_test.go:20: not found: {"input_tokens":"<redacted>"}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.361s
+    FAIL
+
+summary: 11 reverts, all as required

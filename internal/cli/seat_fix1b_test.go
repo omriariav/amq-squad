@@ -320,7 +320,9 @@ func TestUnsignedClearKeepsTheSeatQuarantined(t *testing.T) {
 	s.ClearQuarantine("s1")
 	s.Rearm(tk.ID, time.Hour, time.Now())
 	_, _, err := captureOutput(t, func() error { return runSeatCommit([]string{"--seat", "s1", "--root", root}, os.Stdout) })
-	if got, _ := s.Get(tk.ID); ExitCode(err) != ExitCommitRefused || got.BlockReason != seatcommit.ReasonClearUnsigned {
+	// The hand edit no longer reaches the clear's signature check: the sealed
+	// ledger's tag fails first (phase 5 re-pass ruling), a block for the owner.
+	if got, _ := s.Get(tk.ID); ExitCode(err) != ExitCommitRefused || got.BlockReason != seatcommit.ReasonLedgerTampered || got.BlockRoute != "owner" {
 		t.Fatalf("an unsigned clear was accepted: %v %+v", err, got)
 	}
 }

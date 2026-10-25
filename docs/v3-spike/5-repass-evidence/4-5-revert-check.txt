@@ -1,0 +1,94 @@
+# phase 5 re-pass, 4-5 (gateverify relay, the owner script): revert check (each fix reverted in place, its test row run with -race, the fix restored, the row run again; every relay is in-process, no row reaches the network)
+
+## HIGH (the parsed host: ws:// only for exactly localhost, 127.0.0.1 or ::1): TestRelayURLRuleParsesTheHost (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif slices.Contains([]string{"localhost", "127.0.0.1", "::1"}, u.Hostname()) {' -> '\t\tif len(raw) >= 14 && (raw[:14] == "ws://127.0.0.1" || raw[:min(len(raw), 15)] == "ws://localhost") {'
+reverted run (last lines):
+    --- FAIL: TestRelayURLRuleParsesTheHost (0.00s)
+        repass5_test.go:89: ws://127.0.0.1.nip.io/ passed the relay rule
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.403s
+    FAIL
+
+## HIGH (userinfo refused): TestRelayURLRuleParsesTheHost (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif u.User != nil || u.Opaque != "" || u.Hostname() == "" {' -> '\tif u.Opaque != "" || u.Hostname() == "" {'
+reverted run (last lines):
+    --- FAIL: TestRelayURLRuleParsesTheHost (0.00s)
+        repass5_test.go:89: wss://user@relay.example/ passed the relay rule
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.398s
+    FAIL
+
+## HIGH (a ws:// connection must reach a loopback address): TestRelayURLRuleParsesTheHost (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif ta, ok := conn.RemoteAddr().(*net.TCPAddr); !ok || !ta.IP.IsLoopback() {' -> '\tif ta, ok := conn.RemoteAddr().(*net.TCPAddr); false && (!ok || !ta.IP.IsLoopback()) {'
+reverted run (last lines):
+    --- FAIL: TestRelayURLRuleParsesTheHost (0.00s)
+        repass5_test.go:131: a plaintext dial to 192.168.7.21:49586 (not loopback) was kept
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.401s
+    FAIL
+
+## HIGH (the script applies the same rule before amq-remote): TestEnrollScriptRelayRule (docs/v3-buzz/enroll.sh)
+reverted: FAIL; restored: PASS; as required
+revert: 'relay_ok "$RELAY" || { echo "relay url must be wss://HOST (ws:// only for localhost, 127.0.0.1 or ::1; no userinfo)" >&2; exit 2; }\n' -> 'case $RELAY in wss://*|ws://127.0.0.1*|ws://localhost*) ;; *) echo "relay url must be wss://" >&2; exit 2 ;; esac\n'
+reverted run (last lines):
+        repass5_test.go:40: ws://127.0.0.1@relay.attacker.example/: rc 2, "bad owner npub (or no /usr/bin/false on PATH)\n"
+        repass5_test.go:40: wss://user@relay.example/: rc 2, "bad owner npub (or no /usr/bin/false on PATH)\n"
+        repass5_test.go:45: ws://[::1]:9/ did not pass the relay rule: rc 2, "relay url must be wss://\n"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.508s
+    FAIL
+
+## MEDIUM 1 (backpressure on the reader, no drop): TestQueryBurstIsNeverDropped (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tcase c.frames <- frame:\n\t\tcase <-c.closed:\n\t\t\treturn\n\t\t}' -> '\t\tcase c.frames <- frame:\n\t\tdefault:\n\t\t}'
+reverted run (last lines):
+    --- FAIL: TestQueryBurstIsNeverDropped (18.31s)
+        repass5_test.go:152: a 700-event burst: got 0, context deadline exceeded
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	18.684s
+    FAIL
+
+## MEDIUM 2 (the filter enforced on receipt): TestQueryEnforcesTheFilterDedupsAndCaps (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '!e.CheckID() || !f.Matches(e) || seen[e.ID]' -> '!e.CheckID() || seen[e.ID]'
+reverted run (last lines):
+    --- FAIL: TestQueryEnforcesTheFilterDedupsAndCaps (0.12s)
+        repass5_test.go:173: filtered and deduplicated: got 7, <nil>; want 3
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.516s
+    FAIL
+
+## MEDIUM 2 (deduplicated by event id): TestQueryEnforcesTheFilterDedupsAndCaps (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '!e.CheckID() || !f.Matches(e) || seen[e.ID]' -> '!e.CheckID() || !f.Matches(e)'
+reverted run (last lines):
+    --- FAIL: TestQueryEnforcesTheFilterDedupsAndCaps (0.12s)
+        repass5_test.go:173: filtered and deduplicated: got 6, <nil>; want 3
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.514s
+    FAIL
+
+## MEDIUM 2 (the count cap fails the query): TestQueryEnforcesTheFilterDedupsAndCaps (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tif received > MaxQueryEvents || size > MaxQueryBytes {' -> '\t\t\tif size > MaxQueryBytes {'
+reverted run (last lines):
+    --- FAIL: TestQueryEnforcesTheFilterDedupsAndCaps (11.03s)
+        repass5_test.go:183: 2001 events were accepted (2001 returned)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	11.819s
+    FAIL
+
+## MEDIUM 2 (the byte cap fails the query): TestQueryEnforcesTheFilterDedupsAndCaps (internal/gateverify/relay.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tif received > MaxQueryEvents || size > MaxQueryBytes {' -> '\t\t\tif received > MaxQueryEvents {'
+reverted run (last lines):
+    --- FAIL: TestQueryEnforcesTheFilterDedupsAndCaps (11.04s)
+        repass5_test.go:193: about 8.8 MB of events were accepted (40 returned)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	11.428s
+    FAIL
+
+summary: 9 reverts, all as required

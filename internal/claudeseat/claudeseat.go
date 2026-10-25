@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -44,6 +45,10 @@ const (
 	PermissionMismatch = "claude_permission_mismatch" // the dir is missing, not 0700, not ours, or not what the launch wrote
 	HooksMissing       = "claude_hooks_missing"       // the dir's plugin does not run the guard on PreToolUse
 	AllowRulesPresent  = "claude_allow_rules_present" // a worktree settings file Claude merges carries allow rules
+	// SettingsEnvForbidden: a settings file Claude merges sets, in its env
+	// block, a variable that would redirect the hook or the seat's identity
+	// (phase 5 re-pass of 4-2, P1-1).
+	SettingsEnvForbidden = "claude_settings_env_forbidden"
 	// ConfigChanged: during the run (the hook's context call) or at a seat
 	// exit, the seat's config dir no longer has the launch's digest; the
 	// seat is quarantined (milestone B first pass P1).
@@ -109,7 +114,6 @@ func Write(dir, permissionMode, worktree string, now time.Time) (Written, error)
 		"settings.json": map[string]any{
 			"permissions":    map[string]any{"defaultMode": permissionMode, "allow": []string{}},
 			"enabledPlugins": map[string]bool{PluginKey: true},
-			"env":            SessionEnv,
 		},
 		"plugins/installed_plugins.json": map[string]any{"version": 2, "plugins": map[string]any{
 			PluginKey: []map[string]any{{"scope": "user", "installPath": install, "version": version, "installedAt": stamp, "lastUpdated": stamp}},
@@ -117,6 +121,11 @@ func Write(dir, permissionMode, worktree string, now time.Time) (Written, error)
 		"plugins/known_marketplaces.json": map[string]any{
 			"amq-squad": map[string]any{"source": map[string]any{"source": "directory", "path": marketplace}, "installLocation": marketplace, "lastUpdated": stamp},
 		},
+	}
+	if worktree != "" {
+		// The worktree's settings files are part of the digest (phase 5
+		// re-pass of 4-2, P1-1): Claude merges them into the seat's settings.
+		files[WorktreeFile] = map[string]string{"worktree": worktree}
 	}
 	for rel, v := range files {
 		raw, _ := json.MarshalIndent(v, "", "  ")
@@ -191,10 +200,136 @@ func writeFile(p string, data []byte, mode os.FileMode) error {
 	return err
 }
 
+// WorktreeFile names the seat's worktree inside the config dir: a managed
+// file, so the worktree the digest reads cannot be swapped unseen.
+const WorktreeFile = "amq-squad-worktree.json"
+
+// worktreeSettings are the settings files Claude Code merges from the
+// project directory (the seat's worktree).
+var worktreeSettings = []string{"settings.json", "settings.local.json"}
+
 // managed reports whether a dir-relative slash path is a managed file:
-// settings.json and everything under plugins/.
+// settings.json, the worktree pointer and everything under plugins/.
 func managed(rel string) bool {
-	return rel == "settings.json" || strings.HasPrefix(rel, "plugins/")
+	return rel == "settings.json" || rel == WorktreeFile || strings.HasPrefix(rel, "plugins/")
+}
+
+// recordedWorktree reads the worktree the launch recorded in the config dir
+// ("" when it recorded none).
+func recordedWorktree(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, WorktreeFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var w struct {
+		Worktree string `json:"worktree"`
+	}
+	if json.Unmarshal(raw, &w) != nil || !filepath.IsAbs(w.Worktree) {
+		return "", fmt.Errorf("%s does not name an absolute worktree", WorktreeFile)
+	}
+	return w.Worktree, nil
+}
+
+// readWorktreeSettings reads the worktree's .claude settings files through
+// descriptors with no symlink followed; a missing .claude or file is absent
+// (not in the map), a symlink or a non-regular file fails.
+func readWorktreeSettings(worktree string) (map[string][]byte, error) {
+	out := map[string][]byte{}
+	anchor, err := filepath.EvalSymlinks(filepath.Clean(worktree))
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	wt, err := fsanchor.OpenAnchored(anchor, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	defer wt.Close()
+	d, err := wt.Sub(".claude")
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s/.claude: %w (a symlink or not a directory)", worktree, err)
+	}
+	defer d.Close()
+	for _, name := range worktreeSettings {
+		f, kind, _, _, err := d.OpenEntry(name)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if kind != fsanchor.KindRegular {
+			f.Close()
+			return nil, fmt.Errorf("%s/.claude/%s is not a regular file", worktree, name)
+		}
+		raw, err := io.ReadAll(f)
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
+		out[name] = raw
+	}
+	return out, nil
+}
+
+// ForbiddenSettingsEnv lists the env entries, in every settings source
+// Claude merges for the seat (its config dir's settings.json and the
+// worktree's .claude/settings.json and settings.local.json), that name
+// AMQ_SQUAD_BIN, an AM_* identity variable, an AMQ_SQUAD_* variable or a
+// CLAUDE_CODE_* switch: Claude's settings env wins over the launch's value,
+// so such an entry could point the hook at another binary or move the seat's
+// identity (phase 5 re-pass of 4-2, P1-1). A source that cannot be read or
+// parsed is listed (fail closed).
+func ForbiddenSettingsEnv(dir string) []string {
+	sources := map[string][]byte{}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return []string{"settings.json: unreadable"}
+	}
+	sources["settings.json"] = raw
+	worktree, err := recordedWorktree(dir)
+	if err != nil {
+		return []string{WorktreeFile + ": " + err.Error()}
+	}
+	if worktree != "" {
+		files, err := readWorktreeSettings(worktree)
+		if err != nil {
+			return []string{"worktree settings: " + err.Error()}
+		}
+		for name, b := range files {
+			sources[filepath.Join("worktree", ".claude", name)] = b
+		}
+	}
+	var out []string
+	for src, b := range sources {
+		var s struct {
+			Env map[string]json.RawMessage `json:"env"`
+		}
+		if json.Unmarshal(b, &s) != nil {
+			out = append(out, src+": unparsable")
+			continue
+		}
+		for k := range s.Env {
+			if forbiddenEnvName(k) {
+				out = append(out, src+": env "+k)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func forbiddenEnvName(name string) bool {
+	u := strings.ToUpper(strings.TrimSpace(name))
+	return u == "AMQ_SQUAD_BIN" || strings.HasPrefix(u, "AM_") || strings.HasPrefix(u, "AMQ_SQUAD_") || strings.HasPrefix(u, "CLAUDE_CODE_")
 }
 
 // Digest is the sha256 over the managed files of a config dir: for each, in
@@ -246,6 +381,18 @@ func Digest(dir string) (string, error) {
 			if err := read(name, f, mode); err != nil {
 				return "", err
 			}
+		case WorktreeFile:
+			f, kind, _, mode, err := d.OpenEntry(name)
+			if err != nil {
+				return "", err
+			}
+			if kind != fsanchor.KindRegular {
+				f.Close()
+				return "", fmt.Errorf("%s is not a regular file", name)
+			}
+			if err := read(name, f, mode); err != nil {
+				return "", err
+			}
 		case "plugins":
 			sub, err := d.Sub(name)
 			if err != nil {
@@ -260,6 +407,26 @@ func Digest(dir string) (string, error) {
 			sub.Close()
 			if err != nil {
 				return "", err
+			}
+		}
+	}
+	// The worktree's settings files, which Claude merges: present with their
+	// bytes, or absent (phase 5 re-pass of 4-2, P1-1).
+	worktree, err := recordedWorktree(dir)
+	if err != nil {
+		return "", err
+	}
+	if worktree != "" {
+		files, err := readWorktreeSettings(worktree)
+		if err != nil {
+			return "", err
+		}
+		for _, name := range worktreeSettings {
+			rel := "worktree/.claude/" + name
+			if b, ok := files[name]; ok {
+				entries = append(entries, entry{rel: rel, perm: 0o600, data: b})
+			} else {
+				entries = append(entries, entry{rel: rel + "\x00absent"})
 			}
 		}
 	}
@@ -307,6 +474,9 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 	}
 	if settings.Permissions.DefaultMode != permissionMode || len(settings.Permissions.Allow) != 0 {
 		return PermissionMismatch, fmt.Sprintf("the seat's settings.json has mode %q and %d allow rules; the launch record says %q and none", settings.Permissions.DefaultMode, len(settings.Permissions.Allow), permissionMode)
+	}
+	if env := ForbiddenSettingsEnv(dir); len(env) > 0 {
+		return SettingsEnvForbidden, "a settings file Claude merges for the seat sets a forbidden env variable: " + strings.Join(env, "; ")
 	}
 	if !settings.EnabledPlugins[PluginKey] {
 		return HooksMissing, "the amq-squad plugin is not enabled in the seat's settings.json"

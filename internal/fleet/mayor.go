@@ -139,13 +139,17 @@ const (
 
 // Reason codes.
 const (
-	ReasonGrantInvalid  = "grant_invalid"
-	ReasonNoFleetGrant  = "no_fleet_grant"
-	ReasonManualMode    = "manual_mode"
-	ReasonUnidentified  = "repository_unidentified"
-	ReasonRepository    = "repository_not_permitted"
-	ReasonMaxSquads     = "max_squads"
-	ReasonCostPerDay    = "cost_per_day"
+	ReasonGrantInvalid = "grant_invalid"
+	ReasonNoFleetGrant = "no_fleet_grant"
+	ReasonManualMode   = "manual_mode"
+	ReasonUnidentified = "repository_unidentified"
+	ReasonRepository   = "repository_not_permitted"
+	ReasonMaxSquads    = "max_squads"
+	ReasonCostPerDay   = "cost_per_day"
+	// ReasonCostUnmetered: the grant sets cost_per_day_usd and no meter can
+	// read the outcome log, so the cap cannot be checked; every start is held
+	// until the owner removes the cap (phase 5 re-pass of 4-3, ruling).
+	ReasonCostUnmetered = "cost_unmetered"
 	ReasonProvisioning  = "root_needs_provisioning"
 	ReasonRegistered    = "squad_registered"
 	ReasonLaunchFailure = "launch_failed"
@@ -328,7 +332,12 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 	if g.Mode != grants.ModeAuto {
 		return m.propose(req, ReasonManualMode, "manual mode: the operator session proposes, the owner starts"), nil
 	}
-	if fleet.CostPerDayUSD > 0 && m.Cost != nil {
+	if fleet.CostPerDayUSD > 0 && m.Cost == nil {
+		// A cap with no meter is fail-open; it holds instead (ruling).
+		res, w := m.capResult(s, ReasonCostUnmetered, fmt.Sprintf("cost_per_day_usd %g is set and no meter can read the outcome log; remove the cap from grants.yaml to proceed", fleet.CostPerDayUSD), now)
+		return res, Update(m.RegistryPath, func(r *Registry) error { recordWaiting(r, w); return nil })
+	}
+	if fleet.CostPerDayUSD > 0 {
 		if spent := m.Cost.SpentToday(now); spent >= fleet.CostPerDayUSD {
 			res, w := m.capResult(s, ReasonCostPerDay, fmt.Sprintf("spent %.2f USD today, cost_per_day_usd %g", spent, fleet.CostPerDayUSD), now)
 			return res, Update(m.RegistryPath, func(r *Registry) error { recordWaiting(r, w); return nil })
@@ -351,7 +360,8 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 	err = Update(m.RegistryPath, func(r *Registry) error {
 		now := m.now() // read under the lock, not before it
 		r.ReleaseStale(now, m.PhaseWindow, m.incarnationAlive)
-		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
+		// one squad per name, checkout and session root (root identity, P2-1)
+		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath || SameRoot(x.Root, s.Root) }) {
 			return errDuplicate
 		}
 		taken := 0
@@ -375,7 +385,7 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 		return nil
 	})
 	if errors.Is(err, errDuplicate) {
-		return m.refuse(s.Name, ReasonRegistered, "the fleet already has a squad with this name or checkout (one squad per repository)")
+		return m.refuse(s.Name, ReasonRegistered, "the fleet already has a squad with this name, checkout or session root (one squad per repository and per root)")
 	}
 	if err != nil {
 		return Result{}, err

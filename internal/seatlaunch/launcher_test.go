@@ -36,6 +36,7 @@ type launcherFixture struct {
 	provers    []*prover
 	procs      []*exec.Cmd
 	paneGone   bool
+	fake       *fakeAMQ
 }
 
 func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
@@ -45,6 +46,7 @@ func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
 	if applyOutcome != "applied" {
 		fake.apply.Disposition = "not_applied"
 	}
+	f.fake = fake
 	fake.onApply = func() {
 		if f.gate != nil {
 			<-f.gate
