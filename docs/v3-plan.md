@@ -1459,6 +1459,9 @@ Codex re-passes of merged heads. Findings become fix commits before the
   the exits queue, the pins.
 
 Test hygiene. Each waits on a fix commit only, with no row weakened.
+Done 2026-10-25: all three merged as 186fe04c (mergetrain under -race 944 s
+to 48 s; the PTY deadline derived from a measured warm-up; the seatlaunch
+window closed through t.Cleanup). [2.7, phase 5 hygiene result]
 
 - internal/mergetrain under -race takes 940 s against 60 to 125 s
   without, because the fake gh re-executes the race-instrumented test
