@@ -100,12 +100,21 @@ func claim(t *Task, dur time.Duration, now time.Time) {
 	}
 }
 
-// endAttempt closes the current lease into an attempt row.
-func endAttempt(t *Task, outcome, detail string, now time.Time) {
+// endAttempt closes the current lease into an attempt row. The lease's
+// verdict is archived only after its seal check (P2-2 of the second pass):
+// one that is not the harness's is archived with result invalid, so no
+// report ever reads a pass from it.
+func (s Store) endAttempt(t *Task, outcome, detail string, now time.Time) {
 	if t.Lease == nil {
 		return
 	}
-	t.Attempts = append(t.Attempts, Attempt{N: t.Attempt, Holder: t.Lease.Holder, Pool: t.Pool, GrantedAt: t.Lease.GrantedAt, EndedAt: now, Outcome: outcome, Detail: detail, Verdict: t.Lease.Verdict})
+	v := t.Lease.Verdict
+	if v != nil && s.verdictInvalid(*t) != "" {
+		inv := *v
+		inv.Result = VerdictInvalid
+		v = &inv
+	}
+	t.Attempts = append(t.Attempts, Attempt{N: t.Attempt, Holder: t.Lease.Holder, Pool: t.Pool, GrantedAt: t.Lease.GrantedAt, EndedAt: now, Outcome: outcome, Detail: detail, Verdict: v})
 	t.Lease = nil
 }
 
@@ -315,17 +324,17 @@ func (s Store) complete(t *Task, now time.Time) {
 	if required, why := s.verifierRequired(*t); required || v != nil {
 		switch {
 		case v == nil:
-			endAttempt(t, OutcomeBlocked, BlockVerdictMissing, now)
+			s.endAttempt(t, OutcomeBlocked, BlockVerdictMissing, now)
 			_ = block(t, BlockVerdictMissing, fmt.Sprintf("class %s completes only on a recorded %s verdict from the harness; the done report has none%s%s", t.Class, ClassVerifier(t.Class), why, unsealed), RouteLead)
 			return
 		case v.Result != VerdictPass:
-			endAttempt(t, OutcomeBlocked, BlockVerdictFailed, now)
+			s.endAttempt(t, OutcomeBlocked, BlockVerdictFailed, now)
 			_ = block(t, BlockVerdictFailed, fmt.Sprintf("the %s verdict from %s is %s: %s", v.Verifier, v.Source, v.Result, v.Detail), RouteLead)
 			return
 		}
 	}
 	t.Evidence = t.Report.Evidence
-	endAttempt(t, OutcomeCompleted, "", now)
+	s.endAttempt(t, OutcomeCompleted, "", now)
 	at := now
 	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail = StateCompleted, &at, "", "", ""
 }
@@ -369,7 +378,7 @@ func (s Store) RefuseCommit(id, reasonCode, detail, route string, now time.Time)
 		if t.State != StateInProgress || t.Report == nil {
 			return fmt.Errorf("task %s has no done report awaiting the commit step", t.ID)
 		}
-		endAttempt(t, OutcomeCommitRefused, reasonCode, now)
+		s.endAttempt(t, OutcomeCommitRefused, reasonCode, now)
 		return block(t, reasonCode, detail, route)
 	})
 }
@@ -396,7 +405,7 @@ func (s Store) Fail(id, holder, reason string, now time.Time) (Task, error) {
 		if err := requireLiveHolder(t, holder, now); err != nil {
 			return err
 		}
-		endAttempt(t, OutcomeFailed, strings.TrimSpace(reason), now)
+		s.endAttempt(t, OutcomeFailed, strings.TrimSpace(reason), now)
 		t.State, t.Report = StatePending, nil
 		return nil
 	})
@@ -411,7 +420,7 @@ func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Ta
 			if err := requireLiveHolder(t, actor, now); err != nil {
 				return err
 			}
-			endAttempt(t, OutcomeBlocked, reason, now)
+			s.endAttempt(t, OutcomeBlocked, reason, now)
 			t.Report = nil
 		case StatePending:
 		default:
@@ -437,7 +446,7 @@ func (s Store) Release(id, actor, reason string, now time.Time) (Task, error) {
 		if strings.TrimSpace(reason) == "" {
 			return fmt.Errorf("release needs a reason")
 		}
-		endAttempt(t, OutcomeReleased, strings.TrimSpace(reason)+byActor(actor), now)
+		s.endAttempt(t, OutcomeReleased, strings.TrimSpace(reason)+byActor(actor), now)
 		t.State, t.Report = StatePending, nil
 		return nil
 	})
@@ -485,7 +494,7 @@ func (s Store) Cancel(id, actor, reason string, now time.Time) (Task, error) {
 		if strings.TrimSpace(reason) == "" {
 			return fmt.Errorf("cancel needs a reason")
 		}
-		endAttempt(t, OutcomeCancelled, "", now)
+		s.endAttempt(t, OutcomeCancelled, "", now)
 		at := now
 		t.State, t.ClosedAt, t.Report, t.WaitReason = StateCancelled, &at, nil, ""
 		t.CancelReason = strings.TrimSpace(reason) + byActor(actor)
@@ -524,7 +533,7 @@ func (s Store) ExpireDue(now time.Time) ([]Task, error) {
 			if t.Lease.ClaimedAt == nil {
 				outcome = OutcomeUnclaimed
 			}
-			endAttempt(t, outcome, "lease expired at "+t.Lease.ExpiresAt.UTC().Format(time.RFC3339), now)
+			s.endAttempt(t, outcome, "lease expired at "+t.Lease.ExpiresAt.UTC().Format(time.RFC3339), now)
 			t.State = StatePending
 			all.touch(t.ID)
 			out = append(out, *t)

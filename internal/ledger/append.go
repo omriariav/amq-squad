@@ -104,7 +104,7 @@ func redactWrite(v any) any {
 			x[i] = redactWrite(x[i])
 		}
 	case string:
-		return redactrule.Text(scrubArgs(x))
+		return redactrule.Block(scrubArgs(x))
 	}
 	return v
 }

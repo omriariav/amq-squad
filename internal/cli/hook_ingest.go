@@ -179,7 +179,7 @@ func printablePrefix(raw []byte) string {
 			b[i] = '.'
 		}
 	}
-	return redact.Text(string(b))
+	return redact.Block(string(b))
 }
 
 // appendHookLedger appends line through the ledger's one writer

@@ -68,6 +68,9 @@ const (
 	// runs again on the same snapshot by itself; the lead's reset (a new
 	// lease) or the committer's deferral limit (commit_failed) ends it.
 	ReasonVerifierInterrupted = "verifier_interrupted"
+	// ReasonVerifierCancelled: the task was cancelled while its verifier ran;
+	// the group is killed and no verdict is recorded.
+	ReasonVerifierCancelled = "verifier_cancelled"
 )
 
 // VerifierSource is the source the commit step's verdicts carry.
@@ -222,6 +225,11 @@ func verify(o Options, sh *shadow, res Result) (Result, bool) {
 	if err != nil {
 		return res.defer_("the verifier: " + err.Error()), true
 	}
+	if run.reason == ReasonVerifierCancelled {
+		r := res.defer_(ReasonVerifierCancelled + ": the task was cancelled while its verifier ran; the process group was killed, no verdict is recorded, nothing is pushed")
+		r.ReasonCode = ReasonStepCancelled
+		return r, true
+	}
 	out.ExitCode, out.Reason, out.DurationMS, out.OutputBytes, out.Truncated = run.exit, run.reason, run.dur.Milliseconds(), len(run.output), run.truncated
 	out.Result = task.VerdictFail
 	if run.exit == 0 && run.reason == "" {
@@ -358,7 +366,18 @@ func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan, started fu
 		return run, nil
 	}
 	timer := time.AfterFunc(p.timeout, func() { kill(ReasonVerifierTimeout) })
+	stop := make(chan struct{})
+	if o.Ctx != nil {
+		go func() {
+			select {
+			case <-o.Ctx.Done():
+				kill(ReasonVerifierCancelled)
+			case <-stop:
+			}
+		}()
+	}
 	werr := cmd.Wait()
+	close(stop)
 	timer.Stop()
 	killGroup(cmd) // a descendant still in the group goes with it
 	run.dur = time.Since(start)
@@ -388,7 +407,7 @@ func boundedRedacted(raw []byte, truncated bool, limit int) []byte {
 			raw = nil
 		}
 	}
-	out := redact.Text(string(raw))
+	out := redact.Block(string(raw))
 	if len(out) > limit {
 		out = out[:limit]
 		truncated = true

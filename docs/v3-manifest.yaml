@@ -3319,9 +3319,9 @@ entries:
   status: new
 - path: internal/redact/redact.go
   v2_lines: 0
-  current_lines: 405
+  current_lines: 464
   fate: new
-  target_lines: 405
+  target_lines: 464
   cluster: redact
   extract: ""
   reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
@@ -3544,9 +3544,9 @@ entries:
   status: new
 - path: internal/routing/outcome.go
   v2_lines: 0
-  current_lines: 254
+  current_lines: 255
   fate: new
-  target_lines: 254
+  target_lines: 255
   cluster: routing
   extract: ""
   reason: "2b-4: outcome log row (6.4 fields), append-only JSONL with flock and fsync"
@@ -3562,9 +3562,9 @@ entries:
   status: new
 - path: internal/routing/router.go
   v2_lines: 0
-  current_lines: 1033
+  current_lines: 1036
   fate: new
-  target_lines: 1033
+  target_lines: 1036
   cluster: routing
   extract: ""
   reason: "2b-4: scheduler.Router: chain selection with the four checks, escalation, family rule, exploration, outcome rows"
@@ -3657,9 +3657,9 @@ entries:
   status: new
 - path: internal/schedproc/committer.go
   v2_lines: 0
-  current_lines: 166
+  current_lines: 186
   fate: new
-  target_lines: 166
+  target_lines: 186
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler's Committer over the seat commit step, deferrals to commit_failed"
@@ -3729,27 +3729,27 @@ entries:
   status: new
 - path: internal/scheduler/exits.go
   v2_lines: 0
-  current_lines: 519
+  current_lines: 599
   fate: new
-  target_lines: 519
+  target_lines: 599
   cluster: scheduler
   extract: ""
   reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
   status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 136
+  current_lines: 159
   fate: new
-  target_lines: 136
+  target_lines: 159
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 919
+  current_lines: 962
   fate: new
-  target_lines: 919
+  target_lines: 962
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3792,18 +3792,18 @@ entries:
   status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 1242
+  current_lines: 1260
   fate: new
-  target_lines: 1242
+  target_lines: 1260
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
   status: new
 - path: internal/seatcommit/verifier.go
   v2_lines: 0
-  current_lines: 748
+  current_lines: 767
   fate: new
-  target_lines: 748
+  target_lines: 767
   cluster: seatcommit
   extract: ""
   reason: "v3-5-verifier: the verdict producer: the class verifier in the shadow worktree, seat-class environment, bounds, slots, evidence"
@@ -3837,9 +3837,9 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 595
+  current_lines: 619
   fate: new
-  target_lines: 595
+  target_lines: 619
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
@@ -4171,9 +4171,9 @@ entries:
   status: new
 - path: internal/task/class.go
   v2_lines: 0
-  current_lines: 162
+  current_lines: 165
   fate: new
-  target_lines: 162
+  target_lines: 165
   cluster: task
   extract: ""
   reason: "2b-1: 3.0 task schema vocabulary: states, classes, wait reasons, outcomes, pool"
@@ -4222,9 +4222,9 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 535
+  current_lines: 544
   fate: new
-  target_lines: 535
+  target_lines: 544
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"

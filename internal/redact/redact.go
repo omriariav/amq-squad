@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -316,6 +317,64 @@ func mergeSpans(sp [][2]int) [][2]int {
 		out = append(out, s)
 	}
 	return out
+}
+
+// jsonBlockRE is jsonRE across lines: JSON whitespace, newlines included,
+// between the quoted name, the colon and the value (a pretty-printed or
+// wrapped object); yamlSplitRE is a YAML key whose scalar value sits on the
+// next, more indented line. Group 1 is the name, group 2 the value.
+var (
+	jsonBlockRE = regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\n]|\\.)*"|-?[0-9][0-9.eE+-]*)`)
+	yamlSplitRE = regexp.MustCompile(`(?m)^[ \t]*(?:- )?([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*:[ \t]*\r?\n[ \t]+([^ \t\r\n#][^\r\n]*?)[ \t]*\r?$`)
+)
+
+// Block redacts a whole text (v3-5-verifier, P1-2 of the second pass): the
+// credential-name rules run over the text as one buffer, so a value split
+// from its name across lines (`{"password":` then the value on the next
+// line, or a YAML key line and its value line) is replaced; then every line
+// passes Line's rules as well.
+func Block(text string) string {
+	type span struct{ a, b int }
+	var sp []span
+	for _, m := range jsonBlockRE.FindAllStringSubmatchIndex(text, -1) {
+		name, val := text[m[2]:m[3]], text[m[4]:m[5]]
+		if strings.EqualFold(name, "key") {
+			continue
+		}
+		inner := val
+		if strings.HasPrefix(val, `"`) {
+			inner = val[1 : len(val)-1]
+		}
+		if CredentialName(name) && !countValue(name, val) && namedSecret(name, inner) {
+			sp = append(sp, span{m[4], m[5]})
+		}
+	}
+	for _, m := range yamlSplitRE.FindAllStringSubmatchIndex(text, -1) {
+		name, val := text[m[2]:m[3]], text[m[4]:m[5]]
+		if strings.HasPrefix(val, "- ") || strings.Contains(val, ": ") || strings.HasSuffix(val, ":") {
+			continue // a nested list or map, not the key's scalar
+		}
+		if CredentialName(name) && !countValue(name, val) && namedSecret(name, strings.Trim(val, `"'`)) {
+			sp = append(sp, span{m[4], m[5]})
+		}
+	}
+	sort.Slice(sp, func(i, j int) bool { return sp[i].a < sp[j].a })
+	var out strings.Builder
+	at := 0
+	for _, s := range sp {
+		if s.a < at {
+			continue // inside a span already replaced
+		}
+		rep := Placeholder
+		if strings.HasPrefix(text[s.a:s.b], `"`) {
+			rep = `"` + Placeholder + `"`
+		}
+		out.WriteString(text[at:s.a])
+		out.WriteString(rep)
+		at = s.b
+	}
+	out.WriteString(text[at:])
+	return Text(out.String())
 }
 
 // Text redacts every line of a text.

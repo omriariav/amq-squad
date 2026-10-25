@@ -134,3 +134,26 @@ type LeadNotifier interface {
 type Committer interface {
 	Commit(handle string, t task.Task) CommitResult
 }
+
+// CommitApplier is a Committer told when a decided step's result is in the
+// store: until then it keeps the result (the application is retried, never
+// the step).
+type CommitApplier interface {
+	Applied(taskID string)
+}
+
+// CommitCanceller is a Committer that cancels the running step of a task
+// that no longer waits for it; ended reports that no step of it runs.
+type CommitCanceller interface {
+	CancelCommit(taskID string) (ended bool)
+}
+
+// Reason codes of the commit step's deferral limit (the strings
+// internal/seatcommit uses).
+const (
+	ReasonCommitFailed        = "commit_failed"
+	ReasonVerifierInterrupted = "verifier_interrupted"
+)
+
+// DefaultMaxCommitDeferrals is the commit step's deferral limit (Config.MaxCommitDeferrals).
+const DefaultMaxCommitDeferrals = 5

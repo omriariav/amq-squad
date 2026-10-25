@@ -1,7 +1,7 @@
 package schedproc
 
 import (
-	"fmt"
+	"context"
 	"sync"
 	"time"
 
@@ -9,10 +9,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
-
-// DefaultMaxDeferrals is how many ticks in a row the commit step may defer
-// (a git or push failure) before it refuses with commit_failed for the lead.
-const DefaultMaxDeferrals = 5
 
 // DefaultInline is how long Commit waits for a step it just started before
 // it answers running: a step with no verifier usually decides within it.
@@ -28,11 +24,10 @@ const DefaultInline = 2 * time.Second
 // again and gets the result once it is there. The tick meanwhile dispatches,
 // cancels and checks other seats; the seat stays held by its task's report.
 type Committer struct {
-	Step func(handle string, t task.Task) seatcommit.Result
+	Step func(ctx context.Context, handle string, t task.Task) seatcommit.Result
 	// ExitStep is the exit check of a seat exit off the done path
 	// (seatcommit.ExitCheck); nil checks nothing there.
-	ExitStep     func(handle, taskID, why string) seatcommit.Result
-	MaxDeferrals int
+	ExitStep func(handle, taskID, why string) seatcommit.Result
 	// Inline is how long Commit waits for a step it starts (default
 	// DefaultInline; negative: not at all).
 	Inline time.Duration
@@ -40,9 +35,8 @@ type Committer struct {
 	// slot says so (seatcommit.VerifierWaiting).
 	Root string
 
-	mu       sync.Mutex
-	deferred map[string]int
-	jobs     map[string]*commitJob
+	mu   sync.Mutex
+	jobs map[string]*commitJob
 }
 
 // commitJob is one running commit step.
@@ -50,6 +44,8 @@ type commitJob struct {
 	handle string
 	done   chan struct{}
 	res    seatcommit.Result
+	cancel context.CancelFunc
+	final  *scheduler.CommitResult // the decided result until Applied
 }
 
 // Running states of a commit step.
@@ -65,10 +61,11 @@ func (c *Committer) Commit(handle string, t task.Task) scheduler.CommitResult {
 	}
 	j, wait := c.jobs[t.ID], time.Duration(0)
 	if j == nil {
-		j = &commitJob{handle: handle, done: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		j = &commitJob{handle: handle, done: make(chan struct{}), cancel: cancel}
 		c.jobs[t.ID] = j
 		go func() {
-			r := c.Step(handle, t)
+			r := c.Step(ctx, handle, t)
 			j.res = r
 			close(j.done)
 		}()
@@ -81,30 +78,53 @@ func (c *Committer) Commit(handle string, t task.Task) scheduler.CommitResult {
 		return scheduler.CommitResult{Running: true, Detail: c.state(handle)}
 	}
 	c.mu.Lock()
-	delete(c.jobs, t.ID)
-	res := j.res
 	defer c.mu.Unlock()
-	if c.deferred == nil {
-		c.deferred = map[string]int{}
+	if j.final != nil {
+		return *j.final // decided; not applied yet (P2-3): the application is retried, never the step
 	}
+	res := j.res
 	if res.Deferred {
-		c.deferred[t.ID]++
-		max := c.MaxDeferrals
-		if max <= 0 {
-			max = DefaultMaxDeferrals
-		}
-		if c.deferred[t.ID] < max {
-			return scheduler.CommitResult{Deferred: true, Detail: res.Detail}
-		}
-		delete(c.deferred, t.ID)
-		return scheduler.CommitResult{ReasonCode: seatcommit.ReasonCommitFailed, Route: task.RouteLead,
-			Detail: fmt.Sprintf("the commit step deferred %d ticks in a row; last: %s", max, res.Detail)}
+		// A deferral runs the step again at the next tick; the scheduler
+		// counts deferrals in the step's exits entry (P2-4).
+		delete(c.jobs, t.ID)
+		j.cancel()
+		return scheduler.CommitResult{Deferred: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
 	}
-	delete(c.deferred, t.ID)
+	final := scheduler.CommitResult{ReasonCode: res.ReasonCode, Detail: res.Detail, Route: res.Route, Quarantine: res.Quarantine}
 	if res.OK {
-		return scheduler.CommitResult{OK: true, PRRepository: res.PRRepository, PRNumber: res.PRNumber, PRHead: res.PRHead}
+		final = scheduler.CommitResult{OK: true, PRRepository: res.PRRepository, PRNumber: res.PRNumber, PRHead: res.PRHead}
 	}
-	return scheduler.CommitResult{ReasonCode: res.ReasonCode, Detail: res.Detail, Route: res.Route, Quarantine: res.Quarantine}
+	j.final = &final
+	return final
+}
+
+// Applied forgets a decided step once the scheduler's store transaction
+// for its result committed (P2-3 of the second pass).
+func (c *Committer) Applied(taskID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if j := c.jobs[taskID]; j != nil {
+		j.cancel()
+		delete(c.jobs, taskID)
+	}
+}
+
+// CancelCommit cancels the running step of a task that no longer waits for
+// it (cancelled, P2-1 of the second pass): its verifier's group is killed
+// and its result discarded. ended reports that no step of the task runs.
+func (c *Committer) CancelCommit(taskID string) (ended bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	j := c.jobs[taskID]
+	if j == nil {
+		return true
+	}
+	j.cancel()
+	if c.finished(j, 0) {
+		delete(c.jobs, taskID)
+		return true
+	}
+	return false
 }
 
 // CheckExit is the exit check at a seat exit that is not a done report (R3

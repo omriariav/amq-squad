@@ -1,6 +1,7 @@
 package schedproc
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,7 +46,7 @@ func TestCommitStepRunsOffTheTick(t *testing.T) {
 	var mu sync.Mutex
 	var checked []string
 	c := &Committer{Inline: 50 * time.Millisecond,
-		Step: func(string, task.Task) seatcommit.Result {
+		Step: func(context.Context, string, task.Task) seatcommit.Result {
 			steps.Add(1)
 			select { // the stand-in of a 10-minute verifier
 			case <-release:

@@ -10,6 +10,7 @@
 package seatcommit
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -71,6 +72,10 @@ type Options struct {
 	// Clear verifies the owner's signed clear of a quarantine (the owner's
 	// trust store); nil verifies nothing, so no clear counts.
 	Clear ClearVerifier
+	// Ctx cancels the step (the task was cancelled while the step ran, P2-1
+	// of the second pass): a running verifier's group is killed, no verdict
+	// is recorded and nothing is pushed. nil never cancels.
+	Ctx context.Context
 }
 
 // Change is one changed path of the seat's diff.
@@ -158,6 +163,12 @@ func Run(o Options) Result {
 	return out
 }
 
+// ReasonStepCancelled is the deferral of a step whose task was cancelled
+// while it ran (its result is discarded).
+const ReasonStepCancelled = "commit_cancelled"
+
+func (o Options) cancelled() bool { return o.Ctx != nil && o.Ctx.Err() != nil }
+
 func (o Options) withDefaults() Options {
 	if o.Now == nil {
 		o.Now = time.Now
@@ -236,7 +247,9 @@ func ExitCheck(o Options, why string) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
 	o = o.withDefaults()
 	var out Result
-	err := withLedgerLock(o.Root, o.Handle, func() error {
+	// The exit check runs on the scheduler's tick: it never waits for the
+	// ledger a running commit step holds, it defers (P1-1 of the second pass).
+	err := withLedgerTryLock(o.Root, o.Handle, func() error {
 		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
 			out = res.tamperedRefusal(terr)
 			return nil
@@ -407,6 +420,9 @@ func run(o Options, res Result) Result {
 	if done {
 		return res
 	}
+	if o.cancelled() {
+		return res.defer_(ReasonStepCancelled + ": the task was cancelled while the step ran; nothing is pushed")
+	}
 	return commitAndPush(o, sh, ledger, rec, res)
 }
 
@@ -516,7 +532,9 @@ func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, n
 	if err != nil {
 		return false, err
 	}
-	err = withLedgerLock(root, handle, func() error {
+	// CleanSeat runs on the tick (the seat's preparation before a lease): a
+	// busy ledger is ErrLedgerBusy, never a wait.
+	err = withLedgerTryLock(root, handle, func() error {
 		// Only between leases, never mid-task (condition 2 of the ruling),
 		// with the store locked for the whole reset.
 		return store.WithSeatFree(handle, func(list []task.Task) error {

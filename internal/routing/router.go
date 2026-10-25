@@ -996,8 +996,11 @@ func verifierResult(verifier string, a task.Attempt) string {
 		return VerifierNoCheck
 	}
 	if a.Verdict != nil {
-		if a.Verdict.Result == task.VerdictPass {
+		switch a.Verdict.Result {
+		case task.VerdictPass:
 			return VerifierPass
+		case task.VerdictInvalid:
+			return VerifierInvalid // never a pass from an unverified archive
 		}
 		return VerifierFail
 	}

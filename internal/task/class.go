@@ -47,6 +47,9 @@ func MechanicalVerifier(v string) bool {
 const (
 	VerdictPass = "pass"
 	VerdictFail = "fail"
+	// VerdictInvalid is an archived verdict whose seal did not verify: never
+	// a pass in any report.
+	VerdictInvalid = "invalid"
 )
 
 // Block reasons of the completion gate (phase 5 re-pass, ruling 1): a class
