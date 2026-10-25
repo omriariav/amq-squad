@@ -1764,8 +1764,15 @@ Release prep.
   file resolves back into that project; records are removed after
   everything they describe; every named directory is opened O_NOFOLLOW
   before any removal; a hard-linked secret is unlinked without zeroing;
-  the uninstall holds the scheduler's own lock for its run; only ENOENT
-  is absent. [2.7, reviewer plan and narrow pass, 2026-10-25]
+  the uninstall holds the scheduler's own lock for its run and unlinks it
+  last; only ENOENT is absent; the seat set comes from this root's launch
+  records and task-store snapshot, never a ledger, and a ref is deleted
+  only when a sealed ledger entry of this root records it; the live-seat
+  probe is strict (a probe failure is busy); the verified worktree is
+  held by descriptor from verification to removal with the parent entry
+  re-checked by dev+inode (worktree_replaced otherwise); every candidate
+  appears in the report with a reason. [2.7, reviewer plan and narrow
+  passes, 2026-10-25]
 - After migrate and uninstall merge: the release commit from the
   recorded list, the release gate owner-signed through 7.3's tag-rule
   path, then the owner session rows. Nothing else is planned on the code
