@@ -52,3 +52,17 @@ Revert check (`item2-before-race.txt`): the before run is the revert (every fixt
 - `internal/seatlaunch`: `TestTokenMintedSixtyOneSecondsEarlierIsExpired` restores the former contract as a deterministic row. A proof server on a test clock mints a ticket, the clock moves 61 s, and the proof message is judged with no hook between read and judgement: `proof_expired`, twice (a retry stays refused), and the seat's state says `proof_expired`. `TestExpiredTokenIsRefused` keeps the through-the-socket path with the clock moving at judgement.
 - `internal/cli`: the PTY test starts tmux with `-f /dev/null`, so it does not load the host's tmux configuration. The warm-up's remaining wall-time bound (2 minutes, for the pane shell to run the marker command) is the accepted shape: it is a hang guard on a synchronisation point, not a timing assertion.
 - Gate re-run on the committed head on a quiet host: `gate.txt` replaced.
+
+# Second section: TestDecisionAdapterKillsAHungGuardGroup
+
+Branch `v3-5-hygiene2`, cut from `v3` at f337b4a5. Before evidence: `hygiene2-before-full-run.txt` (the failing block of today's merge gate: "no sleeper pid", test at 1.00 s).
+
+Mechanism: the adapter's watchdog (the test sets `guardWatchdog` to 1 s) starts at the adapter's entry, and the stand-in guard (`/bin/sh`: start, fork `sleep 30`, `echo $! > file`) runs inside that window. Under full-suite load the shell start alone can exceed 1 s, so the watchdog fired, killed the group and returned before the stand-in wrote the sleeper's pid: the test then read an empty file once. A second weakness in the same read: `echo $! > file` creates the file before it writes, so even a ready stand-in can be read empty. Production timeout is untouched.
+
+Fix (test only):
+- The stand-in publishes the pid atomically (write to a temp name, `mv` into place): the pid file is its readiness signal.
+- Before the adapter runs, the test starts the stand-in once on its own, waits for that readiness file (30 s hang guard), measures the step and kills it. The adapter's watchdog is max(1 s, 10 x measured), the elapsed bound is watchdog + 3 s. The watchdog is still what ends the guard; the test only stops it racing the stand-in's start.
+- After the adapter returns, the pid file is waited for (30 s hang guard) instead of read once.
+- Kept: the hung guard's group is killed, the sleeper is gone within 2 s, nothing on stdout, the timeout log line on stderr.
+
+Revert check (`hygiene2-revert-check.txt`): under 160 busy loops on 18 cores, 20 runs: old test failed 2 of 20 ("no sleeper pid"), new test 20 of 20 pass. `hygiene2-race-count20.txt`: `go test -race -count=20` of the new test passes on an idle host. Gate: `gate-hygiene2.txt`.
