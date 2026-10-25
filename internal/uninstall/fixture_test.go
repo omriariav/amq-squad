@@ -23,7 +23,6 @@ import (
 const (
 	tokenBody   = "placeholder-token-body-not-a-secret"
 	bindingBody = "placeholder-binding-body-not-a-secret"
-	evidenceRef = "refs/amq-squad/evidence/seat-a/t1/1"
 )
 
 type fixture struct {
@@ -33,6 +32,7 @@ type fixture struct {
 	root    string // the AMQ session root
 	x       string // <root>/extensions/amq-squad
 	wt      string // the seat worktree
+	ref     string // the evidence ref the sealed commits ledger records
 	outside string // a directory no uninstall may touch
 	opts    Options
 }
@@ -91,15 +91,23 @@ func newFixture(t *testing.T) *fixture {
 	git(t, f.proj, "add", "README")
 	git(t, f.proj, "commit", "-q", "-m", "init")
 	git(t, f.proj, "worktree", "add", "-q", "-b", "seat/a", f.wt)
-	tree := git(t, f.proj, "rev-parse", "HEAD^{tree}")
-	git(t, f.proj, "update-ref", evidenceRef, tree)
-
-	// session state
-	writeJSON(t, filepath.Join(f.x, "commits", "seat-a.json"), seatcommit.Ledger{Schema: 1, Handle: "seat-a", Worktree: f.wt, Branch: "seat/a",
-		Discarded: []seatcommit.LedgerDiscard{{TaskID: "t1", Reason: "x", EvidenceRef: seatcommit.EvidenceRef{Ref: evidenceRef, RefTree: tree}}}})
+	// a sealed commits ledger with a real evidence ref: the core's own calls
+	head := git(t, f.proj, "rev-parse", "HEAD")
+	writeJSON(t, filepath.Join(f.x, "launch", "seat-a", launch.FileName), launch.Record{Schema: 1, Handle: "seat-a", Worktree: f.wt, Branch: "seat/a"})
+	if _, err := seatcommit.RecordBase(f.root, "seat-a", f.wt, "seat/a", head, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.wt, "left-behind.txt"), "work\n", 0o644)
+	if ok, err := seatcommit.CleanSeat(f.root, "seat-a", "git", nil, nil, time.Now()); err != nil || !ok {
+		t.Fatalf("clean seat: %v %v", ok, err)
+	}
+	l, err := seatcommit.ReadLedger(f.root, "seat-a")
+	if err != nil || len(l.EvidenceRefs()) != 1 {
+		t.Fatalf("the sealed ledger: %v %v", err, l.EvidenceRefs())
+	}
+	f.ref = l.EvidenceRefs()[0]
 	write(t, filepath.Join(f.x, "ledger", "seat-a.jsonl"), "{}\n", 0o600)
 	write(t, filepath.Join(f.x, "routing", "outcomes.jsonl"), "{}\n", 0o600)
-	write(t, filepath.Join(f.x, "routing", "seed"), "seed\n", 0o600)
 	write(t, filepath.Join(f.x, "scheduler", "run.lock"), "", 0o644)
 	write(t, filepath.Join(f.x, "scheduler", "decisions.jsonl"), "{}\n", 0o600)
 	writeJSON(t, filepath.Join(f.x, "scheduler", "launch.json"), map[string]any{"schema": 1, "lead": "lead", "root": f.root, "project_root": f.proj, "pid": 999999999})

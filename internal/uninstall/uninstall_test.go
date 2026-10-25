@@ -43,13 +43,13 @@ func TestDryRunChangesNothingAndNamesEveryGroup(t *testing.T) {
 		}
 		out := render(res)
 		for _, want := range []string{
-			"session state under the AMQ root", filepath.Join(f.x, "tasks"), filepath.Join(f.x, "scheduler", "run.lock"), "verifier module cache",
+			"session state under the AMQ root", filepath.Join(f.x, "tasks"), filepath.Join(f.x, "scheduler", "decisions.jsonl"), "verifier module cache",
 			"per-seat config dirs", filepath.Join(f.x, "launch", "seat-a", "claude-config", "L1"),
 			"the core tools dir", filepath.Join(f.x, "tools", "gh"), filepath.Join(f.x, "tools", "claude"),
 			"worktrees the core created", f.wt,
 			"owner files under ~/.amq-squad", "claude-token", "gate-binding.json", "registry.yaml", "grants.yaml",
 			"sealed ledgers", filepath.Join(f.x, "commits"), filepath.Join(f.x, "scheduler", "exits.json"), "outcome log", "hook ledger",
-			evidenceRef, "clear records and the gate store",
+			f.ref, "clear records and the gate store",
 			"claude plugin uninstall amq-squad@amq-squad", "worktree prune",
 			"dry run",
 		} {
@@ -161,7 +161,7 @@ func TestSealedLedgersAndEvidenceAreKeptByDefault(t *testing.T) {
 			t.Errorf("%s was removed without --purge", rel)
 		}
 	}
-	if !refExists(t, f.proj, evidenceRef) {
+	if !refExists(t, f.proj, f.ref) {
 		t.Error("the evidence ref was removed without --purge")
 	}
 	for _, rel := range []string{"tasks", "launch", "tools", "verifiers", "scheduler/run.lock", "scheduler/decisions.jsonl"} {
@@ -190,7 +190,7 @@ func TestPurgeRemovesEvidenceRefsOnlyAndRunsNoRepositoryHook(t *testing.T) {
 	if _, err := Run(f.all()); err != nil {
 		t.Fatal(err)
 	}
-	if refExists(t, f.proj, evidenceRef) {
+	if refExists(t, f.proj, f.ref) {
 		t.Error("the evidence ref survived --purge")
 	}
 	if exists(marker) {

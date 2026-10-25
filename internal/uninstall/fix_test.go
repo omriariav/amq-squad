@@ -24,7 +24,7 @@ func TestASymbolicEvidenceRefNeverDeletesABranch(t *testing.T) {
 	if git(t, f.proj, "rev-parse", "refs/heads/main") != main {
 		t.Fatal("the branch was deleted through a symbolic evidence ref")
 	}
-	if !refExists(t, f.proj, evidenceRef) {
+	if !refExists(t, f.proj, f.ref) {
 		t.Error("nothing should be deleted in a repository that holds a symbolic evidence ref")
 	}
 }
@@ -51,11 +51,11 @@ func TestARefReplacedSinceItWasListedIsLeft(t *testing.T) {
 		t.Fatalf("list: %v %d", err, len(refs))
 	}
 	head := git(t, f.proj, "rev-parse", "HEAD")
-	git(t, f.proj, "update-ref", evidenceRef, head)
+	git(t, f.proj, "update-ref", f.ref, head)
 	if err := seatcommit.DeleteEvidenceRefs("git", []string{f.proj}, refs); err == nil {
 		t.Error("the stale deletion should be reported")
 	}
-	if git(t, f.proj, "rev-parse", evidenceRef) != head {
+	if git(t, f.proj, "rev-parse", f.ref) != head {
 		t.Error("a ref replaced since it was listed was deleted")
 	}
 }
@@ -150,7 +150,7 @@ func TestAFailedEvidenceGroupKeepsTheRecordsAndTheRetryFinishes(t *testing.T) {
 	if _, err := Run(f.all()); err != nil {
 		t.Fatalf("the retry: %v", err)
 	}
-	if exists(filepath.Join(f.x, "commits")) || exists(f.wt) || refExists(t, f.proj, evidenceRef) {
+	if exists(filepath.Join(f.x, "commits")) || exists(f.wt) || refExists(t, f.proj, f.ref) {
 		t.Error("the retry did not finish")
 	}
 	if res, err := Run(f.all()); err != nil || !res.NothingToDo {

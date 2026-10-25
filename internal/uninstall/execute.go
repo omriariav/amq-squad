@@ -148,7 +148,6 @@ func execute(p *plan, o Options, r *Result) error {
 			run(op)
 		}
 	}
-	finishEmpty(o)
 	if symlink != nil {
 		return symlink
 	}
@@ -273,6 +272,9 @@ func remove(o op) (string, error) {
 	defer d.Close()
 	if isLink(d, o.name) {
 		return "", symlinkErr(o.display)
+	}
+	if o.wd != nil {
+		return "", removeWorktree(d, o)
 	}
 	f, kind, _, _, err := d.OpenEntry(o.name)
 	if err != nil {

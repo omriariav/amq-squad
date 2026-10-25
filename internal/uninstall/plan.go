@@ -36,6 +36,7 @@ type op struct {
 	rel     []string
 	name    string
 	ev      *evidenceOp
+	wd      *fsanchor.AnchoredDir // a worktree: the verified directory, removed through this descriptor
 }
 
 // evidenceOp deletes the evidence refs git lists in one repository.
@@ -49,11 +50,28 @@ type evidenceOp struct {
 type wtCand struct{ handle, path string }
 
 type plan struct {
-	ops     []op
-	byHand  []string
-	left    []string
-	kept    []string // worktrees listed but not removed, with the reason
-	handles map[string]bool
+	ops       []op
+	byHand    []string
+	left      []string
+	kept      []string // worktrees and evidence refs listed but not removed, with the reason
+	handles   map[string]bool
+	taskList  []task.Task
+	taskErr   error
+	schedRoot string              // the project root the scheduler's launch record names
+	seatWT    map[string][]string // worktrees the staged records and ledgers name, by seat
+}
+
+// close lets go of the descriptors the plan holds.
+func (p *plan) close() {
+	if p == nil {
+		return
+	}
+	for i := range p.ops {
+		if p.ops[i].wd != nil {
+			p.ops[i].wd.Close()
+			p.ops[i].wd = nil
+		}
+	}
 }
 
 var (
@@ -157,10 +175,8 @@ func noLinks(d *fsanchor.AnchoredDir, disp string, depth int) error {
 // symlink where a directory is expected, anywhere in the layout, nested ones
 // included, refuses the whole plan before anything is removed.
 func discover(o Options) (*plan, error) {
-	p := &plan{handles: map[string]bool{}}
-	var checkouts []string
+	p := &plan{handles: map[string]bool{}, seatWT: map[string][]string{}}
 	var cands []wtCand
-	var seeds []evidenceSeed
 	xrel := []string{extDir, amqDir}
 	xpath := filepath.Join(o.Root, extDir, amqDir)
 	x, err := openDir(o.Root, xrel)
@@ -177,9 +193,8 @@ func discover(o Options) (*plan, error) {
 			readJSON(sd, "launch.json", &sch)
 			sd.Close()
 		}
-		if sch.ProjectRoot != "" {
-			checkouts = append(checkouts, sch.ProjectRoot)
-		}
+		p.schedRoot = sch.ProjectRoot
+		p.loadTasks(filepath.Join(xpath, "tasks"))
 		for _, name := range sortedNames(x) {
 			disp := filepath.Join(xpath, name)
 			if isLink(x, name) {
@@ -205,9 +220,7 @@ func discover(o Options) (*plan, error) {
 				p.children(o.Root, x, xrel, name, GroupTools)
 			case sealedNames[name]:
 				if name == "commits" {
-					ws, sd := p.commits(x, o.Root, xrel, checkouts)
-					cands = append(cands, ws...)
-					seeds = append(seeds, sd...)
+					cands = append(cands, p.commits(x)...)
 				}
 				p.ops = append(p.ops, op{group: GroupSealed, display: disp, base: o.Root, rel: xrel, name: name, note: sealNote[name]})
 			case gateNames[name]:
@@ -221,11 +234,13 @@ func discover(o Options) (*plan, error) {
 			}
 		}
 	}
-	p.evidence(o, seeds)
+	p.evidence(o)
 	if err := p.worktreeOps(o, cands); err != nil {
+		p.close()
 		return nil, err
 	}
 	if err := p.ownerOps(o); err != nil {
+		p.close()
 		return nil, err
 	}
 	p.manual(o, p.removableWorktrees())
@@ -265,9 +280,13 @@ func (p *plan) launch(root string, x *fsanchor.AnchoredDir, xrel []string, disp 
 			if !ok {
 				continue
 			}
+			if h != "alarms" {
+				p.handles[h] = true
+			}
 			var rec launch.Record
 			if readJSON(hd, launch.FileName, &rec) && rec.Worktree != "" {
 				cands = append(cands, wtCand{h, rec.Worktree})
+				p.seatWT[h] = append(p.seatWT[h], rec.Worktree)
 			}
 			if cd, ok := subOf(hd, "claude-config"); ok {
 				rel := append(append([]string{}, xrel...), "launch", h, "claude-config")
@@ -294,6 +313,9 @@ func (p *plan) scheduler(root string, x *fsanchor.AnchoredDir, xrel []string, di
 	defer sd.Close()
 	rel := append(append([]string{}, xrel...), "scheduler")
 	for _, c := range sortedNames(sd) {
+		if c == "run.lock" {
+			continue // held by this run and unlinked last (schedLock.finish)
+		}
 		o := op{group: GroupSession, display: filepath.Join(disp, c), base: root, rel: rel, name: c}
 		if c == "exits.json" {
 			o.group, o.note = GroupSealed, "the exits queue (sealed)"
@@ -302,72 +324,127 @@ func (p *plan) scheduler(root string, x *fsanchor.AnchoredDir, xrel []string, di
 	}
 }
 
-// evidenceSeed is what one commits ledger contributes to the evidence
-// enumeration: the checkouts that can reach its repository.
-type evidenceSeed struct {
-	handle    string
-	checkouts []string
-	err       error
-}
-
-// commits reads the commit ledgers for the worktrees they name. The refs
-// themselves are never taken from a ledger: git is asked (evidence).
-func (p *plan) commits(x *fsanchor.AnchoredDir, root string, xrel, checkouts []string) ([]wtCand, []evidenceSeed) {
+// commits reads the commit ledgers for the worktrees they name (candidates
+// only: a worktree is removed on the word of the task store and git, never of
+// a ledger). The seat set and the evidence refs do not come from here.
+func (p *plan) commits(x *fsanchor.AnchoredDir) []wtCand {
 	cd, ok := subOf(x, "commits")
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	defer cd.Close()
 	var cands []wtCand
-	var seeds []evidenceSeed
 	for _, n := range sortedNames(cd) {
 		var l seatcommit.Ledger
-		if !readJSON(cd, n, &l) {
-			seeds = append(seeds, evidenceSeed{handle: n, err: fmt.Errorf("the commits ledger %s cannot be read, so its evidence refs cannot be located", n)})
-			continue
-		}
-		p.handles[l.Handle] = true
-		if l.Worktree != "" {
+		if readJSON(cd, n, &l) && l.Worktree != "" {
 			cands = append(cands, wtCand{l.Handle, l.Worktree})
 		}
-		seeds = append(seeds, evidenceSeed{handle: l.Handle, checkouts: append([]string{l.Worktree}, checkouts...)})
 	}
-	return cands, seeds
+	return cands
 }
 
-// evidence lists the evidence refs of the seats' repositories from git itself
-// (for-each-ref), one op per repository. A symbolic ref is shown as refused.
-func (p *plan) evidence(o Options, seeds []evidenceSeed) {
-	seen := map[string]bool{}
-	for _, s := range seeds {
-		if s.err != nil {
-			p.ops = append(p.ops, op{group: GroupEvidence, display: s.err.Error(), ev: &evidenceOp{err: s.err}})
-			continue
+// loadTasks reads the task store (no lock, no write) and adds the seats it
+// names to the seat set.
+func (p *plan) loadTasks(dir string) {
+	p.taskList, p.taskErr = task.Snapshot(dir)
+	for _, t := range p.taskList {
+		if t.Lease != nil {
+			p.handles[t.Lease.Holder] = true
 		}
-		common, refs, err := seatcommit.ListEvidenceRefs(o.git(), s.checkouts)
+		if t.Report != nil {
+			p.handles[t.Report.By] = true
+		}
+		for _, a := range t.Attempts {
+			p.handles[a.Holder] = true
+		}
+	}
+	delete(p.handles, "")
+}
+
+// projectsOf are the project paths the task store records for a seat: the
+// only projects whose worktrees the seat may have had.
+func (p *plan) projectsOf(h string) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range p.taskList {
+		involved := t.Lease != nil && t.Lease.Holder == h || t.Report != nil && t.Report.By == h
+		for _, a := range t.Attempts {
+			involved = involved || a.Holder == h
+		}
+		if involved && t.ProjectPath != "" {
+			out[filepath.Clean(t.ProjectPath)] = true
+		}
+	}
+	return out
+}
+
+// evidence plans the evidence refs. The seats are this root's own (its launch
+// records and its task store), never a ledger's say-so. The refs are listed by
+// git (for-each-ref); one is deleted only when a sealed ledger entry of this
+// root (ReadLedger's seal check) records it. A ref recorded by no sealed
+// entry, or only by one that fails its seal, is left and listed
+// (evidence_ref_unrecorded); a symbolic ref among a seat's refs refuses its
+// repository.
+func (p *plan) evidence(o Options) {
+	recorded := map[string]bool{}
+	checkouts := map[string][]string{}
+	handles := make([]string, 0, len(p.handles))
+	for h := range p.handles {
+		handles = append(handles, h)
+	}
+	sort.Strings(handles)
+	for _, h := range handles {
+		cos := append([]string{}, p.seatWT[h]...)
+		l, err := seatcommit.ReadLedger(o.Root, h)
+		switch {
+		case err == nil:
+			for _, r := range l.EvidenceRefs() {
+				recorded[r] = true
+			}
+			cos = append(cos, l.Worktree)
+		case errors.Is(err, fs.ErrNotExist):
+		default:
+			p.kept = append(p.kept, "the commits ledger of seat "+h+" fails its seal or cannot be read ("+err.Error()+"): the evidence refs it names are not trusted")
+		}
+		for proj := range p.projectsOf(h) {
+			cos = append(cos, proj)
+		}
+		if p.schedRoot != "" {
+			cos = append(cos, p.schedRoot)
+		}
+		checkouts[h] = cos
+	}
+	seen := map[string]bool{}
+	for _, h := range handles {
+		common, refs, err := seatcommit.ListEvidenceRefs(o.git(), checkouts[h])
 		if err != nil {
-			p.ops = append(p.ops, op{group: GroupEvidence, display: "evidence refs of " + s.handle + ": " + err.Error(), ev: &evidenceOp{err: err}})
+			if len(checkouts[h]) > 0 && len(recorded) > 0 {
+				p.ops = append(p.ops, op{group: GroupEvidence, display: "evidence refs of " + h + ": " + err.Error(), ev: &evidenceOp{err: err}})
+			}
 			continue
 		}
 		if seen[common] {
 			continue
 		}
 		seen[common] = true
-		var keep []seatcommit.EvidenceRefInfo
+		var del []seatcommit.EvidenceRefInfo
 		var lines []string
 		for _, r := range refs {
 			if !p.ownsRef(r.Name) {
 				continue
 			}
-			keep = append(keep, r)
-			line := r.Name + " (" + common + ")"
-			if r.Symref != "" {
-				line += "   REFUSED: a symbolic ref to " + r.Symref
+			switch {
+			case r.Symref != "":
+				del = append(del, r)
+				lines = append(lines, r.Name+" ("+common+")   REFUSED: a symbolic ref to "+r.Symref)
+			case recorded[r.Name]:
+				del = append(del, r)
+				lines = append(lines, r.Name+" ("+common+")")
+			default:
+				p.kept = append(p.kept, r.Name+" ("+common+"): evidence_ref_unrecorded, no sealed ledger entry of this squad records it; left")
 			}
-			lines = append(lines, line)
 		}
-		if len(keep) > 0 {
-			p.ops = append(p.ops, op{group: GroupEvidence, display: common, lines: lines, ev: &evidenceOp{checkouts: s.checkouts, refs: keep}})
+		if len(del) > 0 {
+			p.ops = append(p.ops, op{group: GroupEvidence, display: common, lines: lines, ev: &evidenceOp{checkouts: checkouts[h], refs: del}})
 		}
 	}
 }
@@ -383,53 +460,37 @@ func (p *plan) ownsRef(name string) bool {
 	return false
 }
 
-// seatProjects are the project paths the task store records for a seat: the
-// only projects whose worktrees the seat may have had.
-func seatProjects(tasksDir string) (func(handle string) map[string]bool, error) {
-	list, err := task.Snapshot(tasksDir)
-	if err != nil {
-		return nil, err
-	}
-	return func(h string) map[string]bool {
-		out := map[string]bool{}
-		for _, t := range list {
-			involved := t.Lease != nil && t.Lease.Holder == h || t.Report != nil && t.Report.By == h
-			for _, a := range t.Attempts {
-				involved = involved || a.Holder == h
-			}
-			if involved && t.ProjectPath != "" {
-				out[filepath.Clean(t.ProjectPath)] = true
-			}
-		}
-		return out
-	}, nil
-}
-
 // worktreeOps plans the worktrees the core created. A candidate is removed
 // only when its project is a project_path the task store records for the
-// seat, the project's `git worktree list` names it, and its .git resolves
-// back into that project; anything else is listed as not removed.
+// seat, the project's `git worktree list` names it, and the opened directory's
+// .git resolves, by device and inode, to the project's own .git/worktrees
+// entry; the verified descriptor is what removal walks. Every other candidate
+// is listed with the reason it is not removed.
 func (p *plan) worktreeOps(o Options, cands []wtCand) error {
-	projectsOf, perr := seatProjects(filepath.Join(o.Root, extDir, amqDir, "tasks"))
 	seen := map[string]bool{}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].path < cands[j].path })
 	for _, c := range cands {
 		w := c.path
-		if !filepath.IsAbs(w) || filepath.Clean(w) != w || seen[w] {
+		if seen[w] {
 			continue
 		}
 		seen[w] = true
-		wt := filepath.Dir(w)
-		if filepath.Base(wt) != "worktrees" || filepath.Base(filepath.Dir(wt)) != ".claude" {
-			continue // not one the core created under .claude/worktrees
-		}
-		proj := filepath.Dir(filepath.Dir(wt))
 		skip := func(why string) { p.kept = append(p.kept, w+": not removed, "+why) }
-		if perr != nil {
-			skip("the task store cannot be read: " + perr.Error())
+		if !filepath.IsAbs(w) || filepath.Clean(w) != w {
+			skip("it is not an absolute clean path")
 			continue
 		}
-		if !projectsOf(c.handle)[proj] {
+		wt := filepath.Dir(w)
+		if filepath.Base(wt) != "worktrees" || filepath.Base(filepath.Dir(wt)) != ".claude" {
+			skip("it is not directly under <project>/.claude/worktrees")
+			continue
+		}
+		proj := filepath.Dir(filepath.Dir(wt))
+		if p.taskErr != nil {
+			skip("the task store cannot be read: " + p.taskErr.Error())
+			continue
+		}
+		if !p.projectsOf(c.handle)[proj] {
 			skip("its project is not a project_path the task store records for seat " + c.handle)
 			continue
 		}
@@ -447,18 +508,25 @@ func (p *plan) worktreeOps(o Options, cands []wtCand) error {
 			return symlinkErr(w)
 		}
 		kind, ok, kerr := kindOf(d, name)
-		d.Close()
 		switch {
 		case kerr != nil:
 			skip("it cannot be opened: " + kerr.Error())
-		case !ok || kind != fsanchor.KindDir:
+		case !ok:
+		case kind != fsanchor.KindDir:
+			skip("it exists and is not a directory")
 		default:
 			if err := seatcommit.VerifyWorktree(o.git(), proj, w); err != nil {
 				skip(err.Error())
-				continue
+				break
 			}
-			p.ops = append(p.ops, op{group: GroupWorktree, display: w, note: "uncommitted work in it is lost", base: proj, rel: rel, name: name})
+			wd, err := verifyWorktreeDir(proj, d, name, w)
+			if err != nil {
+				skip(err.Error())
+				break
+			}
+			p.ops = append(p.ops, op{group: GroupWorktree, display: w, note: "uncommitted work in it is lost", base: proj, rel: rel, name: name, wd: wd})
 		}
+		d.Close()
 	}
 	return nil
 }

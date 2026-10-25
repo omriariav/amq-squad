@@ -11,15 +11,18 @@ import (
 )
 
 // schedLock is the scheduler's own lock (scheduler/run.lock), held by a
-// writing uninstall for its whole run. A lock file or directory this run had
-// to create is removed again at the end, so a run that has nothing to do
-// leaves nothing behind.
+// writing uninstall for its whole run. run.lock is not in the removal set: the
+// run unlinks it as its last action (finish), so no scheduler or second
+// uninstall can lock a new inode while the run is still removing things. A
+// lock file or directory this run had to create is removed again when the run
+// is refused before it executes.
 type schedLock struct {
 	lock       *flock.Exclusive
 	x          *fsanchor.AnchoredDir
 	sd         *fsanchor.AnchoredDir
 	created    bool
 	dirCreated bool
+	done       bool
 }
 
 // takeSchedulerLock takes the lock. It returns nil, "" when there is no
@@ -67,18 +70,28 @@ func takeSchedulerLock(o Options) (*schedLock, string) {
 	return h, ""
 }
 
-func (h *schedLock) release() {
-	if h == nil {
+// release lets go of the lock; a lock file or directory this run created is
+// removed again. A run that never executed leaves an existing lock file alone.
+func (h *schedLock) release() { h.close(false) }
+
+// finish is the last action of a run that executed: it unlinks run.lock
+// (still holding it, so nothing created a second lock in between), then the
+// scheduler directory when nothing else is left in it, and lets go.
+func (h *schedLock) finish() { h.close(true) }
+
+func (h *schedLock) close(final bool) {
+	if h == nil || h.done {
 		return
+	}
+	h.done = true
+	if h.sd != nil && (final || h.created) {
+		h.sd.StageRemoveAll("run.lock")
 	}
 	if h.lock != nil {
 		h.lock.Close()
 	}
-	if h.sd != nil && h.created {
-		h.sd.StageRemoveAll("run.lock")
-	}
 	if h.sd != nil {
-		if h.dirCreated {
+		if final || h.dirCreated {
 			if names, err := h.sd.Names(); err == nil && len(names) == 0 {
 				h.x.StageRemoveAll("scheduler")
 			}

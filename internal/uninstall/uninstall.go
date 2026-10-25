@@ -38,6 +38,7 @@ type Options struct {
 	OwnerFiles bool // with Write: also the owner files under ~/.amq-squad
 	Purge      bool // with Write: also the sealed ledgers, evidence refs, clear records and gate store
 	Now        func() time.Time
+	StartToken func(pid int) (string, bool) // the process start-stamp probe (procinfo.StartToken when nil)
 }
 
 // Group names, in the order they print and (but for the secrets) run.
@@ -104,6 +105,7 @@ func Run(o Options) (Result, error) {
 		return res, err
 	}
 	res.fill(p, o)
+	defer func() { p.close() }()
 	var held *schedLock
 	if o.Write && !res.NothingToDo {
 		var why string
@@ -112,6 +114,7 @@ func Run(o Options) (Result, error) {
 		}
 		defer held.release()
 		// with the lock held, plan again: nothing changed since is trusted
+		p.close()
 		if p, err = discover(o); err != nil {
 			return res, err
 		}
@@ -124,7 +127,10 @@ func Run(o Options) (Result, error) {
 	if !o.Write || res.NothingToDo {
 		return res, nil
 	}
-	return res, execute(p, o, &res)
+	err = execute(p, o, &res)
+	held.finish()
+	finishEmpty(o)
+	return res, err
 }
 
 func joinList(list []string) string {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -50,7 +51,7 @@ func busy(o Options, held bool) []string {
 	ld, lerr := x.Sub("launch")
 	switch {
 	case lerr == nil:
-		live = append(live, seatsLive(xp, o.Root, ld, o.now())...)
+		live = append(live, seatsLive(xp, o.Root, ld, o.now(), o.StartToken)...)
 		ld.Close()
 	case !errors.Is(lerr, fs.ErrNotExist):
 		live = append(live, filepath.Join(xp, "launch")+" cannot be opened: "+lerr.Error())
@@ -141,10 +142,12 @@ func commitSteps(xp string, sd *fsanchor.AnchoredDir) []string {
 	return live
 }
 
-// seatsLive reads every seat's proof entry and staged record strictly (an
-// error is busy) and asks the scheduler's own LiveSeats, with its pid and
-// start-stamp match, which seats are alive.
-func seatsLive(xp, root string, ld *fsanchor.AnchoredDir, now time.Time) []string {
+// seatsLive reads every seat's staged record strictly (an error is busy) for
+// its proof window, and asks the scheduler package's strict liveness walk
+// which seats are alive: an unreadable proof entry or a failing start-stamp
+// probe on a live pid is busy, naming it. A file in the launch directory
+// that is not the decision socket is busy too.
+func seatsLive(xp, root string, ld *fsanchor.AnchoredDir, now time.Time, probe func(int) (string, bool)) []string {
 	var live []string
 	names, err := ld.Names()
 	if err != nil {
@@ -154,22 +157,21 @@ func seatsLive(xp, root string, ld *fsanchor.AnchoredDir, now time.Time) []strin
 		if h == DecisionSocketName {
 			continue
 		}
+		hp := filepath.Join(xp, "launch", h)
 		hd, err := ld.Sub(h)
 		if err != nil {
 			if errors.Is(err, syscall.ENOTDIR) {
-				continue // a file in the launch directory, not a seat
+				switch {
+				case h == "proof-rejects.log":
+				case strings.HasPrefix(h, "proof-") && strings.HasSuffix(h, ".sock"):
+					live = append(live, hp+" is a launch's proof socket: a launch is in flight")
+				default:
+					live = append(live, hp+" is not a seat directory, so it cannot be ruled out")
+				}
+			} else {
+				live = append(live, hp+" cannot be opened: "+err.Error())
 			}
-			live = append(live, filepath.Join(xp, "launch", h)+" cannot be opened: "+err.Error())
 			continue
-		}
-		hp := filepath.Join(xp, "launch", h)
-		var e launch.ProofEntry
-		if raw, err := fsanchor.ReadEntry(hd, "proof.json"); err == nil {
-			if json.Unmarshal(raw, &e) != nil {
-				live = append(live, hp+"/proof.json cannot be parsed, so the seat cannot be ruled live")
-			}
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			live = append(live, hp+"/proof.json cannot be read: "+err.Error())
 		}
 		if raw, err := fsanchor.ReadEntry(hd, launch.FileName); err == nil {
 			var rec launch.Record
@@ -183,7 +185,9 @@ func seatsLive(xp, root string, ld *fsanchor.AnchoredDir, now time.Time) []strin
 		}
 		hd.Close()
 	}
-	for _, s := range schedproc.LiveSeats(root) {
+	seats, problems := schedproc.LiveSeatsStrict(root, probe)
+	live = append(live, problems...)
+	for _, s := range seats {
 		live = append(live, fmt.Sprintf("seat %s is live", s.Handle))
 	}
 	return live

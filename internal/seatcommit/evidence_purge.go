@@ -142,3 +142,26 @@ func EvidenceSeatSegment(seat string) string {
 	seg, _, _ := strings.Cut(strings.TrimPrefix(evidenceRefName(seat, "t", 1), EvidencePrefix), "/")
 	return seg
 }
+
+// EvidenceRefs are the evidence refs a ledger records: the discarded trees',
+// the open quarantine's and the cleared quarantines' (the ledger keeps the
+// record after a retention expiry has dropped the ref, with ""). Uninstall
+// trusts them only from a ledger that passed ReadLedger's seal check.
+func (l Ledger) EvidenceRefs() []string {
+	var out []string
+	add := func(r string) {
+		if r != "" {
+			out = append(out, r)
+		}
+	}
+	for _, d := range l.Discarded {
+		add(d.Ref)
+	}
+	if l.Quarantine != nil {
+		add(l.Quarantine.Ref)
+	}
+	for _, q := range l.Cleared {
+		add(q.Ref)
+	}
+	return out
+}

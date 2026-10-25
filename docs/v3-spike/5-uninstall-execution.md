@@ -59,6 +59,22 @@ One fix commit; each item has a failing-when-reverted row (`5-uninstall-evidence
 
 Judgment calls of the round: (a) a run whose plan is empty takes no lock, so the idempotent second run touches nothing; (b) if the lock file or its directory cannot be created or opened the run is refused as busy rather than run unlocked; (c) the task store is read through `task.Snapshot` (no lock, no write); a seat with no task naming its project keeps its worktrees, listed; (d) the first-round rows are re-confirmed against the changed code, with the patterns that moved updated in the revert script.
 
+## Third round (reviewer's re-pass on 16f0a1f6)
+
+One commit; each item has a failing-when-reverted row (`5-uninstall-evidence/revert-check.txt`, all 52 reverts confirmed, none a build failure).
+
+| item | fix | row |
+| --- | --- | --- |
+| P1-a the seat set came from the ledgers | the seats are this root's launch directories and task-store holders; a ref is deleted only when a sealed ledger entry of this root (`ReadLedger`, seal-checked) records it; others are left and listed `evidence_ref_unrecorded`; a ledger that fails its seal is reported | TestAnEditedLedgerNamingAnotherSquadsSeatDeletesNothing (a genuine sealed entry of a seat unknown to this root, an unsealed edit, an unrecorded ref of a known seat), TestARefRecordedOnlyInATamperedEntryIsLeft |
+| P1-b run.lock unlinked itself | `run.lock` is outside the removal set; `schedLock.finish` unlinks it, still holding it, as the run's last action (then the empty scheduler directory, then the extension directory) | TestTheSchedulerLockIsUnlinkedLastNeverMidRun (a poller sees the lock only ever gone after the tasks directory is) |
+| P1-c the live probe failed open | `schedproc.LiveSeatsStrict` (additive in rebuild.go): an unreadable proof entry, another handle, or a live pid whose start stamp cannot be read is a problem naming it; `Options.StartToken` is the probe seam; a stray file in the launch directory is busy (known: the decision socket, `proof-rejects.log`; a `proof-*.sock` is a launch in flight) | TestALiveSeatWithAFailingProbeRefuses, TestAStrayFileWhereASeatDirectoryIsExpectedRefuses |
+| P1-d the verified directory could be replaced | `verifyWorktreeDir` opens the candidate NOFOLLOW and reads `.git` through that descriptor; the gitdir it names is compared by dev+inode with the project's `.git/worktrees/<name>`; removal empties the directory through the descriptor, checks `fstatat(parent, name)` against it before and after, and ends with a plain rmdir (`worktree_replaced` otherwise) | TestAWorktreeRenamedAsideAndReplacedIsNotRemoved, TestTheGitdirMustBeTheProjectsOwnEntryByInode |
+| P2 rejected candidates vanished | every rejected candidate (relative, outside `.claude/worktrees`, not in the task store, git does not list it, not a directory, unopenable) is listed with its reason; one already gone is not | TestEveryRejectedWorktreeCandidateIsListedWithAReason |
+
+The fixture now builds a genuinely sealed commits ledger (RecordBase, a dirtied worktree and CleanSeat, so the evidence ref and its seal are the core's own).
+
+Judgment calls: (a) the strict liveness walk lives in `internal/schedproc/rebuild.go` as an additive function beside LiveSeats; (b) the worktree candidates still come from the ledgers and staged records, but a candidate is only a name to check, never an authority; (c) a repository none of the seat's checkouts can reach, with sealed refs recorded, is a failed evidence entry (kept for the retry).
+
 ## Not done
 
 - No `--json` envelope and no `--yes`-style prompt: the dry run is the confirmation.

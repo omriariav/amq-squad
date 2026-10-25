@@ -13,7 +13,7 @@ root of `--project/--profile/--session`.
 | session state | `<root>/extensions/amq-squad`: tasks, staged launch records and proofs, alerts, releases, merge-train audit, the scheduler directory (but its exits queue), the verifier directory with its module cache (`verifiers/gomodcache`) | `--write` |
 | per-seat config dirs | `launch/<seat>/claude-config/<launch id>` | `--write` |
 | core tools dir | `tools/`: the copies of gh and claude | `--write` |
-| worktrees | the seat worktrees the commits ledgers and staged launch records name, only when the path is `<project>/.claude/worktrees/<name>`, the project is a `project_path` the task store records for that seat, `git worktree list` of the project names it and its `.git` resolves back into the project's `.git/worktrees`; anything else is listed as not removed, with the reason (uncommitted work in a removed one is lost) | `--write` |
+| worktrees | the seat worktrees the commits ledgers and staged launch records name, only when the path is `<project>/.claude/worktrees/<name>`, the project is a `project_path` the task store records for that seat, `git worktree list` of the project names it and the opened directory's `.git` names, by device and inode, the project's own `.git/worktrees` entry; every other candidate is listed as not removed, with the reason. Removal walks from the verified directory's descriptor, and checks before and after that the entry at the parent is still that directory (`worktree_replaced` otherwise, nothing removed from the replacement). Uncommitted work in a removed one is lost | `--write` |
 | owner files | `~/.amq-squad`: `registry.yaml`, `grants.yaml`, `claude-token`, `gate-binding.json` | `--write --owner-files` |
 | sealed ledgers | the commits ledger, the exits queue, the outcome log and the session seed under `routing/`, the hook ledger | `--write --purge` |
 | evidence refs | `refs/amq-squad/evidence/...` in the seat repositories | `--write --purge` |
@@ -42,7 +42,10 @@ and no object of a seat repository is touched.
   probed is busy, naming the path. The message names what is live. A writing run
   holds the scheduler's own lock (`scheduler/run.lock`) for its whole length and
   checks again once it holds it, so a scheduler cannot start and a second
-  uninstall is refused (`uninstall_busy`) meanwhile.
+  uninstall is refused (`uninstall_busy`) meanwhile; `run.lock` is not removed
+  with the rest, it is unlinked as the run's last action. A live pid whose start
+  stamp cannot be read, and a stray file where a seat directory is expected, are
+  busy as well.
 - `uninstall_refused_symlink`: a symlink (or a non-directory) stands where a
   directory is expected, in the AMQ root (nested directories to three levels
   included, such as `verifiers/gomodcache`), the worktrees, or `~/.amq-squad`.
