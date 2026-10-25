@@ -80,11 +80,32 @@ func (d *AnchoredDir) StageRemoveAll(name string) error {
 	if !CleanName(name) {
 		return errors.New("not a clean name: " + name)
 	}
+	// The entry's identity before anything is done to it: the directory
+	// opened below must be this one (a populated directory renamed into place
+	// after the failed unlink is not emptied).
+	var first unix.Stat_t
+	if err := unix.Fstatat(d.fd, name, &first, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if err == unix.ENOENT {
+			return nil
+		}
+		return err
+	}
 	if err := unix.Unlinkat(d.fd, name, 0); err == nil || err == unix.ENOENT {
 		return nil
 	}
+	if removeBeforeOpen != nil {
+		removeBeforeOpen()
+	}
 	sub, err := d.Sub(name)
 	if err != nil {
+		return err
+	}
+	var opened unix.Stat_t
+	if err := unix.Fstat(sub.fd, &opened); err != nil || opened.Dev != first.Dev || opened.Ino != first.Ino {
+		sub.Close()
+		if err == nil {
+			err = fmt.Errorf("%s/%s was replaced while it was being removed; nothing was removed from the replacement", d.path, name)
+		}
 		return err
 	}
 	_ = unix.Fchmod(sub.fd, 0o700)
@@ -96,9 +117,32 @@ func (d *AnchoredDir) StageRemoveAll(name string) error {
 			}
 		}
 	}
+	if err == nil {
+		err = d.sameChild(name, sub)
+	}
 	sub.Close()
 	if err != nil {
 		return err
 	}
 	return unix.Unlinkat(d.fd, name, unix.AT_REMOVEDIR)
+}
+
+// removeBeforeOpen is a test seam: it runs in StageRemoveAll between the
+// failed unlink and the open of the child.
+var removeBeforeOpen func()
+
+// sameChild checks, by device and inode, that the entry name below d (a link
+// not followed) is the directory sub holds.
+func (d *AnchoredDir) sameChild(name string, sub *AnchoredDir) error {
+	var a, b unix.Stat_t
+	if err := unix.Fstatat(d.fd, name, &a, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if err := unix.Fstat(sub.fd, &b); err != nil {
+		return err
+	}
+	if a.Dev != b.Dev || a.Ino != b.Ino {
+		return fmt.Errorf("%s/%s was replaced while it was being removed; nothing was removed from the replacement", d.path, name)
+	}
+	return nil
 }

@@ -75,6 +75,20 @@ The fixture now builds a genuinely sealed commits ledger (RecordBase, a dirtied 
 
 Judgment calls: (a) the strict liveness walk lives in `internal/schedproc/rebuild.go` as an additive function beside LiveSeats; (b) the worktree candidates still come from the ledgers and staged records, but a candidate is only a name to check, never an authority; (c) a repository none of the seat's checkouts can reach, with sealed refs recorded, is a failed evidence entry (kept for the retry).
 
+## Last commit (the coordinator's read of 3a789544)
+
+Two rows (`5-uninstall-evidence/revert-check.txt`, 54 reverts, all confirmed (the remover compares against the identity taken before the failed unlink)):
+
+- The shared recursive remover (`fsanchor.StageRemoveAll`) descended into a child by name without an identity check: after the failed unlink it opens the child, then compares `fstatat(parent, name)` with `fstat` of the opened child by dev+inode, before descending and again before the child's rmdir, and refuses on a mismatch (a populated directory renamed into place is not emptied). Row: TestStageRemoveAllRefusesAReplacedDirectory (internal/fsanchor, with the swap through a test seam between the open and the check).
+- Refs of a seat that is not this squad's are no longer skipped silently: each is listed as left (`evidence_ref_foreign`). Row: TestAnEditedLedgerNamingAnotherSquadsSeatDeletesNothing.
+
+Recorded limits (no code):
+
+- Evidence refs are matched by name: a ref whose tree was replaced before the enumeration is deleted as listed; the object-id guard in `update-ref --no-deref -d <ref> <oid>` covers a change after the enumeration only.
+- The final rmdir of a worktree directory is not atomic with the identity check: only an empty replacement can vanish (a populated one makes rmdir fail).
+- Worktree candidates are de-duplicated by path string; a duplicate operation is idempotent.
+- The authority of the seat set (launch records, task store, sealed ledgers) is a same-UID limit like every file under the root: a process that can write the root can forge them.
+
 ## Not done
 
 - No `--json` envelope and no `--yes`-style prompt: the dry run is the confirmation.

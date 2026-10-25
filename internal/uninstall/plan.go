@@ -430,6 +430,7 @@ func (p *plan) evidence(o Options) {
 		var lines []string
 		for _, r := range refs {
 			if !p.ownsRef(r.Name) {
+				p.kept = append(p.kept, r.Name+" ("+common+"): evidence_ref_foreign, not a ref of a seat of this squad; left")
 				continue
 			}
 			switch {

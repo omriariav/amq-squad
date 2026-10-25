@@ -62,6 +62,9 @@ func TestAnEditedLedgerNamingAnotherSquadsSeatDeletesNothing(t *testing.T) {
 	if refExists(t, f.proj, f.ref) {
 		t.Error("the recorded ref should be deleted")
 	}
+	if out := render(res); !strings.Contains(out, other+" ") || !strings.Contains(out, "evidence_ref_foreign") {
+		t.Errorf("the foreign seat's ref is not listed as left:\n%s", out)
+	}
 	if out := render(res); !strings.Contains(out, "evidence_ref_unrecorded") || !strings.Contains(out, unrecorded) {
 		t.Errorf("the unrecorded ref is not listed:\n%s", out)
 	}
