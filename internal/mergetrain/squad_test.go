@@ -12,6 +12,7 @@ import (
 // 4-5's squad identity (gatestore Record.Squad): the train sets it on the
 // gates it raises and matches only its own squad's accepted records.
 func TestGatesCarryAndMatchTheSquadIdentity(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	root := filepath.Join(f.dir, "root")
 	mine, theirs := SquadOf(root), SquadOf("/other/root")

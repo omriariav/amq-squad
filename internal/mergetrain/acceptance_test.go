@@ -19,6 +19,7 @@ import (
 // the audit log holds the batch digest; PR 4's rebase after PR 2 changes its
 // tree, changes the digest and re-runs the check.
 func TestAcceptance1FiveCleanPRsLandInOrder(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	oldHead4 := f.head("pr4")
 	res, err := f.train.Run(context.Background(), f.req)
@@ -83,9 +84,44 @@ func TestAcceptance1FiveCleanPRsLandInOrder(t *testing.T) {
 	}
 }
 
+// Subprocess row: PRs 2 and 4 land with gh reached through its real exec path
+// (the test binary as the gh process), so the command arguments of pr view,
+// the force-push query, compare, check-runs, the rules read, the REST merge
+// and the pinned updatePullRequestBranch rebase, and the parsing of what each
+// prints, run end to end. Acceptance 1 and every other train test run the same
+// fake in process.
+func TestSubprocessGHLandsARebasedPair(t *testing.T) {
+	t.Parallel()
+	f := newSubprocessFixture(t)
+	oldHead4 := f.head("pr4")
+	f.req.PRs = []Item{f.req.PRs[1], f.req.PRs[3]}
+	res, err := f.train.Run(context.Background(), f.req)
+	if err != nil {
+		t.Fatalf("run: %v (%+v)", err, res)
+	}
+	for i, want := range []int{2, 4} {
+		if p := res.PRs[i]; p.Status != "merged" || p.Number != want {
+			t.Fatalf("PR %d: %+v", want, p)
+		}
+	}
+	if log := mustGit(t, f.bare, "log", "--format=%s", "main"); log != "squash #4\nsquash #2\nbase" {
+		t.Fatalf("main log:\n%s", log)
+	}
+	if p4 := res.PRs[1]; !slices.Equal(p4.After, []int{2}) || p4.Head == oldHead4 {
+		t.Fatalf("PR 4 was not rebased after PR 2: %+v (old %s)", p4, oldHead4)
+	}
+	calls := f.calls()
+	for _, want := range []string{"pr view 2 -R owner/fixture --json", "updatePullRequestBranch", "compare/", "/check-runs", "rules/branches/main", "-X PUT", "/merge"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("gh was never called with %q:\n%s", want, calls)
+		}
+	}
+}
+
 // Acceptance 2: one refusal per rule. Each raises a gate request for the
 // exact head and rule, and merges nothing.
 func TestAcceptance2Refusals(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		rule string
@@ -125,6 +161,7 @@ func TestAcceptance2Refusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t)
 			it := tc.prep(f)
 			mainBefore := f.head("main")
@@ -159,6 +196,7 @@ func TestAcceptance2Refusals(t *testing.T) {
 // to start (and a ruleset the owner can bypass, or classic protection that
 // exempts admins, is no protection).
 func TestAcceptance5NoRulesetRefusesToStart(t *testing.T) {
+	t.Parallel()
 	for name, prep := range map[string]func(s *fakeState){
 		"no ruleset": func(s *fakeState) { s.Rules = json.RawMessage(`[]`) },
 		"ci but direct push": func(s *fakeState) {
@@ -170,6 +208,7 @@ func TestAcceptance5NoRulesetRefusesToStart(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t)
 			f.edit(prep)
 			mainBefore := f.head("main")
@@ -196,6 +235,7 @@ func TestAcceptance5NoRulesetRefusesToStart(t *testing.T) {
 
 // The dry run plans, orders and checks, and raises and merges nothing.
 func TestDryRunMergesAndRaisesNothing(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.edit(func(s *fakeState) { s.Rules = json.RawMessage(`[]`) }) // a dry run reads an unprotected repository
 	f.train.DryRun = true
@@ -223,6 +263,7 @@ func TestDryRunMergesAndRaisesNothing(t *testing.T) {
 // An owner-accepted gate for the exact head and rules lifts the refusal; a
 // gate for another head does not.
 func TestAcceptedGateLiftsExactlyThatRefusal(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.train.Grants.Merge[0].SizeCapLines = 1
 	head := f.head("pr1")
@@ -243,6 +284,7 @@ func TestAcceptedGateLiftsExactlyThatRefusal(t *testing.T) {
 
 // Manual mode keeps the per-merge stop.
 func TestManualModeStopsBeforeEachMerge(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.train.Manual = true
 	var steps []Step
@@ -261,6 +303,7 @@ func TestManualModeStopsBeforeEachMerge(t *testing.T) {
 
 // A real run from a seat process is refused before anything is read.
 func TestSeatProcessHoldsNoMergePath(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.train.InSeat = true
 	if _, err := f.train.Run(context.Background(), f.req); !errors.Is(err, ErrSeat) || f.calls() != "" {
@@ -294,6 +337,7 @@ func (f *fixture) seatPush(branch string) {
 // A seat's push after the plan changes the head: the train re-checks the new
 // head, with a new digest, and refuses it on its new file.
 func TestNewHeadAfterPlanIsRechecked(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.req.PRs = f.req.PRs[:1]
 	f.train.Forge = &hookForge{GH: f.gh, n: 3, hook: func() { f.seatPush("pr1") }} // plan reads PR twice
@@ -311,6 +355,7 @@ func TestNewHeadAfterPlanIsRechecked(t *testing.T) {
 // head read and the checks makes the check read the PR again; the diff comes
 // from the compare endpoint for the pinned pair, never the live files list.
 func TestHeadMovingDuringTheCheckIsReadAgain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.req.PRs = f.req.PRs[:1]
 	f.train.DryRun = true
@@ -330,6 +375,7 @@ func TestHeadMovingDuringTheCheckIsReadAgain(t *testing.T) {
 // P2-9: manual mode asks after the final rebase, check and digest, for the
 // head that merges; a push after the answer is refused by the pinned head.
 func TestManualConfirmationIsForTheHeadThatMerges(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.req.PRs = []Item{f.req.PRs[1], f.req.PRs[3]} // PR 4 rebases after PR 2
 	f.train.Manual = true
@@ -412,6 +458,7 @@ func TestEvaluateProtection(t *testing.T) {
 // rebase-for-CI, not refused; the real run rebases it, CI runs on the new
 // head, the check re-runs and it lands.
 func TestCIAbsentOnABehindBaseIsRebasedNotRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.req.PRs = []Item{f.req.PRs[0], f.req.PRs[2]}
 	f.edit(func(s *fakeState) { s.NoCI = []string{f.head("pr1")} })
@@ -440,7 +487,8 @@ func TestCIAbsentOnABehindBaseIsRebasedNotRefused(t *testing.T) {
 // with no accepted owner gate is an owner alert, at every run; an accepted
 // gate for it (the release flow's or a seat's gated command) covers it.
 func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
-	f := newFixture(t)
+	t.Parallel()
+	f := newSubprocessFixture(t) // subprocess row: gh through the real exec path
 	mustGit(t, f.bare, "tag", "v0", "main")
 	f.train.ReleaseGates, f.train.Root = &f.store, filepath.Join(f.dir, "root")
 	f.train.DryRun = true

@@ -1,14 +1,21 @@
 package mergetrain
 
-// A fake gh over a local bare repository. The test binary is the fake: with
-// FAKE_GH_STATE set, TestMain runs fakeGH(os.Args[1:]) instead of the tests.
-// It answers exactly the gh command lines GH runs, in the shape GH's --jq
+// A fake gh over a local bare repository. Two ways to reach the same fake:
+// in process (GH.runner calls fakeGHRun; the default for every fixture, so a
+// gh call costs a function call and the work in the bare repository) and as a
+// subprocess (the test binary is the fake: with FAKE_GH_STATE set, TestMain
+// runs fakeGH(os.Args[1:]) instead of the tests; the few rows that cover gh's
+// real command path use it, see newSubprocessFixture). It answers exactly the gh command lines GH runs, in the shape GH's --jq
 // filters produce, from real git objects: diffs, merge-tree conflicts,
 // squash merges and rebases happen in the bare repository.
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,12 +87,33 @@ func gitOut(dir string, args ...string) (string, error) {
 }
 
 func fakeGH(statePath string, args []string) int {
+	return fakeGHRun(statePath, args, os.Stdout, os.Stderr)
+}
+
+// inProcessRunner is GH.runner over the fake: the same answers as the
+// subprocess, from a function call.
+func inProcessRunner(statePath string) func(context.Context, []string) ([]byte, string, error) {
+	return func(_ context.Context, args []string) (out []byte, stderr string, err error) {
+		var o, e bytes.Buffer
+		defer func() {
+			if r := recover(); r != nil { // the subprocess would have crashed with this
+				out, stderr, err = o.Bytes(), fmt.Sprint(e.String(), "fake gh panic: ", r), errors.New("exit status 2")
+			}
+		}()
+		if code := fakeGHRun(statePath, args, &o, &e); code != 0 {
+			return o.Bytes(), e.String(), fmt.Errorf("exit status %d", code)
+		}
+		return o.Bytes(), e.String(), nil
+	}
+}
+
+func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 	s := loadFake(statePath)
 	logf, _ := os.OpenFile(filepath.Join(filepath.Dir(statePath), "calls.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	fmt.Fprintln(logf, strings.Join(args, " "))
 	logf.Close()
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(os.Stderr, format+"\n", a...)
+		fmt.Fprintf(stderr, format+"\n", a...)
 		return 1
 	}
 	rev := func(ref string) string { out, _ := gitOut(s.Bare, "rev-parse", "refs/heads/"+ref); return out }
@@ -98,7 +126,7 @@ func fakeGH(statePath string, args []string) int {
 	repoPrefix := "repos/" + s.Repo + "/"
 	switch {
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view" && slices.Contains(args, "id"):
-		fmt.Println("PR_" + args[2])
+		fmt.Fprintln(stdout, "PR_"+args[2])
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view":
 		p := pr(args[2])
 		if p == nil {
@@ -113,7 +141,7 @@ func fakeGH(statePath string, args []string) int {
 		mb, _ := gitOut(s.Bare, "merge-base", base, head)
 		out, _ := json.Marshal(map[string]any{"number": n, "state": p.State, "isDraft": p.Draft, "baseRefName": p.Base,
 			"baseRefOid": mb, "headRefOid": head, "mergeable": mergeable})
-		fmt.Println(string(out))
+		fmt.Fprintln(stdout, string(out))
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "ready":
 		pr(args[2]).Draft = false
 		s.save(statePath)
@@ -158,7 +186,7 @@ func fakeGH(statePath string, args []string) int {
 			gitOut(w, "push", "-q", "origin", p.Head)
 		}
 		s.save(statePath)
-		fmt.Println(after)
+		fmt.Fprintln(stdout, after)
 	case len(args) >= 2 && args[0] == "api" && args[1] == "graphql":
 		n := ""
 		for _, a := range args {
@@ -168,7 +196,7 @@ func fakeGH(statePath string, args []string) int {
 		}
 		for _, fp := range pr(n).ForcePushes {
 			out, _ := json.Marshal(fp)
-			fmt.Println(string(out))
+			fmt.Fprintln(stdout, string(out))
 		}
 	case len(args) >= 3 && args[0] == "api" && args[1] == "-X" && args[2] == "PUT":
 		path := strings.TrimPrefix(args[3], repoPrefix)
@@ -202,7 +230,7 @@ func fakeGH(statePath string, args []string) int {
 		}
 		p.State = "MERGED"
 		s.save(statePath)
-		fmt.Println(rev(p.Base))
+		fmt.Fprintln(stdout, rev(p.Base))
 	case len(args) >= 2 && args[0] == "api":
 		rest := slices.DeleteFunc(slices.Clone(args[1:]), func(a string) bool { return a == "--paginate" })
 		path := strings.TrimPrefix(rest[0], repoPrefix)
@@ -228,7 +256,7 @@ func fakeGH(statePath string, args []string) int {
 					fc.Status = "added"
 				}
 				out, _ := json.Marshal(fc)
-				fmt.Println(string(out))
+				fmt.Fprintln(stdout, string(out))
 			}
 		case parts[0] == "commits" && len(parts) == 3 && parts[2] == "check-runs":
 			conclusion := "success"
@@ -238,35 +266,35 @@ func fakeGH(statePath string, args []string) int {
 			if slices.Contains(s.RedCI, parts[1]) {
 				conclusion = "failure"
 			}
-			fmt.Printf(`{"id":100,"name":%q,"app_id":%d,"status":"completed","conclusion":%q}`+"\n", s.CIName, s.CIApp, conclusion)
+			fmt.Fprintf(stdout, `{"id":100,"name":%q,"app_id":%d,"status":"completed","conclusion":%q}`+"\n", s.CIName, s.CIApp, conclusion)
 			for _, r := range s.ExtraRuns[parts[1]] {
 				out, _ := json.Marshal(r)
-				fmt.Println(string(out))
+				fmt.Fprintln(stdout, string(out))
 			}
 		case parts[0] == "commits" && len(parts) == 3 && parts[2] == "status":
 		case parts[0] == "branches" && len(parts) == 2:
-			fmt.Println(rev(parts[1]))
+			fmt.Fprintln(stdout, rev(parts[1]))
 		case parts[0] == "branches" && len(parts) == 3 && parts[2] == "protection":
 			if len(s.Classic) == 0 {
 				return fail("gh: Branch not protected (HTTP 404)")
 			}
-			fmt.Println(string(s.Classic))
+			fmt.Fprintln(stdout, string(s.Classic))
 		case parts[0] == "rules":
-			fmt.Println(string(s.Rules))
+			fmt.Fprintln(stdout, string(s.Rules))
 		case parts[0] == "tags":
 			refs, _ := gitOut(s.Bare, "for-each-ref", "refs/tags", "--format=%(refname:short) %(objectname)")
 			for _, l := range strings.Split(refs, "\n") {
 				if f := strings.Fields(l); len(f) == 2 {
-					fmt.Printf(`{"name":%q,"sha":%q}`+"\n", f[0], f[1])
+					fmt.Fprintf(stdout, `{"name":%q,"sha":%q}`+"\n", f[0], f[1])
 				}
 			}
 		case parts[0] == "releases":
 			for _, r := range s.Releases {
 				out, _ := json.Marshal(r)
-				fmt.Println(string(out))
+				fmt.Fprintln(stdout, string(out))
 			}
 		case parts[0] == "rulesets":
-			fmt.Println("0")
+			fmt.Fprintln(stdout, "0")
 		default:
 			return fail("fake gh: unknown api path %s", path)
 		}

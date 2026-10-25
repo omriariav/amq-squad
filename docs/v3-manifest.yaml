@@ -2859,7 +2859,7 @@ entries:
   status: new
 - path: internal/mergetrain/gh.go
   v2_lines: 0
-  current_lines: 333
+  current_lines: 348
   fate: new
   target_lines: 333
   cluster: mergetrain

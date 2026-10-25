@@ -20,6 +20,7 @@ func (failingBinder) BindPR(string, string, int, string) error { return errors.N
 // pr_head_moved, not a re-bind; a push the harness did not make is refused at
 // merge; a failed re-bind stops the run before the merge (binding_failed).
 func TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) (*fixture, Request) {
 		f := newFixture(t)
 		f.bindTask(2, f.head("pr2"), []string{"shared.txt", "pkg/b.go"})

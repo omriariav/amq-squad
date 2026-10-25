@@ -23,3 +23,26 @@ The same reproduction exposed a second race in the same test: it moved the proof
 Fix (test only, no production change): `proofLaunch` (the shared helper of the proof tests) registers `res.proof.close` with `t.Cleanup` (close is synchronous and idempotent; cleanups run last-in first-out, so it finishes before TempDir is removed). The expired-token test sets the clock offset from the existing `judgeHook` seam, which runs after the proof message is read and before it is judged. The cleanup error is not swallowed or ignored.
 
 Revert check (`item3-revert-check.txt`): the pre-fix binary fails in 16 of 16 processes (both kinds above); the fixed binary passes 4800 of 4800 runs.
+
+## Item 2: internal/mergetrain under -race
+
+Measured, `go test -race -count=1 -timeout 45m -v ./internal/mergetrain/`, on a host with no seat, scheduler or lead process:
+- Before: 944.2 s (`item2-before-race.txt`). Slowest tests: TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush 150.6 s, TestAcceptance1FiveCleanPRsLandInOrder 101.4 s, TestGatesCarryAndMatchTheSquadIdentity 81.2 s, TestAcceptance2Refusals 76.1 s (the fixture tests ran one after another, each gh call starting the race-instrumented test binary and running real git).
+- After: 47.5 s (`item2-after-race.txt`); the longest test is the subprocess pair row at 46 s.
+
+Mechanism: the fake gh was the test binary itself, re-executed through `GH.Bin` for every gh call (`TestMain` with `FAKE_GH_STATE`). A race-instrumented binary's start costs seconds, and a five-PR train makes dozens of gh calls.
+
+Fix:
+- Production seam (the only non-test change): an unexported `GH.runner` field in `internal/mergetrain/gh.go`. When nil (always, in production) `GH.run` execs gh exactly as before; the error text is built in one place for both paths. 15 lines; `docs/v3-manifest.yaml` current_lines for gh.go 333 to 348.
+- `fakegh_test.go`: `fakeGH` is split into `fakeGHRun(statePath, args, stdout, stderr)` (the same fake, the same bare-repository git work, the same `calls.log`) and a wrapper for the subprocess. `inProcessRunner` calls it and turns a nonzero exit into the same `exit status N` error; a panic in the fake becomes exit status 2, as the crashed subprocess would have.
+- `newFixture` now wires `GH.runner`; `newSubprocessFixture` restores the exec path for the subprocess rows.
+- `t.Parallel()` on every test (and subtest) that builds a fixture (each has its own TempDir, bare repository and state file; no test sets a package variable or environment).
+
+Subprocess rows (gh's arguments and output parsing through the real exec path):
+- `TestSubprocessGHLandsARebasedPair` (new): PRs 2 and 4 land, PR 4 rebased after PR 2; asserts the merged state, the order, the rebase, and that pr view, updatePullRequestBranch, compare, check-runs, the rules read and the PUT merge were each called.
+- `TestRequiredCheckIsBoundToItsAppAndLatestResult` (end-to-end half): check-runs of two apps, the status read.
+- `TestDriftAlertsOnUngatedTagsAndReleases`: tags, releases and rulesets reads.
+
+Tests whose mechanism changed (fake gh in process instead of the re-executed binary; every assertion kept, none weakened): TestAcceptance1FiveCleanPRsLandInOrder, TestAcceptance2Refusals (all subtests), TestAcceptance5NoRulesetRefusesToStart (all subtests), TestDryRunMergesAndRaisesNothing, TestAcceptedGateLiftsExactlyThatRefusal, TestManualModeStopsBeforeEachMerge, TestSeatProcessHoldsNoMergePath, TestNewHeadAfterPlanIsRechecked, TestHeadMovingDuringTheCheckIsReadAgain, TestManualConfirmationIsForTheHeadThatMerges, TestCIAbsentOnABehindBaseIsRebasedNotRefused, TestAuditFailureStopsBeforeAnyMerge, TestDriftBindsAGateToOneReleaseAndOneTagCommit, TestRealRunReadsTheTaskBoundToThePR, TestBindingWithoutAHeadIsUnbound, TestDriftBaselineMigratesOnceAndAnInvalidOneStops, TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush, TestLocalPushTargetRefusesARealRun, TestGatesCarryAndMatchTheSquadIdentity. Unchanged mechanism (still subprocess): the drift tags/releases test and the end-to-end half of the required-check test. New: TestSubprocessGHLandsARebasedPair. Tests with no fixture (matchers, protection evaluation, custody) are untouched.
+
+Revert check (`item2-before-race.txt`): the before run is the revert (every fixture through the subprocess); it passes in 944 s, against 47.5 s with the fix. The fix changes time, not results, so the revert shows slowness only, as the brief expected.
