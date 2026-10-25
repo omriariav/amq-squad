@@ -164,7 +164,7 @@ Hygiene list: `internal/cli` TestDecisionAdapterKillsAHungGuardGroup failed once
 
 ## The last round on the re-pass of 9d33cf55
 
-One last commit on 9d33cf55, the lead's read only: three residuals of the one-line YAML rule. Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix6-revert-check.txt`. Gate on a quiet host: `5-verifier-evidence/fix6-gate.txt`. Lines refer to the 9d33cf55 export.
+One last commit on 9d33cf55, the lead's read only: three residuals of the one-line YAML rule. Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix6-revert-check.txt` (91 rules, all OK, every case of `tools/cases_verifier.py`, run on 8fde76fc). Gate on a quiet host: `5-verifier-evidence/fix6-gate.txt` (at 8fde76fc, clean tree: gate OK, 3848 PASS, 0 FAIL; race on task, grants, routing, scheduler, schedproc, seatcommit, status, ledger, registry, redact, cli with `-timeout 45m`). The branch is then rebased onto v3's tip and gated again there (`rebase-gate.txt`). Lines refer to the 9d33cf55 export.
 
 | # | finding | fix | test row |
 | --- | --- | --- | --- |
