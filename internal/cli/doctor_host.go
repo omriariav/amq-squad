@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/omriariav/amq-squad/v3/internal/buzz"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,10 +15,12 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
@@ -118,6 +123,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	out = append(out, claudeAllowRulesCheck(projectDir))
 	out = append(out, pushTargetChecks(h.Home, projectDir)...)
 	out = append(out, claudeTokenCheck(h.Home, time.Now()))
+	out = append(out, claudePinCheck(h.Home, env.LookPath)...)
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
@@ -586,4 +592,168 @@ func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detectio
 	}
 	cfg := registry.ProbeConfig{Pi: cmd, Env: piEnv, Model: model, WorkDir: work, VerifyRoot: verify}
 	return registry.Tally(ctx, cfg, h.ProbeRuns, "pi "+rt.Manifest.Version)
+}
+
+// claudePinCheck warns when the registry's claude pin is behind the claude
+// the owner's PATH resolves to (phase 5 release prep): the pin is a hard
+// link that keeps the old bytes until the owner re-pins, by the digest-pin
+// design, so after every Claude Code update the seats still run the old
+// version. The installed binary is found through PATH and its symlink chain
+// is followed and hashed read-only; it is never executed. The warning
+// carries the re-pin command: the hard link and the registry line.
+func claudePinCheck(home string, lookPath func(string) (string, error)) []doctorCheck {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	found, err := lookPath("claude")
+	if err != nil {
+		return nil // no installed claude to compare with
+	}
+	real, installed, err := resolveInstalledClaude(found, home)
+	if err != nil {
+		return []doctorCheck{hostCheck("claude pin", doctorWarn, "the installed claude %s is unresolvable, so the pin is not compared with it: %v", found, err)}
+	}
+	reg, _ := registry.Read(registry.Path(home))
+	pin, ok := reg.PinFor("claude")
+	if !ok || pin.Path == "" {
+		return nil // the unpinned case is the launch's tool_unpinned, not a stale pin
+	}
+	if pin.SHA256 == installed {
+		return []doctorCheck{hostCheck("claude pin", doctorOK, "the pinned claude matches the installed claude (sha256 %s)", installed)}
+	}
+	behind := fmt.Sprintf("the pinned claude is behind the installed claude (%s sha256 %s, installed %s sha256 %s)", pin.Path, pin.SHA256, real, installed)
+	// A hard link needs one filesystem: name the limit instead of printing a
+	// command that fails.
+	if a, aok := fileDevice(real); aok {
+		if b, bok := fileDevice(filepath.Dir(pin.Path)); bok && a != b {
+			return []doctorCheck{hostCheck("claude pin", doctorWarn, "%s; the pin must be on the same filesystem as the installed binary (%s and %s are on different devices), so pin a hard link from a directory on the installed binary's filesystem, then set the claude pin's path and sha256 in %s to it and %s", behind, real, filepath.Dir(pin.Path), registry.Path(home), installed)}
+		}
+	}
+	return []doctorCheck{hostCheck("claude pin", doctorWarn, "%s; to re-pin, run: ln -f %s %s, then set the claude pin's sha256 in %s to %s", behind, shellQuote(real), shellQuote(pin.Path), registry.Path(home), installed)}
+}
+
+// fileDevice is a file's device number; a var so a test can name two
+// filesystems on a host that has one.
+var fileDevice = statDevice
+
+// claudeMaxHops bounds the installed claude's symlink chain: the ninth link
+// found is refused, not followed.
+const claudeMaxHops = 8
+
+// claudeItem is one path component still to resolve; scope names the path
+// (the original, or one link's target) it belongs to.
+type claudeItem struct {
+	name  string
+	scope int
+}
+
+// resolveInstalledClaude resolves found to the regular file the kernel would
+// open, one component at a time, and hashes that file's descriptor. It reads
+// a path a same-UID writer controls, so nothing is trusted lexically: each
+// directory is entered through the fsanchor walk (O_NOFOLLOW|O_DIRECTORY, no
+// symlinked ancestor), each component is tested with readlinkat, and a link's
+// target is spliced in front of the components that remain, never Clean'd
+// across a link. A ".." that follows a symlinked component of its own path is
+// unresolvable (it would leave the link's target, not the link's directory).
+// A followed link and the final file must lie under the owner's HOME or
+// /opt/homebrew; more than claudeMaxHops links is unresolvable. Nothing is
+// executed.
+func resolveInstalledClaude(found, home string) (real, digest string, err error) {
+	roots := []string{"/opt/homebrew"}
+	if home != "" {
+		roots = append(roots, filepath.Clean(home))
+	}
+	within := func(p string) bool {
+		for _, r := range roots {
+			if p == r || strings.HasPrefix(p, r+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+	if !filepath.IsAbs(found) {
+		return "", "", fmt.Errorf("%s is not an absolute path", found)
+	}
+	split := func(p string, scope int) []claudeItem {
+		var out []claudeItem
+		for _, c := range strings.Split(p, "/") {
+			if c != "" && c != "." {
+				out = append(out, claudeItem{c, scope})
+			}
+		}
+		return out
+	}
+	scope, hops := 0, 0
+	tainted := map[int]bool{} // scopes whose own path already went through a link
+	queue := split(found, scope)
+	var parts []string // the physical directory reached so far, no link in it
+	for len(queue) > 0 {
+		it := queue[0]
+		queue = queue[1:]
+		if it.name == ".." {
+			if tainted[it.scope] {
+				return "", "", fmt.Errorf("a .. after a symlinked component in %s (unresolvable, not followed)", found)
+			}
+			if len(parts) == 0 {
+				return "", "", fmt.Errorf("a .. above the root in %s", found)
+			}
+			parts = parts[:len(parts)-1]
+			continue
+		}
+		here := "/" + strings.Join(append(append([]string{}, parts...), it.name), "/")
+		dir, err := fsanchor.OpenAnchored("/"+strings.Join(parts, "/"), nil, false)
+		if err != nil {
+			return "", "", err
+		}
+		target, lerr := dir.Readlink(it.name)
+		switch {
+		case lerr == nil:
+			dir.Close()
+			if !within(here) {
+				return "", "", fmt.Errorf("%s is outside the owner's HOME and /opt/homebrew (not followed)", here)
+			}
+			if hops >= claudeMaxHops {
+				return "", "", fmt.Errorf("more than %d symlink hops from %s", claudeMaxHops, found)
+			}
+			hops++
+			tainted[it.scope] = true
+			scope++
+			if strings.HasPrefix(target, "/") {
+				parts = nil
+			}
+			queue = append(split(target, scope), queue...)
+		case errors.Is(lerr, syscall.EINVAL): // not a link
+			if len(queue) > 0 { // a directory to enter
+				sub, serr := dir.Sub(it.name)
+				dir.Close()
+				if serr != nil {
+					return "", "", serr
+				}
+				sub.Close()
+				parts = append(parts, it.name)
+				continue
+			}
+			f, kind, _, _, oerr := dir.OpenEntry(it.name)
+			dir.Close()
+			if oerr != nil {
+				return "", "", oerr
+			}
+			defer f.Close()
+			if kind != fsanchor.KindRegular {
+				return "", "", fmt.Errorf("%s is not a regular file", here)
+			}
+			if !within(here) {
+				return "", "", fmt.Errorf("%s is outside the owner's HOME and /opt/homebrew (not followed)", here)
+			}
+			h := sha256.New()
+			if _, err := io.Copy(h, f); err != nil {
+				return "", "", err
+			}
+			return here, hex.EncodeToString(h.Sum(nil)), nil
+		default:
+			dir.Close()
+			return "", "", lerr
+		}
+	}
+	return "", "", fmt.Errorf("%s resolves to a directory, not a file", found)
 }

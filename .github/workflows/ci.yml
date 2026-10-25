@@ -192,3 +192,31 @@ jobs:
           set -euo pipefail
           "$AMQ_SQUAD_REAL_AMQ" version
           go test ./internal/launchintent ./internal/cli -run "$TEST_PATTERN" -count=1 -v -timeout=10m
+
+  # v3 phase 5: the Claude hook script under dash, which is /bin/sh on
+  # ubuntu. The script runs through /bin/sh in Claude Code's hook runner, so
+  # the Linux lane proves it is POSIX-clean, not bash-only.
+  claude-hooks-linux:
+    name: Claude hook script (dash, linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build amq-squad
+        run: go build -o amq-squad ./cmd/amq-squad
+
+      - name: Run the Claude hook script tests under dash
+        shell: bash
+        env:
+          HOOK_SHELL: dash
+        run: |
+          set -euo pipefail
+          command -v dash
+          python3 scripts/test_claude_hooks.py ./amq-squad Repass5

@@ -246,6 +246,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		}
 		c.Records[i].ClaudeConfig = w.Digest
 		pin := q.ClaudePins[rec.Handle]
+		c.Records[i].ClaudePin = pin.SHA256 // what seat-exec compares the registry's pin with before exec
 		kind, err := claudeseat.ProbeKind(w.Dir, rec.PermissionMode, pin.SHA256)
 		if err != nil {
 			return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
