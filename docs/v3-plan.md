@@ -634,14 +634,22 @@ a verifier.
 | review | none | advisor | never routed down; reviewer family differs from implementer family |
 
 A task routes below its tier only when its verifier is mechanical. Work
-with no verifier never starts cheap.
+with no verifier never starts cheap. The mechanical verifier runs and its
+verdict is recorded: a class with a mechanical verifier completes only on
+a verdict the harness recorded (the commit step's test run or the
+probe's predicate), never on the seat's report; a done report with no
+verdict is blocked (`verdict_missing`) and the attempt counts as failed
+for escalation. [2.7, 2b-4 re-pass ruling, 2026-10-25]
 
 ### 6.2 Chains
 
 Each tier is an ordered list of (runtime, model, effort). The scheduler
 takes the first entry that passes four checks: verified, privacy class,
 concurrency cap, cost cap. No passing entry: the task waits and the
-status names the reason. Local-only paths never go to a vendor.
+status names the reason. Pool occupancy against the concurrency cap is
+the scheduler's seat view, each seat counted once: live, pending launch,
+closing, and the lead's own seat when it shares the pool; tasks are not
+the unit. [2.7, 2b-4 re-pass ruling, 2026-10-25] Local-only paths never go to a vendor.
 
 Default chains, version 1 (from the routing research; adjust from the
 log):
