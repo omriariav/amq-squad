@@ -80,3 +80,24 @@ func TestUninstallVerbWriteIsIdempotent(t *testing.T) {
 		t.Errorf("no root: want a usage error, got %v", err)
 	}
 }
+
+// U7 through the verb: a partial failure lists what remains and exits 3.
+func TestUninstallVerbPartialFailureExitsNonZero(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	_, root := uninstallHost(t)
+	x := filepath.Join(root, "extensions", "amq-squad")
+	if err := os.Chmod(x, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(x, 0o700)
+	var err error
+	out, _, _ := captureOutput(t, func() error {
+		err = Run([]string{"uninstall", "--root", root, "--write"}, "v-test")
+		return nil
+	})
+	if ExitCode(err) != ExitPartial || !strings.Contains(out, "what remains") {
+		t.Errorf("want exit %d and a report of what remains, got %v:\n%s", ExitPartial, err, out)
+	}
+}
