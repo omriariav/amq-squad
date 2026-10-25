@@ -114,7 +114,7 @@ Judgment calls of this round: a seat whose commit step is pending (running or de
 
 ## The third round on the re-pass of 159a58d2
 
-One short commit on 159a58d2: five items of the lead's re-pass (P1-1, P1-2 and P2-3 held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix3-revert-check.txt` (every case of `tools/cases_verifier.py`). Gate on a quiet host: `5-verifier-evidence/fix3-gate.txt`. Lines refer to the 159a58d2 export.
+One short commit on 159a58d2: five items of the lead's re-pass (P1-1, P1-2 and P2-3 held). Each has a test row that fails when its fix is reverted and passes when restored: `5-verifier-evidence/fix3-revert-check.txt` (66 rules, all OK, every case of `tools/cases_verifier.py`, run on d44613c6). Gate on a quiet host: `5-verifier-evidence/fix3-gate.txt` (at d44613c6, clean tree: gate OK, 3800 PASS, 0 FAIL; race on task, grants, routing, scheduler, schedproc, seatcommit, status, ledger, registry, redact, cli with `-timeout 45m`). Two earlier gate runs of this round failed and are not the evidence: the repository scan rejected a name=value example in this log (reworded), and the linear row's 2 s bound under the race detector (4.2 s there; the row now bounds 20 s under race, 2 s without). Lines refer to the 159a58d2 export.
 
 The invariant, as restated: no lock reachable from the tick is held across a subprocess, a network call or a wait on another lock; the task-store lock stays blocking on every tick path while its holders are short.
 
