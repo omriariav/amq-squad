@@ -76,6 +76,11 @@ type request struct {
 	resource  string
 	cancelled bool
 	closing   bool // a close is in flight (closeOwed runs one at a time)
+	// ambiguous: Apply observed more than one pane for the handle, or a pane
+	// for a handle this request does not know (apply_ambiguous); no one
+	// pane is the evidence then, only the proof or a confirmed close.
+	ambiguous bool
+	proof     *proofServer
 	err       error
 }
 
@@ -121,12 +126,18 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 		l.hold(r.handle, seatIdentity{PID: res.Seats[0].PID, Start: res.Seats[0].Start})
 	}
 	l.mu.Lock()
-	r.launchID, r.err = res.LaunchID, err
+	r.launchID, r.err, r.proof = res.LaunchID, err, res.proof
+	mine := 0
 	if res.Apply != nil {
 		for _, o := range res.Apply.Observations {
-			if o.Handle == r.handle {
-				r.resource = o.Resource
+			if o.Handle != r.handle {
+				r.ambiguous = true // a pane for a handle this request does not know
+				continue
 			}
+			if mine++; mine > 1 {
+				r.ambiguous = true // two panes for one handle: neither is the evidence
+			}
+			r.resource = o.Resource
 		}
 	}
 	switch {
@@ -134,6 +145,9 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 		r.state = stateClosing
 	case up:
 		r.state = stateUp
+	case r.ambiguous:
+		// The proof or a confirmed close settles it (CancelSeatRequest).
+		r.state, r.err = stateUnresolved, fmt.Errorf("apply_ambiguous: AMQ observed %d pane(s) for %s and %d other(s); %v", mine, r.handle, len(res.Apply.Observations)-mine, launchFailure(res, err))
 	case placed(res, err):
 		r.state, r.err = stateUnresolved, launchFailure(res, err)
 	default:
@@ -231,6 +245,9 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	case stateClosing:
 		return l.closeOwed(r)
 	}
+	if r.ambiguous {
+		return l.cancelAmbiguous(r)
+	}
 	// unresolved: the proof socket closed with the launch, so a seat that
 	// starts now cannot prove and seat-exec refuses it; the pane is the
 	// evidence that it is gone (the seat's record is never read here).
@@ -242,6 +259,29 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 		return nil
 	}
 	return fmt.Errorf("seat request %s: AMQ placed the seat (%s) and its termination is not confirmed", req.ID, orNone(r.resource))
+}
+
+// cancelAmbiguous settles the cancel of an apply_ambiguous request (phase 5
+// re-pass P1-3). No pane check answers it: with two observations for the
+// handle, or one for a handle the request does not know, the pane checked
+// could be the wrong one while the live one proves. A seat that proved over
+// the launch's socket is closed by its proved identity, and only that
+// confirmed close releases the request; without a proof the request stays
+// unresolved.
+func (l *Launcher) cancelAmbiguous(r *request) error {
+	l.mu.Lock()
+	srv, handle, id := r.proof, r.handle, r.req.ID
+	l.mu.Unlock()
+	if srv != nil {
+		if up, pid, start, _, _ := srv.state(handle); up {
+			l.hold(handle, seatIdentity{PID: pid, Start: start})
+			l.mu.Lock()
+			r.state = stateClosing
+			l.mu.Unlock()
+			return l.closeOwed(r)
+		}
+	}
+	return fmt.Errorf("seat request %s: apply_ambiguous: AMQ observed more than one pane for %s, or a pane for an unknown handle; only its proof or a confirmed close settles it", id, handle)
 }
 
 // CloseSeat stops the seat's provider: SIGTERM to the pid the launcher holds

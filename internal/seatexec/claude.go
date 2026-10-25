@@ -1,6 +1,7 @@
 package seatexec
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
@@ -35,6 +36,36 @@ func dropVar(env []string, name string) []string {
 		}
 	}
 	return out
+}
+
+// CheckClaudeHooks: the seat's hooks plugin is enabled in the user scope of
+// its own config dir, so an argv that drops that scope or switches hooks off
+// would pass every config-dir check and run without the guard (phase 5
+// re-pass P1-2). Refused, as claude_hooks_missing, before the proof: a
+// --setting-sources list without user, in either form (--setting-sources X,
+// --setting-sources=X), and the flags that skip hooks, --bare and
+// --safe-mode. (Their variables, CLAUDE_CODE_SIMPLE and CLAUDE_CODE_SAFE_MODE,
+// are host-session names the scrub drops.)
+func CheckClaudeHooks(argv []string) error {
+	for i, a := range argv {
+		var sources string
+		switch {
+		case a == "--bare" || strings.HasPrefix(a, "--bare=") || a == "--safe-mode" || strings.HasPrefix(a, "--safe-mode="):
+			return refusef(ClaudeHooksMissing, "Claude argv carries %s, which skips the seat's hooks", a)
+		case a == "--setting-sources":
+			if i+1 < len(argv) {
+				sources = argv[i+1]
+			}
+		case strings.HasPrefix(a, "--setting-sources="):
+			sources = strings.TrimPrefix(a, "--setting-sources=")
+		default:
+			continue
+		}
+		if !slices.Contains(strings.Split(strings.ReplaceAll(sources, " ", ""), ","), "user") {
+			return refusef(ClaudeHooksMissing, "Claude argv carries --setting-sources %q without user; the seat's hooks plugin is enabled in its user settings", sources)
+		}
+	}
+	return nil
 }
 
 // CheckClaudePermission: the argv carries exactly the permission mode the

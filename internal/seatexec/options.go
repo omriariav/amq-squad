@@ -5,6 +5,7 @@ package seatexec
 
 import (
 	"context"
+	"errors"
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
@@ -132,10 +133,24 @@ func WritePreflight(home string, refresh bool) error {
 	return nil
 }
 
+// proofWaitDelay bounds how long the identity proof's output may stay open
+// after amq exits or its context ends (phase 5 re-pass P2-5): a descendant of
+// `amq env` that holds the pipes never holds seat-exec past it.
+const proofWaitDelay = 5 * time.Second
+
+// runAMQ runs amq in its own process group; when the context ends or the
+// output outlives the process by proofWaitDelay, the whole group is killed
+// (the caller reads that as identity_proof_timeout).
 func runAMQ(ctx context.Context, amq string, args, env []string, dir string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, amq, args...)
 	cmd.Env, cmd.Dir = env, dir
-	return cmd.CombinedOutput()
+	cmd.WaitDelay = proofWaitDelay
+	ownGroup(cmd)
+	out, err := cmd.CombinedOutput()
+	if err != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
+		killGroup(cmd)
+	}
+	return out, err
 }
 
 func writePreflight(home string) error { return WritePreflight(home, false) }

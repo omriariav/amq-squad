@@ -295,8 +295,41 @@ func (s *proofServer) serve() {
 	}
 }
 
-// judge decides one proof.
+// paneOrigin is the pane lookup of one proof: the seat's pane shell and its
+// start stamp, and the pane id.
+type paneOrigin struct {
+	shell      int
+	shellStart string
+	id         string
+	ok         bool
+}
+
+// judge decides one proof. The pane lookup (tmux, bounded by
+// paneLookupTimeout) runs before the server mutex is taken (phase 5 re-pass
+// P2-6), so a hung tmux stalls only this proof, never the others or the
+// socket's shutdown; it runs only for a proof whose token is live, so a
+// wrong-token sender cannot make the server call tmux.
 func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) launch.ProofReply {
+	var pane paneOrigin
+	if s.tokenLive(m) {
+		pane.shell, pane.shellStart, pane.ok = s.paneShell(m.Handle)
+		if pane.ok {
+			pane.id = paneIDOf(pane.shell)
+		}
+	}
+	return s.judgeLocked(m, peer, peerKnown, pane)
+}
+
+// tokenLive reports a proof whose token is this seat's and not yet used or
+// refused; judgeLocked decides again under the lock.
+func (s *proofServer) tokenLive(m launch.ProofMessage) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seat := s.seats[m.Handle]
+	return seat != nil && m.LaunchID == s.launchID && subtle.ConstantTimeCompare([]byte(m.Token), []byte(seat.token)) == 1 && !seat.consumed && seat.refused == ""
+}
+
+func (s *proofServer) judgeLocked(m launch.ProofMessage, peer int, peerKnown bool, pane paneOrigin) launch.ProofReply {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	seat := s.seats[m.Handle]
@@ -340,8 +373,8 @@ func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) lau
 	if m.Root != s.root || m.Me != m.Handle || m.Session != s.session {
 		return s.forged(m.Handle, seat, "proof_origin", "the proved identity is not this seat's")
 	}
-	shell, shellStart, ok := s.paneShell(m.Handle)
-	if !ok {
+	shell, shellStart := pane.shell, pane.shellStart
+	if !pane.ok {
 		return launch.ProofReply{Code: "proof_origin_unknown", Detail: "the seat's pane and its shell are not known yet"}
 	}
 	in, known := inChain(m.PID, m.Start, shell, shellStart)
@@ -366,7 +399,7 @@ func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) lau
 	// after launch the pane's mutable label is never consulted again (the
 	// scheduler's decision socket proves the lead against this record).
 	if err := launch.WriteProof(s.root, launch.ProofEntry{Handle: m.Handle, LaunchID: s.launchID, RequestID: m.RequestID, PID: m.PID, Start: m.Start, At: s.now().UTC(),
-		PaneShell: shell, PaneShellStart: shellStart, PaneID: paneIDOf(shell)}); err != nil {
+		PaneShell: shell, PaneShellStart: shellStart, PaneID: pane.id}); err != nil {
 		seat.consumed = false
 		seat.refused, seat.detail = "proof_ledger_failed", err.Error()
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}

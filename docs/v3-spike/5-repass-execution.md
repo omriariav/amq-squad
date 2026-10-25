@@ -113,3 +113,48 @@ The three commits were replayed onto v3 at 9fc4dc34, which carries the phase 5 t
 - `internal/mergetrain/fakegh_test.go`: the in-process `fakeGHRun` split (writers, `t.Parallel`, the three subprocess rows) stays; the paged timeline, the rate-limit page, `mergeCommit` and the lost merge response write to its `stdout` writer.
 - `docs/v3-manifest.yaml`: the gh.go counts, refreshed from the file.
 The reviewer's correction to `verifier_classes` (a superset only) and the store-wiring row are folded into the third commit.
+
+## Seat, hook, fleet, Buzz and milestone B re-passes (branch v3-5-repass-2b2)
+
+Five commits, cut from `v3` at 1bc8c680 and rebased onto 1608eaba (after the
+routing re-pass merge); lines in the findings refer to 1bc8c680. Each item has
+one test row that fails with its fix reverted in place and passes restored
+(run with -race); the revert checks and gates are under
+`docs/v3-spike/5-repass-evidence/`, every file through
+`scripts/redact-evidence`. Every gate ran on a quiet host (ps showed none of
+seat-exec, scheduler run, pi run, amq coop, amq-remote or an amq-squad
+lead/team/launch process; an orphaned v2 `_session-notify` with ppid 1 is
+not counted).
+
+### Commit 1: 2b-2 (seat-exec, the seat launch, the launcher)
+
+Revert check: `5-repass-evidence/2b2-revert-check.txt` (11 reverts, all as
+required). Gate: `5-repass-evidence/2b2-gate.txt`.
+
+| # | finding (1bc8c680 lines) | fix | test row |
+| --- | --- | --- | --- |
+| P1-1 | seatexec_unix.go:347 read `-c VALUE` and `-c=VALUE` but not Codex's attached `-cVALUE`, so `-csandbox_workspace_write.writable_roots='["/"]'` passed and overrode the injected empty roots | one scanner (`codexOptions`) reads every value option the check uses in every form Codex admits, up to `--`: spaced, joined with `=`, and attached for a short option (`-cX`, `-sX`, `-aX`); the protected config keys (sandbox_mode, sandbox_workspace_write.*, approval_policy) are refused in all of them, and an attached `-s`/`-a` is read as the sandbox or approval | TestCodexAttachedShortOptionsAreRead |
+| P1-2 | claude.go:47 accepted `--setting-sources project,local` and `--bare`, which drop the user settings that enable the hooks plugin | `CheckClaudeHooks` refuses, as claude_hooks_missing and before the proof and exec, a `--setting-sources` list without `user` (both forms, an empty list included) and the flags that skip hooks: `--bare` and `--safe-mode` (Claude Code's help: both skip hooks). Their variables, CLAUDE_CODE_SIMPLE and CLAUDE_CODE_SAFE_MODE, are CLAUDE_CODE_* host-session names the scrub already drops | TestClaudeArgvThatDropsTheHooksIsRefused |
+| P1-3 | launcher.go:126 kept the last Apply observation for the handle, so two observations (a live pane and a nonexistent one) let the cancel check the wrong pane (:237), return nil and release the reservation while the live pane proves | an observation for a handle the request does not know, or a second one for its handle, marks the request apply_ambiguous: it stays unresolved and no pane check confirms its cancel. The cancel asks the launch's proof server: a seat that proved is held by its proved pid and stamp and closed, and only that confirmed close releases the request; without a proof the cancel keeps returning apply_ambiguous | TestAmbiguousApplyObservationsKeepTheRequestUnresolved |
+| P2-4 | env.go:70 missed GIT_SSL_NO_VERIFY, GIT_SSL_CAINFO, GIT_SSL_CAPATH | added to NeverNeeded: scrubbed whatever the runtime declares, env_needs or credential_needs naming one is env_needs_invalid | TestGitTLSTrustVariablesNeverReachASeat |
+| P2-5 | options.go:138 ran the identity proof with CombinedOutput and no WaitDelay, so a descendant of `amq env` holding the pipes hung seat-exec past the 20 s context | amq runs in its own process group; WaitDelay 5 s; a context end or a wait-delay expiry kills the whole group; either is identity_proof_timeout, a refusal (the detail names no output) | TestIdentityProofDescendantHoldingThePipesTimesOut |
+| P2-6 | proof_peer_unix.go:34 ran `tmux list-panes` with no deadline while the proof server's mutex was held | the lookup (and the pane id lookup) has a 2 s context, as panechain's lookup for the decision socket, and a 500 ms WaitDelay; a timeout is "not known", so proof_origin_unknown. `judge` runs the lookup before it takes the mutex, and only for a proof whose token is live (a wrong-token sender never makes the server call tmux); the decision then runs under the lock with every check as before | TestPaneLookupIsBoundedAndOutsideTheMutex |
+
+Judgment calls, stated:
+- P1-3: "until the proof or a confirmed close settles it" is read literally.
+  An ambiguous request with no accepted proof stays unresolved after the
+  proof window ends (the scheduler shows it as a closing row from the first
+  failed cancel); it is not released at the window's end, although no
+  seat-exec can exec without a proof then. A late proof is acted on at the
+  next cancel (the scheduler cancels a request that never came up); the
+  launcher does not watch for it between cancels.
+- P1-2: `--safe-mode` is refused beside `--bare`: Claude Code's help says it
+  disables hooks too. The Claude scan, like the existing permission scan,
+  reads the whole argv (it does not stop at `--`), the fail-closed side.
+- P1-1: the attached form is parsed for the three value options the check
+  reads (`-c`, `-s`, `-a`); clustered boolean short flags are not modelled
+  (Codex has none that bear on the sandbox).
+
+The fake tmux and amq in these rows are local scripts under the test's
+temporary directory, the proofs come from in-process stubs or a prover child
+of the test binary; no row reaches the network.

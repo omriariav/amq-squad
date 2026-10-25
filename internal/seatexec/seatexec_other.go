@@ -4,6 +4,7 @@ package seatexec
 
 import (
 	"errors"
+	"os/exec"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
@@ -21,5 +22,13 @@ func execProvider(path string, argv, env []string) error {
 func sendProofDefault(uid int) func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {
 	return func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {
 		return launch.ProofReply{}, errors.New("seat-exec is supported on unix hosts only")
+	}
+}
+
+func ownGroup(cmd *exec.Cmd) {}
+
+func killGroup(cmd *exec.Cmd) {
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
 	}
 }

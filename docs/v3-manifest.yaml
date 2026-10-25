@@ -3729,27 +3729,27 @@ entries:
   status: new
 - path: internal/seatexec/claude.go
   v2_lines: 0
-  current_lines: 63
+  current_lines: 94
   fate: new
-  target_lines: 63
+  target_lines: 94
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: Claude seat preflight: the user-scope hook plugin and the recorded permission mode as one unit (claude_hooks_missing, R36)"
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
-  current_lines: 194
+  current_lines: 196
   fate: new
-  target_lines: 194
+  target_lines: 196
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 213
+  current_lines: 231
   fate: new
-  target_lines: 213
+  target_lines: 231
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3765,18 +3765,18 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_other.go
   v2_lines: 0
-  current_lines: 25
+  current_lines: 34
   fate: new
-  target_lines: 25
+  target_lines: 34
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 562
+  current_lines: 618
   fate: new
-  target_lines: 562
+  target_lines: 618
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3792,9 +3792,9 @@ entries:
   status: new
 - path: internal/seatlaunch/launcher.go
   v2_lines: 0
-  current_lines: 449
+  current_lines: 489
   fate: new
-  target_lines: 449
+  target_lines: 489
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
@@ -3828,18 +3828,18 @@ entries:
   status: new
 - path: internal/seatlaunch/proof_peer_unix.go
   v2_lines: 0
-  current_lines: 78
+  current_lines: 93
   fate: new
-  target_lines: 78
+  target_lines: 93
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
   status: new
 - path: internal/seatlaunch/proof_unix.go
   v2_lines: 0
-  current_lines: 575
+  current_lines: 608
   fate: new
-  target_lines: 575
+  target_lines: 608
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
