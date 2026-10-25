@@ -1,0 +1,24 @@
+== row 1: the digest comparison removed
+--- FAIL: TestSeatRefusedWhenPinChangedSinceProbe (0.06s)
+    repass5_fix2_test.go:63: a pin re-pinned after the probe: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatRefusedWhenPinChange
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.314s
+FAIL
+== restored
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	0.305s
+== row 2: the digest comparison made always-equal
+--- FAIL: TestDoctorWarnsWhenThePinnedClaudeIsBehindTheInstalledClaude (0.02s)
+    relprep_claudepin_test.go:54: the stale pin row: [{Name:claude pin Status:ok Detail:the pinned claude matches the installed claude (sha256 7860945c79796a9d4
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.447s
+FAIL
+== restored
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.346s
+== row 5: plugin.json version reverted to 2.31.0
+--- FAIL: TestClaudePluginManifestVersionIsTheReleaseVersion (0.00s)
+    relprep_version_test.go:26: the embedded plugin.json version is "2.31.0", want "3.0.0"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.351s
+FAIL
+== restored
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.237s
