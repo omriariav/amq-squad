@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
@@ -195,5 +197,46 @@ func TestPiSeatKeepsItsDeclaredCredential(t *testing.T) {
 	}
 	if call.getenv("PI_CODING_AGENT_DIR") != agentDir {
 		t.Errorf("PI_CODING_AGENT_DIR is not the record's agent dir")
+	}
+}
+
+// Re-pass item 1: a FIFO named pi in the shim's place (no writer) is
+// refused at once, not waited on: the open does not block and the fstat
+// refuses a non-regular file. Re-pass item 2: the full mode must be 0700, so
+// an owned, byte-correct shim with the setuid bit fails the check and is
+// repaired to exactly 0700.
+func TestShimRefusesAFIFOAndRepairsSpecialBits(t *testing.T) {
+	home := t.TempDir()
+	p, err := piruntime.EnsureShim(home, "/opt/a/amq-squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(p, 0o700|os.ModeSetuid)
+	if fi, _ := os.Stat(p); fi.Mode()&os.ModeSetuid == 0 {
+		t.Skip("this filesystem does not keep the setuid bit")
+	}
+	if err := piruntime.CheckShim(p, "/opt/a/amq-squad"); err == nil {
+		t.Fatal("a setuid shim passed the check")
+	}
+	if _, err := piruntime.EnsureShim(home, "/opt/a/amq-squad"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode() != 0o700 {
+		t.Fatalf("EnsureShim left mode %s, want exactly 0700", fi.Mode())
+	}
+
+	os.Remove(p)
+	if err := syscall.Mkfifo(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- piruntime.CheckShim(p, "/opt/a/amq-squad") }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a FIFO passed the shim check")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the shim check blocked on a FIFO with no writer")
 	}
 }

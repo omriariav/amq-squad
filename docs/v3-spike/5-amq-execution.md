@@ -114,6 +114,13 @@ All pass locally against the v0.116.2 build, run as ci.yml runs them. A second r
 
 The live pi-seat row ran again on the round's binary (`fix-live-cache-off.log`, pass).
 
+## Narrow re-pass (two one-line fixes)
+
+- The shim's open adds O_NONBLOCK. A FIFO named pi with no writer used to block both the launch and seat-exec in `open`; now it returns at once, and the fstat refuses the non-regular file (`pi_not_embedded` in seat-exec). Rows: `TestShimRefusesAFIFOAndRepairsSpecialBits` (CheckShim returns within 3 s) and the FIFO case in `TestSeatExecPiNeedsTheEmbeddedShim`.
+- The mode check compares the full `FileMode` with 0700, where `Perm()` had ignored the setuid, setgid and sticky bits. An owned, byte-correct shim with setuid now fails the check, and `EnsureShim` repairs it to exactly 0700. Row: `TestShimRefusesAFIFOAndRepairsSpecialBits`.
+
+`revert-check-a.txt`, section "Re-pass": 3 rows, all OK.
+
 ## Deferred
 
 ### The scheduler stand-in deletion (ruling 4, a separate brief on top of A's merge)

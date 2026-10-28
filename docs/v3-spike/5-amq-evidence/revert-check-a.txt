@@ -25,3 +25,8 @@ OK small (a) the shim is the record's, not HOME's: TestSeatExecPiNeedsTheEmbedde
 OK small (c) the floor rows carry amq_below_floor: TestDoctorInstalledAMQFloor reverted=FAIL restored=PASS
 OK R3 one floor for one binary (the installed floor cannot drift from doctorMinAMQVersion): TestGeneralOperationFloorUnchanged reverted=FAIL restored=PASS
 OK small (b) the shim is checked and read through one no-follow descriptor: TestSeatExecPiNeedsTheEmbeddedShim reverted=FAIL restored=PASS
+
+# Re-pass (FIFO at the shim path, the full mode)
+OK re-pass 1 the shim open does not block on a FIFO: TestShimRefusesAFIFOAndRepairsSpecialBits reverted=FAIL restored=PASS
+OK re-pass 1 seat-exec refuses a FIFO shim pi_not_embedded: TestSeatExecPiNeedsTheEmbeddedShim reverted=FAIL restored=PASS
+OK re-pass 2 the full mode is exactly 0700 (setuid repaired): TestShimRefusesAFIFOAndRepairsSpecialBits reverted=FAIL restored=PASS

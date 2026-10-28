@@ -3269,9 +3269,9 @@ entries:
   status: new
 - path: internal/piruntime/shim_unix.go
   v2_lines: 0
-  current_lines: 20
+  current_lines: 22
   fate: new
-  target_lines: 20
+  target_lines: 22
   cluster: piruntime
   extract: ""
   reason: "5-amq-A: the shim's owner check (unix)"

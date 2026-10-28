@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -547,6 +548,16 @@ func TestSeatExecPiNeedsTheEmbeddedShim(t *testing.T) {
 			write(f.t, elsewhere, string(b), 0o700)
 			os.Remove(argv[0])
 			if err := os.Symlink(elsewhere, argv[0]); err != nil {
+				f.t.Fatal(err)
+			}
+			return argv
+		},
+		// Re-pass item 1: a FIFO named pi with no writer is refused, not
+		// waited on.
+		"a FIFO in the shim's place": func(f *fixture) []string {
+			argv := f.piArgv("x")
+			os.Remove(argv[0])
+			if err := syscall.Mkfifo(argv[0], 0o700); err != nil {
 				f.t.Fatal(err)
 			}
 			return argv

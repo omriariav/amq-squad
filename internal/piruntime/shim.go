@@ -91,7 +91,7 @@ func CheckShim(path, self string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrShimMismatch, err)
 	}
-	if !fi.Mode().IsRegular() || fi.Mode().Perm() != ShimMode {
+	if fi.Mode() != ShimMode { // the full mode: a regular file, 0700, no setuid, setgid or sticky bit
 		return fmt.Errorf("%w: %s is not a regular file of mode 0700 (%s)", ErrShimMismatch, path, fi.Mode())
 	}
 	if !ownedByMe(fi) {
