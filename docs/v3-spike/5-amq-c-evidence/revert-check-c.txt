@@ -1,0 +1,19 @@
+== revert A: Launcher.CloseUnconfirmed ignores the launcher's AsyncCloser answer (always false)
+    fix1b_test.go:55: wrong close confirmation
+--- FAIL: TestUnconfirmedCloseFollowsTheSeatsLauncher (0.00s)
+    fix2_test.go:150: a replacement took the slot before the old seat's seat_gone
+--- FAIL: TestUnconfirmedCloseSlotIsReleasedOnlyAtSeatGone (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.421s
+FAIL
+== revert B: the decision socket opens without the start-up barrier (s.Ready())
+    fix4_test.go:151: tick 2: the decision socket opened while an adopted seat's close was unconfirmed
+--- FAIL: TestDecisionSocketOpensOnlyAfterTheStartUpBarrier (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.441s
+FAIL
+== restored
+--- PASS: TestUnconfirmedCloseFollowsTheSeatsLauncher (0.00s)
+--- PASS: TestUnconfirmedCloseSlotIsReleasedOnlyAtSeatGone (0.08s)
+--- PASS: TestDecisionSocketOpensOnlyAfterTheStartUpBarrier (0.08s)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.545s

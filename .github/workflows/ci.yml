@@ -120,19 +120,10 @@ jobs:
           AMQ_NO_UPDATE_CHECK: "1"
           CLI_TESTS: "^(TestRealAMQ.*|TestRealLaunchapiInspectSessionTargetShape|TestNestedWorktreeRootDiscoveryOnAMQ074)$"
           LIBRARY_TESTS: "^(TestCompiledIntentAcceptedByReleasedAMQ|TestApplyForwardsSubjectSchemaFromPrepareResult)$"
-          # Skipped, a pre-existing break independent of the AMQ version:
-          # realAMQOrchestrationContract (orchestration_contract_default and
-          # _review) builds a team with Binary=/bin/sleep, and squad.yaml has
-          # rejected a runtime outside claude, codex, pi since 2b-5
-          # (4fc5dbf2). The other nine subtests and the rest of this lane
-          # pass at v0.116.2. Follow-up (brief C): port the two subtests to a
-          # schema-valid team; see "Deferred" in
-          # docs/v3-spike/5-amq-execution.md.
-          SKIP_PATTERN: "^TestRealAMQCompatibility$/^orchestration_contract_"
         run: |
           set -euo pipefail
           "$AMQ_SQUAD_REAL_AMQ" version
-          go test ./internal/cli -run "$CLI_TESTS" -skip "$SKIP_PATTERN" -count=1 -v -timeout=10m
+          go test ./internal/cli -run "$CLI_TESTS" -count=1 -v -timeout=10m
           go test ./internal/launchintent ./internal/adoptionseam -run "$LIBRARY_TESTS" -count=1 -v -timeout=10m
 
   # v3 phase 5: the Claude hook script under dash, which is /bin/sh on
