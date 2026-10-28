@@ -328,6 +328,7 @@ on the host).
   step (the verb's own function), with a deferral that repeats 5 ticks in a row turned into
   `commit_failed` for the lead. The usage-limit source is 2b-3's `usagelimit.Detector` for
   the owner's home.
+- Retired in 5-amq-C: `schedproc.External`, the request and event files and `amq-squad scheduler post` are gone; pi seats launch through AMQ's pi adapter (v0.116.2 floor), so the stand-in text above and below is history.
 - `amq-squad scheduler run --seats FILE --lead H [--tick] [--trust] [--max-seats N]
   [--base-branch B]` and `amq-squad scheduler post --root R --kind ... --handle H
   [--request-id] [--pool]`. `--trust` is the owner's standing answer

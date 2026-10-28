@@ -16,8 +16,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
@@ -57,7 +55,7 @@ type Options struct {
 	Decisions *DecideOptions
 	Config    scheduler.Config
 	Tick      time.Duration
-	// Wake triggers an early tick (an AMQ message, an event file).
+	// Wake triggers an early tick (an AMQ message).
 	Wake <-chan struct{}
 	// Log receives one JSON line per decision; nil writes
 	// <root>/extensions/amq-squad/scheduler/decisions.jsonl.
@@ -184,7 +182,6 @@ func Run(ctx context.Context, o Options) error {
 	timer := time.NewTicker(o.Tick)
 	defer timer.Stop()
 	for {
-		drainEvents(o.Root, s, o.Log, o.Now)
 		ds, err := s.Tick()
 		if f, ok := o.Router.(Flusher); ok {
 			if err := f.Flush(); err != nil {
@@ -235,79 +232,4 @@ func logLine(w io.Writer, at time.Time, d scheduler.Decision) {
 		scheduler.Decision
 	}{at.UTC().Format(time.RFC3339Nano), d})
 	fmt.Fprintln(w, string(b))
-}
-
-// Event is the file form of a scheduler event posted by an external runner
-// (`amq-squad scheduler post`): the stand-in launcher path for seats AMQ
-// cannot launch (pi before AMQ v0.116).
-type Event struct {
-	Kind      string    `json:"kind"` // seat_up | seat_gone | seat_activity
-	Handle    string    `json:"handle"`
-	Pool      task.Pool `json:"pool"`
-	RequestID string    `json:"request_id,omitempty"`
-	At        time.Time `json:"at"`
-}
-
-var eventKinds = map[string]scheduler.EventKind{"seat_up": scheduler.SeatUp, "seat_gone": scheduler.SeatGone, "seat_activity": scheduler.SeatActivity}
-
-// EventsDir is where external runners drop events.
-func EventsDir(root string) string { return filepath.Join(Dir(root), "events") }
-
-// PostEvent writes one event file (a temp file renamed into place, so the
-// process never reads half of it).
-func PostEvent(root string, ev Event) error {
-	if _, ok := eventKinds[ev.Kind]; !ok || ev.Handle == "" {
-		return fmt.Errorf("scheduler event: kind %q (seat_up, seat_gone, seat_activity) and a handle are required", ev.Kind)
-	}
-	if ev.At.IsZero() {
-		ev.At = time.Now().UTC()
-	}
-	dir := EventsDir(root)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	raw, _ := json.Marshal(ev)
-	f, err := os.CreateTemp(dir, ".event-*")
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(raw)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		os.Remove(f.Name())
-		return err
-	}
-	return os.Rename(f.Name(), filepath.Join(dir, fmt.Sprintf("%d-%s.json", time.Now().UnixNano(), ev.Handle)))
-}
-
-// drainEvents posts every event file to the scheduler, oldest first, and
-// removes it.
-func drainEvents(root string, s *scheduler.Scheduler, log io.Writer, now func() time.Time) {
-	entries, err := os.ReadDir(EventsDir(root))
-	if err != nil {
-		return
-	}
-	var names []string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") && !strings.HasPrefix(e.Name(), ".") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		p := filepath.Join(EventsDir(root), n)
-		raw, err := os.ReadFile(p)
-		os.Remove(p)
-		var ev Event
-		if err == nil {
-			err = json.Unmarshal(raw, &ev)
-		}
-		if _, known := eventKinds[ev.Kind]; err != nil || !known {
-			logLine(log, now(), scheduler.Decision{Kind: "event_unreadable", Reason: n})
-			continue
-		}
-		s.Post(scheduler.Event{Kind: eventKinds[ev.Kind], At: ev.At, Handle: ev.Handle, Pool: ev.Pool, RequestID: ev.RequestID})
-	}
 }

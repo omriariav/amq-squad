@@ -46,10 +46,11 @@ func TestAdmissionComesBeforeTheBaselineAndTheLaunchRecord(t *testing.T) {
 	}
 }
 
-// R3: a close of the external stand-in does not confirm the termination.
-func TestExternalCloseIsUnconfirmed(t *testing.T) {
+// R3: a close through a launcher that does not confirm the termination (a
+// scheduler.AsyncCloser) is unconfirmed; a close through one that does is not.
+func TestUnconfirmedCloseFollowsTheSeatsLauncher(t *testing.T) {
 	q := seatlaunch.Squad{Seats: []seatlaunch.Seat{{Handle: "pi-1", Runtime: "pi"}, {Handle: "c-1", Runtime: "claude"}}}
-	l := &Launcher{Slots: &Slots{Squad: q}, ByRuntime: map[string]scheduler.SeatLauncher{"pi": External{}, "claude": &fakeLauncher{}}}
+	l := &Launcher{Slots: &Slots{Squad: q}, ByRuntime: map[string]scheduler.SeatLauncher{"pi": asyncFake{&fakeLauncher{}}, "claude": &fakeLauncher{}}}
 	if !l.CloseUnconfirmed("pi-1") || l.CloseUnconfirmed("c-1") {
 		t.Fatal("wrong close confirmation")
 	}

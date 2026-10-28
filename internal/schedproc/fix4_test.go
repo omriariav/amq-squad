@@ -151,9 +151,10 @@ func TestDecisionSocketOpensOnlyAfterTheStartUpBarrier(t *testing.T) {
 			t.Fatalf("tick %d: the decision socket opened while an adopted seat's close was unconfirmed", i+1)
 		}
 	}
-	if err := PostEvent(root, Event{Kind: "seat_gone", Handle: "c1"}); err != nil {
-		t.Fatal(err)
-	}
+	fl.mu.Lock()
+	sched := fl.s
+	fl.mu.Unlock()
+	sched.Post(scheduler.Event{Kind: scheduler.SeatGone, At: time.Now(), Handle: "c1"})
 	deadline := time.After(10 * time.Second)
 	for open := false; !open; {
 		select {

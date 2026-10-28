@@ -23,7 +23,7 @@ var commandCatalog = []struct {
 	{Name: "guard", Summary: "Hook verb: one verdict (allow, needs_gate, deny) for one tool call"},
 	{Name: "seat-exec", Summary: "Seat wrapper run by AMQ's launch API: verify, set identity and role, exec the provider"},
 	{Name: "seat", Summary: "Harness steps for one seat: the commit step on a done report (seat commit), the owner's clear (seat clear)"},
-	{Name: "scheduler", Summary: "The squad's scheduler process (scheduler run), and seat events from an external runner (scheduler post)"},
+	{Name: "scheduler", Summary: "The squad's scheduler process (scheduler run)"},
 	{Name: "launch", Summary: "Start a squad's seats through the AMQ launch API (one request, seat-exec per seat)"},
 	{Name: "verify", Summary: "Deterministic preflight checks (action, signed authorization, merge, release)"},
 	{Name: "merge-train", Summary: "Land the lead's ordered PR set under the merge grant (checks, digest, audit log)"},

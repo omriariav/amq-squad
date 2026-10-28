@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -30,15 +29,13 @@ const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 
 Usage:
   amq-squad scheduler run --seats FILE --lead HANDLE [--lead-pool r:m:e]... [--tick 2s] [--trust] [--max-seats N] [--base-branch B]
-  amq-squad scheduler post --root DIR --kind seat_up|seat_gone|seat_activity --handle H [--request-id ID] [--pool r:m:e]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
 over the squad's task store and wires its hooks: seats start through the AMQ
 launch API from the typed seat list FILE (the launch --seats format; each
 seat is a slot the scheduler starts on demand for its pool; pi seats too,
-through AMQ's pi adapter since v0.116); the external-runner stand-in
-(request files) remains for a seat AMQ cannot launch; the doorbell is an AMQ message from
+through AMQ's pi adapter since v0.116); the doorbell is an AMQ message from
 the "scheduler" mailbox, which the seat's AMQ wake delivers; the router is
 2b-4's routing table (the default table plus ~/.amq-squad/routing.yaml and
 the repository's, over the owner's registry), flushed once per tick so each
@@ -65,9 +62,6 @@ does not load refuses the start with routing_invalid.
 --trust is the owner's standing answer trust_exact_subject to AMQ's
 trust_confirmation for this squad's launches; without it a launch that needs
 it fails and is reported. --max-seats only narrows the grant.
-
-scheduler post is how an external runner reports a seat it started (seat_up
-with the request id from the request file), ended, or saw active.
 `
 
 func runScheduler(args []string) error {
@@ -80,10 +74,8 @@ func runScheduler(args []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return runSchedulerRun(ctx, args[1:], os.Stdout)
-	case "post":
-		return runSchedulerPost(args[1:])
 	default:
-		return unknownSubcommandError("scheduler", args[0], "run", "post")
+		return unknownSubcommandError("scheduler", args[0], "run")
 	}
 }
 
@@ -180,9 +172,6 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		amqLauncher = real
 	}
 	byRuntime := map[string]scheduler.SeatLauncher{"claude": amqLauncher, "codex": amqLauncher, "pi": amqLauncher}
-	if !seatlaunch.PiAdapterInLibrary && schedulerAMQLauncher == nil {
-		byRuntime["pi"] = schedproc.External{Slots: slots, Root: root}
-	}
 	sender := schedproc.Sender{AMQ: q.AMQPath, Root: root, BaseRoot: q.BaseRoot, Session: q.Session, Run: schedulerSendRun}
 	store, err := openTaskStore(root) // the completion gate reads the grant (phase 5 re-pass)
 	if err != nil {
@@ -287,32 +276,6 @@ func insecureNote(g grants.Resolved) string {
 func schedulerContext(q seatlaunch.Squad) (contextResolution, error) {
 	return resolveCanonicalContext(contextResolveOptions{ProjectFlag: q.ProjectRoot, ProfileFlag: q.Profile, SessionFlag: q.Session,
 		ProjectExplicit: true, ProfileExplicit: q.Profile != "", SessionExplicit: true})
-}
-
-func runSchedulerPost(args []string) error {
-	fs := flag.NewFlagSet("scheduler post", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	root := fs.String("root", "", "the session root (default AM_ROOT)")
-	kind := fs.String("kind", "", "seat_up, seat_gone or seat_activity")
-	handle := fs.String("handle", "", "the seat")
-	reqID := fs.String("request-id", "", "the request id from the request file (seat_up)")
-	pool := fs.String("pool", "", "runtime:model:effort (seat_up)")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	r := firstOf(strings.TrimSpace(*root), strings.TrimSpace(os.Getenv("AM_ROOT")))
-	if r == "" || !filepath.IsAbs(r) {
-		return usageErrorf("scheduler post: --root (absolute) or AM_ROOT is required")
-	}
-	ev := schedproc.Event{Kind: *kind, Handle: *handle, RequestID: *reqID}
-	if *pool != "" {
-		p, err := task.ParsePool(*pool)
-		if err != nil {
-			return usageErrorf("scheduler post --pool: %v", err)
-		}
-		ev.Pool = p
-	}
-	return schedproc.PostEvent(r, ev)
 }
 
 // schedulerDecideSeams adjusts the decision socket's options (a test seam:
