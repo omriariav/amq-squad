@@ -2004,10 +2004,10 @@ owner-session item above.
 | 2b-2 milestone B | Claude live rows: plugin load, probes a and b, the S4 fault table under dontAsk, the Claude half of the role matrix (the Bash-tool scrub candidate CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is withdrawn for Claude Code 2.1.310, where it forces permission mode default; the token's visibility to the seat's Bash children is R33's recorded limit) | not run | item 2 |
 | 3-1 | 9 owner run with the real Buzz key | pending | item 1 |
 | 3-2 | 4 real merge of the clean S6 PRs | not run | item 4 |
-| 4-1 | 10 pi launch through `amq launch` | blocked on the AMQ release | item 5 |
+| 4-1 | 10 pi launch through `amq launch` | the path is merged (5-amq-A, live 5 of 5 on a scratch-built v0.116.2); the row on the installed AMQ waits on the owner's upgrade | item 5 |
 | 4-2 | 3 the fault table against a real Claude seat | owed to milestone B's live run | item 2 |
 | 4-4 | amq-noc 1.0 command center on amq-noc main | review-complete on its branch | item 6 |
-| 4-5 | 4 owner run with the real key | prepared, not run | item 1 |
+| 4-5 | 4 owner run with the real key | prepared and re-walked for the mailbox adapter (5-amq-B); needs the installed AMQ at v0.116.2 | item 1 |
 
 [2.7, phase 2 results]
 
