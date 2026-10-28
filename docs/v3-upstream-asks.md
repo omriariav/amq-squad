@@ -33,6 +33,7 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 15 | amq-remote: a `mailbox` adapter kind for a strict relay share | not shipped (v0.107.0) | **filed as #1210** (2026-10-25). text in `docs/v3-upstream-issues/15-amq-remote-mailbox-adapter.md` (4-5 deviation 1) |
 | 16 | amq-owner-sign sets RLIMIT_CORE to 0 before reading the owner key | not shipped (v0.107.0) | **filed as #1211** (2026-10-25). text in `docs/v3-upstream-issues/16-owner-sign-no-core-dump.md` (4-5 review) |
 | 17 | Admit the two Codex workspace-write sandbox pins as provider arguments | not shipped (v0.107.0 allowlist is model_reasoning_effort and approvals_reviewer only; main has no sandbox_workspace_write) | **filed as #1212** (2026-10-25). text in `docs/v3-upstream-issues/17-codex-sandbox-pins-as-provider-arguments.md` (amendment 28) |
+| 18 | amq-remote: queue owner DMs on a mailbox target instead of rejecting them busy (or a retry hint in the busy row) | not shipped (v0.116.2: carrier.go:527 BusyReject; admission.go:25-32 refuses busy=queue) | **to file (owner)**. text in `docs/v3-upstream-issues/18-mailbox-busy-queue.md` (5-amq-B fix round, ruling 1) |
 
 ---
 

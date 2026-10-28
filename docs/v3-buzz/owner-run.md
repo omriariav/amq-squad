@@ -259,8 +259,15 @@ Expected within one attach tick: an attach `handled` line with `"kind":"gate"`,
 phone serve's result row under your answer reading `accepted g45-owner-01
 tag` (ids and the class only; neither your answer nor the question is
 echoed). Record T7 (the handled line's `at`) and T7b (the result row seen).
-Wait for the result row before the next DM: amq-remote runs one request at
-a time and answers a DM sent before it as `busy`.
+The busy window (a 3.0 limit, plan R42; upstream ask 18): amq-remote runs
+one request at a time and answers a DM sent before the previous one's
+result row as `busy`; that DM never reaches the attachment, and serve does
+not tell the attachment about it, so nothing on the Mac records it. The
+owner waits for each result row before the next DM. A gate answer lost to
+busy costs a re-answer (the gate stays open); a routed message lost to
+busy is re-sent by the owner. This text is the whole mitigation in 3.0.
+If a `busy` row appears during this run, record it and send the message
+again.
 
 5.3 Lead:
 

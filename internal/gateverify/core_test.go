@@ -298,46 +298,41 @@ func TestHistoryCheck(t *testing.T) {
 		"edit by the owner with other text": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.owner, KindEdit, "x", [][]string{{"e", q.ID}}, q.CreatedAt+1))
 		}, RejectAltered},
-		"question deleted": {func(f *fixture, q, a nostr.Event) {
+		"question deleted by the owner": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", q.ID}}, q.CreatedAt+1))
+		}, RejectAltered},
+		"an edit of the question deleted by the owner (group deletion)": {func(f *fixture, q, a nostr.Event) {
+			ed := f.signed(f.body, KindEdit, q.Content, [][]string{{"e", q.ID}}, q.CreatedAt+1)
+			f.relay.inject(ed)
+			e, _ := nostr.ParseEvent(ed)
+			f.relay.inject(f.signed(f.owner, KindGroupDeletion, "", [][]string{{"e", e.ID}}, q.CreatedAt+2))
+		}, RejectAltered},
+		"question deleted by another key (a relay ignores it)": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", q.ID}}, q.CreatedAt+1))
-		}, RejectAltered},
-		"group deletion by the body": {func(f *fixture, q, a nostr.Event) {
+		}, ""},
+		"a body deletion of something else": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindGroupDeletion, "", [][]string{{"e", strings.Repeat("9", 64)}}, 1))
-		}, RejectAltered},
-		"owner deletion since the question": {func(f *fixture, q, a nostr.Event) {
+		}, ""},
+		"an owner deletion of something else since the question": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("8", 64)}}, q.CreatedAt+2))
-		}, RejectAltered},
+		}, ""},
 		"history read fails": {func(f *fixture, q, a nostr.Event) { f.relay.failQuery = true }, RejectHistory},
 		"unchanged edit and an old owner deletion": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindEdit, q.Content, [][]string{{"e", q.ID}}, q.CreatedAt+1))
 			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("7", 64)}}, q.CreatedAt-100))
 		}, ""},
-		// 5-amq-B acceptance 10 (upstream #1284): a reaction cleanup on the
-		// gate thread is not an alteration of the answer
-		"10a reaction deleted by the attachment (body key)": {func(f *fixture, q, a nostr.Event) {
-			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}}, q.CreatedAt+1))
-		}, ""},
-		"10b reaction deleted by another key on the thread": {func(f *fixture, q, a nostr.Event) {
-			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}}, q.CreatedAt+1))
-			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", reaction}}, q.CreatedAt+1))
-		}, ""},
-		"10b reaction deleted by the owner's Desktop since the question": {func(f *fixture, q, a nostr.Event) {
-			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}}, q.CreatedAt+2))
-		}, ""},
-		"10c the answer edited": {func(f *fixture, q, a nostr.Event) {
-			f.relay.inject(f.signed(f.owner, KindEdit, a.Content, [][]string{{"e", a.ID}}, a.CreatedAt+1))
+		// 5-amq-B acceptance 10, the target-and-signer rule (fix round):
+		"10a the owner deletes the answer": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", a.ID}}, a.CreatedAt+1))
 		}, RejectAltered},
-		"10c the answer deleted by another key": {func(f *fixture, q, a nostr.Event) {
+		"10b the body deletes its own reaction": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}}, q.CreatedAt+1))
+		}, ""},
+		"10c another key posts a kind 5 naming the answer": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", a.ID}}, a.CreatedAt+1))
-		}, RejectAltered},
-		"10c the answer deleted under a reaction k tag": {func(f *fixture, q, a nostr.Event) {
-			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", a.ID}, {"k", "7"}}, a.CreatedAt+1))
-		}, RejectAltered},
-		"10c a cleanup that also names the question": {func(f *fixture, q, a nostr.Event) {
-			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}, {"e", q.ID}, {"k", "7"}}, q.CreatedAt+1))
-		}, RejectAltered},
-		"10c a body deletion with another k": {func(f *fixture, q, a nostr.Event) {
-			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}, {"k", "9"}}, q.CreatedAt+1))
+		}, ""},
+		"10 the owner edits the answer": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindEdit, a.Content, [][]string{{"e", a.ID}}, a.CreatedAt+1))
 		}, RejectAltered},
 	}
 	for name, c := range cases {

@@ -61,7 +61,7 @@ func (a AMQInbox) New(ctx context.Context) ([]Prompt, error) {
 	}
 	var rows []amqHeader
 	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, fmt.Errorf("amq list: unreadable output: %w", err)
+		return nil, fmt.Errorf("%w: amq list output does not parse: %v", ErrInboxUnreadable, err)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Created != rows[j].Created {
@@ -87,7 +87,7 @@ func (a AMQInbox) Take(ctx context.Context, id string) (Prompt, error) {
 		Header amqHeader `json:"header"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil || m.Header.ID != id {
-		return Prompt{}, fmt.Errorf("amq read %s: unreadable output", id)
+		return Prompt{}, fmt.Errorf("%w: amq read %s output does not parse", ErrInboxUnreadable, id)
 	}
 	return Prompt{ID: id, From: m.Header.From, Thread: m.Header.Thread, Labels: m.Header.Labels, Body: m.Body}, nil
 }

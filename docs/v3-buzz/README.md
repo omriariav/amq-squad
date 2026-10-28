@@ -30,12 +30,15 @@ Every message gets one reply, ids and code words only, never your text:
 | `refused <gate> not_in_gate_thread` and `re-ask: answer in the gate thread (event <id>)` | answer again as a reply in that thread |
 | `routed <lead or mailbox>` | delivered (and forwarded to the lead) |
 | `routed <mailbox> not_forwarded <code>` | delivered, not forwarded (`ambiguous_lead`, `not_a_lead`) |
+| `refused - not_fetched` | the relay did not return your message's event; nothing was done, send it again |
 
 While a verification runs you may see `verifying <gate>` (a status line).
 `/status`, `/inspect` and `/cancel <ref>` are amq-remote's own commands:
 serve answers them and they never reach the mailbox. amq-remote runs one
 request at a time, so a DM you send before the previous one has its result
-row is answered `busy`; send it again.
+row is answered `busy` and is not delivered (a 3.0 limit). Wait for each
+result row (about a second); if you see `busy`, send the message again. A
+gate answer lost this way only needs answering again: the gate stays open.
 
 ## The secret rule
 
@@ -145,7 +148,9 @@ with the agent's body key, reads your signed event by its id (and the
 question's edit and delete history), verifies it, and closes the
 connection; every other message is delivered. A verification is capped at
 10 s; one that hangs gets no reply (serve's 60 s reply timeout ends the
-request), attach prints an `attention` line, and the gate stays open for
+request), the squad's status document shows a `verify_timeout` row in its
+attention queue (needs you, with the gate id) while the gate is open, attach
+prints an `attention` line, and the gate stays open for
 you to answer again. `amq-squad remote status` (same
 flags) prints the presence line, the grant expiry and the login service
 warning; `amq-squad doctor` shows the login service state too.

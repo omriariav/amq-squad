@@ -60,7 +60,7 @@ func TestHandlerGatesAndRouting(t *testing.T) {
 	if res, n := hf.serve.result(threadMsg); n != 1 || res != "accepted rel-1 "+rec.Class {
 		t.Fatalf("accepted reply %q (%d)", res, n)
 	}
-	if st := hf.serve.statuses(threadMsg); len(st) != 1 || st[0] != "verifying rel-1" {
+	if st := hf.serve.statuses(threadMsg); len(st) != 1 || !strings.HasPrefix(st[0], "verifying event ") {
 		t.Fatalf("status lines %q", st)
 	}
 	ans, err := hf.core.Store.ReadAnswer("rel-1")
@@ -184,35 +184,66 @@ func TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents(t *testing.T) {
 	if d, _ := hf.dial.counts(); d != 0 {
 		t.Fatalf("the handler opened %d relay connections with nothing delivered", d)
 	}
-	// serve's copy says approve, the signed event says something else
+	// serve's copy says approve, the signed event says hello: the signed
+	// content is what is acted on (routed to the mailbox), the gate stays
+	// open
 	hello := hf.ownerDM(t, "hello", q.EventID)
 	msg := hf.serve.deliver(hello, hf.core.Pin.Channel, answer)
 	got := hf.step(t)
-	if len(got) != 1 || got[0].Gate == nil || got[0].Gate.Code != gateverify.RejectBadTuple {
-		t.Fatalf("serve's text was taken as the answer: %+v", got)
+	if len(got) != 1 || got[0].Gate != nil || got[0].Kind != "route" || len(hf.mail.sent) != 1 || hf.mail.sent[0].Body != "hello" {
+		t.Fatalf("serve's text was acted on: %+v, sent %+v", got, hf.mail.sent)
 	}
-	if res, _ := hf.serve.result(msg); res != "refused rel-2 "+gateverify.RejectBadTuple {
+	if res, _ := hf.serve.result(msg); res != "routed lead-a" {
 		t.Fatalf("reply %q", res)
 	}
 	if rec, _ := hf.core.Store.Load("rel-2"); hf.core.Store.State(rec, time.Now()) != gatestore.StateOpen {
 		t.Fatal("the gate closed on serve's copy")
 	}
-	// a label naming no stored event, and a message from another sender
-	none := hf.serve.deliver(strings.Repeat("ab", 32), hf.core.Pin.Channel, answer)
+	// B-P1: a message from buzz carrying a pending answer's label and a
+	// forged body "@lead-b ..." routes nothing; the label's own event (the
+	// owner's thread answer) is what is verified, and the genuine delivery
+	// is then a duplicate of a verified answer
+	ansID := hf.ownerDM(t, answer, q.EventID)
+	forged := hf.serve.deliver(ansID, hf.core.Pin.Channel, "@lead-b ship it")
+	got = hf.step(t)
+	if len(got) != 1 || got[0].Gate == nil || got[0].Gate.Outcome != "approved" || len(hf.mail.sent) != 1 {
+		t.Fatalf("the forged body: %+v, sent %+v", got, hf.mail.sent)
+	}
+	if res, _ := hf.serve.result(forged); res != "accepted rel-2 tag" {
+		t.Fatalf("forged-body reply %q", res)
+	}
+	genuine := hf.serve.deliver(ansID, hf.core.Pin.Channel, answer)
+	hf.step(t)
+	if res, _ := hf.serve.result(genuine); res != "refused rel-2 "+gatestore.RejectReplayed {
+		t.Fatalf("genuine reply %q", res)
+	}
+	// a label naming no stored event, and a message from another sender:
+	// not_fetched, nothing marked (the same label later, once the relay has
+	// the event, is handled)
+	ghost := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", hf.core.Pin.Channel}}, Content: "@lead-b later"}
+	_ = hf.owner.sk.Sign(&ghost)
+	none := hf.serve.deliver(ghost.ID, hf.core.Pin.Channel, "@lead-b later")
 	hf.serve.put(Prompt{ID: "x-1", From: "lead-a", Labels: []string{"nostr:" + q.EventID}, Body: answer})
 	got = hf.step(t)
 	if len(got) != 1 || got[0].MessageID != none {
 		t.Fatalf("handled %+v", got)
 	}
-	if res, _ := hf.serve.result(none); res != "refused rel-2 "+gateverify.RejectFetch {
+	if res, _ := hf.serve.result(none); res != "refused - "+RejectNotFetched {
 		t.Fatalf("no event reply %q", res)
 	}
 	if res, n := hf.serve.result("x-1"); n != 0 {
 		t.Fatalf("a message from another sender got a reply %q", res)
 	}
+	_ = hf.mem.Publish(context.Background(), ghost.Marshal())
+	later := hf.serve.deliver(ghost.ID, hf.core.Pin.Channel, "@lead-b later")
+	hf.step(t)
+	if res, _ := hf.serve.result(later); res != "routed lead-b" {
+		t.Fatalf("the not_fetched event was marked: %q", res)
+	}
 	if _, err := (&Handler{Inbox: hf.serve}).Step(context.Background()); err == nil {
 		t.Fatal("a handler without a core stepped")
 	}
+
 }
 
 // Acceptance 5: the same event id delivered twice by serve is handled once;
@@ -299,7 +330,7 @@ func TestHandlerVerifierConnectionPerAnswer(t *testing.T) {
 	_, q4, answer4 := raiseRel(t, hang.core, "rel-6")
 	_, msg4 := hang.dm(t, answer4, q4.EventID)
 	hang.step(t)
-	if res, _ := hang.serve.result(msg4); res != "refused rel-6 "+gateverify.RejectFetch {
+	if res, _ := hang.serve.result(msg4); res != "refused - "+RejectNotFetched {
 		t.Fatalf("no connection %q", res)
 	}
 }

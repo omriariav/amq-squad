@@ -1,3 +1,5 @@
-ok  	github.com/omriariav/amq-squad/v3/internal/buzz	5.787s
-ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	24.823s
-ok  	github.com/omriariav/amq-squad/v3/internal/cli	90.080s
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	8.867s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	26.767s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	5.115s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	93.851s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	4.915s

@@ -47,6 +47,7 @@ type ThreadInput struct {
 // (3-2: a tag or release with no accepted owner gate).
 type AlertInput struct {
 	ID, Kind, Subject string
+	GateID            string // the gate it is about, "" for none: shown only while that gate is open
 	At                time.Time
 }
 
@@ -98,9 +99,11 @@ func Build(in Input) Status {
 			UsageLimitSince: in.Scheduler.UsageLimitSince, UsageLimitUntil: in.Scheduler.UsageLimitUntil},
 	}
 	openGateBy := map[string]GateInput{}
+	openGates := map[string]bool{}
 	for _, g := range sortedGates(in.Gates) {
 		s.Gates = append(s.Gates, Gate{ID: g.ID, ActionClass: g.Class, TargetDigest: g.Digest, State: g.State, RaisedBy: g.RaisedBy})
 		if g.State == "open" {
+			openGates[g.ID] = true
 			if _, seen := openGateBy[g.RaisedBy]; !seen {
 				openGateBy[g.RaisedBy] = g
 			}
@@ -195,7 +198,14 @@ func Build(in Input) Status {
 		})
 	}
 	for _, a := range in.Alerts {
-		s.Attention = append(s.Attention, Attention{ID: "alert:" + a.ID, Kind: a.Kind, Severity: "high", Since: a.At, Subject: a.Subject, Bucket: BucketNeedsYou})
+		if a.GateID != "" {
+			// an alert about a gate (a hung verification) lives as long as
+			// the gate is open
+			if _, open := openGates[a.GateID]; !open {
+				continue
+			}
+		}
+		s.Attention = append(s.Attention, Attention{ID: "alert:" + a.ID, Kind: a.Kind, Severity: "high", Since: a.At, Subject: a.Subject, GateID: a.GateID, Bucket: BucketNeedsYou})
 	}
 	for _, st := range s.Seats {
 		if st.Role == LeadRole && s.LeadHandle == nil {

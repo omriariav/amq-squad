@@ -75,13 +75,15 @@ type Inbox interface {
 // to the DM channel.
 type Dialer func(ctx context.Context) (relay gateverify.Relay, body nostr.SecretKey, grant []string, closeFn func(), err error)
 
-// Handler takes the owner's DMs serve delivered and acts on each once: a gate
-// answer goes to the 3-1 core, which fetches and verifies the signed event
-// itself (serve's message is a notification, never the authority: R32,
-// amendment 20, ruling 20); any other message is delivered into the bound
-// mailbox and, when it names a lead, routed on through AMQ. Each message
-// gets exactly one result reply, or, when a verification hangs, none (the
-// adapter's reply timeout is then the result).
+// Handler takes the owner's DMs serve delivered and acts on each once. For
+// every message it fetches the event the label names on the verifier's own
+// connection and acts only on that owner-signed event, never on the AMQ body
+// (serve's message is a notification, never the authority: R32, amendment
+// 20, ruling 20, 5-amq-B B-P1): a gate answer goes to the 3-1 core; any
+// other message is delivered into the bound mailbox and, when it names a
+// lead, routed on through AMQ. Each message gets exactly one result reply,
+// or, when a verification hangs, none (the adapter's reply timeout is then
+// the result, and the squad's status document shows a verify_timeout row).
 type Handler struct {
 	Core *gateverify.Core // Store, Pin, Issuer, Namespace; Relay is set per verification
 	// Cores are the gate stores of the other squads (operator mode): an
@@ -91,10 +93,14 @@ type Handler struct {
 	Inbox  Inbox
 	Mail   Mailer
 	Target Target
+	// SeenPath is the durable once-only record of handled event ids
+	// (B-P7); "" keeps it in memory (tests).
+	SeenPath string
 	// VerifyTimeout overrides the 10 s cap (tests).
 	VerifyTimeout time.Duration
+	Now           func() time.Time
 
-	seen map[string]bool // event ids handled by this process
+	seen *seenSet
 }
 
 // Handled is what the handler did with one delivered message.
@@ -109,15 +115,33 @@ type Handled struct {
 	Error     string             `json:"error,omitempty"`
 }
 
+// RouteWindow is how old a phone message may be when it is routed, and
+// FutureSkew how far ahead of this clock it may be dated (serve admits a DM
+// within 2 minutes, v0.116.2 buzzio/normalize.go MutationWindow; the reply
+// may come later).
+const (
+	RouteWindow = 10 * time.Minute
+	FutureSkew  = 60 * time.Second
+)
+
+// RejectNotFetched is the reply code of a label whose event the relay did
+// not return.
+const RejectNotFetched = "not_fetched"
+
 // Step handles every unread message from the carrier, oldest first. A
 // message from another sender is not serve's delivery of a Buzz DM and is
-// left unread.
+// left unread. An unreadable inbox is an owner alert in the primary squad's
+// status document (5-amq-B fix round).
 func (h *Handler) Step(ctx context.Context) ([]Handled, error) {
 	if h.Core == nil || h.Inbox == nil || h.Dial == nil {
 		return nil, errors.New("the handler needs a core, an inbox and a dialer")
 	}
+	if h.seen == nil {
+		h.seen = &seenSet{path: h.SeenPath}
+	}
 	list, err := h.Inbox.New(ctx)
 	if err != nil {
+		h.inboxAlert(err)
 		return nil, err
 	}
 	var out []Handled
@@ -127,11 +151,19 @@ func (h *Handler) Step(ctx context.Context) ([]Handled, error) {
 		}
 		m, err := h.Inbox.Take(ctx, p.ID)
 		if err != nil {
+			h.inboxAlert(err)
 			return out, fmt.Errorf("read %s: %w (not handled; retried next step)", p.ID, err)
 		}
 		out = append(out, h.handle(ctx, m))
 	}
+	clearInboxAlert(h.Core)
 	return out, nil
+}
+
+func (h *Handler) inboxAlert(err error) {
+	if errors.Is(err, ErrInboxUnreadable) {
+		_ = raiseInboxAlert(h.Core, err, h.now())
+	}
 }
 
 func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
@@ -143,74 +175,122 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 		return hd
 	}
 	hd.EventID = id
-	content := strings.TrimSpace(m.Body)
-	if i := strings.LastIndex(content, ServePromptSuffix); i >= 0 {
-		content = strings.TrimSpace(content[:i])
-	}
-	if h.seen[id] {
+	if gate, seen, err := h.seen.get(id, h.now()); err != nil {
+		hd.Error = "once-only record: " + err.Error()
+		h.final(ctx, &hd, "refused - not_recorded")
+		return hd
+	} else if seen {
 		// serve delivered the same event again: handled once
 		hd.Kind = "duplicate"
-		h.final(ctx, &hd, "refused "+answerGateID(content)+" "+gatestore.RejectReplayed)
+		h.final(ctx, &hd, "refused "+gate+" "+gatestore.RejectReplayed)
 		return hd
 	}
-	if h.seen == nil {
-		h.seen = map[string]bool{}
-	}
-	if isGateAnswer(content) {
-		h.gate(ctx, &hd, id, content)
-	} else {
-		h.route(ctx, &hd, id, content)
-	}
-	if hd.Kind != "attention" {
-		h.seen[id] = true
-	}
-	return hd
-}
-
-// gate verifies one answer on the verifier's own connection: open, one
-// read by event id, the core's checks (the question's history is read on the
-// same connection), close. The event serve named is fetched from the relay
-// and verified; nothing serve put in the message counts.
-func (h *Handler) gate(ctx context.Context, hd *Handled, id, content string) {
-	hd.Kind = "gate"
-	gateID := answerGateID(content)
-	h.status(ctx, hd, "verifying "+gateID)
+	h.status(ctx, &hd, "verifying event "+id[:12])
 	limit := h.VerifyTimeout
 	if limit <= 0 {
 		limit = VerifyTimeout
 	}
 	vctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	hung := func(step string) {
-		hd.Kind = "attention"
-		hd.Error = fmt.Sprintf("verification of %s did not finish within %s (%s); no result sent, the adapter times the request out and the gate stays open", gateID, limit, step)
-		h.status(ctx, hd, "timeout "+gateID+" verify_timeout")
-	}
 	relay, body, grant, closeFn, err := h.Dial(vctx)
 	if err != nil {
 		if vctx.Err() != nil {
-			hung("connect")
-			return
+			h.hungBeforeFetch(ctx, &hd, m, limit, "connect")
+			return hd
 		}
 		hd.Error = "connect: " + err.Error()
-		h.final(ctx, hd, "refused "+gateID+" "+gateverify.RejectFetch)
-		return
+		h.final(ctx, &hd, "refused - "+RejectNotFetched)
+		return hd
 	}
-	defer closeFn()
+	closed := false
+	closeOnce := func() {
+		if !closed {
+			closed = true
+			closeFn()
+		}
+	}
+	defer closeOnce()
 	raw, err := gateverify.FetchEvent(vctx, relay, id)
 	if err != nil {
 		if vctx.Err() != nil {
-			hung("fetch")
-			return
+			h.hungBeforeFetch(ctx, &hd, m, limit, "fetch")
+			return hd
 		}
 		hd.Error = err.Error()
-		h.final(ctx, hd, "refused "+gateID+" "+gateverify.Code(err))
-		return
+		h.final(ctx, &hd, "refused - "+RejectNotFetched) // nothing is marked
+		return hd
 	}
 	e, _ := nostr.ParseEvent(raw)
-	if a, err := gatestore.ParseAnswer(strings.TrimSpace(e.Content)); err == nil {
-		gateID = a.GateID // the signed event's gate, not serve's copy
+	content := strings.TrimSpace(e.Content)
+	gateID := answerGateID(content) // from the signed event, never serve's copy
+	if code := h.ownerEvent(e); code != "" {
+		hd.Error = "the event is not the owner's DM: " + code
+		h.final(ctx, &hd, "refused "+gateID+" "+code) // nothing is marked
+		return hd
 	}
+	if isGateAnswer(content) {
+		h.gate(ctx, vctx, &hd, e, raw, gateID, relay, body, grant, limit)
+		return hd
+	}
+	closeOnce() // a route needs nothing more from the relay
+	now := h.now()
+	if e.CreatedAt < now.Add(-RouteWindow).Unix() || e.CreatedAt > now.Add(FutureSkew).Unix() {
+		hd.Error = fmt.Sprintf("created_at %d is outside the routing window", e.CreatedAt)
+		h.final(ctx, &hd, "refused - "+gateverify.RejectWindow)
+		return hd
+	}
+	// the once-only mark is taken before acting (at most once)
+	if err := h.seen.put(id, "-", now); err != nil {
+		hd.Error = "once-only record: " + err.Error()
+		h.final(ctx, &hd, "refused - not_recorded")
+		return hd
+	}
+	h.route(ctx, &hd, id, content)
+	return hd
+}
+
+// ownerEvent checks the fetched event is the owner's DM to the body: the id
+// recomputes, the signature is the owner's pinned key, kind 9, in the
+// pinned DM channel (the channel of exactly the owner and the body). It
+// returns gateverify's code, "" when it is.
+func (h *Handler) ownerEvent(e nostr.Event) string {
+	pin := h.Core.Pin
+	switch {
+	case !e.CheckID():
+		return gateverify.RejectBadID
+	case e.PubKey != pin.Owner:
+		return gateverify.RejectWrongPubkey
+	case e.VerifySignature() != nil:
+		return gateverify.RejectBadSignature
+	case e.Kind != KindDM:
+		return gateverify.RejectWrongKind
+	case !slices.Equal(nostr.TagValues(e, "h"), []string{pin.Channel}):
+		return gateverify.RejectWrongChannel
+	}
+	return ""
+}
+
+// hung is a verification that did not finish within its cap: a status
+// line, no result (the adapter's reply timeout ends the request), and, for a
+// gate, a verify_timeout row in that squad's status document. Nothing is
+// marked: the owner may answer or send again.
+func (h *Handler) hung(ctx context.Context, hd *Handled, core *gateverify.Core, gateID string, limit time.Duration, step string) {
+	hd.Kind = "attention"
+	hd.Error = fmt.Sprintf("verification of %s did not finish within %s (%s); no result sent, the adapter times the request out and the gate stays open", gateID, limit, step)
+	h.status(ctx, hd, "timeout "+gateID+" verify_timeout")
+	if core == nil || gateID == "-" {
+		return
+	}
+	if err := raiseVerifyTimeout(core, gateID, limit, h.now()); err != nil {
+		hd.Error = joinErr(hd.Error, "attention row: "+err.Error())
+	}
+}
+
+// gate runs the core's checks on the fetched event, with the verifier's
+// connection lent for the call (the question's history and the re-ask go on
+// it), bounded by the verification's context (gate locks included).
+func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, raw []byte, gateID string, relay gateverify.Relay, body nostr.SecretKey, grant []string, limit time.Duration) {
+	hd.Kind = "gate"
 	core, holders := h.coreFor(e)
 	if core == nil {
 		hd.Error = "the gate id is open in more than one squad: " + strings.Join(holders, ", ")
@@ -226,8 +306,13 @@ func (h *Handler) gate(ctx context.Context, hd *Handled, id, content string) {
 		gateID = r.GateID
 	}
 	if r.Outcome == "rejected" && vctx.Err() != nil {
-		hung("verify")
+		h.hung(ctx, hd, core, gateID, limit, "verify")
 		return
+	}
+	clearVerifyTimeout(core, gateID) // a verification of the gate finished
+	// the owner's verified event is handled: a redelivery is a duplicate
+	if err := h.seen.put(e.ID, gateID, h.now()); err != nil {
+		hd.Error = joinErr(hd.Error, "once-only record: "+err.Error())
 	}
 	switch r.Outcome {
 	case "approved", "denied":
@@ -260,6 +345,7 @@ func reaskLine(eventID string) string {
 	return "re-ask: answer in the gate thread (event " + eventID + ")"
 }
 
+// route delivers the owner-signed event's own content (never the AMQ body).
 func (h *Handler) route(ctx context.Context, hd *Handled, id, content string) {
 	hd.Kind = "route"
 	d, err := Deliver(ctx, h.Mail, h.Target, id, content)

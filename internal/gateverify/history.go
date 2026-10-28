@@ -9,13 +9,11 @@ import (
 
 // Buzz event kinds that change or hide a message (upstream
 // internal/remote/buzzio: KindEdit 40003, KindDeletion 5 (NIP-09),
-// KindGroupDeletion 9005 (NIP-29)), and the NIP-25 reaction kind a
-// reaction cleanup names in its NIP-09 `k` tag.
+// KindGroupDeletion 9005 (NIP-29)).
 const (
 	KindEdit          = 40003
 	KindDeletion      = 5
 	KindGroupDeletion = 9005
-	KindReaction      = 7
 )
 
 const (
@@ -32,14 +30,17 @@ const (
 //     unchanged and carry no attachment; the core never edits a question;
 //   - the owner's answer has no edit: the signed answer is what the core
 //     verifies, and an owner who edits it has changed it;
-//   - no deletion (kinds 5, 9005), by any key, may name the question, an
-//     edit of it or the answer;
-//   - no other deletion by the body may exist, and none by the owner since
-//     the question, wherever it points: the relay hides a deleted edit, and
-//     an owner who deletes the answer withdraws it. A reaction cleanup is
-//     the one exception (5-amq-B acceptance 10, after upstream #1284): a
-//     deletion whose NIP-09 `k` tags all name kind 7 and that names none of
-//     those ids hid a reaction, not text, so it is not an alteration.
+//   - no deletion (kinds 5, 9005) signed by the owner's pinned key may name
+//     the question, an edit of it or the answer: an owner who deletes the
+//     answer withdraws it (ownerDeletes). A deletion from any other key,
+//     the body's reaction cleanup included, is no alteration (5-amq-B fix
+//     round, after upstream #1284).
+//
+// Recorded limit: a deletion the relay honours hides its target, so an edit
+// of the question that was deleted again is not seen, and the owner's
+// deletion of such an edit names an id this check does not know; it is not
+// refused. Only the owner (who signs the answer) or the body key (held by
+// the core and serve alone) can make that edit and deletion.
 //
 // An edit or deletion that fails is question_altered. A read that errors,
 // or a full page of edits, is history_unknown: the core does not know the
@@ -79,54 +80,43 @@ func CheckHistory(ctx context.Context, r Relay, question, answer nostr.Event, ow
 		}
 		ids = append(ids, answer.ID)
 	}
-	for _, q := range []struct {
-		f       Filter
-		what    string
-		cleanup bool // a reaction cleanup does not count
-	}{
-		{Filter{Kinds: deletionKinds, Tags: map[string][]string{"e": ids}}, "the question, an edit of it or the answer was deleted", false},
-		{Filter{Kinds: deletionKinds, Authors: []string{question.PubKey}}, "a deletion by the body exists", true},
-		{Filter{Kinds: deletionKinds, Authors: []string{owner}, Since: question.CreatedAt}, "a deletion by the owner since the question exists", true},
-	} {
-		got, err := r.Query(ctx, q.f)
-		if err != nil {
-			return reject(RejectHistory, "read deletions: %v", err)
+	got, err := r.Query(ctx, Filter{Kinds: deletionKinds, Authors: []string{owner}, Tags: map[string][]string{"e": ids}})
+	if err != nil {
+		return reject(RejectHistory, "read deletions: %v", err)
+	}
+	for _, raw := range got {
+		d, err := nostr.ParseEvent(raw)
+		if err != nil || d.VerifySignature() != nil {
+			continue // not an event anyone signed; the relay is not the source of truth
 		}
-		for _, raw := range got {
-			d, err := nostr.ParseEvent(raw)
-			if err != nil || d.VerifySignature() != nil {
-				continue
-			}
-			if q.cleanup && reactionCleanup(d, ids) {
-				continue
-			}
-			return reject(RejectAltered, "%s", q.what)
+		if ownerDeletes(d, owner, ids) {
+			return reject(RejectAltered, "the owner deleted the question, an edit of it or the answer")
 		}
 	}
 	return nil
 }
 
-// reactionCleanup reports whether a deletion hid only reactions: it carries
-// at least one NIP-09 `k` tag, every one names kind 7, and it names none of
-// the ids whose history the core checks.
-func reactionCleanup(d nostr.Event, ids []string) bool {
-	ks := nostr.TagValues(d, "k")
-	if len(ks) == 0 {
+// ownerDeletes is the deletion rule (5-amq-B fix round, ruling on
+// acceptance 10): a kind 5 or 9005 alters the answer only when it is signed
+// by the owner's pinned key and its e tags name the answer, the question or
+// an edit of the question. A deletion from any other key is ignored, as a
+// relay ignores it (NIP-09: only the author's deletion takes effect); a
+// reaction cleanup names only the reaction's id (v0.116.2
+// internal/remote/buzzio/desktop_proof.go, lines 220 to 224, buzz-acp's 👀
+// and 💬 cleanup), so the body's, the attachment's or Buzz Desktop's
+// cleanup is never an alteration.
+func ownerDeletes(d nostr.Event, owner string, ids []string) bool {
+	if d.PubKey != owner || (d.Kind != KindDeletion && d.Kind != KindGroupDeletion) {
 		return false
-	}
-	for _, k := range ks {
-		if k != "7" {
-			return false
-		}
 	}
 	for _, e := range nostr.TagValues(d, "e") {
 		for _, id := range ids {
 			if e == id {
-				return false
+				return true
 			}
 		}
 	}
-	return true
+	return false
 }
 
 func hasTag(e nostr.Event, name string) bool {

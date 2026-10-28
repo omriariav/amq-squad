@@ -356,7 +356,13 @@ func (c *WSRelay) Query(ctx context.Context, f Filter) ([][]byte, error) {
 	if err := c.send(qctx, []any{"REQ", sub, f.wire()}); err != nil {
 		return nil, err
 	}
-	defer func() { _ = c.send(context.Background(), []any{"CLOSE", sub}) }()
+	defer func() {
+		// a stalled socket never holds the caller past the query: the CLOSE
+		// gets CloseTimeout of its own (5-amq-B fix round)
+		cctx, ccancel := context.WithTimeout(context.Background(), CloseTimeout)
+		defer ccancel()
+		_ = c.send(cctx, []any{"CLOSE", sub})
+	}()
 	var out [][]byte
 	seen, received, size := map[string]bool{}, 0, 0
 	for {
@@ -405,3 +411,6 @@ func (c *WSRelay) Query(ctx context.Context, f Filter) ([][]byte, error) {
 		}
 	}
 }
+
+// CloseTimeout bounds the CLOSE a query sends when it ends.
+const CloseTimeout = 2 * time.Second

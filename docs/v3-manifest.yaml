@@ -168,6 +168,15 @@ entries:
   extract: ""
   reason: "5-amq-B: the attach inbox through the amq CLI (list, read to cur, reply answer or status)"
   status: new
+- path: internal/buzz/attention.go
+  v2_lines: 0
+  current_lines: 90
+  fate: new
+  target_lines: 90
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B fix round: owner alerts in the status attention queue (a hung verification, an unreadable attach inbox)"
+  status: new
 - path: internal/buzz/endpoint.go
   v2_lines: 0
   current_lines: 166
@@ -179,9 +188,9 @@ entries:
   status: new
 - path: internal/buzz/inbound.go
   v2_lines: 0
-  current_lines: 388
+  current_lines: 474
   fate: new
-  target_lines: 388
+  target_lines: 474
   cluster: buzz
   extract: ""
   reason: "5-amq-B: the handler of serve's deliveries: one take, the verifier's own connection per answer, one reply per message"
@@ -222,6 +231,15 @@ entries:
   extract: ""
   reason: "4-5: phone messages into AMQ: the bound mailbox, then onward to a named lead"
   status: new
+- path: internal/buzz/seen.go
+  v2_lines: 0
+  current_lines: 125
+  fate: new
+  target_lines: 125
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B fix round: the durable once-only record of handled event ids, bounded to the window"
+  status: new
 - path: internal/buzz/service.go
   v2_lines: 0
   current_lines: 83
@@ -233,9 +251,9 @@ entries:
   status: new
 - path: internal/buzz/share.go
   v2_lines: 0
-  current_lines: 261
+  current_lines: 295
   fate: new
-  target_lines: 261
+  target_lines: 295
   cluster: buzz
   extract: ""
   reason: "4-5: the enrolled amq-remote share (body key, owner grants) read in amq-remote's layout; no owner key"
@@ -579,9 +597,9 @@ entries:
   status: new
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 761
+  current_lines: 787
   fate: new
-  target_lines: 761
+  target_lines: 787
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -1591,9 +1609,9 @@ entries:
   status: keep
 - path: internal/cli/remote.go
   v2_lines: 0
-  current_lines: 690
+  current_lines: 710
   fate: new
-  target_lines: 690
+  target_lines: 710
   cluster: verbs
   extract: ""
   reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"
@@ -2677,9 +2695,9 @@ entries:
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 744
+  current_lines: 786
   fate: new
-  target_lines: 744
+  target_lines: 786
   cluster: gatestore
   extract: ""
   reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask; 4-5: squad identity (amendment 28)"
@@ -2742,9 +2760,9 @@ entries:
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 309
+  current_lines: 317
   fate: new
-  target_lines: 309
+  target_lines: 317
   cluster: gateverify
   extract: ""
   reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path; 4-5: squad identity (amendment 28)"
@@ -2760,18 +2778,18 @@ entries:
   status: new
 - path: internal/gateverify/history.go
   v2_lines: 0
-  current_lines: 139
+  current_lines: 129
   fate: new
-  target_lines: 139
+  target_lines: 129
   cluster: gateverify
   extract: ""
   reason: "3-1: the question's edit and deletion history from the relay (upstream CheckHistory rules)"
   status: new
 - path: internal/gateverify/relay.go
   v2_lines: 0
-  current_lines: 407
+  current_lines: 416
   fate: new
-  target_lines: 407
+  target_lines: 416
   cluster: gateverify
   extract: ""
   reason: "3-1: relay interface and the websocket client with NIP-42 body sign-in (ported from S1)"
@@ -4189,9 +4207,9 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 438
+  current_lines: 448
   fate: new
-  target_lines: 438
+  target_lines: 448
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"

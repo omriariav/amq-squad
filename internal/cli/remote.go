@@ -540,6 +540,11 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 		return fmt.Errorf("remote attach: %w", err)
 	}
 	shareRoot, shareSession := buzz.ShareFor(b)
+	// the one path first (B-P6): a share not bound to the mailbox adapter
+	// starts nothing, not even the endpoint
+	if _, err := buzz.CheckMailboxShare(shareRoot, shareSession, b.Channel, b.Relay); err != nil {
+		return fmt.Errorf("remote attach: %w", err)
+	}
 	ctx, stop := remoteContext()
 	defer stop()
 	var sup *buzz.Supervisor
@@ -589,7 +594,20 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 				}
 			}
 		}
-		if sup != nil {
+		// the binding is checked again every tick: a share re-bound away
+		// from the mailbox adapter stops the endpoint and the handler
+		bindErr := error(nil)
+		if _, err := buzz.CheckMailboxShare(shareRoot, shareSession, b.Channel, b.Relay); err != nil {
+			bindErr = err
+			emit("error", map[string]string{"step": "bind", "error": err.Error()})
+			handler = nil
+			if sup != nil {
+				if act, err := sup.Apply(buzz.Presence{Handle: t.Handle}); act != "" || err != nil {
+					emit("presence", map[string]any{"action": act, "present": false, "state": "", "error": errString(err), "reason": "share not bound to the mailbox adapter"})
+				}
+			}
+		}
+		if sup != nil && bindErr == nil {
 			raw, err := statusDoc()
 			var p buzz.Presence
 			if err == nil {
@@ -616,21 +634,19 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 				}
 			}
 		}
-		if handler == nil {
+		if handler == nil && bindErr == nil {
 			// no relay connection is held: the verifier dials its own for
 			// each answer (ruling 20 point 1)
 			core, err := gateCore(ctx, sel, false)
-			if err == nil {
-				_, err = buzz.CheckMailboxShare(shareRoot, shareSession, b.Channel, b.Relay)
-			}
 			if err != nil {
-				emit("error", map[string]string{"step": "bind", "error": err.Error()})
+				emit("error", map[string]string{"step": "core", "error": err.Error()})
 			} else {
 				cores, problems := squadCores(ctx, m.fleet, core)
 				for _, pr := range problems {
 					emit("error", map[string]string{"step": "squad core", "error": pr})
 				}
-				handler = &buzz.Handler{Core: core, Cores: cores, Dial: remoteDialer(b, core.Pin), Inbox: remoteInbox(shareRoot), Mail: remoteMailer, Target: t}
+				handler = &buzz.Handler{Core: core, Cores: cores, Dial: remoteDialer(b, core.Pin), Inbox: remoteInbox(shareRoot), Mail: remoteMailer, Target: t,
+					SeenPath: buzz.SeenPath(shareRoot), VerifyTimeout: remoteVerifyTimeout}
 			}
 		}
 		if handler != nil {
@@ -688,3 +704,7 @@ var remoteDialer = func(b gateverify.Binding, pin gateverify.Pin) buzz.Dialer {
 		return relay, body, grant, closeFn, nil
 	}
 }
+
+// remoteVerifyTimeout overrides the verification cap (0: buzz.VerifyTimeout,
+// 10 s); a test seam.
+var remoteVerifyTimeout time.Duration

@@ -138,7 +138,15 @@ func ReaskText(a gatestore.Answer) string {
 // gate's one re-ask in the thread and is not accepted (amendment 19), and a
 // second non-thread answer is refused; the question's history (edits,
 // deletions) is clean; then the answer file is written and consumed.
+// Every gate-lock wait is bounded by ctx (5-amq-B B-P4): a lock another
+// process holds past ctx's deadline is a rejection, never a hang.
 func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
+	cc := *c
+	cc.Store = c.Store.WithContext(ctx)
+	return cc.handleEvent(ctx, raw)
+}
+
+func (c *Core) handleEvent(ctx context.Context, raw []byte) Result {
 	e, err := nostr.ParseEvent(raw)
 	if err != nil {
 		return rejected("", "", reject(RejectMalformed, "%v", err))

@@ -19,6 +19,8 @@
 package buzz
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,4 +265,31 @@ func readAnchored(d *fsanchor.AnchoredDir, name string, private bool) ([]byte, e
 		return nil, errors.New("too large")
 	}
 	return io.ReadAll(io.LimitReader(f, 1<<20))
+}
+
+// Verify checks the grant's NIP-OA signature locally: BIP-340 by the
+// grant's owner key over sha256("nostr:agent-auth:" body ":" conditions)
+// (the preimage amq-owner-sign signs). The relay's AUTH acceptance is not
+// the check (5-amq-B fix round).
+func (t Tag) Verify(body string) error {
+	if !nostr.IsHex64(t.OwnerPubKey) {
+		return fmt.Errorf("kind %d grant names no owner key", t.Kind)
+	}
+	sum := sha256.Sum256([]byte("nostr:agent-auth:" + body + ":" + t.Conditions))
+	e := nostr.Event{ID: hex.EncodeToString(sum[:]), PubKey: t.OwnerPubKey, Sig: t.Sig}
+	if err := e.VerifySignature(); err != nil {
+		return fmt.Errorf("kind %d grant signature: %w", t.Kind, err)
+	}
+	return nil
+}
+
+// VerifyGrants checks every enrolled grant's signature against the body and
+// the one owner.
+func (s Share) VerifyGrants() error {
+	for _, t := range s.Tags {
+		if err := t.Verify(s.BodyHex()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
