@@ -48,7 +48,7 @@ func Run(o Options) error {
 		// The raw start stamp lets a later close tell this process from a
 		// reused pid (exec keeps the pid and the stamp); prepare refused
 		// already when it is unreadable.
-		state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "exec", PID: os.Getpid(), ProcessStart: plan.started, ProviderArgv: plan.argv, IdentityProof: plan.identityProof}
+		state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "exec", PID: os.Getpid(), ProcessStart: plan.started, ProviderArgv: plan.providerArgv, LauncherArgv: plan.launcherArgv, IdentityProof: plan.identityProof}
 		var r *Refusal
 		if errors.As(err, &r) {
 			state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "refused", ReasonCode: r.Code, Detail: r.Detail}
@@ -72,7 +72,9 @@ type execPlan struct {
 	env           []string
 	identityProof string
 	started       string   // procinfo.StartToken of this process
-	argv          []string // the provider argv exec'd
+	argv          []string // the argv exec'd
+	providerArgv  []string // the provider argv the adapter composed (recorded)
+	launcherArgv  []string // a pi seat's embedded-runtime launcher argv (recorded)
 	published     *anchor
 	token         string // a Claude seat's credential (never logged or recorded)
 }
@@ -148,13 +150,22 @@ func prepare(o Options) (execPlan, error) {
 		} else {
 			plan.provider, err = pinnedProvider(o.Home, o.Argv[0], rec.ClaudePin)
 		}
+	} else if rec.Runtime == "pi" {
+		// A pi seat runs the verified embedded runtime, never a pi from PATH
+		// (R2): argv[0] must be this binary's pi launch shim, the executable
+		// AMQ's pi adapter probed and planned (brief 5-amq-A).
+		plan.provider, err = piShimProvider(o, rec)
 	} else {
 		plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
 	}
 	if err != nil {
 		return plan, err
 	}
-	plan.argv = o.Argv
+	plan.argv, plan.providerArgv = o.Argv, o.Argv
+	if rec.Runtime == "pi" {
+		plan.argv = PiLauncherArgv(o.Self, rec, o.Argv)
+		plan.launcherArgv = plan.argv
+	}
 	if rec.Runtime == "codex" {
 		if err := CheckCodexSandbox(o.Argv); err != nil {
 			return plan, err
@@ -514,6 +525,9 @@ func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self, token strin
 		m[claudeseat.TokenVar] = token
 	}
 	if rec.Runtime == "pi" {
+		// The launcher (amq-squad pi run) starts the seat's pi with the
+		// launch record's amq; it forces the rest of the pi environment.
+		m["AMQ_SQUAD_AMQ"] = rec.AMQPath
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"
 		m["PI_CODING_AGENT_DIR"] = piAgentDir(rec, home)
 	}

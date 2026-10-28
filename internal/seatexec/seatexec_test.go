@@ -426,58 +426,137 @@ func TestSeatExecPreflightCopy(t *testing.T) {
 	}
 }
 
+// piSelf is the fixture's amq-squad: the binary the pi shim names and
+// seat-exec execs for a pi seat.
+func (f *fixture) piSelf() string { return filepath.Join(f.bin, "amq-squad") }
+
+// piShim writes the fixture's pi launch shim (as the launch does) and
+// returns the adapter-shaped argv AMQ's pi adapter composes.
+func (f *fixture) piArgv(sessionID string) []string {
+	f.t.Helper()
+	shim, err := piruntime.EnsureShim(f.home, f.piSelf())
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return []string{shim, "--session-id", sessionID}
+}
+
+// Amendment 23 (a) on the adapter path (brief 5-amq-A acceptance 3): a pi
+// resume is refused when the ledger has a tool result and the session file
+// for the recorded id is missing, and goes ahead when either condition is
+// absent (no tool result; the session file at the pinned 1.3.0 path). The
+// argv is the one AMQ's pi adapter composes (the shim plus --session-id), and
+// the exec is the embedded runtime's launcher with that argv after "--".
 func TestSeatExecPiResumeRefusal(t *testing.T) {
 	ledger := func(f *fixture, line string) {
 		dir := filepath.Join(f.root, "extensions", "amq-squad", "ledger")
 		os.MkdirAll(dir, 0o700)
 		write(f.t, filepath.Join(dir, "cto.jsonl"), line+"\n", 0o600)
 	}
-	piArgv := func(f *fixture) []string { return []string{filepath.Join(f.bin, "pi"), "--session-id", "nonce-1"} }
 	toolResult := `{"schema":1,"seq":1,"event":"tool_result","tool":"bash","outcome":"ok"}`
 
+	// Row 1: tool result, no session file: refused.
 	f := newFixture(t, "pi")
 	f.rec.Resume = true
 	f.stage()
 	ledger(f, toolResult)
-	if err := f.run(Options{Argv: piArgv(f)}); refusalCode(err) != "pi_resume_context_lost" || f.execPath != "" {
+	if err := f.run(Options{Self: f.piSelf(), Argv: f.piArgv("nonce-1")}); refusalCode(err) != "pi_resume_context_lost" || f.execPath != "" {
 		t.Fatalf("tool result and no session file: %v", err)
 	}
 
+	// Row 2: no tool result: resumes.
 	g := newFixture(t, "pi")
 	g.rec.Resume = true
 	g.stage()
 	ledger(g, `{"schema":1,"seq":1,"event":"before_agent_start"}`)
-	if err := g.run(Options{Argv: piArgv(g)}); err != nil {
+	if err := g.run(Options{Self: g.piSelf(), Argv: g.piArgv("nonce-1")}); err != nil {
 		t.Fatalf("no tool result resumes: %v", err)
 	}
-	for name, want := range map[string]string{"PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_CODING_AGENT_DIR": filepath.Join(g.home, ".amq-squad", "pi-agent", "cto")} {
+	for name, want := range map[string]string{"PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_CODING_AGENT_DIR": filepath.Join(g.home, ".amq-squad", "pi-agent", "cto"), "AMQ_SQUAD_AMQ": "/fake/amq"} {
 		if got := Getenv(g.execEnv, name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
-	if strings.Join(g.execArgv[1:], " ") != "--session-id nonce-1" {
-		t.Fatalf("pi carries no provider arguments of ours: %v", g.execArgv)
+	want := []string{g.piSelf(), "pi", "run", "--seat", "cto", "--thinking", "medium", "--", "--session-id", "nonce-1"}
+	if g.execPath != g.piSelf() || strings.Join(g.execArgv, " ") != strings.Join(want, " ") {
+		t.Fatalf("pi exec %s %q, want the embedded runtime's launcher %q", g.execPath, g.execArgv, want)
+	}
+	rec, err := launch.Read(filepath.Join(g.root, "agents", "cto"))
+	if err != nil || rec.Exec == nil || strings.Join(rec.Exec.ProviderArgv[1:], " ") != "--session-id nonce-1" || strings.Join(rec.Exec.LauncherArgv, " ") != strings.Join(want, " ") {
+		t.Fatalf("the exec record carries the adapter's argv and the launcher's: %+v %v", rec.Exec, err)
 	}
 
+	// Row 3: tool result and the session file present: resumes. The pinned
+	// pi 1.3.0 layout (4-1): the session file lives in the folder of the
+	// seat's cwd (the worktree); a file for the same id in another cwd's
+	// folder does not count.
 	h := newFixture(t, "pi")
 	h.rec.Resume = true
 	h.stage()
 	ledger(h, toolResult)
-	// The pinned pi 1.3.0 layout (4-1): the session file lives in the
-	// folder of the seat's cwd (the worktree); a file for the same id in
-	// another cwd's folder does not count.
 	agentDir := filepath.Join(h.home, ".amq-squad", "pi-agent", "cto")
 	other := filepath.Join(agentDir, "sessions", "--elsewhere--")
 	os.MkdirAll(other, 0o700)
 	write(t, filepath.Join(other, "2026-10-24T10-00-00-000Z_nonce-1.jsonl"), "{}\n", 0o600)
-	if err := h.run(Options{Argv: piArgv(h)}); err == nil {
-		t.Fatal("a session file for another cwd counted as the seat's")
+	if err := h.run(Options{Self: h.piSelf(), Argv: h.piArgv("nonce-1")}); refusalCode(err) != "pi_resume_context_lost" {
+		t.Fatalf("a session file for another cwd counted as the seat's: %v", err)
 	}
 	sessions := piruntime.SessionDir(agentDir, h.wt)
 	os.MkdirAll(sessions, 0o700)
 	write(t, filepath.Join(sessions, "2026-10-24T10-00-00-000Z_nonce-1.jsonl"), "{}\n", 0o600)
-	if err := h.run(Options{Argv: piArgv(h)}); err != nil {
+	if err := h.run(Options{Self: h.piSelf(), Argv: h.piArgv("nonce-1")}); err != nil {
 		t.Fatalf("session file present resumes: %v", err)
+	}
+}
+
+// Brief 5-amq-A: a pi seat runs only the embedded runtime: argv[0] must be
+// this binary's pi shim. A pi from PATH, a shim for another binary, a
+// symlinked or group-writable shim are refused pi_not_embedded, and the
+// refusal is the published exec record.
+func TestSeatExecPiNeedsTheEmbeddedShim(t *testing.T) {
+	for name, setup := range map[string]func(f *fixture) []string{
+		"pi on PATH": func(f *fixture) []string { return []string{filepath.Join(f.bin, "pi"), "--session-id", "x"} },
+		"another binary's shim": func(f *fixture) []string {
+			if _, err := piruntime.EnsureShim(f.home, "/opt/other/amq-squad"); err != nil {
+				f.t.Fatal(err)
+			}
+			return []string{piruntime.ShimPath(f.home), "--session-id", "x"}
+		},
+		"a symlinked shim": func(f *fixture) []string {
+			argv := f.piArgv("x")
+			os.Remove(argv[0])
+			if err := os.Symlink(filepath.Join(f.bin, "pi"), argv[0]); err != nil {
+				f.t.Fatal(err)
+			}
+			return argv
+		},
+		"a group-writable shim": func(f *fixture) []string {
+			argv := f.piArgv("x")
+			os.Chmod(argv[0], 0o770)
+			return argv
+		},
+	} {
+		f := newFixture(t, "pi")
+		f.stage()
+		err := f.run(Options{Self: f.piSelf(), Argv: setup(f)})
+		if refusalCode(err) != "pi_not_embedded" || f.execPath != "" {
+			t.Errorf("%s: %v (exec %q)", name, err, f.execPath)
+			continue
+		}
+		rec, rerr := launch.Read(filepath.Join(f.root, "agents", "cto"))
+		if rerr != nil || rec.Exec == nil || rec.Exec.ReasonCode != "pi_not_embedded" {
+			t.Errorf("%s: published record %+v %v", name, rec.Exec, rerr)
+		}
+	}
+	// A registry model in provider/id form reaches the launcher as --model.
+	f := newFixture(t, "pi")
+	f.rec.Model, f.rec.Effort = "ollama/qwen3.6:27b", ""
+	f.stage()
+	if err := f.run(Options{Self: f.piSelf(), Argv: f.piArgv("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{f.piSelf(), "pi", "run", "--seat", "cto", "--model", "ollama/qwen3.6:27b", "--", "--session-id", "x"}; strings.Join(f.execArgv, " ") != strings.Join(want, " ") {
+		t.Fatalf("launcher argv %q, want %q", f.execArgv, want)
 	}
 }
 

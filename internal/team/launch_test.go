@@ -77,9 +77,8 @@ func lookPath(name string) (string, error) { return "/usr/local/bin/" + name, ni
 
 // Acceptance 4: a squad.yaml with one Claude, one Codex and one pi seat is
 // 2b-2's typed seat list; the pi seat carries no provider argument. With the
-// pinned AMQ library, which has no pi launch adapter yet (upstream PR #1188,
-// seatlaunch.PiAdapterInLibrary), the compiler refuses the pi seat by name and
-// compiles the Claude and Codex seats to one launch request.
+// pi adapter in the pinned library (v0.116.x, brief 5-amq-A) all three
+// compile to one launch request, the pi seat behind the launch's pi shim.
 func TestSquadCompilesToOneLaunchRequest(t *testing.T) {
 	q, base := compileSquad(t, threeRuntimeSquad)
 	want := []seatlaunch.Seat{
@@ -99,23 +98,15 @@ func TestSquadCompilesToOneLaunchRequest(t *testing.T) {
 	// A Claude seat's executable is the registry's claude pin (the launch
 	// resolves it; the phase 5 re-pass's HIGH).
 	q.ClaudePins = map[string]registry.Pin{"lead": {Name: "claude", Path: "/usr/local/bin/claude", SHA256: "test"}}
-	_, err := seatlaunch.Compile(q, "", lookPath, time.Unix(1, 0))
-	if seatlaunch.PiAdapterInLibrary {
-		if err != nil {
-			t.Fatalf("compile: %v", err)
-		}
-	} else if err == nil || !strings.Contains(err.Error(), "seat scout") || !strings.Contains(err.Error(), "pi launch adapter") {
-		t.Fatalf("pi seat without the library adapter = %v", err)
-	}
-	q.Seats = q.Seats[:2]
+	q.PiShim = "/home/u/.amq-squad/pi-launch/pi"
 	c, err := seatlaunch.Compile(q, "", lookPath, time.Unix(1, 0))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("compile: %v", err)
 	}
 	if err := c.Request.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if ps := c.Request.Intent.Participants; len(ps) != 3 || ps[1].Handle != "lead" || ps[2].Handle != "dev" {
+	if ps := c.Request.Intent.Participants; len(ps) != 4 || ps[1].Handle != "lead" || ps[2].Handle != "dev" || ps[3].Handle != "scout" || ps[3].Executable != q.PiShim {
 		t.Fatalf("participants %+v", ps)
 	}
 }

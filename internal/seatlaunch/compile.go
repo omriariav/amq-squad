@@ -77,6 +77,10 @@ type Squad struct {
 	// never a provider path (the narrow pass's HIGH: the probe certifies the
 	// bytes the seat runs).
 	ClaudePins map[string]registry.Pin `json:"-"`
+	// PiShim is the pi launch shim (piruntime.EnsureShim) the launch wrote
+	// for this binary: every pi seat's executable, the file AMQ's pi adapter
+	// probes; seat-exec runs the verified embedded runtime in its place.
+	PiShim string `json:"-"`
 }
 
 // ReasonProviderNotPinned refuses a Claude seat whose provider is not the
@@ -88,10 +92,14 @@ const ReasonProviderNotPinned = "provider_not_pinned"
 var Runtimes = []string{"claude", "codex", "pi"}
 
 // PiAdapterInLibrary says whether the pinned AMQ library carries the pi
-// mint-mode adapter (PR #1188). v0.107.0 does not: flip this with the bump
-// to the first tag that carries it. Until then a pi seat is refused here and
-// pi seats run on the `amq coop exec` fallback (plan 4.3).
-const PiAdapterInLibrary = false
+// mint-mode adapter (PR #1188). v0.116.x does (launchapi PiProvider ->
+// NewPiAdapter): pi seats launch through the launch API behind seat-exec,
+// with the pi launch shim as their executable (brief 5-amq-A).
+const PiAdapterInLibrary = true
+
+// ReasonPiShimMissing refuses a pi seat when the launch named no pi shim, or
+// a provider that is not the shim (R2: never a pi from PATH).
+const ReasonPiShimMissing = "pi_not_embedded"
 
 // ClaudePermissionMode is the permission mode every Claude seat is launched
 // with, recorded in its launch record and checked by seat-exec together with
@@ -99,7 +107,7 @@ const PiAdapterInLibrary = false
 // answers every hooked call; a call nothing approved, such as one whose hook
 // failed open (timeout, exit 1, missing command), is denied rather than
 // prompted, so an unattended seat neither stalls nor runs a call unguarded.
-// AMQ v0.107.0 admits acceptEdits, auto, manual, dontAsk and plan. Explicit,
+// AMQ v0.107.0 and later admit acceptEdits, auto, manual, dontAsk and plan. Explicit,
 // so the owner's settings.json defaultMode never decides it.
 const ClaudePermissionMode = "dontAsk"
 
@@ -245,10 +253,18 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 	var out Compiled
 	seats := make([]launchintent.SeatFacts, 0, len(q.Seats))
 	for _, s := range q.Seats {
-		if s.Runtime == "pi" && !PiAdapterInLibrary {
-			return out, fmt.Errorf("seat %s: the pinned AMQ library has no pi launch adapter (upstream PR #1188 is not in a release yet); launch pi seats with the amq coop exec fallback", s.Handle)
-		}
 		provider := s.Provider
+		if s.Runtime == "pi" {
+			// The embedded runtime, through the shim the launch wrote; a
+			// provider path (a pi from PATH) is refused (R2).
+			if q.PiShim == "" {
+				return out, fmt.Errorf("seat %s: %s: the launch wrote no pi launch shim for the embedded runtime", s.Handle, ReasonPiShimMissing)
+			}
+			if provider != "" && filepath.Clean(provider) != q.PiShim {
+				return out, fmt.Errorf("seat %s: %s: the provider %s is not the embedded runtime's shim %s (a pi seat never runs a pi from PATH)", s.Handle, ReasonPiShimMissing, provider, q.PiShim)
+			}
+			provider = q.PiShim
+		}
 		if s.Runtime == "claude" {
 			pin, ok := q.ClaudePins[s.Handle]
 			if !ok || pin.Path == "" {

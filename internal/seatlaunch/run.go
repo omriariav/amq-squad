@@ -21,6 +21,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
@@ -33,6 +34,16 @@ import (
 // drives Prepare and Apply through the installed amq CLI (`amq launch
 // --request - --prepare --json`, `amq launch --apply - --json`), so the pane
 // runs the real amq; the request and result types are the library's.
+
+// defaultPiShim refuses a build without the embedded runtime (the shim's
+// probes would fail inside AMQ's Prepare with a less useful reason) and
+// writes the shim.
+func defaultPiShim(home, wrapper string) (string, error) {
+	if _, err := piruntime.Load(); err != nil {
+		return "", fmt.Errorf("this amq-squad build carries no embedded pi runtime: %w", err)
+	}
+	return piruntime.EnsureShim(home, wrapper)
+}
 
 // AMQRunner runs the amq CLI with stdin and returns stdout, stderr and the
 // exit code (a non-zero exit is not an error: exit 6 is action_required).
@@ -77,6 +88,10 @@ type Options struct {
 	// PinFor is the registry's claude pin for a Claude seat (default: the
 	// registry under Home, read once per launch); a test seam.
 	PinFor func(s Seat) (registry.Pin, error)
+	// PiShim writes the pi launch shim for the wrapper and returns its path
+	// (default: the embedded runtime must load, then piruntime.EnsureShim
+	// under Home); a test seam.
+	PiShim func(home, wrapper string) (string, error)
 }
 
 // SeatState is one seat's state after the launch.
@@ -137,6 +152,9 @@ func (o Options) withDefaults() Options {
 	if o.ProbeMode == nil {
 		o.ProbeMode = probePinned
 	}
+	if o.PiShim == nil {
+		o.PiShim = defaultPiShim
+	}
 	if o.PinFor == nil {
 		home := o.Home
 		var once sync.Once
@@ -178,6 +196,16 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 			q.ClaudePins = map[string]registry.Pin{}
 		}
 		q.ClaudePins[s.Handle] = pin
+	}
+	// pi seats run the embedded runtime: the launch names the pi launch
+	// shim as their executable (the file AMQ's pi adapter probes).
+	for _, s := range q.Seats {
+		if s.Runtime == "pi" {
+			if q.PiShim, err = o.PiShim(o.Home, q.Wrapper); err != nil {
+				return res, fmt.Errorf("seat %s: %s: %w", s.Handle, ReasonPiShimMissing, err)
+			}
+			break
+		}
 	}
 	c, err := Compile(q, rulesSHA, o.LookPath, o.Now())
 	if err != nil {

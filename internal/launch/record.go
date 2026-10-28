@@ -86,14 +86,17 @@ type Apply struct {
 
 // Exec is seat-exec's outcome: exec (identity proof, pid, raw start stamp) or refused.
 type Exec struct {
-	At            time.Time `json:"at"`
-	Outcome       string    `json:"outcome"` // exec | refused
-	ReasonCode    string    `json:"reason_code,omitempty"`
-	Detail        string    `json:"detail,omitempty"`
-	PID           int       `json:"pid,omitempty"`
-	ProcessStart  string    `json:"process_start,omitempty"` // procinfo.StartToken: raw ticks or kinfo timeval
-	ProviderArgv  []string  `json:"provider_argv,omitempty"`
-	IdentityProof string    `json:"identity_proof,omitempty"`
+	At           time.Time `json:"at"`
+	Outcome      string    `json:"outcome"` // exec | refused
+	ReasonCode   string    `json:"reason_code,omitempty"`
+	Detail       string    `json:"detail,omitempty"`
+	PID          int       `json:"pid,omitempty"`
+	ProcessStart string    `json:"process_start,omitempty"` // procinfo.StartToken: raw ticks or kinfo timeval
+	ProviderArgv []string  `json:"provider_argv,omitempty"`
+	// LauncherArgv is a pi seat's exec: the embedded runtime's launcher
+	// (amq-squad pi run) with the adapter's provider argv after "--".
+	LauncherArgv  []string `json:"launcher_argv,omitempty"`
+	IdentityProof string   `json:"identity_proof,omitempty"`
 }
 
 // TmuxInfo is the v2 tmux pane identity (kept-dead fleet registry only).

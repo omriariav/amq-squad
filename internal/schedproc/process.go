@@ -239,7 +239,7 @@ func logLine(w io.Writer, at time.Time, d scheduler.Decision) {
 
 // Event is the file form of a scheduler event posted by an external runner
 // (`amq-squad scheduler post`): the stand-in launcher path for seats AMQ
-// cannot launch yet (pi on AMQ v0.107.0).
+// cannot launch (pi before AMQ v0.116).
 type Event struct {
 	Kind      string    `json:"kind"` // seat_up | seat_gone | seat_activity
 	Handle    string    `json:"handle"`

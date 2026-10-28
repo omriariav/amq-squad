@@ -36,9 +36,9 @@ scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
 over the squad's task store and wires its hooks: seats start through the AMQ
 launch API from the typed seat list FILE (the launch --seats format; each
-seat is a slot the scheduler starts on demand for its pool); a seat that AMQ
-cannot launch yet (pi on AMQ 0.107.0) goes to an external runner through
-request files (the stand-in launcher); the doorbell is an AMQ message from
+seat is a slot the scheduler starts on demand for its pool; pi seats too,
+through AMQ's pi adapter since v0.116); the external-runner stand-in
+(request files) remains for a seat AMQ cannot launch; the doorbell is an AMQ message from
 the "scheduler" mailbox, which the seat's AMQ wake delivers; the router is
 2b-4's routing table (the default table plus ~/.amq-squad/routing.yaml and
 the repository's, over the owner's registry), flushed once per tick so each

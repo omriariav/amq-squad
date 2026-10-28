@@ -84,25 +84,38 @@ func TestCompileOneRequestWithTheWrapper(t *testing.T) {
 }
 
 // amendment 23 (b): pi seats carry no provider arguments and no initial
-// input. The pinned library (v0.107.0) has no pi adapter yet (PR #1188 is
-// unreleased), so a pi seat is refused with that reason instead of failing
-// inside AMQ's validation.
+// input. With the pi adapter in the pinned library (v0.116.x, brief 5-amq-A)
+// a pi seat compiles with the launch's pi shim as its executable; without a
+// shim, or with a provider that is not the shim (a pi from PATH), it is
+// refused pi_not_embedded (R2).
 func TestPiSeatShape(t *testing.T) {
-	pi := Seat{Handle: "pi1", Runtime: "pi", Model: "qwen", Effort: "low", Role: "# Role\n\npi seat role text here.\n", Worktree: "/w/pi"}
+	pi := Seat{Handle: "pi1", Runtime: "pi", Model: "ollama/qwen", Effort: "low", Role: "# Role\n\npi seat role text here.\n", Worktree: "/w/pi"}
 	if args := ProviderArgs(pi); args != nil {
 		t.Fatalf("pi provider args %q", args)
 	}
+	if !PiAdapterInLibrary {
+		t.Fatal("the pinned library carries the pi adapter")
+	}
 	q := testSquad(t)
 	q.Seats = append(q.Seats, pi)
-	_, err := Compile(q, "", lookPath, time.Unix(1, 0))
-	if PiAdapterInLibrary {
-		if err != nil {
-			t.Fatal(err)
-		}
-		return
+	if _, err := Compile(q, "", lookPath, time.Unix(1, 0)); err == nil || !strings.Contains(err.Error(), ReasonPiShimMissing) {
+		t.Fatalf("a pi seat without the shim: %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "#1188") {
-		t.Fatalf("pi seat on a library without the adapter: %v", err)
+	q.PiShim = "/home/u/.amq-squad/pi-launch/pi"
+	c, err := Compile(q, "", lookPath, time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.Request.Intent.Participants[3]
+	if p.Handle != "pi1" || p.Executable != q.PiShim || len(p.Args) != 0 || p.InitialInput != nil {
+		t.Fatalf("pi participant %+v", p)
+	}
+	if err := c.Request.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	q.Seats[2].Provider = "/usr/local/bin/pi"
+	if _, err := Compile(q, "", lookPath, time.Unix(1, 0)); err == nil || !strings.Contains(err.Error(), ReasonPiShimMissing) {
+		t.Fatalf("a pi from PATH: %v", err)
 	}
 }
 

@@ -34,6 +34,7 @@ Usage:
                    [--lead] [--approve-tools T,...] [--resume] [--no-package] [--dry-run] [-- PI-ARGS...]
   amq-squad pi verify [--json]
   amq-squad pi path [--json]
+  amq-squad pi shim --version | --help
 
 run      start the embedded pi. The seat is --seat, else AM_ME, else "lead";
          its pi config lives in ~/.amq-squad/pi-agent/<seat>. The amq-squad
@@ -43,6 +44,9 @@ run      start the embedded pi. The seat is --seat, else AM_ME, else "lead";
          in the seat's ledger and no session file for --session-id is refused.
 verify   re-hash the unpacked runtime against the embedded manifest (doctor).
 path     print the runtime directory and the node + pi entry argv.
+shim     what the pi launch shim (~/.amq-squad/pi-launch/pi) runs: answers
+         AMQ's pi adapter probes from the verified embedded runtime. A pi
+         seat starts through seat-exec, never through the shim.
 
 The runtime unpacks once to ~/.amq-squad/runtime/<version>-<digest>/; every
 launch re-hashes it. AMQ_SQUAD_PI_TIMING=1 prints the launch timing to stderr.
@@ -73,8 +77,10 @@ func runPi(args []string) error {
 		return runPiVerify(args[1:])
 	case "path":
 		return runPiPath(args[1:])
+	case "shim":
+		return runPiShim(args[1:])
 	}
-	return unknownSubcommandError("pi", args[0], "run", "verify", "path")
+	return unknownSubcommandError("pi", args[0], "run", "verify", "path", "shim")
 }
 
 type piRunFlags struct {
@@ -164,7 +170,10 @@ func piLaunch(s piLaunchSpec) error {
 		}
 		overlay["AMQ_SQUAD_BIN"] = self
 	}
-	if amq, err := exec.LookPath("amq"); err == nil {
+	if amq := os.Getenv("AMQ_SQUAD_AMQ"); filepath.IsAbs(amq) {
+		// seat-exec names the launch record's amq (the one the launch ran).
+		overlay["AMQ_SQUAD_AMQ"] = amq
+	} else if amq, err := exec.LookPath("amq"); err == nil {
 		if abs, err := filepath.Abs(amq); err == nil {
 			overlay["AMQ_SQUAD_AMQ"] = abs
 		}
@@ -319,6 +328,48 @@ func ollamaThinks(host, model string) bool {
 		}
 	}
 	return false
+}
+
+// piShimProbeSeat is the agent dir the shim's probes run in (no seat's).
+const piShimProbeSeat = "_probe"
+
+// runPiShim answers the two probes AMQ's pi adapter makes of the pi
+// executable the launch names (brief 5-amq-A): `--version` and `--help`,
+// from the verified embedded runtime (re-hashed against the embedded
+// manifest, launch set checked, the forced environment, no package), so
+// the adapter's version floor and its --session-id check judge the pi that
+// seats run. Anything else is refused: a seat starts through seat-exec.
+func runPiShim(args []string) error {
+	if len(args) != 1 || (args[0] != "--version" && args[0] != "--help") {
+		return usageErrorf("pi shim answers only --version and --help (AMQ's pi adapter probes); a pi seat starts through amq-squad seat-exec, which runs the embedded runtime")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	e, err := piLoad()
+	if err != nil {
+		return err
+	}
+	rt, _, err := piruntime.Ensure(home, e)
+	if err != nil {
+		return err
+	}
+	l, err := piruntime.Prepare(piruntime.Spec{Runtime: rt, Home: home, Seat: piShimProbeSeat, Parent: os.Environ(), Args: args})
+	if err != nil {
+		return err
+	}
+	if err := rt.CheckLaunch(); err != nil {
+		return err
+	}
+	code, err := piRun(l.Path, l.Argv, l.Env)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		piExit(code)
+	}
+	return nil
 }
 
 func runPiVerify(args []string) error {
