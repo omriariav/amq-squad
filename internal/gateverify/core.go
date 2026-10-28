@@ -187,7 +187,7 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 	if err != nil {
 		return rejected(rec.GateID, e.ID, reject(RejectQuestion, "%v", err))
 	}
-	if err := CheckHistory(ctx, c.Relay, qe, c.Pin.Owner); err != nil {
+	if err := CheckHistory(ctx, c.Relay, qe, e, c.Pin.Owner); err != nil {
 		return rejected(rec.GateID, e.ID, err)
 	}
 	f, err := BuildAnswerFile(o, raw, rec, *q, c.Pin, c.RelayURL, c.Namespace, c.Version, c.Issuer, now)
@@ -280,12 +280,30 @@ func (c *Core) HandleEventID(ctx context.Context, id string) Result {
 	if !nostr.IsHex64(id) {
 		return rejected("", "", reject(RejectLabel, "event id %q is not 64 lowercase hex", id))
 	}
-	raw, err := c.Relay.FetchByID(ctx, id)
+	raw, err := FetchEvent(ctx, c.Relay, id)
 	if err != nil {
-		return rejected("", id, reject(RejectFetch, "%v", err))
-	}
-	if e, err := nostr.ParseEvent(raw); err != nil || e.ID != id || !e.CheckID() {
-		return rejected("", id, reject(RejectFetch, "the relay returned another event for %s", id))
+		return rejected("", id, err)
 	}
 	return c.HandleEvent(ctx, raw)
+}
+
+// FetchEvent is the one read by event id of the label path: one REQ for the
+// id on r, and the bytes the relay sent only when their id recomputes to id
+// (a relay can withhold an event but cannot substitute another). A failure
+// is fetch_failed.
+func FetchEvent(ctx context.Context, r Relay, id string) ([]byte, error) {
+	if !nostr.IsHex64(id) {
+		return nil, reject(RejectLabel, "event id %q is not 64 lowercase hex", id)
+	}
+	if r == nil {
+		return nil, reject(RejectFetch, "no relay connection")
+	}
+	raw, err := r.FetchByID(ctx, id)
+	if err != nil {
+		return nil, reject(RejectFetch, "%v", err)
+	}
+	if e, err := nostr.ParseEvent(raw); err != nil || e.ID != id || !e.CheckID() {
+		return nil, reject(RejectFetch, "the relay returned another event for %s", id)
+	}
+	return raw, nil
 }

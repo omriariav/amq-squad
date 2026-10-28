@@ -287,40 +287,70 @@ func TestAcceptanceFinalAndDotLedID(t *testing.T) {
 }
 
 func TestHistoryCheck(t *testing.T) {
+	reaction := strings.Repeat("6", 64) // a reaction the relay hides once deleted
 	cases := map[string]struct {
-		mutate func(f *fixture, q nostr.Event)
+		mutate func(f *fixture, q, a nostr.Event)
 		code   string
 	}{
-		"edit with other text": {func(f *fixture, q nostr.Event) {
+		"edit with other text": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindEdit, "approve something else", [][]string{{"e", q.ID}}, q.CreatedAt+1))
 		}, RejectAltered},
-		"edit by the owner with other text": {func(f *fixture, q nostr.Event) {
+		"edit by the owner with other text": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.owner, KindEdit, "x", [][]string{{"e", q.ID}}, q.CreatedAt+1))
 		}, RejectAltered},
-		"question deleted": {func(f *fixture, q nostr.Event) {
+		"question deleted": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", q.ID}}, q.CreatedAt+1))
 		}, RejectAltered},
-		"group deletion by the body": {func(f *fixture, q nostr.Event) {
+		"group deletion by the body": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindGroupDeletion, "", [][]string{{"e", strings.Repeat("9", 64)}}, 1))
 		}, RejectAltered},
-		"owner deletion since the question": {func(f *fixture, q nostr.Event) {
+		"owner deletion since the question": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("8", 64)}}, q.CreatedAt+2))
 		}, RejectAltered},
-		"history read fails": {func(f *fixture, q nostr.Event) { f.relay.failQuery = true }, RejectHistory},
-		"unchanged edit and an old owner deletion": {func(f *fixture, q nostr.Event) {
+		"history read fails": {func(f *fixture, q, a nostr.Event) { f.relay.failQuery = true }, RejectHistory},
+		"unchanged edit and an old owner deletion": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindEdit, q.Content, [][]string{{"e", q.ID}}, q.CreatedAt+1))
 			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("7", 64)}}, q.CreatedAt-100))
 		}, ""},
+		// 5-amq-B acceptance 10 (upstream #1284): a reaction cleanup on the
+		// gate thread is not an alteration of the answer
+		"10a reaction deleted by the attachment (body key)": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}}, q.CreatedAt+1))
+		}, ""},
+		"10b reaction deleted by another key on the thread": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}}, q.CreatedAt+1))
+			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", reaction}}, q.CreatedAt+1))
+		}, ""},
+		"10b reaction deleted by the owner's Desktop since the question": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}}, q.CreatedAt+2))
+		}, ""},
+		"10c the answer edited": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindEdit, a.Content, [][]string{{"e", a.ID}}, a.CreatedAt+1))
+		}, RejectAltered},
+		"10c the answer deleted by another key": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", a.ID}}, a.CreatedAt+1))
+		}, RejectAltered},
+		"10c the answer deleted under a reaction k tag": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", a.ID}, {"k", "7"}}, a.CreatedAt+1))
+		}, RejectAltered},
+		"10c a cleanup that also names the question": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}, {"e", q.ID}, {"k", "7"}}, q.CreatedAt+1))
+		}, RejectAltered},
+		"10c a body deletion with another k": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}, {"k", "9"}}, q.CreatedAt+1))
+		}, RejectAltered},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			rec, q := f.raise("g1", "tag", "git tag v1")
 			qe, _ := nostr.ParseEvent([]byte(q.RawEvent))
-			c.mutate(f, qe)
 			at := testNow.Add(time.Minute)
 			f.clock = at
-			r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), q.EventID, at))
+			raw := f.answer(f.owner, tuple("approve", rec), q.EventID, at)
+			ae, _ := nostr.ParseEvent(raw)
+			c.mutate(f, qe, ae)
+			r := f.core.HandleEvent(ctx, raw)
 			if c.code == "" {
 				if r.Outcome != operatorauth.DecisionApproved {
 					t.Fatalf("clean history refused: %+v", r)
