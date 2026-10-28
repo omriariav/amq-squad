@@ -1800,6 +1800,20 @@ Release prep.
   the pre-push history scan is clean (spike log, release-prep list;
   docs/v3-spike/5-release-evidence/history-scan.txt). The tag target is
   the v3 tip after this entry's commit. [2.7, phase 5 hygiene2 result]
+- Owner decision 2026-10-28: the AMQ bump planned as 3.0.1 moves into
+  3.0.0 before the tag. Upstream shipped v0.108.0 to v0.116.1 between
+  2026-10-25 and 2026-10-28 (21 releases); every ask in section 11 is
+  closed, #1178 included (PR #1254). Two briefs: 5-amq-A (go.mod to
+  v0.116.1, pi seats through the upstream adapter with PiAdapterInLibrary
+  flipped, the two Codex sandbox pins as provider arguments at launch with
+  seat-exec verifying rather than injecting, doctor's installed-AMQ floor
+  at v0.116.1, the adoption-seam constants) and 5-amq-B (the strict share
+  bound to amq-remote's mailbox adapter, 4-5 deviation 1 closed by the
+  upstream kind; the attachment's own DM read, marks and redelivery go
+  away; the verifier's signed-event check stays; design points from the
+  reviewer before dispatch). The tag target moves to the v3 tip after
+  both merge. Ask 8 part 2 (the pi bridge event id) stays out of 3.0
+  unless the reviewer rules otherwise. [2.8, owner decision]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
