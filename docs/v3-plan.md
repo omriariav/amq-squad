@@ -1886,6 +1886,29 @@ Release prep.
   still signs the question post and the re-ask (R33). Measured on a
   scratch-built v0.116.2 against a local relay: handler 144 ms, answer to
   delivery 222 ms, answer to the result row 2.0 s. [2.8, phase 5 amq-B result]
+- Brief 5-amq-C merged 2026-10-28 as 25fa922e (branch v3-5-amq-c, three
+  commits, Codex narrow pass, one fix commit, lead final read and gate on
+  the merge result; size of 3.0 81,146, v2 rows kept 27,885): the
+  scheduler stand-in deleted (schedproc.External, the request and event
+  files, `amq-squad scheduler post`, spike/sched-live, PiAdapterInLibrary;
+  grep proofs in docs/v3-spike/5-amq-c-evidence/grep-proofs.txt); the
+  three tests that used it rewritten against a fake launcher and
+  Scheduler.Post through the Started hook, with the barrier row still
+  proving the decision socket stays absent until adopted seats are
+  confirmed; the real-AMQ orchestration contract ported to a schema-valid
+  team (claude and codex runtimes, destructive_filesystem as the one
+  action an AMQ operator can answer in a test) and the review subtest
+  replaced by a named-profile refusal row asserting team.ErrNamedProfile
+  over an empty real root (dispatch gains a three-line CheckProfile guard
+  so the sentinel is typed); the ci -skip gone; the pinned lane green
+  against amq v0.116.2 built from the module. Gate note: the race step's
+  package list named the deleted spike directory (setup failed); the three
+  real packages passed under race and the script now skips deleted
+  directories. Follow-up (3.0.x): the scheduler's async-close path has no
+  production implementer after the deletion (CloseUnconfirmed's delegation
+  always confirms); its removal is recorded in follow-ups and the manifest
+  rows. hook_guard's classification of `amq coop exec` stays: AMQ ships
+  the verb and guard refuses a seat starting one. [2.8, phase 5 amq-C result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
