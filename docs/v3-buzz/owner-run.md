@@ -291,6 +291,14 @@ confirm" appears in the gate's thread. Owner: reply in that thread with the
 approve line. Expected: `accepted g45-owner-02 tag`. Record T15 (the
 re-ask row) and T16 (accepted).
 
+5.6 Reaction removal, optional (5-amq-B round 2; owner, 1 minute). Lead:
+raise `g45-owner-03` as in 5.1. Owner: react to its question in Buzz,
+remove the reaction, then answer in the thread. Expected: `accepted
+g45-owner-03 tag` when Buzz tags the removal with kind 7 (NIP-09 `k`);
+`refused g45-owner-03 altered_history` plus the re-ask when it does not
+(then answer in the re-ask's thread: accepted). Record which; it settles
+whether Buzz Desktop's reaction removals carry the k tag.
+
 ### 6. The routed message (owner on the phone, about 1 minute)
 
 6.1 Owner, in the main DM box: `/status`. This is amq-remote's own command:

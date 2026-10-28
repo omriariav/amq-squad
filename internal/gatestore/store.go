@@ -47,7 +47,19 @@ func (s Store) lockGate(id string) (*flock.Exclusive, error) {
 	if s.lockCtx == nil {
 		return flock.AcquireExclusive(path)
 	}
+	expired := func() error {
+		if err := s.lockCtx.Err(); err != nil {
+			return fmt.Errorf("%w (%s): %v", ErrLockTimeout, id, err)
+		}
+		return nil
+	}
 	for {
+		// the context is checked before every attempt and after the lock is
+		// taken: a lock acquired after the deadline is released, never used
+		// (5-amq-B fix round 2, item 4)
+		if err := expired(); err != nil {
+			return nil, err
+		}
 		lock, acquired, err := flock.TryExclusive(path, true)
 		switch {
 		case errors.Is(err, flock.ErrUnsupported):
@@ -55,11 +67,14 @@ func (s Store) lockGate(id string) (*flock.Exclusive, error) {
 		case err != nil:
 			return nil, err
 		case acquired:
+			if err := expired(); err != nil {
+				_ = lock.Close()
+				return nil, err
+			}
 			return lock, nil
 		}
 		select {
 		case <-s.lockCtx.Done():
-			return nil, fmt.Errorf("%w (%s): %v", ErrLockTimeout, id, s.lockCtx.Err())
 		case <-time.After(lockRetry):
 		}
 	}

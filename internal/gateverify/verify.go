@@ -40,7 +40,13 @@ const (
 	RejectSender        = "wrong_amq_sender"
 	RejectLabel         = "bad_label"
 	RejectFetch         = "fetch_failed"
-	RejectInsecure      = "owner_grants_insecure"
+	// RejectVerifyTimeout is a verification its context ended (a gate lock
+	// not taken in time; 5-amq-B fix round 2).
+	RejectVerifyTimeout = "verify_timeout"
+	// RejectAlteredHistory is a deletion since the question whose target the
+	// relay hides (5-amq-B fix round 2, item 3).
+	RejectAlteredHistory = "altered_history"
+	RejectInsecure       = "owner_grants_insecure"
 	// RejectNoSquad: the record carries no squad identity (a record from
 	// before amendment 28), or another squad's (4-5 re-pass).
 	RejectNoSquad = "no_squad_identity"
@@ -66,6 +72,9 @@ func Code(err error) string {
 	}
 	if errors.Is(err, gatestore.ErrConsumed) {
 		return RejectReplayed
+	}
+	if errors.Is(err, gatestore.ErrLockTimeout) {
+		return RejectVerifyTimeout
 	}
 	return ""
 }

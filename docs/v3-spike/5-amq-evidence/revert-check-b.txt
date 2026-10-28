@@ -102,3 +102,50 @@ row: C7b (small) the doctor row fails on unverified grants
   reverted: FAIL --- FAIL: TestDoctorBuzzGrantRow (0.06s)
   restored: PASS
   OK (fails when reverted)
+
+== fix round 2, the re-pass residuals on 1974caa4 (R4b's reverted run fails by the test binary's 120 s timeout: the wait spins)
+row: R1 (item 1) a route is marked only after its forward succeeded
+  revert: internal/buzz/inbound.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestFailedForwardLeavesNoMark (0.01s)
+  restored: PASS
+  OK (fails when reverted)
+row: R2 (item 2) forwarded text passes redact.Block
+  revert: internal/buzz/route.go (3 replacement(s))
+  reverted: FAIL --- FAIL: TestForwardedTextIsRedacted (0.01s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3a (item 3a) any body-signed deletion since the question refuses
+  revert: internal/gateverify/history.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (1.02s); --- FAIL: TestHistoryCheck/10b/3_the_body_deletes_anything_since_the_question_(foreign_use_of_the_body_key) (0.08s); --- FAIL: TestHiddenDeletedEditIsReasked (0.18s); --- FAIL: TestHiddenDeletedEditIsReasked/body (0.08s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3b (item 3b) an owner deletion with a hidden target refuses
+  revert: internal/gateverify/history.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (1.01s); --- FAIL: TestHistoryCheck/3_an_owner_deletion_since_the_question_whose_target_is_hidden (0.08s); --- FAIL: TestHistoryCheck/3_an_owner_deletion_tagged_k_7_and_k_40003,_target_hidden (0.08s); --- FAIL: TestHiddenDeletedEditIsReasked (0.18s); --- FAIL: TestHiddenDeletedEditIsReasked/owner (0.08s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3c (item 3b) the owner's k=7 reaction cleanup is accepted
+  revert: internal/gateverify/history.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (1.00s); --- FAIL: TestHistoryCheck/3_the_owner's_reaction_cleanup_(every_k_tag_7),_target_hidden (0.07s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3d (item 3b) altered_history is a re-ask, not a lockout
+  revert: internal/gateverify/core.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHiddenDeletedEditIsReasked (0.10s); --- FAIL: TestHiddenDeletedEditIsReasked/owner (0.05s); --- FAIL: TestHiddenDeletedEditIsReasked/body (0.04s)
+  restored: PASS
+  OK (fails when reverted)
+row: R4a (item 4) a lock taken after the deadline is released
+  revert: internal/gatestore/store.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestGateLockChecksTheContextAroundEveryAttempt (0.00s)
+  restored: PASS
+  OK (fails when reverted)
+row: R4b (item 4) the context is checked before every attempt
+  revert: internal/gatestore/store.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestGateLockChecksTheContextAroundEveryAttempt (0.00s)
+  restored: PASS
+  OK (fails when reverted)
+row: R5 (item 5) a lock timeout is verify_timeout
+  revert: internal/gateverify/verify.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHeldGateLockIsTheTimeoutPath (0.37s)
+  restored: PASS
+  OK (fails when reverted)

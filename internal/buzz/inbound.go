@@ -239,13 +239,10 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 		h.final(ctx, &hd, "refused - "+gateverify.RejectWindow)
 		return hd
 	}
-	// the once-only mark is taken before acting (at most once)
-	if err := h.seen.put(id, "-", now); err != nil {
-		hd.Error = "once-only record: " + err.Error()
-		h.final(ctx, &hd, "refused - not_recorded")
-		return hd
-	}
-	h.route(ctx, &hd, id, content)
+	// the once-only mark follows the successful forward, as on the gate
+	// path (fix round 2, item 1): a forward that fails leaves no mark and
+	// the next delivery retries it
+	h.route(ctx, &hd, id, content, now)
 	return hd
 }
 
@@ -346,7 +343,7 @@ func reaskLine(eventID string) string {
 }
 
 // route delivers the owner-signed event's own content (never the AMQ body).
-func (h *Handler) route(ctx context.Context, hd *Handled, id, content string) {
+func (h *Handler) route(ctx context.Context, hd *Handled, id, content string, now time.Time) {
 	hd.Kind = "route"
 	d, err := Deliver(ctx, h.Mail, h.Target, id, content)
 	if err != nil {
@@ -357,6 +354,9 @@ func (h *Handler) route(ctx context.Context, hd *Handled, id, content string) {
 		return
 	}
 	hd.Delivery = &d
+	if err := h.seen.put(id, "-", now); err != nil {
+		hd.Error = "once-only record: " + err.Error()
+	}
 	dest := d.Mailbox
 	if d.Lead != "" {
 		dest = d.Lead

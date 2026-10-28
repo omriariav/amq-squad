@@ -21,34 +21,47 @@ const (
 	maxHistoryEdits = 20
 )
 
+// maxHistoryDeletions bounds one read of the deletions since the question; a
+// full page is an unknown history.
+const maxHistoryDeletions = 200
+
 // CheckHistory reads the history of the gate question and of the owner's
 // answer from the relay, the checks upstream amq-remote's CheckHistory runs
-// for a Claude approval (S1 open question 3):
+// for a Claude approval (S1 open question 3), with 5-amq-B's deletion rules:
 //
 //   - every edit of the question (kind 40003, by the body or by the owner,
 //     whom Buzz lets edit the body's messages) must show the record's text
 //     unchanged and carry no attachment; the core never edits a question;
 //   - the owner's answer has no edit: the signed answer is what the core
 //     verifies, and an owner who edits it has changed it;
-//   - no deletion (kinds 5, 9005) signed by the owner's pinned key may name
-//     the question, an edit of it or the answer: an owner who deletes the
-//     answer withdraws it (ownerDeletes). A deletion from any other key,
-//     the body's reaction cleanup included, is no alteration (5-amq-B fix
-//     round, after upstream #1284).
+//   - visible targets, the target-and-signer rule (fix round 1): a deletion
+//     (kinds 5, 9005) signed by the owner's pinned key that names the
+//     question, an edit of it or the answer is question_altered; a deletion
+//     from any key other than the owner's and the body's is ignored, as a
+//     relay ignores it;
+//   - hidden targets (fix round 2, item 3), the deletions since `since`
+//     (the question, or the history re-ask that showed the question's text
+//     again): a deletion signed by the body key is altered_history whatever
+//     it names, since amq-squad's body never posts a reaction and never
+//     deletes anything (the grep is in the 5-amq-B log); a deletion signed
+//     by the owner whose target the relay no longer returns (it may have
+//     hidden an edit of the question the owner answered) is altered_history
+//     unless every k tag on it names kind 7, an owner reaction cleanup.
+//     altered_history is answered with a re-ask that shows the question as
+//     raised (Core.historyReask), so it costs the owner one re-answer.
 //
-// Recorded limit: a deletion the relay honours hides its target, so an edit
-// of the question that was deleted again is not seen, and the owner's
-// deletion of such an edit names an id this check does not know; it is not
-// refused. Only the owner (who signs the answer) or the body key (held by
-// the core and serve alone) can make that edit and deletion.
+// Recorded limit: a holder of the body key can alter a question and cover
+// the edit only until the verifier sees the deletion; the same-UID model
+// already concedes the body key (plan 7.3, R33). An owner deletion tagged
+// k=7 is trusted to be a reaction cleanup.
 //
-// An edit or deletion that fails is question_altered. A read that errors,
-// or a full page of edits, is history_unknown: the core does not know the
-// history and does not accept.
-func CheckHistory(ctx context.Context, r Relay, question, answer nostr.Event, owner string) error {
+// A read that errors, or a full page of edits or deletions, is
+// history_unknown: the core does not know the history and does not accept.
+func CheckHistory(ctx context.Context, r Relay, question, answer nostr.Event, owner string, since int64) error {
 	ctx, cancel := context.WithTimeout(ctx, historyTimeout)
 	defer cancel()
-	authors := []string{question.PubKey, owner}
+	body := question.PubKey
+	authors := []string{body, owner}
 	deletionKinds := []int{KindDeletion, KindGroupDeletion}
 	edits, err := r.Query(ctx, Filter{Kinds: []int{KindEdit}, Authors: authors, Tags: map[string][]string{"e": {question.ID}}, Limit: maxHistoryEdits})
 	if err != nil {
@@ -93,18 +106,89 @@ func CheckHistory(ctx context.Context, r Relay, question, answer nostr.Event, ow
 			return reject(RejectAltered, "the owner deleted the question, an edit of it or the answer")
 		}
 	}
+	// hidden targets: the body's and the owner's deletions since the window
+	recent, err := r.Query(ctx, Filter{Kinds: deletionKinds, Authors: authors, Since: since, Limit: maxHistoryDeletions})
+	if err != nil {
+		return reject(RejectHistory, "read deletions since the question: %v", err)
+	}
+	if len(recent) >= maxHistoryDeletions {
+		return reject(RejectHistory, "%d or more deletions since the question; the history is not known", maxHistoryDeletions)
+	}
+	for _, raw := range recent {
+		d, err := nostr.ParseEvent(raw)
+		if err != nil || d.VerifySignature() != nil || d.CreatedAt < since {
+			continue
+		}
+		switch d.PubKey {
+		case body:
+			return reject(RejectAlteredHistory, "the body key deleted %v since the question; amq-squad's body never deletes", nostr.TagValues(d, "e"))
+		case owner:
+			if reactionCleanupTags(d) {
+				continue
+			}
+			hidden, err := hiddenTargets(ctx, r, nostr.TagValues(d, "e"))
+			if err != nil {
+				return reject(RejectHistory, "read a deletion's targets: %v", err)
+			}
+			if len(hidden) > 0 {
+				return reject(RejectAlteredHistory, "the owner deleted %v since the question and the relay hides it", hidden)
+			}
+		}
+	}
 	return nil
 }
 
-// ownerDeletes is the deletion rule (5-amq-B fix round, ruling on
-// acceptance 10): a kind 5 or 9005 alters the answer only when it is signed
-// by the owner's pinned key and its e tags name the answer, the question or
-// an edit of the question. A deletion from any other key is ignored, as a
-// relay ignores it (NIP-09: only the author's deletion takes effect); a
-// reaction cleanup names only the reaction's id (v0.116.2
-// internal/remote/buzzio/desktop_proof.go, lines 220 to 224, buzz-acp's 👀
-// and 💬 cleanup), so the body's, the attachment's or Buzz Desktop's
-// cleanup is never an alteration.
+// reactionCleanupTags reports whether every k tag of a deletion names kind
+// 7 (and there is one): an owner reaction cleanup.
+func reactionCleanupTags(d nostr.Event) bool {
+	ks := nostr.TagValues(d, "k")
+	if len(ks) == 0 {
+		return false
+	}
+	for _, k := range ks {
+		if k != "7" {
+			return false
+		}
+	}
+	return true
+}
+
+// hiddenTargets are the ids the relay no longer returns.
+func hiddenTargets(ctx context.Context, r Relay, targets []string) ([]string, error) {
+	var valid []string
+	for _, t := range targets {
+		if nostr.IsHex64(t) {
+			valid = append(valid, t)
+		}
+	}
+	if len(valid) == 0 {
+		return nil, nil
+	}
+	got, err := r.Query(ctx, Filter{IDs: valid})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, raw := range got {
+		if e, err := nostr.ParseEvent(raw); err == nil && e.CheckID() {
+			seen[e.ID] = true
+		}
+	}
+	var hidden []string
+	for _, t := range valid {
+		if !seen[t] {
+			hidden = append(hidden, t)
+		}
+	}
+	return hidden, nil
+}
+
+// ownerDeletes is the visible-target rule (fix round 1): a kind 5 or 9005
+// alters the answer when it is signed by the owner's pinned key and its e
+// tags name the answer, the question or an edit of the question. A
+// deletion from any other key is ignored here, as a relay ignores it
+// (NIP-09: only the author's deletion takes effect); the body's deletions
+// are refused by the hidden-target rule above.
 func ownerDeletes(d nostr.Event, owner string, ids []string) bool {
 	if d.PubKey != owner || (d.Kind != KindDeletion && d.Kind != KindGroupDeletion) {
 		return false

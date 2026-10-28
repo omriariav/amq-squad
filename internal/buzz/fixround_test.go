@@ -10,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
 )
 
@@ -75,7 +76,7 @@ func TestHeldGateLockIsTheTimeoutPath(t *testing.T) {
 	if took := time.Since(start); took > 3*time.Second {
 		t.Fatalf("the held lock hung the handler for %s", took)
 	}
-	if len(got) != 1 || got[0].Kind != "attention" {
+	if len(got) != 1 || got[0].Kind != "attention" || got[0].Gate == nil || got[0].Gate.Code != gateverify.RejectVerifyTimeout {
 		t.Fatalf("handled %+v", got)
 	}
 	if res, n := hf.serve.result(msg); n != 0 {

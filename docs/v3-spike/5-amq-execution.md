@@ -464,3 +464,84 @@ timeout (the held lock blocks, the bug itself).
 Gate on the fix-round tree: build, vet, linux and windows builds, `go test
 ./...` (all ok this run), race on buzz, gateverify, gatestore, cli and
 status, `manifest-check --final` OK, the credential scan.
+
+### Fix round 2 (the re-pass residuals on 1974caa4)
+
+1. A route is marked only after its forward succeeded (the gate path's
+   order): a failing forward leaves no mark and the next delivery retries
+   it. A forward that failed after the mailbox copy was written can now
+   deliver that copy twice; at least once replaces at most once for
+   routes. Row: `TestFailedForwardLeavesNoMark` (R1).
+2. Both bodies `Deliver` writes (the mailbox copy and the forward to the
+   lead) pass `redact.Block`, the owner's signed text included (ruling 18).
+   Row: `TestForwardedTextIsRedacted`, canary: the GH_TOKEN name with a zebra canary value (the literal is in the test source)
+   (a credential-named pair that `redact.Block` replaces and no
+   `RealCredentialShapes` pattern matches) (R2).
+3. The hidden deleted edit. Part (a), the grep: `grep -rnE
+   'KindDeletion|KindGroupDeletion|Kind: *(5|7|9005)\b' internal/buzz
+   internal/cli` (non-test files) returns nothing; the body key signs only
+   in `gateverify.Core.sign` (kind 9: the question and the re-ask) and the
+   NIP-42 AUTH (kind 22242). serve signs the body's kind 9 result rows and
+   their kind 40003 edits and no deletion (v0.116.2 buzzio: `KindDeletion`
+   appears only in the history checks). So any body-signed deletion since
+   the question is foreign use of the body key and refuses
+   `altered_history`, whatever it names. Part (b): an owner-signed
+   deletion since the question whose target the relay no longer returns
+   (`hiddenTargets`: one REQ by the deletion's e ids) refuses
+   `altered_history` unless every k tag on it is 7. The refusal is a
+   re-ask: the core posts its one re-ask in the gate thread showing the
+   question as raised (`HistoryReaskText`: the record's text and the answer
+   line), and the hidden-target window then starts at that re-ask
+   (`IsHistoryReask`), so the owner's reply in its thread verifies; the
+   cost is one re-answer. If the gate's one re-ask was already used (an
+   answer outside the thread came first), an altered_history refusal has
+   no re-ask left and the gate is raised again. The target-and-signer rule
+   of round 1 stays for visible targets. Recorded limit (code comment in
+   `history.go` and here): a holder of the body key can alter a question
+   and cover the edit only until the verifier sees the deletion; the
+   same-UID model already concedes the body key.
+   - Correction to the brief's note: the k=7 shape is not in v0.116.2.
+     `buzzio/desktop_proof.go:220-224` describes buzz-acp's cleanup of its
+     own 👀 and 💬 reactions with "a deletion that names only the reaction's
+     id", under the agent key; no file in the module writes or reads a NIP-09
+     `k` tag (grep for `"k"` over the module: test fixtures only). The k=7
+     exemption is NIP-09's optional kind tag, trusted as written; whether
+     Buzz Desktop tags the owner's reaction removals with it is unverified
+     and goes to the owner run (an owner reaction removal untagged would cost
+     a re-answer, not a lockout).
+   - Rows (`TestHistoryCheck`, `TestHiddenDeletedEditIsReasked`): edit
+     then delete then answer refuses with the history re-ask, by the owner
+     and by the body, and the reply in the re-ask's thread is approved; the
+     owner's k=7 cleanup of a hidden target is accepted; a deletion tagged
+     k 7 and k 40003 refuses; the owner's deletion of a still-visible
+     target is accepted; the body's deletion of anything since the question
+     refuses (row 10b of round 1 flips to refused: our body never posts
+     reactions); a body deletion before the question is outside the window.
+     Reverting rows R3a to R3d.
+4. The bounded gate lock checks its context before every attempt and after
+   the lock is taken; a lock taken after the deadline is released and the
+   caller gets `ErrLockTimeout`, so no write runs under an expired
+   verification. Row: `TestGateLockChecksTheContextAroundEveryAttempt`
+   (an expired context, an expiry between attempt and use, a held lock
+   with an expired context) (R4a, R4b; R4b's reverted run spins until the
+   test binary's timeout).
+5. A lock timeout is code `verify_timeout` (`gateverify.Code` maps
+   `gatestore.ErrLockTimeout`), carried by the result, the status line and
+   the attention row. Row: `TestHeldGateLockIsTheTimeoutPath` asserts it
+   (R5).
+
+Recorded, no change: the routing window accepts created_at up to 60 s in
+the future (relay skew).
+
+### Rebase onto v3 after part A (2c4167e0)
+
+Rebased `v3-5-amq-b` onto v3 at 2c4167e0 (A merged at fb0363c2; go.mod pins
+agent-message-queue v0.116.2, the module the scratch binaries were built
+from). One conflict, this file: A's sections first, part B after them. On
+the rebased head: build, vet, linux and windows builds; `go test ./...` all
+ok; race on buzz, gateverify, gatestore, cli and status ok;
+`manifest-check --final` OK; the scratch-built v0.116.2 dry run and the
+crash-path canary pass (handler step 144 ms, answer to serve's delivery
+222 ms, to the result row 2.0 s, connections at the fetch 2 then 1, canary
+grep 183 channels and files: not found). The note at the top of part B
+("not yet rebased onto part A") is superseded by this section.

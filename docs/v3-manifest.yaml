@@ -224,9 +224,9 @@ entries:
   status: new
 - path: internal/buzz/route.go
   v2_lines: 0
-  current_lines: 175
+  current_lines: 179
   fate: new
-  target_lines: 175
+  target_lines: 179
   cluster: buzz
   extract: ""
   reason: "4-5: phone messages into AMQ: the bound mailbox, then onward to a named lead"
@@ -2760,9 +2760,9 @@ entries:
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 317
+  current_lines: 346
   fate: new
-  target_lines: 317
+  target_lines: 346
   cluster: gateverify
   extract: ""
   reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path; 4-5: squad identity (amendment 28)"
@@ -2778,9 +2778,9 @@ entries:
   status: new
 - path: internal/gateverify/history.go
   v2_lines: 0
-  current_lines: 129
+  current_lines: 213
   fate: new
-  target_lines: 129
+  target_lines: 213
   cluster: gateverify
   extract: ""
   reason: "3-1: the question's edit and deletion history from the relay (upstream CheckHistory rules)"
@@ -2796,9 +2796,9 @@ entries:
   status: new
 - path: internal/gateverify/verify.go
   v2_lines: 0
-  current_lines: 248
+  current_lines: 257
   fate: new
-  target_lines: 248
+  target_lines: 257
   cluster: gateverify
   extract: ""
   reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread; 4-5: squad identity (amendment 28)"

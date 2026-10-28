@@ -159,8 +159,12 @@ Gate questions say "Reply in this thread with one line:" and show the two
 answer lines. Answer with a thread reply. An answer typed in the main DM box
 is not accepted; the core re-posts "Reply here to confirm" in the gate thread
 once, the reply to your message points at it, and your next thread reply is
-the answer (amendment 19). Removing a reaction in the thread does not void
-an answer; editing or deleting your answer does.
+the answer (amendment 19). Editing or deleting your answer voids it. A
+deletion of yours since the question whose target the relay now hides (it
+may have hidden an edit of the question) is answered `refused <gate>
+altered_history` with one re-ask that shows the question as raised; reply
+in that thread. A reaction you remove (a deletion tagged with kind 7) does
+not count.
 
 ## Upgrade note (squad identity)
 
