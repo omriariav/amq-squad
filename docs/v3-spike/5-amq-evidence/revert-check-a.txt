@@ -1,0 +1,11 @@
+OK seat-exec checks the Codex sandbox pins: TestSeatExecRefusesAnArgvWithoutTheSandboxPins reverted=FAIL restored=PASS
+OK the compiler puts the pins in the launch request: TestCodexSandboxPinsAreAdmittedAndDigested reverted=FAIL restored=PASS
+OK a pi seat needs the embedded shim: TestSeatExecPiNeedsTheEmbeddedShim reverted=FAIL restored=PASS
+OK a pi seat execs the embedded runtime launcher: TestSeatExecPiResumeRefusal reverted=FAIL restored=PASS
+OK amendment 23 (a) resume refusal on the adapter path: TestSeatExecPiResumeRefusal reverted=FAIL restored=PASS
+OK the compiler names the shim for a pi seat: TestPiSeatShape reverted=FAIL restored=PASS
+OK the shim probe drops AMQ_SQUAD_PI_TIMING (live finding): TestPiShimAnswersOnlyTheAdapterProbes reverted=FAIL restored=PASS
+OK the shim answers only the two probes: TestPiShimAnswersOnlyTheAdapterProbes reverted=FAIL restored=PASS
+OK the shim is written once (stable identity): TestEnsureShimIsStableAndRefusesASymlink reverted=FAIL restored=PASS
+OK doctor's installed AMQ floor is 0.116.2: TestDoctorInstalledAMQFloor reverted=FAIL restored=PASS
+OK the adoption-seam pin is the linked module: TestLinkedAMQModuleIsThePin reverted=FAIL restored=PASS

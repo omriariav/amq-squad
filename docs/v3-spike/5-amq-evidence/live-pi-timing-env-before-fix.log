@@ -1,0 +1,18 @@
+=== RUN   TestLivePiSeatThroughTheAdapter
+    live_pi_darwin_test.go:97: first pass:
+        prepare: outcome action_required, reason untrusted_config_digest (subject sha256:7f4784ad1e9e9658b9296c06071c4055ba02f30eb8ae8208e78923e3d91c98a9, trust sha256:13177b07222a78fbe6f5d3ba07ec48895ec4f8c7894317b26bde8feb0d60de68)
+        amq: untrusted_config_digest
+        pending decision: sha256:e12c85b2529cb1effebc8b9102d7d3a5ce95df607d7d12d50cf0ac335c67baa1 trust_confirmation (untrusted_config_digest) for scout
+        next: answer trust_confirmation (untrusted_config_digest, handles scout): re-run amq-squad launch with --decision sha256:e12c85b2529cb1effebc8b9102d7d3a5ce95df607d7d12d50cf0ac335c67baa1=<trust_exact_subject|deny>
+        next: the answers bind subject sha256:7f4784ad1e9e9658b9296c06071c4055ba02f30eb8ae8208e78923e3d91c98a9; if the squad changes, Prepare returns new action ids
+    live_pi_darwin_test.go:111: apply pass:
+        prepare: outcome action_required, reason untrusted_config_digest (subject sha256:7f4784ad1e9e9658b9296c06071c4055ba02f30eb8ae8208e78923e3d91c98a9, trust sha256:13177b07222a78fbe6f5d3ba07ec48895ec4f8c7894317b26bde8feb0d60de68)
+        apply: outcome action_required, reason_code launch_action_required, disposition not_applied, backend none
+        apply: failure_detail launch_action_required
+          seat scout: conversation none, execution none, resource none
+        next: fix the cause named by reason_code and failure_detail, then run the same amq-squad launch again
+    live_pi_darwin_test.go:118: the pi seat did not come up: stage apply_failed
+--- FAIL: TestLivePiSeatThroughTheAdapter (3.22s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	3.481s
+FAIL
