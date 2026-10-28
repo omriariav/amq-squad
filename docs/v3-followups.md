@@ -16,6 +16,7 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- Scheduler async close: no production implementer after the stand-in's removal (5-amq-C); CloseUnconfirmed's delegation always confirms; removal of AsyncCloser, the helper, the delegation, the awaitGone branches, state and rendering, and five tests, with holdForExit's exits release kept.
 - Orphaned-verifier adoption: the exits queue entry for a running commit step
   records the verifier child's pgid and start time; the adopting scheduler
   kills that group when the start time matches and re-runs the verifier once

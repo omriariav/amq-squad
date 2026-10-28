@@ -93,9 +93,6 @@ func TestPiSeatShape(t *testing.T) {
 	if args := ProviderArgs(pi); args != nil {
 		t.Fatalf("pi provider args %q", args)
 	}
-	if !PiAdapterInLibrary {
-		t.Fatal("the pinned library carries the pi adapter")
-	}
 	q := testSquad(t)
 	q.Seats = append(q.Seats, pi)
 	if _, err := Compile(q, "", lookPath, time.Unix(1, 0)); err == nil || !strings.Contains(err.Error(), ReasonPiShimMissing) {

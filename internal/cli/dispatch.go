@@ -115,6 +115,9 @@ Examples:
 	}
 	emitContextDiagnostics(resolvedContext)
 	projectDir, profile := resolvedContext.ProjectDir, resolvedContext.Profile
+	if err := team.CheckProfile(profile); err != nil {
+		return err
+	}
 	if !team.ExistsFor(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}

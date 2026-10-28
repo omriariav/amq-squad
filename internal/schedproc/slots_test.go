@@ -2,14 +2,12 @@ package schedproc
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -83,43 +81,6 @@ func TestSlotsPlanWorktreesAndRelease(t *testing.T) {
 	}
 	if _, err := s.Plan(scheduler.SeatRequest{ID: "r4", Pool: task.Pool{Runtime: "claude", Model: "opus", Effort: "high"}}); err == nil || !strings.Contains(err.Error(), "no worktree of its own") {
 		t.Fatalf("a repository-root seat: %v", err)
-	}
-}
-
-// External (the pi stand-in on AMQ 0.107.0): the core still stages the
-// record and role, records the commit base, and writes the request file
-// for the runner; cancel and close leave files the runner obeys.
-func TestExternalLauncherStagesAndWritesTheRequest(t *testing.T) {
-	q := squadFixture(t)
-	root := q.SessionRoot()
-	e := External{Slots: &Slots{Squad: q}, Root: root}
-	pi := task.Pool{Runtime: "pi", Model: "qwen3.6:27b", Effort: "medium"}
-	if err := e.RequestSeat(scheduler.SeatRequest{ID: "seat-req-x-1", Pool: pi, TaskID: "t1"}); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(RequestsDir(root), "seat-req-x-1.json"))
-	var r Request
-	if err != nil || json.Unmarshal(raw, &r) != nil || r.Handle != "p1" || r.TaskID != "t1" || r.Branch != "seat/p1" || r.Session != "s1" {
-		t.Fatalf("request: %s %v", raw, err)
-	}
-	staged, err := os.ReadFile(filepath.Join(launch.StagedDir(root, "p1"), launch.FileName))
-	if err != nil || !strings.Contains(string(staged), `"request_id": "seat-req-x-1"`) || !strings.Contains(string(staged), `"launcher": "external"`) {
-		t.Fatalf("staged record: %s %v", staged, err)
-	}
-	if l, err := seatcommit.ReadLedger(root, "p1"); err != nil || l.Base == "" || l.Branch != "seat/p1" {
-		t.Fatalf("commit base: %+v %v", l, err)
-	}
-	if err := e.CancelSeatRequest(scheduler.SeatRequest{ID: "seat-req-x-1"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(RequestsDir(root), "seat-req-x-1.cancel")); err != nil {
-		t.Fatal("no cancel file")
-	}
-	if err := e.CloseSeat("p1", "idle"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(RequestsDir(root), "close-p1.json")); err != nil {
-		t.Fatal("no close file")
 	}
 }
 

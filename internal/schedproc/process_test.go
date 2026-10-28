@@ -176,50 +176,6 @@ func TestUsageLimitBeforeTheStartIsHistory(t *testing.T) {
 	<-done
 }
 
-// External runners post events through files; the process drains them.
-func TestPostedEventsReachTheScheduler(t *testing.T) {
-	root := t.TempDir()
-	store, _ := task.Open(root)
-	if _, err := store.Add(task.AddInput{Title: "first", Class: "implement", Pool: &sonnet}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	ext := &recording{}
-	ctx, cancel := context.WithCancel(context.Background())
-	ticks := make(chan []scheduler.Decision, 1000)
-	done := make(chan error, 1)
-	go func() {
-		done <- Run(ctx, Options{Root: root, Launcher: ext, Log: &lockedBuf{}, Tick: 10 * time.Millisecond,
-			OnTick: func(ds []scheduler.Decision) { ticks <- ds }})
-	}()
-	waitFor(t, ticks, func(d scheduler.Decision) bool { return d.Kind == "seat_requested" })
-	ext.mu.Lock()
-	id := ext.reqs[0].ID
-	ext.mu.Unlock()
-	if err := PostEvent(root, Event{Kind: "seat_up", Handle: "pi-1", Pool: sonnet, RequestID: id}); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, ticks, func(d scheduler.Decision) bool { return d.Kind == "dispatched" && d.Seat == "pi-1" })
-	if err := PostEvent(root, Event{Kind: "bogus", Handle: "x"}); err == nil {
-		t.Fatal("an unknown event kind was posted")
-	}
-	cancel()
-	<-done
-}
-
-type recording struct {
-	mu   sync.Mutex
-	reqs []scheduler.SeatRequest
-}
-
-func (r *recording) RequestSeat(q scheduler.SeatRequest) error {
-	r.mu.Lock()
-	r.reqs = append(r.reqs, q)
-	r.mu.Unlock()
-	return nil
-}
-func (r *recording) CancelSeatRequest(scheduler.SeatRequest) error { return nil }
-func (r *recording) CloseSeat(string, string) error                { return nil }
-
 func waitFor(t *testing.T, ticks <-chan []scheduler.Decision, match func(scheduler.Decision) bool) {
 	t.Helper()
 	deadline := time.After(10 * time.Second)

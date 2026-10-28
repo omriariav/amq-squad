@@ -1,16 +1,12 @@
 package schedproc
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -29,7 +25,6 @@ type Slots struct {
 	Squad      seatlaunch.Squad // normalized; Wrapper and AMQPath set
 	BaseBranch string           // default main
 	Git        string           // default git on PATH
-	Now        func() time.Time
 	// Target is the launch's record of the owner's grant for each seat's
 	// commit step: repository, base branch and push URL (R2).
 	Target seatcommit.Target
@@ -38,13 +33,6 @@ type Slots struct {
 	inUse  map[string]string // handle -> request id
 	byReq  map[string]string // request id -> handle
 	closed map[string]bool   // handles quarantined or otherwise not to be reused
-}
-
-func (s *Slots) now() time.Time {
-	if s.Now != nil {
-		return s.Now()
-	}
-	return time.Now()
 }
 
 func poolMatches(p task.Pool, seat seatlaunch.Seat) bool {
@@ -123,8 +111,7 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 }
 
 // Launcher sends each request to the launcher of its runtime (the AMQ launch
-// API for Claude, Codex and, since AMQ v0.116, pi; the external runner for a
-// runtime AMQ cannot launch) and
+// API for Claude, Codex and, since AMQ v0.116, pi) and
 // frees the seat's slot when its request is cancelled or the seat closed.
 type Launcher struct {
 	Slots     *Slots
@@ -181,8 +168,9 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 	}
 	err := inner.CloseSeat(handle, reason)
 	if err == nil && !l.CloseUnconfirmed(handle) {
-		// A confirmed close frees the slot now; an unconfirmed one (the
-		// external stand-in) only at the seat's seat_gone (P1-6).
+		// A confirmed close frees the slot now; an unconfirmed one (a
+		// launcher that is a scheduler.AsyncCloser and says so) only at
+		// the seat's seat_gone (P1-6).
 		l.Slots.Release(handle)
 		if reason == "quarantined" {
 			l.Slots.mu.Lock()
@@ -196,14 +184,14 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 	return err
 }
 
-// CloseUnconfirmed: a seat of the external stand-in is closed by a close
-// file its runner obeys, so a nil close does not confirm the termination;
-// the scheduler waits for the runner's seat_gone (R3).
+// CloseUnconfirmed asks the seat's own launcher (a scheduler.AsyncCloser)
+// whether its nil close does not confirm the termination; the scheduler then
+// waits for the seat's seat_gone (R3). The AMQ launcher confirms.
 func (l *Launcher) CloseUnconfirmed(handle string) bool {
 	for _, s := range l.Slots.Squad.Seats {
 		if s.Handle == handle {
-			_, external := l.ByRuntime[s.Runtime].(External)
-			return external
+			a, ok := l.ByRuntime[s.Runtime].(scheduler.AsyncCloser)
+			return ok && a.CloseUnconfirmed(handle)
 		}
 	}
 	return false
@@ -234,81 +222,6 @@ var (
 	_ scheduler.SeatGoneObserver = (*Launcher)(nil)
 	_ scheduler.SeatReserver     = (*Launcher)(nil)
 )
-
-// External is the stand-in launcher for seats the pinned AMQ cannot launch
-// (it was pi's until v0.116 carried the pi adapter; scheduler run uses it
-// only when seatlaunch.PiAdapterInLibrary is false).
-// The core does its part as for any seat: the worktree and branch, the
-// staged launch record and role.md under the session root, the recorded
-// commit base. Then it writes a request file under
-// <root>/extensions/amq-squad/scheduler/requests/ for an external runner,
-// which starts the provider with the seat identity and posts seat_up
-// (`amq-squad scheduler post`). A cancel or a close writes a close file the
-// runner obeys; both are confirmed at once (the stand-in's limit, recorded).
-type External struct {
-	Slots *Slots
-	Root  string
-}
-
-// Request is the file an external runner reads.
-type Request struct {
-	ID        string    `json:"id"`
-	TaskID    string    `json:"task_id"`
-	Pool      task.Pool `json:"pool"`
-	Handle    string    `json:"handle"`
-	Runtime   string    `json:"runtime"`
-	Worktree  string    `json:"worktree"`
-	Branch    string    `json:"branch"`
-	RolePath  string    `json:"role_path"`
-	Root      string    `json:"root"`
-	BaseRoot  string    `json:"base_root"`
-	Session   string    `json:"session"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// RequestsDir is where External writes requests.
-func RequestsDir(root string) string { return filepath.Join(Dir(root), "requests") }
-
-func (e External) RequestSeat(req scheduler.SeatRequest) error {
-	q, err := e.Slots.Plan(req)
-	if err != nil {
-		return err
-	}
-	seat := q.Seats[0]
-	role := []byte(seat.Role)
-	sum := sha256.Sum256(role)
-	rulesSHA, err := seatlaunch.FileDigest(q.RulesPath)
-	if err != nil {
-		e.Slots.ReleaseRequest(req.ID)
-		return err
-	}
-	rec := launch.Record{Handle: seat.Handle, Root: q.SessionRoot(), BaseRoot: q.BaseRoot, Session: q.Session, Runtime: seat.Runtime,
-		Model: seat.Model, Effort: seat.Effort, RoleSHA256: "sha256:" + hex.EncodeToString(sum[:]), RulesPath: q.RulesPath, RulesSHA256: rulesSHA,
-		Branch: seat.Branch, Worktree: seat.Worktree, AMQPath: q.AMQPath, EnvNeeds: seat.EnvNeeds, RequestID: req.ID, Role: seat.RoleName,
-		CWD: seat.Worktree, Binary: seat.Runtime, TeamHome: q.TeamHome, StartedAt: e.Slots.now().UTC(), Launcher: "external"}
-	if err := seatlaunch.Stage(seatlaunch.Compiled{Records: []launch.Record{rec}, Roles: [][]byte{role}}); err != nil {
-		e.Slots.ReleaseRequest(req.ID)
-		return err
-	}
-	if _, err := seatcommit.RecordWorktreeBase(e.Slots.Git, rec.Root, seat.Handle, seat.Worktree, seat.Branch, e.Slots.Target, e.Slots.now()); err != nil {
-		e.Slots.ReleaseRequest(req.ID)
-		return fmt.Errorf("seat %s: record the commit base: %w", seat.Handle, err)
-	}
-	r := Request{ID: req.ID, TaskID: req.TaskID, Pool: req.Pool, Handle: seat.Handle, Runtime: seat.Runtime, Worktree: seat.Worktree, Branch: seat.Branch,
-		RolePath: filepath.Join(launch.StagedDir(rec.Root, seat.Handle), launch.RoleFileName), Root: rec.Root, BaseRoot: q.BaseRoot, Session: q.Session, CreatedAt: e.Slots.now().UTC()}
-	return writeJSON(filepath.Join(RequestsDir(e.Root), req.ID+".json"), r)
-}
-
-func (e External) CancelSeatRequest(req scheduler.SeatRequest) error {
-	os.Remove(filepath.Join(RequestsDir(e.Root), req.ID+".json"))
-	return writeJSON(filepath.Join(RequestsDir(e.Root), req.ID+".cancel"), map[string]string{"id": req.ID})
-}
-
-func (e External) CloseSeat(handle, reason string) error {
-	return writeJSON(filepath.Join(RequestsDir(e.Root), "close-"+handle+".json"), map[string]string{"handle": handle, "reason": reason})
-}
-
-var _ scheduler.SeatLauncher = External{}
 
 func writeJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

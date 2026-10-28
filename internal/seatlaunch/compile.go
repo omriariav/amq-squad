@@ -91,12 +91,6 @@ const ReasonProviderNotPinned = "provider_not_pinned"
 // 23 (b)); its model restriction stays on the registry side (R16).
 var Runtimes = []string{"claude", "codex", "pi"}
 
-// PiAdapterInLibrary says whether the pinned AMQ library carries the pi
-// mint-mode adapter (PR #1188). v0.116.x does (launchapi PiProvider ->
-// NewPiAdapter): pi seats launch through the launch API behind seat-exec,
-// with the pi launch shim as their executable (brief 5-amq-A).
-const PiAdapterInLibrary = true
-
 // ReasonPiShimMissing refuses a pi seat when the launch named no pi shim, or
 // a provider that is not the shim (R2: never a pi from PATH).
 const ReasonPiShimMissing = "pi_not_embedded"

@@ -132,14 +132,14 @@ func TestDecisionSocketProvesTheLeadAgainstTheLedger(t *testing.T) {
 }
 
 // P1-6 (slots.go:183): the slot was released at the close while the
-// scheduler waited for the external seat's seat_gone, so a replacement
+// scheduler waited for the unconfirmed seat's seat_gone, so a replacement
 // launched under the same handle and worktree before the old provider
 // stopped. An unconfirmed close keeps the slot; the seat_gone frees it.
-func TestExternalSlotIsReleasedOnlyAtSeatGone(t *testing.T) {
+func TestUnconfirmedCloseSlotIsReleasedOnlyAtSeatGone(t *testing.T) {
 	q := squadFixture(t)
 	slots := &Slots{Squad: q}
 	pi := task.Pool{Runtime: "pi", Model: "", Effort: ""}
-	l := &Launcher{Slots: slots, ByRuntime: map[string]scheduler.SeatLauncher{"pi": External{Slots: slots, Root: q.SessionRoot()}}}
+	l := &Launcher{Slots: slots, ByRuntime: map[string]scheduler.SeatLauncher{"pi": asyncFake{&fakeLauncher{}}}}
 	if _, err := slots.Plan(scheduler.SeatRequest{ID: "r1", Pool: pi}); err != nil {
 		t.Fatal(err)
 	}

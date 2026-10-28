@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -592,15 +593,18 @@ func realAMQValidateSafeInjectViaAncestors(path string) error {
 	}
 }
 
-// realAMQOrchestrationContractSkip is why the two orchestration-contract
-// subtests are skipped (5-amq-A fix round; the same text is in ci.yml and in
-// docs/v3-spike/5-amq-execution.md under "Deferred"): a pre-existing break
-// independent of the AMQ version. Brief C ports them to a schema-valid team
-// and runs them unskipped against v0.116.2.
-const realAMQOrchestrationContractSkip = "pre-existing break, independent of the AMQ version: realAMQOrchestrationContract builds a team with Binary=/bin/sleep, and squad.yaml has rejected a runtime outside claude, codex, pi since 2b-5 (4fc5dbf2); the other nine subtests pass at v0.116.2. Follow-up (brief C): port to a schema-valid team (a runtime of claude, codex or pi with a stub binary; dispatch queues and sends without launching), or state why the dispatch authorizer cannot accept one"
-
-func realAMQOrchestrationContract(t *testing.T, binary, version, profile string) {
+// realAMQOrchestrationContract is the default-profile orchestration contract
+// against the real AMQ (dispatch, the structured human gate answer, verify
+// action, doctor). The team is schema-valid (runtimes claude and codex; the
+// squad.yaml reader takes no other, and dispatch only queues and sends, so no
+// seat launches). The gate leg uses destructive_filesystem, an untyped
+// human-only action: a typed action (tag, external_send, ...) is answered
+// only by the owner's Buzz-signed reply since 3.0 and has no AMQ operator
+// answer to exercise. A named profile has no squad in 3.0 (team.ErrNamedProfile),
+// so the former review-profile run is the refusal subtest below.
+func realAMQOrchestrationContract(t *testing.T, binary, version string) {
 	t.Helper()
+	const profile = squadnamespace.DefaultProfile
 	const session = "issue-471"
 	project := t.TempDir()
 	authorizerBinary, err := exec.LookPath("sleep")
@@ -622,7 +626,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		Orchestrated: true,
 		Lead:         "cto",
 		Members: []team.Member{
-			{Role: "cto", Binary: authorizerBinary, Handle: "cto", Session: session},
+			{Role: "cto", Binary: "claude", Handle: "cto", Session: session},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: session},
 		},
 	}
@@ -630,9 +634,6 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		t.Fatal(err)
 	}
 	recordBase := filepath.Dir(ctx.Root)
-	if profile != squadnamespace.DefaultProfile {
-		recordBase = ctx.Root
-	}
 	seedAgentRecord(t, filepath.Dir(ctx.Root), session, "cto", launch.Record{
 		CWD: project, Binary: authorizerBinary, Role: "cto", Handle: "cto", Session: session,
 		Root: ctx.Root, BaseRoot: recordBase, TeamProfile: profile,
@@ -677,8 +678,8 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	}
 
 	const gate = "gate/real-amq-471"
-	const action = "external_send"
-	const target = "real AMQ compatibility canary"
+	const action = "destructive_filesystem"
+	const target = "rm -rf real AMQ compatibility canary"
 	const note = "real AMQ typed envelope"
 	questionStdout, questionStderr, err := captureOutput(t, func() error {
 		return runGateRaise([]string{
@@ -1019,12 +1020,42 @@ func TestRealAMQCompatibility(t *testing.T) {
 		}
 	})
 
-	for _, profile := range []string{squadnamespace.DefaultProfile, "review"} {
-		profile := profile
-		t.Run("orchestration contract "+profile, func(t *testing.T) {
-			t.Skip(realAMQOrchestrationContractSkip)
-			realAMQOrchestrationContract(t, binary, version, profile)
-		})
-	}
+	t.Run("orchestration contract default", func(t *testing.T) {
+		realAMQOrchestrationContract(t, binary, version)
+	})
+	t.Run("orchestration contract named profile refused", func(t *testing.T) {
+		realAMQNamedProfileRefused(t, binary)
+	})
 
+}
+
+// realAMQNamedProfileRefused: the v2 review-profile orchestration run is gone
+// with named profiles; dispatch against one is refused by the squad reader
+// before anything is sent, even over a real AMQ root.
+func realAMQNamedProfileRefused(t *testing.T, binary string) {
+	t.Helper()
+	const session, profile = "issue-471", "review"
+	project := t.TempDir()
+	ctx := realAMQProfileContext(project, profile, session, "cto")
+	realAMQInitAgents(t, binary, project, ctx.Root, "cto", "qa", team.DefaultOperatorHandle)
+	cfg := team.Team{Project: project, Orchestrated: true, Lead: "cto", Members: []team.Member{
+		{Role: "cto", Binary: "claude", Handle: "cto", Session: session},
+		{Role: "qa", Binary: "codex", Handle: "qa", Session: session},
+	}}
+	if err := team.Write(project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--project", project, "--profile", profile, "--session", session, "--role", "qa", "--from", "cto",
+			"--thread", "p2p/cto__qa", "--subject", "named profile", "--body", "must be refused", "--json"})
+	})
+	if !errors.Is(err, team.ErrNamedProfile) {
+		t.Fatalf("dispatch against a named profile: %v, want team.ErrNamedProfile", err)
+	}
+	// Nothing was sent: the QA mailbox on the real root is empty.
+	qa := ctx
+	qa.Me = "qa"
+	if drained := realAMQCommand(t, binary, project, amqCommandEnv(qa), "drain", "--include-body"); strings.Contains(drained, "must be refused") {
+		t.Fatalf("the refused dispatch still sent a message:\n%s", drained)
+	}
 }
