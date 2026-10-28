@@ -1,0 +1,46 @@
+== pinned lane, as ci.yml runs it (amq 0.116.2) ==
+--- PASS: TestRealLaunchapiInspectSessionTargetShape (0.07s)
+--- PASS: TestRealAMQGateCloseReplyRefsCompatibility (0.19s)
+--- PASS: TestRealAMQDoctorGlobalRepairScope (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/measured_0.49.8/0.49.9_roster (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/pre-0.49.7_alpha_only (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/unrelated_extra_mailbox (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/unrelated_extra_outside_agents (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/user_subtree_prefix_impostor (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/target_repair_missing (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/target_repair_duplicated (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/no_creations_at_all (0.00s)
+--- PASS: TestRealAMQCompatibility (12.61s)
+    --- PASS: TestRealAMQCompatibility/sessionful_default_profile (0.20s)
+    --- PASS: TestRealAMQCompatibility/exact_root_named_profile (0.28s)
+    --- PASS: TestRealAMQCompatibility/three_actor_100_message_isolation (8.48s)
+    --- PASS: TestRealAMQCompatibility/committed_delivery_wording_contract (0.00s)
+    --- PASS: TestRealAMQCompatibility/coop_exec_drains_preexisting_goal_with_zero_injection (1.78s)
+    --- PASS: TestRealAMQCompatibility/external_wake_suppresses_backlog_and_injects_post-baseline_resend (1.67s)
+    --- PASS: TestRealAMQCompatibility/doctor_repairs_malformed_configured_mailbox (0.07s)
+    --- PASS: TestRealAMQCompatibility/canonical_root_authority (0.00s)
+    --- PASS: TestRealAMQCompatibility/post-coop_child_identity (0.12s)
+--- PASS: TestRealAMQFixtureEnvSanitizesManagedContext (0.00s)
+--- PASS: TestRealAMQProcessEnvSanitizesManagedContext (0.00s)
+--- PASS: TestNestedWorktreeRootDiscoveryOnAMQ074 (0.40s)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	13.588s
+--- PASS: TestCompiledIntentAcceptedByReleasedAMQ (0.01s)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	0.325s
+--- PASS: TestApplyForwardsSubjectSchemaFromPrepareResult (0.23s)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	0.875s
+== the same compatibility test without -skip: the two skipped subtests by name, with their reason ==
+    real_amq_compatibility_test.go:1025: pre-existing break, independent of the AMQ version: realAMQOrchestrationContract builds a team with Binary=/bin/sleep, and squad.yaml has rejected a runtime outside claude, codex, pi since 2b-5 (4fc5dbf2); the other nine subtests pass at v0.116.2. Follow-up (brief C): port to a schema-valid team (a runtime of claude, codex or pi with a stub binary; dispatch queues and sends without launching), or state why the dispatch authorizer cannot accept one
+    real_amq_compatibility_test.go:1025: pre-existing break, independent of the AMQ version: realAMQOrchestrationContract builds a team with Binary=/bin/sleep, and squad.yaml has rejected a runtime outside claude, codex, pi since 2b-5 (4fc5dbf2); the other nine subtests pass at v0.116.2. Follow-up (brief C): port to a schema-valid team (a runtime of claude, codex or pi with a stub binary; dispatch queues and sends without launching), or state why the dispatch authorizer cannot accept one
+--- PASS: TestRealAMQCompatibility (9.09s)
+    --- PASS: TestRealAMQCompatibility/sessionful_default_profile (0.12s)
+    --- PASS: TestRealAMQCompatibility/exact_root_named_profile (0.12s)
+    --- PASS: TestRealAMQCompatibility/three_actor_100_message_isolation (5.54s)
+    --- PASS: TestRealAMQCompatibility/committed_delivery_wording_contract (0.00s)
+    --- PASS: TestRealAMQCompatibility/coop_exec_drains_preexisting_goal_with_zero_injection (1.53s)
+    --- PASS: TestRealAMQCompatibility/external_wake_suppresses_backlog_and_injects_post-baseline_resend (1.61s)
+    --- PASS: TestRealAMQCompatibility/doctor_repairs_malformed_configured_mailbox (0.06s)
+    --- PASS: TestRealAMQCompatibility/canonical_root_authority (0.00s)
+    --- PASS: TestRealAMQCompatibility/post-coop_child_identity (0.10s)
+    --- SKIP: TestRealAMQCompatibility/orchestration_contract_default (0.00s)
+    --- SKIP: TestRealAMQCompatibility/orchestration_contract_review (0.00s)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	9.403s

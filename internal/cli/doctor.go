@@ -17,10 +17,12 @@ import (
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
-// expects to interoperate with. Bumped manually when amq-squad starts to
-// depend on newer AMQ behavior; the doctor check compares the running amq
-// binary's reported version against this floor.
-const doctorMinAMQVersion = "0.60.0"
+// runs with: the release of the module go.mod pins (5-amq-A fix round, one
+// floor for one binary). Every 3.0 path needs that release's launch
+// adapters (the pi mint adapter, the Codex sandbox pins) and its mailbox.
+// The amq env check, the installed-binary rows (doctor_amq_floor.go) and
+// the real-AMQ CI lane's pinned version all read this one value.
+const doctorMinAMQVersion = "0.116.2"
 
 type doctorStatus string
 
@@ -73,6 +75,9 @@ type doctorExecution struct {
 	// version. found=false when none is on PATH. Injectable so the version-skew
 	// check never shells a real binary in tests.
 	PathBinaryVersion func() (path, version string, found bool)
+	// ToolVersion runs `<name> --version` for the installed AMQ floor rows
+	// (brief 5-amq-A); nil skips them, so unit tests never shell a real amq.
+	ToolVersion func(name string) (path, out string, found bool, err error)
 	// Host is the plan 16.2 probe of the host (doctor_host.go). A nil Host
 	// skips the host rows, so unit tests never probe the real machine.
 	Host *doctorHost
@@ -91,6 +96,7 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		Getenv:            os.Getenv,
 		LookupEnv:         os.LookupEnv,
 		PathBinaryVersion: defaultPathBinaryVersion,
+		ToolVersion:       defaultToolVersion,
 		Host:              defaultDoctorHost(),
 	}
 }
@@ -315,6 +321,7 @@ func runDoctorChecks(d doctorExecution) []doctorCheck {
 		doctorCheckAMQOps(d),
 		doctorCheckVersionSkew(d),
 	}
+	checks = append(checks, doctorCheckInstalledAMQFloor(d)...)
 	if d.ReleaseDrift != nil {
 		checks = append(checks, d.ReleaseDrift()...)
 	}
@@ -375,6 +382,7 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		return doctorCheck{
 			Name:   "amq version",
 			Status: doctorFail,
+			Kind:   doctorAMQBelowFloor,
 			Detail: fmt.Sprintf("amq %s is older than required %s; run `amq upgrade` to update", got, doctorMinAMQVersion),
 		}
 	}

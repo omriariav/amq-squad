@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +36,7 @@ Usage:
                    [--lead] [--approve-tools T,...] [--resume] [--no-package] [--dry-run] [-- PI-ARGS...]
   amq-squad pi verify [--json]
   amq-squad pi path [--json]
+  amq-squad pi shim --version | --help
 
 run      start the embedded pi. The seat is --seat, else AM_ME, else "lead";
          its pi config lives in ~/.amq-squad/pi-agent/<seat>. The amq-squad
@@ -43,6 +46,9 @@ run      start the embedded pi. The seat is --seat, else AM_ME, else "lead";
          in the seat's ledger and no session file for --session-id is refused.
 verify   re-hash the unpacked runtime against the embedded manifest (doctor).
 path     print the runtime directory and the node + pi entry argv.
+shim     what the pi launch shim (~/.amq-squad/pi-launch/pi) runs: answers
+         AMQ's pi adapter probes from the verified embedded runtime. A pi
+         seat starts through seat-exec, never through the shim.
 
 The runtime unpacks once to ~/.amq-squad/runtime/<version>-<digest>/; every
 launch re-hashes it. AMQ_SQUAD_PI_TIMING=1 prints the launch timing to stderr.
@@ -73,13 +79,17 @@ func runPi(args []string) error {
 		return runPiVerify(args[1:])
 	case "path":
 		return runPiPath(args[1:])
+	case "shim":
+		return runPiShim(args[1:])
 	}
-	return unknownSubcommandError("pi", args[0], "run", "verify", "path")
+	return unknownSubcommandError("pi", args[0], "run", "verify", "path", "shim")
 }
 
 type piRunFlags struct {
 	seat, thinking, approve string
 	models                  multiFlag
+	envNeeds                multiFlag
+	agentDir                string
 	lead, resume, noPackage bool
 	dryRun                  bool
 }
@@ -101,6 +111,8 @@ func runPiRun(args []string) error {
 	fs.BoolVar(&f.resume, "resume", false, "this start resumes a seat (amendment 23 check)")
 	fs.BoolVar(&f.noPackage, "no-package", false, "start pi without the amq-squad package")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the launch as JSON and do not exec")
+	fs.Var(&f.envNeeds, "env-need", "a variable the seat's runtime declares it needs, kept through the scrub (repeatable; seat-exec passes the record's)")
+	fs.StringVar(&f.agentDir, "agent-dir", "", "the seat's pi agent dir (absolute; seat-exec passes the record's)")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, piUsage) }
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -141,6 +153,17 @@ func piLaunch(s piLaunchSpec) error {
 		return err
 	}
 	agentDir := piruntime.AgentDirFor(home, s.Seat)
+	if d := s.Flags.agentDir; d != "" {
+		if !filepath.IsAbs(d) || filepath.Clean(d) != d {
+			return usageErrorf("pi run --agent-dir %q: want an absolute clean path", d)
+		}
+		agentDir = d
+	}
+	for _, n := range s.Flags.envNeeds {
+		if !piEnvNeedPattern.MatchString(n) {
+			return usageErrorf("pi run --env-need %q: want a variable name", n)
+		}
+	}
 	if s.Flags.resume {
 		root := firstNonEmptyStr(s.Overlay["AM_ROOT"], os.Getenv("AM_ROOT"))
 		if root == "" {
@@ -164,7 +187,10 @@ func piLaunch(s piLaunchSpec) error {
 		}
 		overlay["AMQ_SQUAD_BIN"] = self
 	}
-	if amq, err := exec.LookPath("amq"); err == nil {
+	if amq := os.Getenv("AMQ_SQUAD_AMQ"); filepath.IsAbs(amq) {
+		// seat-exec names the launch record's amq (the one the launch ran).
+		overlay["AMQ_SQUAD_AMQ"] = amq
+	} else if amq, err := exec.LookPath("amq"); err == nil {
 		if abs, err := filepath.Abs(amq); err == nil {
 			overlay["AMQ_SQUAD_AMQ"] = abs
 		}
@@ -190,7 +216,7 @@ func piLaunch(s piLaunchSpec) error {
 	}
 	l, err := piruntime.Prepare(piruntime.Spec{
 		Runtime: rt, Home: home, Seat: s.Seat, AgentDir: agentDir, Parent: os.Environ(), TmpDir: tmp,
-		Models: models, Thinking: s.Flags.thinking, Overlay: overlay, Package: !s.Flags.noPackage, Args: piArgs,
+		Models: models, Thinking: s.Flags.thinking, Overlay: overlay, Package: !s.Flags.noPackage, Args: piArgs, EnvNeeds: s.Flags.envNeeds,
 	})
 	if err != nil {
 		return err
@@ -319,6 +345,84 @@ func ollamaThinks(host, model string) bool {
 		}
 	}
 	return false
+}
+
+// piEnvNeedPattern is a variable name --env-need accepts.
+var piEnvNeedPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// piShimProbeSeat is the agent dir the shim's probes run in (no seat's).
+const piShimProbeSeat = "_probe"
+
+// runPiShim answers the two probes AMQ's pi adapter makes of the pi
+// executable the launch names (brief 5-amq-A): `--version` and `--help`,
+// from the verified embedded runtime (re-hashed against the embedded
+// manifest, launch set checked, the forced environment, no package), so
+// the adapter's version floor and its --session-id check judge the pi that
+// seats run. Anything else is refused: a seat starts through seat-exec.
+func runPiShim(args []string) error {
+	if len(args) != 1 || (args[0] != "--version" && args[0] != "--help") {
+		return usageErrorf("pi shim answers only --version and --help (AMQ's pi adapter probes); a pi seat starts through amq-squad seat-exec, which runs the embedded runtime")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	e, err := piLoad()
+	if err != nil {
+		return err
+	}
+	rt, _, err := piruntime.Ensure(home, e)
+	if err != nil {
+		return err
+	}
+	// AMQ reads the probe's combined output: no launcher or preload timing
+	// line may join pi's answer (it made AMQ refuse the version).
+	l, err := piruntime.Prepare(piruntime.Spec{Runtime: rt, Home: home, Seat: piShimProbeSeat, Parent: dropEnv(os.Environ(), "AMQ_SQUAD_PI_TIMING"), Args: args})
+	if err != nil {
+		return err
+	}
+	if err := rt.CheckLaunch(); err != nil {
+		return err
+	}
+	code, err := piProbe(l.Path, l.Argv, l.Env)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		piExit(code)
+	}
+	return nil
+}
+
+// piProbe runs one shim probe: pi's stdout passes through, its stderr is
+// held and shown only when pi fails, because AMQ's adapter parses the
+// combined output (a Node warning on stderr would spoil the version line).
+// A test seam.
+var piProbe = func(path string, argv, env []string) (int, error) {
+	var stderr bytes.Buffer
+	cmd := &exec.Cmd{Path: path, Args: argv, Env: env, Stdout: os.Stdout, Stderr: &stderr}
+	err := cmd.Run()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		os.Stderr.Write(stderr.Bytes())
+		return ee.ExitCode(), nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	return 0, nil
+}
+
+// dropEnv is env without the named variables.
+func dropEnv(env []string, names ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(names, name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func runPiVerify(args []string) error {

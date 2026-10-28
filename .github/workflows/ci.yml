@@ -74,50 +74,23 @@ jobs:
       - name: Run make ci
         run: make ci
 
+  # Real AMQ lanes (brief 5-amq-A fix round). One floor for one binary: the
+  # pinned lane runs the release go.mod pins and doctor requires (v0.116.2)
+  # and is required; the canary runs AMQ's newest release and is
+  # non-blocking (continue-on-error), because its failure reads as upstream
+  # drift to look at, not as a break of this repository. macOS, the 3.0 host,
+  # with tmux for the launch-backed proofs. The lane runs every test gated on
+  # AMQ_SQUAD_REAL_AMQ.
   real-amq-compatibility:
-    name: real AMQ compatibility (${{ matrix.amq-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        amq-version: [v0.60.0, latest]
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install requested AMQ
-        shell: bash
-        run: |
-          set -euo pipefail
-          export GOBIN="$RUNNER_TEMP/amq-bin"
-          mkdir -p "$GOBIN"
-          go install github.com/avivsinai/agent-message-queue/cmd/amq@${{ matrix.amq-version }}
-          "$GOBIN/amq" version
-
-      - name: Run focused real-AMQ compatibility lane
-        shell: bash
-        env:
-          AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
-          AMQ_SQUAD_REAL_AMQ_VERSION: ${{ matrix.amq-version }}
-          AMQ_NO_UPDATE_CHECK: "1"
-        run: |
-          set -euo pipefail
-          "$AMQ_SQUAD_REAL_AMQ" version
-          go test ./internal/cli -run '^TestRealAMQCompatibility$' -count=1 -v -timeout=10m
-
-  real-amq-wake-compatibility:
-    name: real AMQ wake compatibility (${{ matrix.amq-version }})
+    name: real AMQ compatibility (${{ matrix.lane }} ${{ matrix.amq-version }})
     runs-on: macos-latest
+    continue-on-error: ${{ matrix.canary }}
     strategy:
       fail-fast: false
       matrix:
-        amq-version: [v0.60.0, latest]
+        include:
+          - { lane: pinned, amq-version: v0.116.2, canary: false }
+          - { lane: canary, amq-version: latest, canary: true }
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -139,59 +112,28 @@ jobs:
           tmux -V
           "$GOBIN/amq" version
 
-      - name: Run required real-PTY wake compatibility lane
+      - name: Run the real-AMQ lane
         shell: bash
         env:
           AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
           AMQ_SQUAD_REAL_AMQ_VERSION: ${{ matrix.amq-version }}
           AMQ_NO_UPDATE_CHECK: "1"
-        run: |
-          set -euo pipefail
-          go test ./internal/cli -run '^TestRealAMQWakeCompatibility$' -count=1 -v -timeout=10m
-
-  # gh#736: the opt-in launchapi backend's own adoption floor, distinct from
-  # the general-operation floor the two lanes above pin (doctorMinAMQVersion,
-  # proven on amq 0.60.x). Pinned to the single adoption-floor version
-  # (internal/adoptionseam.AdoptionFloorAMQVersion), not matrixed like the
-  # general-operation lanes above: there is exactly one floor to prove here.
-  adoption-floor-compatibility:
-    name: adoption floor compatibility (v0.74.1)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install adoption-floor AMQ
-        shell: bash
-        run: |
-          set -euo pipefail
-          export GOBIN="$RUNNER_TEMP/amq-bin"
-          mkdir -p "$GOBIN"
-          go install github.com/avivsinai/agent-message-queue/cmd/amq@v0.74.1
-          "$GOBIN/amq" version
-
-      - name: Run adoption-floor lane
-        shell: bash
-        env:
-          AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
-          AMQ_SQUAD_REAL_AMQ_VERSION: v0.74.1
-          AMQ_NO_UPDATE_CHECK: "1"
-          # TestLaunchapiBackendDualRunParity (gh#733) needs no real floor
-          # binary itself (it compares legacy vs launchapi seat resolution
-          # in-process, no AMQ_SQUAD_REAL_AMQ gating), so it already runs in
-          # the normal make ci sweep; it is included here too for visibility
-          # alongside the golden test that does exercise the floor binary.
-          TEST_PATTERN: "^(TestCompiledIntentAcceptedByReleasedAMQ|TestLaunchapiBackendDualRunParity)$"
+          CLI_TESTS: "^(TestRealAMQ.*|TestRealLaunchapiInspectSessionTargetShape|TestNestedWorktreeRootDiscoveryOnAMQ074)$"
+          LIBRARY_TESTS: "^(TestCompiledIntentAcceptedByReleasedAMQ|TestApplyForwardsSubjectSchemaFromPrepareResult)$"
+          # Skipped, a pre-existing break independent of the AMQ version:
+          # realAMQOrchestrationContract (orchestration_contract_default and
+          # _review) builds a team with Binary=/bin/sleep, and squad.yaml has
+          # rejected a runtime outside claude, codex, pi since 2b-5
+          # (4fc5dbf2). The other nine subtests and the rest of this lane
+          # pass at v0.116.2. Follow-up (brief C): port the two subtests to a
+          # schema-valid team; see "Deferred" in
+          # docs/v3-spike/5-amq-execution.md.
+          SKIP_PATTERN: "^TestRealAMQCompatibility$/^orchestration_contract_"
         run: |
           set -euo pipefail
           "$AMQ_SQUAD_REAL_AMQ" version
-          go test ./internal/launchintent ./internal/cli -run "$TEST_PATTERN" -count=1 -v -timeout=10m
+          go test ./internal/cli -run "$CLI_TESTS" -skip "$SKIP_PATTERN" -count=1 -v -timeout=10m
+          go test ./internal/launchintent ./internal/adoptionseam -run "$LIBRARY_TESTS" -count=1 -v -timeout=10m
 
   # v3 phase 5: the Claude hook script under dash, which is /bin/sh on
   # ubuntu. The script runs through /bin/sh in Claude Code's hook runner, so

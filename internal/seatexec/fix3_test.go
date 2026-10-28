@@ -21,18 +21,19 @@ func TestSeatExecRefusesAnUnreadableStartStamp(t *testing.T) {
 	}
 }
 
-// Fix 3 item 5: seat-exec pins the workspace-write sandbox's own settings
-// on the Codex command line (no extra writable roots; no network unless
-// declared), and refuses an argv that sets them itself.
+// Fix 3 item 5, after brief 5-amq-A: the workspace-write sandbox's own
+// settings (no extra writable roots; no network unless declared) come in
+// the admitted argv as provider arguments; seat-exec execs that argv
+// unchanged, and refuses an argv that widens them.
 func TestCodexSandboxPinsBeatProjectConfig(t *testing.T) {
 	f := newFixture(t, "codex")
 	f.stage()
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{filepath.Join(f.bin, "codex"), "-c", "sandbox_workspace_write.writable_roots=[]", "-c", "sandbox_workspace_write.network_access=false"}
-	if strings.Join(f.execArgv[:5], " ") != strings.Join(want, " ") {
-		t.Fatalf("exec argv %q, want the pins after the executable", f.execArgv)
+	want := []string{filepath.Join(f.bin, "codex"), "--model", "m", "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "sandbox_workspace_write.writable_roots=[]", "-c", "sandbox_workspace_write.network_access=false"}
+	if strings.Join(f.execArgv, " ") != strings.Join(want, " ") {
+		t.Fatalf("exec argv %q, want the admitted argv unchanged %q", f.execArgv, want)
 	}
 	g := newFixture(t, "codex")
 	g.rec.EnvNeeds = []string{CodexNetworkNeed}

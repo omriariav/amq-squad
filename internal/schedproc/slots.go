@@ -123,7 +123,8 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 }
 
 // Launcher sends each request to the launcher of its runtime (the AMQ launch
-// API for Claude and Codex; the external runner for pi on AMQ v0.107.0) and
+// API for Claude, Codex and, since AMQ v0.116, pi; the external runner for a
+// runtime AMQ cannot launch) and
 // frees the seat's slot when its request is cancelled or the seat closed.
 type Launcher struct {
 	Slots     *Slots
@@ -234,8 +235,9 @@ var (
 	_ scheduler.SeatReserver     = (*Launcher)(nil)
 )
 
-// External is the stand-in launcher for seats AMQ v0.107.0 cannot launch
-// (pi: the pinned library has no pi adapter, seatlaunch.PiAdapterInLibrary).
+// External is the stand-in launcher for seats the pinned AMQ cannot launch
+// (it was pi's until v0.116 carried the pi adapter; scheduler run uses it
+// only when seatlaunch.PiAdapterInLibrary is false).
 // The core does its part as for any seat: the worktree and branch, the
 // staged launch record and role.md under the session root, the recorded
 // commit base. Then it writes a request file under
