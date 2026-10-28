@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -355,14 +356,16 @@ func runPiShim(args []string) error {
 	if err != nil {
 		return err
 	}
-	l, err := piruntime.Prepare(piruntime.Spec{Runtime: rt, Home: home, Seat: piShimProbeSeat, Parent: os.Environ(), Args: args})
+	// AMQ reads the probe's combined output: no launcher or preload timing
+	// line may join pi's answer (it made AMQ refuse the version).
+	l, err := piruntime.Prepare(piruntime.Spec{Runtime: rt, Home: home, Seat: piShimProbeSeat, Parent: dropEnv(os.Environ(), "AMQ_SQUAD_PI_TIMING"), Args: args})
 	if err != nil {
 		return err
 	}
 	if err := rt.CheckLaunch(); err != nil {
 		return err
 	}
-	code, err := piRun(l.Path, l.Argv, l.Env)
+	code, err := piProbe(l.Path, l.Argv, l.Env)
 	if err != nil {
 		return err
 	}
@@ -370,6 +373,37 @@ func runPiShim(args []string) error {
 		piExit(code)
 	}
 	return nil
+}
+
+// piProbe runs one shim probe: pi's stdout passes through, its stderr is
+// held and shown only when pi fails, because AMQ's adapter parses the
+// combined output (a Node warning on stderr would spoil the version line).
+// A test seam.
+var piProbe = func(path string, argv, env []string) (int, error) {
+	var stderr bytes.Buffer
+	cmd := &exec.Cmd{Path: path, Args: argv, Env: env, Stdout: os.Stdout, Stderr: &stderr}
+	err := cmd.Run()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		os.Stderr.Write(stderr.Bytes())
+		return ee.ExitCode(), nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	return 0, nil
+}
+
+// dropEnv is env without the named variables.
+func dropEnv(env []string, names ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(names, name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func runPiVerify(args []string) error {

@@ -1410,9 +1410,9 @@ entries:
   status: shrunk
 - path: internal/cli/pi.go
   v2_lines: 0
-  current_lines: 443
+  current_lines: 477
   fate: new
-  target_lines: 443
+  target_lines: 477
   cluster: pi
   extract: ""
   reason: "4-1: pi verb: run (child process, exit 70 refusal), verify, path"

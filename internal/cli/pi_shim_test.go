@@ -17,6 +17,12 @@ import (
 // probe's own agent dir, the forced environment) and refuses anything else.
 func TestPiShimAnswersOnlyTheAdapterProbes(t *testing.T) {
 	call, home := piFixture(t)
+	old := piProbe
+	t.Cleanup(func() { piProbe = old })
+	piProbe = piRun
+	// A timing request from the caller's environment never reaches the
+	// probe: AMQ parses its combined output (the live row's finding).
+	t.Setenv("AMQ_SQUAD_PI_TIMING", "1")
 	for _, probe := range []string{"--version", "--help"} {
 		if err := Run([]string{"pi", "shim", probe}, "test"); err != nil {
 			t.Fatalf("%s: %v", probe, err)
@@ -29,7 +35,7 @@ func TestPiShimAnswersOnlyTheAdapterProbes(t *testing.T) {
 				t.Fatalf("%s: the probe loaded the package: %q", probe, call.argv)
 			}
 		}
-		for name, want := range map[string]string{"PI_OFFLINE": "1", "JITI_FS_CACHE": "false", "PI_CODING_AGENT_DIR": piruntime.AgentDirFor(home, piShimProbeSeat)} {
+		for name, want := range map[string]string{"PI_OFFLINE": "1", "JITI_FS_CACHE": "false", "PI_CODING_AGENT_DIR": piruntime.AgentDirFor(home, piShimProbeSeat), "AMQ_SQUAD_PI_TIMING": ""} {
 			if got := call.getenv(name); got != want {
 				t.Fatalf("%s: %s=%q, want %q", probe, name, got, want)
 			}
