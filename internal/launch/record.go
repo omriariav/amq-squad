@@ -33,31 +33,34 @@ type Record struct {
 	BaseRoot string `json:"base_root,omitempty"` // AM_BASE_ROOT
 	Session  string `json:"session"`             // AM_SESSION
 
-	Runtime        string       `json:"runtime,omitempty"` // claude | codex | pi
-	Model          string       `json:"model,omitempty"`
-	Effort         string       `json:"effort,omitempty"`
-	RolePath       string       `json:"role_path,omitempty"`
-	RoleSHA256     string       `json:"role_sha256,omitempty"`
-	RulesPath      string       `json:"rules_path,omitempty"`
-	RulesSHA256    string       `json:"rules_sha256,omitempty"`
-	Branch         string       `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
-	Worktree       string       `json:"worktree,omitempty"`
-	AMQPath        string       `json:"amq_path,omitempty"`             // the real amq (R51)
-	EnvNeeds       []string     `json:"env_needs,omitempty"`            // names the runtime declares it needs
-	CredNeeds      []string     `json:"credential_needs,omitempty"`     // credential names the registry entry declares
-	Resume         bool         `json:"resume,omitempty"`               // the launch asked AMQ to resume
-	PermissionMode string       `json:"permission_mode,omitempty"`      // Claude's, checked with the hook plugin as one unit (R36)
-	ClaudeConfig   string       `json:"claude_config_sha256,omitempty"` // digest of the seat's CLAUDE_CONFIG_DIR managed files
-	ClaudePin      string       `json:"claude_pin_sha256,omitempty"`    // sha256 of the pinned claude the launch probed; seat-exec refuses pin_changed_since_probe when the registry's pin differs
-	AllowRules     string       `json:"claude_allow_rules,omitempty"`   // "permit": worktree allow rules do not refuse the seat
-	Credential     string       `json:"credential_source,omitempty"`    // where a seat credential comes from, never its value
-	PiAgentDir     string       `json:"pi_agent_dir,omitempty"`
-	LaunchNonce    string       `json:"launch_nonce,omitempty"`
-	RequestID      string       `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
-	LaunchID       string       `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
-	Proof          *ProofTicket `json:"proof,omitempty"`      // staged only; the published copy has no token
-	Apply          *Apply       `json:"apply,omitempty"`
-	Exec           *Exec        `json:"exec,omitempty"`
+	Runtime        string   `json:"runtime,omitempty"` // claude | codex | pi
+	Model          string   `json:"model,omitempty"`
+	Effort         string   `json:"effort,omitempty"`
+	RolePath       string   `json:"role_path,omitempty"`
+	RoleSHA256     string   `json:"role_sha256,omitempty"`
+	RulesPath      string   `json:"rules_path,omitempty"`
+	RulesSHA256    string   `json:"rules_sha256,omitempty"`
+	Branch         string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
+	Worktree       string   `json:"worktree,omitempty"`
+	AMQPath        string   `json:"amq_path,omitempty"`             // the real amq (R51)
+	EnvNeeds       []string `json:"env_needs,omitempty"`            // names the runtime declares it needs
+	CredNeeds      []string `json:"credential_needs,omitempty"`     // credential names the registry entry declares
+	Resume         bool     `json:"resume,omitempty"`               // the launch asked AMQ to resume
+	PermissionMode string   `json:"permission_mode,omitempty"`      // Claude's, checked with the hook plugin as one unit (R36)
+	ClaudeConfig   string   `json:"claude_config_sha256,omitempty"` // digest of the seat's CLAUDE_CONFIG_DIR managed files
+	ClaudePin      string   `json:"claude_pin_sha256,omitempty"`    // sha256 of the pinned claude the launch probed; seat-exec refuses pin_changed_since_probe when the registry's pin differs
+	AllowRules     string   `json:"claude_allow_rules,omitempty"`   // "permit": worktree allow rules do not refuse the seat
+	Credential     string   `json:"credential_source,omitempty"`    // where a seat credential comes from, never its value
+	PiAgentDir     string   `json:"pi_agent_dir,omitempty"`
+	// PiShim is the pi shim the launch wrote and AMQ planned; seat-exec
+	// compares argv[0] with it, never with a path from its environment.
+	PiShim      string       `json:"pi_shim,omitempty"`
+	LaunchNonce string       `json:"launch_nonce,omitempty"`
+	RequestID   string       `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
+	LaunchID    string       `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
+	Proof       *ProofTicket `json:"proof,omitempty"`      // staged only; the published copy has no token
+	Apply       *Apply       `json:"apply,omitempty"`
+	Exec        *Exec        `json:"exec,omitempty"`
 
 	CWD              string     `json:"cwd"` // older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt)
 	Binary           string     `json:"binary"`

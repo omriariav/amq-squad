@@ -66,6 +66,10 @@ func newFixture(t *testing.T, runtime string) *fixture {
 		AMQPath: "/fake/amq",
 		Proof:   &launch.ProofTicket{Socket: "/fake/proof.sock", Dir: "/fake", Name: "proof.sock", Token: "tok-0123456789", IssuedAt: time.Now()},
 	}
+	if runtime == "pi" {
+		// The launch records the shim and the agent dir (Codex A small (a)).
+		f.rec.PiShim, f.rec.PiAgentDir = piruntime.ShimPath(f.home), piruntime.AgentDirFor(f.home, "cto")
+	}
 	if runtime == "claude" {
 		f.rec.PermissionMode, f.rec.LaunchID = "dontAsk", "launch-1"
 		// A Claude seat runs the registry's claude pin (the phase 5 re-pass's
@@ -160,7 +164,10 @@ func (f *fixture) run(o Options) error {
 	if o.Env == nil {
 		o.Env = f.env()
 	}
-	o.Home, o.Now = f.home, func() time.Time { return time.Unix(100, 0) }
+	if o.Home == "" {
+		o.Home = f.home
+	}
+	o.Now = func() time.Time { return time.Unix(100, 0) }
 	if o.UID == 0 {
 		o.UID = os.Getuid()
 	}
@@ -477,7 +484,7 @@ func TestSeatExecPiResumeRefusal(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
-	want := []string{g.piSelf(), "pi", "run", "--seat", "cto", "--thinking", "medium", "--", "--session-id", "nonce-1"}
+	want := []string{g.piSelf(), "pi", "run", "--seat", "cto", "--agent-dir", filepath.Join(g.home, ".amq-squad", "pi-agent", "cto"), "--thinking", "medium", "--", "--session-id", "nonce-1"}
 	if g.execPath != g.piSelf() || strings.Join(g.execArgv, " ") != strings.Join(want, " ") {
 		t.Fatalf("pi exec %s %q, want the embedded runtime's launcher %q", g.execPath, g.execArgv, want)
 	}
@@ -530,6 +537,20 @@ func TestSeatExecPiNeedsTheEmbeddedShim(t *testing.T) {
 			}
 			return argv
 		},
+		// Codex A small (b): the check opens without following a symlink and
+		// reads through that descriptor, so a symlink to a byte-identical
+		// 0700 shim elsewhere is refused too.
+		"a symlink to a valid shim": func(f *fixture) []string {
+			argv := f.piArgv("x")
+			elsewhere := filepath.Join(f.t.TempDir(), "pi")
+			b, _ := os.ReadFile(argv[0])
+			write(f.t, elsewhere, string(b), 0o700)
+			os.Remove(argv[0])
+			if err := os.Symlink(elsewhere, argv[0]); err != nil {
+				f.t.Fatal(err)
+			}
+			return argv
+		},
 		"a group-writable shim": func(f *fixture) []string {
 			argv := f.piArgv("x")
 			os.Chmod(argv[0], 0o770)
@@ -555,8 +576,38 @@ func TestSeatExecPiNeedsTheEmbeddedShim(t *testing.T) {
 	if err := f.run(Options{Self: f.piSelf(), Argv: f.piArgv("x")}); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{f.piSelf(), "pi", "run", "--seat", "cto", "--model", "ollama/qwen3.6:27b", "--", "--session-id", "x"}; strings.Join(f.execArgv, " ") != strings.Join(want, " ") {
+	if want := []string{f.piSelf(), "pi", "run", "--seat", "cto", "--agent-dir", f.rec.PiAgentDir, "--model", "ollama/qwen3.6:27b", "--", "--session-id", "x"}; strings.Join(f.execArgv, " ") != strings.Join(want, " ") {
 		t.Fatalf("launcher argv %q, want %q", f.execArgv, want)
+	}
+
+	// Codex A small (a): the shim is the one the record names, whatever
+	// HOME seat-exec runs under; a record naming another shim refuses.
+	m := newFixture(t, "pi")
+	m.stage()
+	argv := m.piArgv("x")
+	moved := t.TempDir()
+	if err := m.run(Options{Self: m.piSelf(), Argv: argv, Home: moved}); err != nil {
+		t.Fatalf("HOME moved: the recorded shim was refused: %v", err)
+	}
+	n := newFixture(t, "pi")
+	n.rec.PiShim = filepath.Join(n.home, "elsewhere", "pi")
+	n.stage()
+	if err := n.run(Options{Self: n.piSelf(), Argv: n.piArgv("x")}); refusalCode(err) != PiNotEmbedded {
+		t.Fatalf("argv[0] is not the recorded shim: %v", err)
+	}
+
+	// Codex A-P1: a declared credential travels through the handoff.
+	c := newFixture(t, "pi")
+	c.rec.CredNeeds = []string{"ANTHROPIC_API_KEY"}
+	c.stage()
+	if err := c.run(Options{Self: c.piSelf(), Argv: c.piArgv("x"), Env: c.env("ANTHROPIC_API_KEY=declared", "OPENAI_API_KEY=undeclared")}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(c.execArgv, "--env-need") || c.execArgv[slices.Index(c.execArgv, "--env-need")+1] != "ANTHROPIC_API_KEY" {
+		t.Fatalf("launcher argv %q does not hand the declared need over", c.execArgv)
+	}
+	if Getenv(c.execEnv, "ANTHROPIC_API_KEY") != "declared" || Getenv(c.execEnv, "OPENAI_API_KEY") != "" {
+		t.Fatal("the launcher's environment does not carry exactly the declared credential")
 	}
 }
 

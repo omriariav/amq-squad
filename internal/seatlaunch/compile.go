@@ -316,6 +316,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
 			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID, PermissionMode: permissionMode(s.Runtime), Credential: credentialSource(s.Runtime),
 			CWD: s.Worktree, Binary: s.Runtime, Role: s.RoleName, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
+			PiShim: piShimFor(s, q),
 		})
 	}
 	intent, target, err := launchintent.Compile(launchintent.Input{
@@ -331,6 +332,14 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		CallerContext: map[string]string{"caller": "amq-squad", "session": q.Session},
 	}
 	return out, nil
+}
+
+// piShimFor is the record's shim path: the launch's shim for a pi seat.
+func piShimFor(s Seat, q Squad) string {
+	if s.Runtime == "pi" {
+		return q.PiShim
+	}
+	return ""
 }
 
 // sameFile reports whether two paths name one file (device and inode).

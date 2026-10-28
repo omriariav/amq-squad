@@ -543,7 +543,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 589
+  current_lines: 592
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -552,9 +552,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_amq_floor.go
   v2_lines: 0
-  current_lines: 86
+  current_lines: 87
   fate: new
-  target_lines: 86
+  target_lines: 87
   cluster: cli
   extract: ""
   reason: "5-amq-A: doctor's installed AMQ floor (amq, amq-remote, amq-owner-sign --version at or above v0.116.2, the install line below it)"
@@ -1410,9 +1410,9 @@ entries:
   status: shrunk
 - path: internal/cli/pi.go
   v2_lines: 0
-  current_lines: 477
+  current_lines: 496
   fate: new
-  target_lines: 477
+  target_lines: 496
   cluster: pi
   extract: ""
   reason: "4-1: pi verb: run (child process, exit 70 refusal), verify, path"
@@ -2859,7 +2859,7 @@ entries:
   status: new
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 247
+  current_lines: 250
   fate: shrink
   target_lines: 250
   cluster: launch
@@ -3206,9 +3206,9 @@ entries:
   status: new
 - path: internal/piruntime/launch.go
   v2_lines: 0
-  current_lines: 390
+  current_lines: 395
   fate: new
-  target_lines: 390
+  target_lines: 395
   cluster: piruntime
   extract: ""
   reason: "4-1: pi launch: forced env applied last over every overlay (NODE_*, JITI_* filtered), per-seat agent dir, team lead tools"
@@ -3251,27 +3251,27 @@ entries:
   status: new
 - path: internal/piruntime/shim.go
   v2_lines: 0
-  current_lines: 105
+  current_lines: 108
   fate: new
-  target_lines: 105
+  target_lines: 108
   cluster: piruntime
   extract: ""
   reason: "5-amq-A: the pi launch shim AMQ's pi adapter probes; seat-exec runs the embedded runtime in its place"
   status: new
 - path: internal/piruntime/shim_other.go
   v2_lines: 0
-  current_lines: 9
+  current_lines: 17
   fate: new
-  target_lines: 9
+  target_lines: 17
   cluster: piruntime
   extract: ""
   reason: "5-amq-A: the shim's owner check (not unix)"
   status: new
 - path: internal/piruntime/shim_unix.go
   v2_lines: 0
-  current_lines: 14
+  current_lines: 20
   fate: new
-  target_lines: 14
+  target_lines: 20
   cluster: piruntime
   extract: ""
   reason: "5-amq-A: the shim's owner check (unix)"
@@ -3963,9 +3963,9 @@ entries:
   status: new
 - path: internal/seatexec/pi.go
   v2_lines: 0
-  current_lines: 116
+  current_lines: 129
   fate: new
-  target_lines: 116
+  target_lines: 129
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3990,9 +3990,9 @@ entries:
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 432
+  current_lines: 441
   fate: new
-  target_lines: 432
+  target_lines: 441
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -4062,9 +4062,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 589
+  current_lines: 594
   fate: new
-  target_lines: 589
+  target_lines: 594
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

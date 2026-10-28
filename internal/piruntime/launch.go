@@ -130,6 +130,10 @@ func Prepare(s Spec) (Launch, error) {
 //     run it from there, outside the verified runtime and outside
 //     ~/.amq-squad (4-1 cold-start finding). With the cache off jiti
 //     transforms in memory from the re-hashed bytes on every start;
+//   - NODE_DISABLE_COMPILE_CACHE=1 (5-amq-A fix round): Node 22's module
+//     compile cache (node-compile-cache/ under TMPDIR, which pi enables)
+//     would otherwise keep V8 code caches of the runtime between starts;
+//     with it off every start compiles from the bytes the re-hash verified;
 //   - TMPDIR: the seat's own 0700 directory, so any other temp writer in pi
 //     or node lands where the same-UID threat model applies and doctor can
 //     see it;
@@ -145,6 +149,7 @@ func Forced(agentDir, tmp, runtimeDir, manifestSHA string) map[string]string {
 		"PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
 		"PI_CODING_AGENT_DIR":               agentDir,
 		"JITI_FS_CACHE":                     "false",
+		"NODE_DISABLE_COMPILE_CACHE":        "1",
 		"TMPDIR":                            tmp,
 		"NODE_OPTIONS":                      "",
 		"AMQ_SQUAD_RUNTIME_DIR":             runtimeDir,

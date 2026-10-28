@@ -1,6 +1,6 @@
 # amq-squad 3.0, brief 5-amq-A: AMQ v0.116.2, pi seats through the upstream adapter, Codex pins through admission
 
-Branch `v3-5-amq-a`, cut from `v3` at 83a155d0. Brief: brief 5-amq-A (owner decision 2026-10-28: the 3.0.1 AMQ bump folds into 3.0.0). Mid-brief, the coordinator moved the pin target to v0.116.2, released 15:00Z the same day (one fix in `internal/acp` and `internal/remote/buzzio`; `launchapi`, the launch adapters, owner-sign and the mailbox code are byte-identical to v0.116.1, checked with `diff -r` of the two module trees). No v0.116.1 binaries were built, so only the v0.116.2 digests are recorded.
+Branch `v3-5-amq-a`, cut from `v3` at 83a155d0. Brief: brief 5-amq-A (owner decision 2026-10-28: the 3.0.1 AMQ bump folds into 3.0.0). Mid-brief, the coordinator moved the pin target to v0.116.2, released 15:00Z the same day (production Go changes are confined to `internal/acp` and `internal/remote/buzzio`, the Desktop approval path; tests, plugin metadata, skills and docs also differ; `launchapi`, the launch adapters, owner-sign and the mailbox code are byte-identical to v0.116.1, checked with `diff -r` of the two module trees). No v0.116.1 binaries were built, so only the v0.116.2 digests are recorded.
 
 Evidence: `docs/v3-spike/5-amq-evidence/` (every file passed through `scripts/redact-evidence`; `-check` is clean).
 
@@ -15,9 +15,9 @@ Evidence: `docs/v3-spike/5-amq-evidence/` (every file passed through `scripts/re
    - It then execs, in place, `amq-squad pi run --seat H [--model M] [--thinking E] -- <adapter argv[1:]>`. That launcher re-hashes the runtime, checks the launch set, forces the pi environment (`JITI_FS_CACHE=false`, the seat's private TMPDIR under its extension directory, `AMQ_SQUAD_AMQ` from the record) and supervises node (amendment 26).
    - The exec record keeps the adapter's argv (`provider_argv`) and the launcher's (`launcher_argv`).
 4. **doctor.** One row per installed binary (`amq`, `amq-remote`, `amq-owner-sign`), read from `--version` with `AMQ_NO_UPDATE_CHECK=1`. A binary at or above 0.116.2 is ok. Below it, a prerelease of it, or unparseable output is a fail row with the install line (`amq upgrade --all -y`, Homebrew `brew upgrade avivsinai/tap/amq`). A missing `amq` is a fail; a missing `amq-remote` or `amq-owner-sign` is a warning. `doctorMinAMQVersion` stays 0.60.0: it is the v2 general-operation floor that the real-AMQ CI lanes run against, pinned by `TestGeneralOperationFloorUnchanged`.
-5. **Docs.** README, MIGRATION and `docs/claude-hooks.md` do not name v0.107.0 (README's requirements still name the v2 0.60.0 floor; left for the lead, see below). The release notes' "Release (phase 5)" gets one bullet.
+5. **Docs.** README, MIGRATION and `docs/claude-hooks.md` do not name v0.107.0. The release notes' "Release (phase 5)" gets one bullet; the README requirements move to 0.116.2 in the fix round.
 
-`amq coop exec` and `schedproc.External` (the request-file stand-in) are no longer used by any 3.0 path. `scheduler run` routes pi to the AMQ launcher, because the stand-in is chosen only when `PiAdapterInLibrary` is false. Per the brief they are not deleted.
+`schedproc.External` (the request-file stand-in) is no longer used by any 3.0 path: `scheduler run` routes pi to the AMQ launcher, because the stand-in is chosen only when `PiAdapterInLibrary` is false. Its deletion is deferred (see "Deferred" below).
 
 ## Live finding, fixed
 
@@ -58,8 +58,79 @@ Binaries for the live rows were built from the module cache into the worktree (`
 
 Node 22 writes its module compile cache (`node-compile-cache/v22.21.1-arm64-…`) into the seat's TMPDIR, the private 0700 directory under its extension directory. It showed up as a non-empty directory when the live test's temp dir was removed while pi was still running. It lands where ruling 12 of 4-1 wanted temp writers to land. Whether the verified-bytes property needs `NODE_DISABLE_COMPILE_CACHE=1` in the forced set is a question for the lead; V8 checks the cached code against the source hash.
 
+## Fix round (reviewer rulings 1 to 3 and the Codex pass on d7e3fc1a)
+
+One fix commit. Every fix has a row that fails when reverted (`revert-check-a.txt`, section "Fix round", 14 rows, all OK; the README text, the ci.yml shape and the diff wording of small (d) have no Go row, and their evidence is the local lane run and the regenerated README.html). Ruling 4 (deleting the stand-in) left the round; it is recorded under "Deferred".
+
+### Ruling 1: the compile cache off; NODE_OPTIONS and NODE_PATH
+
+- `NODE_DISABLE_COMPILE_CACHE=1` is in the forced pi environment (`piruntime.Forced`), so every start compiles from the bytes the re-hash verified. Live, the build without it left `node-compile-cache/` in the seat's TMPDIR and failed the row (`fix-live-cache-on.log`); with it, the row passes and the directory never appears (`fix-live-cache-off.log`).
+- `NODE_OPTIONS` stays forced empty (4-1 review item 1; it loads nothing). `NODE_PATH` was already dropped with every `NODE_*` and `JITI_*` from the parent and from every overlay. Row `TestPiRunAsSeatExecStartsIt`: with the parent setting `NODE_OPTIONS=--require=…` and `NODE_PATH=…`, the seat's pi process environment, as the launcher execs it, has `NODE_OPTIONS` exactly once and empty, no `NODE_PATH`, and `NODE_DISABLE_COMPILE_CACHE=1`. The live node process's own environment cannot be read back on macOS: pi sets `process.title`, which overwrites the argv and environment area that `ps -E` reads (tried and recorded). So the live proof is the compile cache's absence, and the environment proof is the exec'd environment.
+- Cold starts, 4-1's method (`cold5.py`: a fresh `amq-squad` process each run, the runtime unpacked, qwen2.5:32b loaded, five runs per series, medians), on this round's binary against the same binary with the cache on (`fix-cold5-cache-on.json`, `fix-cold5-cache-off.json`):
+
+| Series | Build | Re-hash ms | Launch rest ms | Node start to pi ready ms | Self-check ms | Model first token ms | Spawn to first token ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| lead | 4-1 final (cache on) | 147.3 | 56.7 | 516.6 | 202 | 91.5 | 859.5 |
+| lead | 5-amq-A, cache on | 140.8 | 55.0 | 488.8 | 209 | 89.1 | 786.8 |
+| lead | 5-amq-A, cache off | 142.6 | 56.1 | **520.7** | 196 | 90.4 | 822.6 |
+| control | 4-1 final (cache on) | 152.0 | 57.0 | 359.4 | 206 | 75.9 | 644.8 |
+| control | 5-amq-A, cache on | 141.6 | 55.6 | 330.2 | 196 | 75.5 | 608.9 |
+| control | 5-amq-A, cache off | 141.6 | 56.0 | **358.3** | 197 | 78.0 | 641.8 |
+
+The price of the fix is about 32 ms at node start to pi ready (488.8 against 520.7 ms with the package; 330.2 against 358.3 ms without it). The first run of the lead series, the one with no cache to reuse, is 1,465.7 ms with the cache on and 1,665.9 ms off (node start to pi ready; Ollama's first prefill dominates spawn to first token on that run: 7,311.7 and 6,495.2 ms). Every answer was `42`.
+
+### Ruling 2: README
+
+The Requirements line is now `amq` 0.116.2 or later (with `amq-remote` and `amq-owner-sign` at the same release when installed), and doctor refuses an older one. The 0.60.x paragraph and its lane table now describe one floor, the pinned required lane and the non-blocking `latest` canary. README.html was regenerated (`make readme-html`; `make readme-html-check` in sync).
+
+### Ruling 3: CI and the one floor
+
+`.github/workflows/ci.yml`: the v0.60.0 lanes, the `latest`-only lanes and the v0.74.1 adoption-floor lane are gone, with their comments. One job, `real-amq-compatibility`, runs on macOS (the 3.0 host; tmux installed) as a matrix of `pinned v0.116.2` (required) and `canary latest` (`continue-on-error: true`, named so: a failure reads as upstream drift). The macOS wake lane was dropped with the rest: its test, `TestRealAMQWakeCompatibility`, no longer exists in the tree (it ran no test: `[no tests to run]`), and neither does `TestLaunchapiBackendDualRunParity`, which the old adoption lane listed. The lane runs every test gated on `AMQ_SQUAD_REAL_AMQ`, by name:
+
+- `./internal/cli`:
+  - `TestRealAMQCompatibility`, with subtests sessionful_default_profile, exact_root_named_profile, three_actor_100_message_isolation, committed_delivery_wording_contract, coop_exec_drains_preexisting_goal_with_zero_injection, external_wake_suppresses_backlog_and_injects_post-baseline_resend, doctor_repairs_malformed_configured_mailbox, canonical_root_authority and post-coop_child_identity. **Skipped: orchestration_contract_default and orchestration_contract_review** (see "Deferred").
+  - `TestRealAMQGateCloseReplyRefsCompatibility`
+  - `TestRealAMQDoctorGlobalRepairScope` (8 subtests)
+  - `TestRealAMQFixtureEnvSanitizesManagedContext`
+  - `TestRealAMQProcessEnvSanitizesManagedContext`
+  - `TestRealLaunchapiInspectSessionTargetShape`
+  - `TestNestedWorktreeRootDiscoveryOnAMQ074`
+- `./internal/launchintent`: `TestCompiledIntentAcceptedByReleasedAMQ`.
+- `./internal/adoptionseam`: `TestApplyForwardsSubjectSchemaFromPrepareResult`.
+
+All pass locally against the v0.116.2 build, run as ci.yml runs them. A second run without `-skip` lists the two skipped subtests by name with their reason (`fix-pinned-lane.txt`).
+
+`doctorMinAMQVersion` is 0.116.2, and the installed-binary rows use the same constant (`doctorInstalledAMQFloor = doctorMinAMQVersion`). `TestGeneralOperationFloorUnchanged` now pins 0.116.2, the equality of the two names, and the go.mod pin. The v2 version rows of doctor_test moved to the new floor (`TestExecuteDoctorAMQVersionAcceptsTheFloorAndNewerCanary`, `…RejectsOlderThanTheFloor`: 0.42.1, 0.60.0, 0.74.1, 0.107.0, 0.116.1 and 0.116.2-rc1 fail). Required-check names in the branch protection change with the job names (owner setting, outside the repository).
+
+### The Codex pass on d7e3fc1a
+
+- **A-P1.** Declared credentials survive the handoff. seat-exec puts the record's `env_needs` and `credential_needs` on the launcher argv as `--env-need NAME`, and `pi run` hands them to `piruntime.Prepare` (`Spec.EnvNeeds`). The launcher's scrub therefore keeps exactly those names: a declared `ANTHROPIC_API_KEY` reaches pi, and `OPENAI_API_KEY` and `GEMINI_API_KEY` do not. Rows: `TestPiSeatKeepsItsDeclaredCredential` (end to end: seat-exec's `PiLauncherArgv` into `pi run`) and the A-P1 case in `TestSeatExecPiNeedsTheEmbeddedShim` (seat-exec's own environment and argv).
+- **A-P2.** The shim is written with `atomicfile.Write` (a random O_EXCL temp, fsynced, renamed, the directory fsynced). Row: a symlink planted at the old predictable `pi.tmp-<pid>` name is never followed, and its target is unchanged.
+- **A-P3.** The shim's mode must be exactly 0700, and `EnsureShim` repairs another mode. Row: a 0600 shim fails the check and is rewritten 0700.
+- **Small (a).** The launch record carries the shim (`pi_shim`) and the pi agent dir (`pi_agent_dir`, under the launching HOME). seat-exec compares argv[0] with the record and never derives a path from its own HOME, and it passes `--agent-dir` to `pi run`. Rows: with HOME moved the recorded shim is accepted; a record naming another shim refuses `pi_not_embedded`.
+- **Small (b).** `CheckShim` opens with O_NOFOLLOW and runs the fstat, mode, owner and content checks on that one descriptor. Row: a symlink to a byte-identical 0700 shim is refused.
+- **Small (c).** The floor rows and the amq version row carry `amq_below_floor` (doctor's Kind) when they fail.
+- **Small (d).** The v0.116.2 diff wording above is corrected.
+
+The live pi-seat row ran again on the round's binary (`fix-live-cache-off.log`, pass).
+
+## Deferred
+
+### The scheduler stand-in deletion (ruling 4, a separate brief on top of A's merge)
+
+`amq coop exec` is AMQ's own CLI verb, not amq-squad code. The guard classification at `internal/cli/hook_guard.go:439`, which treats `amq coop exec` as a launch command so guard refuses a seat starting one, stays: AMQ still ships that verb. The real-AMQ v2 tests also exercise AMQ's `coop exec`. The deletable part is the scheduler stand-in. Deleting it is not pure removal; it drags:
+
+- (a) `schedproc.External`, `Request` and `RequestsDir` (slots.go), and the `External` type check inside `Launcher.CloseUnconfirmed` (slots.go:205). `TestExternalCloseIsUnconfirmed` and `fix2_test.go:142` use `External` as the pi launcher and would have to be rewritten with a fake launcher.
+- (b) The event-file path: `Event`, `PostEvent`, `EventsDir` and `drainEvents` in the `Run` loop (process.go). `fix4_test.go:154`, the adopted-seat close row, delivers its `seat_gone` through `PostEvent`. That row tests the decision-socket gating, so it needs another injection path (a rewrite, not a deletion).
+- (c) The `amq-squad scheduler post` verb: usage, flags and dispatch in `scheduler_run.go`, and its mention in `2b2b-execution.md`.
+- (d) `spike/sched-live/main.go` uses `External`'s request files and `scheduler post`. `go build ./...` compiles `spike/`, so the harness would be deleted or edited.
+- (e) `seatlaunch.PiAdapterInLibrary` and its branches become dead code, and `TestPiSeatShape` checks the constant. It goes with the stand-in and is untouched here.
+
+### The two orchestration-contract subtests (brief C)
+
+`TestRealAMQCompatibility/orchestration_contract_default` and `/orchestration_contract_review` are skipped in the pinned lane and print their reason in a local run. They have a pre-existing break, independent of the AMQ version: `realAMQOrchestrationContract` builds a team with `Binary=/bin/sleep`, and squad.yaml has rejected a runtime outside claude, codex and pi since 2b-5 (4fc5dbf2). The other nine subtests, and the rest of the lane, pass at v0.116.2 (and fail the same two ways at 0.107.0). The cause appears in three places: the ci.yml comment, the test's own skip message (`realAMQOrchestrationContractSkip`), and here. Follow-up for brief C: port the two subtests to a schema-valid team (a runtime of claude, codex or pi with a stub binary, since dispatch queues and sends without launching), or state why the dispatch authorizer cannot accept any schema-valid team in that test. `dispatch` is a kept 3.0 verb, so the test is not deleted; brief C's acceptance includes the two subtests running unskipped against v0.116.2.
+
 ## Left for the lead
 
 - Plan 4.1, 4.3 and amendment 28 still describe the Codex pin exception ("seat-exec adds the two config pins … AMQ 0.107.0 does not admit") and the pi launch as pending. The upstream-asks status table (asks 1 and 17) can move to shipped.
-- README "Requirements" still says `amq` 0.60.0 and describes the v2 0.60.x CI lanes. Under 3.0, doctor refuses below 0.116.2.
 - This host's installed AMQ is 0.107.0 (Homebrew), so `doctor` now fails its three floor rows here until the owner upgrades.

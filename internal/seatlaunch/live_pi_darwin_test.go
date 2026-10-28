@@ -194,6 +194,23 @@ func TestLivePiSeatThroughTheAdapter(t *testing.T) {
 		t.Fatalf("no pi session file for %s under %s", argv[2], piruntime.SessionDir(agentDir, wt))
 	}
 	timings["session_file"] = strings.TrimPrefix(file, base)
+	// Fix round: no compile cache appears in the seat's TMPDIR after a turn
+	// (NODE_DISABLE_COMPILE_CACHE=1 in the forced set; with the cache on,
+	// pi's node writes node-compile-cache/ there). The node process's own
+	// environment cannot be read back on macOS: pi sets process.title, which
+	// overwrites the argv and environment area ps -E reads; the exec'd
+	// environment is TestPiRunAsSeatExecStartsIt's row.
+	seatTmp := filepath.Join(root, "agents", "scout", "extensions", "io.github.omriariav.amq-squad", "tmp")
+	if ents, err := os.ReadDir(seatTmp); err != nil {
+		t.Errorf("seat TMPDIR %s: %v", seatTmp, err)
+	} else {
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), "node-compile-cache") {
+				t.Errorf("a compile cache %s in the seat's TMPDIR", e.Name())
+			}
+		}
+	}
+	timings["no_compile_cache"] = true
 	if out := os.Getenv("AMQ_SQUAD_LIVE_OUT"); out != "" {
 		b, _ := json.MarshalIndent(timings, "", "  ")
 		os.WriteFile(out, append(b, '\n'), 0o600)

@@ -9,3 +9,19 @@ OK the shim answers only the two probes: TestPiShimAnswersOnlyTheAdapterProbes r
 OK the shim is written once (stable identity): TestEnsureShimIsStableAndRefusesASymlink reverted=FAIL restored=PASS
 OK doctor's installed AMQ floor is 0.116.2: TestDoctorInstalledAMQFloor reverted=FAIL restored=PASS
 OK the adoption-seam pin is the linked module: TestLinkedAMQModuleIsThePin reverted=FAIL restored=PASS
+
+# Fix round (rulings 1-3 and the Codex findings on d7e3fc1a)
+OK R1 NODE_DISABLE_COMPILE_CACHE=1 forced: TestPiRunAsSeatExecStartsIt reverted=FAIL restored=PASS
+OK R1 NODE_OPTIONS forced empty in the seat's pi: TestPiRunAsSeatExecStartsIt reverted=FAIL restored=PASS
+OK R1 NODE_PATH never reaches the seat's pi: TestPiRunAsSeatExecStartsIt reverted=FAIL restored=PASS
+OK R3 doctorMinAMQVersion is 0.116.2: TestGeneralOperationFloorUnchanged reverted=FAIL restored=PASS
+OK R3 the amq version row refuses below 0.116.2: TestExecuteDoctorAMQVersionRejectsOlderThanTheFloor reverted=FAIL restored=PASS
+OK A-P1 the record's needs travel to pi run: TestPiSeatKeepsItsDeclaredCredential reverted=FAIL restored=PASS
+OK A-P1 pi run keeps exactly the needed names: TestPiSeatKeepsItsDeclaredCredential reverted=FAIL restored=PASS
+OK A-P1 seat-exec hands the need over: TestSeatExecPiNeedsTheEmbeddedShim reverted=FAIL restored=PASS
+OK A-P2 the shim is written through atomicfile: TestEnsureShimIsStableAndRefusesASymlink reverted=FAIL restored=PASS
+OK A-P3 the shim must be exactly 0700: TestEnsureShimIsStableAndRefusesASymlink reverted=FAIL restored=PASS
+OK small (a) the shim is the record's, not HOME's: TestSeatExecPiNeedsTheEmbeddedShim reverted=FAIL restored=PASS
+OK small (c) the floor rows carry amq_below_floor: TestDoctorInstalledAMQFloor reverted=FAIL restored=PASS
+OK R3 one floor for one binary (the installed floor cannot drift from doctorMinAMQVersion): TestGeneralOperationFloorUnchanged reverted=FAIL restored=PASS
+OK small (b) the shim is checked and read through one no-follow descriptor: TestSeatExecPiNeedsTheEmbeddedShim reverted=FAIL restored=PASS

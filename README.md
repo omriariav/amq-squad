@@ -690,7 +690,8 @@ amq-squad completion fish
 ## Requirements
 
 - Go 1.25+
-- `amq` 0.60.0 on `PATH`
+- `amq` 0.116.2 or later on `PATH` (and `amq-remote`, `amq-owner-sign` at the
+  same release when installed); `amq-squad doctor` refuses an older one
 - `tmux` on `PATH` for Tier A managed panes
 - macOS with iTerm2 for the Tier B backend
 - macOS Terminal.app for the Tier C backend
@@ -700,16 +701,18 @@ amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
-AMQ 0.60.x is the supported series, with 0.60.0 as the minimum supported
-release. Both real-AMQ matrices validate pinned v0.60.0 and `latest`; `latest`
-remains a forward-compatibility canary and is not a support claim. Releases
-older than 0.60.0 are rejected fail-closed. Because the version assertion is
-skipped for `latest`, the pinned lane is the one that records what was proved.
+AMQ 0.116.2 is the minimum supported release: it is the release of the AMQ
+module amq-squad 3.0 links, and every 3.0 path needs its launch adapters (pi
+seats through the pi adapter, the Codex sandbox pins in the launch request)
+and its mailbox. `amq-squad doctor` refuses an installed `amq`, `amq-remote`
+or `amq-owner-sign` below it, with the upgrade line (`amq upgrade --all -y`,
+or `brew upgrade avivsinai/tap/amq`). CI runs the real-AMQ lane at the pinned
+v0.116.2, which is required, and at `latest` as a non-blocking canary: a
+canary failure reads as upstream drift, not as a support claim.
 
 | Real-AMQ lane | Runner | Versions |
 | --- | --- | --- |
-| Queue, routing, receipts, doctor, lifecycle | Ubuntu | `v0.60.0`, `latest` |
-| Native real-PTY wake and teardown | macOS | `v0.60.0`, `latest` |
+| Queue, routing, receipts, doctor, launch API (every `AMQ_SQUAD_REAL_AMQ` test) | macOS | `v0.116.2` (required), `latest` (canary, non-blocking) |
 
 For externally injected lead and orchestrator wakes, new launch records use
 `amq wake --retry-until injected` and persist that retry policy so exact

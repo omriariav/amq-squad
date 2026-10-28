@@ -592,6 +592,13 @@ func realAMQValidateSafeInjectViaAncestors(path string) error {
 	}
 }
 
+// realAMQOrchestrationContractSkip is why the two orchestration-contract
+// subtests are skipped (5-amq-A fix round; the same text is in ci.yml and in
+// docs/v3-spike/5-amq-execution.md under "Deferred"): a pre-existing break
+// independent of the AMQ version. Brief C ports them to a schema-valid team
+// and runs them unskipped against v0.116.2.
+const realAMQOrchestrationContractSkip = "pre-existing break, independent of the AMQ version: realAMQOrchestrationContract builds a team with Binary=/bin/sleep, and squad.yaml has rejected a runtime outside claude, codex, pi since 2b-5 (4fc5dbf2); the other nine subtests pass at v0.116.2. Follow-up (brief C): port to a schema-valid team (a runtime of claude, codex or pi with a stub binary; dispatch queues and sends without launching), or state why the dispatch authorizer cannot accept one"
+
 func realAMQOrchestrationContract(t *testing.T, binary, version, profile string) {
 	t.Helper()
 	const session = "issue-471"
@@ -1015,6 +1022,7 @@ func TestRealAMQCompatibility(t *testing.T) {
 	for _, profile := range []string{squadnamespace.DefaultProfile, "review"} {
 		profile := profile
 		t.Run("orchestration contract "+profile, func(t *testing.T) {
+			t.Skip(realAMQOrchestrationContractSkip)
 			realAMQOrchestrationContract(t, binary, version, profile)
 		})
 	}

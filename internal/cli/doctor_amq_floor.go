@@ -12,12 +12,13 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
 )
 
-// doctorInstalledAMQFloor is the oldest installed AMQ release 3.0 runs with
-// (brief 5-amq-A): the release of the module this build links, whose launch
-// adapters (the pi mint adapter, the Codex sandbox pins) the launch path
-// depends on. It is distinct from doctorMinAMQVersion, the v2 general
-// operation floor that the real-AMQ CI lanes keep at 0.60.0.
-const doctorInstalledAMQFloor = "0.116.2"
+// doctorInstalledAMQFloor is doctorMinAMQVersion: one floor for one binary
+// (5-amq-A fix round), applied to amq, amq-remote and amq-owner-sign.
+const doctorInstalledAMQFloor = doctorMinAMQVersion
+
+// doctorAMQBelowFloor is the code of a floor row's fail (Codex A small (c)):
+// below the floor, a prerelease of it, an unreadable version, or no amq.
+const doctorAMQBelowFloor = "amq_below_floor"
 
 // doctorAMQInstallLine is the install line a below-floor row prints.
 const doctorAMQInstallLine = "amq upgrade --all -y (Homebrew: brew upgrade avivsinai/tap/amq)"
@@ -62,22 +63,22 @@ func doctorCheckInstalledAMQFloor(d doctorExecution) []doctorCheck {
 		path, raw, found, err := d.ToolVersion(b.name)
 		switch {
 		case !found && b.required:
-			out = append(out, doctorCheck{Name: name, Status: doctorFail, Detail: fmt.Sprintf("%s is not on PATH; install AMQ %s or later: %s", b.name, doctorInstalledAMQFloor, doctorAMQInstallLine)})
+			out = append(out, doctorCheck{Name: name, Status: doctorFail, Kind: doctorAMQBelowFloor, Detail: fmt.Sprintf("%s is not on PATH; install AMQ %s or later: %s", b.name, doctorInstalledAMQFloor, doctorAMQInstallLine)})
 			continue
 		case !found:
 			out = append(out, doctorCheck{Name: name, Status: doctorWarn, Detail: fmt.Sprintf("%s is not installed (needed for remote access and the Buzz-signed clear); it must be %s or later: %s", b.name, doctorInstalledAMQFloor, doctorAMQInstallLine)})
 			continue
 		case err != nil:
-			out = append(out, doctorCheck{Name: name, Status: doctorFail, Detail: fmt.Sprintf("%s --version failed (%v); reinstall AMQ %s or later: %s", path, err, doctorInstalledAMQFloor, doctorAMQInstallLine)})
+			out = append(out, doctorCheck{Name: name, Status: doctorFail, Kind: doctorAMQBelowFloor, Detail: fmt.Sprintf("%s --version failed (%v); reinstall AMQ %s or later: %s", path, err, doctorInstalledAMQFloor, doctorAMQInstallLine)})
 			continue
 		}
 		got := doctorVersionToken.FindString(strings.TrimSpace(raw))
 		if got == "" {
-			out = append(out, doctorCheck{Name: name, Status: doctorFail, Detail: fmt.Sprintf("%s --version printed no version; reinstall AMQ %s or later: %s", path, doctorInstalledAMQFloor, doctorAMQInstallLine)})
+			out = append(out, doctorCheck{Name: name, Status: doctorFail, Kind: doctorAMQBelowFloor, Detail: fmt.Sprintf("%s --version printed no version; reinstall AMQ %s or later: %s", path, doctorInstalledAMQFloor, doctorAMQInstallLine)})
 			continue
 		}
 		if !semverMeetsStableFloor(got, doctorInstalledAMQFloor) {
-			out = append(out, doctorCheck{Name: name, Status: doctorFail, Detail: fmt.Sprintf("%s %s is below the installed floor %s; upgrade: %s", path, got, doctorInstalledAMQFloor, doctorAMQInstallLine)})
+			out = append(out, doctorCheck{Name: name, Status: doctorFail, Kind: doctorAMQBelowFloor, Detail: fmt.Sprintf("%s %s is below the installed floor %s; upgrade: %s", path, got, doctorInstalledAMQFloor, doctorAMQInstallLine)})
 			continue
 		}
 		out = append(out, doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("%s %s (floor %s)", path, got, doctorInstalledAMQFloor)})

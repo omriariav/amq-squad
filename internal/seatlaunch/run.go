@@ -217,6 +217,11 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	res.LaunchID = launchID
 	for i := range c.Records {
 		c.Records[i].LaunchID = launchID
+		if c.Records[i].Runtime == "pi" {
+			// The seat's pi agent dir under the launch's HOME, recorded so
+			// seat-exec and the launcher never derive it from theirs.
+			c.Records[i].PiAgentDir = piruntime.AgentDirFor(o.Home, c.Records[i].Handle)
+		}
 	}
 	if err := c.Request.Validate(); err != nil {
 		return res, fmt.Errorf("compiled launch request: %w", err)

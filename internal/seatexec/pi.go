@@ -73,10 +73,15 @@ func piShimProvider(o Options, rec launch.Record) (string, error) {
 	if base := filepath.Base(o.Argv[0]); base != "pi" {
 		return "", refusef("runtime_mismatch", "provider %q is not the recorded runtime %q", base, rec.Runtime)
 	}
-	if rec.PiAgentDir != "" && filepath.Clean(rec.PiAgentDir) != piruntime.AgentDirFor(o.Home, rec.Handle) {
-		return "", refusef("record_invalid", "the record's pi agent dir %s is not the embedded runtime's %s", rec.PiAgentDir, piruntime.AgentDirFor(o.Home, rec.Handle))
+	if !filepath.IsAbs(rec.PiAgentDir) || filepath.Clean(rec.PiAgentDir) != rec.PiAgentDir {
+		return "", refusef("record_invalid", "the launch record names no absolute pi agent dir (%q)", rec.PiAgentDir)
 	}
-	if err := piruntime.CheckShim(o.Home, o.Argv[0], o.Self); err != nil {
+	// The shim the launch record names (Codex A small (a)): never a path
+	// derived from this process's HOME.
+	if rec.PiShim == "" || filepath.Clean(o.Argv[0]) != rec.PiShim {
+		return "", refusef(PiNotEmbedded, "argv[0] %s is not the pi shim the launch record names (%q)", o.Argv[0], rec.PiShim)
+	}
+	if err := piruntime.CheckShim(rec.PiShim, o.Self); err != nil {
 		return "", refusef(PiNotEmbedded, "%v", err)
 	}
 	return o.Self, nil
@@ -89,8 +94,16 @@ func piShimProvider(o Options, rec launch.Record) (string, error) {
 // against the embedded manifest, checks the launch set, forces the pi
 // environment (transpile cache off, the seat's private TMPDIR) and runs
 // node as its child (amendment 26).
+//
+// The record's env_needs and credential_needs travel as --env-need (Codex
+// A-P1): seat-exec's scrub kept those names, and the launcher's scrub keeps
+// exactly those again, so a declared provider key reaches pi and nothing
+// else of the kind does. The agent dir is the record's.
 func PiLauncherArgv(self string, rec launch.Record, argv []string) []string {
-	out := []string{self, "pi", "run", "--seat", rec.Handle}
+	out := []string{self, "pi", "run", "--seat", rec.Handle, "--agent-dir", rec.PiAgentDir}
+	for _, n := range append(append([]string{}, rec.EnvNeeds...), rec.CredNeeds...) {
+		out = append(out, "--env-need", n)
+	}
 	if strings.Contains(rec.Model, "/") {
 		out = append(out, "--model", rec.Model)
 	}

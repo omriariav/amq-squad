@@ -86,13 +86,13 @@ if [ -n "$AM_ROOT_ID$AM_BASE_ROOT_ID" ]; then
   echo "inherited AMQ root identity metadata leaked" >&2
   exit 92
 fi
-printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.60.0"}'
+printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.116.2"}'
 `)
 
 	d := defaultDoctorExecution(t.TempDir())
 	check := doctorCheckAMQVersion(d)
-	if check.Status != doctorOK || !strings.Contains(check.Detail, "amq 0.60.0") {
-		t.Fatalf("doctor amq version check = %+v, want ok 0.60.0", check)
+	if check.Status != doctorOK || !strings.Contains(check.Detail, "amq 0.116.2") {
+		t.Fatalf("doctor amq version check = %+v, want ok 0.116.2", check)
 	}
 	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
 		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
@@ -285,9 +285,10 @@ func TestExecuteDoctorAMQEnvCommandFails(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorAMQVersionAccepts0600AndNewerCanary(t *testing.T) {
+// The floor is doctorMinAMQVersion, 0.116.2 since the 5-amq-A fix round.
+func TestExecuteDoctorAMQVersionAcceptsTheFloorAndNewerCanary(t *testing.T) {
 	dir := t.TempDir()
-	for _, v := range []string{"0.60.0", "v0.61.0-rc1", "0.61.0", "1.0.0+build60"} {
+	for _, v := range []string{"0.116.2", "v0.117.0-rc1", "0.117.0", "1.0.0+build60"} {
 		d := newDoctorExec(t, dir)
 		d.ResolveAMQEnv = func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: v, Root: dir}, nil
@@ -305,8 +306,8 @@ func TestExecuteDoctorAMQVersionAccepts0600AndNewerCanary(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorAMQVersionRejectsOlderThan0600(t *testing.T) {
-	for _, version := range []string{"0.42.1", "0.52.2", "0.54.0", "0.57.3", "0.59.1", "0.60.0-rc1"} {
+func TestExecuteDoctorAMQVersionRejectsOlderThanTheFloor(t *testing.T) {
+	for _, version := range []string{"0.42.1", "0.60.0", "0.74.1", "0.107.0", "0.116.1", "0.116.2-rc1"} {
 		t.Run(version, func(t *testing.T) {
 			dir := t.TempDir()
 			d := newDoctorExec(t, dir)
@@ -316,10 +317,10 @@ func TestExecuteDoctorAMQVersionRejectsOlderThan0600(t *testing.T) {
 			var buf bytes.Buffer
 			d.Out = &buf
 			if err := executeDoctor(d); err == nil {
-				t.Fatalf("doctor should fail when amq %s is below the 0.60.0 floor", version)
+				t.Fatalf("doctor should fail when amq %s is below the 0.116.2 floor", version)
 			}
 			amqLine := firstLineWith(buf.String(), "amq version")
-			if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.60.0") {
+			if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.116.2") {
 				t.Fatalf("unexpected amq version line: %q\n%s", amqLine, buf.String())
 			}
 			if !strings.Contains(amqLine, "amq upgrade") {

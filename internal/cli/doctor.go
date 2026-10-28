@@ -17,10 +17,12 @@ import (
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
-// expects to interoperate with. Bumped manually when amq-squad starts to
-// depend on newer AMQ behavior; the doctor check compares the running amq
-// binary's reported version against this floor.
-const doctorMinAMQVersion = "0.60.0"
+// runs with: the release of the module go.mod pins (5-amq-A fix round, one
+// floor for one binary). Every 3.0 path needs that release's launch
+// adapters (the pi mint adapter, the Codex sandbox pins) and its mailbox.
+// The amq env check, the installed-binary rows (doctor_amq_floor.go) and
+// the real-AMQ CI lane's pinned version all read this one value.
+const doctorMinAMQVersion = "0.116.2"
 
 type doctorStatus string
 
@@ -380,6 +382,7 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		return doctorCheck{
 			Name:   "amq version",
 			Status: doctorFail,
+			Kind:   doctorAMQBelowFloor,
 			Detail: fmt.Sprintf("amq %s is older than required %s; run `amq upgrade` to update", got, doctorMinAMQVersion),
 		}
 	}

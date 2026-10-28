@@ -42,7 +42,7 @@ func TestDoctorInstalledAMQFloor(t *testing.T) {
 	rows := floorRows(t)
 	for _, name := range []string{"amq", "amq-remote"} {
 		c := rows[name]
-		if c.Status != doctorFail || !strings.Contains(c.Detail, "below the installed floor 0.116.2") || !strings.Contains(c.Detail, "amq upgrade --all -y") {
+		if c.Status != doctorFail || c.Kind != "amq_below_floor" || !strings.Contains(c.Detail, "below the installed floor 0.116.2") || !strings.Contains(c.Detail, "amq upgrade --all -y") {
 			t.Errorf("%s below the floor: %+v", name, c)
 		}
 	}

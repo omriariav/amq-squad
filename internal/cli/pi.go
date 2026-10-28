@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -87,6 +88,8 @@ func runPi(args []string) error {
 type piRunFlags struct {
 	seat, thinking, approve string
 	models                  multiFlag
+	envNeeds                multiFlag
+	agentDir                string
 	lead, resume, noPackage bool
 	dryRun                  bool
 }
@@ -108,6 +111,8 @@ func runPiRun(args []string) error {
 	fs.BoolVar(&f.resume, "resume", false, "this start resumes a seat (amendment 23 check)")
 	fs.BoolVar(&f.noPackage, "no-package", false, "start pi without the amq-squad package")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the launch as JSON and do not exec")
+	fs.Var(&f.envNeeds, "env-need", "a variable the seat's runtime declares it needs, kept through the scrub (repeatable; seat-exec passes the record's)")
+	fs.StringVar(&f.agentDir, "agent-dir", "", "the seat's pi agent dir (absolute; seat-exec passes the record's)")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, piUsage) }
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -148,6 +153,17 @@ func piLaunch(s piLaunchSpec) error {
 		return err
 	}
 	agentDir := piruntime.AgentDirFor(home, s.Seat)
+	if d := s.Flags.agentDir; d != "" {
+		if !filepath.IsAbs(d) || filepath.Clean(d) != d {
+			return usageErrorf("pi run --agent-dir %q: want an absolute clean path", d)
+		}
+		agentDir = d
+	}
+	for _, n := range s.Flags.envNeeds {
+		if !piEnvNeedPattern.MatchString(n) {
+			return usageErrorf("pi run --env-need %q: want a variable name", n)
+		}
+	}
 	if s.Flags.resume {
 		root := firstNonEmptyStr(s.Overlay["AM_ROOT"], os.Getenv("AM_ROOT"))
 		if root == "" {
@@ -200,7 +216,7 @@ func piLaunch(s piLaunchSpec) error {
 	}
 	l, err := piruntime.Prepare(piruntime.Spec{
 		Runtime: rt, Home: home, Seat: s.Seat, AgentDir: agentDir, Parent: os.Environ(), TmpDir: tmp,
-		Models: models, Thinking: s.Flags.thinking, Overlay: overlay, Package: !s.Flags.noPackage, Args: piArgs,
+		Models: models, Thinking: s.Flags.thinking, Overlay: overlay, Package: !s.Flags.noPackage, Args: piArgs, EnvNeeds: s.Flags.envNeeds,
 	})
 	if err != nil {
 		return err
@@ -330,6 +346,9 @@ func ollamaThinks(host, model string) bool {
 	}
 	return false
 }
+
+// piEnvNeedPattern is a variable name --env-need accepts.
+var piEnvNeedPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // piShimProbeSeat is the agent dir the shim's probes run in (no seat's).
 const piShimProbeSeat = "_probe"
