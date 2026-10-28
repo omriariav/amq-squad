@@ -14,6 +14,12 @@ import (
 // this seam never shells out to the amq CLI (see the package doc comment).
 const AdoptionFloorAMQVersion = "v0.74.1"
 
+// PinnedAMQModule is the agent-message-queue module version this build links
+// (the go.mod pin; brief 5-amq-A moved it from v0.107.0 to v0.116.1). The
+// adoption floor above stays a floor: the pin must be at or above it, and
+// TestLinkedAMQModuleIsThePin proves the linked module is this version.
+const PinnedAMQModule = "v0.116.1"
+
 // AdoptionFloorContractSemver is the minimum launchapi contract semver this
 // backend requires. Deliberately distinct from internal/cli's
 // doctorMinAMQVersion (see TestGeneralOperationFloorUnchanged): this

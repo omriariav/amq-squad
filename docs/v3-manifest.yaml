@@ -65,7 +65,7 @@ entries:
   status: keep
 - path: internal/adoptionseam/floor.go
   v2_lines: 98
-  current_lines: 98
+  current_lines: 104
   fate: keep
   target_lines: 82
   cluster: adoptionseam
@@ -3445,9 +3445,9 @@ entries:
   status: new
 - path: internal/registry/versions.go
   v2_lines: 0
-  current_lines: 26
+  current_lines: 33
   fate: new
-  target_lines: 26
+  target_lines: 33
   cluster: registry
   extract: ""
   reason: "2b-3: provider versions the pinned AMQ launch API verified"

@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/avivsinai/agent-message-queue v0.107.0 h1:TQjIG5kX03YqpjsfDTt+VtxGIus9kTexXuTyVUMBf6c=
-github.com/avivsinai/agent-message-queue v0.107.0/go.mod h1:5piS45bnSaT7ClTiVmQLPB07jy9CL6wP9H4Hab2ePdE=
+github.com/avivsinai/agent-message-queue v0.116.1 h1:WiPUA4c+RzPyVhxKbZBrFpBBmImLlCERFUQCYVswuMQ=
+github.com/avivsinai/agent-message-queue v0.116.1/go.mod h1:5piS45bnSaT7ClTiVmQLPB07jy9CL6wP9H4Hab2ePdE=
 github.com/btcsuite/btcd/btcec/v2 v2.5.0 h1:KioMXOWa76b86sTZZOmbzv/ldaQCmB8KFAyn5PbB8E8=
 github.com/btcsuite/btcd/btcec/v2 v2.5.0/go.mod h1:+K/MYXcLBtHEQjRbjHuJChuybk4LCgjdjgRwil+e+Kk=
 github.com/btcsuite/btcd/chainhash/v2 v2.0.0 h1:PMLlSloHJuEeB80XG9EjpXWNEKAZAMLl6YHZ6YsEuoA=
