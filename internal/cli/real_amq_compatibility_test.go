@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1048,7 +1049,13 @@ func realAMQNamedProfileRefused(t *testing.T, binary string) {
 		return runDispatch([]string{"--project", project, "--profile", profile, "--session", session, "--role", "qa", "--from", "cto",
 			"--thread", "p2p/cto__qa", "--subject", "named profile", "--body", "must be refused", "--json"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "named profiles") {
-		t.Fatalf("dispatch against a named profile: %v", err)
+	if !errors.Is(err, team.ErrNamedProfile) {
+		t.Fatalf("dispatch against a named profile: %v, want team.ErrNamedProfile", err)
+	}
+	// Nothing was sent: the QA mailbox on the real root is empty.
+	qa := ctx
+	qa.Me = "qa"
+	if drained := realAMQCommand(t, binary, project, amqCommandEnv(qa), "drain", "--include-body"); strings.Contains(drained, "must be refused") {
+		t.Fatalf("the refused dispatch still sent a message:\n%s", drained)
 	}
 }

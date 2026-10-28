@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -26,7 +25,6 @@ type Slots struct {
 	Squad      seatlaunch.Squad // normalized; Wrapper and AMQPath set
 	BaseBranch string           // default main
 	Git        string           // default git on PATH
-	Now        func() time.Time
 	// Target is the launch's record of the owner's grant for each seat's
 	// commit step: repository, base branch and push URL (R2).
 	Target seatcommit.Target
@@ -35,13 +33,6 @@ type Slots struct {
 	inUse  map[string]string // handle -> request id
 	byReq  map[string]string // request id -> handle
 	closed map[string]bool   // handles quarantined or otherwise not to be reused
-}
-
-func (s *Slots) now() time.Time {
-	if s.Now != nil {
-		return s.Now()
-	}
-	return time.Now()
 }
 
 func poolMatches(p task.Pool, seat seatlaunch.Seat) bool {

@@ -17,3 +17,23 @@ FAIL
 --- PASS: TestUnconfirmedCloseSlotIsReleasedOnlyAtSeatGone (0.08s)
 --- PASS: TestDecisionSocketOpensOnlyAfterTheStartUpBarrier (0.08s)
 ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.545s
+
+== revert C: CheckProfile returns a plain error (same text, not wrapping team.ErrNamedProfile); the old strings.Contains row would pass, the errors.Is row must fail
+    real_amq_compatibility_test.go:1027: dispatch against a named profile: profile "review": named profiles have no squad config in amq-squad 3.0: a repository has one squad, <repo root>/squad.yaml; migrate a v2 profile with `amq-squad migrate` (phase 5), want team.ErrNamedProfile
+--- FAIL: TestRealAMQCompatibility (0.06s)
+    --- FAIL: TestRealAMQCompatibility/orchestration_contract_named_profile_refused (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.476s
+FAIL
+== revert D: a dispatch that sends and then errors (a message to qa is sent before the refusal check); the drain row must fail
+    real_amq_compatibility_test.go:1027: the refused dispatch still sent a message:
+--- FAIL: TestRealAMQCompatibility (0.13s)
+    --- FAIL: TestRealAMQCompatibility/orchestration_contract_named_profile_refused (0.12s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.556s
+FAIL
+== restored
+--- PASS: TestRealAMQCompatibility (0.07s)
+    --- PASS: TestRealAMQCompatibility/orchestration_contract_named_profile_refused (0.06s)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.487s
+== Slots.Now and Slots.now removed: compile-checked (go build ./... and go vet are the row; the field had no caller)

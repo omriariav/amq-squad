@@ -3801,12 +3801,12 @@ entries:
   status: new
 - path: internal/schedproc/slots.go
   v2_lines: 0
-  current_lines: 245
+  current_lines: 236
   fate: new
-  target_lines: 245
+  target_lines: 236
   cluster: schedproc
   extract: ""
-  reason: "2b-2 B: seat slots from the typed seat list, worktrees, the runtime launcher router; the external (pi stand-in) launcher retired in 5-amq-C (pi launches through seatlaunch and AMQ pi adapter)"
+  reason: "2b-2 B: seat slots from the typed seat list, worktrees, the runtime launcher router; the external (pi stand-in) launcher retired in 5-amq-C (pi launches through seatlaunch and AMQ pi adapter); async close: no production implementer after the stand-in's removal; delegation always confirmed; removal in 3.0.x"
   status: new
 - path: internal/scheduler/exits.go
   v2_lines: 0
@@ -3815,7 +3815,7 @@ entries:
   target_lines: 599
   cluster: scheduler
   extract: ""
-  reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
+  reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat; async close: no production implementer after the stand-in's removal; delegation always confirmed; removal in 3.0.x"
   status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
