@@ -154,7 +154,7 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 	if preflight := hookOwnerPath("preflight"); preflight != "" {
 		entries = append(entries, preflight+"/")
 	}
-	if b := hookOwnerPath("buzz"); b != "" { // the Buzz share (4-5): body key, grants, DM marks
+	if b := hookOwnerPath("buzz"); b != "" { // the Buzz share (4-5, 5-amq-B): body key, grants, the attach inbox
 		entries = append(entries, b+"/")
 	}
 	// The seat reads a rules snapshot (AMQ_SQUAD_RULES_PATH); the recorded

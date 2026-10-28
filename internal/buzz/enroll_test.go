@@ -103,7 +103,8 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short")
 	}
-	for _, bin := range []string{"amq", "amq-remote", "amq-owner-sign", "script", "bash"} {
+	amqBinaries(t)
+	for _, bin := range []string{"script", "bash"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s not installed", bin)
 		}
@@ -216,9 +217,13 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	}
 	t.Logf("MEASURED: grants at enrollment %d (kinds %v), window %s, expires %s", sh.GrantCount(), sh.Kinds(), window.Round(time.Hour), sh.Expires().Format(time.RFC3339))
 	manifest, _ := os.ReadFile(filepath.Join(shareRoot, "extensions", "remote", "manifest.json"))
-	if !bytes.Contains(manifest, []byte(`"presence": true`)) || !bytes.Contains(manifest, []byte(`"name": "amq-squad"`)) || bytes.Contains(manifest, []byte("dm_channel_id")) {
-		t.Fatalf("manifest is not presence-on with DM commands off:\n%s", manifest)
+	if !bytes.Contains(manifest, []byte(`"presence": true`)) || !bytes.Contains(manifest, []byte(`"name": "amq-squad"`)) || bytes.Contains(manifest, []byte("dm_channel_id")) ||
+		!bytes.Contains(manifest, []byte(`"mailbox"`)) || !bytes.Contains(manifest, []byte(`"attach"`)) {
+		t.Fatalf("manifest is not a presence-on mailbox target with DM commands not yet on:\n%s", manifest)
 	}
+	t.Logf("RECORDED (scratch-built amq-remote): manifest after phase D:\n%s", manifest)
+	// the owner opens the DM: the relay now holds its NIP-29 snapshots
+	relay.dmChannel(t, "dm-4-5-dryrun", owner.pubHex(), body)
 	if len(relay.mem.events(30177, owner.pubHex())) != 1 {
 		t.Fatal("the owner's kind 30177 policy is not on the relay")
 	}
@@ -301,20 +306,22 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	offlineAfter := time.Since(t1)
 	t.Logf("MEASURED: presence online %s after the status row went live; offline %s after it went stale", onlineAfter.Round(time.Millisecond), offlineAfter.Round(time.Millisecond))
 
-	// acceptance 3 and the routing, through the real transport: the core
-	// signs in with the share body, posts the gate question, and the pump
-	// handles the owner's answer and messages from the relay
+	// acceptance 1 and 6 through the real serve (5-amq-B): the share is bound
+	// to the mailbox adapter; serve delivers the owner's DMs into the share
+	// root's attach inbox; the handler verifies the gate answer on its own
+	// short connection and routes the phone message; serve posts each reply
+	// as the body's result row
+	mb, err := CheckMailboxShare(shareRoot, DefaultShareSession, "dm-4-5-dryrun", relay.url())
+	if err != nil {
+		t.Fatalf("the share is not bound to the mailbox adapter: %v", err)
+	}
+	t.Logf("MEASURED: share binding %+v", mb)
 	ctx := context.Background()
 	wsr, sh2, post, err := Connect(ctx, b, pin, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer wsr.Close()
 	issuer, err := operatorauth.LoadEd25519Signer(b.IssuerKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	trust, err := operatorauth.LoadAuthorizationTrustStore(gateverify.DefaultTrustStorePath())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +329,8 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	core := &gateverify.Core{Store: store, Pin: pin, Relay: wsr, RelayURL: b.Relay, Body: sh2.Body, BodyGrant: post, Issuer: issuer,
 		Carriers: b.Carriers, Version: "3", Namespace: gateverify.Namespace{ProjectDir: squad, Profile: "p", Session: "s", Generation: "g1"}}
 	rec, q, err := core.Raise(ctx, gatestore.Spec{GateID: "rel-dry", Action: "tag", Target: "git tag v3.0.0-dry", RaisedBy: "lead-a", Window: 30 * time.Minute})
+	wsr.Close() // gate raise's connection: the question is posted, the connection ends
+	core.Relay = nil
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,6 +339,12 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatalf("gate question on the relay: %+v", questions)
 	}
 	t.Logf("gate question text:\n%s", questions[len(questions)-1].Content)
+	setPresence("active", time.Now())
+	p, _ = FromStatus(doc(), "lead-a")
+	if act, err := sup.Apply(p); act != "started" || err != nil {
+		t.Fatalf("apply live for the serve rows: %q %v", act, err)
+	}
+	waitFor(t, 30*time.Second, "online before the DMs", func() bool { return lastStatus(relay, body) == "online" })
 	ownerDM := func(content, thread string) string {
 		tags := [][]string{{"h", pin.Channel}, {"p", body}}
 		if thread != "" {
@@ -340,36 +355,72 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		_ = relay.mem.Publish(ctx, e.Marshal())
 		return e.ID
 	}
+	inbox := AMQInbox{Root: shareRoot, Handle: MailboxHandle}
+	h := &Handler{Core: core, Dial: VerifyDialer(b, pin), Inbox: inbox, Mail: AMQMailer{}, Target: target}
 	prefix := strings.TrimPrefix(rec.Digest, "sha256:")[:16]
+	// one request at a time: the answer first, then the route
+	tAnswer := time.Now()
 	answerID := ownerDM("Approve rel-dry release "+prefix, q.EventID)
-	routeID := ownerDM("@lead-b please rebase #12", "")
-	pump := &Pump{Core: core, Mail: AMQMailer{}, Target: target, Status: func() ([]byte, error) { return doc(), nil }, Marks: MarksDir(shareRoot, pin.Channel)}
-	tStep := time.Now()
-	handled, err := pump.Step(ctx)
-	if err != nil || len(handled) != 2 {
-		t.Fatalf("pump: %+v, %v", handled, err)
+	var delivered []Prompt
+	waitFor(t, 20*time.Second, "serve delivers the answer into the attach inbox", func() bool {
+		delivered, _ = inbox.New(ctx)
+		return len(delivered) == 1
+	})
+	tDelivered := time.Since(tAnswer)
+	if d := delivered[0]; d.From != CarrierHandle || d.Thread != "cockpit/"+pin.Channel || !slices.Equal(d.Labels, []string{"acp", "buzz", "nostr:" + answerID}) {
+		t.Fatalf("serve's delivery shape: %+v", d)
 	}
-	t.Logf("MEASURED: one pump step (relay read, gate verify and commit, two AMQ sends, two thread replies) %s", time.Since(tStep).Round(time.Millisecond))
-	for _, h := range handled {
-		switch h.EventID {
-		case answerID:
-			if h.Gate == nil || h.Gate.Outcome != "approved" {
-				t.Fatalf("answer: %+v %+v", h, h.Gate)
-			}
-		case routeID:
-			if h.Delivery == nil || h.Delivery.Lead != "lead-b" {
-				t.Fatalf("route: %+v", h)
+	t.Logf("RECORDED (scratch-built amq-remote): serve's delivery header %+v", delivered[0])
+	openBefore := relay.open()
+	tStep := time.Now()
+	handled, err := h.Step(ctx)
+	if err != nil || len(handled) != 1 || handled[0].Gate == nil || handled[0].Gate.Outcome != "approved" || handled[0].Reply != "accepted rel-dry tag" {
+		t.Fatalf("answer: %+v, %v", handled, err)
+	}
+	stepTook := time.Since(tStep)
+	idsSeen := relay.idsREQs()
+	waitFor(t, 5*time.Second, "the verifier's connection closes", func() bool { return relay.open() == openBefore })
+	if len(idsSeen) == 0 || idsSeen[len(idsSeen)-1] != openBefore+1 {
+		t.Fatalf("connections at the verifier's REQ by id: %v (serve's: %d)", idsSeen, openBefore)
+	}
+	waitFor(t, 20*time.Second, "serve posts the accepted result row", func() bool { return bodyPosted(relay, body, "accepted rel-dry tag") })
+	tRow := time.Since(tAnswer)
+	for _, k := range []int{9, 40003} {
+		for _, e := range relay.mem.events(k, body) {
+			if strings.Contains(e.Content, "rel-dry") && !strings.Contains(e.Content, "Reply in this thread") {
+				t.Logf("RECORDED (scratch-built amq-remote): serve's result row kind %d tags %v content %q", e.Kind, e.Tags, e.Content)
 			}
 		}
+	}
+	t.Logf("MEASURED (scratch-built amq-remote, local relay): owner answer to serve's delivery %s; handler step (fetch connection, verify, commit, reply) %s; answer to the result row on the relay %s; open connections at the fetch %d (serve %d), after %d",
+		tDelivered.Round(time.Millisecond), stepTook.Round(time.Millisecond), tRow.Round(time.Millisecond), idsSeen[len(idsSeen)-1], openBefore, relay.open())
+	if _, err := store.ReadAnswer("rel-dry"); err != nil {
+		t.Fatalf("no answer file: %v", err)
+	}
+	routeID := ownerDM("@lead-b please rebase #12", "")
+	waitFor(t, 20*time.Second, "serve delivers the route", func() bool {
+		delivered, _ = inbox.New(ctx)
+		return len(delivered) == 1
+	})
+	handled, err = h.Step(ctx)
+	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || handled[0].Reply != "routed lead-b" {
+		t.Fatalf("route: %+v, %v", handled, err)
 	}
 	if !inboxHas(t, squad, "lead-a", "nostr:"+routeID) || !inboxHas(t, squad, "lead-b", "nostr:"+routeID) {
 		t.Fatal("the routed message is not in lead-a's and lead-b's inboxes")
 	}
-	if _, err := store.ReadAnswer("rel-dry"); err != nil {
-		t.Fatalf("no answer file: %v", err)
+	waitFor(t, 20*time.Second, "serve posts the routed result row", func() bool { return bodyPosted(relay, body, "routed lead-b") })
+	for _, e := range append(relay.mem.events(9, body), relay.mem.events(40003, body)...) {
+		if strings.Contains(e.Content, "please rebase") || strings.Contains(e.Content, "Approve rel-dry") {
+			t.Fatalf("a body post echoes the owner's text: %q", e.Content)
+		}
 	}
-	_ = trust
-	wsr.Close()
+	setPresence("active", time.Now().Add(-time.Hour))
+	p, _ = FromStatus(doc(), "lead-a")
+	if act, err := sup.Apply(p); act != "stopped" || err != nil {
+		t.Fatalf("apply stopped after the serve rows: %q %v", act, err)
+	}
+	waitFor(t, 15*time.Second, "offline after the serve rows", func() bool { return lastStatus(relay, body) == "offline" })
 
 	// the owner run (docs/v3-buzz/owner-run.md steps 0.3 to 7) rehearsed
 	// through the binary with the throwaway key: team init, gate raise,
@@ -537,4 +588,68 @@ func ptyRun(t *testing.T, name, scriptPath string, args, env []string, typed str
 	}
 	t.Logf("%s: rc %d in %s\n%s", name, r.rc, r.took.Round(time.Millisecond), r.out)
 	return r
+}
+
+// AMQFloor is the amq-remote release the mailbox adapter path needs (briefs
+// ruling 20 point 4; part A's doctor floor).
+const AMQFloor = "0.116.2"
+
+// amqBinaries puts the AMQ binaries the dry run uses first on PATH:
+// AMQ_SQUAD_TEST_AMQ_BIN names a directory of amq, amq-remote and
+// amq-owner-sign built from the floor release (5-amq-B: scratch-built
+// v0.116.2, never installed); without it the installed ones. It skips when
+// a binary is missing or amq-remote is below the floor, and logs the
+// versions and where they came from.
+func amqBinaries(t *testing.T) {
+	t.Helper()
+	if dir := os.Getenv("AMQ_SQUAD_TEST_AMQ_BIN"); dir != "" {
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	for _, bin := range []string{"amq", "amq-remote", "amq-owner-sign"} {
+		p, err := exec.LookPath(bin)
+		if err != nil {
+			t.Skipf("%s not installed", bin)
+		}
+		out, _ := exec.Command(p, "--version").CombinedOutput()
+		if bin == "amq-remote" {
+			out, _ = exec.Command(p, "version").CombinedOutput()
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(out)), "amq-remote"))
+		t.Logf("AMQ binary %s: %s (%s)", bin, v, p)
+		if bin == "amq-remote" && semverLess(v, AMQFloor) {
+			t.Skipf("amq-remote %s is below the floor v%s (the mailbox adapter); set AMQ_SQUAD_TEST_AMQ_BIN to a v%s build", v, AMQFloor, AMQFloor)
+		}
+	}
+}
+
+// semverLess compares two x.y.z versions; an unreadable one is less.
+func semverLess(a, b string) bool {
+	pa, pb := strings.Split(strings.TrimPrefix(a, "v"), "."), strings.Split(b, ".")
+	for i := 0; i < 3; i++ {
+		var x, y int
+		if i >= len(pa) {
+			return true
+		}
+		if _, err := fmt.Sscanf(pa[i], "%d", &x); err != nil {
+			return true
+		}
+		_, _ = fmt.Sscanf(pb[i], "%d", &y)
+		if x != y {
+			return x < y
+		}
+	}
+	return false
+}
+
+// bodyPosted reports whether the body posted a result row (kind 9) or an
+// edit of one (kind 40003) whose text contains want.
+func bodyPosted(r *wsRelay, body, want string) bool {
+	for _, k := range []int{9, 40003} {
+		for _, e := range r.mem.events(k, body) {
+			if strings.Contains(e.Content, want) {
+				return true
+			}
+		}
+	}
+	return false
 }

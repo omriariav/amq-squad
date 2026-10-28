@@ -57,7 +57,8 @@ func DefaultTrustStorePath() string { return ownerFile("authorization-trust.json
 
 // BuzzDir is ~/.amq-squad/buzz, the one directory a Buzz share may live in:
 // guard protects it from seat writes (the body key, the grants, the
-// once-only DM marks), so a share root anywhere else is refused (4-5 review).
+// attach inbox serve delivers the owner's DMs to), so a share root anywhere
+// else is refused (4-5 review).
 func BuzzDir() string { return ownerFile("buzz") }
 
 // UnderBuzzDir reports whether p is an absolute clean path strictly inside

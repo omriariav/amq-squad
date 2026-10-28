@@ -30,7 +30,8 @@ func TestOwnerSignerCrashLeavesNoKey(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short")
 	}
-	for _, bin := range []string{"amq", "amq-remote", "amq-owner-sign", "script", "bash"} {
+	amqBinaries(t) // the script refuses an amq-remote below the floor
+	for _, bin := range []string{"script", "bash"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s not installed", bin)
 		}

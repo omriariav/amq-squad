@@ -172,10 +172,18 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	if r := sh("5.3 verify action", amqSquad, "verify", "action", "--project", p, "--session", "owner45", "--gate", "g45-owner-01", "--action", "tag", "--target", "git tag v3.0.0-owner45"); r.rc != 0 {
 		t.Fatalf("verify action: rc %d", r.rc)
 	}
-	// 6.1, 6.2
+	// the owner sees serve's result row before the next DM: the mailbox
+	// adapter runs one request at a time and refuses a DM that arrives
+	// while one is open as busy (v0.116.2 internal/remote/core/admission.go)
+	waitFor(t, 20*time.Second, "serve's accepted result row", func() bool { return bodyPosted(relay, body, "accepted g45-owner-01 tag") })
+	// 6.1 /status is serve's own command (v0.116.2 buzzio/normalize.go): it
+	// never reaches the mailbox
 	dm("/status", "")
+	time.Sleep(time.Second)
+	// 6.2
 	pingID := dm("@cto owner45 ping from the phone", "")
 	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"app/cto"`) })
+	waitFor(t, 20*time.Second, "serve's routed result row", func() bool { return bodyPosted(relay, body, "routed app/cto") })
 	r = sh("6.2 amq list (operator mailbox)", "amq", "list", "--root", opRoot, "--me", "user", "--new", "--json")
 	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) {
 		t.Fatalf("operator mailbox: rc %d\n%s", r.rc, r.out)
@@ -190,11 +198,12 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 		return strings.Contains(aout.String(), `"action":"stopped"`) && lastStatus(relay, body) == "offline"
 	})
 	stopAttach()
-	if !strings.Contains(aout.String(), `"kind":"status"`) || !strings.Contains(aout.String(), `"kind":"detached"`) {
-		t.Fatalf("attach output lacks the /status reply or the detach:\n%s", aout.String())
+	if !strings.Contains(aout.String(), `"kind":"detached"`) || strings.Contains(aout.String(), `/status`) {
+		t.Fatalf("attach output lacks the detach, or the mailbox saw /status:\n%s", aout.String())
 	}
-	// the DMs the earlier attachment handled (to another squad root) are not
-	// handled again: the once-only marks belong to the DM channel
+	// the DMs the earlier handler took (for another squad root) are not
+	// handled again: serve never delivers a DM twice, and the taken
+	// messages left the attach inbox
 	if strings.Contains(aout.String(), "rel-dry") || strings.Contains(aout.String(), "please rebase") {
 		t.Fatalf("an earlier DM was handled again:\n%s", aout.String())
 	}
