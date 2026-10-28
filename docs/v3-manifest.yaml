@@ -543,13 +543,22 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 584
+  current_lines: 589
   fate: shrink
   target_lines: 600
   cluster: C15
   extract: "framework (:44, :661) and version/launchapi/floor/pin/AMQ-ops checks; drop tmux, pane, marker, notification, goal, wake, roster checks"
   reason: "probe per plan 16.2"
   status: shrunk
+- path: internal/cli/doctor_amq_floor.go
+  v2_lines: 0
+  current_lines: 86
+  fate: new
+  target_lines: 86
+  cluster: cli
+  extract: ""
+  reason: "5-amq-A: doctor's installed AMQ floor (amq, amq-remote, amq-owner-sign --version at or above v0.116.2, the install line below it)"
+  status: new
 - path: internal/cli/doctor_host.go
   v2_lines: 0
   current_lines: 761
