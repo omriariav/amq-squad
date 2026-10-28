@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,8 @@ func (f *fixture) run(o Options) error {
 		o.Argv = []string{filepath.Join(f.bin, f.rec.Runtime), "--model", "m"}
 		if f.rec.Runtime == "codex" {
 			o.Argv = append(o.Argv, "--sandbox", "workspace-write", "--ask-for-approval", "on-request")
+			// The pins the compiler puts in the launch request (brief 5-amq-A).
+			o.Argv = append(o.Argv, CodexSandboxPins(slices.Contains(f.rec.EnvNeeds, CodexNetworkNeed))...)
 		}
 		if f.rec.Runtime == "claude" {
 			o.Argv = append(o.Argv, "--permission-mode", "dontAsk")

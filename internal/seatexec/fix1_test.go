@@ -32,7 +32,7 @@ func TestSeatExecRefusesCodexWithoutTheSandbox(t *testing.T) {
 	}
 	f := newFixture(t, "codex")
 	f.stage()
-	if err := f.run(Options{Argv: []string{filepath.Join(f.bin, "codex"), "--sandbox", "workspace-write", "--ask-for-approval", "on-request"}}); err != nil {
+	if err := f.run(Options{Argv: append([]string{filepath.Join(f.bin, "codex"), "--sandbox", "workspace-write", "--ask-for-approval", "on-request"}, CodexSandboxPins(false)...)}); err != nil {
 		t.Fatalf("workspace-write: %v", err)
 	}
 }

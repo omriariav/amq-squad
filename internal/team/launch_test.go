@@ -39,7 +39,7 @@ func fixtureCaps() []launchapi.ProviderCapabilitiesV1 {
 	return []launchapi.ProviderCapabilitiesV1{
 		{Provider: "claude", GrammarVersion: 1, AllowedArgumentForms: []string{"--model", "--effort", "--permission-mode", "-n", "--name"}},
 		{Provider: "codex", GrammarVersion: 1, AllowedArgumentForms: []string{"--model", "-c", "--sandbox", "--ask-for-approval"},
-			ConfigOverrides: []launchapi.ConfigOverrideCapabilityV1{{Key: "model_reasoning_effort", AllowedValues: []string{"low", "medium", "high"}}}},
+			ConfigOverrides: []launchapi.ConfigOverrideCapabilityV1{{Key: "model_reasoning_effort", AllowedValues: []string{"low", "medium", "high"}}, {Key: "sandbox_workspace_write.writable_roots", AllowedValues: []string{"[]"}}, {Key: "sandbox_workspace_write.network_access", AllowedValues: []string{"true", "false"}}}},
 		{Provider: "pi", GrammarVersion: 1},
 	}
 }

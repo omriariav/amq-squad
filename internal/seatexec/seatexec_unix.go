@@ -72,7 +72,7 @@ type execPlan struct {
 	env           []string
 	identityProof string
 	started       string   // procinfo.StartToken of this process
-	argv          []string // the provider argv exec'd (Codex gains the sandbox pins)
+	argv          []string // the provider argv exec'd
 	published     *anchor
 	token         string // a Claude seat's credential (never logged or recorded)
 }
@@ -159,7 +159,12 @@ func prepare(o Options) (execPlan, error) {
 		if err := CheckCodexSandbox(o.Argv); err != nil {
 			return plan, err
 		}
-		plan.argv = codexSandboxPins(o.Argv, slices.Contains(rec.EnvNeeds, CodexNetworkNeed))
+		// The pins travel in the launch request (AMQ v0.110.0 admits them,
+		// upstream ask 17): seat-exec checks the admitted argv carries them
+		// as the record requires and adds no provider argument.
+		if err := CheckCodexSandboxPins(o.Argv, slices.Contains(rec.EnvNeeds, CodexNetworkNeed)); err != nil {
+			return plan, err
+		}
 	}
 	// A seat whose start stamp cannot be read could never be closed with a
 	// confirmed identity: refuse it (the identity_incomplete class).
@@ -393,7 +398,10 @@ func CheckCodexSandbox(argv []string) error {
 		case "--config":
 			// A config override of the sandbox or the approval policy, in
 			// every form Codex admits.
-			if v := strings.TrimSpace(o.value); strings.HasPrefix(v, "sandbox_mode") || strings.HasPrefix(v, "sandbox_workspace_write") {
+			// The two sandbox pins are the one admitted sandbox_workspace_write
+			// form, and only with a value that narrows (CheckCodexSandboxPins
+			// checks the record's value).
+			if v := strings.TrimSpace(o.value); strings.HasPrefix(v, "sandbox_mode") || (strings.HasPrefix(v, "sandbox_workspace_write") && !narrowingPin(v)) {
 				return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with %s", o.raw)
 			} else if strings.HasPrefix(v, "approval_policy") {
 				return refusef("codex_approval_missing", "Codex argv overrides the approval policy with %s", o.raw)
@@ -599,19 +607,42 @@ func asRefusal(code string, err error) error {
 	return refusef(code, "%v", err)
 }
 
-// CodexNetworkNeed is the env_needs entry with which a Codex seat keeps the
-// sandbox's network access (the registry entry declares it).
-const CodexNetworkNeed = "CODEX_NETWORK_ACCESS"
+// narrowingPin reports a sandbox_workspace_write override that is one of the
+// two pins with a value the pin admits: writable_roots=[] and
+// network_access=true or false. Any other key or value widens or replaces
+// the sandbox and is refused as before (amendment 28).
+func narrowingPin(v string) bool {
+	return v == CodexWritableRootsPin+"=[]" || v == CodexNetworkAccessPin+"=false" || v == CodexNetworkAccessPin+"=true"
+}
 
-// codexSandboxPins puts the workspace-write sandbox's own settings on the
-// command line, right after the executable, so a trusted project config
-// cannot widen them (Codex gives -c precedence over config.toml; fix 3 item
-// 5): no extra writable roots, and no network unless the seat declared it.
-// This is the one place seat-exec adds provider arguments (lead ruling).
-func codexSandboxPins(argv []string, network bool) []string {
-	pins := []string{"-c", "sandbox_workspace_write.writable_roots=[]", "-c", "sandbox_workspace_write.network_access=" + strconv.FormatBool(network)}
-	out := append([]string{argv[0]}, pins...)
-	return append(out, argv[1:]...)
+// CheckCodexSandboxPins refuses a Codex argv that does not carry each of the
+// two sandbox pins exactly once, with the value the launch record requires:
+// writable_roots=[], and network_access=true only when the seat declared
+// CODEX_NETWORK_ACCESS (sandbox_pins_missing). The pins are provider
+// arguments in the admitted launch request, so a missing pin means the argv
+// is not the one the launch compiled.
+func CheckCodexSandboxPins(argv []string, network bool) error {
+	want := map[string]string{CodexWritableRootsPin: "[]", CodexNetworkAccessPin: strconv.FormatBool(network)}
+	seen := map[string]int{}
+	for _, o := range codexOptions(argv) {
+		if o.name != "--config" {
+			continue
+		}
+		key, value, _ := strings.Cut(strings.TrimSpace(o.value), "=")
+		if _, pin := want[key]; !pin {
+			continue
+		}
+		seen[key]++
+		if value != want[key] {
+			return refusef(SandboxPinsMissing, "Codex argv sets %s=%s; the launch record requires %s=%s", key, value, key, want[key])
+		}
+	}
+	for _, key := range []string{CodexWritableRootsPin, CodexNetworkAccessPin} {
+		if seen[key] != 1 {
+			return refusef(SandboxPinsMissing, "Codex argv carries %s %d times; the admitted launch request carries it once as %s=%s", key, seen[key], key, want[key])
+		}
+	}
+	return nil
 }
 
 // DialProof is seat-exec's proof sender (exported for the launcher's tests): the socket must be

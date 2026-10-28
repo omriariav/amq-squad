@@ -3898,6 +3898,15 @@ entries:
   extract: ""
   reason: "2b-2 B: Claude seat preflight: the user-scope hook plugin and the recorded permission mode as one unit (claude_hooks_missing, R36)"
   status: new
+- path: internal/seatexec/codex.go
+  v2_lines: 0
+  current_lines: 30
+  fate: new
+  target_lines: 30
+  cluster: seatexec
+  extract: ""
+  reason: "5-amq-A: the Codex sandbox pins as provider arguments (AMQ v0.110.0 admits them, upstream ask 17) and sandbox_pins_missing"
+  status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
   current_lines: 196
@@ -3936,18 +3945,18 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 676
+  current_lines: 707
   fate: new
-  target_lines: 676
+  target_lines: 707
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 411
+  current_lines: 416
   fate: new
-  target_lines: 411
+  target_lines: 416
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

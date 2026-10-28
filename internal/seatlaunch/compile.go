@@ -112,7 +112,8 @@ const RolePointer = "Your seat role is in the file named by the environment vari
 var handlePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // ProviderArgs returns the provider arguments of a seat: model and effort
-// (and Codex's sandbox and approval flags) for Claude and Codex, none for pi.
+// (and Codex's sandbox and approval flags and its two sandbox pins) for
+// Claude and Codex, none for pi.
 func ProviderArgs(s Seat) []string {
 	var args []string
 	switch s.Runtime {
@@ -132,6 +133,10 @@ func ProviderArgs(s Seat) []string {
 			args = append(args, "-c", "model_reasoning_effort="+s.Effort)
 		}
 		args = append(args, CodexSandboxArgs...)
+		// The sandbox pins as provider arguments (AMQ v0.110.0 admits both
+		// keys, upstream ask 17), so admission and the trust digest cover
+		// them; seat-exec checks them and adds none (brief 5-amq-A).
+		args = append(args, seatexec.CodexSandboxPins(slices.Contains(s.EnvNeeds, seatexec.CodexNetworkNeed))...)
 	}
 	return args
 }

@@ -20,7 +20,7 @@ import (
 var advertised = []launchapi.ProviderCapabilitiesV1{
 	{Provider: "claude", GrammarVersion: 3, AllowedArgumentForms: []string{"--allowedTools", "--effort", "--model", "--name", "--permission-mode", "-n"}},
 	{Provider: "codex", GrammarVersion: 3, AllowedArgumentForms: []string{"--ask-for-approval", "--model", "--sandbox", "-c"},
-		ConfigOverrides: []launchapi.ConfigOverrideCapabilityV1{{Key: "model_reasoning_effort", AllowedValues: []string{"low", "medium", "high"}}}},
+		ConfigOverrides: []launchapi.ConfigOverrideCapabilityV1{{Key: "model_reasoning_effort", AllowedValues: []string{"low", "medium", "high"}}, {Key: "sandbox_workspace_write.writable_roots", AllowedValues: []string{"[]"}}, {Key: "sandbox_workspace_write.network_access", AllowedValues: []string{"true", "false"}}}},
 }
 
 func testSquad(t *testing.T) Squad {
@@ -64,7 +64,8 @@ func TestCompileOneRequestWithTheWrapper(t *testing.T) {
 	}
 	want := map[string][]string{
 		"cto": {"--model", "sonnet", "--effort", "medium", "--permission-mode", "dontAsk"},
-		"dev": {"--model", "gpt-6-astra", "-c", "model_reasoning_effort=medium", "--sandbox", "workspace-write", "--ask-for-approval", "on-request"},
+		"dev": {"--model", "gpt-6-astra", "-c", "model_reasoning_effort=medium", "--sandbox", "workspace-write", "--ask-for-approval", "on-request",
+			"-c", "sandbox_workspace_write.writable_roots=[]", "-c", "sandbox_workspace_write.network_access=false"},
 	}
 	for _, p := range ps[1:] {
 		if !slices.Equal(p.Args, want[p.Handle]) {
