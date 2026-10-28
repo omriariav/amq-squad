@@ -86,3 +86,19 @@ func GateTransport(ctx context.Context, b gateverify.Binding, pin gateverify.Pin
 	}
 	return relay, sh.Body, post, nil
 }
+
+// VerifyDialer is the verifier's per-verification connection (ruling 20
+// point 1): each call loads the share, dials the binding's relay and signs
+// in with the body key and the kind 1059 grant; the close ends it. The
+// connection reads one event by id and the question's history, and posts
+// the core's re-ask when the thread rule applies; it never subscribes to
+// the DM channel.
+func VerifyDialer(b gateverify.Binding, pin gateverify.Pin) Dialer {
+	return func(ctx context.Context) (gateverify.Relay, nostr.SecretKey, []string, func(), error) {
+		relay, sh, post, err := Connect(ctx, b, pin, time.Now())
+		if err != nil {
+			return nil, nostr.SecretKey{}, nil, nil, err
+		}
+		return relay, sh.Body, post, relay.Close, nil
+	}
+}

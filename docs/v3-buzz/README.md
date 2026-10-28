@@ -3,12 +3,14 @@
 amq-squad 3.0 has one Buzz agent. It is the body of one `amq-remote` strict
 share that you enroll once with your Buzz key, and it is attached to the
 operator session's mailbox (your `user` handle, from the fleet registry), or
-with `--lead` to one squad lead (plan 3.6, 9; R42). From the phone you can:
+with `--lead` to one squad lead (plan 3.6, 9; R42). The share is bound to
+amq-remote's mailbox adapter (amq-remote v0.116.2 or later): `amq-remote
+serve` reads your DMs, delivers each into the share's `attach` inbox as one
+AMQ message, and posts the attachment's reply under your message as its
+result row (brief 5-amq-B). From the phone you can:
 
 - see whether the attached session is present (the agent shows online in
   Buzz while the session runs, offline after it stops);
-- send `/status` and get one line back: the session, the four bucket counts
-  (needs you, working, ready, inactive), the open gates and the last message;
 - answer a typed gate (tag and release, external send, credential change,
   growth beyond the grant) by replying in the gate's thread;
 - send any other message: it lands in the attached mailbox, and a message
@@ -18,6 +20,25 @@ with `--lead` to one squad lead (plan 3.6, 9; R42). From the phone you can:
   `--lead`, a handle whose launch record names a lead role (`lead`, `cto`,
   or the team's lead role). attach refuses any other `--leads` handle, and a
   message naming one stays in the mailbox.
+
+Every message gets one reply, ids and code words only, never your text:
+
+| reply | meaning |
+| --- | --- |
+| `accepted <gate> <class>` | your answer verified and committed |
+| `refused <gate> <code>` | not accepted; the code is the verifier's (`already_consumed`, `wrong_pubkey`, `outside_window`, `bad_signature`, `bad_tuple`, `not_in_gate_thread`, ...) |
+| `refused <gate> not_in_gate_thread` and `re-ask: answer in the gate thread (event <id>)` | answer again as a reply in that thread |
+| `routed <lead or mailbox>` | delivered (and forwarded to the lead) |
+| `routed <mailbox> not_forwarded <code>` | delivered, not forwarded (`ambiguous_lead`, `not_a_lead`) |
+| `refused - not_fetched` | the relay did not return your message's event; nothing was done, send it again |
+
+While a verification runs you may see `verifying <gate>` (a status line).
+`/status`, `/inspect` and `/cancel <ref>` are amq-remote's own commands:
+serve answers them and they never reach the mailbox. amq-remote runs one
+request at a time, so a DM you send before the previous one has its result
+row is answered `busy` and is not delivered (a 3.0 limit). Wait for each
+result row (about a second); if you see `busy`, send the message again. A
+gate answer lost this way only needs answering again: the gate stays open.
 
 ## The secret rule
 
@@ -66,8 +87,11 @@ What this means in practice:
 skips when its output exists, and the script stops with exit 10 or 11 when it
 needs you.
 
-1. First run, without `BUZZ_OWNER_KEY_CMD`: it creates the share root
-   `~/.amq-squad/buzz/root`, asks `amq-remote` for 8 grants (5 base kinds,
+1. First run, without `BUZZ_OWNER_KEY_CMD`: it checks amq-remote is
+   v0.116.2 or later, creates the share root `~/.amq-squad/buzz/root` with
+   the handles `remote` (serve's) and `attach` (the mailbox), declares the
+   share's target as the mailbox adapter (`config.handle` `attach`,
+   `reply_timeout` 60s), asks `amq-remote` for 8 grants (5 base kinds,
    buzz-dm 9 and 40003, buzz-profile 0) and stops (exit 10) to ask for the
    pipe.
 2. Second run, with `BUZZ_OWNER_KEY_CMD`: `amq-owner-sign` shows the session,
@@ -80,8 +104,11 @@ needs you.
    profile is published, and stops (exit 11).
 3. In Buzz, find the agent by its name, open a DM with it, and copy the DM
    channel id (a public value).
-4. Third run, with `BUZZ_DM_CHANNEL=<channel id>`: it writes your gate
-   binding `~/.amq-squad/gate-binding.json` (relay, channel, your public key,
+4. Third run, with `BUZZ_DM_CHANNEL=<channel id>`: it turns on DM commands
+   on the mailbox target (`amq-remote share --target amq-squad --dm-channel
+   <id> --native-session attach --min-evidence submitted`; nothing to sign),
+   then `amq-squad remote bind` checks that binding in the manifest and
+   writes your gate binding `~/.amq-squad/gate-binding.json` (relay, channel, your public key,
    the agent's public key, the carrier handle `buzz`, the share; no secret),
    creates the core's issuer key and trust store if they are absent, and
    stops the enrollment endpoint.
@@ -95,6 +122,10 @@ a new agent.
 
 To revoke early, remove the agent's relay access (or ban its body key on the
 relay); archive the DM in Buzz.
+
+A share enrolled before 5-amq-B (bound to the presence-only `buzz-presence`
+fake target) is refused by the script, `remote bind` and `remote attach`:
+move `~/.amq-squad/buzz` aside and enroll again. There is no fallback.
 
 ## Attach
 
@@ -111,15 +142,29 @@ verified and committed in that squad's gate store. The second form attaches
 to one squad lead. It runs until Ctrl-C. Each tick (5 s) it reads the status
 document, starts the share's `amq-remote` endpoint while the bound seat is
 present and stops it when the seat is not (Buzz then shows the agent
-offline), and reads your DMs: gate answers go to the core, `/status` is
-answered, every other message is delivered. `amq-squad remote status` (same
+offline), and takes what serve delivered to the `attach` inbox: a gate
+answer goes to the core, which opens its own short connection to the relay
+with the agent's body key, reads your signed event by its id (and the
+question's edit and delete history), verifies it, and closes the
+connection; every other message is delivered. A verification is capped at
+10 s; one that hangs gets no reply (serve's 60 s reply timeout ends the
+request), the squad's status document shows a `verify_timeout` row in its
+attention queue (needs you, with the gate id) while the gate is open, attach
+prints an `attention` line, and the gate stays open for
+you to answer again. `amq-squad remote status` (same
 flags) prints the presence line, the grant expiry and the login service
 warning; `amq-squad doctor` shows the login service state too.
 
 Gate questions say "Reply in this thread with one line:" and show the two
 answer lines. Answer with a thread reply. An answer typed in the main DM box
 is not accepted; the core re-posts "Reply here to confirm" in the gate thread
-once, and your next thread reply is the answer (amendment 19).
+once, the reply to your message points at it, and your next thread reply is
+the answer (amendment 19). Editing or deleting your answer voids it. A
+deletion of yours since the question whose target the relay now hides (it
+may have hidden an edit of the question) is answered `refused <gate>
+altered_history` with one re-ask that shows the question as raised; reply
+in that thread. A reaction you remove (a deletion tagged with kind 7) does
+not count.
 
 ## Upgrade note (squad identity)
 
@@ -132,8 +177,8 @@ only such records are the spike's and the rehearsals' on this machine.
 ## Privacy
 
 Buzz DMs are not end-to-end encrypted. The relay operator can read your
-messages, the gate texts and the `/status` lines (which carry the lead's last
-message, at most 120 characters). The agent's name and presence are clear
+messages, the gate texts and the result rows (ids and code words). The
+agent's name and presence are clear
 text too; do not put a path or prompt data in `BUZZ_NAME`.
 
 ## The login service and the box recipe
@@ -161,7 +206,8 @@ recipe item (plan 9).
 | `~/.amq-squad/buzz/share.txt`, `bundle.json` | the grant preimages, the signed tags | no |
 | `~/.amq-squad/gate-binding.json` | relay, channel, public keys, carrier, share | no |
 | `~/.amq-squad/issuer-key.pem`, `authorization-trust.json` | the core's envelope key and its trust store | the issuer key |
-| `~/.amq-squad/buzz/root/attach/seen/<channel>/` | one mark per DM handled, whichever mailbox the agent was attached to | no |
+| `~/.amq-squad/buzz/root/extensions/remote/manifest.json` | the share's target (the mailbox adapter) and its relay binding, written by `amq-remote` | no |
+| `~/.amq-squad/buzz/root/agents/attach/inbox/` | your DMs as serve delivered them (taken once, then in `cur`) | your DM text |
 | `~/.amq-squad/buzz/root/attach/up.log` | the endpoint's log | no |
 
 guard protects all of `~/.amq-squad/buzz/` and the owner files above

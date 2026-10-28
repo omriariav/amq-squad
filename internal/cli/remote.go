@@ -38,20 +38,25 @@ Usage:
   amq-squad remote npub KEY
 
 Enrollment is the owner script docs/v3-buzz/enroll.sh (briefs 4-5 ruling 1);
-it ends with remote bind. bind writes the owner's gate binding from the
-enrolled share (no secret in it), and the issuer key and trust store when
-they are absent. attach binds the share's Buzz agent to the operator
-session's user mailbox from the fleet registry (or, with --lead, to one
-squad lead), reads the owner's DMs, sends gate answers to the core of the
-squad whose store holds the gate, answers /status, routes every other
-message through AMQ (to a named squad lead by cross-project routing), and
-runs the share's amq-remote endpoint only while the mailbox's seat is
-present in the status document. status prints the presence and activity
-line and the login service warning.
+it binds the share to amq-remote's mailbox adapter (amq-remote v0.116.2 or
+later) and ends with remote bind. bind checks that binding in the share's
+manifest and writes the owner's gate binding from the enrolled share (no
+secret in it), and the issuer key and trust store when they are absent.
+attach binds the share's Buzz agent to the operator session's user mailbox
+from the fleet registry (or, with --lead, to one squad lead). amq-remote
+serve delivers each owner DM into the share root's attach inbox; attach
+reads it, sends a gate answer to the core of the squad whose store holds
+the gate (the core fetches and verifies the signed event on its own short
+connection), routes every other message through AMQ (to a named squad lead
+by cross-project routing), and replies once per message (serve posts the
+reply as the result row). It runs the share's amq-remote endpoint only
+while the mailbox's seat is present in the status document. status prints
+the presence and activity line and the login service warning.
 `
 
-// remoteTransport, remoteEndpoint and remoteMailer are seams for tests.
+// remoteInbox, remoteEndpoint and remoteMailer are seams for tests.
 var (
+	remoteInbox                      = func(shareRoot string) buzz.Inbox { return buzz.AMQInbox{Root: shareRoot, Handle: buzz.MailboxHandle} }
 	remoteMailer   buzz.Mailer       = buzz.AMQMailer{}
 	remoteService  buzz.LoginService = buzz.AMQRemoteService{}
 	remoteEndpoint                   = func(shareRoot string) buzz.Endpoint { return &buzz.ExecEndpoint{Root: shareRoot} }
@@ -109,6 +114,9 @@ type remoteBindData struct {
 	IssuerKey  string   `json:"issuer_key"`
 	TrustStore string   `json:"trust_store"`
 	Created    []string `json:"created"`
+	// Mailbox is the share's binding to amq-remote's mailbox adapter, as
+	// the share's manifest states it.
+	Mailbox buzz.MailboxBinding `json:"mailbox"`
 }
 
 func runRemoteBind(args []string, out io.Writer) error {
@@ -133,6 +141,12 @@ func runRemoteBind(args []string, out io.Writer) error {
 	if _, err := sh.Grant(buzz.KindDM, time.Now()); err != nil {
 		return fmt.Errorf("remote bind: %w", err)
 	}
+	// the one path (ruling 20): the share is bound to the mailbox adapter
+	// with DM commands on for this channel, or nothing is written
+	mb, err := buzz.CheckMailboxShare(sh.Root, sh.Session, *channel, *relay)
+	if err != nil {
+		return fmt.Errorf("remote bind: %w", err)
+	}
 	path := gateBindingPath()
 	if path == "" {
 		return errors.New("remote bind: no home directory")
@@ -140,7 +154,7 @@ func runRemoteBind(args []string, out io.Writer) error {
 	b := gateverify.Binding{Schema: gateverify.BindingSchema, Relay: *relay, Channel: *channel, Owner: sh.Owner, Body: sh.BodyHex(),
 		Carriers: []string{*carrier}, ShareRoot: sh.Root, ShareSession: sh.Session}
 	data := remoteBindData{Binding: path, Relay: b.Relay, Channel: b.Channel, Owner: b.Owner, Body: b.Body, Grants: sh.GrantCount(),
-		Kinds: sh.Kinds(), Expires: sh.Expires().Format(time.RFC3339), IssuerKey: gateverify.DefaultIssuerKeyPath(), TrustStore: gateTrustStorePath()}
+		Kinds: sh.Kinds(), Expires: sh.Expires().Format(time.RFC3339), IssuerKey: gateverify.DefaultIssuerKeyPath(), TrustStore: gateTrustStorePath(), Mailbox: mb}
 	data.BodyNpub, _ = nostr.EncodeNpub(b.Body)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -162,6 +176,7 @@ func runRemoteBind(args []string, out io.Writer) error {
 		return writeJSONEnvelope(out, "remote_bind", data)
 	}
 	fmt.Fprintf(out, "gate binding written: %s\nbody %s (%s), owner %s\n%d grants (kinds %v), expire %s\n", path, data.BodyNpub, b.Body, b.Owner, data.Grants, data.Kinds, data.Expires)
+	fmt.Fprintf(out, "share target %s: kind %s, handle %s, reply_timeout %s, DM commands on (channel %s)\n", mb.Target, mb.Kind, mb.Handle, mb.ReplyTimeout, mb.Channel)
 	for _, c := range created {
 		fmt.Fprintf(out, "created %s\n", c)
 	}
@@ -401,9 +416,10 @@ func checkLeads(t buzz.Target) error {
 	return nil
 }
 
-// squadCores are the gate cores of the fleet's squads, sharing the primary
-// core's relay connection and body key: a lead raises its gates in its own
-// squad's root, so the answer is verified and committed there. Each core is
+// squadCores are the gate cores of the fleet's squads: a lead raises its
+// gates in its own squad's root, so the answer is verified and committed
+// there. The handler lends the chosen core the verifier's connection for
+// one verification. Each core is
 // built on the registered root and its namespace; a squad whose context does
 // not resolve to its registered root gets no core, and is reported.
 func squadCores(ctx context.Context, r *fleet.Registry, primary *gateverify.Core) ([]*gateverify.Core, []string) {
@@ -436,7 +452,6 @@ func squadCores(ctx context.Context, r *fleet.Registry, primary *gateverify.Core
 			problems = append(problems, "squad "+s.Name+": "+err.Error())
 			continue
 		}
-		c.Relay, c.Body, c.BodyGrant = primary.Relay, primary.Body, primary.BodyGrant
 		out = append(out, c)
 	}
 	return out, problems
@@ -524,7 +539,12 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("remote attach: %w", err)
 	}
-	shareRoot, _ := buzz.ShareFor(b)
+	shareRoot, shareSession := buzz.ShareFor(b)
+	// the one path first (B-P6): a share not bound to the mailbox adapter
+	// starts nothing, not even the endpoint
+	if _, err := buzz.CheckMailboxShare(shareRoot, shareSession, b.Channel, b.Relay); err != nil {
+		return fmt.Errorf("remote attach: %w", err)
+	}
 	ctx, stop := remoteContext()
 	defer stop()
 	var sup *buzz.Supervisor
@@ -543,7 +563,7 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 		fmt.Fprintf(out, "%s %s\n", kind, raw)
 	}
 	emit("attached", map[string]any{"mailbox": t.Handle, "root": t.Root, "leads": t.Leads, "operator": buzz.AttachToOperator, "share_root": shareRoot})
-	var pump *buzz.Pump
+	var handler *buzz.Handler
 	misses := 0
 	for {
 		// operator mode: the fleet registry is read again every tick, so a
@@ -560,21 +580,34 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 				t.Leads, t.Registry = nil, buzz.FleetLeads{}
 				empty := fleet.Registry{Operator: m.fleet.Operator}
 				m.fleet, m.target = &empty, t
-				if pump != nil {
-					pump.Target, pump.Cores = t, nil
+				if handler != nil {
+					handler.Target, handler.Cores = t, nil
 				}
 			} else {
 				m, t, statusDoc = nm, nm.target, nm.status
-				if pump != nil {
-					cores, problems := squadCores(ctx, m.fleet, pump.Core)
+				if handler != nil {
+					cores, problems := squadCores(ctx, m.fleet, handler.Core)
 					for _, pr := range problems {
 						emit("error", map[string]string{"step": "squad core", "error": pr})
 					}
-					pump.Target, pump.Cores, pump.Status = t, cores, statusDoc
+					handler.Target, handler.Cores = t, cores
 				}
 			}
 		}
-		if sup != nil {
+		// the binding is checked again every tick: a share re-bound away
+		// from the mailbox adapter stops the endpoint and the handler
+		bindErr := error(nil)
+		if _, err := buzz.CheckMailboxShare(shareRoot, shareSession, b.Channel, b.Relay); err != nil {
+			bindErr = err
+			emit("error", map[string]string{"step": "bind", "error": err.Error()})
+			handler = nil
+			if sup != nil {
+				if act, err := sup.Apply(buzz.Presence{Handle: t.Handle}); act != "" || err != nil {
+					emit("presence", map[string]any{"action": act, "present": false, "state": "", "error": errString(err), "reason": "share not bound to the mailbox adapter"})
+				}
+			}
+		}
+		if sup != nil && bindErr == nil {
 			raw, err := statusDoc()
 			var p buzz.Presence
 			if err == nil {
@@ -601,29 +634,34 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 				}
 			}
 		}
-		if pump == nil {
-			core, err := gateCore(ctx, sel, true)
+		if handler == nil && bindErr == nil {
+			// no relay connection is held: the verifier dials its own for
+			// each answer (ruling 20 point 1)
+			core, err := gateCore(ctx, sel, false)
 			if err != nil {
-				emit("error", map[string]string{"step": "connect", "error": err.Error()})
+				emit("error", map[string]string{"step": "core", "error": err.Error()})
 			} else {
 				cores, problems := squadCores(ctx, m.fleet, core)
 				for _, pr := range problems {
 					emit("error", map[string]string{"step": "squad core", "error": pr})
 				}
-				pump = &buzz.Pump{Core: core, Cores: cores, Mail: remoteMailer, Target: t, Status: statusDoc, Marks: buzz.MarksDir(shareRoot, core.Pin.Channel)}
+				handler = &buzz.Handler{Core: core, Cores: cores, Dial: remoteDialer(b, core.Pin), Inbox: remoteInbox(shareRoot), Mail: remoteMailer, Target: t,
+					SeenPath: buzz.SeenPath(shareRoot), VerifyTimeout: remoteVerifyTimeout}
 			}
 		}
-		if pump != nil {
-			handled, err := pump.Step(ctx)
+		if handler != nil {
+			handled, err := handler.Step(ctx)
 			for _, h := range handled {
+				if h.Kind == "attention" {
+					// a hung verification: no result was sent, the adapter's
+					// reply timeout ends the request, the gate stays open
+					emit("attention", h)
+					continue
+				}
 				emit("handled", h)
 			}
 			if err != nil && ctx.Err() == nil {
-				emit("error", map[string]string{"step": "dm", "error": err.Error()})
-				if c, ok := pump.Core.Relay.(*gateverify.WSRelay); ok {
-					c.Close()
-				}
-				pump = nil // reconnect next tick
+				emit("error", map[string]string{"step": "inbox", "error": err.Error()})
 			}
 		}
 		if *once {
@@ -648,3 +686,25 @@ func errString(err error) string {
 	}
 	return err.Error()
 }
+
+// remoteDialer is the verifier's per-verification connection over the
+// core's transport seam (gateTransport, the enrolled share in production):
+// one connection per answer, closed after it (ruling 20 point 1).
+var remoteDialer = func(b gateverify.Binding, pin gateverify.Pin) buzz.Dialer {
+	return func(ctx context.Context) (gateverify.Relay, nostr.SecretKey, []string, func(), error) {
+		relay, body, grant, err := gateTransport(ctx, b, pin)
+		if err != nil {
+			return nil, nostr.SecretKey{}, nil, nil, err
+		}
+		closeFn := func() {
+			if c, ok := relay.(interface{ Close() }); ok {
+				c.Close()
+			}
+		}
+		return relay, body, grant, closeFn, nil
+	}
+}
+
+// remoteVerifyTimeout overrides the verification cap (0: buzz.VerifyTimeout,
+// 10 s); a test seam.
+var remoteVerifyTimeout time.Duration

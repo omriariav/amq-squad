@@ -404,6 +404,7 @@ func collectAlerts(root string, warn func(string, ...any)) []AlertInput {
 		}
 		var a struct {
 			ID, Kind, Detail, At string
+			GateID               string `json:"gate_id"`
 		}
 		raw, err := os.ReadFile(p)
 		if err == nil {
@@ -418,7 +419,7 @@ func collectAlerts(root string, warn func(string, ...any)) []AlertInput {
 		if kind == "tag" || kind == "release" {
 			kind = "ungated_" + kind
 		}
-		out = append(out, AlertInput{ID: a.ID, Kind: kind, Subject: a.Detail, At: at})
+		out = append(out, AlertInput{ID: a.ID, Kind: kind, Subject: a.Detail, GateID: a.GateID, At: at})
 	}
 	return out
 }

@@ -287,40 +287,78 @@ func TestAcceptanceFinalAndDotLedID(t *testing.T) {
 }
 
 func TestHistoryCheck(t *testing.T) {
+	reaction := strings.Repeat("6", 64) // a reaction the relay hides once deleted
 	cases := map[string]struct {
-		mutate func(f *fixture, q nostr.Event)
+		mutate func(f *fixture, q, a nostr.Event)
 		code   string
 	}{
-		"edit with other text": {func(f *fixture, q nostr.Event) {
+		"edit with other text": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindEdit, "approve something else", [][]string{{"e", q.ID}}, q.CreatedAt+1))
 		}, RejectAltered},
-		"edit by the owner with other text": {func(f *fixture, q nostr.Event) {
+		"edit by the owner with other text": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.owner, KindEdit, "x", [][]string{{"e", q.ID}}, q.CreatedAt+1))
 		}, RejectAltered},
-		"question deleted": {func(f *fixture, q nostr.Event) {
+		"question deleted by the owner": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", q.ID}}, q.CreatedAt+1))
+		}, RejectAltered},
+		"an edit of the question deleted by the owner (group deletion)": {func(f *fixture, q, a nostr.Event) {
+			ed := f.signed(f.body, KindEdit, q.Content, [][]string{{"e", q.ID}}, q.CreatedAt+1)
+			f.relay.inject(ed)
+			e, _ := nostr.ParseEvent(ed)
+			f.relay.inject(f.signed(f.owner, KindGroupDeletion, "", [][]string{{"e", e.ID}}, q.CreatedAt+2))
+		}, RejectAltered},
+		"question deleted by another key (a relay ignores it)": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", q.ID}}, q.CreatedAt+1))
-		}, RejectAltered},
-		"group deletion by the body": {func(f *fixture, q nostr.Event) {
+		}, ""},
+		"a body deletion before the question": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindGroupDeletion, "", [][]string{{"e", strings.Repeat("9", 64)}}, 1))
-		}, RejectAltered},
-		"owner deletion since the question": {func(f *fixture, q nostr.Event) {
+		}, ""},
+		// round 2, item 3: hidden targets since the question
+		"3 an owner deletion since the question whose target is hidden": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("8", 64)}}, q.CreatedAt+2))
-		}, RejectAltered},
-		"history read fails": {func(f *fixture, q nostr.Event) { f.relay.failQuery = true }, RejectHistory},
-		"unchanged edit and an old owner deletion": {func(f *fixture, q nostr.Event) {
+		}, RejectAlteredHistory},
+		"3 an owner deletion since the question whose target is still visible": {func(f *fixture, q, a nostr.Event) {
+			r := f.signed(f.owner, 7, "+", [][]string{{"e", q.ID}}, q.CreatedAt+1)
+			f.relay.inject(r)
+			re, _ := nostr.ParseEvent(r)
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", re.ID}}, q.CreatedAt+2))
+		}, ""},
+		"3 the owner's reaction cleanup (every k tag 7), target hidden": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("8", 64)}, {"k", "7"}}, q.CreatedAt+2))
+		}, ""},
+		"3 an owner deletion tagged k 7 and k 40003, target hidden": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("8", 64)}, {"k", "7"}, {"k", "40003"}}, q.CreatedAt+2))
+		}, RejectAlteredHistory},
+		"history read fails": {func(f *fixture, q, a nostr.Event) { f.relay.failQuery = true }, RejectHistory},
+		"unchanged edit and an old owner deletion": {func(f *fixture, q, a nostr.Event) {
 			f.relay.inject(f.signed(f.body, KindEdit, q.Content, [][]string{{"e", q.ID}}, q.CreatedAt+1))
 			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", strings.Repeat("7", 64)}}, q.CreatedAt-100))
 		}, ""},
+		// 5-amq-B acceptance 10, the target-and-signer rule (fix round):
+		"10a the owner deletes the answer": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", a.ID}}, a.CreatedAt+1))
+		}, RejectAltered},
+		"10b/3 the body deletes anything since the question (foreign use of the body key)": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.body, KindDeletion, "", [][]string{{"e", reaction}, {"k", "7"}}, q.CreatedAt+1))
+		}, RejectAlteredHistory},
+		"10c another key posts a kind 5 naming the answer": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.seat, KindDeletion, "", [][]string{{"e", a.ID}}, a.CreatedAt+1))
+		}, ""},
+		"10 the owner edits the answer": {func(f *fixture, q, a nostr.Event) {
+			f.relay.inject(f.signed(f.owner, KindEdit, a.Content, [][]string{{"e", a.ID}}, a.CreatedAt+1))
+		}, RejectAltered},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			rec, q := f.raise("g1", "tag", "git tag v1")
 			qe, _ := nostr.ParseEvent([]byte(q.RawEvent))
-			c.mutate(f, qe)
 			at := testNow.Add(time.Minute)
 			f.clock = at
-			r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), q.EventID, at))
+			raw := f.answer(f.owner, tuple("approve", rec), q.EventID, at)
+			ae, _ := nostr.ParseEvent(raw)
+			c.mutate(f, qe, ae)
+			r := f.core.HandleEvent(ctx, raw)
 			if c.code == "" {
 				if r.Outcome != operatorauth.DecisionApproved {
 					t.Fatalf("clean history refused: %+v", r)
@@ -455,5 +493,51 @@ func TestVerifyAnswerFileTamper(t *testing.T) {
 	other, _ := newIssuer(t, t.TempDir())
 	if _, err := BuildAnswerFile(o, raw, rec, q, f.core.Pin, "", f.core.Namespace, "test", other, at); err == nil {
 		t.Fatal("an issuer the record does not name built an answer")
+	}
+}
+
+// 5-amq-B fix round 2, item 3: edit the question to E, the owner answers,
+// E is deleted so the relay hides it. The answer is refused altered_history
+// with a re-ask that shows the question as raised (not a lockout); the
+// owner's reply in the re-ask's thread is accepted. The body's deletion of
+// anything since the question refuses the same way.
+func TestHiddenDeletedEditIsReasked(t *testing.T) {
+	for _, signer := range []string{"owner", "body"} {
+		t.Run(signer, func(t *testing.T) {
+			f := newFixture(t)
+			rec, q := f.raise("g-h", "tag", "git tag v1")
+			qe, _ := nostr.ParseEvent([]byte(q.RawEvent))
+			key := f.owner
+			if signer == "body" {
+				key = f.body
+			}
+			// E: an edit the relay no longer returns (deleted), so only the
+			// deletion is stored
+			edit := f.signed(key, KindEdit, "approve git tag v9-evil", [][]string{{"e", q.EventID}}, qe.CreatedAt+1)
+			ee, _ := nostr.ParseEvent(edit)
+			f.relay.inject(f.signed(key, KindDeletion, "", [][]string{{"e", ee.ID}}, qe.CreatedAt+2))
+			at := testNow.Add(time.Minute)
+			f.clock = at
+			r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), q.EventID, at))
+			if r.Outcome != "reasked" || r.Code != RejectAlteredHistory {
+				t.Fatalf("the answer after a hidden deleted edit: %+v", r)
+			}
+			if st := f.store.State(rec, at); st != gatestore.StateOpen {
+				t.Fatalf("the gate closed: %s", st)
+			}
+			ra, err := f.store.ReadReask("g-h")
+			if err != nil || ra == nil || !IsHistoryReask(*ra, rec) {
+				t.Fatalf("no history re-ask: %+v %v", ra, err)
+			}
+			if c := mustEvent(ra.RawEvent).Content; !strings.Contains(c, rec.Text) {
+				t.Fatalf("the re-ask does not show the question as raised:\n%s", c)
+			}
+			later := at.Add(time.Minute)
+			f.clock = later
+			r = f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), ra.EventID, later))
+			if r.Outcome != operatorauth.DecisionApproved {
+				t.Fatalf("the reply to the history re-ask: %+v", r)
+			}
+		})
 	}
 }

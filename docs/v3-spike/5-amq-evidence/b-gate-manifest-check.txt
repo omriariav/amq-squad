@@ -1,0 +1,16 @@
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a6e50e6ac3f5a85e9/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        84      43515        21719
+replace        2       2431            0
+review         4       3687         2803
+delete       140      49894            0
+new          258          0        53445
+TOTAL        546     111761        88615
+target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+v2 rows kept: 27,882, ceiling 36,410 (deferred-replace rows excluded: 0 lines) [--final]
+3.0 additions: 258 files, 53,469 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 81,351 lines (v2 rows kept plus 3.0 additions)
+like for like, class 1 and 2 rows and their targets removed: 27882 lines against a target sum of 35170 (-20.7 percent over)
+class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 0 lines, 0 over target; class 3 (accepted-3 and other non-keep rows): 772 over target
+manifest-check: OK

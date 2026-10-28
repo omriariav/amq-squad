@@ -1,19 +1,26 @@
 // Package buzz is the Buzz attachment of amq-squad 3.0 (plan 3.6, 9; R42;
-// brief 4-5): one Buzz agent, the body of an amq-remote strict share that the
-// owner enrolled with the owner script (docs/v3-buzz/enroll.sh), attached to
-// one mailbox. The core reads the owner's DMs from the relay with the body
-// key, hands a gate answer to the 3-1 verifier, answers /status from the
-// status document, and routes every other message into AMQ. amq-remote
-// serve publishes the body's profile and presence; the attachment starts it
-// while the bound session is present in the status document and stops it
-// when it is not.
+// briefs 4-5 and 5-amq-B): one Buzz agent, the body of an amq-remote strict
+// share that the owner enrolled with the owner script
+// (docs/v3-buzz/enroll.sh), bound to amq-remote's mailbox adapter. amq-remote
+// serve reads the owner's DMs, delivers each into the share root's
+// MailboxHandle inbox and posts the handle's reply as the result row; it
+// also publishes the body's profile and presence. The attachment reads that
+// inbox, hands a gate answer to the 3-1 verifier (which fetches and
+// verifies the signed event itself on its own short connection), routes
+// every other message into AMQ, and replies once per message. It starts
+// serve while the bound session is present in the status document and
+// stops it when it is not.
 //
 // No code here reads, holds or asks for the owner key (R33): the owner key
 // enters amq-owner-sign only, through the owner script's password-manager
-// pipe. The body key is the share's own key, minted by amq-remote.
+// pipe. The body key is the share's own key, minted by amq-remote; this
+// package uses it for the core's own posts (the gate question, the re-ask)
+// and the verifier's per-verification read, never for a DM subscription.
 package buzz
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -258,4 +265,31 @@ func readAnchored(d *fsanchor.AnchoredDir, name string, private bool) ([]byte, e
 		return nil, errors.New("too large")
 	}
 	return io.ReadAll(io.LimitReader(f, 1<<20))
+}
+
+// Verify checks the grant's NIP-OA signature locally: BIP-340 by the
+// grant's owner key over sha256("nostr:agent-auth:" body ":" conditions)
+// (the preimage amq-owner-sign signs). The relay's AUTH acceptance is not
+// the check (5-amq-B fix round).
+func (t Tag) Verify(body string) error {
+	if !nostr.IsHex64(t.OwnerPubKey) {
+		return fmt.Errorf("kind %d grant names no owner key", t.Kind)
+	}
+	sum := sha256.Sum256([]byte("nostr:agent-auth:" + body + ":" + t.Conditions))
+	e := nostr.Event{ID: hex.EncodeToString(sum[:]), PubKey: t.OwnerPubKey, Sig: t.Sig}
+	if err := e.VerifySignature(); err != nil {
+		return fmt.Errorf("kind %d grant signature: %w", t.Kind, err)
+	}
+	return nil
+}
+
+// VerifyGrants checks every enrolled grant's signature against the body and
+// the one owner.
+func (s Share) VerifyGrants() error {
+	for _, t := range s.Tags {
+		if err := t.Verify(s.BodyHex()); err != nil {
+			return err
+		}
+	}
+	return nil
 }

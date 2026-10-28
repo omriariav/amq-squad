@@ -50,6 +50,10 @@ type Alert struct {
 	SHA        string `json:"sha,omitempty"`
 	At         string `json:"at"`
 	Detail     string `json:"detail"`
+	// GateID names the open gate an alert is about (5-amq-B: a hung
+	// verification); the status contract shows it only while that gate is
+	// open.
+	GateID string `json:"gate_id,omitempty"`
 }
 
 // AlertsDir is where alerts and each repository's baseline live; the status

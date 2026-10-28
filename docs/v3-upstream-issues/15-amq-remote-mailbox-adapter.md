@@ -17,3 +17,7 @@ An adapter kind `mailbox` with `config.handle` (an AMQ handle in the root, as `a
 ## Why this belongs in AMQ
 
 serve already owns the share's relay connection, the DM surface checks, redelivery and the result rows. A layer that reads the DM channel itself duplicates that and opens a second authenticated connection with the same body key.
+
+## Status (2026-10-28)
+
+Shipped upstream: the mailbox adapter kind in v0.111.0 (PR #1226), strict replies from the mailbox carrier in v0.112.0 (PR #1230). amq-squad binds the strict share to it from brief 5-amq-B (floor v0.116.2); the attachment no longer reads the DM channel. The presence part ("presence follows the handle's AMQ presence instead of a process") did not ship: the target is live while the handle's inbox exists, so the attachment still supervises serve for presence (4-5 deviation 2).

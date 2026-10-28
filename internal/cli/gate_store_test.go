@@ -102,6 +102,7 @@ func newGateCLIFixture(t *testing.T) gateCLIFixture {
 		return f.relay, f.body, nil, nil
 	}
 	t.Cleanup(func() { gateTransport = prev })
+	installServe(t, home) // amq-remote serve's mailbox adapter, faked
 	return f
 }
 
@@ -116,6 +117,9 @@ func (f gateCLIFixture) answer(t *testing.T, content, thread string) string {
 		t.Fatal(err)
 	}
 	_ = f.relay.Publish(context.Background(), e.Marshal())
+	if s := f.serve(); s != nil {
+		s.deliver(e.ID, content) // serve submits the owner's DM to the mailbox target
+	}
 	return e.ID
 }
 

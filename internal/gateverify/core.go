@@ -131,6 +131,24 @@ func ReaskText(a gatestore.Answer) string {
 		strings.Join([]string{a.Verb, a.GateID, a.Class, a.DigestPrefix}, " ")
 }
 
+// historyReaskMarker starts the history re-ask (HistoryReaskText).
+const historyReaskMarker = "the question's history changed"
+
+// HistoryReaskText is the re-ask of an altered_history refusal: the question
+// as raised (the record's text, which the core signed) and the answer line,
+// so what the owner answers is what the record holds.
+func HistoryReaskText(rec gatestore.Record, a gatestore.Answer) string {
+	return "amq-squad gate " + rec.GateID + ": " + historyReaskMarker + " (an edit was deleted). This is the question as raised:\n\n" +
+		rec.Text + "\n\nReply here to confirm, with one line:\n" + strings.Join([]string{a.Verb, a.GateID, a.Class, a.DigestPrefix}, " ")
+}
+
+// IsHistoryReask reports whether a stored re-ask is the history re-ask of
+// rec (it shows the record's full text).
+func IsHistoryReask(r gatestore.Reask, rec gatestore.Record) bool {
+	c := mustEvent(r.RawEvent).Content
+	return strings.Contains(c, historyReaskMarker) && strings.Contains(c, rec.Text)
+}
+
 // HandleEvent processes one owner event exactly as fetched. In order: the
 // tuple names a stored gate; a replay is already_consumed; Verify (pin,
 // signature, kind, channel, tuple, digest prefix against the record, window,
@@ -138,7 +156,15 @@ func ReaskText(a gatestore.Answer) string {
 // gate's one re-ask in the thread and is not accepted (amendment 19), and a
 // second non-thread answer is refused; the question's history (edits,
 // deletions) is clean; then the answer file is written and consumed.
+// Every gate-lock wait is bounded by ctx (5-amq-B B-P4): a lock another
+// process holds past ctx's deadline is a rejection, never a hang.
 func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
+	cc := *c
+	cc.Store = c.Store.WithContext(ctx)
+	return cc.handleEvent(ctx, raw)
+}
+
+func (c *Core) handleEvent(ctx context.Context, raw []byte) Result {
 	e, err := nostr.ParseEvent(raw)
 	if err != nil {
 		return rejected("", "", reject(RejectMalformed, "%v", err))
@@ -175,7 +201,7 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 		if reask != nil && c.Store.ReaskPublished(rec.GateID) {
 			return rejected(rec.GateID, e.ID, reject(RejectThread, "the gate was re-asked in its thread (%s); this answer is still outside it", reask.EventID))
 		}
-		return c.reask(ctx, rec, q, o, now)
+		return c.reask(ctx, rec, q, o, now, ReaskText(o.Answer), RejectThread, "the answer was not in the gate thread; re-asked there (reply here to confirm)")
 	}
 	if err != nil {
 		return rejected(rec.GateID, e.ID, err)
@@ -187,7 +213,19 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 	if err != nil {
 		return rejected(rec.GateID, e.ID, reject(RejectQuestion, "%v", err))
 	}
-	if err := CheckHistory(ctx, c.Relay, qe, c.Pin.Owner); err != nil {
+	// the hidden-target window starts at the question, or at the history
+	// re-ask, which showed the question's text again (5-amq-B round 2)
+	since := qe.CreatedAt
+	if reask != nil && IsHistoryReask(*reask, rec) {
+		since = mustEvent(reask.RawEvent).CreatedAt
+	}
+	if err := CheckHistory(ctx, c.Relay, qe, e, c.Pin.Owner, since); err != nil {
+		if Code(err) == RejectAlteredHistory && reask == nil {
+			// a re-ask, not a lockout: the question as raised, once, in
+			// its thread; the owner's next thread reply is checked from it
+			return c.reask(ctx, rec, q, o, now, HistoryReaskText(rec, o.Answer), RejectAlteredHistory,
+				"the question's history changed ("+err.Error()+"); re-asked in the thread with the question as raised")
+		}
 		return rejected(rec.GateID, e.ID, err)
 	}
 	f, err := BuildAnswerFile(o, raw, rec, *q, c.Pin, c.RelayURL, c.Namespace, c.Version, c.Issuer, now)
@@ -205,16 +243,16 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 // published (gatestore.ReserveReask), so two handlers, or a crash between
 // publish and persist, can never produce a second re-ask: a retry publishes
 // the same event. The answer that triggered it is not accepted.
-func (c *Core) reask(ctx context.Context, rec gatestore.Record, q *gatestore.Question, o Outcome, now time.Time) Result {
+func (c *Core) reask(ctx context.Context, rec gatestore.Record, q *gatestore.Question, o Outcome, now time.Time, text, code, detail string) Result {
 	if c.Store.State(rec, now) != gatestore.StateOpen {
-		return rejected(rec.GateID, o.Event.ID, reject(RejectThread, "the answer is outside the gate thread and the gate is no longer open"))
+		return rejected(rec.GateID, o.Event.ID, reject(code, "the gate is no longer open; no re-ask"))
 	}
 	r, _, err := c.Store.ReserveReask(rec.GateID, func() (gatestore.Reask, error) {
 		extra := [][]string{{"e", q.EventID, c.RelayURL, "root"}}
 		if rec.Squad != "" {
 			extra = append(extra, []string{"squad", rec.Squad})
 		}
-		evt, err := c.sign(ReaskText(o.Answer), extra)
+		evt, err := c.sign(text, extra)
 		if err != nil {
 			return gatestore.Reask{}, err
 		}
@@ -231,8 +269,7 @@ func (c *Core) reask(ctx context.Context, rec gatestore.Record, q *gatestore.Que
 			return rejected(rec.GateID, o.Event.ID, fmt.Errorf("record the re-ask as published: %w", err))
 		}
 	}
-	return Result{GateID: rec.GateID, EventID: o.Event.ID, Outcome: "reasked", Code: RejectThread, ReaskEventID: r.EventID,
-		Detail: "the answer was not in the gate thread; re-asked there (reply here to confirm)"}
+	return Result{GateID: rec.GateID, EventID: o.Event.ID, Outcome: "reasked", Code: code, ReaskEventID: r.EventID, Detail: detail}
 }
 
 // MailboxMessage is the part of an AMQ mailbox message the label path reads.
@@ -280,12 +317,30 @@ func (c *Core) HandleEventID(ctx context.Context, id string) Result {
 	if !nostr.IsHex64(id) {
 		return rejected("", "", reject(RejectLabel, "event id %q is not 64 lowercase hex", id))
 	}
-	raw, err := c.Relay.FetchByID(ctx, id)
+	raw, err := FetchEvent(ctx, c.Relay, id)
 	if err != nil {
-		return rejected("", id, reject(RejectFetch, "%v", err))
-	}
-	if e, err := nostr.ParseEvent(raw); err != nil || e.ID != id || !e.CheckID() {
-		return rejected("", id, reject(RejectFetch, "the relay returned another event for %s", id))
+		return rejected("", id, err)
 	}
 	return c.HandleEvent(ctx, raw)
+}
+
+// FetchEvent is the one read by event id of the label path: one REQ for the
+// id on r, and the bytes the relay sent only when their id recomputes to id
+// (a relay can withhold an event but cannot substitute another). A failure
+// is fetch_failed.
+func FetchEvent(ctx context.Context, r Relay, id string) ([]byte, error) {
+	if !nostr.IsHex64(id) {
+		return nil, reject(RejectLabel, "event id %q is not 64 lowercase hex", id)
+	}
+	if r == nil {
+		return nil, reject(RejectFetch, "no relay connection")
+	}
+	raw, err := r.FetchByID(ctx, id)
+	if err != nil {
+		return nil, reject(RejectFetch, "%v", err)
+	}
+	if e, err := nostr.ParseEvent(raw); err != nil || e.ID != id || !e.CheckID() {
+		return nil, reject(RejectFetch, "the relay returned another event for %s", id)
+	}
+	return raw, nil
 }

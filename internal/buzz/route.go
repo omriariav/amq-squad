@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 )
 
 // Mail is one AMQ message the attachment sends.
@@ -121,6 +122,9 @@ type Delivery struct {
 // other than the mailbox, forwards it to that lead through AMQ with a ref to
 // the mailbox copy. The label is a pointer, not proof: no consumer may treat
 // it as the owner's word without fetching and verifying the event (R32).
+// Both bodies pass redact.Block: everything written to a seat or a mailbox
+// is redacted, the owner's own signed text included (ruling 18; 5-amq-B fix
+// round 2).
 func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (Delivery, error) {
 	if m == nil {
 		return Delivery{}, errors.New("no mailer")
@@ -132,7 +136,7 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 	if r.Lead != "" && r.Lead != t.Handle {
 		subject = "Buzz: message from the owner for " + r.Lead
 	}
-	id, err := m.Send(ctx, Mail{Root: t.Root, From: CarrierHandle, To: t.Handle, Subject: subject, Body: strings.TrimSpace(content), Labels: labels})
+	id, err := m.Send(ctx, Mail{Root: t.Root, From: CarrierHandle, To: t.Handle, Subject: subject, Body: redact.Block(strings.TrimSpace(content)), Labels: labels})
 	if err != nil {
 		return d, err
 	}
@@ -159,7 +163,7 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 	// from the mailbox's root (fleet.RelayArgv's route); the ref names the
 	// mailbox copy only when both are in one root
 	fwd := Mail{Root: t.Root, From: CarrierHandle, To: dest.Handle, Project: dest.Project, Session: dest.Session,
-		Subject: "Buzz: from the owner, routed by " + t.Handle, Body: r.Text, Labels: append(labels, "routed")}
+		Subject: "Buzz: from the owner, routed by " + t.Handle, Body: redact.Block(r.Text), Labels: append(labels, "routed")}
 	if dest.Project == "" {
 		fwd.Refs = []string{id}
 	}

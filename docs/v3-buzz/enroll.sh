@@ -15,17 +15,25 @@
 #     never passes through this script: no variable, no file, no log, no
 #     argv, no clipboard, no terminal;
 #   - the grant window is 30 days (ruling 2);
-#   - the gate thread rule is on in the core (amendment 19b, c).
+#   - the gate thread rule is on in the core (amendment 19b, c);
+#   - the share's target is amq-remote's mailbox adapter (amq-remote
+#     v0.116.2 or later; brief 5-amq-B, ruling 20): serve delivers each owner
+#     DM into the share root's `attach` inbox and posts the reply as the
+#     result row. reply_timeout is 60s.
 #
 # Phases (each skips when its output exists; rerun to resume):
-#   A  local   amq init, a manifest with the share's target, and
+#   A  local   amq init (handles remote and attach), a manifest with the
+#              mailbox target, and
 #              amq-remote share --enable buzz-dm --enable buzz-profile
 #   B  OWNER   <password manager> | amq-owner-sign   (types the body prefix)
 #   C  local   amq-remote share --bundle             (enroll the 8 grants)
 #   D  local   bind presence (--presence NAME), start the endpoint so the
 #              profile is published; OWNER opens the DM with the agent in
 #              Buzz and passes the channel id (exit 11 until then)
-#   E  local   amq-squad remote bind (the gate binding, issuer key, trust)
+#   E  local   bind the DM channel to the mailbox target (DM commands on:
+#              --dm-channel, --native-session attach, --min-evidence
+#              submitted; nothing to sign), then amq-squad remote bind (it
+#              checks that binding; the gate binding, issuer key, trust)
 #   F  local   stop the enrollment endpoint; `amq-squad remote attach` runs
 #              it from now on, only while the bound session is present
 #
@@ -69,7 +77,8 @@ ROOT=$BUZZ/root
 SESSION=${BUZZ_SESSION:-amq-squad}
 NAME=${BUZZ_NAME:-amq-squad}
 DAYS=${BUZZ_DAYS:-30}
-TARGET=buzz-presence
+TARGET=amq-squad # the mailbox adapter's target (buzz.MailboxTarget)
+HANDLE=attach    # the handle serve delivers to (buzz.MailboxHandle)
 AMQ_SQUAD=${AMQ_SQUAD:-amq-squad}
 STATE=$ROOT/extensions/remote
 umask 077
@@ -79,7 +88,7 @@ umask 077
 # amq-owner-sign itself is upstream (docs/v3-upstream-issues/16).
 ulimit -c 0
 # The share must live under ~/.amq-squad/buzz/, the tree guard protects
-# from seat writes (the body key, the grants, the once-only DM marks).
+# from seat writes (the body key, the grants, the attach inbox).
 case $BUZZ/ in *"/../"* | *"/./"* | *"//"*) echo "BUZZ_HOME must be a clean path" >&2; exit 2 ;; "$HOME/.amq-squad/buzz/"*) ;; *) echo "BUZZ_HOME must be ~/.amq-squad/buzz or a directory under it" >&2; exit 2 ;; esac
 mkdir -p "$BUZZ" "$ROOT/attach"
 
@@ -120,18 +129,33 @@ echo "relay: $RELAY"
 echo "share: $ROOT session $SESSION, name \"$NAME\", $DAYS-day window"
 
 # --- A: local -------------------------------------------------------------
+# The mailbox adapter needs amq-remote v0.116.2 or later (the floor doctor
+# names); an older one refuses the kind, so the script stops here first.
+RV=$(amq-remote version 2>/dev/null | awk '{print $2}')
+case $RV in
+  0.11[7-9].* | 0.1[2-9][0-9].* | [1-9].* | 0.116.[2-9] | 0.116.[1-9][0-9]) ;;
+  *) echo "amq-remote ${RV:-not found} is below v0.116.2, the floor for the mailbox adapter; upgrade AMQ first" >&2; exit 2 ;;
+esac
 if [[ ! -f $ROOT/meta/config.json ]]; then
-  echo "== A: amq init (endpoint handle remote)"
-  AMQ_NO_UPDATE_CHECK=1 amq init --root "$ROOT" --agents remote >/dev/null
+  echo "== A: amq init (endpoint handle remote, mailbox handle $HANDLE)"
+  AMQ_NO_UPDATE_CHECK=1 amq init --root "$ROOT" --agents "remote,$HANDLE" >/dev/null
 fi
 mkdir -p "$STATE"
+if [[ -f $STATE/manifest.json ]] && grep -q '"buzz-presence"' "$STATE/manifest.json"; then
+  # an enrollment of the 4-5 presence-only fake target (deviation 1, retired)
+  echo "this share was enrolled on the retired presence-only fake target; move $BUZZ aside and enroll again" >&2
+  exit 2
+fi
+if [[ ! -d $ROOT/agents/$HANDLE/inbox ]]; then
+  echo "the mailbox handle $HANDLE has no inbox in $ROOT; run amq init --root $ROOT --agents remote,$HANDLE" >&2
+  exit 2
+fi
 if [[ ! -f $STATE/manifest.json ]]; then
-  # The share needs one declared adapter target. amq-remote has no mailbox
-  # adapter, so the target is a fake adapter that only carries presence: no
-  # DM commands are bound to it (no --dm-channel), the attachment reads the
-  # DMs itself (brief 4-5 log, deviation 1).
+  # The share's one declared target: the mailbox adapter, delivering each
+  # owner DM to the attach handle in this root, reply timeout 60 s (ruling
+  # 20 point 3). DM commands are bound to it in phase E.
   cat >"$STATE/manifest.json" <<JSON
-{"schema_version": 1, "layer": "remote", "adapters": [{"kind": "fake", "target": "$TARGET", "epoch": "amq-squad-buzz-1"}]}
+{"schema_version": 1, "layer": "remote", "adapters": [{"kind": "mailbox", "target": "$TARGET", "config": {"handle": "$HANDLE", "reply_timeout": "60s"}}]}
 JSON
 fi
 if [[ ${BUZZ_RENEW:-} == 1 && ! -f $BUZZ/renew.started ]]; then
@@ -270,7 +294,14 @@ if [[ -z $CHANNEL ]]; then
 fi
 echo "$CHANNEL" >"$BUZZ/dm-channel"
 
-# --- E: the gate binding ---------------------------------------------------
+# --- E: DM commands on the mailbox target, then the gate binding -----------
+if ! grep -q "\"dm_channel_id\": *\"$CHANNEL\"" "$STATE/manifest.json"; then
+  # nothing to sign: the binding is written under the enrolled grants
+  # (cmd/amq-remote/README.md, "Strict share in one owner step")
+  echo "== E: amq-remote share --target $TARGET --dm-channel <channel> --native-session $HANDLE --min-evidence submitted"
+  amq-remote share --root "$ROOT" --session "$SESSION" --target "$TARGET" --relay "$RELAY" \
+    --dm-channel "$CHANNEL" --native-session "$HANDLE" --min-evidence submitted
+fi
 echo "== E: amq-squad remote bind"
 "$AMQ_SQUAD" remote bind --relay "$RELAY" --channel "$CHANNEL" --share-root "$ROOT" --share-session "$SESSION"
 

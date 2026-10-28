@@ -63,12 +63,25 @@ func TestRemoteBindWritesTheOwnerFiles(t *testing.T) {
 		}
 		return data, err
 	}
+	// 5-amq-B: a share still bound to the presence-only fake adapter (4-5
+	// deviation 1) is refused, and nothing is written; no fallback
+	writeShareManifest(t, shareRoot, "wss://relay.example", "dm-1", "fake")
+	if _, err := bind(); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Fatalf("bind on the fake adapter: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".amq-squad", "gate-binding.json")); err == nil {
+		t.Fatal("a refused bind wrote the binding")
+	}
+	writeShareManifest(t, shareRoot, "wss://relay.example", "dm-1", "mailbox")
 	data, err := bind()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if data.Grants != 8 || data.Body != body.PublicHex() || data.Owner != owner.PublicHex() || len(data.Created) != 2 {
 		t.Fatalf("bind = %+v", data)
+	}
+	if m := data.Mailbox; m.Kind != "mailbox" || m.Handle != "attach" || m.ReplyTimeout != "60s" || !m.Commands || m.Channel != "dm-1" {
+		t.Fatalf("bind's mailbox binding = %+v", m)
 	}
 	b, pin, err := gateverify.LoadBinding(filepath.Join(home, ".amq-squad", "gate-binding.json"))
 	if err != nil || pin.Body != body.PublicHex() || pin.Owner != owner.PublicHex() || b.Channel != "dm-1" || b.ShareRoot != shareRoot || b.ShareSession != "amq-squad" || b.Carriers[0] != "buzz" {
@@ -190,15 +203,17 @@ func TestRemoteAttachOnce(t *testing.T) {
 	// one-tick run stops it again on exit (offline)
 	raw, _ := json.Marshal(map[string]any{"status": "active", "last_seen": time.Now().UTC()})
 	mustWrite(t, filepath.Join(f.root, "agents", "cto", "presence.json"), string(raw))
-	f.answer(t, "/status", "")
+	// (serve answers /status itself and never delivers it: v0.116.2
+	// internal/remote/buzzio/normalize.go; the attachment sees plain text)
+	f.answer(t, "standup at ten", "")
 	stdout, _, err = captureOutput(t, func() error { return runRemote(args, "test") })
 	if err != nil {
 		t.Fatalf("attach 2: %v\n%s", err, stdout)
 	}
-	if ep.starts != 1 || ep.stops != 1 || !strings.Contains(stdout, `"action":"started"`) || !strings.Contains(stdout, `"kind":"status"`) {
+	if ep.starts != 1 || ep.stops != 1 || !strings.Contains(stdout, `"action":"started"`) || !strings.Contains(stdout, `"reply":"routed cto"`) {
 		t.Fatalf("attach with a live lead: starts %d stops %d\n%s", ep.starts, ep.stops, stdout)
 	}
-	if len(mailer.sent) != 2 {
+	if len(mailer.sent) != 3 {
 		t.Fatalf("the first message was delivered twice: %+v", mailer.sent)
 	}
 

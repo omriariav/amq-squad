@@ -141,3 +141,407 @@ The live pi-seat row ran again on the round's binary (`fix-live-cache-off.log`, 
 
 - Plan 4.1, 4.3 and amendment 28 still describe the Codex pin exception ("seat-exec adds the two config pins … AMQ 0.107.0 does not admit") and the pi launch as pending. The upstream-asks status table (asks 1 and 17) can move to shipped.
 - This host's installed AMQ is 0.107.0 (Homebrew), so `doctor` now fails its three floor rows here until the owner upgrades.
+
+## Part B: the Buzz share on the mailbox adapter
+
+Branch `v3-5-amq-b`, cut from `v3` at 8b8a8879 (briefs ruling 20). Not yet
+rebased onto part A (go.mod is still v0.107.0 on this branch; nothing in B
+imports the AMQ module). Every row is one of:
+
+- (a) a unit row whose upstream shapes come from the v0.116.2 module, file
+  and tag named below, run against fakes (fake relay, fake serve);
+- (b) a measured row against binaries built from the v0.116.2 module into
+  the scratch directory (`go build -C <module cache>/agent-message-queue@v0.116.2
+  -trimpath ./cmd/amq ./cmd/amq-remote ./cmd/amq-owner-sign`), labelled
+  "scratch-built v0.116.2, not the installed binary"; never installed. sha256:
+  amq-remote 25b2591787e97a0ac92f608e2aa4b2f8c83bc446712526f58e23b1d132c9d7fc,
+  amq 212277d51b25603e7fd90b02eaab4ca06d76dbd9c20af1a2d8c2018e40e82298,
+  amq-owner-sign 2975f4d53b16a409f909f37ca7965a9b86fac93b45ab60933b2f29342b476329;
+- (c) a live row against the installed binaries (0.107.0 on this Mac), which
+  waits for the owner's AMQ upgrade and is written into
+  `docs/v3-buzz/owner-run.md`.
+
+v0.116.2 differs from v0.116.1 only in internal/acp and
+internal/remote/buzzio (the Desktop approval path, #1284); the mailbox
+adapter and the amq-remote README are byte-identical (diff -rq of the two
+module trees).
+
+### Upstream shapes relied on (v0.116.2)
+
+| shape | source |
+| --- | --- |
+| adapter kind `mailbox`, `config.handle` (an inbox in serve's own root, never created), `reply_timeout` (default 10m, max 24h), handle not `buzz`, `amq-remote` or `--me` | `internal/remote/mailbox/mailbox.go` (Factory); `cmd/amq-remote/README.md` "Manifest" |
+| a Buzz DM delivered as one message: to the handle, from `buzz`, thread `cockpit/<channel>`, subject `Buzz DM`, labels `acp`, `buzz`, `nostr:<event>`, body = DM text + "This came from the owner's Buzz DM. Answer with `amq reply --id <id>` ..." | `mailbox.go` (prompt) |
+| result = the newest reply to the prompt that is not `--kind status` and has a body; none within reply_timeout: the request fails, the message stays | `mailbox.go` (observe, finalReply, timeoutText) |
+| bind the DM channel without signing: `share --target T --relay R --dm-channel C --native-session <handle> --min-evidence submitted`; existing presence kept | README "Strict share in one owner step"; `cmd/amq-remote/share.go` (relayBinding.apply) |
+| `/inspect`, `/status [ref]`, `/cancel ref` and any `/...` are serve's own commands, never submitted | `internal/remote/buzzio/normalize.go` (Normalize) |
+| one request per target at a time: a second submit while one runs is a terminal `busy` (no queue) | `internal/remote/core/admission.go` (runtimeInFlightLocked, busy tombstone) |
+| the DM surface opens only when relay-signed 39000/39002 show a private DM of exactly owner and body | `internal/remote/buzzio/membership.go` |
+| `amq-remote bindings` lists `attach --self` bindings under `~/.amq/remote/bindings`, not manifest shares | `cmd/amq-remote/attach.go` (bindings) |
+
+### Built
+
+- `internal/buzz/inbound.go` (new, replaces `pump.go`): the `Handler`.
+  Lists the `attach` inbox, takes each message from `buzz` once (`amq read`
+  moves it to cur: the once-only claim), parses the one `nostr:<id>` label,
+  and for a gate answer sends `verifying <gate>` as a status line, opens
+  the verifier's connection (`Dialer`), fetches the event by id
+  (`gateverify.FetchEvent`), resolves the squad core on the fetched event,
+  runs `Core.HandleEvent` on the fetched bytes with the connection lent for
+  the call, closes. One result reply per message, through redact.Block:
+  `accepted <gate> <class>`, `refused <gate> <code>` (plus `re-ask: answer
+  in the gate thread (event <12 hex>)` under the thread rule), `routed
+  <dest>` (plus `not_forwarded ambiguous_lead|not_a_lead`), `refused -
+  not_delivered`, `refused <gate> ambiguous_gate`. A duplicate delivery of
+  one event id: `refused <gate> already_consumed`, no connection. A
+  verification capped at 10 s: on the cap a status line `timeout <gate>
+  verify_timeout`, no result, Kind `attention`; the gate stays open.
+- `internal/buzz/amqinbox.go` (new): `AMQInbox` over `amq list --new`,
+  `amq read`, `amq reply --kind answer|status`, body on stdin.
+- `internal/buzz/manifest.go` (new): `CheckMailboxShare`, the one path:
+  the session's share on target `amq-squad` of kind mailbox, handle
+  `attach`, reply_timeout 60s, DM commands on for the bound channel,
+  native_session_id `attach`, min_evidence submitted, presence on, the
+  inbox present; the `buzz-presence` fake target refused.
+- `internal/buzz/transport.go`: `VerifyDialer` (per-verification connection).
+- `internal/gateverify`: `FetchEvent`; `CheckHistory` takes the answer
+  event (acceptance 10 below).
+- `internal/cli/remote.go`: `remote bind` checks the manifest
+  (`CheckMailboxShare`) before writing anything and reports the binding;
+  `remote attach` builds the core without a transport, holds no relay
+  connection, runs the Handler over `remoteInbox` with `remoteDialer`
+  (gateTransport per verification), prints `attention` for a hang.
+- `docs/v3-buzz/enroll.sh`: amq-remote floor check (v0.116.2), `amq init
+  --agents remote,attach`, the mailbox manifest, the fake-target refusal,
+  phase E's DM bind on the mailbox target.
+
+Deleted outright: `Pump`, `MarksDir` and the marks directory, the 24 h
+backlog read, the `since` cursor, the future-dated quarantine (serve's
+admission window and the verifier's created_in_future cover it), the
+attachment's body-signed replies, the `/status` activity reply.
+
+### Acceptance
+
+| # | row | kind | status | evidence |
+| --- | --- | --- | --- | --- |
+| 1 | enrollment binds kind mailbox, handle, reply_timeout 60s, DM commands on | (a)+(b) | met | (a) `TestCheckMailboxShare`, `TestRemoteBindWritesTheOwnerFiles` (fake target refused, nothing written; mailbox binding reported); (b) `TestOwnerScriptDryRun` with `AMQ_SQUAD_TEST_AMQ_BIN` = the scratch-built v0.116.2: the script's four runs, the manifest after phase D (mailbox adapter, presence on, no DM channel yet), after phase E `{Target:amq-squad Kind:mailbox Handle:attach ReplyTimeout:60s Channel:dm-4-5-dryrun Commands:true MinEvidence:submitted Presence:true}`. `amq-remote bindings` does not list a strict share (upstream, see below); the live check is owner-run 3.1 and 4.3 (c) |
+| 2 | no DM-channel subscription in internal/buzz; marks and redelivery gone | (a) | met | `TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents`: two owner DMs on the relay, not delivered by serve, are never handled and open no connection; code: no Query of kind 9 in internal/buzz outside tests |
+| 3 | verifier fetch: one REQ by id on a fresh connection, closed; 10 s cap; hang = attention + status, no result | (a)+(b) | met | (a) `TestVerifierConnectionOnTheRelay` (websocket relay: connections open at the REQ by id `[1]`, 0 after; stalled REQ: attention, two status lines, no result, connection closed), `TestHandlerVerifierConnectionPerAnswer`; (b) dry run: open connections at the verifier's REQ by id 2 (serve's 1 + the verifier's), back to serve's 1 after |
+| 4 | reply shapes, one non-status reply per inbound, redact.Block, no answer text, canary not a credential shape | (a) | met | `TestHandlerReplyTable` (verified, already_consumed, wrong_pubkey, outside_window, bad_signature, not_in_gate_thread + re-ask line, routed, not_forwarded), `TestHandlerGatesAndRouting`; no reply contains the canary, `git tag` (question text) or 16 hex (the digest prefix) |
+| 5 | the same event id delivered twice is handled once; an answer outside the thread gets the re-ask reply | (a) | met | `TestHandlerDuplicateDeliveryHandledOnce` (one dial, second reply `refused rel-3 already_consumed`, a route delivered twice forwarded once), `TestHandlerGatesAndRouting` |
+| 6 | rehearsal: question, answer, verified, cleared; the signed seat clear through the same path | (a)+(b) | met | (a) `TestRehearsalThroughServe` (internal/cli: gate raise, the fake serve's delivery, `remote attach --once`, `accepted rel-r tag`, gate accepted, verify action; seat clear request, answer through serve, `accepted clear-... quarantine_clear`, the clear record names the gate and the delivered event); (b) dry run and `rehearseOwnerRun` with the real serve (scratch-built): serve's result rows `accepted rel-dry tag`, `accepted g45-owner-01 tag`, `routed lead-b`, `routed app/cto` on the relay |
+| 7 | presence rows of deviation 2 unchanged | (a)+(b) | met | `TestSupervisorFollowsPresence`, `TestRemotePresenceExpires*`; (b) dry run: online 202 ms after the row went live, offline 17 ms after it went stale |
+| 8 | owner-run.md re-walked; README, plan, 4-5 deviation 1 closed, follow-ups | docs | met | `docs/v3-buzz/owner-run.md` (rows 0.1b, 1.2, 3.1, 4.3, 4.4, 5.2, 5.4, 5.5, 6.1, 6.2, 9.3, 9.5 and the record table), `docs/v3-buzz/README.md`, plan section 9, R33, R42, `docs/v3-spike/4-5-execution.md` deviations 1 and 6, `docs/v3-followups.md`, `docs/v3-upstream-issues/15-*.md` |
+| 9 | no test reaches the network; evidence through redact-evidence; credential-shape test green | (a) | met | every relay is `httptest` on 127.0.0.1 (`CheckRelayURL` refuses anything else for ws://); `go run ./scripts/redact-evidence` over `docs/v3-spike/5-amq-evidence/`; `TestNoCredentialShapedValueUnderDocsOrEvidence` in the gate run |
+| 10 | the deletion rule: target and signer (fix round 1) | (a) | met | `TestHistoryCheck`: 10a the owner deletes the answer, refused; 10b the body deletes its own reaction, accepted; 10c another key posts a kind 5 naming the answer, accepted; the owner edits the answer, refused (see fix round 1; the k-tag rule of b2a1c683 is replaced) |
+| live | the same rows against the installed binaries with the real key | (c) | waits | owner-run.md; needs the owner's AMQ upgrade to v0.116.2 |
+
+Every review-relevant row fails when reverted:
+`docs/v3-spike/5-amq-evidence/revert-check-b.txt` (7 rows; the cap row's
+reverted run fails by the test binary's own timeout).
+
+### Measured (b: scratch-built v0.116.2, not the installed binary; local relay)
+
+| what | value |
+| --- | --- |
+| owner answer published to serve's delivery in the attach inbox | 222 to 232 ms |
+| handler step (fetch connection, verify, commit, reply) | 142 to 149 ms |
+| owner answer to serve's result row on the relay | 970 to 988 ms (serve's poll 500 ms) |
+| connections at the verifier's REQ by id / after | 2 (serve 1) / 1 |
+| raise to verified through `remote attach` (1 s tick) | 1.0 s |
+| canary grep | 176 channels and files, 98 713 to 98 757 bytes, 3 key forms: not found |
+| serve's result row as recorded (kind 40003, the body's edit of its row) | `amq-squad: completed` + blank line + `accepted rel-dry tag` |
+
+Full logs: `docs/v3-spike/5-amq-evidence/b-scratch-v0.116.2-dryrun.txt`
+(the dry run and the crash-path canary with the scratch-built binaries),
+`b-gate-*.txt` (build and vet, `go test ./...`, race on buzz, gateverify
+and cli, manifest check), `revert-check-b.txt`. One `go test ./...` failure
+is internal/seatlaunch's TempDir cleanup race, a package this branch does
+not touch; reruns pass (noted in the file).
+
+### Mechanism
+
+What serve now does: holds the share's relay connection, opens the DM
+surface on the relay-signed membership, normalizes each owner DM (its own
+slash commands answered by itself), submits plain text to the mailbox
+target, which writes one AMQ message into `attach`'s inbox; polls the
+handle's replies, takes the newest non-status one as the result and posts
+it (and edits it) as the body's result row in the DM; fails the request
+after 60 s without one. It publishes the profile and presence as before.
+
+What the attachment no longer does: subscribe to or query the DM channel,
+keep marks or a cursor, quarantine future-dated DMs, post replies with
+the body key, answer `/status`.
+
+Where the body key is still used, and why: (1) `gate raise` / `gate post`
+post the gate question body-signed (the verifier needs the question's
+event id and bytes in the store; serve's result rows are not addressable
+questions); (2) per answer, the core's own connection: sign in, one REQ by
+the event id, the question's and the answer's history reads (part of the
+verification), the gate's one re-ask post when the thread rule applies,
+close. Both are recorded in R33 as the second authenticated connection with
+a bounded purpose; ruling 20 point 1 named only the read, so (1) and the
+re-ask post are named here as where the narrowing stops.
+
+### Upstream behaviour that differed from the notes
+
+1. `amq-remote bindings` does not show the mailbox binding: it lists
+   `attach --self` bindings only (`cmd/amq-remote/attach.go`). The binding
+   is shown by the manifest and, while serve runs, `amq-remote sessions`
+   (owner-run 3.1, 4.3).
+2. Two owner DMs inside one request do not serialize: the second is a
+   terminal `busy` result (admission.go), and the owner sends it again. The
+   first rehearsal run showed it: a routed DM sent right after a verified
+   answer was never delivered; the rehearsal now waits for the result row,
+   as the owner run does (5.2).
+3. `/status` (and any `/...`) is serve's own command and never reaches the
+   mailbox, so the 4-5 activity reply is gone (follow-up).
+4. Ruling 20's code names map to gateverify's: replayed = `already_consumed`,
+   wrong_handle = `wrong_pubkey`, signature_invalid = `bad_signature`,
+   not_in_thread = `not_in_gate_thread`; outside_window is the same.
+5. The verifier's one connection carries the REQ by id plus the history
+   reads (four REQs) and, under the thread rule, the re-ask post; one REQ
+   alone would drop the edit and delete checks of amendment 20.
+6. Ask 15's presence wish did not ship: the mailbox target is live while
+   the inbox exists, so presence still follows serve's process (deviation
+   2 unchanged).
+
+### Not run, and why
+
+- The live rows (c) against the installed amq-remote: it is 0.107.0 and
+  may not be upgraded here; they are owner-run.md's.
+- The doctor floor row is part A's code; owner-run 0.1b names it.
+- Not rebased onto part A: A has not merged yet.
+
+### Harness notes
+
+- Shell compound commands with variables, heredocs into interpreters and
+  `cd && ...` chains were refused by the worktree isolation check; scripts
+  went to the scratch directory and ran as single commands.
+
+### Fix round 1 (reviewer rulings on a360f98c; the Codex findings join this round)
+
+**Ruling 1, the busy window (a 3.0 limit).** Proposed wording for plan
+R42 (the lead places it): "The mailbox adapter runs one request at a time
+and rejects an owner DM that arrives while the previous one is open as
+`busy` (amq-remote v0.116.2, no queue); the rejected DM never reaches the
+attachment. 3.0 accepts this: the owner waits for each result row (about a
+second) before the next DM; a gate answer lost to busy costs a re-answer,
+since the gate stays open; a routed message lost to busy is re-sent by the
+owner. Upstream ask 18 asks for a queue on mailbox targets, or a retry hint
+in the busy row. [5-amq-B fix round]"
+
+- Does serve expose the busy result to the handle? No. The carrier submits
+  with `busy=reject` (v0.116.2 `internal/remote/buzzio/carrier.go:527`);
+  the endpoint's admission finds the target's request in flight and writes
+  a terminal busy tombstone before dispatch (`internal/remote/core/admission.go:151-183`),
+  so the mailbox adapter's Submit never runs and nothing reaches the
+  `attach` inbox; the busy row goes to the owner's DM only. The
+  owner-run.md text (5.2) is therefore the whole mitigation in 3.0, and it
+  says so. (The tombstone is in serve's request store, which
+  `amq-remote requests` reads; its JSON is not a documented contract, so
+  the attachment does not parse it. Ask 18 asks for that record.)
+- The handler's own share of the window stays measured: reply 142 to 154
+  ms after delivery (b row above), under the 200 ms bound.
+- Upstream ask 18 drafted: `docs/v3-upstream-issues/18-mailbox-busy-queue.md`;
+  row 18 in `docs/v3-upstream-asks.md`, "to file (owner)". README and
+  owner-run 5.2 carry the owner text.
+
+**Ruling 2, the deletion rule: target and signer.** `CheckHistory` reads
+one deletion filter, kinds 5 and 9005, author the owner's pinned key, e
+tags naming the question, an edit of it or the answer; `ownerDeletes`
+re-checks the signer and the target on each signed event. The 4-5 filters
+"a deletion by the body exists" and "a deletion by the owner since the
+question" are gone, and so is the k-tag rule of b2a1c683. A deletion from
+any other key is ignored (NIP-09: only the author's deletion takes effect).
+The owner's edit of the answer still refuses. Deletion shape checked
+against v0.116.2: `internal/remote/buzzio/desktop_proof.go:220-224`
+(buzz-acp deletes its own 👀 and 💬 reactions with a deletion naming only
+the reaction's id), `internal/remote/buzzio/approve_proof.go:210` and
+`desktop_proof.go:294` (upstream's own checks read deletions by e tag of the
+message), `internal/acp/approval.go:449-458` (the agent's deletions read
+before an approval post). Recorded limit (in the code comment): an edit of
+the question deleted again is hidden by the relay, and the owner's deletion
+of such an edit names an id the check does not know, so it is not refused;
+only the owner or the body key can make that pair.
+
+Row 10, now three inputs plus the edit (`TestHistoryCheck`): 10a the owner
+deletes the answer, refused (`question_altered`); 10b the body deletes its
+own reaction, accepted; 10c another key posts a kind 5 naming the answer,
+accepted; the owner edits the answer, refused. Neighbouring rows changed
+with the rule: a deletion of the question by another key, a body deletion
+of something else and an owner deletion of something else are accepted;
+the owner deleting the question, or an edit of it (kind 9005), refuses.
+
+**Ruling 3, the attention row in the status document.** A hung
+verification writes an owner alert into the gate's squad root
+(`extensions/amq-squad/alerts/verify-timeout-<gate>.json`, kind
+`verify_timeout`, gate id), which the status contract already reads into
+its attention queue (needs you, severity high). `mergetrain.Alert` and
+`status.AlertInput` carry `gate_id`; `status.Build` shows a gate's alert
+only while that gate is open. The handler removes the alert when a later
+verification of the gate finishes. Row:
+`TestHungVerificationIsInTheStatusAttentionQueue` (internal/cli: the
+`buildStatusContract` document the owner reads has `kind: verify_timeout`,
+`gate_id: rel-h`; the re-answer is accepted and the row is gone);
+`TestGateAlertShownOnlyWhileTheGateIsOpen`.
+
+Kept as recorded: the other five upstream deviations, and the code-name
+mapping of ruling 20 to gateverify (replayed = `already_consumed`,
+wrong_handle = `wrong_pubkey`, signature_invalid = `bad_signature`,
+not_in_thread = `not_in_gate_thread`, outside_window the same).
+
+Reverting rows: `revert-check-b.txt`, section "fix round 1" (F1 to F5, all
+fail when reverted). Rows 1 and 2 of the first section revert code that
+this round replaced (the k-tag rule); they stand as the record of
+b2a1c683.
+
+**The Codex findings on a360f98c**, in the same round:
+
+- B-P1 (the principle). The handler now fetches the event the label names
+  for every message, on the verifier's connection, before anything else,
+  and acts only on that event: `ownerEvent` requires the id to recompute,
+  the owner's pinned key and a valid signature, kind 9 and the pinned DM
+  channel (the channel of exactly the owner and the body); the
+  classification (gate answer or route) and the routed text come from the
+  signed content, never the AMQ body. A route must be inside the routing
+  window (created_at no older than 10 minutes, no more than 60 s ahead;
+  serve admits within 2 minutes, v0.116.2 `buzzio/normalize.go:26`). The
+  once-only mark is set only after a successful fetch and verification (a
+  route: before delivering, at most once; a gate answer: after the core's
+  checks). A label whose event cannot be fetched is `refused -
+  not_fetched` and marks nothing. The status line is now `verifying event
+  <12 hex>`. Row: `TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents`
+  (serve's copy says approve, the event says hello: hello is routed and the
+  gate stays open; a forged `@lead-b` body on a pending answer's label
+  routes nothing and the answer verifies; the genuine delivery is then
+  `refused rel-2 already_consumed`; a not-fetched label is handled once the
+  relay has the event). A hang before the fetch places its attention row
+  by the gate the delivery names (that name only places the row; it
+  authorizes nothing).
+- B-P2/P3: ruling 2 above.
+- B-P4. `gatestore.Store.WithContext` bounds every gate-lock wait (Raise's
+  reserve, Commit, Recover, ReserveReask) with a try-lock retried every 20
+  ms until the context ends (`ErrLockTimeout`); `Core.HandleEvent` runs on
+  a copy of the core whose store carries the verification's context, so a
+  held lock ends as the timeout path (status line, no result, the
+  attention row, the connection closed by defer). The CLI paths without a
+  context still wait. Row: `TestHeldGateLockIsTheTimeoutPath`.
+- B-P5: ruling 3 above.
+- B-P6. `remote attach` checks the share's binding before it builds the
+  supervisor and refuses to attach on a mismatch, so nothing starts; each
+  tick checks it again and, when the binding is gone, stops the endpoint
+  and drops the handler. Row: `TestAttachChecksTheBindingBeforeTheEndpoint`.
+- B-P7. The once-only record is durable:
+  `~/.amq-squad/buzz/root/extensions/amq-squad/buzz-seen.json` (event id,
+  time, gate), written through `internal/atomicfile` at 0600, pruned to 20
+  minutes (twice the routing window). Row: `TestSeenRecordSurvivesARestart`.
+- Small: an unreadable attach inbox (amq output that does not parse) is an
+  owner alert `buzz_inbox_unreadable` in the primary squad's status
+  document, cleared when the inbox reads again
+  (`TestUnreadableInboxIsAnAlert`); the query's deferred CLOSE has its own
+  2 s timeout (`gateverify.CloseTimeout`; no reverting row: a CLOSE that
+  blocks needs a socket whose send buffer is full, which the local relay
+  cannot hold); doctor's `buzz share grants` row verifies every enrolled
+  grant's BIP-340 signature locally against the body and the owner
+  (`Share.VerifyGrants`; `TestShareGrantsVerifyLocally`,
+  `TestDoctorBuzzGrantRow`).
+- Recorded as a same-UID limit, no change: the `buzz` sender check on an
+  AMQ message (a same-UID process can write as `buzz`); after B-P1 such a
+  message can only point at an owner-signed event, which is acted on as
+  itself.
+
+Measured again after the round (b, scratch-built v0.116.2): handler step
+147 ms (under the 200 ms bound), owner answer to serve's delivery 238 ms,
+to the result row 2.0 s (serve's poll), connections at the fetch 2 (serve
+1), after 1; canary grep 183 channels and files: not found.
+
+Reverting rows: `revert-check-b.txt` sections "fix round 1, reviewer
+rulings" (F1 to F5) and "fix round 1, Codex findings" (C1 to C7b), all
+failing when reverted; C3's reverted run fails by the test binary's
+timeout (the held lock blocks, the bug itself).
+
+Gate on the fix-round tree: build, vet, linux and windows builds, `go test
+./...` (all ok this run), race on buzz, gateverify, gatestore, cli and
+status, `manifest-check --final` OK, the credential scan.
+
+### Fix round 2 (the re-pass residuals on 1974caa4)
+
+1. A route is marked only after its forward succeeded (the gate path's
+   order): a failing forward leaves no mark and the next delivery retries
+   it. A forward that failed after the mailbox copy was written can now
+   deliver that copy twice; at least once replaces at most once for
+   routes. Row: `TestFailedForwardLeavesNoMark` (R1).
+2. Both bodies `Deliver` writes (the mailbox copy and the forward to the
+   lead) pass `redact.Block`, the owner's signed text included (ruling 18).
+   Row: `TestForwardedTextIsRedacted`, canary: the GH_TOKEN name with a zebra canary value (the literal is in the test source)
+   (a credential-named pair that `redact.Block` replaces and no
+   `RealCredentialShapes` pattern matches) (R2).
+3. The hidden deleted edit. Part (a), the grep: `grep -rnE
+   'KindDeletion|KindGroupDeletion|Kind: *(5|7|9005)\b' internal/buzz
+   internal/cli` (non-test files) returns nothing; the body key signs only
+   in `gateverify.Core.sign` (kind 9: the question and the re-ask) and the
+   NIP-42 AUTH (kind 22242). serve signs the body's kind 9 result rows and
+   their kind 40003 edits and no deletion (v0.116.2 buzzio: `KindDeletion`
+   appears only in the history checks). So any body-signed deletion since
+   the question is foreign use of the body key and refuses
+   `altered_history`, whatever it names. Part (b): an owner-signed
+   deletion since the question whose target the relay no longer returns
+   (`hiddenTargets`: one REQ by the deletion's e ids) refuses
+   `altered_history` unless every k tag on it is 7. The refusal is a
+   re-ask: the core posts its one re-ask in the gate thread showing the
+   question as raised (`HistoryReaskText`: the record's text and the answer
+   line), and the hidden-target window then starts at that re-ask
+   (`IsHistoryReask`), so the owner's reply in its thread verifies; the
+   cost is one re-answer. If the gate's one re-ask was already used (an
+   answer outside the thread came first), an altered_history refusal has
+   no re-ask left and the gate is raised again. The target-and-signer rule
+   of round 1 stays for visible targets. Recorded limit (code comment in
+   `history.go` and here): a holder of the body key can alter a question
+   and cover the edit only until the verifier sees the deletion; the
+   same-UID model already concedes the body key.
+   - Correction to the brief's note: the k=7 shape is not in v0.116.2.
+     `buzzio/desktop_proof.go:220-224` describes buzz-acp's cleanup of its
+     own 👀 and 💬 reactions with "a deletion that names only the reaction's
+     id", under the agent key; no file in the module writes or reads a NIP-09
+     `k` tag (grep for `"k"` over the module: test fixtures only). The k=7
+     exemption is NIP-09's optional kind tag, trusted as written; whether
+     Buzz Desktop tags the owner's reaction removals with it is unverified
+     and goes to the owner run (an owner reaction removal untagged would cost
+     a re-answer, not a lockout).
+   - Rows (`TestHistoryCheck`, `TestHiddenDeletedEditIsReasked`): edit
+     then delete then answer refuses with the history re-ask, by the owner
+     and by the body, and the reply in the re-ask's thread is approved; the
+     owner's k=7 cleanup of a hidden target is accepted; a deletion tagged
+     k 7 and k 40003 refuses; the owner's deletion of a still-visible
+     target is accepted; the body's deletion of anything since the question
+     refuses (row 10b of round 1 flips to refused: our body never posts
+     reactions); a body deletion before the question is outside the window.
+     Reverting rows R3a to R3d.
+4. The bounded gate lock checks its context before every attempt and after
+   the lock is taken; a lock taken after the deadline is released and the
+   caller gets `ErrLockTimeout`, so no write runs under an expired
+   verification. Row: `TestGateLockChecksTheContextAroundEveryAttempt`
+   (an expired context, an expiry between attempt and use, a held lock
+   with an expired context) (R4a, R4b; R4b's reverted run spins until the
+   test binary's timeout).
+5. A lock timeout is code `verify_timeout` (`gateverify.Code` maps
+   `gatestore.ErrLockTimeout`), carried by the result, the status line and
+   the attention row. Row: `TestHeldGateLockIsTheTimeoutPath` asserts it
+   (R5).
+
+Recorded, no change: the routing window accepts created_at up to 60 s in
+the future (relay skew).
+
+### Rebase onto v3 after part A (2c4167e0)
+
+Rebased `v3-5-amq-b` onto v3 at 2c4167e0 (A merged at fb0363c2; go.mod pins
+agent-message-queue v0.116.2, the module the scratch binaries were built
+from). One conflict, this file: A's sections first, part B after them. On
+the rebased head: build, vet, linux and windows builds; `go test ./...` all
+ok; race on buzz, gateverify, gatestore, cli and status ok;
+`manifest-check --final` OK; the scratch-built v0.116.2 dry run and the
+crash-path canary pass (handler step 144 ms, answer to serve's delivery
+222 ms, to the result row 2.0 s, connections at the fetch 2 then 1, canary
+grep 183 channels and files: not found). The note at the top of part B
+("not yet rebased onto part A") is superseded by this section.

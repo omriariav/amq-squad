@@ -2,6 +2,7 @@ package gatestore
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,62 @@ import (
 type Store struct {
 	Root  string
 	squad string // SquadID, computed once at Open when the root exists
+	// lockCtx, when set (WithContext), bounds every wait for a gate lock: a
+	// try-lock retried until the context ends (5-amq-B fix round, B-P4).
+	lockCtx context.Context
+}
+
+// ErrLockTimeout is a gate lock not taken before the store's context ended.
+var ErrLockTimeout = errors.New("gate lock not acquired in time")
+
+// lockRetry is the pause between two tries of a held gate lock.
+const lockRetry = 20 * time.Millisecond
+
+// WithContext returns the store with its gate locks bounded by ctx: a lock
+// another process holds is retried every 20 ms until ctx ends, then
+// ErrLockTimeout. Without it a gate lock waits (the CLI paths).
+func (s Store) WithContext(ctx context.Context) Store {
+	s.lockCtx = ctx
+	return s
+}
+
+// lockGate takes a gate's lock: blocking without a context, else bounded.
+func (s Store) lockGate(id string) (*flock.Exclusive, error) {
+	path := s.Dir("consumed", "locks", id+".lock")
+	if s.lockCtx == nil {
+		return flock.AcquireExclusive(path)
+	}
+	expired := func() error {
+		if err := s.lockCtx.Err(); err != nil {
+			return fmt.Errorf("%w (%s): %v", ErrLockTimeout, id, err)
+		}
+		return nil
+	}
+	for {
+		// the context is checked before every attempt and after the lock is
+		// taken: a lock acquired after the deadline is released, never used
+		// (5-amq-B fix round 2, item 4)
+		if err := expired(); err != nil {
+			return nil, err
+		}
+		lock, acquired, err := flock.TryExclusive(path, true)
+		switch {
+		case errors.Is(err, flock.ErrUnsupported):
+			return flock.AcquireExclusive(path)
+		case err != nil:
+			return nil, err
+		case acquired:
+			if err := expired(); err != nil {
+				_ = lock.Close()
+				return nil, err
+			}
+			return lock, nil
+		}
+		select {
+		case <-s.lockCtx.Done():
+		case <-time.After(lockRetry):
+		}
+	}
 }
 
 // Open returns the store under an AMQ session root (absolute).
@@ -152,7 +209,7 @@ func (s Store) reserveQuestion(rec Record, send Sender) (Question, error) {
 	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return Question{}, err
 	}
-	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", rec.GateID+".lock"))
+	lock, err := s.lockGate(rec.GateID)
 	if err != nil {
 		return Question{}, err
 	}
@@ -324,7 +381,7 @@ func (s Store) Commit(f AnswerFile) error {
 	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return err
 	}
-	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", id+".lock"))
+	lock, err := s.lockGate(id)
 	if err != nil {
 		return err // no lock, no consume (non-unix fails closed)
 	}
@@ -379,7 +436,7 @@ func (s Store) Recover(gateID string) error {
 	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return err
 	}
-	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", gateID+".lock"))
+	lock, err := s.lockGate(gateID)
 	if err != nil {
 		return err
 	}
@@ -520,7 +577,7 @@ func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, 
 	if err := mkdirDurable(s.Dir("consumed", "locks")); err != nil {
 		return Reask{}, false, err
 	}
-	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", gateID+".lock"))
+	lock, err := s.lockGate(gateID)
 	if err != nil {
 		return Reask{}, false, err
 	}

@@ -48,6 +48,20 @@ planning sessions that made them; nothing here is a release blocker.
 - MIGRATION.md keeps its v2 sections; the "Moving to 3.0" section points at
   docs/squad-yaml.md and `amq-squad migrate`; a fuller v2-to-3.0 guide can
   follow once the first real migration runs. Plan 16.4 (migrate).
+- 3.1, only if a pi lead ever takes phone approvals: ask 8 part 2 (PR #1254,
+  the event id through the pi bridge). No 3.0 path takes a single tool
+  approval through the pi bridge; typed gates go over Buzz with the owner's
+  signature. Briefs ruling 20 point 5.
+- The core's own body-key connection (gate question post, the per-answer
+  read by id and history, the re-ask) goes when amq-remote offers a
+  read-by-id and post surface on serve's connection. Ruling 20 point 1; plan
+  R33.
+- `/status` from the phone is now amq-remote's own command (request state);
+  the 4-5 activity line (bucket counts, open gates) no longer reaches the
+  phone. A plain-text keyword, or an upstream hook for a target-defined
+  status, can bring it back. 5-amq-B.
+- A hung verification is an `attention` line in `remote attach`'s output,
+  not a row in the status document's attention queue. 5-amq-B.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 

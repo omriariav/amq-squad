@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/omriariav/amq-squad/v3/internal/buzz"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"io"
 	"io/fs"
 	"os"
@@ -351,7 +352,32 @@ func (h *doctorHost) serviceChecks(ctx context.Context, det registry.Detection) 
 			out = append(out, hostCheck("amq-remote login service state", doctorWarn, "%s", w))
 		}
 	}
+	if c, ok := buzzGrantCheck(); ok {
+		out = append(out, c)
+	}
 	return out
+}
+
+// buzzGrantCheck verifies the enrolled Buzz share's grant signatures
+// locally (5-amq-B fix round): the relay's AUTH acceptance is not the check.
+// No row without a gate binding.
+func buzzGrantCheck() (doctorCheck, bool) {
+	b, _, err := gateverify.LoadBinding(gateBindingPath())
+	if err != nil {
+		return doctorCheck{}, false
+	}
+	root, session := buzz.ShareFor(b)
+	sh, err := buzz.LoadShare(root, session)
+	if err != nil {
+		return hostCheck("buzz share grants", doctorFail, "%v", err), true
+	}
+	if err := sh.VerifyGrants(); err != nil {
+		return hostCheck("buzz share grants", doctorFail, "%v; enroll again with docs/v3-buzz/enroll.sh", err), true
+	}
+	if sh.Owner != b.Owner || sh.BodyHex() != b.Body {
+		return hostCheck("buzz share grants", doctorFail, "the share's owner or body is not the gate binding's pin"), true
+	}
+	return hostCheck("buzz share grants", doctorOK, "%d grants verify locally (owner %s), expire %s", sh.GrantCount(), sh.Owner[:12], sh.Expires().Format(time.RFC3339)), true
 }
 
 // codexChecks list project roots codex-cli does not trust (amendment 1) and

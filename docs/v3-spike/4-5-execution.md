@@ -103,7 +103,11 @@ ruling 16: the operator mailbox is the owner's `user` handle.
    body key and delivers them into the mailbox with the same message shape
    as the mailbox binding. Open ruling: accept, or ask upstream for a
    mailbox adapter kind (then serve delivers and the label path of 3-1 takes
-   the answers).
+   the answers). **Closed by brief 5-amq-B (2026-10-28, ruling 20):** the
+   share binds amq-remote's mailbox adapter (upstream ask 15, v0.111.0 and
+   v0.112.0; floor v0.116.2); serve delivers and posts the result rows; the
+   attachment's DM reader and its marks (deviation 6) are deleted;
+   `docs/v3-spike/5-amq-execution.md`, part B.
 2. **Presence follows the status document by supervising the endpoint.**
    serve's kind 10100 is `online` while its target is attached; with a
    presence-only target that is while serve runs. The attachment runs serve
@@ -127,6 +131,8 @@ ruling 16: the operator mailbox is the owner's `user` handle.
    so moving the attachment between mailboxes never replays a DM (found by
    the rehearsal: with per-root marks a new root re-delivered the last 24 h
    of DMs). Delivery is at most once: the mark is taken before acting.
+   **Retired by 5-amq-B:** serve owns redelivery; the attachment's take of
+   a delivered message (`amq read`, to cur) is the once-only claim.
 7. doctor: 2b-3 is not on v3. The check is `buzz.ServiceWarning` behind the
    `buzz.LoginService` interface and shows in `remote status`. Follow-up,
    one line in 2b-3's doctor: `if w := buzz.ServiceWarning(ctx,
