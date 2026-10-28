@@ -31,3 +31,27 @@ rewritten commits f8af8a2, 180f2d8: present, ancestors of v3
 # the line: a push-protection hit for a Google API key pattern on the first push
 # is the canary in those three blobs, bypass with "used in tests"; any other
 # push-protection hit means stop and send the reviewer the path.
+
+# Delta, 2026-10-28, after the AMQ bump merges (briefs 5-amq-A, B, C): the
+# objects reachable from v3 (tip 0d7df0d6) but not from 45c4f39b, the
+# Saturday scan's tip. Script $CLAUDE_JOB_DIR/tmp/history-scan/delta.sh,
+# the six real-shape patterns of redact.RealCredentialShapes.
+delta objects scanned: 418
+shape hits: 0
+# What this delta proves and what it does not:
+# - The Gemini key of the milestone B exposure is a Google API key and
+#   matches the AIza pattern; the Saturday scan found 0 shape hits for it
+#   over every object, and this delta finds 0 over the new objects, so it
+#   is absent from everything reachable from v3.
+# - The lead session's messaging token matches none of the six shapes. On
+#   Saturday it was compared as a literal (0 hits over every object); the
+#   literal is kept nowhere, so the delta is not a proof for that value.
+#   No agent commit since Saturday had a source for it (it exists in no
+#   object reachable from v3 and in no file on disk the agents read); the
+#   owner's rotation (action 1 of the report) is the mitigation that stands
+#   regardless.
+# - The 1Password environment id: the planning session's expressions file
+#   is gone, so the literal could not be re-checked; the same argument
+#   applies (absent from every object on Saturday, no source in the tree),
+#   and it is a vault id, not a credential.
+# The commit that adds this addendum carries only this file.
