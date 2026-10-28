@@ -1,0 +1,35 @@
+row: 10a/10b reaction cleanup is not an alteration
+  revert: internal/gateverify/history.go (func reactionCleanup(d nostr.Event, ids []string) bool {)
+  reverted: FAIL --- FAIL: TestHistoryCheck (0.78s); --- FAIL: TestHistoryCheck/10a_reaction_deleted_by_the_attachment_(body_key) (0.05s); --- FAIL: TestHistoryCheck/10b_reaction_deleted_by_the_owner's_Desktop_since_the_question (0.05s)
+  restored: PASS
+  OK (fails when reverted)
+row: 10c the answer's own edits and deletions refuse
+  revert: internal/gateverify/history.go (if answer.ID != "" {)
+  reverted: FAIL --- FAIL: TestHistoryCheck (0.98s); --- FAIL: TestHistoryCheck/10c_the_answer_edited (0.08s); --- FAIL: TestHistoryCheck/10c_the_answer_deleted_under_a_reaction_k_tag (0.08s); --- FAIL: TestHistoryCheck/10c_the_answer_deleted_by_another_key (0.08s)
+  restored: PASS
+  OK (fails when reverted)
+row: 3 one connection per verification, closed after
+  revert: internal/buzz/inbound.go (defer closeFn())
+  reverted: FAIL --- FAIL: TestVerifierConnectionOnTheRelay (5.15s); --- FAIL: TestHandlerVerifierConnectionPerAnswer (0.11s)
+  restored: PASS
+  OK (fails when reverted)
+row: 3 the verification is capped (10 s)
+  revert: internal/buzz/inbound.go (vctx, cancel := context.WithTimeout(ctx, limit))
+  reverted: FAIL 
+  restored: PASS
+  OK (fails when reverted)
+row: 4 intermediate lines are status, one result per inbound
+  revert: internal/buzz/inbound.go (if err := h.Inbox.Reply(ctx, hd.MessageID, text, true); err != nil {)
+  reverted: FAIL --- FAIL: TestHandlerGatesAndRouting (0.08s); --- FAIL: TestHandlerReplyTable (0.38s); --- FAIL: TestHandlerReplyTable/verified (0.08s); --- FAIL: TestHandlerReplyTable/wrong_pubkey (0.05s); --- FAIL: TestHandlerReplyTable/outside_window (0.05s); --- FAIL: TestHandlerReplyTable/bad_signature (0.05s)
+  restored: PASS
+  OK (fails when reverted)
+row: 5 the same event delivered twice is handled once
+  revert: internal/buzz/inbound.go (if h.seen[id] {)
+  reverted: FAIL --- FAIL: TestHandlerDuplicateDeliveryHandledOnce (0.10s)
+  restored: PASS
+  OK (fails when reverted)
+row: 1/4 one path: remote bind refuses a share not bound to the mailbox adapter
+  revert: internal/cli/remote.go (mb, err := buzz.CheckMailboxShare(sh.Root, sh.Session, *channel, *relay))
+  reverted: FAIL --- FAIL: TestRemoteBindWritesTheOwnerFiles (0.03s)
+  restored: PASS
+  OK (fails when reverted)

@@ -1,0 +1,3 @@
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	5.787s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	24.823s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	90.080s

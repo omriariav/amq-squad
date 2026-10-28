@@ -159,6 +159,15 @@ entries:
   extract: ""
   reason: "hooks inject every turn (owner default applied)"
   status: deleted
+- path: internal/buzz/amqinbox.go
+  v2_lines: 0
+  current_lines: 103
+  fate: new
+  target_lines: 103
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B: the attach inbox through the amq CLI (list, read to cur, reply answer or status)"
+  status: new
 - path: internal/buzz/endpoint.go
   v2_lines: 0
   current_lines: 166
@@ -167,6 +176,15 @@ entries:
   cluster: buzz
   extract: ""
   reason: "4-5: the share's amq-remote endpoint, run only while the bound session is present (presence through amq-remote)"
+  status: new
+- path: internal/buzz/inbound.go
+  v2_lines: 0
+  current_lines: 388
+  fate: new
+  target_lines: 388
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B: the handler of serve's deliveries: one take, the verifier's own connection per answer, one reply per message"
   status: new
 - path: internal/buzz/leads.go
   v2_lines: 0
@@ -177,6 +195,15 @@ entries:
   extract: ""
   reason: "4-5: the lead registry: the fleet registry (operator mode) and the launch records (one squad); routing only to leads"
   status: new
+- path: internal/buzz/manifest.go
+  v2_lines: 0
+  current_lines: 119
+  fate: new
+  target_lines: 119
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B: the one path: the share bound to the mailbox adapter with DM commands on, checked in the share's manifest"
+  status: new
 - path: internal/buzz/presence.go
   v2_lines: 0
   current_lines: 158
@@ -185,15 +212,6 @@ entries:
   cluster: buzz
   extract: ""
   reason: "4-5: presence and the activity line derived from the status document (one squad or a fleet, ruling 16)"
-  status: new
-- path: internal/buzz/pump.go
-  v2_lines: 0
-  current_lines: 347
-  fate: new
-  target_lines: 347
-  cluster: buzz
-  extract: ""
-  reason: "4-5: reads the owner's DMs once each: gate answers to the 3-1 core, /status, routing"
   status: new
 - path: internal/buzz/route.go
   v2_lines: 0
@@ -233,9 +251,9 @@ entries:
   status: new
 - path: internal/buzz/transport.go
   v2_lines: 0
-  current_lines: 88
+  current_lines: 104
   fate: new
-  target_lines: 88
+  target_lines: 104
   cluster: buzz
   extract: ""
   reason: "4-5: the gate core's transport: the share body signs in to the relay (fills 3-1's gateTransport seam)"
@@ -1573,9 +1591,9 @@ entries:
   status: keep
 - path: internal/cli/remote.go
   v2_lines: 0
-  current_lines: 650
+  current_lines: 690
   fate: new
-  target_lines: 650
+  target_lines: 690
   cluster: verbs
   extract: ""
   reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"
@@ -2724,9 +2742,9 @@ entries:
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 291
+  current_lines: 309
   fate: new
-  target_lines: 291
+  target_lines: 309
   cluster: gateverify
   extract: ""
   reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path; 4-5: squad identity (amendment 28)"
@@ -2742,9 +2760,9 @@ entries:
   status: new
 - path: internal/gateverify/history.go
   v2_lines: 0
-  current_lines: 90
+  current_lines: 139
   fate: new
-  target_lines: 90
+  target_lines: 139
   cluster: gateverify
   extract: ""
   reason: "3-1: the question's edit and deletion history from the relay (upstream CheckHistory rules)"

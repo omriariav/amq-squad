@@ -1,0 +1,70 @@
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	1.013s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	0.656s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	0.336s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.291s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	1.972s
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	2.448s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	4.171s
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	2.562s
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	20.265s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	108.090s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	7.291s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	38.185s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	25.404s
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	8.836s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	4.715s
+ok  	github.com/omriariav/amq-squad/v3/internal/fsanchor	5.167s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	10.779s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	5.957s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	18.600s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	6.926s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	6.957s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	7.407s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	6.285s
+ok  	github.com/omriariav/amq-squad/v3/internal/leadsession	6.200s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	6.481s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	77.398s
+ok  	github.com/omriariav/amq-squad/v3/internal/migrate	20.258s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	5.556s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	5.044s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	4.106s
+ok  	github.com/omriariav/amq-squad/v3/internal/panechain	8.422s
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	12.872s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	3.667s
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	11.333s
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	80.151s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	55.466s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	7.538s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	3.837s
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	24.330s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.550s
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	24.321s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	49.306s
+?   	github.com/omriariav/amq-squad/v3/internal/sealchain	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	128.264s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	65.201s
+--- FAIL: TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (0.61s)
+    testing.go:1617: TempDir RemoveAll cleanup: unlinkat /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists3374179458/001/proj/.agent-mail/s1/extensions/amq-squad/launch/cto: directory not empty
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	37.948s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	15.105s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	10.175s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	59.045s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	1.981s
+ok  	github.com/omriariav/amq-squad/v3/internal/uninstall	69.368s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	0.837s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	0.855s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	25.700s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	0.618s
+?   	github.com/omriariav/amq-squad/v3/plugins	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/scripts	2.981s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	0.331s
+?   	github.com/omriariav/amq-squad/v3/scripts/redact-evidence	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/claude-probes	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/sched-live	[no test files]
+FAIL
+
+# note (5-amq-B): internal/seatlaunch is untouched by this branch (git diff v3 -- internal/seatlaunch is empty); its one failure above is a TempDir cleanup race (directory not empty). Reruns: ok, FAIL, ok; -count=3 of the failing test alone: ok. Pre-existing flake, named for the lead.
+# GOOS=linux go build ./... and GOOS=windows go build ./...: ok

@@ -1,4 +1,4 @@
-# Owner run: brief 4-5 acceptance 4 (and 3-1 acceptance 9)
+# Owner run: brief 4-5 acceptance 4 (and 3-1 acceptance 9, 5-amq-B live rows)
 
 One owner session of about 15 minutes, held at the end of brief 4-5
 (rulings 3 and 7). The owner is present with the real Buzz key in the
@@ -19,7 +19,21 @@ What it proves:
   local relay): online while the operator session runs, offline after;
 - the third item (phase 5): the Buzz-signed `seat clear` answered from the
   phone, with the clear record carrying the gate id and the answer's event
-  id.
+  id;
+- brief 5-amq-B (ruling 20 point 6): the share bound to amq-remote's mailbox
+  adapter with DM commands on, serve delivering every DM and posting the
+  attachment's one reply as the result row, the verifier's own connection
+  opened and closed per answer, and the doctor floor. The gate round-trip
+  rows keep their pass criteria; their evidence is serve's result rows on
+  the phone plus the core's verification record (`gate status`, the answer
+  file). The rows of the retired path (the attachment's own DM reads, its
+  once-only marks, redelivery) are gone.
+
+This run needs amq, amq-remote and amq-owner-sign v0.116.2 or later
+installed by the owner (his AMQ upgrade). The checkpoint of 5-amq-B ran its
+rows against binaries built from the v0.116.2 module in a scratch
+directory, never installed (`docs/v3-spike/5-amq-execution.md`, part B);
+the rows here are the live rows against the installed binaries.
 
 Each step lists who acts, the command, the expected output and what to
 record. Write the times into the table at the end (wall clock, HH:MM:SS).
@@ -29,13 +43,18 @@ record. Write the times into the table at the end (wall clock, HH:MM:SS).
 0.1 Build the branch binary and put it first on PATH for this shell only:
 
 ```
-cd <worktree of v3-4e>
+cd <checkout of v3 with 5-amq-A and 5-amq-B merged>
 go build -o /tmp/owner45/bin/amq-squad ./cmd/amq-squad
 export PATH=/tmp/owner45/bin:$PATH AMQ_SQUAD=/tmp/owner45/bin/amq-squad AMQ_NO_UPDATE_CHECK=1
 amq --version; amq-remote --version; amq-owner-sign --version
 ```
 
-Expected: `0.107.0` three times (or later; record the versions).
+Expected: `0.116.2` three times (or later; record the versions). An older
+amq-remote stops the run here: the mailbox adapter needs v0.116.2.
+
+0.1b Doctor (5-amq-B row): `amq-squad doctor` names the AMQ floor v0.116.2
+and passes it (part A); with an older amq-remote it fails and names the
+floor. Record the line.
 
 0.2 Check that no other endpoint holds the Buzz share root and that no
 earlier enrollment exists (this run enrolls the 3.0 agent for real):
@@ -110,7 +129,16 @@ Expected, in order: `owner pubkey: <the owner's hex>`, `wrote 8 signed
 grants`, `published kind 30177 policy <id>`, `== C`, `grants enrolled: 8`,
 `== D`, doctor lines `"discovery": "policy_present"`, `"presence":
 "online"`, `"state": "authenticated"`, the agent npub, exit 11. Record T1
-(exit 11) and the grant count.
+(exit 11) and the grant count. The share's manifest declares the mailbox
+target (no fake target):
+
+```
+jq '.adapters, (.relay.shares[] | {target, presence, name})' ~/.amq-squad/buzz/root/extensions/remote/manifest.json
+```
+
+Expected: one adapter `{"kind": "mailbox", "target": "amq-squad", "config":
+{"handle": "attach", "reply_timeout": "60s"}}`, the share on target
+`amq-squad` with presence on.
 
 If amq-owner-sign says the key is not valid: the read command prints more
 than the key and one newline. Fix the command, rerun 1.2. Do not print the
@@ -130,10 +158,27 @@ Record T2 (channel id received).
 BUZZ_DM_CHANNEL=<channel id> docs/v3-buzz/enroll.sh <owner npub> wss://omriariav.communities.buzz.xyz
 ```
 
-Expected: `gate binding written: ~/.amq-squad/gate-binding.json`, `8
-grants`, `created .../issuer-key.pem`, `created
-.../authorization-trust.json`, `== F: stopping the enrollment endpoint`,
-exit 0. The agent shows offline on the phone within about 10 s. Record T3.
+Expected: `== E: amq-remote share --target amq-squad --dm-channel <channel>
+--native-session attach --min-evidence submitted`, `gate binding written:
+~/.amq-squad/gate-binding.json`, `8 grants`, `share target amq-squad: kind
+mailbox, handle attach, reply_timeout 60s, DM commands on (channel <id>)`,
+`created .../issuer-key.pem`, `created .../authorization-trust.json`, `==
+F: stopping the enrollment endpoint`, exit 0. The agent shows offline on
+the phone within about 10 s. Record T3.
+
+3.1 The binding (5-amq-B doctor row), lead:
+
+```
+jq '.relay.shares[] | {target, dm_channel_id, native_session_id, commands, min_evidence, presence}' ~/.amq-squad/buzz/root/extensions/remote/manifest.json
+amq-remote bindings --json
+```
+
+Expected: the share with `commands: true`, the channel, `native_session_id:
+"attach"`, `min_evidence: "submitted"`. `amq-remote bindings` lists the
+`attach --self` bindings under `~/.amq/remote/bindings/` only, so it is not
+expected to show this strict share (v0.116.2 cmd/amq-remote/attach.go,
+bindings); record what it shows. The live check that serve holds the
+mailbox target is step 4.3.
 
 ### 4. Attach, presence on (lead; owner watches the phone)
 
@@ -160,6 +205,27 @@ Record T4 (online seen on the phone).
 
 The presence file goes stale after 90 s; refresh it with 4.1 every minute
 during the run (or keep a loop: `while sleep 45; do <4.1>; done`).
+
+4.3 The running endpoint holds the mailbox target (lead):
+
+```
+amq-remote sessions --root ~/.amq-squad/buzz/root --json
+```
+
+Expected: target `amq-squad`, harness `mailbox`, display name `mailbox
+attach`, attachment `live`. Record it.
+
+4.4 The verifier's connections (lead, a third terminal, kept running
+through section 5): count the attach process's established TCP connections
+every 50 ms (serve is a separate process and holds its own):
+
+```
+A=$(pgrep -f 'amq-squad remote attach' | head -1)
+while sleep 0.05; do printf '%s %s\n' "$(date +%T.%N | cut -c1-12)" "$(lsof -a -p "$A" -iTCP -sTCP:ESTABLISHED -nP 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"; done | uniq -f1 | tee /tmp/owner45/evidence/attach-conns.txt
+```
+
+Expected: `0` while no answer is being verified; `1` for a fraction of a
+second around each verified answer (5.2, 5.4, 5.5, 9.3), then `0` again.
 
 ### 5. The typed gate (owner on the phone, about 2 minutes)
 
@@ -188,10 +254,13 @@ deny g45-owner-01 release <16 hex>
 Reply IN THE THREAD of that message (long-press, reply in thread) with the
 approve line exactly. Record T6 (sent).
 
-Expected within one attach tick: an attach `handled` line with `"kind":"gate"`
-and `"outcome":"approved"`, and a thread reply on the phone `amq-squad gate
-g45-owner-01: approved, verified by the core.` Record T7 (the handled line's
-`at`).
+Expected within one attach tick: an attach `handled` line with `"kind":"gate"`,
+`"outcome":"approved"` and `"reply":"accepted g45-owner-01 tag"`, and on the
+phone serve's result row under your answer reading `accepted g45-owner-01
+tag` (ids and the class only; neither your answer nor the question is
+echoed). Record T7 (the handled line's `at`) and T7b (the result row seen).
+Wait for the result row before the next DM: amq-remote runs one request at
+a time and answers a DM sent before it as `busy`.
 
 5.3 Lead:
 
@@ -204,25 +273,39 @@ Expected: state `accepted`; verify action approved (exit 0). This is 3-1
 acceptance 9.
 
 5.4 Negative, optional (owner, 30 s): send the same approve line again in the
-thread. Expected reply: `answer not accepted (already_consumed)`.
+thread. Expected result row: `refused g45-owner-01 already_consumed`.
+
+5.5 The re-ask row (5-amq-B; owner, 1 minute). Lead: raise a second gate
+`g45-owner-02` as in 5.1 (target `git tag v3.0.0-owner45b`). Owner: type its
+approve line in the MAIN DM box, not in the thread. Expected: serve's result
+row under it reads `refused g45-owner-02 not_in_gate_thread` and `re-ask:
+answer in the gate thread (event <12 hex>)`; the core's "Reply here to
+confirm" appears in the gate's thread. Owner: reply in that thread with the
+approve line. Expected: `accepted g45-owner-02 tag`. Record T15 (the
+re-ask row) and T16 (accepted).
 
 ### 6. The routed message (owner on the phone, about 1 minute)
 
-6.1 Owner, in the main DM box: `/status`. Expected reply: `user: present
-(online, ...). needs you N, working N, ready N, inactive N. ...`.
+6.1 Owner, in the main DM box: `/status`. This is amq-remote's own command:
+serve answers it with the state of the share's requests, and it never
+reaches the mailbox (no attach `handled` line). Record serve's answer.
 
 6.2 Owner: `@cto owner45 ping from the phone`. Record T8 (sent).
 
 Expected: attach `handled` line with `"kind":"route"`, `"lead":"app/cto"`; the
-phone reply `delivered to user, routed to app/cto`. Lead:
+phone result row `routed app/cto` (your text is not echoed). Lead:
 
 ```
 amq list --root "$ROP" --me user --new --json
 amq list --root "$R" --me cto --new --json
 ```
 
-Expected: the operator mailbox holds the owner's message (from `buzz`,
-labels `buzz`, `nostr:<the phone event id>`); the squad lead's inbox holds
+Expected: the share root's `attach` inbox has the message as serve
+delivered it, taken (`amq list --root ~/.amq-squad/buzz/root --me attach
+--cur --json`: from `buzz`, thread `cockpit/<channel>`, labels `acp`,
+`buzz`, `nostr:<the phone event id>`); the operator mailbox holds the
+owner's message (from `buzz`, labels `buzz`, `nostr:<the phone event id>`);
+the squad lead's inbox holds
 the routed copy (from `buzz`, subject `Buzz: from the owner, routed by user`,
 thread `p2p/fleet:ops:buzz__app:owner45:cto`, labels `buzz`,
 `nostr:<the phone event id>`, `routed`, body `owner45 ping from the phone`).
@@ -285,7 +368,10 @@ deny clear-<32 hex> clear <16 hex>
 
 Reply IN THE THREAD with the approve line exactly. Record T12 (sent).
 Expected within one attach tick: a `handled` line with `"outcome":"approved"`
-and the thread reply `approved, verified by the core.` Record T13.
+and serve's result row `accepted clear-<32 hex> quarantine_clear` (the
+same path as section 5: serve delivers, the core fetches and verifies the
+signed event on its own connection, 4.4 shows it open and closed). Record
+T13.
 
 9.4 Owner, at the Mac terminal: run the 9.2 command again and type `q1`.
 Expected: `seat q1 cleared (signed by ...)`, exit 0. Then the lead:
@@ -300,7 +386,7 @@ Expected: the clear record names the gate and the answer's event id (the
 phone reply's event id). Record T14 (cleared).
 
 9.5 Negative, optional (owner, 30 s): send the same approve line again in the
-thread. Expected reply: `answer not accepted (already_consumed)`. A second
+thread. Expected result row: `refused clear-<32 hex> already_consumed`. A second
 `seat clear --seat q1` says the seat is not quarantined.
 
 9.6 Buzz unreachable, optional (lead): repeat 9.1 and 9.2 with the relay
@@ -315,7 +401,8 @@ Ctrl-C the attach. Copy the evidence (all public):
 
 ```
 cp -R "$R/extensions/amq-squad/gates" "$R/extensions/amq-squad/answers" /tmp/owner45/evidence/
-cp ~/.amq-squad/buzz/doctor.json ~/.amq-squad/gate-binding.json /tmp/owner45/evidence/
+cp ~/.amq-squad/buzz/doctor.json ~/.amq-squad/gate-binding.json ~/.amq-squad/buzz/root/extensions/remote/manifest.json /tmp/owner45/evidence/
+go run ./scripts/redact-evidence /tmp/owner45/evidence
 ```
 
 The agent stays enrolled for 3.0 use (the grants expire in 30 days); the
@@ -352,5 +439,17 @@ the pipe. The no-secret-output evidence is the dry run's canary test
 | T13 clear answer verified (attach handled line) | |
 | T14 seat cleared (record names gate and event) | |
 | clear answer event id = record event_id | |
+| doctor AMQ floor line (0.1b; floor v0.116.2) | |
+| manifest: mailbox target, handle attach, reply_timeout 60s, commands on (1.2, 3.1) | |
+| `amq-remote bindings` output (3.1; not expected to list the strict share) | |
+| `amq-remote sessions`: target amq-squad, harness mailbox (4.3) | |
+| T7b serve's result row `accepted g45-owner-01 tag` seen | |
+| answer to result row, T7b - T6 | |
+| 5.4 result row (`refused ... already_consumed`) | |
+| T15 re-ask result row (`refused g45-owner-02 not_in_gate_thread` + re-ask line), T16 accepted | |
+| 6.1 serve's own `/status` answer (no handled line) | |
+| 6.2 result row `routed app/cto` | |
+| verifier connections (4.4): 1 during each verification, 0 after | |
+| clear result row `accepted clear-... quarantine_clear` (9.3) | |
 | owner minutes, T0 to T10 (target about 15; the third item adds about 3) | |
 | frictions | |
