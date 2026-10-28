@@ -1814,6 +1814,38 @@ Release prep.
   reviewer before dispatch). The tag target moves to the v3 tip after
   both merge. Ask 8 part 2 (the pi bridge event id) stays out of 3.0
   unless the reviewer rules otherwise. [2.8, owner decision]
+- Brief 5-amq-A merged 2026-10-28 as fb0363c2 (branch v3-5-amq-a, nine
+  commits, Codex pass, one fix round, narrow re-pass, lead final read and
+  gate on the merge result; size of 3.0 80,378): go.mod at AMQ v0.116.2
+  (the module diff against v0.116.1 confined to internal/acp and
+  internal/remote/buzzio in production Go), the adoption-seam constants
+  and the registry pin at the same version, doctorMinAMQVersion 0.116.2 as
+  the one floor with amq_below_floor rows for amq, amq-remote and
+  amq-owner-sign; pi seats through AMQ's pi adapter: the launch writes a
+  0700 shim at ~/.amq-squad/pi-launch/pi (atomicfile, exact mode,
+  repaired) that answers the adapter's --version and --help probes through
+  `amq-squad pi shim` from the verified embedded runtime, the record
+  carries pi_shim and pi_agent_dir, seat-exec compares argv[0] with the
+  record and checks the shim through one O_NOFOLLOW descriptor
+  (pi_not_embedded otherwise; a FIFO refuses at once), then execs
+  `amq-squad pi run --seat H -- <adapter argv>` with the record's env_needs
+  and credential_needs as --env-need, the compile cache off, NODE_OPTIONS
+  empty and NODE_PATH absent; the session id is a v8 UUID of (nonce,
+  handle) and the 23(a) resume refusal fires on it; the Codex sandbox pins
+  travel as provider arguments in the launch request (AMQ v0.110.0 admits
+  them, ask 17) and seat-exec verifies them (sandbox_pins_missing) instead
+  of injecting; CI's real-AMQ matrix is one job with a required pinned
+  v0.116.2 lane and a non-blocking latest canary, the v0.60.0, v0.74.1 and
+  wake lanes retired (two ran nothing); two orchestration_contract
+  subtests skipped with the cause named in three places (ported in
+  5-amq-C). Live: a pi seat through amq launch 5 of 5 (Prepare 14 ms,
+  launch to up 2.5 s with about 1 s the probe pair, up to ready 0.8 s;
+  cold node-ready 520.7 ms with the cache off against 488.8 ms on).
+  `amq coop exec` as the pi fallback is retired at the v0.116.2 floor; the
+  scheduler stand-in's deletion is 5-amq-C (not pure: three test rewrites,
+  the scheduler post verb, the sched-live harness, PiAdapterInLibrary).
+  Owner list: the CI-only rulesets' required-check names follow the new
+  job names. [2.8, phase 5 amq-A result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
