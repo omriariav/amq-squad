@@ -1183,7 +1183,7 @@ Fleet, mayor, remote
 - R39 The operator session and a squad lead are the same program with different grants.
 - R40 In auto mode the operator session, the mayor, starts squads inside a fleet grant: maximum squads, cost per day, permitted repositories; a cap with no meter is fail-open, so when the grant sets cost_per_day and no meter can read the outcome log the mayor holds every start with wait_reason cost_unmetered and the status says so, and the owner removes the cap to proceed (4-3 re-pass ruling, 2026-10-25) [2.7, 4-3 re-pass]; the Go core provisions the roster through the launch API package, and where a new project root needs `amq launch` to provision an unknown session (upstream ask 2) the fallback is: the mayor proposes, the owner starts.
 - R41 The mayor never approves a typed gate.
-- R42 `amq-remote` plus Buzz is the remote face; Buzz attaches to the operator session. Enrollment defaults to `--enable buzz-profile --presence`, at the cost of one extra owner signature. [2.5, amendment 19] The share's target is amq-remote's mailbox adapter with DM commands on; serve delivers, the core verifies (section 9). [5-amq-B]
+- R42 `amq-remote` plus Buzz is the remote face; Buzz attaches to the operator session. Enrollment defaults to `--enable buzz-profile --presence`, at the cost of one extra owner signature. [2.5, amendment 19] The share's target is amq-remote's mailbox adapter with DM commands on; serve delivers, the core verifies (section 9). [5-amq-B] The busy window (5-amq-B fix round, a 3.0 limit): the mailbox adapter runs one request at a time and rejects an owner DM that arrives while the previous one is open as `busy` (amq-remote v0.116.2, no queue; the rejected DM never reaches the attachment, since the carrier submits busy=reject and admission writes a terminal tombstone before dispatch). 3.0 accepts this: the owner waits for each result row (about a second) before the next DM; a gate answer lost to busy costs a re-answer, since the gate stays open; a routed message lost to busy is re-sent by the owner. Upstream ask 18 asks for a queue on mailbox targets, or a retry hint in the busy row. [2.8, 5-amq-B]
 - R43 `status --json` is the versioned contract in 4.6 with a golden fixture in CI; it carries the command-center fields, the bucket table and the "new task" argv. [2.6, amendment 24] The fleet form is the document of 4.6. [2.7, briefs ruling 16]
 - R44 amq-noc reads that contract and AMQ primitives only; amq-noc 1.0 is the command center and its only view (4.7). [2.6, amendment 24] The old board goes by the delete list of 4.7. [2.7, briefs ruling 17]
 
@@ -1857,6 +1857,35 @@ Release prep.
   the scheduler post verb, the sched-live harness, PiAdapterInLibrary).
   Owner list: the CI-only rulesets' required-check names follow the new
   job names. [2.8, phase 5 amq-A result]
+- Brief 5-amq-B merged 2026-10-28 as 5f1a8261 (branch v3-5-amq-b, five
+  commits, full Codex pass, two fix rounds, narrow re-pass, reviewer read
+  of the deletion rule, lead final read and gate on the merge result;
+  size of 3.0 81,351): the strict share bound to amq-remote's mailbox
+  adapter (ask 15; handle `attach`, reply_timeout 60 s, DM commands on),
+  serve delivering the owner's DMs into the share root's inbox with the
+  `nostr:<eventID>` label and taking the attachment's one non-status
+  reply as the result row; the attachment's DM reader, marks, backlog
+  read and quarantine deleted (4-5 deviation 1 closed); every message's
+  event fetched by id on the core's own bounded connection (10 s cap,
+  closed after) and the handler acting only on the owner-signed event,
+  never the AMQ body, routing included; the deletion rule: a kind 5 or
+  9005 signed by the owner's pinned key naming the question, an edit of it
+  or the answer refuses altered; a body-signed deletion since the question
+  refuses altered_history (our body never deletes); an owner-signed
+  deletion whose target the relay hides refuses altered_history unless
+  every k tag is 7, answered with the gate's one re-ask; the gate store's
+  lock bounded by the verification context (verify_timeout); the
+  hung-verification alert in the status document's attention queue; routed
+  events deduplicated durably; forwards redacted; a doctor row verifying
+  the share grants locally; owner-run.md re-walked with the live rows
+  waiting on the owner's AMQ upgrade. Recorded limits: the busy window
+  (R42), a forward failing after the mailbox copy may deliver that copy
+  twice, a gate whose one re-ask is spent is raised again, the k=7
+  exemption rests on NIP-09's optional tag (owner-run row 5.6 settles
+  whether Buzz Desktop tags the owner's reaction removals), the body key
+  still signs the question post and the re-ask (R33). Measured on a
+  scratch-built v0.116.2 against a local relay: handler 144 ms, answer to
+  delivery 222 ms, answer to the result row 2.0 s. [2.8, phase 5 amq-B result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
