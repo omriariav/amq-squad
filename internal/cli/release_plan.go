@@ -122,11 +122,21 @@ func runVerifyReleasePlan(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad verify release-plan - deterministic read-only tag/release plan
 
+Usage:
+  amq-squad verify release-plan --repository OWNER/REPO --project DIR --remote-url URL
+      --branch BRANCH --head SHA --version VERSION --annotation TEXT
+      --worktree-state clean|dirty --preflight-state passed|failed --preflight-sha256 SHA
+      --release-title TITLE --notes-policy file|generated [--notes-file F --notes-sha256 SHA] [options]
+
 All repository, branch, candidate, tag/signing, evidence, title/notes, and
 draft/prerelease/latest inputs are explicit. Output contains exact literal-
 newline gate bodies, non-force refspecs, and local/remote verification steps.
 The command performs no git, gh, network, authorization, or filesystem mutation.
+
+Flags:
 `)
+		fs.SetOutput(os.Stderr)
+		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err

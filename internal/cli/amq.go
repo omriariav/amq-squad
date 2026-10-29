@@ -68,9 +68,28 @@ const (
 	amqPinSessionful
 )
 
+const amqUsage = `amq-squad amq - the resolved AMQ context and route explanations
+
+Usage:
+  amq-squad amq env [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [--json]
+  amq-squad amq route --to HANDLE [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [--target-project NAME] [--target-session NAME] [--json]
+
+env prints the AMQ root, base root, session, handle and AMQ version amq-squad
+resolves for the project; route runs 'amq route explain' from that root. Both
+only read.
+
+Examples:
+  amq-squad amq env --json
+  amq-squad amq route --to cto --session issue-96
+`
+
 func runAMQ(args []string) error {
 	if len(args) == 0 {
 		return usageErrorf("amq requires a subcommand: env, route")
+	}
+	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		fmt.Fprint(os.Stderr, amqUsage)
+		return flag.ErrHelp
 	}
 	switch args[0] {
 	case "env":

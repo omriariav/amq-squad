@@ -92,13 +92,43 @@ type teamProposeFlags struct {
 	json                                                                      *bool
 }
 
+// perSeatFlag is a per-seat ROLE=VALUE list flag of team propose and apply.
+// It takes one occurrence: a second one is refused, never silently kept in
+// place of the first, because the result lands in a squad.yaml the owner
+// approves by digest.
+type perSeatFlag struct {
+	name, val string
+	set       bool
+}
+
+func (f *perSeatFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return f.val
+}
+
+func (f *perSeatFlag) Set(v string) error {
+	if f.set {
+		return fmt.Errorf("--%s is given more than once and would keep only the last; name every seat in one comma list: --%s %s,%s", f.name, f.name, f.val, v)
+	}
+	f.val, f.set = v, true
+	return nil
+}
+
+func perSeatString(fs *flag.FlagSet, name string) *string {
+	f := &perSeatFlag{name: name}
+	fs.Var(f, name, "")
+	return &f.val
+}
+
 func runTeamPropose(args []string, apply bool) error {
 	name := map[bool]string{false: "team propose", true: "team apply"}[apply]
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	o := teamProposeFlags{
 		project: fs.String("project", "", ""), from: fs.String("from", "", ""), roles: fs.String("roles", "", ""),
-		runtime: fs.String("runtime", "", ""), model: fs.String("model", "", ""), effort: fs.String("effort", "", ""),
-		worktree: fs.String("worktree", "", ""), tools: fs.String("tools", "", ""), actorMode: fs.String("actor-mode", "", ""),
+		runtime: perSeatString(fs, "runtime"), model: perSeatString(fs, "model"), effort: perSeatString(fs, "effort"),
+		worktree: perSeatString(fs, "worktree"), tools: perSeatString(fs, "tools"), actorMode: perSeatString(fs, "actor-mode"),
 		lead: fs.String("lead", "", ""), leadMode: fs.String("lead-mode", "", ""), executionMode: fs.String("execution-mode", "", ""),
 		session: fs.String("session", "", ""), controlRoot: fs.String("control-root", "", ""), targetRoot: fs.String("target-project-root", "", ""),
 		operator: fs.String("operator-interaction", "", ""), template: fs.String("template", "auto", ""),

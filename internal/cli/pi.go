@@ -54,6 +54,22 @@ The runtime unpacks once to ~/.amq-squad/runtime/<version>-<digest>/; every
 launch re-hashes it. AMQ_SQUAD_PI_TIMING=1 prints the launch timing to stderr.
 `
 
+const piVerifyUsage = `amq-squad pi verify - re-hash the unpacked pi runtime against the embedded manifest
+
+Usage:
+  amq-squad pi verify [--json]
+
+Reads ~/.amq-squad/runtime/<version>-<digest>/ and re-hashes every file
+against the manifest embedded in this build (the check doctor runs). It writes
+nothing; a runtime that is not unpacked yet, or a file that differs, exits
+non-zero (doctor --fix repairs it). The first 'amq-squad pi run' or
+'amq-squad lead' unpacks it.
+
+Examples:
+  amq-squad pi verify
+  amq-squad pi verify --json
+`
+
 // piRun runs the embedded pi as a child and returns its exit code (tests
 // replace it); piExit ends the launcher with pi's exit code.
 var (
@@ -430,6 +446,9 @@ func runPiVerify(args []string) error {
 	fs.SetOutput(io.Discard)
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(os.Stderr, piVerifyUsage)
+		}
 		return err
 	}
 	home, err := os.UserHomeDir()
