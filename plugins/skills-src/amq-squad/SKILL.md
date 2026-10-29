@@ -5,21 +5,24 @@ description: Compatibility intent router for the amq-squad plugin. Routes goal p
 
 # amq-squad compatibility router
 
-This legacy skill name remains during the v2.22 migration. Route the request to
-one authoritative namespaced skill and follow that skill completely:
+This legacy skill name remains for compatibility. Route the request to one
+authoritative namespaced skill and follow that skill completely:
 
-- Goal intake, team design, custom roles, team/profile setup, or launch preview:
-  `amq-squad:wizard`.
-- Status, doctor, task, gate, AMQ inspection, lifecycle
-  commands, verification, or evidence: `amq-squad:cli`.
-- A verified visible lead coordinating an already-launched squad:
-  `amq-squad:orchestrator`.
+- Goal intake, roster and custom roles, the squad.yaml digest flow
+  (`team propose`, `team apply`), the brief, or the launch: `amq-squad:wizard`.
+- Status, doctor, task, evidence, guard, gate status, AMQ context, or merge and
+  release verification: `amq-squad:cli`.
+- The lead seat of a launched squad planning tasks, dispatching, widening, running
+  the merge train, raising gates or preparing a release: `amq-squad:orchestrator`.
 
 Do not run setup, direct operations, and the live lead loop from this router.
 Existing invocations keep working only as compatibility routing; authoritative
 behavior and future changes live in the three namespaced skills.
 
-Disposable review worktrees follow the canonical workspace rules: create them at
-an explicit temporary path with `git worktree add --detach`, and clean up that exact
-path with `git worktree remove --force`. This does not authorize raw recursive
-deletion.
+amq-squad 3.0 removed the v2 lifecycle verbs (`start`, `resume`, `down`, `send`,
+`init`, `wizard`). A request phrased in those terms routes by intent: "start the
+team" is a launch (`amq-squad:wizard`), "who is up" is status (`amq-squad:cli`).
+
+Disposable review worktrees follow the canonical workspace rules: create them at an
+explicit temporary path with `git worktree add --detach`, and clean up that exact path
+with `git worktree remove --force`. This does not authorize raw recursive deletion.
