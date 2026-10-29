@@ -1,0 +1,93 @@
+revert check, brief 5-docs-F part 2, fix commit 1a9ef6b1
+
+== row 4 task widen help: revert internal/cli/task.go to 1a9ef6b1~1, run TestDocsFTaskUsageShowsWidenWithoutMe
+--- FAIL: TestDocsFTaskUsageShowsWidenWithoutMe (0.00s)
+    docs_f_help_test.go:27: task usage shows a --me for widen: "  amq-squad task widen ID --me LEAD --files GLOB,... --reason TEXT"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.687s
+FAIL
+-- restored; with the fix:
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.773s
+
+== row 5 verify action exit 12: revert internal/cli/verify_action.go to 1a9ef6b1~1, run TestDocsFVerifyActionHelpListsExit12
+--- FAIL: TestDocsFVerifyActionHelpListsExit12 (0.00s)
+    docs_f_help_test.go:42: verify action --help has no exit 12:
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.467s
+FAIL
+-- restored; with the fix:
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.352s
+
+== row 6 help paths (amq): revert internal/cli/amq.go to 1a9ef6b1~1, run TestDocsFHelpPathsPrintUsageAndExitZero
+--- FAIL: TestDocsFHelpPathsPrintUsageAndExitZero (0.00s)
+    docs_f_help_test.go:63: [amq --help]: err = unknown 'amq' subcommand: "--help". Try 'env' or 'route'. (exit 1), want help and exit 0
+    docs_f_help_test.go:63: [amq help]: err = unknown 'amq' subcommand: "help". Try 'env' or 'route'. (exit 1), want help and exit 0
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.474s
+FAIL
+-- restored; with the fix:
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.557s
+
+== row 6 help paths (pi verify): revert internal/cli/pi.go to 1a9ef6b1~1, run TestDocsFHelpPathsPrintUsageAndExitZero
+--- FAIL: TestDocsFHelpPathsPrintUsageAndExitZero (0.00s)
+    docs_f_help_test.go:68: [pi verify --help]: help lacks "amq-squad pi verify [--json]":
+    docs_f_help_test.go:68: [pi verify --help]: help lacks "Examples:":
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.640s
+FAIL
+-- restored; with the fix:
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.779s
+
+== row 6 help paths (verify release-plan): revert internal/cli/release_plan.go to 1a9ef6b1~1, run TestDocsFHelpPathsPrintUsageAndExitZero
+--- FAIL: TestDocsFHelpPathsPrintUsageAndExitZero (0.00s)
+    docs_f_help_test.go:68: [verify release-plan --help]: help lacks "Usage:":
+    docs_f_help_test.go:68: [verify release-plan --help]: help lacks "-repository":
+    docs_f_help_test.go:68: [verify release-plan --help]: help lacks "-head":
+    docs_f_help_test.go:68: [verify release-plan --help]: help lacks "-version":
+    docs_f_help_test.go:68: [verify release-plan --help]: help lacks "-notes-policy":
+    docs_f_help_test.go:68: [verify release-plan --help]: help lacks "-preflight-sha256":
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.557s
+FAIL
+-- restored; with the fix:
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.622s
+
+== row 7 team propose repeated per-seat flag: revert internal/cli/team.go to 1a9ef6b1~1, run TestDocsFTeamProposeRefusesRepeatedPerSeatFlag
+--- FAIL: TestDocsFTeamProposeRefusesRepeatedPerSeatFlag (0.06s)
+    docs_f_help_test.go:98: team propose with a repeated --worktree = <nil> (exit 0), want a refusal naming "--worktree cto=x,fullstack=y"
+    docs_f_help_test.go:98: team propose with a repeated --runtime = <nil> (exit 0), want a refusal naming "--runtime cto=claude,fullstack=codex"
+    docs_f_help_test.go:98: team propose with a repeated --model = <nil> (exit 0), want a refusal naming "--model cto=opus,fullstack=gpt-5.5"
+    docs_f_help_test.go:98: team propose with a repeated --effort = <nil> (exit 0), want a refusal naming "--effort cto=high,fullstack=medium"
+    docs_f_help_test.go:98: team propose with a repeated --tools = <nil> (exit 0), want a refusal naming "--tools cto=coding,fullstack=full"
+    docs_f_help_test.go:98: team propose with a repeated --actor-mode = <nil> (exit 0), want a refusal naming "--actor-mode cto=review,fullstack=implementation"
+    docs_f_help_test.go:98: team apply with a repeated --tools = squad_yaml_digest_mismatch: the planned files changed since the proposal (now sha256:29ef0143d30aa19e95f353faa62175f7649501b10203ecfc9b543aa54bc612fc@absent); run team propose again (exit 2), want a refusal naming "--tools cto=coding,fullstack=full"
+    docs_f_help_test.go:98: team apply with a repeated --actor-mode = squad_yaml_digest_mismatch: the planned files changed since the proposal (now sha256:baf1925b6bb824e4df561fce15e7f72b01bdd711346adda6449ace79006b718c@absent); run team propose again (exit 2), want a refusal naming "--actor-mode cto=review,fullstack=implementation"
+    docs_f_help_test.go:98: team apply with a repeated --worktree = squad_yaml_digest_mismatch: the planned files changed since the proposal (now sha256:3b45e1c9ec13ce44d80ae3459f9862aca4f84feaf7c57f7a662ff0911a1eaf8c@absent); run team propose again (exit 2), want a refusal naming "--worktree cto=x,fullstack=y"
+    docs_f_help_test.go:98: team apply with a repeated --runtime = squad_yaml_digest_mismatch: the planned files changed since the proposal (now sha256:85e1aed3073128338162683e36c8cd31cad0be284bd0df37510fc9ec710a7bd0@absent); run team propose again (exit 2), want a refusal naming "--runtime cto=claude,fullstack=codex"
+    docs_f_help_test.go:98: team apply with a repeated --model = squad_yaml_digest_mismatch: the planned files changed since the proposal (now sha256:196d54e31411236d2b5a4fb39598597c34870bfcb2984da85612b7048f603421@absent); run team propose again (exit 2), want a refusal naming "--model cto=opus,fullstack=gpt-5.5"
+-- restored; with the fix:
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.527s
+
+ M .github/workflows/ci.yml
+ M README.html
+ M README.md
+ M docs/global-orchestrator-runbook.md
+ M plugins/claude/skills/cli/SKILL.md
+ M plugins/claude/skills/cli/references/daily-loop.md
+ M plugins/claude/skills/orchestrator/references/recovery.md
+ M plugins/claude/skills/wizard/SKILL.md
+ M plugins/claude/skills/wizard/references/readiness.md
+ M plugins/codex/skills/cli/SKILL.md
+ M plugins/codex/skills/cli/references/daily-loop.md
+ M plugins/codex/skills/orchestrator/references/recovery.md
+ M plugins/codex/skills/wizard/SKILL.md
+ M plugins/codex/skills/wizard/references/readiness.md
+ M plugins/skills-src/cli/SKILL.md
+ M plugins/skills-src/cli/references/daily-loop.md
+ M plugins/skills-src/orchestrator/references/recovery.md
+ M plugins/skills-src/wizard/SKILL.md
+ M plugins/skills-src/wizard/references/readiness.md
+ M scripts/check-skill-invocations.py
+ M scripts/test_check_skill_invocations.py
+?? docs/v3-spike/5-docs-evidence/
+?? docs/v3-spike/5-docs-execution.md
