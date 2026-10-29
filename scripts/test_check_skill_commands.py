@@ -59,6 +59,14 @@ class MutatedSkill:
         return False
 
 
+# The wrap shape v2's cli/SKILL.md carried: an inline span broken mid-flag-list with NO
+# leading whitespace on the continuation line, so an indentation rule misses it.
+WRAPPED_SPAN = (
+    "Read it with `amq-squad evidence list --me H --root ROOT\n"
+    "--last 5 --json` before the done report.\n"
+)
+
+
 class GatePassesOnCleanTree(unittest.TestCase):
     def test_clean_tree_passes(self):
         if not BINARY.exists():
@@ -83,10 +91,10 @@ class GateDetectsDrift(unittest.TestCase):
 
     def test_renamed_verb_fails(self):
         target = SKILLS / "amq-squad" / "references" / "team-rules-template.md"
-        with MutatedSkill(target, "amq-squad doctor", "amq-squad doctorq"):
+        with MutatedSkill(target, "amq-squad task claim", "amq-squad taskq claim"):
             result = run_gate()
         self.assertEqual(result.returncode, 1, "a renamed verb must fail the gate")
-        self.assertIn("doctorq", result.stderr)
+        self.assertIn("taskq", result.stderr)
 
     def test_renamed_verb_with_uppercase_fails_rather_than_vanishing(self):
         """The bug this gate nearly shipped with.
@@ -97,7 +105,7 @@ class GateDetectsDrift(unittest.TestCase):
         no gate, because the loss is indistinguishable from agreement.
         """
         target = SKILLS / "cli" / "SKILL.md"
-        with MutatedSkill(target, "amq-squad evidence run", "amq-squad evidenceX run"):
+        with MutatedSkill(target, "amq-squad evidence list", "amq-squad evidenceX list"):
             result = run_gate()
         self.assertEqual(result.returncode, 1, "an unparseable verb must fail, not vanish")
         self.assertIn("evidenceX", result.stderr)
@@ -105,14 +113,15 @@ class GateDetectsDrift(unittest.TestCase):
     def test_unknown_flag_fails_on_an_exhaustive_surface(self):
         """Refutation is only legitimate where the surface is COMPLETE.
 
-        `task add` uses Go's default flag printer, which enumerates every flag,
-        so absence there is genuine drift.
+        `verify merge` uses Go's default flag printer, which enumerates every flag,
+        so absence there is genuine drift. (In v2 this was `task add`; the 3.0 task
+        verb prints a hand-written usage block, which is illustrative.)
         """
         with tempfile.TemporaryDirectory() as tmp:
             for src in sorted(SKILLS.rglob("*.md")):
                 (Path(tmp) / src.name).write_text(src.read_text())
             (Path(tmp) / "zz_exhaustive.md").write_text(
-                "```\namq-squad task add --title T --session S --nope-not-a-flag\n```\n"
+                "```\namq-squad verify merge --repository R --pr 1 --nope-not-a-flag\n```\n"
             )
             result = subprocess.run(
                 [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
@@ -124,23 +133,23 @@ class GateDetectsDrift(unittest.TestCase):
         """The counter-case: Go's single-dash listing must be READ, or every real
         flag on such a command would be reported as drift. This is finding #10."""
         gate = load_gate()
-        known, exhaustive = gate.flag_surface(str(BINARY), "task", "add")
-        self.assertTrue(exhaustive, "task add's help is a complete definition list")
-        for real in ("--title", "--session", "--project"):
+        known, exhaustive = gate.flag_surface(str(BINARY), "verify", "merge")
+        self.assertTrue(exhaustive, "verify merge's help is a complete definition list")
+        for real in ("--repository", "--pr", "--root"):
             self.assertIn(real, known, f"{real} is accepted and must be readable from help")
 
     def test_absent_flag_on_an_illustrative_surface_does_not_fail(self):
-        """Confirm-only. `start` documents an illustrative usage block rather
+        """Confirm-only. `status` documents an illustrative usage block rather
         than an exhaustive flag list, so absence of an accepted long-form flag
         from that block proves nothing and must not fail the reference."""
         gate = load_gate()
-        known, exhaustive = gate.flag_surface(str(BINARY), "start", None)
-        self.assertFalse(exhaustive, "start's usage block is illustrative, not exhaustive")
+        known, exhaustive = gate.flag_surface(str(BINARY), "status", None)
+        self.assertFalse(exhaustive, "status's usage block is illustrative, not exhaustive")
         with tempfile.TemporaryDirectory() as tmp:
             for src in sorted(SKILLS.rglob("*.md")):
                 (Path(tmp) / src.name).write_text(src.read_text())
             (Path(tmp) / "zz_illustrative.md").write_text(
-                "```\namq-squad start --project P --session S --unlisted-but-maybe-real\n```\n"
+                "```\namq-squad status --project P --session S --unlisted-but-maybe-real\n```\n"
             )
             result = subprocess.run(
                 [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
@@ -164,14 +173,20 @@ class ExtractionRules(unittest.TestCase):
         self.assertNotIn("for", {verb for verb, _ in found})
 
     def test_inline_span_wrapping_across_lines_is_extracted(self):
-        """cli/SKILL.md names `amq-squad evidence run TASK --profile ...` across a line break.
+        """An inline span wrapped across a line break must be extracted whole.
 
         A newline-hostile inline pattern misses it SILENTLY, which is the dangerous
-        kind of miss: the reference is simply never checked.
+        kind of miss: the reference is simply never checked. The 3.0 skills no longer
+        wrap a span (v2's `evidence run` span did), so the shape is pinned with a
+        probe that is the only source of the post-wrap flags.
         """
-        found = self.gate.extract([SKILLS / "cli" / "SKILL.md"])
-        self.assertIn(("evidence", "run"), found, "wrapped inline span was not extracted")
-        self.assertIn("--profile", found[("evidence", "run")])
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "x.md"
+            probe.write_text(WRAPPED_SPAN)
+            found = self.gate.extract([probe])
+        self.assertIn(("evidence", "list"), found, "wrapped inline span was not extracted")
+        self.assertIn("--me", found[("evidence", "list")])
+        self.assertIn("--last", found[("evidence", "list")])
 
     def test_leading_flag_is_not_treated_as_a_verb(self):
         """`amq-squad --version` names no verb.
@@ -205,7 +220,7 @@ class AntiVacuity(unittest.TestCase):
             "loudly rather than empty the surface silently",
         )
         # Spot-check real verbs so a parser that returns plausible garbage fails.
-        for verb in ("doctor", "status", "start", "team"):
+        for verb in ("doctor", "status", "task", "team"):
             self.assertIn(verb, surface)
 
     def test_floors_are_enforced_not_decorative(self):
@@ -290,7 +305,7 @@ class SecondReviewFindings(unittest.TestCase):
         target = SKILLS / "wizard" / "references" / "pointer-stub-template.md"
         for bogus in ("synchronise", "syncX"):
             with self.subTest(sub=bogus):
-                with MutatedSkill(target, "amq-squad team sync --apply", f"amq-squad team {bogus} --apply"):
+                with MutatedSkill(target, "amq-squad team apply", f"amq-squad team {bogus}"):
                     result = run_gate()
                 self.assertEqual(result.returncode, 1, f"'team {bogus}' must fail the gate")
                 self.assertIn(bogus, result.stderr)
@@ -305,24 +320,30 @@ class SecondReviewFindings(unittest.TestCase):
         """`rest` stopped at the first newline, so every flag after a wrap was
         silently dropped. The wrap in cli/SKILL.md has NO leading whitespace on the
         continuation line, so an indentation-based rule missed it too."""
-        found = self.gate.extract([SKILLS / "cli" / "SKILL.md"])
-        flags = found[("evidence", "run")]
-        self.assertIn("--subject", flags, "a flag AFTER the wrap must be extracted")
-        self.assertIn("--attempt-id", flags, "a flag further after the wrap must be extracted")
-        self.assertIn("--profile", flags, "flags before the wrap must still be extracted")
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "x.md"
+            probe.write_text(WRAPPED_SPAN)
+            found = self.gate.extract([probe])
+        flags = found[("evidence", "list")]
+        self.assertIn("--last", flags, "a flag AFTER the wrap must be extracted")
+        self.assertIn("--json", flags, "a flag further after the wrap must be extracted")
+        self.assertIn("--root", flags, "flags before the wrap must still be extracted")
 
     def test_post_wrap_flag_is_extracted_and_refuted_where_possible(self):
         """Extraction across a wrap is proven separately from refutation, because
         refutation now requires an exhaustive surface. The wrap fix is what makes the
         flag visible at all; whether it can be REFUTED depends on the surface kind.
         """
-        found = self.gate.extract([SKILLS / "cli" / "SKILL.md"])
-        self.assertIn("--subject", found[("evidence", "run")], "post-wrap flag must be extracted")
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "x.md"
+            probe.write_text(WRAPPED_SPAN)
+            found = self.gate.extract([probe])
+        self.assertIn("--last", found[("evidence", "list")], "post-wrap flag must be extracted")
         with tempfile.TemporaryDirectory() as tmp:
             for src in sorted(SKILLS.rglob("*.md")):
                 (Path(tmp) / src.name).write_text(src.read_text())
             (Path(tmp) / "zz_wrap.md").write_text(
-                "```\namq-squad task add --title T\n    --session S --bogus-after-wrap\n```\n"
+                "```\namq-squad verify merge --repository R\n    --pr 1 --bogus-after-wrap\n```\n"
             )
             result = subprocess.run(
                 [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
@@ -422,20 +443,23 @@ class ThirdRoundFindings(unittest.TestCase):
         self.assertNotIn("totallybogus", subs)
 
     def test_error_list_only_subcommands_resolve(self):
-        """The UNION proof. team's usage block lists 8 subcommands; lead, autonomous
-        and shared-cwd-exception appear ONLY in the error list. Using either source
+        """The UNION proof. task's usage block lists its fourteen subcommands; the
+        aliases ls and complete appear ONLY in the error list. Using either source
         alone would fail VALID references -- fail-closed on incomplete data invents
-        drift, which is a defect in the opposite direction from fail-open."""
-        subs, observable = self.gate.subcommand_surface(str(BINARY), "team")
+        drift, which is a defect in the opposite direction from fail-open. (v2 proved
+        this on team's lead, autonomous and shared-cwd-exception, which 3.0 deleted.)"""
+        subs, observable = self.gate.subcommand_surface(str(BINARY), "task")
         self.assertTrue(observable)
-        for only_in_error_list in ("lead", "autonomous", "shared-cwd-exception"):
+        usage = self.gate.run_help(str(BINARY), "task")
+        for only_in_error_list in ("ls", "complete"):
+            self.assertNotIn(f"amq-squad task {only_in_error_list}", usage, "fixture: must be absent from usage")
             self.assertIn(only_in_error_list, subs, f"{only_in_error_list} must resolve")
-        for in_usage_block in ("init", "sync", "member"):
+        for in_usage_block in ("add", "claim", "widen"):
             self.assertIn(in_usage_block, subs)
 
     def test_subcommands_resolve_for_every_form_of_verb(self):
         """Three surviving verb shapes expose authoritative subcommand lists."""
-        for verb, expected in (("evidence", "run"), ("team", "sync"), ("worktree", "inspect")):
+        for verb, expected in (("evidence", "list"), ("team", "propose"), ("worktree", "inspect")):
             with self.subTest(verb=verb):
                 subs, observable = self.gate.subcommand_surface(str(BINARY), verb)
                 self.assertTrue(observable, f"{verb} surface must be observable")
@@ -504,6 +528,50 @@ class ThirdRoundFindings(unittest.TestCase):
         self.assertIn("--me", flags)
         self.assertNotIn("--wrong-flag", flags, "a wrapped command's flags must not be attributed")
         self.assertNotIn("--", flags)
+
+    # 3.0: a positional path is not a subcommand ---------------------------
+    def test_positional_path_verb_is_observable_and_checked_as_the_verb(self):
+        """`amq-squad trust P`: trust takes one repository path and no subcommand.
+
+        Its probe answers `error: trust takes exactly one repository path; got 2`,
+        which matched neither contract, so the gate could not observe trust and
+        refused to render a verdict for a correct reference.
+        """
+        self.gate._SUB_SURFACE_CACHE.clear()
+        subs, observable = self.gate.subcommand_surface(str(BINARY), "trust")
+        self.assertTrue(observable)
+        self.assertEqual(subs, set())
+        self.assertIn((str(BINARY), "trust"), self.gate._POSITIONAL_VERBS)
+
+    def test_positional_contract_is_bound_to_the_probed_verb(self):
+        """An error naming another verb must not declare this one positional."""
+        self.gate._SUB_SURFACE_CACHE.clear()
+        self.gate._POSITIONAL_VERBS.clear()
+        original = self.gate.run_help
+        self.gate.run_help = lambda *a, **k: "error: other takes exactly one path; got 2"
+        try:
+            subs, observable = self.gate.subcommand_surface("binary", "fake")
+        finally:
+            self.gate.run_help = original
+            self.gate._SUB_SURFACE_CACHE.clear()
+        self.assertFalse(observable)
+        self.assertNotIn(("binary", "fake"), self.gate._POSITIONAL_VERBS)
+
+    def test_flags_of_a_positional_verb_are_still_refuted_where_possible(self):
+        """The positional rule must not make the verb permissive: a bogus
+        subcommand-shaped token on a subcommand verb still fails."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for src in sorted(SKILLS.rglob("*.md")):
+                (Path(tmp) / src.name).write_text(src.read_text())
+            (Path(tmp) / "zz_positional.md").write_text(
+                "```\namq-squad trust .\namq-squad team trustx\n```\n"
+            )
+            result = subprocess.run(
+                [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
+            )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("trustx", result.stderr)
+        self.assertNotIn("amq-squad trust .", result.stderr)
 
     # Self-exposed 9: whitespace crossing newlines ---------------------------
     def test_usage_parse_does_not_cross_lines(self):
@@ -578,9 +646,9 @@ class FourthRoundFindings(unittest.TestCase):
 
     def test_go_definition_list_is_still_read(self):
         """Section scoping must not break the exhaustive case it exists to serve."""
-        known, exhaustive = self.gate.flag_surface(str(BINARY), "task", "add")
+        known, exhaustive = self.gate.flag_surface(str(BINARY), "verify", "merge")
         self.assertTrue(exhaustive)
-        for real in ("--title", "--session", "--project"):
+        for real in ("--repository", "--pr", "--root"):
             self.assertIn(real, known)
 
     def test_bogus_global_flag_is_unverifiable_not_refuted(self):
@@ -798,12 +866,14 @@ class UnknownSubcommandContract(unittest.TestCase):
         self.assertNotIn("alpha", subs, "another verb's error must not populate this surface")
         self.assertFalse(observable)
 
-    def test_amq_resolves_all_fourteen(self):
+    def test_amq_resolves_its_subcommands(self):
         """The specific regression: `amq` was unobservable, so documenting any of its
-        fourteen surviving subcommands failed the build."""
+        subcommands failed the build. v2 had fourteen; 3.0 keeps env and route, and
+        `amq --help` is itself an unknown-subcommand error, so the canonical error
+        list is the only source."""
         subs, observable = self.gate.subcommand_surface(str(BINARY), "amq")
         self.assertTrue(observable)
-        self.assertGreaterEqual(len(subs), 14, f"expected all 14 amq subcommands, got {sorted(subs)}")
+        self.assertEqual(subs, {"env", "route"}, f"expected amq's 3.0 subcommands, got {sorted(subs)}")
 
     def test_documenting_an_amq_subcommand_no_longer_blocks_the_build(self):
         """End to end: this is what the finding actually cost."""
@@ -811,7 +881,7 @@ class UnknownSubcommandContract(unittest.TestCase):
             for src in sorted(SKILLS.rglob("*.md")):
                 (Path(tmp) / src.name).write_text(src.read_text())
             (Path(tmp) / "zz_amq.md").write_text(
-                "```\namq-squad amq drain --include-body\namq-squad amq route explain\n```\n"
+                "```\namq-squad amq env --json\namq-squad amq route --to qa --json\n```\n"
             )
             result = subprocess.run(
                 [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
