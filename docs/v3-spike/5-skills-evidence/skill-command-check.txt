@@ -1,0 +1,150 @@
+go build -ldflags "-X main.version=v2.31.0-591-g2bb0f15d-dirty" -o amq-squad ./cmd/amq-squad
+skills name 48 command(s); all verb/subcommand paths resolve, 131 of 166 flag(s) verified
+flags NOT verifiable from --help for 35 command(s) (help errors without required positionals, or delegates its flag set):
+  - amq-squad launch --help
+  - amq-squad release prepare --project
+  - amq-squad release prepare --session
+  - amq-squad role draft --project
+  - amq-squad role draft --purpose
+  - amq-squad roles --json
+  - amq-squad task add --project
+  - amq-squad task add --session
+  - amq-squad task block --project
+  - amq-squad task block --session
+  - amq-squad task cancel --project
+  - amq-squad task cancel --session
+  - amq-squad task claim --project
+  - amq-squad task claim --session
+  - amq-squad task done --project
+  - amq-squad task done --session
+  - amq-squad task fail --project
+  - amq-squad task fail --session
+  - amq-squad task list --project
+  - amq-squad task list --session
+  - amq-squad task reconcile --project
+  - amq-squad task reconcile --session
+  - amq-squad task release --project
+  - amq-squad task release --session
+  - amq-squad task renew --project
+  - amq-squad task renew --session
+  - amq-squad task reset --project
+  - amq-squad task reset --session
+  - amq-squad task set --project
+  - amq-squad task set --session
+  - amq-squad task show --project
+  - amq-squad task show --session
+  - amq-squad team apply --session
+  - amq-squad team propose --session
+  - amq-squad team propose --worktree
+test_floors_are_enforced_not_decorative (__main__.AntiVacuity.test_floors_are_enforced_not_decorative) ... ok
+test_gate_fails_when_no_skills_are_found (__main__.AntiVacuity.test_gate_fails_when_no_skills_are_found)
+An empty skills tree must be an ERROR, not a pass. ... ok
+test_gate_fails_when_skills_name_too_few_commands (__main__.AntiVacuity.test_gate_fails_when_skills_name_too_few_commands)
+A tree that names almost nothing must trip the floor rather than pass. ... ok
+test_help_parser_extracts_a_sane_verb_count (__main__.AntiVacuity.test_help_parser_extracts_a_sane_verb_count) ... ok
+test_inline_span_wrapping_across_lines_is_extracted (__main__.ExtractionRules.test_inline_span_wrapping_across_lines_is_extracted)
+An inline span wrapped across a line break must be extracted whole. ... ok
+test_leading_flag_is_not_treated_as_a_verb (__main__.ExtractionRules.test_leading_flag_is_not_treated_as_a_verb)
+`amq-squad --version` names no verb. ... ok
+test_prose_mid_sentence_is_not_a_command (__main__.ExtractionRules.test_prose_mid_sentence_is_not_a_command)
+"This project uses amq-squad for agent team coordination" is English. ... ok
+test_bogus_global_flag_is_unverifiable_not_refuted (__main__.FourthRoundFindings.test_bogus_global_flag_is_unverifiable_not_refuted)
+Encodes the MODEL, not merely a nonzero exit. ... ok
+test_flag_surface_ignores_prose_and_examples (__main__.FourthRoundFindings.test_flag_surface_ignores_prose_and_examples)
+Asserts the NEGATIVE, which the previous version never did. ... ok
+test_floor_guards_the_verifiable_set_too (__main__.FourthRoundFindings.test_floor_guards_the_verifiable_set_too) ... ok
+test_floor_uses_productions_ceiling_not_pythons (__main__.FourthRoundFindings.test_floor_uses_productions_ceiling_not_pythons)
+Exercises required_verified(), at inputs where ceil and int DIVERGE. ... ok
+test_floors_sit_at_committed_coverage (__main__.FourthRoundFindings.test_floors_sit_at_committed_coverage)
+Floors set far below real coverage permitted a 13 -> 5 collapse at exit 0. ... ok
+test_go_definition_list_is_still_read (__main__.FourthRoundFindings.test_go_definition_list_is_still_read)
+Section scoping must not break the exhaustive case it exists to serve. ... ok
+test_hash_inside_quotes_is_not_a_comment (__main__.FourthRoundFindings.test_hash_inside_quotes_is_not_a_comment)
+`--note "issue #123" --force` lost --force to a blunt comment strip. ... ok
+test_later_single_dash_token_is_not_dropped (__main__.FourthRoundFindings.test_later_single_dash_token_is_not_dropped)
+`team sync -apply` passed with no claimed flag: the collector retained only ... ok
+test_main_exits_2_when_the_verifiable_set_collapses (__main__.FourthRoundFindings.test_main_exits_2_when_the_verifiable_set_collapses)
+The main()-level exit-code assertion, asked for twice. Blind the flag ... ok
+test_one_span_two_commands_both_extracted (__main__.FourthRoundFindings.test_one_span_two_commands_both_extracted)
+The earlier test used TWO spans, so it missed this: after a span is ... ok
+test_real_trailing_comment_is_still_stripped (__main__.FourthRoundFindings.test_real_trailing_comment_is_still_stripped) ... ok
+test_absent_flag_on_an_illustrative_surface_does_not_fail (__main__.GateDetectsDrift.test_absent_flag_on_an_illustrative_surface_does_not_fail)
+Confirm-only. `status` documents an illustrative usage block rather ... ok
+test_real_flags_on_an_exhaustive_surface_verify (__main__.GateDetectsDrift.test_real_flags_on_an_exhaustive_surface_verify)
+The counter-case: Go's single-dash listing must be READ, or every real ... ok
+test_renamed_verb_fails (__main__.GateDetectsDrift.test_renamed_verb_fails) ... ok
+test_renamed_verb_with_uppercase_fails_rather_than_vanishing (__main__.GateDetectsDrift.test_renamed_verb_with_uppercase_fails_rather_than_vanishing)
+The bug this gate nearly shipped with. ... ok
+test_unknown_flag_fails_on_an_exhaustive_surface (__main__.GateDetectsDrift.test_unknown_flag_fails_on_an_exhaustive_surface)
+Refutation is only legitimate where the surface is COMPLETE. ... ok
+test_clean_tree_passes (__main__.GatePassesOnCleanTree.test_clean_tree_passes) ... ok
+test_reports_what_it_verified (__main__.GatePassesOnCleanTree.test_reports_what_it_verified) ... ok
+test_entries_carry_a_documented_reason (__main__.NotACommandListIsNotStale.test_entries_carry_a_documented_reason) ... ok
+test_every_entry_still_appears_in_the_skills (__main__.NotACommandListIsNotStale.test_every_entry_still_appears_in_the_skills) ... ok
+test_bash_permission_string_is_checked (__main__.SecondReviewFindings.test_bash_permission_string_is_checked)
+A command inside a Bash(...) allowlist is still checked. ... ok
+test_flag_coverage_floor_exists (__main__.SecondReviewFindings.test_flag_coverage_floor_exists)
+Verbs were floored; flags were not, so a flag-help format change would ... ok
+test_flags_after_a_line_wrap_are_extracted (__main__.SecondReviewFindings.test_flags_after_a_line_wrap_are_extracted)
+`rest` stopped at the first newline, so every flag after a wrap was ... ok
+test_lone_global_flag_is_still_accepted (__main__.SecondReviewFindings.test_lone_global_flag_is_still_accepted)
+`amq-squad --version` names no verb and must not be reported as drift. ... ok
+test_malformed_verb_with_leading_dash_is_reported (__main__.SecondReviewFindings.test_malformed_verb_with_leading_dash_is_reported)
+Blanket-skipping any leading-dash token was the vanishing-reference class ... ok
+test_post_wrap_flag_is_extracted_and_refuted_where_possible (__main__.SecondReviewFindings.test_post_wrap_flag_is_extracted_and_refuted_where_possible)
+Extraction across a wrap is proven separately from refutation, because ... ok
+test_real_subcommand_still_passes (__main__.SecondReviewFindings.test_real_subcommand_still_passes)
+The fix must not reject valid subcommands. ... ok
+test_same_verb_bare_and_with_subcommand_does_not_crash (__main__.SecondReviewFindings.test_same_verb_bare_and_with_subcommand_does_not_crash)
+Sorting raw (verb, sub) tuples raised TypeError when one verb appeared ... ok
+test_unknown_subcommand_fails (__main__.SecondReviewFindings.test_unknown_subcommand_fails)
+Only the top-level verb used to be verified, so `team syncX` passed ... ok
+test_zero_verified_flags_fails_when_flags_were_claimed (__main__.SecondReviewFindings.test_zero_verified_flags_fails_when_flags_were_claimed) ... ok
+test_error_list_only_subcommands_resolve (__main__.ThirdRoundFindings.test_error_list_only_subcommands_resolve)
+The UNION proof. task's usage block lists its fourteen subcommands; the ... ok
+test_flag_floor_is_ratio_based_not_exactly_zero (__main__.ThirdRoundFindings.test_flag_floor_is_ratio_based_not_exactly_zero)
+An exactly-zero floor was bypassed by a mass drop or by one verified flag. ... ok
+test_flags_after_double_dash_belong_to_the_wrapped_command (__main__.ThirdRoundFindings.test_flags_after_double_dash_belong_to_the_wrapped_command)
+`evidence run ... -- make ci`: make's flags are not amq-squad's, and `--` ... ok
+test_flags_of_a_positional_verb_are_still_refuted_where_possible (__main__.ThirdRoundFindings.test_flags_of_a_positional_verb_are_still_refuted_where_possible)
+The positional rule must not make the verb permissive: a bogus ... ok
+test_global_flags_are_parsed_from_real_top_level_help (__main__.ThirdRoundFindings.test_global_flags_are_parsed_from_real_top_level_help)
+flag_surface(binary, "", None) ran `amq-squad "" --help`, returned an empty ... ok
+test_inline_shell_comment_is_not_a_subcommand (__main__.ThirdRoundFindings.test_inline_shell_comment_is_not_a_subcommand)
+`amq-squad doctor   # AMQ version, tmux` extracted `#` as a SUBCOMMAND, ... ok
+test_malformed_flag_is_reported_not_dropped (__main__.ThirdRoundFindings.test_malformed_flag_is_reported_not_dropped) ... ok
+test_none_safe_sort_is_actually_reached (__main__.ThirdRoundFindings.test_none_safe_sort_is_actually_reached)
+The earlier regression test exited on the MIN_COMMANDS floor before ever ... ok
+test_positional_contract_is_bound_to_the_probed_verb (__main__.ThirdRoundFindings.test_positional_contract_is_bound_to_the_probed_verb)
+An error naming another verb must not declare this one positional. ... ok
+test_positional_path_verb_is_observable_and_checked_as_the_verb (__main__.ThirdRoundFindings.test_positional_path_verb_is_observable_and_checked_as_the_verb)
+`amq-squad trust P`: trust takes one repository path and no subcommand. ... ok
+test_single_dash_token_after_verb_is_not_discarded (__main__.ThirdRoundFindings.test_single_dash_token_after_verb_is_not_discarded) ... ok
+test_subcommand_surface_is_queried_not_guessed (__main__.ThirdRoundFindings.test_subcommand_surface_is_queried_not_guessed)
+Per-path error interpretation proved `doctor totallybogus` valid, because ... ok
+test_subcommands_resolve_for_every_form_of_verb (__main__.ThirdRoundFindings.test_subcommands_resolve_for_every_form_of_verb)
+Three surviving verb shapes expose authoritative subcommand lists. ... ok
+test_two_commands_in_one_span_stay_separate (__main__.ThirdRoundFindings.test_two_commands_in_one_span_stay_separate)
+Unconditional span collapse merged them, inventing drift. ... ok
+test_usage_parse_does_not_cross_lines (__main__.ThirdRoundFindings.test_usage_parse_does_not_cross_lines)
+`\s+` matches NEWLINES, so a usage line ending at the verb ran into the ... ok
+test_a_bogus_amq_subcommand_still_fails (__main__.UnknownSubcommandContract.test_a_bogus_amq_subcommand_still_fails)
+The counter-case: making amq observable must not make it permissive. ... ok
+test_a_flag_list_is_not_a_subcommand_list (__main__.UnknownSubcommandContract.test_a_flag_list_is_not_a_subcommand_list)
+"; use --json, --verbose" yielded subcommands {json, verbose}. ... ok
+test_amq_resolves_its_subcommands (__main__.UnknownSubcommandContract.test_amq_resolves_its_subcommands)
+The specific regression: `amq` was unobservable, so documenting any of its ... ok
+test_an_error_about_a_different_verb_does_not_populate_this_verb (__main__.UnknownSubcommandContract.test_an_error_about_a_different_verb_does_not_populate_this_verb)
+Verb binding: the error names its verb, so it must match the probed one. ... ok
+test_canonical_complete_list_resolves_without_usage_help (__main__.UnknownSubcommandContract.test_canonical_complete_list_resolves_without_usage_help)
+Prove the canonical parser itself, with the usage source disabled. ... ok
+test_documenting_an_amq_subcommand_no_longer_blocks_the_build (__main__.UnknownSubcommandContract.test_documenting_an_amq_subcommand_no_longer_blocks_the_build)
+End to end: this is what the finding actually cost. ... ok
+test_legacy_wordings_are_not_a_second_contract (__main__.UnknownSubcommandContract.test_legacy_wordings_are_not_a_second_contract) ... ok
+test_prose_mentioning_a_subcommand_is_not_an_authoritative_list (__main__.UnknownSubcommandContract.test_prose_mentioning_a_subcommand_is_not_an_authoritative_list)
+The false-observation door the first generalization opened. ... ok
+
+----------------------------------------------------------------------
+Ran 60 tests in 6.627s
+
+OK

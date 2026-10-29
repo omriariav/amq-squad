@@ -41,31 +41,31 @@ FRONTMATTER = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S
 CLAUDE_META = {
     "wizard": {
         "allowed-tools": "Bash, Read, Write, Edit, MultiEdit, Glob, Grep, WebFetch",
-        "argument-hint": "[request | goal | brief | rules | roles | profile | launch]",
+        "argument-hint": "[goal | roles | propose | apply | brief | launch]",
         "user-invocable": True,
         "trigger": "/wizard",
     },
     "cli": {
         "allowed-tools": "Bash, Read, Write, Edit, MultiEdit, Glob, Grep",
-        "argument-hint": "[status | doctor | task | gate | resume | down | amq]",
+        "argument-hint": "[status | doctor | task | evidence | guard | gate | amq | verify]",
         "user-invocable": True,
         "trigger": "/cli",
     },
     "orchestrator": {
         "allowed-tools": "Bash, Read, Write, Edit, Glob, Grep",
-        "argument-hint": "[compose | start | dispatch | status | review | recover]",
+        "argument-hint": "[status | plan | dispatch | widen | merge-train | gate | release | recover]",
         "user-invocable": True,
         "trigger": "/orchestrator",
     },
     "amq-squad": {
         "allowed-tools": "Bash, Read, Write, Edit, MultiEdit, Glob, Grep",
-        "argument-hint": "[drain | review | handoff | status | start | focus | send | resume | down | doctor]",
+        "argument-hint": "[setup | status | task | gate | lead]",
         "user-invocable": True,
         "trigger": "/amq-squad",
     },
     "amq-squad-orchestrator": {
         "allowed-tools": "Bash, Read, Write, Edit, Glob, Grep",
-        "argument-hint": "[compose | start | dispatch | status | coordinate | recover | example]",
+        "argument-hint": "[status | dispatch | recover]",
         "user-invocable": True,
         "trigger": "/amq-squad-orchestrator",
     },

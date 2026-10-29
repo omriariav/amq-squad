@@ -1,58 +1,63 @@
-# Wizard readiness and launch preflight
+# Readiness and launch preflight
 
-The binary-owned wizard begins with a read-only readiness stage. It resolves
-the target project and effective global drafter configuration, reports the
-config path and source, and checks the AMQ, tmux, and selected agent binaries.
-It then builds the exact profile or reusable-profile plan that the combined
-default-No review will show. Do not assemble a separate setup/doctor sequence
-to certify the launch.
+Setup starts with a read-only readiness pass. Do not certify a launch from a
+hand-assembled checklist; read what `doctor`, `team check` and the launch itself
+report.
 
-After approval, the existing start primitive performs ordinary preflight
-against the reviewed roster and current external runtime under the launch lock
-before it spawns. A global mailbox is not implicit authority for a Git
-worktree, and a reviewed plan is not a substitute for that live revalidation.
+```sh
+# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
+amq-squad doctor --project P
+amq-squad team check --project P
+```
+
+## What doctor checks
+
+- the AMQ version and launch API (0.116.2 or later for `amq`, `amq-remote` and
+  `amq-owner-sign`), the amq-squad on PATH against this build, the AMQ identity pin;
+- the tools on PATH (claude, codex, the built-in pi, grok, cursor-agent, ollama, amq,
+  amq-remote, tmux, gh) with their versions against the versions the launch API
+  verified, and their login state;
+- RAM and GPU, the registry entries, the full re-hash of the embedded pi runtime;
+- project roots codex-cli does not trust, the Codex notify fan-out line, exported key
+  names in the shell profile, the owner's global agent config against the preflight
+  copy, and the grants file mode;
+- the embedded squad.yaml golden (`squad_yaml_golden_drift` when the parser drifted).
+
+A missing optional tool is one status line, not a failure. Without `--write-registry`,
+`--probe` or `--fix` doctor writes nothing, and it exits non-zero when any check is
+`fail`. `doctor --json` is the same rows as a JSON envelope.
 
 ## Drafter readiness
 
-The effective resolver chooses the complete profile block when present,
-otherwise the complete global block, otherwise `in_session`; it never merges
-fields between layers. A configured chain tries only its explicit order.
+`brief --goal`, `role draft` and `team draft-rules` share one drafter resolution: the
+user config `~/.config/amq-squad/config.json` (or `AMQ_SQUAD_CONFIG`), else the
+in-session path. The in-session path prints the filled prompt and stages nothing;
+complete it in the session and seed the result (`brief --seed-from file:<path>`).
+A drafter failure is not a success: nothing is written.
 
-Role draft, custom team-rules prose, and a missing goal-first brief print the
-resolved config source plus every attempt and fall-through. Missing binary,
-credentials, timeout, non-zero exit, empty or oversized output, and validation
-failure are not successes. `on_failure: error` fails closed. The default
-`in_session` fallback prints a filled prompt and stops before mutation.
+## What the launch checks
 
-## What preflight checks
+`launch` sends one AMQ launch request for the squad. It stops, or a seat refuses to start, when:
 
-- the project, profile, session, and canonical AMQ root resolve unambiguously;
-- each configured binary exists and accepts its selected model/trust options;
-- mutation-capable actors satisfy the worktree-isolation rule;
-- launch records are valid and do not describe multiple live matches;
-- a launcher-stamped unmanaged pane will not be duplicated;
-- the tmux backend and target are available.
-- a generated goal-first brief passed exact title and six-section validation
-  before any brief, namespace, lock, or pane mutation.
+- a required action (AMQ's trust confirmation, for example) needs an answer: it
+  prints the action ids and exits 10; rerun with `--decision ACTION_ID=CHOICE` only
+  on the owner's answer;
+- a seat's role file, rules digest or launch record does not verify in `seat-exec`
+  (one stderr line naming the reason code; `identity_incomplete` exits 14).
 
-These checks observe current inputs and external runtime. They do not produce a
-digest, token, accepted generation, or second record that certifies the roster.
+The launch does not check worktree isolation: one worktree per mutation-capable seat
+is the squad's rule (see `worktrees.md`), so check the seat list before launching.
+
+A seat is reported up only after seat-exec proved its identity with one read-only
+AMQ check; nothing is drained.
 
 ## Reading failures
 
-Use the exact class and target in the error:
-
-| Class | Meaning | Safe response |
+| Code | Meaning | Safe response |
 |---|---|---|
-| `duplicate_live` | more than one live record matches | inspect the named records; do not elect a winner |
-| `record_invalid` | a selected launch record is inconsistent | inspect that record and the reported field |
-| `unmanaged` | a launcher-stamped pane exists without a launch record | inspect the named pane before any new launch |
-| `stopped` | the recorded process or pane is no longer live | rerun the same wizard invocation to reconcile it |
-| `live/config-diverged` | the actor is live but current roster config differs | keep it live and route recovery to `amq-squad:cli` |
-| drafter chain exhausted | every configured backend failed | inspect each recorded attempt; fix the first intended backend or complete the filled prompt in-session |
-| generated prose invalid | output failed deterministic structure/content checks | do not write it; fix the backend/prompt inputs and generate a fresh preview |
-
-After an interrupted approved launch, rerun the same wizard invocation. It
-reuses the reviewed artifacts and lets start reconciliation keep verified live
-actors while rolling the partial launch forward; it does not require manual
-namespace cleanup.
+| `squad_yaml_invalid` | a parse or validation error, the key named | fix the draft and propose again |
+| `grants_invalid` | a key widens the owner grant or is owner-only | remove it; squad.yaml only narrows |
+| `squad_yaml_schema_unsupported` | not schema 1 | 3.0 reads schema 1 only |
+| `squad_yaml_digest_mismatch` | the options changed since the proposal | run `team propose` again and get a fresh approval |
+| `squad_yaml_changed` | squad.yaml was edited on disk since the proposal | run `team propose`; the edit is the diff the owner decides on |
+| launch exit 10 | a required action is unanswered | relay the action ids to the owner; never answer it yourself |

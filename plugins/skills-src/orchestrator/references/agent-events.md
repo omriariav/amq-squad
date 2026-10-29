@@ -2,33 +2,34 @@
 
 ## `status` is the operator projection
 
-```
-amq-squad status --session S --json
+```sh
+amq-squad status --project P --session S --json
 ```
 
-`status` projects live launch records, task state, inbox state, and open or aged
-operator gates without becoming mutation authority. Read the complete JSON
-snapshot rather than reconstructing state from pane titles or message prose.
+`status` reads the task store, the seat mailboxes and launch records, the evidence
+ledger, the gate store and the scheduler state, and prints the status contract
+(schema 1). It never writes and is never mutation authority. Read the complete JSON
+document rather than reconstructing state from pane titles or message prose. A read
+problem is one line in `warnings[]`; a partial status is still valid.
 
 ## Progress travels over durable AMQ
 
-Workers push ACK, meaningful progress, blockers, review requests, and DONE on the
-durable task thread. Pane delivery is wake/fallback only. A fresh status report
-with matching profile/session/task/actor context is evidence that work is moving;
-a claimed task without current process or message evidence is only fallback
-context, not proof that the worker is healthy.
+Seats push ACK, meaningful progress, blockers, review requests, and DONE on the
+durable task thread. Pane delivery is never the channel. Liveness comes from the
+launch record, presence and the evidence ledger: a seat row is `online` when one of
+them is live inside the freshness window, `stale` when signals exist but none is
+live, and `unknown` with no signal at all. A claimed task without current evidence is
+only context, not proof that the seat is healthy.
 
 ## Park instead of polling
 
-After one status read, act or park/end the turn. Do not create a hand-written
-sleep loop or block the visible lead pane waiting for change. `start` establishes
-a namespace-scoped notifier that nudges the recorded pane for pending AMQ work,
-including messages that arrived while the notifier was absent. `doctor` diagnoses
-that notifier contract.
+After one status read, act or park/end the turn. Do not create a hand-written sleep
+loop or block the lead waiting for change. AMQ wake delivers pending messages to the
+seat; `doctor` diagnoses the host when wake health is suspect.
 
-## Operator attention remains non-authorizing
+## Owner attention remains non-authorizing
 
-Open and aged gates surface through `status`; configured operator watcher plumbing
-may emit attention outside the model loop. Those signals never approve, answer,
-clear, or poll a gate. Only the matching durable operator answer can resolve a
-human decision.
+Open typed gates and refusals routed to the owner land in the `needs_you` bucket and
+in `attention[]`. The operator session sees every squad's open gates in one list
+(`operator inbox`). Those signals never approve, answer or clear a gate. Only the
+owner's signed answer, verified by the core, resolves a typed gate.

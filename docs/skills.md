@@ -1,19 +1,21 @@
 # Using the amq-squad skills
 
 amq-squad ships the same three authoritative skills to the Claude Code and
-Codex marketplaces: `amq-squad:wizard` for setup and launch preview,
-`amq-squad:cli` for direct operations, and `amq-squad:orchestrator` for a
-verified live lead. `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`,
-and `amq-squad-role-creator` are compatibility redirects only.
+Codex marketplaces: `amq-squad:wizard` for squad setup and launch,
+`amq-squad:cli` for direct operations, and `amq-squad:orchestrator` for the
+lead seat of a launched squad. `amq-squad`, `amq-squad-orchestrator`,
+`amq-team-setup`, and `amq-squad-role-creator` are compatibility redirects only.
 
-For the binary's full verb/flag reference, see the main [README](../README.md).
-This document is about the skills.
+This guide describes the skills for amq-squad 3.0. For the verbs themselves, run
+`amq-squad --help` and `amq-squad <verb> --help`; for the squad file, see
+[squad.yaml](squad-yaml.md); for upgrading a v2 checkout, see
+[MIGRATION.md](../MIGRATION.md) "Moving to 3.0".
 
 - [The mental model](#the-mental-model)
 - [Which skill do I reach for?](#which-skill-do-i-reach-for)
 - [Installing and invoking](#installing-and-invoking)
-- [`amq-squad:wizard` — set up and start a squad](#preparation-with-amq-squadwizard)
-- [`amq-squad:cli` — direct live-team operations](#amq-squadcli--direct-live-team-operations)
+- [`amq-squad:wizard` — set up and launch a squad](#amq-squadwizard--set-up-and-launch-a-squad)
+- [`amq-squad:cli` — direct operations](#amq-squadcli--direct-operations)
 - [`amq-squad:orchestrator` — lead a squad](#amq-squadorchestrator--lead-a-squad)
 - [Role authoring](#role-authoring)
 - [End-to-end walkthrough](#end-to-end-walkthrough)
@@ -25,700 +27,264 @@ The three authoritative skills map onto the actor model:
 
 | Phase | Skill | You use it... |
 | --- | --- | --- |
-| Setup and launch | **`amq-squad:wizard`** | one goal enters the binary-owned wizard and reaches one combined default-No review. |
-| Direct operations | **`amq-squad:cli`** | status, doctor, task, gate, AMQ, resume/down, verification, and evidence commands. |
-| Verified lead orchestration | **`amq-squad:orchestrator`** | dispatch, status review, convergence, recovery, and final evidence after launch. |
+| Setup and launch | **`amq-squad:wizard`** | readiness, roster, the squad.yaml digest flow, the brief, the launch. |
+| Direct operations | **`amq-squad:cli`** | status, doctor, context, task, evidence, guard, gate status, AMQ context, verification. |
+| Lead seat | **`amq-squad:orchestrator`** | planning tasks, dispatch, the commit step, widening, the merge train, gates, releases, recovery. |
 | Compatibility redirects | `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`, `amq-squad-role-creator` | route old invocations to one authoritative namespaced skill. |
 
-They sit on top of three durable layers that setup creates and coordination
-consumes:
+They sit on top of durable layers that setup creates and the squad consumes:
 
-- **Norms** — `.amq-squad/team-rules.md` (generated; the single source of truth).
-- **Goal** — `.amq-squad/briefs/<session>.md` for the default profile, or
-  `.amq-squad/briefs/<profile>/<session>.md` for a named profile.
-- **Persona** — `<agent-dir>/role.md` (seeded at launch, then user-editable).
+- **Squad** — `<repo root>/squad.yaml`, schema 1: the seats, the lead, the modes,
+  and the narrowing of the owner's grant. Written only through `team propose` and
+  `team apply`; a protected path no seat can write.
+- **Norms** — `.amq-squad/team-rules.md`, rendered from squad.yaml.
+- **Goal** — `.amq-squad/briefs/<session>.md`, written with `amq-squad brief`.
+- **Role** — the seat's `role.md`, delivered at launch by `seat-exec`.
+- **State** — the task store, the hook ledger, the gate store and the scheduler
+  state under the AMQ session root (`<root>/extensions/amq-squad/`).
 
 `CLAUDE.md` / `AGENTS.md` carry only a small managed **pointer stub** linking to
-those three; they never duplicate the content.
+the norms, role and brief; they never duplicate the content.
 
 ## Which skill do I reach for?
 
 | If you want to... | Reach for |
 | --- | --- |
-| Start from a ticket / prompt / doc and stand up a new team | `amq-squad:wizard` |
-| Turn a Jira/GitHub/URL goal into a confirmed brief | `amq-squad:wizard` |
-| Decide who leads an orchestrated squad | `amq-squad:wizard` wires it; `amq-squad:orchestrator` runs it after launch |
-| Bring the configured team up | `amq-squad:wizard` and its combined artifact/launch review |
-| Drain your inbox, route a handoff, request a review | `amq-squad:cli` |
-| Check the status board / Mission Control / health | `amq-squad:cli` |
-| Spawn child agents and drive them to completion as the lead | `amq-squad:orchestrator` |
-| Add a role that isn't in the catalog | `amq-squad:wizard` roles stage |
+| Stand up a squad for a repository from a goal | `amq-squad:wizard` |
+| Turn a ticket, issue or prompt into a brief | `amq-squad:wizard` |
+| Change the roster of an existing squad | `amq-squad:wizard` (the same digest flow) |
+| Launch the seats | `amq-squad:wizard` |
+| Check status, the host, a task, the ledger or a guard verdict | `amq-squad:cli` |
+| Plan tasks and drive the squad to a merged, released result as the lead | `amq-squad:orchestrator` |
+| Add a role that isn't in the catalog | `amq-squad:wizard` roles step (`role draft`) |
 | Debug raw AMQ outside a squad | the separate `amq-cli` skill |
 
-Rule of thumb: set up and start with **wizard**, operate directly with **cli**, and enter
-**orchestrator** only after the visible lead and live namespace are verified.
+Rule of thumb: set up and launch with **wizard**, operate directly with **cli**,
+and enter **orchestrator** only as the lead seat of a launched squad.
 
 ## Installing and invoking
 
 Install the marketplace once; the skills are then discovered automatically.
 
 - **Claude Code:** `/plugin install amq-squad@amq-squad`, then invoke
-  `/amq-squad:wizard`, `/amq-squad:cli`, or `/amq-squad:orchestrator`.
-- **Codex:** install the Codex marketplace, then invoke a skill as `$<skill>` —
-  e.g. `$wizard`, `$cli`, or `$orchestrator` from the amq-squad plugin.
+  `/amq-squad:wizard`, `/amq-squad:cli`, or `/amq-squad:orchestrator`. The same
+  plugin carries the seat hooks ([Claude Code seat hooks](claude-hooks.md)); install
+  it at user scope.
+- **Codex:** install the Codex marketplace, then invoke a skill as `$<skill>`,
+  for example `$wizard`, `$cli`, or `$orchestrator` from the amq-squad plugin.
 
 The primary skills are user-invocable and require the `amq-squad` binary on
-`PATH` (`go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@latest`).
-Their workflows are equivalent across the two marketplaces; the platform
-metadata differs (a Claude skill carries `trigger` / `allowed-tools` /
-`argument-hint`; the Codex skill omits them).
+`PATH` (`go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.0`) and
+`amq` 0.116.2 or later. AMQ 0.116.2 is the minimum supported release for 3.0;
+`amq-squad doctor` refuses an older `amq`, `amq-remote` or `amq-owner-sign`. The
+real-AMQ lane runs at the pinned v0.116.2 (required) and at latest as a
+non-blocking canary, which is not a support claim.
+
+The workflows are equivalent across the two marketplaces; the platform metadata
+differs (a Claude skill carries `trigger` / `allowed-tools` / `argument-hint`;
+the Codex skill omits them).
 
 ---
 
-## Preparation with `amq-squad:wizard`
+## `amq-squad:wizard` — set up and launch a squad
 
-**Invoke:** `/amq-squad:wizard` (Claude) · `$wizard` (Codex). **Use when:** no team exists yet, or you are starting a
-new piece of work and want a real goal/brief in place before launch.
+**Invoke:** `/amq-squad:wizard` (Claude) · `$wizard` (Codex). **Use when:** the
+repository has no squad yet, its roster changes, or a new workstream needs a brief
+and a launch.
 
-The skill no longer chooses between prose-owned Flow A and Flow B command
-sequences. It passes the complete intent to the shipped verb:
+3.0 has no `wizard`, `init` or `start` verb. The skill walks one sequence:
 
-```sh
-amq-squad wizard "GOAL"
-```
+1. **Readiness.** `amq-squad doctor --project <repo>` probes the AMQ version and
+   launch API, the tools and their logins, the registry and the owner files, and
+   writes nothing. `amq-squad trust <repo>` prints the lines the owner adds to
+   `~/.codex/config.toml`; amq-squad never writes it.
+2. **Roster.** `amq-squad roles` lists catalog and staged custom roles; a custom
+   role is staged with `amq-squad role draft <id> --purpose "..."`. The skill asks
+   for the roles rather than inferring a roster from the goal.
+3. **Propose.** `amq-squad team propose --roles cto,fullstack --runtime
+   fullstack=codex --lead cto --session issue-96` prints every file the squad needs
+   (`squad.yaml`, `team-rules.md`, `CLAUDE.md`, `AGENTS.md`) with its sha256 and one
+   digest, and writes nothing. Keys the flags do not cover go in a squad.yaml draft
+   passed with `--from`.
+4. **Approve and apply.** The digest is the approval surface. Only after the owner
+   approved that exact digest (the grant decides in auto mode) does the skill run
+   `team apply --digest <d>` with the same options. A changed option or a hand edit
+   in between is refused (`squad_yaml_digest_mismatch`, `squad_yaml_changed`) and
+   nothing is written.
+5. **Brief.** `amq-squad brief --goal "..." --session issue-96` drafts it through
+   the configured drafter (or prints the in-session prompt and stages nothing);
+   `--seed-from file:<path>`, `issue:<n>` or `gh:owner/repo#<n>` seeds it.
+6. **Launch.** One AMQ launch request starts the seats, each behind `seat-exec`:
+   `amq-squad launch --seats <file>` (a typed seat list, `--dry-run` first), the pi
+   lead in team mode with the scheduler beside it (`amq-squad lead --team
+   --scheduler-seats <file>`), or the mayor inside the fleet grant
+   (`amq-squad operator start-squad`). A required action such as AMQ's trust
+   confirmation stops the launch with exit 10; it is never answered for the owner.
 
-The binary selects create-profile or existing-profile/session recovery and is
-the literal composition of `init` (profile + team-rules.md + pointer stubs),
-`brief` (drafts the workstream brief), and `plan`/`start --apply` (zero-write
-launch preview, then launch) -- with one thing none of those three has on its
-own: a single combined confirmation covering all of them. It runs four ordered
-stages: readiness, profile & rules (via `init`), brief (via `brief`), and
-approved execution (via `plan`/`start`). The single review displays the exact
-proposed profile, rules, and brief bytes with the launch coordinates and
-defaults to No. No profile, rules, brief, namespace, or pane changes before
-approval.
-
-Creating a **new** profile requires an explicit `--roles`: the binary no
-longer infers a roster from the goal text. A custom (non-catalog) role with no
-authored `role.md` yet gets a notice naming the exact `amq-squad role draft`
-command to author one -- it is no longer drafted inline as part of the wizard
-review.
-
-The skill relays the binary output and prompt verbatim. It does not assemble
-setup, profile, role, rules, brief, or start commands, and it does not use help
-probes to infer their syntax. Structured coordinates or roster choices supplied
-by the operator remain arguments to the same wizard verb.
-
-On approval, the wizard writes the reviewed artifacts and delegates launch to
-the current locked `start` implementation. If launch is interrupted after those
-writes, rerun the same wizard invocation; it detects the existing profile and
-rolls the current simple-mode state forward. An accepted-input change fails
-closed and requires a fresh combined review.
-
-Trust completion only after every pane owns its verified live child. Then use
-`amq-squad:cli` for direct inspection and route the visible lead to
-`amq-squad:orchestrator`.
+Once the seats are up, use `amq-squad:cli` for direct inspection and route the
+lead seat to `amq-squad:orchestrator`.
 
 ---
 
-## `amq-squad:cli` — direct live-team operations
+## `amq-squad:cli` — direct operations
 
-**Invoke:** `/amq-squad:cli` (Claude) · `$cli` (Codex)
-**Use when:** `.amq-squad/team.json` already exists and you want to run the team.
+**Invoke:** `/amq-squad:cli` (Claude) · `$cli` (Codex). **Use when:** a squad
+exists and you want one explicit command and its output.
 
-This is the everyday skill. The lifecycle is one small state machine:
-
-```
-(none) --start--> running --down--> stopped
-                    ^                  |
-                    +----- resume -----+
-```
-
-### The daily loop
-
-1. **Orient.** Confirm the team-home + profile + workstream, then read the
-   selected namespace's brief.
-2. **Discover live state.** `amq-squad status` (board), `status --session <name>`
-   (detail), and `amq-squad doctor` (health,
-   including PATH binary, Codex/Claude plugin cache, and skill-marker
-   alignment). `status --json` and `doctor --json` expose the same alignment in
-   `data.versions`, and `start` warns before launch when a detectable mismatch
-   would make workers inherit different instructions or binaries.
-3. **Bring members up.** `amq-squad start <session>` previews and reconciles new,
-   partial, and changed rosters; use `resume` to reattach saved conversations.
-4. **Route + drain.** Hand off over AMQ, request reviews, drain your inbox.
-5. **Stop roles with `down`** as the work finishes; durable state is retained.
-
-### Key verbs
+The skill relays CLI output verbatim and adds only interpretation and the next
+action. Its main verbs:
 
 | Goal | Command |
 | --- | --- |
-| Preview and start or reconcile a team | `amq-squad start <session>` (`--yes` after approval for automation) |
-| One window/tab per agent | `amq-squad start <session> --target new-window` |
-| Continue an existing session | `amq-squad resume` (`--exec` to open) |
-| Stop members (state preserved) | `amq-squad down --role R` / `--all` |
-| Multi-session board | `amq-squad status` (or bare `amq-squad`) |
-| Single-session detail | `amq-squad status --session <name>` |
-| Run and retain task-bound command evidence | `amq-squad evidence run TASK --me ACTOR --subject TEXT --attempt-id ID -- COMMAND` |
-| Build an exact read-only release plan | `amq-squad verify release-plan ... --json` |
-| Trim worker context (overlays) | `amq-squad team overlay init --workers [--disable-plugins ids] [--disable-all-hooks]` |
+| The squad's state (status contract, schema 1) | `amq-squad status --project <repo> --session <s> --json` |
+| Every squad of the fleet | `amq-squad status --fleet --json` |
+| The host | `amq-squad doctor`, `amq-squad doctor --json` |
+| A seat's own role, rules digest, task and gates | `amq-squad context --me <handle> --json` (inside a seat) |
+| Tasks | `amq-squad task list`, `task show`, `task claim`, `task done`, `task block` |
+| The evidence ledger | `amq-squad evidence list --me <handle> --root <root> --json` |
+| One tool call's verdict | `amq-squad guard --me <handle> --tool Bash --arg "command=..."` (inside a seat) |
+| Gate kinds and open gates | `amq-squad gate raise --list-kinds --json`, `amq-squad gate status --json` |
+| Whether an action is approved | `amq-squad verify action ... --json` (0 approved, 10 pending, 11 denied, 13 unbound) |
+| Merge and release evidence | `amq-squad verify merge --repository o/n --pr <n>`, `amq-squad verify release --tag <t>` |
+| The AMQ context and one route | `amq-squad amq env --json`, `amq-squad amq route --to <handle> --json` |
 
-`evidence run` executes argv directly without a shell and requires the active
-structured task assignee. It binds the canonical project/profile/session, exact
-task digest, executable bytes, cwd, bounded explicit environment, and attempt
-identity before publishing immutable process, outcome, and summary records.
-The task link is compare-and-swap; replaying the same attempt returns the
-original result only for the same complete request. Use bounded `evidence show`,
-`list`, and `lookup` projections for inspection and `evidence recover` for an
-explicit interrupted-finalization pass. Any AMQ report follows only the task's
-recorded dispatch route and is a separate, non-destructive step.
+Every store verb takes the AMQ session root (`--root`, else `AM_ROOT`) or the
+project coordinates (`--project` and `--session`). Inside a seat `seat-exec` set
+`AM_ME`, `AM_ROOT` and `AM_SESSION` from the launch record, so bare `amq` commands
+and the hook verbs need nothing more.
 
-Task completion atomically binds its generation, canonical DONE report intent,
-and any exact task-scoped gate request. An open human decision is recorded as
-preserved and unsuppressed. Only an already answered, closed, withdrawn, or
-durably superseded request generation may clear attention; exact repeats are
-idempotent and different request identities conflict.
-
-`verify release-plan` performs no git, GitHub, network, authorization, or file
-mutation. It freezes the canonical absolute project/worktree, exact repository
-and remote URL identity, branch, protected/default action taxonomy, candidate
-SHA, non-force branch/tag refspecs, tag annotation/signing, immutable preflight
-evidence, and repository-bound noninteractive release title/notes/draft/
-prerelease/latest policy. Every git command uses `git -C <project>`. Before any
-push, verification requires the named remote to resolve to the frozen URL;
-file-based notes freeze a canonical path and exact SHA-256 verification step.
-Its literal-newline `Action:` / `Target:` bodies are independently exact.
-Verification separately requires an annotated local tag object, its peeled
-candidate commit, a valid signature when signed, the remote branch SHA, a
-remote tag object distinct from the commit, and the remote peeled candidate
-SHA.
-
-For a narrow Claude-only permission exception, configure a member's
-`permission_allowlist` in `team.json`, for example
-`["Bash(go test ./internal/cli:*)"]`. The grant is scoped to that
-exact role,
-merged with any explicit native `--allowedTools`, visible in dry-run JSON and
-launch history, and rebuilt from current policy on resume so removed/narrowed
-grants are revoked. Validation rejects other binaries and values beginning with
-`-`; generated grants use one `--allowedTools=<grant>` token. The
-`--no-preauthorize-inscope` bit also round-trips. Preview commands keep
-launcher policy out of executable child argv; `agent up` recomputes it and the
-launch record stores launcher-owned versus explicit provenance separately,
-including equal-valued grants. Prefer scratch/worktree-
-specific patterns over broad command grants. An allowlist grants native tool
-permission; it does not override the generated team rules' `## Workspace
-Safety and Cleanup` prohibition on `rm -rf`. Such profiles write schema 4;
-profiles without the field stay schema 3. Upgrade all readers/writers to v2.20+
-before configuring it: pre-v2.20 binaries can silently ignore the field and
-lossily rewrite the profile. Use `amq-squad doctor` to detect version skew.
-
-Profile-scoped headless drafting is configured with the optional schema-6
-`drafter` block. Presets cover `yoetz`, `claude -p`, and `codex exec`; custom
-argv templates use private prompt/output files or stdin/stdout without a shell.
-Timeout, failure policy, exact-command evidence, model/effort mapping, and
-explicit keyless-environment fallback are documented in
-[drafter backends](drafter-backends.md). Omitting the block keeps the
-backward-compatible in-session path.
-
-Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
-CLI args for one member only — the overlay verb above generates the flagship
-case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
-for you. Plan emission fails fast when a referenced `--settings` file is
-missing. AMQ 0.60.x is the supported series, with 0.60.0 as the minimum
-supported release. Both real-AMQ matrices validate pinned v0.60.0 and `latest`;
-`latest` remains a forward-compatibility canary and is not a support claim.
-Releases older than 0.60.0 are rejected fail-closed; upgrade to v0.60.0 or
-newer and stop/resume agents so their parent shells refresh the complete
-identity tuple. A child command cannot repair stale injected environment.
-Default profiles use `AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty
-`AM_SESSION`; named profiles use an exact root with `AM_ROOT=AM_BASE_ROOT` and
-omit `AM_SESSION`. Run
-`amq-squad doctor` before resume if it reports a legacy or inconsistent pin.
-Launches pass
-`--require-wake` so a launch fails immediately when the wake sidecar cannot
-acquire its lock (`--no-require-wake` opts out and persists into resume).
-Use `--wake-inject-mode none` for permission-prompt workflows that require AMQ
-wake notices with zero synthetic terminal input; normal notices go to wake
-stderr and urgent notices add one bell. It cannot be combined with injector
-flags. The zero-input contract also suppresses dispatch's last-resort pane
-nudge (even with `--force`) and the delayed Claude `/rename` command. Records
-written with mode `none` must not be resumed by an amq-squad binary older than
-v2.20.0, because older replay code does not understand that safety contract.
-Run `amq-squad doctor` and resolve any binary/plugin/skill version skew before
-`resume --exec` or `agent resume`. Mode `none` governs automatic injection paths:
-the wake sidecar, dispatch's pane nudge, and delayed Claude `/rename`. It does
-not disable deliberate operator control actions such as `amq-squad send` or
-native `/goal` pane delivery. Layout startup send-keys that launch the process
-before the agent becomes active are outside this runtime injection contract.
-Use `--no-gitignore` on `start` or the internal `agent` launcher when AMQ coop
-auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
-launch record and replayed by `agent resume`.
-Namespace safety (v2.16.0+): mutating commands with `--session` fail closed
-when an unprofiled default-profile write would collide with a named profile
-that already owns that session. Rerun with `--profile <name>` to target the
-named namespace, or `--profile default` to intentionally write the legacy
-default root.
-Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to
-the configured operator handle escalate from `initial` to `reminder` after 30m
-and `strong-warning` after 2h. `status --json` and `operator status --json`
-surface aged gates and their current action.
-
-### Operator primitive decision table
-
-| Intent | Use | Why |
-| --- | --- | --- |
-| Supervise a squad | `amq-squad status`, `doctor`, `task`, `operator status` | Resolves the project/profile/session and shows the squad model. |
-| Tell a live visible lead something now | `amq-squad send --session S --role lead --body-file ./prompt.md` | Tmux pane delivery to the recorded pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
-| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role worker --kind todo --subject "..." --body-file ./task.md` | Queues durable AMQ in the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
-| Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with explicit `--root`; otherwise prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing. From an external pane, the wrong root can trigger the same class of namespace problem as #328: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
-
-For orchestrated squads, the operator normally talks to the visible lead with
-`amq-squad send` or an operator directive; the lead uses `task`, `dispatch`, and
-rooted raw `amq drain` for workers. A raw `amq send --session ...` from an external pane is
-ambiguous for named-profile squads because it may write the default
-`.agent-mail/<session>` while workers drain `.agent-mail/<profile>/<session>`.
-Use `amq-squad amq send --project <project> --profile <profile> --session <S>
-...` or raw `amq send --root <project>/.agent-mail/<profile>/<session> ...`
-when direct mailbox plumbing is intentional.
-
-Claude-binary agents launched in tmux also get a best-effort delayed
-`/rename <role>-<session>` injection, including managed `resume --exec` /
-`agent resume` replay, except when wake injection mode is `none`. Failure to
-deliver the rename does not block launch.
-Codex agents are unaffected because Codex has no matching slash command.
-
-Model/binary guidance (context-stamped 2026-07-10, current operator setup;
-setup-dependent, not universal): defaults are not limits; escalate model or
-effort when output quality misses the bar. For shippable work,
-`intelligence > taste > cost`, with cost only a tie-breaker. Bulk/mechanical
-work defaults to Codex CLI on `gpt-5.6-luna`; everyday balanced implementation
-defaults to `gpt-5.6-terra`; frontier implementation and independent review
-default to `gpt-5.6-sol`. Raise to terra/sol when quality misses the bar.
-`gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini` remain valid Codex choices for
-previous-frontier, strong everyday, and small/fast work respectively. UI, copy,
-API, and product design need taste `>= 7`. Never use Haiku. Configure direct
-agents with `binary`, `model`, Codex effort through `codex_args`
-(`-c model_reasoning_effort=<level>`), and Claude effort/settings through
-`claude_args` (for example `--effort high`).
-The wizard's advisory model/effort/lead-mode recommendation reads a single
-structured work-class table instead of this prose; see
-[`v2.24.0-model-routing-policy.md`](v2.24.0-model-routing-policy.md) for the
-table and `internal/wizard/routing.go` for the exact policy.
-amq-squad does not maintain an Anthropic whitelist: Claude member `model` is
-passed through to installed `claude --model <model>`, with aliases such as
-`default`, `opus`, `fable`, `sonnet`, `haiku`, and full names such as
-`claude-fable-5` depending on CLI/account support. Mentioning `haiku` here is
-mechanical pass-through support only; the policy remains never choose Haiku for
-amq-squad work. Use a thin Claude wrapper for Codex models such as
-`gpt-5.6-sol` or `gpt-5.6-terra` only when a Claude-only workflow/subagent slot
-forces that shape; a Claude workflow/agent `model:` parameter still selects a
-Claude model only. Prefer an explicit Codex-binary member otherwise. Exact
-override paths include
-`amq-squad init --model cto=gpt-5.6-sol,fullstack=fable-5` (preview, then `--apply <init_digest>`),
-`amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 --claude-args "--effort high"`,
-`amq-squad start issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet`,
-and
-`amq-squad resume --session issue-96 --model plan-reviewer=opus,implementer=sonnet --exec`.
-
-### Runtime control (tmux)
-
-amq-squad owns the tmux control contract — drive agents by stable command, never
-raw `tmux send-keys`. Control targets the recorded **pane id**, never window
-names.
-
-Use `--body-file FILE` or `--body-file -` (stdin) for wrapper bodies containing
-code, commands, backticks, or `$()` syntax. Inline `--body` is only for short
-plain prose because the caller shell expands it before execution. Bare
-`amq send` instead uses `--body -` or `--body @file`; raw AMQ does not accept
-`--body-file`.
-
-```sh
-amq-squad focus --session issue-96 --role cto                       # bring a pane into view
-amq-squad send  --session issue-96 --role cto --body-file ./prompt.md # deliver a prompt + submit
-cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
-```
-
-`send` stages text in a tmux paste buffer (multi-line and shell metacharacters
-arrive verbatim) and has a **built-in busy-guard**: it refuses to deliver into a
-mid-turn pane unless you pass `--force`.
-
-> `amq-squad send` is **pane delivery**, not an AMQ message — it has no
-> `--kind`/`--thread`. To post an inter-agent message, use `amq send ... --kind
-> <kind>` (see below).
-
-### Routing messages over AMQ
-
-```sh
-amq send --to fullstack --thread p2p/cto__fullstack --kind review_request \
-  --subject "Review: rate limiter" --body @review.md
-amq drain --include-body            # read your inbox
-```
-
-Valid kinds (enforced): `brainstorm, review_request, review_response, question,
-answer, decision, status, todo`. **There is no `handoff` kind** — send a handoff
-as `review_request` (work to take over) or `todo` (a queued task). When operator
-gates are enabled, human approvals go to the operator handle on a `gate/<topic>`
-thread; with `--no-operator`, follow `team-rules.md` and route human-facing asks
-through the lead/CTO instead. If the operator approves a pending gate in a live
-pane/chat instead of AMQ, the lead treats it as operator input, ACKs or mirrors
-it on the matching gate thread without spoofing the operator handle, and checks
-both the live channel and AMQ gate/inbox state before declaring the gate blocked.
+Evidence is the hook ledger: in a Claude seat the PostToolUse hook runs
+`evidence ingest` once per tool result and renews the claimed lease. A seat never
+commits, pushes or merges; after `task done` the harness commit step commits the
+seat branch and refuses any path outside the task's declared files.
 
 ---
 
 ## `amq-squad:orchestrator` — lead a squad
 
-**Invoke:** `/amq-squad:orchestrator` (Claude) · `$orchestrator` (Codex)
-**Use when:** you are the **lead** agent of an orchestrated squad — you spawn
-child agents, dispatch tasks to them over durable AMQ, monitor them, handle
-their reports, and own the deliverable to the human.
+**Invoke:** `/amq-squad:orchestrator` (Claude) · `$orchestrator` (Codex).
+**Use when:** you are the lead seat (`lead` in squad.yaml) of a launched squad.
 
-This is the discipline on top of the shipped runtime primitives. Routine member
-coordination still belongs to `amq-squad:cli`; this skill is specifically the
-lead's playbook.
+The lead loop is one `status --json` read, one bounded action, the durable update,
+then park the turn; AMQ wake delivers the next message. The status document's
+`attention[]` items and `actions.new_task` carry `argv` actions to run as argument
+vectors, never through a shell.
 
-For `/goal` runs, keep the operator interface as a three-step flow:
+- **Plan.** `task add --title ... --class implement --files <paths> --pool
+  runtime:model:effort`; the scheduler grants leases to seats of the pool and rings
+  their doorbell. `dispatch --create-task` (or `--task <id>`) grants the lease and
+  sends the durable message in one step.
+- **Commit step.** On a seat's done report the scheduler runs `seat commit`: every
+  changed path against the declared files, the protected paths and the size cap,
+  then a commit under the harness identity and a fast-forward push. `--open-pr`
+  binds the task to its draft PR.
+- **Widen.** A refusal for a path outside the declared set comes back to the lead;
+  `task widen <id> --files ... --reason ...` is the lead's recorded decision,
+  applied by the scheduler only from the lead of its launch record.
+- **Merge.** `merge-train --request <file> --dry-run` plans the ordered PR set
+  against the owner's standing merge grant; the real run uses the owner's gh outside
+  any seat. Seats never merge.
+- **Gates.** Tag and release, external send, credential change and growth beyond
+  the grant always stop for the owner. The lead raises the typed gate
+  (`gate raise --gate <id> --action tag --target "git tag v3.0.0"`), the owner's
+  signed Buzz answer opens it, and `verify action` checks it.
+- **Release.** `release prepare` raises the `tag` and `github_release` gates;
+  `release publish`, under the owner's gh outside any seat, runs each only with its
+  verified answer.
+- **Recover.** Inspect (`status`, `task list`, `task reconcile`), re-ring the
+  doorbell, release, reset or cancel the task, then escalate. A quarantined seat
+  is cleared only by the owner with `seat clear` from the owner's own terminal.
 
-1. Preview the goal, repo, source issues, profile/session namespace, visible
-   lead, proposed mutations, topology, spawn policy, validation, and gates.
-2. Create or launch exactly one operator-visible project lead. Use `--lead ROLE`
-   when generated commands should route through a non-`cto` lead. Register an
-   existing pane only when it already proves the exact project/profile/session
-   lead identity, or with explicit safe project-lead adoption from that pane;
-   never adopt a global-orchestrator pane as project `cto`.
-3. Monitor through that lead. Child agents stay implementation details unless an
-   approval gate, blocker, release risk, or final evidence needs surfacing.
-   Leads must surface blockers and approval requests immediately to the
-   operator/orchestrator-visible surface, not only in a child pane or internal
-   worker thread.
-
-Team rules and custom role contracts remain part of the prompt and handoff
-contract throughout the flow.
-
-When wake is unavailable for the parent orchestrator or NOC, use a polling
-contract: one `/goal` per visible lead; each lead pushes status, blockers,
-approval requests, and final evidence to AMQ/NOC-visible surfaces; the parent
-polls lead inboxes, gate threads, and `status --json` on a cadence. Child agents
-remain internal unless the lead escalates them.
-Poll with finite deadline/tick bounds and use the final snapshot rather than
-stream order. Batch review by invariant and risk: low-risk docs/projections get
-focused regular tests plus drift checks; medium-risk state changes add
-adversarial identity/idempotence coverage and focused race tests; high-risk
-authority, lifecycle, release, or recovery changes require immutable exact-head
-evidence and full regular/race suites. Completion reconciliation may clear
-only an exact task-scoped request generation already terminal or superseded;
-it must never answer or close an unresolved human gate.
-When a `global_orchestrator` owns more than one active or recently active
-workstream in the same conversation, it must keep an in-conversation board and
-refresh it after every poll, gate answer, spawn, stop, final report, or recovery
-action. The board tracks run name, repo, profile/session, lead and pane id,
-state (`running`, `gated`, `blocked`, `paused`, `stale`, `done`, `closed`),
-last checked time, next poll or wake source, current gate/blocker, last action,
-next action, and deterministic polling commands. Closed runs are demoted with
-`next action: none - closed` so they stop competing with active gates or stale
-runs.
-For `poll_required=true`, prefer concrete poll commands such as
-scoped `status --json`, `operator status --json`, and root-correct raw AMQ
-gate-thread reads. Recovery follows the native amq-squad ladder first: inspect
-status/doctor/gates/tasks, re-nudge queued work
-with `dispatch` or drain-only `send`, resume stale agents with `resume` or
-`actions[]`, mark native `/goal` blockers as `paused`, and use raw
-`tmux send-keys Enter` only as a recorded last resort after operator direction
-or when native recovery is unavailable.
-Every lead status pass must inspect `status --json.records[].local_input` and
-`warnings[].kind=="local_input_blocked"` before treating child silence as idle
-or parking. This is a read-only pane-tail blind-spot detection heuristic for
-managed child local approval/input prompts, not a coordination or progress
-primitive. A prompt is a blocker, never authority: inspect the exact action and
-target, do not type into the modal while authorization is unresolved, and
-escalate the matching gate when needed. After operator-directed recovery, rerun
-status and verify the prompt cleared. Absence only means the heuristic did not
-observe a prompt; destructive prompts require an operator decision or a
-non-destructive alternative.
-Use `goal_binding` in `goal draft --json` and `status --json` to distinguish a
-generated native `/goal` plan (`native_goal_pending`), verified launch-record
-native binding (`native_goal`), and the explicit AMQ task + active brief +
-task-store fallback (`amq_task_brief`). Recovery sends a durable AMQ directive
-first; managed-pane `/goal` injection is only a follow-up when the pane is idle,
-and force-interrupt requires an operator gate.
-
-`status --json` also exposes `execution.release_readiness.merge_authority` so
-clients and agents do not infer merge authority from prose. The default actor is
-`visible_lead`, `worker_policy` is `workers_do_not_merge_by_default`, and the
-only documented worker exception is a verifiable authorization artifact tied to
-the same subject, head SHA, and gate/evidence thread. This answers who owns the
-merge/lifecycle action path; exact-head review, `verify merge`, normalized
-evidence, and operator gates still answer when merge-ready can be claimed.
-
-### Composition modes and guardrails
-
-Goal-first composition is opt-in and defaults to seeded mode once selected.
-Manual rosters remain first-class, and a short goal never authorizes worker
-spawning by itself:
-
-| Mode | Contract |
-| --- | --- |
-| **Manual** | The operator defines the roster up front. Runtime composition is not required. |
-| **Seeded** | The lead proposes each worker and waits for explicit operator approval on a stable `gate/spawn-<role>` thread before adding or launching it. |
-| **Autonomous** | The operator explicitly selects `--composition autonomous` and supplies a bounded policy. The runtime may add or prune workers only inside that policy. |
-
-Seeded mode requires a clear `APPROVED:` answer from the configured operator.
-`DENIED:`, silence, emoji, or vague assent means do not spawn. A live-channel
-approval must be acknowledged or mirrored onto the same durable gate thread
-without spoofing the operator handle. Approval covers that spawn only; it does
-not authorize implementation details, merges, releases, or other side effects.
-
-After approval, persist the member with `team member add` and launch it through
-the managed `start` path so down, resume, focus, and status retain a stable
-runtime identity. The durable roster and task store must rebuild the team the
-lead created, not merely the initial seed.
-
-For a session-pinned roster, `team member add`, `team member update` (including
-`--binary`, `--model`, and `--effort`), and `team member rm` edit the roster
-directly. Rerun `start`: verified live roles stay in place, missing roles start,
-and configuration differences on live roles are reported as
-`live/config-diverged` rather than replaced silently.
-
-Autonomous mode is never inferred. It requires positive `max-agents`,
-`max-total-spawns`, and `budget-turns`, plus an allowed-role or
-allowed-role-class boundary; `idle-reap-minutes` constrains pruning. Before an
-allowed spawn/prune decision returns, the runtime persists policy counters and
-writes `.amq-squad/autonomous/<session>/audit.jsonl`. A prune request must carry
-measured idle age, evidence that active task linkage was checked, and proof that
-no active task remains linked.
-
-Pause, resume, inspect, or permanently disable the policy without editing the
-profile directly:
-
-```sh
-amq-squad team autonomous show --json
-amq-squad team autonomous pause
-amq-squad team autonomous resume
-amq-squad team autonomous disable
-```
-
-Autonomous composition grants no authority to merge, push, tag, release,
-perform destructive filesystem operations, send externally, invoke provider
-side effects, or delegate child self-spawn. Those actions retain their normal
-lead/operator gates and verification preflights.
-
-### The loop: start → dispatch → status → drain → recover
-
-```sh
-# 1. START — preview and reconcile one window per agent
-amq-squad start issue-96 --target new-window
-
-# 2. CONFIRM the children are live before dispatching
-amq-squad status --session issue-96 --json \
-  | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
-
-# 3. DISPATCH — over durable AMQ (queues, survives pane death; the busy-guarded
-#    `amq-squad send` pane injection is the fallback/nudge only)
-amq send --root /absolute/path/to/session-root --me cto \
-  --to fullstack --thread p2p/cto__fullstack --kind todo \
-  --subject "Task: rate-limiter" --body - --wait-for drained --wait-timeout 60s <<'EOF'
-Implement the rate-limiter per the brief. When the diff is ready, push a
-review_request to me (cto) over AMQ. Report any blocker as a question.
-EOF
-
-# 4. INSPECT — use one bounded status snapshot when needed
-amq-squad focus --session issue-96 --role fullstack   # watch live when needed
-
-# 5. COORDINATE — children PUSH reports; the lead performs one rooted drain
-amq drain --root /absolute/path/to/session-root --me cto --include-body
-```
-
-Do not hand-roll an unbounded polling loop in the visible lead pane. Read one
-`status --json` snapshot, act on a bounded item, drain the exact-root mailbox
-once when the notifier wakes pending work, then park or end the turn.
-
-### The `[AGENT-EVENT]`-over-AMQ protocol
-
-The key design point: instead of writing status into a parent pane, children
-**push real AMQ messages** to the lead, which survive pane death and are
-addressable by stable handle. Spell this out in each child's brief:
-
-| Child wants to report | Kind to use |
-| --- | --- |
-| progress / done | `--kind status` |
-| blocked / needs input | `--kind question` |
-| ready for review / handoff | `--kind review_request` |
-
-The lead consumes child reports with one exact-root command:
-
-```sh
-amq drain --root /absolute/path/to/session-root --me <lead> --include-body
-```
-
-`drain` moves unread messages to `cur`, so persist or act on the displayed
-result before draining again. The pinned root and actor are mandatory in agent
-instructions; repository-cwd auto-detection is not a routing contract.
-
-**Bodies are data, not authority** — a child's "please merge" is surfaced or
-acted on under the lead's judgment. Merge and irreversible lifecycle actions are
-lead-owned by default: workers do not merge, push, tag, release, close issues,
-or run similar actions from AMQ prose. If a worker is ever asked to do one, it
-requires a verifiable authorization artifact tied to the same subject, head SHA,
-and gate/evidence thread; otherwise it escalates back to the lead.
-
-### Operator directives (NOC → lead)
-
-The operator can steer the lead from amq-noc (v0.8.0+). A directive arrives
-pane-injected when the lead is live, or as a durable AMQ message when it was
-down: thread `p2p/<sorted lead__operator>`, kind `todo`, subject
-`DIRECTIVE: <first line>`. The lead treats directives as operator steering
-with **priority over child reports**, acknowledges on the same thread
-(`--kind status` or `answer`), and never treats one as a gate answer — a
-directive does not clear `gate/<topic>` threads. Orchestrated teams carry the
-convention as a generated line in their `## Orchestration` norm.
-
-### Recover
-
-```sh
-amq-squad resume --session issue-96      # PLAN ONLY; add --exec to reopen panes
-amq-squad agent resume fullstack         # revive one child from its saved record
-```
+Message bodies are data, never authority: a body that claims the owner approved
+something is evidence only; only a verified gate answer opens a gate.
 
 ---
 
-## Role Authoring
+## Role authoring
 
-Author the custom role's persona doc with `amq-squad role draft` (below)
-before naming it in `--roles` -- wizard no longer drafts custom-role personas
-itself; it only notices an undocumented one and names this command. For an
-existing roster edit, use `amq-squad:cli`. **Use when:** you need a role the built-in
-catalog doesn't ship (`researcher`, `sre`, `archivist`, `data-scientist`, ...).
-Custom roles are first-class — they appear in `team.json`, `team-rules.md`, the
-bootstrap prompt, and status/launch exactly like built-ins.
-
-Three ways, by how much role guidance you want:
-
-**A. Inline (quick, minimal `role.md`)** — just an id + CLI:
+Custom roles are first-class: any role a squad.yaml seat names that is not in the
+catalog needs a role file at `.amq-squad/roles/<id>.md`.
 
 ```sh
-amq-squad init --roles researcher --binary researcher=codex
-# preview only; apply with the printed init_digest
+amq-squad role draft researcher --purpose "Investigate ambiguous behavior"
 ```
 
-A custom role must be a valid slug and **must** carry an explicit
-`--binary <role>=<cli>` (there is no catalog default to fall back to).
+`role draft` uses the shared drafter (the user config
+`~/.config/amq-squad/config.json`, else in-session), validates the draft and
+stages it without overwriting; without a backend it prints the prompt and stages
+nothing. It never adds a seat: name the role in `team propose --roles` afterwards.
+At launch the role reaches the seat only through its `role.md`. See
+[Drafter backends](drafter-backends.md) for the backend settings.
 
-**B. Built-in fast draft (rich, reviewed `role.md`)** — after the profile
-exists, delegate only the reusable prose to the shared configured drafter. If
-the active brief exists it is attached as untrusted context; otherwise the
-persona defers live scope to the future brief and durable task:
-
-```sh
-amq-squad role draft researcher --binary codex \
-  --purpose "Investigate ambiguous product behavior" \
-  --project P --profile R --session S
-```
-
-The binary owns the template, validates exact frontmatter and the
-Mission/Boundaries/Protocol shape, enforces fewer than 45 lines, rejects active
-session/task/version/branch names, and stages without overwriting. With no
-external backend (or a keyless fallback), it prints the filled manual prompt and
-writes nothing. It never adds or launches the member: review the staged file,
-then run the printed `team member add` command. For a short-lived seat, the
-neutral generated contract plus a precise durable task is faster than any
-persona draft.
-
-See [Drafter backends](drafter-backends.md) for the yoetz, Claude, Codex, and
-custom argv settings.
-
-**C. From a role file (rich, authored `role.md`)** — Markdown with optional YAML
-frontmatter, `.yaml`, or `.json`:
-
-```sh
-amq-squad init --role-file ./roles/researcher.md --roles cto
-# preview only; apply with the printed init_digest
-```
-
-```markdown
----
-id: researcher
-label: Research Engineer
-binary: codex
-peers: [cto, qa]
-skills: [/deep-research]
----
-# Role: Research Engineer
-## Description
-Owns deep technical investigation, prototypes, and written findings.
-```
-
-The id comes from the file (`id:`, a `# Role:` heading, or the filename); the
-binary from the file's `binary:` field (`--binary` overrides). The authored
-document is staged at `.amq-squad/roles/<id>.md` and seeds the agent's `role.md`
-at launch (never clobbering later user edits). Preview with `--dry-run --json`
-before writing.
+Keep a role version-neutral and session-neutral; what a seat works on this session
+belongs in the brief and the task.
 
 ---
 
 ## End-to-end walkthrough
 
-Shipping GitHub issue #96 with an orchestrated squad, start to finish.
+Shipping GitHub issue #96 with a squad, start to finish.
 
-```sh
-# 0. (once) install the marketplace, then in your project:
-cd ~/Code/my-project
-```
-
-1. **Set up and start** — invoke `/amq-squad:wizard` and say *"the goal is
-   GitHub issue #96."* The skill calls the binary-owned composition of `init`,
-   `brief`, and `plan`/`start`, which shows the exact profile, rules, brief,
-   and launch plan at one default-No approval:
+1. **Set up** — invoke `/amq-squad:wizard` and say *"the goal is GitHub issue
+   #96, with a cto lead, a fullstack developer on Codex and a qa reviewer."* The
+   skill runs readiness, then proposes the squad and relays the digest:
 
    ```sh
-   amq-squad wizard "fix issue 96" --project . --profile delivery --session issue-96 \
-     --roles cto,fullstack,qa \
-     --actor-mode cto=review,fullstack=implementation,qa=review
+   amq-squad team propose --project . --roles cto,fullstack,qa \
+     --runtime fullstack=codex --worktree fullstack=../app-96 \
+     --actor-mode qa=review --lead cto --session issue-96
    ```
 
-   Answer Yes only after reviewing that invocation's exact artifacts and plan.
-
-2. **Lead the work** — the `cto` agent (its `team-rules.md` now carries the
-   orchestration norm, so it loads `/amq-squad:orchestrator`) dispatches
-   to `fullstack`, monitors, and drains pushed reports:
+   After the owner approves that digest, it applies with the same options and seeds
+   the brief:
 
    ```sh
-   amq send --root /absolute/path/to/session-root --me cto \
-     --to fullstack --thread p2p/cto__fullstack --kind todo --wait-for drained \
-     --subject "Task: #96" --body @task.md
-   amq drain --root /absolute/path/to/session-root --me cto --include-body
-   amq send --root /absolute/path/to/session-root --me cto \
-     --to qa --thread p2p/cto__qa --kind todo --wait-for drained \
-     --subject "Task: review #96" --body @review-task.md
+   amq-squad team apply --digest sha256:<d> --project . --roles cto,fullstack,qa \
+     --runtime fullstack=codex --worktree fullstack=../app-96 \
+     --actor-mode qa=review --lead cto --session issue-96
+   amq-squad brief --seed-from issue:96 --project . --session issue-96
    ```
 
-3. **Converge and stop** — the lead verifies the artifacts, owns the merge
-   and lifecycle-action path after the human gates align, reports up to the
-   human, then:
+2. **Launch** — the seats start through one AMQ launch request
+   (`amq-squad launch --seats seats.json --dry-run`, then without `--dry-run`); a
+   trust confirmation stops the launch for the owner's decision.
+
+3. **Lead the work** — the `cto` seat, the squad's lead, loads
+   `/amq-squad:orchestrator`, adds the tasks, reads status, and lets the
+   scheduler dispatch:
 
    ```sh
-   amq-squad down --session issue-96 --all
+   amq-squad task add --title "Fix #96" --class implement --files internal/parse/ --session issue-96
+   amq-squad task add --title "Review #96" --class review --session issue-96
+   amq-squad status --session issue-96 --json
    ```
+
+4. **Converge** — the commit step pushes the fullstack seat's branch and binds its
+   draft PR; qa reviews the exact head; the merge train dry-runs the PR set and the
+   owner runs the real merge; `release prepare` raises the tag and release gates for
+   the owner.
 
 ## Troubleshooting
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| "no team configured" | No selected profile exists yet — use `amq-squad:wizard`; its binary-owned flow proposes one before launch. |
-| `start` reports a conflict | Inspect the exact `duplicate_live`, `record_invalid`, or `unmanaged` record/pane named by the error; do not delete the namespace. |
-| A prompt didn't reach an agent | The pane was busy — `send` refuses a mid-turn pane; re-send when idle or pass `--force` to interrupt deliberately. |
-| `amq send` rejected the message | Invalid `--kind` (there is no `handoff`) — use `review_request`/`todo`/`status`/`question`. |
-| The brief is a stub the board warns about | Author a real active brief via the `amq-squad` Setup section, then rerun `start`. |
-| Orchestration norm missing after adding `--orchestrated` | `new team` leaves an existing `team-rules.md` untouched — regenerate with `amq-squad team rules init --force`. |
-| Codex loads an old amq-squad skill after upgrade | Run `amq-squad doctor`; the Codex skill-cache check warns when the released bundle is missing, stale, or only present through a compatibility symlink. Refresh the plugin/skill cache instead of relying on manual symlinks. |
-| Shift+Enter doesn't submit in a tmux window | `doctor` warns when tmux `extended-keys` is off; opening under iTerm2 `tmux -CC` (the `attach_control` action) makes it work natively. |
-| Custom role rejected | A custom role needs an explicit `--binary <role>=<cli>` (no catalog default). |
+| `no squad.yaml at <path>` | The repository has no squad yet — use `amq-squad:wizard`; `team propose` plans one. |
+| `squad_yaml_digest_mismatch` on apply | The options changed since the proposal — run `team propose` again and get a fresh approval. |
+| `squad_yaml_changed` on apply | squad.yaml was edited on disk after the proposal — the next `team propose` shows the edit as the diff to decide on. |
+| `grants_invalid` | squad.yaml widens the owner grant or carries an owner-only key; it can only narrow. |
+| `status: no store root` | Outside a seat, pass `--project <repo> --session <s>` or `--root <root>`. |
+| A seat's done task never reaches review | The commit step refused a path outside the declared files — the lead widens the task or sends it back. |
+| `task widen: takes no --me` | The scheduler proves the lead from the process; run it from the lead seat without `--me`. |
+| A launch exits 10 | A required action (AMQ's trust confirmation) waits for the owner; rerun with `--decision` only on the owner's answer. |
+| A Codex seat stops on its folder-trust prompt | The owner adds the lines `amq-squad trust <repo>` prints to `~/.codex/config.toml`. |
+| Codex loads an old amq-squad skill after upgrade | Refresh the plugin/skill cache; `amq-squad doctor` reports the installed versions. |
 
 ## Where the authoritative instructions live
 
 This guide is orientation. It is **not** the source of truth for how to run a squad.
 
-Each skill's authoritative instructions live in its canonical source, and the long-form
-material extracted from this guide lives beside them:
+Each skill's authoritative instructions live in its canonical source, and the
+long-form material lives beside them:
 
 | skill | authoritative source | extracted references |
 | --- | --- | --- |
@@ -726,14 +292,12 @@ material extracted from this guide lives beside them:
 | `amq-squad:cli` | `plugins/skills-src/cli/SKILL.md` | `references/{daily-loop,primitives,troubleshooting}.md`, `LEARNINGS.md` |
 | `amq-squad:orchestrator` | `plugins/skills-src/orchestrator/SKILL.md` | `references/{lead-loop,agent-events,recovery}.md`, `LEARNINGS.md` |
 
-`plugins/{claude,codex}/skills/<skill>/` are GENERATED mirrors of those sources. Edit the
-source and run `make skills-generate`; editing a mirror is lost on the next generation and
-`--check` will fail.
+`plugins/{claude,codex}/skills/<skill>/` are GENERATED mirrors of those sources.
+Edit the source and run `make skills-generate`; editing a mirror is lost on the next
+generation and `--check` will fail.
 
-When this guide and a `SKILL.md` disagree, **the `SKILL.md` is correct** — its commands are
-verified against the live binary surface on every CI run by
-`scripts/check-skill-commands.py`, and this guide is not.
-
-For anything below the skills — the binary's verbs, JSON envelopes, tmux targets,
-profiles, and [cross-project teams](../README.md#cross-project-teams) — see the
-[README](../README.md).
+When this guide and a `SKILL.md` disagree, **the `SKILL.md` is correct** — its
+commands are checked against the live binary on every CI run:
+`scripts/check-skill-commands.py` proves every named verb, subcommand and flag
+exists, and `scripts/check-skill-invocations.py` executes every documented
+invocation in a fixture project. This guide is not checked that way.

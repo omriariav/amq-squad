@@ -1,62 +1,77 @@
 # Recovery ladder
 
-Climb in order. Each rung is cheaper and less destructive than the next, and
-skipping to the bottom is how a recoverable run becomes an unrecoverable one.
+Climb in order. Each rung is cheaper and less destructive than the next, and skipping
+to the bottom is how a recoverable run becomes an unrecoverable one.
 
 ## 1. Inspect before acting
 
+```sh
+amq-squad status --project P --session S --json
+amq-squad task list --project P --session S
+amq-squad task reconcile --project P --session S --json
+# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
+amq-squad doctor --project P
 ```
-amq-squad status --session S --json
-amq-squad doctor --session S
-amq-squad task list --session S
+
+Distinguish *stalled* from *busy* first. A live seat plus recent ledger evidence
+means busy. `task reconcile` lists the leases that expired without a report.
+
+## 2. Re-ring the doorbell
+
+Prefer a durable AMQ message over anything that touches a pane. A seat that never
+drained its inbox is not a stalled seat: `dispatch --task ID` re-grants the lease and
+rings again.
+
+## 3. Return the task to the pool
+
+An expired lease returns to the pool on its own. To move a task deliberately:
+
+```sh
+amq-squad task release ID --me H --reason TEXT --project P --session S
+amq-squad task reset ID --me H --project P --session S
+amq-squad task set ID --me H --priority 1 --project P --session S
+amq-squad task cancel ID --me H --reason TEXT --project P --session S
 ```
 
-Distinguish *stalled* from *busy* first. A live process plus recent durable
-progress means busy; otherwise inspect the recorded pane before assuming failure.
+`task release` returns a leased in-progress task to pending; `task reset` moves a
+blocked task back to pending and discards a refused done report (optionally onto
+another `--pool`); `task set` changes the priority or pool of a task that is not
+terminal. The scheduler starts a seat for the pool on demand. A history_tampered
+block clears only through a reset after the router observed it.
 
-## 2. Re-nudge queued work
+## 4. Escalate to the owner
 
-Prefer a durable AMQ send over anything that touches a pane. A worker that never
-drained its inbox is not a stalled worker.
-
-## 3. Resume
-
-`amq-squad resume` for stale agents, or the actions the status projection names.
-Resume rebuilds from the durable record, which is why the record is worth keeping
-honest.
-
-## 4. Escalate to the operator
-
-A blocker that needs a human decision is a gate, not a retry. Raise it on the
-gate thread and surface it on the operator-visible surface. Do not loop waiting
-for a human who has not been told.
+A blocker that needs an owner decision is a gate or a block routed to the owner
+(`task block ... --route owner`), not a retry. A seat quarantined for a global agent
+config change stays quarantined until the owner runs `seat clear` from the owner's
+own terminal; the lead never clears it.
 
 ## 5. Last resort, recorded
 
-Raw pane input (`tmux send-keys`) only after operator direction, and only
-recorded as such. It bypasses every durable record the rest of this ladder relies
-on.
+Raw pane input (`tmux send-keys`) only after owner direction, and only recorded as
+such. It bypasses every durable record the rest of this ladder relies on.
 
 ## Leadership handoff
 
-Before replacement, the outgoing lead records: current head, active tasks,
-worker progress, open gates, evidence paths, decisions taken, known
-risks, and the next safe action.
+Before replacement, the outgoing lead records: current head, active tasks, seat
+progress, open gates, evidence paths, decisions taken, known risks, and the next safe
+action.
 
-The replacement lead must ACK that checkpoint and advance the leadership epoch
-before dispatching anything. A second lead dispatching on a stale epoch is how
-two leads end up owning one task.
+The replacement lead reads `status` and `gate status` before dispatching anything. A
+second lead dispatching on stale state is how two leads end up owning one task; the
+scheduler accepts widening only from the lead of its launch record.
 
-## Multi-workstream board
+## Multi-squad board
 
-A `global_orchestrator` holding more than one active workstream in one
-conversation keeps an in-conversation board and refreshes it after every poll,
-gate answer, spawn, stop, final report, or recovery action.
+The operator session holding more than one squad reads them together:
 
-Track per run: name, repo, profile/session, lead and pane id, state (`running`,
-`gated`, `blocked`, `paused`, `stale`, `done`, `closed`), last checked, next poll
-or wake source, current gate or blocker, last action, next action, and the exact
-polling command.
+```sh
+amq-squad status --fleet --json
+amq-squad operator inbox --json
+```
 
-Demote closed runs to `next action: none - closed` so they stop competing for
-attention with active gates and stale runs.
+`status --fleet` prints one schema 1 document per squad of `~/.amq-squad/fleet.yaml`
+plus the squads waiting on the fleet cap; `operator inbox` lists every open gate of
+every squad, oldest first, and the lead questions with their relay argv. Track per
+squad: name, repository, session, lead handle, state, current gate or blocker, last
+action and next action. Demote closed squads so they stop competing for attention.

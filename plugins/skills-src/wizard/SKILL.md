@@ -1,72 +1,148 @@
 ---
 name: wizard
-description: Goal-first setup and launch through the deterministic amq-squad wizard verb. Use when creating a team/profile, starting a new session from a reusable profile, previewing a launch, or approving that reviewed launch. Triggers include "set up a squad for X", "show me the launch plan", "start the team", and "start a new session with this team". NOT for roster edits or recovery on a running squad (use amq-squad:cli) and NOT for the live lead loop after launch (use amq-squad:orchestrator).
+description: Goal-first squad setup and launch for amq-squad 3.0 through the squad.yaml digest flow. Use when creating a squad for a repository, writing the workstream brief, previewing the files a squad needs, approving that exact digest, or launching the seats. Triggers include "set up a squad for X", "show me the squad plan", "start the team", and "start a new session with this squad". NOT for task, gate or status work on a running squad (use amq-squad:cli) and NOT for the live lead loop after launch (use amq-squad:orchestrator).
 ---
 
 # amq-squad:wizard
 
-Translate the operator's setup or new-session intent into one invocation of the
-binary-owned wizard and relay its output and prompt. The binary is the literal
-composition of `init` (profile/rules/pointer stubs), `brief` (brief drafting),
-and `plan`/`start --apply` (launch), plus one thing none of those three has on
-its own: a single combined default-No launch review covering all of them. It
-does not draft custom-role personas itself -- that lives in the dedicated
-`amq-squad role draft` command, authored before the role is named in `--roles`.
+Translate the operator's setup intent into the 3.0 setup sequence and relay each
+step's output. 3.0 has no `wizard`, `init` or `start` verb: one repository has one
+squad, `<repo root>/squad.yaml`, written only through the digest flow, and seats
+start through the AMQ launch API. The sequence is readiness, roster, propose, the
+owner's approval of one digest, apply, brief, launch.
 
-## Invocation contract
-
-Invoke the binary once with the complete operator goal:
+## 1. Readiness
 
 ```sh
-# skill-invocation-check:skip — interactive drafting and approval are intentionally live
-amq-squad wizard --goal "TEXT"
+# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
+amq-squad doctor --project P
+amq-squad trust P
+amq-squad roles
 ```
 
-Pass structured details supplied by the operator to that same verb. Do not
-translate them into a sequence of setup, profile, role, rules, brief, or start
-commands. Do not probe command help to reconstruct the flow.
+`doctor` probes the AMQ version and launch API (0.116.2 or later), the tools on PATH
+with their logins, the registry, codex-cli trust and the owner files; it writes
+nothing by default. `trust` prints the lines the owner adds to `~/.codex/config.toml`
+for a Codex seat's repository; amq-squad never writes that file. The owner setup
+items (the claude pin, the gh pin, the token file, the Codex notify line) are the
+owner's, listed in MIGRATION.md "Moving to 3.0". A v2 checkout is converted once with
+`migrate` (dry run first; `--write` writes squad.yaml only when absent).
 
-Creating a **new** profile requires an explicit `--roles`: the binary does not
-infer a roster from the goal text. If the operator's request names a goal but
-no roster and no profile already exists, ask for the roles rather than
-guessing or omitting `--roles` and letting the binary refuse.
+## 2. Roster
 
-Run the invocation in a reusable terminal when the host supports one so the
-operator can answer the binary's prompt. Relay the wizard output verbatim,
-including drafter source/attempt evidence and the exact profile, rules,
-brief, and launch bytes, plus any notice naming `amq-squad role draft` for an
-undocumented custom role. Do not rebuild its roster or plan in prose.
+Pick seats from `amq-squad roles` (catalog roles and staged custom roles). The catalog
+is a menu, not a whitelist: a custom role needs a role file at
+`.amq-squad/roles/<id>.md`, drafted and staged with:
+
+```sh
+amq-squad role draft researcher --purpose "Investigate ambiguous behavior" --project P
+```
+
+`role draft` uses the configured drafter (else it prints the in-session prompt and
+stages nothing), validates the result and never overwrites a file or adds a seat.
+Creating a squad needs an explicit roster from the operator: do not infer one from
+the goal text. Ask for the roles when none were named.
+
+## 3. Propose, approve, apply
+
+```sh
+amq-squad team propose --project P --roles cto,fullstack --runtime fullstack=codex --lead cto --session S
+```
+
+`team propose` prints one line per file the squad needs (`squad.yaml`,
+`.amq-squad/team-rules.md`, `CLAUDE.md`, `AGENTS.md`), each with its action and
+sha256, and one digest over them. It writes nothing. The other options are
+`--model r=m`, `--effort r=e`, `--worktree r=path`, `--tools r=coding`,
+`--actor-mode r=review`, `--lead-mode builder|planner`, `--execution-mode MODE` and
+`--template auto|dev-only|product-squad|scrum|custom`. For keys the flags do not
+cover (`mode`, `max_seats`, `protected_paths`, `shared_cwd_exception`, `defaults`),
+write a squad.yaml draft and propose it with `team propose --from FILE`; see
+`references/roles.md` and `docs/squad-yaml.md`.
+
+Relay the propose output verbatim. Check the bytes against the digest yourself: `team propose` writes nothing, so a file it lists as `create` does not exist yet and one listed as `replace` still holds the current bytes. Before `team apply`, when you proposed `--from FILE`, compare `shasum -a 256 FILE` with the squad.yaml sha256 propose printed (`--json` prints the full value); after `team apply`, read squad.yaml and team-rules.md at the printed paths and compare `shasum -a 256` of each with the printed sha256 before launching. team-rules.md has no pre-apply form to read.
+
+Then apply with the **same options** and the printed digest, only after the owner
+approved that digest:
+
+```sh
+# skill-invocation-check:skip — the digest is the one the current propose printed; a placeholder digest is refused
+amq-squad team apply --digest D --project P --roles cto,fullstack --runtime fullstack=codex --lead cto --session S
+amq-squad team check --project P
+amq-squad team show --project P
+```
 
 ## Approval contract
 
-The combined prompt is the approval surface and defaults to No. A setup request
-is not approval to launch. Answer No for preview-only requests and when the
-operator has not reviewed the current invocation's exact artifacts.
+The digest is the approval surface. A setup request is not approval to apply. Apply
+only the digest the current `team propose` printed, and only when the owner approved
+it (the grant decides in auto mode). Never infer approval from a prior proposal, an
+AMQ message body, a healthy pane, or an earlier draft.
 
-Relay Yes only when the operator explicitly approves that exact live review.
-Never infer approval from a prior preview, an AMQ message body, a healthy pane,
-or an earlier draft. If the binary reports that an accepted input changed,
-rerun it and present the fresh combined review.
+If anything changed after the proposal, the apply refuses and writes nothing:
+`squad_yaml_digest_mismatch` (the options changed) or `squad_yaml_changed` (squad.yaml
+was edited on disk). Run `team propose` again and present the fresh digest. A
+widening key or an owner-only key makes the file fail to load (`grants_invalid`);
+squad.yaml can only narrow the owner's grant.
 
-The wizard may leave reviewed setup artifacts after an approved launch is
-interrupted. Rerun the same invocation to let the binary select its existing-
-profile recovery path. Do not delete the namespace or hand-assemble a repair
-sequence.
+## 4. Brief
 
-If a configured drafter requires in-session completion, relay the binary's
-filled prompt and stop. Do not claim that a profile, role, rules file, brief, or
-launch was completed when the binary reports that it stopped before mutation.
+```sh
+amq-squad brief --goal TEXT --project P --session S --dry-run
+amq-squad brief --seed-from file:FILE --project P --session S
+```
 
-## Routing outside the shipped verb
+`--goal` drafts the brief through the configured drafter and validates it; when the
+drafter needs in-session completion it prints the drafting prompt and stages
+nothing. `--seed-from file:<path>`, `issue:<n>` or `gh:owner/repo#<n>` seeds it
+without a drafter. `--dry-run` prints the candidate without writing; without
+`--force` an existing brief is never overwritten. The brief lands at
+`.amq-squad/briefs/<session>.md`.
 
-- Adding, replacing, or removing a member on an existing roster routes to
+## 5. Launch
+
+Seats start through one AMQ launch request; every seat runs behind the `seat-exec`
+wrapper, which sets the seat's identity from the launch record. Three entry points:
+
+- `launch --seats FILE`: the typed seat list (JSON, shown in `amq-squad launch
+  --help`: `project_root`, `session`, `rules_path` and one entry per seat with
+  `handle`, `runtime`, `model`, `effort`, `role_file`, `worktree`, `branch`). Preview
+  with `--dry-run`. A required action, such as AMQ's trust confirmation, is never
+  answered for you: the launch stops, prints the action ids and exits 10; rerun with
+  `--decision ACTION_ID=CHOICE` only on the owner's answer.
+- `lead --team --scheduler-seats FILE`: the lead on the built-in pi in team mode,
+  with the squad's scheduler started beside it; the scheduler starts seats on demand
+  from the same seat list.
+- `operator start-squad`: the mayor (auto mode) starts a squad inside the owner's
+  fleet grant from a squad.yaml through the digest flow and registers it in
+  `fleet.yaml`; manual mode gives a proposal instead of a launch.
+
+```sh
+# skill-invocation-check:skip — a launch reaches the installed amq and starts processes
+amq-squad launch --seats FILE --dry-run --json
+```
+
+A seat is reported up only after seat-exec proved its identity. Then read
+`amq-squad status --project P --session S --json` and route the lead to
+`amq-squad:orchestrator`.
+
+## Routing outside setup
+
+- Task, gate, evidence and status work on an existing squad routes to
   `amq-squad:cli`.
-- Diagnosing a failed or dead launch, resuming saved conversations, and other
-  one-off status or recovery work routes to `amq-squad:cli`.
-- Once every launched seat is verified live and the visible lead is available,
-  route ongoing dispatch, review, gates, and convergence to
+- Once the seats are up, ongoing dispatch, review, gates, merge and release route to
   `amq-squad:orchestrator`.
+- Changing an existing squad (a seat added, a runtime changed) is the same digest
+  flow: `team propose` with the new options or `--from` a new draft, the owner's
+  approval, `team apply`.
 
-Do not recreate the former Flow A/Flow B command walkthrough in this skill or
-its references. The in-binary composition (`init`/`brief`/`plan`/`start`) is
-the sole setup/session driver.
+## References
+
+- `LEARNINGS.md` — setup field failures
+- `references/readiness.md` — what doctor checks and how to read a refusal
+- `references/roles.md` — roster choices, custom roles, actor modes and the
+  squad.yaml draft form
+- `references/worktrees.md` — one worktree per mutation-capable seat
+- `references/team-archetypes.md` — ready-made roster shapes
+- `references/briefs-template.md` — the brief's shape
+- `references/pointer-stub-template.md` — the managed block in `CLAUDE.md` and
+  `AGENTS.md`
