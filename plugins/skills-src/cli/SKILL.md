@@ -45,7 +45,7 @@ already says.
 |---|---|
 | "what's the state" | `amq-squad status --project P --session S --json` |
 | "every squad at once" | `amq-squad status --fleet --json` |
-| "is the host sane" | `amq-squad doctor --project P` <!-- skill-invocation-check:skip — doctor probes gh and the provider logins, which can reach the network --> |
+| "is the host sane" | `amq-squad doctor --project P` |
 | "who am I, what is my task" (inside a seat) | `amq-squad context --me H --json` |
 | "show the tasks" | `amq-squad task list --project P --session S` |
 | "show one task" | `amq-squad task show ID --project P --session S --json` |
@@ -175,9 +175,7 @@ amq-squad verify release --tag TAG --root ROOT --json
 ## Host checks
 
 ```sh
-# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
 amq-squad doctor --project P
-# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
 amq-squad doctor --json
 amq-squad trust P
 ```

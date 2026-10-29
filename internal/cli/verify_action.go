@@ -108,6 +108,7 @@ Exit codes:
   0 approved
   10 pending
   11 denied
+  12 no gate (no gate record for the topic; a merge kind goes to merge-train)
   13 unbound or mismatched operator answer
 `, strings.Join(operatorauth.SupportedActions(), ", "))
 	}

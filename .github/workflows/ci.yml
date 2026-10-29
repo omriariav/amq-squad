@@ -11,9 +11,12 @@ permissions:
   contents: read
 
 jobs:
+  # The gating suite runs on macOS, the 3.0 host (brief 5-docs-F, reviewer
+  # ruling): 3.0 supports macOS on Apple silicon only, and the Linux test run
+  # is a canary in the Linux job below.
   make-ci:
     name: make ci
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -45,11 +48,18 @@ jobs:
 
       # The HTML renders are pinned to one pandoc release (Makefile PANDOC_VERSION);
       # keep this version equal to it, or the -check targets refuse with a version error.
+      # PyYAML for the skill generator and checks: a venv first on PATH (the
+      # runner's Homebrew Python refuses a system pip install, PEP 668).
       - name: Install documentation tools
+        shell: bash
         run: |
-          curl -L https://github.com/jgm/pandoc/releases/download/3.11/pandoc-3.11-1-amd64.deb -o /tmp/pandoc.deb
-          sudo dpkg -i /tmp/pandoc.deb
+          set -euo pipefail
+          curl -fL https://github.com/jgm/pandoc/releases/download/3.11/pandoc-3.11-arm64-macOS.pkg -o "$RUNNER_TEMP/pandoc.pkg"
+          sudo installer -pkg "$RUNNER_TEMP/pandoc.pkg" -target /
           pandoc --version | head -n 1
+          python3 -m venv "$RUNNER_TEMP/py"
+          "$RUNNER_TEMP/py/bin/pip" install --quiet pyyaml
+          echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
 
       - name: Run shuffled internal/cli evidence suite
         shell: bash
@@ -132,7 +142,20 @@ jobs:
 
   # v3 phase 5: the Claude hook script under dash, which is /bin/sh on
   # ubuntu. The script runs through /bin/sh in Claude Code's hook runner, so
-  # the Linux lane proves it is POSIX-clean, not bash-only.
+  # the Linux lane proves it is POSIX-clean, not bash-only. Build, vet and the
+  # hook script gate here; `go test ./...` on Linux is a canary only
+  # (continue-on-error), because 3.0 does not support Linux seats.
+  #
+  # Known red on Linux (first Linux test run, run 40955238412), by package:
+  #   internal/seatlaunch: the proof socket under long paths (helper_dial_failed,
+  #     no_proof, bind: invalid argument, the Unix socket path bound); the
+  #     replaced-directory and replaced-socket identity rows (ext4 and tmpfs
+  #     reuse an inode right after unlink and recreate; APFS never does); two
+  #     cancel and close rows.
+  #   internal/routing: TestFix5SeedReplacedIsRefused,
+  #     TestRepassReportRunsTheStartChecks (the seed replacement, same inode
+  #     reuse).
+  #   internal/gatestore: TestSquadIDIsCanonical.
   claude-hooks-linux:
     name: Claude hook script (dash, linux)
     runs-on: ubuntu-latest
@@ -149,6 +172,9 @@ jobs:
       - name: Build amq-squad
         run: go build -o amq-squad ./cmd/amq-squad
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Run the Claude hook script tests under dash
         shell: bash
         env:
@@ -157,3 +183,7 @@ jobs:
           set -euo pipefail
           command -v dash
           python3 scripts/test_claude_hooks.py ./amq-squad Repass5
+
+      - name: Linux test canary
+        continue-on-error: true
+        run: go test -timeout 20m ./...

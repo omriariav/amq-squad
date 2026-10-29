@@ -1,0 +1,29 @@
+$ cat <x>/home/.amq-squad/grants.yaml
+schema: 1
+mode: manual
+max_seats: 6
+permitted_runtimes: [claude, codex, pi]
+merge:
+  - repository: you/app
+    base_branch: main
+    ci_required: true
+    size_cap_lines: 400
+[exit 0]
+
+ok      registry                           45 entries, 0 verified (the lead proposes seats from these only); <x>/home/.amq-squad/registry.yaml is current
+ok      grants                             <x>/home/.amq-squad/grants.yaml (owner file <x>/home/.amq-squad/grants.yaml, mode 0600); mode manual; seat cap 6 per session
+ok      gh pin                             <x>/home/bin/gh sha256 4657c69c2e31c183d240277868c9ff07e2e18812f2914db59228df013eaa32a6
+
+$ amq-squad team propose --roles cto,fullstack --lead cto --session issue-96
+create  <x>/app/squad.yaml                68ac00937fcd
+create  <x>/app/.amq-squad/team-rules.md  73854640e077
+create  <x>/app/CLAUDE.md                 f606fada821f
+create  <x>/app/AGENTS.md                 f606fada821f
+digest sha256:3c2b33ca2421c5a5ccca652a69de8ee1d2bd4e3072b2c9c66eb43364760f3a5c@absent (2 seats); nothing written. Apply after approval:
+  amq-squad team apply --digest sha256:3c2b33ca2421c5a5ccca652a69de8ee1d2bd4e3072b2c9c66eb43364760f3a5c@absent <same options>
+[exit 0]
+
+$ amq-squad team propose --roles cto,fullstack,qa,senior-dev,junior-dev,designer,researcher --lead cto --session issue-96
+error: <x>/app/squad.yaml: seats widens the owner grant: 7 seats above max_seats 6 (squad.yaml can only narrow, plan 7.2)
+[exit 2]
+

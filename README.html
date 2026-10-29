@@ -274,1031 +274,521 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2310" id="toc-whats-new-in-v2310">What's new
-in v2.31.0</a></li>
+<li><a href="#whats-new-in-30" id="toc-whats-new-in-30">What's new in
+3.0</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
-<li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
-<li><a href="#execution-modes" id="toc-execution-modes">Execution
-modes</a></li>
-<li><a href="#core-concepts" id="toc-core-concepts">Core
-concepts</a></li>
-<li><a href="#orchestration-protocol-and-safety"
-id="toc-orchestration-protocol-and-safety">Orchestration protocol and
-safety</a></li>
-<li><a href="#terminal-capability-matrix"
-id="toc-terminal-capability-matrix">Terminal capability matrix</a></li>
-<li><a href="#command-map" id="toc-command-map">Command map</a></li>
-<li><a href="#skills-and-model-guidance"
-id="toc-skills-and-model-guidance">Skills and model guidance</a></li>
-<li><a href="#customize" id="toc-customize">Customize</a></li>
-<li><a href="#cross-project-teams"
-id="toc-cross-project-teams">Cross-project teams</a></li>
-<li><a href="#reference-and-moved-details"
-id="toc-reference-and-moved-details">Reference and moved
-details</a></li>
 <li><a href="#requirements" id="toc-requirements">Requirements</a></li>
+<li><a href="#first-run" id="toc-first-run">First run</a></li>
+<li><a href="#running-a-squad" id="toc-running-a-squad">Running a
+squad</a></li>
+<li><a href="#the-owners-buzz-face" id="toc-the-owners-buzz-face">The
+owner's Buzz face</a></li>
+<li><a href="#command-map" id="toc-command-map">Command map</a></li>
+<li><a href="#what-30-does-not-do" id="toc-what-30-does-not-do">What 3.0
+does not do</a></li>
+<li><a href="#uninstall" id="toc-uninstall">Uninstall</a></li>
+<li><a href="#upgrading-from-v2" id="toc-upgrading-from-v2">Upgrading
+from v2</a></li>
+<li><a href="#where-the-plan-and-evidence-live"
+id="toc-where-the-plan-and-evidence-live">Where the plan and evidence
+live</a></li>
 </ul></li>
 </ul>
 </nav>
 <h1 id="amq-squad">amq-squad</h1>
-<p><strong>amq-squad launches and coordinates teams of Claude and Codex
-agents over durable AMQ.</strong> It owns the team layer above <a
-href="https://github.com/avivsinai/agent-message-queue">AMQ</a> by <a
-href="https://github.com/avivsinai">Aviv Sinai</a>: roles, rosters,
-briefs, operator gates, launch records, and the terminal/runtime
-controls that keep a squad observable.</p>
-<p>The 30-second mental model:</p>
+<p><strong>amq-squad 3.0 runs a squad of coding agents (Claude Code,
+Codex and the built-in pi) on one repository, inside grants the owner
+sets, over durable <a
+href="https://github.com/avivsinai/agent-message-queue">AMQ</a></strong>
+by <a href="https://github.com/avivsinai">Aviv Sinai</a>. It is a
+rebuild on AMQ's coop primitives: the v2 launch and orchestration code
+is gone, and what remains is a smaller, security-first core.</p>
+<p>The model in five lines:</p>
 <ul>
-<li><strong>AMQ is the durable coordination rail.</strong> Agents
-communicate through inboxes, threads, receipts, presence, and wake
-signals.</li>
-<li><strong>amq-squad is the project/team layer.</strong> It declares
-who is on the team, what each role does, which workstream they share,
-and how to start/stop/resume them.</li>
-<li><strong>Terminals are runtime surfaces, not the source of
-truth.</strong> tmux, iTerm2, and Terminal.app make agents visible and
-sometimes controllable; durable AMQ dispatch works even when pane
-injection is unavailable.</li>
-<li><strong>Operator gates bind high-risk actions.</strong> Leads may
-plan, dispatch, review, and collect evidence, but default-branch pushes,
-tags, releases, external sends, and merges need verified operator
-approval tied to an exact action and target.</li>
+<li><strong>AMQ is the rail.</strong> Seats start through AMQ's launch
+API; mail, wake and cross-project routing are AMQ's.</li>
+<li><strong>The squad is one file.</strong>
+<code>&lt;repo root&gt;/squad.yaml</code> names the seats, the lead and
+the narrowing of the owner's grant. It is written only through a digest
+the owner (manual mode) or the grant (auto mode) approves.</li>
+<li><strong>The owner's limits live outside the repository.</strong>
+<code>~/.amq-squad/grants.yaml</code> sets the mode, the seat and cost
+caps, the runtimes and the merge grants; squad.yaml can only narrow
+it.</li>
+<li><strong>Seats never commit, merge or release.</strong> A seat edits
+its worktree; the harness commit step commits only the task's declared
+files, the merge train lands PRs inside the merge grant, and tags and
+releases wait for the owner.</li>
+<li><strong>Four typed gates stop for the owner:</strong> tag and
+release, external send, credential change, and growth beyond the grant.
+The owner answers from Buzz on the phone with a signature the Go core
+verifies.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2310">What's new in v2.31.0</a></li>
+<li><a href="#whats-new-in-30">What's new in 3.0</a></li>
 <li><a href="#install">Install</a></li>
-<li><a href="#quickstart">Quickstart</a></li>
-<li><a href="#execution-modes">Execution modes</a></li>
-<li><a href="#core-concepts">Core concepts</a></li>
-<li><a href="#orchestration-protocol-and-safety">Orchestration protocol
-and safety</a></li>
-<li><a href="#terminal-capability-matrix">Terminal capability
-matrix</a></li>
-<li><a href="#command-map">Command map</a></li>
-<li><a href="#skills-and-model-guidance">Skills and model
-guidance</a></li>
-<li><a href="#customize">Customize</a></li>
-<li><a href="#cross-project-teams">Cross-project teams</a></li>
-<li><a href="#reference-and-moved-details">Reference and moved
-details</a></li>
 <li><a href="#requirements">Requirements</a></li>
+<li><a href="#first-run">First run</a></li>
+<li><a href="#running-a-squad">Running a squad</a></li>
+<li><a href="#the-owners-buzz-face">The owner's Buzz face</a></li>
+<li><a href="#command-map">Command map</a></li>
+<li><a href="#what-30-does-not-do">What 3.0 does not do</a></li>
+<li><a href="#uninstall">Uninstall</a></li>
+<li><a href="#upgrading-from-v2">Upgrading from v2</a></li>
+<li><a href="#where-the-plan-and-evidence-live">Where the plan and
+evidence live</a></li>
 </ul>
-<h2 id="whats-new-in-v2310">What's new in v2.31.0</h2>
-<p><code>launchapi</code> is now the default launch backend on tmux,
-with a complete digest-gated launch surface. <strong>Two new mandatory
-steps:</strong> every project needs a <code>.amqrc</code>
-(<code>amq setup</code>, once) and every workstream needs a brief
-(<code>amq-squad brief</code>) before
-<code>start</code>/<code>plan</code>/<code>resume</code> will launch --
-the new getting-started order is <code>init</code> -&gt;
-<code>brief</code> -&gt; <code>plan</code> -&gt;
-<code>start --apply</code>.</p>
+<h2 id="whats-new-in-30">What's new in 3.0</h2>
+<p>Everything: <a
+href="docs/v3.0.0-release-notes.md">docs/v3.0.0-release-notes.md</a>
+lists the release by phase. In short:</p>
 <ul>
-<li><strong><code>launchapi</code> is the default on tmux</strong>
-(#755); <code>--launch-via legacy</code> opts out through v2.31.x,
-removed in v2.32.0.</li>
-<li><strong>One <code>init</code> verb</strong> (#762) replaces
-<code>new team</code>/<code>new profile</code>/<code>team init</code>/<code>team rules init</code>/<code>team sync --apply</code>
-with a zero-write preview/<code>--apply &lt;digest&gt;</code> flow; the
-old verbs still work as deprecation redirects.</li>
-<li><strong><code>plan</code></strong> (#756) is a zero-write preview of
-any launch;
-<strong><code>start --apply &lt;digest&gt; --decision</code></strong>
-(#757) replaces the old <code>--yes</code>/<code>--trust</code>/
-<code>--launchapi-decision</code> flags with a digest-print-confirm
-flow.</li>
-<li><strong><code>resume</code> folds into
-<code>plan</code>/<code>start</code></strong> (#758): no
-<code>--exec</code> is a thin alias for <code>plan</code>;
-<code>--exec</code> drives the same shared launch machinery
-<code>start --apply</code> uses. <code>team resume</code> is now a hard
-error. <code>resume --json</code>'s envelope <code>kind</code> changed
-<code>resume_plan</code> -&gt; <code>plan</code> (see the release notes
-for the migration).</li>
-<li><strong>Goal delivery moves to launch time</strong> (#761):
-<code>goal deliver</code>/<code>claim</code>/
-<code>retry-attempt</code>/<code>start</code>/<code>apply</code> are all
-deleted, replaced by passing <code>--goal TEXT</code> to
-<code>brief</code>/<code>start</code> and automatic delivery via the
-lead seat's launch-time <code>InitialInput</code>.</li>
-<li><strong><code>doctor</code>/<code>status</code> report launchapi
-compatibility and liveness</strong> (#766): adoption-floor warnings, and
-an explicit explanation for a launchapi-launched seat's missing launch
-record.</li>
-<li><strong>New mandatory <code>brief</code> verb</strong> (#759): all
-LLM drafting moves off the launch path into
-<code>amq-squad brief [--goal TEXT | --seed-from REF]</code>;
-<code>wizard</code> becomes sugar over <code>init</code> -&gt;
-<code>brief</code> -&gt; <code>plan</code> -&gt;
-<code>start --apply</code>.</li>
+<li><code>squad.yaml</code> schema 1 replaces the v2 profile, through
+<code>team propose</code> and <code>team apply</code> (<a
+href="docs/squad-yaml.md">docs/squad-yaml.md</a>).</li>
+<li>A task store with leases and pools, and a scheduler process beside
+the lead.</li>
+<li><code>seat-exec</code> in front of every seat: a scrubbed
+environment, the identity from the launch record, a read-only identity
+proof.</li>
+<li>The harness commit step, the merge train under the standing merge
+grant, and the release flow behind the <code>tag</code> and
+<code>github_release</code> gates.</li>
+<li>A runtime registry with the owner's pins, re-hashed at every
+launch.</li>
+<li>The Claude Code hooks plugin (<a
+href="docs/claude-hooks.md">docs/claude-hooks.md</a>), the built-in pi
+package, and the Buzz attachment on amq-remote's mailbox adapter.</li>
+<li><code>amq-squad migrate</code> for v2 profiles and
+<code>amq-squad uninstall</code> (<a
+href="docs/uninstall.md">docs/uninstall.md</a>).</li>
 </ul>
-<p>Also fixed: the quickstart's <code>new team</code> example never
-pinned members to the session the following steps assume, breaking the
-flow as written (#792).</p>
-<p>Full detail in <a href="docs/v2.31.0-release-notes.md">the v2.31.0
-release notes</a>.</p>
-<p>The README describes the latest release only. Earlier releases live
-in <a href="https://github.com/omriariav/amq-squad/releases">GitHub
-Releases</a> and <a href="docs/">docs/</a> (per-release notes
-files).</p>
 <h2 id="install">Install</h2>
-<p>Install the v2 module path:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v3/cmd/amq-squad@latest</span>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.0</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
-<p>For a pinned release, replace <code>@latest</code> with the tag you
-want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.0</span></code></pre></div>
-<p>Install the skills from the plugin marketplace when agents should use
-the amq-squad playbooks themselves.</p>
-<p>Claude Code:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">/plugin</span> marketplace add omriariav/amq-squad</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">/plugin</span> install amq-squad@amq-squad</span></code></pre></div>
-<p>Codex:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin marketplace add omriariav/amq-squad</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin add amq-squad@amq-squad</span></code></pre></div>
-<p>The authoritative skills are <code>amq-squad:wizard</code> for setup
-and launch preview, <code>amq-squad:cli</code> for direct operations,
-and <code>amq-squad:orchestrator</code> for a verified live lead.
-<code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
-<code>amq-team-setup</code>, and <code>amq-squad-role-creator</code> are
-compatibility redirects only. The CLI and skills are versioned
-together.</p>
-<h2 id="quickstart">Quickstart</h2>
-<p>Enable the default attention-only desktop notification policy when
-creating a profile with <code>team init --operator-notifications</code>.
-Existing profiles remain authoritative and are never rewritten. Live
-<code>start</code> and <code>resume</code> supervise one profile/session
-notification watcher on the launch host. <code>status</code> and
-<code>doctor</code> surface watcher health. Notifications never approve
-gates.</p>
-<p>Notification delivery is honestly <strong>at least once</strong>, not
-exactly once. The supervised watcher and manual
-<code>operator watch</code> share the same per-event/per-sink
-reservation and success-commit state in
-<code>.amq-squad/notify-state.json</code>. A reservation lasts for the
-configured sink timeout plus a 5-second commit margin (15 seconds by
-default, up to 65 seconds for the supported maximum timeout). If a sink
-side effect succeeds but the process dies before committing success,
-other drivers suppress that event only until the reservation expires and
-then retry it. This bounds concurrent replay and retry delay, not the
-total duplicate count: repeated ambiguous crashes, committed delivery
-errors and explicit resend can cause further attempts. Command sinks
-should therefore be idempotent.</p>
-<p>The shortest working path for a visible project lead and workers:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Create the roster and its shared rules.</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--session</span> issue-96 <span class="at">--sync</span></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Author the workstream brief. start/plan/wizard never draft one themselves</span></span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="co"># and fail closed naming this command if it&#39;s missing.</span></span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> brief <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--project</span> .</span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Accept the shared checkout for this demo (real multi-implementer teams</span></span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="co"># should give each member its own worktree via &#39;team member update --cwd&#39;;</span></span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="co"># wizard/start materializing worktrees inside the plan is tracked as #770).</span></span>
-<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team shared-cwd-exception set <span class="st">&quot;quickstart demo: single shared checkout&quot;</span> <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
-<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="co"># Preview the complete launch plan. The prompt defaults to No.</span></span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span></span>
-<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="co"># After approving that exact plan, automation can use --yes.</span></span>
-<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--yes</span></span>
-<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="co"># Watch the run.</span></span>
-<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
-<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a><span class="co"># Queue durable work to a role. Pane nudges are optional; AMQ is authoritative.</span></span>
-<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="dt">\</span></span>
-<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a>  <span class="at">--role</span> qa <span class="dt">\</span></span>
-<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Run smoke tests&quot;</span> <span class="dt">\</span></span>
-<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body-file</span> ./qa-task.md</span>
-<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a><span class="co"># Stop and resume without losing launch records, briefs, or task state.</span></span>
-<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> down <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
-<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span></code></pre></div>
-<p><code>start</code> has one mutation gate, default No. It resolves the
-roster and active brief, renders one plan, and starts only after
-approval. Under the launch lock it keeps verified live roles, respawns
-missing or stopped roles, and verifies every child process before
-reporting success. An optional goal is sent to the lead only after the
-whole roster is live. After interruption, rerun <code>start</code>; no
-prepared manifest, readiness digest, bootstrap acknowledgement, or
-separate go step exists.</p>
-<p>Roster changes use the same reconciler. Add a configured role and
-rerun <code>start</code>; verified live roles remain untouched and only
-the missing role starts. Use <code>down --role &lt;role&gt;</code>
-before changing and replacing a live role. For a deterministic visible
-arrangement, use <code>--target new-window</code> or select
-<code>--layout vertical|horizontal|tiled</code>; the recorded pane IDs,
-not window names, remain the runtime identity.</p>
-<p>The canonical copy/paste flow is:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--profile</span> default</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--profile</span> default <span class="at">--yes</span></span></code></pre></div>
-<p>Manual setup still works when the team shape is known:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96 <span class="at">--seed-from</span> issue:96</span></code></pre></div>
-<h2 id="execution-modes">Execution modes</h2>
-<p>amq-squad separates the control root, target project root, visible
-lead, and implementation authority. The mode should be explicit in
-goal-first runs.</p>
-<table>
-<thead>
-<tr>
-<th>Mode</th>
-<th>What it means</th>
-<th>Use it when</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>global_orchestrator</code></td>
-<td>A neutral control-plane session supervises one or more project runs.
-It previews, creates/registers project leads, routes gates, and watches
-evidence; it does not edit target project code.</td>
-<td>NOC/global coordination across repos or milestones.</td>
-</tr>
-<tr>
-<td><code>project_lead</code></td>
-<td>One visible project-root lead owns the run, delegates implementation
-over durable AMQ tasks, and produces final evidence.</td>
-<td>Default for most issue or milestone delivery.</td>
-</tr>
-<tr>
-<td><code>project_team</code></td>
-<td>Multiple visible project-root agents are launched as first-class
-members.</td>
-<td>The operator wants to watch and address several roles directly.</td>
-</tr>
-<tr>
-<td><code>direct_lead_session</code></td>
-<td>The visible project lead may code directly in the project root.</td>
-<td>Single-lead exceptions where delegation would add no value.</td>
-</tr>
-</tbody>
-</table>
-<p>Each schema-5 member also has an explicit <code>actor_mode</code>:
-<code>implementation</code> or <code>review</code>. A planner lead
-remains a delegating reviewer, an implementation worker may edit only
-within its assigned role and durable task, and a review actor remains
-read-only. Bootstrap capability lookup uses the exact trimmed role and
-handle; case drift does not inherit another actor's permissions. Set
-modes when creating a team with
-<code>--actor-mode role=implementation,...</code> or when adding a
-member with
-<code>team member add --actor-mode review|implementation</code>. Legacy
-schema-1 through schema-4 profiles retain their historical effective
-behavior until explicitly migrated; once a profile is written as schema
-5, every member must carry an explicit mode.</p>
-<p><code>--external-lead</code> is a project-lead binding mode: the
-current tmux pane becomes the configured lead for that run, while
-amq-squad spawns the rest of the team. It must run from the lead
-member's project root. It does not adopt a separate global orchestrator
-handle as the project lead.</p>
-<p>Operational recipes live in <a
-href="docs/global-orchestrator-runbook.md">docs/global-orchestrator-runbook.md</a>
-and <a
-href="docs/operator-cookbook.md">docs/operator-cookbook.md</a>.</p>
-<h3 id="bounded-self-operator-mode">Bounded self-operator mode</h3>
-<p><code>self_operator</code> is an explicit, exact-session policy for
-delegated merge-gate approval. New profiles require
-<code>--operator-mode self_operator --self-operator-lead &lt;lead&gt; --self-operator-allow merge</code>;
-there is no default allowlist. Spawn remains human-only until strict
-spawn evidence exists, as do release, tag, publish, external-send, and
-destructive-filesystem gates. The approving lead cannot execute the
-merge; a different strongly verified roster actor must run the final
-verifier. Human denial/intervention and policy pause or revision revoke
-self approval. Notifications are attention-only and never authorize an
-action.</p>
-<h2 id="core-concepts">Core concepts</h2>
-<table>
-<thead>
-<tr>
-<th>Concept</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Project root</strong></td>
-<td>The repository or workspace whose <code>.amq-squad/</code> directory
-owns team state. Most commands default to cwd and accept
-<code>--project DIR</code>.</td>
-</tr>
-<tr>
-<td><strong>Profile</strong></td>
-<td>A team shape. The default profile is
-<code>.amq-squad/team.json</code>; named profiles live under
-<code>.amq-squad/teams/&lt;name&gt;.json</code>.</td>
-</tr>
-<tr>
-<td><strong>Session / workstream</strong></td>
-<td>The AMQ namespace for one issue, release, or focused run. Session
-names use lowercase letters, digits, <code>-</code>, and
-<code>_</code>.</td>
-</tr>
-<tr>
-<td><strong>Team rules</strong></td>
-<td><code>.amq-squad/team-rules.md</code>, shared norms for all members.
-<code>CLAUDE.md</code> and <code>AGENTS.md</code> only point to it.</td>
-</tr>
-<tr>
-<td><strong>Role file</strong></td>
-<td>Per-agent persona seeded into the AMQ agent directory at launch and
-preserved on later resumes.</td>
-</tr>
-<tr>
-<td><strong>Brief</strong></td>
-<td>The goal/scope/source file for one profile/session namespace, under
-<code>.amq-squad/briefs/</code>.</td>
-</tr>
-<tr>
-<td><strong>Launch record</strong></td>
-<td>Per-agent metadata that records cwd, binary, args, terminal
-identity, wake settings, goal binding, and resume state.</td>
-</tr>
-<tr>
-<td><strong>Task store</strong></td>
-<td>Native dependency-aware task files under
-<code>.amq-squad/tasks/</code>, used by leads to assign and track
-work.</td>
-</tr>
-<tr>
-<td><strong>AMQ thread</strong></td>
-<td>A durable conversation path such as <code>p2p/cto__qa</code> or
-<code>gate/merge-pr-387</code>.</td>
-</tr>
-<tr>
-<td><strong>Operator handle</strong></td>
-<td>Usually <code>user</code>, a non-runnable mailbox for human gates.
-Agents are runnable; the operator handle is not.</td>
-</tr>
-</tbody>
-</table>
-<p>The context model has one source of truth per layer:</p>
-<ul>
-<li>Team norms: <code>.amq-squad/team-rules.md</code></li>
-<li>Agent persona: each launched agent's <code>role.md</code></li>
-<li>Workstream brief: <code>.amq-squad/briefs/&lt;session&gt;.md</code>
-or
-<code>.amq-squad/briefs/&lt;profile&gt;/&lt;session&gt;.md</code></li>
-</ul>
-<p><code>amq-squad team sync --apply</code> writes the small managed
-pointer block into <code>CLAUDE.md</code> and <code>AGENTS.md</code>; it
-does not duplicate rules.</p>
-<h2 id="orchestration-protocol-and-safety">Orchestration protocol and
-safety</h2>
-<p>An orchestrated run is a simple loop:</p>
-<ol type="1">
-<li>The lead reads the goal/brief and decomposes work into native
-tasks.</li>
-<li>The lead sends durable AMQ <code>todo</code> messages with
-<code>amq-squad dispatch</code>.</li>
-<li>Workers drain AMQ, ACK/start, push progress, ask questions, request
-reviews, and report DONE on the same durable thread.</li>
-<li>The lead collects reports, verifies evidence, updates the task
-store, and decides whether more work is needed.</li>
-<li>Human-only decisions use <code>gate/&lt;topic&gt;</code> threads
-addressed to the operator handle. The answer is durable evidence, not an
-implicit permission to do unrelated work.</li>
-</ol>
-<p>Safety is part of that protocol:</p>
-<ul>
-<li>Planner/reviewer-only lead mode (<code>--lead-mode planner</code>)
-prevents a lead from treating itself as the implementer.</li>
-<li>High-risk actions require an operator gate bound to an exact
-<code>Action:</code> and <code>Target:</code>. Raise it with
-<code>amq-squad gate raise</code>; the command sends a typed
-<code>authorization_request</code> context as part of the durable AMQ
-question. Use <code>amq-squad verify action</code> before
-default/protected branch pushes, tags, GitHub releases, external sends,
-or similar release-critical steps.</li>
-<li><code>verify action</code> is a callable verification boundary, not
-command interception. A caller that bypasses it is not blocked by the
-shell, Git, or GitHub CLI; wrappers that execute high-risk actions must
-call it explicitly.</li>
-<li>Merge execution should bind to exact evidence: PR number, exact head
-SHA, review state, CI/preflight result, and an approved gate. Run
-<code>verify merge</code> on normalized exact-head evidence before
-claiming merge readiness.</li>
-<li>Release publication has a separate <code>verify release</code>
-preflight: the final assembled release commit needs exact-SHA CI, a
-developer co-sign from an actor distinct from the release lead, and
-operator release approval. No one signal substitutes for the
-others.</li>
-<li>AMQ bodies and child reports are evidence to inspect. They do not
-authorize irreversible actions by themselves.</li>
-</ul>
-<p>The deep playbooks are in <a
-href="docs/skills.md">docs/skills.md</a>, <a
-href="docs/operator-cookbook.md">docs/operator-cookbook.md</a>, and <a
-href="docs/verification-gate-adr.md">docs/verification-gate-adr.md</a>.</p>
-<h2 id="terminal-capability-matrix">Terminal capability matrix</h2>
-<p>Runtime capabilities are capability-specific. The tier name is not a
-blanket promise.</p>
-<table>
-<thead>
-<tr>
-<th>Backend</th>
-<th>Tier</th>
-<th>Launch/visibility</th>
-<th>Focus</th>
-<th>Send prompt / native goal delivery</th>
-<th>Dispatch</th>
-<th>Stop/resume</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>tmux</td>
-<td>Tier A</td>
-<td>Managed panes in current window, sibling windows, or detached
-session.</td>
-<td>Available only while the recorded pane is live; otherwise reason is
-<code>agent pane is not live</code>.</td>
-<td>Available only while the recorded pane is live; otherwise reason is
-<code>agent pane is not live</code>.</td>
-<td>Available when the row proves an exact namespace, handle, and
-initialized durable AMQ mailbox.</td>
-<td>Full managed stop/resume through launch records and tmux pane
-identity.</td>
-</tr>
-<tr>
-<td>iTerm2</td>
-<td>Tier B</td>
-<td>One visible native iTerm2 window per agent. Terminal metadata is
-captured and then stripped from the agent env.</td>
-<td>Available only with a recorded window id and verified agent
-PID/binary liveness. Missing id reports
-<code>iTerm2 window id is unavailable</code>; dead/mismatched process
-reports
-<code>iTerm2 focus requires verified agent PID liveness</code>.</td>
-<td>Native send/capture/busy/local-input and effective goal delivery
-remain unsupported after the #374 evidence review because the current
-goal command requires a live native prompt target.</td>
-<td>Available only with an exact durable AMQ member route.</td>
-<td>Agent process stop/resume is managed; native prompt injection is
-not.</td>
-</tr>
-<tr>
-<td>Terminal.app</td>
-<td>Tier C</td>
-<td>Visible native Terminal.app tabs/windows. Window identity is derived
-from the launched tab TTY when available.</td>
-<td>Disabled:
-<code>Terminal.app focus requires stable window/tab addressing; manual focus is required</code>.</td>
-<td>Native send/capture/busy/local-input and effective goal delivery
-remain unsupported after the #375 Accessibility and targeting review
-because the current goal command requires a live native prompt
-target.</td>
-<td>Available only with an exact durable AMQ member route.</td>
-<td>Agent process stop/resume is managed; native focus/input remain
-manual.</td>
-</tr>
-<tr>
-<td>cmux</td>
-<td>Pending</td>
-<td>No backend is shipped.</td>
-<td>Pending #330 re-entry bar.</td>
-<td>Pending #330 re-entry bar.</td>
-<td>Requires an exact durable AMQ member route once a backend
-exists.</td>
-<td>Pending #330 re-entry bar.</td>
-</tr>
-</tbody>
-</table>
-<p>Manual smoke flows live in <a
-href="docs/iterm2-tier-b-smoke.md">docs/iterm2-tier-b-smoke.md</a> and
-<a
-href="docs/terminal-app-tier-c-smoke.md">docs/terminal-app-tier-c-smoke.md</a>.
-The capability contract is implemented in
-<code>internal/runtimecontrol</code> and documented in <a
-href="docs/terminal-runtime-contract.md">docs/terminal-runtime-contract.md</a>.</p>
-<h2 id="command-map">Command map</h2>
-<p>Common setup and run commands:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--sync</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile review <span class="at">--roles</span> cto,qa <span class="at">--sync</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--profile</span> review <span class="at">--goal</span> <span class="st">&quot;...&quot;</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--profile</span> review <span class="at">--goal</span> <span class="st">&quot;...&quot;</span> <span class="at">--yes</span></span></code></pre></div>
-<p>Lifecycle:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--session</span> issue-96</span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> down <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span></code></pre></div>
-<p><code>status</code>, <code>doctor</code>, and <code>down</code> share
-one record-first identity pipeline. A selected launch record supplies
-the captured root, team home, cwd, actor, PID, TTY, pane, binary, and
-argv; current runtime state comes from probing those recorded
-coordinates. Multiple live matches fail as <code>duplicate_live</code>,
-an invalid record fails as <code>record_invalid</code>, and a
-launcher-stamped pane without a record is labeled
-<code>unmanaged</code>. Rerun <code>start</code> to roll a partial
-launch forward.</p>
-<p><code>doctor</code> has three severities: <code>ok</code>,
-<code>warn</code>, and <code>fail</code>. Only <code>fail</code> makes
-the command exit non-zero; warnings remain visible diagnostic notes. A
-shared Git index is therefore a failure only when two or more affected
-members are live. Stopped or unplanned members sharing an index produce
-a warning with the exact <code>worktree plan</code> /
-<code>worktree materialize</code> remedy. Doctor uses the same
-replacement-pane discovery as status; if a member's runtime environment
-cannot be resolved, the affected role and resolution error remain
-visible in the diagnostic detail.</p>
-<p>Coordination:</p>
-<p>Use <code>--body-file FILE</code> or <code>--body-file -</code>
-(stdin) for <code>amq-squad send</code> and <code>dispatch</code> bodies
-containing code, commands, backticks, or <code>$()</code> syntax. Inline
-<code>--body</code> is only for short plain prose because the caller
-shell expands it before amq-squad receives argv. For bare
-<code>amq send</code>, use <code>--body -</code> or
-<code>--body @file</code> instead; raw AMQ does not accept
-<code>--body-file</code>.</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--session</span> issue-96 <span class="at">--title</span> <span class="st">&quot;Implement fix&quot;</span> <span class="at">--assign</span> fullstack</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task claim t1 <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack</span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--task</span> t1 <span class="at">--subject</span> <span class="st">&quot;Implement fix&quot;</span> <span class="at">--body-file</span> ./task.md</span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task done t1 <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task list <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> thread <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> fullstack <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span></span></code></pre></div>
-<p>The native task list is a flat persisted queue. <code>claim</code>
-atomically assigns one task; AMQ delivery and task status are separate
-observations. Workers report progress, blockers, review readiness, and
-completion with ordinary durable AMQ messages on the task thread. No
-local delivery receipt or task reconciliation state machine certifies
-those messages.</p>
-<p>Task-backed lifecycle events are schema-bound records, not subject
-heuristics. They carry the exact actor, task and claim generation,
-namespace, prepared-run generation reference, dispatch/outbox anchors,
-and—where required—immutable command-evidence reference. ACK, progress,
-checkpoint, and review remain nonterminal; only the matching terminal
-task transaction can publish DONE, BLOCK, or cancellation. Delayed,
-duplicate, stale-generation, cross-namespace, or prose-only messages
-remain inspectable but cannot change task state.</p>
-<p><code>evidence run</code> executes argv without a shell for the
-active structured task assignee. It binds canonical namespace, exact
-task and executable bytes, cwd, bounded explicit environment, and
-attempt identity; publishes immutable process/outcome/summary records;
-and compare-and-swap links their digests to the task. A repeated attempt
-ID returns the original result only for the same full request.
-<code>evidence show</code>, <code>list</code>, and <code>lookup</code>
-are bounded read-only projections; <code>evidence recover</code>
-explicitly reconciles an interrupted finalization. Its AMQ report uses
-only the task's recorded dispatch route and cannot erase evidence when
-delivery fails.</p>
-<p>Safety preflights:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate raise <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="dt">\</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--kind</span> release <span class="at">--action</span> github_release <span class="dt">\</span></span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target</span> <span class="st">&quot;publish v2.21.0 GitHub release&quot;</span></span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> operator answer <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--approved</span></span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;publish v2.21.0 GitHub release&quot;</span> <span class="dt">\</span></span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--emit-authorization</span> <span class="at">--signing-key-file</span> /secure/operator-authz.pem <span class="dt">\</span></span>
-<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--authorization-out</span> /secure/release-authz.json</span>
-<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify authorization <span class="at">--file</span> /secure/release-authz.json <span class="dt">\</span></span>
-<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;publish v2.21.0 GitHub release&quot;</span> <span class="dt">\</span></span>
-<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--trust-store</span> /secure/operator-authz-trust.json</span>
-<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--evidence</span> merge-evidence.json</span>
-<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--evidence</span> release-evidence.json</span></code></pre></div>
-<p><code>gate raise --list-kinds --json</code>,
-<code>operator answer --list-kinds --json</code>, and
-<code>verify action --list-kinds --json</code> expose the same
-context-free versioned action catalog. The verifier listing keeps custom
-actions outside the hard-kind array and carries explicit guidance that
-they require an exact Action/Target operator gate plus manual
-verification. Canonical gate topics reject empty, dot, dot-dot,
-whitespace, control, and backslash path segments. Typed
-<code>Target</code>, <code>Note</code>, and answer <code>Reason</code>
-values are exact, valid UTF-8, single-line, trim-canonical, and
-control-free; optional action/target overrides must match exactly.
-Decisions come only from the exact <code>APPROVED: &lt;topic&gt;</code>
-or <code>DENIED: &lt;topic&gt;</code> subject, while the body must
-repeat each typed binding exactly once. V2 receipts, reservations, and
-preflight evidence use collision-resistant hashed identities and
-immutable tuple validation. Legacy raw answers remain unstructured
-readable diagnostics and cannot authorize an action. A human-approved
-typed PASS can emit an immutable Ed25519 authorization envelope when the
-caller supplies an explicit owner-controlled PKCS#8 key
-(<code>0600</code>). <code>verify authorization</code> checks an
-explicit public trust store, exact caller action/target, and the current
-namespace, gate, answer, receipt bytes, policy/preflight, and
-compound-release generation before returning PASS. Revoked/untrusted
-keys, stale evidence, symlinks, and changed authority fail closed. The
-envelope is a normalized callable boundary for CLI, reviewers, and
-connectors; it never performs the external action.</p>
-<p>The action, merge, and final-release-commit contracts are documented
-together in <a
-href="docs/verification-gate-adr.md">docs/verification-gate-adr.md</a>.</p>
-<p>Diagnostics:</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor</span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--profile</span> release</span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
-<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq ops <span class="at">--session</span> issue-96</span>
-<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq route <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--to</span> fullstack</span></code></pre></div>
-<p>Runtime control:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto</span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> ./prompt.md</span></code></pre></div>
-<p><code>focus</code> and <code>send</code> are runtime capabilities.
-They may be unavailable on native terminal tiers even while durable AMQ
-<code>dispatch</code> remains available.</p>
-<p>Removed lifecycle verbs now return usage errors:</p>
-<table>
-<thead>
-<tr>
-<th>Removed</th>
-<th>Use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>up</code>, <code>run start</code></td>
-<td><code>start</code></td>
-</tr>
-<tr>
-<td><code>stop</code>, <code>rm</code>, <code>archive</code></td>
-<td><code>down</code></td>
-</tr>
-<tr>
-<td><code>console</code>, <code>monitor</code>, <code>context</code>,
-<code>history</code>, <code>next</code></td>
-<td><code>status</code>, <code>doctor</code>, and
-<code>operator status</code></td>
-</tr>
-<tr>
-<td><code>collect</code>, <code>threads</code>, <code>thread</code></td>
-<td>exact-root raw <code>amq drain/list/read/thread</code></td>
-</tr>
-<tr>
-<td><code>review-worktree</code></td>
-<td>retained <code>worktree</code> workflow</td>
-</tr>
-</tbody>
-</table>
-<p>Full upgrade notes live in <code>MIGRATION.md</code>.</p>
-<h2 id="skills-and-model-guidance">Skills and model guidance</h2>
-<p>The skills are the source of truth for agent behavior and current
-model selection guidance.</p>
-<table>
-<thead>
-<tr>
-<th>Skill</th>
-<th>Use it for</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>amq-squad:wizard</code></td>
-<td>Goal intake routed to the in-binary wizard's exact-artifact,
-default-No launch review.</td>
-</tr>
-<tr>
-<td><code>amq-squad:cli</code></td>
-<td>Direct status, doctor, task, AMQ, gate, recovery, evidence, and
-read-only release planning.</td>
-</tr>
-<tr>
-<td><code>amq-squad:orchestrator</code></td>
-<td>Verified live-lead operation: dispatch, status review, convergence,
-recovery, and final evidence.</td>
-</tr>
-<tr>
-<td>Legacy names</td>
-<td><code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
-<code>amq-team-setup</code>, and <code>amq-squad-role-creator</code> are
-compatibility redirects only.</td>
-</tr>
-</tbody>
-</table>
-<p>Invoke skills in Claude Code as <code>/amq-squad:&lt;skill&gt;</code>
-and in Codex as <code>$&lt;skill&gt;</code>.</p>
-<p>During wizard setup, the recommended tool policy keeps the visible
-lead broad and assigns each built-in worker its catalog-minimum profile.
-Choosing <code>full_all</code> is an explicit opt-in, never an implicit
-default. Two or more <code>full</code> members duplicate MCP/plugin
-context and increase memory and concurrency pressure, so the review
-screen warns before that configuration proceeds.</p>
-<p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.25.0, use the current model family and per-role
-model/effort recommendations in the installed v2.25.0 skills; confirm
-the startup marker <code>amq-squad skill v2.25.0</code> matches
-<code>amq-squad version</code>. Treat cost as a tie-breaker after output
-quality for shippable work, and prefer installed-skill guidance over
-copying model examples from this README.</p>
-<p>Deep guide: <a href="docs/skills.md">docs/skills.md</a> (<a
-href="docs/skills.html">HTML</a>).</p>
-<p>That guide also defines goal-first composition modes: manual rosters,
-seeded per-spawn approval, and explicitly bounded autonomous
-composition. Autonomous composition never grants merge, release,
-destructive, or external-send authority.</p>
-<h2 id="customize">Customize</h2>
-<p>Profiles and roles:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,researcher <span class="at">--binary</span> researcher=codex <span class="at">--sync</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto <span class="at">--sync</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team lead set cto <span class="at">--lead-mode</span> planner</span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team lead clear</span></code></pre></div>
-<p>Custom role files can be Markdown with YAML frontmatter, plain
-Markdown with a <code># Role:</code> heading, or metadata-only
-YAML/JSON. They are staged under
-<code>.amq-squad/roles/&lt;id&gt;.md</code>; launch seeds each agent's
-role file and does not clobber later edits.</p>
-<p>To generate a role file instead of authoring one,
-<code>amq-squad role draft &lt;id&gt; --binary claude|codex --purpose TEXT</code>
-drafts a reusable persona through the profile's optional headless
-drafter (<a href="https://github.com/avivsinai/yoetz">yoetz</a>, a
-CLI-first multi-provider LLM gateway; <code>claude -p</code>;
-<code>codex exec</code>; or a custom argv template), validates its shape
-and neutrality deterministically, and stages it without adding or
-launching a member. Without a configured backend it prints the filled
-prompt for manual completion. See <a
-href="docs/drafter-backends.md">drafter backends</a> for the profile
-<code>drafter</code> block and preset commands.</p>
-<p>Model and effort picker suggestions can be overlaid globally in
-<code>~/.amq-squad/catalog.json</code> and per project in
-<code>&lt;team-home&gt;/.amq-squad/catalog.json</code>; the project
-layer wins. The catalog is advisory and is not stored in
-<code>team.json</code>: explicit values still pass through, with a
-warning for an effort tier that is not listed. A version-1 overlay uses
-ordered object entries:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;schema_version&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;binaries&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;claude&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;models&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;value&quot;</span><span class="fu">:</span> <span class="st">&quot;opus&quot;</span><span class="fu">,</span> <span class="dt">&quot;label&quot;</span><span class="fu">:</span> <span class="st">&quot;Opus&quot;</span><span class="fu">,</span> <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">}</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;efforts&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;value&quot;</span><span class="fu">:</span> <span class="st">&quot;max&quot;</span><span class="fu">,</span> <span class="dt">&quot;label&quot;</span><span class="fu">:</span> <span class="st">&quot;Maximum&quot;</span><span class="fu">,</span> <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">}</span><span class="ot">]</span></span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<p>Matching is case-insensitive while the winning entry's
-<code>value</code> spelling is preserved. Later entries replace the same
-value without moving it; <code>enabled:false</code> hides it. Missing
-files are normal, and a malformed or future schema layer warns and falls
-back to the lower-precedence catalog.</p>
-<p>Launch customization:</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up claude <span class="at">--role</span> qa <span class="at">--session</span> beta <span class="dt">\</span></span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launcher</span> /path/claude-wrapper.sh <span class="at">--launcher-args</span> <span class="st">&quot;--pull --workspace /ws&quot;</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team overlay init <span class="at">--workers</span> <span class="at">--disable-all-hooks</span></span></code></pre></div>
-<p><code>--launcher-args</code> are placed before the normal child
-arguments that carry bootstrap and binary defaults. A wrapper must
-forward its trailing arguments to the real agent, for example by ending
-with <code>exec claude "$@"</code>; otherwise the managed agent can lose
-required startup behavior.</p>
-<p>Per-member <code>claude_args</code> / <code>codex_args</code> apply
-native CLI flags to one member and are replayed by resume. Worker
-overlays trim Claude plugin/hook surface for same-cwd squads; Codex
-workers use native Codex profiles via <code>codex_args</code>.</p>
-<p>Claude members may also carry an explicit, role-scoped
-<code>permission_allowlist</code>, for example
-<code>"permission_allowlist": ["Bash(go test ./internal/cli:*)"]</code>.
-amq-squad merges those patterns into one effective
-<code>--allowedTools</code> grant for that member only, records the
-result in launch history, and shows both the configured and effective
-lists in <code>up --dry-run --json</code>. Values beginning with
-<code>-</code> are rejected and generated grants use the single-token
-<code>--allowedTools=&lt;grant&gt;</code> form. Resume removes the prior
-launcher-owned grant before rebuilding from current policy, so narrowing
-or removing the field revokes old access; the
-<code>--no-preauthorize-inscope</code> choice also survives replay.
-Preview commands never embed launcher-owned policy in executable child
-argv: <code>agent up</code> recomputes it from current profile state,
-and launch history records launcher-owned and explicit-native provenance
-separately even when their values are identical. Keep each pattern as
-narrow as the member's own scratch or review workspace; the field is
-rejected on non-Claude members and is intentionally not a team-wide
-trust switch. An allowlist grants native tool permission; it does not
-override the generated team rules'
-<code>## Workspace Safety and Cleanup</code> prohibition on
-<code>rm -rf</code>.</p>
-<p>Profiles using <code>permission_allowlist</code> are written as team
-schema 4; profiles without it remain schema 3. v2.20+ readers accept
-both and reject future schemas. Pre-v2.20 binaries do not understand
-this field: they can silently ignore it and lossily rewrite a schema-4
-profile. Upgrade every amq-squad binary that may read or write the
-profile before configuring an allowlist, and use
-<code>amq-squad doctor</code> to detect version skew.</p>
-<p>Trust and binary defaults are explicit. Codex trusted mode is the
-only path that prepends
-<code>--dangerously-bypass-approvals-and-sandbox</code>; the default
-sandboxed mode does not.</p>
-<h2 id="cross-project-teams">Cross-project teams</h2>
-<p>Members may work from different repositories while one team-home owns
-the roster. Set a per-member cwd during team creation:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/project-a</span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--roles</span> cto,fullstack,qa <span class="at">--cwd</span> qa=~/Code/project-b</span></code></pre></div>
-<p><code>up --dry-run</code> emits the corresponding
-<code>cd &lt;member-cwd&gt;</code> launch commands.
-<code>team sync --apply --allow-outside</code> writes the managed
-<code>CLAUDE.md</code> / <code>AGENTS.md</code> pointer block in each
-member cwd; <code>--allow-outside</code> is required so a hand-edited
-profile cannot write into unrelated directories silently.</p>
-<p>Cross-project AMQ replies also require each project to declare its
-peers in <code>.amqrc</code>; <code>team sync</code> does not edit this
-file:</p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;root&quot;</span><span class="fu">:</span> <span class="st">&quot;.agent-mail&quot;</span><span class="fu">,</span></span>
-<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;project&quot;</span><span class="fu">:</span> <span class="st">&quot;project-a&quot;</span><span class="fu">,</span></span>
-<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;peers&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;project-b&quot;</span><span class="fu">:</span> <span class="st">&quot;/Users/you/Code/project-b/.agent-mail&quot;</span></span>
-<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<p>Configure the reciprocal peer entry when both projects need to
-initiate and reply to messages. Use AMQ <code>--project</code> routing
-for another project and <code>--session</code> for another workstream in
-the same project; do not substitute a raw cross-project
-<code>--root</code>, which lacks reply-origin metadata.</p>
-<h2 id="reference-and-moved-details">Reference and moved details</h2>
-<p>This README is the map, not the runbook. Older long-form material is
-preserved or compressed here and lives in the docs below:</p>
-<table>
-<thead>
-<tr>
-<th>Topic</th>
-<th>Where to read</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Operator milestone runs, CLI-only flow, common failures</td>
-<td><a
-href="docs/operator-cookbook.md">docs/operator-cookbook.md</a></td>
-</tr>
-<tr>
-<td>Global orchestrator and external lead runbook</td>
-<td><a
-href="docs/global-orchestrator-runbook.md">docs/global-orchestrator-runbook.md</a></td>
-</tr>
-<tr>
-<td>Skill workflows, AGENT-EVENT protocol, issue-to-merge
-walkthrough</td>
-<td><a href="docs/skills.md">docs/skills.md</a></td>
-</tr>
-<tr>
-<td>Action, merge, and release verification preflights</td>
-<td><a
-href="docs/verification-gate-adr.md">docs/verification-gate-adr.md</a></td>
-</tr>
-<tr>
-<td>Native task store internals</td>
-<td><a
-href="docs/task-store-design.md">docs/task-store-design.md</a></td>
-</tr>
-<tr>
-<td>JSON action object contract and availability semantics</td>
-<td><a
-href="docs/action-object-contract.md">docs/action-object-contract.md</a></td>
-</tr>
-<tr>
-<td>AMQ swarm interop boundary</td>
-<td><a
-href="docs/amq-swarm-interop.md">docs/amq-swarm-interop.md</a></td>
-</tr>
-<tr>
-<td>iTerm2 and Terminal.app manual smoke checks</td>
-<td><a
-href="docs/iterm2-tier-b-smoke.md">docs/iterm2-tier-b-smoke.md</a>, <a
-href="docs/terminal-app-tier-c-smoke.md">docs/terminal-app-tier-c-smoke.md</a></td>
-</tr>
-<tr>
-<td>Release history</td>
-<td><code>docs/v2.*-release-notes.md</code></td>
-</tr>
-<tr>
-<td>Migration from 1.x verbs</td>
-<td><code>MIGRATION.md</code></td>
-</tr>
-</tbody>
-</table>
-<p>Machine-readable command outputs use JSON envelopes with a
-<code>kind</code> and <code>data</code> payload. Prefer
-<code>--json</code> for automation and the action objects surfaced by
-<code>status --json</code> instead of inferring tmux/window state.</p>
-<p>Exit codes:</p>
-<ul>
-<li><code>0</code> success</li>
-<li><code>1</code> usage or user error</li>
-<li><code>2</code> system/runtime error</li>
-<li><code>3</code> partial success</li>
-</ul>
-<p>Shell completions are available from the CLI:</p>
-<div class="sourceCode" id="cb19"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion zsh</span>
-<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion bash</span>
-<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion fish</span></code></pre></div>
+<p>The module path carries <code>/v3</code>. A <code>go install</code>
+build has <strong>no embedded pi runtime</strong>:
+<code>amq-squad lead</code>, solo mode and pi seats refuse with "this
+amq-squad build carries no pi runtime". The pi runtime is embedded only
+by a darwin arm64 build from a checkout, with
+<code>scripts/build-pi-runtime.sh all</code> (one networked fetch of
+Node, fd and rg with checked SHA-256s, then an offline
+<code>go build -tags amqpi</code> to <code>build/pi/amq-squad</code>).
+Claude and Codex seats need no pi runtime.</p>
+<p>The Claude Code plugin carries the skills and the seat hooks. Install
+it at user scope (<a
+href="docs/claude-hooks.md">docs/claude-hooks.md</a>):</p>
+<pre><code>claude plugin marketplace add omriariav/amq-squad --scope user
+claude plugin install amq-squad@amq-squad --scope user</code></pre>
+<p>For Codex, add the same marketplace with
+<code>codex plugin marketplace add omriariav/amq-squad</code>. The
+skills (<code>amq-squad:wizard</code>, <code>amq-squad:cli</code>,
+<code>amq-squad:orchestrator</code>) are described in <a
+href="docs/skills.md">docs/skills.md</a>.</p>
 <h2 id="requirements">Requirements</h2>
+<p><code>amq-squad doctor</code> probes all of these and names what is
+missing:</p>
 <ul>
-<li>Go 1.25+</li>
 <li><code>amq</code> 0.116.2 or later on <code>PATH</code> (and
 <code>amq-remote</code>, <code>amq-owner-sign</code> at the same release
 when installed); <code>amq-squad doctor</code> refuses an older one</li>
-<li><code>tmux</code> on <code>PATH</code> for Tier A managed panes</li>
-<li>macOS with iTerm2 for the Tier B backend</li>
-<li>macOS Terminal.app for the Tier C backend</li>
-<li><code>pandoc</code> only when regenerating or checking
-<code>README.html</code></li>
+<li>Claude Code (<code>claude</code>) for Claude seats, with the owner's
+pin and token file (below)</li>
+<li>Codex (<code>codex</code>) for Codex seats, with each seat
+repository trusted in <code>~/.codex/config.toml</code></li>
+<li>the built-in pi (a pi-runtime build, above) for the pi lead and pi
+seats; <code>ollama</code> for local pi models</li>
+<li><code>tmux</code>: AMQ creates each seat as a tmux pane</li>
+<li><code>gh</code>, pinned in the registry, for the harness's PRs and
+HTTPS pushes</li>
+<li>macOS on Apple silicon (see "Platforms" below); Go 1.25+ to
+build</li>
+<li><code>pandoc</code> 3.11 only to regenerate or check
+<code>README.html</code> and <code>docs/skills.html</code></li>
 </ul>
-<p>amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or
-other goal sources happens in the skills or operator tooling; the core
-binary owns team, runtime, and coordination state.</p>
-<p>AMQ 0.116.2 is the minimum supported release: it is the release of
-the AMQ module amq-squad 3.0 links, and every 3.0 path needs its launch
-adapters (pi seats through the pi adapter, the Codex sandbox pins in the
-launch request) and its mailbox. <code>amq-squad doctor</code> refuses
-an installed <code>amq</code>, <code>amq-remote</code> or
-<code>amq-owner-sign</code> below it, with the upgrade line
-(<code>amq upgrade --all -y</code>, or
-<code>brew upgrade avivsinai/tap/amq</code>). CI runs the real-AMQ lane
-at the pinned v0.116.2, which is required, and at <code>latest</code> as
-a non-blocking canary: a canary failure reads as upstream drift, not as
-a support claim.</p>
+<p>AMQ 0.116.2 is the minimum supported release: it is the AMQ module
+3.0 links, and every 3.0 path needs its launch adapters (pi seats
+through the pi adapter, the Codex sandbox pins in the launch request)
+and its mailbox. <code>amq-squad doctor</code> refuses an installed
+<code>amq</code>, <code>amq-remote</code> or <code>amq-owner-sign</code>
+below it and prints the upgrade line (<code>amq upgrade --all -y</code>,
+or <code>brew upgrade avivsinai/tap/amq</code>). CI runs the real-AMQ
+lane at the pinned v0.116.2, which is required, and at
+<code>latest</code> as a non-blocking canary; a canary failure reads as
+upstream drift, not as a support claim.</p>
+<h3 id="platforms">Platforms</h3>
+<p>3.0 supports macOS on Apple silicon. On Linux the binary builds and
+the Claude hook script is tested, but seats are not supported in 3.0,
+for two reasons found on the first Linux test run. First, the launch's
+proof socket fails under a long project path (the Unix socket path
+bound). Second, ext4 and tmpfs reuse an inode right after an unlink and
+recreate, so the device-and-inode identity checks the harness uses
+against replacement of its seed, its sockets and its anchored
+directories are weaker there than on APFS, which never reuses one. Linux
+seats are 3.1 work.</p>
+<h2 id="first-run">First run</h2>
+<p>Each step below is the owner's, at the owner's own terminal.
+amq-squad never writes the owner's Claude or Codex configuration and
+never answers a trust prompt for you.</p>
+<p><strong>1. The AMQ root.</strong> The repository needs an AMQ queue
+first: run <code>amq coop init</code> once inside it (AMQ's verb; it
+writes <code>.amqrc</code> and <code>.agent-mail/</code>).</p>
+<p><strong>2. Probe the host.</strong> doctor checks AMQ and its launch
+API, the tools and their logins, the registry, the pins, the token file,
+the grants file, the Codex trust rows and the owner's global agent
+config. It writes nothing unless asked:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> .</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--json</span></span></code></pre></div>
+<p><strong>3. The registry.</strong>
+<code>amq-squad doctor --write-registry</code> writes
+<code>~/.amq-squad/registry.yaml</code>: one entry per runtime, model
+and effort it detected. The lead proposes seats from verified entries
+only.</p>
+<p><strong>4. The pins.</strong> Seats never run a tool from
+<code>PATH</code>. The registry's <code>pins:</code> list names each
+harness tool by absolute path and sha256, and every launch re-hashes it
+(<code>tool_unpinned</code> or <code>tool_pin_mismatch</code> refuse the
+launch):</p>
+<ul>
+<li><strong>claude:</strong> a hard link named <code>claude</code> to
+the versioned Claude Code binary on the same filesystem (a symlink is
+refused), for example
+<code>ln ~/.local/share/claude/versions/&lt;version&gt; ~/.amq-squad/bin/claude</code>,
+then its path and <code>shasum -a 256</code> in the pin. Re-pin after
+every Claude Code update. Without it a launch with a Claude seat is
+refused.</li>
+<li><strong>gh:</strong> the same for gh, needed for an HTTPS push
+target. doctor's <code>gh pin</code> row prints the exact entry to
+add.</li>
+</ul>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">pins</span><span class="kw">:</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> claude</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">path</span><span class="kw">:</span><span class="at"> /Users/you/.amq-squad/bin/claude</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">sha256</span><span class="kw">:</span><span class="at"> &lt;64 hex&gt;</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> gh</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">path</span><span class="kw">:</span><span class="at"> /opt/homebrew/bin/gh</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">sha256</span><span class="kw">:</span><span class="at"> &lt;64 hex&gt;</span></span></code></pre></div>
+<p><strong>5. The token file.</strong> Claude seats authenticate with a
+long-lived token, not your login: run <code>claude setup-token</code>
+and save the token it prints, alone, to
+<code>~/.amq-squad/claude-token</code> with mode 0600. A missing or
+loosely-permissioned file refuses Claude seats
+(<code>claude_token_insecure</code>). Never paste the token into a
+command line.</p>
+<p><strong>6. The grants file.</strong>
+<code>~/.amq-squad/grants.yaml</code> (strict YAML subset, mode 0600; a
+group- or world-writable file fails closed to manual mode with no merge
+grant). Without it the built-in defaults apply: auto mode, 12 seats per
+session, no merge grant. A small example:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">schema</span><span class="kw">:</span><span class="at"> </span><span class="dv">1</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mode</span><span class="kw">:</span><span class="at"> manual</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="fu">max_seats</span><span class="kw">:</span><span class="at"> </span><span class="dv">6</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="fu">permitted_runtimes</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">claude</span><span class="kw">,</span><span class="at"> codex</span><span class="kw">,</span><span class="at"> pi</span><span class="kw">]</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="fu">merge</span><span class="kw">:</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">repository</span><span class="kw">:</span><span class="at"> you/app</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">base_branch</span><span class="kw">:</span><span class="at"> main</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">ci_required</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">size_cap_lines</span><span class="kw">:</span><span class="at"> </span><span class="dv">400</span></span></code></pre></div>
+<p>The keys a squad can narrow, and the ones it can never set, are
+listed in <a href="docs/squad-yaml.md">docs/squad-yaml.md</a>.</p>
+<p><strong>7. Codex trust.</strong> A fresh Codex seat stops on its
+folder-trust prompt. This prints the lines you add to
+<code>~/.codex/config.toml</code> yourself, and the candidate Codex
+notify fan-out line:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> trust .</span></code></pre></div>
+<p><strong>8. The squad.</strong> <code>team propose</code> prints every
+file the squad needs (<code>squad.yaml</code>,
+<code>.amq-squad/team-rules.md</code>, the <code>CLAUDE.md</code> and
+<code>AGENTS.md</code> pointer stubs) with one digest, and writes
+nothing. <code>team apply</code> with that digest and the same options
+writes them; a changed option (<code>squad_yaml_digest_mismatch</code>)
+or a hand edit in between (<code>squad_yaml_changed</code>) writes
+nothing:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> roles</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team propose <span class="at">--project</span> . <span class="at">--roles</span> cto,fullstack,qa <span class="at">--runtime</span> fullstack=codex <span class="at">--worktree</span> fullstack=../app-96 <span class="at">--lead</span> cto <span class="at">--session</span> issue-96</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team apply <span class="at">--digest</span> <span class="op">&lt;</span>digest<span class="op">&gt;</span> --project . <span class="at">--roles</span> cto,fullstack,qa <span class="at">--runtime</span> fullstack=codex <span class="at">--worktree</span> fullstack=../app-96 <span class="at">--lead</span> cto <span class="at">--session</span> issue-96</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team show <span class="at">--project</span> .</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team check <span class="at">--project</span> .</span></code></pre></div>
+<p>A per-seat flag takes one comma list:
+<code>--worktree a=x,b=y</code>, never the flag twice (a repeated
+per-seat flag is refused). A custom role is staged first with
+<code>amq-squad role draft researcher --purpose "Investigate ambiguous behavior"</code>.</p>
+<p><strong>9. The brief.</strong> The workstream's goal, at
+<code>.amq-squad/briefs/&lt;session&gt;.md</code>:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> brief <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--dry-run</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> brief <span class="at">--seed-from</span> file:./prompt.md <span class="at">--session</span> issue-96</span></code></pre></div>
+<p><strong>10. Launch.</strong> Three entry points, each one AMQ launch
+request with every seat behind <code>seat-exec</code>:</p>
+<ul>
+<li><p><code>amq-squad launch --seats seats.json</code>: the typed seat
+list (JSON; the format is in <code>amq-squad launch --help</code>). A
+required action such as AMQ's trust confirmation stops the launch with
+exit 10 and is never answered for you.</p></li>
+<li><p>the pi lead in team mode with the scheduler beside it; the lead
+never edits code, it dispatches through the task store, and the
+scheduler starts seats on demand:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--scheduler-seats</span> seats.json <span class="at">--dry-run</span></span></code></pre></div>
+<p>(drop <code>--dry-run</code> to start it; a pi-runtime build
+only).</p></li>
+<li><p>the mayor inside the owner's fleet grant:
+<code>operator start-squad</code> writes the squad.yaml through the same
+digest flow and launches it; in manual mode it returns a proposal
+instead.</p></li>
+</ul>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> launch <span class="at">--seats</span> seats.json <span class="at">--dry-run</span></span></code></pre></div>
+<p>In a directory with no AMQ identity, <code>amq-squad lead</code> (or
+a bare <code>amq-squad</code> on a terminal) starts the pi lead in solo
+mode: its state lives under <code>~/.amq-squad/solo/</code>, nothing is
+written in the repository.</p>
+<h2 id="running-a-squad">Running a squad</h2>
+<p>The lead's loop is one status read, one bounded action, then park;
+AMQ wake delivers the next message. <code>amq-squad:orchestrator</code>
+is the lead's playbook.</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Fix the parser&quot;</span> <span class="at">--class</span> implement <span class="at">--files</span> internal/parse/ <span class="at">--pool</span> claude:sonnet:medium <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task list <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span></code></pre></div>
+<ul>
+<li><strong>Status</strong> is the versioned contract of <a
+href="docs/status-contract.md">docs/status-contract.md</a>: four buckets
+(Needs you, Working, Ready, Inactive), seats, tasks, the attention queue
+and gates, with argv actions. amq-noc renders it for the fleet;
+<code>amq-squad status --fleet --json</code> reads every squad of
+<code>~/.amq-squad/fleet.yaml</code>.</li>
+<li><strong>The commit step.</strong> On a seat's done report the
+scheduler runs <code>seat commit</code>: every changed path against the
+task's declared files, the protected paths and the size cap, then a
+commit under the harness identity and a fast-forward push of the seat
+branch. A path outside the set comes back to the lead, whose decision is
+<code>task widen ID --files ... --reason ...</code> (no
+<code>--me</code>: the scheduler proves the lead from the process).</li>
+<li><strong>Merge.</strong>
+<code>merge-train --request FILE --dry-run</code> plans and checks the
+lead's ordered PR set against the merge grant; the real run uses the
+owner's gh, outside any seat. Seats never merge.</li>
+<li><strong>Release.</strong> <code>release prepare</code> raises the
+<code>tag</code> and <code>github_release</code> gates;
+<code>release publish</code> runs each only with its verified owner
+answer.</li>
+<li><strong>Quarantine.</strong> A seat that changed the owner's global
+agent config is quarantined; only the owner clears it, with
+<code>seat clear</code> from the owner's own terminal.</li>
+</ul>
+<p>Check whether an action is approved, and the evidence of a merge or a
+release:</p>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--gate</span> rel-v3 <span class="at">--action</span> tag <span class="at">--target</span> <span class="st">&quot;git tag v3.0.0&quot;</span> <span class="at">--json</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;merge evidence failed&quot;) where no merge-train run is recorded, by design</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--repository</span> you/app <span class="at">--pr</span> 12 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;release evidence failed&quot;) where no release flow is recorded, by design</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--tag</span> v3.0.0 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span></code></pre></div>
+<p><code>verify action</code> exits 0 approved, 10 pending, 11 denied,
+12 no gate, 13 unbound.</p>
+<h2 id="the-owners-buzz-face">The owner's Buzz face</h2>
+<p>One Buzz agent, the body of one <code>amq-remote</code> share,
+attaches to the operator session's mailbox (or with <code>--lead</code>
+to one squad lead). The owner's guide is <a
+href="docs/v3-buzz/README.md">docs/v3-buzz/README.md</a>.</p>
+<ul>
+<li><strong>Enrollment</strong> is the owner script
+<code>docs/v3-buzz/enroll.sh &lt;owner-npub&gt; &lt;relay-url&gt;</code>,
+run once per 30-day grant window. The Buzz key reaches
+<code>amq-owner-sign</code> only through a password-manager pipe
+(<code>BUZZ_OWNER_KEY_CMD</code>); nothing in amq-squad,
+<code>amq</code> or <code>amq-remote</code> reads it. The script ends
+with <code>remote bind</code>, which writes the owner's gate binding
+<code>~/.amq-squad/gate-binding.json</code> (no secret in it).</li>
+<li><strong>The mailbox adapter.</strong> <code>amq-remote serve</code>
+delivers each DM from the owner into the share's mailbox;
+<code>remote attach</code> answers each once (<code>accepted</code>,
+<code>refused</code>, <code>routed</code>), and serve posts the reply
+under the message. A message starting with <code>@&lt;lead&gt;</code> is
+routed to that squad lead.</li>
+<li><strong>The gates.</strong> A typed gate's question goes to the
+owner's DM with its reply thread; the owner answers in that thread, and
+the core of the squad that raised it fetches and verifies the signed
+event itself. An answer outside the thread is refused with one
+re-ask.</li>
+</ul>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 until fleet.yaml names the operator session (or --lead names a launched lead)</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> remote status</span></code></pre></div>
+<h2 id="command-map">Command map</h2>
+<p><code>amq-squad --help</code> and each verb's <code>--help</code> are
+the reference. The verbs:</p>
 <table>
 <thead>
 <tr>
-<th>Real-AMQ lane</th>
-<th>Runner</th>
-<th>Versions</th>
+<th>Area</th>
+<th>Verbs</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Queue, routing, receipts, doctor, launch API (every
-<code>AMQ_SQUAD_REAL_AMQ</code> test)</td>
-<td>macOS</td>
-<td><code>v0.116.2</code> (required), <code>latest</code> (canary,
-non-blocking)</td>
+<td>Host and setup</td>
+<td><code>doctor</code>, <code>trust</code>, <code>roles</code>,
+<code>role draft</code>,
+<code>team propose/apply/show/check/draft-rules</code>,
+<code>brief</code>, <code>migrate</code>, <code>uninstall</code>,
+<code>version</code></td>
+</tr>
+<tr>
+<td>Launch</td>
+<td><code>launch</code>, <code>lead</code>, <code>scheduler run</code>,
+<code>seat-exec</code> (AMQ runs it),
+<code>pi run/verify/path</code></td>
+</tr>
+<tr>
+<td>Work</td>
+<td><code>task add/list/show/claim/renew/done/fail/block/release/reset/set/cancel/widen/reconcile</code>,
+<code>dispatch</code>, <code>seat commit</code>,
+<code>seat clear</code>, <code>worktree</code></td>
+</tr>
+<tr>
+<td>Hook verbs</td>
+<td><code>context</code>, <code>guard</code>,
+<code>evidence ingest</code>, <code>evidence list</code></td>
+</tr>
+<tr>
+<td>Gates and landing</td>
+<td><code>gate raise/answer/status/post/close</code>,
+<code>verify action/authorization/merge/release/release-plan/rebind</code>,
+<code>merge-train</code>, <code>release prepare/publish</code></td>
+</tr>
+<tr>
+<td>Fleet and owner</td>
+<td><code>status</code>, <code>status --fleet</code>,
+<code>fleet list/add/remove/operator</code>,
+<code>operator inbox/answer/start-squad</code>,
+<code>remote bind/attach/status</code>,
+<code>routing report --week</code>, <code>amq env/route</code></td>
 </tr>
 </tbody>
 </table>
-<p>For externally injected lead and orchestrator wakes, new launch
-records use <code>amq wake --retry-until injected</code> and persist
-that retry policy so exact retirement replays the same target identity.
-Legacy records that omit the field retain AMQ's historical
-<code>drained</code> default. AMQ owns lock/state binding, quarantine,
-exact retirement, Darwin running-image identity, safe restart, and newer
-installed-image adoption. amq-squad's cross-platform session notifier
-remains the project-level tmux nudge; <code>amq-keepalive</code> is an
-optional, operator-managed Darwin companion and is not installed or
-supervised by amq-squad.</p>
-<p>AMQ 0.47.1 introduced the supervised <code>coop exec</code> wake
-contract used by every supported release: instead of injecting message
-headers or subjects, managed coop wakes submit the fixed, shell-inert
-doorbell
-<code>: AMQ doorbell run amq drain --include-body then act on it</code>.
-AMQ 0.49.1 extended that fixed doorbell to standalone/default wake
-injection, and every supported release is now above that boundary, so
-the lane that used to pin it is retired along with the pre-0.51 floors.
-All managed coop lanes require the fixed doorbell. Agents must drain the
-durable mailbox to discover the sender, subject, and body.</p>
-<p>AMQ 0.49.1 also hardens wake delivery without changing amq-squad
-production branches: transient foreground-process-group handoffs retry
-pending notices, active input through max hold demotes to out-of-band
-output, quiet detection requires consecutive samples, and periodic
-capability checks report only what they can prove. Its optional Claude
-Stop hook guards by fresh message content and recovers incomplete
-session context; amq-squad does not install or invoke that upstream
-hook.</p>
-<p>On Linux, AMQ 0.48.0 probes the legacy TIOCSTI capability. When the
-kernel disables it, wake degrades to a non-input notifier and records
-<code>injector_unsupported</code> diagnostics instead of pretending
-synthetic input was delivered. The macOS real-PTY lane proves native
-injection where TIOCSTI is available; AMQ's upstream tests own the
-Linux-only <code>/proc/sys/dev/tty/legacy_tiocsti=0</code> fallback.</p>
-<p>AMQ can inspect malformed configured mailbox layouts with
-<code>amq doctor --json</code> and create only missing safe directories
-with <code>amq doctor --fix-mailboxes --json</code>. Repair is explicit
-and fail-closed: existing messages are not moved, overwritten, or
-deleted, discovered-only mailboxes are not repair eligible, and unsafe
-filesystem state is refused. AMQ 0.49.0 adds actionable remedies for
-discovered-only mailboxes. <code>amq-squad doctor</code> keeps its
-read-only ops check and never runs mutating repair automatically; use
-upstream <code>amq doctor --json</code> for the canonical remedy
-text.</p>
-<p>AMQ 0.49.0 also adds read-only
-<code>amq trace &lt;message-id&gt; --root &lt;path&gt; --json</code>,
-which joins current message, route, delivery, DLQ, receipt, and thread
-evidence. It is useful for diagnostics, but it does not prove historical
-directory-sync or notification success and therefore is not retry or
-authorization authority for amq-squad evidence/receipt flows. See the <a
-href="docs/amq-0.51.x-assessment.md">AMQ 0.51.x support
-assessment</a>.</p>
-<p>AMQ 0.42.1 historically introduced the complete injected identity
-contract; 0.60.0 is the supported floor for the 0.60.x series. After
-upgrading AMQ, stop and resume/relaunch agents so their parent shells
-refresh the complete identity tuple; a child command cannot repair stale
-parent environment variables. Default-profile sessions use
-<code>AM_ROOT</code>, <code>AM_BASE_ROOT</code>, non-empty
-<code>AM_SESSION</code>, and <code>AM_ME</code>. Named profiles use
-their exact root with <code>AM_ROOT=AM_BASE_ROOT</code> and no
-<code>AM_SESSION</code>. Run <code>amq-squad doctor</code> before
-resuming if it reports a legacy or inconsistent pin.</p>
+<p>Exit codes common to every verb: 0 success, 1 usage or user error, 2
+system or runtime error, 3 partial success; a verb with more
+(<code>launch</code> 10, <code>verify action</code> 10 to 13,
+<code>seat commit</code> and <code>task widen</code> 15) lists them in
+its help.</p>
+<h2 id="what-30-does-not-do">What 3.0 does not do</h2>
+<p>These are the recorded limits of 3.0. The full list, with its
+reasoning, is in <a href="docs/v3-plan.md">docs/v3-plan.md</a> (section
+7 for the security model, section 16.4 for the phase 5 items and the
+open acceptance rows):</p>
+<ul>
+<li><strong>Same-UID boundary.</strong> Seats run as the owner's user. A
+same-UID process can read the owner's gh token from the login keychain
+(guard denies the CLI reads and the scrub removes the variables, but
+neither is a wall), forge AMQ mail as the lead, forge hook reports, and
+in principle swap the pi runtime in the milliseconds between its re-hash
+and its exec. The ledgers are sealed so a forgery is detected and
+blocks, not prevented. A dedicated keychain or GitHub App token and a
+read-only runtime image move to 3.1.</li>
+<li><strong>Hooks are UX and evidence, not enforcement.</strong> Claude
+Code's PreToolUse hook fails open on a timeout or an error; enforcement
+is the commit step and the merge train. Codex, Grok Build and Cursor
+seats have no hooks.</li>
+<li><strong>One owner DM at a time.</strong> The mailbox adapter answers
+a second DM <code>busy</code> while one is open; wait for each result
+row.</li>
+<li><strong>No seats-file compiler.</strong> <code>launch --seats</code>
+and <code>lead --scheduler-seats</code> take a hand-written typed seat
+list; only the mayor's <code>operator start-squad</code> compiles
+squad.yaml into the launch itself.</li>
+<li><strong>The pi runtime is darwin arm64 only</strong> and is not in a
+<code>go install</code> build.</li>
+<li><strong>Open acceptance rows at the tag</strong> (plan 16.4): the
+Claude live rows wait on the owner's token file, the first real
+merge-train run on a harness-bound PR, the pi launch through
+<code>amq launch</code> on the installed AMQ, amq-noc 1.0, and the
+signed <code>seat clear</code> live row.</li>
+<li>No v2 verb survives: <code>init</code>, <code>start</code>,
+<code>plan</code>, <code>resume</code>, <code>down</code>,
+<code>wizard</code>, <code>goal</code>, <code>team init/sync</code> and
+the pane drivers are gone, with no aliases.</li>
+</ul>
+<h2 id="uninstall">Uninstall</h2>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> uninstall <span class="at">--project</span> . <span class="at">--session</span> issue-96</span></code></pre></div>
+<p>A dry run by default: it prints every path it would remove.
+<code>--write</code> removes the session state, the per-seat config
+dirs, the pinned tool copies and the worktrees it created; the owner
+files only with <code>--owner-files</code>, the sealed ledgers only with
+<code>--purge</code>. It prints the Claude plugin and Codex trust
+commands for you to run. See <a
+href="docs/uninstall.md">docs/uninstall.md</a>.</p>
+<h2 id="upgrading-from-v2">Upgrading from v2</h2>
+<p><a href="MIGRATION.md">MIGRATION.md</a> "Moving to 3.0" is the list.
+The converter is a dry run unless <code>--write</code> is given, never
+writes <code>grants.yaml</code> or <code>registry.yaml</code> (it writes
+<code>grants.yaml.proposed</code> beside them), and prints every v2
+field it did not map:</p>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (migrate_input_invalid) where no v2 profile exists, by design</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> migrate .amq-squad/team.json</span></code></pre></div>
+<h2 id="where-the-plan-and-evidence-live">Where the plan and evidence
+live</h2>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The 3.0 plan, its rulings, phases and recorded limits</td>
+<td><a href="docs/v3-plan.md">docs/v3-plan.md</a></td>
+</tr>
+<tr>
+<td>The phase briefs and their rulings</td>
+<td><a href="docs/v3-phase2-briefs.md">docs/v3-phase2-briefs.md</a></td>
+</tr>
+<tr>
+<td>Execution logs and evidence per brief</td>
+<td><a href="docs/v3-spike/">docs/v3-spike/</a></td>
+</tr>
+<tr>
+<td>Release notes</td>
+<td><a
+href="docs/v3.0.0-release-notes.md">docs/v3.0.0-release-notes.md</a></td>
+</tr>
+<tr>
+<td>squad.yaml schema 1</td>
+<td><a href="docs/squad-yaml.md">docs/squad-yaml.md</a></td>
+</tr>
+<tr>
+<td>Status contract, schema 1</td>
+<td><a href="docs/status-contract.md">docs/status-contract.md</a></td>
+</tr>
+<tr>
+<td>Claude Code seat hooks</td>
+<td><a href="docs/claude-hooks.md">docs/claude-hooks.md</a></td>
+</tr>
+<tr>
+<td>The skills</td>
+<td><a href="docs/skills.md">docs/skills.md</a></td>
+</tr>
+<tr>
+<td>Buzz, the owner's guide and run</td>
+<td><a href="docs/v3-buzz/">docs/v3-buzz/</a></td>
+</tr>
+<tr>
+<td>Uninstall</td>
+<td><a href="docs/uninstall.md">docs/uninstall.md</a></td>
+</tr>
+<tr>
+<td>Follow-ups after 3.0</td>
+<td><a href="docs/v3-followups.md">docs/v3-followups.md</a></td>
+</tr>
+</tbody>
+</table>
+<p>amq-squad is MIT licensed (<a href="LICENSE">LICENSE</a>).</p>
 </body>
 </html>
