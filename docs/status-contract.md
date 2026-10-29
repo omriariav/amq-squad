@@ -150,3 +150,11 @@ Buzz attachment reads the operator's presence from it (4-5).
 `lead_handle` is a document field (one per squad document) and `live` a seat
 field (one per seat row and on `operator`); neither replaces the other: the
 lead's presence is its seat row's `live`, found by `lead_handle`.
+
+## Recorded limits
+
+- `live` from a launch record is the recorded `AgentPID` answering signal-0
+  (`status.Collect`); the binary and the process birth time are not checked,
+  so a pid reused after a seat or lead died without a `StoppedAt` reads live.
+  Presence and the Buzz attachment inherit it. 3.0.x follow-up
+  (docs/v3-followups.md).

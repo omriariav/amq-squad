@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -89,10 +90,22 @@ func DialPrivate(root, recordedPath, name string) (*net.UnixConn, error) {
 		err error
 	)
 	launchRel := []string{"extensions", "amq-squad", "launch"}
+	// The listener's root reached the bind through the anchored walk, which
+	// refuses an unclean or symlinked anchor, so the recorded directory is
+	// canonical. The dialer's root comes from another resolver (task
+	// widen's --root, AM_ROOT or the AMQ context) and is canonicalised the
+	// same way before the compare: absolute, clean, symlinks resolved.
+	canon := root
+	if abs, aerr := filepath.Abs(root); aerr == nil {
+		canon = abs
+		if real, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+			canon = real
+		}
+	}
 	switch {
-	case filepath.IsAbs(root) && dir == filepath.Join(append([]string{filepath.Clean(root)}, launchRel...)...):
-		d, err = fsanchor.OpenAnchored(filepath.Clean(root), launchRel, false)
-	case filepath.IsAbs(dir) && strings.HasPrefix(filepath.Base(dir), "amqsq-"):
+	case dir == filepath.Join(append([]string{canon}, launchRel...)...):
+		d, err = fsanchor.OpenAnchored(canon, launchRel, false)
+	case runtime.GOOS != "linux" && filepath.IsAbs(dir) && strings.HasPrefix(filepath.Base(dir), "amqsq-"):
 		// darwin's temp fallback (proofDir): a private directory of its own
 		d, err = fsanchor.OpenAnchored(dir, nil, false)
 	default:

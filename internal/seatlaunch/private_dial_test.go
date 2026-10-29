@@ -104,3 +104,55 @@ func TestDialPrivateRefusesAPlantedEntry(t *testing.T) {
 		refused(t, root, elsewhere, "neither in")
 	})
 }
+
+// 5-ci-D narrow pass, item 2: the scheduler records the socket under its
+// root as the anchored walk saw it (clean, absolute, no symlink: the walk
+// refuses anything else), while task widen's root comes from --root,
+// AM_ROOT or the AMQ context. The same session root spelled through a
+// symlink, with a trailing slash or a "." component still dials.
+func TestDialPrivateCanonicalisesTheDialersRoot(t *testing.T) {
+	const name = "scheduler-decide.sock"
+	// a short root, so darwin's listener stays in the launch directory
+	// and the compare is exercised on every platform
+	tmp, err := os.MkdirTemp("/tmp", "dp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmp) })
+	real, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(real, "s")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sock, err := ListenPrivate(root, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sock.Close()
+	if filepath.Dir(sock.Path) != filepath.Join(root, "extensions", "amq-squad", "launch") {
+		t.Fatalf("the listener left the launch directory: %s", sock.Path)
+	}
+	link := filepath.Join(real, "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, spelled := range []string{root, root + "/", filepath.Join(real, ".") + "/./s", link, link + "/"} {
+		c, err := DialPrivate(spelled, sock.Path, name)
+		if err != nil {
+			t.Fatalf("the session root spelled %q: %v", spelled, err)
+		}
+		c.Close()
+	}
+	// another directory is still refused
+	other := filepath.Join(real, "other")
+	if err := os.Mkdir(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := DialPrivate(other, sock.Path, name); err == nil {
+		c.Close()
+		t.Fatal("a different root dialed the socket")
+	}
+}

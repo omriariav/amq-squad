@@ -16,6 +16,17 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- Status liveness by launch-record identity, not bare signal-0: `status.Collect`
+  (internal/status/collect.go:134) marks a seat `live` when its recorded
+  `AgentPID` answers signal-0, while `classifyLaunchRuntimeIdentity`
+  (internal/cli/launch.go:90) also checks the recorded binary or launcher and
+  that the process was not born after the record. Failure: the lead dies
+  without a `StoppedAt` and its pid is reused, so the lead's row stays `live`,
+  the Buzz attachment's presence stays "present", and the owner's messages
+  route to a dead lead. The fix moves the identity check where status can
+  call it (the matcher lives in internal/cli) and gives Collect the probes
+  as seams; the status tests that stub `PIDAlive` need the new seams. Found
+  in 5-ci-D (D2, the Linux pid-42 fixture); deferred by diff size.
 - Scheduler async close: no production implementer after the stand-in's removal (5-amq-C); CloseUnconfirmed's delegation always confirms; removal of AsyncCloser, the helper, the delegation, the awaitGone branches, state and rendering, and five tests, with holdForExit's exits release kept.
 - Orphaned-verifier adoption: the exits queue entry for a running commit step
   records the verifier child's pgid and start time; the adopting scheduler

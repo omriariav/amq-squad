@@ -39,6 +39,17 @@ This is a production exposure, not only a test one: on Linux, any project whose 
 
 On darwin, reverting the dial leaves the deep-root row green, because darwin never records a long path. The refusal row is the revert-sensitive row on this host (D1a in revert-check-d.txt).
 
+**Narrow pass on f4e1c960.**
+
+- **The amqsq- case is darwin-only now.** `proofDir` moves to a temp directory only when `runtime.GOOS != "linux"` (proof_unix.go:93). `DialPrivate`'s second case is gated the same way. On Linux, a record outside the root's launch directory gets the "neither in" refusal. The planted-entry test's "a path outside the launch directory" subtest pins that refusal; there is no new row, per the ruling.
+- **The two roots are not the same resolver.**
+  - The scheduler binds under `q.SessionRoot()` (internal/cli/scheduler_run.go:140). That is `filepath.Join(filepath.Clean(BaseRoot), Session)` (internal/seatlaunch/compile.go:164, 175) from the seats file. It went through `OpenAnchored`, which refuses an unclean or symlinked anchor (internal/fsanchor/open_unix.go:30-49). So the recorded directory is always absolute, clean and free of symlinks.
+  - `task widen` takes its root from `taskFlags.store` (internal/cli/task_widen.go:95, internal/cli/task.go:148-180). That root is `--root` as typed (trimmed only), else `AM_ROOT`, else the AMQ context's root through `absAMQRoot`. None of these resolves symlinks.
+  - A lead whose `AM_ROOT` spells the session root through a symlink would therefore get "neither in … launch directory", and widening would die at that root.
+  - Fix: `DialPrivate` canonicalises the dialer's root the way the walk constrains the listener's: `filepath.Abs`, then `filepath.EvalSymlinks` (internal/seatlaunch/private_socket_unix.go, the `canon` step before the compare). The compare then matches whenever both name the same directory.
+  - Row: `TestDialPrivateCanonicalisesTheDialersRoot` (internal/seatlaunch/private_dial_test.go). It dials the same session root spelled plain, with a trailing slash, with a `.` component, through a symlink, and through a symlink with a trailing slash. A different directory is still refused. Reverted, the symlinked spelling fails (D1b in revert-check-d.txt). The trailing slash and `.` already passed through `filepath.Clean`.
+- **Recorded limit, not fixed.** The amqsq- case trusts any 0700 directory owned by this user whose basename starts with `amqsq-`, as long as the launch record names it. A same-UID edit of the launch record can point the lead's dial at such a directory elsewhere. The same-UID integrity of the launch record is already its stated limit. The dial still requires a socket owned by this user, and the scheduler still proves the sender.
+
 ## D2. TestRemoteAttachOnce on Linux ("starts 1", make ci, ubuntu)
 
 **What failed.** At remote_test.go:196 the test failed with `attach with no live lead: starts 1`: presence `started, online, present: true` for `cto`, with no `presence.json` written yet.
@@ -60,6 +71,18 @@ On darwin, reverting the dial leaves the deep-root row green, because darwin nev
 **Fix.** The cause is in the test fixture. The seeded records now carry `seededDeadPID = 1 << 30`, above Linux's `PID_MAX_LIMIT` (4194304) and darwin's `PID_MAX` (99999), so the pid is never a live process on any host. internal/buzz is unchanged, there is no `runtime.GOOS` skip, and the assertion is unchanged.
 
 **Not a portability bug in presence.go.** Presence reads the status contract's `live` field correctly. A product note for the reviewer, outside this brief: `status.Collect`'s `live` trusts a bare signal-0 on the recorded pid. Unlike `classifyLaunchRuntimeIdentity` (internal/cli/launch.go:90), it does not match the binary or the start stamp. A reused pid after a seat's crash therefore reads live until its `StoppedAt` is written. Nothing here changes that.
+
+**D4 (narrow pass): deferred, not fixed here.**
+- **The defect:** the identity check (`classifyLaunchRuntimeIdentity`, internal/cli/launch.go:90) cannot be called from internal/status as it stands, because the check and its process matcher (`launchRecordProcessMatcher`, `agentProcessMatcher`, internal/cli/preflight.go:85) live in internal/cli.
+- **What a fix takes:**
+  - moving the check and its matcher into a package status can import;
+  - giving `CollectOptions` match and start-time probes as seams next to `PIDAlive`;
+  - updating every status test that stubs `PIDAlive` (fleet_test.go, operator_inbox_test.go, status_contract_test.go and the status package's own tests).
+- **Size:** estimated at about 40 production lines plus the test seams. That is over the 30-line bar.
+- **Risk:** matching the binary from status also risks reading a live seat as dead where the recorded binary is not the process image, for example a wrapper or a script interpreter.
+- **Recorded instead:**
+  - as the first 3.0.x item in docs/v3-followups.md, with the failure scenario: the lead dies without `StoppedAt`, its pid is reused, presence stays "present", and the owner's messages route to a dead lead;
+  - as a "Recorded limits" section in docs/status-contract.md.
 
 **Rows.**
 - `TestSeededLaunchPIDIsNeverALiveProcess` (internal/cli/remote_test.go) checks the range and that `procinfo.Alive` is false for the seeded pid.
@@ -102,6 +125,8 @@ It now sets PATH to a private directory holding the same claude stub and a `tmux
 
 Found on the way: with a real tmux and claude, this test's Apply ran `tmux new-session … <adoptionseam.test> coop exec … claude` on the host's default tmux server. That session died at once, but the test was starting the test binary in a host tmux session. With the stub it opens nothing.
 
+**Hygiene finding.** Until this branch, `TestApplyForwardsSubjectSchemaFromPrepareResult` opened a real session on the host's default tmux server. No `TMUX_TMPDIR` or socket isolation was set, and the session ran the test binary as `amq coop exec` with the host's claude. It died at once, so nothing was left behind, but a test reached the developer's live tmux server. The tmux stub closes that: the create step now fails inside the stub and no host tmux is touched.
+
 The lane installs tmux on the runner (ci.yml) and no gated test now needs it. The lane step itself is unchanged.
 
 **Rows.**
@@ -121,6 +146,7 @@ The lane installs tmux on the runner (ci.yml) and no gated test now needs it. Th
 | D1a | `DialPrivate` dials the recorded path by name (pre-fix SendDecision) | TestDialPrivateRefusesAPlantedEntry | FAIL | PASS |
 | D1a | same | TestDecisionSocketDialsUnderARootPastSunPath | PASS on darwin (no long path recorded; Linux reasoning above) | PASS |
 | D1 | (none) | the two CI failures | n/a | PASS |
+| D1b | the dialer's root compared as given, not canonicalised (narrow pass) | TestDialPrivateCanonicalisesTheDialersRoot | FAIL | PASS |
 | D2a | `seededDeadPID = 42` | TestSeededLaunchPIDIsNeverALiveProcess | FAIL | PASS |
 | D2b | `seededDeadPID = 1` (live here, as 42 is on the runner) | TestRemoteAttachOnce | FAIL (`starts 1`) | PASS |
 | D3a | the setup call without the claude stub, PATH stripped of claude | TestNestedWorktreeRootDiscoveryOnAMQ074 | FAIL (CI message) | PASS |

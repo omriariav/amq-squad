@@ -13,6 +13,9 @@ D1a. DialPrivate reverted to a plain dial of the recorded path (the pre-fix Send
           --- FAIL: TestDialPrivateRefusesAPlantedEntry/a_regular_file (0.00s)
           --- FAIL: TestDialPrivateRefusesAPlantedEntry/a_symlink_to_a_live_socket (0.00s)
   reverted: TestDecisionSocketDialsUnderARootPastSunPath (darwin: PASS expected, see log): PASS
+      (darwin never records a path past sun_path, so this row cannot fail here when the
+      dial is reverted; its reverting proof is CI's Linux job, make ci on ubuntu-latest,
+      where the pre-fix dial is the run-40945638948 failure and the row asserts it)
   restored: TestDialPrivateRefusesAPlantedEntry (want PASS): PASS
   restored: TestDecisionSocketDialsUnderARootPastSunPath (want PASS): PASS
   restored: the two CI failures (want PASS): PASS
@@ -50,3 +53,16 @@ D3b. adoptionseam without the probe stubs, minimal PATH (no claude, no tmux)
 
 working tree after the check:
     (clean when empty)
+
+Narrow pass on f4e1c960 (run separately, on the narrow-pass head):
+D1b. DialPrivate compares the dialer's root as given (no canonicalisation; the pre-narrow-pass compare)
+     internal/seatlaunch/private_socket_unix.go | 5 +++--
+     1 file changed, 3 insertions(+), 2 deletions(-)
+  reverted: TestDialPrivateCanonicalisesTheDialersRoot (want FAIL): FAIL
+          private_dial_test.go:145: the session root spelled "/private/tmp/dp1755074900/link": the recorded socket /private/tmp/dp1755074900/s/extensions/amq-squad/launch/scheduler-decide.sock is neither in /private/tmp/dp1755074900/link's launch directory nor
+  restored: TestDialPrivateCanonicalisesTheDialersRoot + TestDialPrivateRefusesAPlantedEntry (want PASS): PASS
+  working tree after the check: clean
+D1c. The amqsq- case gated to non-Linux (proofDir never creates one there): no new row by
+  ruling. On Linux a record outside the root's launch directory takes the "neither in"
+  refusal the planted-entry test's "a path outside the launch directory" subtest pins;
+  the gate itself is exercised by CI's Linux job.
