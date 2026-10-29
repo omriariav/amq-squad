@@ -18,6 +18,26 @@ FAILS=0
 ok()   { echo "PASS  $*"; }
 bad()  { echo "FAIL  $*"; FAILS=$((FAILS+1)); }
 info() { echo "INFO  $*"; }
+# caffeinate_check: PASS when every caffeinate is bounded (-t or -w), FAIL when any is unbounded.
+# In pre mode, no caffeinate at all is also a FAIL: the run needs the host awake, and the owner
+# decides whether to start one (scoped: caffeinate -dims -t SECONDS, or -w LEAD_PID).
+caffeinate_check() {
+  local cp a bounded="" unbounded=""
+  for cp in $(pgrep -x caffeinate || true); do
+    a="$(ps -o args= -p "$cp" 2>/dev/null || true)"
+    if [[ "$a" =~ (^|[[:space:]])-[a-z]*[tw]([[:space:]]|$) ]]; then bounded="$bounded $cp:[$a]"
+    else unbounded="$unbounded $cp:[$a]"; fi
+  done
+  if [ -n "$unbounded" ]; then
+    bad "caffeinate with no time limit (stop it: kill PID; restart only with the owner's approval, scoped with -t or -w):$unbounded"
+  elif [ -n "$bounded" ]; then
+    ok "caffeinate bounded:$bounded"
+  elif [ "$MODE" = pre ]; then
+    bad "no caffeinate; ask the owner before starting one (caffeinate -dims -t SECONDS, or -w LEAD_PID; never nohup-detached)"
+  else
+    ok "no caffeinate left after the run"
+  fi
+}
 
 hash_of() { [ -e "$1" ] && shasum -a 256 "$1" | cut -d' ' -f1 || echo "absent"; }
 CFG_FILES=("$HOME/.claude/settings.json" "$HOME/.codex/config.toml")
@@ -55,16 +75,10 @@ if [ "$MODE" = pre ]; then
     [ -z "$spike" ] && ok "no spike tmux sessions" || bad "spike-looking tmux sessions exist: $(echo "$spike" | tr '\n' ' ')"
   else ok "no tmux server running"; fi
 
-  # 4. caffeinate
-  assertions="$(pmset -g assertions 2>/dev/null || true)"
-  cafs=""
-  for cp in $(pgrep -x caffeinate || true); do
-    a="$(ps -o args= -p "$cp" 2>/dev/null || true)"
-    case "$a" in *" -t "*) ;; "caffeinate -"*d*) cafs="$cp $a";; esac
-  done
-  if [[ "$assertions" == *"asserting forever"* && -n "$cafs" ]]; then
-    ok "caffeinate running without a time limit: $cafs"
-  else bad "no unlimited caffeinate (start: caffeinate -dims &)"; fi
+  # 4. caffeinate: a sleep override must be bounded (-t SECONDS or -w PID). An unbounded
+  #    caffeinate outlives the run (one ran 8.5 days after S0), so it is a FAIL, never a PASS.
+  #    Starting one is the owner's call: ask first, then scope it; never nohup-detach it.
+  caffeinate_check
 
   # 5. window
   "$HERE/window-note.sh" show "$RUN_ID" "${REPOS[@]}" | sed 's/^/INFO  /'
@@ -108,6 +122,7 @@ else
     [ "$(git -C "$r" rev-parse main)" = "$(git -C "$r" rev-parse origin/main)" ] && ok "$n: local main untouched" || info "$n: local main differs from origin/main"
     info "$n branches: $(git -C "$r" branch --list 'loadtest/*' | tr -d ' *' | tr '\n' ' ')"
   done
+  caffeinate_check
   info "tmux: $(tmux ls 2>&1 | tr '\n' ';')"
   info "seat processes: $(ps -axo pid=,command= | grep -E '/claude/versions/|(^| )claude( |$)' | grep -v grep | wc -l | tr -d ' ') claude-like"
 fi

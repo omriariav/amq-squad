@@ -51,11 +51,14 @@ cd "$WT"
 date                                              # must be 05:05 or later
 git branch --show-current                         # spike/s6-loadtest
 tmux ls                                           # must list NO spike sessions (amq-*, s6*, s4*, s3*, s5*)
-pmset -g assertions | grep -i 'asserting forever' # caffeinate -dims must be active
+pgrep -lf caffeinate                              # every caffeinate must carry -t SECONDS or -w PID; none without a limit
 $L/window-note.sh show $RUN $NOC $WCLI            # window reference 00:05, fresh window 05:05
 ```
 
-If caffeinate is not active, start it (`caffeinate -dims &`) and note it in the report.
+If no caffeinate runs, do not start one yourself: ask the owner first. If he approves, scope it to the run
+(`caffeinate -dims -t <seconds>` for the planned window, or `caffeinate -dims -w <lead pid>` so it ends with the lead)
+and note the pid and the limit in the report. Never `nohup`-detach it. A caffeinate with no limit is a FAIL in
+`preflight.sh pre`: stop it (`kill <pid>`) and report it; one left over from S0 kept the host awake for 8.5 days.
 
 Optional but recommended (about one minute, uses throwaway tmux sessions `s6dry-*` and a throwaway task store, touches no repo;
 run it BEFORE the `tmux ls` check above, or run `tmux ls` again after it):
@@ -72,7 +75,7 @@ $L/preflight.sh pre $RUN $NOC $WCLI
 
 It must end with `preflight pre: ALL PASS`. It checks versions (amq-squad 2.31.0, amq 0.102.0, plugin 2.31.0), that no other
 claude/codex/amq-squad/amq-wake processes run (your own session and known background helpers are listed as INFO, not counted),
-no spike tmux sessions, caffeinate, both repos clean on `main == origin/main`, local files ignored, 11 + 10 tasks all pending,
+no spike tmux sessions, caffeinate bounded (`-t` or `-w`; an unlimited one is FAIL), both repos clean on `main == origin/main`, local files ignored, 11 + 10 tasks all pending,
 briefs present, worktrees clean and detached, `amq-squad doctor` exit 0 in both, `gh` authenticated; it records baseline hashes of
 `~/.claude/settings.json` and `~/.codex/config.toml`. If any line is FAIL, stop and report it; do not fix other agents' processes yourself.
 
@@ -229,7 +232,9 @@ $L/preflight.sh post $RUN $NOC $WCLI                 # config files unchanged? n
 checkout. A `CHANGED` line is a finding for the owner: report it first, with the hash lines.
 
 Do NOT remove the `.s6-wt` worktrees, the stores, the briefs, or any `loadtest/*` branch or PR; the owner decides in the morning.
-Do not stop caffeinate.
+Teardown of the sleep override: a `-w <lead pid>` caffeinate ends with the lead; a `-t` one ends at its limit. Confirm
+nothing is left asserting forever (`pmset -g assertions | grep -i 'asserting forever'` must print nothing) and
+`kill <pid>` any caffeinate that is; `preflight.sh post` checks this and FAILs on one. Note the teardown in the report.
 
 ## 7. Analysis
 
