@@ -1984,6 +1984,30 @@ Release prep.
   suite as a continue-on-error canary with the known-red set listed.
   README and the release notes carry the platform statement; follow-ups
   3.1 carry the four items with their failure scenarios. [2.8, platform]
+- Brief 5-docs-F merged 2026-10-29 as ad8fda9b (branch v3-5-docs-f, six
+  commits, reviewer read of the Go part, lead gate on the merge result;
+  size of 3.0 81,309, v2 rows kept 27,945): README.md rewritten for 3.0
+  from the verbs' help and the release notes (26 README commands run under
+  a throwaway HOME with the gh stub, 0 failures, four skip-marked with
+  their reason; the grants.yaml and pins examples read by doctor; the
+  platform paragraph; `amq coop init` as step 1; the stated limit that no
+  verb turns squad.yaml into the seats file manual launch takes), README.html
+  regenerated with pandoc 3.11; the global orchestrator runbook retired to
+  a one-paragraph pointer; scripts/check-release-version.py reads the floor
+  from doctor's constant (fail-closed on a missing, repeated or non-literal
+  line; a Go row ties it to doctorMinAMQVersion) and `make release-check
+  VERSION=v3.0.0` is green; four help and refusal fixes with rows (task
+  widen's usage states R4 instead of --me; verify action's exit 12 in its
+  help; amq --help, pi verify --help and verify release-plan --help print
+  their usage; team propose and apply refuse a repeated per-seat flag
+  naming the comma form); the skill gate's gh stub answers --version only
+  and the 76 documented invocations run offline; make ci's gating suite on
+  a macOS runner with the Linux job as build, vet, hook script and a
+  continue-on-error test canary listing the known-red packages. Manifest:
+  team.go's shrink target raised 350 to 365 for the refusal (reason in the
+  row; target sum 35,185 within the band). Gate note: TestOwnerScriptDryRun
+  failed once more in the full suite under load and passed 3 of 3 alone on
+  the merge result (the hygiene-list entry). [2.8, phase 5 docs-F result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
