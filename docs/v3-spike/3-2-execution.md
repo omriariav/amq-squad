@@ -213,7 +213,7 @@ Tests:
 | 1 fixture train, five PRs in order, digest, rebase re-digest and re-check | met | `TestAcceptance1FiveCleanPRsLandInOrder` (6.5 s with the fake gh over a bare repository) |
 | 2 refusals, one test each, gate raised, nothing merged | met | `TestAcceptance2Refusals` (7 rows: CI red, size cap lines, size cap files, force push, protected path, wrong base, file outside the task) |
 | 3 S6 dry run | met, with three measured deviations | `s6-dry-run/` pass 1, 2 and 3; table in commit 1 |
-| 4 S6 real run | not run (not this brief's; waits for the owner's merge grant and the CI-only rulesets) | |
+| 4 S6 real run | re-scoped 2026-10-29 (reviewer ruling): a real run takes task, declared files and head only from the harness commit step's binding (P1-4), and the S6 drafts have none; the row becomes "the first real run merges a harness-bound PR", an owner-session row; the tag's evidence is dry run pass 5 against the owner's CI-only rulesets (`s6-dry-run/pass5-*`: protection met on both, 9 + 4 planned, 5 refused as predicted, digests unchanged from pass 4) | pass5-amq-noc.json, pass5-workspace-cli.json |
 | 5 no ruleset, train refuses to start | met | `TestAcceptance5NoRulesetRefusesToStart` |
 | 6 release flow on a fixture repo | met | `TestAcceptance6ReleaseFlow` |
 | 7 no deferred-3, no deferred-replace | met | `gate-c4.txt` manifest-check --final |

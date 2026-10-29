@@ -410,6 +410,20 @@ with `amq-squad gate post --gate <id>`, and `amq-squad doctor` showing
 `seat clear q1` as a warning that names why it waits. There is no pty-only
 fallback.
 
+### Fourth item: the first real merge-train run (3-2 acceptance 4, re-scoped 2026-10-29)
+
+A real run merges only a PR the 3.0 harness commit step produced and bound
+to its task (task_unbound otherwise, by design). The S6 drafts were the
+dry-run input and cannot be merged by the train. This row: a small 3.0
+squad task on amq-noc (the 4-4 fixture refresh for lead_handle and live),
+claimed by a seat, ended through `seat commit` (the draft PR bound to the
+task), then `amq-squad merge-train --request <the lead's request naming
+that PR number>` under the owner's gh. Expected: the PR rebased if needed,
+CI green on the head, merged by the train, the batch digest in the audit
+log, `task show` carrying pr_number and pr_head. The repository must be
+covered by the grant (grants.yaml: amq-noc, 300 lines, 5 files, CI
+required) and its CI-only ruleset (26159067).
+
 ### 8. Wrap up (lead, 2 minutes; the owner may leave)
 
 Ctrl-C the attach. Copy the evidence (all public):
