@@ -153,6 +153,10 @@ func ServeDecisions(o DecideOptions) (*DecisionServer, error) {
 // Path is where the socket is bound (recorded in the launch record).
 func (s *DecisionServer) Path() string { return s.sock.Path }
 
+// Root is the session root the socket is bound under (SendDecision dials
+// through it).
+func (s *DecisionServer) Root() string { return s.o.Root }
+
 // Overflow is how many connections were refused because the socket was full.
 func (s *DecisionServer) Overflow() int64 { return s.overflow.Load() }
 
@@ -240,10 +244,12 @@ func (s *DecisionServer) origin(conn *net.UnixConn) DecideReply {
 }
 
 // SendDecision is the lead's side: one decision over the scheduler's
-// socket, the reply read back.
-func SendDecision(path string, req WidenRequest) (DecideReply, error) {
+// socket (recorded at path, bound under root), the reply read back. The
+// dial goes through seatlaunch.DialPrivate, bounded like the bind: a
+// recorded path past sun_path (a deep root on Linux) is still dialable.
+func SendDecision(root, path string, req WidenRequest) (DecideReply, error) {
 	var reply DecideReply
-	c, err := net.DialTimeout("unix", path, 5*time.Second)
+	c, err := seatlaunch.DialPrivate(root, path, DecisionSocketName)
 	if err != nil {
 		return reply, err
 	}

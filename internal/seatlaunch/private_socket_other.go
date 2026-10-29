@@ -20,4 +20,8 @@ func ListenPrivate(root, name string) (*PrivateSocket, error) {
 
 func (p *PrivateSocket) Close() {}
 
+func DialPrivate(root, recordedPath, name string) (*net.UnixConn, error) {
+	return nil, errors.New("the decision socket needs a unix host")
+}
+
 func PeerPID(conn *net.UnixConn) (int, bool) { return 0, false }

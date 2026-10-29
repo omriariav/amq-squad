@@ -107,7 +107,7 @@ func runTaskWiden(args []string, out io.Writer) error {
 		// The fourth pass: the socket opens only after the start-up barrier.
 		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting, Detail: "the scheduler is starting: its decision socket opens once the exits ledger is loaded and every seat of the previous incarnation is closed and confirmed gone"}
 	} else {
-		if reply, err = schedproc.SendDecision(rec.DecisionSocket, req); err != nil {
+		if reply, err = schedproc.SendDecision(root, rec.DecisionSocket, req); err != nil {
 			return fmt.Errorf("task widen: the scheduler's decision socket: %w", err)
 		}
 		// The lead's AMQ message is the record of the decision, never its

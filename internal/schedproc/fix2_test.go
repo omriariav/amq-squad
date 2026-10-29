@@ -72,7 +72,7 @@ func TestDecisionSocketAcceptsOnlyTheLeadsPaneChain(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			s, applied := decideServer(t, tc.lead, tc.reach, tc.peerKnown)
-			reply, err := SendDecision(s.Path(), req)
+			reply, err := SendDecision(s.Root(), s.Path(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +120,7 @@ func TestDecisionSocketProvesTheLeadAgainstTheLedger(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		reply, err := SendDecision(s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
+		reply, err := SendDecision(s.Root(), s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
 		s.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -225,7 +225,7 @@ func TestDecisionSocketLimitsConnections(t *testing.T) {
 		idle = append(idle, c)
 	}
 	time.Sleep(100 * time.Millisecond)
-	reply, err := SendDecision(s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
+	reply, err := SendDecision(s.Root(), s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
 	if err != nil || reply.Code != RefusedBusy || s.Overflow() != 1 || len(*applied) != 0 {
 		t.Fatalf("the ninth connection: %+v %v (overflow %d)", reply, err, s.Overflow())
 	}
@@ -235,7 +235,7 @@ func TestDecisionSocketLimitsConnections(t *testing.T) {
 		c.Close()
 	}
 	time.Sleep(100 * time.Millisecond)
-	if reply, err := SendDecision(s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"}); err != nil || !reply.OK {
+	if reply, err := SendDecision(s.Root(), s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"}); err != nil || !reply.OK {
 		t.Fatalf("after the deadline: %+v %v", reply, err)
 	}
 }
