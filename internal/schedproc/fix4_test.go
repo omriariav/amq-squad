@@ -48,7 +48,7 @@ func TestDecisionSocketReprovesTheLeadAfterTheRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	reply, err := SendDecision(s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
+	reply, err := SendDecision(s.Root(), s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
 	if err != nil || reply.OK || reply.Code != RefusedNotLead || applied != 0 || calls != 2 {
 		t.Fatalf("a decision whose lead record was replaced in flight: %+v %v (applied %d, ledger reads %d)", reply, err, applied, calls)
 	}
@@ -96,7 +96,7 @@ func TestDecisionFromAPreviousLeadIncarnationIsRefused(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		reply, err := SendDecision(s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
+		reply, err := SendDecision(s.Root(), s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
 		s.Close()
 		if err != nil {
 			t.Fatal(err)

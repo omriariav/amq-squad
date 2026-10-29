@@ -88,7 +88,7 @@ func leadServer(t *testing.T, sel storeSelection, project string, fromLead bool)
 func leadDecision(t *testing.T, sel storeSelection, project string, req schedproc.WidenRequest) schedproc.DecideReply {
 	t.Helper()
 	s := leadServer(t, sel, project, true)
-	reply, err := schedproc.SendDecision(s.Path(), req)
+	reply, err := schedproc.SendDecision(s.Root(), s.Path(), req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -78,7 +78,7 @@ func seedLegacyOperatorQuestion(t *testing.T, project, profile, session, from, g
 		base = filepath.Join(base, profile)
 	}
 	root := filepath.Join(base, session)
-	seedAgentRecord(t, base, session, from, launch.Record{CWD: project, Binary: "codex", Role: from, Handle: from, Session: session, Root: root, TeamProfile: profile, AgentPID: 42})
+	seedAgentRecord(t, base, session, from, launch.Record{CWD: project, Binary: "codex", Role: from, Handle: from, Session: session, Root: root, TeamProfile: profile, AgentPID: seededDeadPID})
 	seedNotifyMessageToDir(t, filepath.Join(root, "agents", team.DefaultOperatorHandle), "new", notifyMsg{ID: "legacy-question", From: from, To: team.DefaultOperatorHandle, Thread: gate, Subject: "APPROVAL: legacy", Kind: string(state.KindQuestion), Created: notifyNow})
 }
 

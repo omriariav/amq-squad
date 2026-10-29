@@ -170,6 +170,12 @@ func TestApplyForwardsSubjectSchemaFromPrepareResult(t *testing.T) {
 		t.Skipf("AMQ_SQUAD_REAL_AMQ %q is unavailable or not executable", binary)
 	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	// Prepare resolves and probes the seat's claude and the tmux launcher in
+	// this process; both probes answer from stubs first on PATH, so the test
+	// needs no claude and no tmux on the host (5-ci-D: the macOS runner has
+	// no claude), and Apply's create step reaches the stub tmux, which
+	// refuses it, instead of opening a session on the host's tmux server.
+	t.Setenv("PATH", probeStubDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -225,4 +231,47 @@ func TestApplyForwardsSubjectSchemaFromPrepareResult(t *testing.T) {
 	if strings.Contains(strings.ToLower(result.ReasonCode), "caller_context") || strings.Contains(strings.ToLower(result.FailureDetail), "caller_context requires subject schema") {
 		t.Fatalf("Apply refused on the caller_context/subject_schema mismatch the fix addresses: outcome=%q reason_code=%q detail=%q", result.Outcome, result.ReasonCode, result.FailureDetail)
 	}
+}
+
+// probeStubDir is a private directory holding the two executables Prepare
+// probes, each answering only its probe and refusing anything else:
+//
+//   - `claude`, for AMQ v0.116.2's claude adapter probe
+//     (internal/launch/adapter_claude.go, ClaudeAdapter.Capabilities):
+//     `--version` whose first field is the version, `--help` naming
+//     "--session-id <uuid>" and "--resume [value]". The internal/cli
+//     real-AMQ tests carry the same stub
+//     (real_amq_nested_worktree_discovery_test.go, claudeProbeStub).
+//   - `tmux`, for the tmux launcher's detection (internal/launch/tmux.go,
+//     TmuxBackend.Detect): `-V` answering a version in ">=3.2 <4.0".
+func probeStubDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stubs := map[string]string{
+		"claude": `#!/bin/sh
+case "$1" in
+--version) echo '2.1.0 (Claude Code)' ;;
+--help)
+	echo 'Usage: claude [options] [command] [prompt]'
+	echo '  --session-id <uuid>  Use a specific session ID for the conversation'
+	echo '  -r, --resume [value]  Resume a conversation by session ID'
+	;;
+*) echo 'claude probe stub: answers --version and --help only' >&2; exit 2 ;;
+esac
+`,
+		"tmux": `#!/bin/sh
+if [ "$1" = "-V" ] && [ $# -eq 1 ]; then echo 'tmux 3.5a'; exit 0; fi
+echo 'tmux probe stub: answers -V only' >&2
+exit 1
+`,
+	}
+	for name, body := range stubs {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }

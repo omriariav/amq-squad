@@ -1,0 +1,68 @@
+revert-check-d (5-ci-D), head b38be778, darwin/arm64, amq 0.116.2
+
+D1a. DialPrivate reverted to a plain dial of the recorded path (the pre-fix SendDecision)
+     internal/seatlaunch/private_socket_unix.go | 6 ++++++
+     1 file changed, 6 insertions(+)
+  reverted: TestDialPrivateRefusesAPlantedEntry (want FAIL): FAIL
+          private_dial_test.go:45: DialPrivate(/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDialPrivateRefusesAPlantedEntrya_regular_file241943644/001/extensions/amq-squad/launch/scheduler-decide.sock) = dial unix /private/var/folders/gx/wg9xtf
+          private_dial_test.go:58: DialPrivate(/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDialPrivateRefusesAPlantedEntrya_symlink_to_a_live_socket2387071478/001/extensions/amq-squad/launch/scheduler-decide.sock) = dial unix /private/var/fold
+          private_dial_test.go:76: DialPrivate connected to /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/amqsq-2666245200/scheduler-decide.sock
+          private_dial_test.go:89: DialPrivate connected to /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/amqsq-836209759/scheduler-decide.sock
+          private_dial_test.go:104: DialPrivate connected to /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/dial3646565311/scheduler-decide.sock
+      --- FAIL: TestDialPrivateRefusesAPlantedEntry (0.00s)
+          --- FAIL: TestDialPrivateRefusesAPlantedEntry/a_regular_file (0.00s)
+          --- FAIL: TestDialPrivateRefusesAPlantedEntry/a_symlink_to_a_live_socket (0.00s)
+  reverted: TestDecisionSocketDialsUnderARootPastSunPath (darwin: PASS expected, see log): PASS
+      (darwin never records a path past sun_path, so this row cannot fail here when the
+      dial is reverted; its reverting proof is CI's Linux job, make ci on ubuntu-latest,
+      where the pre-fix dial is the run-40945638948 failure and the row asserts it)
+  restored: TestDialPrivateRefusesAPlantedEntry (want PASS): PASS
+  restored: TestDecisionSocketDialsUnderARootPastSunPath (want PASS): PASS
+  restored: the two CI failures (want PASS): PASS
+
+D2a. seededDeadPID back to 42 (the pre-fix seed)
+     internal/cli/removed_command_test_support_test.go | 2 +-
+     1 file changed, 1 insertion(+), 1 deletion(-)
+  reverted: TestSeededLaunchPIDIsNeverALiveProcess (want FAIL): FAIL
+          remote_test.go:245: seededDeadPID 42 is inside a kernel's pid range
+      --- FAIL: TestSeededLaunchPIDIsNeverALiveProcess (0.00s)
+D2b. seededDeadPID = 1 (a pid that is a live process here, as 42 is on the Linux runner)
+     internal/cli/removed_command_test_support_test.go | 2 +-
+     1 file changed, 1 insertion(+), 1 deletion(-)
+  reverted: TestRemoteAttachOnce (want FAIL, the CI message): FAIL
+      --- FAIL: TestRemoteAttachOnce (0.06s)
+          remote_test.go:197: attach with no live lead: starts 1
+  restored: TestRemoteAttachOnce + TestSeededLaunchPIDIsNeverALiveProcess (want PASS): PASS
+
+D3a. the setup call without the claude stub, PATH stripped of claude
+     internal/cli/real_amq_nested_worktree_discovery_test.go | 2 +-
+     1 file changed, 1 insertion(+), 1 deletion(-)
+  reverted: TestNestedWorktreeRootDiscoveryOnAMQ074 (want FAIL): FAIL
+          real_amq_nested_worktree_discovery_test.go:41: real AMQ binary=/Users/omri/go/bin/amq version=0.116.2
+          real_amq_nested_worktree_discovery_test.go:60: real amq setup -project-root /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestNestedWorktreeRootDiscoveryOnAMQ0743710137145/002/livebase -agents claude -default-session s -launcher-preference
+              agent "claude" is not available through a supported adapter probe
+      --- FAIL: TestNestedWorktreeRootDiscoveryOnAMQ074 (0.15s)
+  restored: TestNestedWorktreeRootDiscoveryOnAMQ074 (want PASS): PASS
+D3b. adoptionseam without the probe stubs, minimal PATH (no claude, no tmux)
+     internal/adoptionseam/adoptionseam_test.go | 2 +-
+     1 file changed, 1 insertion(+), 1 deletion(-)
+  reverted: TestApplyForwardsSubjectSchemaFromPrepareResult (want FAIL): FAIL
+          adoptionseam_test.go:206: Prepare: resolve claude executable: exec: "claude": executable file not found in $PATH
+      --- FAIL: TestApplyForwardsSubjectSchemaFromPrepareResult (0.00s)
+  restored: TestApplyForwardsSubjectSchemaFromPrepareResult (want PASS): PASS
+
+working tree after the check:
+    (clean when empty)
+
+Narrow pass on f4e1c960 (run separately, on the narrow-pass head):
+D1b. DialPrivate compares the dialer's root as given (no canonicalisation; the pre-narrow-pass compare)
+     internal/seatlaunch/private_socket_unix.go | 5 +++--
+     1 file changed, 3 insertions(+), 2 deletions(-)
+  reverted: TestDialPrivateCanonicalisesTheDialersRoot (want FAIL): FAIL
+          private_dial_test.go:145: the session root spelled "/private/tmp/dp1755074900/link": the recorded socket /private/tmp/dp1755074900/s/extensions/amq-squad/launch/scheduler-decide.sock is neither in /private/tmp/dp1755074900/link's launch directory nor
+  restored: TestDialPrivateCanonicalisesTheDialersRoot + TestDialPrivateRefusesAPlantedEntry (want PASS): PASS
+  working tree after the check: clean
+D1c. The amqsq- case gated to non-Linux (proofDir never creates one there): no new row by
+  ruling. On Linux a record outside the root's launch directory takes the "neither in"
+  refusal the planted-entry test's "a path outside the launch directory" subtest pins;
+  the gate itself is exercised by CI's Linux job.
