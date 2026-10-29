@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "kind": "merge_train",
+  "data": {
+    "run": "mt-20261029T201051Z-56528c8a",
+    "repository": "omriariav/workspace-cli",
+    "base": "main",
+    "base_sha": "793396c609201d9e2288f9355dc2b46c6ca52733",
+    "dry_run": true,
+    "manual": false,
+    "protection": {
+      "required_checks": [
+        {
+          "context": "build (1.25)",
+          "app_id": 15368
+        }
+      ],
+      "direct_push_refused": true,
+      "force_push_refused": true,
+      "sources": [
+        "ruleset 26159068",
+        "classic"
+      ],
+      "notes": [
+        "classic protection requires no PR: direct push is allowed"
+      ]
+    },
+    "protection_met": true,
+    "ci_checks": [
+      {
+        "context": "build (1.25)",
+        "app_id": 15368
+      },
+      {
+        "context": "build (1.25)"
+      }
+    ],
+    "pairs": [
+      {
+        "number": 216,
+        "head": "351ca6e237a3bd3331b3f438a45089ff55afafe1"
+      },
+      {
+        "number": 218,
+        "head": "586909888e59386d4d92a63d70404db1770df3f7"
+      },
+      {
+        "number": 223,
+        "head": "72fe2b817fda481ee0ffcbbc51105f3bbf1c4942"
+      },
+      {
+        "number": 224,
+        "head": "485cf768ef79fd158cc8abe24d992ebe62447d9a"
+      }
+    ],
+    "digest": "sha256:d343aae9ee026ad8ffc15b09bbd9405ef6b83f078b778f63a6ed98c3af6cdee0",
+    "digests": [
+      "sha256:d343aae9ee026ad8ffc15b09bbd9405ef6b83f078b778f63a6ed98c3af6cdee0"
+    ],
+    "prs": [
+      {
+        "number": 216,
+        "task": "W7",
+        "head": "351ca6e237a3bd3331b3f438a45089ff55afafe1",
+        "draft": true,
+        "changed_lines": 119,
+        "files": [
+          "cmd/sheets_test.go"
+        ],
+        "status": "planned"
+      },
+      {
+        "number": 217,
+        "task": "W3",
+        "head": "eca77d5a16675fb2d86f84041d1569ddc072dd2b",
+        "draft": true,
+        "changed_lines": 143,
+        "files": [
+          "cmd/sheets.go",
+          "cmd/sheets_test.go"
+        ],
+        "refusals": [
+          {
+            "rule": "ci_green",
+            "detail": "head eca77d5a1667: required checks not green: build (1.25)@app15368=failure, build (1.25)=failure"
+          }
+        ],
+        "gate_error": "dry run: would raise grow merge omriariav/workspace-cli#217 head=eca77d5a16675fb2d86f84041d1569ddc072dd2b rules=ci_green",
+        "after": [
+          216
+        ],
+        "overlap": [
+          "cmd/sheets_test.go"
+        ],
+        "status": "refused"
+      },
+      {
+        "number": 218,
+        "task": "W12",
+        "head": "586909888e59386d4d92a63d70404db1770df3f7",
+        "draft": true,
+        "changed_lines": 43,
+        "files": [
+          "internal/client/factory_test.go"
+        ],
+        "status": "planned"
+      },
+      {
+        "number": 219,
+        "task": "W5",
+        "head": "bc6c327d1ac5b85ea2b40abfcb9375f89dc6a6ab",
+        "draft": true,
+        "changed_lines": 157,
+        "files": [
+          "cmd/root.go",
+          "internal/client/factory.go",
+          "internal/client/factory_test.go"
+        ],
+        "refusals": [
+          {
+            "rule": "task_scope",
+            "detail": "internal/client/factory_test.go is outside task W5's declared files [cmd/root.go internal/client/factory.go]"
+          }
+        ],
+        "gate_error": "dry run: would raise grow merge omriariav/workspace-cli#219 head=bc6c327d1ac5b85ea2b40abfcb9375f89dc6a6ab rules=task_scope",
+        "after": [
+          218
+        ],
+        "overlap": [
+          "internal/client/factory_test.go"
+        ],
+        "status": "refused"
+      },
+      {
+        "number": 220,
+        "task": "W2",
+        "head": "229d005540944194ce6b87a1f9b41b45657f9ef0",
+        "draft": true,
+        "changed_lines": 141,
+        "files": [
+          "cmd/drive.go",
+          "cmd/drive_test.go"
+        ],
+        "refusals": [
+          {
+            "rule": "ci_green",
+            "detail": "head 229d00554094: required checks not green: build (1.25)@app15368=failure, build (1.25)=failure"
+          }
+        ],
+        "gate_error": "dry run: would raise grow merge omriariav/workspace-cli#220 head=229d005540944194ce6b87a1f9b41b45657f9ef0 rules=ci_green",
+        "status": "refused"
+      },
+      {
+        "number": 221,
+        "task": "W6",
+        "head": "8fea3f14a2a1eeb2da38804730c78fda34b04356",
+        "draft": true,
+        "changed_lines": 315,
+        "files": [
+          "cmd/gmail.go",
+          "cmd/gmail_test.go"
+        ],
+        "refusals": [
+          {
+            "rule": "ci_green",
+            "detail": "head 8fea3f14a2a1: required checks not green: build (1.25)@app15368=failure, build (1.25)=failure"
+          },
+          {
+            "rule": "size_cap",
+            "detail": "315 changed lines, cap 300"
+          }
+        ],
+        "gate_error": "dry run: would raise grow merge omriariav/workspace-cli#221 head=8fea3f14a2a1eeb2da38804730c78fda34b04356 rules=ci_green,size_cap",
+        "status": "refused"
+      },
+      {
+        "number": 222,
+        "task": "W4",
+        "head": "cf1e5e3a73ebe0fbc275e2e2ac30ac9a542d5387",
+        "draft": true,
+        "changed_lines": 191,
+        "files": [
+          "cmd/slides.go",
+          "cmd/slides_test.go"
+        ],
+        "refusals": [
+          {
+            "rule": "ci_green",
+            "detail": "head cf1e5e3a73eb: required checks not green: build (1.25)@app15368=failure, build (1.25)=failure"
+          }
+        ],
+        "gate_error": "dry run: would raise grow merge omriariav/workspace-cli#222 head=cf1e5e3a73ebe0fbc275e2e2ac30ac9a542d5387 rules=ci_green",
+        "status": "refused"
+      },
+      {
+        "number": 223,
+        "task": "W8",
+        "head": "72fe2b817fda481ee0ffcbbc51105f3bbf1c4942",
+        "draft": true,
+        "changed_lines": 172,
+        "files": [
+          "cmd/hooks_test.go"
+        ],
+        "status": "planned"
+      },
+      {
+        "number": 224,
+        "task": "W9",
+        "head": "485cf768ef79fd158cc8abe24d992ebe62447d9a",
+        "draft": true,
+        "changed_lines": 88,
+        "files": [
+          "internal/auth/oauth_test.go"
+        ],
+        "status": "planned"
+      }
+    ],
+    "wall_ms": 34691,
+    "gh_calls": 69
+  }
+}
