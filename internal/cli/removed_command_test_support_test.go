@@ -16,6 +16,15 @@ import (
 
 var notifyNow = time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 
+// seededDeadPID is the agent pid the seeded launch records carry: above
+// every supported kernel's pid range (Linux PID_MAX_LIMIT is 4194304,
+// darwin's PID_MAX 99999), so it is never a live process. The records
+// carried pid 42 until 5-ci-D: absent on darwin, but on a Linux runner a
+// kernel thread, which signal-0 (procinfo.Alive) reports alive, so the
+// status document showed every seeded seat live and TestRemoteAttachOnce
+// started the endpoint with no lead running.
+const seededDeadPID = 1 << 30
+
 func seedNotifyProject(t *testing.T) (project, base, statePath string) {
 	t.Helper()
 	project = t.TempDir()
@@ -43,7 +52,7 @@ func seedNotifyLaunchProfile(t *testing.T, project, base, profile, session, hand
 	agentDir := filepath.Join(base, session, "agents", handle)
 	if err := launch.WriteUnderRecordLock(agentDir, launch.Record{
 		CWD: project, Binary: "codex", Handle: handle, Role: handle, Session: session,
-		Root: filepath.Join(base, session), AgentPID: 42, StartedAt: notifyNow, TeamProfile: profile,
+		Root: filepath.Join(base, session), AgentPID: seededDeadPID, StartedAt: notifyNow, TeamProfile: profile,
 	}); err != nil {
 		t.Fatal(err)
 	}

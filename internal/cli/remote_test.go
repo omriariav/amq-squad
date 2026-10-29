@@ -15,6 +15,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/buzz"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
 // writeTestShare writes an enrolled share in amq-remote's layout with the
@@ -230,5 +231,20 @@ func TestRemoteAttachOnce(t *testing.T) {
 	}
 	if !env.Data.Presence.Present || !strings.Contains(env.Data.ServiceWarning, "absent") {
 		t.Fatalf("status = %+v", env.Data)
+	}
+}
+
+// 5-ci-D D2: the seeded launch records' agent pid is never a live process
+// on any host. TestRemoteAttachOnce read the cto seat as present on the
+// ubuntu runner because the records carried pid 42, a live process there
+// (signal-0 answers it) and absent on darwin; the status document's live
+// field is the launch record's pid being alive.
+func TestSeededLaunchPIDIsNeverALiveProcess(t *testing.T) {
+	const linuxPIDMaxLimit, darwinPIDMax = 4194304, 99999
+	if seededDeadPID <= linuxPIDMaxLimit || seededDeadPID <= darwinPIDMax {
+		t.Fatalf("seededDeadPID %d is inside a kernel's pid range", seededDeadPID)
+	}
+	if procinfo.Alive(seededDeadPID) {
+		t.Fatalf("seededDeadPID %d is a live process", seededDeadPID)
 	}
 }
