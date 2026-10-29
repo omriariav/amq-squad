@@ -2029,12 +2029,12 @@ owner-session item above.
 | 2b-2 | 9 role-delivery matrix, N=3 over Claude and Codex | milestone A's pointer arm at N=1 only | items 2 and 3 |
 | 2b-2 milestone B | 7.5 a Codex seat under workspace-write ends with a harness-pushed branch | fixture only | item 3 |
 | 2b-2 milestone B | Claude live rows: plugin load, probes a and b, the S4 fault table under dontAsk, the Claude half of the role matrix (the Bash-tool scrub candidate CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is withdrawn for Claude Code 2.1.310, where it forces permission mode default; the token's visibility to the seat's Bash children is R33's recorded limit) | not run | item 2 |
-| 3-1 | 9 owner run with the real Buzz key | pending | item 1 |
+| 3-1 | 9 owner run with the real Buzz key | passed 2026-10-29: the owner's thread answer to gate g45-owner-01 verified by the core (approved, authorization id), gate state accepted, `verify action` exit 0 (docs/v3-spike/4-5-evidence/owner-run-2026-10-29/) | done |
 | 3-2 | 4 the first real run merges a PR the 3.0 harness commit step produced and bound (re-scoped 2026-10-29, reviewer ruling: the S6 drafts have no 3.0 task binding, by design P1-4; the tag's merge-train evidence is dry run pass 5, protection met on both repositories, 9 + 4 planned, 5 refused as predicted, digests unchanged) | owner-session row, not a tag gate; the PR lands on amq-noc or workspace-cli (covered by the grant and a CI-only ruleset): the row's task is a small 3.0 squad task on amq-noc (the 4-4 fixture refresh), so the commit step produces the PR the train merges | item 4 |
 | 4-1 | 10 pi launch through `amq launch` | the path is merged (5-amq-A, live 5 of 5 on a scratch-built v0.116.2); the row on the installed AMQ waits on the owner's upgrade | item 5 |
 | 4-2 | 3 the fault table against a real Claude seat | owed to milestone B's live run | item 2 |
 | 4-4 | amq-noc 1.0 command center on amq-noc main | review-complete on its branch | item 6 |
-| 4-5 | 4 owner run with the real key | prepared and re-walked for the mailbox adapter (5-amq-B); needs the installed AMQ at v0.116.2 | item 1 |
+| 4-5 | 4 owner run with the real key | passed 2026-10-29 on the mailbox adapter: enrollment (8 grants, the DM channel bound), one typed gate answered from the phone in the thread (raise 20:48:57Z, handled 20:50:27Z), the re-ask row (an answer in the main box refused not_in_gate_thread, the thread answer accepted), /status answered by serve, one message routed to the squad lead's inbox with the nostr and routed labels, presence off; the signed seat clear live row stays open (its fixture needs core records only the test helpers write; a rehearsal verb is a 3.0.x line) | done; the clear row open |
 
 [2.7, phase 2 results]
 

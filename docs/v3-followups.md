@@ -16,6 +16,13 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- `amq-squad seat clear --rehearse` (or a script): build the quarantine
+  fixture of the signed-clear live row (a scratch repository with a seat
+  worktree, the staged launch record, the worktree base record, a grant
+  naming a local bare origin, a task done by the seat, the owner config
+  change) so the owner-run third item can run without hand-written core
+  records. Owner session 2026-10-29; owner-run.md.
+
 - Status liveness by launch-record identity, not bare signal-0: `status.Collect`
   (internal/status/collect.go:134) marks a seat `live` when its recorded
   `AgentPID` answers signal-0, while `classifyLaunchRuntimeIdentity`
