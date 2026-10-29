@@ -273,6 +273,32 @@ class GhStub(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertNotIn("gh stub", detail)
 
+    def test_gh_version_is_answered_and_any_other_argv_is_reported(self):
+        # doctor's gh pin row runs `gh --version`: the stub answers that one
+        # argv with a fixed line and exit 0 and does not report it; `gh
+        # --version extra`, `gh version` and `gh auth status` are reported.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            home = root / "home"
+            home.mkdir()
+            env = gate.clean_env(home)
+            fixture = root / "fx"
+            fixture.mkdir()
+            fake = root / "fake-amq-squad"
+            fake.write_text(
+                "#!/bin/sh\nv=$(gh --version) || exit 9\n"
+                f"[ \"$v\" = {gate.shlex.quote(gate.GH_STUB_VERSION)} ] || exit 8\necho \"$v\"\nexit 0\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            code, detail = gate.run_invocation(str(fake), "amq-squad doctor", fixture, env)
+            self.assertEqual((code, detail), (0, gate.GH_STUB_VERSION))
+            for argv in ("--version extra", "version", "auth status"):
+                fake.write_text(f"#!/bin/sh\ngh {argv} >/dev/null 2>&1\nexit 0\n", encoding="utf-8")
+                code, detail = gate.run_invocation(str(fake), "amq-squad doctor", fixture, env)
+                self.assertEqual(code, -1, argv)
+                self.assertIn(f"gh {argv}", detail)
+
 
 class Collect(unittest.TestCase):
     def test_learnings_excluded_and_something_extracted(self):

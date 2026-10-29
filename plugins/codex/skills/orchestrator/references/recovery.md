@@ -9,7 +9,6 @@ to the bottom is how a recoverable run becomes an unrecoverable one.
 amq-squad status --project P --session S --json
 amq-squad task list --project P --session S
 amq-squad task reconcile --project P --session S --json
-# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
 amq-squad doctor --project P
 ```
 

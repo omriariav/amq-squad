@@ -364,13 +364,15 @@ GH_ENV_KEYS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GI
 
 GH_STUB_MESSAGE = "gh stub: no network from the skill gate"
 GH_STUB_LOG = "gh-stub.log"
+GH_STUB_VERSION = "gh version 0.0.0-skill-gate-stub"
 
 
 def install_gh_stub(home: Path) -> Path:
     """Write a refusing `gh` into <home>/bin and return that directory.
 
     The documented merge-train, release, verify and trust invocations can reach for
-    gh. The stub exits 1 with GH_STUB_MESSAGE on stderr and appends its argv to
+    gh. `gh --version` alone prints GH_STUB_VERSION and exits 0 (a local version
+    probe; doctor runs it). Any other argv exits 1 with GH_STUB_MESSAGE on stderr and appends its argv to
     <home>/gh-stub.log, so a call is caught even when amq-squad swallows gh's
     stderr. git stays real.
     """
@@ -380,6 +382,12 @@ def install_gh_stub(home: Path) -> Path:
     log = home / GH_STUB_LOG
     stub.write_text(
         "#!/bin/sh\n"
+        # `gh --version` is a local probe (doctor's gh pin row runs it): one
+        # fixed line, exit 0, not logged. Every other argv is refused and logged.
+        'if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then\n'
+        f"  echo {shlex.quote(GH_STUB_VERSION)}\n"
+        "  exit 0\n"
+        "fi\n"
         f"printf 'gh %s\\n' \"$*\" >> {shlex.quote(str(log))}\n"
         f"echo {shlex.quote(GH_STUB_MESSAGE)} >&2\n"
         "exit 1\n",

@@ -18,7 +18,6 @@ owner's approval of one digest, apply, brief, launch.
 ## 1. Readiness
 
 ```sh
-# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
 amq-squad doctor --project P
 amq-squad trust P
 amq-squad roles
