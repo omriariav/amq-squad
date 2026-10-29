@@ -43,10 +43,13 @@ jobs:
         if: github.event_name == 'pull_request' && steps.release.outputs.run_release_check == 'true'
         run: make release-check VERSION="${{ steps.release.outputs.release_version }}"
 
+      # The HTML renders are pinned to one pandoc release (Makefile PANDOC_VERSION);
+      # keep this version equal to it, or the -check targets refuse with a version error.
       - name: Install documentation tools
         run: |
-          curl -L https://github.com/jgm/pandoc/releases/download/3.8.3/pandoc-3.8.3-1-amd64.deb -o /tmp/pandoc.deb
+          curl -L https://github.com/jgm/pandoc/releases/download/3.11/pandoc-3.11-1-amd64.deb -o /tmp/pandoc.deb
           sudo dpkg -i /tmp/pandoc.deb
+          pandoc --version | head -n 1
 
       - name: Run shuffled internal/cli evidence suite
         shell: bash
