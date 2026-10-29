@@ -1910,6 +1910,32 @@ Release prep.
   always confirms); its removal is recorded in follow-ups and the manifest
   rows. hook_guard's classification of `amq coop exec` stays: AMQ ships
   the verb and guard refuses a seat starting one. [2.8, phase 5 amq-C result]
+- Brief 5-ci-D merged 2026-10-29 as 23d8a9e4 (branch v3-5-ci-d, six
+  commits, reviewer read of the production diff and rows, lead gate on the
+  merge result; size of 3.0 81,230): the first CI run on v3 found three
+  Linux-only failures and one runner-dependent test, none visible on
+  macOS. D1: the decision socket's dial side used the recorded full path,
+  which Linux refuses past sun_path (the listener was already bound-safe
+  through /proc/self/fd); seatlaunch.DialPrivate dials through the anchored
+  launch directory (or darwin's temp directory, off Linux), requires a
+  socket owned by this user with symlinks not followed, canonicalises the
+  dialer's root (task widen's root is not symlink-resolved, the
+  scheduler's is), and SendDecision takes the root; the deep-root row's
+  reverting proof on darwin is CI's Linux job; recorded limit: the amqsq-
+  case trusts any 0700 own directory the launch record names, the launch
+  record's same-UID limit. D2: a fixture seeded pid 42, a live kernel
+  thread on a fresh Linux runner; seeded pids now sit above both pid
+  limits. D3: the real-AMQ lane's nested-worktree proof and the
+  adoptionseam Apply test get stub claude and tmux probes for their one
+  setup call, so no gated test needs a host tool (and the Apply test no
+  longer opens a session on the host's tmux server). D4 deferred to 3.0.x
+  (status.Collect's bare signal-0 liveness; recorded in follow-ups and
+  docs/status-contract.md). Gate note: TestOwnerScriptDryRun (internal/buzz,
+  a 20 s wait on the thread answer through a real amq-remote and a local
+  relay) failed twice in the full-suite run under the host's load (an
+  agent building in parallel) and passed 3 of 3 alone on the merge result;
+  on the test-hygiene list for 3.0.x (a measured bound, not a constant).
+  [2.8, phase 5 ci-D result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for

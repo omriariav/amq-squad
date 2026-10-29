@@ -74,8 +74,11 @@ exists, stop and ask the owner whether to renew it (`BUZZ_RENEW=1`) instead.
 mailbox) in session `ops`; the operator's project names the squad as an AMQ
 peer for cross-project routing:
 
+Run this block in bash (zsh does not word-split `$T`), and use
+`/private/tmp` on macOS: the fleet registry refuses the `/tmp` symlink.
+
 ```
-P=/tmp/owner45/project; OP=/tmp/owner45/operator; FL=/tmp/owner45/fleet.yaml
+P=/private/tmp/owner45/project; OP=/private/tmp/owner45/operator; FL=/private/tmp/owner45/fleet.yaml
 mkdir -p "$P" "$OP"
 T="--project $P --roles cto --runtime cto=codex --lead cto --session owner45"
 D=$(amq-squad team propose $T --json | sed -n 's/.*"digest": "\(sha256:[0-9a-f]*\)".*/\1/p')
