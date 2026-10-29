@@ -18,6 +18,9 @@ prose fragment (`team draft-rules`, passed back with `--rules-prose FILE`).
 
 ## Skills
 
+The binary's templates do not render this section; a `custom` template's prose
+fragment carries it when the seats should be told which skill to load.
+
 - Use `amq-squad:wizard` for goal intake, roster and roles, the squad.yaml digest flow, the brief, and the launch.
 - Use `amq-squad:cli` for direct status, doctor, task, evidence, guard, gate status, AMQ context, and verification.
 - Use `amq-squad:orchestrator` only as the lead seat for planning, dispatch, status review, widening, the merge train, gates, and releases. The old `amq-squad` and `amq-squad-orchestrator` names are compatibility redirects only.
