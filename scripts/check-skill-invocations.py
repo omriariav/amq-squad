@@ -86,6 +86,12 @@ PLACEHOLDERS = {
     "X": "9",
     "Y": "9",
     "Z": "9",
+    # 3.0 store verbs take the AMQ session root itself (--root ROOT), and the
+    # merge, release and worktree verbs name a commit, a tag and a PR number.
+    "ROOT": "{fixture}/.agent-mail/issue-1",
+    "SHA": "a" * 40,
+    "TAG": "v9.9.9",
+    "N": "9",
 }
 
 # `gate raise` validates --kind/--action against the shared catalog before
@@ -351,13 +357,26 @@ def make_fixture(root: Path, index: int) -> Path:
     return fixture
 
 
-def clean_env() -> dict[str, str]:
+def clean_env(home: Path | None = None) -> dict[str, str]:
+    """The environment every documented invocation runs under.
+
+    AM_* and AMQ_* (the seat identity, AMQ_SQUAD_CONFIG) and the tmux variables are
+    dropped. With `home`, HOME and XDG_CONFIG_HOME point at that throwaway directory:
+    3.0 verbs read and write ~/.amq-squad (grants.yaml, fleet.yaml, the gate binding)
+    and ~/.config/amq-squad/config.json (the drafter). Run against the real home, a
+    documented `gate raise --action tag` could post to the owner's Buzz DM through
+    the owner's gate binding, and a documented `role draft` could call the owner's
+    configured drafter: both reach the network, and neither may run from this gate.
+    """
     import os
 
     env = dict(os.environ)
     for key in list(env):
         if key.startswith(("AM_", "AMQ_")) or key in ("TMUX", "TMUX_PANE"):
             env.pop(key)
+    if home is not None:
+        env["HOME"] = str(home)
+        env["XDG_CONFIG_HOME"] = str(home / ".config")
     return env
 
 
@@ -392,10 +411,16 @@ def main() -> int:
     if not invocations:
         print("no invocations extracted — extraction is broken, refusing to pass", file=sys.stderr)
         return 1
-    env = clean_env()
     failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="skill-inv-") as tmp:
-        root = Path(tmp)
+        # Resolved: macOS puts the temp dir under /var, a symlink to /private/var, and
+        # the 3.0 verbs open their roots anchored (no symlinked ancestor), so an
+        # unresolved fixture made every anchored open refuse before parsing anything
+        # the gate exists to check.
+        root = Path(tmp).resolve()
+        home = root / "home"
+        home.mkdir()
+        env = clean_env(home)
         for index, (path, line, command) in enumerate(invocations):
             fixture = make_fixture(root, index)
             try:

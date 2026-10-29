@@ -165,6 +165,66 @@ class Substitute(unittest.TestCase):
                 self.substitute("amq-squad frob --thing UNMAPPEDTOKEN", Path(tmp))
 
 
+class StoreRootPlaceholders(unittest.TestCase):
+    def test_root_sha_tag_and_pr_number(self):
+        # 3.0 store verbs take the AMQ session root itself; merge, release and
+        # worktree verbs name a commit, a tag and a PR number.
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp)
+            got = gate.substitute(
+                "amq-squad verify merge --repository OWNER/REPO --pr N --root ROOT --tag TAG --head SHA",
+                fixture, "merge", "default_branch_push",
+            )
+        self.assertIn(f"--root {fixture}/.agent-mail/issue-1", got)
+        self.assertIn("--pr 9", got)
+        self.assertIn("--tag v9.9.9", got)
+        self.assertIn("--head " + "a" * 40, got)
+
+
+class IsolatedEnvironment(unittest.TestCase):
+    """The documented invocations must never see the owner's home.
+
+    3.0 verbs read ~/.amq-squad (the gate binding, grants, fleet) and
+    ~/.config/amq-squad/config.json (the drafter). Against the real home a
+    documented typed `gate raise` could post to the owner's Buzz DM and a
+    documented `role draft` could call the configured drafter: network, from a
+    gate that must not reach it.
+    """
+
+    def test_home_and_config_point_into_the_run(self):
+        import os
+
+        saved = {k: os.environ.get(k) for k in ("AM_ME", "AMQ_SQUAD_CONFIG", "TMUX")}
+        os.environ.update(AM_ME="cto", AMQ_SQUAD_CONFIG="/owner/config.json", TMUX="x")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp) / "home"
+                env = gate.clean_env(home)
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        self.assertEqual(env["HOME"], str(home))
+        self.assertEqual(env["XDG_CONFIG_HOME"], str(home / ".config"))
+        for dropped in ("AM_ME", "AMQ_SQUAD_CONFIG", "TMUX"):
+            self.assertNotIn(dropped, env)
+
+    def test_without_a_home_the_environment_keeps_home(self):
+        # Removal proof for the row above: the isolation comes from the argument,
+        # not from clean_env dropping HOME on its own.
+        import os
+
+        env = gate.clean_env()
+        self.assertEqual(env.get("HOME"), os.environ.get("HOME"))
+
+    def test_main_runs_under_an_isolated_resolved_home(self):
+        text = Path(gate.__file__).read_text()
+        self.assertIn("root = Path(tmp).resolve()", text)
+        self.assertIn("env = clean_env(home)", text)
+
+
 class Collect(unittest.TestCase):
     def test_learnings_excluded_and_something_extracted(self):
         invocations, skipped = gate.collect()
