@@ -22,13 +22,38 @@ SKILL_FRONTMATTER_VERSION_RE = re.compile(
     r'^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+)"?',
     re.MULTILINE,
 )
-AMQ_MIN_VERSION = "0.60.0"
-AMQ_COMPATIBILITY_POLICY = (
-    f"AMQ 0.60.x is the supported series, with {AMQ_MIN_VERSION} as the minimum "
-    f"supported release. Both real-AMQ matrices validate pinned "
-    f"v{AMQ_MIN_VERSION} and latest; latest remains a forward-compatibility "
-    "canary and is not a support claim."
+# The AMQ floor has one source: doctor's constant, the version below which
+# `amq-squad doctor` refuses an installed amq, amq-remote or amq-owner-sign.
+# This script reads it from the Go source and never carries a second copy, so
+# a raised floor that the docs do not follow fails the release check.
+# internal/cli's TestReleaseCheckReadsTheDoctorFloor runs --print-amq-floor
+# and compares the result with doctorMinAMQVersion.
+AMQ_FLOOR_SOURCE = "internal/cli/doctor.go"
+AMQ_FLOOR_RE = re.compile(
+    r'^const doctorMinAMQVersion = "([0-9]+\.[0-9]+\.[0-9]+)"$',
+    re.MULTILINE,
 )
+
+
+def read_amq_floor(root: str) -> str:
+    """Return doctorMinAMQVersion as written in AMQ_FLOOR_SOURCE under root.
+
+    Fails closed (ValueError) when the declaration is missing, repeated or
+    not a plain x.y.z literal.
+    """
+    path = os.path.join(root, AMQ_FLOOR_SOURCE)
+    matches = AMQ_FLOOR_RE.findall(read(path))
+    if len(matches) != 1:
+        raise ValueError(
+            f"{AMQ_FLOOR_SOURCE}: want exactly one "
+            f"'const doctorMinAMQVersion = \"x.y.z\"', found {len(matches)}"
+        )
+    return matches[0]
+
+
+def amq_compatibility_policy(floor: str) -> str:
+    """The sentence every release-facing doc carries for the AMQ floor."""
+    return f"AMQ {floor} is the minimum supported release"
 
 
 def read(path: str) -> str:
@@ -83,8 +108,15 @@ def require_release_notes(root: str, tag: str, failures: list[str]) -> None:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--print-amq-floor"]:
+        try:
+            print(read_amq_floor(os.getcwd()))
+        except (OSError, ValueError) as err:
+            sys.stderr.write(f"FAIL  {err}\n")
+            return 1
+        return 0
     if len(sys.argv) != 2:
-        sys.stderr.write("usage: check-release-version.py VERSION\n")
+        sys.stderr.write("usage: check-release-version.py VERSION | --print-amq-floor\n")
         return 2
     m = VERSION_RE.match(sys.argv[1].strip())
     if not m:
@@ -95,6 +127,13 @@ def main() -> int:
     tag = "v" + version
     root = os.getcwd()
     failures: list[str] = []
+
+    try:
+        amq_floor = read_amq_floor(root)
+    except (OSError, ValueError) as err:
+        sys.stderr.write(f"FAIL  {err}\n")
+        return 1
+    policy = amq_compatibility_policy(amq_floor)
 
     require_release_notes(root, tag, failures)
 
@@ -125,30 +164,29 @@ def main() -> int:
 
     readme = os.path.join(root, "README.md")
     fail_if_missing(readme, f"go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@{tag}", failures)
-    fail_if_missing(readme, f"- `amq` {AMQ_MIN_VERSION} on `PATH`", failures)
+    fail_if_missing(readme, f"- `amq` {amq_floor} or later on `PATH`", failures)
     for rel in (
         "README.md",
         "docs/skills.md",
-        "docs/global-orchestrator-runbook.md",
         "plugins/skills-src/cli/SKILL.md",
         "plugins/claude/skills/cli/SKILL.md",
         "plugins/codex/skills/cli/SKILL.md",
     ):
-        fail_if_missing_normalized(os.path.join(root, rel), AMQ_COMPATIBILITY_POLICY, failures)
+        fail_if_missing_normalized(os.path.join(root, rel), policy, failures)
 
     readme_html = os.path.join(root, "README.html")
     if os.path.exists(readme_html):
         fail_if_missing(readme_html, f"github.com/omriariav/amq-squad/v3/cmd/amq-squad@{tag}", failures)
         fail_if_missing(
             readme_html,
-            f"<li><code>amq</code> {AMQ_MIN_VERSION} on <code>PATH</code></li>",
+            f"<li><code>amq</code> {amq_floor} or later on <code>PATH</code>",
             failures,
         )
-        fail_if_missing_normalized(readme_html, AMQ_COMPATIBILITY_POLICY, failures)
+        fail_if_missing_normalized(readme_html, policy, failures)
 
     skills_html = os.path.join(root, "docs/skills.html")
     if os.path.exists(skills_html):
-        fail_if_missing_normalized(skills_html, AMQ_COMPATIBILITY_POLICY, failures)
+        fail_if_missing_normalized(skills_html, policy, failures)
 
     if failures:
         for failure in failures:
