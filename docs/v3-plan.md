@@ -1964,6 +1964,26 @@ Release prep.
   found: make release-check fails on v3 (check-release-version.py still
   requires the v2 AMQ policy sentence) and README.md and the global
   runbook are still v2 content; brief F. [2.8, phase 5 skills-E result]
+- Platform decision 2026-10-29 (reviewer ruling on the plan's own target,
+  stated to the owner as reversible; B is 3.1 work): 3.0 ships for darwin
+  arm64; on Linux the binary builds and the Claude hook script is tested;
+  seats are unsupported. Found by the second CI run on v3 (40955238412,
+  make ci on ubuntu-latest, 24 failures in three packages, none on macOS
+  where every gate ran): (a) the launch's proof socket under the runner's
+  long temp paths (helper_dial_failed, no_proof, bind invalid argument),
+  the sun_path family of D1 on the proof side, a production exposure on a
+  Linux host with a deep project path; (b) ext4 and tmpfs reuse an inode
+  right after unlink and recreate, so the dev+inode identity checks against
+  replacement (the routing seed, the proof socket after the probe, the
+  anchored directories) pass a replaced object on Linux; APFS never reuses
+  one; the same-UID limit does not cover this, since these checks exist to
+  catch same-UID replacement; (c) two cancel and close rows (process
+  semantics on the runner); (d) gatestore TestSquadIDIsCanonical (likely
+  /tmp against /var in the fixture). CI: the gating go test runs on a macOS
+  runner; the Linux job keeps build, vet and the hook script and runs the
+  suite as a continue-on-error canary with the known-red set listed.
+  README and the release notes carry the platform statement; follow-ups
+  3.1 carry the four items with their failure scenarios. [2.8, platform]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for

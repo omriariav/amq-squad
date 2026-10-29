@@ -6,6 +6,24 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.1
 
+- Linux seats (platform decision 2026-10-29, plan 16.4; CI run
+  40955238412). (a) The launch's proof socket binds and dials through
+  descriptors on both ends (D1's pattern, the proof-side twin): on a Linux
+  host with a project path over the sun_path bound the launch's proof fails
+  (helper_dial_failed, no_proof) and no seat starts. (b) Identity on Linux:
+  ext4 and tmpfs reuse an inode right after unlink and recreate, so a
+  same-UID replacement of the routing seed, of the proof socket after the
+  probe, or of an anchored directory passes the dev+inode check that exists
+  to catch it; hold the descriptor and fstat it instead of re-stating the
+  path wherever the check guards replacement, and where a path must be
+  re-stated add statx birth time (stx_btime) beside dev and inode; the three
+  sites are the seed, the proof socket after the probe, the anchored
+  directory. (c) The cancel and close rows (the cancelled seat still runs;
+  an unconfirmed close reported cancelled): process semantics on the
+  runner, pid start stamp or signal timing; a Linux VM is the first step.
+  (d) gatestore TestSquadIDIsCanonical, likely /tmp against /var in the
+  fixture; a test fix that rides with the rest.
+
 - Read-only runtime image for the embedded pi runtime (the hash-to-exec
   window, milliseconds, same-UID only). Owner decision 2026-10-25 on launch
   speed. Plan 4.1 and 16.4 (hardening).
