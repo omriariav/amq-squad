@@ -9,6 +9,7 @@ coordinates so they also run from the owner's terminal.
 
 ```sh
 amq-squad status --project P --session S --json
+# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
 amq-squad doctor --project P
 ```
 

@@ -1,4 +1,4 @@
-go build -ldflags "-X main.version=v2.31.0-581-g14905a08" -o amq-squad ./cmd/amq-squad
+go build -ldflags "-X main.version=v2.31.0-591-g2bb0f15d-dirty" -o amq-squad ./cmd/amq-squad
 skills name 48 command(s); all verb/subcommand paths resolve, 131 of 166 flag(s) verified
 flags NOT verifiable from --help for 35 command(s) (help errors without required positionals, or delegates its flag set):
   - amq-squad launch --help
@@ -145,6 +145,6 @@ test_prose_mentioning_a_subcommand_is_not_an_authoritative_list (__main__.Unknow
 The false-observation door the first generalization opened. ... ok
 
 ----------------------------------------------------------------------
-Ran 60 tests in 6.385s
+Ran 60 tests in 6.627s
 
 OK

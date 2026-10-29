@@ -225,6 +225,55 @@ class IsolatedEnvironment(unittest.TestCase):
         self.assertIn("env = clean_env(home)", text)
 
 
+class GhStub(unittest.TestCase):
+    """An invocation that reaches for gh is a failure the gate names."""
+
+    def test_an_invocation_that_calls_gh_is_reported(self):
+        import os
+
+        saved = os.environ.get("GH_TOKEN")
+        os.environ["GH_TOKEN"] = "placeholder-not-a-credential"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                home = root / "home"
+                home.mkdir()
+                env = gate.clean_env(home)
+                self.assertNotIn("GH_TOKEN", env)
+                fake = root / "fake-amq-squad"
+                # A stand-in binary that shells out to gh, as merge-train or
+                # release would, and swallows its stderr.
+                fake.write_text("#!/bin/sh\ngh api user 2>/dev/null\nexit 2\n", encoding="utf-8")
+                fake.chmod(0o755)
+                fixture = root / "fx"
+                fixture.mkdir()
+                code, detail = gate.run_invocation(str(fake), "amq-squad release prepare", fixture, env)
+        finally:
+            if saved is None:
+                os.environ.pop("GH_TOKEN", None)
+            else:
+                os.environ["GH_TOKEN"] = saved
+        self.assertEqual(code, -1)
+        self.assertIn("gh stub: no network from the skill gate", detail)
+        self.assertIn("gh api user", detail)
+
+    def test_an_invocation_without_gh_is_not_reported(self):
+        # Removal proof's counterpart: the stub log alone decides, not the exit code.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            home = root / "home"
+            home.mkdir()
+            env = gate.clean_env(home)
+            fake = root / "fake-amq-squad"
+            fake.write_text("#!/bin/sh\necho 'error: no team configured' >&2\nexit 2\n", encoding="utf-8")
+            fake.chmod(0o755)
+            fixture = root / "fx"
+            fixture.mkdir()
+            code, detail = gate.run_invocation(str(fake), "amq-squad status", fixture, env)
+        self.assertEqual(code, 2)
+        self.assertNotIn("gh stub", detail)
+
+
 class Collect(unittest.TestCase):
     def test_learnings_excluded_and_something_extracted(self):
         invocations, skipped = gate.collect()

@@ -5,6 +5,7 @@ hand-assembled checklist; read what `doctor`, `team check` and the launch itself
 report.
 
 ```sh
+# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
 amq-squad doctor --project P
 amq-squad team check --project P
 ```

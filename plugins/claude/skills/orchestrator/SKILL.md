@@ -183,7 +183,7 @@ amq-squad team check --project P
 ```
 
 `team apply --digest D` with the same options writes the files when the digest still
-matches. A seat count above the grant's `max_seats`, or a runtime outside
+matches. Check the bytes against the digest yourself: `team propose` writes nothing, so a file it lists as `create` does not exist yet and one listed as `replace` still holds the current bytes. Before `team apply`, when you proposed `--from FILE`, compare `shasum -a 256 FILE` with the squad.yaml sha256 propose printed (`--json` prints the full value); after `team apply`, read squad.yaml and team-rules.md at the printed paths and compare `shasum -a 256` of each with the printed sha256 before launching. team-rules.md has no pre-apply form to read. A seat count above the grant's `max_seats`, or a runtime outside
 `permitted_runtimes`, makes the file fail to load; a new seat is a `spawn` gate, and
 the owner answers it. See `amq-squad:wizard` for the squad.yaml keys.
 

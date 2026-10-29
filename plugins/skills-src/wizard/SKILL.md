@@ -14,6 +14,7 @@ owner's approval of one digest, apply, brief, launch.
 ## 1. Readiness
 
 ```sh
+# skill-invocation-check:skip — doctor probes gh and the provider CLIs' logins, which can reach the network
 amq-squad doctor --project P
 amq-squad trust P
 amq-squad roles
@@ -58,8 +59,10 @@ cover (`mode`, `max_seats`, `protected_paths`, `shared_cwd_exception`, `defaults
 write a squad.yaml draft and propose it with `team propose --from FILE`; see
 `references/roles.md` and `docs/squad-yaml.md`.
 
-Relay the propose output verbatim. Then apply with the **same options** and the
-printed digest, only after the owner approved that digest:
+Relay the propose output verbatim. Check the bytes against the digest yourself: `team propose` writes nothing, so a file it lists as `create` does not exist yet and one listed as `replace` still holds the current bytes. Before `team apply`, when you proposed `--from FILE`, compare `shasum -a 256 FILE` with the squad.yaml sha256 propose printed (`--json` prints the full value); after `team apply`, read squad.yaml and team-rules.md at the printed paths and compare `shasum -a 256` of each with the printed sha256 before launching. team-rules.md has no pre-apply form to read.
+
+Then apply with the **same options** and the printed digest, only after the owner
+approved that digest:
 
 ```sh
 # skill-invocation-check:skip — the digest is the one the current propose printed; a placeholder digest is refused

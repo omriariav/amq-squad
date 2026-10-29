@@ -357,6 +357,38 @@ def make_fixture(root: Path, index: int) -> Path:
     return fixture
 
 
+# The GitHub CLI's credential and host variables. With HOME moved gh has no stored
+# login, but these survive a plain environment copy, and gh without auth still
+# reaches api.github.com anonymously.
+GH_ENV_KEYS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+
+GH_STUB_MESSAGE = "gh stub: no network from the skill gate"
+GH_STUB_LOG = "gh-stub.log"
+
+
+def install_gh_stub(home: Path) -> Path:
+    """Write a refusing `gh` into <home>/bin and return that directory.
+
+    The documented merge-train, release, verify and trust invocations can reach for
+    gh. The stub exits 1 with GH_STUB_MESSAGE on stderr and appends its argv to
+    <home>/gh-stub.log, so a call is caught even when amq-squad swallows gh's
+    stderr. git stays real.
+    """
+    bindir = home / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    stub = bindir / "gh"
+    log = home / GH_STUB_LOG
+    stub.write_text(
+        "#!/bin/sh\n"
+        f"printf 'gh %s\\n' \"$*\" >> {shlex.quote(str(log))}\n"
+        f"echo {shlex.quote(GH_STUB_MESSAGE)} >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    return bindir
+
+
 def clean_env(home: Path | None = None) -> dict[str, str]:
     """The environment every documented invocation runs under.
 
@@ -372,12 +404,28 @@ def clean_env(home: Path | None = None) -> dict[str, str]:
 
     env = dict(os.environ)
     for key in list(env):
-        if key.startswith(("AM_", "AMQ_")) or key in ("TMUX", "TMUX_PANE"):
+        if key.startswith(("AM_", "AMQ_")) or key in ("TMUX", "TMUX_PANE") or key in GH_ENV_KEYS:
             env.pop(key)
     if home is not None:
         env["HOME"] = str(home)
         env["XDG_CONFIG_HOME"] = str(home / ".config")
+        # The refusing gh goes first on PATH, so no documented invocation can reach
+        # GitHub through the PATH lookup.
+        env["PATH"] = str(install_gh_stub(home)) + os.pathsep + env.get("PATH", "")
     return env
+
+
+def gh_stub_calls(env: dict[str, str]) -> list[str]:
+    """The gh calls the stub recorded under this environment's home, then reset."""
+    home = env.get("HOME")
+    if not home:
+        return []
+    log = Path(home) / GH_STUB_LOG
+    if not log.exists():
+        return []
+    calls = log.read_text(encoding="utf-8").splitlines()
+    log.unlink()
+    return calls
 
 
 def run_invocation(binary: str, command: str, fixture: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -397,6 +445,11 @@ def run_invocation(binary: str, command: str, fixture: Path, env: dict[str, str]
         # A crash is never an acceptable outcome for a documented command,
         # whatever exit code the runtime maps it to.
         return -1, "panicked: " + proc.stderr.strip().splitlines()[0]
+    calls = gh_stub_calls(env)
+    if calls or GH_STUB_MESSAGE in (proc.stderr or "") + (proc.stdout or ""):
+        # Reaching for gh is reaching for the network: a documented invocation
+        # must stop before it, whatever exit code it then returned.
+        return -1, f"{GH_STUB_MESSAGE} (reached for gh: {'; '.join(calls) or 'see stderr'})"
     detail = (proc.stderr or proc.stdout).strip().splitlines()
     return proc.returncode, detail[0] if detail else ""
 
@@ -442,7 +495,7 @@ def main() -> int:
         for failure in failures:
             print(failure + "\n", file=sys.stderr)
         return 1
-    print(f"skill-invocation-check: {len(invocations)} documented invocation(s) execute cleanly")
+    print(f"skill-invocation-check: {len(invocations)} documented invocation(s) execute cleanly; none reached for gh (stubbed)")
     if skipped:
         print(f"  {len(skipped)} flagless inline reference(s) not executed (existence gate covers them):")
         for path, line, span in skipped:

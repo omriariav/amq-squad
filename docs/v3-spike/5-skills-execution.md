@@ -90,6 +90,17 @@ Still redirects; the wording names the 3.0 flow (no `start`). No command paths.
   directory and resolves that directory (macOS `/var` is a symlink; anchored opens
   refuse it). Placeholders ROOT, SHA, TAG, N added. Tests:
   `IsolatedEnvironment` (three rows), `StoreRootPlaceholders`.
+- Same script, review round: `clean_env` also drops GH_TOKEN, GITHUB_TOKEN, GH_HOST
+  (and the two enterprise token names), and puts a refusing `gh` first on PATH inside
+  the throwaway home: it exits 1 with `gh stub: no network from the skill gate` and
+  logs its argv to `<home>/gh-stub.log`, and the gate reports any invocation that
+  reached for it as a failure, whatever its exit code (the log catches a gh call whose
+  stderr amq-squad swallowed). git stays real. Tests: `GhStub` (a stand-in binary that
+  calls gh with its stderr discarded is reported with the stub's message and argv; one
+  that does not call gh is not). The stub found that `doctor` runs `gh --version` (and
+  probes provider logins), so the seven documented `doctor` invocations are marked
+  `skill-invocation-check:skip` with that reason; the command check still verifies
+  their flags.
 - `scripts/check-skill-commands.py`: `trust` and `migrate` take one positional path;
   their probe answer matched neither subcommand contract, so `amq-squad trust P` was
   unobservable and the gate refused a verdict. `POSITIONAL_ONLY` reads that answer
@@ -126,23 +137,32 @@ the targets from this branch.
 skills name 48 command(s); all verb/subcommand paths resolve, 131 of 166 flag(s) verified
 flags NOT verifiable from --help for 35 command(s) (help errors without required positionals, or delegates its flag set):
   ...
-Ran 60 tests in 6.385s
+Ran 60 tests in 6.627s
 
 OK
 ```
 
 `make skill-invocation-check` (full output: `5-skills-evidence/skill-invocation-check.txt`;
 per invocation exit codes: `5-skills-evidence/invocation-exit-codes.txt`, 40 exit 0,
-34 exit 2 at state resolution in the empty fixture, 2 exit 12 `no_gate`):
+27 exit 2 at state resolution in the empty fixture, 2 exit 12 `no_gate`):
 
 ```
-skill-invocation-check: 76 documented invocation(s) execute cleanly
+skill-invocation-check: 69 documented invocation(s) execute cleanly; none reached for gh (stubbed)
   17 flagless inline reference(s) not executed (existence gate covers them):
   ...
-Ran 23 tests in 0.004s
+Ran 25 tests in 0.739s
 
 OK
 ```
+
+**69 invocations executed, none reached the network.** Basis: every run had a
+throwaway HOME and XDG_CONFIG_HOME (no gate binding, so no Buzz post; no drafter
+config, so no drafter call; no registry, grants or fleet of the owner's), no AM_*,
+AMQ_*, GH_TOKEN, GITHUB_TOKEN or GH_HOST, and the refusing `gh` first on PATH; the
+stub log recorded no call (a recorded call fails the gate). The first draft of this
+log said 76: the stub then caught all seven documented `doctor` invocations calling
+`gh --version`, and those seven are now skip-marked rather than executed, so the
+earlier 76 included runs that reached for gh.
 
 `make skill-routing-check`:
 
@@ -162,6 +182,27 @@ all 14 SKILL.md frontmatters valid; version markers match manifests
 docs/skills.html is in sync with docs/skills.md
 README.html is in sync with README.md
 ```
+
+## Review-round confirmations
+
+- Gap 7 is no longer promised by the team-rules reference. The only
+  `shared_cwd_exception` line of
+  `plugins/skills-src/amq-squad/references/team-rules-template.md` now reads, as it
+  stands: "- Two mutation-capable seats share one directory only with
+  `shared_cwd_exception` recorded in squad.yaml." It names no readiness check (the
+  binary's rendered rules still say "readiness fails closed without it"; gap 7).
+- The help the skill text was written from is recorded:
+  `5-skills-evidence/help-digests.txt` holds the sha256 of stdout plus stderr and the
+  exit code of `amq-squad --help` and of 78 verb and subcommand `--help` calls, from
+  the binary built at this branch's head (`go build -o amq-squad ./cmd/amq-squad`; no
+  Go code changes on the branch, so the digests hold for every commit of it).
+- Gap 2 mitigation in the skills: the wizard and orchestrator skills tell the agent,
+  at the propose step, to check bytes against the printed sha256 with
+  `shasum -a 256`. Propose writes nothing, so a file listed `create` does not exist
+  before apply; the pre-apply check is the `--from` draft against the printed
+  squad.yaml sha256 (`--json` gives the full value), and squad.yaml and
+  team-rules.md at the printed paths are compared after `team apply`, before the
+  launch. team-rules.md has no pre-apply form; the verb fix is 3.0.x.
 
 ## What a 3.0 verb lacks that a skill needs (listed, not worked around)
 

@@ -16,18 +16,12 @@
       {
 [0] plugins/skills-src/cli/SKILL.md:154: amq-squad gate status --project P --session S --json
       {
-[2] plugins/skills-src/cli/SKILL.md:178: amq-squad doctor --project P
-      error: doctor: 2 check(s) failed
-[2] plugins/skills-src/cli/SKILL.md:179: amq-squad doctor --json
-      error: doctor: 2 check(s) failed
-[0] plugins/skills-src/cli/SKILL.md:180: amq-squad trust P
-      Trust /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-11 in codex-cli. amq-squad never writes /private/var/folders/gx/wg9xtfn96wx9z4gkb
+[0] plugins/skills-src/cli/SKILL.md:182: amq-squad trust P
+      Trust /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-9 in codex-cli. amq-squad never writes /private/var/folders/gx/wg9xtfn96wx9z4gkb9
 [0] plugins/skills-src/cli/SKILL.md:46: amq-squad status --project P --session S --json
       {
 [0] plugins/skills-src/cli/SKILL.md:47: amq-squad status --fleet --json
       {
-[2] plugins/skills-src/cli/SKILL.md:49: amq-squad context --me H --json
-      error: context: session root "" must be a clean absolute path (AM_ROOT)
 [0] plugins/skills-src/cli/SKILL.md:50: amq-squad task list --project P --session S
       No tasks.
 [2] plugins/skills-src/cli/SKILL.md:51: amq-squad task show ID --project P --session S --json
@@ -63,46 +57,42 @@
 [12] plugins/skills-src/orchestrator/SKILL.md:142: amq-squad verify action --project P --session S --gate TOPIC --action ACTION --target TARGET --json
       error: action authorization no_gate
 [2] plugins/skills-src/orchestrator/SKILL.md:177: amq-squad team propose --from FILE --project P
-      error: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-32/squad.yaml:1: malformed line "evidence"
+      error: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-29/squad.yaml:1: malformed line "evidence"
 [2] plugins/skills-src/orchestrator/SKILL.md:178: amq-squad team check --project P
-      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-33/squad.yaml; the lead proposes one with amq-squad team propos
+      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-30/squad.yaml; the lead proposes one with amq-squad team propos
 [2] plugins/skills-src/orchestrator/SKILL.md:33: amq-squad dispatch --project P --session S --role ROLE --subject TEXT --body-file FILE --create-task --task-class implement
       error: no team configured for profile "default". Run 'amq-squad team propose' first.
 [0] plugins/skills-src/orchestrator/SKILL.md:38: amq-squad routing report --week --session S
       routing report 2026-10-22 to 2026-10-29: 0 rows in the window, 0 used
-[2] plugins/skills-src/wizard/SKILL.md:17: amq-squad doctor --project P
-      error: doctor: 2 check(s) failed
-[0] plugins/skills-src/wizard/SKILL.md:18: amq-squad trust P
-      Trust /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-37 in codex-cli. amq-squad never writes /private/var/folders/gx/wg9xtfn96wx9z4gkb
-[0] plugins/skills-src/wizard/SKILL.md:19: amq-squad roles
+[0] plugins/skills-src/wizard/SKILL.md:19: amq-squad trust P
+      Trust /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-33 in codex-cli. amq-squad never writes /private/var/folders/gx/wg9xtfn96wx9z4gkb
+[0] plugins/skills-src/wizard/SKILL.md:20: amq-squad roles
       ROLE          DEFAULT RUNTIME  SOURCE
-[0] plugins/skills-src/wizard/SKILL.md:37: amq-squad role draft researcher --purpose "Investigate ambiguous behavior" --project P
+[0] plugins/skills-src/wizard/SKILL.md:38: amq-squad role draft researcher --purpose "Investigate ambiguous behavior" --project P
       No role file was staged.
-[0] plugins/skills-src/wizard/SKILL.md:48: amq-squad team propose --project P --roles cto,fullstack --runtime fullstack=codex --lead cto --session S
-      create  /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-40/squad.yaml                15c17347e7e6
-[2] plugins/skills-src/wizard/SKILL.md:67: amq-squad team check --project P
-      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-41/squad.yaml; the lead proposes one with amq-squad team propos
-[2] plugins/skills-src/wizard/SKILL.md:68: amq-squad team show --project P
-      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-42/squad.yaml; the lead proposes one with amq-squad team propos
-[2] plugins/skills-src/wizard/SKILL.md:87: amq-squad brief --goal TEXT --project P --session S --dry-run
-      error: read team: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-43/squad.yaml: no such file or directory
-[0] plugins/skills-src/wizard/SKILL.md:88: amq-squad brief --seed-from file:FILE --project P --session S
-      wrote brief /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-44/.amq-squad/briefs/issue-1.md
-[0] plugins/skills-src/wizard/SKILL.md:103: amq-squad launch --help
+[0] plugins/skills-src/wizard/SKILL.md:49: amq-squad team propose --project P --roles cto,fullstack --runtime fullstack=codex --lead cto --session S
+      create  /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-36/squad.yaml                15c17347e7e6
+[2] plugins/skills-src/wizard/SKILL.md:70: amq-squad team check --project P
+      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-37/squad.yaml; the lead proposes one with amq-squad team propos
+[2] plugins/skills-src/wizard/SKILL.md:71: amq-squad team show --project P
+      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-38/squad.yaml; the lead proposes one with amq-squad team propos
+[2] plugins/skills-src/wizard/SKILL.md:90: amq-squad brief --goal TEXT --project P --session S --dry-run
+      error: read team: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-39/squad.yaml: no such file or directory
+[0] plugins/skills-src/wizard/SKILL.md:91: amq-squad brief --seed-from file:FILE --project P --session S
+      wrote brief /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-40/.amq-squad/briefs/issue-1.md
+[0] plugins/skills-src/wizard/SKILL.md:106: amq-squad launch --help
       amq-squad launch - start a squad's seats through the AMQ launch API
-[0] plugins/skills-src/wizard/SKILL.md:122: amq-squad status --project P --session S --json
+[0] plugins/skills-src/wizard/SKILL.md:125: amq-squad status --project P --session S --json
       {
 [0] plugins/skills-src/cli/references/daily-loop.md:11: amq-squad status --project P --session S --json
       {
-[2] plugins/skills-src/cli/references/daily-loop.md:12: amq-squad doctor --project P
-      error: doctor: 2 check(s) failed
-[0] plugins/skills-src/cli/references/daily-loop.md:25: amq-squad task list --project P --session S
+[0] plugins/skills-src/cli/references/daily-loop.md:26: amq-squad task list --project P --session S
       No tasks.
-[2] plugins/skills-src/cli/references/daily-loop.md:26: amq-squad task claim ID --me H --project P --session S
+[2] plugins/skills-src/cli/references/daily-loop.md:27: amq-squad task claim ID --me H --project P --session S
       error: task claim: task not found: "t1"
-[0] plugins/skills-src/cli/references/daily-loop.md:41: amq-squad evidence list --me H --root ROOT --last 5 --json
+[0] plugins/skills-src/cli/references/daily-loop.md:42: amq-squad evidence list --me H --root ROOT --last 5 --json
       {
-[2] plugins/skills-src/cli/references/daily-loop.md:42: amq-squad task done ID --me H --evidence "make ci ok" --project P --session S
+[2] plugins/skills-src/cli/references/daily-loop.md:43: amq-squad task done ID --me H --evidence "make ci ok" --project P --session S
       error: task done: task not found: "t1"
 [0] plugins/skills-src/cli/references/primitives.md:35: amq-squad amq env --project P --session S --json
       {
@@ -124,29 +114,25 @@
       No tasks.
 [0] plugins/skills-src/orchestrator/references/recovery.md:11: amq-squad task reconcile --project P --session S --json
       {
-[2] plugins/skills-src/orchestrator/references/recovery.md:12: amq-squad doctor --project P
-      error: doctor: 2 check(s) failed
-[2] plugins/skills-src/orchestrator/references/recovery.md:29: amq-squad task release ID --me H --reason TEXT --project P --session S
+[2] plugins/skills-src/orchestrator/references/recovery.md:30: amq-squad task release ID --me H --reason TEXT --project P --session S
       error: task release: task not found: "t1"
-[2] plugins/skills-src/orchestrator/references/recovery.md:30: amq-squad task reset ID --me H --project P --session S
+[2] plugins/skills-src/orchestrator/references/recovery.md:31: amq-squad task reset ID --me H --project P --session S
       error: task reset: task not found: "t1"
-[2] plugins/skills-src/orchestrator/references/recovery.md:31: amq-squad task set ID --me H --priority 1 --project P --session S
+[2] plugins/skills-src/orchestrator/references/recovery.md:32: amq-squad task set ID --me H --priority 1 --project P --session S
       error: task set: task not found: "t1"
-[2] plugins/skills-src/orchestrator/references/recovery.md:32: amq-squad task cancel ID --me H --reason TEXT --project P --session S
+[2] plugins/skills-src/orchestrator/references/recovery.md:33: amq-squad task cancel ID --me H --reason TEXT --project P --session S
       error: task cancel: task not found: "t1"
-[0] plugins/skills-src/orchestrator/references/recovery.md:68: amq-squad status --fleet --json
+[0] plugins/skills-src/orchestrator/references/recovery.md:69: amq-squad status --fleet --json
       {
-[0] plugins/skills-src/orchestrator/references/recovery.md:69: amq-squad operator inbox --json
+[0] plugins/skills-src/orchestrator/references/recovery.md:70: amq-squad operator inbox --json
       {
-[2] plugins/skills-src/wizard/references/readiness.md:8: amq-squad doctor --project P
-      error: doctor: 2 check(s) failed
-[2] plugins/skills-src/wizard/references/readiness.md:9: amq-squad team check --project P
-      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-71/squad.yaml; the lead proposes one with amq-squad team propos
+[2] plugins/skills-src/wizard/references/readiness.md:10: amq-squad team check --project P
+      error: no squad.yaml at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-64/squad.yaml; the lead proposes one with amq-squad team propos
 [0] plugins/skills-src/wizard/references/roles.md:25: amq-squad role draft researcher --purpose "Investigate ambiguous behavior" --project P
       No role file was staged.
 [2] plugins/skills-src/wizard/references/roles.md:65: amq-squad team propose --from FILE --project P
-      error: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-73/squad.yaml:1: malformed line "evidence"
+      error: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-66/squad.yaml:1: malformed line "evidence"
 [0] plugins/skills-src/wizard/references/worktrees.md:21: amq-squad team propose --project P --roles cto,fullstack,backend-dev --worktree fullstack=../app-fullstack,backend-dev=../app-backend --lead cto --session S
-      create  /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-74/squad.yaml                a62e9a8e7acc
+      create  /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-67/squad.yaml                a62e9a8e7acc
 [2] plugins/skills-src/wizard/references/worktrees.md:53: amq-squad worktree inspect --project P --session S --json
-      error: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmpc54bgb1y/inv-75/squad.yaml: no such file or directory
+      error: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmptnb3ybfq/inv-68/squad.yaml: no such file or directory
