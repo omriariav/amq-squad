@@ -1936,6 +1936,34 @@ Release prep.
   agent building in parallel) and passed 3 of 3 alone on the merge result;
   on the test-hygiene list for 3.0.x (a measured bound, not a constant).
   [2.8, phase 5 ci-D result]
+- Brief 5-skills-E merged 2026-10-29 as 7630adf0 (branch v3-5-skills-e,
+  eleven commits, reviewer read, lead gate on the merge result; no Go
+  production code): the seven plugin skill sources, their generated
+  mirrors and docs/skills.md rewritten for the 3.0 command surface from
+  the binary's own help (the help digests of 78 verb and subcommand
+  --help calls recorded in the evidence), the v2 verbs removed; make ci's
+  skill gates green (48 commands with every path resolving, 131 of 166
+  flags verified; 69 documented invocations executed cleanly under a
+  throwaway HOME and XDG config with GH_TOKEN, GITHUB_TOKEN and GH_HOST
+  dropped and a refusing gh stub first on PATH, so the gate is offline by
+  construction; the seven documented doctor invocations that run `gh
+  --version` are skip-marked with the reason; the invocation check used to
+  run under the real HOME, where a documented typed gate raise could have
+  posted to the owner's Buzz DM); the command check reads positional-path
+  verbs; pandoc pinned to 3.11 on both sides (the Makefile refuses another
+  release; ci.yml installs the 3.11 deb; if Linux renders differently from
+  macOS the committed render becomes the Linux one); the propose step's
+  digest check written into the wizard and orchestrator skills (with
+  --from FILE compare the file's sha256 before apply; after apply compare
+  squad.yaml and team-rules.md at the printed paths; team-rules.md cannot
+  be checked before apply until the verb shows bytes, 3.0.x). Eleven verb
+  gaps found and listed, not worked around: four go to brief F (task
+  widen's help showing --me, verify action's exit 12 in its help, the three
+  empty or failing --help outputs, a repeated per-seat flag on team
+  propose refused instead of silently kept), the rest to 3.0.x. Also
+  found: make release-check fails on v3 (check-release-version.py still
+  requires the v2 AMQ policy sentence) and README.md and the global
+  runbook are still v2 content; brief F. [2.8, phase 5 skills-E result]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
