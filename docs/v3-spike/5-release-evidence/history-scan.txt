@@ -55,3 +55,13 @@ shape hits: 0
 #   applies (absent from every object on Saturday, no source in the tree),
 #   and it is a vault id, not a credential.
 # The commit that adds this addendum carries only this file.
+
+# Delta, 2026-10-29, after briefs 5-ci-D, 5-skills-E and 5-docs-F and the
+# owner session: the objects reachable from v3 (tip a584d214) but not from
+# 25b65368, the previous tag target. The six real-shape patterns; the same
+# per-value coverage as the 2026-10-28 delta (the Gemini key by the AIza
+# shape; the messaging token and the vault id not re-checkable as literals,
+# Saturday's result and the owner's confirmed rotation stand).
+delta objects scanned: 396
+shape hits: 0
+# The commit that adds this addendum carries only this file; it is the tag target.
