@@ -445,7 +445,10 @@ config. It writes nothing unless asked:</p>
 <code>amq-squad doctor --write-registry</code> writes
 <code>~/.amq-squad/registry.yaml</code>: one entry per runtime, model
 and effort it detected. The lead proposes seats from verified entries
-only.</p>
+only. Seats never probe: inside a seat <code>doctor --probe</code> and
+<code>doctor --write-registry</code> refuse
+(<code>seat_owner_state_refused</code>), and the owner runs
+<code>amq-squad doctor --probe</code> from their own terminal.</p>
 <p><strong>4. The pins.</strong> Seats never run a tool from
 <code>PATH</code>. The registry's <code>pins:</code> list names each
 harness tool by absolute path and sha256, and every launch re-hashes it

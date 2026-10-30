@@ -108,6 +108,29 @@ func (h hookFlags) identity() (hookIdentity, error) {
 	return hookIdentity{Handle: me, Root: root, Session: vals[2], AgentDir: agentDir}, nil
 }
 
+// seatEnvMarkers are the environment names that mark a process as a seat.
+// AM_ME is the hooks' own test: the hook adapter
+// (plugins/claude/hooks/amq-squad-hook.sh) is "outside a seat" exactly when
+// AM_ME is unset or empty, and the hook verbs take the seat from AM_ME
+// (identity above). AMQ_SQUAD_SEAT and AMQ_SQUAD_ROLE_PATH are seat-exec's
+// overlay (internal/seatexec), so a seat whose AM_ME was stripped still
+// counts. AMQ_SQUAD_LEAD alone is the lead, not a seat (a pi lead carries
+// AM_ME as well).
+var seatEnvMarkers = []string{"AM_ME", "AMQ_SQUAD_SEAT", "AMQ_SQUAD_ROLE_PATH"}
+
+// seatEnvMarker returns the first seat marker set (non-blank) in the
+// environment getenv reads, or "" outside a seat. Verbs that must never run
+// inside a seat (doctor --probe and --write-registry, brief 3.0.1-t15) fail
+// closed on it.
+func seatEnvMarker(getenv func(string) string) string {
+	for _, name := range seatEnvMarkers {
+		if strings.TrimSpace(getenv(name)) != "" {
+			return name
+		}
+	}
+	return ""
+}
+
 // seatIdentity is identity plus the seat's config-dir check and digest
 // report (checkClaudeConfig), the one check every hook verb runs (phase 5
 // re-pass of 4-2, P2-3): context through buildHookContext, guard and

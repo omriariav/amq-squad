@@ -142,7 +142,10 @@ amq-squad doctor --json
 
 **3. The registry.** `amq-squad doctor --write-registry` writes
 `~/.amq-squad/registry.yaml`: one entry per runtime, model and effort it
-detected. The lead proposes seats from verified entries only.
+detected. The lead proposes seats from verified entries only. Seats never
+probe: inside a seat `doctor --probe` and `doctor --write-registry` refuse
+(`seat_owner_state_refused`), and the owner runs `amq-squad doctor --probe`
+from their own terminal.
 
 **4. The pins.** Seats never run a tool from `PATH`. The registry's `pins:`
 list names each harness tool by absolute path and sha256, and every launch
