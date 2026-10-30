@@ -34,6 +34,15 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- The compound release store refuses a session root whose files carry a
+  group other than the owner's primary gid: a scratch fleet under
+  /private/tmp (macOS gives files there the wheel group) failed `release
+  prepare` with "immutable temp identity invalid" on 2026-10-30. Accept the
+  owner's uid with either the owner's primary gid or the gid the directory
+  hands out (setgid-style inheritance is normal); the refusal names the
+  directory and the gid it saw; a doctor row pre-checks the fleet root's
+  group. Reviewer ruling 2026-10-30; owner-run.md 0.3.
+
 - `amq-squad seat clear --rehearse` (or a script): build the quarantine
   fixture of the signed-clear live row (a scratch repository with a seat
   worktree, the staged launch record, the worktree base record, a grant
