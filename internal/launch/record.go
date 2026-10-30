@@ -97,8 +97,7 @@ type Exec struct {
 	PID          int       `json:"pid,omitempty"`
 	ProcessStart string    `json:"process_start,omitempty"` // procinfo.StartToken: raw ticks or kinfo timeval
 	ProviderArgv []string  `json:"provider_argv,omitempty"`
-	// LauncherArgv is a pi seat's exec: the embedded runtime's launcher
-	// (amq-squad pi run) with the adapter's provider argv after "--".
+	// LauncherArgv is a pi seat's exec: the embedded runtime's launcher (amq-squad pi run) with the adapter's provider argv after "--".
 	LauncherArgv  []string `json:"launcher_argv,omitempty"`
 	IdentityProof string   `json:"identity_proof,omitempty"`
 }
