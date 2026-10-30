@@ -235,7 +235,7 @@ Examples:
 	d.Host.UsageScan = *usageScan
 	d.Fix = *fixFlag
 	syncRegistryRuntimePin()
-	d.ReleaseDrift = withClearChecks(doctorReleaseDriftHook(os.Getenv("AM_ROOT")), os.Getenv("AM_ROOT"))
+	d.ReleaseDrift = withClearChecks(doctorReleaseDriftFor(os.Getenv, os.Getenv("AM_ROOT")), os.Getenv("AM_ROOT"))
 	return doctorExecute(d)
 }
 

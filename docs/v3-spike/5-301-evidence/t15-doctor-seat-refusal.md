@@ -84,6 +84,37 @@ The wizard reference `plugins/skills-src/wizard/references/readiness.md`
 (and its two mirrors, byte-identical to the source) now says the owner runs
 `--probe`, `--write-registry` and `--fix`, and seats never do.
 
+## Third commit: plain doctor skips the release-drift check in a seat
+
+Codex pass blocker. Plain `doctor` inside a seat still installed the
+release-drift hook. With an absolute `AM_ROOT` and owner grants carrying a
+merge entry it called GitHub, and `mergetrain.Drift` wrote baselines,
+coverage bindings and owner alerts under `<AM_ROOT>/extensions/amq-squad/alerts`.
+That is a seat reaching the network and writing squad state the owner
+session owns.
+
+- `doctorReleaseDriftFor` (doctor_release_drift.go) replaces the direct
+  `doctorReleaseDriftHook` call in `runDoctor`. Outside a seat it is the old
+  hook. Inside a seat it reads no grants and returns one row, `release drift`
+  (ok): "skipped: <MARKER> is set, so this process is a seat; ... so the
+  owner runs it".
+- The seat clear checks that share the hook stay: they only read the gate
+  store (`gatestore.Open` creates nothing).
+- `doctorReleaseLister` is a seam for gh, so the rows count calls and never
+  reach GitHub, even reverted.
+- The fake execute now runs the drift hook `runDoctor` built and records
+  the rows; before, it discarded `ReleaseDrift`.
+
+| Row | What it holds |
+|---|---|
+| TestDoctorSeatSkipsReleaseDrift | per marker: temp HOME with a merge grant, absolute temp `AM_ROOT`; plain doctor runs, the only drift row is the seat skip row naming the marker and the owner, gh is called 0 times, nothing exists under `<AM_ROOT>/extensions` |
+| TestDoctorWithoutSeatRunsReleaseDrift | same fixture, no marker: gh is called, the `release drift o/r` row is present, the baseline is written (the seat row is not vacuous) |
+
+Revert check (runDoctor back on `doctorReleaseDriftHook`): the seat row
+fails on each assertion alone. The drift-row check sees
+`release drift o/r`; the gh-call check sees 2 calls; the extensions check
+finds `<AM_ROOT>/extensions` written.
+
 ## Docs
 
 - README.md, the registry step of the doctor section: seats never probe.
