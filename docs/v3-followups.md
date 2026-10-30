@@ -34,6 +34,12 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- Install and self-update write to a temp name and rename, never a copy
+  over the existing file: the macOS kernel kills a binary copied over an
+  existing signed executable (the cached code-signature check, signal 9);
+  a fresh inode runs. Seen installing 3.0.0 on 2026-10-30. The README's
+  install step says so. Reviewer ruling 2026-10-30.
+
 - The compound release store refuses a session root whose files carry a
   group other than the owner's primary gid: a scratch fleet under
   /private/tmp (macOS gives files there the wheel group) failed `release
