@@ -64,6 +64,12 @@ func Builtins() Catalog {
 			Models: []Entry{
 				modelEntry("gpt-5.6-sol", TierFrontier, []string{"planning", "implementation", "review", "security"}),
 				modelEntry("gpt-5.6-terra", TierBalanced, []string{"implementation"}),
+				modelEntry("gpt-5.6-luna", TierBalanced, []string{"implementation"}),
+				modelEntry("gpt-6.1-sol", TierFrontier, []string{"planning", "implementation", "review", "security"}),
+				modelEntry("gpt-6-sol", TierFrontier, []string{"planning", "implementation", "review", "security"}),
+				modelEntry("gpt-6.1-terra", TierBalanced, []string{"implementation"}),
+				modelEntry("gpt-6-astra", TierBalanced, []string{"implementation"}),
+				modelEntry("gpt-6-luna", TierBalanced, []string{"implementation"}),
 			},
 			Efforts: entries("minimal", "low", "medium", "high", "xhigh"),
 		},
