@@ -545,14 +545,18 @@ that holds no lease is parked and gets the next task of its pool, and
 the seat cap and the registry's concurrency pools bound the leases held
 at once (max_seats caps live leases, not live panes). A restarted
 scheduler adopts the live roster seats it re-proves from the launch
-ledger and closes the rest. A gone seat is replaced only by relaunching
+ledger and closes the rest. The roster's tmux session holds seats only: the
+lead's seat is left out of the roster, and the team-mode lead and its
+scheduler run in the owner's terminal, the scheduler taking its team-mode
+parent as the lead for decisions. A gone seat is replaced only by relaunching
 the roster: its pool's next task blocks for the lead
 (`seat_replacement_needs_relaunch`), whose decision `amq-squad scheduler
 relaunch` lets the remaining seats finish, closes them and launches the
 roster again in one apply, until AMQ can join a fresh participant into a
 present binding (ask 20). A roster launch that fails at prepare or apply
 is one decision with its stage, AMQ's reason and the detail, and the
-process exits with it. [3.0.1 t16; docs/v3-spike/5-301-evidence/t16-roster-launch.md]
+process exits with it, an exit the lead's supervisor does not restart;
+`lead --team --trust` passes the owner's standing trust answer through. [3.0.1 t16; docs/v3-spike/5-301-evidence/t16-roster-launch.md]
 
 ### 4.6 Status contract
 

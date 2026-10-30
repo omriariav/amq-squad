@@ -283,9 +283,13 @@ amq-squad gate status --project . --session issue-96 --json
   binding is present, so a gone seat is not replaced on its own: its pool's
   next task blocks for the lead (`seat_replacement_needs_relaunch`), and the
   lead's `amq-squad scheduler relaunch` lets the other seats finish, closes
-  them and launches the roster again. A restarted scheduler adopts the live
-  seats. A roster launch that AMQ refuses stops the scheduler with the stage,
-  AMQ's reason and the detail in its decisions log.
+  them and launches the roster again. The lead and the scheduler run outside
+  the roster's tmux session (the lead's own seat is never in the roster). A
+  restarted scheduler adopts the live seats. A roster launch that AMQ refuses stops the scheduler with the stage,
+  AMQ's reason and the detail in its decisions log, and the lead's
+  supervisor does not restart it; `amq-squad lead --team --scheduler-seats
+  seats.json --trust` is the owner's standing answer to AMQ's trust
+  confirmation for that session.
 - **Merge.** `merge-train --request FILE --dry-run` plans and checks the lead's
   ordered PR set against the merge grant; the real run uses the owner's gh,
   outside any seat. Seats never merge.

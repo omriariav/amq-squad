@@ -273,3 +273,80 @@ jq -c 'select(.kind|test("roster_relaunch|seat_closed|roster_launch|task_reset")
    each seat launch failed quietly and the task waited. Whether team mode
    passes `--trust` (the owner's standing answer) is a lead decision; t17
    widens the failure reporting.
+
+## Round 2: the reviewer's rulings on the open points (2026-10-30)
+
+**Ruling 1: the roster's tmux session holds seats only.** Where the lead
+and the scheduler live today:
+
+- AMQ binds one tmux session per session root: the binding is
+  `<session root>/…/binding.json` (AMQ v0.116.2 internal/launch/binding.go:132),
+  its session named from the project and the AMQ session
+  (`amq-<project>-<hash>-<session>-<hash>`, tmux_names.go:11), created at an
+  Apply (tmux.go:140).
+- `amq-squad lead --team --scheduler-seats FILE` (internal/cli/pi_lead.go:99)
+  starts `scheduler run` as its own child (internal/cli/lead_scheduler.go:115,
+  `exec.CommandContext(self, "scheduler", "run", …)`) and runs pi as another
+  child (internal/cli/pi.go:420, `cmd.Run`). Neither creates or joins a tmux
+  session: both live wherever the owner started `lead --team`, his own
+  terminal or a session of his own, so they do not share the roster's
+  session.
+- They do share it when the lead's seat is itself a seat of the squad's
+  launch: the squad.yaml lead (`lead: cto`, a seat) compiles into the same
+  typed seat list (internal/team/launch.go:18), and an AMQ launch of it in the
+  same session puts its pane in the roster's binding. And the decision socket
+  proved the lead only from the proof ledger entry of such a launch
+  (RecordedLeadPane, internal/schedproc/decide.go:99), so a lead outside the
+  binding could send no decision (origin_unknown), a lead inside it made every
+  relaunch fail by construction.
+
+The change: (a) the roster leaves out the `--lead` seat (`Slots.Roster(lead)`,
+"seat X is the lead (--lead); the lead runs outside the roster's tmux
+session"), so the scheduler never launches the lead into the roster's
+session; (b) a scheduler started by the lead's team mode (the existing
+`startedByLeadTeam` check, the one `--lead-pool` relies on) takes its own
+parent process, the team-mode lead, as the lead's incarnation
+(`schedproc.SupervisingLead`: its pid and raw start stamp read at the
+scheduler's start, the stamp re-read at every decision; gone or reused is
+origin_unknown). pi runs as that process's child, so the pi lead's commands
+are proved by the same parent-chain walk as before. Outside team mode the
+ledger path is unchanged. The lead is told by message (this changes who
+counts as the lead from "the AMQ-launched proved seat" to "the team-mode
+process that started this scheduler"). A pane that outlives its process
+stays the live row's question; ask 20 is the fix.
+
+Rows: TestSupervisingLeadProvesTheTeamModeLead (schedproc: the real socket,
+kernel peer and parent chain; a reused parent is origin_unknown),
+TestSchedulerTakesItsTeamModeParentAsTheLead (cli: the wiring, and none
+outside team mode), TestSchedulerRunLaunchesTheRosterAtStart now also checks
+the lead seat is left out.
+
+**Ruling 2.** The SeatGone producer is t17's; open point 2 stays as written.
+
+**Ruling 3: pi seats park like the others.** The model memory is the local
+server's, not the seat's: ollama's keep_alive unloads an idle model, and the
+seat process holds none, so a parked pi seat costs the GPU nothing after
+the keep-alive window. If the owner run measures otherwise, close-on-park
+for pi is the conditional 3.0.x line in docs/v3-followups.md.
+
+**Ruling 4: `--trust` on the lead's command line.** `amq-squad lead --team
+--scheduler-seats FILE --trust` passes `--trust` to `scheduler run`
+(leadSchedulerCommand); a flag the owner typed is his standing answer for
+that session, and there is no grant-file field. `--trust` without team mode
+and a seat list is a usage error. Without it, a roster launch whose Prepare
+asks for trust_confirmation is refused at start with a reason that names
+the flag, and `scheduler run` exits with ExitSchedulerRefused (17). Every
+refusal of AMQ (prepare_refused, decisions_pending, apply_failed) takes
+that exit; a launch_error (a probe, a plan, an amq that did not answer)
+keeps the crash exit and the supervisor's restarts. The supervisor does not
+restart exit 17 ("refused to start … not restarted"), so the refusal
+happens once.
+
+Rows: TestLeadTeamPassesTrustToTheScheduler,
+TestSchedulerRunRefusesAtStartNamingTrust,
+TestSupervisorDoesNotRestartARefusal.
+
+Files outside the first round's list: internal/cli/lead_scheduler.go and its
+test (widened by the ruling), internal/cli/pi_lead.go (the `--trust` flag of
+`lead`, three lines; the flag parsing lives there) and
+internal/cli/repass_routing_test.go (one call site of leadSchedulerCommand).

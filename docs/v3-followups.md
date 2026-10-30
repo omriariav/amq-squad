@@ -64,6 +64,11 @@ closes.
   roster in one apply and replaces a gone seat by relaunching the whole
   roster (`amq-squad scheduler relaunch`); with the ask, the scheduler can
   replace one seat in place. The lead files the ask.
+- Conditional (3.0.1 t16 ruling 3): pi seats park like the others, on the
+  rule that the model memory is the local server's (ollama's keep_alive
+  unloads an idle model; the seat process holds none). If the owner run
+  measures GPU memory held by a parked pi seat after the keep-alive window,
+  close-on-park for pi seats becomes a 3.0.x item.
 
 - The 3.0 Claude plugin is unreachable through the public marketplace: the
   marketplace source is the repository (omriariav/amq-squad) and Claude
