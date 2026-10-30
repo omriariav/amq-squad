@@ -58,7 +58,9 @@ func TestClaudeSeatRunsWithItsOwnConfigDir(t *testing.T) {
 // not what the launch wrote (claude_permission_mismatch), whose plugin does
 // not run the guard or is not enabled (claude_hooks_missing), or that lacks
 // a first-run fact (3.0.1 t6): onboarding or the theme
-// (claude_onboarding_missing), or the worktree's trust (claude_trust_missing).
+// (claude_onboarding_missing), or the worktree's trust (claude_trust_missing),
+// or whose .claude.json trusts another project or carries a permission
+// input (claude_config_unexpected).
 // The first-run rows re-record the digest: a launch that wrote the
 // incomplete dir is refused by name, not only by digest.
 func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
@@ -97,6 +99,16 @@ func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 		}},
 		"plugin not enabled, digest re-recorded": {ClaudeHooksMissing, func(f *fixture, dir string) {
 			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":[]},"theme":"dark"}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"canonical root trusted, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true},"/repo":{"hasTrustDialogAccepted":true}}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"allowedTools, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"allowedTools":["Bash(*)"],"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
 			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
 			f.stage()
 		}},

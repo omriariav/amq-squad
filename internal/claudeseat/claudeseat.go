@@ -70,6 +70,11 @@ const (
 	// worktree as trusted; Claude Code would open its trust dialog (3.0.1
 	// t6).
 	TrustMissing = "claude_trust_missing"
+	// ConfigUnexpected: the seat's .claude.json carries a key the launch
+	// did not write and Claude Code does not keep as bookkeeping: another
+	// project's entry (trust beyond the seat's worktree) or a permission
+	// input such as allowedTools (3.0.1 t6 fix round).
+	ConfigUnexpected = "claude_config_unexpected"
 )
 
 // ConfigDrift reports whether a Claude seat's config dir differs from the
@@ -289,63 +294,6 @@ func recordedTrust(raw []byte) []string {
 	return w.Trusted
 }
 
-// firstRunFacts is the canonical form of the first-run facts of a
-// .claude.json: hasCompletedOnboarding and, for each trust key the launch
-// recorded, projects[key].hasTrustDialogAccepted, each the value found (null
-// when missing). An absent or unparsable file has its own form.
-func firstRunFacts(raw []byte, present bool, trusted []string) []byte {
-	if !present {
-		return []byte("absent")
-	}
-	var cfg struct {
-		Onboarded any                       `json:"hasCompletedOnboarding"`
-		Projects  map[string]map[string]any `json:"projects"`
-	}
-	if json.Unmarshal(raw, &cfg) != nil {
-		return []byte("unparsable")
-	}
-	projects := map[string]any{}
-	for _, k := range trusted {
-		projects[k] = cfg.Projects[k][trustKey]
-	}
-	out, _ := json.Marshal(map[string]any{onboardedKey: cfg.Onboarded, projectsKey: projects})
-	return out
-}
-
-// firstRunGaps names what the config dir's first-run state lacks: the
-// onboarding-complete state, the theme in settings.json, and the trust of
-// the recorded worktree. onboarding and trust list their gaps separately.
-func firstRunGaps(dir, theme string) (onboarding, trust []string) {
-	if theme == "" {
-		onboarding = append(onboarding, "settings.json names no theme")
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, GlobalConfigFile))
-	var cfg struct {
-		Onboarded bool `json:"hasCompletedOnboarding"`
-		Projects  map[string]struct {
-			Trusted bool `json:"hasTrustDialogAccepted"`
-		} `json:"projects"`
-	}
-	if err != nil || json.Unmarshal(raw, &cfg) != nil {
-		onboarding = append(onboarding, GlobalConfigFile+" is missing or unreadable")
-		trust = append(trust, GlobalConfigFile+" is missing or unreadable")
-		return onboarding, trust
-	}
-	if !cfg.Onboarded {
-		onboarding = append(onboarding, GlobalConfigFile+" does not set "+onboardedKey+": true")
-	}
-	worktree, err := recordedWorktree(dir)
-	switch {
-	case err != nil:
-		trust = append(trust, err.Error())
-	case worktree == "":
-		trust = append(trust, "the launch recorded no worktree to trust")
-	case !cfg.Projects[filepath.Clean(worktree)].Trusted:
-		trust = append(trust, fmt.Sprintf("%s does not set %s[%q].%s: true", GlobalConfigFile, projectsKey, filepath.Clean(worktree), trustKey))
-	}
-	return onboarding, trust
-}
-
 // readWorktreeSettings reads the worktree's .claude settings files through
 // descriptors with no symlink followed; a missing .claude or file is absent
 // (not in the map), a symlink or a non-regular file fails.
@@ -547,8 +495,9 @@ func Digest(dir string) (string, error) {
 			}
 		}
 	}
-	// The first-run facts of .claude.json, by value (3.0.1 t6).
-	entries = append(entries, entry{rel: GlobalConfigFile + "#first-run", data: firstRunFacts(globalRaw, globalPresent, trusted)})
+	// The first-run facts and the permission inputs of .claude.json, by
+	// value (3.0.1 t6).
+	entries = append(entries, entry{rel: GlobalConfigFile + "#facts", data: configFacts(globalRaw, globalPresent, trusted)})
 	// The worktree's settings files, which Claude merges: present with their
 	// bytes, or absent (phase 5 re-pass of 4-2, P1-1).
 	worktree, err := recordedWorktree(dir)
@@ -583,7 +532,9 @@ func Digest(dir string) (string, error) {
 // the launch's digest, its settings carry the launch's permission mode with
 // no allow rule, it is past first-run onboarding (hasCompletedOnboarding and
 // a theme: claude_onboarding_missing), its worktree is trusted
-// (claude_trust_missing), and its plugin runs the guard on PreToolUse
+// (claude_trust_missing), its .claude.json carries nothing beyond what the
+// launch wrote and Claude Code's bookkeeping (claude_config_unexpected), and
+// its plugin runs the guard on PreToolUse
 // (claude_hooks_missing). It returns the reason code and the detail of the
 // first failure ("" when it passes).
 func Check(dir string, uid int, digest, permissionMode string) (string, string) {
@@ -627,6 +578,9 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 	}
 	if len(trust) > 0 {
 		return TrustMissing, "the seat's Claude config dir does not trust its worktree: " + strings.Join(trust, "; ")
+	}
+	if extra := unexpectedConfig(dir); len(extra) > 0 {
+		return ConfigUnexpected, "the seat's " + GlobalConfigFile + " carries what the launch did not write and Claude Code does not keep as bookkeeping: " + strings.Join(extra, "; ")
 	}
 	if !settings.EnabledPlugins[PluginKey] {
 		return HooksMissing, "the amq-squad plugin is not enabled in the seat's settings.json"
