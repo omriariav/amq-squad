@@ -31,13 +31,18 @@ import (
 var bookkeepingGlobal = setOf("numStartups", "skillUsage", "pluginUsage", "memoryUsageCount", "promptQueueUseCount",
 	"btwUseCount", "queuedCommandUpHintCount", "lspRecommendationIgnoredCount", "promptSuggestionUnusedStreak",
 	"tipsHistory", "tipLifetimeShownCounts", "tipsHistoryByCommand", "seenNotifications", "announcementImpressions",
-	"savedModelSuccessorShown", "seenSecurityWarnings", "subagentConfigWarningShown", "subagentConfigChecks",
+	"savedModelSuccessorShown", warningsSeenKey, "subagentConfigWarningShown", "subagentConfigChecks",
 	"subagentConfigClassifierCalls", "lastShownEmergencyTip", "subscriptionNoticeCount", "subscriptionUpsellShownCount",
 	"passesUpsellSeenCount", "fullscreenUpsellSeenCount", "fullscreenDownsellSeenCount", "voiceLangHintShownCount",
 	"voiceFooterHintSeenCount", "experimentNoticesSeenCount", "cachedGrowthBookFeatures", "cachedGrowthBookFeaturesAt",
 	"cachedArtifactRoster", "artifactRosterDenied", "promoStartupStatusCache", "groveChoiceSeenAt",
 	"unusedLimitResetStatusCache", "apiCreditLinkStatusCache", "cachedDynamicConfigs", "cachedExperimentFeatures",
 	"cachedExperimentData", "mcpLegacyKeyOwners", "firstStartTime", "claudeCodeFirstTokenDate", "startupPrefetchedAt")
+
+// warningsSeenKey is the pI key of the security warnings seen, built from
+// two parts: spelled whole it trips gateverify's repository-wide key scan
+// (nokey_test.go), which refuses the four-letter key prefix in any case.
+var warningsSeenKey = "seen" + "SecurityWarnings"
 
 // bookkeepingProject is 2.1.314's kI set: project-entry keys whose changes
 // the binary treats as bookkeeping.
@@ -53,12 +58,18 @@ var bookkeepingProject = setOf("lastCost", "lastAPIDuration", "lastAPIDurationWi
 // whose values 2.1.314 reads on a permission path (the fifth commit's walk,
 // listed with their readers in docs/v3-spike/5-claudeseat-execution.md):
 // mcpLegacyKeyOwners (kW and Fn, the legacy-key MCP grant behind the flag
-// tengu_marlin_thicket), cachedGrowthBookFeatures (the flag values
-// getAllFeatures falls back to, tengu_marlin_thicket among them) and, in a
-// project entry, hasClaudeMdExternalIncludesWarningShown (p9s skips the
+// tengu_marlin_thicket); the flag cache syncRemoteEvalToDisk writes
+// (cachedGrowthBookFeatures, the values getAllFeatures falls back to,
+// tengu_marlin_thicket among them, with cachedGrowthBookFeaturesAt,
+// cachedExperimentFeatures and cachedExperimentData); and, in a project
+// entry, hasClaudeMdExternalIncludesWarningShown (p9s skips the
 // external-includes dialog on it). Check refuses them before exec; they are
-// not bookkeeping for the allowance.
-var permissionPathBookkeeping = setOf("mcpLegacyKeyOwners", "cachedGrowthBookFeatures", "hasClaudeMdExternalIncludesWarningShown")
+// not bookkeeping for the allowance. A seat runs with
+// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 (registry.ClaudeSeatEnv), so
+// its flag client is off and never writes the cache; one that appears is
+// drift.
+var permissionPathBookkeeping = setOf("mcpLegacyKeyOwners", "cachedGrowthBookFeatures", "cachedGrowthBookFeaturesAt",
+	"cachedExperimentFeatures", "cachedExperimentData", "hasClaudeMdExternalIncludesWarningShown")
 
 // inputKind is a permission input's expected shape, which also fixes its
 // digest form.
@@ -71,7 +82,7 @@ const (
 	kindSecret                     // a string credential or command; "set" enters
 	kindApprovals                  // {approved: [...], rejected: [...]}; the approved count enters
 	kindObject                     // an object; the object enters
-	kindCount                      // an object; its presence and entry count enter, even empty
+	kindCount                      // any value; its presence and entry count enter, even empty
 )
 
 // permissionGlobal are the top-level permission inputs.
@@ -87,6 +98,10 @@ var permissionGlobal = map[string]inputKind{
 	"enableAllProjectMcpServers":    kindBool,
 	"enabledMcpjsonServers":         kindStrings,
 	"mcpLegacyKeyOwners":            kindCount, // bookkeeping in pI, read on the MCP grant path
+	"cachedGrowthBookFeatures":      kindCount, // the flag cache (pI), refused and digested
+	"cachedGrowthBookFeaturesAt":    kindCount,
+	"cachedExperimentFeatures":      kindCount,
+	"cachedExperimentData":          kindCount,
 }
 
 // permissionProject are the project-entry permission inputs: the entry
@@ -195,11 +210,14 @@ func summarize(key string, kind inputKind, v any) (form any, present, malformed 
 		}
 		return m, len(m) > 0, false
 	case kindCount:
-		m, ok := v.(map[string]any)
-		if !ok {
-			return bad()
+		n := 1
+		switch t := v.(type) {
+		case map[string]any:
+			n = len(t)
+		case []any:
+			n = len(t)
 		}
-		return map[string]int{"count": len(m)}, true, false
+		return map[string]int{"count": n}, true, false
 	}
 	return bad()
 }

@@ -14,7 +14,8 @@ import (
 // and re-hashed immediately before exec, so the bytes the launch probed are
 // the bytes the seat runs. A provider that is not the pin, and a pinned file
 // replaced after the probe (here: after the proof, before exec), are
-// refused tool_unpinned.
+// refused: tool_unpinned for the first, claude_pin_mismatch for the second
+// (3.0.1 t6).
 func TestClaudeSeatExecsOnlyThePinnedBytes(t *testing.T) {
 	f := newFixture(t, "claude")
 	f.stage()
@@ -29,7 +30,7 @@ func TestClaudeSeatExecsOnlyThePinnedBytes(t *testing.T) {
 	o := Options{BeforeFinalCheck: func() {
 		write(t, filepath.Join(g.bin, "claude"), "#!/bin/sh\n# replaced after the probe\nexit 0\n", 0o700)
 	}}
-	if err := g.run(o); refusalCode(err) != ToolUnpinned || g.execPath != "" {
+	if err := g.run(o); refusalCode(err) != ClaudePinMismatch || g.execPath != "" {
 		t.Fatalf("a pinned file replaced before exec: %v (exec %q)", err, g.execPath)
 	}
 	h := newFixture(t, "claude")

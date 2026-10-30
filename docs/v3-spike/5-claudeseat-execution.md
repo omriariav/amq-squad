@@ -80,8 +80,7 @@ Rows, each failing when reverted:
 **2. Bookkeeping keys on a permission path.** Codex found that `mcpLegacyKeyOwners`, in the binary's bookkeeping set `pI`, is read on the MCP grant path, and that `cachedGrowthBookFeatures` can switch that path on through `tengu_marlin_thicket`. So the bookkeeping sets are not a security allowlist by themselves.
 - I walked all 72 keys of `pI` and `kI` against the binary's permission readers: trust, allowed tools, MCP grants, external includes and bypass flags. A script listed every read site of each key, outside the set literals and the defaults, and flagged sites near those readers. I then read each flagged site.
 - Three keys are permission inputs and are refused before exec with any content, as `claude_config_unexpected` naming the key. In the digest, `mcpLegacyKeyOwners` enters by presence and entry count, and `hasClaudeMdExternalIncludesWarningShown` enters as a bool input.
-- **`cachedGrowthBookFeatures` is not in the digest. This departs from the ruling, and I asked the lead for a ruling.** In 2.1.314, `syncRemoteEvalToDisk` writes `cachedGrowthBookFeatures`, `cachedExperimentFeatures`, `cachedExperimentData` and `cachedGrowthBookFeaturesAt` into the global config after every successful flag fetch. Seats run without `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`; only the mode probe sets it. So a digest over the flag cache would move at every seat's first fetch, and every Claude seat would be quarantined as `claude_config_changed`.
-- The residual: a same-UID process could seed flag values into a running seat's cache until the next fetch. Once a fetch is fresh, the remote values take precedence (`getAllFeatures` returns `remoteEvalFeatureValues` when any are present).
+- The flag cache: superseded by the reviewer's ruling, see the sixth commit below. Seats now run with the binary's flag client off, and all four flag-cache keys are refused and digested.
 
 | set | key | verdict |
 | --- | --- | --- |
@@ -114,7 +113,7 @@ Rows, each failing when reverted:
 | pI | `voiceFooterHintSeenCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
 | pI | `experimentNoticesSeenCount` | bookkeeping, no permission reader found: no read site beyond the bookkeeping set and the defaults |
 | pI | `cachedGrowthBookFeatures` | **permission input, refused**: the flag values `getAllFeatures` and `readSavedFlags` fall back to until a fetch is fresh, `tengu_marlin_thicket` (the gate of `kW`) among them; `syncRemoteEvalToDisk` rewrites it after each fetch |
-| pI | `cachedGrowthBookFeaturesAt` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `cachedGrowthBookFeaturesAt` | **flag cache, refused** (the ruling): `syncRemoteEvalToDisk` writes it with `cachedGrowthBookFeatures`; it carries no permission reader of its own |
 | pI | `cachedArtifactRoster` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
 | pI | `artifactRosterDenied` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
 | pI | `promoStartupStatusCache` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
@@ -122,8 +121,8 @@ Rows, each failing when reverted:
 | pI | `unusedLimitResetStatusCache` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
 | pI | `apiCreditLinkStatusCache` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
 | pI | `cachedDynamicConfigs` | bookkeeping, no permission reader found: no read site beyond the bookkeeping set and the defaults |
-| pI | `cachedExperimentFeatures` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
-| pI | `cachedExperimentData` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `cachedExperimentFeatures` | **flag cache, refused** (the ruling): `syncRemoteEvalToDisk` writes it with `cachedGrowthBookFeatures`; it carries no permission reader of its own |
+| pI | `cachedExperimentData` | **flag cache, refused** (the ruling): `syncRemoteEvalToDisk` writes it with `cachedGrowthBookFeatures`; it carries no permission reader of its own |
 | pI | `mcpLegacyKeyOwners` | **permission input, refused**: `kW` reads it, behind the flag `tengu_marlin_thicket`, to resolve a legacy-key MCP server's owner; `Fn` writes it; `mee` refuses a tool whose `mcpInfo.legacyGrantRefused` is set |
 | pI | `firstStartTime` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
 | pI | `claudeCodeFirstTokenDate` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
@@ -171,11 +170,49 @@ Rows, each failing when reverted:
 | row | it fails when this is reverted |
 | --- | --- |
 | `TestMalformedTrustOrPermissionInputs` (claudeseat): `{}` and `[]` trust on the root entry, `{}` trust on another entry, a string bypass flag, `allowedTools` as an object or with a non-string rule, `mcpServers` as a list each move the digest and are refused naming the key; a defaults entry of the right shape keeps the digest | the bool shape check in `summarize` (four cases); the malformed scan in the shared check (all seven) |
-| `TestPermissionPathBookkeepingIsRefused` (claudeseat): `mcpLegacyKeyOwners` (empty or not), `cachedGrowthBookFeatures` and the external-includes warning state are refused before exec; `mcpLegacyKeyOwners` and the warning state move the digest when added, `cachedGrowthBookFeatures` does not | the permission-path set (all four); `mcpLegacyKeyOwners` in the digest (two) |
+| `TestPermissionPathBookkeepingIsRefused` (claudeseat): `mcpLegacyKeyOwners` (empty or not), `cachedGrowthBookFeatures` and the external-includes warning state are refused before exec; `mcpLegacyKeyOwners` and the warning state move the digest when added, and since the sixth commit so do the four flag-cache keys | the permission-path set (all four); `mcpLegacyKeyOwners` in the digest (two) |
 | `TestExternalIncludesKeepTheScreensOpen` (claudeseat): an absolute import, a relative one, one nested in an import inside the worktree, one in an ancestor's CLAUDE.md, one under `~/` (HOME set to a temp dir), a linked rules file and the managed CLAUDE.md each give `claude_external_includes_pending` from `StartupScreensClosed` and Check; imports inside the worktree, in code fences, code spans and HTML comments, of a missing file, or a bare word close nothing | the check in the shared function (all seven pending cases); ancestor scanning; fence skipping; linked memory files |
 | `TestClaudeSeatConfigDirIsChecked/a_CLAUDE.md_importing_a_file_outside_the_worktree` (seatexec): seat-exec refuses before exec | the check in the shared function |
 
 No row reads the host's managed CLAUDE.md: the package's `TestMain` points it at a path that does not exist, and the one row that needs it sets its own. The host has none either.
+
+### Sixth commit: the pin, key variants, the flag-cache ruling, the nsec scan
+
+**(a) `claude_pin_mismatch`.** The bookkeeping sets and the permission-reader walk are facts about the pinned 2.1.314 binary.
+- seat-exec opens the claude it is about to exec, at the pin's path, through `registry.OpenPinned`, the check doctor's pin rows run. When the bytes do not hash to the registry pin, it refuses `claude_pin_mismatch`.
+- This runs at the preflight, before any config check, and again as the last step before exec. It was `tool_unpinned` before.
+- So an upgrade of Claude Code in place fails closed at the next seat launch, until the owner re-pins.
+- **The re-pin's step:** re-extract `internal/claudeseat/testdata/claude-2.1.314-bookkeeping.js` from the new binary's strings, re-walk the permission readers (the fifth commit's method and table), update the sets, and keep `TestBookkeepingSetsAreTheBinarys` green.
+- A 3.0.x line in `docs/v3-followups.md` says the re-walk should become a check.
+
+**(b) Key variants NFC does not fold.** `.claude.json` is read into maps, so its keys already matched exactly. A key differing only in case, or with leading or trailing whitespace, beside a complete seed is refused as `claude_config_unexpected`. A variant in place of the real key leaves the real key missing and is refused for the missing fact.
+- `settings.json` was read through Go structs. Go matches JSON keys there in any case, so `"Theme"` or `"EnabledPlugins"` would have satisfied the check while Claude Code ignores them.
+- It is now read into a map with exact keys, in the shared check and in Check's mode check.
+
+**The flag-cache ruling.** seat-exec sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` in every Claude seat's exec'd environment, after the scrub, whatever the caller had.
+- **Evidence, 2.1.314 strings:**
+  - The flag client's `isEnabled` is `Wm()`, which is `!DISABLE_GROWTHBOOK && EV()`. `EV()` is `!gy()`, `gy()` includes `gj()`, and `gj()` holds when the variable is set (`vJt()` returns `essential-traffic`). So the client never fetches and `syncRemoteEvalToDisk` never runs.
+  - Its disk cache is not read while it is off either: `E$i()` needs `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF`, a `CLAUDE_CODE_*` variable the scrub drops.
+  - Config saves drop every key equal to its default (`Ho(config, (v,k) => _(v) !== _(wI[k]))`), so the default `cachedGrowthBookFeatures: {}` is never written.
+- **The refusal and the digest.** The four flag-cache keys (`cachedGrowthBookFeatures`, `cachedGrowthBookFeaturesAt`, `cachedExperimentFeatures`, `cachedExperimentData`) and `mcpLegacyKeyOwners` are refused with any content before exec, as `claude_config_unexpected` naming the key. They are digested by presence and count, so a flag cache that appears mid-run is drift.
+- **The one cost:** the binary's default flag values. There are no remote flags, no update check and no telemetry.
+- **An owner must never unset `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` for seats.**
+- **The registry records it.** Claude entries now carry `seat_env: ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]` (`registry.ClaudeSeatEnv`), written by the builder and absent on every other entry. seat-exec sets the same list, so a manager that runs Claude seats its own way (the 3.1 pi manager) inherits it. `internal/registry` was widened for this one field.
+
+**The nsec scan.** `TestNoPackageUnderInternalReadsAnNsec` (internal/gateverify) refuses the four letters in any case in non-test code under `internal/`. The pI key for the security warnings seen contains them. It is now built from two parts, as the variable `warningsSeenKey`. The split suggested in the brief would still have carried the letters across the line. The scan passes, and the set-equality row passes.
+- There was no set-equality row before, only a one-off script, because a row cannot read the pinned binary under the real HOME. `TestBookkeepingSetsAreTheBinarys` now compares the Go sets with a verbatim testdata copy of the binary's two set literals.
+
+Rows, each failing when reverted:
+
+| row | it fails when this is reverted |
+| --- | --- |
+| `TestAnUpgradedClaudeIsRefusedBeforeTheConfigChecks` (seatexec): a binary rewritten at the pin's path, with the config dir also broken, is refused `claude_pin_mismatch` and nothing is exec'd; `TestClaudeSeatExecsOnlyThePinnedBytes` now expects the same code for a file replaced before exec | the `claude_pin_mismatch` mapping |
+| `TestKeyVariantsAreNotTheLaunchsKeys` (claudeseat): case and whitespace variants of the onboarding key, a project key and an entry key are refused `claude_config_unexpected`; a variant in place of the key gives `claude_onboarding_missing`; `Theme` and `EnabledPlugins` in settings.json give `claude_onboarding_missing` and `claude_hooks_missing` | case-folding and trimming the `.claude.json` keys (six cases); reading settings in any case (two cases) |
+| `TestClaudeSeatRunsWithNonessentialTrafficOff` (seatexec): the variable is `1` in a Claude seat's exec'd environment even when the caller set it empty, and absent for a Codex seat | the overlay loop |
+| `TestPermissionPathBookkeepingIsRefused` (claudeseat): each of the four flag-cache keys, seeded, is refused before exec and moves the digest | the flag cache in the refusal; the flag cache in the digest |
+| `TestAFlagCacheMidRunIsDrift` (claudeseat): a flag cache written as `syncRemoteEvalToDisk` writes it is drift for `ConfigDrift` | the flag cache in the digest |
+| `TestBuilderEmitsTheClaudeSeatEnvironment` (registry): every Claude entry carries `ClaudeSeatEnv`, no other entry carries anything, `Format` writes one `seat_env` line per Claude entry, and `Parse` round-trips it | the builder's line |
+| `TestBookkeepingSetsAreTheBinarys` (claudeseat): the Go sets equal the binary's | a set edited away from the binary's |
 
 ## Field names and their sources
 
@@ -284,6 +321,7 @@ jq '{onboarded: .hasCompletedOnboarding, trusted: .projects["/Users/omri/scratch
 jq '{theme, plugin: .enabledPlugins["amq-squad@amq-squad"], mode: .permissions.defaultMode, allow: .permissions.allow}' "$D/settings.json"
 tail -n 3 "$ROOT/extensions/amq-squad/claude-config/t6probe.jsonl"   # hook reports: digest and ok
 jq '.projects | keys' "$D/.claude.json"                                # which project entries exist
+jq '[has("cachedGrowthBookFeatures"), has("cachedGrowthBookFeaturesAt")]' "$D/.claude.json"   # [false,false]: the flag client stayed off
 jq '.projects["/Users/omri/code/amq-squad"] | if . == null then "absent" else keys end' "$D/.claude.json"   # the root entry's key names only
 amq-squad status --session t6-live --json
 ```

@@ -217,6 +217,12 @@ closes.
   from "keys carrying trust or a permission input" to the bare `projects`
   key set, so any added entry moves it. If the entry does appear, record
   its keys there and keep the current digest.
+- The Claude seat config checks are facts about the pinned Claude Code
+  binary (3.0.1 t6): the bookkeeping sets pI and kI and the walk of their
+  keys against the binary's permission readers. Today a re-pin's step is to
+  re-extract internal/claudeseat/testdata/claude-*-bookkeeping.js and re-walk
+  by hand (the execution note's method); make the re-walk a check, so that
+  doctor's pin row refuses a pin whose sets differ from the code's.
 - Claude seats and external CLAUDE.md includes (3.0.1 t6, fifth commit):
   when a CLAUDE.md the seat loads at start imports a file outside its
   worktree, Claude Code 2.1.314 opens its external-includes dialog unless

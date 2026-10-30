@@ -3,6 +3,7 @@ package claudeseat
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -78,7 +79,10 @@ func TestPermissionPathBookkeepingIsRefused(t *testing.T) {
 		"mcpLegacyKeyOwners":        {func(m map[string]any) { m["mcpLegacyKeyOwners"] = map[string]any{"srv": "owner"} }, "mcpLegacyKeyOwners", true},
 		"cachedGrowthBookFeatures": {func(m map[string]any) {
 			m["cachedGrowthBookFeatures"] = map[string]any{"tengu_marlin_thicket": true}
-		}, "cachedGrowthBookFeatures", false},
+		}, "cachedGrowthBookFeatures", true},
+		"cachedGrowthBookFeaturesAt": {func(m map[string]any) { m["cachedGrowthBookFeaturesAt"] = 1.0 }, "cachedGrowthBookFeaturesAt", true},
+		"cachedExperimentFeatures":   {func(m map[string]any) { m["cachedExperimentFeatures"] = []any{} }, "cachedExperimentFeatures", true},
+		"cachedExperimentData":       {func(m map[string]any) { m["cachedExperimentData"] = map[string]any{} }, "cachedExperimentData", true},
 		"external-includes warning shown": {func(m map[string]any) {
 			project(m, "/wt/c1")["hasClaudeMdExternalIncludesWarningShown"] = true
 		}, "hasClaudeMdExternalIncludesWarningShown", true},
@@ -183,5 +187,68 @@ func write(t *testing.T, p, body string) {
 	}
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The bookkeeping sets are the pinned binary's: bookkeepingGlobal and
+// bookkeepingProject equal its pI and kI sets, as extracted verbatim from
+// the 2.1.314 strings into testdata (no row reads the binary itself). A
+// re-pin re-extracts the file and re-walks the permission readers.
+func TestBookkeepingSetsAreTheBinarys(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "claude-2.1.314-bookkeeping.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(prefix string) map[string]bool {
+		i := strings.Index(string(raw), prefix)
+		if i < 0 {
+			t.Fatalf("no %s in the testdata", prefix)
+		}
+		body := string(raw[i+len(prefix):])
+		body = body[:strings.Index(body, "])")]
+		out := map[string]bool{}
+		for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(body, -1) {
+			out[m[1]] = true
+		}
+		return out
+	}
+	for name, tc := range map[string]struct {
+		want, got map[string]bool
+	}{
+		"pI": {set("var pI=new Set(["), bookkeepingGlobal},
+		"kI": {set("kI=new Set(["), bookkeepingProject},
+	} {
+		if len(tc.want) == 0 || len(tc.want) != len(tc.got) {
+			t.Fatalf("%s: the binary has %d keys, the Go set %d", name, len(tc.want), len(tc.got))
+		}
+		for k := range tc.want {
+			if !tc.got[k] {
+				t.Fatalf("%s: %q is in the binary's set, not in the Go set", name, k)
+			}
+		}
+	}
+}
+
+// The reviewer's ruling: a flag cache that appears in a running seat's
+// config dir, written the way 2.1.314's syncRemoteEvalToDisk writes it, is
+// drift: ConfigDrift reports it against the digest the launch recorded (the
+// seat's flag client is off under registry.ClaudeSeatEnv, so the binary
+// never writes it itself).
+func TestAFlagCacheMidRunIsDrift(t *testing.T) {
+	root := t.TempDir()
+	w, err := Write(Dir(root, "c1", "launch-1"), "dontAsk", "/wt/c1", t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drift, _ := ConfigDrift(root, "c1", "launch-1", w.Digest); drift {
+		t.Fatal("a fresh dir drifts")
+	}
+	editJSON(t, filepath.Join(w.Dir, ".claude.json"), func(m map[string]any) {
+		m["cachedGrowthBookFeatures"] = map[string]any{"tengu_marlin_thicket": true}
+		m["cachedExperimentFeatures"], m["cachedExperimentData"] = []any{}, map[string]any{}
+		m["cachedGrowthBookFeaturesAt"] = 1.0
+	})
+	if drift, detail := ConfigDrift(root, "c1", "launch-1", w.Digest); !drift {
+		t.Fatalf("a flag cache mid-run is not drift: %s", detail)
 	}
 }

@@ -627,18 +627,17 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 	if err != nil || digest == "" || got != digest {
 		return PermissionMismatch, fmt.Sprintf("the seat's Claude config dir is not what the launch wrote (digest %s, the launch record %s, %v)", got, digest, err)
 	}
-	var settings struct {
-		Permissions struct {
-			DefaultMode string   `json:"defaultMode"`
-			Allow       []string `json:"allow"`
-		} `json:"permissions"`
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
-	if err != nil || json.Unmarshal(raw, &settings) != nil {
+	// Exact keys: Go's struct decoding matches JSON keys in any case, Claude
+	// Code reads them exactly (fifth commit, the reviewer's key variants).
+	settings, err := readSettings(dir)
+	if err != nil {
 		return PermissionMismatch, "the seat's settings.json is unreadable"
 	}
-	if settings.Permissions.DefaultMode != permissionMode || len(settings.Permissions.Allow) != 0 {
-		return PermissionMismatch, fmt.Sprintf("the seat's settings.json has mode %q and %d allow rules; the launch record says %q and none", settings.Permissions.DefaultMode, len(settings.Permissions.Allow), permissionMode)
+	perms, _ := settings["permissions"].(map[string]any)
+	mode, _ := perms["defaultMode"].(string)
+	allow, isList := perms["allow"].([]any)
+	if mode != permissionMode || (perms["allow"] != nil && !isList) || len(allow) != 0 {
+		return PermissionMismatch, fmt.Sprintf("the seat's settings.json has mode %q and %d allow rules; the launch record says %q and none", mode, len(allow), permissionMode)
 	}
 	if env := ForbiddenSettingsEnv(dir); len(env) > 0 {
 		return SettingsEnvForbidden, "a settings file Claude merges for the seat sets a forbidden env variable: " + strings.Join(env, "; ")
@@ -661,20 +660,18 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 // launch. It returns the reason code and the detail of the first gap ("",
 // "" when there is none).
 func screensGap(dir string) (string, string) {
-	var settings struct {
-		EnabledPlugins map[string]bool `json:"enabledPlugins"`
-		Theme          string          `json:"theme"`
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
-	if err != nil || json.Unmarshal(raw, &settings) != nil {
+	settings, err := readSettings(dir)
+	if err != nil {
 		return OnboardingMissing, "the seat's settings.json is missing or unreadable"
 	}
+	theme, _ := settings["theme"].(string)
+	plugins, _ := settings["enabledPlugins"].(map[string]any)
 	if cfg, err := readGlobalConfig(dir); err == nil {
 		if bad := malformedInputs(cfg); len(bad) > 0 {
 			return ConfigUnexpected, "the seat's " + GlobalConfigFile + " carries a trust or permission input of the wrong shape (2.1.314 tests them by truthiness): " + strings.Join(bad, "; ")
 		}
 	}
-	onboarding, trust := firstRunGaps(dir, settings.Theme)
+	onboarding, trust := firstRunGaps(dir, theme)
 	if len(onboarding) > 0 {
 		return OnboardingMissing, "the seat's Claude config dir is not past first-run onboarding: " + strings.Join(onboarding, "; ")
 	}
@@ -692,7 +689,7 @@ func screensGap(dir string) (string, string) {
 			return ExternalIncludesPending, "a CLAUDE.md the seat loads at start imports files outside its worktree and nothing approves them, so Claude Code would open its external-includes dialog: " + strings.Join(ext, "; ")
 		}
 	}
-	if !settings.EnabledPlugins[PluginKey] {
+	if plugins[PluginKey] != true {
 		return HooksMissing, "the amq-squad plugin is not enabled in the seat's settings.json"
 	}
 	var installed struct {
@@ -701,7 +698,7 @@ func screensGap(dir string) (string, string) {
 			InstallPath string `json:"installPath"`
 		} `json:"plugins"`
 	}
-	raw, err = os.ReadFile(filepath.Join(dir, "plugins", "installed_plugins.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "plugins", "installed_plugins.json"))
 	if err != nil || json.Unmarshal(raw, &installed) != nil {
 		return HooksMissing, "the seat's plugins/installed_plugins.json is missing or unreadable"
 	}
@@ -711,6 +708,23 @@ func screensGap(dir string) (string, string) {
 		}
 	}
 	return HooksMissing, "the seat's amq-squad plugin install does not run amq-squad-hook.sh pre-tool on PreToolUse"
+}
+
+// readSettings reads the config dir's settings.json as an object, so every
+// key is matched exactly as Claude Code matches it.
+func readSettings(dir string) (map[string]any, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		return nil, fmt.Errorf("settings.json is null")
+	}
+	return m, nil
 }
 
 func inside(dir, p string) bool {

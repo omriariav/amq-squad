@@ -79,7 +79,7 @@ func TestBookkeepingKeysPassAndKeepTheDigest(t *testing.T) {
 	}
 	editJSON(t, filepath.Join(dir, ".claude.json"), func(m map[string]any) {
 		m["numStartups"], m["firstStartTime"], m["tipsHistory"] = 1, "2026-10-30T00:00:00Z", map[string]any{"x": 1}
-		m["cachedGrowthBookFeaturesAt"] = 1 // cachedGrowthBookFeatures itself has a permission reader (refused)
+		m["lastShownEmergencyTip"] = "x" // the flag cache has a permission reader (refused)
 		e := project(m, "/wt/c1")
 		e["lastSessionId"], e["lastCost"], e["hasCompletedProjectOnboarding"] = "s", 0.5, true
 	})
