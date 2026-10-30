@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
@@ -446,14 +447,7 @@ func (s *proofServer) reject(m launch.ProofMessage, peer int, code string) {
 	}
 	line, _ := json.Marshal(map[string]any{"at": s.now().UTC(), "code": code, "handle": m.Handle, "claimed_pid": m.PID, "peer_pid": peer, "count": rc.n})
 	rc.last, rc.n = now, 0
-	path := filepath.Join(s.root, "extensions", "amq-squad", "launch", "proof-rejects.log")
-	if st, err := os.Stat(path); err == nil && st.Size()+int64(len(line))+1 > s.lim.logCap {
-		os.Rename(path, path+".1")
-	}
-	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
-		f.Write(append(line, '\n'))
-		f.Close()
-	}
+	s.appendLog(line)
 }
 
 type rejectCount struct {
@@ -486,6 +480,9 @@ func (s *proofServer) markToken(handle, requestID, marker string) error {
 			stale = &staleMark{handle: handle, marker: marker, ownLaunch: s.launchID, ownRequest: requestID, stagedLaunch: rec.LaunchID, stagedRequest: rec.RequestID}
 			return stale
 		}
+		if markCompareHook != nil {
+			markCompareHook(handle) // a test seam: between the compare and the write
+		}
 		rec.Proof.Token = marker
 		return nil
 	})
@@ -512,16 +509,33 @@ func (e *staleMark) Error() string {
 func (s *proofServer) noteStale(e *staleMark) {
 	line, _ := json.Marshal(map[string]any{"at": s.now().UTC(), "code": "token_mark_stale", "handle": e.handle, "marker": e.marker,
 		"launch_id": e.ownLaunch, "request_id": e.ownRequest, "staged_launch_id": e.stagedLaunch, "staged_request_id": e.stagedRequest})
+	s.appendLog(line)
+}
+
+// markCompareHook runs inside markToken's locked rewrite, after the launch
+// id compare and before the write (a test seam; nil in production).
+var markCompareHook func(handle string)
+
+// appendLog appends one line to the launch directory's proof-rejects.log,
+// rotating it to .1 at the cap (fix 3c (c)). Every proof server of every
+// launcher process shares the file, so the stat, the rotation, the open and
+// the append run under one file lock, proof-rejects.log.lock (3.0.1 t16,
+// round 6): a per-server mutex let two writers rotate over each other's .1,
+// drop lines or pass the cap.
+func (s *proofServer) appendLog(line []byte) {
 	path := filepath.Join(s.root, "extensions", "amq-squad", "launch", "proof-rejects.log")
-	s.rejMu.Lock()
-	defer s.rejMu.Unlock()
-	if st, err := os.Stat(path); err == nil && st.Size()+int64(len(line))+1 > s.lim.logCap {
-		os.Rename(path, path+".1")
-	}
-	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
-		f.Write(append(line, '\n'))
-		f.Close()
-	}
+	_ = flock.WithLock(path+".lock", func() error {
+		if st, err := os.Stat(path); err == nil && st.Size()+int64(len(line))+1 > s.lim.logCap {
+			os.Rename(path, path+".1")
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.Write(append(line, '\n'))
+		return err
+	})
 }
 
 // state reports a seat's proof: up (with its identity) or a refusal.
