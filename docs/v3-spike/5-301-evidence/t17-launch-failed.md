@@ -202,10 +202,10 @@ ok  	github.com/omriariav/amq-squad/v3/internal/cli
    own ruling keeps that. So "a second failure with the same reason blocks
    the waiting task" applies to per-seat failures: a seat of an applied
    roster that did not prove, at the start launch and again at the lead's
-   relaunch, and the on-demand per-seat path. The count lives in the
-   scheduler and starts over at a restart; the supervisor's restarts after
-   a `launch_error` are capped at five fast failures (t16), and an AMQ
-   refusal is not restarted at all. The whole-roster failure is now named
+   relaunch, and the on-demand per-seat path. The counts and the blocks
+   survive a restart in the state file (round 2, Codex finding 2); the
+   supervisor's restarts after a `launch_error` are capped at five fast
+   failures (t16), and an AMQ refusal is not restarted at all. The whole-roster failure is now named
    per seat and left in the state file, so status shows it after the exit.
 2. **The wait reason is AMQ's code.** A task that waits for a pool whose
    last launch failed now has that failure's reason as its `wait_reason`
@@ -237,3 +237,74 @@ ok  	github.com/omriariav/amq-squad/v3/internal/cli
 7. Outside the declared files: none. The new files are
    internal/scheduler/launchfail.go, internal/schedproc/liveness_ledger.go
    and internal/cli/status_launchfail.go, with their tests.
+
+## Round 2: the Codex findings on 5b9202fd (2026-10-30)
+
+**Codex 1 (blocker): AMQ's stderr was redacted after it was wrapped.**
+When `amq launch --prepare` or `--apply` printed output that is not JSON,
+`prepareCLI` and `applyCLI` (internal/seatlaunch/run.go) built an error
+"amq launch --apply exited N without an ApplyResult: <stderr>". The
+redaction ran later, on the whole message. `redact.Block` finds a YAML key
+that owns the quoted value on the next line only at a line's start, and
+the prefix buried the key. So stderr shaped as `api_key:` with the quoted
+value on the next line kept the value in the decision, the state file and
+status. Now both functions redact AMQ's raw stderr as one block before
+anything wraps it (`redactAMQOutput`), for the error and for the
+FailureDetail alike. Every reason and detail t17 logs takes AMQ's output
+from those two functions. The redaction in the launcher's event and in the
+scheduler stays, as a second pass. run.go is outside the brief's declared
+files; the lead's message named these functions.
+
+**Codex 2: the failures and the blocks were memory only.** A restart lost
+both. A task blocked on a repeated failure then stayed blocked after a
+later successful launch, because the reset no longer recognised it, and
+the repeat count started over at one. Now the state file carries each
+failure's attempt (`launch_id`) and sequence number (`seq`) and the blocked
+tasks (`launch_blocked`: task, pool, the failure's `seq`).
+`schedproc.Run` restores them before the first tick
+(`launch_failures_restored`, or `launch_failures_unread` when the state file
+cannot be read), and the sequence counter continues from the highest
+restored number. A failure after the restart is therefore later than the
+block, so it is never taken for the lead's retry.
+
+**Codex 3 (nit): the proof read had no deadline.** The liveness check's
+read of the proof file is bounded by `Liveness.ReadBound`. The verb passes
+the tick's share, half the tick split over the roster and at least 10 ms;
+the default is 250 ms. A read past the bound is unknown, never gone. While
+it is still in flight no second read of that seat starts, and its result is
+taken when it lands. The proof is still read once per seat request, so the
+steady cost is unchanged: one start-stamp read per seat per tick.
+
+| Finding | Row | Package |
+| --- | --- | --- |
+| 1, prepare and apply, per-seat path: the value in neither the decision nor the state file | TestInvalidJSONStderrIsRedactedBeforeItIsWrapped (subtests prepare, apply) | seatlaunch |
+| 1, roster path: not in roster_launch_failed, either seat_launch_failed, the error or the state file | TestInvalidJSONRosterFailureIsRedacted | seatlaunch |
+| 1, end to end through `scheduler run` and the real launcher: not in the error, decisions.jsonl, the state file, status --json or the status table | TestInvalidJSONThroughTheVerbLeavesNoCredentialInStatus | cli |
+| 2, a restart between the block and a successful launch recovers the task; a repeat across a restart blocks; a failure after a restart re-blocks and is not a retry | TestLaunchFailuresAndBlocksSurviveARestart | scheduler |
+| 2, Run restores the previous incarnation's state before the first tick | TestRunRestoresTheLaunchFailuresOfThePreviousIncarnation | schedproc |
+| 3, a slow read is unknown, one read in flight, the landed read taken, the tick's share | TestLivenessProofReadIsBounded | schedproc |
+| 3, the verb passes the bound | TestSchedulerRunRefusalLeavesTheReasonForStatus (extended) | cli |
+
+The canaries are built at run time, use the key-then-quoted-value-on-the-
+next-line shape, and the seatlaunch rows check them against
+`redact.RealCredentialShapes`.
+
+Revert check (`revert_check_t17_codex.py` in the job's scratch directory),
+each change undone alone, its rows run:
+
+| Mutation | Rows | Result |
+| --- | --- | --- |
+| prepare's stderr wrapped raw | TestInvalidJSONStderrIsRedactedBeforeItIsWrapped/prepare, TestInvalidJSONThroughTheVerbLeavesNoCredentialInStatus | fail |
+| apply's stderr wrapped raw | TestInvalidJSONStderrIsRedactedBeforeItIsWrapped/apply, TestInvalidJSONRosterFailureIsRedacted | fail |
+| Run restores nothing | TestRunRestoresTheLaunchFailuresOfThePreviousIncarnation | fail |
+| the blocks not restored | TestLaunchFailuresAndBlocksSurviveARestart | fail |
+| the failures not restored | TestLaunchFailuresAndBlocksSurviveARestart | fail |
+| the blocks not written to the state file | TestLaunchFailuresAndBlocksSurviveARestart | fail |
+| the sequence not restored (both restore points) | TestLaunchFailuresAndBlocksSurviveARestart | fail |
+| the proof read unbounded | TestLivenessProofReadIsBounded | fail |
+| a second read while one is in flight | TestLivenessProofReadIsBounded | fail |
+| the verb passes no bound | TestSchedulerRunRefusalLeavesTheReasonForStatus | fail |
+
+The sequence mutation first disabled only the failures' restore point and
+the row passed, because the blocks' restore point also sets the counter.
+With both disabled it fails; the table records that form.
