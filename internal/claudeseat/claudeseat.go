@@ -558,3 +558,18 @@ func WorktreeAllowRules(worktree string) []string {
 	}
 	return out
 }
+
+// OnboardingUnverified is StartupScreensClosed's reason until the seat's
+// config dir is born complete (task t6).
+const OnboardingUnverified = "claude_onboarding_unverified"
+
+// StartupScreensClosed reports whether a Claude seat's config dir rules out
+// every first-run screen (onboarding, folder trust, hook review) that a raw
+// AMQ wake doorbell could answer: a condition of the seat's wake (3.0.1).
+// Nothing is verified yet (Seed is empty), so it reports false with
+// OnboardingUnverified; t6 fills it in with the seeded onboarding, trust and
+// hooks keys verified, and a Claude seat's wake turns on then, never before.
+func StartupScreensClosed(dir string) (bool, string) {
+	_ = dir
+	return false, OnboardingUnverified
+}

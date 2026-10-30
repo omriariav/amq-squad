@@ -2,6 +2,7 @@ package buzz
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -14,22 +15,30 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 )
 
+// syncBuffer is a process output a test reads while it runs; when bell is
+// set it rings after every write (the attach loop's events reach await).
 type syncBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
+	mu   sync.Mutex
+	b    bytes.Buffer
+	bell *bell
 }
 
 func (s *syncBuffer) Write(p []byte) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.Write(p)
+	n, err := s.b.Write(p)
+	s.mu.Unlock()
+	if s.bell != nil {
+		s.bell.ring()
+	}
+	return n, err
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
 // rehearseOwnerRun runs the commands of docs/v3-buzz/owner-run.md steps 0.3
 // to 7 through the amq-squad binary, after the dry-run enrollment, with the
 // throwaway owner key standing in for the owner's phone. It returns the
-// command outputs for the canary grep.
+// command outputs for the canary grep. ctx is the dry run's budget: each
+// wait blocks on what the attach loop prints or serve posts on the relay.
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -40,16 +49,21 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
-func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *wsRelay, owner throwaway, body string) []run {
+func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad, home string, relay *wsRelay, owner throwaway, body string) []run {
 	t.Helper()
 	var runs []run
 	sh := func(name string, argv ...string) run {
-		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+		tree := guardTree(cmd)
 		cmd.Env, cmd.Dir = env, home
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e
 		err := cmd.Run()
 		r := run{name: "rehearsal: " + name, out: o.String(), errOut: e.String()}
+		if ctx.Err() != nil {
+			tree.reap(t, r.name) // before any cleanup removes the scratch HOME
+			t.Fatalf("hung: %s did not finish (%v)\n%s%s", r.name, context.Cause(ctx), r.out, r.errOut)
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			r.rc = ee.ExitCode()
 		} else if err != nil {
@@ -106,9 +120,10 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	}
 	// 4.1, 4.2 the operator session runs, attach (no --lead: the operator)
 	presence("active")
-	attach := exec.Command(amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
+	attach := exec.CommandContext(ctx, amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
 	attach.Env, attach.Dir = env, home
-	var aout, aerr syncBuffer
+	attachTree := guardTree(attach) // the budget TERMs attach and the endpoint it starts
+	aout, aerr := syncBuffer{bell: &relay.bell}, syncBuffer{}
 	attach.Stdout, attach.Stderr = &aout, &aerr
 	if err := attach.Start(); err != nil {
 		t.Fatal(err)
@@ -119,6 +134,7 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 			return
 		}
 		stopped = true
+		attachTree.record(attach.Process.Pid) // attach and the endpoint it started, while attach links them
 		_ = attach.Process.Signal(os.Interrupt)
 		done := make(chan error, 1)
 		go func() { done <- attach.Wait() }()
@@ -128,11 +144,12 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 			_ = attach.Process.Kill()
 			<-done
 		}
+		attachTree.reap(t, "rehearsal: 4.2 remote attach") // nothing it started outlives it
 		runs = append(runs, run{name: "rehearsal: 4.2 remote attach", out: aout.String(), errOut: aerr.String()})
 		t.Logf("rehearsal: 4.2 remote attach output:\n%s%s", aout.String(), aerr.String())
 	}
 	t.Cleanup(stopAttach)
-	waitFor(t, 30*time.Second, "attach starts the endpoint and the agent is online", func() bool {
+	await(ctx, t, &relay.bell, "attach starts the endpoint and the agent is online", func() bool {
 		return strings.Contains(aout.String(), `"action":"started"`) && lastStatus(relay, body) == "online"
 	})
 	// 5.1 the gate
@@ -163,7 +180,7 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	}
 	prefix := strings.TrimPrefix(raised.Data.Gate.Digest, "sha256:")[:16]
 	dm("approve g45-owner-01 release "+prefix, raised.Data.QuestionEventID)
-	waitFor(t, 20*time.Second, "the attach verifies the thread answer", func() bool { return strings.Contains(aout.String(), `"outcome":"approved"`) })
+	await(ctx, t, &relay.bell, "the attach verifies the thread answer", func() bool { return strings.Contains(aout.String(), `"outcome":"approved"`) })
 	t.Logf("MEASURED (rehearsal, local relay): raise to verified through remote attach %s (tick 1 s)", time.Since(tRaise).Round(time.Millisecond))
 	// 5.3
 	if r := sh("5.3 gate status", amqSquad, "gate", "status", "--project", p, "--session", "owner45", "--gate", "g45-owner-01", "--json"); r.rc != 0 || !strings.Contains(r.out, "accepted") {
@@ -175,15 +192,15 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	// the owner sees serve's result row before the next DM: the mailbox
 	// adapter runs one request at a time and refuses a DM that arrives
 	// while one is open as busy (v0.116.2 internal/remote/core/admission.go)
-	waitFor(t, 20*time.Second, "serve's accepted result row", func() bool { return bodyPosted(relay, body, "accepted g45-owner-01 tag") })
+	await(ctx, t, &relay.bell, "serve's accepted result row", func() bool { return bodyPosted(relay, body, "accepted g45-owner-01 tag") })
 	// 6.1 /status is serve's own command (v0.116.2 buzzio/normalize.go): it
-	// never reaches the mailbox
-	dm("/status", "")
-	time.Sleep(time.Second)
+	// never reaches the mailbox; serve's own reply row ends the step
+	statusID := dm("/status", "")
+	await(ctx, t, &relay.bell, "serve's reply to /status", func() bool { return serveAnswered(relay, body, statusID) })
 	// 6.2
 	pingID := dm("@cto owner45 ping from the phone", "")
-	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"app/cto"`) })
-	waitFor(t, 20*time.Second, "serve's routed result row", func() bool { return bodyPosted(relay, body, "routed app/cto") })
+	await(ctx, t, &relay.bell, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"app/cto"`) })
+	await(ctx, t, &relay.bell, "serve's routed result row", func() bool { return bodyPosted(relay, body, "routed app/cto") })
 	r = sh("6.2 amq list (operator mailbox)", "amq", "list", "--root", opRoot, "--me", "user", "--new", "--json")
 	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) {
 		t.Fatalf("operator mailbox: rc %d\n%s", r.rc, r.out)
@@ -194,7 +211,7 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	}
 	// 7 presence off
 	presence("stopped")
-	waitFor(t, 20*time.Second, "offline after the operator session stops", func() bool {
+	await(ctx, t, &relay.bell, "offline after the operator session stops", func() bool {
 		return strings.Contains(aout.String(), `"action":"stopped"`) && lastStatus(relay, body) == "offline"
 	})
 	stopAttach()

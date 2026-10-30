@@ -570,7 +570,11 @@ task's declared files, the protected paths and the size cap, then a
 commit under the harness identity and a fast-forward push of the seat
 branch. A path outside the set comes back to the lead, whose decision is
 <code>task widen ID --files ... --reason ...</code> (no
-<code>--me</code>: the scheduler proves the lead from the process).</li>
+<code>--me</code>: the scheduler proves the lead from the process).
+Binding is the default under a merge grant: the step opens the pushed
+branch's draft PR and binds it to the task with no flag, and
+<code>--no-open-pr</code> is refused while the repository has a merge
+grant.</li>
 <li><strong>Merge.</strong>
 <code>merge-train --request FILE --dry-run</code> plans and checks the
 lead's ordered PR set against the merge grant; the real run uses the

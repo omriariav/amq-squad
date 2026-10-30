@@ -167,7 +167,20 @@ func (f *fakeAMQ) run(_ context.Context, amq string, args []string, stdin []byte
 		if err := json.Unmarshal(stdin, &req); err != nil || req.Validate() != nil {
 			f.t.Fatalf("prepare request: %v", err)
 		}
-		b, _ := json.Marshal(f.prepare)
+		res := f.prepare
+		if res.Preview.Participants == nil {
+			// As the pinned AMQ does (launchapi/prepare.go:200-203): the
+			// preview echoes each runnable participant's execution options.
+			for _, p := range req.Intent.Participants {
+				pv := launchapi.ParticipantPreviewV1{Handle: p.Handle, Runnable: p.Runnable, PlannedOutcome: "create"}
+				if p.Runnable && p.Execution != nil {
+					e := *p.Execution
+					pv.Execution = &e
+				}
+				res.Preview.Participants = append(res.Preview.Participants, pv)
+			}
+		}
+		b, _ := json.Marshal(res)
 		code := 0
 		if f.prepare.Outcome == "action_required" {
 			code = 6

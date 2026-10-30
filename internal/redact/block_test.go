@@ -6,26 +6,69 @@ import (
 	"time"
 )
 
-// v3-5-verifier, item 4 of the third round: redaction is linear in a line,
-// however many values it holds: a 1 MiB single line of repeated name=value
-// assignments redacts within 2 s on the gate host (the bound recorded in the
-// execution log; under the race detector's instrumentation, raceBound).
-func TestBlockIsLinearOnALongLine(t *testing.T) {
-	line := strings.Repeat("password"+"=x ", (1<<20)/11)
+// longLine is n bytes (rounded down to whole pairs) of repeated name=value
+// assignments, built at run time: a credential-named key with a one-letter
+// value, never a credential-shaped literal.
+func longLine(n int) string { return strings.Repeat("password"+"=x ", n/11) }
+
+// timed is one timing of Block on line, and its output.
+func timed(line string) (time.Duration, string) {
 	start := time.Now()
-	done := make(chan string, 1)
-	go func() { done <- Block(line) }()
+	out := Block(line)
+	return time.Since(start), out
+}
+
+// v3-5-verifier, item 4 of the third round: redaction is linear in a line,
+// however many values it holds. The proof is a ratio measured in one
+// process (3.0.1 t7, the reviewer ruling of 2026-10-30), not a wall-clock
+// bound: the 1 MiB line holds 16x the 64 KiB line's values and must take no
+// more than 64x its time (a generous linear factor; a quadratic scan takes
+// about 256x). One warm-up call on the small line comes first. The two
+// sizes are then timed in three interleaved pairs (small, then large), and
+// the best of each size counts. Interleaving spreads a load change that
+// lasts across the run over both sizes. It does not cancel a burst that
+// lands on one timing, so a ratio over the limit gets one more interleaved
+// pair before the test fails, and the log line records the retry.
+//
+// Before (the absolute bound, gate host, 2026-10-30): 1 MiB in 241 ms, and
+// 4.922 s under -race (bounds 2 s and 20 s).
+// After (this ratio, interleaved, same host): 64 KiB 13 ms, 1 MiB 213 ms,
+// 16.5x; under -race 64 KiB 315 ms, 1 MiB 5.058 s, 16.0x.
+func TestBlockIsLinearOnALongLine(t *testing.T) {
+	const limit = 64
+	small, big := longLine(1<<16), longLine(1<<20)
+	Block(small) // warm-up: first-call costs stay out of the small timing
+	var smallBest, bigBest time.Duration
 	var out string
-	select {
-	case out = <-done:
-	case <-time.After(linearBound):
-		t.Fatalf("a 1 MiB line with %d values took over %s", strings.Count(line, "="), linearBound)
+	pair := func(first bool) {
+		s, _ := timed(small)
+		b, o := timed(big)
+		out = o
+		if first || s < smallBest {
+			smallBest = s
+		}
+		if first || b < bigBest {
+			bigBest = b
+		}
 	}
-	took := time.Since(start)
+	for i := 0; i < 3; i++ {
+		pair(i == 0)
+	}
+	retried := false
+	if bigBest > limit*smallBest {
+		pair(false)
+		retried = true
+	}
 	if strings.Contains(out, "=x ") {
 		t.Fatal("a value of the long line was not redacted")
 	}
-	t.Logf("1 MiB, %d values: %s", strings.Count(line, "="), took.Round(time.Millisecond))
+	ratio := float64(bigBest) / float64(smallBest)
+	t.Logf("64 KiB, %d values: %s; 1 MiB, %d values: %s; ratio %.1fx (limit %dx); retried %v",
+		strings.Count(small, "="), smallBest.Round(time.Millisecond),
+		strings.Count(big, "="), bigBest.Round(time.Millisecond), ratio, limit, retried)
+	if bigBest > limit*smallBest {
+		t.Fatalf("16x the input took %.1fx the time (over %dx, after one retry): Block is not linear in a line", ratio, limit)
+	}
 }
 
 // Item 2 of the third round: a quoted YAML scalar on the line after its key

@@ -278,7 +278,10 @@ amq-squad gate status --project . --session issue-96 --json
   protected paths and the size cap, then a commit under the harness identity
   and a fast-forward push of the seat branch. A path outside the set comes back
   to the lead, whose decision is `task widen ID --files ... --reason ...`
-  (no `--me`: the scheduler proves the lead from the process).
+  (no `--me`: the scheduler proves the lead from the process). Binding is
+  the default under a merge grant: the step opens the pushed branch's draft
+  PR and binds it to the task with no flag, and `--no-open-pr` is refused
+  while the repository has a merge grant.
 - **Merge.** `merge-train --request FILE --dry-run` plans and checks the lead's
   ordered PR set against the merge grant; the real run uses the owner's gh,
   outside any seat. Seats never merge.

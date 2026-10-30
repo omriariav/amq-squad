@@ -1,6 +1,7 @@
 package buzz
 
 import (
+	"context"
 	"encoding/hex"
 	"io/fs"
 	"net"
@@ -44,9 +45,7 @@ func TestOwnerSignerCrashLeavesNoKey(t *testing.T) {
 	pm, shimDir := realTempDir(t), realTempDir(t)
 	bin := filepath.Join(home, "bin")
 	amqSquad := filepath.Join(bin, "amq-squad")
-	if out, err := exec.Command("go", "build", "-o", amqSquad, "../../cmd/amq-squad").CombinedOutput(); err != nil {
-		t.Fatalf("build amq-squad: %v\n%s", err, out)
-	}
+	buildOffline(t, amqSquad)
 	script, _ := filepath.Abs("../../docs/v3-buzz/enroll.sh")
 
 	// a relay that accepts and never answers: the policy publication hangs
@@ -104,9 +103,15 @@ func TestOwnerSignerCrashLeavesNoKey(t *testing.T) {
 		"BUZZ_NO_CLIPBOARD=1", "BUZZ_UP_SETTLE=1", "AMQ_NO_UPDATE_CHECK=1")
 	t.Cleanup(func() { stopPID(filepath.Join(home, ".amq-squad", "buzz", "enroll-up.pid")) })
 
-	first := exec.Command("bash", script, npub, relayURL)
+	firstCtx := budget(t) // ends a hung phase A run only
+	first := exec.CommandContext(firstCtx, "bash", script, npub, relayURL)
 	first.Env = env
+	firstTree := guardTree(first)
 	out1, _ := first.CombinedOutput()
+	if firstCtx.Err() != nil {
+		firstTree.reap(t, "phase A") // before any cleanup removes the scratch HOME
+		t.Fatalf("hung: phase A did not finish (%v)\n%s", context.Cause(firstCtx), out1)
+	}
 	shareTxt, _ := os.ReadFile(filepath.Join(home, ".amq-squad", "buzz", "share.txt"))
 	body := ""
 	for _, line := range strings.Split(string(shareTxt), "\n") {
@@ -118,9 +123,11 @@ func TestOwnerSignerCrashLeavesNoKey(t *testing.T) {
 		t.Fatalf("phase A wrote no body:\n%s", out1)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second) // ptyRun's former bound; this test has no serve loop
+	defer cancel()
 	done := make(chan run, 1)
 	go func() {
-		done <- ptyRun(t, "signer killed mid-publish", wrapper, []string{npub, relayURL}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD=cat '"+keyFile+"'"), body[:8]+"\n")
+		done <- ptyRun(ctx, t, "signer killed mid-publish", wrapper, []string{npub, relayURL}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD=cat '"+keyFile+"'"), body[:8]+"\n")
 	}()
 	// the shim's pid file appears when the signer starts; the body prefix is
 	// typed at 4 s, the key read and the grants signed, then the publish hangs

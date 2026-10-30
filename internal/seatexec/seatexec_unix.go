@@ -196,6 +196,15 @@ func prepare(o Options) (execPlan, error) {
 		if code, detail := claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
 			return plan, refusef(code, "%s", detail)
 		}
+		// The launch admitted an AMQ wake for this seat from a scratch copy
+		// of its config dir (3.0.1); the real dir must carry the guard deny
+		// of AskUserQuestion and ExitPlanMode too, or a doorbell could
+		// answer a dialog.
+		if rec.WakeRequired {
+			if ok, why := ClaudeDialogGuardWired(dir); !ok {
+				return plan, refusef(ClaudeDialogGuardMissing, "the launch admitted an AMQ wake for this seat, but its config dir does not run the guard deny of %s: %s", strings.Join(SeatDeniedDialogTools, " and "), why)
+			}
+		}
 		// The worktree's settings files still merge into the seat's config.
 		if rules := claudeseat.WorktreeAllowRules(firstNonEmpty(rec.Worktree, rec.CWD)); len(rules) > 0 && rec.AllowRules != "permit" {
 			return plan, refusef(claudeseat.AllowRulesPresent, "the worktree's Claude settings carry permission allow rules, which would run a call unguarded when a hook fails open: %s", strings.Join(rules, "; "))
