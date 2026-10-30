@@ -102,8 +102,21 @@ func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
 			f.stage()
 		}},
-		"canonical root trusted, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
+		"another entry trusted, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
 			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true},"/repo":{"hasTrustDialogAccepted":true}}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"canonical repository root entry, digest re-recorded": {ClaudeTrustRootRefused, func(f *fixture, dir string) {
+			// f.wt becomes a linked worktree of <base>/repo after the launch;
+			// seat-exec finds the root at check time too.
+			repo := filepath.Join(f.base, "repo")
+			admin := filepath.Join(repo, ".git", "worktrees", "wt1")
+			os.MkdirAll(admin, 0o700)
+			write(t, filepath.Join(admin, "commondir"), "../..\n", 0o600)
+			write(t, filepath.Join(admin, "gitdir"), filepath.Join(f.wt, ".git")+"\n", 0o600)
+			write(t, filepath.Join(f.wt, ".git"), "gitdir: "+admin+"\n", 0o600)
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true},"`+repo+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
 			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
 			f.stage()
 		}},

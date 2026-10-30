@@ -225,6 +225,53 @@ func recordedTrustKeys(dir string) ([]string, error) {
 	return recordedTrust(raw), nil
 }
 
+// recordedRootKeys are the canonical root keys the launch recorded beside
+// the worktree, together with the root of the recorded worktree as it is now
+// (a worktree whose layout changed after the launch is still caught).
+func recordedRootKeys(dir string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(keys []string) {
+		for _, k := range keys {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, WorktreeFile)); err == nil {
+		var w struct {
+			Root []string `json:"canonical_root"`
+		}
+		if json.Unmarshal(raw, &w) == nil {
+			add(w.Root)
+		}
+	}
+	if worktree, err := recordedWorktree(dir); err == nil && worktree != "" {
+		own, _ := recordedTrustKeys(dir)
+		add(rootKeys(worktree, own))
+	}
+	return out
+}
+
+// trustedRoot names the canonical-root entries a .claude.json carries
+// (whatever they hold: an entry there is refused, not only its trust).
+func trustedRoot(dir string) []string {
+	cfg, err := readGlobalConfig(dir)
+	if err != nil {
+		return nil // firstRunGaps names an unreadable file
+	}
+	projects, _ := cfg[projectsKey].(map[string]any)
+	var out []string
+	for _, k := range recordedRootKeys(dir) {
+		if _, ok := projects[k]; ok {
+			out = append(out, fmt.Sprintf("%s[%q]", projectsKey, k))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // readGlobalConfig reads the config dir's .claude.json as an object.
 func readGlobalConfig(dir string) (map[string]any, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, GlobalConfigFile))

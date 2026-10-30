@@ -20,7 +20,9 @@ import (
 // when its plugin is not enabled or does not run the guard on PreToolUse,
 // claude_onboarding_missing when the dir is not past first-run onboarding
 // (no hasCompletedOnboarding or no theme), claude_trust_missing when it does
-// not record the seat's worktree as trusted, claude_config_unexpected when
+// not record the seat's worktree as trusted, claude_trust_root_refused when
+// its .claude.json has an entry for the worktree's canonical repository
+// root (sibling-worktree trust), claude_config_unexpected when
 // its .claude.json carries another project's entry or a permission input
 // (anything beyond the launch's keys and Claude Code's bookkeeping), and
 // claude_allow_rules_present when the worktree's .claude/settings.json or
@@ -35,6 +37,7 @@ const (
 	ClaudeOnboardingMissing  = claudeseat.OnboardingMissing
 	ClaudeTrustMissing       = claudeseat.TrustMissing
 	ClaudeConfigUnexpected   = claudeseat.ConfigUnexpected
+	ClaudeTrustRootRefused   = claudeseat.TrustRootRefused
 )
 
 // dropVar removes every entry of one variable from an environment.

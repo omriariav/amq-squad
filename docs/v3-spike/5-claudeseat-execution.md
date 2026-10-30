@@ -11,7 +11,7 @@ Branch `v3-301-t6`, from `v3` at a1a67151. Reviewer ruling 2026-10-30: the seat 
 | onboarding complete | `.claude.json` | `"hasCompletedOnboarding": true` |
 | theme | `settings.json` | `"theme": "dark"` |
 | hooks plugin enabled | `settings.json` and `plugins/` | `"enabledPlugins": {"amq-squad@amq-squad": true}`, with the plugin installed at user scope from the embedded files (unchanged since 2b-2 milestone B) |
-| worktree trusted | `.claude.json` | `"projects": {"<worktree>": {"hasTrustDialogAccepted": true}}`, under the path as recorded and, when it differs, under its symlink-resolved form |
+| worktree trusted | `.claude.json` | `"projects": {"<worktree>": {"hasTrustDialogAccepted": true}}`, under the path as recorded and, when it differs, under its symlink-resolved form, each NFC-normalized (fix round) |
 
 The worktree pointer (`amq-squad-worktree.json`, a managed file) now also records the trust keys (`"trusted": [...]`), so the digest reads the keys the launch wrote and does not depend on the filesystem at check time.
 
@@ -30,9 +30,26 @@ The first pass hashed and checked only the seeded values. A dir with the seeded 
 - **Check is an allowlist.** It runs only before exec, on the dir exactly as the launch wrote it, and it refuses `claude_config_unexpected` (new) for any `.claude.json` key outside three groups. The first is the launch's own keys: `hasCompletedOnboarding`, and `projects` with the recorded trust keys only, each holding `hasTrustDialogAccepted`. The second is the binary's top-level bookkeeping set `pI`. The third is its project-entry bookkeeping set `kI`. So another project's entry is refused whatever it holds, and so is any permission input at either level. The detail names keys only, never a value.
 - **The digest covers trust and permission inputs anywhere.** It reads `hasCompletedOnboarding`, the recorded keys' trust, and the non-default permission inputs (listed below) of every project entry and of the top level. An entry that gains trust or a permission input at run time moves the digest, under any project key. Defaults (null, false, empty string, empty list or map, no approved key) and every other key are left out. Maps whose values may hold a secret enter by key names only. A stored key or a key helper enters as set or not set, and approved API keys as a count. No credential value is hashed or printed.
 
-The reviewer asked for the digest to cover the set of `projects` keys itself, so that any added entry moves it. I did not do that literally. Claude Code 2.1.314 keys its own project state on the canonical repository root, which differs from a seat's worktree. Its project-config reader falls back to the default entry `fEe` (`allowedTools:[]`, `mcpServers:{}`, `hasTrustDialogAccepted:!1`, and so on), so its first write at run time can create that root entry with defaults only. A digest over the bare key set would then quarantine every seat (`claude_config_changed`) at its first context call. Instead the digest covers the set of `projects` keys that carry trust or a permission input. Check still refuses any extra entry before exec. If the live row shows that 2.1.314 never writes such an entry, the digest can be tightened to the bare key set.
+The reviewer asked for the digest to cover the set of `projects` keys itself, so that any added entry moves it. I did not do that literally. Claude Code 2.1.314 keys its own project state on the canonical repository root, which differs from a seat's worktree. Its project-config reader falls back to the default entry `fEe` (`allowedTools:[]`, `mcpServers:{}`, `hasTrustDialogAccepted:!1`, and so on), so its first write at run time can create that root entry with defaults only. A digest over the bare key set would then quarantine every seat (`claude_config_changed`) at its first context call. Instead the digest covers the set of `projects` keys that carry trust or a permission input. Check still refuses any extra entry before exec.
 
-`seatexec` exports the codes as `ClaudeOnboardingMissing`, `ClaudeTrustMissing` and `ClaudeConfigUnexpected`. No doctor check was added: seat-exec refuses by name before exec, and every Claude seat's dir is written by the launch, so there is nothing on the host for doctor to inspect ahead of a launch.
+The reviewer upheld this departure (2026-10-30) on two conditions.
+
+- **(a) The live row records the root entry.** The owner-run row below records whether the runtime creates the canonical-root entry, and with which keys. If it never appears, the digest tightens to the bare key set. That is a 3.0.x line in `docs/v3-followups.md`.
+- **(b) A root entry never reaches a second exec.** A seat's config dir is born fresh at every launch, so Check before exec only ever sees what the harness seeded. A dir in which the runtime created a root entry is never exec'd again. In the code at this commit:
+  - Each launch mints a new launch ID (`internal/seatlaunch/run.go:219`, `launchID := newLaunchID()`). The config dir is keyed by it (`internal/claudeseat/claudeseat.go:204`, `Dir(root, handle, launchID)`) and written at `run.go:283`.
+  - `Write` creates the dir with `os.Mkdir`, which fails when it exists (`claudeseat.go:223`). Every file is opened `O_EXCL` (`claudeseat.go:314`). So a launch never reuses or rewrites a dir.
+  - Re-running seat-exec on the same launch, and so on the same dir, cannot exec. Check runs before the proof (`internal/seatexec/seatexec_unix.go:196`, proof at `:252`). Its allowlist refuses whatever the runtime wrote that the harness did not seed, such as `userID` or another entry (`claude_config_unexpected`), and refuses a root entry by name (`claude_trust_root_refused`). Behind that, the proof token is single-use. The launcher marks it consumed on the accepted proof (`internal/seatlaunch/proof_unix.go:392`). seat-exec refuses a consumed token (`seatexec_unix.go:328`, `proof_ticket_consumed`), and the launcher refuses a second proof (`proof_unix.go:345`, `proof_replayed`).
+  - A relaunch of the same handle is a new `amq-squad launch`. It mints a new launch ID, so it gets a new dir and never reuses the old one.
+  - Every call of Check is inside seat-exec, before exec (`seatexec_unix.go:196`, `:262`, `:369`). After exec, the hook's context call (`internal/cli/hook_context.go:94`) and the exit check (`internal/seatcommit/commit.go:209`) compare only the digest. The digest ignores a defaults-only root entry (`TestBookkeepingKeysPassAndKeepTheDigest`).
+  - So refusing a defaults-only root entry can never quarantine a seat after a clean run, under this name or any other. Check only ever sees a dir that no Claude Code has run in. Refusing both a defaults-only and a trusted root entry is therefore right.
+  - The second branch of condition (b), an allowlist that admits a defaults-only root entry on a relaunch, is not what the code does, and no row admits one.
+  - The rows pin the first branch. `TestEveryLaunchIsBornFresh` (internal/claudeseat): a used launch dir with a root entry, defaults-only or trusted, cannot be written again, and Check refuses it by name; the next launch's dir is fresh and passes. `TestASecondExecOnAUsedConfigDirNeverExecs` (internal/seatexec): after a first exec, a second seat-exec on the same launch never execs. With the runtime's state in the dir it stops at `claude_config_unexpected`. With only the seed but the token consumed, it stops at `proof_ticket_consumed`.
+
+Reviewer addition: an entry for the worktree's canonical repository root is refused under its own reason, `claude_trust_root_refused`, whatever the entry holds. This is the key 2.1.314 checks first, and trust there would extend to every sibling worktree. The launch derives the root the way the binary does (`Rt` and `sr`): the worktree's `.git` file gives `gitdir: <common>/worktrees/<name>`, that gitdir's `commondir` gives `<common>`, and the root is `<common>`'s parent when `<common>` is a `.git` directory. The launch records the root's NFC keys beside the worktree (`"canonical_root"`, digested). Check refuses an entry under a recorded key, or under the root as it derives it again at check time. A main checkout (a `.git` directory) has no separate root. Check runs this before the general `claude_config_unexpected` rule.
+
+NFC (fix round, should-fix). Trust keys are NFC-normalized. The 2.1.314 trust walk keys on `Nn(ut(cwd))`, and the strings define `function Nn(t){return t.normalize("NFC")}`, so a decomposed key would never match. The headless runner likewise writes `_e.normalize("NFC")` forms. This widened the declared files by `go.mod`, approved by the lead on 2026-10-30: one new require line, `golang.org/x/text v0.43.0`, for `unicode/norm`. It was added offline (`GOPROXY=off`). `go.sum` is byte-identical, since it already carried v0.43.0, and `go mod verify` reports all modules verified. `go mod tidy -diff` lists the same 41 stale `go.sum` lines before and after the change, so they are pre-existing and left alone.
+
+`seatexec` exports the codes as `ClaudeOnboardingMissing`, `ClaudeTrustMissing`, `ClaudeTrustRootRefused` and `ClaudeConfigUnexpected`. No doctor check was added: seat-exec refuses by name before exec, and every Claude seat's dir is written by the launch, so there is nothing on the host for doctor to inspect ahead of a launch.
 
 ## Field names and their sources
 
@@ -73,10 +90,15 @@ The strings show what each gate reads. They do not show the whole runtime. These
 | a worktree reached through a symlink is trusted under both keys, and the resolved key's fact is in the digest | `TestWriteTrustsTheResolvedWorktreeToo` (internal/claudeseat) |
 | the digest covers each fact (onboarding false, trust dropped, `.claude.json` removed, theme dropped, plugin disabled); Claude Code's own `.claude.json` keys do not move it | `TestDigestCoversTheFirstRunFacts`, `TestDigestCoversOnlyTheManagedFiles` (internal/claudeseat) |
 | Check names the missing fact even when the launch recorded the incomplete dir's digest | `TestCheckNamesTheMissingFirstRunFact` (internal/claudeseat) |
-| Check refuses `claude_config_unexpected` for another project's entry (the canonical root trusted, or defaults only) and for each permission input (`allowedTools` at the top level and in the worktree's entry, local and user MCP servers, a global env, a stored key, `permissions`); the detail carries no value | `TestCheckRefusesTrustOrPermissionsBeyondTheLaunch` (internal/claudeseat) |
-| bookkeeping keys (`pI`, `kI`) pass Check and keep the digest, and so do the defaults entry for the canonical root and Claude Code's other state (`userID`) | `TestBookkeepingKeysPassAndKeepTheDigest` (internal/claudeseat) |
+| Check refuses `claude_config_unexpected` for another project's entry (trusted, or defaults only) and for each permission input (`allowedTools` at the top level and in the worktree's entry, local and user MCP servers, a global env, a stored key, `permissions`); the detail carries no value | `TestCheckRefusesTrustOrPermissionsBeyondTheLaunch` (internal/claudeseat) |
+| bookkeeping keys (`pI`, `kI`) pass Check and keep the digest; a defaults-only entry of the kind Claude Code may write at run time for the canonical root, and its other state (`userID`), keep the digest | `TestBookkeepingKeysPassAndKeepTheDigest` (internal/claudeseat) |
 | trust or any permission input added at run time, in any project entry or at the top level, moves the digest (13 cases) | `TestDigestCoversTrustAndPermissionsAnywhere` (internal/claudeseat) |
-| seat-exec refuses `claude_config_unexpected` for the canonical root trusted and for `allowedTools`, with the digest re-recorded | `TestClaudeSeatConfigDirIsChecked` (internal/seatexec), two more cases |
+| seat-exec refuses `claude_config_unexpected` for another entry and for `allowedTools`, with the digest re-recorded | `TestClaudeSeatConfigDirIsChecked` (internal/seatexec), two more cases |
+| the canonical root's entry is refused as `claude_trust_root_refused`, whether it is trusted or holds defaults only; the launch records the root; a stray entry stays `claude_config_unexpected`; a main checkout has no root | `TestCanonicalRootEntryIsRefusedByName` (internal/claudeseat) |
+| seat-exec refuses `claude_trust_root_refused` when the worktree becomes a linked worktree after the launch and its root has an entry (the root derived at check time) | `TestClaudeSeatConfigDirIsChecked/canonical_repository_root_entry,_digest_re-recorded` (internal/seatexec) |
+| a worktree path in decomposed Unicode is trusted under its NFC key only, and Check passes | `TestTrustKeysAreNFC` (internal/claudeseat) |
+| condition (b): a used launch dir is never rewritten and is refused by name; the next launch is fresh | `TestEveryLaunchIsBornFresh` (internal/claudeseat) |
+| condition (b): a second seat-exec on a used dir never execs | `TestASecondExecOnAUsedConfigDirNeverExecs` (internal/seatexec) |
 | seat-exec refuses a dir missing any one fact (`claude_onboarding_missing` twice, `claude_trust_missing`, `claude_hooks_missing`), and a trust dropped after the launch is `claude_permission_mismatch` by digest; no exec in any case | `TestClaudeSeatConfigDirIsChecked` (internal/seatexec), five new cases |
 
 Revert check, each change reverted alone, with `go test ./internal/claudeseat ./internal/seatexec`:
@@ -89,16 +111,23 @@ Revert check, each change reverted alone, with `go test ./internal/claudeseat ./
 | the first-run entry in the digest | `TestDigestCoversTheFirstRunFacts` (onboarding false, trust dropped, `.claude.json` removed), `TestWriteTrustsTheResolvedWorktreeToo`, `TestClaudeSeatConfigDirIsChecked/trust_dropped_after_the_launch` |
 | the onboarding check | `TestCheckNamesTheMissingFirstRunFact` (three cases), `TestClaudeSeatConfigDirIsChecked` (two cases) |
 | the trust check | `TestCheckNamesTheMissingFirstRunFact` (two cases), `TestClaudeSeatConfigDirIsChecked` (one case) |
-| fix round: the extra-entry rule in Check | `TestCheckRefusesTrustOrPermissionsBeyondTheLaunch/canonical_root_trusted`, `TestClaudeSeatConfigDirIsChecked/canonical_root_trusted,_digest_re-recorded` |
+| fix round: the extra-entry rule in Check | `TestCheckRefusesTrustOrPermissionsBeyondTheLaunch/another_entry_trusted`, `TestClaudeSeatConfigDirIsChecked/another_entry_trusted,_digest_re-recorded` |
 | fix round: the top-level key rule in Check | `TestCheckRefusesTrustOrPermissionsBeyondTheLaunch` (top-level allowedTools, stored key, user MCP server, global env, permissions), `TestClaudeSeatConfigDirIsChecked/allowedTools,_digest_re-recorded` |
 | fix round: the entry key rule in Check | `TestCheckRefusesTrustOrPermissionsBeyondTheLaunch` (worktree allowedTools, local MCP server) |
 | fix round: the unexpected-config call in Check | `TestCheckRefusesTrustOrPermissionsBeyondTheLaunch` (all nine cases), `TestClaudeSeatConfigDirIsChecked` (two cases) |
 | fix round: the `pI` allowance, the `kI` allowance | `TestBookkeepingKeysPassAndKeepTheDigest` (each) |
 | fix round: other project entries in the digest | `TestDigestCoversTrustAndPermissionsAnywhere` (seven project-level cases) |
 | fix round: top-level inputs in the digest | `TestDigestCoversTrustAndPermissionsAnywhere` (six top-level cases) |
+| fix round: NFC normalization of the trust keys | `TestTrustKeysAreNFC` |
+| fix round: recording the root at launch | `TestCanonicalRootEntryIsRefusedByName` (both cases) |
+| fix round: deriving the root | `TestCanonicalRootEntryIsRefusedByName` (both cases), `TestClaudeSeatConfigDirIsChecked/canonical_repository_root_entry,_digest_re-recorded` |
+| fix round: the root refusal in Check | the same three cases |
+| condition (b): a fresh dir per launch (`os.Mkdir` and `O_EXCL` both reverted) | `TestEveryLaunchIsBornFresh` (both cases) |
+| condition (b): the consumed-token refusal | `TestASecondExecOnAUsedConfigDirNeverExecs/the_seed_only,_token_consumed` |
+| condition (b): Check's allowlist | `TestASecondExecOnAUsedConfigDirNeverExecs/Claude_Code's_own_state_in_the_dir` |
 | fix round: hashing the whole file instead of the projection | `TestBookkeepingKeysPassAndKeepTheDigest`, `TestDigestCoversOnlyTheManagedFiles`, `TestDigestCoversTheFirstRunFacts` |
 
-No test reaches the network or touches the real HOME. The new rows use temp dirs and files only, and seat-exec's fixture mocks the exec. The pre-existing live probe row (`TestModeProbeOnTheInstalledClaude`) runs the real Claude Code only under `AMQ_SQUAD_LIVE=1`, with a scratch HOME, config dir and cwd. The `.claude.json` fixtures carry no credential-shaped value. The canary in the refusal row (`canary-not-a-secret-value`) is a plain word, not a credential shape.
+No test reaches the network or touches the real HOME. The new rows use temp dirs and files only, and seat-exec's fixture mocks the exec. The pre-existing live probe row (`TestModeProbeOnTheInstalledClaude`) runs the real Claude Code only under `AMQ_SQUAD_LIVE=1`, with a scratch HOME, config dir and cwd. The `.claude.json` fixtures carry no credential-shaped value. The canary in the refusal row (`canary-not-a-secret-value`) is a plain word, not a credential shape. Nit 4: seat-exec's pre-existing token canary was `sk-ant-oat01-CANARY-2b2b-9f3c`, an OAuth-token prefix. It is now `canary-claude-token-2b2b-9f3c`, a one-line rename. Every row compares the canary by substring and `ReadToken` checks no shape, so the rows keep their meaning. Neither literal matches `redact.RealCredentialShapes`.
 
 ## Owner-run row (3.0.1 owner run)
 
@@ -128,6 +157,8 @@ D=$(ls -dt "$ROOT"/extensions/amq-squad/launch/t6probe/claude-config/* | head -1
 jq '{onboarded: .hasCompletedOnboarding, trusted: .projects["/Users/omri/scratch-t6-live"].hasTrustDialogAccepted}' "$D/.claude.json"
 jq '{theme, plugin: .enabledPlugins["amq-squad@amq-squad"], mode: .permissions.defaultMode, allow: .permissions.allow}' "$D/settings.json"
 tail -n 3 "$ROOT/extensions/amq-squad/claude-config/t6probe.jsonl"   # hook reports: digest and ok
+jq '.projects | keys' "$D/.claude.json"                                # which project entries exist
+jq '.projects["/Users/omri/code/amq-squad"] | if . == null then "absent" else keys end' "$D/.claude.json"   # the root entry's key names only
 amq-squad status --session t6-live --json
 ```
 
@@ -137,7 +168,8 @@ Pass when all of these hold:
 - The first `jq` prints `true` and `true`.
 - The second prints `"dark"`, `true`, the launch's mode and `[]`.
 - The hook reports have at least one line with `"ok":true` and a `sha256:` digest equal to the launch record's `claude_config_sha256`.
-- `status` shows no quarantine for `t6probe`. In particular there is no `claude_hooks_silent` and no `claude_config_changed`. A `claude_config_changed` here answers open items 1 or 2 above.
+- `status` shows no quarantine for `t6probe`.
+- Record, for reviewer condition (a), whether Claude Code created a `projects` entry for the canonical repository root, `/Users/omri/code/amq-squad`, and with which keys. Run the two `jq` lines below after the seat's first turn and again at its exit. If the entry never appears, apply the 3.0.x line in `docs/v3-followups.md`, which tightens the digest to the bare key set. In particular there is no `claude_hooks_silent` and no `claude_config_changed`. A `claude_config_changed` here answers open items 1 or 2 above.
 
 Fail when any screen appears, when seat-exec refuses (record the reason code), or when a quarantine appears. Record the screen text or the reason code with the Claude Code version, then stop.
 

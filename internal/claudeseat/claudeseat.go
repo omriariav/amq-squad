@@ -47,6 +47,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/plugins"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Reason codes seat-exec refuses with.
@@ -75,6 +76,11 @@ const (
 	// project's entry (trust beyond the seat's worktree) or a permission
 	// input such as allowedTools (3.0.1 t6 fix round).
 	ConfigUnexpected = "claude_config_unexpected"
+	// TrustRootRefused: the seat's .claude.json has an entry for the
+	// worktree's canonical repository root, the key 2.1.314 checks first
+	// for trust; trust there would extend to every sibling worktree (3.0.1
+	// t6 fix round, reviewer addition).
+	TrustRootRefused = "claude_trust_root_refused"
 )
 
 // ConfigDrift reports whether a Claude seat's config dir differs from the
@@ -118,13 +124,80 @@ const (
 
 // trustKeys are the projects keys the launch records the worktree under: the
 // path as recorded and, when it differs, its symlink-resolved form (Claude
-// Code's own headless runner writes both).
+// Code's own headless runner writes both), each NFC-normalized, as 2.1.314's
+// trust walk normalizes the cwd (`Nn(t){return t.normalize("NFC")}`).
 func trustKeys(worktree string) []string {
-	keys := []string{filepath.Clean(worktree)}
-	if real, err := filepath.EvalSymlinks(worktree); err == nil && real != keys[0] {
-		keys = append(keys, real)
+	return pathKeys(worktree)
+}
+
+// pathKeys is a path's NFC form and, when it differs, its symlink-resolved
+// NFC form.
+func pathKeys(p string) []string {
+	keys := []string{norm.NFC.String(filepath.Clean(p))}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		if r := norm.NFC.String(real); r != keys[0] {
+			keys = append(keys, r)
+		}
 	}
 	return keys
+}
+
+// canonicalRoot is the main repository a git worktree belongs to, the way
+// 2.1.314 finds it (its Rt and sr): the worktree's .git file names a gitdir
+// under <common>/worktrees/, the gitdir's commondir names <common>, and the
+// root is <common>'s parent when <common> is a .git directory. "" when the
+// worktree is a main checkout (a .git directory), not a git worktree, or the
+// layout does not check out.
+func canonicalRoot(worktree string) string {
+	raw, err := os.ReadFile(filepath.Join(worktree, ".git"))
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return ""
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(worktree, gitdir)
+	}
+	gitdir = filepath.Clean(gitdir)
+	c, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil {
+		return ""
+	}
+	common := strings.TrimSpace(string(c))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitdir, common)
+	}
+	common = filepath.Clean(common)
+	if filepath.Dir(gitdir) != filepath.Join(common, "worktrees") {
+		return ""
+	}
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return common
+}
+
+// rootKeys are the projects keys of the worktree's canonical repository
+// root that are not the worktree's own keys (none for a main checkout).
+func rootKeys(worktree string, own []string) []string {
+	root := canonicalRoot(worktree)
+	if root == "" {
+		return nil
+	}
+	mine := map[string]bool{}
+	for _, k := range own {
+		mine[k] = true
+	}
+	var out []string
+	for _, k := range pathKeys(root) {
+		if !mine[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // Dir is the config dir of one launch of a seat.
@@ -178,7 +251,7 @@ func Write(dir, permissionMode, worktree string, now time.Time) (Written, error)
 		// The trust keys are recorded with it, so the digest reads the same
 		// keys the launch wrote.
 		keys := trustKeys(worktree)
-		files[WorktreeFile] = map[string]any{"worktree": worktree, "trusted": keys}
+		files[WorktreeFile] = map[string]any{"worktree": worktree, "trusted": keys, "canonical_root": rootKeys(worktree, keys)}
 		projects := map[string]any{}
 		for _, k := range keys {
 			projects[k] = map[string]bool{trustKey: true}
@@ -578,6 +651,9 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 	}
 	if len(trust) > 0 {
 		return TrustMissing, "the seat's Claude config dir does not trust its worktree: " + strings.Join(trust, "; ")
+	}
+	if roots := trustedRoot(dir); len(roots) > 0 {
+		return TrustRootRefused, "the seat's " + GlobalConfigFile + " has an entry for the worktree's canonical repository root, which Claude Code checks first and which would trust every sibling worktree: " + strings.Join(roots, "; ")
 	}
 	if extra := unexpectedConfig(dir); len(extra) > 0 {
 		return ConfigUnexpected, "the seat's " + GlobalConfigFile + " carries what the launch did not write and Claude Code does not keep as bookkeeping: " + strings.Join(extra, "; ")
