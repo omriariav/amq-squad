@@ -1,9 +1,12 @@
 package schedproc
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -164,5 +167,103 @@ func TestAdoptedRosterSeatIsCheckedByItsProofsRequest(t *testing.T) {
 	}
 	if strings.Join(lv.asked, ",") != "a@req-L1-a" {
 		t.Fatalf("asked %v", lv.asked)
+	}
+}
+
+// Codex finding 2 on t17, the process: Run restores the previous
+// incarnation's launch failures and blocks from its state file before the
+// first tick, so a task blocked on a repeated failure is reset by the
+// roster launch at start once its seat comes up. Reverted (no restore), the
+// task stays blocked.
+func TestRunRestoresTheLaunchFailuresOfThePreviousIncarnation(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	store, _ := task.Open(root)
+	tk, _ := store.Add(task.AddInput{Title: "work", Class: "implement", Pool: &gptPool}, time.Now())
+	if _, err := store.Block(tk.ID, "", "no_proof", "the launch of seat x1 failed 2 times in a row", task.RouteLead, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	prev := scheduler.State{UpdatedAt: time.Now(), Seats: []scheduler.SeatView{}, Refused: []scheduler.RefusedSeat{},
+		LaunchFailures: []scheduler.LaunchFailure{{Pool: gptPool, Handle: "x1", Stage: "seat_not_up", ReasonCode: "no_proof", Count: 2, LaunchID: "L2", Seq: 2, At: time.Now()}},
+		LaunchBlocked:  []scheduler.LaunchBlockedTask{{TaskID: tk.ID, Pool: gptPool.Key(), Seq: 2}}}
+	raw, _ := json.Marshal(prev)
+	if err := os.MkdirAll(filepath.Dir(scheduler.StatePathFor(root)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scheduler.StatePathFor(root), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, log := &rosterLauncher{}, &lockedBuf{}
+	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
+		Config: scheduler.Config{MaxSeats: 2, Roster: []scheduler.RosterSeat{{Handle: "x1", Pool: gptPool, Worktree: "/w/x1"}}}},
+		l, func(ds []scheduler.Decision) bool { return decided(ds, "dispatched") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := log.String()
+	for _, want := range []string{`"kind":"launch_failures_restored"`, `"kind":"task_reset","task_id":"` + tk.ID + `"`, `"kind":"dispatched","task_id":"` + tk.ID + `","seat":"x1"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the log lacks %s:\n%s", want, text)
+		}
+	}
+}
+
+// Codex finding 3 on t17: the proof file read is bounded. A read past the
+// bound is unknown (an error, never gone), a second check while it is
+// still in flight starts no second read, and the read's result is taken
+// once it lands. Reverted (an unbounded read), the check blocks the tick.
+func TestLivenessProofReadIsBounded(t *testing.T) {
+	root := t.TempDir()
+	if err := launch.WriteProof(root, launch.ProofEntry{Handle: "a", RequestID: "req-1", PID: os.Getpid(), Start: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	reads := 0
+	var mu sync.Mutex
+	prev := readProofOf
+	readProofOf = func(root, handle string) (launch.ProofEntry, error) {
+		mu.Lock()
+		reads++
+		mu.Unlock()
+		<-release
+		return prev(root, handle)
+	}
+	t.Cleanup(func() { readProofOf = prev })
+	l := &Liveness{Root: root, ReadBound: 20 * time.Millisecond}
+	check := func() (bool, error) {
+		type answer struct {
+			gone bool
+			err  error
+		}
+		done := make(chan answer, 1)
+		go func() { g, _, err := l.SeatProcess("a", "req-1"); done <- answer{g, err} }()
+		select {
+		case a := <-done:
+			return a.gone, a.err
+		case <-time.After(2 * time.Second):
+			t.Fatal("the liveness check did not return within 2 s: the proof read is unbounded")
+			return false, nil
+		}
+	}
+	if gone, err := check(); gone || err == nil || !strings.Contains(err.Error(), "was not read within 20ms") {
+		t.Fatalf("a slow read: gone %v err %v", gone, err)
+	}
+	if gone, err := check(); gone || err == nil || !strings.Contains(err.Error(), "still being read") {
+		t.Fatalf("while the read is in flight: gone %v err %v", gone, err)
+	}
+	// The read lands and is taken: the proof names this process with another
+	// stamp ("s"), so the seat is gone (a reused pid). The bound is widened so
+	// a loaded machine cannot turn the landing into another timeout.
+	close(release)
+	l.ReadBound = 2 * time.Second
+	if gone, err := check(); !gone || err != nil {
+		t.Fatalf("after the read landed: gone %v err %v", gone, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if reads != 1 {
+		t.Fatalf("the proof was read %d times, want once", reads)
+	}
+	if got := ProofReadBound(2*time.Second, 4); got != 250*time.Millisecond {
+		t.Fatalf("the tick's share: %s", got)
 	}
 }

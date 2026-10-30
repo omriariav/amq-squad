@@ -962,6 +962,9 @@ type State struct {
 	// has not come up since (3.0.1 t17): status shows the reason on the
 	// seat's row in place of seat_starting.
 	LaunchFailures []LaunchFailure `json:"launch_failures,omitempty"`
+	// LaunchBlocked are the tasks blocked on a repeated launch failure:
+	// restored at a restart with LaunchFailures (RestoreLaunchFailures).
+	LaunchBlocked []LaunchBlockedTask `json:"launch_blocked,omitempty"`
 }
 
 // RefusedUnmanaged is the refusal reason of a SeatUp without a request id.
@@ -1056,6 +1059,7 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	}
 	sort.Slice(st.Seats, func(i, j int) bool { return st.Seats[i].Handle < st.Seats[j].Handle })
 	st.LaunchFailures = s.launchFailureList()
+	st.LaunchBlocked = s.launchBlockedList()
 	raw, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err

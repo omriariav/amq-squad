@@ -3,6 +3,7 @@ package schedproc
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
@@ -21,11 +22,36 @@ import (
 // error, nothing is posted). Never a bare signal 0: signal 0 only tells a
 // gone pid from an unreadable stamp, after the stamp read failed. It is
 // read only.
+//
+// The proof file read is bounded (Codex finding 3): a read that takes
+// longer than ReadBound (the verb passes the tick's share per seat,
+// ProofReadBound) is unknown, never gone, and while it is still in flight
+// no second read of that seat's proof starts; its result is taken when it
+// lands.
 type Liveness struct {
-	Root string
+	Root      string
+	ReadBound time.Duration // default DefaultProofReadBound
 
-	mu   sync.Mutex
-	held map[string]launch.ProofEntry // handle -> the proof read for its request
+	mu       sync.Mutex
+	held     map[string]launch.ProofEntry // handle -> the proof read for its request
+	inflight map[string]chan proofRead    // handle -> a read past its bound, not landed yet
+}
+
+type proofRead struct {
+	e   launch.ProofEntry
+	err error
+}
+
+// DefaultProofReadBound bounds one proof file read when no bound is given.
+const DefaultProofReadBound = 250 * time.Millisecond
+
+// ProofReadBound is the tick's share per seat for one proof read: half the
+// tick split over the roster, at least 10 ms.
+func ProofReadBound(tick time.Duration, seats int) time.Duration {
+	if seats < 1 {
+		seats = 1
+	}
+	return max(tick/time.Duration(2*seats), 10*time.Millisecond)
 }
 
 // readProofOf and aliveOf are test seams.
@@ -62,9 +88,9 @@ func (l *Liveness) identity(handle, requestID string) (launch.ProofEntry, error)
 	if ok && requestID != "" && e.RequestID == requestID {
 		return e, nil
 	}
-	e, err := readProofOf(l.Root, handle)
+	e, err := l.readBounded(handle)
 	if err != nil {
-		return e, fmt.Errorf("the launch ledger's proof of %s cannot be read: %v", handle, err)
+		return e, err
 	}
 	switch {
 	case e.Handle != handle:
@@ -83,6 +109,49 @@ func (l *Liveness) identity(handle, requestID string) (launch.ProofEntry, error)
 		l.mu.Unlock()
 	}
 	return e, nil
+}
+
+// readBounded reads the seat's proof within ReadBound; past it the read
+// keeps running in its own goroutine and the answer is unknown.
+func (l *Liveness) readBounded(handle string) (launch.ProofEntry, error) {
+	bound := l.ReadBound
+	if bound <= 0 {
+		bound = DefaultProofReadBound
+	}
+	l.mu.Lock()
+	ch, busy := l.inflight[handle]
+	if !busy {
+		ch = make(chan proofRead, 1)
+		root := l.Root
+		go func() {
+			e, err := readProofOf(root, handle)
+			ch <- proofRead{e, err}
+		}()
+	}
+	l.mu.Unlock()
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case r := <-ch:
+		l.mu.Lock()
+		delete(l.inflight, handle)
+		l.mu.Unlock()
+		if r.err != nil {
+			return r.e, fmt.Errorf("the launch ledger's proof of %s cannot be read: %v", handle, r.err)
+		}
+		return r.e, nil
+	case <-timer.C:
+		l.mu.Lock()
+		if l.inflight == nil {
+			l.inflight = map[string]chan proofRead{}
+		}
+		l.inflight[handle] = ch
+		l.mu.Unlock()
+		if busy {
+			return launch.ProofEntry{}, fmt.Errorf("the launch ledger's proof of %s is still being read (an earlier read passed its %s bound)", handle, bound)
+		}
+		return launch.ProofEntry{}, fmt.Errorf("the launch ledger's proof of %s was not read within %s", handle, bound)
+	}
 }
 
 var _ scheduler.SeatLiveness = (*Liveness)(nil)

@@ -169,6 +169,14 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	// The launch failures and the blocks on them survive a restart (3.0.1
+	// t17, Codex finding 2): the previous incarnation's state file holds
+	// them.
+	if st, err := scheduler.ReadState(o.Config.StatePath); err != nil {
+		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_unread", Reason: err.Error()})
+	} else if f, b := s.RestoreLaunchFailures(st); f+b > 0 {
+		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_restored", Reason: fmt.Sprintf("%d launch failures and %d tasks blocked on one, from the previous incarnation's state", f, b)})
+	}
 	if p, ok := o.Preparer.(interface {
 		SetLog(io.Writer, func() time.Time)
 	}); ok {

@@ -126,11 +126,16 @@ func TestLaunchFailureRepeatIsPerReasonAndPerAttempt(t *testing.T) {
 }
 
 // failingRoster is fakeRoster whose seats that do not come up post their
-// failure, as the real launcher does.
-type failingRoster struct{ *fakeRoster }
+// failure, as the real launcher does; tag sets apart the launch ids of
+// another incarnation's fake.
+type failingRoster struct {
+	*fakeRoster
+	tag string
+}
 
 func (f failingRoster) LaunchRoster(reqs []SeatRequest) RosterOutcome {
 	out := f.fakeRoster.LaunchRoster(reqs)
+	out.LaunchID = f.tag + out.LaunchID
 	for _, r := range reqs {
 		if f.notUp[r.Handle] && out.Stage == RosterApplied {
 			f.s.Post(failed(r, r.Handle, out.LaunchID, "seat_not_up", "no_proof", "no accepted proof within 90s", f.s.Now()))
@@ -149,7 +154,7 @@ func (f failingRoster) LaunchRoster(reqs []SeatRequest) RosterOutcome {
 func TestRosterSeatFailingTwiceBlocksForTheLead(t *testing.T) {
 	h, fr := newRosterHarness(t, Config{MaxSeats: 2, SeatStartTimeout: time.Minute, IdleTimeout: time.Hour}, rosterAB...)
 	fr.notUp = map[string]bool{"s-b": true}
-	h.s.Launcher = failingRoster{fr}
+	h.s.Launcher = failingRoster{fakeRoster: fr}
 	b := h.add("b", &gpt)
 	ds := h.tick()
 	if !has(ds, "seat_not_up", "", "s-b") || !has(ds, KindSeatLaunchFailed, "", "s-b") || h.get(b.ID).WaitReason != "no_proof" {
@@ -253,5 +258,98 @@ func TestGoneRosterSeatProcessIsPostedGoneWithinOneTick(t *testing.T) {
 	}
 	if ds := h.tick(); has(ds, "seat_liveness_unknown", "", "s-b") || has(ds, "seat_gone", "", "s-b") || h.s.seats["s-b"] == nil {
 		t.Fatalf("the unknown seat on the next tick: %+v", ds)
+	}
+}
+
+// restarted is a second incarnation over the same task store and state
+// file, its launch failures restored as schedproc.Run restores them.
+func restarted(t *testing.T, h *harness, tag string, notUp map[string]bool) (*Scheduler, *fakeRoster) {
+	t.Helper()
+	s := &Scheduler{Store: h.store, Now: h.clk.Now, Doorbell: h.bell, Config: h.s.Config, Incarnation: tag}
+	fr := &fakeRoster{fakeLauncher: &fakeLauncher{}, s: s, notUp: notUp}
+	s.Launcher = failingRoster{fakeRoster: fr, tag: tag}
+	st, err := ReadState(h.s.Config.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.RestoreLaunchFailures(st)
+	return s, fr
+}
+
+// Codex finding 2 on t17: the launch failures and the blocks on them live
+// in the state file and are restored at a restart. A task blocked on a
+// repeated failure is recovered by a successful launch after a restart;
+// a first failure before a restart and a second after it is a repeat and
+// blocks. Reverted (memory only), the block is not recognised after the
+// restart and the task stays blocked, and the count starts over at one.
+func TestLaunchFailuresAndBlocksSurviveARestart(t *testing.T) {
+	statePath := t.TempDir() + "/scheduler.json"
+	h, fr := newRosterHarness(t, Config{MaxSeats: 2, SeatStartTimeout: time.Minute, IdleTimeout: time.Hour, StatePath: statePath}, rosterAB...)
+	fr.notUp = map[string]bool{"s-b": true}
+	h.s.Launcher = failingRoster{fakeRoster: fr, tag: "a"}
+	b := h.add("b", &gpt)
+	h.tick()
+	h.clk.Add(2 * time.Minute)
+	h.tick()
+	h.s.RequestRelaunch("s-b never came up")
+	h.tick()
+	if got := h.get(b.ID); got.State != task.StateBlocked || got.BlockReason != "no_proof" {
+		t.Fatalf("before the restart: %+v", got)
+	}
+	st, _ := ReadState(statePath)
+	if len(st.LaunchBlocked) != 1 || st.LaunchBlocked[0].TaskID != b.ID || len(st.LaunchFailures) != 1 || st.LaunchFailures[0].Count != 2 || st.LaunchFailures[0].Seq == 0 {
+		t.Fatalf("the state file: %+v", st)
+	}
+	// The restart: the roster launches at start and every seat comes up.
+	s2, _ := restarted(t, h, "b", nil)
+	ds, err := s2.Tick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(ds, "task_reset", b.ID, "") || !has(ds, "dispatched", b.ID, "s-b") {
+		t.Fatalf("after the restart: %+v; b %+v", ds, h.get(b.ID))
+	}
+
+	// A first failure, a restart, the same failure again: a repeat.
+	statePath2 := t.TempDir() + "/scheduler.json"
+	g, gr := newRosterHarness(t, Config{MaxSeats: 2, SeatStartTimeout: time.Minute, IdleTimeout: time.Hour, StatePath: statePath2}, rosterAB...)
+	gr.notUp = map[string]bool{"s-b": true}
+	g.s.Launcher = failingRoster{fakeRoster: gr, tag: "a"}
+	c := g.add("c", &gpt)
+	g.tick()
+	if got := g.get(c.ID); got.State != task.StatePending || got.WaitReason != "no_proof" {
+		t.Fatalf("after the first failure: %+v", got)
+	}
+	s3, _ := restarted(t, g, "c", map[string]bool{"s-b": true})
+	if _, err := s3.Tick(); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.get(c.ID); got.State != task.StateBlocked || got.BlockReason != "no_proof" || !strings.Contains(got.BlockDetail, "failed 2 times") {
+		t.Fatalf("the repeat across the restart: %+v", got)
+	}
+
+	// Blocked, a restart, and the seat fails again at the start launch: the
+	// new failure is later than the block (the sequence is restored), so the
+	// reset task blocks again, never taken for the lead's retry.
+	statePath3 := t.TempDir() + "/scheduler.json"
+	k, kr := newRosterHarness(t, Config{MaxSeats: 2, SeatStartTimeout: time.Minute, IdleTimeout: time.Hour, StatePath: statePath3}, rosterAB...)
+	kr.notUp = map[string]bool{"s-b": true}
+	k.s.Launcher = failingRoster{fakeRoster: kr, tag: "a"}
+	d := k.add("d", &gpt)
+	k.tick()
+	k.clk.Add(2 * time.Minute)
+	k.tick()
+	k.s.RequestRelaunch("s-b never came up")
+	k.tick()
+	s4, _ := restarted(t, k, "d", map[string]bool{"s-b": true})
+	ds, err = s4.Tick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has(ds, "seat_launch_retry", d.ID, "") || !has(ds, "task_reset", d.ID, "") || !has(ds, "blocked", d.ID, "") {
+		t.Fatalf("a failure after the restart: %+v", ds)
+	}
+	if got := k.get(d.ID); got.State != task.StateBlocked || !strings.Contains(got.BlockDetail, "failed 3 times") {
+		t.Fatalf("the task: %+v", got)
 	}
 }

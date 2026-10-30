@@ -47,9 +47,13 @@ type LaunchFailure struct {
 	// Count is how many launch attempts in a row failed with this reason
 	// (one launch attempt counts once, whatever number of its seats failed).
 	Count int `json:"count"`
-
-	launchID string
-	seq      int // the order failures were noted in (a block remembers it)
+	// LaunchID is the attempt that failed (another seat of the same attempt
+	// is not a repeat); Seq orders the failures, and a block remembers the
+	// one it was blocked on. Both persist in the state file and are restored
+	// at a restart (Codex finding 2), so a repeat across a restart still
+	// counts and a block is still recognised.
+	LaunchID string `json:"launch_id,omitempty"`
+	Seq      int    `json:"seq"`
 }
 
 // Code is the failure's reason: AMQ's reason code, else the stage.
@@ -59,6 +63,55 @@ func (f LaunchFailure) Code() string { return firstNonEmpty(f.ReasonCode, f.Stag
 type launchBlock struct {
 	pool string
 	seq  int // the failure it was blocked on
+}
+
+// LaunchBlockedTask is a task the scheduler blocked on a repeated launch
+// failure, as the state file keeps it: the pool and the failure's Seq.
+type LaunchBlockedTask struct {
+	TaskID string `json:"task_id"`
+	Pool   string `json:"pool"`
+	Seq    int    `json:"seq"`
+}
+
+// RestoreLaunchFailures takes the launch failures and the blocks on them
+// a previous incarnation left in its state file (Codex finding 2): without
+// them a task blocked on a failure stays blocked after a later relaunch
+// succeeds (the reset no longer recognises it), and the repeat count starts
+// over at every restart. Call before the first Tick; it returns how many
+// failures and blocks it took.
+func (s *Scheduler) RestoreLaunchFailures(st State) (failures, blocks int) {
+	for _, f := range st.LaunchFailures {
+		if s.launchFailures == nil {
+			s.launchFailures = map[string]*LaunchFailure{}
+		}
+		f := f
+		s.launchFailures[f.Pool.Key()] = &f
+		if f.Seq > s.failSeq {
+			s.failSeq = f.Seq
+		}
+		failures++
+	}
+	for _, b := range st.LaunchBlocked {
+		if s.launchBlocked == nil {
+			s.launchBlocked = map[string]launchBlock{}
+		}
+		s.launchBlocked[b.TaskID] = launchBlock{pool: b.Pool, seq: b.Seq}
+		if b.Seq > s.failSeq {
+			s.failSeq = b.Seq
+		}
+		blocks++
+	}
+	return failures, blocks
+}
+
+// launchBlockedList is the state file's view of the blocks, by task.
+func (s *Scheduler) launchBlockedList() []LaunchBlockedTask {
+	var out []LaunchBlockedTask
+	for id, b := range s.launchBlocked {
+		out = append(out, LaunchBlockedTask{TaskID: id, Pool: b.pool, Seq: b.seq})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TaskID < out[j].TaskID })
+	return out
 }
 
 // SeatLiveness answers, read only, whether a live seat's process still
@@ -128,19 +181,19 @@ func (s *Scheduler) noteLaunchFailure(ev Event, log func(Decision)) {
 	}
 	key := ev.Pool.Key()
 	f := &LaunchFailure{Pool: ev.Pool, Handle: ev.Handle, RequestID: ev.RequestID, Stage: stage, ReasonCode: ev.ReasonCode, Detail: detail,
-		At: ev.At, Count: 1, launchID: ev.LaunchID}
+		At: ev.At, Count: 1, LaunchID: ev.LaunchID}
 	prev := s.launchFailures[key]
 	if prev != nil && prev.Code() == f.Code() {
 		f.Count = prev.Count
-		if ev.LaunchID != "" && ev.LaunchID == prev.launchID {
-			f.seq = prev.seq // another seat of the same attempt: not a repeat
+		if ev.LaunchID != "" && ev.LaunchID == prev.LaunchID {
+			f.Seq = prev.Seq // another seat of the same attempt: not a repeat
 			s.launchFailures[key] = f
 			return
 		}
 		f.Count++
 	}
 	s.failSeq++
-	f.seq = s.failSeq
+	f.Seq = s.failSeq
 	s.launchFailures[key] = f
 }
 
@@ -162,7 +215,7 @@ func (s *Scheduler) failureFor(p task.Pool) *LaunchFailure {
 		if f.Pool != p && !(s.rosterMode() && PoolServes(f.Pool, p)) {
 			continue
 		}
-		if out == nil || f.seq > out.seq {
+		if out == nil || f.Seq > out.Seq {
 			out = f
 		}
 	}
@@ -188,7 +241,7 @@ func (s *Scheduler) blockOnLaunchFailure(t task.Task, p task.Pool, now time.Time
 	f := s.failureFor(p)
 	if b, ok := s.launchBlocked[t.ID]; ok {
 		delete(s.launchBlocked, t.ID)
-		if f != nil && f.seq <= b.seq {
+		if f != nil && f.Seq <= b.seq {
 			delete(s.launchFailures, f.Pool.Key())
 			log(Decision{Kind: "seat_launch_retry", TaskID: t.ID, Pool: f.Pool.Key(), Reason: "the task blocked on " + f.Code() + " is pending again with no failure since: the lead's retry"})
 			return nil, nil
@@ -210,7 +263,7 @@ func (s *Scheduler) blockOnLaunchFailure(t task.Task, p task.Pool, now time.Time
 	if s.launchBlocked == nil {
 		s.launchBlocked = map[string]launchBlock{}
 	}
-	s.launchBlocked[t.ID] = launchBlock{pool: f.Pool.Key(), seq: f.seq}
+	s.launchBlocked[t.ID] = launchBlock{pool: f.Pool.Key(), seq: f.Seq}
 	log(Decision{Kind: "blocked", TaskID: t.ID, Pool: f.Pool.Key(), Stage: f.Stage, ReasonCode: f.ReasonCode, Reason: f.Code()})
 	return &got, nil
 }

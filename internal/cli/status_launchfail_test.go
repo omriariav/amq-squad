@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -113,7 +114,7 @@ func TestSchedulerRunRefusalLeavesTheReasonForStatus(t *testing.T) {
 	if ExitCode(err) != ExitSchedulerRefused {
 		t.Fatalf("the refusal: %v (exit %d)", err, ExitCode(err))
 	}
-	if lv, ok := started.Liveness.(*schedproc.Liveness); !ok || lv.Root != root {
+	if lv, ok := started.Liveness.(*schedproc.Liveness); !ok || lv.Root != root || lv.ReadBound != schedproc.ProofReadBound(20*time.Millisecond, 1) {
 		t.Fatalf("the liveness check: %#v", started.Liveness)
 	}
 	raw, err := os.ReadFile(filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
@@ -138,4 +139,53 @@ func TestSchedulerRunRefusalLeavesTheReasonForStatus(t *testing.T) {
 		}
 	}
 	t.Fatalf("status after the refusal: %+v", doc.Attention)
+}
+
+// Codex finding 1 on t17, end to end through the verb and status: the real
+// seat launcher, its AMQ answering prepare with output that is not JSON
+// and a credential key on stderr's first line with its quoted value on the
+// next. The scheduler ends with the failure; the value is in none of the
+// error, the decisions log, the state file, status --json or the status
+// table, which all name the failure. Reverted (AMQ's stderr wrapped before
+// its redaction), every one of them carries the value.
+func TestInvalidJSONThroughTheVerbLeavesNoCredentialInStatus(t *testing.T) {
+	_, root, seatsFile := schedulerFixture(t)
+	value := "t17" + "statusvalue" + "0095"
+	stderr := "api" + "_key:\n  \"" + value + "\""
+	var real *seatlaunch.Launcher
+	schedulerAMQLauncher = func(sl *schedproc.Slots, r string, opts seatlaunch.Options) scheduler.SeatLauncher {
+		opts.RunAMQ = func(context.Context, string, []string, []byte, []string, string) ([]byte, []byte, int, error) {
+			return []byte("amq: not json"), []byte(stderr), 2, nil
+		}
+		opts.PinFor = func(seatlaunch.Seat) (registry.Pin, error) {
+			return registry.Pin{Name: "claude", Path: "/usr/local/bin/claude", SHA256: "test"}, nil
+		}
+		opts.LookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
+		opts.Home, opts.Env = t.TempDir(), []string{"PATH=/usr/bin"}
+		real = &seatlaunch.Launcher{Plan: sl.Plan, PlanRoster: sl.PlanRoster, Options: opts, Root: r,
+			PaneGone: func(string) (bool, bool) { return true, true }, PanesFor: func(string) (int, bool) { return 0, true }}
+		return real
+	}
+	schedulerStarted = func(s *scheduler.Scheduler) { real.Post = s.Post }
+	_, _, err := captureOutput(t, func() error {
+		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+	})
+	if err == nil || !strings.Contains(err.Error(), "without a PrepareResult") || strings.Contains(err.Error(), value) {
+		t.Fatalf("the verb's error: %v", err)
+	}
+	for _, p := range []string{filepath.Join(schedproc.Dir(root), "decisions.jsonl"), scheduler.StatePathFor(root)} {
+		raw, err := os.ReadFile(p)
+		if err != nil || !strings.Contains(string(raw), "without a PrepareResult") || strings.Contains(string(raw), value) {
+			t.Fatalf("%s (%v):\n%s", p, err, raw)
+		}
+	}
+	doc := buildStatusContract(root, "", "3.0.1-test", time.Now())
+	js, _ := json.Marshal(doc)
+	var table strings.Builder
+	if err := writeStatusContractTable(&table, doc); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "without a PrepareResult") || strings.Contains(string(js), value) || strings.Contains(table.String(), value) || !strings.Contains(table.String(), "seat_launch_failed") {
+		t.Fatalf("status:\n%s\n%s", js, table.String())
+	}
 }
