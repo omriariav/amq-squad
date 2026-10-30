@@ -62,10 +62,21 @@ closes.
   Options for the owner: make v3 the default branch (the repository's main
   stays as the v2 line under a new name), or a marketplace entry that
   names the branch. Found 2026-10-30 at the first Claude seat start.
-- Test hygiene: internal/redact TestBlockIsLinearOnALongLine bounds a
-  1 MiB line at 2 s of wall clock; the shared macOS runner missed it once
-  (PR #800's first run, green on the re-run). A measured bound, with the
-  buzz dry-run entry.
+- Blocker for the train, not hygiene (reviewer ruling 2026-10-30):
+  internal/redact TestBlockIsLinearOnALongLine bounds a 1 MiB line at 2 s
+  of wall clock; the shared macOS runner missed it once (PR #800's first
+  run, green on the re-run), and with make ci strict and no bypass actors a
+  wall-clock bound fails the train at random. Fix before brief 0's PR
+  reaches the train: the linearity proof as a ratio measured in one
+  process (a 1 MiB line against a 64 KiB line within a 64x factor), no
+  absolute bound. Task t2 in the v31 store. The buzz dry-run bound stays a
+  hygiene entry while it is off the required path.
+- Release check: the next tag must fail closed when the marketplace's
+  resolved ref does not carry the released version (3.0's release check
+  missed it); the real fix for the marketplace gap above is main carrying
+  3.0, the owner's merge on his repository, recommended as the first 3.0.x
+  action; a branch name in the marketplace is the stopgap only if Claude
+  Code's marketplace format takes a ref.
 
 - The pi lead on a cloud model (owner, 2026-10-30: "can I start pi and use
   a codex / claude model in it?"): the registry builds pi entries for
