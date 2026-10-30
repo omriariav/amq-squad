@@ -363,15 +363,14 @@ type observingRoster struct {
 
 func (o *observingRoster) SeatGone(h string) { o.released = append(o.released, h) }
 
-// t17, the reviewer's double fire: a liveness gone, then a gone for the
-// same seat from another producer (no request id, as a launcher's
-// confirmation would carry), then the same request's gone again. The second
-// and third change nothing: one seat_gone, one exit check, one slot
-// release, the held task as it was. A gone that names the seat's earlier
-// request after a new seat of the handle came up leaves the new seat up.
-// Reverted (the handler takes every gone), the second queues a second exit
-// check and a second release, and the stale one closes the new seat.
-func TestASecondSeatGoneForOneSeatChangesNothing(t *testing.T) {
+// t17, the reviewer's ruling on the double fire: the exit queue checks one
+// gone attempt once. A liveness SeatGone, then a launcher's confirmation for
+// the same handle and attempt (its request id): one seat_gone, one exit
+// check, one slot release, the held task as it was; the second is dropped
+// and logged (exit_check_duplicate). The same handle with a new attempt
+// (a new seat of it, gone in turn) queues again. Reverted (queueExit takes
+// every item), the confirmation runs a second check and a second release.
+func TestASecondSeatGoneForOneAttemptIsCheckedOnce(t *testing.T) {
 	h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour}, rosterAB...)
 	obs := &observingRoster{fakeRoster: fr}
 	h.s.Launcher = obs
@@ -390,34 +389,34 @@ func TestASecondSeatGoneForOneSeatChangesNothing(t *testing.T) {
 	lv.gone["s-b"] = true
 	ds := h.tick()
 	if count(ds, "seat_gone") != 1 || len(ex.calls) != 1 || len(obs.released) != 1 {
-		t.Fatalf("the first gone: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+		t.Fatalf("the liveness gone: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
 	}
 	before := h.get(b.ID)
-	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-b"})
-	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-b", RequestID: "seat-req-t-2"})
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-b", RequestID: "seat-req-t-2"}) // the launcher's confirmation
 	ds = h.tick()
-	if count(ds, "seat_gone") != 0 || count(ds, "seat_gone_ignored") != 2 || len(ex.calls) != 1 || len(obs.released) != 1 {
-		t.Fatalf("the repeats: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+	if count(ds, "exit_check_duplicate") != 1 || len(ex.calls) != 1 || len(obs.released) != 1 {
+		t.Fatalf("the confirmation: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
 	}
 	after := h.get(b.ID)
 	if after.State != before.State || len(after.Attempts) != len(before.Attempts) || (after.Lease == nil) != (before.Lease == nil) || after.UpdatedAt != before.UpdatedAt {
 		t.Fatalf("the task changed: before %+v after %+v", before, after)
 	}
-	// A new seat of the handle comes up; a late gone of its earlier request
-	// leaves it up.
+	// A new attempt of the handle: a new seat comes up and is gone in turn.
 	lv.gone["s-b"] = false
 	h.up("s-b", gpt)
 	h.tick()
-	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-b", RequestID: "seat-req-t-2"})
+	lv.gone["s-b"] = true
 	ds = h.tick()
-	if h.s.seats["s-b"] == nil || count(ds, "seat_gone") != 0 || !has(ds, "seat_gone_ignored", "", "s-b") || len(ex.calls) != 1 || len(obs.released) != 1 {
-		t.Fatalf("the stale gone: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+	if count(ds, "seat_gone") != 1 || count(ds, "exit_check_duplicate") != 0 || len(ex.calls) != 2 || len(obs.released) != 2 {
+		t.Fatalf("a new attempt: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
 	}
-	// A gone naming a request never seen gone that is not the live seat's
-	// (a previous launch of the handle, as after a restart): s-a stays up.
-	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-a", RequestID: "seat-req-old-9"})
+	// A gone that names no request, of a live seat, is for the seat's own
+	// attempt: the confirmation naming that request is the duplicate.
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-a"})
+	h.tick()
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-a", RequestID: "seat-req-t-1"})
 	ds = h.tick()
-	if h.s.seats["s-a"] == nil || count(ds, "seat_gone") != 0 || !has(ds, "seat_gone_ignored", "", "s-a") || len(ex.calls) != 1 || len(obs.released) != 1 {
-		t.Fatalf("a gone of another request: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+	if count(ds, "exit_check_duplicate") != 1 || len(ex.calls) != 3 || len(obs.released) != 3 {
+		t.Fatalf("a gone with no request: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
 	}
 }
