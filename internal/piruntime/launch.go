@@ -171,8 +171,12 @@ var forcedEmpty = map[string]bool{"NODE_OPTIONS": true}
 // TeamLeadTools is the team lead's whole tool set (amendment 26): the native
 // AMQ tools, the task verbs through the scheduler, a read-only file read and
 // directory list scoped to the repository root, and amq-squad status. No
-// tool runs a command: that work is dispatched to a seat.
-var TeamLeadTools = []string{"amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_add", "amq_task_reset", "amq_repo_read", "amq_repo_list", "amq_status"}
+// tool runs a command: that work is dispatched to a seat. The lead's two
+// decisions over the scheduler's socket are tools too (3.0.1 t16): the
+// widening of a refused task by the paths its refusal names, and the
+// roster relaunch; each runs the CLI verb from the lead's own process, the
+// descendant the scheduler proves.
+var TeamLeadTools = []string{"amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_add", "amq_task_reset", "amq_task_widen", "amq_scheduler_relaunch", "amq_repo_read", "amq_repo_list", "amq_status"}
 
 // ExitRuntimeMismatch is the exit code of a pi process whose in-process
 // re-hash refused the runtime; RuntimeMismatchReason is its named reason in

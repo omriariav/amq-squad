@@ -23,6 +23,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
@@ -93,6 +94,14 @@ type Options struct {
 	// (default: the embedded runtime must load, then piruntime.EnsureShim
 	// under Home); a test seam.
 	PiShim func(home, wrapper string) (string, error)
+	// BeforeApply checks a ready Prepare before anything is staged or
+	// applied (3.0.1 t16, the roster launch): a non-empty reason stops the
+	// launch at stage resource_present with the detail, so AMQ never sees
+	// an Apply it would refuse.
+	BeforeApply func(prepared launchapi.PrepareResultV1) (reason, detail string)
+	// PaneID is the tmux pane id whose shell is pid (default: a read-only
+	// tmux list-panes); a test seam.
+	PaneID func(shell int) string
 	// CodexDialogHook reads AMQ's Codex dialog hook in a Codex home (default
 	// seatexec.ReadCodexDialogHook, read only); a test seam. The launch
 	// calls it only for a squad with a Codex seat, on the Codex home the
@@ -278,6 +287,13 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	if o.BeforeApply != nil && !o.DryRun {
+		if reason, detail := o.BeforeApply(prepared); reason != "" {
+			res.Stage, res.FailureDetail = "resource_present", reason+": "+detail
+			res.NextActions = []string{"the named panes must end before the launch can apply (" + reason + ")"}
+			return res, nil
+		}
+	}
 	if o.DryRun {
 		res.Stage = "prepared"
 		res.Pending = missing
@@ -446,9 +462,9 @@ func prepareCLI(ctx context.Context, q Squad, o Options, req launchapi.PrepareRe
 		return res, "", fmt.Errorf("amq launch --prepare: %w", err)
 	}
 	if jerr := json.Unmarshal(out, &res); jerr != nil || res.ResultVersion == 0 {
-		return res, "", fmt.Errorf("amq launch --prepare exited %d without a PrepareResult: %s", code, strings.TrimSpace(string(errOut)))
+		return res, "", fmt.Errorf("amq launch --prepare exited %d without a PrepareResult: %s", code, amqDiagnostic(errOut))
 	}
-	return res, strings.TrimSpace(string(errOut)), nil
+	return res, amqDiagnostic(errOut), nil
 }
 
 func applyCLI(ctx context.Context, q Squad, o Options, req launchapi.ApplyRequestV1, env []string) (launchapi.ApplyResultV1, string, error) {
@@ -458,13 +474,22 @@ func applyCLI(ctx context.Context, q Squad, o Options, req launchapi.ApplyReques
 	if err != nil {
 		return res, "", fmt.Errorf("amq launch --apply: %w", err)
 	}
-	detail := strings.TrimSpace(string(errOut))
+	detail := amqDiagnostic(errOut)
 	if jerr := json.Unmarshal(out, &res); jerr != nil || res.ResultVersion == 0 {
 		return res, "", fmt.Errorf("amq launch --apply exited %d without an ApplyResult: %s", code, detail)
 	}
 	// FailureDetail is not in the JSON DTO; the CLI prints it on stderr (R48).
 	res.FailureDetail = detail
 	return res, detail, nil
+}
+
+// amqDiagnostic is amq's stderr as the launch keeps it: redacted at the
+// source (3.0.1 t16 round 7), with the multiline rules (redact.Block: a
+// quoted value on the line after its key), before it is persisted in the
+// staged record (Apply.FailureDetail), printed by Report, or logged by the
+// scheduler. Every reader of the failure detail gets the redacted text.
+func amqDiagnostic(stderr []byte) string {
+	return strings.TrimSpace(redact.Block(string(stderr)))
 }
 
 // runAMQCLI captures stdout and stderr in temp files, not pipes: amq may

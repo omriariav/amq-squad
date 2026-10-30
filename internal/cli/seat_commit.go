@@ -244,7 +244,7 @@ func runSeatCommit(args []string, out io.Writer) error {
 			// The acceptance and the PR binding are one store transaction (P2).
 			after, recErr = sel.store.CompleteBound(t.ID, res.PRRepository, res.PRNumber, res.PRHead, taskNow())
 		} else {
-			after, recErr = sel.store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, taskNow())
+			after, recErr = sel.store.RefuseCommitPaths(t.ID, res.ReasonCode, res.Detail, res.Route, res.OutsidePaths(), taskNow())
 			if recErr == nil && res.Quarantine {
 				recErr = sel.store.Quarantine(task.Quarantine{Handle: *seat, Reason: res.ReasonCode, Detail: res.Detail, TaskID: t.ID, At: taskNow()})
 			}

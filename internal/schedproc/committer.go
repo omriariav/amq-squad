@@ -90,7 +90,7 @@ func (c *Committer) Commit(handle string, t task.Task) scheduler.CommitResult {
 		j.cancel()
 		return scheduler.CommitResult{Deferred: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
 	}
-	final := scheduler.CommitResult{ReasonCode: res.ReasonCode, Detail: res.Detail, Route: res.Route, Quarantine: res.Quarantine}
+	final := scheduler.CommitResult{ReasonCode: res.ReasonCode, Detail: res.Detail, Route: res.Route, Quarantine: res.Quarantine, RefusedPaths: res.OutsidePaths()}
 	if res.OK {
 		final = scheduler.CommitResult{OK: true, PRRepository: res.PRRepository, PRNumber: res.PRNumber, PRHead: res.PRHead}
 	}

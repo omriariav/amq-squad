@@ -662,7 +662,7 @@ func Stage(c Compiled) error {
 		if err := writeAtomic(filepath.Join(dir, launch.RoleFileName), c.Roles[i]); err != nil {
 			return err
 		}
-		if err := launch.WriteFile(filepath.Join(dir, launch.FileName), rec); err != nil {
+		if err := writeStaged(filepath.Join(dir, launch.FileName), rec); err != nil {
 			return err
 		}
 	}

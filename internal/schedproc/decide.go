@@ -66,7 +66,15 @@ const (
 	// (the exits ledger loaded, every adopted seat closed and confirmed
 	// gone); its decision socket is not open yet.
 	RefusedStarting = "scheduler_starting"
+	// RefusedLeadGone: the lead's recorded incarnation (the team-mode lead
+	// that started this scheduler) is gone or its pid reused; the scheduler
+	// exits rather than serve a dead lead's socket (3.0.1 t16).
+	RefusedLeadGone = "lead_gone"
 )
+
+// ErrLeadGone is SupervisingLead's error for a recorded lead incarnation
+// that is gone (its pid dead or carrying another start stamp).
+var ErrLeadGone = errors.New("lead_gone")
 
 // DecideReply is the scheduler's answer to one decision.
 type DecideReply struct {
@@ -82,6 +90,9 @@ type DecideOptions struct {
 	Lead string
 	// Apply applies a widening the lead decided (the verb's core).
 	Apply func(lead string, req WidenRequest) DecideReply
+	// Relaunch takes the lead's relaunch of the roster (3.0.1 t16); nil
+	// refuses it (relaunch_unsupported: the scheduler runs no roster).
+	Relaunch func(lead string, req RelaunchRequest) DecideReply
 	// Seams for tests: the lead's recorded pane, the chain walk, a pid's
 	// start stamp and the kernel peer of a connection.
 	LeadPane   func(root, lead string) (panechain.Pane, error)
@@ -111,6 +122,65 @@ func RecordedLeadPane(root, lead string) (panechain.Pane, error) {
 		return panechain.Pane{}, fmt.Errorf("the lead %s's proof recorded no incarnation", lead)
 	}
 	return panechain.Pane{Shell: e.PID, Start: e.Start, Agent: lead}, nil
+}
+
+// SupervisingLead is the lead's incarnation when the scheduler was started
+// by the lead's team mode (3.0.1 t16): the scheduler's own parent process,
+// pid and raw start stamp read once at the scheduler's start. The team-mode
+// lead runs outside the roster's tmux session (a lead inside it keeps the
+// binding present, and AMQ then refuses every relaunch), so it has no proof
+// ledger entry under the session root; the kernel's parent link is its
+// proof instead, and its commands (pi runs as its child) descend from it.
+// The stamp is read again at every decision: a parent that is gone or
+// reused is origin_unknown.
+//
+// The proof is then panechain.Reaches as for a ledger lead: an ancestor of
+// the sender (the walk bounded at 64 hops, the stamp re-read at every hop)
+// whose pid and raw start stamp both equal the recorded incarnation. The
+// stamp is what makes it sound: the recorded pid can sit in another chain
+// only after the lead died and the pid was reused, and that pid then carries
+// another stamp. The two proofs never both apply to one scheduler: a
+// team-mode start uses this one, every other start the launch ledger's.
+func SupervisingLead(pid int, start string, stamp func(int) (string, bool), alive func(int) bool) func(root, lead string) (panechain.Pane, error) {
+	return func(_, lead string) (panechain.Pane, error) {
+		switch st, why := LeadState(pid, start, stamp, alive); st {
+		case LeadIsGone:
+			return panechain.Pane{}, fmt.Errorf("%w: %s", ErrLeadGone, why)
+		case LeadUnknown:
+			return panechain.Pane{}, errors.New(why) // origin_unknown, never lead_gone
+		}
+		return panechain.Pane{Shell: pid, Start: start, Agent: lead}, nil
+	}
+}
+
+// LeadStatus is the recorded lead incarnation's state.
+type LeadStatus int
+
+const (
+	LeadAlive   LeadStatus = iota // the pid carries the recorded stamp
+	LeadIsGone                    // confirmed: the pid is dead, or carries another stamp
+	LeadUnknown                   // the pid is alive but its stamp cannot be read (permission, a transient error)
+)
+
+// LeadState reads the recorded lead incarnation (pid and raw start stamp).
+// It is gone only on confirmed absence (the pid is not alive) or a changed
+// stamp (the pid reused); a stamp that cannot be read for a live pid, or an
+// incarnation never recorded, is unknown (3.0.1 t16 round 7: a permission
+// or transient read error proves nothing).
+func LeadState(pid int, start string, stamp func(int) (string, bool), alive func(int) bool) (LeadStatus, string) {
+	if pid <= 1 || start == "" {
+		return LeadUnknown, "the team-mode lead process that started this scheduler was not recorded"
+	}
+	now, ok := stamp(pid)
+	switch {
+	case ok && now == start:
+		return LeadAlive, ""
+	case ok:
+		return LeadIsGone, fmt.Sprintf("the team-mode lead process %d that started this scheduler is gone: its pid carries another start stamp", pid)
+	case !alive(pid):
+		return LeadIsGone, fmt.Sprintf("the team-mode lead process %d that started this scheduler is gone", pid)
+	}
+	return LeadUnknown, fmt.Sprintf("the start stamp of the team-mode lead process %d cannot be read; its state is unknown", pid)
 }
 
 // DecisionServer is the running socket.
@@ -196,8 +266,10 @@ func (s *DecisionServer) serve() {
 			if reply.Code == "" {
 				reply = DecideReply{Code: "decision_malformed", Detail: "no decision"}
 				line, err := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
-				var req WidenRequest
-				if err == nil && json.Unmarshal(line, &req) == nil && req.Kind == WidenRequestKind {
+				var kind struct {
+					Kind string `json:"kind"`
+				}
+				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind) {
 					// The fourth pass: the ledger is read again and the
 					// sender proved again after the request is read; a lead
 					// record replaced meanwhile refuses it.
@@ -205,7 +277,7 @@ func (s *DecisionServer) serve() {
 						reply = again
 					} else {
 						conn.SetDeadline(time.Time{}) // the apply step is the scheduler's own work
-						reply = s.o.Apply(s.o.Lead, req)
+						reply = s.apply(kind.Kind, line)
 					}
 				}
 			}
@@ -213,6 +285,27 @@ func (s *DecisionServer) serve() {
 			b, _ := json.Marshal(reply)
 			conn.Write(append(b, '\n'))
 		}()
+	}
+}
+
+// apply runs a proved decision of a known kind.
+func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
+	switch kind {
+	case RelaunchRequestKind:
+		var req RelaunchRequest
+		if json.Unmarshal(line, &req) != nil {
+			return DecideReply{Code: "decision_malformed", Detail: "a relaunch that does not decode"}
+		}
+		if s.o.Relaunch == nil {
+			return DecideReply{Code: RefusedRelaunchUnsupported, Detail: "this scheduler runs no roster; there is nothing to relaunch"}
+		}
+		return s.o.Relaunch(s.o.Lead, req)
+	default:
+		var req WidenRequest
+		if json.Unmarshal(line, &req) != nil {
+			return DecideReply{Code: "decision_malformed", Detail: "a widening that does not decode"}
+		}
+		return s.o.Apply(s.o.Lead, req)
 	}
 }
 
@@ -230,6 +323,9 @@ func (s *DecisionServer) origin(conn *net.UnixConn) DecideReply {
 		return unknown(fmt.Sprintf("the start stamp of pid %d is unreadable", pid))
 	}
 	lead, err := s.o.LeadPane(s.o.Root, s.o.Lead)
+	if errors.Is(err, ErrLeadGone) {
+		return DecideReply{Code: RefusedLeadGone, Detail: err.Error() + "; refused, and the scheduler exits"}
+	}
 	if err != nil {
 		return unknown(err.Error())
 	}
@@ -248,6 +344,32 @@ func (s *DecisionServer) origin(conn *net.UnixConn) DecideReply {
 // dial goes through seatlaunch.DialPrivate, bounded like the bind: a
 // recorded path past sun_path (a deep root on Linux) is still dialable.
 func SendDecision(root, path string, req WidenRequest) (DecideReply, error) {
+	return sendDecision(root, path, req)
+}
+
+// SendRelaunch is the lead's relaunch of the roster over the scheduler's
+// socket (3.0.1 t16), proved and answered like a widening.
+func SendRelaunch(root, path string, req RelaunchRequest) (DecideReply, error) {
+	req.Kind = RelaunchRequestKind
+	return sendDecision(root, path, req)
+}
+
+// RelaunchRequestKind marks the lead's relaunch of the roster.
+const RelaunchRequestKind = "amq-squad.relaunch.v1"
+
+// RefusedRelaunchUnsupported: the scheduler runs no roster.
+const RefusedRelaunchUnsupported = "relaunch_unsupported"
+
+// RelaunchRequest is the lead's decision to relaunch the roster: the
+// remaining seats finish what they hold and close, and the roster launches
+// again in one apply (a replacement while AMQ cannot join a fresh seat into
+// a present binding, ask 20).
+type RelaunchRequest struct {
+	Kind   string `json:"kind"`
+	Reason string `json:"reason,omitempty"`
+}
+
+func sendDecision(root, path string, req any) (DecideReply, error) {
 	var reply DecideReply
 	c, err := seatlaunch.DialPrivate(root, path, DecisionSocketName)
 	if err != nil {

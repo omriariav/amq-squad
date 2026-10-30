@@ -529,13 +529,52 @@ started and supervised by the lead's team mode (`lead --team
 --scheduler-seats`). It is wired to 2b-2's seat launcher, uses the AMQ
 wake as the doorbell, runs 2b-4's router and its Flush every tick and
 the milestone B commit step, and takes 2b-3's usage-limit source. At
-start it holds a barrier: adopted seats are closed and their close
-confirmed, the exits ledger is loaded and writable, and its decision
-socket stays closed until then, so nothing is dispatched before. A slot
-is released only at seat_gone, deferred exit checks are persisted, and
-the seat cap counts the seat list's slots. Restart recovery from the
+start it holds a barrier: a seat of the previous incarnation that the
+roster does not adopt (see the roster launch below) is closed and its
+close confirmed, the exits ledger is loaded and writable, and its
+decision socket stays closed until then, so nothing is dispatched
+before. A gone seat's slot is held until its exit check is decided,
+deferred exit checks are persisted, and the seat cap counts live leases
+(3.0.1; before it, the seat list's slots). Restart recovery from the
 task store stays phase 5 (16.4). [2.7, briefs rulings 15 and 19;
-milestone B result]
+milestone B result; 3.0.1 t16]
+
+The roster launch (3.0.1, reviewer ruling 2026-10-30). AMQ refuses a
+fresh seat into a session's present binding unless every planned seat
+resumes (`binding_present_without_resumable_conversation`, v0.116.2
+reconcile), so a scheduler that launched one seat per request ran a
+single-seat squad. The scheduler therefore launches the roster, every
+seat of the typed seat list with a worktree of its own, in one AMQ
+prepare and one apply at start (one binding, every seat fresh); a seat
+that holds no lease is parked and gets the next task of its pool, and
+the seat cap and the registry's concurrency pools bound the leases held
+at once (max_seats caps live leases, not live panes). A restarted
+scheduler adopts the live roster seats it re-proves from the launch
+ledger and closes the rest. The roster's tmux session holds seats only: the
+lead's seat is left out of the roster, and the team-mode lead and its
+scheduler run in the owner's terminal, the scheduler taking its team-mode
+parent as the lead for decisions. A gone seat is replaced only by relaunching
+the roster: its pool's next task blocks for the lead
+(`seat_replacement_needs_relaunch`), whose decision `amq-squad scheduler
+relaunch` lets the remaining seats finish, closes them and launches the
+roster again in one apply, until AMQ can join a fresh participant into a
+present binding (ask 20). A roster launch that fails at prepare or apply
+is one decision with its stage, AMQ's reason and the detail, and the
+process exits with it, an exit the lead's supervisor does not restart;
+`lead --team --trust` passes the owner's standing trust answer through.
+
+Amendment to R4 (3.0.1 t16, reviewer ruling 2026-10-30): "the lead
+proved from the process" has two forms, and one scheduler uses exactly
+one. For a `lead --team` start the lead is the team-mode process that
+started this scheduler: its pid and raw start stamp recorded at the
+scheduler's start, proved as an ancestor of the decision's sender whose
+pid and stamp both match (the bounded parent-chain walk, the stamp
+re-read at every hop); a recorded incarnation that is gone refuses the
+decision with lead_gone and the scheduler exits. For every other start the
+lead is the AMQ-proved seat under the session root, as before (3.1 brief
+1's Claude lead seat, row 1c, is this form). The `--lead` seat is left out
+of the roster, so neither form's lead is launched or relaunched into the
+roster's tmux session. [docs/v3-spike/5-301-evidence/t16-roster-launch.md] [3.0.1 t16; docs/v3-spike/5-301-evidence/t16-roster-launch.md]
 
 ### 4.6 Status contract
 

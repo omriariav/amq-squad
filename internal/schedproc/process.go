@@ -67,6 +67,12 @@ type Options struct {
 	// Started is called once the scheduler exists (its Post receives the
 	// launcher's events).
 	Started func(*scheduler.Scheduler)
+	// LeadState, when set, reads the state of the lead the scheduler serves
+	// (a team-mode start: its parent's recorded incarnation). Gone ends the
+	// process rather than serve a dead lead's socket; unknown (a stamp that
+	// cannot be read) is logged once and checked again next tick, and never
+	// ends it (3.0.1 t16).
+	LeadState func() (LeadStatus, string)
 }
 
 // Dir is the process's directory under the session root.
@@ -171,17 +177,32 @@ func Run(ctx context.Context, o Options) error {
 	// dispatch; a seat of the previous incarnation that is still alive is
 	// closed through the launcher, its exit check after the confirmed close.
 	// AdoptClosing loads the exits ledger first (N3 (a)).
-	for _, ls := range LiveSeats(o.Root) {
-		s.AdoptClosing(ls.Handle, ls.Pool, o.Now())
-		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "seat_adopted_closing", Seat: ls.Handle, Reason: "alive from a previous incarnation"})
-	}
+	// In roster mode (3.0.1 t16) a live roster seat is adopted as up
+	// instead: closing it would leave a squad AMQ cannot refill without
+	// relaunching the roster.
+	adoptLive(s, o.Root, o.Config.Roster, o.Now(), func(d scheduler.Decision) { logLine(o.Log, o.Now(), d) })
 	if o.Started != nil {
 		o.Started(s)
 	}
 	logLine(o.Log, o.Now(), scheduler.Decision{Kind: "scheduler_started", Reason: "incarnation " + s.Incarnation})
 	timer := time.NewTicker(o.Tick)
 	defer timer.Stop()
+	leadUnknown := false
 	for {
+		if o.LeadState != nil {
+			switch st, why := o.LeadState(); st {
+			case LeadIsGone:
+				logLine(o.Log, o.Now(), scheduler.Decision{Kind: "scheduler_stopped", Reason: RefusedLeadGone + ": " + why})
+				return fmt.Errorf("scheduler: %w: %s", ErrLeadGone, why)
+			case LeadUnknown:
+				if !leadUnknown {
+					logLine(o.Log, o.Now(), scheduler.Decision{Kind: "lead_unknown", Reason: why + "; checked again each tick"})
+				}
+				leadUnknown = true
+			default:
+				leadUnknown = false
+			}
+		}
 		ds, err := s.Tick()
 		if f, ok := o.Router.(Flusher); ok {
 			if err := f.Flush(); err != nil {
@@ -194,6 +215,14 @@ func Run(ctx context.Context, o Options) error {
 		if o.OnTick != nil {
 			o.OnTick(ds)
 		}
+		var failed *scheduler.RosterLaunchError
+		if errors.As(err, &failed) {
+			// A roster launch that failed at prepare or apply ends the
+			// process with its stage, reason and detail (logged by the tick
+			// as roster_launch_failed); the caller prints it.
+			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "scheduler_stopped", Reason: failed.Error()})
+			return fmt.Errorf("scheduler: %w", err)
+		}
 		if err != nil {
 			// A tick error is logged and the next tick retries: the store is
 			// transactional, so a failed tick left nothing half done.
@@ -205,6 +234,9 @@ func Run(ctx context.Context, o Options) error {
 		if o.Decisions != nil && srv == nil && s.Ready() {
 			d := *o.Decisions
 			d.Root, d.Lead = o.Root, o.Config.Lead
+			if d.Relaunch == nil && len(o.Config.Roster) > 0 {
+				d.Relaunch = relaunchDecision(s)
+			}
 			opened, serr := ServeDecisions(d)
 			if serr != nil {
 				return fmt.Errorf("scheduler: the decision socket: %w", serr)

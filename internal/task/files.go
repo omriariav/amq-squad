@@ -150,3 +150,35 @@ func matchSegs(gs, ps []string, tree bool) bool {
 	}
 	return matchSegs(gs[1:], ps[1:], tree)
 }
+
+// LiteralGlob is the declared-file entry that matches exactly the path p and
+// nothing else (3.0.1 t16 round 7): the metacharacters of path.Match in p
+// (*, ?, [) become one-character classes ([*], [?], [[]), so a file a seat
+// named like a glob never widens a task's scope, and a segment "**" stays
+// literal. A path the declared set cannot hold exactly is refused: empty, a
+// control character, a backslash (the set reads it as a separator), a
+// directory ("/" at the end), or one that is not relative.
+func LiteralGlob(p string) (string, error) {
+	switch {
+	case p == "":
+		return "", fmt.Errorf("an empty path")
+	case strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+		return "", fmt.Errorf("path %q carries a newline or a control character", p)
+	case strings.Contains(p, "\\"):
+		return "", fmt.Errorf("path %q carries a backslash, which the declared set reads as a separator", p)
+	case strings.HasSuffix(p, "/"):
+		return "", fmt.Errorf("path %q is a directory, not a file", p)
+	case path.Clean(p) != p || strings.HasPrefix(p, "/") || p == ".." || strings.HasPrefix(p, "../"):
+		return "", fmt.Errorf("path %q is not a clean repository-relative path", p)
+	}
+	var b strings.Builder
+	for _, r := range p {
+		switch r {
+		case '*', '?', '[':
+			b.WriteString("[" + string(r) + "]")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String(), nil
+}

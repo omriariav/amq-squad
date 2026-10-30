@@ -92,8 +92,8 @@ func (s *Slots) ReleaseRequest(id string) {
 
 func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	root := filepath.Clean(s.Squad.ProjectRoot)
-	if seat.Worktree == "" || filepath.Clean(seat.Worktree) == root {
-		return seat, fmt.Errorf("seat %s has no worktree of its own (the repository root is never a seat worktree: the commit step moves the seat branch)", seat.Handle)
+	if _, err := s.checkWorktree(seat); err != nil {
+		return seat, err
 	}
 	if seat.Branch == "" {
 		seat.Branch = "seat/" + seat.Handle
@@ -222,6 +222,8 @@ var (
 	_ scheduler.SeatGoneObserver = (*Launcher)(nil)
 	_ scheduler.SeatReserver     = (*Launcher)(nil)
 )
+
+func cleanPath(p string) string { return filepath.Clean(p) }
 
 func writeJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

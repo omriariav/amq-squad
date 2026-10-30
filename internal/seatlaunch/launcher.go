@@ -30,17 +30,26 @@ type SeatPlanner func(req scheduler.SeatRequest) (Squad, error)
 // confirmed. CloseSeat stops the seat's provider process (the pane is AMQ's;
 // amq-squad never closes it, R6).
 type Launcher struct {
-	Plan    SeatPlanner
-	Options Options               // Decisions carries the standing answers, if any
-	Post    func(scheduler.Event) // usually (*scheduler.Scheduler).Post
-	Root    string                // the session root, for CloseSeat
-	Now     func() time.Time
+	Plan SeatPlanner
+	// PlanRoster turns a roster launch's requests (one per roster seat, each
+	// naming its handle) into the squad to launch in one apply (3.0.1 t16);
+	// nil: the launcher launches no roster.
+	PlanRoster func(reqs []scheduler.SeatRequest) (Squad, error)
+	Options    Options               // Decisions carries the standing answers, if any
+	Post       func(scheduler.Event) // usually (*scheduler.Scheduler).Post
+	Root       string                // the session root, for CloseSeat
+	Now        func() time.Time
 	// CloseWait bounds how long CloseSeat waits for the process to exit.
 	CloseWait time.Duration
 	// PaneGone reports whether an AMQ pane resource no longer exists; ok is
 	// false when that cannot be determined. Default: a read-only tmux
 	// list-panes query.
 	PaneGone func(resource string) (gone, ok bool)
+	// BindingPane reports whether a roster seat's recorded pane resource is
+	// still the binding's live pane (its server, session, epoch and agent
+	// label; bindingPanePresent); known is false when that cannot be read. A
+	// test seam.
+	BindingPane func(root, handle, resource string) (present, known bool)
 	// PanesFor counts the panes labelled with a handle (@amq_pane_agent);
 	// ok is false when that cannot be determined. Default: a read-only tmux
 	// list-panes query bounded at 2 s (the fix round's item 3).
@@ -128,9 +137,32 @@ func (l *Launcher) RequestSeat(req scheduler.SeatRequest) error {
 // cancelled meanwhile is closed; it becomes cancelled only once the close is
 // confirmed, else it stays closing with the error for the next cancel retry.
 func (l *Launcher) settle(r *request, res Result, err error) {
-	up := err == nil && res.Stage == "applied" && len(res.Seats) == 1 && res.Seats[0].Up
+	l.settleAll([]*request{r}, res, err)
+}
+
+// settleAll settles every request of one launch (one seat, or the roster's
+// seats in one apply): each by its own seat's state. A pane observed for a
+// handle no request of the launch knows makes every request ambiguous.
+func (l *Launcher) settleAll(rs []*request, res Result, err error) {
+	known := map[string]bool{}
+	for _, r := range rs {
+		known[r.handle] = true
+	}
+	for _, r := range rs {
+		l.settleOne(r, known, res, err)
+	}
+}
+
+func (l *Launcher) settleOne(r *request, known map[string]bool, res Result, err error) {
+	var seat *SeatState
+	for i := range res.Seats {
+		if res.Seats[i].Handle == r.handle {
+			seat = &res.Seats[i]
+		}
+	}
+	up := err == nil && res.Stage == "applied" && seat != nil && seat.Up
 	if up {
-		l.hold(r.handle, seatIdentity{PID: res.Seats[0].PID, Start: res.Seats[0].Start})
+		l.hold(r.handle, seatIdentity{PID: seat.PID, Start: seat.Start})
 	}
 	l.mu.Lock()
 	r.launchID, r.err, r.proof = res.LaunchID, err, res.proof
@@ -138,7 +170,9 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 	if res.Apply != nil {
 		for _, o := range res.Apply.Observations {
 			if o.Handle != r.handle {
-				r.ambiguous = true // a pane for a handle this request does not know
+				if !known[o.Handle] {
+					r.ambiguous = true // a pane for a handle this launch does not know
+				}
 				continue
 			}
 			if mine++; mine > 1 {
@@ -154,11 +188,11 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 		r.state = stateUp
 	case r.ambiguous:
 		// The proof or a confirmed close settles it (CancelSeatRequest).
-		r.state, r.err = stateUnresolved, fmt.Errorf("apply_ambiguous: AMQ observed %d pane(s) for %s and %d other(s); %v", mine, r.handle, len(res.Apply.Observations)-mine, launchFailure(res, err))
-	case placed(res, err):
-		r.state, r.err = stateUnresolved, launchFailure(res, err)
+		r.state, r.err = stateUnresolved, fmt.Errorf("apply_ambiguous: AMQ observed %d pane(s) for %s and %d other(s); %v", mine, r.handle, len(res.Apply.Observations)-mine, seatFailure(res, err, seat))
+	case placedSeat(res, err, seat):
+		r.state, r.err = stateUnresolved, seatFailure(res, err, seat)
 	default:
-		r.state, r.err = stateFailed, launchFailure(res, err)
+		r.state, r.err = stateFailed, seatFailure(res, err, seat)
 	}
 	state := r.state
 	l.mu.Unlock()
@@ -170,11 +204,14 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 	}
 }
 
-// placed reports whether AMQ may have started the seat: Apply began and did
-// not report a clean refusal, and seat-exec did not refuse. An error or a
-// missing ApplyResult after Apply began is unknown, so placed: AMQ can create
-// the pane and then exit without valid JSON (fix 3 item 1).
-func placed(res Result, err error) bool {
+// placedSeat reports whether AMQ may have started this request's seat:
+// Apply began and did not report a clean refusal, and this seat's seat-exec
+// did not refuse. An error or a missing ApplyResult after Apply began is
+// unknown, so placed: AMQ can create the pane and then exit without valid
+// JSON (fix 3 item 1). The refusal is the seat's own (3.0.1 t16, Codex
+// finding 2): in a roster launch another seat's refusal says nothing about
+// this one, whose pane may still start.
+func placedSeat(res Result, err error, seat *SeatState) bool {
 	if !res.ApplyStarted {
 		return false
 	}
@@ -184,10 +221,8 @@ func placed(res Result, err error) bool {
 	if d := string(res.Apply.Disposition); d == "not_applied" || d == "rolled_back" {
 		return false
 	}
-	for _, s := range res.Seats {
-		if s.State == "refused" {
-			return false // seat-exec exited before exec: nothing runs
-		}
+	if seat != nil && seat.State == "refused" {
+		return false // seat-exec exited before exec: nothing runs
 	}
 	return true
 }
@@ -528,12 +563,13 @@ func tmuxPaneGone(resource string, env []string) (bool, bool) {
 	return true, true
 }
 
-func launchFailure(res Result, err error) error {
+// seatFailure is why one seat of a launch did not come up.
+func seatFailure(res Result, err error, seat *SeatState) error {
 	if err != nil {
 		return err
 	}
-	if len(res.Seats) == 1 && !res.Seats[0].Up {
-		return fmt.Errorf("seat %s %s: %s %s", res.Seats[0].Handle, res.Seats[0].State, res.Seats[0].ReasonCode, res.Seats[0].Detail)
+	if seat != nil && !seat.Up {
+		return fmt.Errorf("seat %s %s: %s %s", seat.Handle, seat.State, seat.ReasonCode, seat.Detail)
 	}
 	return fmt.Errorf("launch stopped at %s", res.Stage)
 }

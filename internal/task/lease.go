@@ -336,7 +336,7 @@ func (s Store) complete(t *Task, now time.Time) {
 	t.Evidence = t.Report.Evidence
 	s.endAttempt(t, OutcomeCompleted, "", now)
 	at := now
-	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail = StateCompleted, &at, "", "", ""
+	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = StateCompleted, &at, "", "", "", nil
 }
 
 // verifierRequired says whether the task's class needs the harness's
@@ -374,12 +374,25 @@ func (s Store) Complete(id string, now time.Time) (Task, error) {
 // refusal's reason code, the report stays (the seat's diff waits), and the
 // seat stays reserved until Widen re-arms the commit or Reset discards it.
 func (s Store) RefuseCommit(id, reasonCode, detail, route string, now time.Time) (Task, error) {
+	return s.RefuseCommitPaths(id, reasonCode, detail, route, nil, now)
+}
+
+// RefuseCommitPaths is RefuseCommit that also records the exact paths the
+// refusal found outside the declared files (RefusedPaths), in the same
+// transaction as the block.
+func (s Store) RefuseCommitPaths(id, reasonCode, detail, route string, paths []string, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		if t.State != StateInProgress || t.Report == nil {
 			return fmt.Errorf("task %s has no done report awaiting the commit step", t.ID)
 		}
 		s.endAttempt(t, OutcomeCommitRefused, reasonCode, now)
-		return block(t, reasonCode, detail, route)
+		if err := block(t, reasonCode, detail, route); err != nil {
+			return err
+		}
+		if len(paths) > 0 {
+			t.RefusedPaths = append([]string(nil), paths...)
+		}
+		return nil
 	})
 }
 
@@ -394,7 +407,7 @@ func block(t *Task, reason, detail, route string) error {
 		return fmt.Errorf("a block needs a reason code")
 	}
 	t.State, t.WaitReason = StateBlocked, ""
-	t.BlockReason, t.BlockDetail, t.BlockRoute = strings.TrimSpace(reason), strings.TrimSpace(detail), route
+	t.BlockReason, t.BlockDetail, t.BlockRoute, t.RefusedPaths = strings.TrimSpace(reason), strings.TrimSpace(detail), route, nil
 	return nil
 }
 
@@ -459,7 +472,7 @@ func (s Store) Reset(id string, pool *Pool, now time.Time) (Task, error) {
 		if t.State != StateBlocked {
 			return fmt.Errorf("task %s is %s; reset takes a blocked task", t.ID, t.State)
 		}
-		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail = StatePending, nil, "", "", ""
+		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = StatePending, nil, "", "", "", nil
 		if pool != nil {
 			p := *pool
 			t.Pool = &p
