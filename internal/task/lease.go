@@ -481,11 +481,17 @@ func (s Store) Reset(id string, pool *Pool, now time.Time) (Task, error) {
 	})
 }
 
-// Set changes the priority or the pool of a task that is not terminal.
+// Set changes the priority or, before its first attempt, the pool of a task
+// that is not terminal. The first attempt is the routing record, so changing
+// its pool afterwards would make the task's current pin disagree with that
+// immutable history.
 func (s Store) Set(id string, priority *int, pool *Pool, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		if Terminal(t.State) {
 			return fmt.Errorf("task %s is %s", t.ID, t.State)
+		}
+		if pool != nil && t.Attempt > 0 {
+			return fmt.Errorf("task %s has started attempt %d; pool cannot be changed after the first claim", t.ID, t.Attempt)
 		}
 		if priority != nil {
 			t.Priority = *priority

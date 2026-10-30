@@ -422,6 +422,19 @@ func TestLeadPin(t *testing.T) {
 	}
 }
 
+func TestPendingRepinReevaluatesTheNextRoute(t *testing.T) {
+	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	tk := newTask("t1", "implement")
+	tk.Pool = pl("claude:haiku:low")
+	if d := f.decide(tk); d.Entry == nil || d.Entry.Key() != "claude:haiku:low" {
+		t.Fatalf("first pin: %+v", d)
+	}
+	tk.Pool = pl("codex:gpt-5.6-terra:medium")
+	if d := f.decide(tk); d.Entry == nil || d.Entry.Key() != "codex:gpt-5.6-terra:medium" || d.Policy != PolicyLeadPin {
+		t.Fatalf("re-pinned pending task: %+v", d)
+	}
+}
+
 // A lead pin fixes the starting tier: retries move one tier up from the
 // pinned tier and never below it (ruling 4; Codex pass 1, limit a).
 func TestLeadPinFixesTheStartingTier(t *testing.T) {

@@ -114,6 +114,26 @@ func TestTaskCLIRefusals(t *testing.T) {
 	}
 }
 
+func TestTaskCLISetRepinBoundary(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	if _, err := taskCLI(t, "add", "--title", "x", "--class", "script", "--pool", "claude:haiku:low", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "set", "t1", "--pool", "codex:gpt-5.6-terra:medium", "--me", "lead"); err != nil {
+		t.Fatalf("re-pin before claim: %v", err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "set", "t1", "--pool", "claude:sonnet:medium", "--me", "lead"); err == nil || !strings.Contains(err.Error(), "after the first claim") {
+		t.Fatalf("re-pin after claim: %v", err)
+	}
+}
+
 func TestTaskCLIReconcileListsExpiredLeases(t *testing.T) {
 	root := t.TempDir()
 	chdir(t, root)
