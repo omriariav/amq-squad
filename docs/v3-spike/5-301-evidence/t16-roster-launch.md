@@ -592,3 +592,40 @@ Row: TestExpiredWindowNeverMarksALaterLaunchsToken, the chase's five steps
 recorded; 31 s and 600 ms; the record still carries B's launch, request and
 token) plus B's seat proving after A's window and the logged line. With the
 compare removed it fails: `A's window rewrote B's record: token "expired"`.
+
+## Round 6: Codex on round 5
+
+**The restage takes the record's lock.** The expiry mark's compare-and-set
+held launch.json.lock (launch.UpdateStaged), but Stage wrote the staged
+record through a bare launch.WriteFile, so B's restage could land between
+A's compare and A's write and be replaced by A's old record with "expired".
+Stage now writes through `writeStaged` (internal/seatlaunch/staged.go), a
+WriteFile under the same sidecar lock (`launch.json.lock`), the locked
+WriteFile variant rather than UpdateStaged (a restage replaces the record
+whole; it reads nothing). compile.go changes in one call only, apart from
+t9's lines. Row: TestRestageInsideTheMarkWindowKeepsTheLaterRecord, whose
+test-only seam (`markCompareHook`, between the compare and the write inside
+the locked rewrite) starts B's restage and gives it 200 ms to land; B's
+record is intact after A's mark. Unlocked, it fails (A's record replaces
+B's).
+
+**One file lock for the proof log.** proof-rejects.log is shared by every
+proof server of every launcher process, and the per-server rejMu did not
+cover that; reject() (since fix 3c (c)) and round 5's noteStale now write
+through `appendLog`, which holds `proof-rejects.log.lock` (flock, process-wide
+and cross-process) across the stat, the rotation, the open and the append;
+rejMu keeps only reject()'s rate counters. Row: TestProofLogWritersShareOneLock,
+two servers writing 100 fixed-width lines each at once against a 120-line
+cap: one rotation, 200 distinct lines across the log and .1, neither file
+past the cap. Without the shared lock it fails 20 runs in 20 (79 lines of
+200 survive).
+
+**The expiry row waits on the watcher.** TestExpiredWindowNeverMarksALaterLaunchsToken
+waits on A's proof server's done channel (closed at the end of close(),
+after the expiry marks), bounded at 5 s, instead of a 600 ms sleep. With the
+compare removed it still fails.
+
+Codex also found: the launch id the right key (fresh random ids, duplicate
+handles rejected), the accept path unable to refuse a legitimate proof, the
+log fields credential-free, no lock cycle in the cleanup, and no real tmux
+or network in the rows.
