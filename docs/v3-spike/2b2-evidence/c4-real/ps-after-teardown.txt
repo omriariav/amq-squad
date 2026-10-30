@@ -1,0 +1,1 @@
+checked 2026-10-24T09:35Z: ps -p 50296,50301 (the two seat pane processes) returns no process; no seat-exec, c4-claude or c4-codex process remains; the private tmux server (TMUX_TMPDIR=/tmp/2b2run/tmux) was killed with tmux kill-server.

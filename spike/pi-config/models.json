@@ -1,0 +1,15 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        { "id": "qwen2.5:32b", "contextWindow": 131072, "maxTokens": 8192 },
+        { "id": "qwen3.6:27b", "contextWindow": 131072, "maxTokens": 16384, "reasoning": true },
+        { "id": "gemma3:4b", "contextWindow": 131072, "maxTokens": 8192 }
+      ]
+    }
+  }
+}

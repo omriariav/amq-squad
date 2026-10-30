@@ -1,0 +1,24 @@
+
+
+› Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH.
+  Run exactly one shell command: cat "$AMQ_SQUAD_ROLE_PATH". Then reply with
+  the token S4_ROLE_VISIBLE, your seat handle from the role, and stop.
+
+
+• I’ll read the role file and return the requested token and seat handle.
+
+• Ran cat "$AMQ_SQUAD_ROLE_PATH"
+  └ Runtime: codex
+
+    Read this role and report S4_ROLE_VISIBLE with your seat handle. Perform on…
+    + 4 lines (⌃t to expand)
+
+• S4_ROLE_VISIBLE s4-codex
+
+  Worked for 11s • 11:30
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra medium · Show seat role · s4-codex-wt · No changes · Approve for …
+  ? for shortcuts                                      ⚠ 1 warning · f2 to view

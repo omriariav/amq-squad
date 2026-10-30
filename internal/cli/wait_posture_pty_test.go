@@ -6,13 +6,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
@@ -41,10 +41,9 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatalf("build amq-squad: %v\n%s", err, out)
 	}
 
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
+	opMode := team.OperatorInteractionLeadPane
 	if err := team.Write(dir, team.Team{
-		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, OperatorInteraction: opMode,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s", CWD: dir}, {Role: "qa", Binary: "codex", Handle: "qa", Session: "s", CWD: dir}},
 	}); err != nil {
 		t.Fatal(err)
@@ -61,7 +60,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 	}
 	tmuxEnv = append(tmuxEnv, "TMUX_TMPDIR="+tmuxTmp)
 	tmuxRun := func(args ...string) ([]byte, error) {
-		cmd := exec.Command(tmux, append([]string{"-L", socket}, args...)...)
+		cmd := exec.Command(tmux, append([]string{"-f", "/dev/null", "-L", socket}, args...)...)
 		cmd.Dir = dir
 		cmd.Env = tmuxEnv
 		return cmd.CombinedOutput()
@@ -89,34 +88,63 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatalf("tmux pane identity = %q", created)
 	}
 	paneID := parts[0]
-	panePID, err := strconv.Atoi(parts[1])
-	if err != nil || panePID <= 0 {
-		t.Fatalf("tmux pane pid = %q: %v", parts[1], err)
-	}
 
 	base := filepath.Join(dir, ".agent-mail")
 	root := filepath.Join(base, "s")
-	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{
-		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: team.DefaultProfile,
-		Root: root, TeamHome: dir, AgentPID: panePID, External: true, AdoptionMode: adoptionModeExternalProjectLead,
-		Tmux: &launch.TmuxInfo{PaneID: paneID, Session: "wait-posture"},
-	})
+	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: squadnamespace.DefaultProfile, Root: root, TeamHome: dir})
 	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
 		ID: "pty-gate", From: "cto", To: "user", Thread: "gate/pty", Subject: "APPROVAL: real PTY wait", Kind: "question", Created: time.Now().UTC(),
 	})
 
+	// Synchronise on the pane's shell before timing anything: a fresh tmux pane
+	// starts the user's login shell (rc files, prompt hooks), and under full-suite
+	// load that start alone took most of the old fixed 5 s. Run the binary once
+	// through the pane, wait for its marker with a generous bound, and keep the
+	// measured time as the load yardstick for the real step's deadline.
+	readyPath := filepath.Join(dir, "ready.done")
+	warm := fmt.Sprintf("%s version >/dev/null 2>&1; : >%s", shellQuote(binary), shellQuote(readyPath))
+	if out, err := tmuxRun("send-keys", "-t", paneID, warm, "C-m"); err != nil {
+		t.Fatalf("submit PTY warm-up: %v\n%s", err, out)
+	}
+	warmStart := time.Now()
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Since(warmStart) > 2*time.Minute {
+			pane, _ := tmuxRun("capture-pane", "-p", "-t", paneID, "-S", "-80")
+			t.Fatalf("pane shell never ran the warm-up command; pane:\n%s", pane)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	warmed := time.Since(warmStart)
+	// The refusal is a fast pre-send check; the failure being guarded against is
+	// the dispatch blocking until --wait-timeout. The deadline is the larger of
+	// 5 s and ten times the measured warm step, and stays well below the wait
+	// timeout, so a load spike moves it while a real block (60 s) still fails.
+	const waitTimeout = 60 * time.Second
+	limit := 10 * warmed
+	if limit < 5*time.Second {
+		limit = 5 * time.Second
+	}
+	if limit > waitTimeout/2 {
+		limit = waitTimeout / 2
+	}
+
 	outputPath := filepath.Join(dir, "watch.out")
 	donePath := filepath.Join(dir, "watch.done")
 	command := fmt.Sprintf(
-		"env -u AM_ME -u AM_ROOT -u AM_BASE_ROOT -u AM_SESSION %s amq watch --project %s --session s --me qa --override-boundary --reason %s --timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
-		shellQuote(binary), shellQuote(dir), shellQuote("real PTY alternate mailbox"), shellQuote(outputPath), shellQuote(donePath),
+		"env AM_SESSION=s AM_ME=cto AM_ROOT=%s AM_BASE_ROOT=%s %s dispatch --project %s --session s --role qa --subject %s --body %s --wait-for drained --wait-timeout 60s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
+		shellQuote(root), shellQuote(base), shellQuote(binary), shellQuote(dir), shellQuote("real PTY wait"), shellQuote("plain prose"), shellQuote(outputPath), shellQuote(donePath),
 	)
 	if out, err := tmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
 		t.Fatalf("submit PTY command: %v\n%s", err, out)
 	}
 
 	started := time.Now()
-	deadline := started.Add(5 * time.Second)
+	deadline := started.Add(limit)
 	for {
 		if _, err := os.Stat(donePath); err == nil {
 			break
@@ -125,7 +153,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			pane, _ := tmuxRun("capture-pane", "-p", "-t", paneID, "-S", "-80")
-			t.Fatalf("amq watch did not refuse before deadline; pane:\n%s", pane)
+			t.Fatalf("dispatch did not refuse before deadline; pane:\n%s", pane)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -134,19 +162,19 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(string(code)) == "0" {
-		t.Fatal("guarded amq watch unexpectedly succeeded")
+		t.Fatal("guarded dispatch unexpectedly succeeded")
 	}
 	out, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(out)
-	for _, want := range []string{"refusing amq watch before blocking", "gate/pty", "Park/end the turn"} {
+	for _, want := range []string{"refusing dispatch before blocking", "gate/pty", "Park/end the turn"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("PTY output missing %q:\n%s", want, got)
 		}
 	}
-	if elapsed := time.Since(started); elapsed >= 5*time.Second {
-		t.Fatalf("named-gate refusal took %s, want fast pre-watch refusal", elapsed)
+	if elapsed := time.Since(started); elapsed >= limit {
+		t.Fatalf("named-gate refusal took %s, want fast pre-send refusal (limit %s, warm step %s)", elapsed, limit, warmed)
 	}
 }

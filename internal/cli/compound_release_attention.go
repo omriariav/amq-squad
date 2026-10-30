@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/compoundrelease"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type compoundReleaseAttentionProjection struct {
@@ -65,7 +65,7 @@ func newCLIReleaseInspectionAdapter(projectDir, profile, session, namespaceGener
 		rootErr = fmt.Errorf("selected AMQ base root must be nonempty, absolute, and clean: %q", selectedBaseRoot)
 	} else if strings.TrimSpace(session) == "" {
 		rootErr = fmt.Errorf("selected AMQ session must be nonempty")
-	} else if profile == team.DefaultProfile {
+	} else if profile == squadnamespace.DefaultProfile {
 		expectedRoot = filepath.Join(baseRoot, strings.TrimSpace(session))
 	} else {
 		expectedRoot = baseRoot
@@ -120,11 +120,7 @@ func collectProjectedOperatorAttention(t team.Team, projectDir, profile string, 
 		if !squadnamespace.ProfilesEqual(profile, sess.TeamProfile) || onlySession != "" && sess.Name != onlySession {
 			continue
 		}
-		generation, err := namespaceEndpointGeneration(projectDir, profile, sess.Name)
-		if err != nil {
-			return projectedOperatorAttention{}, fmt.Errorf("resolve compound release namespace generation: %w", err)
-		}
-		projection, capture, err := projectCompoundReleaseSession(projectDir, profile, generation, operatorHandle, filtered.BaseRoot, *sess, now)
+		projection, capture, err := projectCompoundReleaseSession(projectDir, profile, namespaceGenerationNone, operatorHandle, filtered.BaseRoot, *sess, now)
 		if err != nil {
 			return projectedOperatorAttention{}, err
 		}
@@ -295,7 +291,7 @@ func digestAttentionParts(parts ...string) string {
 }
 
 func compoundReleaseInspectCommand(projectDir, profile, session string) string {
-	return "amq-squad operator status --project " + notifyShellQuote(projectDir) + " --profile " + notifyShellQuote(squadnamespace.NormalizeProfile(profile)) + " --session " + notifyShellQuote(session) + " --json"
+	return "amq-squad status --project " + notifyShellQuote(projectDir) + " --profile " + notifyShellQuote(squadnamespace.NormalizeProfile(profile)) + " --session " + notifyShellQuote(session) + " --json"
 }
 
 var _ compoundrelease.InspectionAdapter = (*cliReleaseInspectionAdapter)(nil)

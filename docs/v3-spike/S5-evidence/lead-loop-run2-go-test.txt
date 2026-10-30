@@ -1,0 +1,13 @@
+# lead-loop run 2, files as left by pi-1 in the scratch project; 2026-10-20T21:50:02Z
+$ go test -count=1 -v ./...
+=== RUN   TestGreeting
+--- PASS: TestGreeting (0.00s)
+=== RUN   TestIsEven
+--- PASS: TestIsEven (0.00s)
+=== RUN   TestMax
+--- PASS: TestMax (0.00s)
+=== RUN   TestReverse
+--- PASS: TestReverse (0.00s)
+PASS
+ok  	example.com/s5calc	0.332s
+exit=0

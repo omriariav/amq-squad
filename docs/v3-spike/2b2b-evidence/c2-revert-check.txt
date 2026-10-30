@@ -1,0 +1,228 @@
+==============================================================================
+ROW AMQ_SQUAD_BIN pinned to the launching binary
+fix reverted in internal/seatexec/seatexec_unix.go:
+- "AMQ_SQUAD_BIN": self,
++ "AMQ_SQUAD_BIN": "",
+$ go test -count=1 -race -run ^(TestSeatExecPinsAMQSquadBin)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestSeatExecPinsAMQSquadBin (0.03s)
+    claude_test.go:21: AMQ_SQUAD_BIN = "", want the launching binary
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.396s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatExecPinsAMQSquadBin)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.433s
+
+ROW AMQ_SQUAD_BIN pinned to the launching binary: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW claude_hooks_missing preflight
+fix reverted in internal/seatexec/seatexec_unix.go:
+- 		if err := CheckClaudeHooks(o.Home, scrubbed); err != nil {
++ 		if err := CheckClaudeHooks(o.Home, scrubbed); false && err != nil {
+$ go test -count=1 -race -run ^(TestClaudeSeatRefusesWithoutTheUserScopeHook)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook (0.17s)
+    --- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook/hooks.json_without_the_guard (0.04s)
+        claude_test.go:68: want claude_hooks_missing and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRefusesWithoutTheUserScopeHookhooks.json_without_585583712/001/bin/claude")
+    --- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook/hook_script_missing (0.03s)
+        claude_test.go:68: want claude_hooks_missing and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRefusesWithoutTheUserScopeHookhook_script_missing1114251238/001/bin/claude")
+    --- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook/not_installed (0.03s)
+        claude_test.go:68: want claude_hooks_missing and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRefusesWithoutTheUserScopeHooknot_installed1686504474/001/bin/claude")
+    --- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook/not_enabled (0.03s)
+        claude_test.go:68: want claude_hooks_missing and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRefusesWithoutTheUserScopeHooknot_enabled2386776154/001/bin/claude")
+    --- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook/project_scope_only (0.03s)
+        claude_test.go:68: want claude_hooks_missing and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRefusesWithoutTheUserScopeHookproject_scope_only2290972875/001/bin/claude")
+    claude_test.go:82: the plugin removed from HOME: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.569s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatRefusesWithoutTheUserScopeHook)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.340s
+
+ROW claude_hooks_missing preflight: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the plugin must be at user scope
+fix reverted in internal/seatexec/claude.go:
+- if entry.Scope == "user" && hooksWired(entry.InstallPath) {
++ if hooksWired(entry.InstallPath) {
+$ go test -count=1 -race -run ^(TestClaudeSeatRefusesWithoutTheUserScopeHook)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook (0.09s)
+    --- FAIL: TestClaudeSeatRefusesWithoutTheUserScopeHook/project_scope_only (0.04s)
+        claude_test.go:68: want claude_hooks_missing and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRefusesWithoutTheUserScopeHookproject_scope_only1634309389/001/bin/claude")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.588s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatRefusesWithoutTheUserScopeHook)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.354s
+
+ROW the plugin must be at user scope: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the recorded permission mode is checked
+fix reverted in internal/seatexec/seatexec_unix.go:
+- 		if err := CheckClaudePermission(rec.PermissionMode, o.Argv[1:]); err != nil {
++ 		if err := CheckClaudePermission(rec.PermissionMode, o.Argv[1:]); false && err != nil {
+$ go test -count=1 -race -run ^(TestClaudePermissionModeIsRecordedAndChecked)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudePermissionModeIsRecordedAndChecked (0.17s)
+    --- FAIL: TestClaudePermissionModeIsRecordedAndChecked/no_recorded_mode (0.03s)
+        claude_test.go:123: want claude_permission_mismatch, got <nil>
+    --- FAIL: TestClaudePermissionModeIsRecordedAndChecked/another_mode (0.03s)
+        claude_test.go:123: want claude_permission_mismatch, got <nil>
+    --- FAIL: TestClaudePermissionModeIsRecordedAndChecked/no_mode_in_argv (0.03s)
+        claude_test.go:123: want claude_permission_mismatch, got <nil>
+    --- FAIL: TestClaudePermissionModeIsRecordedAndChecked/two_modes (0.03s)
+        claude_test.go:123: want claude_permission_mismatch, got <nil>
+    --- FAIL: TestClaudePermissionModeIsRecordedAndChecked/a_permission_skip (0.03s)
+        claude_test.go:123: want claude_permission_mismatch, got <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.913s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudePermissionModeIsRecordedAndChecked)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.583s
+
+ROW the recorded permission mode is checked: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the launch records the permission mode
+fix reverted in internal/seatlaunch/compile.go:
+- PermissionMode: permissionMode(s.Runtime),
++ PermissionMode: "",
+$ go test -count=1 -race -run ^(TestLaunchRecordsTheCommitBaseAndKeepsPreflight)$ ./internal/seatlaunch   (fix reverted)
+--- FAIL: TestLaunchRecordsTheCommitBaseAndKeepsPreflight (0.13s)
+    milestoneb_test.go:76: staged record lacks the role id or the Claude permission mode:
+        {
+          "schema": 1,
+          "handle": "cto",
+          "root": "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLaunchRecordsTheCommitBaseAndKeepsPreflight1131220672/001/proj/.agent-mail/s1",
+          "base_root": "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLaunchRecordsTheCommitBaseAndKeepsPreflight1131220672/001/proj/.agent-mail",
+          "session": "s1",
+          "runtime": "claude",
+          "model": "sonnet",
+          "effort": "medium",
+          "role_sha256": "sha256:d1350091303bc83dec3b4f2fcd7c7ded45831503df3a5465df416280e4fe1e76",
+          "branch": "seat/cto",
+          "worktree": "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLaunchRecordsTheCommitBaseAndKeepsPreflight1131220672/001/wt-cto",
+          "amq_path": "/opt/homebrew/bin/amq",
+          "launch_id": "fe9b8cfb04b99579c0c0bc9be29f87f9",
+          "apply": {
+            "outcome": "applied",
+            "at": "2026-10-24T13:57:47.478086Z"
+          },
+          "cwd": "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLaunchRecordsTheCommitBaseAndKeepsPreflight1131220672/001/wt-cto",
+          "binary": "claude",
+          "role": "lead",
+          "started_at": "2026-10-24T13:57:47.448447Z",
+          "team_home": "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLaunchRecordsTheCommitBaseAndKeepsPreflight1131220672/001/proj"
+        }
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.526s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLaunchRecordsTheCommitBaseAndKeepsPreflight)$ ./internal/seatlaunch   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.545s
+
+ROW the launch records the permission mode: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW quarantine keeps the seat's tree on the ledger
+fix reverted in internal/seatcommit/commit.go:
+- 			q.Tree, q.DiffDigest = tree, digest(raw)
++ 			_ = raw
+$ go test -count=1 -race -run ^(TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing (2.83s)
+    commit_test.go:289: ledger evidence: &{Task:t1 Parent:43fa9e389a8901da9345a7fa33417e3e859cce32 Tree: DiffDigest: Snapshot: Config:[{File:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing1616815558/001/home/.claude/settings.json Preflight:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing1616815558/001/home/.amq-squad/preflight/claude-settings.json Detail:content differs from the preflight copy}] At:2026-10-24 12:00:00 +0000 UTC ClearedAt:<nil> ClearedBy:} <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	7.688s
+FAIL
+
+$ go test -count=1 -race -run ^(TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	6.693s
+
+ROW quarantine keeps the seat's tree on the ledger: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW an uncleared quarantine stays refused
+fix reverted in internal/seatcommit/commit.go:
+- 		case q.ClearedAt == nil:
+
++ 		case false:
+
+$ go test -count=1 -race -run ^(TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing (3.36s)
+    commit_test.go:301: an uncleared quarantine committed: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:5bf381087f01b617ef733eb85b1ff6d425d8e218 Tree:1d0ed0b34d65a816d9276855ed0e7862c3354469 Commit:27179e55ef0d515f864a2ecbbde4a34adc69a5a1 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:b0b67b1795657634cc3d2fa4eb95af15c6f180704aa5dcd093b60a8a66dc750f Violations:[] Config:[] Notes:[the owner cleared the quarantine of task t1] Quarantine:false}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	3.737s
+FAIL
+
+$ go test -count=1 -race -run ^(TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	4.696s
+
+ROW an uncleared quarantine stays refused: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW only the kept tree commits after the clear
+fix reverted in internal/seatcommit/commit.go:
+- 		case q.Task == o.Task.ID && q.Tree != "" && q.Tree != tree:
++ 		case false:
+$ go test -count=1 -race -run ^(TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing (2.15s)
+    commit_test.go:308: a tree changed after the quarantine: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:7c605638b4a92c52cee2a40c33bf8933ff42149d Tree:47d86b4bf6ad41086b577ef9cffc4fbe2967f620 Commit:f304e2849bb7cf644c6fa0ad900a2985e9b7c219 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:76a8bcaff3006432d87102d537f4b43ba65a65500bc747244c9de2a4a4a57a90 Violations:[] Config:[] Notes:[the owner cleared the quarantine of task t1] Quarantine:false}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	2.543s
+FAIL
+
+$ go test -count=1 -race -run ^(TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	3.073s
+
+ROW only the kept tree commits after the clear: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the store refuses a lease to a quarantined seat
+fix reverted in internal/task/lease.go:
+- 	if all.dir != "" {
+		if err := quarantined(all.dir, holder); err != nil {
++ 	if false {
+		if err := quarantined(all.dir, holder); err != nil {
+$ go test -count=1 -race -run ^(TestQuarantinedSeatGetsNoLease)$ ./internal/task   (fix reverted)
+--- FAIL: TestQuarantinedSeatGetsNoLease (0.13s)
+    quarantine_test.go:27: grant to a quarantined seat: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.545s
+FAIL
+
+$ go test -count=1 -race -run ^(TestQuarantinedSeatGetsNoLease)$ ./internal/task   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/task	1.500s
+
+ROW the store refuses a lease to a quarantined seat: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the scheduler quarantines and closes the seat
+fix reverted in internal/scheduler/scheduler.go:
+- 	if res.Quarantine {
+
++ 	if false {
+
+$ go test -count=1 -race -run ^(TestQuarantineClosesTheSeatAndDispatchesElsewhere)$ ./internal/scheduler   (fix reverted)
+--- FAIL: TestQuarantineClosesTheSeatAndDispatchesElsewhere (0.39s)
+    milestoneb_test.go:94: quarantine decisions: [{Kind:commit_refused TaskID:t1 Seat:seat-a Pool: Reason:global_config_changed} {Kind:seat_requested TaskID:t2 Seat: Pool:claude:sonnet:medium Reason:}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.904s
+FAIL
+
+$ go test -count=1 -race -run ^(TestQuarantineClosesTheSeatAndDispatchesElsewhere)$ ./internal/scheduler   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	3.591s
+
+ROW the scheduler quarantines and closes the seat: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW a seat never clears its own quarantine
+fix reverted in internal/cli/seat_commit.go:
+- 	if me == *seat || os.Getenv("AM_ME") == *seat {
++ 	if false {
+$ go test -count=1 -race -run ^(TestSeatCommitQuarantineAndOwnerClear)$ ./internal/cli   (fix reverted)
+--- FAIL: TestSeatCommitQuarantineAndOwnerClear (4.61s)
+    seat_clear_test.go:51: a seat cleared its own quarantine
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	11.360s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatCommitQuarantineAndOwnerClear)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	4.902s
+
+ROW a seat never clears its own quarantine: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

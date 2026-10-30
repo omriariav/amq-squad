@@ -1,0 +1,29 @@
+=== RUN   TestStatusFleetJSONIsTheFleetDocument
+--- PASS: TestStatusFleetJSONIsTheFleetDocument (0.10s)
+=== RUN   TestStatusFleetEmpty
+--- PASS: TestStatusFleetEmpty (0.00s)
+=== RUN   TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings
+=== RUN   TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/closed
+=== RUN   TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/withdrawn
+--- PASS: TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings (0.01s)
+    --- PASS: TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/closed (0.01s)
+    --- PASS: TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/withdrawn (0.01s)
+=== RUN   TestOperatorAttentionReportsAgedGateEscalation
+--- PASS: TestOperatorAttentionReportsAgedGateEscalation (0.00s)
+=== RUN   TestOperatorAttentionReportsOneGateWithoutDirectiveDuplicate
+--- PASS: TestOperatorAttentionReportsOneGateWithoutDirectiveDuplicate (0.01s)
+=== RUN   TestOperatorAttentionKeepsGateOpenAfterStatusUpdate
+--- PASS: TestOperatorAttentionKeepsGateOpenAfterStatusUpdate (0.00s)
+=== RUN   TestOperatorAttentionClosesGateAfterOperatorAnswer
+--- PASS: TestOperatorAttentionClosesGateAfterOperatorAnswer (0.01s)
+=== RUN   TestMergeOperatorAttentionActiveWinsOverClearedInEitherOrder
+--- PASS: TestMergeOperatorAttentionActiveWinsOverClearedInEitherOrder (0.00s)
+=== RUN   TestOperatorInboxGroupsGatesOfTwoSquads
+--- PASS: TestOperatorInboxGroupsGatesOfTwoSquads (0.07s)
+=== RUN   TestOperatorStartSquadInsideTheOwnerFleetGrant
+--- PASS: TestOperatorStartSquadInsideTheOwnerFleetGrant (0.01s)
+=== RUN   TestStatusJSONIsTheContractDocument
+--- PASS: TestStatusJSONIsTheContractDocument (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.748s
+exit 0

@@ -4,26 +4,24 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/compoundrelease"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestCompoundReleaseBarrierClearsWithStableTombstone(t *testing.T) {
 	project := t.TempDir()
 	session := "issue-414"
-	root := squadnamespace.AMQRoot(project, team.DefaultProfile, session)
+	root := squadnamespace.AMQRoot(project, squadnamespace.DefaultProfile, session)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	degradedSession := state.Session{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: squadnamespace.ID(team.DefaultProfile, session), Root: root + ".wrong"}
-	degraded, _, err := projectCompoundReleaseSession(project, team.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), degradedSession, notifyNow)
+	degradedSession := state.Session{Name: session, TeamProfile: squadnamespace.DefaultProfile, NamespaceID: squadnamespace.ID(squadnamespace.DefaultProfile, session), Root: root + ".wrong"}
+	degraded, _, err := projectCompoundReleaseSession(project, squadnamespace.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), degradedSession, notifyNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +32,7 @@ func TestCompoundReleaseBarrierClearsWithStableTombstone(t *testing.T) {
 
 	cleanSession := degradedSession
 	cleanSession.Root = root
-	clean, _, err := projectCompoundReleaseSession(project, team.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), cleanSession, notifyNow.Add(time.Minute))
+	clean, _, err := projectCompoundReleaseSession(project, squadnamespace.DefaultProfile, "none", team.DefaultOperatorHandle, filepath.Dir(root), cleanSession, notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +48,7 @@ func TestCompoundReleaseClaimedIDPreservesOrdinarySameThread(t *testing.T) {
 	writeCompoundAttentionMessage(t, root, "user", "new", "release-v1", "cto", "user", thread, "APPROVAL: marker", "question", notifyNow, map[string]any{"release_child": map[string]any{"schema_version": 1}})
 	writeCompoundAttentionMessage(t, root, "user", "new", "ordinary", "cto", "user", thread, "APPROVAL: ordinary", "question", notifyNow.Add(time.Second), nil)
 
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +83,7 @@ func TestCompoundReleaseProjectionOrdinaryGateRegressionAndOneScan(t *testing.T)
 		return compoundrelease.ResolveSessionSeries(scope, query, adapter)
 	}
 
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +112,7 @@ func TestCompoundReleaseProjectionSelectedBaseRootLayoutsScanOnce(t *testing.T) 
 		profile string
 		root    func(string, string) (string, string)
 	}{
-		{name: "custom default base", profile: team.DefaultProfile, root: func(project, session string) (string, string) {
+		{name: "custom default base", profile: squadnamespace.DefaultProfile, root: func(project, session string) (string, string) {
 			base := filepath.Join(project, "custom-amq")
 			return base, filepath.Join(base, session)
 		}},
@@ -166,7 +164,7 @@ func TestCompoundReleaseProjectionSelectedRootMismatchIsPresentUnscannedBarrier(
 		name, profile string
 		roots         func(string, string) (string, string)
 	}{
-		{name: "wrong observed root", profile: team.DefaultProfile, roots: func(project, session string) (string, string) {
+		{name: "wrong observed root", profile: squadnamespace.DefaultProfile, roots: func(project, session string) (string, string) {
 			base := filepath.Join(project, "custom-amq")
 			return base, filepath.Join(base, session+"-wrong")
 		}},
@@ -221,7 +219,7 @@ func TestCompoundReleaseRootBarrierPreservesExistingOrdinaryAttention(t *testing
 		return state.ScanSessionMessages(root, now)
 	}
 
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,247 +238,13 @@ func TestCompoundReleaseRootBarrierPreservesExistingOrdinaryAttention(t *testing
 func TestExplicitActionabilityPreservesNonGateSurfaceBehavior(t *testing.T) {
 	project, snapshot, cfg, root := compoundReleaseProjectionFixture(t)
 	writeCompoundAttentionMessage(t, root, "user", "new", "surface", "cto", "user", "ask/ordinary", "Which option?", "question", notifyNow, nil)
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
+	projected, err := collectProjectedOperatorAttention(cfg, project, squadnamespace.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	surface, ok := attentionByLatestID(projected.Items, "surface")
-	if !ok || !surface.Actionable || surface.Answerable || operatorOpenGates(projected.Items) != 0 {
-		t.Fatalf("surface=%+v open=%d all=%+v", surface, operatorOpenGates(projected.Items), projected.Items)
-	}
-}
-
-func TestSelfOperatorVisibilityReusesFilteredSingleCapture(t *testing.T) {
-	project, snapshot, cfg, root := compoundReleaseProjectionFixture(t)
-	cfg.Operator = &team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle, InteractionMode: team.OperatorInteractionSelfOperator, Participant: true}
-	writeCompoundAttentionMessage(t, root, "user", "new", "release-v1", "cto", "user", "gate/shared", "APPROVAL: marker", "question", notifyNow, map[string]any{"release_child": map[string]any{"schema_version": 1}})
-	writeCompoundAttentionMessage(t, root, "user", "new", "ordinary", "cto", "user", "gate/shared", "APPROVAL: ordinary", "question", notifyNow.Add(time.Second), nil)
-	oldResolve := resolveCompoundReleaseAttention
-	defer func() { resolveCompoundReleaseAttention = oldResolve }()
-	oldScan := scanOperatorSessionMessages
-	defer func() { scanOperatorSessionMessages = oldScan }()
-	scans := 0
-	scanOperatorSessionMessages = func(root string, now func() time.Time) ([]state.Message, []state.Warning) {
-		scans++
-		return state.ScanSessionMessages(root, now)
-	}
-	resolveCompoundReleaseAttention = func(scope compoundrelease.SessionScope, query compoundrelease.ResolveQuery, adapter compoundrelease.InspectionAdapter) (compoundrelease.Resolution, error) {
-		return compoundrelease.ResolveSessionSeries(scope, query, adapter)
-	}
-	projected, err := collectProjectedOperatorAttention(cfg, project, team.DefaultProfile, snapshot, team.DefaultOperatorHandle, "issue-414", notifyNow.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	visibility := collectSelfOperatorVisibilityAttentionCaptured(cfg, project, team.DefaultProfile, projected.Snapshot, "issue-414", notifyNow.Add(time.Minute), projected.Captures)
-	if scans != 1 {
-		t.Fatalf("self-operator projection scans=%d", scans)
-	}
-	for _, item := range visibility {
-		if item.LatestID == "release-v1" {
-			t.Fatalf("self-operator visibility reused claimed release id: %+v", visibility)
-		}
-	}
-}
-
-func TestProjectedUnreadBacklogUsesThreadUnionAndExactMailboxState(t *testing.T) {
-	ordinary := []state.ThreadSummary{{ID: "gate/shared", UnreadBy: []string{team.DefaultOperatorHandle}}}
-	child := operatorAttention{EventType: "compound_release_child", Thread: "gate/shared", Actionable: true, Answerable: true, Unread: true}
-	if got := operatorUnreadBacklogWithProjected(ordinary, team.DefaultOperatorHandle, []operatorAttention{child}); got != 1 {
-		t.Fatalf("same-thread backlog=%d, want 1", got)
-	}
-	child.Thread = "gate/distinct"
-	if got := operatorUnreadBacklogWithProjected(ordinary, team.DefaultOperatorHandle, []operatorAttention{child}); got != 2 {
-		t.Fatalf("distinct-thread backlog=%d, want 2", got)
-	}
-	child.Unread = false
-	if got := operatorUnreadBacklogWithProjected(nil, team.DefaultOperatorHandle, []operatorAttention{child}); got != 0 {
-		t.Fatalf("read child backlog=%d, want 0", got)
-	}
-}
-
-func TestProjectedUnreadBacklogComposesTerminalLifecycleWithSecureBarriers(t *testing.T) {
-	unreadGate := func(thread string, gateState state.OperatorGateState) []state.ThreadSummary {
-		return []state.ThreadSummary{{ID: thread, UnreadBy: []string{team.DefaultOperatorHandle}, OperatorGateState: gateState}}
-	}
-
-	for _, kind := range []string{"securely_answered", "legacy_answered"} {
-		t.Run(kind, func(t *testing.T) {
-			if got := operatorUnreadBacklogWithProjected(unreadGate("gate/answered", state.OperatorGateStateAnswered), team.DefaultOperatorHandle, nil); got != 0 {
-				t.Fatalf("answered gate without active projection backlog=%d, want 0", got)
-			}
-		})
-	}
-
-	t.Run("structurally_answered_secure_barrier", func(t *testing.T) {
-		barrier := operatorAttention{
-			EventType: "gate", Thread: "gate/secure-barrier", Summary: "approval_receipt_missing",
-			Actionable: true, Answerable: false,
-		}
-		unrelated := operatorAttention{EventType: "gate", Thread: "gate/unrelated", Actionable: true}
-		for order, items := range [][]operatorAttention{{barrier, unrelated}, {unrelated, barrier}} {
-			if got := operatorUnreadBacklogWithProjected(unreadGate(barrier.Thread, state.OperatorGateStateAnswered), team.DefaultOperatorHandle, items); got != 1 {
-				t.Fatalf("answered gate with active secure barrier order %d backlog=%d, want 1", order, got)
-			}
-		}
-	})
-
-	for _, terminalState := range []state.OperatorGateState{state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn} {
-		t.Run(string(terminalState), func(t *testing.T) {
-			staleBarrier := operatorAttention{EventType: "gate", Thread: "gate/terminal", Actionable: true}
-			if got := operatorUnreadBacklogWithProjected(unreadGate(staleBarrier.Thread, terminalState), team.DefaultOperatorHandle, []operatorAttention{staleBarrier}); got != 0 {
-				t.Fatalf("%s gate backlog=%d, want 0", terminalState, got)
-			}
-		})
-	}
-
-	t.Run("compound_release_child_remains_independent_union_member", func(t *testing.T) {
-		child := operatorAttention{EventType: "compound_release_child", Thread: "gate/answered", Actionable: true, Answerable: true, Unread: true}
-		if got := operatorUnreadBacklogWithProjected(unreadGate(child.Thread, state.OperatorGateStateAnswered), team.DefaultOperatorHandle, []operatorAttention{child}); got != 1 {
-			t.Fatalf("answered ordinary gate with unread compound child backlog=%d, want 1", got)
-		}
-	})
-}
-
-func TestCompoundReleaseChildrenStableKeysAndEvidenceLossTombstone(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	sess := state.Session{Name: fixture.adapter.session, TeamProfile: fixture.adapter.profile, NamespaceID: squadnamespace.ID(fixture.adapter.profile, fixture.adapter.session), Root: fixture.adapter.root}
-	projected, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	activeChildren := releaseChildAttentionByRole(projected.Items)
-	if len(activeChildren) != 2 {
-		t.Fatalf("active children=%+v", activeChildren)
-	}
-	for _, child := range active.Prepared.Children {
-		item := activeChildren[child.Role]
-		if item.Cleared || !item.Actionable || !item.Answerable || item.LatestID == "" || item.Key == "" {
-			t.Fatalf("active child %s=%+v", child.Role, item)
-		}
-	}
-
-	broken := active.Prepared.Children[0]
-	brokenMessageID := active.Active.Children[0].QuestionMessageID
-	if err := os.Remove(filepath.Join(fixture.adapter.root, "agents", active.Prepared.Spec.OperatorHandle, "inbox", "new", brokenMessageID+".md")); err != nil {
-		t.Fatal(err)
-	}
-	degraded, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow.Add(2*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	degradedChildren := releaseChildAttentionByRole(degraded.Items)
-	if got := degradedChildren[broken.Role]; !got.Cleared || got.Actionable || got.Answerable || got.Key != activeChildren[broken.Role].Key {
-		t.Fatalf("broken child active=%+v tombstone=%+v", activeChildren[broken.Role], got)
-	}
-	sibling := active.Prepared.Children[1]
-	if got := degradedChildren[sibling.Role]; got.Cleared || !got.Actionable || !got.Answerable || got.Key != activeChildren[sibling.Role].Key {
-		t.Fatalf("sibling active=%+v degraded=%+v", activeChildren[sibling.Role], got)
-	}
-	recovery := findReleaseAttention(t, degraded.Items, "compound_release_recovery")
-	if recovery.Cleared || !recovery.Actionable || recovery.Answerable || recovery.Respond != "" {
-		t.Fatalf("recovery=%+v", recovery)
-	}
-	prior := notifyStateFile{Schema: notifyStateSchema, Items: map[string]notifyStateRecord{}}
-	_, _, prior = selectNotifications(projected.Items, prior, time.Hour, notifyNow)
-	_, _, next := selectNotifications(degraded.Items, prior, time.Hour, notifyNow.Add(time.Minute))
-	if next.Items[activeChildren[broken.Role].Key].Active {
-		t.Fatalf("broken child tombstone did not clear notify state: %+v", next.Items[activeChildren[broken.Role].Key])
-	}
-}
-
-func TestCompoundReleaseChildrenTombstoneOnInactiveSuccessor(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	sess := state.Session{Name: fixture.adapter.session, TeamProfile: fixture.adapter.profile, NamespaceID: squadnamespace.ID(fixture.adapter.profile, fixture.adapter.session), Root: fixture.adapter.root}
-	before, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := active.Prepared.Spec
-	spec.TagTarget += "-next"
-	spec.GitHubReleaseTarget += "-next"
-	spec.Note.Summary += " next"
-	if _, err := fixture.store.PrepareSuccessor(active.Pointer.GenerationID, spec); err != nil {
-		t.Fatal(err)
-	}
-	after, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeChildren, afterChildren := releaseChildAttentionByRole(before.Items), releaseChildAttentionByRole(after.Items)
-	for role, activeItem := range beforeChildren {
-		cleared := afterChildren[role]
-		if !cleared.Cleared || cleared.Actionable || cleared.Answerable || cleared.Key != activeItem.Key {
-			t.Fatalf("role %s active=%+v inactive=%+v", role, activeItem, cleared)
-		}
-	}
-}
-
-func TestCompoundReleaseStatusPreservesPhysicalCursorAndReadBacklog(t *testing.T) {
-	fixture, _ := newCLIActiveReleaseAttentionFixture(t)
-	cfg := team.Team{Project: fixture.adapter.project, Workstream: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
-	if err := team.Write(fixture.adapter.project, cfg); err != nil {
-		t.Fatal(err)
-	}
-	base := filepath.Join(fixture.adapter.project, ".agent-mail")
-	seedNotifyLaunch(t, fixture.adapter.project, base, fixture.adapter.session, "cto")
-	data, err := buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: team.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(time.Minute) }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if data.operatorCursor != "question-tag" || data.OperatorLoop.Backlog != 2 || data.OperatorLoop.GatesOpen != 2 {
-		t.Fatalf("cursor/backlog/open=%q/%d/%d attention=%+v", data.operatorCursor, data.OperatorLoop.Backlog, data.OperatorLoop.GatesOpen, data.Attention)
-	}
-	for _, child := range releaseChildAttentionByRole(data.Attention) {
-		path := filepath.Join(fixture.adapter.root, "agents", team.DefaultOperatorHandle, "inbox", "new", child.LatestID+".md")
-		cur := filepath.Join(fixture.adapter.root, "agents", team.DefaultOperatorHandle, "inbox", "cur", child.LatestID+".md")
-		if err := os.MkdirAll(filepath.Dir(cur), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(path, cur); err != nil {
-			t.Fatal(err)
-		}
-	}
-	data, err = buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: team.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(2 * time.Minute) }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if data.OperatorLoop.Backlog != 0 || data.OperatorLoop.GatesOpen != 2 || data.operatorCursor != "question-tag" {
-		t.Fatalf("read cursor/backlog/open=%q/%d/%d", data.operatorCursor, data.OperatorLoop.Backlog, data.OperatorLoop.GatesOpen)
-	}
-}
-
-func TestCompoundReleaseRecoveryIsNotAnAgedGate(t *testing.T) {
-	inspect := "amq-squad operator status --project /project --profile default --session s --json"
-	recovery := operatorAttention{EventType: "compound_release_recovery", Key: "recovery", Profile: team.DefaultProfile, Session: "s", Thread: "gate/release", Subject: "compound release recovery", Escalation: string(state.OperatorGateEscalationStrongWarning), Inspect: inspect, Actionable: true, Answerable: false}
-	data := operatorStatusEnvelopeData{ProjectDir: "/project", Profile: team.DefaultProfile, Session: "s", Namespace: squadnamespace.Resolve("/project", team.DefaultProfile, "s"), Attention: []operatorAttention{recovery}}
-	if warnings := statusWarningsForAgedOperatorGates(data); len(warnings) != 0 {
-		t.Fatalf("non-answerable recovery produced aged gate warning: %+v", warnings)
-	}
-	answerable := recovery
-	answerable.EventType = "compound_release_child"
-	answerable.Answerable = true
-	if warnings := statusWarningsForAgedOperatorGates(operatorStatusEnvelopeData{Attention: []operatorAttention{answerable}}); len(warnings) != 1 {
-		t.Fatalf("answerable aged child warnings=%+v", warnings)
-	}
-}
-
-func TestCompoundReleaseNotifyAndStatusShareProjectedChildren(t *testing.T) {
-	fixture, _ := newCLIActiveReleaseAttentionFixture(t)
-	base := installCLIReleaseAttentionTeam(t, fixture)
-	now := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
-	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: fixture.adapter.profile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	statusKeys := activeAttentionKeys(status.Attention)
-	if len(statusKeys) != 2 || status.OperatorLoop.GatesOpen != 2 {
-		t.Fatalf("status keys/open=%v/%d attention=%+v", statusKeys, status.OperatorLoop.GatesOpen, status.Attention)
-	}
-
-	notifyOut := executeNotifyJSONForTest(t, notifyExecution{ProjectDir: fixture.adapter.project, Profile: fixture.adapter.profile, Session: fixture.adapter.session, BaseRoot: base, StatePath: filepath.Join(fixture.adapter.project, "notify-test.json"), RenotifyAfter: time.Hour, DryRun: true, Now: func() time.Time { return now }})
-	notifyData := decodeJSONEnvelope[notifyEnvelopeData](t, notifyOut).Data
-	if notifyKeys := activeAttentionKeys(notifyData.Notifications); !slices.Equal(notifyKeys, statusKeys) {
-		t.Fatalf("notify keys=%v status keys=%v notifications=%+v", notifyKeys, statusKeys, notifyData.Notifications)
+	if !ok || !surface.Actionable || surface.Answerable || openGatesForTest(projected.Items) != 0 {
+		t.Fatalf("surface=%+v open=%d all=%+v", surface, openGatesForTest(projected.Items), projected.Items)
 	}
 }
 
@@ -488,12 +252,12 @@ func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, tea
 	t.Helper()
 	project := t.TempDir()
 	session := "issue-414"
-	root := squadnamespace.AMQRoot(project, team.DefaultProfile, session)
+	root := squadnamespace.AMQRoot(project, squadnamespace.DefaultProfile, session)
 	if err := os.MkdirAll(filepath.Join(root, "agents", "user", "inbox", "new"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	agents := []state.Agent{{Handle: "cto", Liveness: state.LivenessAlive}}
-	snapshot := state.Snapshot{BaseRoot: filepath.Dir(root), Sessions: []state.Session{{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: squadnamespace.ID(team.DefaultProfile, session), Root: root, Agents: agents}}}
+	snapshot := state.Snapshot{BaseRoot: filepath.Dir(root), Sessions: []state.Session{{Name: session, TeamProfile: squadnamespace.DefaultProfile, NamespaceID: squadnamespace.ID(squadnamespace.DefaultProfile, session), Root: root, Agents: agents}}}
 	cfg := team.Team{Project: project, Members: []team.Member{{Role: "cto", Handle: "cto"}}}
 	return project, snapshot, cfg, root
 }
@@ -501,14 +265,10 @@ func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, tea
 func newCLIActiveReleaseAttentionFixture(t *testing.T) (cliReleaseFixture, compoundrelease.Snapshot) {
 	t.Helper()
 	fixture := newCLIReleaseFixture(t, 1)
-	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
-	if err != nil || result.Disposition != compoundrelease.ReconcilePublished || result.Role != operatorauth.ReleaseChildGitHubRelease {
-		t.Fatalf("first child reconcile=%+v err=%v", result, err)
-	}
 	child := fixture.publishing.Prepared.Children[1]
 	now := time.Date(2026, 7, 15, 1, 0, 1, 0, time.UTC)
 	writeExactCLIReleaseQuestion(t, fixture.adapter.root, fixture.publishing.Prepared.Spec, child, "question-github-release", now)
-	result, err = fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
+	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
 	if err != nil || result.Disposition != compoundrelease.ReconcileActivated || result.Snapshot.Active == nil {
 		t.Fatalf("activation=%+v err=%v", result, err)
 	}
@@ -523,37 +283,6 @@ func releaseChildAttentionByRole(items []operatorAttention) map[string]operatorA
 		}
 	}
 	return out
-}
-
-func installCLIReleaseAttentionTeam(t *testing.T, fixture cliReleaseFixture) string {
-	t.Helper()
-	cfg := team.Team{Project: fixture.adapter.project, Workstream: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
-	if err := team.WriteProfile(fixture.adapter.project, fixture.adapter.profile, cfg); err != nil {
-		t.Fatal(err)
-	}
-	base := filepath.Join(fixture.adapter.project, ".agent-mail")
-	seedNotifyLaunch(t, fixture.adapter.project, base, fixture.adapter.session, "cto")
-	return base
-}
-
-func activeAttentionKeys(items []operatorAttention) []string {
-	var keys []string
-	for _, item := range items {
-		if item.Actionable && !item.Cleared {
-			keys = append(keys, item.Key)
-		}
-	}
-	slices.Sort(keys)
-	return keys
-}
-
-func compoundReleaseChildKeyForThread(items []operatorAttention, thread string) string {
-	for _, item := range items {
-		if item.EventType == "compound_release_child" && item.Thread == thread {
-			return item.Key
-		}
-	}
-	return ""
 }
 
 func writeCompoundAttentionMessage(t *testing.T, root, owner, box, id, from, to, thread, subject, kind string, created time.Time, context map[string]any) {
@@ -593,4 +322,35 @@ func attentionByLatestID(items []operatorAttention, id string) (operatorAttentio
 		}
 	}
 	return operatorAttention{}, false
+}
+
+// The compound release children stay two open gates after the operator reads
+// them (4-3: the projection directly; the deleted verb's unread backlog count
+// went with it).
+func TestCompoundReleaseAttentionKeepsOpenGatesAfterRead(t *testing.T) {
+	fixture, _ := newCLIActiveReleaseAttentionFixture(t)
+	cfg := team.Team{Project: fixture.adapter.project, Session: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
+	if err := team.Write(fixture.adapter.project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(fixture.adapter.project, ".agent-mail")
+	seedNotifyLaunch(t, fixture.adapter.project, base, fixture.adapter.session, "cto")
+	items := projectAttentionForTest(t, fixture.adapter.project, squadnamespace.DefaultProfile, fixture.adapter.session, base, probeForNext(), notifyNow.Add(time.Minute))
+	if openGatesForTest(items) != 2 {
+		t.Fatalf("open=%d attention=%+v", openGatesForTest(items), items)
+	}
+	for _, child := range releaseChildAttentionByRole(items) {
+		path := filepath.Join(fixture.adapter.root, "agents", team.DefaultOperatorHandle, "inbox", "new", child.LatestID+".md")
+		cur := filepath.Join(fixture.adapter.root, "agents", team.DefaultOperatorHandle, "inbox", "cur", child.LatestID+".md")
+		if err := os.MkdirAll(filepath.Dir(cur), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(path, cur); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items = projectAttentionForTest(t, fixture.adapter.project, squadnamespace.DefaultProfile, fixture.adapter.session, base, probeForNext(), notifyNow.Add(2*time.Minute))
+	if openGatesForTest(items) != 2 {
+		t.Fatalf("read open=%d", openGatesForTest(items))
+	}
 }

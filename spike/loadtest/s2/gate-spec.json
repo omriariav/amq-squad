@@ -1,0 +1,13 @@
+{
+  "gate_id": "s2-merge-01",
+  "class": "merge",
+  "repo": "omriariav/amq-noc",
+  "base_sha": "9bedf33502bc84fb24c916ab583090f8a246bda9",
+  "prs": [
+    {
+      "number": 78,
+      "head_sha": "f1f5a842597302586d983cab11c418ba294819f9"
+    }
+  ],
+  "window_minutes": 30
+}

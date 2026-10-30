@@ -1,0 +1,945 @@
+========================================================================
+## rule: P1-1 pin must resolve to a class tier
+## test: ./internal/routing/ TestLeadPin$
+## edit internal/routing/router.go:
+-		if pinTier == "" {
+			return d, scheduler.Route{Block: BlockPinUnresolved
++		if pinTier == "" && false {
+			return d, scheduler.Route{Block: BlockPinUnresolved
+## reverted run (exit 1):
+=== RUN   TestLeadPin
+    router_test.go:396: plan pinned to claude:haiku:low: {Pool:0x5b2622d74780 Wait: Block: Detail:routing:  lead_pin}
+--- FAIL: TestLeadPin (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.975s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLeadPin
+--- PASS: TestLeadPin (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.768s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-1 review pins only on advisor
+## test: ./internal/routing/ TestLeadPin$
+## edit internal/routing/router.go:
+-	if class == "review" {
+		return []string{TierAdvisor}
+	}
++	if class == "review" && false {
+		return []string{TierAdvisor}
+	}
+## reverted run (exit 1):
+=== RUN   TestLeadPin
+    router_test.go:403: review pinned to advisor: {Task:t4 Attempt:1 Class:review Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:advisor UsedTier: Entry:<nil> Skipped:[] Policy: Propensity:0 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestLeadPin (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.487s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLeadPin
+--- PASS: TestLeadPin (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.329s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit a: the pin fixes the starting tier
+## test: ./internal/routing/ TestLeadPinFixesTheStartingTier$
+## edit internal/routing/router.go:
+-	case t.Attempt > 0 && haveFirst:
++	case false && haveFirst:
+## reverted run (exit 1):
+=== RUN   TestLeadPinFixesTheStartingTier
+    router_test.go:435: pin claude:opus:high retry: {Task:t1 Attempt:2 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:plan Entry:0x628fabff2630 Skipped:[{Entry:claude:opus:high Reason:used_before}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestLeadPinFixesTheStartingTier (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.462s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLeadPinFixesTheStartingTier
+--- PASS: TestLeadPinFixesTheStartingTier (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.373s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit a: a pinned attempt runs the pin
+## test: ./internal/routing/ TestLeadPinFixesTheStartingTier$
+## edit internal/routing/router.go:
+-	if pin != nil && failures == 0 {
++	if pin != nil && false {
+## reverted run (exit 1):
+=== RUN   TestLeadPinFixesTheStartingTier
+    router_test.go:431: pin claude:haiku:low first: {Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:task UsedTier:smol Entry:0x5988131429c0 Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:lead_pin Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestLeadPinFixesTheStartingTier (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.433s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLeadPinFixesTheStartingTier
+--- PASS: TestLeadPinFixesTheStartingTier (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.383s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 a symlink alias is local-only
+## test: ./internal/routing/ TestFix1PrivacyMatchesTheCanonicalPath$
+## edit internal/routing/canon.go:
+-		if c.Alias != "" && len(t.PrivacyPaths) > 0 {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath735835521/001: true
+    fix1_test.go:61: alias/vault.go: vendor (), want local
+    fix1_test.go:61: alias/: vendor (), want local
+    fix1_test.go:61: out/x.go: vendor (), want local
+    fix1_test.go:61: ALIAS/vault.go: vendor (), want local
+    fix1_test.go:70: alias route: {Pool:0x28f551698cc0 Wait: Block: Detail:routing: task table}
+--- FAIL: TestFix1PrivacyMatchesTheCanonicalPath (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.414s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath4118870676/001: true
+--- PASS: TestFix1PrivacyMatchesTheCanonicalPath (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.307s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the walk does not follow a link
+## test: ./internal/routing/ TestFix1PrivacyMatchesTheCanonicalPath$
+## edit internal/routing/canon.go:
+-		if kind&fs.ModeSymlink != 0 {
++		if false && kind&fs.ModeSymlink != 0 {
+## reverted run (exit 1):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath110089616/001: true
+    fix1_test.go:61: alias/vault.go: vendor (), want local
+    fix1_test.go:61: alias/: vendor (), want local
+    fix1_test.go:61: out/x.go: vendor (), want local
+    fix1_test.go:61: ALIAS/vault.go: vendor (), want local
+    fix1_test.go:70: alias route: {Pool:0x65e87f772c90 Wait: Block: Detail:routing: task table}
+--- FAIL: TestFix1PrivacyMatchesTheCanonicalPath (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.567s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath4049565982/001: true
+--- PASS: TestFix1PrivacyMatchesTheCanonicalPath (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.316s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 on-disk name on a folding filesystem
+## test: ./internal/routing/ TestFix1PrivacyMatchesTheCanonicalPath$
+## edit internal/routing/canon.go:
+-	if fold {
+		for _, e := range entries {
++	if false {
+		for _, e := range entries {
+## reverted run (exit 1):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath1204202969/001: true
+    fix1_test.go:61: ALIAS/vault.go: vendor (), want local
+--- FAIL: TestFix1PrivacyMatchesTheCanonicalPath (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.443s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath3368765570/001: true
+--- PASS: TestFix1PrivacyMatchesTheCanonicalPath (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.332s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 case-folded match
+## test: ./internal/routing/ TestFix1PrivacyMatchesTheCanonicalPath$
+## edit internal/routing/canon.go:
+-	if fold {
+		glob = strings.ToLower(glob)
++	if false {
+		glob = strings.ToLower(glob)
+## reverted run (exit 1):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath4291431421/001: true
+    fix1_test.go:61: Vendor-Keys/a.pem: vendor (), want local
+--- FAIL: TestFix1PrivacyMatchesTheCanonicalPath (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.428s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath1342430021/001: true
+--- PASS: TestFix1PrivacyMatchesTheCanonicalPath (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.307s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the router uses the canonical match
+## test: ./internal/routing/ TestFix1PrivacyMatchesTheCanonicalPath$
+## edit internal/routing/router.go:
+-	f.Privacy, f.PrivacyGlob = tbl.RequiredPrivacyAt(root, t.DeclaredFiles)
++	f.Privacy, f.PrivacyGlob = tbl.RequiredPrivacy(t.DeclaredFiles)
+## reverted run (exit 1):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath3380055121/001: true
+    fix1_test.go:70: alias route: {Pool:0x53489bbeab40 Wait: Block: Detail:routing: task table}
+--- FAIL: TestFix1PrivacyMatchesTheCanonicalPath (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.397s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath1720230466/001: true
+--- PASS: TestFix1PrivacyMatchesTheCanonicalPath (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.277s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 sensitive paths canonical
+## test: ./internal/routing/ TestFix1PrivacyMatchesTheCanonicalPath$
+## edit internal/routing/canon.go:
+-		if c.Alias != "" {
+			return true
+		}
++		if false {
+			return true
+		}
+## reverted run (exit 1):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath2432066182/001: true
+    fix1_test.go:75: sensitive canonical match
+--- FAIL: TestFix1PrivacyMatchesTheCanonicalPath (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.650s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1PrivacyMatchesTheCanonicalPath
+    fix1_test.go:58: case-insensitive filesystem under /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1PrivacyMatchesTheCanonicalPath2256119854/001: true
+--- PASS: TestFix1PrivacyMatchesTheCanonicalPath (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.480s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-3 exact child keys
+## test: ./internal/routing/ TestRoutingFileRefusals/
+## edit internal/routing/file.go:
+-func child(parent, e yamlsub.Entry) string { return strings.TrimPrefix(e.Key, parent.Key+".") }
++func child(parent, e yamlsub.Entry) string { _ = parent; return e.Key[strings.LastIndex(e.Key, ".")+1:] }
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/anchor
+=== RUN   TestRoutingFileRefusals/alias
+=== RUN   TestRoutingFileRefusals/tag
+=== RUN   TestRoutingFileRefusals/flow_map
+=== RUN   TestRoutingFileRefusals/second_document
+=== RUN   TestRoutingFileRefusals/repeated_key
+=== RUN   TestRoutingFileRefusals/unknown_key
+=== RUN   TestRoutingFileRefusals/malformed_line
+=== RUN   TestRoutingFileRefusals/missing_schema
+=== RUN   TestRoutingFileRefusals/schema_2
+=== RUN   TestRoutingFileRefusals/share_above_1
+=== RUN   TestRoutingFileRefusals/unknown_class
+=== RUN   TestRoutingFileRefusals/unknown_tier
+=== RUN   TestRoutingFileRefusals/plan_routed_down
+=== RUN   TestRoutingFileRefusals/review_routed_down
+=== RUN   TestRoutingFileRefusals/implement_on_advisor
+=== RUN   TestRoutingFileRefusals/verifier_changed
+=== RUN   TestRoutingFileRefusals/bad_chain_entry
+=== RUN   TestRoutingFileRefusals/empty_chain
+=== RUN   TestRoutingFileRefusals/repeated_chain_entry
+=== RUN   TestRoutingFileRefusals/negative_cost_cap
+=== RUN   TestRoutingFileRefusals/privacy_in_user_file
+=== RUN   TestRoutingFileRefusals/privacy_class_unknown
+=== RUN   TestRoutingFileRefusals/privacy_path_escapes
+=== RUN   TestRoutingFileRefusals/privacy_rule_incomplete
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_privacy_rule
+    file_test.go:180: err = <nil>, want "unknown key"
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_class_row
+    file_test.go:180: err = <nil>, want "unknown key"
+=== RUN   TestRoutingFileRefusals/dotted_class_name
+    file_test.go:180: err = <nil>, want "closed list"
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_tier
+    file_test.go:180: err = <nil>, want "unknown key"
+=== RUN   TestRoutingFileRefusals/dotted_tier_name
+    file_test.go:180: err = <nil>, want "unknown tier"
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_price
+    file_test.go:180: err = <nil>, want "unknown key"
+=== RUN   TestRoutingFileRefusals/share_NaN
+=== RUN   TestRoutingFileRefusals/cost_cap_infinite
+=== RUN   TestRoutingFileRefusals/price_NaN
+=== RUN   TestRoutingFileRefusals/price_infinite
+=== RUN   TestRoutingFileRefusals/prices_in_the_repository_file
+=== RUN   TestRoutingFileRefusals/price_incomplete
+=== RUN   TestRoutingFileRefusals/price_repeated
+=== RUN   TestRoutingFileRefusals/price_negative
+=== RUN   TestRoutingFileRefusals/price_bad_entry
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/anchor (0.00s)
+    --- PASS: TestRoutingFileRefusals/alias (0.00s)
+    --- PASS: TestRoutingFileRefusals/tag (0.00s)
+    --- PASS: TestRoutingFileRefusals/flow_map (0.00s)
+    --- PASS: TestRoutingFileRefusals/second_document (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/malformed_line (0.00s)
+    --- PASS: TestRoutingFileRefusals/missing_schema (0.00s)
+    --- PASS: TestRoutingFileRefusals/schema_2 (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_above_1 (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_class (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_tier (0.00s)
+    --- PASS: TestRoutingFileRefusals/plan_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/review_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/implement_on_advisor (0.00s)
+    --- PASS: TestRoutingFileRefusals/verifier_changed (0.00s)
+    --- PASS: TestRoutingFileRefusals/bad_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/empty_chain (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/negative_cost_cap (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_in_user_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_class_unknown (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_path_escapes (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_rule_incomplete (0.00s)
+    --- FAIL: TestRoutingFileRefusals/dotted_key_in_a_privacy_rule (0.00s)
+    --- FAIL: TestRoutingFileRefusals/dotted_key_in_a_class_row (0.00s)
+    --- FAIL: TestRoutingFileRefusals/dotted_class_name (0.00s)
+    --- FAIL: TestRoutingFileRefusals/dotted_key_in_a_tier (0.00s)
+    --- FAIL: TestRoutingFileRefusals/dotted_tier_name (0.00s)
+    --- FAIL: TestRoutingFileRefusals/dotted_key_in_a_price (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_NaN (0.00s)
+    --- PASS: TestRoutingFileRefusals/cost_cap_infinite (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_NaN (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_infinite (0.00s)
+    --- PASS: TestRoutingFileRefusals/prices_in_the_repository_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_incomplete (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_repeated (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_negative (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_bad_entry (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.711s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/anchor
+=== RUN   TestRoutingFileRefusals/alias
+=== RUN   TestRoutingFileRefusals/tag
+=== RUN   TestRoutingFileRefusals/flow_map
+=== RUN   TestRoutingFileRefusals/second_document
+=== RUN   TestRoutingFileRefusals/repeated_key
+=== RUN   TestRoutingFileRefusals/unknown_key
+=== RUN   TestRoutingFileRefusals/malformed_line
+=== RUN   TestRoutingFileRefusals/missing_schema
+=== RUN   TestRoutingFileRefusals/schema_2
+=== RUN   TestRoutingFileRefusals/share_above_1
+=== RUN   TestRoutingFileRefusals/unknown_class
+=== RUN   TestRoutingFileRefusals/unknown_tier
+=== RUN   TestRoutingFileRefusals/plan_routed_down
+=== RUN   TestRoutingFileRefusals/review_routed_down
+=== RUN   TestRoutingFileRefusals/implement_on_advisor
+=== RUN   TestRoutingFileRefusals/verifier_changed
+=== RUN   TestRoutingFileRefusals/bad_chain_entry
+=== RUN   TestRoutingFileRefusals/empty_chain
+=== RUN   TestRoutingFileRefusals/repeated_chain_entry
+=== RUN   TestRoutingFileRefusals/negative_cost_cap
+=== RUN   TestRoutingFileRefusals/privacy_in_user_file
+=== RUN   TestRoutingFileRefusals/privacy_class_unknown
+=== RUN   TestRoutingFileRefusals/privacy_path_escapes
+=== RUN   TestRoutingFileRefusals/privacy_rule_incomplete
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_privacy_rule
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_class_row
+=== RUN   TestRoutingFileRefusals/dotted_class_name
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_tier
+=== RUN   TestRoutingFileRefusals/dotted_tier_name
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_price
+=== RUN   TestRoutingFileRefusals/share_NaN
+=== RUN   TestRoutingFileRefusals/cost_cap_infinite
+=== RUN   TestRoutingFileRefusals/price_NaN
+=== RUN   TestRoutingFileRefusals/price_infinite
+=== RUN   TestRoutingFileRefusals/prices_in_the_repository_file
+=== RUN   TestRoutingFileRefusals/price_incomplete
+=== RUN   TestRoutingFileRefusals/price_repeated
+=== RUN   TestRoutingFileRefusals/price_negative
+=== RUN   TestRoutingFileRefusals/price_bad_entry
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/anchor (0.00s)
+    --- PASS: TestRoutingFileRefusals/alias (0.00s)
+    --- PASS: TestRoutingFileRefusals/tag (0.00s)
+    --- PASS: TestRoutingFileRefusals/flow_map (0.00s)
+    --- PASS: TestRoutingFileRefusals/second_document (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/malformed_line (0.00s)
+    --- PASS: TestRoutingFileRefusals/missing_schema (0.00s)
+    --- PASS: TestRoutingFileRefusals/schema_2 (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_above_1 (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_class (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_tier (0.00s)
+    --- PASS: TestRoutingFileRefusals/plan_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/review_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/implement_on_advisor (0.00s)
+    --- PASS: TestRoutingFileRefusals/verifier_changed (0.00s)
+    --- PASS: TestRoutingFileRefusals/bad_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/empty_chain (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/negative_cost_cap (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_in_user_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_class_unknown (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_path_escapes (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_rule_incomplete (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_privacy_rule (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_class_row (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_class_name (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_tier (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_tier_name (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_price (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_NaN (0.00s)
+    --- PASS: TestRoutingFileRefusals/cost_cap_infinite (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_NaN (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_infinite (0.00s)
+    --- PASS: TestRoutingFileRefusals/prices_in_the_repository_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_incomplete (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_repeated (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_negative (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_bad_entry (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.341s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-3 start refuses the widened rule
+## test: ./internal/routing/ TestFix1OpenRefusesAnInvalidTable$
+## edit internal/routing/file.go:
+-func child(parent, e yamlsub.Entry) string { return strings.TrimPrefix(e.Key, parent.Key+".") }
++func child(parent, e yamlsub.Entry) string { _ = parent; return e.Key[strings.LastIndex(e.Key, ".")+1:] }
+## reverted run (exit 1):
+=== RUN   TestFix1OpenRefusesAnInvalidTable
+    fix1_test.go:201: invalid table: router &{{{1 0.05 map[extract:{schema smol []} implement:{tests task []} plan:{none plan []} review:{none advisor []} script:{exit_code smol []} summarize:{none smol []}] map[advisor:{[{codex gpt-5.6-sol xhigh} {claude opus xhigh}] 0} plan:{[{claude opus high} {codex gpt-5.6-sol high}] 0} smol:{[{pi ollama/qwen3.6:35b-a3b low} {pi ollama/qwen3.6:27b low} {pi anthropic/haiku low} {claude haiku low} {codex gpt-5.6-luna low}] 0} task:{[{claude sonnet medium} {codex gpt-5.6-terra medium} {pi anthropic/sonnet medium} {pi ollama/qwen3.6:27b high}] 0}] map[] [{s/ vendor}] [] false [/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1OpenRefusesAnInvalidTable1791369387/002/.amq-squad/routing.yaml]} {0 {0  } [] []} { 0 0 []   [] [] {0 0 []}} /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1OpenRefusesAnInvalidTable1791369387/003 <nil> /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1OpenRefusesAnInvalidTable1791369387/002 5f3802ee1f8bbe13912b86853117c538bb3cfaa21feb8aca1e228519b72042e4 0x100249fb0 0x100268d10 0x1000eac90 3 <nil>} {{} {0 0}} map[] map[] map[] map[] map[]} err <nil>
+--- FAIL: TestFix1OpenRefusesAnInvalidTable (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.325s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1OpenRefusesAnInvalidTable
+--- PASS: TestFix1OpenRefusesAnInvalidTable (0.06s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.363s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-4 unwritable outcome log stops dispatch
+## test: ./internal/routing/ TestFix1UnwritableLogStopsDispatch$
+## edit internal/routing/router.go:
+-		if err := r.flush(list, now); err != nil {
++		if err := r.flush(list, now); err != nil && false {
+## reverted run (exit 1):
+=== RUN   TestFix1UnwritableLogStopsDispatch
+    fix1_test.go:99: unwritable outcome log: {Pool:0x45a8c7742f30 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestFix1UnwritableLogStopsDispatch (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.415s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1UnwritableLogStopsDispatch
+--- PASS: TestFix1UnwritableLogStopsDispatch (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.261s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-4 unwritable decision log stops dispatch
+## test: ./internal/routing/ TestFix1UnwritableLogStopsDispatch$
+## edit internal/routing/router.go:
+-		if err := r.remember(d, t, route); err != nil {
++		if err := r.remember(d, t, route); err != nil && false {
+## reverted run (exit 1):
+=== RUN   TestFix1UnwritableLogStopsDispatch
+    fix1_test.go:119: unwritable decision log: {Pool:0x6d1b6ddeb290 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestFix1UnwritableLogStopsDispatch (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.411s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1UnwritableLogStopsDispatch
+--- PASS: TestFix1UnwritableLogStopsDispatch (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.377s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 one counter is unknown usage
+## test: ./internal/routing/ TestFix1UsageNeedsBothCounters$
+## edit internal/routing/usage.go:
+-			case inOK || outOK:
+				partial = true
++			case false:
+				partial = true
+## reverted run (exit 1):
+=== RUN   TestFix1UsageNeedsBothCounters
+    fix1_test.go:150: both then one: tokens 0x14eb5d5db2f0 0x14eb5d5db2f8, known want false
+    fix1_test.go:153: both then one: evidence complete true
+--- FAIL: TestFix1UsageNeedsBothCounters (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.536s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1UsageNeedsBothCounters
+--- PASS: TestFix1UsageNeedsBothCounters (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.365s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-5 a lone counter never sums as zero
+## test: ./internal/routing/ TestFix1UsageNeedsBothCounters$
+## edit internal/routing/usage.go:
+-			case inOK && outOK:
++			case inOK || outOK:
+## reverted run (exit 1):
+=== RUN   TestFix1UsageNeedsBothCounters
+    fix1_test.go:150: input only: tokens 0x4f4d9043d3c0 0x4f4d9043d3c8, known want false
+    fix1_test.go:153: input only: evidence complete true
+    fix1_test.go:150: output only: tokens 0x4f4d9043d3e0 0x4f4d9043d3e8, known want false
+    fix1_test.go:153: output only: evidence complete true
+    fix1_test.go:150: both then one: tokens 0x4f4d9043d400 0x4f4d9043d408, known want false
+    fix1_test.go:153: both then one: evidence complete true
+--- FAIL: TestFix1UsageNeedsBothCounters (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.507s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1UsageNeedsBothCounters
+--- PASS: TestFix1UsageNeedsBothCounters (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.436s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-6 non-finite numbers refused
+## test: ./internal/routing/ TestRoutingFileRefusals/
+## edit internal/routing/file.go:
+-if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
++if err != nil || math.IsNaN(0) {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/anchor
+=== RUN   TestRoutingFileRefusals/alias
+=== RUN   TestRoutingFileRefusals/tag
+=== RUN   TestRoutingFileRefusals/flow_map
+=== RUN   TestRoutingFileRefusals/second_document
+=== RUN   TestRoutingFileRefusals/repeated_key
+=== RUN   TestRoutingFileRefusals/unknown_key
+=== RUN   TestRoutingFileRefusals/malformed_line
+=== RUN   TestRoutingFileRefusals/missing_schema
+=== RUN   TestRoutingFileRefusals/schema_2
+=== RUN   TestRoutingFileRefusals/share_above_1
+=== RUN   TestRoutingFileRefusals/unknown_class
+=== RUN   TestRoutingFileRefusals/unknown_tier
+=== RUN   TestRoutingFileRefusals/plan_routed_down
+=== RUN   TestRoutingFileRefusals/review_routed_down
+=== RUN   TestRoutingFileRefusals/implement_on_advisor
+=== RUN   TestRoutingFileRefusals/verifier_changed
+=== RUN   TestRoutingFileRefusals/bad_chain_entry
+=== RUN   TestRoutingFileRefusals/empty_chain
+=== RUN   TestRoutingFileRefusals/repeated_chain_entry
+=== RUN   TestRoutingFileRefusals/negative_cost_cap
+=== RUN   TestRoutingFileRefusals/privacy_in_user_file
+=== RUN   TestRoutingFileRefusals/privacy_class_unknown
+=== RUN   TestRoutingFileRefusals/privacy_path_escapes
+=== RUN   TestRoutingFileRefusals/privacy_rule_incomplete
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_privacy_rule
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_class_row
+=== RUN   TestRoutingFileRefusals/dotted_class_name
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_tier
+=== RUN   TestRoutingFileRefusals/dotted_tier_name
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_price
+=== RUN   TestRoutingFileRefusals/share_NaN
+    file_test.go:180: err = <nil>, want "share from 0 to 1"
+=== RUN   TestRoutingFileRefusals/cost_cap_infinite
+    file_test.go:180: err = <nil>, want "finite number"
+=== RUN   TestRoutingFileRefusals/price_NaN
+    file_test.go:180: err = <nil>, want "finite number"
+=== RUN   TestRoutingFileRefusals/price_infinite
+    file_test.go:180: err = <nil>, want "finite number"
+=== RUN   TestRoutingFileRefusals/prices_in_the_repository_file
+=== RUN   TestRoutingFileRefusals/price_incomplete
+=== RUN   TestRoutingFileRefusals/price_repeated
+=== RUN   TestRoutingFileRefusals/price_negative
+=== RUN   TestRoutingFileRefusals/price_bad_entry
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/anchor (0.00s)
+    --- PASS: TestRoutingFileRefusals/alias (0.00s)
+    --- PASS: TestRoutingFileRefusals/tag (0.00s)
+    --- PASS: TestRoutingFileRefusals/flow_map (0.00s)
+    --- PASS: TestRoutingFileRefusals/second_document (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/malformed_line (0.00s)
+    --- PASS: TestRoutingFileRefusals/missing_schema (0.00s)
+    --- PASS: TestRoutingFileRefusals/schema_2 (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_above_1 (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_class (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_tier (0.00s)
+    --- PASS: TestRoutingFileRefusals/plan_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/review_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/implement_on_advisor (0.00s)
+    --- PASS: TestRoutingFileRefusals/verifier_changed (0.00s)
+    --- PASS: TestRoutingFileRefusals/bad_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/empty_chain (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/negative_cost_cap (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_in_user_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_class_unknown (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_path_escapes (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_rule_incomplete (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_privacy_rule (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_class_row (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_class_name (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_tier (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_tier_name (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_price (0.00s)
+    --- FAIL: TestRoutingFileRefusals/share_NaN (0.00s)
+    --- FAIL: TestRoutingFileRefusals/cost_cap_infinite (0.00s)
+    --- FAIL: TestRoutingFileRefusals/price_NaN (0.00s)
+    --- FAIL: TestRoutingFileRefusals/price_infinite (0.00s)
+    --- PASS: TestRoutingFileRefusals/prices_in_the_repository_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_incomplete (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_repeated (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_negative (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_bad_entry (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.620s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/anchor
+=== RUN   TestRoutingFileRefusals/alias
+=== RUN   TestRoutingFileRefusals/tag
+=== RUN   TestRoutingFileRefusals/flow_map
+=== RUN   TestRoutingFileRefusals/second_document
+=== RUN   TestRoutingFileRefusals/repeated_key
+=== RUN   TestRoutingFileRefusals/unknown_key
+=== RUN   TestRoutingFileRefusals/malformed_line
+=== RUN   TestRoutingFileRefusals/missing_schema
+=== RUN   TestRoutingFileRefusals/schema_2
+=== RUN   TestRoutingFileRefusals/share_above_1
+=== RUN   TestRoutingFileRefusals/unknown_class
+=== RUN   TestRoutingFileRefusals/unknown_tier
+=== RUN   TestRoutingFileRefusals/plan_routed_down
+=== RUN   TestRoutingFileRefusals/review_routed_down
+=== RUN   TestRoutingFileRefusals/implement_on_advisor
+=== RUN   TestRoutingFileRefusals/verifier_changed
+=== RUN   TestRoutingFileRefusals/bad_chain_entry
+=== RUN   TestRoutingFileRefusals/empty_chain
+=== RUN   TestRoutingFileRefusals/repeated_chain_entry
+=== RUN   TestRoutingFileRefusals/negative_cost_cap
+=== RUN   TestRoutingFileRefusals/privacy_in_user_file
+=== RUN   TestRoutingFileRefusals/privacy_class_unknown
+=== RUN   TestRoutingFileRefusals/privacy_path_escapes
+=== RUN   TestRoutingFileRefusals/privacy_rule_incomplete
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_privacy_rule
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_class_row
+=== RUN   TestRoutingFileRefusals/dotted_class_name
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_tier
+=== RUN   TestRoutingFileRefusals/dotted_tier_name
+=== RUN   TestRoutingFileRefusals/dotted_key_in_a_price
+=== RUN   TestRoutingFileRefusals/share_NaN
+=== RUN   TestRoutingFileRefusals/cost_cap_infinite
+=== RUN   TestRoutingFileRefusals/price_NaN
+=== RUN   TestRoutingFileRefusals/price_infinite
+=== RUN   TestRoutingFileRefusals/prices_in_the_repository_file
+=== RUN   TestRoutingFileRefusals/price_incomplete
+=== RUN   TestRoutingFileRefusals/price_repeated
+=== RUN   TestRoutingFileRefusals/price_negative
+=== RUN   TestRoutingFileRefusals/price_bad_entry
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/anchor (0.00s)
+    --- PASS: TestRoutingFileRefusals/alias (0.00s)
+    --- PASS: TestRoutingFileRefusals/tag (0.00s)
+    --- PASS: TestRoutingFileRefusals/flow_map (0.00s)
+    --- PASS: TestRoutingFileRefusals/second_document (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_key (0.00s)
+    --- PASS: TestRoutingFileRefusals/malformed_line (0.00s)
+    --- PASS: TestRoutingFileRefusals/missing_schema (0.00s)
+    --- PASS: TestRoutingFileRefusals/schema_2 (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_above_1 (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_class (0.00s)
+    --- PASS: TestRoutingFileRefusals/unknown_tier (0.00s)
+    --- PASS: TestRoutingFileRefusals/plan_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/review_routed_down (0.00s)
+    --- PASS: TestRoutingFileRefusals/implement_on_advisor (0.00s)
+    --- PASS: TestRoutingFileRefusals/verifier_changed (0.00s)
+    --- PASS: TestRoutingFileRefusals/bad_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/empty_chain (0.00s)
+    --- PASS: TestRoutingFileRefusals/repeated_chain_entry (0.00s)
+    --- PASS: TestRoutingFileRefusals/negative_cost_cap (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_in_user_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_class_unknown (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_path_escapes (0.00s)
+    --- PASS: TestRoutingFileRefusals/privacy_rule_incomplete (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_privacy_rule (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_class_row (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_class_name (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_tier (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_tier_name (0.00s)
+    --- PASS: TestRoutingFileRefusals/dotted_key_in_a_price (0.00s)
+    --- PASS: TestRoutingFileRefusals/share_NaN (0.00s)
+    --- PASS: TestRoutingFileRefusals/cost_cap_infinite (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_NaN (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_infinite (0.00s)
+    --- PASS: TestRoutingFileRefusals/prices_in_the_repository_file (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_incomplete (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_repeated (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_negative (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_bad_entry (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.350s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-7 retry reads the recorded skips
+## test: ./internal/routing/ TestRetryKeepsTheRecordedSkips$
+## edit internal/routing/router.go:
+-		d.Skipped = append(d.Skipped, r.recordedSkips(t.ID, t.Attempts[k-1].N)...)
++		_ = k
+## reverted run (exit 1):
+=== RUN   TestRetryKeepsTheRecordedSkips
+    router_test.go:463: retry lost the recorded skip: [{Entry:claude:haiku:low Reason:used_before}]
+--- FAIL: TestRetryKeepsTheRecordedSkips (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.443s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRetryKeepsTheRecordedSkips
+--- PASS: TestRetryKeepsTheRecordedSkips (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.747s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-7 the row is the record
+## test: ./internal/routing/ TestRetryKeepsTheRecordedSkips$
+## edit internal/routing/router.go:
+-	if h, ok := r.hist[key(id, n)]; ok {
+		return slices.Clone(h.Skipped)
+	}
++	if h, ok := r.hist[key(id, n)]; ok && false {
+		return slices.Clone(h.Skipped)
+	}
+## reverted run (exit 1):
+=== RUN   TestRetryKeepsTheRecordedSkips
+    router_test.go:463: retry lost the recorded skip: [{Entry:claude:haiku:low Reason:used_before}]
+--- FAIL: TestRetryKeepsTheRecordedSkips (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.359s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRetryKeepsTheRecordedSkips
+--- PASS: TestRetryKeepsTheRecordedSkips (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.243s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-8 a tier down needs verifier passes
+## test: ./internal/routing/ TestReportRedoAndCostRules$
+## edit internal/routing/report.go:
+-	case s.Passed >= MinTasksForDown && s.Redone == 0
++	case s.Tasks >= MinTasksForDown && s.Redone == 0
+## reverted run (exit 1):
+=== RUN   TestReportRedoAndCostRules
+    report_test.go:212: no success, proposal "try implement size band 1 on smol, one tier down: 0 of 5 tasks passed their verifier, no redo" (implement task band 1)
+--- FAIL: TestReportRedoAndCostRules (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.349s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestReportRedoAndCostRules
+--- PASS: TestReportRedoAndCostRules (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.268s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit b: random persisted session seed
+## test: ./internal/routing/ TestFix1SessionSeed$
+## edit internal/routing/router.go:
+-		seed, err := SessionSeed(o.Root)
++		seed, err := o.Root, error(nil)
+## reverted run (exit 1):
+=== RUN   TestFix1SessionSeed
+    fix1_test.go:176: router seed "/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1SessionSeed2246466922/001", want the session seed (<nil>)
+--- FAIL: TestFix1SessionSeed (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.437s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1SessionSeed
+--- PASS: TestFix1SessionSeed (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.350s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit b: the seed is private
+## test: ./internal/routing/ TestFix1SessionSeed$
+## edit internal/routing/seed.go:
+-	if err := tmp.Chmod(0o600); err == nil {
++	if err := tmp.Chmod(0o644); err == nil {
+## reverted run (exit 1):
+=== RUN   TestFix1SessionSeed
+    fix1_test.go:172: seed file mode -rw-r--r-- (<nil>)
+--- FAIL: TestFix1SessionSeed (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.480s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1SessionSeed
+--- PASS: TestFix1SessionSeed (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.387s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit b: a damaged seed is refused
+## test: ./internal/routing/ TestFix1SessionSeed$
+## edit internal/routing/seed.go:
+-	if len(s) != 64 {
++	if len(s) == 0 {
+## reverted run (exit 1):
+=== RUN   TestFix1SessionSeed
+    fix1_test.go:185: a damaged seed file was accepted
+--- FAIL: TestFix1SessionSeed (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	1.644s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1SessionSeed
+--- PASS: TestFix1SessionSeed (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	1.303s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: ruling 1: companions union
+## test: ./internal/routing/ TestRequiredCompanionsDefaultEmptyAndRepositoryList$
+## edit internal/routing/table.go:
+-append(slices.Clone(t.Classes[class].RequiredCompanions), repository...)
++slices.Clone(t.Classes[class].RequiredCompanions)
+## reverted run (exit 1):
+=== RUN   TestRequiredCompanionsDefaultEmptyAndRepositoryList
+    file_test.go:61: union = [SKILL.md docs/cli/]
+--- FAIL: TestRequiredCompanionsDefaultEmptyAndRepositoryList (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.351s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRequiredCompanionsDefaultEmptyAndRepositoryList
+--- PASS: TestRequiredCompanionsDefaultEmptyAndRepositoryList (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.237s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: ruling 1: each companion once
+## test: ./internal/routing/ TestRequiredCompanionsDefaultEmptyAndRepositoryList$
+## edit internal/routing/table.go:
+-if !slices.Contains(files, c) && !slices.Contains(out, c) {
++if !slices.Contains(files, c) {
+## reverted run (exit 1):
+=== RUN   TestRequiredCompanionsDefaultEmptyAndRepositoryList
+    file_test.go:61: union = [SKILL.md docs/cli/ SKILL.md README.md]
+--- FAIL: TestRequiredCompanionsDefaultEmptyAndRepositoryList (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.345s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRequiredCompanionsDefaultEmptyAndRepositoryList
+--- PASS: TestRequiredCompanionsDefaultEmptyAndRepositoryList (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.258s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: ruling 2: start refuses routing_invalid
+## test: ./internal/routing/ TestFix1OpenRefusesAnInvalidTable$
+## edit internal/routing/open.go:
+-	if err != nil {
+		return nil, &InvalidError{Err: err}
+	}
++	if err != nil {
+		tbl = Default()
+	}
+## reverted run (exit 1):
+=== RUN   TestFix1OpenRefusesAnInvalidTable
+    fix1_test.go:201: invalid table: router &{{{1 0.05 map[extract:{schema smol []} implement:{tests task []} plan:{none plan []} review:{none advisor []} script:{exit_code smol []} summarize:{none smol []}] map[advisor:{[{codex gpt-5.6-sol xhigh} {claude opus xhigh}] 0} plan:{[{claude opus high} {codex gpt-5.6-sol high}] 0} smol:{[{pi ollama/qwen3.6:35b-a3b low} {pi ollama/qwen3.6:27b low} {pi anthropic/haiku low} {claude haiku low} {codex gpt-5.6-luna low}] 0} task:{[{claude sonnet medium} {codex gpt-5.6-terra medium} {pi anthropic/sonnet medium} {pi ollama/qwen3.6:27b high}] 0}] map[] [] [] false []} {0 {0  } [] []} { 0 0 []   [] [] {0 0 []}} /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1OpenRefusesAnInvalidTable411373185/003 <nil> /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix1OpenRefusesAnInvalidTable411373185/002 c7b2490df0c191d77b7b0a3432524272bd0b713d252b29ddd8b93f05a464b87f 0x10233a1b0 0x102358f10 0x1021dac90 3 <nil>} {{} {0 0}} map[] map[] map[] map[] map[]} err <nil>
+--- FAIL: TestFix1OpenRefusesAnInvalidTable (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.384s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1OpenRefusesAnInvalidTable
+--- PASS: TestFix1OpenRefusesAnInvalidTable (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.334s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: ruling 2: New refuses a broken table
+## test: ./internal/routing/ TestFix1OpenRefusesAnInvalidTable$
+## edit internal/routing/router.go:
+-		return nil, &InvalidError{Err: err}
++		return nil, err
+## reverted run (exit 1):
+=== RUN   TestFix1OpenRefusesAnInvalidTable
+    fix1_test.go:210: New on a broken table: routing table schema 0, want 1
+--- FAIL: TestFix1OpenRefusesAnInvalidTable (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.432s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix1OpenRefusesAnInvalidTable
+--- PASS: TestFix1OpenRefusesAnInvalidTable (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.338s
+
+## verdict: OK (fails reverted, passes restored)

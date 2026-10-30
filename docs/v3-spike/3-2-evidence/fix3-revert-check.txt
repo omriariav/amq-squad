@@ -1,0 +1,25 @@
+## the train re-binds after its own rebase: revert internal/mergetrain/train.go; go test -run 'TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\t\tit.BoundHead = cur.HeadSHA\n'
+-- to:       ''
+--- FAIL: TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush (1.06s)
+    fix3_test.go:51: rebased PR refused: <nil> [{Number:2 Task:t2 Head:8bad7992bd97536bd402f9f4de8bd4faec3ab026 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:6d315378dc0d22240edbfefe0b2cd2acacc17801 base:73ac62c95393ddd98a9211e4ebd0062f9e0d3cfc} {Number:4 Task:t4 Head:5ea46dcd4d8743be5999cf296779f36a22029b30 Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[{Rule:pr_head_moved Detail:PR #4 head 5ea46dcd4d87 is not the pr_head 959c19a177d9 bound to task t4; re-bind through the commit step}] GateID:merge-89f40e7ea7dcf095 GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:refused Merged: base:6d315378dc0d22240edbfefe0b2cd2acacc17801}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.432s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	3.114s
+
+## a failed re-bind stops the run before the merge: revert internal/mergetrain/train.go; go test -run 'TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\t\tif err := t.Binder.BindPR(it.Task, p.Number, cur.HeadSHA); err != nil {\n\t\t\t\t\treturn'
+-- to:       '\t\t\t\tif err := t.Binder.BindPR(it.Task, p.Number, cur.HeadSHA); err != nil && false {\n\t\t\t\t\treturn'
+--- FAIL: TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush (3.07s)
+    fix3_test.go:79: a failed re-bind did not stop the run: <nil> [{Number:2 Task:t2 Head:3f156114f7d5bb241142494b6a057e1b92c2850a Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:4ba7f5b2d8df491dc032f383bcb4a628e552eac2 base:dbd2f7a9067487db14eaf212a3dd36ad88f87ba8} {Number:4 Task:t4 Head:b3590825b90bc66414a870591c0412c9fc9b409c Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:merged Merged:cd62b87fd47d665c9847e0fc496cfc370043977e base:4ba7f5b2d8df491dc032f383bcb4a628e552eac2}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	3.443s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	3.273s
+
+SUMMARY: every row fails on its assertion when reverted and passes restored

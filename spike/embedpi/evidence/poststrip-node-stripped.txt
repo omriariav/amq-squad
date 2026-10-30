@@ -1,0 +1,12 @@
+== 1. extension
+42
+exit=0
+mark: loaded pi 1.3.0
+== 2. HTML export
+42
+exit=0
+Exported to: /Users/omri/.amq-squad/spike/s3/poststrip/out.html
+exit=0 html_bytes=  276662 has_marked=11
+== 3. image attach
+yes
+exit=0

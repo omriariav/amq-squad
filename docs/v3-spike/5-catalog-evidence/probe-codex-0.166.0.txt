@@ -1,0 +1,27 @@
+Codex catalog probe record
+==========================
+
+Command: go run ./cmd/amq-squad doctor --probe --runs 1
+Codex CLI: codex-cli 0.166.0
+Date: 2026-10-30
+
+The doctor probe issued one read-only `codex exec --json` turn per catalog
+model. Each accepted response had an exit-zero structured assistant answer of
+exactly `OK` (the ProbeCodexModel predicate).
+
+The run was made by the seat from a branch build with `go run ./cmd/amq-squad`,
+an R54 breach: a binary built from the branch it edits ran against owner
+state. It rewrote the owner registry ~/.amq-squad/registry.yaml. The registry
+was rebuilt from the installed 3.0.0 binary's own probe afterwards, before the
+next seat launch. This file records the redacted verdicts only and contains no
+credential values.
+
+model             verdict
+gpt-5.6-sol       usable (1/1)
+gpt-5.6-terra     usable (1/1)
+gpt-5.6-luna      usable (1/1)
+gpt-6.1-sol       usable (1/1)
+gpt-6-sol         usable (1/1)
+gpt-6.1-terra     usable (1/1)
+gpt-6-astra       usable (1/1)
+gpt-6-luna        usable (1/1)

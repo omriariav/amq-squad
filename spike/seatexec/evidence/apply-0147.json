@@ -1,0 +1,65 @@
+{
+  "result_version": 1,
+  "subject_schema": 2,
+  "outcome": "action_required",
+  "reason_code": "evidence_missing",
+  "subject_digest": "sha256:b4fd7570f408f81b9408c4a17e7c2a80f01e65f31bef941d0b4300bd4f8ed0ee",
+  "plan_digest": "sha256:4bddb1d695822c516c5d1ff06f85842300de5b0962bb3ab3d4fdf2dc1b277cd1",
+  "trust_digest": "sha256:d7a93ce9bc59663340e8653ea9fa22471780a9ae73afd9c28423d653e6f55c33",
+  "semantic_digest": "sha256:d7a93ce9bc59663340e8653ea9fa22471780a9ae73afd9c28423d653e6f55c33",
+  "backend": "tmux",
+  "profile": "tmux/darwin/v1",
+  "disposition": "committed",
+  "binding_generation": "3881094c-f890-4101-be4d-f91c11c4ee57",
+  "roster": {
+    "desired": [
+      "operator",
+      "s4-claude",
+      "s4-codex"
+    ],
+    "present": [
+      "operator",
+      "s4-claude",
+      "s4-codex"
+    ],
+    "missing": [],
+    "extra": [
+      "user"
+    ]
+  },
+  "observations": [
+    {
+      "handle": "operator",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none"
+    },
+    {
+      "handle": "s4-claude",
+      "mailbox": "present",
+      "runnable": true,
+      "conversation": "pending",
+      "execution": "pending",
+      "resource": "tmux:v1:pane:%14"
+    },
+    {
+      "handle": "s4-codex",
+      "mailbox": "present",
+      "runnable": true,
+      "conversation": "stale",
+      "execution": "pending",
+      "resource": "tmux:v1:pane:%15"
+    },
+    {
+      "handle": "user",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none",
+      "reason_code": "extra_mailbox_preserved"
+    }
+  ]
+}

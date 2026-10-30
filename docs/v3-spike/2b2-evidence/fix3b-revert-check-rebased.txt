@@ -1,0 +1,124 @@
+# 2b-2 fix 3b: revert check on the rebased head, anchors moved by fix 3c (each fix reverted in place, its test row run with -race, the fix restored, the row run again)
+
+## item 2 (an up seat: cancel is a close; only a confirmed close releases): TestCancelOfAnUpSeatWaitsForAConfirmedClose (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'l.mu.Lock()\n\t\tr.state = stateClosing\n\t\tl.mu.Unlock()\n\t\treturn l.closeOwed(r)\n\tcase stateClosing:' -> 'return nil\n\tcase stateClosing:'
+reverted run (last lines):
+    --- FAIL: TestCancelOfAnUpSeatWaitsForAConfirmedClose (0.06s)
+        fix3_test.go:60: an up seat that still runs was confirmed cancelled: <nil> (alive true)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.313s
+    FAIL
+
+## item 4a (seat-exec checks device and inode): TestProofSocketIsBoundToTheTicket (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '|| uint64(st.Dev) != t.Dev || uint64(st.Ino) != t.Ino {' -> '{'
+reverted run (last lines):
+    --- FAIL: TestProofSocketIsBoundToTheTicket (30.05s)
+        fix3b_test.go:54: a rebound socket was trusted: read unix ->/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/amqsq-814146199/proof-c4564b300a86.sock: i/o timeout
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	30.312s
+    FAIL
+
+## item 4a (seat-exec checks the peer is the launcher): TestProofSocketIsBoundToTheTicket (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '; peer != t.LauncherPID || !ok || start != t.LauncherStart {' -> '; false && (peer != t.LauncherPID || !ok || start != t.LauncherStart) {'
+reverted run (last lines):
+    --- FAIL: TestProofSocketIsBoundToTheTicket (0.10s)
+        fix3b_test.go:44: a socket served by another process was trusted: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.345s
+    FAIL
+
+## item 4a (the launcher never unlinks a live socket): TestProofSocketIsBoundToTheTicket (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if cerr == nil {\n\t\t\tc.Close()\n\t\t\tbindMu.Unlock()\n\t\t\treturn occupied(' -> 'if false && cerr == nil {\n\t\t\tc.Close()\n\t\t\tbindMu.Unlock()\n\t\t\treturn occupied('
+reverted run (last lines):
+    testing.tRunner(0xc000220248, 0x100f1b8d0)
+    	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2193 +0x168
+    created by testing.(*T).Run in goroutine 1
+    	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2258 +0x7c0
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.590s
+    FAIL
+
+## item 4b (a wrong token is dropped, not a refusal): TestWrongTokenIsDroppedNotRefused (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 's.reject(m, peer, "proof_token_invalid")\n\t\treturn launch.ProofReply{Code: "proof_token_invalid", Detail: "not ' -> 'return s.forged(m.Handle, seat, "proof_token_invalid", "a proof with a token that is not this seat\'s")'
+reverted run (last lines):
+    --- FAIL: TestWrongTokenIsDroppedNotRefused (0.20s)
+        fix3b_test.go:96: wrong {OK:false Code:identity_forged Detail:proof_token_invalid: a proof with a token that is not this seat's} real {OK:false Code:identity_forged Detail:proof_token_invalid: a proof with a token that is not this seat's}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.570s
+    FAIL
+
+## item 4c (the socket stays open for the token window): TestSocketStaysOpenForTheTokenWindow (internal/seatlaunch/run.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'res.proof = srv // open for the whole token window; WaitProofWindow waits for its end' -> 'res.proof = srv\n\tdefer srv.close()'
+reverted run (last lines):
+    --- FAIL: TestSocketStaysOpenForTheTokenWindow (0.10s)
+        fix3b_test.go:124: a late replay after the launch returned: {OK:false Code:helper_dial_failed Detail:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.452s
+    FAIL
+
+## item 4d (every hop re-read): TestPaneChainChecksEveryHop (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !ok || !ok2 || after != before {\n\t\t\treturn false, false' -> 'if !ok || !ok2 {\n\t\t\t_ = after\n\t\t\treturn false, false'
+reverted run (last lines):
+    --- FAIL: TestPaneChainChecksEveryHop (0.00s)
+        fix3b_test.go:143: a hop replaced mid-walk kept the chain (or counted as known)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.338s
+    FAIL
+
+## item 4d (the sender re-checked after the walk): TestPaneChainChecksEveryHop (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'now, ok := startTokenOf(pid)\n\t\t\tif !ok || now != start {\n\t\t\t\treturn false, false\n\t\t\t}' -> 'now, ok := startTokenOf(pid)\n\t\t\t_, _ = now, ok'
+reverted run (last lines):
+    --- FAIL: TestPaneChainChecksEveryHop (0.00s)
+        fix3b_test.go:154: a sender replaced during the walk kept the chain
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.370s
+    FAIL
+
+## item 4e (consumed token overwritten): TestUsedTokensAreOverwrittenInTheStagedRecord (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if err := s.markToken(m.Handle, launch.TokenConsumed); err != nil {' -> 'if err := error(nil); err != nil {'
+reverted run (last lines):
+    --- FAIL: TestUsedTokensAreOverwrittenInTheStagedRecord (0.61s)
+        fix3b_test.go:169: cto token after its proof: "1626b31a29ca6f56c4d0fbf726d07b8ac58c060bd7c966f368fbc05ff2615d99"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.182s
+    FAIL
+
+## item 4e (expired token overwritten at the window end): TestUsedTokensAreOverwrittenInTheStagedRecord (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '_ = s.markToken(handle, launch.TokenExpired)' -> '_ = handle'
+reverted run (last lines):
+    --- FAIL: TestUsedTokensAreOverwrittenInTheStagedRecord (0.59s)
+        fix3b_test.go:173: dev token after the window: "175db432ebec28a55f7e8677ebbb681919ee0e316e200ff1d853db4b557e7674"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.941s
+    FAIL
+
+## item 4f (a monotonic window): TestTokenWindowIsMonotonic (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !s.clock().Before(seat.deadline) {' -> 'if !s.now().Before(seat.deadline) {'
+reverted run (last lines):
+    --- FAIL: TestTokenWindowIsMonotonic (0.06s)
+        fix3b_test.go:186: a wall-clock step expired the token: {OK:false Code:proof_expired Detail:the token's 1m0s window has passed}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.535s
+    FAIL
+
+## item 4g (no peer credentials: refused): TestUnavailablePeerCredentialsRefuse (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !peerKnown {' -> 'if false && !peerKnown {'
+reverted run (last lines):
+    --- FAIL: TestUnavailablePeerCredentialsRefuse (0.05s)
+        fix3b_test.go:201: no peer credentials: {OK:false Code:identity_forged Detail:proof_origin: a valid token claims pid 75115 but was sent by pid 0}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.395s
+    FAIL
+
+all items as required: True

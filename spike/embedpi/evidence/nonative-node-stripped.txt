@@ -1,0 +1,4 @@
+removed native modules:
+/Users/omri/.amq-squad/spike/s3/nonative-node/pi/node_modules/@earendil-works/pi-tui/native/darwin/prebuilds/darwin-arm64/darwin-platform.node
+42
+exit=0

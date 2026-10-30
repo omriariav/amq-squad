@@ -2,14 +2,14 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 )
 
 const noisyAMQNotice = "AMQ UPDATE NOTICE"
@@ -158,16 +158,7 @@ func TestAMQNoisyFakeRepresentativeJSONSurfaces(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"ops", []string{"ops", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `{"ops":"ok"}`},
 		{"route", []string{"route", "--project", project, "--session", "issue-96", "--me", "outsider", "--to", "qa", "--json"}, `{"routable":true,"argv":["amq","send","--to","qa"]}`},
-		{"who", []string{"who", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `{"sessions":[]}`},
-		{"presence", []string{"presence", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `[]`},
-		{"drain", []string{"drain", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `[]`},
-		{"list", []string{"list", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `[]`},
-		{"read", []string{"read", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "m1", "--json"}, `{"id":"m1"}`},
-		{"thread", []string{"thread", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "p2p/cto__qa", "--json"}, `[]`},
-		{"dlq-list", []string{"dlq", "list", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `[]`},
-		{"dlq-read", []string{"dlq", "read", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "dlq-1", "--json"}, `{"id":"dlq-1"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,46 +172,13 @@ func TestAMQNoisyFakeRepresentativeJSONSurfaces(t *testing.T) {
 	}
 }
 
-func TestAMQNoisyFakeExactTextSurfaces(t *testing.T) {
-	project := t.TempDir()
-	base := filepath.Join(project, ".agent-mail")
-	root := filepath.Join(base, "issue-96")
-	noticeMarker, _ := setupNoisyAMQ(t, base)
-	chdir(t, project)
-
-	cases := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"send", []string{"send", "--project", project, "--session", "issue-96", "--me", "outsider", "--to", "qa", "--subject", "hello"}, "Sent msg-123 to qa\n"},
-		{"reply", []string{"reply", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "m1", "--body", "ok"}, "Replied msg-124\n"},
-		{"drain", []string{"drain", "--project", project, "--session", "issue-96", "--me", "outsider"}, "[AMQ] drained\n"},
-		{"dlq-mutation", []string{"dlq", "retry", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "dlq-1", "--yes"}, fmt.Sprintf("AMQ command preview\nproject: %s\nroot:    %s\nme:      outsider\ncommand: amq dlq retry --root %s --me outsider --id dlq-1\nretried dlq-1\n", project, root, root)},
-		{"cleanup", []string{"cleanup", "--project", project, "--session", "issue-96", "--me", "outsider", "--tmp-older-than", "36h", "--yes"}, fmt.Sprintf("AMQ command preview\nproject: %s\nroot:    %s\nme:      outsider\ncommand: amq cleanup --root %s --tmp-older-than 36h --yes\ncleaned tmp\n", project, root, root)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			stdout, stderr, err := captureOutput(t, func() error { return runAMQ(tc.args) })
-			if err != nil {
-				t.Fatalf("runAMQ(%v): %v\nstderr:\n%s", tc.args, err, stderr)
-			}
-			if stdout != tc.want {
-				t.Fatalf("stdout\n got: %q\nwant: %q", stdout, tc.want)
-			}
-			assertNoNoisyAMQNotice(t, noticeMarker, stdout, stderr)
-		})
-	}
-
-}
-
 func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 	t.Run("dispatch", func(t *testing.T) {
 		project := t.TempDir()
 		writeDispatchTeam(t, project)
 		marker, calls := setupNoisyAMQ(t, filepath.Join(project, ".agent-mail"))
 		stdout, stderr, err := captureOutput(t, func() error {
-			return runDispatch([]string{"--project", project, "--session", "issue-96", "--role", "qa", "--subject", "test", "--body", "body", "--no-wake", "--json"})
+			return runDispatch([]string{"--project", project, "--session", "issue-96", "--role", "qa", "--subject", "test", "--body", "body", "--json"})
 		})
 		if err != nil {
 			t.Fatalf("dispatch: %v\nstderr:\n%s", err, stderr)
@@ -235,8 +193,8 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 	})
 
 	t.Run("operator", func(t *testing.T) {
-		project, base, _ := seedNotifyProject(t, team.DefaultOperator())
-		seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
+		project, base, _ := seedNotifyProject(t)
+		seedLegacyOperatorQuestion(t, project, squadnamespace.DefaultProfile, "s", "cto", "gate/release")
 		marker, calls := setupNoisyAMQ(t, base)
 		stdout, stderr, err := captureOutput(t, func() error {
 			return runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", "release", "--to", "cto", "--approved", "--json"})
@@ -252,19 +210,6 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
 		assertNoisyAMQCall(t, calls, "send --root")
 
-		stdout, stderr, err = captureOutput(t, func() error {
-			return runOperator([]string{"directive", "--project", project, "--session", "s", "--to", "cto", "--subject", "ship it", "--body", "Proceed after checks.", "--json"})
-		})
-		if err != nil {
-			t.Fatalf("operator directive: %v\nstderr:\n%s", err, stderr)
-		}
-		assertJSONFromByteZero(t, stdout)
-		env = decodeJSONEnvelope[mutationResult](t, stdout)
-		if env.Kind != "operator_send" || env.Data.MessageID != "msg-123" || env.Data.Thread != "p2p/cto__user" || env.Data.Handle != "cto" {
-			t.Fatalf("operator directive JSON envelope = %+v", env)
-		}
-		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
-		assertNoisyAMQCall(t, calls, "send --root")
 	})
 
 	t.Run("doctor", func(t *testing.T) {
@@ -281,52 +226,6 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
 		assertNoisyAMQCall(t, calls, "doctor --ops")
 	})
-}
-
-func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
-	project := t.TempDir()
-	writeDispatchTeam(t, project)
-	seedBriefAt(t, project, team.DefaultProfile, "issue-96")
-	base := filepath.Join(project, ".agent-mail")
-	if err := os.MkdirAll(filepath.Join(base, "issue-96", "agents"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	marker, calls := setupNoisyAMQ(t, base)
-
-	cases := []struct {
-		name   string
-		run    func() error
-		assert func(*testing.T, string)
-	}{
-		{"status", func() error { return runStatus([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
-			env := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
-			if env.Kind != "status" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
-				t.Fatalf("status JSON envelope = %+v", env)
-			}
-		}},
-		// gh#758/t11: resume --json is now a thin alias for plan --json
-		// (planEnvelopeData, kind "plan"), not its own resumeEnvelopeData
-		// shape -- TeamHome/Workstream's new equivalent is the compiled
-		// PrepareRequestV1's own Target.ProjectRoot/Target.Session.
-		{"resume", func() error { return runResume([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
-			env := decodeJSONEnvelope[planEnvelopeData](t, stdout)
-			if env.Kind != "plan" || env.Data.Request.Target.ProjectRoot != canonicalFilesystemPath(project) || env.Data.Request.Target.Session != "issue-96" {
-				t.Fatalf("resume JSON envelope = %+v", env)
-			}
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			stdout, stderr, err := captureOutput(t, tc.run)
-			if err != nil {
-				t.Fatalf("%s: %v\nstderr:\n%s", tc.name, err, stderr)
-			}
-			assertJSONFromByteZero(t, stdout)
-			tc.assert(t, stdout)
-			assertNoNoisyAMQNotice(t, marker, stdout, stderr)
-		})
-	}
-	assertNoisyAMQCall(t, calls, "env --json")
 }
 
 func assertJSONFromByteZero(t *testing.T, stdout string) {
@@ -382,4 +281,42 @@ func assertNoisyAMQCall(t *testing.T, callsPath, want string) {
 			t.Fatalf("fake AMQ call did not receive suppression: %q", line)
 		}
 	}
+}
+
+func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
+	project := t.TempDir()
+	writeDispatchTeam(t, project)
+	base := filepath.Join(project, ".agent-mail")
+	if err := os.MkdirAll(filepath.Join(base, "issue-96", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker, calls := setupNoisyAMQ(t, base)
+
+	cases := []struct {
+		name   string
+		run    func() error
+		assert func(*testing.T, string)
+	}{
+		{"status", func() error {
+			return runStatusWithVersion([]string{"--project", project, "--session", "issue-96", "--json"}, "dev")
+		}, func(t *testing.T, stdout string) {
+			var doc status.Status
+			if err := json.Unmarshal([]byte(stdout), &doc); err != nil || doc.SchemaVersion != status.SchemaVersion || doc.Session != "issue-96" {
+				t.Fatalf("status contract = %+v (%v)", doc, err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, err := captureOutput(t, tc.run)
+			if err != nil {
+				t.Fatalf("%s: %v\nstderr:\n%s", tc.name, err, stderr)
+			}
+			assertJSONFromByteZero(t, stdout)
+			tc.assert(t, stdout)
+			assertNoNoisyAMQNotice(t, marker, stdout, stderr)
+		})
+	}
+	// 2b-1: the 3.0 status reads the session root and no longer runs amq.
+	_ = calls
 }

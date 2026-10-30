@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -14,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 func sessionScope(scope Scope) SessionScope {
@@ -438,7 +437,7 @@ func TestSuccessorRecoveryKeepsStableKeyAndUpdatesFingerprint(t *testing.T) {
 		t.Fatalf("initial recovery=%+v", clear.Recovery)
 	}
 	initial := clear.Recovery[0]
-	next, err := store.PrepareSuccessor(snapshot.Pointer.GenerationID, successorSpec(store.scope, "-next"))
+	next, err := writeSuccessorState(store, snapshot.Pointer.GenerationID, successorSpec(store.scope, "-next"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -936,19 +935,9 @@ func TestPointerAheadSuccessorInspectionIsNonMutating(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldFault := storeFault
-	defer func() { storeFault = oldFault }()
-	crash := errors.New("after old terminalized")
-	storeFault = func(stage string) error {
-		if stage == "after_old_terminalized" {
-			return crash
-		}
-		return nil
+	if _, _, err := writePointerAheadSuccessor(store, successorSpec(scope, "-crash")); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := store.PrepareSuccessor(first.Pointer.GenerationID, successorSpec(scope, "-crash")); !errors.Is(err, crash) {
-		t.Fatalf("fault=%v", err)
-	}
-	storeFault = oldFault
 	pointer, err := store.readPointer()
 	if err != nil {
 		t.Fatal(err)
@@ -966,55 +955,6 @@ func TestPointerAheadSuccessorInspectionIsNonMutating(t *testing.T) {
 	after := captureArtifacts(t, store, names)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("successor inspection mutated artifacts")
-	}
-}
-
-func TestPointerAheadSuccessorRealCrashInspection(t *testing.T) {
-	scope := testScope(t)
-	store := openTestStore(t, scope)
-	first, err := store.Create(specForScope(scope))
-	if err != nil {
-		t.Fatal(err)
-	}
-	publishing, err := store.StartPublishing(first.Pointer.GenerationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipts := stagePublishedChildrenForTest(t, store, scope, publishing, "")
-	active, err := operatorauth.NewActiveRelease(publishing.Prepared, receipts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Activate(active); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestMutableCrashSubprocessHelper$")
-	cmd.Env = append(os.Environ(), mutableCrashEnv+"=successor_pointer_published", mutableCrashEnv+"_PROJECT="+scope.ProjectDir)
-	err = cmd.Run()
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 91 {
-		t.Fatalf("crash subprocess=%v", err)
-	}
-	store, err = Open(scope, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	names := []string{"store.lock", "current.json", store.generationName(1), store.preparedName(1), store.activeName(1), store.preparedName(2)}
-	before := captureArtifacts(t, store, names)
-	root := filepath.Join(scope.ProjectDir, ".agent-mail", scope.Session)
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	result, err := ResolveSessionSeries(sessionScope(scope), ResolveQuery{MessageID: "ordinary", Gate: first.Prepared.Children[0].Thread}, staticInspectionAdapter{root: root})
-	if err != nil || result.Claim != nil || len(result.Recovery) != 1 || result.Recovery[0].Kind != "complete_successor" || !slices.Contains(result.Suppression.Threads, first.Prepared.Children[0].Thread) {
-		t.Fatalf("result=%+v err=%v", result, err)
-	}
-	if after := captureArtifacts(t, store, names); !reflect.DeepEqual(before, after) {
-		t.Fatal("real-crash inspection mutated artifacts")
 	}
 }
 
@@ -1070,7 +1010,7 @@ func TestInvocationGuardRetainsExclusiveLease(t *testing.T) {
 		if err := guard.Run(func() error {
 			close(entered)
 			go func() {
-				_, transitionErr := store.PrepareSuccessor(snapshot.Pointer.GenerationID, successorSpec(store.scope, "-guard-wins"))
+				_, transitionErr := writeSuccessorState(store, snapshot.Pointer.GenerationID, successorSpec(store.scope, "-guard-wins"))
 				transitionDone <- transitionErr
 			}()
 			select {
@@ -1110,7 +1050,7 @@ func TestInvocationGuardSuccessorWinsAndDifferentSeriesDoesNotRevoke(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.PrepareSuccessor(snapshot.Pointer.GenerationID, successorSpec(store.scope, "-next")); err != nil {
+		if _, err := writeSuccessorState(store, snapshot.Pointer.GenerationID, successorSpec(store.scope, "-next")); err != nil {
 			t.Fatal(err)
 		}
 		called := false
@@ -1125,7 +1065,7 @@ func TestInvocationGuardSuccessorWinsAndDifferentSeriesDoesNotRevoke(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := second.PrepareSuccessor(secondSnapshot.Pointer.GenerationID, successorSpec(second.scope, "-next")); err != nil {
+		if _, err := writeSuccessorState(second, secondSnapshot.Pointer.GenerationID, successorSpec(second.scope, "-next")); err != nil {
 			t.Fatal(err)
 		}
 		called := false

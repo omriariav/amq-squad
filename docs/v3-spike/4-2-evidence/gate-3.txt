@@ -1,0 +1,446 @@
+gate run 2026-10-24T14:15:44Z head 3d694159 branch v3-4b-fix
+uncommitted:  M docs/claude-hooks.md  M docs/v3-spike/4-2-evidence/fault-table.json  M docs/v3-spike/4-2-evidence/test-run-verbose.txt  M docs/v3-spike/4-2-execution.md  M plugins/claude/hooks/amq-squad-hook.sh  M scripts/test_claude_hooks.py ?? docs/v3-spike/4-2-evidence/gate-3.txt ?? docs/v3-spike/4-2-evidence/reverts-fix.txt 
+=== $ go build ./...
+=== exit 0: go build ./...
+
+=== $ go vet ./...
+=== exit 0: go vet ./...
+
+=== $ go test ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.421s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	0.837s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	1.757s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	108.228s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	50.939s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	91.357s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	34.013s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+?   	github.com/omriariav/amq-squad/v3/internal/fsanchor	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	16.467s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	20.385s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	2.330s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	3.307s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	1.749s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	31.616s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	98.541s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.985s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	61.971s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	34.881s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	10.806s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	26.539s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	16.350s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	43.228s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	8.715s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	7.455s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	7.194s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	49.806s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	7.185s
+ok  	github.com/omriariav/amq-squad/v3/scripts	10.045s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	7.111s
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
+=== exit 0: go test ./...
+
+=== $ scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        84      43515        21719
+replace        2       2431            0
+review         4       3687         2803
+delete       140      49894            0
+new          101          0        19434
+TOTAL        389     111761        54604
+target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+v2 rows kept: 29,154, ceiling 36,410 (deferred-replace rows excluded: 1657 lines) [--final]
+3.0 additions: 101 files, 19,209 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 48,363 lines (v2 rows kept plus 3.0 additions)
+like for like, class 1 and 2 rows and their targets removed: 27145 lines against a target sum of 33333 (-18.6 percent over)
+class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 1194 over target
+manifest-check: OK
+=== exit 0: scripts/manifest-check.sh --final
+
+=== $ env GOOS=linux go build ./...
+=== exit 0: env GOOS=linux go build ./...
+
+=== $ env GOOS=windows go build ./...
+=== exit 0: env GOOS=windows go build ./...
+
+=== $ make fmt-check skills-check skill-routing-check release-validator-test go-files-scope-test claude-hooks-test
+ok    plugins/claude/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/claude/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/claude/skills/amq-squad/SKILL.md
+ok    plugins/claude/skills/amq-team-setup/SKILL.md
+ok    plugins/claude/skills/cli/SKILL.md
+ok    plugins/claude/skills/orchestrator/SKILL.md
+ok    plugins/claude/skills/wizard/SKILL.md
+ok    plugins/codex/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/codex/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/codex/skills/amq-squad/SKILL.md
+ok    plugins/codex/skills/amq-team-setup/SKILL.md
+ok    plugins/codex/skills/cli/SKILL.md
+ok    plugins/codex/skills/orchestrator/SKILL.md
+ok    plugins/codex/skills/wizard/SKILL.md
+
+all 14 SKILL.md frontmatters valid; version markers match manifests
+current docs and generated team rules route to wizard/cli/orchestrator
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.008s
+
+OK
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.003s
+
+OK
+test_exclusion_is_path_based_not_git_tracked (__main__.GoFilesScope.test_exclusion_is_path_based_not_git_tracked)
+Untracked new .go files must stay in coverage, so the fix cannot be ... ok
+test_fmt_check_fails_when_gofmt_itself_fails (__main__.GoFilesScope.test_fmt_check_fails_when_gofmt_itself_fails)
+A check that passes when its instrument breaks is worse than no check. ... ok
+test_fmt_check_passes_despite_a_misformatted_peer_file (__main__.GoFilesScope.test_fmt_check_passes_despite_a_misformatted_peer_file) ... ok
+test_fmt_check_prints_the_offending_files (__main__.GoFilesScope.test_fmt_check_prints_the_offending_files)
+`@test -z "$(shell ...)"` swallowed the list, so a failure printed only ... ok
+test_fmt_leaves_the_peer_file_byte_identical (__main__.GoFilesScope.test_fmt_leaves_the_peer_file_byte_identical)
+`make fmt` writing to another agent's checkout is the severe half of #560. ... ok
+test_peer_worktree_file_is_excluded (__main__.GoFilesScope.test_peer_worktree_file_is_excluded) ... ok
+test_removal_proof_the_exclusion_is_what_excludes_it (__main__.GoFilesScope.test_removal_proof_the_exclusion_is_what_excludes_it)
+Vary exactly one thing: the -not -path './.worktrees/*' clause. ... ok
+test_untracked_go_file_at_project_root_stays_in_scope (__main__.GoFilesScope.test_untracked_go_file_at_project_root_stays_in_scope)
+The companion property, proved directly rather than inferred from the rule. ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.347s
+
+OK
+go build -ldflags "-X main.version=v2.31.0-317-g3d694159-dirty" -o amq-squad ./cmd/amq-squad
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 7.800s
+
+OK
+context injection: last run 15.8 ms
+PERF pre-tool allow in a seat: p50 22.1 ms, p95 23.8 ms
+PERF outside a seat: 60 runs, p50 5.6 ms, p95 6.2 ms, max 6.4 ms (budget p95 < 20 ms: met)
+=== exit 0: make fmt-check skills-check skill-routing-check release-validator-test go-files-scope-test claude-hooks-test
+
+=== $ python3 scripts/check-skill-frontmatter.py
+ok    plugins/claude/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/claude/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/claude/skills/amq-squad/SKILL.md
+ok    plugins/claude/skills/amq-team-setup/SKILL.md
+ok    plugins/claude/skills/cli/SKILL.md
+ok    plugins/claude/skills/orchestrator/SKILL.md
+ok    plugins/claude/skills/wizard/SKILL.md
+ok    plugins/codex/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/codex/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/codex/skills/amq-squad/SKILL.md
+ok    plugins/codex/skills/amq-team-setup/SKILL.md
+ok    plugins/codex/skills/cli/SKILL.md
+ok    plugins/codex/skills/orchestrator/SKILL.md
+ok    plugins/codex/skills/wizard/SKILL.md
+
+all 14 SKILL.md frontmatters valid; version markers match manifests
+=== exit 0: python3 scripts/check-skill-frontmatter.py
+
+=== $ make -k ci (informational)
+go vet ./...
+go test -timeout 20m ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.697s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	0.974s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	0.441s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	68.043s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	33.924s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	60.297s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	15.295s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+?   	github.com/omriariav/amq-squad/v3/internal/fsanchor	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	8.336s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	16.588s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	4.137s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	4.136s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	1.783s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	19.658s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	64.914s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	5.238s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	36.783s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	21.966s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	9.978s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	17.572s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	13.513s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	25.655s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	6.555s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	4.090s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	4.394s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	27.210s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	0.756s
+ok  	github.com/omriariav/amq-squad/v3/scripts	3.705s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	1.018s
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
+README.html is stale: run 'make readme-html' and commit it
+make: *** [readme-html-check] Error 1
+docs/skills.html is stale: run 'make docs-html' and commit it
+make: *** [docs-html-check] Error 1
+ok    plugins/claude/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/claude/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/claude/skills/amq-squad/SKILL.md
+ok    plugins/claude/skills/amq-team-setup/SKILL.md
+ok    plugins/claude/skills/cli/SKILL.md
+ok    plugins/claude/skills/orchestrator/SKILL.md
+ok    plugins/claude/skills/wizard/SKILL.md
+ok    plugins/codex/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/codex/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/codex/skills/amq-squad/SKILL.md
+ok    plugins/codex/skills/amq-team-setup/SKILL.md
+ok    plugins/codex/skills/cli/SKILL.md
+ok    plugins/codex/skills/orchestrator/SKILL.md
+ok    plugins/codex/skills/wizard/SKILL.md
+
+all 14 SKILL.md frontmatters valid; version markers match manifests
+current docs and generated team rules route to wizard/cli/orchestrator
+go build -ldflags "-X main.version=v2.31.0-317-g3d694159-dirty" -o amq-squad ./cmd/amq-squad
+skill/command drift (15):
+  - subcommand 'amq-squad amq drain' is named in the skills but amq has no such subcommand (valid: env, route)
+  - subcommand 'amq-squad amq thread' is named in the skills but amq has no such subcommand (valid: env, route)
+  - verb 'amq-squad down' is named in the skills but is not a command
+  - subcommand 'amq-squad evidence recover' is named in the skills but evidence has no such subcommand (valid: ingest, list)
+  - subcommand 'amq-squad evidence run' is named in the skills but evidence has no such subcommand (valid: ingest, list)
+  - verb 'amq-squad focus' is named in the skills but is not a command
+  - verb 'amq-squad init' is named in the skills but is not a command
+  - verb 'amq-squad resume' is named in the skills but is not a command
+  - verb 'amq-squad send' is named in the skills but is not a command
+  - verb 'amq-squad start' is named in the skills but is not a command
+  - subcommand 'amq-squad team member' is named in the skills but team has no such subcommand (valid: apply, check, draft-rules, propose, show)
+  - subcommand 'amq-squad team rules' is named in the skills but team has no such subcommand (valid: apply, check, draft-rules, propose, show)
+  - subcommand 'amq-squad team shared-cwd-exception' is named in the skills but team has no such subcommand (valid: apply, check, draft-rules, propose, show)
+  - subcommand 'amq-squad team sync' is named in the skills but team has no such subcommand (valid: apply, check, draft-rules, propose, show)
+  - verb 'amq-squad wizard' is named in the skills but is not a command
+
+Fix the skill text, or the command, so they agree.
+make: *** [skill-command-check] Error 1
+31 documented invocation(s) do not run as written:
+
+plugins/skills-src/cli/SKILL.md:46: usage failure (exit 1)
+    documented: amq-squad doctor --session S
+    executed:   amq-squad doctor --session issue-1
+    error:      flag provided but not defined: -session
+
+plugins/skills-src/cli/SKILL.md:51: usage failure (exit 1)
+    documented: amq-squad evidence run ID --me H --session S --subject TEXT -- make ci
+    executed:   amq-squad evidence run t1 --me cto --session issue-1 --subject text -- make ci
+    error:      error: unknown 'evidence' subcommand: "run". Try 'ingest' or 'list'.
+
+plugins/skills-src/cli/SKILL.md:52: usage failure (exit 1)
+    documented: amq-squad evidence recover ID ATTEMPT --me H --session S
+    executed:   amq-squad evidence recover t1 a1 --me cto --session issue-1
+    error:      error: unknown 'evidence' subcommand: "recover". Try 'ingest' or 'list'.
+
+plugins/skills-src/cli/SKILL.md:54: usage failure (exit 1)
+    documented: amq-squad amq thread --id THREAD --include-body
+    executed:   amq-squad amq thread --id p2p/cto__qa --include-body
+    error:      error: unknown 'amq' subcommand: "thread". Try 'env' or 'route'.
+
+plugins/skills-src/cli/SKILL.md:56: usage failure (exit 1)
+    documented: amq-squad amq drain --include-body
+    executed:   amq-squad amq drain --include-body
+    error:      error: unknown 'amq' subcommand: "drain". Try 'env' or 'route'.
+
+plugins/skills-src/cli/SKILL.md:88: usage failure (exit 1)
+    documented: amq-squad evidence run TASK --profile PROFILE --session SESSION --me ACTOR --subject TEXT --attempt-id ID -- COMMAND [ARG...]
+    executed:   amq-squad evidence run t1 --profile relprof --session issue-1 --me cto --subject text --attempt-id t1 -- make ci
+    error:      error: unknown 'evidence' subcommand: "run". Try 'ingest' or 'list'.
+
+plugins/skills-src/orchestrator/SKILL.md:116: usage failure (exit 1)
+    documented: amq-squad role draft researcher --binary codex --purpose "Investigate ambiguous product behavior" --project P --profile R --session S
+    executed:   amq-squad role draft researcher --binary codex --purpose "Investigate ambiguous product behavior" --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-15 --profile relprof --session issue-1
+    error:      flag provided but not defined: -binary
+
+plugins/skills-src/orchestrator/SKILL.md:120: usage failure (exit 1)
+    documented: amq-squad team member add researcher --binary codex --project P --profile R --session S
+    executed:   amq-squad team member add researcher --binary codex --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-16 --profile relprof --session issue-1
+    error:      error: unknown 'team' subcommand: "member". Try 'propose', 'apply', 'show', 'check', or 'draft-rules'.
+
+plugins/skills-src/orchestrator/SKILL.md:121: usage failure (exit 1)
+    documented: amq-squad resume --project P --profile R --session S --exec --role researcher
+    executed:   amq-squad resume --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-17 --profile relprof --session issue-1 --exec --role researcher
+    error:      error: unknown command: "resume". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/orchestrator/SKILL.md:176: usage failure (exit 1)
+    documented: amq-squad team member rm researcher --project P --profile R --stop --close-panes
+    executed:   amq-squad team member rm researcher --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-18 --profile relprof --stop --close-panes
+    error:      error: unknown 'team' subcommand: "member". Try 'propose', 'apply', 'show', 'check', or 'draft-rules'.
+
+plugins/skills-src/orchestrator/SKILL.md:34: usage failure (exit 1)
+    documented: amq-squad doctor --session S
+    executed:   amq-squad doctor --session issue-1
+    error:      flag provided but not defined: -session
+
+plugins/skills-src/orchestrator/SKILL.md:142: usage failure (exit 1)
+    documented: amq-squad team member add ROLE --binary B --launch
+    executed:   amq-squad team member add qa --binary codex --launch
+    error:      error: unknown 'team' subcommand: "member". Try 'propose', 'apply', 'show', 'check', or 'draft-rules'.
+
+plugins/skills-src/orchestrator/SKILL.md:191: usage failure (exit 1)
+    documented: amq-squad evidence recover TASK ATTEMPT --me H --session S
+    executed:   amq-squad evidence recover t1 a1 --me cto --session issue-1
+    error:      error: unknown 'evidence' subcommand: "recover". Try 'ingest' or 'list'.
+
+plugins/skills-src/amq-squad/references/team-rules-template.md:54: usage failure (exit 1)
+    documented: amq-squad status
+    executed:   amq-squad status
+    error:      error: status: no store root; pass --root, set AM_ROOT, or pass --session
+
+plugins/skills-src/amq-squad/references/team-rules-template.md:13: usage failure (exit 1)
+    documented: amq-squad team sync --apply
+    executed:   amq-squad team sync --apply
+    error:      error: team sync was removed in amq-squad 3.0; use team propose and team apply (they plan CLAUDE.md and AGENTS.md too)
+
+plugins/skills-src/cli/references/daily-loop.md:10: usage failure (exit 1)
+    documented: amq-squad doctor --session S
+    executed:   amq-squad doctor --session issue-1
+    error:      flag provided but not defined: -session
+
+plugins/skills-src/cli/references/primitives.md:67: usage failure (exit 1)
+    documented: amq-squad focus --session S --role cto
+    executed:   amq-squad focus --session issue-1 --role cto
+    error:      error: unknown command: "focus". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:68: usage failure (exit 1)
+    documented: amq-squad send --session S --role cto --body-file ./prompt.md
+    executed:   amq-squad send --session issue-1 --role cto --body-file ./prompt.md
+    error:      error: unknown command: "send". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:69: usage failure (exit 1)
+    documented: amq-squad send --session S --role qa --body-file -
+    executed:   amq-squad send --session issue-1 --role qa --body-file -
+    error:      error: unknown command: "send". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:96: usage failure (exit 1)
+    documented: amq-squad down --role R --session S
+    executed:   amq-squad down --role relprof --session issue-1
+    error:      error: unknown command: "down". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:97: usage failure (exit 1)
+    documented: amq-squad resume --session S
+    executed:   amq-squad resume --session issue-1
+    error:      error: unknown command: "resume". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:98: usage failure (exit 1)
+    documented: amq-squad resume --session S --exec
+    executed:   amq-squad resume --session issue-1 --exec
+    error:      error: unknown command: "resume". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:99: usage failure (exit 1)
+    documented: amq-squad start --project DIR --profile PROFILE
+    executed:   amq-squad start --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-36 --profile relprof
+    error:      error: unknown command: "start". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/orchestrator/references/lead-loop.md:79: usage failure (exit 1)
+    documented: amq-squad evidence recover TASK ATTEMPT --me H --session S
+    executed:   amq-squad evidence recover t1 a1 --me cto --session issue-1
+    error:      error: unknown 'evidence' subcommand: "recover". Try 'ingest' or 'list'.
+
+plugins/skills-src/orchestrator/references/recovery.md:10: usage failure (exit 1)
+    documented: amq-squad doctor --session S
+    executed:   amq-squad doctor --session issue-1
+    error:      flag provided but not defined: -session
+
+plugins/skills-src/wizard/references/pointer-stub-template.md:3: usage failure (exit 1)
+    documented: amq-squad team sync --apply
+    executed:   amq-squad team sync --apply
+    error:      error: team sync was removed in amq-squad 3.0; use team propose and team apply (they plan CLAUDE.md and AGENTS.md too)
+
+plugins/skills-src/wizard/references/roles.md:46: usage failure (exit 1)
+    documented: amq-squad role draft researcher --binary codex --purpose "Investigate ambiguous product behavior" --project P --profile R --session S
+    executed:   amq-squad role draft researcher --binary codex --purpose "Investigate ambiguous product behavior" --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-46 --profile relprof --session issue-1
+    error:      flag provided but not defined: -binary
+
+plugins/skills-src/wizard/references/worktrees.md:23: usage failure (exit 1)
+    documented: amq-squad init --profile NAME --cwd "dev-1=/path/to/wt-a,dev-2=/path/to/wt-b"
+    executed:   amq-squad init --profile relprof --cwd "dev-1=/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-47/paths/path_to_wt-a,dev-2=/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-47/paths/path_to_wt-b"
+    error:      error: unknown command: "init". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/wizard/references/worktrees.md:29: usage failure (exit 1)
+    documented: amq-squad team member update dev-2 --cwd /path/to/wt-b --project P --profile NAME
+    executed:   amq-squad team member update dev-2 --cwd /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-48/paths/path_to_wt-b --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-48 --profile relprof
+    error:      error: unknown 'team' subcommand: "member". Try 'propose', 'apply', 'show', 'check', or 'draft-rules'.
+
+plugins/skills-src/wizard/references/worktrees.md:41: usage failure (exit 1)
+    documented: amq-squad init --profile NAME --shared-cwd-exception "single checkout accepted for this run"
+    executed:   amq-squad init --profile relprof --shared-cwd-exception "single checkout accepted for this run"
+    error:      error: unknown command: "init". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/wizard/references/worktrees.md:47: usage failure (exit 1)
+    documented: amq-squad team shared-cwd-exception set "<reason>" --project P --profile NAME
+    executed:   amq-squad team shared-cwd-exception set "reason" --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-m9nzju4e/inv-50 --profile relprof
+    error:      error: unknown 'team' subcommand: "shared-cwd-exception". Try 'propose', 'apply', 'show', 'check', or 'draft-rules'.
+
+make: *** [skill-invocation-check] Error 1
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.001s
+
+OK
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+test_exclusion_is_path_based_not_git_tracked (__main__.GoFilesScope.test_exclusion_is_path_based_not_git_tracked)
+Untracked new .go files must stay in coverage, so the fix cannot be ... ok
+test_fmt_check_fails_when_gofmt_itself_fails (__main__.GoFilesScope.test_fmt_check_fails_when_gofmt_itself_fails)
+A check that passes when its instrument breaks is worse than no check. ... ok
+test_fmt_check_passes_despite_a_misformatted_peer_file (__main__.GoFilesScope.test_fmt_check_passes_despite_a_misformatted_peer_file) ... ok
+test_fmt_check_prints_the_offending_files (__main__.GoFilesScope.test_fmt_check_prints_the_offending_files)
+`@test -z "$(shell ...)"` swallowed the list, so a failure printed only ... ok
+test_fmt_leaves_the_peer_file_byte_identical (__main__.GoFilesScope.test_fmt_leaves_the_peer_file_byte_identical)
+`make fmt` writing to another agent's checkout is the severe half of #560. ... ok
+test_peer_worktree_file_is_excluded (__main__.GoFilesScope.test_peer_worktree_file_is_excluded) ... ok
+test_removal_proof_the_exclusion_is_what_excludes_it (__main__.GoFilesScope.test_removal_proof_the_exclusion_is_what_excludes_it)
+Vary exactly one thing: the -not -path './.worktrees/*' clause. ... ok
+test_untracked_go_file_at_project_root_stays_in_scope (__main__.GoFilesScope.test_untracked_go_file_at_project_root_stays_in_scope)
+The companion property, proved directly rather than inferred from the rule. ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.330s
+
+OK
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 15.087s
+
+OK
+context injection: last run 16.5 ms
+PERF pre-tool allow in a seat: p50 94.4 ms, p95 129.5 ms
+PERF outside a seat: 60 runs, p50 7.5 ms, p95 8.6 ms, max 11.2 ms (budget p95 < 20 ms: met)
+make: Target `ci' not remade because of errors.
+=== exit 2: make -k ci (informational)
+
+=== files changed against v3 that feed the red make ci targets (README.md, docs/skills.md, plugins/skills-src, plugins/claude/skills, plugins/codex, internal, cmd); empty means this branch did not cause them:
+=== (end of diff)
+GATE RESULT: PASS

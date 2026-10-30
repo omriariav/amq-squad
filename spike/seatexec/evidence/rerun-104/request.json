@@ -1,0 +1,95 @@
+{
+  "request_version": 1,
+  "target": {
+    "project_root": "/Users/omri/.amq-squad/spike/s4/project",
+    "base_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail",
+    "session_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4-104-1",
+    "session": "s4-104-1"
+  },
+  "launcher": "tmux",
+  "intent": {
+    "intent_version": 1,
+    "participants": [
+      {
+        "handle": "operator",
+        "runnable": false
+      },
+      {
+        "handle": "s4-claude",
+        "runnable": true,
+        "executable": "claude",
+        "args": [
+          "--model",
+          "sonnet",
+          "--effort",
+          "medium",
+          "--name",
+          "s4-claude"
+        ],
+        "wrapper": {
+          "executable": "/Users/omri/.amq-squad/spike/bin/seat-exec",
+          "args": [
+            "--seat",
+            "s4-claude"
+          ]
+        },
+        "cwd": {
+          "kind": "absolute",
+          "path": "/Users/omri/.amq-squad/spike/s4/project"
+        },
+        "resume_policy": "fresh",
+        "execution": {
+          "require_wake": false,
+          "no_gitignore": true,
+          "wake": {
+            "mode": "disabled",
+            "audit_reason": "S4 manually driven launch probe"
+          }
+        },
+        "initial_input": {
+          "kind": "argument",
+          "text": "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+        }
+      },
+      {
+        "handle": "s4-codex",
+        "runnable": true,
+        "executable": "codex",
+        "args": [
+          "--model",
+          "gpt-6-astra",
+          "-c",
+          "model_reasoning_effort=medium",
+          "--sandbox",
+          "workspace-write",
+          "--ask-for-approval",
+          "on-request"
+        ],
+        "wrapper": {
+          "executable": "/Users/omri/.amq-squad/spike/bin/seat-exec",
+          "args": [
+            "--seat",
+            "s4-codex"
+          ]
+        },
+        "cwd": {
+          "kind": "absolute",
+          "path": "/Users/omri/.amq-squad/spike/s4/project-wt"
+        },
+        "resume_policy": "fresh",
+        "execution": {
+          "require_wake": false,
+          "no_gitignore": true,
+          "wake": {
+            "mode": "disabled",
+            "audit_reason": "S4 manually driven launch probe"
+          }
+        },
+        "initial_input": {
+          "kind": "argument",
+          "text": "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+        }
+      }
+    ]
+  }
+}

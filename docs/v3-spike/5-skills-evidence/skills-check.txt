@@ -1,0 +1,16 @@
+ok    plugins/claude/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/claude/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/claude/skills/amq-squad/SKILL.md
+ok    plugins/claude/skills/amq-team-setup/SKILL.md
+ok    plugins/claude/skills/cli/SKILL.md
+ok    plugins/claude/skills/orchestrator/SKILL.md
+ok    plugins/claude/skills/wizard/SKILL.md
+ok    plugins/codex/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/codex/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/codex/skills/amq-squad/SKILL.md
+ok    plugins/codex/skills/amq-team-setup/SKILL.md
+ok    plugins/codex/skills/cli/SKILL.md
+ok    plugins/codex/skills/orchestrator/SKILL.md
+ok    plugins/codex/skills/wizard/SKILL.md
+
+all 14 SKILL.md frontmatters valid; version markers match manifests

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
 
 type worktreeEnvelopeData struct {
@@ -285,14 +285,14 @@ func resolveWorktreeScope(fs *flag.FlagSet, project, profile, session string) (w
 	if err != nil {
 		return worktreeScope{}, err
 	}
-	t, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
+	t, err := team.ReadFor(ctx.ProjectDir, ctx.Profile)
 	if err != nil {
 		return worktreeScope{}, err
 	}
 	originalProject := filepath.Clean(ctx.ProjectDir)
 	reanchored := false
-	if control := worktreeplan.ControlRoot(t); control != originalProject && team.ExistsProfile(control, ctx.Profile) {
-		t, err = team.ReadProfile(control, ctx.Profile)
+	if control := worktreeplan.ControlRoot(t); control != originalProject && team.ExistsFor(control, ctx.Profile) {
+		t, err = team.ReadFor(control, ctx.Profile)
 		if err != nil {
 			return worktreeScope{}, fmt.Errorf("read canonical team profile: %w", err)
 		}

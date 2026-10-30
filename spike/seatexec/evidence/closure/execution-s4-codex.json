@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "handle": "s4-codex",
+  "launch_nonce": "<redacted>",
+  "mode": "capture",
+  "provider": "codex",
+  "provider_version": "0.147.0",
+  "backend": "tmux",
+  "profile": "tmux/darwin/v1",
+  "project_root": "/Users/omri/.amq-squad/spike/s4/project",
+  "project_identity": "v1:darwin:100000d:9ccb76",
+  "session_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4e",
+  "session_identity": "v1:darwin:100000d:ac3942",
+  "cwd": "/Users/omri/.amq-squad/spike/s4/project-wt",
+  "cwd_identity": "v1:darwin:100000d:9ccc9d",
+  "provider_executable": "/Users/omri/.amq-squad/spike/codex-0.147/node_modules/@openai/codex/bin/codex.js",
+  "provider_executable_identity": "v1:darwin:100000d:9bae72",
+  "amq_executable": "/opt/homebrew/Cellar/amq/0.102.0/bin/amq",
+  "amq_executable_identity": "v1:darwin:100000d:9a55cd",
+  "wrapper": {
+    "executable": "/Users/omri/.amq-squad/spike/bin/seat-exec",
+    "args": [
+      "--seat",
+      "s4-codex"
+    ]
+  },
+  "wrapper_executable_identity": "{\"canonical_path\":\"/Users/omri/.amq-squad/spike/bin/seat-exec\",\"type\":\"file\",\"dev\":16777229,\"inode\":10275213,\"volume_id\":0,\"file_id\":0,\"size\":4404210,\"mtime_ns\":1792530943559102509,\"symlink_chain\":[]}",
+  "target_argv": [
+    "/Users/omri/.amq-squad/spike/bin/seat-exec",
+    "--seat",
+    "s4-codex",
+    "/Users/omri/.amq-squad/spike/codex-0.147/node_modules/.bin/codex",
+    "--model",
+    "gpt-5.6-sol",
+    "-c",
+    "model_reasoning_effort=medium",
+    "--sandbox",
+    "workspace-write",
+    "--ask-for-approval",
+    "on-request",
+    "-c",
+    "notify=[\"/opt/homebrew/Cellar/amq/0.102.0/bin/amq\",\"__codex-notify\",\"--root\",\"/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4e\",\"--handle\",\"s4-codex\"]",
+    "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+  ],
+  "initial_input": {
+    "kind": "argument",
+    "sha256": "sha256:5514694298bba1c0991d9e18eff5fdffbf8cd00c07f9e65ecc0d17e36df4ff8a",
+    "argv_index": 14
+  },
+  "env_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "state": "spawn_attempted",
+  "reason": "spawn_attempted",
+  "execution": {
+    "require_wake": false,
+    "no_gitignore": true,
+    "wake_mode": "disabled",
+    "audit_reason": "S4 manually driven launch probe",
+    "injector_mode": "none"
+  }
+}

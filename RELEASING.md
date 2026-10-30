@@ -41,8 +41,8 @@ and both real-AMQ CI matrices aligned on pinned `v0.60.0` plus `latest`.
    make release-smoke VERSION=v0.5.1
    ```
 
-The smoke test installs `github.com/omriariav/amq-squad/v2/cmd/amq-squad@VERSION`
-(note the `/v2` module path for v2+) into a temporary `GOBIN` and fails unless
+The smoke test installs `github.com/omriariav/amq-squad/v3/cmd/amq-squad@VERSION`
+(note the `/v3` module path, as for every v2+ major) into a temporary `GOBIN` and fails unless
 `amq-squad version` prints the same version. This catches releases where the
 source tag works but the documented `go install` path reports `dev` or an old
 version.

@@ -9,23 +9,34 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// TMPDIR at its real path: macOS temp dirs are under /var, a symlink to
+	// /private/var, and the fsanchor anchor (the pi runtime and registry
+	// re-hash) is opened from / with O_NOFOLLOW (4-1 rebase).
+	if real, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		_ = os.Setenv("TMPDIR", real)
+	}
 	tempDir := ""
 	modelDir, err := os.MkdirTemp("", "amq-squad-test-models-*")
 	if err != nil {
 		panic(err)
 	}
-	modelUserConfigDir = func() (string, error) { return filepath.Join(modelDir, "config"), nil }
-	modelUserHomeDir = func() (string, error) { return filepath.Join(modelDir, "home"), nil }
+	// The owner grants file (~/.amq-squad/grants.yaml) bounds every squad.yaml
+	// write; tests never read the real owner's file.
+	if err := os.Setenv("HOME", filepath.Join(modelDir, "home")); err != nil {
+		panic(err)
+	}
+	// Every doctor run in this package probes the temp HOME, never the owner's.
+	for _, key := range []string{"CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR"} {
+		if err := os.Unsetenv(key); err != nil {
+			panic(err)
+		}
+	}
 	if err := os.Setenv("CODEX_HOME", filepath.Join(modelDir, "codex")); err != nil {
 		panic(err)
 	}
 	if err := os.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(modelDir, "missing.json")); err != nil {
 		panic(err)
 	}
-	// Most package tests use synthetic pane ids without a real tmux server.
-	// Individual stamp-at-capture tests restore the production implementation
-	// and spy on tmuxRunCommand.
-	stampCapturedLaunchPane = func(string, string, string) error { return nil }
 	var setupErr error
 	tempDir, setupErr = installPackageTestAMQ()
 	if setupErr != nil {

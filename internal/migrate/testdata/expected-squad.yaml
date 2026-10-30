@@ -1,0 +1,25 @@
+schema: 1
+session: feature-x
+lead: lead
+lead_mode: planner
+execution_mode: project_team
+control_root: {{PROJECT}}
+shared_cwd_exception: only one seat mutates at a time
+operator_interaction: lead_pane
+seats:
+  - handle: lead
+    role: cto
+    runtime: claude
+    model: opus
+    actor_mode: review
+  - handle: dev
+    role: fullstack
+    runtime: codex
+    model: gpt-5.5
+    worktree: dev-tree
+    tools: full
+    actor_mode: implementation
+  - handle: counsel
+    role: legal
+    runtime: claude
+    actor_mode: review

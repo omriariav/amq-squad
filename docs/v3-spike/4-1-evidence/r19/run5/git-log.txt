@@ -1,0 +1,4 @@
+1847518 t3: Implement IsEven(n int) bool in even.go with TestIsEven table test in even_test.go (pi-1)
+2cbbdb2 t2: Implement Reverse(s string) string in reverse.go with TestReverse table test in reverse_test.go (pi-1)
+4747faa t1: Implement Max(a, b int) int in max.go with TestMax table test in max_test.go (pi-1)
+d69f497 fixture

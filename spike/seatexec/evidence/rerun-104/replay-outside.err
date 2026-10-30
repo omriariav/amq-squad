@@ -1,0 +1,3 @@
+codex capture receiver does not run under the seat's provider process
+
+exit=1

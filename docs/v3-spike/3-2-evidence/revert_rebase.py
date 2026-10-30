@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Revert check for the post-rebase commit of 3-2 (onto v3 with 4-5 and 2b-2)."""
+import subprocess, sys, os
+
+W = "/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571"
+REVERTS = [
+    ("a squad-less record matches nothing", "internal/mergetrain/escalate.go", 'return squad == "" || rec.Squad != "" && rec.Squad == squad', 'return squad == "" || rec.Squad == "" || rec.Squad == squad', "./internal/mergetrain/", "TestGatesCarryAndMatchTheSquadIdentity"),
+    ("credential_needs never names a forge credential", "internal/seatexec/env.go", "\t\tif NeverNeeded(n) {\n\t\t\treturn refusef(\"env_needs_invalid\", \"credential_needs names", "\t\tif false && NeverNeeded(n) {\n\t\t\treturn refusef(\"env_needs_invalid\", \"credential_needs names", "./internal/seatexec/", "TestForgeCredentialIsNeverACredentialNeed"),
+]
+
+
+def main():
+    out = open(sys.argv[1], "w")
+    bad = []
+    for name, rel, old, new, pkg, pat in REVERTS:
+        path = os.path.join(W, rel)
+        orig = open(path).read()
+        if orig.count(old) != 1:
+            out.write(f"## {name}: SETUP ERROR, anchor found {orig.count(old)} times in {rel}\n\n")
+            bad.append(name)
+            continue
+        open(path, "w").write(orig.replace(old, new))
+        try:
+            r = subprocess.run(["go", "test", "-count=1", "-run", pat, pkg], cwd=W, capture_output=True, text=True)
+        finally:
+            open(path, "w").write(orig)
+        text = r.stdout + r.stderr
+        assertion = r.returncode != 0 and "build failed" not in text
+        verdict = "FAILS on its assertion with the fix reverted (good)" if assertion else ("BUILD FAILURE (bad revert)" if r.returncode != 0 else "PASSES with the fix reverted (BAD)")
+        if not assertion:
+            bad.append(name)
+        out.write(f"## {name}: revert {rel}; go test -run '{pat}' {pkg}: {verdict}\n-- reverted: {old!r}\n-- to:       {new!r}\n{text}\n")
+        r2 = subprocess.run(["go", "test", "-count=1", "-run", pat, pkg], cwd=W, capture_output=True, text=True)
+        out.write(f"-- restored: exit {r2.returncode}\n{r2.stdout.strip()[-300:]}\n\n")
+        if r2.returncode != 0:
+            bad.append(name + " (restored run failed)")
+    out.write("SUMMARY: " + ("every row fails on its assertion when reverted and passes restored" if not bad else "problems: " + ", ".join(bad)) + "\n")
+    print("problems:", bad)
+
+
+main()

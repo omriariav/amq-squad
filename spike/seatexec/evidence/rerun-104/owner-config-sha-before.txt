@@ -1,0 +1,2 @@
+1c0461ac0ead50a3f5aaa9aefa7f0bbab70e8f3d9c0e1b4d171ae313dfe7bdfd  /Users/omri/.codex/config.toml
+65fb8dfe99d6aaba24a89c0e4ced8c28c8a06ef72da9f9e08bc2d821d71a3170  /Users/omri/.claude/settings.json

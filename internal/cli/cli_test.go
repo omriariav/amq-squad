@@ -4,10 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func TestUnknownSubcommandErrorCanonicalFormat(t *testing.T) {
@@ -92,12 +91,9 @@ func TestRunHelpIncludesVersionCommand(t *testing.T) {
 }
 
 func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
-	for _, want := range []string{"setup", "dispatch", "task", "start", "doctor"} {
+	for _, want := range []string{"dispatch", "task", "doctor"} {
 		if _, ok := lookupCommand(want, "v-test"); !ok {
 			t.Fatalf("registry missing %q", want)
-		}
-		if !containsString(completionTopCommands, want) {
-			t.Fatalf("completion missing registry command %q", want)
 		}
 	}
 	stdout, _, err := captureOutput(t, func() error {
@@ -106,7 +102,7 @@ func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run --help: %v", err)
 	}
-	for _, want := range []string{"dispatch", "start", "task"} {
+	for _, want := range []string{"dispatch", "status", "task"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("help missing registry command %q:\n%s", want, stdout)
 		}
@@ -119,8 +115,10 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 	// runs on any launch-capable path) -- not a silent regression of the
 	// v2.28-pruned command this list originally named. Removed from both
 	// lists below; brief_test.go covers the new command directly.
+	// 2a-3: "context" likewise returns as a new verb, the plan 4.2 hook verb
+	// (hook_context.go), not the v2 context board; hook_verbs_test.go covers it.
 	removed := []string{
-		"context", "activity", "bootstrap", "threads", "thread",
+		"activity", "bootstrap", "threads", "thread",
 		"collect", "prune-panes", "console", "monitor", "notify", "notifications",
 		"history", "fork", "review-worktree", "tmux-harness", "rm", "archive", "next",
 	}
@@ -129,7 +127,7 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 		if _, ok := lookupCommand(name, "v-test"); ok {
 			t.Errorf("removed command %q remains dispatchable", name)
 		}
-		if containsString(public, name) || containsString(completionTopCommands, name) {
+		if containsString(public, name) {
 			t.Errorf("removed command %q remains public or completable", name)
 		}
 		if err := Run([]string{name}, "v-test"); err == nil || !strings.Contains(err.Error(), "unknown command") {
@@ -137,10 +135,7 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 		}
 	}
 
-	if _, ok := lookupCommand("agent", "v-test"); !ok {
-		t.Fatal("internal agent child route is not dispatchable")
-	}
-	if containsString(public, "agent") || containsString(completionTopCommands, "agent") {
+	if containsString(public, "agent") {
 		t.Fatal("internal agent child route leaked into public help/completion")
 	}
 	help, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "v-test") })
@@ -157,7 +152,7 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		"context.go", "activity.go", "bootstrap_ack.go", "threads.go", "thread.go",
+		"activity.go", "bootstrap_ack.go", "threads.go", "thread.go",
 		"collect.go", "prune_panes.go", "console.go", "monitor.go", "notify.go", "notifications.go",
 		"history.go", "fork.go", "review_worktree.go", "tmux_harness.go", "rm.go", "next.go",
 	} {
@@ -175,19 +170,14 @@ func TestRunRolesListsMarketNumbers(t *testing.T) {
 		t.Fatalf("Run roles: %v\nstderr:\n%s", err, stderr)
 	}
 	for _, want := range []string{
-		"NUM",
 		"ROLE",
-		"DEFAULT CLI",
-		"1",
+		"DEFAULT RUNTIME",
 		"cpo",
-		"2",
 		"cto",
-		"9",
 		"qa",
+		"catalog",
 		"lead",
 		"agent",
-		"Generic orchestrator",
-		"Generic individual contributor",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("roles output missing %q:\n%s", want, stdout)
@@ -223,11 +213,8 @@ peers:
 		t.Fatalf("Run roles: %v\nstderr:\n%s", err, stderr)
 	}
 	for _, want := range []string{
-		"Built-in roles",
-		"Custom roles (.amq-squad/roles)",
 		"probe-officer",
-		"codex",
-		"staged custom role",
+		"probe-officer.md",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("roles output missing %q:\n%s", want, stdout)
@@ -279,175 +266,87 @@ func TestRunHelpVerbsStillPrintUsage(t *testing.T) {
 	}
 }
 
-// TestRunBareConfiguredRoutesToBoard proves bare `amq-squad` in a configured
-// project runs the status board (not usage). PATH is stripped of `amq` so the
-// board degrades to its guidance line rather than execing a real subprocess;
-// the key assertion is that it took the board route, not printUsage.
-func TestRunBareConfiguredRoutesToBoard(t *testing.T) {
-	seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	t.Setenv("PATH", "")
-	stdout, stderr, err := captureOutput(t, func() error {
-		return Run(nil, "v-test")
-	})
+// Sanity check on the public catalog (moved from completion_test.go in the 2a-1
+// C24 cut; completionTopCommands was commandNames("")). Internal child routes
+// such as agent remain dispatchable without becoming operator-facing verbs.
+func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
+	expected := map[string]bool{
+		"roles":       true,
+		"role":        true,
+		"brief":       true,
+		"team":        true,
+		"task":        true,
+		"evidence":    true,
+		"context":     true,
+		"guard":       true,
+		"seat-exec":   true,
+		"seat":        true,
+		"launch":      true,
+		"verify":      true,
+		"merge-train": true,
+		"release":     true,
+		"gate":        true,
+		"operator":    true,
+		"status":      true,
+		"fleet":       true,
+		"routing":     true,
+		"dispatch":    true,
+		"amq":         true,
+		"doctor":      true,
+		"trust":       true,
+		"migrate":     true,
+		"worktree":    true,
+		"version":     true,
+		"help":        true,
+		"lead":        true,
+		"pi":          true,
+		"remote":      true,
+		"scheduler":   true,
+		"uninstall":   true,
+	}
+	for _, c := range commandNames("") {
+		if !expected[c] {
+			t.Errorf("public catalog has unexpected entry %q", c)
+		}
+		delete(expected, c)
+	}
+	for c := range expected {
+		t.Errorf("public catalog missing %q", c)
+	}
+}
+
+// TestRunBarePrintsUsage: 3.0 (2a-2) bare `amq-squad` prints the root usage; the
+// v2 multi-session board moved to amq-noc (manifest C3).
+func TestRunBarePrintsUsage(t *testing.T) {
+	chdir(t, t.TempDir())
+	stdout, _, err := captureOutput(t, func() error { return Run(nil, "v-test") })
 	if err != nil {
-		t.Fatalf("bare run in configured project must not error: %v\nstderr:\n%s", err, stderr)
+		t.Fatalf("bare Run: %v", err)
 	}
-	if strings.Contains(stdout, "amq-squad - role-aware agent team launcher") {
-		t.Errorf("bare configured run should route to the board, not usage:\n%s", stdout)
-	}
-	// The board's graceful-degradation guidance is on stdout (amq missing).
-	if !strings.Contains(stdout, "amq-squad:") {
-		t.Errorf("expected board guidance on stdout, got:\n%s", stdout)
+	if !strings.Contains(stdout, "Usage:") || !strings.Contains(stdout, "Commands:") {
+		t.Fatalf("bare run should print the usage, got:\n%s", stdout)
 	}
 }
 
-// TestRunBareUnconfiguredShowsGuidance proves bare `amq-squad` in an
-// unconfigured project shows a short setup guidance message — not the board,
-// not usage, and not a crash.
-func TestRunBareUnconfiguredShowsGuidance(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	// Strip PATH so the footprint check's session probe can never resolve a real
-	// base root from a stray `amq` — a truly empty project must show guidance.
-	t.Setenv("PATH", "")
-	stdout, stderr, err := captureOutput(t, func() error {
-		return Run(nil, "v-test")
-	})
+// TestRootUsageExamplesNameRegisteredCommands: every `amq-squad <verb>` the root
+// usage text shows is a registered command (2a-2 item 5: no removed verb in
+// kept help text).
+func TestRootUsageExamplesNameRegisteredCommands(t *testing.T) {
+	stdout, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "v-test") })
 	if err != nil {
-		t.Fatalf("bare run in unconfigured project must not error: %v\nstderr:\n%s", err, stderr)
+		t.Fatalf("Run --help: %v", err)
 	}
-	if !strings.Contains(stdout, "no team is configured") {
-		t.Errorf("expected setup guidance, got:\n%s", stdout)
+	registered := map[string]bool{}
+	for _, name := range commandNames("v-test") {
+		registered[name] = true
 	}
-	if !strings.Contains(stdout, "amq-squad init") {
-		t.Errorf("guidance should point at init, got:\n%s", stdout)
+	examples := regexp.MustCompile(`(?m)^\s+amq-squad ([a-z][a-z-]*)`).FindAllStringSubmatch(stdout, -1)
+	if len(examples) == 0 {
+		t.Fatal("root usage shows no examples; the guard has nothing to check")
 	}
-	if !strings.Contains(stdout, "amq-squad roles") {
-		t.Errorf("guidance should point at roles, got:\n%s", stdout)
-	}
-}
-
-// TestRunBareNamedProfilesOnlyRoutesToBoard is the end-to-end PR12 regression:
-// bare `amq-squad` in a project that has ONLY named profiles (no default
-// team.json) must route to the board, NOT print the "no team configured"
-// guidance. PATH is stripped so the board degrades to its guidance line instead
-// of execing a real `amq`; the key assertion is the ROUTE taken.
-func TestRunBareNamedProfilesOnlyRoutesToBoard(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	if err := team.WriteProfile(dir, "code-truth", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if team.Exists(dir) {
-		t.Fatal("guard: no default team.json should exist for this case")
-	}
-	t.Setenv("PATH", "")
-	stdout, stderr, err := captureOutput(t, func() error {
-		return Run(nil, "v-test")
-	})
-	if err != nil {
-		t.Fatalf("bare run in named-profile-only project must not error: %v\nstderr:\n%s", err, stderr)
-	}
-	if strings.Contains(stdout, "no team is configured") {
-		t.Errorf("named-profile-only project must route to the board, not setup guidance:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "amq-squad:") {
-		t.Errorf("expected board guidance on stdout, got:\n%s", stdout)
-	}
-}
-
-// TestProjectHasFootprintDefaultProfile proves a project with a default-profile
-// team.json is recognized as having a footprint without consulting the session
-// probe at all.
-func TestProjectHasFootprintDefaultProfile(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.Write(dir, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	resolverCalled := false
-	resolve := func(string) (string, error) {
-		resolverCalled = true
-		return "", os.ErrNotExist
-	}
-	if !projectHasFootprint(dir, resolve) {
-		t.Errorf("default-profile team.json should count as a footprint")
-	}
-	if resolverCalled {
-		t.Errorf("default-profile shortcut must not consult the session probe")
-	}
-}
-
-// TestProjectHasFootprintNamedProfilesOnly is the core PR12 regression: a
-// project with ONLY named profiles (no default team.json) — like
-// taboola-sales-skills (.amq-squad/teams/code-truth.json + my-voice.json) — must
-// be treated as having a footprint and run the board, NOT the "no team
-// configured / run team init" guidance.
-func TestProjectHasFootprintNamedProfilesOnly(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, "code-truth", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := team.WriteProfile(dir, "my-voice", team.Team{
-		Members: []team.Member{{Role: "fs", Binary: "claude", Handle: "fs", Session: "s"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if team.Exists(dir) {
-		t.Fatal("guard: no default team.json should exist for this case")
-	}
-	// Resolver fails -> proves named profiles ALONE flip the footprint decision.
-	resolve := func(string) (string, error) { return "", os.ErrNotExist }
-	if !projectHasFootprint(dir, resolve) {
-		t.Errorf("named-profile-only project should count as a footprint")
-	}
-}
-
-// TestProjectHasFootprintSessionsOnly proves a project with no team config at
-// all but with discoverable sessions under the resolved base root still runs the
-// board (the footprint is the live work on disk).
-func TestProjectHasFootprintSessionsOnly(t *testing.T) {
-	dir := t.TempDir()
-	base := filepath.Join(dir, ".agent-mail")
-	if err := os.MkdirAll(filepath.Join(base, "issue-96", "agents", "cto"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if team.Exists(dir) {
-		t.Fatal("guard: no default team.json should exist for this case")
-	}
-	if profiles, _ := team.ListProfiles(dir); len(profiles) != 0 {
-		t.Fatal("guard: no named profiles should exist for this case")
-	}
-	resolve := func(string) (string, error) { return base, nil }
-	if !projectHasFootprint(dir, resolve) {
-		t.Errorf("project with discoverable sessions should count as a footprint")
-	}
-}
-
-// TestProjectHasFootprintEmptyProject proves a truly empty project — no team
-// config, no named profiles, no discoverable sessions — has NO footprint, so the
-// bare command shows the setup guidance rather than the board.
-func TestProjectHasFootprintEmptyProject(t *testing.T) {
-	dir := t.TempDir()
-	// Resolver succeeds but the base root has no session/agents layout.
-	emptyBase := filepath.Join(dir, ".agent-mail")
-	if err := os.MkdirAll(emptyBase, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	resolve := func(string) (string, error) { return emptyBase, nil }
-	if projectHasFootprint(dir, resolve) {
-		t.Errorf("empty project should have no footprint")
-	}
-	// Also: an unresolvable base root must not crash and must report no footprint.
-	failResolve := func(string) (string, error) { return "", os.ErrNotExist }
-	if projectHasFootprint(dir, failResolve) {
-		t.Errorf("empty project with unresolvable base root should have no footprint")
+	for _, m := range examples {
+		if !registered[m[1]] {
+			t.Errorf("root usage example names %q, which is not a registered command", m[1])
+		}
 	}
 }

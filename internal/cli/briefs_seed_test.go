@@ -11,21 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 // frozenClock returns a fixed timestamp so provenance assertions are
 // deterministic.
 func frozenClock() time.Time {
 	return time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
-}
-
-// swapSeedClock installs a frozen clock for the duration of t.
-func swapSeedClock(t *testing.T) {
-	t.Helper()
-	prev := seedNow
-	seedNow = frozenClock
-	t.Cleanup(func() { seedNow = prev })
 }
 
 // fakeGh returns a seedGhRun stub that responds with the supplied issue
@@ -74,10 +66,10 @@ func TestResolveSeedFileMissingFails(t *testing.T) {
 }
 
 func TestResolveSeedRejectsClaudeAndCodex(t *testing.T) {
-	for _, ref := range []string{"claude:abc123", "codex:session-1"} {
+	for _, ref := range []string{"claude:abc123", "codex:session-1", "transcript:x"} {
 		_, err := resolveSeed(ref)
-		if err == nil || !strings.Contains(err.Error(), "not implemented") {
-			t.Errorf("%s: want not-implemented error, got %v", ref, err)
+		if err == nil || !strings.Contains(err.Error(), "unknown kind") {
+			t.Errorf("%s: want unknown-kind error, got %v", ref, err)
 		}
 	}
 }
@@ -174,10 +166,10 @@ func TestBuildSeedBriefBodyByteForByte(t *testing.T) {
 
 func TestWriteSeedBriefRefusesExistingWithoutForce(t *testing.T) {
 	home := t.TempDir()
-	if _, err := writeSeedBrief(home, "issue-96", "first content\n", false); err != nil {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "first content\n", false); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
-	if _, err := writeSeedBrief(home, "issue-96", "second content\n", false); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "second content\n", false); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("second write should refuse: %v", err)
 	}
 	// Existing content must be untouched.
@@ -213,7 +205,7 @@ func TestWriteSeedBriefNoForceConcurrentExclusive(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := writeSeedBrief(home, "issue-96", contents[i], false)
+			_, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", contents[i], false)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -256,216 +248,14 @@ func TestWriteSeedBriefNoForceConcurrentExclusive(t *testing.T) {
 
 func TestWriteSeedBriefForceOverwrites(t *testing.T) {
 	home := t.TempDir()
-	if _, err := writeSeedBrief(home, "issue-96", "first content\n", false); err != nil {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "first content\n", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeSeedBrief(home, "issue-96", "second content\n", true); err != nil {
+	if _, err := writeSeedBriefForProfile(home, squadnamespace.DefaultProfile, "issue-96", "second content\n", true); err != nil {
 		t.Fatalf("force overwrite failed: %v", err)
 	}
 	got, _ := os.ReadFile(filepath.Join(home, ".amq-squad", "briefs", "issue-96.md"))
 	if string(got) != "second content\n" {
 		t.Errorf("force did not overwrite: %s", got)
-	}
-}
-
-// TestRunUpForceWithoutSeedErrors guards the rule that --force is a
-// brief-overwrite flag only; the duplicate-agent flag stays --force-duplicate.
-func TestRunUpForceWithoutSeedErrors(t *testing.T) {
-	seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	_, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--force"})
-	})
-	if err == nil {
-		t.Fatal("--force without --seed-from must error")
-	}
-	if _, ok := err.(UsageError); !ok {
-		t.Fatalf("want UsageError, got %T: %v", err, err)
-	}
-}
-
-func TestRunUpSeedFromDryRunPrintsBriefOnly(t *testing.T) {
-	swapSeedClock(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	source := filepath.Join(dir, "brief.md")
-	if err := os.WriteFile(source, []byte("# Hand seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	useFakeBackend(t)
-	stdout, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--seed-from", "file:" + source, "--session", "issue-96"})
-	})
-	if err != nil {
-		t.Fatalf("up --dry-run --seed-from: %v", err)
-	}
-	for _, want := range []string{
-		"source: file:" + source,
-		"generated_at: 2026-05-17T12:00:00Z",
-		"generator: deterministic",
-		"# Hand seed",
-	} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("dry-run output missing %q in:\n%s", want, stdout)
-		}
-	}
-	// Must NOT emit launch-plan commands.
-	if strings.Contains(stdout, "--team-workstream") || strings.Contains(stdout, "# amq-squad team") {
-		t.Errorf("dry-run --seed-from should print brief only, leaked plan:\n%s", stdout)
-	}
-	// Must NOT write any brief file.
-	if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "briefs", "issue-96.md")); err == nil {
-		t.Error("dry-run wrote brief to disk")
-	}
-}
-
-func TestRunUpDryRunWithoutSeedStillMatchesTeamShow(t *testing.T) {
-	cfg := team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	}
-	seedTeam(t, cfg)
-	showOut, _, err := captureOutput(t, func() error {
-		return runTeamShow([]string{"--no-bootstrap"})
-	})
-	if err != nil {
-		t.Fatalf("team show: %v", err)
-	}
-	upOut, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--no-bootstrap", "--target", "current-window"})
-	})
-	if err != nil {
-		t.Fatalf("up --dry-run: %v", err)
-	}
-	if showOut != upOut {
-		t.Fatalf("up --dry-run no longer matches team show:\nteam show:\n%s\nup --dry-run:\n%s", showOut, upOut)
-	}
-}
-
-func TestRunUpLiveSeedFromWritesBriefThenLaunches(t *testing.T) {
-	swapSeedClock(t)
-	backend := useFakeBackend(t)
-	setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	source := filepath.Join(dir, "brief.md")
-	if err := os.WriteFile(source, []byte("# Seeded\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--terminal", "fake", "--seed-from", "file:" + source, "--session", "issue-96", "--no-bootstrap"})
-	}); err != nil {
-		t.Fatalf("up --seed-from: %v", err)
-	}
-	briefPath := filepath.Join(dir, ".amq-squad", "briefs", "issue-96.md")
-	got, err := os.ReadFile(briefPath)
-	if err != nil {
-		t.Fatalf("brief not written: %v", err)
-	}
-	for _, want := range []string{"source: file:" + source, "# Seeded"} {
-		if !strings.Contains(string(got), want) {
-			t.Errorf("brief missing %q:\n%s", want, got)
-		}
-	}
-	if len(backend.launches) != 1 {
-		t.Fatalf("backend.Launch calls = %d, want 1", len(backend.launches))
-	}
-}
-
-func TestRunUpLiveSeedFromRefusesExistingWithoutForce(t *testing.T) {
-	swapSeedClock(t)
-	useFakeBackend(t)
-	setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	// Pre-existing brief.
-	if err := os.MkdirAll(filepath.Join(dir, ".amq-squad", "briefs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	briefPath := filepath.Join(dir, ".amq-squad", "briefs", "issue-96.md")
-	if err := os.WriteFile(briefPath, []byte("KEEP ME\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join(dir, "src.md")
-	if err := os.WriteFile(source, []byte("would clobber\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--terminal", "fake", "--seed-from", "file:" + source, "--session", "issue-96", "--no-bootstrap"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("expected existing-brief refusal, got %v", err)
-	}
-	got, _ := os.ReadFile(briefPath)
-	if string(got) != "KEEP ME\n" {
-		t.Errorf("refused seed still modified body: %s", got)
-	}
-}
-
-// TestRunUpLiveSeedFromDoesNotWriteOnFreshExistingRejection guards the
-// reordering finding: a later launch validation failure (here, --fresh with
-// an existing workstream root) must NOT mutate the brief on disk.
-func TestRunUpLiveSeedFromDoesNotWriteOnFreshExistingRejection(t *testing.T) {
-	swapSeedClock(t)
-	useFakeBackend(t)
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	// Pre-create the workstream root so --fresh trips.
-	if err := os.MkdirAll(filepath.Join(base, "issue-97"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join(dir, "src.md")
-	if err := os.WriteFile(source, []byte("# would-be seeded\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--terminal", "fake", "--seed-from", "file:" + source, "--fresh", "--session", "issue-97", "--no-bootstrap"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("expected existing-workstream rejection, got %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "briefs", "issue-97.md")); err == nil {
-		t.Error("brief was written despite later validation failure")
-	}
-}
-
-func TestRunUpLiveSeedFromForceOverwrites(t *testing.T) {
-	swapSeedClock(t)
-	useFakeBackend(t)
-	setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	briefDir := filepath.Join(dir, ".amq-squad", "briefs")
-	if err := os.MkdirAll(briefDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	briefPath := filepath.Join(briefDir, "issue-96.md")
-	if err := os.WriteFile(briefPath, []byte("OLD\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join(dir, "src.md")
-	if err := os.WriteFile(source, []byte("NEW BODY\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--terminal", "fake", "--seed-from", "file:" + source, "--force", "--session", "issue-96", "--no-bootstrap"})
-	}); err != nil {
-		t.Fatalf("up --seed-from --force: %v", err)
-	}
-	got, _ := os.ReadFile(briefPath)
-	if !strings.Contains(string(got), "NEW BODY") {
-		t.Errorf("force did not overwrite:\n%s", got)
-	}
-	if strings.Contains(string(got), "OLD") {
-		t.Errorf("force left old content:\n%s", got)
 	}
 }

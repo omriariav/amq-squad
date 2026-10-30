@@ -1,0 +1,180 @@
+=== MUTATION: item 1: guard stderr opened on the log path again (redirection before guard runs)
+tests: FaultTable.test_unwritable_log_does_not_stop_guard
+replaced:
+<"$tmpd/in" >"$tmpd/out" 2>&3 &
+with:
+<"$tmpd/in" >"$tmpd/out" 2>>"$logf" &
+mutated run: exit 1 (FAILS as required)
+--- full output ---
+F
+======================================================================
+FAIL: test_unwritable_log_does_not_stop_guard (__main__.FaultTable.test_unwritable_log_does_not_stop_guard)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 265, in test_unwritable_log_does_not_stop_guard
+    self.assertEqual((rc, err), (0, ""))  # no shell diagnostic reaches the model
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '/Users/omri/code/amq-squad/.claude/worktr[226 chars]y\n') != (0, '')
+
+First differing element 1:
+'/Users/omri/code/amq-squad/.claude/worktr[225 chars]ry\n'
+''
+
++ (0, '')
+- (0,
+-  '/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/plugins/claude/hooks/amq-squad-hook.sh: '
+-  'line 81: '
+-  '/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/hooktest-8jsktifn/project/.agent-mail/s1/extensions/amq-squad/hooklog/cto.log: '
+-  'Is a directory\n')
+
+----------------------------------------------------------------------
+Ran 1 test in 0.019s
+
+FAILED (failures=1)
+
+--- restored run: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.089s
+
+OK
+
+
+=== MUTATION: item 1: logging descriptor opened without the fallback
+tests: FaultTable.test_unwritable_log_does_not_stop_guard
+replaced:
+else
+	exec 3>/dev/null
+fi
+with:
+else
+	:
+fi
+mutated run: exit 1 (FAILS as required)
+--- full output ---
+F
+======================================================================
+FAIL: test_unwritable_log_does_not_stop_guard (__main__.FaultTable.test_unwritable_log_does_not_stop_guard)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 265, in test_unwritable_log_does_not_stop_guard
+    self.assertEqual((rc, err), (0, ""))  # no shell diagnostic reaches the model
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '/Users/omri/code/amq-squad/.claude/worktr[240 chars]r\n') != (0, '')
+
+First differing element 1:
+'/Users/omri/code/amq-squad/.claude/worktr[239 chars]or\n'
+''
+
++ (0, '')
+- (0,
+-  '/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/plugins/claude/hooks/amq-squad-hook.sh: '
+-  'line 81: 3: Bad file descriptor\n'
+-  '/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/plugins/claude/hooks/amq-squad-hook.sh: '
+-  'line 51: 3: Bad file descriptor\n')
+
+----------------------------------------------------------------------
+Ran 1 test in 0.019s
+
+FAILED (failures=1)
+
+--- restored run: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.079s
+
+OK
+
+
+=== MUTATION: item 2: watchdog sleeps 400 s (no internal timeout)
+tests: FaultTable.test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open
+replaced:
+sleep 4.8 &
+with:
+sleep 400 &
+mutated run: exit 1 (FAILS as required)
+--- full output ---
+F
+======================================================================
+FAIL: test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open (__main__.FaultTable.test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 253, in test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open
+    self.assertFalse(to)
+    ~~~~~~~~~~~~~~~~^^^^
+AssertionError: True is not false
+
+----------------------------------------------------------------------
+Ran 1 test in 20.020s
+
+FAILED (failures=1)
+
+--- restored run: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 4.841s
+
+OK
+
+
+=== MUTATION: item 2: watchdog kills but writes no timeout line
+tests: FaultTable.test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open
+replaced:
+log "fail-open: guard timeout after 4.8 s (killed; no decision)"
+with:
+:
+mutated run: exit 1 (FAILS as required)
+--- full output ---
+F
+======================================================================
+FAIL: test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open (__main__.FaultTable.test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 256, in test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open
+    self.assertIn("fail-open: guard timeout after 4.8 s", s.log())
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'fail-open: guard timeout after 4.8 s' not found in ''
+
+----------------------------------------------------------------------
+Ran 1 test in 4.824s
+
+FAILED (failures=1)
+
+--- restored run: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 4.850s
+
+OK
+
+
+=== item 3: previous test file (580d70a6) under 54 busy loops: exit 1
+context injection: last run 34.9 ms
+outside a seat (attempt 1): 60 runs, p50 14.3 ms, p95 21.9 ms, max 89.8 ms
+outside a seat (attempt 2): 60 runs, p50 13.3 ms, p95 14.8 ms, max 15.7 ms
+.......F.......
+======================================================================
+FAIL: test_timeout_fails_open_after_the_configured_timeout (__main__.FaultTable.test_timeout_fails_open_after_the_configured_timeout)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks_prev.py", line 270, in test_timeout_fails_open_after_the_configured_timeout
+    self.assertTrue(to)
+    ~~~~~~~~~~~~~~~^^^^
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 15 tests in 8.696s
+
+FAILED (failures=1)
+
+=== item 3: new test file, same load: exit 0
+context injection: last run 32.5 ms
+PERF pre-tool allow in a seat: p50 48.3 ms, p95 65.6 ms
+PERF outside a seat: 60 runs, p50 13.9 ms, p95 18.2 ms, max 20.2 ms (budget p95 < 20 ms: met)
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 9.607s
+
+OK
+
+SUMMARY: problems 0 (previous file under load exit 1; informational: it may pass if the load is not enough)

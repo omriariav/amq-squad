@@ -1,0 +1,122 @@
+# 4-5 narrow pass fix 4: revert check, 2026-10-24T18:12:38Z
+Each fix is reverted in place, its test row runs and must FAIL (and build), then the fix is restored and the row must PASS.
+
+## squad identity a: canonical root (symlinks resolved, device and inode)
+file internal/gatestore/squad.go; test TestSquadIDIsCanonical in ./internal/gatestore/
+revert: 'resolved, err := filepath.EvalSymlinks(filepath.Clean(root))' -> 'resolved, err := filepath.Clean(root), error(nil)'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestSquadIDIsCanonical (0.00s)
+    squad_test.go:25: two paths to one store: root-sha256:0b2130bb5446c1ebcfef5b9f09a9ac7cb5c8f5f2b7e5bbe97f75a7f19b6c5e56 root-sha256:e2f7b4c180ba65b46dbb1346595ebfec6898c24e19ab6688eb84b213b21b01ea
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/gatestore	0.860s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	0.225s
+
+## squad identity b1: the answer's squad tag is compared with the record
+file internal/gateverify/verify.go; test TestAnswerSquadTagMustMatch in ./internal/buzz/
+revert: 'len(tags) > 0 && !slices.Equal(tags, []string{rec.Squad})' -> 'false && len(tags) > 0 && !slices.Equal(tags, []string{rec.Squad})'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestAnswerSquadTagMustMatch (0.09s)
+    fix4_test.go:36: an answer tagged with another squad: {GateID:rel-t EventID:b6889fda3f707aee117821a13abb60c7c3cc1eae9197cdff190d0ad29052c4ae Outcome:approved Code: Detail: AuthorizationID:authz-v1-90a35e432569ac52812360e72010f5138df3bc2d78f49f8f6db9a37d950ffd13 ReaskEventID:}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.500s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.704s
+
+## squad identity b2: the re-ask carries the squad tag
+file internal/gateverify/core.go; test TestAnswerSquadTagMustMatch in ./internal/buzz/
+revert: 'extra = append(extra, []string{"squad", rec.Squad})' -> '_ = extra'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestAnswerSquadTagMustMatch (0.16s)
+    fix4_test.go:51: the re-ask carries squad tags []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	1.581s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.481s
+
+## squad identity c: gate raise names the upgrade note
+file internal/cli/gate_store.go; test TestGateRaiseNamesTheUpgradeNote in ./internal/cli/
+revert: 'lerr == nil && old.Squad == "" {' -> 'false && lerr == nil && old.Squad == "" {'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestGateRaiseNamesTheUpgradeNote (0.04s)
+    remote_fix4_test.go:35: raise over a pre-upgrade gate: gate raise: create /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestGateRaiseNamesTheUpgradeNote3368725324/001/.agent-mail/s/extensions/amq-squad/gates/rel-old.json: file already exists
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.690s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.697s
+
+## item 2: share.json held to the body key rule
+file internal/buzz/share.go; test TestShareJSONMustBePrivate in ./internal/buzz/
+revert: 'readAnchored(d, "share.json", true)' -> 'readAnchored(d, "share.json", false)'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestShareJSONMustBePrivate (0.01s)
+    fix4_test.go:64: a world-writable share.json: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.411s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.474s
+
+## medium 3: lead roles per squad, never pooled
+file internal/buzz/leads.go; test TestFleetLeadRolesArePerSquad in ./internal/buzz/
+revert: '\troles := f.Roles[s.Name]\n' -> '\tvar roles []string\n\tfor _, r := range f.Roles {\n\t\troles = append(roles, r...)\n\t}\n'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestFleetLeadRolesArePerSquad (0.00s)
+    fix4_test.go:81: lib's seat passed with app's configured lead role
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.388s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.342s
+
+## medium 4: a failed refresh never keeps the previous routing table
+file internal/cli/remote.go; test TestRemoteRefreshFailureDropsTheRoutingTable in ./internal/cli/
+revert: '\t\t\t\tt.Leads, t.Registry = nil, buzz.FleetLeads{}\n' -> '\t\t\t\tif false {\n\t\t\t\tt.Leads, t.Registry = nil, buzz.FleetLeads{}\n'
+revert: '\t\t\t\t\tpump.Target, pump.Cores = t, nil\n\t\t\t\t}\n' -> '\t\t\t\t\tpump.Target, pump.Cores = t, nil\n\t\t\t\t}\n\t\t\t\t}\n'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestRemoteRefreshFailureDropsTheRoutingTable (0.41s)
+    remote_fix4_test.go:54: a corrupt registry kept the previous routing table
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.982s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.700s
+
+## new: an invalid squad is left out, the others attach
+file internal/cli/remote.go; test TestFleetAttachLeavesOutAnInvalidSquad in ./internal/cli/
+revert: '\t\t\t\tproblems = append(problems, "squad "+sq.Name+" left out: "+err.Error())\n\t\t\t\tcontinue\n' -> '\t\t\t\treturn remoteMode{}, err\n'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestFleetAttachLeavesOutAnInvalidSquad (10.04s)
+    remote_fix4_test.go:69: timed out waiting for the endpoint to start
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	10.460s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	8.510s
+
+## medium 6: a stale status document is a miss
+file internal/cli/remote.go; test TestRemotePresenceExpiresWhenStatusIsStale in ./internal/cli/
+revert: 'if err == nil && time.Since(p.GeneratedAt) > MissedStatusTicks*(*interval)' -> 'if false && err == nil && time.Since(p.GeneratedAt) > MissedStatusTicks*(*interval)'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestRemotePresenceExpiresWhenStatusIsStale (10.30s)
+    remote_fix4_test.go:102: timed out waiting for presence to expire on a stale document
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	18.783s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.984s
+
+RESULT: every row fails when its fix is reverted and passes with it

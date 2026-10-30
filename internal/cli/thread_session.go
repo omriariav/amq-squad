@@ -1,8 +1,8 @@
 package cli
 
 import (
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 func findThreadsSession(sessions []state.Session, profile, name string) (state.Session, bool) {

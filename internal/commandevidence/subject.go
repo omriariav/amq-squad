@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -133,7 +134,7 @@ func validateCommandSubject(subject CommandSubject) error {
 		return nil
 	}
 	if !filepath.IsAbs(subject.GitTopLevel) || filepath.Clean(subject.GitTopLevel) != subject.GitTopLevel || !filepath.IsAbs(subject.GitCommonDir) || filepath.Clean(subject.GitCommonDir) != subject.GitCommonDir ||
-		!validGitHead(subject.GitHead) || !validGitHead(subject.GitTree) || !validSHA256(subject.StatusSHA256) {
+		!gitHeadRe.MatchString(subject.GitHead) || !gitHeadRe.MatchString(subject.GitTree) || !sha256Re.MatchString(subject.StatusSHA256) {
 		return fmt.Errorf("Git command subject identity is incomplete or non-canonical")
 	}
 	return nil
@@ -271,11 +272,11 @@ func goChdirIndex(args []string) int {
 		subcommand := args[1]
 		switch args[0] {
 		case "mod":
-			if stringInSet(subcommand, "download", "edit", "graph", "init", "tidy", "vendor", "verify", "why") {
+			if slices.Contains([]string{"download", "edit", "graph", "init", "tidy", "vendor", "verify", "why"}, subcommand) {
 				commandWords = 2
 			}
 		case "work":
-			if stringInSet(subcommand, "edit", "init", "sync", "use", "vendor") {
+			if slices.Contains([]string{"edit", "init", "sync", "use", "vendor"}, subcommand) {
 				commandWords = 2
 			}
 		}
@@ -286,18 +287,9 @@ func goChdirIndex(args []string) int {
 	return -1
 }
 
-func stringInSet(value string, candidates ...string) bool {
-	for _, candidate := range candidates {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
+// isGoChdirToken: -C, -C=DIR, -CDIR and the -- forms (the prefix covers all).
 func isGoChdirToken(arg string) bool {
-	return arg == "-C" || arg == "--C" || strings.HasPrefix(arg, "-C=") || strings.HasPrefix(arg, "--C=") ||
-		strings.HasPrefix(arg, "-C") || strings.HasPrefix(arg, "--C")
+	return strings.HasPrefix(arg, "-C") || strings.HasPrefix(arg, "--C")
 }
 
 func parseSequentialC(control string, args []string, name string, joined func(string) (string, bool), conflicting []string) (string, string, bool, error) {
@@ -403,3 +395,6 @@ func snapshotGit(subject string) (CommandSubject, error) {
 	return CommandSubject{Git: true, GitTopLevel: top, GitCommonDir: filepath.Clean(common), GitHead: head, GitTree: tree,
 		Dirty: status != "", StatusSHA256: "sha256:" + hex.EncodeToString(sum[:])}, nil
 }
+
+// The two shape checks subject.go used from the retired evidence.go (3-2).
+var gitHeadRe, sha256Re = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`), regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)

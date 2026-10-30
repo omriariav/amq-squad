@@ -1,0 +1,118 @@
+# phase 5 re-pass, 2b-2 (seat-exec, seatlaunch): revert check (each fix reverted in place, its test row run with -race, the fix restored, the row run again)
+
+## P1-1 (the attached short form -cVALUE): TestCodexAttachedShortOptionsAreRead (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tcase len(a) > 2: // the attached form, -cX\n\t\t\t\tout = append(out, codexOption{name: long, value: a[2:], raw: a})\n' -> ''
+reverted run (last lines):
+        repass5_test.go:34: codex ["--sandbox" "workspace-write" "-sdanger-full-access" "-a" "on-request"]: <nil>, want codex_sandbox_missing
+        repass5_test.go:34: codex ["-s" "workspace-write" "-a" "on-request" "-anever"]: <nil>, want codex_approval_missing
+        repass5_test.go:43: codex ["-sworkspace-write" "-aon-request"] refused: seat-exec refused (codex_sandbox_missing): Codex argv has sandbox ""; seat-exec requires --sandbox workspace-write (or read-only)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.363s
+    FAIL
+
+## P1-2 (setting sources without user, --bare, --safe-mode refused before the proof): TestClaudeArgvThatDropsTheHooksIsRefused (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif err := CheckClaudeHooks(o.Argv[1:]); err != nil {\n\t\t\treturn plan, err\n\t\t}\n' -> ''
+reverted run (last lines):
+        repass5_test.go:64: claude ["--setting-sources" ""]: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeArgvThatDropsTheHooksIsRefused2166188064/003/bin/claude", proofs 1, amq [/fake/amq env --me cto --json])
+        repass5_test.go:64: claude ["--bare"]: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeArgvThatDropsTheHooksIsRefused2166188064/004/bin/claude", proofs 1, amq [/fake/amq env --me cto --json])
+        repass5_test.go:64: claude ["--safe-mode"]: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeArgvThatDropsTheHooksIsRefused2166188064/005/bin/claude", proofs 1, amq [/fake/amq env --me cto --json])
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.535s
+    FAIL
+
+## P1-3 (an ambiguous request is never confirmed by a pane check): TestAmbiguousApplyObservationsKeepTheRequestUnresolved (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif r.ambiguous {\n\t\treturn l.cancelAmbiguous(r)\n\t}\n' -> ''
+reverted run (last lines):
+    --- FAIL: TestAmbiguousApplyObservationsKeepTheRequestUnresolved (0.34s)
+        repass5_test.go:42: observations [{cto  true   tmux:v1:pane:%7   } {cto  true   tmux:v1:pane:%99   }]: cancel confirmed by a pane check: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.733s
+    FAIL
+
+## P1-3 (two observations for one handle are ambiguous): TestAmbiguousApplyObservationsKeepTheRequestUnresolved (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tif mine++; mine > 1 {\n\t\t\t\tr.ambiguous = true' -> '\t\t\tif mine++; false {\n\t\t\t\tr.ambiguous = true'
+reverted run (last lines):
+    --- FAIL: TestAmbiguousApplyObservationsKeepTheRequestUnresolved (0.34s)
+        repass5_test.go:42: observations [{cto  true   tmux:v1:pane:%7   } {cto  true   tmux:v1:pane:%99   }]: cancel confirmed by a pane check: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.714s
+    FAIL
+
+## P1-3 (an observation for an unknown handle is ambiguous): TestAmbiguousApplyObservationsKeepTheRequestUnresolved (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\t\tr.ambiguous = true // a pane for a handle this request does not know\n' -> ''
+reverted run (last lines):
+    --- FAIL: TestAmbiguousApplyObservationsKeepTheRequestUnresolved (0.78s)
+        repass5_test.go:42: observations [{cto  true   tmux:v1:pane:%99   } {other  true   tmux:v1:pane:%7   }]: cancel confirmed by a pane check: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.156s
+    FAIL
+
+## P2-4 (GIT_SSL_NO_VERIFY, GIT_SSL_CAINFO, GIT_SSL_CAPATH never needed): TestGitTLSTrustVariablesNeverReachASeat (internal/seatexec/env.go)
+reverted: FAIL; restored: PASS; as required
+revert: ',\n\t// phase 5 re-pass P2-4: git\'s own TLS trust switches\n\t"GIT_SSL_NO_VERIFY": true, "GIT_SSL_CAINFO": true, "GIT_SSL_CAPATH": true}' -> '}'
+reverted run (last lines):
+    --- FAIL: TestGitTLSTrustVariablesNeverReachASeat (0.00s)
+        repass5_test.go:84: seat env carries 3 of the TLS trust variables
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.368s
+    FAIL
+
+## P2-5 (WaitDelay and the process group): TestIdentityProofDescendantHoldingThePipesTimesOut (internal/seatexec/options.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tcmd.WaitDelay = proofWaitDelay\n\townGroup(cmd)\n' -> ''
+reverted run (last lines):
+    --- FAIL: TestIdentityProofDescendantHoldingThePipesTimesOut (30.33s)
+        repass5_test.go:110: proof with a descendant holding the pipe: <nil> after 30s
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	30.695s
+    FAIL
+
+## P2-5 (the group is killed after a wait-delay expiry): TestIdentityProofDescendantHoldingThePipesTimesOut (internal/seatexec/options.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tkillGroup(cmd)\n\t}\n\treturn out, err' -> '\t}\n\treturn out, err'
+reverted run (last lines):
+    --- FAIL: TestIdentityProofDescendantHoldingThePipesTimesOut (8.32s)
+        repass5_test.go:120: the descendant (pid 143) survived the proof
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	8.695s
+    FAIL
+
+## P2-5 (a timeout is identity_proof_timeout): TestIdentityProofDescendantHoldingThePipesTimesOut (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif err != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {\n\t\t// P2-5' -> '\tif false && err != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {\n\t\t// P2-5'
+reverted run (last lines):
+    --- FAIL: TestIdentityProofDescendantHoldingThePipesTimesOut (5.33s)
+        repass5_test.go:110: proof with a descendant holding the pipe: seat-exec refused (identity_proof_failed): amq env failed: exec: WaitDelay expired before I/O complete: {"root":"/r/s1","me":"cto","session_name":"s1"} after 5s
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	5.695s
+    FAIL
+
+## P2-6 (the 2 s deadline on the pane lookup): TestPaneLookupIsBoundedAndOutsideTheMutex (internal/seatlaunch/proof_peer_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tcmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_pid} #{@amq_pane_agent}")\n\tcmd.WaitDelay = paneLookupWaitDelay\n' -> '\tcmd := exec.CommandContext(context.Background(), "tmux", "list-panes", "-a", "-F", "#{pane_pid} #{@amq_pane_agent}")\n\t_ = ctx\n'
+reverted run (last lines):
+    --- FAIL: TestPaneLookupIsBoundedAndOutsideTheMutex (30.20s)
+        --- FAIL: TestPaneLookupIsBoundedAndOutsideTheMutex/deadline (30.19s)
+            repass5_test.go:73: hung tmux: ok false after 30s
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	30.575s
+    FAIL
+
+## P2-6 (the lookup outside the server mutex): TestPaneLookupIsBoundedAndOutsideTheMutex (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif s.tokenLive(m) {\n\t\tpane.shell' -> '\tif false && s.tokenLive(m) {\n\t\tpane.shell'
+revert: '\tshell, shellStart := pane.shell, pane.shellStart\n' -> '\tpane.shell, pane.shellStart, pane.ok = s.paneShell(m.Handle)\n\tshell, shellStart := pane.shell, pane.shellStart\n'
+reverted run (last lines):
+    --- FAIL: TestPaneLookupIsBoundedAndOutsideTheMutex (5.51s)
+        --- FAIL: TestPaneLookupIsBoundedAndOutsideTheMutex/outside_the_mutex (3.00s)
+            repass5_test.go:110: the server mutex is held across the pane lookup
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	5.885s
+    FAIL
+
+summary: 11 reverts, all as required

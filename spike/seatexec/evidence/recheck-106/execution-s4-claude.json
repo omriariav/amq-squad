@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "handle": "s4-claude",
+  "launch_nonce": "<redacted-nonce>",
+  "mode": "mint",
+  "provider": "claude",
+  "provider_version": "2.1.308",
+  "conversation_id": "<redacted-nonce>",
+  "backend": "tmux",
+  "profile": "tmux/darwin/v1",
+  "project_root": "/Users/omri/.amq-squad/spike/s4/project",
+  "project_identity": "v1:darwin:100000d:9ccb76",
+  "session_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4-106-1",
+  "session_identity": "v1:darwin:100000d:db6065",
+  "cwd": "/Users/omri/.amq-squad/spike/s4/project",
+  "cwd_identity": "v1:darwin:100000d:9ccb76",
+  "provider_executable": "/Users/omri/.local/share/claude/versions/2.1.308",
+  "provider_executable_identity": "v1:darwin:100000d:b11d1b",
+  "amq_executable": "/opt/homebrew/Cellar/amq/0.106.1/bin/amq",
+  "amq_executable_identity": "v1:darwin:100000d:dad525",
+  "wrapper": {
+    "executable": "/Users/omri/.amq-squad/spike/bin/seat-exec",
+    "args": [
+      "--seat",
+      "s4-claude"
+    ]
+  },
+  "wrapper_executable_identity": "{\"canonical_path\":\"/Users/omri/.amq-squad/spike/bin/seat-exec\",\"type\":\"file\",\"dev\":16777229,\"inode\":10275213,\"volume_id\":0,\"file_id\":0,\"size\":4404210,\"mtime_ns\":1792530943559102509,\"symlink_chain\":[]}",
+  "target_argv": [
+    "/Users/omri/.amq-squad/spike/bin/seat-exec",
+    "--seat",
+    "s4-claude",
+    "/Users/omri/.local/bin/claude",
+    "--model",
+    "sonnet",
+    "--effort",
+    "medium",
+    "--name",
+    "s4-claude",
+    "--session-id",
+    "<redacted-nonce>",
+    "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+  ],
+  "dynamic_argv": [
+    {
+      "index": 11,
+      "kind": "launch_nonce"
+    }
+  ],
+  "initial_input": {
+    "kind": "argument",
+    "sha256": "sha256:5514694298bba1c0991d9e18eff5fdffbf8cd00c07f9e65ecc0d17e36df4ff8a",
+    "argv_index": 12
+  },
+  "env_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "state": "acknowledged",
+  "reason": "child_spawn_acknowledged",
+  "execution": {
+    "require_wake": false,
+    "no_gitignore": true,
+    "wake_mode": "disabled",
+    "audit_reason": "S4 manually driven launch probe",
+    "injector_mode": "none"
+  }
+}

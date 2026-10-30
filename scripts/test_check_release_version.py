@@ -31,17 +31,17 @@ class RequireReleaseNotesTest(unittest.TestCase):
             )
 
     def test_policy_normalization_ignores_markdown_and_html_markup(self) -> None:
-        policy = CHECK_RELEASE_VERSION.AMQ_COMPATIBILITY_POLICY
+        policy = CHECK_RELEASE_VERSION.amq_compatibility_policy("0.116.2")
         markdown = policy.replace(
-            "AMQ 0.60.x is the supported series",
-            "AMQ **0.60.x is the supported series**",
-        ).replace("latest", "`latest`")
+            "minimum supported release",
+            "**minimum supported release**",
+        ).replace("0.116.2", "`0.116.2`")
         html_body = (
             "<p>"
             + policy.replace(
-                "AMQ 0.60.x is the supported series",
-                "AMQ <strong>0.60.x is the supported series</strong>",
-            ).replace("latest", "<code>latest</code>")
+                "minimum supported release",
+                "<strong>minimum supported release</strong>",
+            ).replace("0.116.2", "<code>0.116.2</code>")
             + "</p>"
         )
 
@@ -53,6 +53,38 @@ class RequireReleaseNotesTest(unittest.TestCase):
             CHECK_RELEASE_VERSION.normalize_policy_text(html_body),
             CHECK_RELEASE_VERSION.normalize_policy_text(policy),
         )
+
+    def test_amq_floor_is_read_from_the_doctor_constant(self) -> None:
+        # The repository's own doctor.go: the floor the script requires is
+        # the one doctor enforces (internal/cli TestReleaseCheckReadsTheDoctorFloor
+        # compares it with the compiled constant).
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(SCRIPT)))
+        floor = CHECK_RELEASE_VERSION.read_amq_floor(repo)
+        with open(os.path.join(repo, "internal/cli/doctor.go"), encoding="utf-8") as f:
+            self.assertIn(f'const doctorMinAMQVersion = "{floor}"\n', f.read())
+        self.assertEqual(
+            CHECK_RELEASE_VERSION.amq_compatibility_policy(floor),
+            f"AMQ {floor} is the minimum supported release",
+        )
+        self.assertFalse(hasattr(CHECK_RELEASE_VERSION, "AMQ_MIN_VERSION"))
+
+    def test_amq_floor_follows_a_changed_constant_and_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "internal", "cli"))
+            path = os.path.join(root, "internal", "cli", "doctor.go")
+            for body, want in (
+                ('package cli\n\nconst doctorMinAMQVersion = "9.8.7"\n', "9.8.7"),
+                ("package cli\n", None),
+                ('const doctorMinAMQVersion = "1.2.3"\nconst doctorMinAMQVersion = "1.2.4"\n', None),
+                ('const doctorMinAMQVersion = "v1.2"\n', None),
+            ):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(body)
+                if want is None:
+                    with self.assertRaises(ValueError):
+                        CHECK_RELEASE_VERSION.read_amq_floor(root)
+                else:
+                    self.assertEqual(CHECK_RELEASE_VERSION.read_amq_floor(root), want)
 
     def test_skill_frontmatter_version_matches_generated_shape(self) -> None:
         body = (

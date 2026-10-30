@@ -1,0 +1,114 @@
+# 2b-2 fix 3 (commit 1): revert check (each fix reverted in place, its test row run with -race, the fix restored, the row run again)
+
+## item 1 (an Apply error after it began is unknown): TestApplyErrorAfterStartIsUnresolved (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !res.ApplyStarted {\n\t\treturn false\n\t}\n\tif err != nil || res.Apply == nil {\n\t\treturn true\n\t}' -> 'if err != nil || res.Apply == nil {\n\t\treturn false\n\t}'
+reverted run (last lines):
+    --- FAIL: TestApplyErrorAfterStartIsUnresolved (0.06s)
+        fix3_test.go:34: an Apply that failed after it began was confirmed as no seat
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.425s
+    FAIL
+
+## item 2a (an up seat: confirm, the scheduler refuses its SeatUp): TestCancelOfAnUpSeatIsConfirmedForTheScheduler (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: '// (fix 3 item 2).\n\t\treturn nil\n\tcase stateClosing:\n\t\treturn l.closeOwed(r)' -> '// (fix 3 item 2).\n\t\tl.mu.Lock()\n\t\tr.state = stateClosing\n\t\tl.mu.Unlock()\n\t\treturn l.closeOwed(r)\n\tcase stateC'
+reverted run (last lines):
+    --- FAIL: TestCancelOfAnUpSeatIsConfirmedForTheScheduler (0.04s)
+        fix3_test.go:58: cancel of an up seat: close cto (request cancelled): no start stamp is held for pid 95542; not signalled (the scheduler would count it while it closes)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.703s
+    FAIL
+
+## item 2b (no identity held: not confirmed): TestCloseSeatNeverTrustsAMissingRecord (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !held {\n\t\treturn fmt.Errorf(' -> 'if !held {\n\t\treturn nil\n\t}\n\tif false {\n\t\treturn fmt.Errorf('
+reverted run (last lines):
+    --- FAIL: TestCloseSeatNeverTrustsAMissingRecord (0.01s)
+        fix3_test.go:70: no held identity, no record: <nil> (alive true)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.505s
+    FAIL
+
+## item 3 (unreadable start stamp refused): TestSeatExecRefusesAnUnreadableStartStamp (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if plan.started, ok = o.StartToken(os.Getpid()); !ok {' -> 'if plan.started, ok = o.StartToken(os.Getpid()); false && !ok {'
+reverted run (last lines):
+    --- FAIL: TestSeatExecRefusesAnUnreadableStartStamp (0.05s)
+        fix3_test.go:20: unreadable start stamp: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatExecRefusesAnUnreadableStartStamp809746378/001/bin/claude")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.552s
+    FAIL
+
+## item 5 (sandbox pins on the command line): TestCodexSandboxPinsBeatProjectConfig (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'plan.argv = codexSandboxPins(o.Argv, slices.Contains(rec.EnvNeeds, CodexNetworkNeed))' -> 'plan.argv = o.Argv\n\t\t_ = slices.Contains(rec.EnvNeeds, CodexNetworkNeed)'
+reverted run (last lines):
+    --- FAIL: TestCodexSandboxPinsBeatProjectConfig (0.25s)
+        fix3_test.go:35: exec argv ["/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestCodexSandboxPinsBeatProjectConfig1952041290/001/bin/codex" "--model" "m" "--sandbox" "workspace-write"], want the pins after the executable
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	7.083s
+    FAIL
+
+## item 6a (needs validated): TestAskpassScrubbedAndNeedsValidated (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if err := ValidateNeeds(rec.EnvNeeds, rec.CredNeeds); err != nil {' -> 'if err := error(nil); err != nil {'
+reverted run (last lines):
+        fix3_test.go:71: needs {env:[CLAUDECODE] cred:[]}: <nil>
+        fix3_test.go:71: needs {env:[] cred:[CLAUDE_CODE_SESSION_ID]}: <nil>
+        fix3_test.go:71: needs {env:[] cred:[bad name]}: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	3.239s
+    FAIL
+
+## item 6b (askpass scrubbed): TestAskpassScrubbedAndNeedsValidated (internal/seatexec/env.go)
+reverted: FAIL; restored: PASS; as required
+revert: '"GIT_ASKPASS": true, "SSH_ASKPASS": true,' -> ''
+reverted run (last lines):
+    --- FAIL: TestAskpassScrubbedAndNeedsValidated (0.23s)
+        fix3_test.go:61: an askpass program reached the seat
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.642s
+    FAIL
+
+## item new A (raw start stamp, not a wall-clock reconstruction): TestCloseSeatUsesTheRawStartStamp (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'var startToken = procinfo.StartToken' -> 'var startToken = func(pid int) (string, bool) { t, ok := procinfo.StartTime(pid); return t.String(), ok }'
+reverted run (last lines):
+    --- FAIL: TestCloseSeatUsesTheRawStartStamp (0.05s)
+        fix3_test.go:94: raw stamp close: <nil> (alive true)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.529s
+    FAIL
+
+## item new B (the sandbox scan stops at --): TestCodexSandboxScanStopsAtDoubleDash (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if a == "--" {\n\t\t\tbreak // what follows is the prompt, not options\n\t\t}' -> ''
+reverted run (last lines):
+    --- FAIL: TestCodexSandboxScanStopsAtDoubleDash (0.00s)
+        fix3_test.go:86: a sandbox after -- was honoured: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.436s
+    FAIL
+
+## item new C (a sandbox refusal is published): TestSandboxRefusalIsPublished (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if err := checkIdentity(rec, o); err != nil {\n\t\treturn plan, err\n\t}' -> 'if err := checkIdentity(rec, o); err != nil {\n\t\treturn plan, err\n\t}\n\tif rec.Runtime == "codex" {\n\t\tif err := C'
+reverted run (last lines):
+    --- FAIL: TestSandboxRefusalIsPublished (0.14s)
+        fix3_test.go:101: published record: <nil> open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSandboxRefusalIsPublished1420809560/001/proj/.agent-mail/s1/agents/cto/extensions/io.github.omriariav.amq-squad/launch.json: no such file or directory
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.485s
+    FAIL
+
+## item new D (guard protects the recorded rules source): TestGuardProtectsTheRecordedRulesSource (internal/cli/hook_guard_env.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if rec, err := launch.Read(e.id.AgentDir); err == nil && rec.RulesPath != "" {' -> 'if rec, err := launch.Read(e.id.AgentDir); false && err == nil && rec.RulesPath != "" {'
+reverted run (last lines):
+    --- FAIL: TestGuardProtectsTheRecordedRulesSource (0.03s)
+        hook_rules_source_test.go:25: write /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestGuardProtectsTheRecordedRulesSource112750570/001/project/custom/squad-rules.md: allow allowed
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.525s
+    FAIL
+
+all items as required: True

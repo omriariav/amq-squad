@@ -1,0 +1,305 @@
+## ci_green: revert internal/mergetrain/checks.go; go test -run 'TestAcceptance2Refusals/ci_red' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'if why, _ := ciRed(in.required, in.runs); why != "" {'
+-- to:       'if why, _ := ciRed(in.required, in.runs); false && why != "" {'
+--- FAIL: TestAcceptance2Refusals (5.20s)
+    --- FAIL: TestAcceptance2Refusals/ci_red (5.20s)
+        acceptance_test.go:136: want refusal ci_green, got {Number:1 Task:T1 Head:69c4fcc5e03c6c2849bd54e1195926f03081f7dc Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:58742f9a9b2ee9d2d2bcd040c8362d3577d4ec43 base:e1d651ce35076fa2bfa5d9c8571508e9e0306844}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	13.257s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	5.923s
+
+## size_cap_lines: revert internal/mergetrain/checks.go; go test -run 'TestAcceptance2Refusals/size_cap$' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'ok && n > merge.SizeCapLines {'
+-- to:       'ok && n > merge.SizeCapLines*1000 {'
+--- FAIL: TestAcceptance2Refusals (4.11s)
+    --- FAIL: TestAcceptance2Refusals/size_cap (4.11s)
+        acceptance_test.go:136: want refusal size_cap, got {Number:1 Task:T1 Head:619e23172cbabbab1e115775608e96216bd1e440 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:52e5ca7cf8ecc5d43fc1cf52fcc3973ed468e4cb base:626a725e76f006b7dc4672efdc07612bceee059b}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	5.044s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	3.010s
+
+## size_cap_files: revert internal/mergetrain/checks.go; go test -run 'TestAcceptance2Refusals/size_cap_files' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'ok && n > merge.SizeCapFiles {'
+-- to:       'ok && n > merge.SizeCapFiles*1000 {'
+--- FAIL: TestAcceptance2Refusals (2.76s)
+    --- FAIL: TestAcceptance2Refusals/size_cap_files (2.76s)
+        acceptance_test.go:136: want refusal size_cap, got {Number:2 Task:T2 Head:eab5a831daf0364ec8b16d5887a209ddbc0ab315 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:81ad5f06b65928fb4715c08ae819233026d174ac base:963b285e10d2dee8489eaae1e7f1d4273f030cca}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	3.145s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.633s
+
+## force_push: revert internal/mergetrain/checks.go; go test -run 'TestAcceptance2Refusals/force_push' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'if !in.trainHeads[fp.After] {'
+-- to:       'if false && !in.trainHeads[fp.After] {'
+--- FAIL: TestAcceptance2Refusals (1.97s)
+    --- FAIL: TestAcceptance2Refusals/force_push (1.97s)
+        acceptance_test.go:136: want refusal force_push, got {Number:1 Task:T1 Head:546d6c94dc3a587d04e3a13be7878046f32affe6 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:296d1f2cf75a10eef717862138a3939bdb36e316 base:862995b3ee049adf9d23d475e53b5249b42ff84d}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.312s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.899s
+
+## protected_path: revert internal/mergetrain/checks.go; go test -run 'TestAcceptance2Refusals/protected_path' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'if e, hit := protectedHit(p, entries); hit {'
+-- to:       'if e, hit := protectedHit(p, entries); false && hit {'
+--- FAIL: TestAcceptance2Refusals (0.88s)
+    --- FAIL: TestAcceptance2Refusals/protected_path (0.88s)
+        acceptance_test.go:136: want refusal protected_path, got {Number:6 Task:T6 Head:1f781a2908a1acc0d0035b8e276a9801fe9027c9 Draft:true Changed:2 Files:[.amq-squad/team-rules.md] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:a0b23df357c227dc2cebe7f26b29829d14353863 base:cd52f4af90461c5a7401d95ed274300785b93174}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.337s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.989s
+
+## base_branch: revert internal/mergetrain/checks.go; go test -run 'TestAcceptance2Refusals/wrong_base' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'case in.pr.BaseRef != in.base:'
+-- to:       'case false && in.pr.BaseRef != in.base:'
+--- FAIL: TestAcceptance2Refusals (0.88s)
+    --- FAIL: TestAcceptance2Refusals/wrong_base (0.88s)
+        acceptance_test.go:136: want refusal base_branch, got {Number:7 Task:T7 Head:da58c1b1c09b1ac8ce1b4173e8199caa59080a66 Draft:true Changed:1 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:b43799f431802987d61f0ab36c96e8af4322ed2c base:5901e98300db6afd69919d0a8d71020901d828b4}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.325s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.321s
+
+## task_scope: revert internal/mergetrain/checks.go; go test -run 'TestAcceptance2Refusals/file_outside_the_task' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'if len(in.item.DeclaredFiles) > 0 && !Declared(p, in.item.DeclaredFiles) {'
+-- to:       'if false && len(in.item.DeclaredFiles) > 0 && !Declared(p, in.item.DeclaredFiles) {'
+--- FAIL: TestAcceptance2Refusals (0.86s)
+    --- FAIL: TestAcceptance2Refusals/file_outside_the_task (0.86s)
+        acceptance_test.go:136: want refusal task_scope, got {Number:2 Task:T2 Head:404cc2d67220b412270d83f1d555201e636c8df9 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:968672d7b3e3dba4e7b055295ac32f41f678185a base:7396914b789ee5eeba217e4deeeeb79c7890541b}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.185s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	6.105s
+
+## protection: revert internal/mergetrain/forge.go; go test -run 'TestAcceptance5NoRulesetRefusesToStart' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'func (p Protection) Met() bool { return len(p.RequiredChecks) > 0 && p.DirectPushRefused }'
+-- to:       'func (p Protection) Met() bool { return true }'
+--- FAIL: TestAcceptance5NoRulesetRefusesToStart (9.51s)
+    --- FAIL: TestAcceptance5NoRulesetRefusesToStart/no_ruleset (1.98s)
+        acceptance_test.go:175: want ErrProtection, got <nil> {Run:mt-20261024T133555Z-a52160d4 Repository:owner/fixture Base:main BaseSHA:9f3be3b4625d09d389f63a8fa355e3af819ab669 DryRun:false Manual:false Protection:{RequiredChecks:[] DirectPushRefused:false ForcePushRefused:false Sources:[] Notes:[no ruleset and no branch protection]} ProtectionMet:true CIChecks:[] Pairs:[] Digest:sha256:054377b8f8050e60185560a8a3ddced811c753f0f81700374f20229dc214fce9 Digests:[sha256:054377b8f8050e60185560a8a3ddced811c753f0f81700374f20229dc214fce9] PRs:[{Number:1 Task:T1 Head:d0aed49ee59e8f0d9584a3cc06abb1159bafa998 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[{Rule:ci_green Detail:head d0aed49ee59e: no required CI check is known (the server protection names none)}] GateID:merge-5783159fb7ec07fb GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:9f3be3b4625d09d389f63a8fa355e3af819ab669} {Number:2 Task:T2 Head:51d5c53a440e404cf3d9376fd8399ae8ccb5c95a Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[{Rule:ci_green Detail:head 51d5c53a440e: no required CI check is known (the server protection names none)}] GateID:merge-c2109b34640734da GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:9f3be3b4625d09d389f63a8fa355e3af819ab669} {Number:3 Task:T3 Head:0459bfa82623443258d763ce7790191aeb00ed95 Draft:true Changed:2 Files:[pkg/c.go] Refusals:[{Rule:ci_green Detail:head 0459bfa82623: no required CI check is known (the server protection names none)}] GateID:merge-3175185119862992 GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:9f3be3b4625d09d389f63a8fa355e3af819ab669} {Number:4 Task:T4 Head:cecc5c971af4e0558737e84543b277032579cfea Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[{Rule:ci_green Detail:head cecc5c971af4: no required CI check is known (the server protection names none)}] GateID:merge-4da17dd1198b4bae GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:refused Merged: base:9f3be3b4625d09d389f63a8fa355e3af819ab669} {Number:5 Task:T5 Head:8ef0c7685ca54717d98434d6e178f2334e7a8940 Draft:true Changed:1 Files:[pkg/e_test.go] Refusals:[{Rule:ci_green Detail:head 8ef0c7685ca5: no required CI check is known (the server protection names none)}] GateID:merge-88c3c20fe77ce723 GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:9f3be3b4625d09d389f63a8fa355e3af819ab669}] Stopped: WallMS:487}
+    --- FAIL: TestAcceptance5NoRulesetRefusesToStart/ci_but_direct_push (4.25s)
+        acceptance_test.go:175: want ErrProtection, got <nil> {Run:mt-20261024T133556Z-36425042 Repository:owner/fixture Base:main BaseSHA:aaca5816bcb4329070155e15d8aa53b096b8c0b7 DryRun:false Manual:false Protection:{RequiredChecks:[ci] DirectPushRefused:false ForcePushRefused:false Sources:[ruleset 7] Notes:[]} ProtectionMet:true CIChecks:[ci] Pairs:[{Number:4 Head:a03343a32f585713a921aaa9be798d38e0897b9a} {Number:5 Head:7a393db7e270dc804dcc89ac44a9ba92257537e2}] Digest:sha256:7427688da2b3ec2a3657f791eb7087ac82a5fc8526e2b1b02e7222cfacca0973 Digests:[sha256:5aa2ffbd78b64eb3d88e7a648dba3e55e976cb889b6fcfcce5a0d99c3769511c sha256:7427688da2b3ec2a3657f791eb7087ac82a5fc8526e2b1b02e7222cfacca0973] PRs:[{Number:1 Task:T1 Head:f61c03fc1a5875b4db264f7a7e981a9e217937c1 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:1c239c1860f41f4f11c4f8db37e597ecc5db45d8 base:f05143af6fe26c13b90b356d0e7c4d25e2ca65c2} {Number:2 Task:T2 Head:6b1eeecf2d12bf48a8d059b7fb861dc2f9143968 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:94fbed302e227535bf57de34dbe261960e1a39f3 base:f05143af6fe26c13b90b356d0e7c4d25e2ca65c2} {Number:3 Task:T3 Head:b4334b4b9a79acc12e7d10457c9657837c5c10d9 Draft:true Changed:2 Files:[pkg/c.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:88e59103422f15cb6df3a2a397ac557dcdd9e75c base:f05143af6fe26c13b90b356d0e7c4d25e2ca65c2} {Number:4 Task:T4 Head:a03343a32f585713a921aaa9be798d38e0897b9a Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:merged Merged:b5546887b9112cf73b967069b4b578813e44d19b base:88e59103422f15cb6df3a2a397ac557dcdd9e75c} {Number:5 Task:T5 Head:7a393db7e270dc804dcc89ac44a9ba92257537e2 Draft:true Changed:1 Files:[pkg/e_test.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:aaca5816bcb4329070155e15d8aa53b096b8c0b7 base:f05143af6fe26c13b90b356d0e7c4d25e2ca65c2}] Stopped: WallMS:3242}
+    --- FAIL: TestAcceptance5NoRulesetRefusesToStart/classic_admin_exempt (2.43s)
+        acceptance_test.go:175: want ErrProtection, got <nil> {Run:mt-20261024T133600Z-35feab48 Repository:owner/fixture Base:main BaseSHA:e4395901d23da4c04b62668b5dbe685a919789f0 DryRun:false Manual:false Protection:{RequiredChecks:[ci] DirectPushRefused:false ForcePushRefused:true Sources:[classic] Notes:[classic protection requires a PR but not for admins: the owner can push directly]} ProtectionMet:true CIChecks:[ci] Pairs:[{Number:4 Head:0a9f166a2dab61c74935a35efeca5504c40e9e3b} {Number:5 Head:981d4c49f3cb09e151003cb291454c4cbd708039}] Digest:sha256:f1d0f649df40531bb0250f4546730ff8c4677a7ac3d37e1c0c03a2da6f3caf31 Digests:[sha256:339d9b61dfe80ae6839ce6e5152ed5a2d64decf9965ad606def90beaf7c1c506 sha256:f1d0f649df40531bb0250f4546730ff8c4677a7ac3d37e1c0c03a2da6f3caf31] PRs:[{Number:1 Task:T1 Head:0d630a343dcf982f79864ada8268ef0ef2a284cf Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:6d972d76b854816cb61884a3802d20558450b262 base:5987c18e20cd9a1f70b2fea3c591863d4810c107} {Number:2 Task:T2 Head:bf305240e118881dd7b2aa1d5edd8285b92a7c22 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:814a9ed3cab065fd177717e5a7589c0675a166db base:5987c18e20cd9a1f70b2fea3c591863d4810c107} {Number:3 Task:T3 Head:1d7de83c0632e044a23152f724c07dd35ebe9e7d Draft:true Changed:2 Files:[pkg/c.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:b37e6d035f532b554af0949ef37d49b0d3db6069 base:5987c18e20cd9a1f70b2fea3c591863d4810c107} {Number:4 Task:T4 Head:0a9f166a2dab61c74935a35efeca5504c40e9e3b Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:merged Merged:099c0682bc05aface21fc36a42b37e822d41ac48 base:b37e6d035f532b554af0949ef37d49b0d3db6069} {Number:5 Task:T5 Head:981d4c49f3cb09e151003cb291454c4cbd708039 Draft:true Changed:1 Files:[pkg/e_test.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:e4395901d23da4c04b62668b5dbe685a919789f0 base:5987c18e20cd9a1f70b2fea3c591863d4810c107}] Stopped: WallMS:1800}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	10.027s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.388s
+
+## protection_bypass: revert internal/mergetrain/gh.go; go test -run 'TestEvaluateProtection' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'if bypass[r.RulesetID] == 0 {'
+-- to:       'if bypass[r.RulesetID] >= 0 {'
+--- FAIL: TestEvaluateProtection (0.00s)
+    acceptance_test.go:344: a ruleset with a bypass actor refuses no direct push by the owner
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.351s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.238s
+
+## rebase_redigest: revert internal/mergetrain/train.go; go test -run 'TestAcceptance1FiveCleanPRsLandInOrder' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: '\tif moved {\n\t\tt.digest(res, entry)'
+-- to:       '\tif false && moved {\n\t\tt.digest(res, entry)'
+--- FAIL: TestAcceptance1FiveCleanPRsLandInOrder (2.01s)
+    acceptance_test.go:61: batch entries 1, want the plan and the post-rebase digest: [{Schema:amq-squad-merge-audit/1 At:2026-10-24T13:36:08.435809Z Run:mt-20261024T133608Z-120d63aa Kind:batch Repository:owner/fixture Base:main BaseSHA:4f875863603a8eb0b1207bf96e663d8950ba7772 Pairs:[{Number:1 Head:fc3178a5e50485c5c14dc9d2a20eb613aa8c07af} {Number:2 Head:116aee7515eded41862a6f4fc4fb09f1be176ba4} {Number:3 Head:24e46e2e928e214bad7926fe4ba97f9be61933d3} {Number:4 Head:bbb87232a4f27c5dda218508afe331cbce56e660} {Number:5 Head:70e225d8062d1c37e535b1c6672aaad326887fb7}] Digest:sha256:936c42a08377004da76d9fe1a52c5cf11705d9b75a5288788e83a38de20e2938 PR:0 Task: Head: NewHead: Merged: Rules:[] Detail: GateID: DryRun:false}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.366s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.192s
+
+## rebase_recheck: revert internal/mergetrain/train.go; go test -run 'TestNewHeadAfterPlanIsRechecked' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: '\tfresh, err := t.checkPR(ctx, req, it, res.CIChecks)\n\tif err != nil {\n\t\treturn err\n\t}\n\tfresh.After'
+-- to:       '\tfresh, err := t.checkPR(ctx, req, it, res.CIChecks)\n\tif err != nil {\n\t\treturn err\n\t}\n\tfresh.Refusals = nil\n\tfresh.After'
+--- FAIL: TestNewHeadAfterPlanIsRechecked (0.79s)
+    acceptance_test.go:288: the new head was not re-checked: {Number:1 Task:T1 Head:8048d0d71d3a32a9cea18831d10f96100c9b6d89 Draft:true Changed:3 Files:[pkg/a.go pkg/x.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:20f52d18bc41a52d5eeffb7f0f2a9fe72785bff9 base:ec1e5aa5ae5ad9d7fb7a79899eb5bc8a77fb44fe} digests [sha256:7f535c2281f1b0a7ddaa08121405d9aef7b712c8cd4477bd4c0fd19e7dbdfd95 sha256:6dc5bbc5dba96841a87a4a66bdb31bbb594cb91fda5b65316036a8c51546eb30]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.136s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.909s
+
+## seat_no_merge_path: revert internal/mergetrain/train.go; go test -run 'TestSeatProcessHoldsNoMergePath' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: 'if t.InSeat && !t.DryRun {'
+-- to:       'if false && t.InSeat && !t.DryRun {'
+--- FAIL: TestSeatProcessHoldsNoMergePath (1.96s)
+    acceptance_test.go:264: seat run: <nil>
+        api repos/owner/fixture/rules/branches/main
+        api repos/owner/fixture/rulesets/7 --jq .bypass_actors | length
+        api repos/owner/fixture/branches/main/protection
+        api repos/owner/fixture/branches/main --jq .commit.sha
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/1/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/6e6c1c635f2e720f22e3d1aef18158cbf94be8b3/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/6e6c1c635f2e720f22e3d1aef18158cbf94be8b3/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 2 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/2/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=2 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/a224cbbc493fe863d87a033199467350a0339640/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/a224cbbc493fe863d87a033199467350a0339640/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 3 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/3/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=3 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/6105f847ee595e5b305de1433cdcecccbc4ce995/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/6105f847ee595e5b305de1433cdcecccbc4ce995/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 4 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/4/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=4 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/ef2e9aa844f743ad60ddc9983f5b04c5668f24c9/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/ef2e9aa844f743ad60ddc9983f5b04c5668f24c9/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 5 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/5/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=5 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/8f20f6c8b9175a5eef0f90f5333810e877891f43/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/8f20f6c8b9175a5eef0f90f5333810e877891f43/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/1/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/1/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/6e6c1c635f2e720f22e3d1aef18158cbf94be8b3/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/6e6c1c635f2e720f22e3d1aef18158cbf94be8b3/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr ready 1 -R owner/fixture
+        api -X PUT repos/owner/fixture/pulls/1/merge -f merge_method=squash -f sha=6e6c1c635f2e720f22e3d1aef18158cbf94be8b3 --jq .sha
+        pr view 2 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/2/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=2 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr view 2 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/2/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=2 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/a224cbbc493fe863d87a033199467350a0339640/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/a224cbbc493fe863d87a033199467350a0339640/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr ready 2 -R owner/fixture
+        api -X PUT repos/owner/fixture/pulls/2/merge -f merge_method=squash -f sha=a224cbbc493fe863d87a033199467350a0339640 --jq .sha
+        pr view 3 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/3/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=3 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr view 3 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/3/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=3 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/6105f847ee595e5b305de1433cdcecccbc4ce995/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/6105f847ee595e5b305de1433cdcecccbc4ce995/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr ready 3 -R owner/fixture
+        api -X PUT repos/owner/fixture/pulls/3/merge -f merge_method=squash -f sha=6105f847ee595e5b305de1433cdcecccbc4ce995 --jq .sha
+        pr view 4 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/4/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=4 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr update-branch 4 -R owner/fixture --rebase
+        pr view 4 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/4/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=4 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/48c8733c524a7a835de87c94208ebeeb449250bd/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/48c8733c524a7a835de87c94208ebeeb449250bd/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 4 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/4/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=4 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/48c8733c524a7a835de87c94208ebeeb449250bd/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/48c8733c524a7a835de87c94208ebeeb449250bd/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr ready 4 -R owner/fixture
+        api -X PUT repos/owner/fixture/pulls/4/merge -f merge_method=squash -f sha=48c8733c524a7a835de87c94208ebeeb449250bd --jq .sha
+        pr view 5 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/5/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=5 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr view 5 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api --paginate repos/owner/fixture/pulls/5/files?per_page=100 --jq .[] | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api graphql -F o=owner -F r=fixture -F n=5 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api --paginate repos/owner/fixture/commits/8f20f6c8b9175a5eef0f90f5333810e877891f43/check-runs?per_page=100 --jq .check_runs[] | {name, status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/8f20f6c8b9175a5eef0f90f5333810e877891f43/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr ready 5 -R owner/fixture
+        api -X PUT repos/owner/fixture/pulls/5/merge -f merge_method=squash -f sha=8f20f6c8b9175a5eef0f90f5333810e877891f43 --jq .sha
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.317s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.680s
+
+## dry_run_raises_nothing: revert internal/mergetrain/train.go; go test -run 'TestDryRunMergesAndRaisesNothing' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: '\tcase t.DryRun:\n'
+-- to:       '\tcase false:\n'
+--- FAIL: TestDryRunMergesAndRaisesNothing (0.75s)
+    acceptance_test.go:208: plan {Run:mt-20261024T133618Z-04174930 Repository:owner/fixture Base:main BaseSHA:570c3795ebbef642c8284d66bcc2367efd448c06 DryRun:true Manual:false Protection:{RequiredChecks:[] DirectPushRefused:false ForcePushRefused:false Sources:[] Notes:[no ruleset and no branch protection]} ProtectionMet:false CIChecks:[ci] Pairs:[{Number:1 Head:ba91b961bf4557fbabede04931df976bad2b1dd3} {Number:3 Head:41df0bc80dcfc234558d93d250a65d7c4b64cabf} {Number:4 Head:21a06c5241a28147ece432a26754a5b3429d698b} {Number:5 Head:65b0c0fd310b7893693e56c0515f8554b50edf34}] Digest:sha256:bc3deb7fa5d33ead52ff591af251d3dc8ca573283bfa7e5d648a40b0d93d9567 Digests:[sha256:bc3deb7fa5d33ead52ff591af251d3dc8ca573283bfa7e5d648a40b0d93d9567] PRs:[{Number:1 Task:T1 Head:ba91b961bf4557fbabede04931df976bad2b1dd3 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:planned Merged: base:570c3795ebbef642c8284d66bcc2367efd448c06} {Number:2 Task:T2 Head:2ef913885c1c3b7c179908dac10148a05dd35aa1 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[{Rule:task_scope Detail:shared.txt is outside task T2's declared files [pkg/b.go]}] GateID:merge-23b571cbe8cbea6e GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:570c3795ebbef642c8284d66bcc2367efd448c06} {Number:3 Task:T3 Head:41df0bc80dcfc234558d93d250a65d7c4b64cabf Draft:true Changed:2 Files:[pkg/c.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:planned Merged: base:570c3795ebbef642c8284d66bcc2367efd448c06} {Number:4 Task:T4 Head:21a06c5241a28147ece432a26754a5b3429d698b Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:planned Merged: base:570c3795ebbef642c8284d66bcc2367efd448c06} {Number:5 Task:T5 Head:65b0c0fd310b7893693e56c0515f8554b50edf34 Draft:true Changed:1 Files:[pkg/e_test.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:planned Merged: base:570c3795ebbef642c8284d66bcc2367efd448c06}] Stopped: WallMS:314}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.097s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.009s
+
+## custody_askpass: revert internal/seatexec/env.go; go test -run 'TestSeatEnvironmentCarriesNoForgeCredential' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: '"GIT_ASKPASS": true, "SSH_ASKPASS": true,'
+-- to:       ''
+--- FAIL: TestSeatEnvironmentCarriesNoForgeCredential (0.00s)
+    custody_test.go:16: seat environment carries [GIT_ASKPASS SSH_ASKPASS]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.343s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.240s
+
+## codex_approval: revert internal/seatexec/seatexec_unix.go; go test -run 'TestCodexSeatRequiresApprovalOnRequest' ./internal/seatexec/: FAILS with the fix reverted (good)
+-- reverted: 'if approval != "on-request" {'
+-- to:       'if false && approval != "on-request" {'
+--- FAIL: TestCodexSeatRequiresApprovalOnRequest (0.03s)
+    approval_test.go:20: codex ["--sandbox" "workspace-write"]: <nil>
+    approval_test.go:20: codex ["--sandbox" "workspace-write" "--ask-for-approval" "never"]: <nil>
+    approval_test.go:20: codex ["--sandbox" "workspace-write" "-a" "untrusted"]: <nil>
+    approval_test.go:20: codex ["--sandbox" "workspace-write" "--ask-for-approval=on-failure"]: <nil>
+    approval_test.go:29: seat-exec ran a Codex seat without the approval policy: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestCodexSeatRequiresApprovalOnRequest2882215333/001/bin/codex")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.367s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	0.214s
+
+## guard_credential_read: revert internal/cli/hook_guard.go; go test -run 'TestGuardRuleMatrix' ./internal/cli/: FAILS with the fix reverted (good)
+-- reverted: 'if a.credRead != "" {'
+-- to:       'if false && a.credRead != "" {'
+--- FAIL: TestGuardRuleMatrix (0.23s)
+    --- FAIL: TestGuardRuleMatrix/cred/deny_gh_auth_token (0.00s)
+        hook_verbs_test.go:451: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+    --- FAIL: TestGuardRuleMatrix/cred/deny_gh_auth_status_--show-token (0.01s)
+        hook_verbs_test.go:451: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+    --- FAIL: TestGuardRuleMatrix/cred/deny_keychain_password (0.00s)
+        hook_verbs_test.go:451: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+    --- FAIL: TestGuardRuleMatrix/cred/deny_git_credential_fill (0.00s)
+        hook_verbs_test.go:451: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+    --- FAIL: TestGuardRuleMatrix/cred/deny_osxkeychain_helper (0.00s)
+        hook_verbs_test.go:451: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+    --- FAIL: TestGuardRuleMatrix/cred/deny_launchd_ssh_agent (0.00s)
+        hook_verbs_test.go:451: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.921s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.560s
+
+SUMMARY: all reverted rows failed and pass restored

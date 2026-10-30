@@ -1,0 +1,45 @@
+lint ok: 16 files, pi 1.3.0
+(node:16540) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ before_agent_start injects role and context every turn and the role message once (1115.524209ms)
+✔ a resumed session that already holds the role message gets no second one (1863.812ms)
+✔ tool_call: allow passes, deny blocks, guard failure blocks (2538.239208ms)
+✔ needs_gate holds until guard allows (a verified gate answer) (3560.999459ms)
+✔ needs_gate times out and blocks; the same call is then capped (605.824833ms)
+✔ an approval tool: a local confirm races the remote answer (498.50475ms)
+✔ bridge revision 4: the remote answer approves the held call under an owned ref (1357.453125ms)
+✔ no owned ref: raiseApproval returns null (the local face answers) (0.5385ms)
+✔ tool_result writes one evidence line (355.240917ms)
+✔ without an AMQ identity the package is inactive (0.363709ms)
+✔ the first decision from any face wins: remote before local (22.304333ms)
+✔ the first decision from any face wins: local before remote (10.278292ms)
+✔ a late second answer does not change the decision (44.949125ms)
+✔ timeout and abort block (43.131792ms)
+✔ a throwing face blocks (fail closed) (0.100667ms)
+✔ several held calls in parallel resolve independently (62.228417ms)
+✔ the retry cap stops a storm (0.279333ms)
+✔ guard fails closed: exit 1, timeout, missing binary, no verdict (1222.040041ms)
+✔ guard verdicts map to allow, block and needs_gate (5594.4245ms)
+✔ guard is called with the seat and --stdin (697.850083ms)
+✔ context section states what AMQ is, the task and gates (0.616084ms)
+✔ evidence ingest gets one tool_result payload with an outcome (621.073292ms)
+✔ config needs an AMQ identity (0.317417ms)
+✔ run reports spawn errors and timeouts (103.550375ms)
+✔ writes outside the task's declared files are blocked in session (0.608417ms)
+✔ the lead's reset tool (0.919625ms)
+✔ the in-process re-hash accepts the verified tree (2.6635ms)
+✔ the in-process re-hash refuses a changed chunk, an extra file, a missing file, a changed manifest (11.032209ms)
+✔ a mismatch exits 70 with the named reason (78.268791ms)
+✔ the lead's repository read and list stay inside the root (6.060167ms)
+✔ argv: bodies go on stdin, recipients and kinds are checked (0.819417ms)
+✔ registered tools run the configured binaries with the body on stdin (2305.509834ms)
+✔ a failing amq is an error tool result (thrown) (1286.001375ms)
+✔ model restriction (0.1305ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16194.373958

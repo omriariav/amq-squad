@@ -13,7 +13,7 @@ func TestResolveNamedProfileSession(t *testing.T) {
 	if ref.Profile != "release" || ref.Session != "main" || ref.AMQSession != "main" {
 		t.Fatalf("namespace fields = %+v", ref)
 	}
-	if got, want := ref.Paths.ProfileConfig, filepath.Join("/repo", ".amq-squad", "teams", "release.json"); got != want {
+	if got, want := ref.Paths.ProfileConfig, filepath.Join("/repo", "squad.yaml"); got != want {
 		t.Fatalf("profile path = %q, want %q", got, want)
 	}
 	if got, want := ref.AMQRoot, filepath.Join("/repo", ".agent-mail", "release", "main"); got != want {

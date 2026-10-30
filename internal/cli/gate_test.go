@@ -10,34 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
-
-func TestGateListKindsIsContextFreeAndCatalogDriven(t *testing.T) {
-	t.Chdir(t.TempDir())
-	stdout, _, err := captureOutput(t, func() error { return runGate([]string{"raise", "--list-kinds", "--json"}) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := decodeJSONEnvelope[actionKindsData](t, stdout)
-	if env.Data.TaxonomyVersion != operatorauth.ActionTaxonomyVersion || len(env.Data.Actions) != len(operatorauth.ActionCapabilities()) {
-		t.Fatalf("list-kinds diverged from catalog: %+v", env.Data)
-	}
-	if _, err := os.Stat(filepath.Join(".amq-squad")); !os.IsNotExist(err) {
-		t.Fatalf("context-free listing touched project state: %v", err)
-	}
-	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
-		if !strings.Contains(script, "gate") || !strings.Contains(script, "raise") {
-			t.Errorf("%s completion omitted gate raise", shell)
-		}
-	}
-	_, help, err := captureOutput(t, func() error { return runGate([]string{"--help"}) })
-	if err != nil || !strings.Contains(help, "amq-squad gate") || !strings.Contains(help, "raise") {
-		t.Fatalf("gate help missing: err=%v help=%q", err, help)
-	}
-}
 
 func TestGateRaiseRejectsUnknownOrMismatchedPairBeforeResolutionOrSend(t *testing.T) {
 	project := t.TempDir()
@@ -60,7 +37,7 @@ func TestGateRaiseRejectsUnknownOrMismatchedPairBeforeResolutionOrSend(t *testin
 }
 
 func TestGateRaiseSendsExactTypedRequestToConfiguredOperator(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-gate to user\n")
 	_, stderr, err := captureOutput(t, func() error {
 		return runGate([]string{"raise", "--project", project, "--session", "s", "--me", "cto", "--gate", "merge-414", "--kind", "merge", "--action", "protected_branch_push", "--target", "PR #414 head abcdef0 into main", "--note", "integrity note", "--json"})
@@ -86,7 +63,7 @@ func TestGateRaiseSendsExactTypedRequestToConfiguredOperator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.Namespace.ProjectDir != project || request.Namespace.Profile != team.DefaultProfile || request.Namespace.Session != "s" || request.Namespace.NamespaceID != "default/s" || request.Namespace.Generation != "none" || request.Note != "integrity note" {
+	if request.Namespace.ProjectDir != project || request.Namespace.Profile != squadnamespace.DefaultProfile || request.Namespace.Session != "s" || request.Namespace.NamespaceID != "default/s" || request.Namespace.Generation != "none" || request.Note != "integrity note" {
 		t.Fatalf("typed request=%+v", request)
 	}
 
@@ -104,11 +81,10 @@ func TestGateRaiseReResolutionDriftRefusesBeforeSend(t *testing.T) {
 		name string
 		fn   func(*contextResolution)
 	}{
-		{name: "generation", fn: func(ctx *contextResolution) { ctx.NamespaceGeneration = "changed" }},
 		{name: "root", fn: func(ctx *contextResolution) { ctx.Root = filepath.Join(ctx.Root, "changed") }},
 	} {
 		t.Run(mutate.name, func(t *testing.T) {
-			project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, _, _ := seedNotifyProject(t)
 			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible to user\n")
 			original := resolveGateRaiseContext
 			count := 0
@@ -193,7 +169,7 @@ func TestTypedCLIInjectionFailsBeforeResolutionOrMutation(t *testing.T) {
 }
 
 func TestTypedAnswerReasonInjectionMayResolveButNeverSendsOrWritesReceipt(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	request := typedQuestion(project, "s", "q", "github_release", "release target", "note", time.Now().UTC()).AuthorizationRequest
 	writeTypedGateMessage(t, base, "s", "user", "q", "gate/test", "cto", "question", "Gate-Kind: release\nAction: github_release\nTarget: release target\nNote: note", request, time.Now().UTC())
@@ -217,73 +193,6 @@ func TestTypedAnswerReasonInjectionMayResolveButNeverSendsOrWritesReceipt(t *tes
 	}
 }
 
-func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
-	seedNotifyLaunch(t, project, base, "s", "cto")
-	raiseCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent q-safe to user\n")
-	if err := runGate([]string{"raise", "--project", project, "--session", "s", "--me", "cto", "--gate", "release-safe", "--kind", "release", "--action", "github_release", "--target", "release v1 with  two spaces", "--note", "safe prose"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(*raiseCalls) != 1 {
-		t.Fatalf("raise calls=%+v", *raiseCalls)
-	}
-	var requestContext map[string]any
-	if err := json.Unmarshal([]byte(amqFlagValue((*raiseCalls)[0].Arg, "context")), &requestContext); err != nil {
-		t.Fatal(err)
-	}
-	request, err := operatorauth.DecodeGateRequest(requestContext["authorization_request"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	question := state.Message{ID: "q-safe", From: "cto", To: []string{"user"}, Thread: request.Gate, RawThread: request.Gate, Kind: state.KindQuestion, Subject: amqFlagValue((*raiseCalls)[0].Arg, "subject"), Body: amqFlagValue((*raiseCalls)[0].Arg, "body"), Created: time.Now().UTC(), AuthorizationRequestPresent: true, AuthorizationRequestValid: true, AuthorizationRequest: &request}
-	question = withAuthorityRaw(question)
-	writeAuthorizationMessage(t, base, "s", "user", "new", question)
-
-	answerCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent a-safe to cto\n")
-	if err := runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", request.Gate, "--approved", "--reason", "safe operational prose"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(*answerCalls) != 1 {
-		t.Fatalf("answer calls=%+v", *answerCalls)
-	}
-	var approvalContext map[string]any
-	if err := json.Unmarshal([]byte(amqFlagValue((*answerCalls)[0].Arg, "context")), &approvalContext); err != nil {
-		t.Fatal(err)
-	}
-	approval, err := operatorauth.DecodeApproval(approvalContext["approval"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	answer := state.Message{ID: "a-safe", From: "user", To: []string{"cto"}, Thread: request.Gate, RawThread: request.Gate, Kind: state.KindAnswer, Subject: amqFlagValue((*answerCalls)[0].Arg, "subject"), Body: amqFlagValue((*answerCalls)[0].Arg, "body"), Created: question.Created.Add(time.Second), ApprovalPresent: true, ApprovalValid: true, Approval: &approval}
-	answer = withAuthorityRaw(answer)
-	if !strings.Contains(answer.Body, "\nNote: safe prose\nReason: safe operational prose") {
-		t.Fatalf("safe prose did not round trip exactly: %q", answer.Body)
-	}
-	writeAuthorizationMessage(t, base, "s", "cto", "cur", answer)
-	cfg, err := team.Read(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := decideTypedVerifyActionWithPolicy([]state.Message{question, answer}, request.Gate, request.Action, request.Target, "user", cfg, "s", project, team.DefaultProfile)
-	if got.Decision != actionDecisionApproved {
-		t.Fatalf("safe typed round trip not approved: %+v", got)
-	}
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runVerifyAction([]string{"--project", project, "--session", "s", "--gate", request.Gate, "--action", request.Action, "--target", request.Target, "--json"})
-	})
-	verifiedCLI := decodeJSONEnvelope[verifyActionResult](t, stdout).Data
-	if err != nil || verifiedCLI.Decision != actionDecisionApproved {
-		t.Fatalf("verify action CLI err=%v stdout=%s stderr=%s", err, stdout, stderr)
-	}
-	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return answer.Created.Add(time.Second) }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, open := gateAttention(status.Attention, request.Gate); open || status.OperatorLoop.Backlog != 0 {
-		t.Fatalf("approved typed gate remained active: backlog=%d attention=%+v", status.OperatorLoop.Backlog, status.Attention)
-	}
-}
-
 func writeTypedGateMessage(t *testing.T, base, session, owner, id, thread, from, kind, body string, request any, created time.Time) {
 	t.Helper()
 	header := map[string]any{"schema": 1, "id": id, "from": from, "to": []string{owner}, "thread": thread, "subject": "APPROVAL: typed", "created": created.UTC().Format(time.RFC3339Nano), "kind": kind, "context": map[string]any{"authorization_request": request}}
@@ -304,7 +213,7 @@ func writeTypedGateMessage(t *testing.T, base, session, owner, id, thread, from,
 }
 
 func TestOperatorAnswerTypedAutoBindExactOverridesAndMalformedBarrier(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	request := typedQuestion(project, "s", "q", "protected_branch_push", "exact target", "note", time.Now().UTC()).AuthorizationRequest
 	writeTypedGateMessage(t, base, "s", "user", "q", "gate/test", "cto", "question", "Gate-Kind: merge\nAction: protected_branch_push\nTarget: exact target\nNote: note", request, time.Now().UTC())
@@ -360,7 +269,7 @@ func TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary(t *t
 				ctx, err := original(project, profile, session, handle, fs)
 				count++
 				if err == nil && count > 1 {
-					ctx.NamespaceGeneration = "changed"
+					ctx.Root = filepath.Join(ctx.Root, "changed")
 				}
 				return ctx, err
 			}
@@ -385,7 +294,7 @@ func TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary(t *t
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, _, _ := seedNotifyProject(t)
 			observed, err := tc.run(t, project)
 			if err == nil || !strings.Contains(err.Error(), "context changed") {
 				t.Fatalf("drift did not fail closed: observed=%d err=%v", observed, err)
@@ -398,7 +307,7 @@ func TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary(t *t
 }
 
 func TestOperatorAnswerNoQuestionFailsClosedWithoutSend(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible to cto\n")
 	err := runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", "missing", "--to", "cto", "--approved"})
 	if err == nil {
@@ -406,5 +315,88 @@ func TestOperatorAnswerNoQuestionFailsClosedWithoutSend(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("missing question reached AMQ: %+v", *calls)
+	}
+}
+
+func TestGateListKindsIsContextFreeAndCatalogDriven(t *testing.T) {
+	t.Chdir(t.TempDir())
+	stdout, _, err := captureOutput(t, func() error { return runGate([]string{"raise", "--list-kinds", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := decodeJSONEnvelope[actionKindsData](t, stdout)
+	if env.Data.TaxonomyVersion != operatorauth.ActionTaxonomyVersion || len(env.Data.Actions) != len(operatorauth.ActionCapabilities()) {
+		t.Fatalf("list-kinds diverged from catalog: %+v", env.Data)
+	}
+	if _, err := os.Stat(filepath.Join(".amq-squad")); !os.IsNotExist(err) {
+		t.Fatalf("context-free listing touched project state: %v", err)
+	}
+	_, help, err := captureOutput(t, func() error { return runGate([]string{"--help"}) })
+	if err != nil || !strings.Contains(help, "amq-squad gate") || !strings.Contains(help, "raise") {
+		t.Fatalf("gate help missing: err=%v help=%q", err, help)
+	}
+}
+
+func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
+	project, base, _ := seedNotifyProject(t)
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	raiseCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent q-safe to user\n")
+	if err := runGate([]string{"raise", "--project", project, "--session", "s", "--me", "cto", "--gate", "release-safe", "--kind", "feature_branch_push", "--action", "feature_branch_push", "--target", "release v1 with  two spaces", "--note", "safe prose"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*raiseCalls) != 1 {
+		t.Fatalf("raise calls=%+v", *raiseCalls)
+	}
+	var requestContext map[string]any
+	if err := json.Unmarshal([]byte(amqFlagValue((*raiseCalls)[0].Arg, "context")), &requestContext); err != nil {
+		t.Fatal(err)
+	}
+	request, err := operatorauth.DecodeGateRequest(requestContext["authorization_request"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	question := state.Message{ID: "q-safe", From: "cto", To: []string{"user"}, Thread: request.Gate, RawThread: request.Gate, Kind: state.KindQuestion, Subject: amqFlagValue((*raiseCalls)[0].Arg, "subject"), Body: amqFlagValue((*raiseCalls)[0].Arg, "body"), Created: time.Now().UTC(), AuthorizationRequestPresent: true, AuthorizationRequestValid: true, AuthorizationRequest: &request}
+	question = withAuthorityRaw(question)
+	writeAuthorizationMessage(t, base, "s", "user", "new", question)
+
+	answerCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent a-safe to cto\n")
+	if err := runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", request.Gate, "--approved", "--reason", "safe operational prose"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*answerCalls) != 1 {
+		t.Fatalf("answer calls=%+v", *answerCalls)
+	}
+	var approvalContext map[string]any
+	if err := json.Unmarshal([]byte(amqFlagValue((*answerCalls)[0].Arg, "context")), &approvalContext); err != nil {
+		t.Fatal(err)
+	}
+	approval, err := operatorauth.DecodeApproval(approvalContext["approval"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := state.Message{ID: "a-safe", From: "user", To: []string{"cto"}, Thread: request.Gate, RawThread: request.Gate, Kind: state.KindAnswer, Subject: amqFlagValue((*answerCalls)[0].Arg, "subject"), Body: amqFlagValue((*answerCalls)[0].Arg, "body"), Created: question.Created.Add(time.Second), ApprovalPresent: true, ApprovalValid: true, Approval: &approval}
+	answer = withAuthorityRaw(answer)
+	if !strings.Contains(answer.Body, "\nNote: safe prose\nReason: safe operational prose") {
+		t.Fatalf("safe prose did not round trip exactly: %q", answer.Body)
+	}
+	writeAuthorizationMessage(t, base, "s", "cto", "cur", answer)
+	cfg, err := team.Read(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decideTypedVerifyActionWithPolicy([]state.Message{question, answer}, request.Gate, request.Action, request.Target, "user", cfg, "s", project, squadnamespace.DefaultProfile)
+	if got.Decision != actionDecisionApproved {
+		t.Fatalf("safe typed round trip not approved: %+v", got)
+	}
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runVerifyAction([]string{"--project", project, "--session", "s", "--gate", request.Gate, "--action", request.Action, "--target", request.Target, "--json"})
+	})
+	verifiedCLI := decodeJSONEnvelope[verifyActionResult](t, stdout).Data
+	if err != nil || verifiedCLI.Decision != actionDecisionApproved {
+		t.Fatalf("verify action CLI err=%v stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	items := projectAttentionForTest(t, project, squadnamespace.DefaultProfile, "s", base, probeForNext(), answer.Created.Add(time.Second))
+	if _, open := gateAttention(items, request.Gate); open {
+		t.Fatalf("approved typed gate remained active: attention=%+v", items)
 	}
 }

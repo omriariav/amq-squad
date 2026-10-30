@@ -1,0 +1,4 @@
+tampered tree sha: 298867a6801621dfd65420c76f8bcd2988833b34ded258602e84791bcbfed279
+manifest entry sha before: e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774
+manifest entry sha after:  e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774
+PASS: the tampered file did not reach the payload

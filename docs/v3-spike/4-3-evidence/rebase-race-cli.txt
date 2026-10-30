@@ -1,0 +1,41 @@
+=== RUN   TestTeamSquadWriterIsTheDigestFlow
+--- PASS: TestTeamSquadWriterIsTheDigestFlow (0.06s)
+=== RUN   TestSeatRosterCompilesAndMapsOutcomes
+--- PASS: TestSeatRosterCompilesAndMapsOutcomes (0.00s)
+=== RUN   TestOperatorStartSquadWritesSquadYAMLThroughTheDigestFlow
+--- PASS: TestOperatorStartSquadWritesSquadYAMLThroughTheDigestFlow (0.11s)
+=== RUN   TestStatusFleetJSONIsTheFleetDocument
+--- PASS: TestStatusFleetJSONIsTheFleetDocument (0.18s)
+=== RUN   TestStatusFleetMissingRootWarns
+--- PASS: TestStatusFleetMissingRootWarns (0.01s)
+=== RUN   TestStatusFleetCarriesTheOperatorSeat
+--- PASS: TestStatusFleetCarriesTheOperatorSeat (0.02s)
+=== RUN   TestFleetRemoveRefusesAReservation
+--- PASS: TestFleetRemoveRefusesAReservation (0.02s)
+=== RUN   TestStatusFleetEmpty
+--- PASS: TestStatusFleetEmpty (0.00s)
+=== RUN   TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings
+=== RUN   TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/closed
+=== RUN   TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/withdrawn
+--- PASS: TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings (0.06s)
+    --- PASS: TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/closed (0.03s)
+    --- PASS: TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings/withdrawn (0.03s)
+=== RUN   TestOperatorAttentionReportsAgedGateEscalation
+--- PASS: TestOperatorAttentionReportsAgedGateEscalation (0.03s)
+=== RUN   TestOperatorAttentionReportsOneGateWithoutDirectiveDuplicate
+--- PASS: TestOperatorAttentionReportsOneGateWithoutDirectiveDuplicate (0.04s)
+=== RUN   TestOperatorAttentionKeepsGateOpenAfterStatusUpdate
+--- PASS: TestOperatorAttentionKeepsGateOpenAfterStatusUpdate (0.03s)
+=== RUN   TestOperatorAttentionClosesGateAfterOperatorAnswer
+--- PASS: TestOperatorAttentionClosesGateAfterOperatorAnswer (0.05s)
+=== RUN   TestMergeOperatorAttentionActiveWinsOverClearedInEitherOrder
+--- PASS: TestMergeOperatorAttentionActiveWinsOverClearedInEitherOrder (0.00s)
+=== RUN   TestOperatorInboxGroupsGatesOfTwoSquads
+--- PASS: TestOperatorInboxGroupsGatesOfTwoSquads (0.13s)
+=== RUN   TestOperatorStartSquadInsideTheOwnerFleetGrant
+--- PASS: TestOperatorStartSquadInsideTheOwnerFleetGrant (0.09s)
+=== RUN   TestStatusJSONIsTheContractDocument
+--- PASS: TestStatusJSONIsTheContractDocument (0.08s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	2.743s
+exit 0

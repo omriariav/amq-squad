@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/compoundrelease"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-func TestCLIReleaseDomainEligibleDefaultAndGuardObservationIsImmutable(t *testing.T) {
+func TestCLIReleaseDomainEligibleDefaultClassification(t *testing.T) {
 	fixture, active := newCLIActiveReleaseAttentionFixture(t)
 	selected := selectedContextForCLIReleaseFixture(fixture)
 	question := releaseQuestionForCLIClassification(t, fixture.adapter.root, active.Active.Children[0].QuestionMessageID)
@@ -29,68 +29,6 @@ func TestCLIReleaseDomainEligibleDefaultAndGuardObservationIsImmutable(t *testin
 	}
 	if classification.Claim == classification.Resolution.Claim {
 		t.Fatal("classification claim aliases resolver claim")
-	}
-	use, err := classification.NewGuardedUse()
-	if err != nil {
-		t.Fatal(err)
-	}
-	classification.Claim.Role = "mutated-after-guard-construction"
-	classification.Resolution.Claim.Role = "mutated-resolution-role"
-	duplicate := state.Message{
-		ID: "duplicate-observation", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.RawThread,
-		Subject: "STATUS: observed", RawSubject: "STATUS: observed", Kind: state.KindStatus, Priority: state.PriorityNormal,
-		Body: "observation", RawBody: "observation", AuthorityRaw: true, SchemaOK: true,
-		Created: question.Created.Add(time.Second), RawCreated: question.Created.Add(time.Second).Format(time.RFC3339Nano),
-	}
-	writeRawCLIReleaseMessage(t, fixture.adapter.root, "cto", "cur", duplicate, nil)
-	writeRawCLIReleaseMessage(t, fixture.adapter.root, "user", "cur", duplicate, nil)
-	rawAlias := duplicate
-	rawAlias.ID = "canonical-collision-alias"
-	rawAlias.RawThread = "/" + question.Thread
-	writeRawCLIReleaseMessage(t, fixture.adapter.root, "user", "cur", rawAlias, nil)
-	callbacks := 0
-	if err := use.Run(func(observation cliReleaseGuardObservation) error {
-		callbacks++
-		firstQuestion := observation.Question()
-		firstMessages := observation.Messages()
-		duplicateCopies := 0
-		aliasCopies := 0
-		for _, message := range firstMessages {
-			if message.ID == duplicate.ID {
-				duplicateCopies++
-			}
-			if message.ID == rawAlias.ID {
-				aliasCopies++
-			}
-		}
-		if firstQuestion.ID != question.ID || len(firstMessages) == 0 || duplicateCopies != 2 || aliasCopies != 0 {
-			t.Fatalf("observation question=%+v messages=%+v", firstQuestion, firstMessages)
-		}
-		firstQuestion.Context["release_child"] = "mutated"
-		firstQuestion.To[0] = "mutated"
-		firstMessages[0].To[0] = "mutated"
-		for i := range firstMessages {
-			if firstMessages[i].Context != nil {
-				firstMessages[i].Context["release_child"] = "mutated"
-				break
-			}
-		}
-		firstQuestion.AuthorizationRequest.Action = "mutated"
-		againQuestion := observation.Question()
-		againMessages := observation.Messages()
-		messageContextMutated := false
-		for _, message := range againMessages {
-			messageContextMutated = messageContextMutated || message.Context["release_child"] == "mutated"
-		}
-		if againQuestion.To[0] == "mutated" || againMessages[0].To[0] == "mutated" || againQuestion.Context["release_child"] == "mutated" || messageContextMutated || againQuestion.AuthorizationRequest.Action == "mutated" {
-			t.Fatalf("guard observation accessors leaked mutable aliases: question=%+v messages=%+v", againQuestion, againMessages)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if callbacks != 1 {
-		t.Fatalf("guard callbacks=%d", callbacks)
 	}
 }
 
@@ -317,7 +255,7 @@ func TestCLIReleaseDomainDispositionFailsClosedAcrossInspectionErrors(t *testing
 	})
 }
 
-func TestCLIReleaseDomainDuplicateAndNewerQuestionFailBeforeGuardCallback(t *testing.T) {
+func TestCLIReleaseDomainDuplicateQuestionFailsClassification(t *testing.T) {
 	t.Run("duplicate", func(t *testing.T) {
 		fixture, active := newCLIActiveReleaseAttentionFixture(t)
 		question := releaseQuestionForCLIClassification(t, fixture.adapter.root, active.Active.Children[0].QuestionMessageID)
@@ -327,54 +265,6 @@ func TestCLIReleaseDomainDuplicateAndNewerQuestionFailBeforeGuardCallback(t *tes
 		classification, err := classifyCLIReleaseQuestion(selectedContextForCLIReleaseFixture(fixture), question)
 		if err == nil || classification.Disposition != cliReleaseDomainReleaseOwned {
 			t.Fatalf("duplicate classification=%+v err=%v", classification, err)
-		}
-	})
-
-	t.Run("fresh exact-gate conflict", func(t *testing.T) {
-		fixture, active := newCLIActiveReleaseAttentionFixture(t)
-		question := releaseQuestionForCLIClassification(t, fixture.adapter.root, active.Active.Children[0].QuestionMessageID)
-		classification, err := classifyCLIReleaseQuestion(selectedContextForCLIReleaseFixture(fixture), question)
-		if err != nil || !classification.Eligible {
-			t.Fatalf("classification=%+v err=%v", classification, err)
-		}
-		use, err := classification.NewGuardedUse()
-		if err != nil {
-			t.Fatal(err)
-		}
-		first := state.Message{ID: "conflict", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.Thread, Subject: "STATUS: first", RawSubject: "STATUS: first", Kind: state.KindStatus, Priority: state.PriorityNormal, Body: "body", RawBody: "body", AuthorityRaw: true, SchemaOK: true, Created: question.Created.Add(time.Second), RawCreated: question.Created.Add(time.Second).Format(time.RFC3339Nano)}
-		second := first
-		second.Subject, second.RawSubject = "STATUS: second", "STATUS: second"
-		writeRawCLIReleaseMessage(t, fixture.adapter.root, "cto", "cur", first, nil)
-		writeRawCLIReleaseMessage(t, fixture.adapter.root, "user", "cur", second, nil)
-		callbacks := 0
-		err = use.Run(func(cliReleaseGuardObservation) error { callbacks++; return nil })
-		if err == nil || callbacks != 0 || !strings.Contains(err.Error(), "conflicting message copies") {
-			t.Fatalf("guard err=%v callbacks=%d", err, callbacks)
-		}
-	})
-
-	t.Run("newer same gate", func(t *testing.T) {
-		fixture, active := newCLIActiveReleaseAttentionFixture(t)
-		question := releaseQuestionForCLIClassification(t, fixture.adapter.root, active.Active.Children[0].QuestionMessageID)
-		classification, err := classifyCLIReleaseQuestion(selectedContextForCLIReleaseFixture(fixture), question)
-		if err != nil || !classification.Eligible {
-			t.Fatalf("classification=%+v err=%v", classification, err)
-		}
-		use, err := classification.NewGuardedUse()
-		if err != nil {
-			t.Fatal(err)
-		}
-		newer := state.Message{
-			ID: "newer", From: question.From, To: append([]string(nil), question.To...), Thread: question.Thread, RawThread: question.RawThread,
-			Subject: "APPROVAL: newer", RawSubject: "APPROVAL: newer", Kind: state.KindQuestion, Priority: state.PriorityNormal,
-			Body: "body", RawBody: "body", AuthorityRaw: true, SchemaOK: true,
-			Created: question.Created.Add(time.Minute), RawCreated: question.Created.Add(time.Minute).Format(time.RFC3339Nano),
-		}
-		writeRawCLIReleaseMessage(t, fixture.adapter.root, question.To[0], "new", newer, nil)
-		callbacks := 0
-		err = use.Run(func(cliReleaseGuardObservation) error { callbacks++; return nil })
-		if err == nil || callbacks != 0 || !strings.Contains(err.Error(), "current trusted gate question") {
-			t.Fatalf("guard err=%v callbacks=%d", err, callbacks)
 		}
 	})
 }

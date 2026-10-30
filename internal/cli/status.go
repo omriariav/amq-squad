@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -12,77 +11,150 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/activity"
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
+	"github.com/omriariav/amq-squad/v3/internal/activity"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/status"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
 
-// statusPaneLister lists live tmux panes so status can detect a live agent that
-// was relaunched OUTSIDE amq-squad (its recorded PID is dead, but a replacement
-// process is running). Injected as a package var so tests supply a fake and the
-// classifier never shells real tmux. Defaults to the same read-only lister the
-// tmux pane resolver uses, keeping detection consistent across surfaces.
-var statusPaneLister = tmuxpane.DefaultPaneLister
+// The status verb prints the 3.0 status contract (plan 4.6, R43;
+// docs/status-contract.md): status --json is the schema 1 document itself,
+// the human form is a table of the same rows. The per-member liveness
+// helpers below it are shared with doctor, liveness and the operator view.
 
-// statusPaneInspector resolves a single pane directly by its recorded tmux id,
-// bypassing the global `list-panes -a` scan. It is the authoritative-address
-// path used when the scan misses or fails wholesale (e.g. under iTerm2 tmux -CC
-// control mode). Injected as a package var so tests supply a fake.
-var statusPaneInspector = tmuxpane.InspectPaneByID
+const statusUsage = `amq-squad status - the squad's seats, tasks, attention queue and gates
 
-// statusPaneTTYInspector resolves a pane's controlling pty device by its exact
-// tmux id. The runtime identity classifier uses it to corroborate a recorded
-// pane whose visible title was clobbered by the app inside it (#655). Injected
-// as a package var so tests supply a fake.
-var statusPaneTTYInspector = tmuxpane.InspectPaneTTYByID
+Usage:
+  amq-squad status [--root DIR | --project DIR --profile P --session S] [--json]
+  amq-squad status --fleet [--fleet-file PATH] [--json]
 
-// statusLocalInputDetector is best-effort and intentionally error-suppressing:
-// capture failures, dead panes, and unparseable tails should mean "no heuristic
-// signal", never a status command failure or proof that the agent is not
-// blocked locally.
-var statusLocalInputDetector = func(paneID string) (tmuxpane.LocalInputBlocker, bool) {
-	blocker, ok, err := tmuxpane.DetectLocalInputBlocker(paneID)
+Reads the AMQ session root (default AM_ROOT): the task store, the seat
+mailboxes and launch records, the evidence ledger, the gate store and the
+scheduler state. --json prints the status contract, schema 1
+(docs/status-contract.md); it never writes. --fleet reads every squad of
+~/.amq-squad/fleet.yaml into one fleet document (plan 16.3).
+
+Examples:
+  amq-squad status
+  amq-squad status --root ~/.agent-mail/squad --json
+  amq-squad status --project ~/Code/app --session squad
+`
+
+// statusNow and statusPIDAlive are seams for tests.
+var (
+	statusNow      = func() time.Time { return time.Now().UTC() }
+	statusPIDAlive func(int) bool
+)
+
+func runStatusWithVersion(args []string, version string) error {
+	f := newStoreFlags("status")
+	f.fs.Usage = func() { fmt.Fprint(os.Stderr, statusUsage) }
+	fleetAll := f.fs.Bool("fleet", false, "every squad of the fleet registry: the fleet document (ruling 16)")
+	fleetFile := fleetFileFlag(f.fs)
+	if err := parseFlags(f.fs, args); err != nil {
+		return err
+	}
+	if f.fs.NArg() > 0 {
+		return usageErrorf("status takes no positional arguments; got %q", f.fs.Arg(0))
+	}
+	if *fleetAll {
+		return runFleetStatus(os.Stdout, *fleetFile, version, *f.jsonOut)
+	}
+	_, root, release, err := f.store(false)
 	if err != nil {
-		return tmuxpane.LocalInputBlocker{}, false
+		return err
 	}
-	return blocker, ok
+	defer release()
+	project := ""
+	if flagWasSet(f.fs, "project") {
+		project, _ = resolveProjectDirFlag("", *f.project, true)
+	}
+	if project == "" {
+		project, _ = os.Getwd()
+	}
+	st := buildStatusContract(root, project, version, statusNow())
+	if *f.jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(st)
+	}
+	return writeStatusContractTable(os.Stdout, st)
 }
 
-var statusTerminalContext = func() runtimecontrol.HostContext {
-	controlMode := false
-	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
-		controlMode = len(tmuxControlModeClients()) > 0
+// buildStatusContract collects one session root into the contract.
+func buildStatusContract(root, project, version string, now time.Time) status.Status {
+	var gates []status.GateInput
+	records, err := readHookGates(root, now)
+	var warnings []string
+	if err != nil {
+		warnings = append(warnings, "gate store: "+err.Error())
 	}
-	return runtimecontrol.DetectHostContext(os.Environ(), controlMode)
+	for _, g := range records {
+		since := time.Time{}
+		if info, statErr := os.Stat(hookExtPath(root, "gates", g.GateID+".json")); statErr == nil {
+			since = info.ModTime().UTC()
+		}
+		gates = append(gates, status.GateInput{ID: g.GateID, Class: g.Class, Digest: g.Digest, State: g.State, RaisedBy: g.RaisedBy, Since: since})
+	}
+	in := status.Collect(status.CollectOptions{
+		Root: root, Session: filepath.Base(root), ProjectPath: project, ProducerVersion: version,
+		Now: now, Gates: gates, PIDAlive: statusPIDAlive,
+	})
+	in.Warnings = append(warnings, in.Warnings...)
+	return withLaunchFailures(status.Build(in), in.Scheduler.LaunchFailures)
 }
 
-// paneCloser closes an agent's tmux pane on teardown (kill-pane). Injected as a
-// package var so tests record the call instead of killing a real pane. It
-// MUTATES tmux, so callers gate it on the agent being down.
-var paneCloser = tmuxpane.ClosePane
+func writeStatusContractTable(out io.Writer, st status.Status) error {
+	fmt.Fprintf(out, "Squad %s (root %s): %d needs you, %d working, %d ready, %d inactive\n",
+		st.Session, st.Root, st.Counts.NeedsYou, st.Counts.Working, st.Counts.Ready, st.Counts.Inactive)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "BUCKET\tSTATE\tROW\tSEAT\tPOOL\tREASON\tTITLE")
+	for _, t := range st.Tasks {
+		pool := "-"
+		if t.Pool != nil {
+			pool = t.Pool.Runtime + ":" + t.Pool.Model + ":" + t.Pool.Effort
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", t.Bucket, t.State, t.ID, orDash(t.LeaseHolder), pool, t.ReasonCode, t.Title)
+	}
+	for _, s := range st.Seats {
+		if s.TaskID != "" {
+			continue
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Bucket, s.State, "seat", s.Handle, orDash(strings.Trim(s.Runtime+":"+s.Model+":"+s.Effort, ":")), s.ReasonCode, s.LastMessage)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	for _, a := range st.Attention {
+		line := fmt.Sprintf("attention [%s] %s: %s", a.Severity, a.Kind, a.Subject)
+		if a.Action != nil {
+			line += "  (" + strings.Join(a.Action.Argv, " ") + ")"
+		}
+		fmt.Fprintln(out, line)
+	}
+	for _, msg := range st.Warnings {
+		fmt.Fprintln(out, "warning: "+msg)
+	}
+	return nil
+}
 
 // statusState is the precise state vocabulary emitted by `amq-squad status`.
 // Definitions:
-//   - live:      launch-record PID alive AND binary matches; the agent is running.
-//   - wake-live: wake helper is verified live for this handle/root, but the
-//     agent PID itself is not verified.
-//   - stale:     live signals exist on disk (launch record, wake lock, or
-//     presence) but none verify as usable for this handle.
-//   - missing:   no launch record, no wake lock, no presence file. The member
-//     is configured but has never run in the resolved session.
+//   - live:    launch-record PID alive AND binary matches, or a fresh active
+//     presence for the handle; the agent is running.
+//   - stale:   live signals exist on disk (launch record or presence) but none
+//     verify as usable for this handle.
+//   - missing: no launch record and no usable presence. The member is
+//     configured but has never run in the resolved session.
+//
+// 3.0 (2a-2): the wake-live state and the wake and pane inputs are cut
+// (manifest C10: "liveness vocabulary kept, pane/wake inputs cut").
 type statusState string
 
 const (
 	statusStateLive          statusState = "live"
-	statusStateWakeLive      statusState = "wake-live"
 	statusStateStale         statusState = "stale"
 	statusStateMissing       statusState = "missing"
 	statusStateDuplicateLive statusState = "duplicate_live"
@@ -92,58 +164,14 @@ type statusSignals struct {
 	AgentPID    int       `json:"agent_pid,omitempty"`
 	AgentAlive  bool      `json:"agent_alive,omitempty"`
 	BinaryMatch bool      `json:"binary_match,omitempty"`
-	WakePID     int       `json:"wake_pid,omitempty"`
-	WakeAlive   bool      `json:"wake_alive,omitempty"`
 	Presence    string    `json:"presence,omitempty"`
 	LastSeen    time.Time `json:"last_seen,omitempty"`
 }
 
-// statusEnvelopeData is the kind="status" payload: resolved team-home,
-// workstream, profile, and the per-member records.
-type statusEnvelopeData struct {
-	TeamHome            string                      `json:"team_home"`
-	Workstream          string                      `json:"workstream"`
-	Profile             string                      `json:"profile,omitempty"`
-	Namespace           squadnamespace.Ref          `json:"namespace"`
-	Operator            statusOperatorView          `json:"operator"`
-	OperatorDelivery    operatorDeliveryData        `json:"operator_delivery"`
-	NotificationWatcher notificationWatcherStatus   `json:"notification_watcher"`
-	Capabilities        team.Capabilities           `json:"capabilities"`
-	TerminalContext     runtimecontrol.HostContext  `json:"terminal_context"`
-	Orchestrated        bool                        `json:"orchestrated,omitempty"`
-	Lead                string                      `json:"lead,omitempty"`
-	LeadHandle          string                      `json:"lead_handle,omitempty"`
-	GoalBinding         goalBindingData             `json:"goal_binding"`
-	GoalSupervision     *GoalSupervisionAssessment  `json:"goal_supervision,omitempty"`
-	Autonomous          team.AutonomousStatus       `json:"autonomous"`
-	Execution           executionModeData           `json:"execution"`
-	Versions            versionAlignmentData        `json:"versions"`
-	NamespaceConflict   *namespaceConflictData      `json:"namespace_conflict,omitempty"`
-	Warnings            []statusWarning             `json:"warnings,omitempty"`
-	Topology            *statusTopology             `json:"topology,omitempty"`
-	ExternalEvidence    []state.ExternalEvidenceRow `json:"external_evidence,omitempty"`
-	Records             []statusRecord              `json:"records"`
-	// Actions are the SESSION-scope operator actions (status / resume preview /
-	// resume in current window / resume in new tmux session / stop), the catalog
-	// counterpart to each record's agent-scope actions. A client renders these
-	// for the session row instead of constructing the commands itself.
-	Actions []runtimeActionJSON `json:"actions"`
-}
-
-type statusWarning struct {
-	Kind             string                       `json:"kind"`
-	Session          string                       `json:"session"`
-	Detail           string                       `json:"detail"`
-	SuggestedCommand string                       `json:"suggested_command,omitempty"`
-	Conflicts        []namespaceConflictCandidate `json:"conflicts,omitempty"`
-}
-
 type statusOperatorView struct {
 	team.OperatorView
-	SelfOperator            *team.EffectiveSelfOperatorView `json:"self_operator,omitempty"`
-	VisibilityNotifications bool                            `json:"visibility_notifications"`
-	CanonicalInbox          *statusOperatorInbox            `json:"canonical_inbox,omitempty"`
-	Poll                    *statusOperatorPoll             `json:"poll,omitempty"`
+	CanonicalInbox *statusOperatorInbox `json:"canonical_inbox,omitempty"`
+	Poll           *statusOperatorPoll  `json:"poll,omitempty"`
 }
 
 type statusOperatorInbox struct {
@@ -153,12 +181,10 @@ type statusOperatorInbox struct {
 }
 
 type statusOperatorPoll struct {
-	Required     bool   `json:"required"`
-	Owner        string `json:"owner,omitempty"`
-	Cursor       string `json:"cursor,omitempty"`
-	Unread       int    `json:"unread"`
-	OpenGates    *int   `json:"open_gates,omitempty"`
-	OpenBlockers int    `json:"open_blockers"`
+	Required  bool   `json:"required"`
+	Owner     string `json:"owner,omitempty"`
+	Unread    int    `json:"unread"`
+	OpenGates *int   `json:"open_gates,omitempty"`
 }
 
 type statusRecord struct {
@@ -181,51 +207,11 @@ type statusRecord struct {
 	ClassificationError string        `json:"classification_error,omitempty"`
 	Signals             statusSignals `json:"signals"`
 	liveness            agentLiveness
-	goalBinding         *launch.GoalBinding
-	// Tmux is the persisted tmux runtime identity (exact pane/window ids) plus
-	// a computed pane_alive, so clients can target follow-up control. Omitted
-	// when the agent's launch record carried no tmux identity.
-	Tmux *tmuxRuntimeJSON `json:"tmux,omitempty"`
-	// Terminal is the additive backend-neutral runtime identity. For current
-	// tmux launches it mirrors Tmux and carries the same computed pane_alive.
-	Terminal *terminalRuntimeJSON `json:"terminal,omitempty"`
-	// Visibility fields distinguish "agent process is live" from "this member
-	// is the operator-visible project lead". operator_visible is fail-closed:
-	// it is true only when persisted launch-origin evidence proves visibility.
-	OperatorVisible         bool                `json:"operator_visible"`
-	AdoptionMode            string              `json:"adoption_mode,omitempty"`
-	RoleBoundary            string              `json:"role_boundary,omitempty"`
-	LauncherPaneID          string              `json:"launcher_pane_id,omitempty"`
-	AgentPaneID             string              `json:"agent_pane_id,omitempty"`
-	ManagedTarget           string              `json:"managed_target,omitempty"`
-	CurrentPaneConflict     bool                `json:"current_pane_conflict"`
-	VisibilityProblem       string              `json:"visibility_problem,omitempty"`
-	VisibilityRepairActions []runtimeActionJSON `json:"visibility_repair_actions,omitempty"`
-	// External reports that this member's launch record is an external pane (for
-	// example a registered global orchestrator). It is surfaced in --json so a
-	// client can positively identify the wakeable orchestrator identity rather
-	// than inferring it from lead role alone. Set from launch.Record.External.
-	External bool `json:"external,omitempty"`
-	// OrchestratorRegistration is the persisted provenance for the external
-	// orchestrator bound to this project run. Status exposes the exact policy,
-	// NOC launch generation, registration id, and timestamp rather than asking
-	// clients to infer registration from wake liveness or prose.
-	OrchestratorRegistration *launch.OrchestratorRegistration `json:"orchestrator_registration,omitempty"`
 	// LaunchapiObservation is gh#766's structured launchapi liveness detail:
-	// the session Inspect's ParticipantObservationV1 matched to this
-	// member's handle, when the session was launchapi-launched and Inspect
-	// meaningfully engaged. Absent for legacy sessions and for every seat
-	// Inspect could not identify. Corroborates/explains Detail only -- never
-	// changes status/record_state.
+	// the session Inspect's ParticipantObservationV1 matched to this member's
+	// handle. Corroborates/explains Detail only -- never changes
+	// status/record_state.
 	LaunchapiObservation *launchapiObservationJSON `json:"launchapi_observation,omitempty"`
-	// WakeAutoDrain reports that this member's wake sidecar is configured to
-	// inject a drain instruction on each durable-message arrival (the launch
-	// record carries WakeInjectCmd). It means inbound messages are processed
-	// reactively on wake, with no periodic `amq drain` polling loop. It is a
-	// CONFIGURATION signal, not liveness: a client must still read signals
-	// (wake_alive) and status to know whether the sidecar is actually running,
-	// so a dead sidecar surfaces as degraded rather than silently lost.
-	WakeAutoDrain bool `json:"wake_auto_drain,omitempty"`
 	// Activity is an additive, honest busy/progress signal. Heartbeat-file
 	// entries come from an agent-written activity.json; task-store entries only
 	// seed current-task ownership and must not be treated as liveness.
@@ -234,502 +220,15 @@ type statusRecord struct {
 	// members omit it; unplanned mutation-capable members carry state
 	// "unplanned" in human output and an empty durable state in JSON.
 	Worktree *worktreeplan.MemberStatus `json:"worktree,omitempty"`
-	// LocalInput is an additive best-effort hint that a managed child pane is
-	// waiting on a local approval/input prompt. Absence means "not observed",
-	// not "not blocked".
-	LocalInput *statusLocalInput `json:"local_input,omitempty"`
 	// PreauthorizedActions surfaces the in-scope worker actions amq-squad
-	// pre-authorized at launch (#296) so the active allowlist is auditable from
-	// status --json. Empty/omitted for legacy records and launches with no
-	// pre-authorization. Mirrors launch.Record.PreauthorizedActions.
+	// pre-authorized at launch (#296), mirroring launch.Record.PreauthorizedActions.
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
-	// Actions are the stable, project-scoped commands a client can render/copy
-	// for this member (focus/send/resume/status). Populated for --json only.
-	Actions []runtimeActionJSON `json:"actions,omitempty"`
-	// LiveIdentity preserves declared, launch-record, observed, and verified
-	// layers without flattening intent into process evidence.
-	LiveIdentity     *liveidentity.Result `json:"live_identity,omitempty"`
-	LiveIdentityMode string               `json:"live_identity_mode,omitempty"`
-}
-
-type statusLocalInput struct {
-	Status      string `json:"status"`
-	Kind        string `json:"kind"`
-	PaneID      string `json:"pane_id,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	Destructive bool   `json:"destructive,omitempty"`
-	Recovery    string `json:"recovery"`
-	Source      string `json:"source"`
-}
-
-type statusTopology struct {
-	Mode           string   `json:"mode"`
-	TmuxSessions   []string `json:"tmux_sessions,omitempty"`
-	LivePanes      int      `json:"live_panes"`
-	LiveWindows    int      `json:"live_windows,omitempty"`
-	VisibleProblem bool     `json:"visible_problem,omitempty"`
-	ProblemFor     string   `json:"problem_for,omitempty"`
-	Detail         string   `json:"detail,omitempty"`
-}
-
-type sessionStatusContext struct {
-	Team         team.Team
-	Profile      string
-	Workstream   string
-	Orchestrated bool
-	Lead         string
-	LeadHandle   string
-	Actions      []runtimeActionJSON
-}
-
-func newSessionStatusContext(t team.Team, profile, workstream, tmuxSession string) sessionStatusContext {
-	orchestrated, lead, leadHandle := orchestrationStatusFields(t)
-	return sessionStatusContext{
-		Team:         t,
-		Profile:      profile,
-		Workstream:   workstream,
-		Orchestrated: orchestrated,
-		Lead:         lead,
-		LeadHandle:   leadHandle,
-		Actions:      sessionActions(t.Project, profile, workstream, tmuxSession),
-	}
-}
-
-func runStatus(args []string) error {
-	return runStatusWithVersion(args, "dev")
-}
-
-func runStatusWithVersion(args []string, version string) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	sessionName := fs.String("session", "", "AMQ workstream session name (default: a board over all discovered sessions)")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
-	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
-	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
-	registerScopedFlagAliases(fs, projectFlag, sessionName, profileFlag)
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's sessions and team
-
-Usage:
-  amq-squad status [--project DIR] [--json]
-  amq-squad status --session NAME [--project DIR] [--profile NAME] [--json]
-
-With no --session, prints a multi-session BOARD over every discovered
-session (docker-ps / git branch -v style): session name, rolled-up state
-(running/stopped/degraded), agent health (N/M alive + at-risk), a one-line
-brief, and last-activity. This is also the bare 'amq-squad' default.
-
-With --session NAME, prints the single-session detail table: each
-configured team member's live state in that session, using launch-record
-PID + binary match, wake-lock PID + handle/root match, and fresh presence.
-
-Examples:
-  amq-squad status
-  amq-squad status --project ~/Code/app
-  amq-squad status --json
-  amq-squad status --session issue-96 --json
-`)
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionName, "", fs)
-	if err != nil {
-		return err
-	}
-	emitContextDiagnostics(ctx)
-	// No --session: the multi-session board over ALL discovered sessions.
-	// This is the front-door default, so it degrades gracefully rather than
-	// hard-erroring when `amq` is missing or there are no sessions.
-	if !flagWasSet(fs, "session") {
-		return runStatusBoardWithVersion(ctx.ProjectDir, *jsonOut, version)
-	}
-	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
-	}
-	return executeStatus(statusExecution{
-		ProjectDir:       ctx.ProjectDir,
-		RequestedSession: ctx.Session,
-		ExplicitSession:  flagWasSet(fs, "session"),
-		Profile:          ctx.Profile,
-		Probe:            defaultDuplicateLaunchProbe,
-		Out:              os.Stdout,
-		JSON:             *jsonOut,
-		RuntimeVersion:   version,
-	})
-}
-
-type statusExecution struct {
-	ProjectDir       string
-	RequestedSession string
-	ExplicitSession  bool
-	Profile          string
-	Probe            duplicateLaunchProbe
-	Out              io.Writer
-	JSON             bool
-	RuntimeVersion   string
-	VersionSources   versionAlignmentSources
-}
-
-func executeStatus(s statusExecution) error {
-	s.ProjectDir = canonicalFilesystemPath(s.ProjectDir)
-	t, err := team.ReadProfile(s.ProjectDir, s.Profile)
-	if err != nil {
-		return fmt.Errorf("read team: %w", err)
-	}
-	if len(t.Members) == 0 {
-		return fmt.Errorf("team has no members")
-	}
-	workstream, err := resolveTeamWorkstreamName(t, s.RequestedSession, s.ExplicitSession)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	if s.Probe.Now != nil {
-		now = s.Probe.Now()
-	}
-	warnings, err := statusWarnings(t.Project, s.Profile, workstream, now)
-	if err != nil {
-		return fmt.Errorf("scan status warnings: %w", err)
-	}
-
-	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
-	if entries, scanErr := launch.ScanEntries(t.Project); scanErr == nil {
-		warnings = append(warnings, statusUnmanagedLaunchRecordWarningsFromEntries(t, s.Profile, workstream, entries)...)
-	}
-	warnings = append(warnings, statusLocalInputWarnings(t.Project, s.Profile, workstream, rows)...)
-	warnings = append(warnings, statusLaunchapiInspectWarnings(workstream, rows)...)
-	if s.JSON {
-		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
-		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
-		exactDownScope := exactDownNamespaceScope{
-			Verb:            "down",
-			ProjectDir:      t.Project,
-			Profile:         s.Profile,
-			Session:         workstream,
-			All:             true,
-			ExplicitProject: true,
-			ExplicitProfile: squadnamespace.NormalizeProfile(s.Profile) != team.DefaultProfile,
-			ExplicitSession: true,
-		}
-		// Attach the stable action commands a client can render/copy per member.
-		for i := range rows {
-			rows[i].Namespace = ns
-			decorateTerminalRuntimeCapabilities(&rows[i])
-			rows[i].Actions = disableNamespaceConflictActions(policyAwareMemberActionsForRow(t, s.Profile, workstream, rows[i]), conflict, exactDownScope)
-		}
-		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
-		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict, exactDownScope)
-		binding := goalBindingForStatus(ns, ctx, rows)
-		operatorView := statusOperatorForTeam(t, ns)
-		applyGoalBindingOpenBlockers(&operatorView, binding)
-		topology := statusTopologyForRows(rows, ctx.Orchestrated)
-		externalEvidence := statusExternalEvidence(t, s.Profile, workstream, rows, now)
-		version := strings.TrimSpace(s.RuntimeVersion)
-		if version == "" {
-			version = "dev"
-		}
-		versionSources := s.VersionSources
-		if strings.TrimSpace(versionSources.RunningVersion) == "" {
-			versionSources.RunningVersion = version
-		}
-		invariantErrors := annotateVisibilityInvariants(rows, ctx)
-		execution := executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version)
-		execution.InvariantsEvaluated = true
-		execution.InvariantOK = len(invariantErrors) == 0
-		execution.InvariantErrors = invariantErrors
-		applyLeadExecutionContract(&execution, t.LeadExecution)
-		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
-			TeamHome:            t.Project,
-			Workstream:          workstream,
-			Profile:             s.Profile,
-			Namespace:           ns,
-			Operator:            operatorView,
-			OperatorDelivery:    operatorDeliveryForTeamAtRoot(t, firstStatusRoot(rows)),
-			NotificationWatcher: inspectNotificationWatcher(t, s.Profile, workstream, now),
-			Capabilities:        team.EffectiveCapabilities(t),
-			TerminalContext:     statusTerminalContext(),
-			Orchestrated:        ctx.Orchestrated,
-			Lead:                ctx.Lead,
-			LeadHandle:          ctx.LeadHandle,
-			GoalBinding:         binding,
-			Autonomous:          team.EffectiveAutonomousStatus(t),
-			Execution:           execution,
-			Versions:            buildVersionAlignment(versionSources),
-			NamespaceConflict:   conflict,
-			Warnings:            warnings,
-			Topology:            topology,
-			ExternalEvidence:    externalEvidence,
-			Records:             rows,
-			Actions:             ctx.Actions,
-		})
-	}
-	policy := outputPolicyCurrent()
-	fmt.Fprintf(s.Out, "# workstream: %s\n", workstream)
-	if root := firstStatusRoot(rows); root != "" {
-		fmt.Fprintf(s.Out, "# AM_ROOT:    %s\n", root)
-	}
-	for _, warning := range warnings {
-		fmt.Fprintf(s.Out, "warning: %s\n", warning.Detail)
-	}
-	delivery := operatorDeliveryForTeamAtRoot(t, firstStatusRoot(rows))
-	if delivery.Enabled {
-		fmt.Fprintf(s.Out, "# operator_delivery: %s\n", operatorDeliverySummary(delivery))
-	}
-	if delivery.NotificationsEnabled {
-		watcher := inspectNotificationWatcher(t, s.Profile, workstream, now)
-		fmt.Fprintf(s.Out, "# notification_watcher: %s (pid=%d host=%s heartbeat=%s state=%s)\n", watcher.Health, watcher.PID, watcher.Host, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.RuntimePath)
-	}
-	if delivery.InteractionMode == team.OperatorInteractionSelfOperator {
-		v := team.EffectiveSelfOperator(t, workstream)
-		fmt.Fprintf(s.Out, "# self_operator: lead=%s/%s allow=%s revision=%d enabled=%t paused=%t hash=%s visibility_notifications=%t human_only=%s\n", v.LeadRole, v.LeadHandle, strings.Join(v.AllowedGateKinds, ","), v.PolicyRevision, v.Enabled, v.Paused, v.PolicyHash, delivery.NotificationsEnabled, strings.Join(humanOnlyCatalogGateKinds(), ","))
-		if !delivery.NotificationsEnabled {
-			fmt.Fprintln(s.Out, "# self_operator_visibility: notifications disabled; inspect durable gate threads manually")
-		}
-	}
-	fmt.Fprintln(s.Out)
-	return writeStatusTable(s.Out, rows, policy)
-}
-
-func humanOnlyCatalogGateKinds() []string {
-	seen := map[string]bool{}
-	var kinds []string
-	for _, capability := range operatorauth.ActionCapabilities() {
-		if capability.HumanOnly && !seen[capability.GateKind] {
-			seen[capability.GateKind] = true
-			kinds = append(kinds, capability.GateKind)
-		}
-	}
-	sort.Strings(kinds)
-	return kinds
-}
-
-func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tWORKTREE\tBRANCH\tBASE..HEAD\tGIT\tSCOPE\tHANDOFF\tDETAIL")
-	for _, r := range rows {
-		worktree, branch, baseHead, gitState, scope, handoff := statusWorktreeColumns(r.Worktree)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), worktree, branch, baseHead, gitState, scope, handoff, r.Detail)
-	}
-	return w.Flush()
-}
-
-func statusWorktreeColumns(status *worktreeplan.MemberStatus) (string, string, string, string, string, string) {
-	if status == nil {
-		return "-", "-", "-", "-", "-", "-"
-	}
-	state := printableWorktreeState(status.State)
-	worktree := state + ":" + status.Worktree
-	gitState := "clean"
-	switch {
-	case status.Drifted:
-		gitState = "drifted"
-	case status.Dirty:
-		gitState = "dirty"
-	case !status.Registered && status.State != "":
-		gitState = "unregistered"
-	}
-	handoff := shortWorktreeSHA(status.HandoffSHA)
-	baseHead := shortWorktreeSHA(status.BaseSHA) + ".." + shortWorktreeSHA(status.CurrentHEAD)
-	return worktree, status.Branch, baseHead, gitState, strings.Join(status.Scope, ","), handoff
-}
-
-func statusWarnings(projectDir, profile, session string, now time.Time) ([]statusWarning, error) {
-	var warnings []statusWarning
-	namespaceWarnings, err := statusNamespaceWarnings(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	warnings = append(warnings, namespaceWarnings...)
-	taskWarnings, err := statusTaskWarnings(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	warnings = append(warnings, taskWarnings...)
-	if body, readErr := os.ReadFile(layoutFinalizationWarningPath(projectDir, profile, session)); readErr == nil {
-		detail := strings.TrimSpace(string(body))
-		if detail == "" {
-			detail = "layout finalization reported an unspecified failure"
-		}
-		warnings = append(warnings, statusWarning{Kind: "layout_finalization", Session: session, Detail: detail})
-	}
-	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
-	warnings = append(warnings, statusNotificationWatcherWarnings(projectDir, profile, session, now)...)
-	return warnings, nil
-}
-
-func statusNotificationWatcherWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil || !team.EffectiveOperatorNotifications(t.Operator).Enabled {
-		return nil
-	}
-	watcher := inspectNotificationWatcher(t, profile, session, now)
-	if watcher.Health == "healthy" || watcher.Health == "inactive" || watcher.Health == "external-active" {
-		return nil
-	}
-	return []statusWarning{{
-		Kind: "notification_watcher_unhealthy", Session: session,
-		Detail:           fmt.Sprintf("UNHEALTHY: notifications_enabled=true but the supervised notification watcher is %s: %s (runtime %s)", watcher.Health, watcher.Reason, watcher.RuntimePath),
-		SuggestedCommand: "amq-squad resume --project " + shellQuote(projectDir) + commandProfileArg(profile) + " --session " + shellQuote(session) + " --exec",
-	}}
-}
-
-func statusAgedOperatorGateWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
-	ns := squadnamespace.Resolve(projectDir, profile, session)
-	root := strings.TrimSpace(ns.AMQRoot)
-	if root == "" {
-		return nil
-	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-	baseRoot := root
-	if squadnamespace.ProfilesEqual(profile, team.DefaultProfile) {
-		baseRoot = filepath.Dir(root)
-	}
-	data, err := buildOperatorStatusData(operatorExecution{
-		ProjectDir: projectDir,
-		Profile:    profile,
-		Session:    session,
-		BaseRoot:   baseRoot,
-		Probe: state.Probe{
-			Now: func() time.Time { return now },
-		},
-		Now: func() time.Time { return now },
-	})
-	if err != nil {
-		return nil
-	}
-	return statusWarningsForAgedOperatorGates(data)
-}
-
-func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statusWarning {
-	var warnings []statusWarning
-	for _, item := range data.Attention {
-		if !isOpenGateAttention(item) {
-			continue
-		}
-		escalation := state.OperatorGateEscalation(item.Escalation)
-		if state.OperatorGateEscalationRank(escalation) < state.OperatorGateEscalationRank(state.OperatorGateEscalationReminder) {
-			continue
-		}
-		kind := "operator_gate_" + strings.ReplaceAll(string(escalation), "-", "_")
-		delivery := "durable AMQ"
-		switch {
-		case data.OperatorDelivery.PollRequired:
-			delivery = "poll-required/no-wake operator delivery"
-		case data.OperatorDelivery.WakeSupported:
-			delivery = "wake-supported operator delivery"
-		}
-		detail := fmt.Sprintf("operator gate %s aged to %s after %s: %s; %s for handle %s requires visible escalation",
-			item.Thread, escalation, item.Age, item.Subject, delivery, printableHandle(data.Operator.Handle))
-		warnings = append(warnings, statusWarning{
-			Kind:             kind,
-			Session:          item.Session,
-			Detail:           detail,
-			SuggestedCommand: item.Inspect,
-		})
-	}
-	return warnings
-}
-
-func statusNamespaceWarnings(projectDir, profile, session string) ([]statusWarning, error) {
-	if squadnamespace.NormalizeProfile(profile) != team.DefaultProfile || strings.TrimSpace(session) == "" {
-		return nil, nil
-	}
-	profiles, err := team.ListProfiles(projectDir)
-	if err != nil {
-		return nil, err
-	}
-	conflicts := namedProfileSessionConflicts(projectDir, session, profiles, false)
-	if len(conflicts) == 0 {
-		return nil, nil
-	}
-	names := make([]string, 0, len(conflicts))
-	for _, c := range conflicts {
-		names = append(names, c.Profile)
-	}
-	suggested := ""
-	if len(names) == 1 {
-		suggested = "amq-squad status --project " + shellQuote(projectDir) + " --profile " + shellQuote(names[0]) + " --session " + shellQuote(session)
-	}
-	detail := fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
-		shellQuote(session), pluralProfileList(names), "amq-squad status --profile <profile> --session "+shellQuote(session))
-	if suggested != "" {
-		detail = fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
-			shellQuote(session), pluralProfileList(names), suggested)
-	}
-	return []statusWarning{{
-		Kind:             "default_profile_shadowed",
-		Session:          session,
-		Detail:           detail,
-		SuggestedCommand: suggested,
-		Conflicts:        conflicts,
-	}}, nil
-}
-
-func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, error) {
-	tasks, err := taskstore.ListForProfile(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	var warnings []statusWarning
-	for _, t := range tasks {
-		if t.Status == taskstore.StatusCompletedPendingReconcile {
-			warnings = append(warnings, statusWarning{
-				Kind:    "task_legacy_status",
-				Session: session,
-				Detail: fmt.Sprintf(
-					"task %s retains legacy status completed_pending_reconcile; simple mode does not inspect completion evidence or run reconciliation, so use task list and make the next transition explicitly",
-					t.ID,
-				),
-			})
-		}
-	}
-	return warnings, nil
-}
-
-func statusCanonicalThread(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	lower := strings.ToLower(raw)
-	if !strings.HasPrefix(lower, "p2p/") {
-		return raw
-	}
-	pair := strings.TrimPrefix(lower, "p2p/")
-	parts := strings.Split(pair, "__")
-	if len(parts) != 2 {
-		return lower
-	}
-	return canonicalP2PThread(stripThreadRole(parts[0]), stripThreadRole(parts[1]))
-}
-
-func stripThreadRole(handle string) string {
-	handle = strings.TrimSpace(handle)
-	if before, _, ok := strings.Cut(handle, ":"); ok {
-		return before
-	}
-	return handle
-}
-
-func printableHandle(handle string) string {
-	if strings.TrimSpace(handle) == "" {
-		return "<unknown>"
-	}
-	return handle
 }
 
 func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorView {
 	op := team.EffectiveOperator(t)
 	contract := team.OperatorContractForMode(op.InteractionMode)
 	out := statusOperatorView{OperatorView: op}
-	if op.InteractionMode == team.OperatorInteractionSelfOperator {
-		view := team.EffectiveSelfOperator(t, ns.Session)
-		out.SelfOperator = &view
-		out.VisibilityNotifications = team.EffectiveOperatorNotifications(t.Operator).Enabled
-	}
 	if !op.Enabled {
 		return out
 	}
@@ -747,898 +246,16 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 		Session: ns.Session,
 	}
 	out.Poll = &statusOperatorPoll{
-		Required:     op.PollRequired,
-		Owner:        contract.PollOwner,
-		Unread:       0,
-		OpenBlockers: 0,
+		Required: op.PollRequired,
+		Owner:    contract.PollOwner,
 	}
 	return out
-}
-
-func annotateVisibilityInvariants(rows []statusRecord, ctx sessionStatusContext) []executionInvariantError {
-	mode := effectiveTeamExecutionMode(ctx.Team)
-	requiresVisibleLead := mode == executionModeProjectLead || mode == executionModeProjectTeam
-	lead := strings.TrimSpace(ctx.Lead)
-	if lead == "" && len(ctx.Team.Members) == 1 {
-		lead = ctx.Team.Members[0].Role
-	}
-	leadSeen := false
-	leadVisible := false
-	var leadError executionInvariantError
-
-	for i := range rows {
-		rows[i].RoleBoundary = roleBoundaryForStatus(ctx, rows[i], lead)
-		if strings.TrimSpace(rows[i].AdoptionMode) == "" {
-			rows[i].AdoptionMode = adoptionModeForStatus(rows[i])
-		}
-		if rows[i].RoleBoundary != "lead" {
-			rows[i].OperatorVisible = false
-			continue
-		}
-		leadSeen = true
-		visible, code := operatorVisibilityForLead(&rows[i], mode)
-		rows[i].OperatorVisible = visible
-		rows[i].VisibilityProblem = code
-		if !visible {
-			rows[i].VisibilityRepairActions = visibilityRepairActions(ctx, rows[i])
-		}
-		if visible {
-			leadVisible = true
-		} else if leadError.Code == "" {
-			leadError = invariantErrorForVisibilityProblem(rows[i], code, faultRepairScopeForStatus(ctx))
-		}
-	}
-
-	if !requiresVisibleLead {
-		return nil
-	}
-	switch {
-	case lead == "":
-		return []executionInvariantError{{Code: "no_visible_lead", Message: "project execution mode requires a configured visible lead"}}
-	case !leadSeen:
-		return []executionInvariantError{{Code: "no_visible_lead", Role: lead, Message: fmt.Sprintf("configured visible lead %q is not a team member", lead)}}
-	case !leadVisible:
-		if leadError.Code == "" {
-			leadError = executionInvariantError{Code: "no_visible_lead", Role: lead, Message: "configured visible lead is not operator-visible"}
-		}
-		return []executionInvariantError{leadError}
-	default:
-		return nil
-	}
-}
-
-func roleBoundaryForStatus(ctx sessionStatusContext, row statusRecord, lead string) string {
-	mode := effectiveTeamExecutionMode(ctx.Team)
-	if mode == executionModeGlobalOrchestrator {
-		return "orchestrator"
-	}
-	if mode != executionModeProjectLead && mode != executionModeProjectTeam {
-		// direct_lead_session: classify a DECLARED direct lead (registered as an
-		// external lead, or a configured orchestration lead running in direct
-		// mode) as role_boundary=lead so operatorVisibilityForLead can judge it.
-		// Visibility stays fail-closed (external/managed-visible -> visible;
-		// bare/collapsed/detached/unprovable -> not). A bare flat team that merely
-		// defaults to direct_lead_session has no declared lead and stays
-		// member/child, so flat output is unchanged. invariant_required stays
-		// limited to project_lead/project_team (no no_visible_lead for direct leads).
-		if mode == executionModeDirectLeadSession {
-			configuredLead := strings.TrimSpace(ctx.Lead)
-			if row.External || (configuredLead != "" && row.Role == configuredLead) {
-				return "lead"
-			}
-		}
-		if row.SpawnDepth > 0 || strings.TrimSpace(row.SpawnOrigin) != "" {
-			return "child"
-		}
-		return "member"
-	}
-	if strings.TrimSpace(lead) != "" {
-		if row.Role == lead {
-			return "lead"
-		}
-		return "child"
-	}
-	if row.SpawnDepth > 0 || strings.TrimSpace(row.SpawnOrigin) != "" {
-		return "child"
-	}
-	return "member"
-}
-
-func adoptionModeForStatus(row statusRecord) string {
-	if row.External {
-		return "external"
-	}
-	if row.Tmux == nil {
-		if row.RecordState == "missing" {
-			return "missing"
-		}
-		return "unmanaged"
-	}
-	switch strings.TrimSpace(row.Tmux.Target) {
-	case "current-window":
-		return "managed_current_window"
-	case "new-window":
-		return "managed_window"
-	case "new-session":
-		return "managed_session"
-	case "":
-		if row.LauncherPaneID != "" && row.LauncherPaneID == row.AgentPaneID {
-			return "bare_agent_up"
-		}
-		return "unmanaged"
-	default:
-		return "tmux_" + strings.TrimSpace(row.Tmux.Target)
-	}
-}
-
-func operatorVisibilityForLead(row *statusRecord, mode string) (bool, string) {
-	if row != nil && (row.External || row.AdoptionMode == "external") {
-		if projectExecutionMode(mode) &&
-			strings.TrimSpace(row.AdoptionMode) != adoptionModeExternalProjectLead &&
-			!launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
-			return false, "role_boundary_violation"
-		}
-		if row.Tmux == nil {
-			return false, "no_pane"
-		}
-		if row.Tmux.PaneAlive {
-			row.Status = statusStateLive
-			if strings.TrimSpace(row.Detail) == "" || strings.Contains(row.Detail, "no live signals") {
-				row.Detail = fmt.Sprintf("external pane %s live (registered lead)", row.Tmux.PaneID)
-			}
-			return true, ""
-		}
-		return false, "pane_dead"
-	}
-	if row.Status != statusStateLive {
-		return false, "lead_pane_dead"
-	}
-	if row.Tmux == nil {
-		return false, "no_pane"
-	}
-	if !row.Tmux.PaneAlive {
-		return false, "pane_dead"
-	}
-	if strings.TrimSpace(row.LauncherPaneID) == "" {
-		return false, "pane_origin_unprovable"
-	}
-	row.CurrentPaneConflict = row.LauncherPaneID == row.AgentPaneID
-	if row.CurrentPaneConflict {
-		return false, "current_pane_collapse"
-	}
-	switch strings.TrimSpace(row.AdoptionMode) {
-	case "managed_window", "managed_current_window":
-		return true, ""
-	case "managed_session":
-		return false, "detached_session"
-	case "bare_agent_up":
-		return false, "unmanaged_agent_up"
-	case "":
-		return false, "pane_origin_unprovable"
-	default:
-		return false, "unmanaged_agent_up"
-	}
-}
-
-type faultRepairScope struct {
-	Project string
-	Profile string
-	Session string
-}
-
-func faultRepairScopeForStatus(ctx sessionStatusContext) faultRepairScope {
-	return faultRepairScope{
-		Project: ctx.Team.Project,
-		Profile: ctx.Profile,
-		Session: ctx.Workstream,
-	}
-}
-
-func invariantErrorForVisibilityProblem(row statusRecord, code string, scope faultRepairScope) executionInvariantError {
-	const docRef = "docs/v2.12.0-plan.md#repair-first-ux-for-topology-and-launch-failures"
-	switch code {
-	case "current_pane_collapse":
-		return executionInvariantError{
-			Code:    "lead_pane_collapsed",
-			Role:    row.Role,
-			Message: "visible lead is running in the launcher pane; relaunch in a managed visible pane or register an explicit external lead",
-			DocRef:  docRef,
-			Remedy:  faultRemedyRelaunch(scope),
-		}
-	case "lead_pane_dead", "pane_dead", "no_pane":
-		return executionInvariantError{
-			Code:    "lead_pane_dead",
-			Role:    row.Role,
-			Message: "visible lead has no live operator-addressable pane",
-			DocRef:  docRef,
-			Remedy:  faultRemedyResume(row.Role, scope),
-		}
-	case "detached_session":
-		return executionInvariantError{
-			Code:    "no_visible_lead",
-			Role:    row.Role,
-			Message: "visible lead is live in a detached tmux session, not an operator-visible pane",
-			DocRef:  docRef,
-			Remedy:  faultRemedyResume(row.Role, scope),
-		}
-	case "pane_origin_unprovable":
-		return executionInvariantError{
-			Code:    "no_visible_lead",
-			Role:    row.Role,
-			Message: "visible lead launch record does not prove launcher pane origin",
-			DocRef:  docRef,
-			Remedy:  faultRemedyRelaunch(scope),
-		}
-	case "role_boundary_violation":
-		return executionInvariantError{
-			Code:    "lead_role_boundary_violation",
-			Role:    row.Role,
-			Message: fmt.Sprintf("current pane is registered as a control-plane/external identity, not verified project lead %q", row.Role),
-			DocRef:  docRef,
-			Remedy:  faultRemedyResume(row.Role, scope),
-		}
-	default:
-		return executionInvariantError{
-			Code:    "no_visible_lead",
-			Role:    row.Role,
-			Message: "configured visible lead is not operator-visible",
-			DocRef:  docRef,
-			Remedy:  faultRemedyRelaunch(scope),
-		}
-	}
-}
-
-// faultRemedyRelaunch returns a repair action that relaunches the team in a
-// managed visible pane. Available when the session is known.
-func faultRemedyRelaunch(scope faultRepairScope) *faultRemedy {
-	r := &faultRemedy{
-		Kind:       "up",
-		ID:         "up",
-		Label:      "relaunch lead in a managed visible pane",
-		ActionKind: "repair",
-	}
-	if strings.TrimSpace(scope.Session) == "" {
-		r.Available = false
-		r.Reason = "session name unknown; supply --session to build the repair command"
-		r.UnavailableReason = r.Reason
-		return r
-	}
-	r.Command = "amq-squad up" + faultRemedyScopeArgs(scope)
-	r.Available = true
-	return r
-}
-
-// faultRemedyResume returns a repair action that resumes a stale or detached
-// lead. Available when both role and session are known.
-func faultRemedyResume(role string, scope faultRepairScope) *faultRemedy {
-	r := &faultRemedy{
-		Kind:       "resume",
-		ID:         "resume",
-		Label:      "resume the lead session in a visible pane",
-		ActionKind: "repair",
-	}
-	if strings.TrimSpace(role) == "" || strings.TrimSpace(scope.Session) == "" {
-		r.Available = false
-		r.Reason = "role or session unknown; supply --role and --session to build the repair command"
-		r.UnavailableReason = r.Reason
-		return r
-	}
-	r.Command = "amq-squad resume --role " + shellQuote(role) + faultRemedyScopeArgs(scope)
-	r.Available = true
-	return r
-}
-
-func faultRemedyScopeArgs(scope faultRepairScope) string {
-	var args []string
-	if strings.TrimSpace(scope.Project) != "" {
-		args = append(args, "--project", shellQuote(scope.Project))
-	}
-	if strings.TrimSpace(scope.Profile) != "" && squadnamespace.NormalizeProfile(scope.Profile) != team.DefaultProfile {
-		args = append(args, "--profile", shellQuote(scope.Profile))
-	}
-	if strings.TrimSpace(scope.Session) != "" {
-		args = append(args, "--session", shellQuote(scope.Session))
-	}
-	if len(args) == 0 {
-		return ""
-	}
-	return " " + strings.Join(args, " ")
-}
-
-func visibilityRepairActions(ctx sessionStatusContext, row statusRecord) []runtimeActionJSON {
-	out := []runtimeActionJSON{}
-	for _, action := range row.Actions {
-		switch action.Kind {
-		case "focus", "status":
-			out = append(out, action)
-		}
-	}
-	for _, action := range ctx.Actions {
-		switch action.Kind {
-		case "resume_preview", "resume_current_window":
-			out = append(out, action)
-		}
-	}
-	if row.Tmux != nil && strings.TrimSpace(row.Tmux.Session) != "" {
-		out = append(out, runtimeActionJSON{
-			Kind:              "attach_control",
-			Label:             "open in iTerm2 (tmux -CC)",
-			Scope:             "session",
-			NamespaceID:       row.Namespace.ID,
-			Command:           "tmux -CC attach -t " + shellQuote(row.Tmux.Session),
-			Mutates:           false,
-			NeedsConfirmation: false,
-			Available:         true,
-		})
-	}
-	return out
-}
-
-func goalBindingForNamespace(ns squadnamespace.Ref) goalBindingData {
-	binding := goalBindingData{
-		Mode:       "amq_task_brief",
-		NativeGoal: false,
-		Verified:   false,
-		Source:     "amq-task-brief",
-		Detail:     "This runtime has no verified binary-specific goal binding; the visible lead is bound by the durable AMQ task, active brief, and task store for the namespace.",
-	}
-	if ns.Paths.Brief != "" {
-		binding.BriefPath = ns.Paths.Brief
-	}
-	if ns.Paths.Tasks != "" {
-		binding.TasksPath = ns.Paths.Tasks
-	}
-	return binding
-}
-
-func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows []statusRecord) goalBindingData {
-	binding := goalBindingForNamespace(ns)
-	if !ctx.Orchestrated || strings.TrimSpace(ctx.Lead) == "" {
-		return binding
-	}
-	leadMember, ok := teamMemberByRole(ctx.Team, ctx.Lead)
-	if !ok {
-		return binding
-	}
-	contract, contractErr := goalDeliveryContractForBinary(leadMember.Binary)
-	for _, row := range rows {
-		if row.Role != ctx.Lead {
-			continue
-		}
-		if row.Status != statusStateLive && row.Status != statusStateWakeLive {
-			continue
-		}
-		if contractErr == nil && contract.NativeGoal && nativeGoalBindingBlocked(row.goalBinding) {
-			binding.Mode = "native_goal_blocked"
-			binding.NativeGoal = true
-			binding.Verified = true
-			binding.Source = "launch-record"
-			binding.NativeSource = row.goalBinding.Source
-			binding.Command = row.goalBinding.Command
-			if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
-				binding.Detail = detail
-			} else {
-				binding.Detail = "visible lead native /goal is blocked; operator or orchestrator should inspect and resume with /goal resume"
-			}
-			return binding
-		}
-		if contractErr == nil && verifyClaimedGoalBindingForStatus(ns, ctx, row, contract) == nil {
-			binding.Mode = contract.Mode
-			binding.NativeGoal = contract.NativeGoal
-			binding.Verified = true
-			binding.Source = "goal-attempt-claim"
-			binding.NativeSource = row.goalBinding.Source
-			binding.Command = row.goalBinding.Command
-			binding.Detail = "configured visible lead launch binding is verified by its exact immutable goal-attempt claim"
-			return binding
-		}
-		if contractErr == nil && launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
-			binding.Mode = contract.Mode
-			binding.NativeGoal = contract.NativeGoal
-			binding.Verified = true
-			binding.Source = "launch-record"
-			binding.NativeSource = row.goalBinding.Source
-			binding.Command = row.goalBinding.Command
-			if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
-				binding.Detail = detail
-			} else {
-				binding.Detail = "configured visible lead launch record carries verified " + contract.Mode + " binding evidence"
-			}
-			return binding
-		}
-		if projectExecutionModeRequiresGoalBinding(ctx.Team) {
-			if contractErr != nil {
-				binding.Mode = "goal_delivery_unsupported"
-				binding.Detail = contractErr.Error()
-				return binding
-			}
-			return goalMissingBinding(binding, row, contract)
-		}
-	}
-	return binding
-}
-
-func verifyClaimedGoalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, row statusRecord, contract goalDeliveryContract) error {
-	binding := row.goalBinding
-	if binding == nil || binding.Source != "goal-control" || binding.DeliveryState != goalBindingDeliveryReserved {
-		return fmt.Errorf("launch binding is not a reserved goal-control binding")
-	}
-	goal, attemptID, err := goalBindingPayload(binding, contract)
-	if err != nil {
-		return fmt.Errorf("parse launch binding: %w", err)
-	}
-	profile := squadnamespace.NormalizeProfile(ctx.Profile)
-	prompt := contract.prompt(goal, ctx.Team, profile, ctx.Workstream, row.Role, attemptID)
-	if !exactGoalBinding(binding, contract, goal, attemptID, prompt, "goal-control") {
-		return fmt.Errorf("launch binding does not match the exact generated prompt")
-	}
-	attemptPath, err := goalAttemptPath(ctx.Team.Project, profile, ctx.Workstream, attemptID)
-	if err != nil {
-		return fmt.Errorf("resolve goal attempt: %w", err)
-	}
-	attempt, err := readGoalAttempt(attemptPath, attemptID)
-	if err != nil {
-		return err
-	}
-	if err := validateResumeGoalAttempt(attempt, ctx.Team.Project, profile, ctx.Workstream, row.Role, row.Handle, goal, attemptID, ns); err != nil {
-		return fmt.Errorf("goal attempt identity: %w", err)
-	}
-	claimBytes, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
-	if err != nil {
-		return fmt.Errorf("read goal attempt claim: %w", err)
-	}
-	var claim goalAttemptClaim
-	if err := json.Unmarshal(claimBytes, &claim); err != nil {
-		return fmt.Errorf("decode goal attempt claim: %w", err)
-	}
-	if err := validateResumeGoalClaim(claim, attempt); err != nil {
-		return fmt.Errorf("goal attempt claim identity: %w", err)
-	}
-	if claim.Route != contract.ClaimRoute {
-		return fmt.Errorf("goal attempt claim route %q does not match %q", claim.Route, contract.ClaimRoute)
-	}
-	return nil
-}
-
-func nativeGoalBindingBlocked(binding *launch.GoalBinding) bool {
-	return binding != nil && binding.NativeGoal && strings.TrimSpace(binding.Mode) == "native_goal_blocked"
-}
-
-func applyGoalBindingOpenBlockers(operatorView *statusOperatorView, binding goalBindingData) {
-	if operatorView == nil || operatorView.Poll == nil {
-		return
-	}
-	if binding.Mode == "native_goal_blocked" {
-		operatorView.Poll.OpenBlockers++
-	}
-}
-
-func blockedNativeGoalsInSnapshot(t team.Team, profile, workstream string, snap state.Snapshot) int {
-	leadRole := strings.TrimSpace(t.Lead)
-	if leadRole == "" {
-		return 0
-	}
-	profile = squadnamespace.NormalizeProfile(profile)
-	count := 0
-	for _, session := range snap.Sessions {
-		if session.Name != workstream || squadnamespace.NormalizeProfile(session.TeamProfile) != profile {
-			continue
-		}
-		for _, agent := range session.Agents {
-			if agent.Role == leadRole && nativeGoalBindingBlocked(agent.GoalBinding) {
-				count++
-			}
-		}
-	}
-	return count
-}
-
-func projectExecutionModeRequiresGoalBinding(t team.Team) bool {
-	switch effectiveTeamExecutionMode(t) {
-	case executionModeProjectLead, executionModeProjectTeam:
-		return true
-	default:
-		return false
-	}
-}
-
-func goalMissingBinding(binding goalBindingData, row statusRecord, contract goalDeliveryContract) goalBindingData {
-	binding.Mode = contract.Mode + "_missing"
-	binding.NativeGoal = false
-	binding.Verified = false
-	binding.NativeSource = "missing"
-	if row.RecordState == "launched" {
-		binding.Source = "launch-record"
-	} else {
-		binding.Source = "runtime-observation"
-	}
-	binding.Detail = "A live visible project lead is running without launch-record evidence of the required " + contract.Mode + " contract for binary " + contract.Binary + "; relaunch from the generated binary-specific goal plan or treat this as an explicit unsupported fallback before claiming release readiness."
-	if row.goalBinding != nil {
-		binding.Detail += " The recorded binding mode/native flag does not match the lead binary."
-	}
-	return binding
-}
-
-func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLaunchProbe) []statusRecord {
-	return buildStatusRowsWithLocalInputDetector(t, profile, workstream, probe, statusLocalInputDetector)
-}
-func buildStatusRowsWithLocalInputDetector(t team.Team, profile, workstream string, probe duplicateLaunchProbe, detector func(string) (tmuxpane.LocalInputBlocker, bool)) []statusRecord {
-	// Share one tmux pane snapshot across this whole command: live-replacement
-	// detection inside classifyMemberStatus and pane_alive resolution below
-	// both read statusPaneLister, so memoize it for the command's duration.
-	restoreLister := statusPaneLister
-	statusPaneLister = memoizePaneLister(restoreLister)
-	defer func() { statusPaneLister = restoreLister }()
-
-	members := orderedTeamMembers(t.Members)
-	launchEntries, launchScanErr := launch.ScanEntries(t.Project)
-	replacement := newBatchReplacementPaneResolver()
-	rows := make([]statusRecord, 0, len(members))
-	for _, m := range members {
-		rows = append(rows, classifyMemberStatusFromEntries(t, profile, m, workstream, probe, replacement, launchEntries, launchScanErr))
-	}
-	// #95: adopt a live tmux pane for live agents with no recorded tmux identity
-	// (launched outside amq-squad's tmux backend, e.g. a raw `tmux new-window`),
-	// so focus/send/attach_control and pane_alive work for them too.
-	pidTree := childrenPidTree()
-	for i := range rows {
-		if rows[i].Tmux == nil && rows[i].liveness.RuntimeIdentity.PIDLive {
-			if panes, perr := statusPaneLister(); perr == nil {
-				if adopted := adoptLivePane(rows[i].Role, rows[i].Handle, rows[i].Binary, rows[i].CWD, workstream, rows[i].Signals.AgentPID, panes, pidTree); adopted != nil {
-					rows[i].Tmux = tmuxRuntimeFromInfo(adopted)
-					rows[i].Terminal = terminalRuntimeFromTmuxInfo(adopted)
-				}
-			}
-		}
-	}
-	var livePanes map[string]bool
-	for i := range rows {
-		if rows[i].Tmux != nil {
-			if livePanes == nil {
-				livePanes = livePaneIDSet(statusPaneLister)
-			}
-			fillPaneAliveFromLiveness(rows[i].Tmux, livePanes, &rows[i].liveness)
-			rows[i].AgentPaneID = strings.TrimSpace(rows[i].Tmux.PaneID)
-			rows[i].ManagedTarget = strings.TrimSpace(rows[i].Tmux.Target)
-			syncTerminalRuntimeFromTmux(&rows[i])
-		}
-	}
-	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
-	attachStatusLocalInputsWithDetector(t, rows, detector)
-	attachStatusWorktrees(t, profile, workstream, rows)
-	return rows
-}
-
-func attachStatusWorktrees(t team.Team, profile, workstream string, rows []statusRecord) {
-	service, err := worktreeplan.NewService(t, profile, workstream, worktreeplan.ExecGit{}, nil)
-	if err != nil {
-		return
-	}
-	inspection, err := service.Inspect()
-	if err != nil {
-		for i := range rows {
-			member, ok := statusTeamMember(t, rows[i].Role)
-			if !ok || team.EffectiveActorMode(t, member) != team.ActorModeImplementation {
-				continue
-			}
-			rows[i].Worktree = &worktreeplan.MemberStatus{
-				Role: rows[i].Role, Handle: rows[i].Handle, CWD: rows[i].CWD,
-				Worktree: rows[i].CWD, Drifted: true, Detail: err.Error(),
-			}
-		}
-		return
-	}
-	byRole := map[string]worktreeplan.MemberStatus{}
-	for _, status := range inspection.Members {
-		byRole[status.Role] = status
-	}
-	for i := range rows {
-		if status, ok := byRole[rows[i].Role]; ok {
-			copy := status
-			rows[i].Worktree = &copy
-		}
-	}
-}
-
-func statusTeamMember(t team.Team, role string) (team.Member, bool) {
-	for _, member := range t.Members {
-		if member.Role == role {
-			return member, true
-		}
-	}
-	return team.Member{}, false
-}
-
-func attachStatusActivities(projectDir, profile, workstream string, rows []statusRecord, now time.Time) {
-	activeTasks := activeTasksByAssignee(projectDir, profile, workstream)
-	symphony := symphonyActivitiesByHandle(rows, now)
-	for i := range rows {
-		if strings.TrimSpace(rows[i].AgentDir) != "" {
-			if act, ok, err := activity.Read(rows[i].AgentDir, now, activity.DefaultStaleAfter); err == nil && ok {
-				rows[i].Activity = &act
-				continue
-			} else if err != nil {
-				act := activity.UnknownSnapshot(rows[i].Handle, "activity heartbeat unreadable")
-				rows[i].Activity = &act
-				continue
-			}
-		}
-		if act, ok := symphony[rows[i].Handle]; ok {
-			rows[i].Activity = &act
-			continue
-		}
-		if task, ok := activeTasks[rows[i].Handle]; ok {
-			rows[i].Activity = taskStoreActivity(task, now)
-		}
-	}
-}
-
-func symphonyActivitiesByHandle(rows []statusRecord, now time.Time) map[string]activity.Snapshot {
-	roots := map[string]bool{}
-	for _, row := range rows {
-		if root := strings.TrimSpace(row.Root); root != "" {
-			roots[root] = true
-		}
-	}
-	out := map[string]activity.Snapshot{}
-	latestID := map[string]string{}
-	for root := range roots {
-		msgs, _ := state.ScanSessionMessages(root, func() time.Time { return now })
-		for _, msg := range msgs {
-			if !isSymphonyLifecycleMessage(msg) {
-				continue
-			}
-			handle := strings.TrimSpace(msg.Owner)
-			if handle == "" {
-				handle = strings.TrimSpace(msg.From)
-			}
-			if handle == "" {
-				continue
-			}
-			act := activity.SymphonySnapshot(handle, msg.OrchestratorEvent, msg.ExternalTaskID, msg.Subject, msg.Created, now, activity.DefaultStaleAfter)
-			prev, ok := out[handle]
-			if !ok || act.WrittenAt.After(prev.WrittenAt) || (act.WrittenAt.Equal(prev.WrittenAt) && msg.ID > latestID[handle]) {
-				out[handle] = act
-				latestID[handle] = msg.ID
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func isSymphonyLifecycleMessage(msg state.Message) bool {
-	if msg.Kind != state.KindStatus || strings.TrimSpace(msg.OrchestratorEvent) == "" {
-		return false
-	}
-	for _, label := range msg.Labels {
-		if strings.EqualFold(strings.TrimSpace(label), "orchestrator:symphony") {
-			return true
-		}
-	}
-	return false
-}
-
-func activeTasksByAssignee(projectDir, profile, workstream string) map[string]taskstore.Task {
-	tasks, err := taskstore.ListForProfile(projectDir, profile, workstream)
-	if err != nil {
-		return nil
-	}
-	out := map[string]taskstore.Task{}
-	for _, t := range tasks {
-		if (t.Status != taskstore.StatusInProgress && t.Status != taskstore.StatusCompletedPendingReconcile) || strings.TrimSpace(t.AssignedTo) == "" {
-			continue
-		}
-		cur, ok := out[t.AssignedTo]
-		if !ok || t.UpdatedAt.After(cur.UpdatedAt) || (t.UpdatedAt.Equal(cur.UpdatedAt) && t.ID > cur.ID) {
-			out[t.AssignedTo] = t
-		}
-	}
-	return out
-}
-
-func taskStoreActivity(t taskstore.Task, now time.Time) *activity.Snapshot {
-	detail := strings.TrimSpace(t.Title)
-	if detail == "" {
-		detail = "current task from task store; no fresh activity heartbeat"
-	}
-	act := activity.TaskStoreSnapshot(t.AssignedTo, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
-	return &act
-}
-
-func attachStatusLocalInputs(t team.Team, rows []statusRecord) {
-	attachStatusLocalInputsWithDetector(t, rows, statusLocalInputDetector)
-}
-func attachStatusLocalInputsWithDetector(t team.Team, rows []statusRecord, detector func(string) (tmuxpane.LocalInputBlocker, bool)) {
-	for i := range rows {
-		if !statusLocalInputCandidate(t, rows[i]) {
-			continue
-		}
-		blocker, ok := detector(rows[i].Tmux.PaneID)
-		if !ok {
-			continue
-		}
-		rows[i].LocalInput = &statusLocalInput{
-			Status:      "blocked",
-			Kind:        blocker.Kind,
-			PaneID:      rows[i].Tmux.PaneID,
-			Summary:     blocker.Summary,
-			Destructive: blocker.Destructive,
-			Recovery:    blocker.Recovery,
-			Source:      "tmux-pane-tail",
-		}
-	}
-}
-
-func statusExternalEvidence(t team.Team, profile, workstream string, rows []statusRecord, now time.Time) []state.ExternalEvidenceRow {
-	root := firstStatusRoot(rows)
-	if strings.TrimSpace(root) == "" {
-		return nil
-	}
-	operatorHandle := team.DefaultOperatorHandle
-	if op := team.EffectiveOperator(t); op.Enabled && strings.TrimSpace(op.Handle) != "" {
-		operatorHandle = strings.TrimSpace(op.Handle)
-	}
-	probe := state.Probe{
-		PIDAlive:     func(int) bool { return false },
-		ProcessMatch: func(int, func(string) bool) bool { return false },
-		Now:          func() time.Time { return now },
-	}
-	snap, err := state.BuildWithThresholds(t.Project, filepath.Dir(root), probe, state.Thresholds{OperatorHandle: operatorHandle})
-	if err != nil {
-		return nil
-	}
-	namespaceID := squadnamespace.ID(profile, workstream)
-	for _, sess := range snap.Sessions {
-		if sess.NamespaceID == namespaceID {
-			return sess.Coordination.ExternalEvidence
-		}
-	}
-	return nil
-}
-
-func statusLocalInputCandidate(t team.Team, row statusRecord) bool {
-	if !t.Orchestrated {
-		return false
-	}
-	lead := strings.TrimSpace(t.Lead)
-	if lead == "" || row.Role == lead {
-		return false
-	}
-	if row.External || row.Tmux == nil || strings.TrimSpace(row.Tmux.PaneID) == "" || !row.Tmux.PaneAlive {
-		return false
-	}
-	switch strings.TrimSpace(row.Tmux.Target) {
-	case "current-window", "new-window", "new-session":
-		return true
-	default:
-		return false
-	}
-}
-
-func statusLocalInputWarnings(projectDir, profile, session string, rows []statusRecord) []statusWarning {
-	var warnings []statusWarning
-	for _, row := range rows {
-		if row.LocalInput == nil {
-			continue
-		}
-		cmd := "amq-squad focus --role " + shellQuote(row.Role) + taskScope(projectDir, profile, session)
-		detail := fmt.Sprintf(
-			"role %s (handle %s) appears blocked on local UI input in pane %s: %s; AMQ may stay silent while the local prompt waits; recovery: %s",
-			row.Role,
-			printableHandle(row.Handle),
-			row.LocalInput.PaneID,
-			row.LocalInput.Summary,
-			row.LocalInput.Recovery,
-		)
-		warnings = append(warnings, statusWarning{
-			Kind:             "local_input_blocked",
-			Session:          session,
-			Detail:           detail,
-			SuggestedCommand: cmd,
-		})
-	}
-	return warnings
-}
-
-// statusLaunchapiInspectWarnings surfaces gh#737's session-level warning
-// when launchapi.Inspect itself errored (I/O, not a successful
-// binding_missing result) for this session -- per cto's ruling, no member's
-// verdict is clamped on a call error, but the failure must still be visible.
-// Deduplicated to at most one warning per distinct evidence string even
-// though every row in a launchapi-launched roster independently observes
-// the same session-level failure.
-func statusLaunchapiInspectWarnings(session string, rows []statusRecord) []statusWarning {
-	seen := make(map[string]bool)
-	var warnings []statusWarning
-	for _, row := range rows {
-		if row.liveness.InspectSignal.Outcome != launchapiInspectCallFailed {
-			continue
-		}
-		evidence := strings.TrimSpace(row.liveness.InspectSignal.Evidence)
-		if seen[evidence] {
-			continue
-		}
-		seen[evidence] = true
-		warnings = append(warnings, statusWarning{
-			Kind:    "launchapi_inspect_failed",
-			Session: session,
-			Detail:  "session-level launchapi.Inspect call failed; per-seat liveness falls back to existing pane/launch-record/wake/presence signals unchanged: " + evidence,
-		})
-	}
-	return warnings
-}
-
-func orchestrationStatusFields(t team.Team) (bool, string, string) {
-	if !t.Orchestrated {
-		return false, "", ""
-	}
-	lead := strings.TrimSpace(t.Lead)
-	leadHandle := lead
-	for _, m := range t.Members {
-		if m.Role == lead {
-			leadHandle = memberHandle(m)
-			break
-		}
-	}
-	return true, lead, leadHandle
-}
-
-func firstStatusRoot(rows []statusRecord) string {
-	for _, r := range rows {
-		if r.Root != "" {
-			return r.Root
-		}
-	}
-	return ""
-}
-
-func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
-	return classifyMemberStatusWithReplacementResolver(t, profile, m, workstream, probe, classifierReplacementPane)
-}
-
-func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, replacement replacementPaneResolver) statusRecord {
-	entries, scanErr := launch.ScanEntries(t.Project)
-	return classifyMemberStatusFromEntries(t, profile, m, workstream, probe, replacement, entries, scanErr)
 }
 
 type statusLaunchSelection struct {
 	Entry          launch.Entry
 	Found          bool
 	DuplicatePaths []string
-}
-
-func statusUnmanagedLaunchRecordWarningsFromEntries(t team.Team, profile, workstream string, entries []launch.Entry) []statusWarning {
-	configuredHandles := make(map[string]bool, len(t.Members))
-	for _, member := range t.Members {
-		configuredHandles[strings.TrimSpace(memberHandle(member))] = true
-	}
-	var warnings []statusWarning
-	for _, entry := range entries {
-		rec := entry.Record
-		if strings.TrimSpace(rec.Session) != strings.TrimSpace(workstream) || !squadnamespace.ProfilesEqual(rec.TeamProfile, profile) {
-			continue
-		}
-		if strings.TrimSpace(rec.TeamHome) != "" && !sameResolvedDir(rec.TeamHome, t.Project) {
-			continue
-		}
-		handle := strings.TrimSpace(rec.Handle)
-		if configuredHandles[handle] {
-			continue
-		}
-		warnings = append(warnings, statusWarning{
-			Kind:    "unmanaged_launch_record",
-			Session: workstream,
-			Detail: fmt.Sprintf(
-				"unmanaged launch record for unconfigured handle %q (recorded role %q): %s",
-				handle, strings.TrimSpace(rec.Role), launch.ExistingPath(entry.AgentDir),
-			),
-		})
-	}
-	sort.Slice(warnings, func(i, j int) bool { return warnings[i].Detail < warnings[j].Detail })
-	return warnings
 }
 
 func selectStatusLaunchRecord(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, entries []launch.Entry) statusLaunchSelection {
@@ -1676,11 +293,7 @@ func selectLaunchRecordWithRuntimeProbe(t team.Team, profile string, m team.Memb
 	})
 	var live []launch.Entry
 	for _, entry := range candidates {
-		paneID := ""
-		if entry.Record.Tmux != nil {
-			paneID = entry.Record.Tmux.PaneID
-		}
-		if classifyLaunchRuntimeIdentity(entry.Record, "", paneID, runtimeProbe).Live {
+		if classifyLaunchRuntimeIdentity(entry.Record, "", runtimeProbe).PIDLive {
 			live = append(live, entry)
 		}
 	}
@@ -1704,15 +317,13 @@ func selectLaunchRecordWithRuntimeProbe(t team.Team, profile string, m team.Memb
 	return statusLaunchSelection{Entry: candidates[0], Found: true}
 }
 
-func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, replacement replacementPaneResolver, entries []launch.Entry, scanErr error) statusRecord {
+func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, entries []launch.Entry, scanErr error) statusRecord {
 	rec := statusRecord{
-		Role:        m.Role,
-		Handle:      m.Handle,
-		Binary:      m.Binary,
-		Session:     workstream,
-		CWD:         m.EffectiveCWD(t.Project),
-		SpawnOrigin: m.SpawnOrigin,
-		SpawnDepth:  m.SpawnDepth,
+		Role:    m.Role,
+		Handle:  m.Handle,
+		Binary:  m.Binary,
+		Session: workstream,
+		CWD:     m.EffectiveCWD(t.Project),
 	}
 	if scanErr != nil {
 		rec.Status = statusStateMissing
@@ -1757,65 +368,26 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 	}
 	root := rec.Root
 
-	// Consume the single shared liveness classifier so status and resume can
-	// never disagree. classifyAgentLiveness does the one disk read + probe
-	// checks and returns the verdict, signals, detail, status state, and the
-	// persisted tmux identity. classifyMemberStatus then just adopts them; the
-	// verdict->statusState mapping lives in the classifier (Status field).
-	// classifyAgentLivenessForRollup layers gh#737's session-level launchapi
-	// Inspect floor on top; team_resume.go's roster-facing call sites use the
-	// same wrapper so status/resume keep agreeing.
-	live := classifyAgentLivenessForRollup(t.Project, rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe, replacement)
+	// Consume the single shared liveness classifier: one disk read + probe checks
+	// returning the verdict, signals, detail and status state. The rollup wrapper
+	// layers gh#737's session-level launchapi Inspect floor on top.
+	live := classifyAgentLivenessForRollup(t.Project, rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
 	rec.liveness = live
 	rec.LaunchapiObservation = live.LaunchapiObservation
 	rec.ClassificationError = live.SourceError
-	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
-	if live.LaunchFound {
-		rec.Terminal = terminalRuntimeFromInfo(live.LaunchRecord.Terminal)
-		rec.goalBinding = live.LaunchRecord.GoalBinding
-		rec.External = live.LaunchRecord.External
-		rec.OrchestratorRegistration = live.LaunchRecord.OrchestratorRegistration
-		rec.WakeAutoDrain = strings.TrimSpace(live.LaunchRecord.WakeInjectCmd) != ""
-		rec.PreauthorizedActions = live.LaunchRecord.PreauthorizedActions
-		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
-		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
-		// Prepared tuple fields from v2.27 are opaque compatibility data. Runtime
-		// status comes from the launch record plus direct PID/pane probes.
-		rec.LiveIdentityMode = "record_first"
-		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
-			rec.SpawnOrigin = origin
-		}
-		if live.LaunchRecord.SpawnDepth > 0 {
-			rec.SpawnDepth = live.LaunchRecord.SpawnDepth
-		}
-	}
 	rec.Signals = live.Signals
-	if rec.LiveIdentityMode != "managed_refused" {
-		rec.Status = live.Status
-	}
+	rec.Status = live.Status
 	rec.RecordState = statusRecordState(live)
-	if rec.LiveIdentityMode == "managed_refused" {
-		rec.RecordState = "stale-record"
-	}
-	if rec.LiveIdentityMode != "managed_refused" {
-		rec.Detail = live.Detail
-		if rec.ClassificationError != "" {
-			rec.Detail = rec.ClassificationError
-		}
-	}
-	if rec.Tmux != nil {
-		rec.AgentPaneID = strings.TrimSpace(rec.Tmux.PaneID)
-		rec.ManagedTarget = strings.TrimSpace(rec.Tmux.Target)
-	}
-	if rec.Terminal != nil && rec.Terminal.Backend != "tmux" {
-		rec.Terminal.PIDAlive = live.RuntimeIdentity.PIDLive
+	rec.Detail = live.Detail
+	if rec.ClassificationError != "" {
+		rec.Detail = rec.ClassificationError
 	}
 	return rec
 }
 
 func statusRecordState(live agentLiveness) string {
 	switch live.Status {
-	case statusStateLive, statusStateWakeLive:
+	case statusStateLive:
 		if !live.LaunchFound {
 			return "missing"
 		}
@@ -1832,84 +404,6 @@ func statusRecordState(live agentLiveness) string {
 	}
 }
 
-// liveReplacementPane reports a live tmux pane that resolves to this member when
-// its recorded PID is dead — the case where the agent was relaunched outside
-// amq-squad. It reuses the neutral tmux pane resolver (title-first amq:<session>:<role>,
-// then engine+cwd) so detection is consistent and conservative: only a
-// SAME-ENGINE match is attributed, never a bare differently-engined pane. The
-// pane lister is injectable (statusPaneLister) so tests never shell real tmux;
-// any tmux/lister error degrades to "not found" (the caller stays stale).
-func liveReplacementPane(m team.Member, rec statusRecord, workstream string) (string, bool) {
-	panes, err := statusPaneLister()
-	if err != nil || len(panes) == 0 {
-		return "", false
-	}
-	ag := state.Agent{
-		Handle: rec.Handle,
-		Role:   m.Role,
-		Engine: m.Binary,
-	}
-	target, ok := tmuxpane.ResolveTmuxTargetForSession(ag, workstream, rec.CWD, panes, nil)
-	if !ok {
-		return "", false
-	}
-	return tmuxpane.SuggestJump(target), true
-}
-
-// newBatchReplacementPaneResolver preserves the neutral resolver's
-// single-member fallback while making roster classification injective: once a
-// physical pane is assigned to one stale role, later roles cannot reuse it.
-// The pane snapshot is loaded lazily because most healthy rosters never need
-// replacement detection at all.
-func newBatchReplacementPaneResolver() replacementPaneResolver {
-	var (
-		loaded  bool
-		panes   []tmuxpane.TmuxPane
-		loadErr error
-	)
-	claimed := make(map[string]struct{})
-	return func(role, handle, binary, cwd, workstream string) (string, bool) {
-		if !loaded {
-			panes, loadErr = statusPaneLister()
-			loaded = true
-		}
-		if loadErr != nil || len(panes) == 0 {
-			return "", false
-		}
-
-		available := make([]tmuxpane.TmuxPane, 0, len(panes))
-		for _, pane := range panes {
-			if _, used := claimed[replacementPaneKey(pane.Session, pane.Window, pane.Pane)]; !used {
-				available = append(available, pane)
-			}
-		}
-		agent := state.Agent{Handle: handle, Role: role, Engine: binary}
-		target, ok := tmuxpane.ResolveTmuxTargetForSession(agent, workstream, cwd, available, nil)
-		if !ok {
-			return "", false
-		}
-		claimed[replacementPaneKey(target.Session, target.Window, target.Pane)] = struct{}{}
-		return tmuxpane.SuggestJump(target), true
-	}
-}
-
-func replacementPaneKey(session, window, pane string) string {
-	return session + "\x00" + window + "\x00" + pane
-}
-
-func readWakeLock(agentDir string) (wakeLockFile, error) {
-	path := wakeLockPath(agentDir)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return wakeLockFile{}, err
-	}
-	lock, err := decodeWakeLockFile(data)
-	if err != nil {
-		return wakeLockFile{}, err
-	}
-	return lock, nil
-}
-
 func staleDetail(s statusSignals, presenceMismatched bool) string {
 	var parts []string
 	if s.AgentPID > 0 {
@@ -1920,12 +414,6 @@ func staleDetail(s statusSignals, presenceMismatched bool) string {
 			parts = append(parts, fmt.Sprintf("agent pid %d binary mismatch", s.AgentPID))
 		}
 	}
-	if s.WakePID > 0 && !s.WakeAlive {
-		parts = append(parts, fmt.Sprintf("wake pid %d not alive or unrelated", s.WakePID))
-	}
-	if s.WakeAlive {
-		parts = append(parts, fmt.Sprintf("wake pid %d alive without verified agent", s.WakePID))
-	}
 	if presenceMismatched {
 		parts = append(parts, "fresh presence for unrelated handle")
 	}
@@ -1935,17 +423,27 @@ func staleDetail(s statusSignals, presenceMismatched bool) string {
 	return strings.Join(parts, "; ")
 }
 
-func wakeLiveDetail(s statusSignals) string {
-	parts := []string{fmt.Sprintf("wake pid %d alive", s.WakePID)}
-	if s.AgentPID > 0 {
-		switch {
-		case !s.AgentAlive:
-			parts = append(parts, fmt.Sprintf("agent pid %d not alive", s.AgentPID))
-		case !s.BinaryMatch:
-			parts = append(parts, fmt.Sprintf("agent pid %d binary mismatch", s.AgentPID))
-		}
-	} else {
-		parts = append(parts, "no verified agent pid")
+// profileInitCommand returns the creation command to suggest when reporting a
+// missing team profile.
+func profileInitCommand(profile string) string {
+	if profile == "" || profile == squadnamespace.DefaultProfile {
+		return "amq-squad team propose"
 	}
-	return strings.Join(parts, "; ")
+	return "amq-squad migrate (phase 5); named profiles were removed in 3.0, and amq-squad team propose writes the one squad.yaml"
+}
+
+func readPresenceForEntry(agentDir string) (presenceFile, error) {
+	data, err := os.ReadFile(presencePath(agentDir))
+	if err != nil {
+		return presenceFile{}, err
+	}
+	var pres presenceFile
+	if err := json.Unmarshal(data, &pres); err != nil {
+		return presenceFile{}, err
+	}
+	return pres, nil
+}
+
+func presencePath(agentDir string) string {
+	return filepath.Join(agentDir, "presence.json")
 }

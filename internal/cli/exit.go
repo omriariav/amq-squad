@@ -29,7 +29,18 @@ const (
 	ExitActionDenied  = 11
 	ExitActionNoGate  = 12
 	ExitActionUnbound = 13
+	// ExitIdentityIncomplete: seat-exec refused a launch record that lacks
+	// one of AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION (R52, fail closed).
+	ExitIdentityIncomplete = 14
 )
+
+// codedExitError carries an explicit exit code.
+type codedExitError struct {
+	code int
+	msg  string
+}
+
+func (e *codedExitError) Error() string { return e.msg }
 
 // PartialError signals partial success: the command made progress on some
 // targets and explicitly reported per-target failure for the rest. main
@@ -89,6 +100,10 @@ func ExitCode(err error) int {
 		}
 		return ExitUser
 	}
+	var coded *codedExitError
+	if errors.As(err, &coded) {
+		return coded.code
+	}
 	var ue UsageError
 	if errors.As(err, &ue) {
 		return ExitUser
@@ -123,12 +138,9 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 // without registering it here silently corrupts that flag. TestEveryCommaSeparatedProjectFlagIsExempt
 // enumerates the flag registrations and fails when one is missing, so the next
 // such command cannot be missed by inspection alone.
-var commaSeparatedProjectFlagCommands = map[string]bool{
-	// Each of these documents --project as "comma-separated project directories
-	// to scan" and splits the value itself.
-	"list":    true,
-	"restore": true,
-}
+// Empty since 3.0 removed `restore`, the last command that took a list; the
+// map stays so a new list-valued --project must be registered here.
+var commaSeparatedProjectFlagCommands = map[string]bool{}
 
 // normalizePathFlags rewrites filesystem-path flags to their canonical
 // representation immediately after parsing, before any command body can read

@@ -1,0 +1,8 @@
+{"at":"2026-10-24T11:33:22Z","decision":{"kind":"seat_requested","task_id":"t1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T11:33:22Z","decision":{"kind":"seat_up","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T11:33:22Z","decision":{"kind":"dispatched","task_id":"t1","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T11:33:53Z","decision":{"kind":"completed","task_id":"t1","seat":"pi-1"}}
+{"at":"2026-10-24T11:33:53Z","decision":{"kind":"dispatched","task_id":"t2","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T11:34:14Z","decision":{"kind":"completed","task_id":"t2","seat":"pi-1"}}
+{"at":"2026-10-24T11:34:14Z","decision":{"kind":"dispatched","task_id":"t3","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T11:34:33Z","decision":{"kind":"completed","task_id":"t3","seat":"pi-1"}}

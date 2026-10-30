@@ -1,0 +1,439 @@
+========================================================================
+## rule: R1 rows are signed when written
+## test: ./internal/routing/ TestFix3TamperedRowsAreAbsentAndReported$
+## edit internal/routing/router.go:
+-					row = row.Sign(r.key)
+
++					_ = r.key
+
+## reverted run (exit 1):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+    fix3_test.go:79: written row does not verify: {Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:smol UsedTier:smol Entry:claude:haiku:low Runtime:claude Skipped:[] Policy:manual Propensity:0 ExplorationShare:0.05 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> CostIndex:0 WallMS:0 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:s1 GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC Tag:}
+--- FAIL: TestFix3TamperedRowsAreAbsentAndReported (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.275s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+--- PASS: TestFix3TamperedRowsAreAbsentAndReported (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.310s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 rows are verified on every full read
+## test: ./internal/routing/ TestFix3TamperedRowsAreAbsentAndReported$
+## edit internal/routing/durable.go:
+-	good, bad := VerifyRows(rows, r.key)
++	good, bad := rows, []Row(nil)
+## reverted run (exit 1):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+    fix3_test.go:97: keep mtime false: tampered = []
+--- FAIL: TestFix3TamperedRowsAreAbsentAndReported (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.307s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+--- PASS: TestFix3TamperedRowsAreAbsentAndReported (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.314s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 a same-size, same-mtime edit is read within the interval
+## test: ./internal/routing/ TestFix3TamperedRowsAreAbsentAndReported$
+## edit internal/routing/durable.go:
+-	if st.same(r.logStat) && now.Sub(r.checkedAt) < FullCheckInterval && !now.Before(r.checkedAt) {
++	if st.same(r.logStat) {
+## reverted run (exit 1):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+    fix3_test.go:97: keep mtime true: tampered = []
+--- FAIL: TestFix3TamperedRowsAreAbsentAndReported (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.333s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+--- PASS: TestFix3TamperedRowsAreAbsentAndReported (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.290s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 the stamp includes the mtime
+## test: ./internal/routing/ TestFix3TamperedRowsAreAbsentAndReported$
+## edit internal/routing/durable.go:
+- && s.info.ModTime().Equal(o.info.ModTime())
++
+## reverted run (exit 1):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+    fix3_test.go:97: keep mtime false: tampered = []
+--- FAIL: TestFix3TamperedRowsAreAbsentAndReported (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.257s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+--- PASS: TestFix3TamperedRowsAreAbsentAndReported (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.300s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 decisions are verified on start
+## test: ./internal/routing/ TestFix3TamperedRowsAreAbsentAndReported$
+## edit internal/routing/router.go:
+-		if !d.verify(r.key) {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+    fix3_test.go:123: decision tampered = []
+--- FAIL: TestFix3TamperedRowsAreAbsentAndReported (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.285s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+--- PASS: TestFix3TamperedRowsAreAbsentAndReported (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.309s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R1 the report leaves tampered rows out
+## test: ./internal/routing/ TestFix3TamperedRowsAreAbsentAndReported$
+## edit internal/routing/seed.go:
+-	good, tampered = VerifyRows(rows, SeedKey(seed))
++	good, _ = rows, seed
+## reverted run (exit 1):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+    fix3_test.go:106: report rows: 2 good 0 bad verified true err <nil>
+--- FAIL: TestFix3TamperedRowsAreAbsentAndReported (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.400s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+--- PASS: TestFix3TamperedRowsAreAbsentAndReported (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.292s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 row policy on the closed list
+## test: ./internal/routing/ TestFix3PolicyIsAClosedListAndLeadPinIsReal$
+## edit internal/routing/outcome.go:
+- && slices.Contains(Policies, r.Policy)
++ && (slices.Contains(Policies, r.Policy) || true)
+## reverted run (exit 1):
+=== RUN   TestFix3PolicyIsAClosedListAndLeadPinIsReal
+    fix3_test.go:138: a signed row with a policy off the list verified
+--- FAIL: TestFix3PolicyIsAClosedListAndLeadPinIsReal (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.449s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3PolicyIsAClosedListAndLeadPinIsReal
+--- PASS: TestFix3PolicyIsAClosedListAndLeadPinIsReal (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.261s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 decision policy on the closed list
+## test: ./internal/routing/ TestFix3PolicyIsAClosedListAndLeadPinIsReal$
+## edit internal/routing/router.go:
+- && slices.Contains(Policies, d.Policy)
++
+## reverted run (exit 1):
+=== RUN   TestFix3PolicyIsAClosedListAndLeadPinIsReal
+    fix3_test.go:141: a signed decision with a policy off the list verified
+--- FAIL: TestFix3PolicyIsAClosedListAndLeadPinIsReal (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.256s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3PolicyIsAClosedListAndLeadPinIsReal
+--- PASS: TestFix3PolicyIsAClosedListAndLeadPinIsReal (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.256s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 a mismatched dispatch is manual
+## test: ./internal/routing/ TestFix3PolicyIsAClosedListAndLeadPinIsReal$
+## edit internal/routing/router.go:
+-			row.Policy, row.Propensity = PolicyManual, 0
+
++			row.Policy, row.Propensity = PolicyLeadPin, 1
+
+## reverted run (exit 1):
+=== RUN   TestFix3PolicyIsAClosedListAndLeadPinIsReal
+    fix3_test.go:155: mismatched dispatch row: [{Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:task UsedTier:task Entry:codex:gpt-5.6-terra:medium Runtime:codex Skipped:[] Policy:lead_pin Propensity:1 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> CostIndex:0 WallMS:0 WaitMS:0 WaitReasons:[] Outcome:unclaimed VerifierResult:not_run ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:s GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC Tag:}]
+--- FAIL: TestFix3PolicyIsAClosedListAndLeadPinIsReal (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.248s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3PolicyIsAClosedListAndLeadPinIsReal
+--- PASS: TestFix3PolicyIsAClosedListAndLeadPinIsReal (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.253s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R2 no decision is manual
+## test: ./internal/routing/ TestFix2HistoryIsCheckedNotTrusted$
+## edit internal/routing/router.go:
+-row.Policy, row.Propensity, row.ExplorationShare = PolicyManual, 0, r.o.Table.ExplorationShare
++row.Policy, row.Propensity, row.ExplorationShare = PolicyLeadPin, 1, r.o.Table.ExplorationShare
+## reverted run (exit 1):
+=== RUN   TestFix2HistoryIsCheckedNotTrusted
+    fix2_test.go:31: hand dispatch row: [{Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:plan Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:plan UsedTier:smol Entry:claude:haiku:low Runtime:claude Skipped:[] Policy:lead_pin Propensity:1 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> CostIndex:0 WallMS:60000 WaitMS:0 WaitReasons:[] Outcome:unclaimed VerifierResult:none ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:s GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:01:00 +0000 UTC Tag:}]
+--- FAIL: TestFix2HistoryIsCheckedNotTrusted (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.257s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2HistoryIsCheckedNotTrusted
+--- PASS: TestFix2HistoryIsCheckedNotTrusted (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.269s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R3/N1 the first attempt's actual entry tier
+## test: ./internal/routing/ TestFix3ActualTierNotTheRecordedString$
+## edit internal/routing/router.go:
+-		base = entryTier(tbl, r.classTiers(t.Class, spec.Tier, false), recorded, entry)
++		base = recorded
+## reverted run (exit 1):
+=== RUN   TestFix3ActualTierNotTheRecordedString
+    fix3_test.go:182: plan on a smol entry recorded as plan: {Pool:0xe03ddf733b0 Wait: Block: Detail:routing: plan lead_pin}
+--- FAIL: TestFix3ActualTierNotTheRecordedString (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.284s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3ActualTierNotTheRecordedString
+--- PASS: TestFix3ActualTierNotTheRecordedString (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.289s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R3 the recorded string only breaks a tie
+## test: ./internal/routing/ TestFix3ActualTierNotTheRecordedString$
+## edit internal/routing/router.go:
+-	if slices.Contains(allowed, recorded) && slices.Contains(t.Tiers[recorded].Chain, entry) {
++	if slices.Contains(allowed, recorded) {
+## reverted run (exit 1):
+=== RUN   TestFix3ActualTierNotTheRecordedString
+    fix3_test.go:182: plan on a smol entry recorded as plan: {Pool:0x4db1d8ba93b0 Wait: Block: Detail:routing: plan lead_pin}
+--- FAIL: TestFix3ActualTierNotTheRecordedString (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.266s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3ActualTierNotTheRecordedString
+--- PASS: TestFix3ActualTierNotTheRecordedString (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.297s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R3/N1 a hand dispatch off the class tiers is refused
+## test: ./internal/routing/ TestFix2HistoryIsCheckedNotTrusted$
+## edit internal/routing/router.go:
+-		if base == "" {
+			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: fmt.Sprintf("routing: the first attempt
++		if base == "" && false {
+			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: fmt.Sprintf("routing: the first attempt
+## reverted run (exit 1):
+=== RUN   TestFix2HistoryIsCheckedNotTrusted
+    fix2_test.go:34: plan retried on claude:haiku:low's recorded tier: {Pool:<nil> Wait:no_route Block: Detail:routing: empty chain}
+--- FAIL: TestFix2HistoryIsCheckedNotTrusted (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.363s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2HistoryIsCheckedNotTrusted
+--- PASS: TestFix2HistoryIsCheckedNotTrusted (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.288s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R3/N2 the floor on the actual tier
+## test: ./internal/routing/ TestFix3ActualTierNotTheRecordedString$
+## edit internal/routing/router.go:
+-		if escalated && TierRank(base) < TierRank(tableTier) {
+			base, pin = tableTier, nil
++		if false {
+			base, pin = tableTier, nil
+## reverted run (exit 1):
+=== RUN   TestFix3ActualTierNotTheRecordedString
+    fix3_test.go:191: floor on the actual tier: {Task:t2 Attempt:2 Class:implement Features:{DeclaredFiles:4 SizeBand:4+ InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:plan UsedTier:task Entry:0x4fe0b7a733e0 Skipped:[] Policy:table Propensity:0.95 ExplorationShare:0.05 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC Tag:}
+--- FAIL: TestFix3ActualTierNotTheRecordedString (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.342s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3ActualTierNotTheRecordedString
+--- PASS: TestFix3ActualTierNotTheRecordedString (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.347s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R4/P1-4 the tail before any append
+## test: ./internal/routing/ TestFix3TailBeforeFlushAndRecoveryKeepsPolicy$
+## edit internal/routing/durable.go:
+-	// The tail before any append: a flush must not cover it.
+	if err := r.checkTail(); err != nil {
+		return err
+	}
+
++
+## reverted run (exit 1):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+    fix3_test.go:230: torn tail: {Pool:0x400d85d73650 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.374s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+--- PASS: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.311s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R4 recovery takes the kept decision's policy
+## test: ./internal/routing/ TestFix3TailBeforeFlushAndRecoveryKeepsPolicy$
+## edit internal/routing/router.go:
+-				r.note(row)
+				if r.o.OnRow != nil {
++				r.note(row)
+				delete(r.decisions, k)
+				if r.o.OnRow != nil {
+## reverted run (exit 1):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+    fix3_test.go:220: recovered row: {Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:tc Attempt:1 Class:implement Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily: Unchecked:} TableTier:task UsedTier:smol Entry:pi:ollama/qwen3.6:27b:low Runtime:pi Skipped:[] Policy:manual Propensity:0 ExplorationShare:0.05 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> CostIndex:0 WallMS:0 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder:s1 GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC Tag:636ca75fbe9a172a8751a18a997bdbc4a927984806e6fa74cfcf78ecca54fccb}
+--- FAIL: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.376s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+--- PASS: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.375s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R4/P1-4 a truncated log is read again
+## test: ./internal/routing/ TestFix3TailBeforeFlushAndRecoveryKeepsPolicy$
+## edit internal/routing/durable.go:
+-	if st.same(r.logStat) && now.Sub(r.checkedAt) < FullCheckInterval && !now.Before(r.checkedAt) {
+		return nil
+	}
++	if st.size() >= 0 {
+		return nil
+	}
+## reverted run (exit 1):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+    fix3_test.go:220: recovered row: {Schema:0 At:0001-01-01 00:00:00 +0000 UTC Task: Attempt:0 Class: Features:{DeclaredFiles:0 SizeBand: InputTokens:0 Sensitive:false NoTests:false Privacy: PrivacyGlob: ImplementerFamily: Unchecked:} TableTier: UsedTier: Entry: Runtime: Skipped:[] Policy: Propensity:0 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> CostIndex:0 WallMS:0 WaitMS:0 WaitReasons:[] Outcome: VerifierResult: ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder: GrantedAt:0001-01-01 00:00:00 +0000 UTC EndedAt:0001-01-01 00:00:00 +0000 UTC Tag:}
+--- FAIL: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.403s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+--- PASS: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.486s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R5 the seed is opened without following a link
+## test: ./internal/routing/ TestFix3SeedIsNotReadThroughALink$
+## edit internal/routing/seed_unix.go:
+-os.O_RDONLY|syscall.O_NOFOLLOW
++os.O_RDONLY|0*syscall.O_NOFOLLOW
+## reverted run (exit 1):
+=== RUN   TestFix3SeedIsNotReadThroughALink
+    fix3_test.go:251: seed through a link: <nil>
+--- FAIL: TestFix3SeedIsNotReadThroughALink (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.382s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3SeedIsNotReadThroughALink
+--- PASS: TestFix3SeedIsNotReadThroughALink (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.314s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R6 an unchecked tree blocks the task
+## test: ./internal/routing/ TestFix3UncheckedTreeIsARefusal$
+## edit internal/routing/router.go:
+-	if f.Unchecked != "" {
++	if false && f.Unchecked != "" {
+## reverted run (exit 1):
+=== RUN   TestFix3UncheckedTreeIsARefusal
+    fix3_test.go:272: route = {Pool:0x74c756972630 Wait: Block: Detail:routing: task table}
+--- FAIL: TestFix3UncheckedTreeIsARefusal (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.321s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3UncheckedTreeIsARefusal
+--- PASS: TestFix3UncheckedTreeIsARefusal (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.273s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: R6 never a silent local-only
+## test: ./internal/routing/ TestFix3UncheckedTreeIsARefusal$
+## edit internal/routing/canon.go:
+-			refuse = fmt.Sprintf("the declared tree %s has more than %d entries; declare narrower paths", dir, MaxTreeEntries)
++			why = fmt.Sprintf("the declared tree %s has more than %d entries; declare narrower paths", dir, MaxTreeEntries)
+## reverted run (exit 1):
+=== RUN   TestFix3UncheckedTreeIsARefusal
+    fix3_test.go:272: route = {Pool:<nil> Wait:privacy_class Block: Detail:routing: claude:sonnet:medium privacy_class; codex:gpt-5.6-terra:medium privacy_class; pi:anthropic/sonnet:medium privacy_class; pi:ollama/qwen3.6:27b:high unverified}
+--- FAIL: TestFix3UncheckedTreeIsARefusal (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.287s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3UncheckedTreeIsARefusal
+--- PASS: TestFix3UncheckedTreeIsARefusal (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.293s
+
+## verdict: OK (fails reverted, passes restored)

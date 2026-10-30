@@ -19,10 +19,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const storeSchemaVersion = 2
@@ -36,7 +36,7 @@ const (
 )
 
 var (
-	ErrSpecChangeRequiresSuccessor = errors.New("release spec changed; explicit successor preparation is required")
+	ErrSpecChangeRequiresSuccessor = errors.New("release spec changed; in 3.0 a changed release is a new tag, a new parent gate and a new series")
 	storeContainmentHook           = func(string, string) error { return nil }
 	storeFault                     = func(string) error { return nil }
 	storeFileSync                  = func(f *os.File) error { return f.Sync() }
@@ -110,8 +110,8 @@ type Store struct {
 func Open(scope Scope, create bool) (*Store, error) {
 	scope.Profile = squadnamespace.NormalizeProfile(scope.Profile)
 	scope.Session = strings.TrimSpace(scope.Session)
-	if scope.Profile != team.DefaultProfile {
-		if err := team.ValidateProfileName(scope.Profile); err != nil {
+	if scope.Profile != squadnamespace.DefaultProfile {
+		if err := squadnamespace.ValidateProfile(scope.Profile); err != nil {
 			return nil, err
 		}
 	}
@@ -360,141 +360,6 @@ func (s *Store) activate(active operatorauth.ActiveReleaseManifest, transitionHo
 		return nil
 	})
 	return result, err
-}
-
-// PrepareSuccessor is the explicit re-raise transaction. It durably publishes
-// the fresh immutable preparation before it tombstones old authority. A crash
-// after tombstoning leaves the successor identity in the monotonic pointer.
-func (s *Store) PrepareSuccessor(expectedGenerationID string, spec operatorauth.ReleaseSpec) (Snapshot, error) {
-	if err := s.validateSpecScope(spec); err != nil {
-		return Snapshot{}, err
-	}
-	var result Snapshot
-	err := s.withLock(func() error {
-		pointer, err := s.readPointer()
-		if err != nil {
-			return err
-		}
-		if pointer.GenerationID != expectedGenerationID {
-			// An identical retry after pointer advancement is idempotent.
-			prepared, readErr := s.readPrepared(pointer.Generation)
-			if readErr != nil {
-				return fmt.Errorf("current release generation changed")
-			}
-			want, deriveErr := operatorauth.DerivePreparedRelease(spec, pointer.Generation)
-			if deriveErr == nil && reflect.DeepEqual(prepared, want) {
-				result, err = s.snapshotFrom(pointer, prepared)
-				return err
-			}
-			return fmt.Errorf("current release generation changed")
-		}
-		if pointer.State == operatorauth.ReleaseStateSuperseded && pointer.SuccessorGenerationID != "" {
-			return s.completeSuccessor(&result, pointer, spec)
-		}
-		currentPrepared, err := s.readPrepared(pointer.Generation)
-		if err != nil {
-			return err
-		}
-		if _, err := s.snapshotFrom(pointer, currentPrepared); err != nil {
-			return err
-		}
-		nextGeneration := pointer.Generation + 1
-		prepared, err := operatorauth.DerivePreparedRelease(spec, nextGeneration)
-		if err != nil {
-			return err
-		}
-		if err := s.writePrepared(prepared); err != nil {
-			return err
-		}
-		if err := storeFault("after_successor_prepared"); err != nil {
-			return err
-		}
-		// Tombstone through the authority-selecting pointer before any old-state
-		// bookkeeping. Old active authority can no longer revive after this sync.
-		pointer.Revision++
-		pointer.State = operatorauth.ReleaseStateSuperseded
-		pointer.SuccessorGenerationID = prepared.GenerationID
-		if err := s.writePointer(pointer); err != nil {
-			return err
-		}
-		if err := storeFault("after_old_terminalized"); err != nil {
-			return err
-		}
-		return s.completeSuccessor(&result, pointer, spec)
-	})
-	return result, err
-}
-
-func (s *Store) completeSuccessor(result *Snapshot, tombstone Pointer, spec operatorauth.ReleaseSpec) error {
-	nextGeneration := tombstone.Generation + 1
-	prepared, err := s.readPrepared(nextGeneration)
-	if err != nil {
-		return err
-	}
-	want, err := operatorauth.DerivePreparedRelease(spec, nextGeneration)
-	if err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(prepared, want) || tombstone.SuccessorGenerationID != prepared.GenerationID {
-		return fmt.Errorf("prepared successor does not exactly match requested spec")
-	}
-	old, err := s.readGeneration(tombstone.Generation)
-	if err != nil {
-		return err
-	}
-	oldPrepared, err := s.readPrepared(tombstone.Generation)
-	if err != nil {
-		return err
-	}
-	var oldActive *operatorauth.ActiveReleaseManifest
-	if old.ActiveManifestID != "" {
-		value, readErr := s.readActive(old.Generation, oldPrepared)
-		if readErr != nil {
-			return readErr
-		}
-		oldActive = &value
-	}
-	if old.State == operatorauth.ReleaseStateSuperseded {
-		if old.SuccessorGenerationID != prepared.GenerationID {
-			return fmt.Errorf("superseded generation names a different successor")
-		}
-		if err := s.validateLifecycleSnapshot(tombstone, old, oldPrepared, oldActive); err != nil {
-			return err
-		}
-	} else {
-		if err := s.validatePointerAheadSupersession(tombstone, old, oldPrepared, oldActive); err != nil {
-			return err
-		}
-		old.Revision++
-		old.State = operatorauth.ReleaseStateSuperseded
-		old.SuccessorGenerationID = prepared.GenerationID
-		if err := s.writeGeneration(old); err != nil {
-			return err
-		}
-		if err := s.validateLifecycleSnapshot(tombstone, old, oldPrepared, oldActive); err != nil {
-			return fmt.Errorf("supersession repair: %w", err)
-		}
-	}
-	if err := storeFault("before_successor_pointer"); err != nil {
-		return err
-	}
-	record := newGenerationRecord(s.seriesID, prepared, tombstone.GenerationID)
-	if existing, readErr := s.readGeneration(nextGeneration); readErr == nil {
-		if err := s.validateLifecycleSnapshot(pointerFromRecord(record, 1), existing, prepared, nil); err != nil {
-			return fmt.Errorf("successor generation record conflicts")
-		}
-		record = existing
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return readErr
-	} else if err := s.writeGeneration(record); err != nil {
-		return err
-	}
-	pointer := pointerFromRecord(record, tombstone.Revision+1)
-	if err := s.writePointer(pointer); err != nil {
-		return err
-	}
-	*result = Snapshot{Pointer: pointer, Prepared: prepared}
-	return nil
 }
 
 func (s *Store) ReadCurrent() (Snapshot, error) {

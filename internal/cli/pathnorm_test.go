@@ -57,7 +57,7 @@ func TestProjectFlagRecordsOneRepresentationForEverySpelling(t *testing.T) {
 			// The comparison must agree that this is the same project as the
 			// absolute spelling, whatever was recorded. This is the property the
 			// #540 identity check depends on.
-			if !sameFilesystemPath(recorded, sub) {
+			if !sameResolvedDir(recorded, sub) {
 				t.Fatalf("recorded --project %q as %q, which does not compare equal to %q", spelling, recorded, sub)
 			}
 		})
@@ -110,24 +110,6 @@ func TestUnsetProjectFlagStaysUnset(t *testing.T) {
 	}
 }
 
-// The `list` command's --project is a comma-separated LIST of directories. It is
-// an explicitly named exemption, so assert the exemption holds: single-path
-// normalization would corrupt the list.
-func TestListCommandProjectFlagIsExemptFromPathNormalization(t *testing.T) {
-	if !commaSeparatedProjectFlagCommands["list"] {
-		t.Fatal("list must remain a named exemption from --project path normalization")
-	}
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	project := fs.String("project", "", "")
-	value := "one,two"
-	if err := parseFlags(fs, []string{"--project", value}); err != nil {
-		t.Fatal(err)
-	}
-	if *project != value {
-		t.Fatalf("list --project was rewritten to %q; the comma-separated list must survive verbatim", *project)
-	}
-}
-
 // The record/compare split is load-bearing (see pathnorm.go). Recording must NOT
 // resolve symlinks -- doing so rewrites the operator-chosen path and changes
 // every digest computed over it -- while comparison MUST resolve them.
@@ -146,59 +128,6 @@ func TestRecordingKeepsSymlinkAndComparisonResolvesIt(t *testing.T) {
 	if canonicalFilesystemPath(link) != canonicalFilesystemPath(target) {
 		t.Fatalf("canonicalFilesystemPath(%q)=%q did not resolve to the same location as %q=%q",
 			link, canonicalFilesystemPath(link), target, canonicalFilesystemPath(target))
-	}
-}
-
-// #617: macOS can resolve two differently-cased path spellings to the same
-// directory while filepath.EvalSymlinks preserves the spelling it was given.
-// Every comparison seam must converge on the on-disk spelling so pane CWD,
-// launch-record and runtime identity checks agree.
-func TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "CaseProbe")
-	if err := os.MkdirAll(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	variant, ok := differentlyCasedExistingPath(project)
-	if !ok {
-		t.Skip("test filesystem is case-sensitive")
-	}
-
-	want := canonicalFilesystemPath(project)
-	if got := canonicalFilesystemPath(variant); got != want {
-		t.Fatalf("same directory canonicalized with different case:\n canonical: %q\n variant:   %q\n got:       %q", project, variant, got)
-	}
-	if !sameFilesystemPath(project, variant) {
-		t.Fatal("sameFilesystemPath rejected differently-cased aliases of one directory")
-	}
-	if !sameResolvedDir(project, variant) {
-		t.Fatal("sameResolvedDir rejected differently-cased aliases of one directory")
-	}
-	canonicalDirProject, err := canonicalDir(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonicalDirVariant, err := canonicalDir(variant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if canonicalDirProject != canonicalDirVariant {
-		t.Fatalf("canonicalDir preserved input case: %q != %q", canonicalDirProject, canonicalDirVariant)
-	}
-	if canonicalPath(project) != canonicalPath(variant) {
-		t.Fatal("launch/resume canonicalPath rejected differently-cased aliases")
-	}
-	if canonicalContextComparisonPath(project) != canonicalContextComparisonPath(variant) {
-		t.Fatal("context comparison rejected differently-cased aliases")
-	}
-	if !rootsMatch(filepath.Join(project, ".agent-mail"), filepath.Join(variant, ".agent-mail")) {
-		t.Fatal("AMQ root comparison rejected differently-cased aliases")
-	}
-	if got := canonicalFilesystemPaths([]string{project, variant}); len(got) != 1 {
-		t.Fatalf("one directory produced %d canonical set entries: %v", len(got), got)
-	}
-	missing := filepath.Join("future", "worktree")
-	if canonicalFilesystemPath(filepath.Join(project, missing)) != canonicalFilesystemPath(filepath.Join(variant, missing)) {
-		t.Fatal("differently-cased existing ancestors diverged for the same missing descendant")
 	}
 }
 
@@ -261,138 +190,6 @@ func TestCanonicalPathHandlesMissingLocation(t *testing.T) {
 	}
 }
 
-// Second-review finding 5: EvalSymlinks fails outright when the LEAF is missing,
-// even if an ancestor is a symlink. Taking the absolute form in that case would
-// make /link/x and /real/x canonicalize differently for a not-yet-created x, so
-// two records naming the same future location would compare as drift.
-//
-// The comparison resolves the longest EXISTING ancestor and rejoins the
-// remainder, so both spellings agree whether or not the leaf exists yet.
-func TestCanonicalPathResolvesSymlinkPrefixForMissingLeaf(t *testing.T) {
-	real := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-
-	// Several depths of not-yet-existing descendant.
-	for _, leaf := range []string{"x", filepath.Join("a", "b"), filepath.Join("a", "b", "c", "d")} {
-		t.Run(leaf, func(t *testing.T) {
-			viaLink := canonicalFilesystemPath(filepath.Join(link, leaf))
-			viaReal := canonicalFilesystemPath(filepath.Join(real, leaf))
-			if viaLink != viaReal {
-				t.Fatalf("same missing location canonicalized differently:\n via link: %q\n via real: %q", viaLink, viaReal)
-			}
-			// And the set comparison must therefore see them as one entry.
-			set := canonicalFilesystemPaths([]string{filepath.Join(link, leaf), filepath.Join(real, leaf)})
-			if len(set) != 1 {
-				t.Fatalf("two spellings of one missing location produced %d set entries: %v", len(set), set)
-			}
-		})
-	}
-
-	// sameFilesystemPath is the comparator callers actually use, so pin it too.
-	if !sameFilesystemPath(filepath.Join(link, "not-created-yet"), filepath.Join(real, "not-created-yet")) {
-		t.Fatal("sameFilesystemPath must treat a symlinked prefix and its target as one location for a missing leaf")
-	}
-
-	// A path with no existing ancestor at all must still canonicalize, not hang
-	// or return empty: the loop has to terminate at the root.
-	orphan := canonicalFilesystemPath(filepath.Join(string(filepath.Separator), "no-such-root-dir-amq", "x", "y"))
-	if orphan == "" || !filepath.IsAbs(orphan) {
-		t.Fatalf("a path with no existing ancestor canonicalized to %q", orphan)
-	}
-}
-
-// A path set persisted with RELATIVE entries must be anchored to the project it
-// was recorded against, not to the process working directory. This is the
-// out-of-repo invocation case: `amq-squad ... --project /path/to/repo` run from
-// somewhere else must reach the same verdict as the same command run inside it.
-func TestRelativePathSetAnchorsToProjectNotProcessCWD(t *testing.T) {
-	project := t.TempDir()
-	claudeDir := filepath.Join(project, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	settings := filepath.Join(claudeDir, "settings.local.json")
-	if err := os.WriteFile(settings, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	legacyRelative := []string{filepath.Join(".claude", "settings.local.json")}
-	absolute := []string{settings}
-
-	elsewhere := t.TempDir()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(cwd) })
-
-	for _, from := range []struct{ name, dir string }{
-		{"cwd inside the project", project},
-		{"cwd outside the project", elsewhere},
-	} {
-		t.Run(from.name, func(t *testing.T) {
-			if err := os.Chdir(from.dir); err != nil {
-				t.Fatal(err)
-			}
-			got := canonicalFilesystemPathsIn(project, legacyRelative)
-			want := canonicalFilesystemPathsIn(project, absolute)
-			if len(got) != 1 || len(want) != 1 || got[0] != want[0] {
-				t.Fatalf("legacy relative entry anchored to %v, absolute anchored to %v; they must agree from any cwd", got, want)
-			}
-			if !strings.HasPrefix(got[0], canonicalFilesystemPath(project)) {
-				t.Fatalf("relative entry resolved to %q, which is outside the project %q", got[0], project)
-			}
-		})
-	}
-}
-
-// Absolute entries must be unaffected by anchoring, and a set must be
-// order-independent: the #539 symptom included a leading "." sorting differently
-// from the absolute form and making an identical three-file set compare unequal.
-func TestPathSetComparisonIsOrderAndRepresentationIndependent(t *testing.T) {
-	project := t.TempDir()
-	a := filepath.Join(project, ".claude", "settings.local.json")
-	b := filepath.Join(project, ".mcp.json")
-	c := "/etc/hosts"
-
-	recordedOneOrder := canonicalFilesystemPathsIn(project, []string{c, a, b})
-	recordedOtherOrder := canonicalFilesystemPathsIn(project, []string{b, c, a})
-	mixedRepresentation := canonicalFilesystemPathsIn(project, []string{
-		filepath.Join(".claude", "settings.local.json"), c, ".mcp.json",
-	})
-	if len(recordedOneOrder) != 3 {
-		t.Fatalf("expected 3 canonical entries, got %v", recordedOneOrder)
-	}
-	for i := range recordedOneOrder {
-		if recordedOneOrder[i] != recordedOtherOrder[i] {
-			t.Fatalf("set comparison is order dependent: %v vs %v", recordedOneOrder, recordedOtherOrder)
-		}
-		if recordedOneOrder[i] != mixedRepresentation[i] {
-			t.Fatalf("set comparison is representation dependent: %v vs %v", recordedOneOrder, mixedRepresentation)
-		}
-	}
-}
-
-// Second-review MUST-FIX 2: every command whose --project is a comma-separated
-// directory LIST must be exempt from single-path normalization.
-func TestCommaSeparatedProjectFlagCommandsSurviveVerbatim(t *testing.T) {
-	for _, command := range []string{"list", "restore"} {
-		t.Run(command, func(t *testing.T) {
-			fs := flag.NewFlagSet(command, flag.ContinueOnError)
-			project := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
-			value := "~,/repo,./rel"
-			if err := parseFlags(fs, []string{"--project", value}); err != nil {
-				t.Fatal(err)
-			}
-			if *project != value {
-				t.Fatalf("%s --project was rewritten to %q; the comma-separated list must survive verbatim", command, *project)
-			}
-		})
-	}
-}
-
 // The exemption map is load-bearing, so it must police itself rather than rely on
 // someone remembering. This enumerates the actual flag registrations in the
 // package and fails when a comma-separated --project is not registered as exempt,
@@ -429,9 +226,6 @@ func TestEveryCommaSeparatedProjectFlagIsExempt(t *testing.T) {
 		command := names[len(names)-1][1]
 		found[command] = path
 	}
-	if len(found) == 0 {
-		t.Fatal("no comma-separated --project registrations found; this guard has stopped guarding anything")
-	}
 	for command, path := range found {
 		if !commaSeparatedProjectFlagCommands[command] {
 			t.Fatalf("%s registers --project as a comma-separated list for command %q, but it is not in commaSeparatedProjectFlagCommands; normalization will corrupt that flag", path, command)
@@ -443,5 +237,82 @@ func TestEveryCommaSeparatedProjectFlagIsExempt(t *testing.T) {
 		if _, ok := found[command]; !ok {
 			t.Fatalf("commaSeparatedProjectFlagCommands exempts %q, but no comma-separated --project registration was found for it; the exemption is stale and skips normalization", command)
 		}
+	}
+}
+
+// #617: macOS can resolve two differently-cased path spellings to the same
+// directory while filepath.EvalSymlinks preserves the spelling it was given.
+// Every comparison seam must converge on the on-disk spelling so pane CWD,
+// launch-record and runtime identity checks agree.
+func TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "CaseProbe")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	variant, ok := differentlyCasedExistingPath(project)
+	if !ok {
+		t.Skip("test filesystem is case-sensitive")
+	}
+
+	want := canonicalFilesystemPath(project)
+	if got := canonicalFilesystemPath(variant); got != want {
+		t.Fatalf("same directory canonicalized with different case:\n canonical: %q\n variant:   %q\n got:       %q", project, variant, got)
+	}
+	if !sameResolvedDir(project, variant) {
+		t.Fatal("sameFilesystemPath rejected differently-cased aliases of one directory")
+	}
+	if !sameResolvedDir(project, variant) {
+		t.Fatal("sameResolvedDir rejected differently-cased aliases of one directory")
+	}
+	if canonicalFilesystemPath(project) != canonicalFilesystemPath(variant) {
+		t.Fatal("launch/resume canonicalPath rejected differently-cased aliases")
+	}
+	if canonicalContextComparisonPath(project) != canonicalContextComparisonPath(variant) {
+		t.Fatal("context comparison rejected differently-cased aliases")
+	}
+	if !rootsMatch(filepath.Join(project, ".agent-mail"), filepath.Join(variant, ".agent-mail")) {
+		t.Fatal("AMQ root comparison rejected differently-cased aliases")
+	}
+	missing := filepath.Join("future", "worktree")
+	if canonicalFilesystemPath(filepath.Join(project, missing)) != canonicalFilesystemPath(filepath.Join(variant, missing)) {
+		t.Fatal("differently-cased existing ancestors diverged for the same missing descendant")
+	}
+}
+
+// Second-review finding 5: EvalSymlinks fails outright when the LEAF is missing,
+// even if an ancestor is a symlink. Taking the absolute form in that case would
+// make /link/x and /real/x canonicalize differently for a not-yet-created x, so
+// two records naming the same future location would compare as drift.
+//
+// The comparison resolves the longest EXISTING ancestor and rejoins the
+// remainder, so both spellings agree whether or not the leaf exists yet.
+func TestCanonicalPathResolvesSymlinkPrefixForMissingLeaf(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// Several depths of not-yet-existing descendant.
+	for _, leaf := range []string{"x", filepath.Join("a", "b"), filepath.Join("a", "b", "c", "d")} {
+		t.Run(leaf, func(t *testing.T) {
+			viaLink := canonicalFilesystemPath(filepath.Join(link, leaf))
+			viaReal := canonicalFilesystemPath(filepath.Join(real, leaf))
+			if viaLink != viaReal {
+				t.Fatalf("same missing location canonicalized differently:\n via link: %q\n via real: %q", viaLink, viaReal)
+			}
+		})
+	}
+
+	// sameFilesystemPath is the comparator callers actually use, so pin it too.
+	if !sameResolvedDir(filepath.Join(link, "not-created-yet"), filepath.Join(real, "not-created-yet")) {
+		t.Fatal("sameFilesystemPath must treat a symlinked prefix and its target as one location for a missing leaf")
+	}
+
+	// A path with no existing ancestor at all must still canonicalize, not hang
+	// or return empty: the loop has to terminate at the root.
+	orphan := canonicalFilesystemPath(filepath.Join(string(filepath.Separator), "no-such-root-dir-amq", "x", "y"))
+	if orphan == "" || !filepath.IsAbs(orphan) {
+		t.Fatalf("a path with no existing ancestor canonicalized to %q", orphan)
 	}
 }

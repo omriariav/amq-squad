@@ -1,5 +1,7 @@
-// Package launch defines the launch record written into each agent's mailbox
-// at coop exec time. It is the durable input to `amq-squad restore`.
+// Package launch defines the seat launch record, schema 1 (plan 4.3, R4,
+// R52): the core stages it and role.md under the session root (StagedDir);
+// seat-exec verifies both, publishes them into the seat's extension directory
+// and execs the provider. The record is the only source of the seat identity.
 package launch
 
 import (
@@ -7,276 +9,109 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
-	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
+// SchemaVersion stays 1: 3.0 adds fields, and every older record still
+// decodes (unknown fields are ignored, missing ones are zero). LayerName is
+// the AMQ extension namespace; FileName and RoleFileName name the files.
 const (
-	// SchemaVersion is bumped on any breaking change to the on-disk record.
 	SchemaVersion = 1
-
-	// LayerName is the AMQ extension namespace used for amq-squad metadata.
-	LayerName = "io.github.omriariav.amq-squad"
-
-	// FileName is the name of the launch record inside an agent's mailbox dir.
-	FileName = "launch.json"
+	LayerName     = "io.github.omriariav.amq-squad"
+	FileName      = "launch.json"
+	RoleFileName  = "role.md"
 )
 
-// Record is the persisted launch invocation for a single agent. New records
-// live under the amq-squad extension namespace inside the agent mailbox.
+// Record is one seat's launch record.
 type Record struct {
-	Schema  int      `json:"schema"`
-	CWD     string   `json:"cwd"`
-	Binary  string   `json:"binary"`
-	Argv    []string `json:"argv"`
-	Session string   `json:"session"`
-	// SharedWorkstream means Session was chosen as the team-wide workstream,
-	// even if the name happens to equal this agent's role or handle.
-	SharedWorkstream bool     `json:"shared_workstream,omitempty"`
-	Conversation     string   `json:"conversation,omitempty"`
-	Handle           string   `json:"handle"`
-	Role             string   `json:"role,omitempty"`
-	Root             string   `json:"root"`
-	BaseRoot         string   `json:"base_root,omitempty"`
-	RootSource       string   `json:"root_source,omitempty"`
-	AMQVersion       string   `json:"amq_version,omitempty"`
-	CodexArgs        []string `json:"codex_args,omitempty"`
-	ClaudeArgs       []string `json:"claude_args,omitempty"`
-	Launcher         string   `json:"launcher,omitempty"`
-	LauncherArgs     []string `json:"launcher_args,omitempty"`
-	Model            string   `json:"model,omitempty"`
-	ToolProfile      string   `json:"tool_profile,omitempty"`
-	ToolConfig       string   `json:"tool_config,omitempty"`
-	ToolMCPConfig    string   `json:"tool_mcp_config,omitempty"`
-	ToolAllowlist    []string `json:"tool_allowlist,omitempty"`
-	ToolBlocklist    []string `json:"tool_blocklist,omitempty"`
-	Trust            string   `json:"trust,omitempty"`
-	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
-	// NoPreauthorizeInScope records the --no-preauthorize-inscope choice so a
-	// replay never silently restores the built-in worker grant. Older records
-	// omit the field and retain the historical include-built-in behavior.
-	NoPreauthorizeInScope bool   `json:"no_preauthorize_inscope,omitempty"`
-	SpawnOrigin           string `json:"spawn_origin,omitempty"`
-	SpawnDepth            int    `json:"spawn_depth,omitempty"`
-	// AdoptionMode records how this agent became part of the visible runtime:
-	// managed_window, managed_current_window, managed_session, bare_agent_up,
-	// external, unmanaged. Status treats missing/unknown values fail-closed for
-	// operator-visible lead claims.
-	AdoptionMode string `json:"adoption_mode,omitempty"`
-	// LauncherPaneID is the tmux pane that initiated the launch when known.
-	// Comparing it to Tmux.PaneID lets status detect same-pane collapse.
-	LauncherPaneID string `json:"launcher_pane_id,omitempty"`
-	// NoRequireWake records the --no-require-wake opt-out so resume/replay
-	// reproduces it: the constraint it answers (wake cannot acquire its lock
-	// in this environment) is a property of the execution environment, not a
-	// one-shot launch decision.
-	NoRequireWake bool `json:"no_require_wake,omitempty"`
-	// NoGitignore records the AMQ 0.40.0 --no-gitignore opt-out so resume
-	// reproduces launches that intentionally leave .gitignore untouched during
-	// AMQ coop auto-init.
-	NoGitignore bool `json:"no_gitignore,omitempty"`
-	// Symphony records that this Codex launch opted into AMQ's Symphony
-	// WORKFLOW.md lifecycle hook integration. The hook patches the user's
-	// project working tree and is replayed only when this explicit bit is set.
-	Symphony bool `json:"symphony,omitempty"`
-	// NoWakeReason records the explicit compatibility reason for adopting a
-	// project lead without wake. It is intentionally separate from
-	// NoRequireWake: --no-require-wake weakens wake startup strictness, while
-	// --no-wake skips the sidecar entirely and needs an auditable reason.
-	NoWakeReason string `json:"no_wake_reason,omitempty"`
-	External     bool   `json:"external,omitempty"`
-	// OrchestratorRegistration records how an external orchestrator became
-	// wake-connected to this exact project/profile/session. It is observation
-	// evidence only: it never grants project-lead or operator authority.
-	// Registered NOC defaults carry their exact neutral-root launch generation;
-	// direct --register-orchestrator calls retain explicit provenance.
-	OrchestratorRegistration *OrchestratorRegistration `json:"orchestrator_registration,omitempty"`
-	// GoalBinding records launch-time evidence that this agent was started with
-	// its binary-specific goal input. It is optional and additive: older records
-	// omit it, and NOC/status surfaces must fall back to AMQ task + brief binding
-	// unless a visible lead record carries matching native_goal or prompt_goal evidence.
-	GoalBinding *GoalBinding `json:"goal_binding,omitempty"`
-	// PreauthorizedActions records the effective Claude --allowedTools patterns
-	// amq-squad granted at launch: explicit native values plus the narrow
-	// built-in worker action and current per-member permission_allowlist. It is
-	// audit evidence of exactly what was granted to this role; additive and
-	// omitted for legacy records and launches where no pre-authorization applied.
-	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
-	// LauncherPreauthorizedActions records only the built-in and current member
-	// policy contribution. Keeping it separate from ExplicitAllowedTools makes
-	// equal-valued grants retain their source provenance across replay.
-	LauncherPreauthorizedActions []string `json:"launcher_preauthorized_actions,omitempty"`
-	// ExplicitAllowedTools preserves native allowed-tools values that existed
-	// before launcher policy was composed. Replay removes the old merged grant,
-	// then restores these explicit values before applying current policy.
-	ExplicitAllowedTools []string `json:"explicit_allowed_tools,omitempty"`
-	// WakeInjectVia and WakeInjectArgs record AMQ 0.37.0 external wake
-	// injector settings so resume/replay can repair and restart the same
-	// digest-bound wake target later.
-	WakeInjectVia  string   `json:"wake_inject_via,omitempty"`
-	WakeInjectArgs []string `json:"wake_inject_args,omitempty"`
-	WakeInjectMode string   `json:"wake_inject_mode,omitempty"`
-	// WakeRetryUntil records the AMQ wake presentation milestone used by an
-	// external inject-via wake. Records written before AMQ 0.54 omit it; an
-	// omitted value therefore means AMQ's historical "drained" policy.
-	WakeRetryUntil string `json:"wake_retry_until,omitempty"`
-	// WakeRetryTransition is additive audit evidence that an active external
-	// re-registration upgraded an older drained retry policy to injected. It is
-	// never synthesized by a passive record read or rewrite: the registration
-	// path records the exact old/new policy while it replaces the live wake.
-	WakeRetryTransition *WakeRetryTransition `json:"wake_retry_transition,omitempty"`
-	// WakeInjectCmd records the literal instruction the wake sidecar injects on
-	// each durable-message arrival (amq wake --inject-cmd). amq-squad sets it to
-	// the standard drain instruction so an inbound directive re-engages a lead
-	// even after its active goal reaches a terminal state, via AMQ's sanctioned
-	// injector rather than a raw tmux send-keys. It is set only on the external
-	// wake path (lead register / register-orchestrator); amq coop exec has no
-	// --inject-cmd, so coop-exec restore cannot replay it. Resume repair is via
-	// re-running those register commands, which reapply the instruction; this
-	// persisted value is durable evidence of the configured injection. Additive:
-	// older records omit it.
-	WakeInjectCmd string `json:"wake_inject_cmd,omitempty"`
-	WakePID       int    `json:"wake_pid,omitempty"`
-	// WakeRecordID and WakeRecordDigest bind this launch to the exact AMQ wake
-	// lock that was created for it. They are additive: older launch records omit
-	// both fields and retain the legacy PID-only verification path.
-	WakeRecordID     string    `json:"wake_record_id,omitempty"`
-	WakeRecordDigest string    `json:"wake_record_digest,omitempty"`
-	AgentPID         int       `json:"agent_pid,omitempty"`
-	AgentTTY         string    `json:"agent_tty,omitempty"`
-	StartedAt        time.Time `json:"started_at"`
-	// StoppedAt marks a launch record as resumable but no longer live. Stop
-	// writes it only after the runtime is confirmed stopped/non-live; a fresh
-	// launch or adoption clears it. Older records omit the field and continue
-	// through the runtime liveness probes.
-	StoppedAt *time.Time `json:"stopped_at,omitempty"`
-	// TeamProfile names the profile the launch was emitted from. Empty
-	// means the implicit default profile. Captured so status / bootstrap
-	// routing can reuse the same profile without rereading flags.
-	TeamProfile string `json:"team_profile,omitempty"`
-	TeamHome    string `json:"team_home,omitempty"`
-	// PreparedRun* pins this record to the exact schema-2 run-start manifest
-	// accepted by the parent transaction. These fields are additive so legacy
-	// direct launches remain readable and continue to omit them.
-	PreparedRunGeneration    string `json:"prepared_run_generation,omitempty"`
-	PreparedRunDigest        string `json:"prepared_run_digest,omitempty"`
-	PreparedRunGoalNamespace string `json:"prepared_run_goal_namespace,omitempty"`
-	PreparedRunGoalDigest    string `json:"prepared_run_goal_digest,omitempty"`
-	PreparedRunLaunchAttempt string `json:"prepared_run_launch_attempt,omitempty"`
-	// BootstrapExpectation is additive launch identity evidence used to judge
-	// whether this exact startup prompt was acknowledged. nil is legacy_unknown.
-	BootstrapExpectation *bootstrapack.Expectation `json:"bootstrap_expectation,omitempty"`
-	// Tmux is the tmux runtime identity captured at launch time when
-	// amq-squad runs inside tmux. nil when launched outside tmux (or when
-	// tmux metadata could not be resolved). Clients detect runtime-control
-	// availability by the presence of this object, not by Schema.
-	Tmux *TmuxInfo `json:"tmux,omitempty"`
-	// Terminal is the additive backend-neutral runtime identity captured at
-	// launch time. It mirrors Tmux for tmux-backed launches so newer control
-	// planes can select a controller by backend while legacy clients keep using
-	// the stable tmux block.
-	Terminal *TerminalInfo `json:"terminal,omitempty"`
+	Schema   int    `json:"schema"`
+	Handle   string `json:"handle"`              // the seat identity (R52) is set in the seat environment from this record only
+	Root     string `json:"root"`                // AM_ROOT, the session root
+	BaseRoot string `json:"base_root,omitempty"` // AM_BASE_ROOT
+	Session  string `json:"session"`             // AM_SESSION
+
+	Runtime        string   `json:"runtime,omitempty"` // claude | codex | pi
+	Model          string   `json:"model,omitempty"`
+	Effort         string   `json:"effort,omitempty"`
+	RolePath       string   `json:"role_path,omitempty"`
+	RoleSHA256     string   `json:"role_sha256,omitempty"`
+	RulesPath      string   `json:"rules_path,omitempty"`
+	RulesSHA256    string   `json:"rules_sha256,omitempty"`
+	Branch         string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
+	Worktree       string   `json:"worktree,omitempty"`
+	AMQPath        string   `json:"amq_path,omitempty"`             // the real amq (R51)
+	EnvNeeds       []string `json:"env_needs,omitempty"`            // names the runtime declares it needs
+	CredNeeds      []string `json:"credential_needs,omitempty"`     // credential names the registry entry declares
+	Resume         bool     `json:"resume,omitempty"`               // the launch asked AMQ to resume
+	PermissionMode string   `json:"permission_mode,omitempty"`      // Claude's, checked with the hook plugin as one unit (R36)
+	ClaudeConfig   string   `json:"claude_config_sha256,omitempty"` // digest of the seat's CLAUDE_CONFIG_DIR managed files
+	ClaudePin      string   `json:"claude_pin_sha256,omitempty"`    // sha256 of the pinned claude the launch probed; seat-exec refuses pin_changed_since_probe when the registry's pin differs
+	AllowRules     string   `json:"claude_allow_rules,omitempty"`   // "permit": worktree allow rules do not refuse the seat
+	Credential     string   `json:"credential_source,omitempty"`    // where a seat credential comes from, never its value
+	PiAgentDir     string   `json:"pi_agent_dir,omitempty"`
+	// PiShim is the pi shim the launch wrote and AMQ planned; seat-exec
+	// compares argv[0] with it, never with a path from its environment.
+	PiShim      string       `json:"pi_shim,omitempty"`
+	LaunchNonce string       `json:"launch_nonce,omitempty"`
+	RequestID   string       `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
+	LaunchID    string       `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
+	Proof       *ProofTicket `json:"proof,omitempty"`      // staged only; the published copy has no token
+	Apply       *Apply       `json:"apply,omitempty"`
+	Exec        *Exec        `json:"exec,omitempty"`
+
+	CWD              string     `json:"cwd"` // older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt)
+	Binary           string     `json:"binary"`
+	Argv             []string   `json:"argv,omitempty"`
+	SharedWorkstream bool       `json:"shared_workstream,omitempty"`
+	WakeRequired     bool       `json:"wake_required,omitempty"` // the launch compiled a required AMQ wake; seat-exec re-checks it (3.0.1)
+	Conversation     string     `json:"conversation,omitempty"`
+	Role             string     `json:"role,omitempty"`
+	Launcher         string     `json:"launcher,omitempty"`
+	ToolProfile      string     `json:"tool_profile,omitempty"`
+	ToolConfig       string     `json:"tool_config,omitempty"`
+	AgentPID         int        `json:"agent_pid,omitempty"`
+	StartedAt        time.Time  `json:"started_at"`
+	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
+	TeamProfile      string     `json:"team_profile,omitempty"`
+	TeamHome         string     `json:"team_home,omitempty"`
+	Tmux             *TmuxInfo  `json:"tmux,omitempty"` // v2 pane identity, kept-dead fleet registry only
 }
 
-// WakeRetryTransition records one active-registration policy migration. An
-// omitted legacy value is normalized to "drained" in From; Source preserves
-// whether that old policy was implicit or explicitly persisted.
-type WakeRetryTransition struct {
-	From   string    `json:"from"`
-	To     string    `json:"to"`
-	Source string    `json:"source"`
-	At     time.Time `json:"at"`
+// Apply is the AMQ ApplyResult outcome the core saw for this launch (R48).
+type Apply struct {
+	Outcome       string    `json:"outcome"`
+	ReasonCode    string    `json:"reason_code,omitempty"`
+	FailureDetail string    `json:"failure_detail,omitempty"`
+	At            time.Time `json:"at"`
 }
 
-// OrchestratorRegistration is additive launch-record provenance for the
-// external orchestrator companion bound to one project run.
-type OrchestratorRegistration struct {
-	Policy                 string    `json:"policy"`
-	State                  string    `json:"state"`
-	Handle                 string    `json:"handle"`
-	ExternalRegistrationID string    `json:"external_registration_id,omitempty"`
-	ExternalGeneration     uint64    `json:"external_generation,omitempty"`
-	NOCControlRoot         string    `json:"noc_control_root,omitempty"`
-	NOCLaunchID            string    `json:"noc_launch_id,omitempty"`
-	NOCGeneration          uint64    `json:"noc_generation,omitempty"`
-	NOCRunRegistrationID   string    `json:"noc_run_registration_id,omitempty"`
-	RegisteredAt           time.Time `json:"registered_at"`
+// Exec is seat-exec's outcome: exec (identity proof, pid, raw start stamp) or refused.
+type Exec struct {
+	At           time.Time `json:"at"`
+	Outcome      string    `json:"outcome"` // exec | refused
+	ReasonCode   string    `json:"reason_code,omitempty"`
+	Detail       string    `json:"detail,omitempty"`
+	PID          int       `json:"pid,omitempty"`
+	ProcessStart string    `json:"process_start,omitempty"` // procinfo.StartToken: raw ticks or kinfo timeval
+	ProviderArgv []string  `json:"provider_argv,omitempty"`
+	// LauncherArgv is a pi seat's exec: the embedded runtime's launcher (amq-squad pi run) with the adapter's provider argv after "--".
+	LauncherArgv  []string `json:"launcher_argv,omitempty"`
+	IdentityProof string   `json:"identity_proof,omitempty"`
 }
 
-// GoalBinding is launch-time evidence for a visible lead's goal binding.
-type GoalBinding struct {
-	Mode       string `json:"mode"`
-	NativeGoal bool   `json:"native_goal"`
-	Source     string `json:"source"`
-	Command    string `json:"command,omitempty"`
-	// DeliveryState separates accepted/prepared bootstrap evidence from a
-	// reserved control action and a control action whose delivery completed.
-	// Empty is the legacy state and remains readable for pre-v2.22 records.
-	DeliveryState string `json:"delivery_state,omitempty"`
-	// Goal and AttemptID are additive typed identity for binary-specific goal
-	// delivery. Legacy native bindings omit them and remain readable through the
-	// strict generated-/goal parser; prompt_goal bindings require them so resume
-	// never has to infer structured prompt contents.
-	Goal      string `json:"goal,omitempty"`
-	AttemptID string `json:"attempt_id,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-}
-
-// TmuxInfo is the exact tmux identity of the pane an agent was launched into.
-// Pane and window ids (e.g. "%265", "@42") are stable tmux control addresses
-// and are the only values that should be used to target follow-up control.
-// WindowName is a human label that can collide and must never be treated as an
-// address.
+// TmuxInfo is the v2 tmux pane identity (kept-dead fleet registry only).
 type TmuxInfo struct {
 	Session    string `json:"session,omitempty"`
 	WindowID   string `json:"window_id,omitempty"`
 	WindowName string `json:"window_name,omitempty"`
 	PaneID     string `json:"pane_id,omitempty"`
-	// Target records how the pane was created relative to the launching
-	// environment: "current-window", "new-window", or "new-session". Empty
-	// when not known to the launcher.
-	Target string `json:"target,omitempty"`
-}
-
-// TerminalInfo is the backend-neutral runtime identity for terminal control.
-// For tmux-backed launches it intentionally duplicates the existing tmux ids
-// instead of nesting TmuxInfo, keeping the JSON shape simple for clients that
-// select behavior by backend first.
-type TerminalInfo struct {
-	Backend    string `json:"backend,omitempty"`
-	Session    string `json:"session,omitempty"`
-	WindowID   string `json:"window_id,omitempty"`
-	WindowName string `json:"window_name,omitempty"`
-	TabID      string `json:"tab_id,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	PaneID     string `json:"pane_id,omitempty"`
-	TTY        string `json:"tty,omitempty"`
 	Target     string `json:"target,omitempty"`
 }
 
-// TerminalInfoFromTmux maps the legacy tmux identity into the additive generic
-// terminal identity. Empty tmux records carry no useful control target.
-func TerminalInfoFromTmux(info *TmuxInfo) *TerminalInfo {
-	if info == nil {
-		return nil
-	}
-	if info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.Target == "" {
-		return nil
-	}
-	return &TerminalInfo{
-		Backend:    "tmux",
-		Session:    info.Session,
-		WindowID:   info.WindowID,
-		WindowName: info.WindowName,
-		PaneID:     info.PaneID,
-		Target:     info.Target,
-	}
-}
-
-// Entry is a launch record plus the mailbox directory it was discovered in.
+// Entry is a launch record plus the mailbox directory it was found in.
 type Entry struct {
 	Record   Record
 	AgentDir string
@@ -284,22 +119,21 @@ type Entry struct {
 }
 
 // ExtensionDir returns the amq-squad extension directory for an agent mailbox.
-func ExtensionDir(agentDir string) string {
-	return filepath.Join(agentDir, "extensions", LayerName)
+func ExtensionDir(agentDir string) string { return filepath.Join(agentDir, "extensions", LayerName) }
+
+// Path is the published record of an agent mailbox; LegacyPath is pre-v0.6.
+func Path(agentDir string) string { return filepath.Join(ExtensionDir(agentDir), FileName) }
+
+func LegacyPath(agentDir string) string { return filepath.Join(agentDir, FileName) }
+
+// StagedDir is where the core stages a seat's record and role before the
+// launch: <session root>/extensions/amq-squad/launch/<handle>. guard
+// protects <root>/extensions/amq-squad/, so a seat cannot rewrite it.
+func StagedDir(root, handle string) string {
+	return filepath.Join(root, "extensions", "amq-squad", "launch", handle)
 }
 
-// Path returns the v0.6+ launch record path for an agent mailbox.
-func Path(agentDir string) string {
-	return filepath.Join(ExtensionDir(agentDir), FileName)
-}
-
-// LegacyPath returns the pre-v0.6 launch record path for an agent mailbox.
-func LegacyPath(agentDir string) string {
-	return filepath.Join(agentDir, FileName)
-}
-
-// ExistingPath returns the launch record path that should be read, preferring
-// the extension namespace and falling back to the legacy direct-agent path.
+// ExistingPath prefers the extension record and falls back to the legacy path.
 func ExistingPath(agentDir string) string {
 	p := Path(agentDir)
 	if _, err := os.Stat(p); err == nil {
@@ -311,394 +145,106 @@ func ExistingPath(agentDir string) string {
 	return p
 }
 
-// HasRecord reports whether either the extension or legacy record exists.
-func HasRecord(agentDir string) bool {
-	if _, err := os.Stat(Path(agentDir)); err == nil {
-		return true
-	}
-	if _, err := os.Stat(LegacyPath(agentDir)); err == nil {
-		return true
-	}
-	return false
-}
-
-// Write atomically writes the record into the agent's amq-squad extension dir.
-// The agent mailbox is expected to exist (coop exec creates it), but Write
-// also creates missing parents so the record can be written pre-exec.
-func Write(agentDir string, rec Record) error {
-	return WithRecordLock(agentDir, func() error { return WriteUnderRecordLock(agentDir, rec) })
-}
-
-// RecordLockPath is the shared writer lock for one launch record.
-func RecordLockPath(agentDir string) string { return Path(agentDir) + ".lock" }
-
-// WithRecordLock serializes launch record writers and narrow conditional
-// read/write control-plane operations.
+// WithRecordLock serializes writers of one agent's published record.
 func WithRecordLock(agentDir string, fn func() error) error {
 	if err := os.MkdirAll(ExtensionDir(agentDir), 0o700); err != nil {
 		return fmt.Errorf("ensure extension dir: %w", err)
 	}
-	return flock.WithLock(RecordLockPath(agentDir), fn)
+	return flock.WithLock(Path(agentDir)+".lock", fn)
 }
 
-// WriteUnderRecordLock writes a record while the caller holds WithRecordLock.
-// It is exported only for compound compare-and-write sections.
+// WriteUnderRecordLock writes an agent's published record (callers hold WithRecordLock).
 func WriteUnderRecordLock(agentDir string, rec Record) error {
-	dir := ExtensionDir(agentDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(ExtensionDir(agentDir), 0o700); err != nil {
 		return fmt.Errorf("ensure extension dir: %w", err)
 	}
-	path := Path(agentDir)
-	tmp := path + ".tmp"
+	return WriteFile(Path(agentDir), rec)
+}
 
+// WriteFile writes rec to path atomically: an exclusive random temp file per
+// writer (atomicfile), 0600, fsync, rename (2b-2 fix 3c: no shared temp name).
+func WriteFile(path string, rec Record) error {
+	b, err := Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(path, b, 0o600)
+}
+
+// Marshal encodes rec as schema 1.
+func Marshal(rec Record) ([]byte, error) {
 	rec.Schema = SchemaVersion
 	b, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal launch record: %w", err)
+		return nil, fmt.Errorf("marshal launch record: %w", err)
 	}
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
+	return append(b, '\n'), nil
 }
 
-// Read loads a launch record from an agent's mailbox directory. Returns
-// os.ErrNotExist if no launch.json is present.
+// Decode parses a record of any schema-1 vintage.
+func Decode(b []byte) (Record, error) {
+	var rec Record
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return Record{}, err
+	}
+	if rec.Schema > SchemaVersion {
+		return Record{}, fmt.Errorf("launch record schema %d is newer than %d", rec.Schema, SchemaVersion)
+	}
+	return rec, nil
+}
+
+// Read loads an agent's published record; os.ErrNotExist when absent.
 func Read(agentDir string) (Record, error) {
 	path := ExistingPath(agentDir)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Record{}, err
 	}
-	var rec Record
-	if err := json.Unmarshal(b, &rec); err != nil {
+	rec, err := Decode(b)
+	if err != nil {
 		return Record{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return rec, nil
 }
 
-// ScanEntries walks a projectRoot for launch.json records across AMQ layouts:
-//
-//	<projectRoot>/.agent-mail/<profile>/<session>/agents/<handle>/extensions/<layer>/launch.json
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/extensions/<layer>/launch.json
-//	<projectRoot>/.agent-mail/agents/<handle>/extensions/<layer>/launch.json
-//	<projectRoot>/.agent-mail/<profile>/<session>/agents/<handle>/launch.json
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json
-//	<projectRoot>/.agent-mail/agents/<handle>/launch.json
-//
-// Returns every record found. Order is whatever filepath.Glob returns;
-// callers that care about ordering should sort the result themselves.
+// ScanEntries scans <projectRoot>/.agent-mail (see ScanEntriesInRoot).
 func ScanEntries(projectRoot string) ([]Entry, error) {
 	return ScanEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
 }
 
-// ScanEntriesInRoot walks an AMQ base root for launch.json records across
-// extension and legacy layouts.
-func ScanEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
-	patterns := []struct {
-		glob     string
-		agentDir func(string) string
-	}{
-		{
-			glob: filepath.Join(baseRoot, "*", "*", "agents", "*", "extensions", LayerName, FileName),
-			agentDir: func(path string) string {
-				return filepath.Dir(filepath.Dir(filepath.Dir(path)))
-			},
-		},
-		{
-			glob: filepath.Join(baseRoot, "*", "agents", "*", "extensions", LayerName, FileName),
-			agentDir: func(path string) string {
-				return filepath.Dir(filepath.Dir(filepath.Dir(path)))
-			},
-		},
-		{
-			glob: filepath.Join(baseRoot, "agents", "*", "extensions", LayerName, FileName),
-			agentDir: func(path string) string {
-				return filepath.Dir(filepath.Dir(filepath.Dir(path)))
-			},
-		},
-		{
-			glob: filepath.Join(baseRoot, "*", "agents", "*", FileName),
-			agentDir: func(path string) string {
-				return filepath.Dir(path)
-			},
-		},
-		{
-			glob: filepath.Join(baseRoot, "*", "*", "agents", "*", FileName),
-			agentDir: func(path string) string {
-				return filepath.Dir(path)
-			},
-		},
-		{
-			glob: filepath.Join(baseRoot, "agents", "*", FileName),
-			agentDir: func(path string) string {
-				return filepath.Dir(path)
-			},
-		},
-	}
+// ScanEntriesInRoot finds launch records under an AMQ base root, in the
+// extension and legacy layouts at the base root, session and profile/session
+// levels. A mailbox without a record is not inferred (3.0 drops that).
+func ScanEntriesInRoot(_ string, baseRoot string) ([]Entry, error) {
 	seen := map[string]bool{}
 	var out []Entry
-	for _, p := range patterns {
-		matches, err := filepath.Glob(p.glob)
-		if err != nil {
-			return nil, fmt.Errorf("glob %s: %w", p.glob, err)
-		}
-		for _, m := range matches {
-			agentDir := p.agentDir(m)
-			if seen[agentDir] {
-				continue
+	for _, levels := range [][]string{{"*", "*"}, {"*"}, nil} {
+		for _, legacy := range []bool{false, true} {
+			parts := append(append([]string{baseRoot}, levels...), "agents", "*")
+			if legacy {
+				parts = append(parts, FileName)
+			} else {
+				parts = append(parts, "extensions", LayerName, FileName)
 			}
-			seen[agentDir] = true
-			rec, err := Read(agentDir)
+			glob := filepath.Join(parts...)
+			matches, err := filepath.Glob(glob)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("glob %s: %w", glob, err)
 			}
-			out = append(out, Entry{
-				Record:   rec,
-				AgentDir: agentDir,
-				Source:   FileName,
-			})
-		}
-	}
-	return out, nil
-}
-
-// ScanRestorableEntries returns launch records plus best-effort records
-// inferred from older AMQ mailboxes that predate amq-squad launch.json.
-func ScanRestorableEntries(projectRoot string) ([]Entry, error) {
-	return ScanRestorableEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
-}
-
-// ScanRestorableEntriesInRoot returns launch records plus best-effort records
-// inferred from older AMQ mailboxes under a resolved AMQ base root.
-func ScanRestorableEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
-	entries, err := ScanEntriesInRoot(projectRoot, baseRoot)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	for _, e := range entries {
-		seen[e.AgentDir] = true
-	}
-
-	legacy, err := ScanLegacyEntriesInRoot(projectRoot, baseRoot)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range legacy {
-		if seen[e.AgentDir] {
-			continue
-		}
-		entries = append(entries, e)
-	}
-	return entries, nil
-}
-
-// ScanLegacyEntries infers restorable launches from AMQ agent mailbox
-// directories that do not have launch.json. The binary is inferred from the
-// handle, which matches AMQ's default handle derivation for claude/codex.
-func ScanLegacyEntries(projectRoot string) ([]Entry, error) {
-	return ScanLegacyEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
-}
-
-// ScanLegacyEntriesInRoot infers restorable launches under a resolved AMQ base root.
-func ScanLegacyEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
-	agentDirs, err := legacyAgentDirs(baseRoot)
-	if err != nil {
-		return nil, err
-	}
-	var out []Entry
-	for _, agentDir := range agentDirs {
-		if HasRecord(agentDir) {
-			continue
-		}
-		if !hasLegacyActivity(agentDir) {
-			continue
-		}
-		rec, err := legacyRecord(projectRoot, baseRoot, agentDir)
-		if err != nil {
-			continue
-		}
-		out = append(out, Entry{
-			Record:   rec,
-			AgentDir: agentDir,
-			Source:   "amq history",
-		})
-	}
-	return out, nil
-}
-
-func legacyAgentDirs(baseRoot string) ([]string, error) {
-	patterns := []string{
-		filepath.Join(baseRoot, "*", "*", "agents", "*"),
-		filepath.Join(baseRoot, "*", "agents", "*"),
-		filepath.Join(baseRoot, "agents", "*"),
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range patterns {
-		matches, err := filepath.Glob(p)
-		if err != nil {
-			return nil, fmt.Errorf("glob %s: %w", p, err)
-		}
-		for _, m := range matches {
-			info, err := os.Stat(m)
-			if err != nil || !info.IsDir() || seen[m] {
-				continue
-			}
-			seen[m] = true
-			out = append(out, m)
-		}
-	}
-	return out, nil
-}
-
-func hasLegacyActivity(agentDir string) bool {
-	if _, err := os.Stat(filepath.Join(agentDir, "presence.json")); err == nil {
-		return true
-	}
-	for _, name := range []string{"inbox", "outbox", "receipts", "dlq"} {
-		if hasFiles(filepath.Join(agentDir, name)) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasFiles(root string) bool {
-	found := false
-	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		found = true
-		return filepath.SkipAll
-	})
-	return found
-}
-
-func legacyRecord(projectRoot, baseRoot, agentDir string) (Record, error) {
-	rel, err := filepath.Rel(baseRoot, agentDir)
-	if err != nil {
-		return Record{}, err
-	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	if len(parts) < 2 {
-		return Record{}, fmt.Errorf("invalid agent dir: %s", agentDir)
-	}
-
-	session := ""
-	root := baseRoot
-	handle := filepath.Base(agentDir)
-	binary, ok := inferLegacyBinary(handle)
-	if !ok {
-		return Record{}, fmt.Errorf("cannot infer binary for legacy handle: %s", handle)
-	}
-	if parts[0] != "agents" {
-		if len(parts) >= 4 && parts[2] == "agents" {
-			session = parts[1]
-			root = filepath.Join(baseRoot, parts[0], session)
-		} else {
-			session = parts[0]
-			root = filepath.Join(baseRoot, session)
-		}
-	}
-
-	rec := Record{
-		CWD:       projectRoot,
-		Binary:    binary,
-		Session:   session,
-		Handle:    handle,
-		Role:      inferLegacyRole(handle),
-		Root:      root,
-		BaseRoot:  baseRoot,
-		StartedAt: legacyActivityTime(agentDir),
-	}
-	if len(parts) >= 4 && parts[2] == "agents" {
-		rec.TeamProfile = parts[0]
-	}
-	return rec, nil
-}
-
-func inferLegacyBinary(handle string) (string, bool) {
-	switch handle {
-	case "claude", "codex":
-		return handle, true
-	default:
-		for _, binary := range []string{"claude", "codex"} {
-			if strings.HasPrefix(handle, binary+"-") {
-				return binary, true
+			for _, m := range matches {
+				agentDir := filepath.Dir(m)
+				if !legacy {
+					agentDir = filepath.Dir(filepath.Dir(agentDir))
+				}
+				if seen[agentDir] {
+					continue
+				}
+				seen[agentDir] = true
+				if rec, err := Read(agentDir); err == nil {
+					out = append(out, Entry{Record: rec, AgentDir: agentDir, Source: FileName})
+				}
 			}
 		}
-		return "", false
-	}
-}
-
-func inferLegacyRole(handle string) string {
-	for _, binary := range []string{"claude", "codex"} {
-		prefix := binary + "-"
-		if strings.HasPrefix(handle, prefix) {
-			return strings.TrimPrefix(handle, prefix)
-		}
-	}
-	return ""
-}
-
-func legacyActivityTime(agentDir string) time.Time {
-	if t, ok := readPresenceLastSeen(filepath.Join(agentDir, "presence.json")); ok {
-		return t
-	}
-	var latest time.Time
-	filepath.WalkDir(agentDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		if info.ModTime().After(latest) {
-			latest = info.ModTime()
-		}
-		return nil
-	})
-	return latest
-}
-
-func readPresenceLastSeen(path string) (time.Time, bool) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return time.Time{}, false
-	}
-	var parsed struct {
-		LastSeen time.Time `json:"last_seen"`
-	}
-	if err := json.Unmarshal(b, &parsed); err != nil || parsed.LastSeen.IsZero() {
-		return time.Time{}, false
-	}
-	return parsed.LastSeen, true
-}
-
-// Scan walks a projectRoot for launch.json records across AMQ layouts:
-//
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/extensions/<layer>/launch.json
-//	<projectRoot>/.agent-mail/agents/<handle>/extensions/<layer>/launch.json
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json
-//	<projectRoot>/.agent-mail/agents/<handle>/launch.json
-//
-// Returns every record found. Order is whatever filepath.Glob returns;
-// callers that care about ordering should sort the result themselves.
-func Scan(projectRoot string) ([]Record, error) {
-	entries, err := ScanEntries(projectRoot)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Record, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, e.Record)
 	}
 	return out, nil
 }

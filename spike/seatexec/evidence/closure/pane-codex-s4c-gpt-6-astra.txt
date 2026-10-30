@@ -1,0 +1,47 @@
+
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.147.0 -> 0.163.0         │
+│ Run npm install -g @openai/codex to update.     │
+│                                                 │
+│ See full release notes:                         │
+│ https://github.com/openai/codex/releases/latest │
+╰─────────────────────────────────────────────────╯
+
+╭─────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.147.0)                  │
+│                                             │
+│ model:     loading   /model to change       │
+│ directory: ~/.amq-squad/spike/s4/project-wt │
+╰─────────────────────────────────────────────╯
+
+⚠ Ignored invalid status line item: "thread-name".
+
+╭──────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.147.0)                       │
+│                                                  │
+│ model:     gpt-6-astra medium   /model to change │
+│ directory: ~/.amq-squad/spike/s4/project-wt      │
+╰──────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+
+› Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH.
+  Run exactly one shell command: cat "$AMQ_SQUAD_ROLE_PATH". Then reply with
+  the token S4_ROLE_VISIBLE, your seat handle from the role, and stop.
+
+
+⚠ Model metadata for `gpt-6-astra` not found. Defaulting to fallback metadata;
+  this can degrade performance and cause issues.
+
+• You have 3 usage limit resets available. Run /usage to use one.
+
+■ {"type":"error","status":400,"error":
+{"type":"invalid_request_error","message":"The 'gpt-6-astra' model requires a
+newer version of Codex. Please upgrade to the latest app or CLI and try
+again."}}
+
+
+› Run /review on my current changes
+
+  gpt-6-astra medium · s4-codex-wt · No changes · Approve for me · Context 100%…

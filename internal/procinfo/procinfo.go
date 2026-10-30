@@ -29,16 +29,6 @@ const psArgsAttempts = 3
 // unavailable or failed, and Args then falls back to ps.
 var argsNative = readArgsNative
 
-// TTY returns the exact controlling terminal endpoint for pid without
-// spawning a helper process. ok=false means the platform cannot observe one
-// or the process has no controlling terminal.
-func TTY(pid int) (string, bool) {
-	if pid <= 0 {
-		return "", false
-	}
-	return readTTYNative(pid)
-}
-
 // StartTime returns the operating system's recorded process birth time without
 // spawning a helper process. It lets launch-record consumers distinguish the
 // original process from a later process that reused the same PID and binary.
@@ -49,11 +39,7 @@ func StartTime(pid int) (time.Time, bool) {
 	return readStartTimeNative(pid)
 }
 
-// Alive reports whether pid is a live process via signal-0. EPERM means the
-// process EXISTS but is owned by another user (POSIX guarantees the target
-// exists when EPERM is returned), so it counts as alive; only ESRCH/other mean
-// gone. Treating EPERM as dead previously mislabeled live cross-user/sandboxed
-// agents as stale (#87).
+// Alive reports whether pid is a live process via signal-0.
 func Alive(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -83,21 +69,6 @@ func Match(pid int, predicate func(args string) bool) bool {
 	return predicate(args)
 }
 
-// ChildrenIndex takes one fork-free snapshot of the process table and returns a
-// function mapping a pid to its IMMEDIATE child pids (suitable as the pidTree
-// seam for tmux pane resolution: walking a pane's pane_pid down to an agent
-// pid). The returned function is a closure over the snapshot, so repeated
-// lookups do not re-read the table. err is non-nil when the table cannot be
-// read (e.g. unsupported platform); callers should treat that as "no pid tree"
-// and degrade to non-pid resolution rather than failing.
-func ChildrenIndex() (func(pid int) []int, error) {
-	index, err := parentChildIndex()
-	if err != nil {
-		return nil, err
-	}
-	return func(pid int) []int { return index[pid] }, nil
-}
-
 // Args returns pid's full command line, fork-free where possible (darwin sysctl
 // / linux /proc), falling back to ps (with retry on transient fork failures)
 // otherwise. ok=false means it could not be read at all.
@@ -111,10 +82,7 @@ func Args(pid int) (string, bool) {
 	return readArgsWithRetry(pid, readPSArgs)
 }
 
-// readPSArgs reads pid's command line via ps. -ww disables column truncation.
-// ran is true when ps actually executed (so a nil-args/non-zero result is a
-// DEFINITIVE "no such pid"); ran is false when ps could not be started (a
-// transient condition worth retrying).
+// readPSArgs reads pid's command line via ps.
 func readPSArgs(pid int) (args string, ran bool, err error) {
 	out, e := exec.Command("ps", "-ww", "-o", "args=", "-p", fmt.Sprintf("%d", pid)).Output()
 	if e == nil {

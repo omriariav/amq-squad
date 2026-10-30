@@ -1,191 +1,51 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
-	"time"
 )
 
-var deliveryAttemptSequence atomic.Uint64
-
-type durableInvocationDisposition string
-
-const (
-	durableInvocationInvoked            durableInvocationDisposition = "invoked"
-	durableInvocationReconciledExisting durableInvocationDisposition = "reconciled_existing"
-)
-
-type durableInvocationResult struct {
-	disposition         durableInvocationDisposition
-	reconciledMessageID string
-}
-
-func newDurableInvokedResult() durableInvocationResult {
-	return durableInvocationResult{disposition: durableInvocationInvoked}
-}
-
-func newDurableReconciledExistingResult(messageID string) (durableInvocationResult, error) {
-	result := durableInvocationResult{disposition: durableInvocationReconciledExisting, reconciledMessageID: messageID}
-	if err := result.validate(); err != nil {
-		return durableInvocationResult{}, err
-	}
-	return result, nil
-}
-
-func (r durableInvocationResult) Disposition() durableInvocationDisposition { return r.disposition }
-func (r durableInvocationResult) ReconciledMessageID() string               { return r.reconciledMessageID }
-
-func (r durableInvocationResult) validate() error {
-	switch r.disposition {
-	case durableInvocationInvoked:
-		if r.reconciledMessageID != "" {
-			return fmt.Errorf("durable invocation result cannot bind a reconciled message id when invoked")
-		}
-		return nil
-	case durableInvocationReconciledExisting:
-		if strings.TrimSpace(r.reconciledMessageID) == "" || strings.TrimSpace(r.reconciledMessageID) != r.reconciledMessageID || strings.ContainsAny(r.reconciledMessageID, "\r\n\x00") {
-			return fmt.Errorf("durable invocation reconciled message id is required and must be canonical")
-		}
-		return nil
-	default:
-		return fmt.Errorf("durable invocation result disposition %q is invalid", r.disposition)
-	}
-}
-
-type durableInvocationBoundary struct {
-	run func(func() error) (durableInvocationResult, error)
-}
-
-func newDurableInvocationBoundary(run func(func() error) (durableInvocationResult, error)) (durableInvocationBoundary, error) {
-	if run == nil {
-		return durableInvocationBoundary{}, fmt.Errorf("durable invocation boundary callback is required")
-	}
-	return durableInvocationBoundary{run: run}, nil
-}
-
-func (b durableInvocationBoundary) Run(invoke func() error) (durableInvocationResult, error) {
-	if b.run == nil || invoke == nil {
-		return durableInvocationResult{}, fmt.Errorf("durable invocation boundary and callback are required")
-	}
-	return b.run(invoke)
-}
-
-func directDurableInvocationBoundary() durableInvocationBoundary {
-	boundary, _ := newDurableInvocationBoundary(func(invoke func() error) (durableInvocationResult, error) {
-		if err := invoke(); err != nil {
-			return durableInvocationResult{}, err
-		}
-		return newDurableInvokedResult(), nil
-	})
-	return boundary
-}
-
-// ownedAMQSendOptions contains transport controls plus the recipient resolved
-// for an AMQ reply. Sends carry their recipient in --to; replies do not, so the
-// caller must supply the sender resolved from the original message.
+// ownedAMQSendOptions contains the transport controls for one owned send.
 type ownedAMQSendOptions struct {
-	Invocation     durableInvocationBoundary
-	WaitPosture    waitPostureRequest
-	ReplyRecipient string
+	WaitPosture waitPostureRequest
 }
 
 type ownedAMQSendResult struct {
-	MessageID  string
-	Invoked    bool
-	Reconciled bool
+	MessageID string
+	Invoked   bool
 }
 
-// runOwnedAMQSend is the single amq-squad-owned send boundary. It preserves
-// the release replay guard and wait-posture guard, captures AMQ output on
-// failure, and returns AMQ's stable message id without writing local state.
+// runOwnedAMQSend is the single amq-squad-owned send boundary: the
+// wait-posture guard, one AMQ invocation, and AMQ's stable message id
+// (recovered from a committed-delivery report when the send itself failed
+// after the commit). It writes no local state. The v2 durable-invocation
+// boundary of the release answer path is gone: 3.0 release answers are typed
+// gates the core verifies (3-1), and the release flow (3-2) raises gates, not
+// mail.
 func runOwnedAMQSend(opts ownedAMQSendOptions, req amqCommandRequest) ([]byte, ownedAMQSendResult, error) {
-	boundary := opts.Invocation
-	if boundary.run == nil {
-		boundary = directDurableInvocationBoundary()
+	if err := guardOwnedWait(opts.WaitPosture); err != nil {
+		return nil, ownedAMQSendResult{}, err
 	}
-
-	callbackCount := 0
-	invoked := false
-	var out []byte
-	var sendErr error
-	var boundaryPanic any
-	boundaryResult, boundaryErr := func() (result durableInvocationResult, err error) {
-		defer func() { boundaryPanic = recover() }()
-		return boundary.Run(func() error {
-			callbackCount++
-			if callbackCount != 1 {
-				return fmt.Errorf("durable invocation callback is single-use")
-			}
-			if err := guardOwnedWait(opts.WaitPosture); err != nil {
-				return err
-			}
-			invoked = true
-			out, sendErr = runAMQCommand(req)
-			return nil
-		})
-	}()
-	if boundaryPanic != nil {
-		panic(boundaryPanic)
-	}
-
-	if boundaryResult != (durableInvocationResult{}) {
-		if err := boundaryResult.validate(); err != nil {
-			return out, ownedAMQSendResult{Invoked: invoked}, errors.Join(boundaryErr, err, sendErr)
-		}
-	}
-	switch boundaryResult.Disposition() {
-	case durableInvocationReconciledExisting:
-		if callbackCount != 0 {
-			return out, ownedAMQSendResult{Invoked: invoked}, errors.Join(boundaryErr, fmt.Errorf("reconciled invocation unexpectedly called AMQ"), sendErr)
-		}
-		return out, ownedAMQSendResult{MessageID: boundaryResult.ReconciledMessageID(), Reconciled: true}, boundaryErr
-	case durableInvocationInvoked:
-		if callbackCount != 1 || !invoked {
-			return out, ownedAMQSendResult{Invoked: invoked}, errors.Join(boundaryErr, fmt.Errorf("invoked result requires exactly one AMQ transport invocation"), sendErr)
-		}
-	case "":
-		if callbackCount == 0 {
-			return out, ownedAMQSendResult{}, errors.Join(boundaryErr, fmt.Errorf("durable invocation boundary ended before AMQ invocation"), sendErr)
-		}
-		if !invoked {
-			if combined := errors.Join(boundaryErr, sendErr); combined != nil {
-				return out, ownedAMQSendResult{}, combined
-			}
-			return out, ownedAMQSendResult{}, fmt.Errorf("durable invocation callback ended before AMQ transport invocation")
-		}
-	default:
-		return out, ownedAMQSendResult{Invoked: invoked}, errors.Join(boundaryErr, fmt.Errorf("unsupported durable invocation disposition %q", boundaryResult.Disposition()), sendErr)
-	}
-
+	out, sendErr := runAMQCommand(req)
 	messageID := parseSentMessageID(string(out))
-	if evidence, ok := parseCommittedDeliveryEvidence(string(out), sendErr); ok && committedDeliveryEvidenceMatchesRequest(opts, req, evidence) {
-		messageID = strings.TrimSpace(evidence.MessageID)
+	if evidence, ok := parseCommittedDeliveryEvidence(string(out), sendErr); ok && committedDeliveryEvidenceMatchesRequest(req, evidence) {
+		messageID = evidence.MessageID
 	}
 	if sendErr == nil && messageID == "" {
 		sendErr = fmt.Errorf("AMQ exited successfully without a parseable stable message id")
 	}
-	return out, ownedAMQSendResult{MessageID: messageID, Invoked: invoked}, errors.Join(boundaryErr, sendErr)
+	return out, ownedAMQSendResult{MessageID: messageID, Invoked: true}, sendErr
 }
 
-func deliveryAttemptID(now time.Time, kind, role, handle string) string {
-	seed := sanitizeWorkstreamName(strings.Join([]string{kind, role, handle}, "-"))
-	if seed == "" {
-		seed = "delivery"
-	}
-	return fmt.Sprintf("%s-%s-p%d-%016x", now.Format("20060102T150405.000000000Z"), seed, os.Getpid(), deliveryAttemptSequence.Add(1))
-}
-
+// parseSentMessageID reads AMQ's id from its JSON output, or from a
+// "Sent <id>" / "Replied <id>" line.
 func parseSentMessageID(out string) string {
 	var native struct {
 		ID string `json:"id"`
 	}
-	if payload := firstJSONObject([]byte(out)); len(payload) > 0 && json.Unmarshal(payload, &native) == nil && strings.TrimSpace(native.ID) != "" {
+	if i := strings.IndexByte(out, '{'); i >= 0 && json.NewDecoder(strings.NewReader(out[i:])).Decode(&native) == nil && strings.TrimSpace(native.ID) != "" {
 		return strings.TrimSpace(native.ID)
 	}
 	for _, line := range strings.Split(out, "\n") {
@@ -194,10 +54,8 @@ func parseSentMessageID(out string) string {
 		if !ok {
 			rest, ok = strings.CutPrefix(line, "Replied ")
 		}
-		if ok {
-			if fields := strings.Fields(rest); len(fields) > 0 {
-				return fields[0]
-			}
+		if fields := strings.Fields(rest); ok && len(fields) > 0 {
+			return fields[0]
 		}
 	}
 	return ""
@@ -208,131 +66,56 @@ type committedDeliveryEvidence struct {
 	FinalPath string
 }
 
+// parseCommittedDeliveryEvidence reads AMQ's "message <id> has a committed
+// delivery; ... committed at <path>, but durability is indeterminate:" line
+// from a failed send.
 func parseCommittedDeliveryEvidence(out string, sendErr error) (committedDeliveryEvidence, bool) {
 	if sendErr == nil {
 		return committedDeliveryEvidence{}, false
 	}
-	text := out + "\n" + sendErr.Error()
-	const idSuffix = " has a committed delivery;"
-	const pathPrefix = " committed at "
-	const pathSuffix = ", but durability is indeterminate:"
-	for _, line := range strings.Split(text, "\n") {
-		idEnd := strings.Index(line, idSuffix)
-		if idEnd < 0 {
+	const idSuffix, pathPrefix, pathSuffix = " has a committed delivery;", " committed at ", ", but durability is indeterminate:"
+	for _, line := range strings.Split(out+"\n"+sendErr.Error(), "\n") {
+		before, after, ok := strings.Cut(line, idSuffix)
+		idStart := strings.LastIndex(before, "message ")
+		_, rest, okPath := strings.Cut(after, pathPrefix)
+		finalPath, _, okEnd := strings.Cut(rest, pathSuffix)
+		if !ok || idStart < 0 || !okPath || !okEnd {
 			continue
 		}
-		idStart := strings.LastIndex(line[:idEnd], "message ")
-		if idStart < 0 {
-			continue
+		id, finalPath := strings.TrimSpace(before[idStart+len("message "):]), strings.TrimSpace(finalPath)
+		if safeCommittedName(id) && filepath.IsAbs(finalPath) && filepath.Clean(finalPath) == finalPath {
+			return committedDeliveryEvidence{MessageID: id, FinalPath: finalPath}, true
 		}
-		messageID := strings.TrimSpace(line[idStart+len("message ") : idEnd])
-		pathStart := strings.Index(line[idEnd+len(idSuffix):], pathPrefix)
-		if !safeCommittedMessageID(messageID) || pathStart < 0 {
-			continue
-		}
-		pathStart += idEnd + len(idSuffix) + len(pathPrefix)
-		pathEnd := strings.Index(line[pathStart:], pathSuffix)
-		if pathEnd < 0 {
-			continue
-		}
-		finalPath := strings.TrimSpace(line[pathStart : pathStart+pathEnd])
-		if !filepath.IsAbs(finalPath) || filepath.Clean(finalPath) != finalPath {
-			continue
-		}
-		return committedDeliveryEvidence{MessageID: messageID, FinalPath: finalPath}, true
 	}
 	return committedDeliveryEvidence{}, false
 }
 
-func safeCommittedMessageID(id string) bool {
-	if id == "" || id == "." || id == ".." || strings.HasPrefix(id, ".") || strings.Contains(id, "..") || filepath.Base(id) != id {
+// safeCommittedName is one path segment of [A-Za-z0-9._-], not starting with
+// a dot and holding no "..".
+func safeCommittedName(id string) bool {
+	if id == "" || strings.HasPrefix(id, ".") || strings.Contains(id, "..") {
 		return false
 	}
-	for _, r := range id {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
-			return false
-		}
-	}
-	return true
+	return strings.Trim(id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") == ""
 }
 
-func committedDeliveryEvidenceMatchesRequest(opts ownedAMQSendOptions, req amqCommandRequest, evidence committedDeliveryEvidence) bool {
-	if len(req.Arg) == 0 || !safeCommittedMessageID(evidence.MessageID) {
+// committedDeliveryEvidenceMatchesRequest binds a committed-delivery report to
+// this send: a send (not a reply) to one recipient under a clean absolute
+// root, at that recipient's inbox path, and not echoed by the body itself.
+func committedDeliveryEvidenceMatchesRequest(req amqCommandRequest, evidence committedDeliveryEvidence) bool {
+	if len(req.Arg) == 0 || req.Arg[0] != "send" || !safeCommittedName(evidence.MessageID) {
 		return false
 	}
-	if committedDeliveryEvidenceEchoedByRequestBody(req, evidence) {
-		return false
-	}
-	root := amqFlagValue(req.Arg, "root")
-	if root == "" || strings.TrimSpace(root) != root || !filepath.IsAbs(root) || filepath.Clean(root) != root {
-		return false
-	}
-
-	var recipient string
-	switch req.Arg[0] {
-	case "send":
-		recipient = amqFlagValue(req.Arg, "to")
-	case "reply":
-		recipient = opts.ReplyRecipient
-	default:
-		return false
-	}
-	if !safeCommittedRecipient(recipient) {
-		return false
-	}
-
-	expected := filepath.Join(root, "agents", recipient, "inbox", "new", evidence.MessageID+".md")
-	return evidence.FinalPath == expected && filepath.Clean(evidence.FinalPath) == expected
-}
-
-func safeCommittedRecipient(recipient string) bool {
-	return recipient != "" && strings.TrimSpace(recipient) == recipient && recipient != "." && recipient != ".." && filepath.Base(recipient) == recipient
-}
-
-func committedDeliveryEvidenceEchoedByRequestBody(req amqCommandRequest, evidence committedDeliveryEvidence) bool {
 	body := amqFlagValue(req.Arg, "body")
-	if body == "" {
-		return req.Stdin != nil
+	switch {
+	case body == "" && req.Stdin != nil, body == "-" || body == "@-" || strings.HasPrefix(body, "@"):
+		return false // the transport owns these body sources: fail closed
+	case strings.Contains(body, "message "+evidence.MessageID+" has a committed delivery;") && strings.Contains(body, " committed at "+evidence.FinalPath):
+		return false
 	}
-	if body == "-" || body == "@-" || strings.HasPrefix(body, "@") {
-		// The transport owns these body sources. Without independently trusted
-		// provenance for an error line, fail closed instead of treating body
-		// content as proof that delivery committed.
-		return true
+	root, recipient := amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "to")
+	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || !safeCommittedName(recipient) {
+		return false
 	}
-	return strings.Contains(body, "message "+evidence.MessageID+" has a committed delivery;") &&
-		strings.Contains(body, " committed at "+evidence.FinalPath+", but durability is indeterminate:")
-}
-
-func firstJSONObject(data []byte) []byte {
-	start := bytes.IndexByte(data, '{')
-	if start < 0 {
-		return nil
-	}
-	depth, inString, escaped := 0, false, false
-	for i := start; i < len(data); i++ {
-		c := data[i]
-		if inString {
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == '"' {
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return data[start : i+1]
-			}
-		}
-	}
-	return nil
+	return evidence.FinalPath == filepath.Join(root, "agents", recipient, "inbox", "new", evidence.MessageID+".md")
 }

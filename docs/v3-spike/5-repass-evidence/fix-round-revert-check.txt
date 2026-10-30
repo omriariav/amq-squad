@@ -1,0 +1,240 @@
+# phase 5 re-pass, the rebase and fix round (sealchain over routing's final code; probe, watchdog, ambiguous Apply, evidence refs, items 19 and 25, question 6): revert check (each fix reverted in place, its row run, Go rows with -race, the fix restored, the row run again)
+
+## re-extraction (routing's tag bytes unchanged, sealchain.Tag): TestSealchainKeepsRoutingTagsAndOneSeed (internal/sealchain/sealchain.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tm.Write([]byte{0})\n' -> ''
+reverted run (last lines):
+    --- FAIL: TestSealchainKeepsRoutingTagsAndOneSeed (0.00s)
+        repass5_sealchain_test.go:37: the outcome row's tag changed: a2d8744d277d38c34bd99dcf596292d9206ab7cc342aad9242ec8d107a94d4d2
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.276s
+    FAIL
+
+## re-extraction (one seed per session root, shared with routing): TestSealchainKeepsRoutingTagsAndOneSeed (internal/sealchain/sealchain.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tseed, dev, ino, err := EnsureSeed(root, RoutingStarted(root) || headsExist(root))' -> '\tseed, dev, ino, err := EnsureSeed(root+"/sealed", RoutingStarted(root) || headsExist(root))'
+reverted run (last lines):
+    --- FAIL: TestSealchainKeepsRoutingTagsAndOneSeed (0.02s)
+        repass5_sealchain_test.go:58: routing first true: two seeds for one root (<nil>)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.289s
+    FAIL
+
+## re-extraction (checkHead's seed identity is sealchain's): TestRepassReportRunsTheStartChecks (internal/sealchain/sealchain.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif dev != 0 && (recordedDev != dev || recordedIno != ino) {' -> '\tif false && dev != 0 && (recordedDev != dev || recordedIno != ino) {'
+reverted run (last lines):
+    --- FAIL: TestRepassReportRunsTheStartChecks (0.08s)
+        repass_test.go:308: replaced seed: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.332s
+    FAIL
+
+## probe (the pinned claude, never PATH): TestProbeRunsThePinnedClaudeNeverPath (internal/seatlaunch/run.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\treturn claudeseat.ProbeMode(ctx, tool.Command, dir, mode)' -> '\treturn claudeseat.ProbeMode(ctx, func(args ...string) *exec.Cmd { return exec.Command("claude", args...) }, dir, mode)'
+reverted run (last lines):
+    --- FAIL: TestProbeRunsThePinnedClaudeNeverPath (0.34s)
+        repass5_42_test.go:116: the pinned probe: {Mode: Version:} the pinned Claude Code exited without an init event
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.620s
+    FAIL
+
+## probe (a scratch HOME): TestProbeIsIsolated (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '"HOME=" + home, ' -> '"HOME=" + os.Getenv("HOME"), '
+reverted run (last lines):
+    --- FAIL: TestProbeIsIsolated (0.33s)
+        repass5_test.go:63: the probe's HOME is "/Users/omri" (owner "/Users/omri")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.587s
+    FAIL
+
+## probe (an empty scratch working directory): TestProbeIsIsolated (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tcmd.Dir = work\n' -> '\tcmd.Dir = dir\n'
+reverted run (last lines):
+    --- FAIL: TestProbeIsIsolated (0.33s)
+        repass5_test.go:67: the probe's cwd is "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestProbeIsIsolated2077881158/001/cfg/launch-1" with entries "pwd=/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestProbeIsIsolated2077881158/001/cfg/launch-1\namq-squad-worktree.json\nplugins\nsettings.json\n", not an empty scratch dir
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.577s
+    FAIL
+
+## probe (hooks disabled in the probe's copy only): TestProbeIsIsolated (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tsettings["disableAllHooks"] = true // the probe\'s copy only\n' -> ''
+reverted run (last lines):
+              },
+              "version": 2
+            }
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.567s
+    FAIL
+
+## probe (the full config dir, plugin paths rewritten to the copy): TestProbeIsIsolated (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\traw = []byte(strings.ReplaceAll(string(raw), src, dst))\n' -> '\t\t\t_ = dst\n'
+reverted run (last lines):
+              },
+              "version": 2
+            }
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.564s
+    FAIL
+
+## probe (before any ticket is minted): TestProbeRunsBeforeTicketsAndOncePerSeatKind (internal/seatlaunch/run.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t// The proof socket and the seats\' one-time tokens (item 4): a seat\n\t// counts up only from its proof over this socket. Minted only now, after\n\t// every probe, so a slow probe never eats a ticket\'s 60 s window.\n\tsrv, err := startProofServer(q, launchID, o)\n\tif err != nil {\n\t\treturn res, fmt.Errorf("proof socket: %w", err)\n\t}\n\tres.proof = srv // open for the whole token window; WaitProofWindow waits for its end\n\tfor i := range c.Records {\n\t\tc.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)\n\t}\n' -> ''
+revert: '\t// Each Claude seat gets its own CLAUDE_CONFIG_DIR for this launch: the\n' -> '\t// The proof socket and the seats\' one-time tokens (item 4): a seat\n\t// counts up only from its proof over this socket. Minted only now, after\n\t// every probe, so a slow probe never eats a ticket\'s 60 s window.\n\tsrv, err := startProofServer(q, launchID, o)\n\tif err != nil {\n\t\treturn res, fmt.Errorf("proof socket: %w", err)\n\t}\n\tres.proof = srv // open for the whole token window; WaitProofWindow waits for its end\n\tfor i := range c.Records {\n\t\tc.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)\n\t}\n\t// Each Claude seat gets its own CLAUDE_CONFIG_DIR for this launch: the\n'
+reverted run (last lines):
+    --- FAIL: TestProbeRunsBeforeTicketsAndOncePerSeatKind (0.46s)
+        repass5_42_test.go:85: seat cto: the ticket was minted at &{/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/amqsq-3348320506/proof-084a729eff49.sock /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/amqsq-3348320506 proof-084a729eff49.sock 16777229 34252118 ef7cfe0f311e3cc7da3b9783bbbc2c04926bfecc34731b2e1b163e1f1db3f1fd 2026-10-25 02:40:03.462291 +0000 UTC 86869 darwin-tv:1792896003.182324}, before the probe ended at 2026-10-25 04:40:03.76772 +0200 IST m=+0.319093501 (<nil>)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.737s
+    FAIL
+
+## probe (once per seat kind): TestProbeRunsBeforeTicketsAndOncePerSeatKind (internal/seatlaunch/run.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tprobe, done := probed[kind]' -> '\t\tprobe, done := probed[kind+rec.Handle]'
+revert: '\t\t\tprobed[kind] = probe' -> '\t\t\tprobed[kind+rec.Handle] = probe'
+reverted run (last lines):
+    --- FAIL: TestProbeRunsBeforeTicketsAndOncePerSeatKind (0.78s)
+        repass5_42_test.go:76: two Claude seats with identical settings were probed 2 times
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.054s
+    FAIL
+
+## probe (over 5 s is claude_mode_unverified): TestSlowProbeIsModeUnverified (internal/claudeseat/probe.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'var ProbeTimeout = 5 * time.Second' -> 'var ProbeTimeout = 40 * time.Second'
+reverted run (last lines):
+    --- FAIL: TestSlowProbeIsModeUnverified (30.21s)
+        repass5_test.go:93: a slow probe: the pinned Claude Code exited without an init event after 30s
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	30.461s
+    FAIL
+
+## watchdog (the Go adapter kills the guard's process group): TestDecisionAdapterKillsAHungGuardGroup (internal/cli/hook_decision_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)' -> '\t\t_ = cmd.Process.Kill()'
+reverted run (last lines):
+    --- FAIL: TestDecisionAdapterKillsAHungGuardGroup (30.34s)
+        repass5_fix_test.go:34: a hung guard: err <nil>, out "", log "2026-10-25T02:40:48Z pre-tool fail-open: guard timeout after 1.0 s (killed; no decision)\n" after 30.338s
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	30.707s
+    FAIL
+
+## ambiguous Apply (a confirmed absence of the pane releases the slot): TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\t\tif n, known := l.panesFor(handle); known && n == 0 {' -> '\t\t\tif n, known := l.panesFor(handle); false && known && n == 0 {'
+reverted run (last lines):
+    --- FAIL: TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (0.36s)
+        repass5_fix_test.go:59: no pane after the window: seat request seat-req-abandon: apply_ambiguous: AMQ observed more than one pane for cto, or a pane for an unknown handle; only its proof, a confirmed close, or (after the token window) a confirmed absence of its pane settles it
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.621s
+    FAIL
+
+## ambiguous Apply (only after the token window and the close grace): TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: '!end.IsZero() && !l.clock().Before(end.Add(l.closeWait()))' -> '!end.IsZero()'
+reverted run (last lines):
+    --- FAIL: TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (0.34s)
+        repass5_fix_test.go:46: inside the token window: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.614s
+    FAIL
+
+## evidence refs (seat-scoped names): TestEvidenceRefsAreSeatScoped (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '"refs/amq-squad/evidence/" + clean(seat) + "/" + clean(taskID)' -> '"refs/amq-squad/evidence/" + clean(taskID)'
+reverted run (last lines):
+    --- FAIL: TestEvidenceRefsAreSeatScoped (0.44s)
+        repass5_fix_test.go:43: the evidence ref {Ref:refs/amq-squad/evidence/t1/1 RefTree:1ec90313480bbe338d8c0e05c27e48818a0eb25c RetainUntil:2026-11-23 12:00:00 +0000 UTC} (tree 1ec90313480bbe338d8c0e05c27e48818a0eb25c)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.724s
+    FAIL
+
+## evidence refs (verified at the commit step): TestMovedOrDeletedEvidenceRefIsTampered (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {\n\t\t\treturn res.tamperedRefusal(terr)' -> '\t\tif terr := verifyEvidence(o); false && errors.Is(terr, sealchain.ErrTampered) {\n\t\t\treturn res.tamperedRefusal(terr)'
+reverted run (last lines):
+    --- FAIL: TestMovedOrDeletedEvidenceRefIsTampered (1.34s)
+        repass5_fix_test.go:67: moved ref, commit step: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t2 Seat:s1 Branch:seat/s1 Parent:d7782957ae0847653518f62446d0bf77b8ca2f59 Tree:1aa871dc7394129f9017def6bab58e63735e68e2 Commit:80256f7a896213c247711887a6e0797db00bdd1f Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:07b4958d3e146834e710e535c4176e680633c437d0bc59218a9b121624596262 Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:80256f7a896213c247711887a6e0797db00bdd1f}
+        repass5_fix_test.go:67: deleted ref, commit step: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t2 Seat:s1 Branch:seat/s1 Parent:b509840273079acac8eb64df6640ead77c707f85 Tree:e91d88251c6123377e2c7192b47ee6fa07a50896 Commit:ef0a933bda5234f1b737510dc15748ff9d1e3584 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:4c35f95cedd4abac0bf42d59622e9c90e3c5b154b5bda237c3e7f3ec76928747 DiffDigest:sha256:ae0c8f7afcb7a0259b88c3d9e6e8ae51f711cf91e1816bca270690d2a723dc1d Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:ef0a933bda5234f1b737510dc15748ff9d1e3584}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.626s
+    FAIL
+
+## evidence refs (verified at the exit check): TestMovedOrDeletedEvidenceRefIsTampered (internal/seatcommit/commit.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tif terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {\n\t\t\tout = res.tamperedRefusal(terr)' -> '\t\tif terr := verifyEvidence(o); false && errors.Is(terr, sealchain.ErrTampered) {\n\t\t\tout = res.tamperedRefusal(terr)'
+reverted run (last lines):
+    --- FAIL: TestMovedOrDeletedEvidenceRefIsTampered (1.08s)
+        repass5_fix_test.go:70: moved ref, exit check: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t9 Seat:s1 Branch: Parent: Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:}
+        repass5_fix_test.go:70: deleted ref, exit check: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t9 Seat:s1 Branch: Parent: Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.365s
+    FAIL
+
+## item 19 (a JSON number under a credential name): TestJSONNumberUnderACredentialName (internal/redact/redact.go)
+reverted: FAIL; restored: PASS; as required
+revert: '|-?[0-9][0-9.eE+-]*)`)' -> ')`)'
+reverted run (last lines):
+    --- FAIL: TestJSONNumberUnderACredentialName (0.00s)
+        repass5_fix_test.go:12: findings []
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.250s
+    FAIL
+
+## item 19 (the redacted number stays a JSON string): TestJSONNumberUnderACredentialName (internal/redact/redact.go)
+reverted: FAIL; restored: PASS; as required
+revert: ' || jsonValueAt(line, s[0]) {' -> ' {'
+reverted run (last lines):
+    --- FAIL: TestJSONNumberUnderACredentialName (0.00s)
+        repass5_fix_test.go:16: redacted "{\"password\":<redacted>,\"output_tokens\":17,\"first_token_ms\":40}"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.224s
+    FAIL
+
+## item 25 (an undecodable ledger is ledger_tampered): TestUndecodableOrWrongSchemaLedgerIsTampered (internal/seatcommit/ledger.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\treturn l, sealchain.Tampered("commit ledger "+handle+" does not decode", err)' -> '\t\treturn l, fmt.Errorf("commit ledger %s: %w", handle, err)'
+reverted run (last lines):
+    --- FAIL: TestUndecodableOrWrongSchemaLedgerIsTampered (0.51s)
+        repass5_fix_test.go:89: an edited ledger: {OK:false Deferred:true ReasonCode: Route: Detail:commit ledger s1: unexpected end of JSON input Task:t1 Seat:s1 Branch:seat/s1 Parent: Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.800s
+    FAIL
+
+## item 25 (a wrong-schema ledger is ledger_tampered): TestUndecodableOrWrongSchemaLedgerIsTampered (internal/seatcommit/ledger.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\treturn l, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))' -> '\t\treturn l, fmt.Errorf("commit ledger %s: schema %d for %q", handle, l.Schema, l.Handle)'
+reverted run (last lines):
+    --- FAIL: TestUndecodableOrWrongSchemaLedgerIsTampered (0.50s)
+        repass5_fix_test.go:89: an edited ledger: {OK:false Deferred:true ReasonCode: Route: Detail:commit ledger s1: schema 2 for "s1" Task:t1 Seat:s1 Branch:seat/s1 Parent: Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[] Notes:[] Quarantine:false PRRepository: PRNumber:0 PRHead:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.793s
+    FAIL
+
+## item 25 (an undecodable or wrong-schema sealed exits queue): TestUndecodableSealedExitsQueueIsTampered (internal/scheduler/exits.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\t\tcase uerr != nil && s.Config.SealRoot != "":' -> '\t\tcase false && uerr != nil && s.Config.SealRoot != "":'
+reverted run (last lines):
+    --- FAIL: TestUndecodableSealedExitsQueueIsTampered (0.07s)
+        repass5_test.go:108: "{": [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:exits_ledger_unwritable TaskID: Seat: Pool: Reason:the exits ledger /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestUndecodableSealedExitsQueueIsTampered733360774/002/exits.json cannot be parsed: unexpected end of JSON input}] (the exits ledger /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestUndecodableSealedExitsQueueIsTampered733360774/002/exits.json cannot be parsed: unexpected end of JSON input)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.319s
+    FAIL
+
+## question 6 (an exact fixture match, no quote stripping): TestQuotedFixtureIsNotExempt (internal/redact/redact.go)
+reverted: FAIL; restored: PASS; as required
+revert: '\tif v == "" || placeholderForms[v] {' -> '\tv = strings.Trim(v, "\\"\'")\n\tif v == "" || placeholderForms[v] {'
+reverted run (last lines):
+        repass5_fix_test.go:28: a quoted fixture passed: password=<redacted>
+        repass5_fix_test.go:28: a quoted fixture passed: password="<redacted>"
+        repass5_fix_test.go:28: a quoted fixture passed: password="<redacted>"
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.239s
+    FAIL
+
+summary: 23 reverts, all as required

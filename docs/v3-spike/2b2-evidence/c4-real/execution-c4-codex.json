@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "handle": "c4-codex",
+  "launch_nonce": "<redacted-nonce>",
+  "mode": "capture",
+  "provider": "codex",
+  "provider_version": "0.163.0",
+  "backend": "tmux",
+  "profile": "tmux/darwin/v1",
+  "project_root": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e",
+  "project_identity": "v1:darwin:100000d:f82d1c",
+  "session_root": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/.agent-mail/c4",
+  "session_identity": "v1:darwin:100000d:10c4dee",
+  "cwd": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e",
+  "cwd_identity": "v1:darwin:100000d:f82d1c",
+  "provider_executable": "/opt/homebrew/Caskroom/codex/0.163.0/bin/codex",
+  "provider_executable_identity": "v1:darwin:100000d:ac0735",
+  "amq_executable": "/opt/homebrew/Cellar/amq/0.107.0/bin/amq",
+  "amq_executable_identity": "v1:darwin:100000d:ecf525",
+  "wrapper": {
+    "executable": "/private/tmp/2b2run/bin/amq-squad",
+    "args": [
+      "seat-exec",
+      "--seat",
+      "c4-codex"
+    ]
+  },
+  "wrapper_executable_identity": "{\"canonical_path\":\"/private/tmp/2b2run/bin/amq-squad\",\"type\":\"file\",\"dev\":16777229,\"inode\":17583206,\"volume_id\":0,\"file_id\":0,\"size\":12367170,\"mtime_ns\":1792834402486925312,\"symlink_chain\":[]}",
+  "target_argv": [
+    "/private/tmp/2b2run/bin/amq-squad",
+    "seat-exec",
+    "--seat",
+    "c4-codex",
+    "/opt/homebrew/bin/codex",
+    "--model",
+    "gpt-6-astra",
+    "-c",
+    "model_reasoning_effort=medium",
+    "--sandbox",
+    "workspace-write",
+    "--ask-for-approval",
+    "on-request",
+    "-c",
+    "notify=[\"/opt/homebrew/Cellar/amq/0.107.0/bin/amq\",\"__codex-notify\",\"--root\",\"~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/.agent-mail/c4\",\"--handle\",\"c4-codex\"]",
+    "-c",
+    "shell_environment_policy.set.AM_ROOT=__AMQ_IDENTITY__",
+    "-c",
+    "shell_environment_policy.set.AM_BASE_ROOT=__AMQ_IDENTITY__",
+    "-c",
+    "shell_environment_policy.set.AM_SESSION=__AMQ_IDENTITY__",
+    "-c",
+    "shell_environment_policy.set.AM_ME=__AMQ_IDENTITY__",
+    "-c",
+    "shell_environment_policy.set.AM_ROOT_ID=__AMQ_IDENTITY__",
+    "-c",
+    "shell_environment_policy.set.AM_BASE_ROOT_ID=__AMQ_IDENTITY__",
+    "Your seat role is in the file named by the environment variable AMQ_SQUAD_ROLE_PATH. Read it first and follow it. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then do what it says."
+  ],
+  "dynamic_argv": [
+    {
+      "index": 16,
+      "kind": "codex_identity"
+    },
+    {
+      "index": 18,
+      "kind": "codex_identity"
+    },
+    {
+      "index": 20,
+      "kind": "codex_identity"
+    },
+    {
+      "index": 22,
+      "kind": "codex_identity"
+    },
+    {
+      "index": 24,
+      "kind": "codex_identity"
+    },
+    {
+      "index": 26,
+      "kind": "codex_identity"
+    }
+  ],
+  "initial_input": {
+    "kind": "argument",
+    "sha256": "sha256:aca820ac03a8690a3cee2491ca6de1316b4c268a81bad4badd8d2d2912c126b8",
+    "argv_index": 27
+  },
+  "env_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "state": "spawn_attempted",
+  "reason": "spawn_attempted",
+  "execution": {
+    "require_wake": false,
+    "no_gitignore": true,
+    "wake_mode": "disabled",
+    "audit_reason": "amq-squad 3.0 seats learn of work through task leases and doorbells (2b-1)",
+    "injector_mode": "none"
+  },
+  "caller_context": {
+    "caller": "amq-squad",
+    "session": "c4"
+  },
+  "provider_process": {
+    "pid": 50301,
+    "process_start": "1792834448.134590000",
+    "boot_id": "1F7F503E-C8D3-42CC-8660-CC97754E8395"
+  }
+}

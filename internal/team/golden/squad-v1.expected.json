@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "session": "golden-session",
+  "lead": "lead",
+  "lead_mode": "planner",
+  "execution_mode": "project_team",
+  "control_root": "/golden/control",
+  "target_project_root": "/golden/target",
+  "shared_cwd_exception": "golden exception",
+  "operator_interaction": "lead_pane",
+  "defaults": {
+    "runtime": "claude",
+    "model": "golden-model",
+    "effort": "medium",
+    "tools": "coding"
+  },
+  "seats": [
+    {
+      "handle": "lead",
+      "role": "cto",
+      "runtime": "claude",
+      "model": "opus",
+      "effort": "high",
+      "worktree": "lead-tree",
+      "tools": "full",
+      "actor_mode": "review"
+    },
+    {
+      "handle": "dev",
+      "role": "senior-dev",
+      "runtime": "codex",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "worktree": "/golden/dev-tree",
+      "tools": "coding",
+      "actor_mode": "implementation"
+    },
+    {
+      "handle": "scout",
+      "role": "researcher",
+      "runtime": "pi"
+    }
+  ],
+  "grants": {
+    "Mode": "manual",
+    "MaxSeats": 6,
+    "CostPerDayUSD": 20,
+    "PermittedRuntimes": [
+      "claude",
+      "codex",
+      "pi"
+    ],
+    "RuntimesSet": true,
+    "PrivacyClass": "local",
+    "ProtectedPaths": [
+      "docs/adr/"
+    ],
+    "MergeRepositories": [
+      "golden/repo"
+    ],
+    "MergeSizeCapLines": 200,
+    "MergeSizeCapFiles": 4,
+    "FleetKeys": null,
+    "VerifierClasses": [
+      "implement"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+# item 3 revert check, internal/seatlaunch TestExpiredTokenIsRefused
+# 16 processes in parallel x 300 runs each (4800 runs), the test binary built from each tree
+## fix reverted (proofLaunch without the proof-socket close, clock jumped in onApply)
+processes with FAIL:       16 of 16
+    testing.go:1617: TempDir RemoveAll cleanup: unlinkat /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestExpiredTokenIsRefused1009402085/001/proj/.agent-mail/s1/extensions/amq-squad/launch/cto: d
+    testing.go:1617: TempDir RemoveAll cleanup: unlinkat /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestExpiredTokenIsRefused3903587168/001/proj/.agent-mail/s1/extensions/amq-squad/launch/cto: d
+    testing.go:1617: TempDir RemoveAll cleanup: unlinkat /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestExpiredTokenIsRefused343781054/001/proj/.agent-mail/s1/extensions/amq-squad/launch/cto: di
+failure kinds, reverted:
+ 153     proof_test.go: late proof: {OK:false Code:helper_dial_failed Detail:}
+ 192     testing.go:1617: TempDir RemoveAll cleanup: unlinkat <path> directory not empty
+## fix restored
+processes with FAIL:        0 of 16
+PASS lines: 16

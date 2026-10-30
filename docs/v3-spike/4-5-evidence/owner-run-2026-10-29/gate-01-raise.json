@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "gate_raise",
+  "data": {
+    "gate": {
+      "schema": "amq-squad-gate/1",
+      "gate_id": "g45-owner-01",
+      "class": "tag",
+      "gate_kind": "tag",
+      "typed_class": "release",
+      "target": "git tag v3.0.0-owner45",
+      "digest": "sha256:29f6faf71e84faf91a2c4106fdc55eab1acc6d3e80da40512f79e049d8a2805a",
+      "text": "amq-squad gate g45-owner-01\nsquad: root-sha256:80841e6c0f81a7ff3fc386340d80753d5ae6b9e03e80c5f58057536e1b7471d2\nclass: release (tag)\ntarget: git tag v3.0.0-owner45\ndigest: sha256:29f6faf71e84faf91a2c4106fdc55eab1acc6d3e80da40512f79e049d8a2805a\nReply in this thread with one line:\napprove g45-owner-01 release 29f6faf71e84faf9\ndeny g45-owner-01 release 29f6faf71e84faf9",
+      "text_sha256": "sha256:b9968b42ed265af89566a52bfc62c0fd102b8364c5e344d7fa2cc0ac7669e8d4",
+      "issued_at": "2026-10-29T20:48:57Z",
+      "not_before": "2026-10-29T20:47:57Z",
+      "not_after": "2026-10-29T21:18:57Z",
+      "raised_by": "cto",
+      "owner_pubkey": "232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71",
+      "issuer_key_id": "ed25519-sha256:0b4848d033e3d2939e790d786b5b04209cdb54912e216fc9c4726386c1c409ee",
+      "squad": "root-sha256:80841e6c0f81a7ff3fc386340d80753d5ae6b9e03e80c5f58057536e1b7471d2"
+    },
+    "question_sent": true,
+    "question_event_id": "fbe572b09cb47eba46c15c9c3f6179a62e01412785d8d9e173018e8eb8fa71c1"
+  }
+}

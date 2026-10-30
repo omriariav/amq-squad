@@ -1,0 +1,7 @@
+1.3.0
+exit=0
+1.3.0
+exit=0
+28:  --session-id <id>              Use exact project session ID, creating it if missing
+exit=0
+cold --version 2466 ms, warm --version 510 ms, warm --help 532 ms

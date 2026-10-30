@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func operatorMailboxOnlyError(action, target string) error {
@@ -39,8 +39,8 @@ func ensureTargetIsNotOperator(t team.Team, action, target string) error {
 
 func ensureLaunchTargetIsNotOperator(projectDir, profile, action, role, handle string) error {
 	reserved := map[string]bool{strings.ToLower(team.DefaultOperatorHandle): true}
-	if team.ExistsProfile(projectDir, profile) {
-		t, err := team.ReadProfile(projectDir, profile)
+	if team.ExistsFor(projectDir, profile) {
+		t, err := team.ReadFor(projectDir, profile)
 		if err != nil {
 			return fmt.Errorf("read team: %w", err)
 		}

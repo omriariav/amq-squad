@@ -1,0 +1,25 @@
+## a squad-less record matches nothing: revert internal/mergetrain/escalate.go; go test -run 'TestGatesCarryAndMatchTheSquadIdentity' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'return squad == "" || rec.Squad != "" && rec.Squad == squad'
+-- to:       'return squad == "" || rec.Squad == "" || rec.Squad == squad'
+--- FAIL: TestGatesCarryAndMatchTheSquadIdentity (0.98s)
+    squad_test.go:41: a squad-less record lifted the refusal: <nil> {Number:1 Task:T1 Head:71a472b3827f7df52c85b0736351e7daff3343a0 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[{Rule:size_cap Detail:2 changed lines, cap 1}] GateID:merge-5b01f84f107c1399 GateError: Lifted:true After:[] RebaseForCI:false Overlap:[] Status:merged Merged:7b908482e5eb7d3315691cff776f92478747cf3d base:e8a9bef28dfa3c50c57c80deca4756050203d834}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.335s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.172s
+
+## credential_needs never names a forge credential: revert internal/seatexec/env.go; go test -run 'TestForgeCredentialIsNeverACredentialNeed' ./internal/seatexec/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tif NeverNeeded(n) {\n\t\t\treturn refusef("env_needs_invalid", "credential_needs names'
+-- to:       '\t\tif false && NeverNeeded(n) {\n\t\t\treturn refusef("env_needs_invalid", "credential_needs names'
+--- FAIL: TestForgeCredentialIsNeverACredentialNeed (0.03s)
+    fix3_2b_test.go:41: credential_needs GH_TOKEN ran: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.384s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	0.280s
+
+SUMMARY: every row fails on its assertion when reverted and passes restored

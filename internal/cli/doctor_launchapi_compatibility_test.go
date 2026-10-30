@@ -4,7 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
+	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 // TestDoctorReportsLaunchapiCompatibility is gh#766's first named acceptance
@@ -50,43 +51,18 @@ func TestDoctorFlagsAMQBinaryBelowAdoptionFloor(t *testing.T) {
 }
 
 // TestDoctorFlagsAMQBinaryAboveModulePin is gh#766's third named acceptance
-// test: a PATH amq newer than the go.mod-pinned agent-message-queue module
-// warns (never fails) -- amq-squad's launchapi integration runs in-process
-// against the pinned module regardless of what is on PATH.
+// test, now on the tool row: a PATH amq newer than the go.mod-pinned
+// agent-message-queue module warns (never fails); at the pin it is ok.
 func TestDoctorFlagsAMQBinaryAboveModulePin(t *testing.T) {
-	previous := pinnedAMQModuleVersion
-	defer func() { pinnedAMQModuleVersion = previous }()
-	pinnedAMQModuleVersion = func() (string, bool) { return "v0.75.0", true }
-
-	d := doctorExecution{
-		ResolveAMQEnv: func(string) (amqEnv, error) {
-			return amqEnv{AMQVersion: "v0.76.0"}, nil
-		},
+	pin := strings.TrimPrefix(registry.PinnedAMQModule, "v")
+	newer := registry.Tool{Name: "amq", Found: true, Path: "/bin/amq", Version: "999.0.0",
+		VerifiedVersion: pin, VersionCheck: "newer", Login: "n/a"}
+	if got := toolCheck(newer); got.Status != doctorWarn || !strings.Contains(got.Detail, pin) || !strings.Contains(got.Detail, "999.0.0") {
+		t.Fatalf("newer amq: %+v", got)
 	}
-	got := doctorCheckAMQModulePin(d)
-	if got.Status != doctorWarn {
-		t.Fatalf("status = %q, want warn: %q", got.Status, got.Detail)
-	}
-	if !strings.Contains(got.Detail, "v0.76.0") || !strings.Contains(got.Detail, "v0.75.0") {
-		t.Fatalf("detail must name both the PATH version and the pinned version: %q", got.Detail)
-	}
-
-	atOrBelow := doctorCheckAMQModulePin(doctorExecution{
-		ResolveAMQEnv: func(string) (amqEnv, error) {
-			return amqEnv{AMQVersion: "v0.75.0"}, nil
-		},
-	})
-	if atOrBelow.Status != doctorOK {
-		t.Fatalf("at-pin status = %q, want ok: %q", atOrBelow.Status, atOrBelow.Detail)
-	}
-
-	pinnedAMQModuleVersion = func() (string, bool) { return "", false }
-	unavailable := doctorCheckAMQModulePin(doctorExecution{
-		ResolveAMQEnv: func(string) (amqEnv, error) {
-			return amqEnv{AMQVersion: "v0.75.0"}, nil
-		},
-	})
-	if unavailable.Status != doctorOK {
-		t.Fatalf("unavailable-pin status = %q, want ok (skip, not warn/fail): %q", unavailable.Status, unavailable.Detail)
+	at := newer
+	at.Version, at.VersionCheck = pin, "match"
+	if got := toolCheck(at); got.Status != doctorOK {
+		t.Fatalf("amq at the pin: %+v", got)
 	}
 }

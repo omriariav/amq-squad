@@ -1,0 +1,15 @@
+{
+  "project_root": "/Users/omri/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e",
+  "session": "c4",
+  "operator": "operator",
+  "seats": [
+    {"handle": "c4-claude", "runtime": "claude", "model": "sonnet", "effort": "medium",
+     "role_file": "/tmp/2b2run/role-c4-claude.md",
+     "worktree": "/Users/omri/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e",
+     "initial_input": "Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then do what it says."},
+    {"handle": "c4-codex", "runtime": "codex", "model": "gpt-6-astra", "effort": "medium",
+     "role_file": "/tmp/2b2run/role-c4-codex.md",
+     "worktree": "/Users/omri/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e",
+     "initial_input": "Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then do what it says."}
+  ]
+}

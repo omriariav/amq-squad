@@ -1,0 +1,261 @@
+NOT RUN: seat launch denied by the Claude Code auto-mode classifier (Create Unsafe Agents) at 05:07; owner launch needed
+
+## Why (classifier denial, verbatim)
+
+Denied twice (05:07 and 05:08) by the Claude Code auto mode classifier. Reason: `[Create Unsafe Agents]`. Text: "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Create Unsafe Agents]. ... To allow this type of action in the future, the user can add a permission rule for Bash to their settings."
+
+Exact denied command (the same command both times):
+
+    amq-squad resume --session s6-noc --project /Users/omri/code/amq-noc --role lead --exec --target new-session \
+      --apply sha256:49eb1dc6fb68fe7cad525e586fb6fd8af8b4f634736f03f66bb60df418ee9e95 \
+      --decision sha256:7c4a985770cf724419a50bc10492d052ef067893fae94b157bf77077363139d4=trust_exact_subject
+
+The operator did not retry beyond the one repeat and did not route around the denial. No seat, tmux session or squad state was created.
+
+# S6 load test report: Claude-only, 21 tasks
+
+Status: no seat was started, no number was measured. Every result field is empty on purpose. Codex column: pending.
+
+- Run id: `s6-claude-20261021` (folder `~/.amq-squad/spike/s6/s6-claude-20261021/`, holds preflight output and ~1 minute of baseline RAM samples only)
+- Recorded start 2026-10-21 05:07:36 IDT, end 05:08:48: "aborted before first seat". Not a load-test interval.
+- Squads `s6-noc` and `s6-wcli` untouched (all 21 tasks still pending, no tmux session created).
+- Label if run later: Claude-only, 21 tasks; shared host, other agents idle; window shared with idle sessions.
+
+## Preflight results (05:05-05:07)
+
+- PASS: versions (amq-squad 2.31.0, amq 0.102.0, plugin 2.31.0), no spike tmux sessions, caffeinate -dims (pid 98300), both repos clean and `main == origin/main` (amq-noc 9bedf33, workspace-cli 793396c), local files ignored, 11 + 10 tasks pending, briefs present, worktrees clean and detached, doctor exit 0 in both.
+- FAIL (first run only, transient): `gh not authenticated`; `gh auth status` then showed omriariav logged in, and the second run passed.
+- FAIL (remains): "other agent-like processes are running". Lead authorised running anyway (option b); the process check would be recorded as a warning (script not edited).
+- Config baselines: `~/.claude/settings.json` sha256 b1e1ece5...87fc0, `~/.codex/config.toml` sha256 6fa20145...e4b  (full in `config-baseline.txt`). Not changed by me.
+- `amq-squad plan` for both sessions: `action_required / untrusted_config_digest`, one `trust_confirmation`, roster desired=[backend-dev fullstack lead user] present=all, as expected.
+
+## Host state at start
+
+Files: `host-state-at-start.txt` (05:06), `host-state-at-start-recheck-0510.txt` (05:08) in the run folder. At 05:08 (PID, RSS KB):
+- Session-944a59d4 subagents still alive (lead said stopped): routing-researcher 13690 (342896), v3-final-reviewer 31460 (282080), v3-plan-reviewer 23005 (264496), s1-review 10505 (426960), s5-review 15102 (302768), s4-review 84621 (280432), s3-review 18244 (307728)
+- codex-floor-coder 11552 (306704)
+- Interactive claude: 76112 (878208), 29748 (545600), 53651 (300000), 3796 (449600); codex 46591 (56192)
+- Operator (me) 15112 (565664). Background: codex app-servers 4662, 6020, 85699; claude-mem worker 43974 (~311MB), chroma-mcp 44470 (~1.9GB).
+- Gone by 05:08: host-baseline 50796, manifest-pass 50801, gate-transport 50824.
+- System at 05:07:34 (ram.csv): see `ram.csv` first rows. System RAM columns would be contaminated by this baseline; `seat_rss_mb` would be the clean number.
+
+## The denied command
+
+Runbook step 3 as written fails: `amq-squad resume s6-noc --project ... --role lead` gives `error: resume takes at most one session positional; got 5`. Corrected form (preview, works):
+
+    amq-squad resume --session s6-noc --project /Users/omri/code/amq-noc --role lead
+
+Preview: `outcome: action_required`, `reason: untrusted_config_digest`, roster desired=[lead user], extra=[backend-dev claude fullstack].
+subject_digest `sha256:49eb1dc6fb68fe7cad525e586fb6fd8af8b4f634736f03f66bb60df418ee9e95`
+action_id `sha256:7c4a985770cf724419a50bc10492d052ef067893fae94b157bf77077363139d4` (allowed: trust_exact_subject, deny)
+
+Denied twice (05:07, 05:08) by the auto-mode classifier, reason `[Create Unsafe Agents]`:
+
+    amq-squad resume --session s6-noc --project /Users/omri/code/amq-noc --role lead --exec --target new-session \
+      --apply sha256:49eb1dc6fb68fe7cad525e586fb6fd8af8b4f634736f03f66bb60df418ee9e95 \
+      --decision sha256:7c4a985770cf724419a50bc10492d052ef067893fae94b157bf77077363139d4=trust_exact_subject
+
+The digest is only valid for the current roster; take a fresh one from the preview before launching. Whether `resume --exec` accepts `--apply`/`--decision` is still unverified (its `--help` lists neither; `start --apply` is the documented form).
+
+## Samplers
+
+Started 05:07 (pids 23879 ram, 23880 tasks, 23881 limits), stopped 05:08. Restart:
+
+    . /Users/omri/code/amq-squad/.claude/worktrees/agent-ab721e7ddbc5ca3be/spike/loadtest/env.sh
+    $L/samplers.sh start $RUN $NOC $WCLI     # RAM every 10 s, task store every 10 s, limit scan every 5 min
+    $L/samplers.sh status $RUN $NOC $WCLI
+    $L/samplers.sh stop $RUN $NOC $WCLI
+
+## Owner run
+
+Run from a terminal where the launches are permitted. First move the aborted run's markers aside so the start can be recorded again:
+`mv ~/.amq-squad/spike/s6/s6-claude-20261021 ~/.amq-squad/spike/s6/s6-claude-20261021-aborted` (or edit `RUN` in `env.sh`). Then, with the rest of the runbook as authority (`docs/v3-spike/S6-runbook.md`, resume lines now fixed):
+
+    . /Users/omri/code/amq-squad/.claude/worktrees/agent-ab721e7ddbc5ca3be/spike/loadtest/env.sh; cd "$WT"
+    # 1 pre-flight (stop other agents or accept the process FAIL)
+    date; tmux ls; $L/preflight.sh pre $RUN $NOC $WCLI
+    # 2 plans
+    amq-squad plan s6-noc --project $NOC; amq-squad plan s6-wcli --project $WCLI
+    # 3 samplers, then start note
+    $L/samplers.sh start $RUN $NOC $WCLI; sleep 30; $L/samplers.sh status $RUN $NOC $WCLI
+    $L/window-note.sh start $RUN $NOC $WCLI
+    # 4 trust check: lead of s6-noc only
+    amq-squad resume --session s6-noc --project $NOC --role lead
+    amq-squad resume --session s6-noc --project $NOC --role lead --exec --target new-session --apply <subject_digest> --decision <action_id>=trust_exact_subject
+    sleep 45; $L/pane-check.sh $RUN $NOC $WCLI      # exit 2 = prompt: stop, never answer
+    # 5 rest of both squads (fresh digest from each plan)
+    amq-squad plan s6-noc --project $NOC
+    amq-squad start s6-noc --project $NOC --target new-session --apply <subject_digest> --decision <action_id>=trust_exact_subject
+    amq-squad plan s6-wcli --project $WCLI
+    amq-squad start s6-wcli --project $WCLI --target new-session --apply <subject_digest> --decision <action_id>=trust_exact_subject
+    sleep 60; $L/pane-check.sh $RUN $NOC $WCLI; tmux ls
+    # 6 watch every ~5 min until 21/21 terminal or 3 h
+    $L/progress.sh $RUN $NOC $WCLI; $L/task-times.sh report $RUN $NOC $WCLI
+    # 7 stop
+    $L/pane-check.sh $RUN $NOC $WCLI || true; $L/scan-limits.sh $RUN $NOC $WCLI
+    REASON="..." $L/window-note.sh end $RUN $NOC $WCLI
+    amq-squad down --project $NOC --session s6-noc --all --close-panes
+    amq-squad down --project $WCLI --session s6-wcli --all --close-panes
+    $L/samplers.sh stop $RUN $NOC $WCLI; $L/preflight.sh post $RUN $NOC $WCLI
+    # 8 analysis and report
+    $L/analysis.sh $RUN $NOC $WCLI
+
+The usage window opened at 05:05; it is shared with every other live Claude session, so start soon or note the shift.
+
+## Owner launch attempt (08:06-08:14): two 2.31 defects, fixed in spike scope
+
+The owner ran the `start --apply` lines from his own prompt (the classifier denies them for the operator). Results and the fixes, in order; details and evidence paths in `spike-log.md` 08:06-08:12.
+
+1. `--decision ...=trust_exact_subject` recorded the trust and then printed `error: launchapi: 0 applied command(s) for 3 team member(s)` for both squads.
+2. The immediate retry was refused with `duplicate_live` for `lead`: the decision send writes an active `lead` presence and the preflight counts it as live for 90 s. `--force-duplicate` is a no-op on this path. Wait 90 s.
+3. The retry after 90 s printed `0 applied command(s)` again with `outcome: ready`. Cause: `.amq/launch.local.json` from the S6 setup put `tmux` before `commands`, so the pinned AMQ 0.75.0 library created the panes itself with `<amq-squad binary> coop exec ...`, which exits at once (amq-squad has no `coop` command). The library returned `backend_create_failed`; amq-squad 2.31 drops that reason and reports only the command count.
+4. Fix: `launcher_preference` set to `["commands"]` in both repos (originals saved in the run folder); the stale `meta/launch/` journals moved to `stale-launch-state/` in the run folder (they did not exist before 08:06, and the library's recovery would have retried with the journaled tmux backend). Both plans `ready`; new subject digests s6-noc `sha256:7c5102cf…`, s6-wcli `sha256:bb912997…`.
+
+Label note for the report: the samplers have been running since 07:22; the measured window starts at the first seat, not at 07:22. The `window-note.sh start` at 07:22 is the operator's preparation time and must be subtracted or the run id renamed.
+
+## Run of 2026-10-22: launched via the legacy pane driver (R51)
+
+Label for every number in this report: **launched via legacy path
+(`--launch-via legacy --yes`); launchapi start from the amq-squad binary fails
+at Create (R51)**. The five criterion-5 numbers (task throughput, PR count,
+RAM, usage-limit events, prompt stops) do not depend on the launch path, so
+criterion 5 is still decided by this run; the label is a finding about 2.31's
+launchapi seam, not a caveat on the numbers.
+
+Root cause, 06:24 (corrects the 08:12 diagnosis of 2026-10-21): the seam
+passes `Launcher: "tmux"` in `callPrepare`, so `launch.local.json` is never
+read; the library sets `AMQPath` from `os.Executable()`
+(`launchapi/prepare.go:53`), which inside amq-squad is `~/go/bin/amq-squad`;
+the tmux pane runs `amq-squad coop exec ...`, which does not exist. Every
+launchapi start from the amq-squad binary therefore fails at Create. Upstream
+ask 14; plan requirement R51.
+
+Lines used (one per prompt, no digest on this path; `amq` 0.102.0 on PATH):
+
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-noc --project /Users/omri/code/amq-noc --target new-session --launch-via legacy --yes
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-wcli --project /Users/omri/code/workspace-cli --target new-session --launch-via legacy --yes
+
+Timeline: s6-noc panes up 06:41:3x, s6-wcli 06:42:3x; pane-check 6 panes, 0
+flagged at 06:43:22; first PRs amq-noc #78 (N1) and #79 (N10), workspace-cli
+#216 (W7) by 06:43. Run id `s6-claude-20261022`; samplers restarted 06:22 and
+the 2026-10-21 idle samples are in `s6-claude-20261021-idle-prep`. **Window
+reference for this run is 06:41**, not 00:05. Non-S6 Claude consumers of the
+usage window during the run: the operator session (this one) and the peer
+session `v3-0-0-work`.
+
+Merge rule: the seats open draft PRs and merge nothing (brief lines 11 and
+29). The one merge in this spike is S2's gate on N1 (#78), with the signed
+typed gate as the review, ten minutes after N1 is up and only with Omri
+present; without him S2 waits and every PR stays open.
+
+## Results of 2026-10-22 (run `s6-claude-20261022`, variant 1: Claude-only, 21 tasks)
+
+Label: launched via legacy path (`--launch-via legacy --yes`); launchapi start from the
+amq-squad binary fails at Create (R51). The five numbers do not depend on the launch path.
+Seats: 2 squads x (lead, fullstack, backend-dev), all Claude Code 2.1.307, Sonnet 5.5,
+effort medium, auto mode, in tmux. Window 06:41 (first seat) to 09:45 (3 h box); samplers
+06:22 to 09:46. Shared-host label: this operator session and the peer session `v3-0-0-work`
+were the only other Claude consumers of the usage window. Full tables:
+`~/.amq-squad/spike/s6/s6-claude-20261022/five-numbers.txt`, `per-task-table.md`.
+
+| # | Number | Value |
+| --- | --- | --- |
+| 1 | Throughput | 21 tasks: 19 completed with a draft PR, 1 honest FAIL (W1: the Chat API has no scheduled delivery), 1 never claimed (N4, see finding A). First claim to last PR 10m09s; per-task wall min 0m20s, median 0m52s, max 1m33s. Everything terminal was done 30 minutes after the samplers' start; the remaining 2.5 h were the lead waiting on N4. |
+| 2 | PRs and conflicts | 19 PRs (amq-noc 10, workspace-cli 9); 18 open, N1 merged by S2. GitHub CONFLICTING 0; solo dry-run conflicts 0; cumulative dry-run conflicts 2, both predicted in the task list (W3/W7 `cmd/sheets_test.go`, W5/W12 `internal/client/factory_test.go`); W5 flagged for touching `internal/client/factory_test.go` outside its task: evidence for the merge grant's path checks (the core's "no protected-path change" check is a path-set check, and a task-declared file set is a candidate input for it in phase 2). Cumulative `go build` after merging the clean PRs: ok in both repos. |
+| 3 | RAM | Peak seat RSS 4.19 GB at 06:46 (6 panes, 25 processes), average 3.45 GB; heaviest seat 1.19 GB (workspace-cli fullstack), lightest 0.61 GB. Max swap 895 MB, min free memory 66 %, compressed max 2.59 GB. |
+| 4 | Usage-limit and 429 events | 0 across 6 session files and 38 pane captures (usage_limit 0, http_429 0, retry_429 0, server_error 0). |
+| 5 | Prompt stops | 0 panes flagged in 38 pane checks; no seat asked the operator anything. |
+
+Load duration: the window is 3.39 h, but the seats worked for 10m09s (first claim to last
+PR) and idled the rest. `usage_limit=0` therefore measures ten minutes of load from six
+Sonnet-medium seats, not three hours; time to first limit: not reached in 10 min of work.
+The only limit evidence the spike has is the 2026-10-21 data point: both Fable sessions
+were limited at about 02:10, 2h05m after the 00:05 window start, with six agents plus three
+Codex reviewers busy. Per-task wall is not representative either: the tasks were about one
+file each (median 0m52s); a feature-sized task will not look like this.
+
+Criterion 5 reading: PASSED for the Claude column (the five numbers exist); the Codex column
+is PENDING, tied to the Codex follow-up with criterion 4. Six Sonnet seats on one Mac finish
+19 one-file tasks in ten minutes with no limit event and about 4.2 GB; RAM is nowhere near
+its limit. The cost of the run is in the lead's idle wait, not in the seats.
+
+Proposed registry caps (plan S6 output line). Per-seat RSS at peak: 0.70 GB average, 1.19 GB
+heaviest. Twelve seats, extrapolated from the 6-seat Claude-only run of 2026-10-22: 8.4 GB
+typical, 14.3 GB if every seat is the heaviest, on a 64 GB host whose free memory never
+went under 66 % during the run. RAM is not the binding constraint; the subscription window
+is, and it is unmeasured at 12 seats. The 12-seat cap is the owner's decision.
+
+### Finding A: the legacy driver injects no `AM_SESSION`; one seat in six stayed idle
+
+Every seat's first `amq drain --include-body` was refused by amq 0.102.0 with
+`refusing drain: root is not the pinned base root. Use --session <name> to route
+deliberately`, and `amq-squad task list` with `injected exact-root identity is inconsistent:
+AM_ROOT ".../.agent-mail/s6-noc" must equal AM_BASE_ROOT ".../.agent-mail" when AM_SESSION
+is omitted`. The legacy pane driver set `AM_ROOT` to the session root and `AM_BASE_ROOT`
+to `.agent-mail` but did not export `AM_SESSION`. Five seats repaired their own shell with
+`export AM_SESSION=s6-noc` (or `s6-wcli`) and worked from then on (transcript counts:
+29, 19, 21, 60, 56 exports). The amq-noc backend-dev seat (impl-b) tried it for one command,
+reported that it was still refused, declined `--ignore-session-pin` because the team rules
+limit that override to inspecting another project, and stayed idle "with no task claimed
+and no branch created" from 06:42 to the end (its own words are in
+`stuck-N4-backend-dev-pane-joined.txt` and the transcript `4514beb9…jsonl`). The lead
+assigned N4 to it, would not reassign, and parked until the box ended. Net: 5 of 6 seats
+effective; the seat that stayed idle followed the rules. The second half of the finding is
+the stronger one: for five of six seats the model chose its own session pin by exporting
+`AM_SESSION` itself. That is the "model as enforcement point" shape the 07:15 ruling rules
+out, and the one seat that followed the team rules was the one that lost its task.
+Requirement R52: the launch sets the complete AMQ identity in the seat environment (`AM_ME`,
+`AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one drain
+before it reports the seat as up; a seat never chooses or repairs its own pin. For 3.0 this
+lands in `seat-exec` (R3, R40). N4 is also scheduler evidence: an assignment a seat never
+claims sat for three hours and the lead parked; under the lease requirement an unclaimed
+assignment returns to the pool on lease expiry and the lead reassigns (plan, scheduler
+section).
+
+### Finding B: `~/.claude/settings.json` changed during the run (unattributed)
+
+Preflight post: the hash of `~/.claude/settings.json` differs from the 06:22 baseline;
+the file's mtime is 06:56. No seat transcript references the file. Claude Code installed an
+update in every pane at about 06:52 ("Update installed") and the owner was active in his
+own session at that time; either is a plausible, unverified cause. The preflight keeps only
+a hash, so the change cannot be diffed. Phase 1 verdict: unattributed, accepted. Fix for the
+harness: `preflight.sh pre` keeps a copy of each guarded file in the run folder so a
+post-run change can be shown, not only detected. For the plan: amendment 18, `seat-exec`
+denies writes to the owner's global agent config (`~/.claude/settings.json`,
+`~/.codex/config.toml`) and `doctor` diffs it against the preflight copy.
+
+### Shutdown
+
+`amq-squad down --all --close-panes` closed all six panes but reported `3 of 3 target(s)
+failed` per squad on the first pass and `3 cleaned, 3 inspection_unavailable` on the second:
+the legacy path leaves no launch record, so `down` cannot inspect what it closes. Seat
+processes gone, samplers stopped, both repos clean on `main` (preflight post, apart from
+finding B). The 18 open draft PRs stay open; the owner decides whether to merge, close, or
+leave them for the day-3 merge-train test.
+
+## Launch lines of 2026-10-21 12:00 (superseded; launchapi path, see R51)
+
+Paste one line per prompt, with the `!` prefix in the Claude session or plain in a terminal. The trust decisions for both squads were recorded at 08:06, so `--decision` is no longer needed; `required_actions` is `(none)` in both previews.
+
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-noc --project /Users/omri/code/amq-noc --target new-session --apply sha256:311701fe1afde161db812cda6f5af72d9f2dfbf8509411a764b9df2589c4bf50
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-wcli --project /Users/omri/code/workspace-cli --target new-session --apply sha256:41dc7cc6327eccf8d1ce7a7001c1e324a9aec17fbb410f2f8d87c948a34f29b1
+
+A subject digest is valid only while the roster and launch state are unchanged. If `start` refuses with "does not match the current plan's subject_digest", run `amq-squad plan <session> --project <repo>` and paste the digest it prints. If it refuses with `duplicate_live`, wait 90 s and paste the same line again. If a preview ever shows `required_actions`, add `--decision <action_id>=trust_exact_subject` to that line once; the run then records the trust and stops, and the next plan gives a fresh digest.
+
+## Owner run: the two variants and their labels
+
+The morning run is the plan's original shape with the owner present at the start: the owner's own session launches the squads at the start of his window (his terminal or session has the launch permission this operator lacked).
+
+### Variant 1: Claude-only, 21 tasks (as prepared)
+
+Use the "Owner run" sequence above unchanged. Per-provider labels: Claude column "Claude-only, 21 tasks"; Codex column "pending". Shared-host label if other sessions are live: "shared host, other agents idle; window shared with idle sessions".
+
+### Variant 2: Claude lead plus Codex seats, one combined run (needs the owner's pre-trust first)
+
+Precondition, done by the owner before anything starts: pre-trust `/Users/omri/code/amq-noc` and `/Users/omri/code/workspace-cli` for codex-cli (the Codex folder trust; the operator may not write `~/.codex/config.toml`, so only the owner does it, and `preflight pre` records the baseline hash after that edit, so make the edit before running preflight).
+
+Shape: per squad, one Claude lead (the planner, no implementing) plus two Codex implementer seats, working N11, N12 (amq-noc) and W10, W11 (workspace-cli) in the same run window as the Claude squads, or as a second pair of squads in the same repos in the same window. Which of the two the owner picks decides the labels:
+- Claude 21 tasks plus Codex seats on N11, N12, W10, W11 in the same window: label the Claude column "Claude, 21 tasks, run concurrently with Codex" and the Codex column "Codex, 4 tasks, run concurrently with Claude"; the window, RAM and rate-limit numbers are then combined and must not be split per provider unless `seat_rss_mb` is attributed by process name. Wall time per task stays per provider.
+- Codex run after the Claude run ends: label Claude "Claude-only, 21 tasks" and Codex "Codex, 4 tasks, after Claude".
+
+Not verified and not prepared tonight: the Codex roster and `team.json` for N11, N12, W10, W11, the `--binary codex` seat config and its trust flow, the Codex rate-limit scanner (`scan-limits.sh` reads Claude session JSONL only; the Codex column of `limit-events.csv` needs a source). The operator did not touch any of this. Owner decision: pick one of the two labels above before the run; the analysis scripts need the Codex seat panes added to the sampler's pane match only if the Codex seats run in the same tmux session names as the Claude ones.

@@ -8,6 +8,24 @@ per release instead of decaying.
 Add an entry when something cost you more than a minute of confusion. The value is in
 the ones that *looked* like user error and were not.
 
+> **3.0 note.** Entries written before 3.0 name v2 verbs that 3.0 removed (`start`,
+> `resume`, `down`, `send`, `agent up`, `team member`, `evidence run`, profiles). The
+> lesson stands; the command does not. Use `SKILL.md` for the 3.0 form.
+
+---
+
+## 3.0 rewrite: help text and parser can disagree (v3.0.0)
+
+Rewriting this skill for 3.0 by executing every documented invocation found two
+places where a verb's own help and its parser disagree:
+
+- `task widen` help shows `--me LEAD`, and the parser refuses it: `task widen: takes
+  no --me; the scheduler proves the lead from the process, never from a flag`.
+- `verify action` help lists exit codes 0, 10, 11 and 13; with no gate raised it exits
+  12 (`no_gate`).
+
+Help is illustrative; the run is the contract. Copy a form you have executed.
+
 ---
 
 ## Verifying a claim: how assertions fail silently

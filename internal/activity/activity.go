@@ -21,15 +21,11 @@ const (
 	StateUnknown = "unknown"
 
 	SourceHeartbeat = "heartbeat-file"
-	SourceSymphony  = "symphony-hook"
 	SourceTaskStore = "task-store"
 	SourceUnknown   = "unknown"
 )
 
 // DefaultStaleAfter is the freshness window for a written activity heartbeat.
-// It intentionally matches the coordination heartbeat window: after 90 seconds
-// without a new write, the signal is still visible but no longer implies active
-// progress.
 const DefaultStaleAfter = 90 * time.Second
 
 // File is the on-disk JSON schema written by agents under
@@ -61,24 +57,27 @@ func Path(agentDir string) string {
 	return filepath.Join(agentDir, Filename)
 }
 
-func Normalize(file File, now time.Time, staleAfter time.Duration) Snapshot {
+// freshness is the stale flag and quality of a timestamp; fresh says what a
+// recent timestamp is worth (a task-store update never claims fresh progress).
+func freshness(at, now time.Time, staleAfter time.Duration, fresh string) (bool, string) {
 	if staleAfter <= 0 {
 		staleAfter = DefaultStaleAfter
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	writtenAt := file.WrittenAt
-	quality := StateUnknown
-	stale := true
-	if !writtenAt.IsZero() {
-		stale = now.Sub(writtenAt) > staleAfter
-		if stale {
-			quality = StateStale
-		} else {
-			quality = StateFresh
-		}
+	switch {
+	case at.IsZero():
+		return true, StateUnknown
+	case now.Sub(at) > staleAfter:
+		return true, StateStale
+	default:
+		return false, fresh
 	}
+}
+
+func Normalize(file File, now time.Time, staleAfter time.Duration) Snapshot {
+	stale, quality := freshness(file.WrittenAt, now, staleAfter, StateFresh)
 	return Snapshot{
 		Source:    SourceHeartbeat,
 		Quality:   quality,
@@ -86,26 +85,13 @@ func Normalize(file File, now time.Time, staleAfter time.Duration) Snapshot {
 		TaskID:    strings.TrimSpace(file.TaskID),
 		Phase:     strings.TrimSpace(file.Phase),
 		Detail:    strings.TrimSpace(file.Detail),
-		WrittenAt: writtenAt,
+		WrittenAt: file.WrittenAt,
 		Stale:     stale,
 	}
 }
 
 func TaskStoreSnapshot(handle, taskID, detail string, updatedAt, now time.Time, staleAfter time.Duration) Snapshot {
-	if staleAfter <= 0 {
-		staleAfter = DefaultStaleAfter
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	stale := true
-	quality := StateUnknown
-	if !updatedAt.IsZero() {
-		stale = now.Sub(updatedAt) > staleAfter
-		if stale {
-			quality = StateStale
-		}
-	}
+	stale, quality := freshness(updatedAt, now, staleAfter, StateUnknown)
 	return Snapshot{
 		Source:    SourceTaskStore,
 		Quality:   quality,
@@ -115,45 +101,6 @@ func TaskStoreSnapshot(handle, taskID, detail string, updatedAt, now time.Time, 
 		Detail:    strings.TrimSpace(detail),
 		WrittenAt: updatedAt,
 		Stale:     stale,
-	}
-}
-
-func SymphonySnapshot(handle, event, taskID, detail string, observedAt, now time.Time, staleAfter time.Duration) Snapshot {
-	if staleAfter <= 0 {
-		staleAfter = DefaultStaleAfter
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	event = strings.TrimSpace(event)
-	stale := true
-	quality := StateUnknown
-	if !observedAt.IsZero() && symphonyEventClaimsActivity(event) {
-		stale = now.Sub(observedAt) > staleAfter
-		if stale {
-			quality = StateStale
-		} else {
-			quality = StateFresh
-		}
-	}
-	return Snapshot{
-		Source:    SourceSymphony,
-		Quality:   quality,
-		Handle:    strings.TrimSpace(handle),
-		TaskID:    strings.TrimSpace(taskID),
-		Phase:     "symphony_" + event,
-		Detail:    strings.TrimSpace(detail),
-		WrittenAt: observedAt,
-		Stale:     stale,
-	}
-}
-
-func symphonyEventClaimsActivity(event string) bool {
-	switch event {
-	case "after_create", "before_remove":
-		return false
-	default:
-		return true
 	}
 }
 
@@ -198,17 +145,6 @@ func Write(agentDir string, file File) error {
 		file.WrittenAt = time.Now().UTC()
 	}
 	return writeAtomic(Path(agentDir), file)
-}
-
-func Clear(agentDir string) error {
-	err := os.Remove(Path(agentDir))
-	if err == nil || os.IsNotExist(err) {
-		if syncErr := syncDir(agentDir); syncErr != nil {
-			return fmt.Errorf("sync activity dir: %w", syncErr)
-		}
-		return nil
-	}
-	return err
 }
 
 func writeAtomic(path string, file File) error {

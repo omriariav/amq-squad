@@ -1,0 +1,11 @@
+tui_drawn=yes
+answered=yes
+----- pane -----
+ Warning: fd not found. Offline mode enabled, skipping download.
+ Warning: ripgrep not found. Offline mode enabled, skipping download.
+ What is 17 plus 25? Reply with just the number.
+ 42
+── ⠏ Working ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/.amq-squad/spike/s3/cwd
+1.4%/33k (auto)                                                                                              qwen2.5:32b

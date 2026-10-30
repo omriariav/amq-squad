@@ -1,0 +1,137 @@
+# gate: 2026-10-25T02:42:56Z
+head: 14381e46 (the commit is this tree plus the files under test; uncommitted listed below)
+uncommitted:  M docs/claude-hooks.md  M docs/v3-manifest.yaml  M docs/v3-spike/5-repass-execution.md  M internal/claudeseat/owner_unix.go  M internal/claudeseat/probe.go  M internal/claudeseat/probe_live_test.go  M internal/cli/hook_decision.go  M internal/cli/hook_guard.go  M internal/redact/redact.go  M internal/routing/head.go  M internal/scheduler/exits.go  M internal/scheduler/repass5_test.go  M internal/sealchain/sealchain.go  M internal/seatcommit/commit.go  M internal/seatcommit/ledger.go  M internal/seatlaunch/launcher.go  M internal/seatlaunch/proof_other.go  M internal/seatlaunch/proof_unix.go  M internal/seatlaunch/repass5_42_test.go  M internal/seatlaunch/run.go  M plugins/claude/hooks/amq-squad-hook.sh  M scripts/test_claude_hooks.py ?? docs/v3-spike/5-repass-evidence/fix-round-revert-check.txt ?? internal/claudeseat/repass5_test.go ?? internal/cli/hook_decision_other.go ?? internal/cli/hook_decision_unix.go ?? internal/cli/repass5_fix_test.go ?? internal/redact/repass5_fix_test.go ?? internal/routing/repass5_sealchain_test.go ?? internal/seatcommit/repass5_fix_test.go ?? internal/seatlaunch/repass5_fix_test.go 
+quiet host check (ps: seat-exec, scheduler run, pi run, amq coop, amq-remote, amq-squad lead/team/launch; orphans with ppid 1 excluded): 0 live
+
+## go build ./...
+exit: 0
+
+## go vet ./...
+exit: 0
+
+## GOOS=linux go build ./...
+exit: 0
+
+## GOOS=windows go build ./...
+exit: 0
+
+## scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a76d84b5c1d5be1e6/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        84      43515        21719
+replace        2       2431            0
+review         4       3687         2803
+delete       140      49894            0
+new          211          0        43700
+TOTAL        499     111761        78870
+target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+v2 rows kept: 27,826, ceiling 36,410 (deferred-replace rows excluded: 0 lines) [--final]
+3.0 additions: 211 files, 43,712 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 71,538 lines (v2 rows kept plus 3.0 additions)
+like for like, class 1 and 2 rows and their targets removed: 27826 lines against a target sum of 35170 (-20.9 percent over)
+class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 0 lines, 0 over target; class 3 (accepted-3 and other non-keep rows): 772 over target
+manifest-check: OK
+exit: 0
+
+## go test -count=1 ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.386s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	1.063s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	0.699s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.334s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	1.651s
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	2.064s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	45.943s
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	2.597s
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	14.571s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	79.661s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	11.534s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	36.880s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	26.243s
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	11.481s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	2.857s
+ok  	github.com/omriariav/amq-squad/v3/internal/fsanchor	4.430s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	8.884s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	4.811s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	13.268s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	4.617s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	6.270s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	6.694s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	6.106s
+ok  	github.com/omriariav/amq-squad/v3/internal/leadsession	6.231s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	6.173s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	60.507s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	5.202s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	5.329s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	5.533s
+ok  	github.com/omriariav/amq-squad/v3/internal/panechain	8.137s
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	8.246s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	3.931s
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	8.439s
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	62.729s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	47.869s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	7.631s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	3.892s
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	21.893s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	3.988s
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	14.809s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	43.412s
+?   	github.com/omriariav/amq-squad/v3/internal/sealchain	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	72.839s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	50.746s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	37.823s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	16.402s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	10.110s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	31.190s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	4.283s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	2.622s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	1.085s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	26.354s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	0.701s
+?   	github.com/omriariav/amq-squad/v3/plugins	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/scripts	3.028s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	0.500s
+?   	github.com/omriariav/amq-squad/v3/scripts/redact-evidence	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/claude-probes	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/sched-live	[no test files]
+exit: 0
+
+## go test -count=1 -race -timeout 45m ./internal/claudeseat/ ./internal/cli/ ./internal/seatlaunch/ ./internal/seatcommit/ ./internal/scheduler/ ./internal/sealchain/ ./internal/routing/ ./internal/redact/
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	9.085s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	47.963s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	20.751s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	47.959s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	21.676s
+?   	github.com/omriariav/amq-squad/v3/internal/sealchain	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	12.778s
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	99.479s
+exit: 0
+
+## the hook script tests (scripts/test_claude_hooks.py against this tree's binary)
+...................
+----------------------------------------------------------------------
+Ran 19 tests in 13.283s
+
+OK
+context injection: last run 18.3 ms
+PERF pre-tool allow in a seat: p50 19.4 ms, p95 22.4 ms
+PERF outside a seat: 60 runs, p50 6.7 ms, p95 11.1 ms, max 11.6 ms (budget p95 < 20 ms: met)
+exit: 0
+
+## the hook script tests under /bin/dash (HOOK_SHELL=/bin/dash)
+...................
+----------------------------------------------------------------------
+Ran 19 tests in 12.289s
+
+OK
+context injection: last run 15.1 ms
+PERF pre-tool allow in a seat: p50 17.7 ms, p95 19.5 ms
+PERF outside a seat: 60 runs, p50 4.2 ms, p95 4.7 ms, max 4.8 ms (budget p95 < 20 ms: met)
+exit: 0
+
+## GOOS=linux go test -c ./internal/cli (compiled, not run here)
+exit: 0
+
+# gate end: 2026-10-25T02:46:33Z

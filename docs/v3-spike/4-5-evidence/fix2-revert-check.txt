@@ -1,0 +1,1060 @@
+# 4-5 review fix 2: revert check, 2026-10-24T12:06:18Z
+Each fix is reverted in place, its test row runs and must FAIL, then the fix is restored and the row must PASS.
+
+## 1a high: no core dump (ulimit -c 0, GOTRACEBACK=none)
+file docs/v3-buzz/enroll.sh; test TestOwnerSignerCrashLeavesNoKey in ./internal/buzz/
+revert: 'ulimit -c 0\n' -> ''
+revert: 'GOTRACEBACK=none amq-owner-sign' -> 'amq-owner-sign'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestOwnerSignerCrashLeavesNoKey (6.71s)
+    crash_test.go:122: signer killed mid-publish: rc 11 in 5.476s
+        owner: npub17lnjszdj37vl9m5hlnkzz65dr7gkjf858cj0pj3krwcucjj5p2vsmwulxw (f7e72809b28f99f2ee97fcec216a8d1f916924f43e24f0ca361bb1cc4a540a99)
+        relay: ws://127.0.0.1:55884
+        share: /private/tmp/4e-1799699483/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  93d313df8f36d95a5a0bdd2f9e7ee0a3aacf16bc330dfe2f2a6de35b6a75ec61 (check this against what amq-owner-sign shows)
+        grants requested: 8
+        == B: the owner signs the grants (amq-owner-sign, key through the pipe)
+           OWNER: amq-owner-sign shows the body; check it is 93d313df8f36d95a5a0bdd2f9e7ee0a3aacf16bc330dfe2f2a6de35b6a75ec61 and type its first 8 characters.
+        You are about to sign these grants and publish a policy for this body.
+        session:     amq-squad
+        body pubkey: 93d313df8f36d95a5a0bdd2f9e7ee0a3aacf16bc330dfe2f2a6de35b6a75ec61
+          kind 20003: kind=20003&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+          kind 1059: kind=1059&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+          kind 24200: kind=24200&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+          kind 44200: kind=44200&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+          kind 10100: kind=10100&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+          kind 0: kind=0&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+          kind 9: kind=9&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+          kind 40003: kind=40003&created_at<1795435581 (until 2026-11-23T12:06:21Z)
+        check the body pubkey against the share output, then type its first 8 characters to sign: 93d313df
+        owner nsec or hex (hidden): owner pubkey: f7e72809b28f99f2ee97fcec216a8d1f916924f43e24f0ca361bb1cc4a540a99
+        wrote 8 signed grants to /private/tmp/4e-1799699483/.amq-squad/buzz/bundle.json
+           amq-owner-sign stopped abnormally; its crash trace is not shown (it may hold the owner key).
+        /Users/omri/code/amq-squad/.claude/worktrees/agent-a65ea70da9321942d/docs/v3-buzz/enroll.sh: line 161: 56448 Done                       bash -c "$BUZZ_OWNER_KEY_CMD"
+             56449 Abort trap: 6              | amq-owner-sign --share "$BUZZ/share.txt" --out "$BUZZ/bundle.json" --relay "$RELAY" --name "$NAME" 2>&1
+             56450                          | signer_output
+           amq-owner-sign failed. If it said the key is not valid, check that BUZZ_OWNER_KEY_CMD prints the key and one newline only (no printf or echo wrapper).
+           (the kind 30177 policy was not published; the next run retries it, or set BUZZ_SKIP_POLICY=1)
+        == C: amq-remote share --bundle (enroll)
+        grants enrolled: 8
+        == D: amq-remote share --target --relay --presence "amq-squad"
+        == D: amq-remote up (background, publishes the profile and presence)
+             doctor: "presence": "configured"
+             doctor: "state": "auth_pending"
+        == D: OWNER STEP (phone or Buzz Desktop): open a DM with the agent named "amq-squad"
+             and send the DM channel id back: rerun with BUZZ_DM_CHANNEL=<channel id>.
+             agent npub: npub1j0f38hu0xmv45kstm5heulhq5w4v794uxvxlute2dh34k6n4a3sscxffwd
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▀█ █▄██▀▄▄▀▄ ▀▀▄▀█ ▄▄▄▄▄ ████[0m
+        [40;37;1m████ █   █ █▀▀▀█ ▀▄  ▀▄█ ▄▄███ █   █ ████[0m
+        [40;37;1m████ █▄▄▄█ █▀ █▀▀▀▄▀█▀█▄▄  ▄██ █▄▄▄█ ████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█ █ █ █ ▀ ▀ █▄▄▄▄▄▄▄████[0m
+        [40;37;1m████▄   ▄█▄ ▄▄▀▄▀▄ █▀ █▀▄█▄▀█ ▀ █▄▀ ▀████[0m
+        [40;37;1m█████ ▄ ▀▀▄ ▄█▄█▀▄▀▄▀█ █▄ █▀▀█▄▀▄█▀▄█████[0m
+        [40;37;1m████▄█▀█▄▀▄▀▄▄▄█▄▄ ▄▄ ▀ ▄▀▄ ▄▄▀▀▄▄█ ▀████[0m
+        [40;37;1m█████ ▀█▄█▄█▀▀▀ ▄▄▀▄▄█▀▀   ███▄▄▄▀▀ ▀████[0m
+        [40;37;1m████ █  ██▄  ▀ ▄▀▄▄█▀▄█▀▄▀ ▀▀ ▀▄▄▀█▀▀████[0m
+        [40;37;1m████▄  ▀ ▀▄ ▄█▄█▀▄▀ ▀██▀▀  █▄ █ █▀▀ ▀████[0m
+        [40;37;1m████ ▄ ▀▀█▄▄▄▀ █▄  ▄▄▄█▀ █▄▀▀▀▀▀▄▄▀▄ ████[0m
+        [40;37;1m████ █▀██ ▄█ █  ▄██▄▄█▀█▀ ▄▀▄██  ▀ ▄▀████[0m
+        [40;37;1m████▄█▄▄▄█▄▄▀  ▄ ▄▄▄▄▄▀▀▄█▄▀ ▄▄▄  ▀▄ ████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▄▄██▄▄▄ ███▀  █  █▄█    █████[0m
+        [40;37;1m████ █   █ █ ▄█▀▄▄▄█▀▄▄▀ ▀ ▀  ▄  █▀▄█████[0m
+        [40;37;1m████ █▄▄▄█ █ ▄ ▀█▄▄ ▀▄ █  ▀▄█▄ ███▀▄█████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▄▄██▄▄▄█▄██▄██▄▄██▄█▄█▄█████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+    crash_test.go:137: signer killed with SIGABRT, pid 56449; script rc 11
+    crash_test.go:141: the signer ran with "core=unlimited gotraceback=crash", want core=0 gotraceback=none
+    crash_test.go:211: CRASH-PATH CANARY: signer limits "core=unlimited gotraceback=crash", 0 core files, 28 outputs and files scanned (HOME, the shim dir, [/private/tmp/4e-1799699483 /cores]): FAILED
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	7.414s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	7.062s
+
+## 1b high: the crash trace never reaches the terminal (signer output filter)
+file docs/v3-buzz/enroll.sh; test TestOwnerSignerCrashLeavesNoKey in ./internal/buzz/
+revert: '--name "$NAME" 2>&1 | signer_output; then' -> '--name "$NAME" | signer_output; then'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestOwnerSignerCrashLeavesNoKey (6.84s)
+    crash_test.go:122: signer killed mid-publish: rc 11 in 5.363s
+        owner: npub13j8mfpcd4hy5rnelszhjry7ahte0zcrpwpa35kkxpt8hc5gjpqfs58wa62 (8c8fb4870dadc941cf3f80af2193ddbaf2f16061707b1a5ac60acf7c51120813)
+        relay: ws://127.0.0.1:55903
+        share: /private/tmp/4e-1926639754/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b (check this against what amq-owner-sign shows)
+        grants requested: 8
+        == B: the owner signs the grants (amq-owner-sign, key through the pipe)
+           OWNER: amq-owner-sign shows the body; check it is 490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b and type its first 8 characters.
+        check the body pubkey against the share output, then type its first 8 characters to sign: You are about to sign these grants and publish a policy for this body.
+        session:     amq-squad
+        body pubkey: 490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b
+          kind 20003: kind=20003&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 1059: kind=1059&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 24200: kind=24200&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 44200: kind=44200&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 10100: kind=10100&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 0: kind=0&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 9: kind=9&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 40003: kind=40003&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+        490c3228
+        owner nsec or hex (hidden): owner pubkey: 8c8fb4870dadc941cf3f80af2193ddbaf2f16061707b1a5ac60acf7c51120813
+        wrote 8 signed grants to /private/tmp/4e-1926639754/.amq-squad/buzz/bundle.json
+        SIGABRT: abort
+        PC=0x18a96b50c m=0 sigcode=0
+        
+        goroutine 0 gp=0x105051d40 m=0 mp=0x105052720 [idle]:
+        runtime.pthread_cond_wait(0x105052c88, 0x105052c48)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/sys_darwin.go:488 +0x20 fp=0x16b53dff0 sp=0x16b53dfc0 pc=0x104925690
+        runtime.semasleep(0xffffffffffffffff)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/os_darwin.go:77 +0x80 fp=0x16b53e050 sp=0x16b53dff0 pc=0x104901380
+        runtime.notesleep(0x105052878)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/lock_sema.go:62 +0xac fp=0x16b53e080 sp=0x16b53e050 pc=0x1048d838c
+        runtime.mPark(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:1967
+        runtime.stopm()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:3008 +0x84 fp=0x16b53e0b0 sp=0x16b53e080 pc=0x10490b934
+        runtime.findRunnable()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:3796 +0xffc fp=0x16b53e280 sp=0x16b53e0b0 pc=0x10490d6bc
+        runtime.schedule()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:4164 +0x90 fp=0x16b53e2c0 sp=0x16b53e280 pc=0x10490ea30
+        runtime.park_m(0x1a61e2a661e0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:4304 +0x244 fp=0x16b53e320 sp=0x16b53e2c0 pc=0x10490eeb4
+        runtime.mcall()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:339 +0x54 fp=0x16b53e330 sp=0x16b53e320 pc=0x10493e704
+        
+        goroutine 1 gp=0x1a61e281c1e0 m=nil [select]:
+        runtime.gopark(0x1a61e28589f0?, 0x5?, 0x38?, 0x87?, 0x1a61e285888e?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e2858700 sp=0x1a61e28586e0 pc=0x10493955c
+        runtime.selectgo(0x1a61e28589f0, 0x1a61e2858884, 0x104bbc7d6?, 0x0, 0x1a61e28d2930?, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/select.go:351 +0x83c fp=0x1a61e2858840 sp=0x1a61e2858700 pc=0x10491a2ec
+        net/http.(*persistConn).roundTrip(0x1a61e2818c80, 0x1a61e29962d0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2916 +0x708 fp=0x1a61e2858a80 sp=0x1a61e2858840 pc=0x104ae6e88
+        net/http.(*Transport).roundTrip(0x10504ae20, 0x1a61e2818b40)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:704 +0x7e8 fp=0x1a61e2858c60 sp=0x1a61e2858a80 pc=0x104adc748
+        net/http.(*Transport).RoundTrip(0x808080695a5c087b?, 0x104fe2a40?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/roundtrip.go:33 +0x20 fp=0x1a61e2858c80 sp=0x1a61e2858c60 pc=0x104ae90f0
+        net/http.send(0x1a61e2818b40, {0x104fe2a40, 0x10504ae20}, {0x104fcce40?, 0xe?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:264 +0x4a0 fp=0x1a61e2858e70 sp=0x1a61e2858c80 pc=0x104ab42d0
+        net/http.(*Client).send(0x1a61e29a1d40, 0x1a61e2818b40, {0x8?, 0x104bba578?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:185 +0x1e4 fp=0x1a61e2858f10 sp=0x1a61e2858e70 pc=0x104ab3ce4
+        net/http.(*Client).do(0x1a61e29a1d40, 0x1a61e2818b40)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:733 +0x710 fp=0x1a61e2859110 sp=0x1a61e2858f10 pc=0x104ab5b00
+        net/http.(*Client).Do(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:592
+        github.com/coder/websocket.handshakeRequest({0x104fe67d8, 0x1a61e28c57a0}, {0x1a61e28464f8?, 0x160?}, 0x1a61e28ce840, 0x1a61e2a22304, {0x1a61e2846510, 0x18})
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:223 +0x7cc fp=0x1a61e28592c0 sp=0x1a61e2859110 pc=0x104b5612c
+        github.com/coder/websocket.dial({0x104fe67d8?, 0x1a61e28c57a0?}, {0x1a61e28464f8, 0x14}, 0x1a61e28594d8?, {0x0, 0x0})
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:143 +0x1f4 fp=0x1a61e2859480 sp=0x1a61e28592c0 pc=0x104b55034
+        github.com/coder/websocket.Dial(...)
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:121
+        fiatjaf.com/nostr.(*Relay).newConnection(0x1a61e2986240, {0x104fe67d8, 0x1a61e28c57a0}, 0x0)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:240 +0x218 fp=0x1a61e28595f0 sp=0x1a61e2859480 pc=0x104b673b8
+        fiatjaf.com/nostr.(*Relay).ConnectWithClient(0x1a61e2986240, {0x104fe67d8, 0x1a61e28c57a0}, 0x0)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:213 +0xdc fp=0x1a61e2859670 sp=0x1a61e28595f0 pc=0x104b6701c
+        fiatjaf.com/nostr.(*Relay).Connect(...)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:188
+        fiatjaf.com/nostr.RelayConnect({0x104fe67d8, 0x1a61e28c57a0}, {0x16b53ee2b?, 0x10?}, {0x0, 0x0, 0x0, 0x0, 0x0})
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:134 +0x60 fp=0x1a61e28596d0 sp=0x1a61e2859670 pc=0x104b66ee0
+        main.publishPolicy({0x104fe67d8, 0x1a61e28c57a0}, {0x16b53ee2b?, _}, {{0x87, 0xbb, 0x9b, 0x81, 0xc4, 0x32, ...}, ...}, ...)
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:304 +0x50 fp=0x1a61e2859870 sp=0x1a61e28596d0 pc=0x104b747d0
+        main.run({{0x16b53edb1, 0x34}, {0x16b53edec, 0x36}, {0x16b53ee2b, 0x14}, {0x16b53ee47, 0x9}}, 0x104fded60, 0x1a61e299de88, ...)
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:175 +0x918 fp=0x1a61e2859e00 sp=0x1a61e2859870 pc=0x104b730d8
+        main.runMain({0x1a61e283a130, 0x8, 0x8}, {0x104fe2518, 0x1a61e281a040}, {0x104fe2518, 0x1a61e281a048})
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:89 +0x3ec fp=0x1a61e2859ee0 sp=0x1a61e2859e00 pc=0x104b723dc
+        main.main()
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:58 +0x6c fp=0x1a61e2859f30 sp=0x1a61e2859ee0 pc=0x104b71fcc
+        runtime.main()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:290 +0x2b4 fp=0x1a61e2859fd0 sp=0x1a61e2859f30 pc=0x104906bb4
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e2859fd0 sp=0x1a61e2859fd0 pc=0x1049407b4
+        
+        goroutine 2 gp=0x1a61e281c780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a8f90 sp=0x1a61e28a8f70 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.forcegchelper()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:375 +0xb4 fp=0x1a61e28a8fd0 sp=0x1a61e28a8f90 pc=0x104906ed4
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a8fd0 sp=0x1a61e28a8fd0 pc=0x1049407b4
+        created by runtime.init.7 in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:363 +0x24
+        
+        goroutine 3 gp=0x1a61e281cd20 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a9770 sp=0x1a61e28a9750 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.bgsweep(0x1a61e28c0000)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcsweep.go:279 +0x9c fp=0x1a61e28a97b0 sp=0x1a61e28a9770 pc=0x1048f213c
+        runtime.gcenable.gowrap1()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:214 +0x20 fp=0x1a61e28a97d0 sp=0x1a61e28a97b0 pc=0x1048e38b0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a97d0 sp=0x1a61e28a97d0 pc=0x1049407b4
+        created by runtime.gcenable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:214 +0x6c
+        
+        goroutine 4 gp=0x1a61e281cf00 m=nil [GC scavenge wait]:
+        runtime.gopark(0x1a61e28c0000?, 0x104c84318?, 0x1?, 0x0?, 0x1a61e281cf00?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a9f60 sp=0x1a61e28a9f40 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.(*scavengerState).park(0x1050517a0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcscavenge.go:425 +0x5c fp=0x1a61e28a9f90 sp=0x1a61e28a9f60 pc=0x1048efd2c
+        runtime.bgscavenge(0x1a61e28c0000)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcscavenge.go:653 +0x44 fp=0x1a61e28a9fb0 sp=0x1a61e28a9f90 pc=0x1048f0264
+        runtime.gcenable.gowrap2()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:215 +0x20 fp=0x1a61e28a9fd0 sp=0x1a61e28a9fb0 pc=0x1048e3870
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a9fd0 sp=0x1a61e28a9fd0 pc=0x1049407b4
+        created by runtime.gcenable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:215 +0xac
+        
+        goroutine 5 gp=0x1a61e281d4a0 m=nil [GOMAXPROCS updater (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28aa770 sp=0x1a61e28aa750 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.updateMaxProcsGoroutine()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:7095 +0xf4 fp=0x1a61e28aa7d0 sp=0x1a61e28aa770 pc=0x104915524
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28aa7d0 sp=0x1a61e28aa7d0 pc=0x1049407b4
+        created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:7083 +0x48
+        
+        goroutine 6 gp=0x1a61e281d680 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0xb8?, 0x85?, 0x10493a104?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a8580 sp=0x1a61e28a8560 pc=0x10493955c
+        runtime.runFinalizers()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mfinal.go:210 +0x100 fp=0x1a61e28a87d0 sp=0x1a61e28a8580 pc=0x1048e28d0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a87d0 sp=0x1a61e28a87d0 pc=0x1049407b4
+        created by runtime.createfing in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mfinal.go:172 +0x78
+        
+        goroutine 7 gp=0x1a61e281d860 m=nil [cleanup wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28aaf50 sp=0x1a61e28aaf30 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.(*cleanupQueue).dequeue(0x105051b80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:522 +0x160 fp=0x1a61e28aaf90 sp=0x1a61e28aaf50 pc=0x1048df860
+        runtime.runCleanups()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:718 +0x40 fp=0x1a61e28aafd0 sp=0x1a61e28aaf90 pc=0x1048dffb0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28aafd0 sp=0x1a61e28aafd0 pc=0x1049407b4
+        created by runtime.(*cleanupQueue).createGs in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:672 +0x108
+        
+        goroutine 8 gp=0x1a61e281da40 m=nil [chan receive]:
+        runtime.gopark(0x1a61e28ab6e8?, 0x104974de0?, 0x40?, 0x5?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28ab6c0 sp=0x1a61e28ab6a0 pc=0x10493955c
+        runtime.chanrecv(0x1a61e2910000, 0x0, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/chan.go:667 +0x470 fp=0x1a61e28ab740 sp=0x1a61e28ab6c0 pc=0x1048d2af0
+        runtime.chanrecv1(0x1a61e2996230?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/chan.go:509 +0x14 fp=0x1a61e28ab770 sp=0x1a61e28ab740 pc=0x1048d2644
+        fiatjaf.com/nostr.NewRelay.func1()
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:101 +0x3c fp=0x1a61e28ab7d0 sp=0x1a61e28ab770 pc=0x104b66d7c
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28ab7d0 sp=0x1a61e28ab7d0 pc=0x1049407b4
+        created by fiatjaf.com/nostr.NewRelay in goroutine 1
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:100 +0x21c
+        
+        goroutine 10 gp=0x1a61e2a661e0 m=nil [IO wait]:
+        runtime.gopark(0x1a61e28d4b18?, 0x1049622a8?, 0x80?, 0x3a?, 0x1a61e28d4b00?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28d4ac0 sp=0x1a61e28d4aa0 pc=0x10493955c
+        runtime.netpollblock(0x1a61e2a5b000?, 0x1000?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/netpoll.go:575 +0x150 fp=0x1a61e28d4b00 sp=0x1a61e28d4ac0 pc=0x1049005b0
+        internal/poll.runtime_pollWait(0x1072c6200, 0x72)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/netpoll.go:351 +0xa0 fp=0x1a61e28d4b30 sp=0x1a61e28d4b00 pc=0x104938770
+        internal/poll.(*pollDesc).wait(0x1a61e2994600?, 0x1a61e2a5b000?, 0x0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_poll_runtime.go:84 +0x28 fp=0x1a61e28d4b60 sp=0x1a61e28d4b30 pc=0x10498e538
+        internal/poll.(*pollDesc).waitRead(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_poll_runtime.go:89
+        internal/poll.(*FD).Read(0x1a61e2994600, {0x1a61e2a5b000, 0x1000, 0x1000})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_unix.go:165 +0x234 fp=0x1a61e28d4c00 sp=0x1a61e28d4b60 pc=0x10498ef34
+        net.(*netFD).Read(0x1a61e2994600, {0x1a61e2a5b000?, 0x0?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/fd_posix.go:68 +0x28 fp=0x1a61e28d4c50 sp=0x1a61e28d4c00 pc=0x104a1b8c8
+        net.(*conn).Read(0x1a61e281a1c8, {0x1a61e2a5b000?, 0x100000000?, 0x14bdfdd68?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/net.go:196 +0x34 fp=0x1a61e28d4ca0 sp=0x1a61e28d4c50 pc=0x104a23444
+        net/http.(*persistConn).Read(0x1a61e2818c80, {0x1a61e2a5b000?, 0x1a61e28abd58?, 0x104ae4a04?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2174 +0x48 fp=0x1a61e28d4d00 sp=0x1a61e28d4ca0 pc=0x104ae3e68
+        bufio.(*Reader).fill(0x1a61e28ce900)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/bufio/bufio.go:113 +0xe0 fp=0x1a61e28d4d40 sp=0x1a61e28d4d00 pc=0x10495a320
+        bufio.(*Reader).Peek(0x1a61e28ce900, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/bufio/bufio.go:152 +0x58 fp=0x1a61e28d4d60 sp=0x1a61e28d4d40 pc=0x10495a468
+        net/http.(*persistConn).readLoop(0x1a61e2818c80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2330 +0x110 fp=0x1a61e28d4fb0 sp=0x1a61e28d4d60 pc=0x104ae4a90
+        net/http.(*Transport).dialConn.gowrap2()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1994 +0x20 fp=0x1a61e28d4fd0 sp=0x1a61e28d4fb0 pc=0x104ae34f0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28d4fd0 sp=0x1a61e28d4fd0 pc=0x1049407b4
+        created by net/http.(*Transport).dialConn in goroutine 9
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1994 +0x109c
+        
+        goroutine 11 gp=0x1a61e2a663c0 m=nil [select]:
+        runtime.gopark(0x1a61e2c5cf38?, 0x2?, 0x60?, 0xd8?, 0x1a61e2c5cee4?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e2c5cd60 sp=0x1a61e2c5cd40 pc=0x10493955c
+        runtime.selectgo(0x1a61e2c5cf38, 0x1a61e2c5cee0, 0x1a61e28d0b00?, 0x0, 0x1a61e2a622a0?, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/select.go:351 +0x83c fp=0x1a61e2c5cea0 sp=0x1a61e2c5cd60 pc=0x10491a2ec
+        net/http.(*persistConn).writeLoop(0x1a61e2818c80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2657 +0x98 fp=0x1a61e2c5cfb0 sp=0x1a61e2c5cea0 pc=0x104ae60c8
+        net/http.(*Transport).dialConn.gowrap3()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1995 +0x20 fp=0x1a61e2c5cfd0 sp=0x1a61e2c5cfb0 pc=0x104ae34b0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e2c5cfd0 sp=0x1a61e2c5cfd0 pc=0x1049407b4
+        created by net/http.(*Transport).dialConn in goroutine 9
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1995 +0x10e4
+        
+        r0      0x104
+        r1      0x0
+        r2      0x300
+        r3      0x0
+        r4      0x0
+        r5      0xa0
+        r6      0x0
+        r7      0x0
+        r8      0x16b53ded8
+        r9      0x0
+        r10     0x0
+        r11     0x2
+        r12     0x2
+        r13     0x0
+        r14     0x0
+        r15     0x0
+        r16     0x131
+        r17     0x1f8a2b310
+        r18     0x0
+        r19     0x105052c48
+        r20     0x105052c88
+        r21     0x1f73ea260
+        r22     0x0
+        r23     0x0
+        r24     0x300
+        r25     0x301
+        r26     0x400
+        r27     0x10503f000
+        r28     0x105051d40
+        r29     0x16b53df50
+        lr      0x18a9ac128
+        sp      0x16b53dec0
+        pc      0x18a96b50c
+        fault   0x18a96b50c
+           amq-owner-sign failed. If it said the key is not valid, check that BUZZ_OWNER_KEY_CMD prints the key and one newline only (no printf or echo wrapper).
+           (the kind 30177 policy was not published; the next run retries it, or set BUZZ_SKIP_POLICY=1)
+        == C: amq-remote share --bundle (enroll)
+        grants enrolled: 8
+        == D: amq-remote share --target --relay --presence "amq-squad"
+        == D: amq-remote up (background, publishes the profile and presence)
+             doctor: "presence": "configured"
+             doctor: "state": "auth_pending"
+        == D: OWNER STEP (phone or Buzz Desktop): open a DM with the agent named "amq-squad"
+             and send the DM channel id back: rerun with BUZZ_DM_CHANNEL=<channel id>.
+             agent npub: npub1fyxry2r4kcy0r2kpfuh6n5rywlw8sz0449w44wytjefd37q0w99slrzc4y
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▀█ █▄▀ ▀▄██▄█▄▀▄▀█ ▄▄▄▄▄ ████[0m
+        [40;37;1m████ █   █ █▀▀▀█ ▀▄ ▀▀ █ ▄▀█▄█ █   █ ████[0m
+        [40;37;1m████ █▄▄▄█ █▀ █▀▀▄▄▀▀▄▀▄█  ▄██ █▄▄▄█ ████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█ ▀▄█▄█▄▀ ▀ █▄▄▄▄▄▄▄████[0m
+        [40;37;1m████▄▄▄ ▄▀▄▄▄▄▀▄▀ ▀▄ ▄█▀▄█▄ ▄ ▀▄█▄▀ ▀████[0m
+        [40;37;1m████▀  █▀▄▄▀▀█▄█▀█▀▄ ▄█▀█ █▀ ▀▄ ▄█▀▄█████[0m
+        [40;37;1m██████ ▀▀ ▄██ ▄█▄▄ ▄▄▄▄  ▀▀▀▀▀▀█▄▄█ ▀████[0m
+        [40;37;1m█████▄▀▀█ ▄█▄▀  ▄▄▀▄▄█▀▀▄▀▄▀ █▀ ▀▀▀ ▀████[0m
+        [40;37;1m████ ▀▀▀ ▀▄  ▀▄▄▀ ▄▄▄▄▄▀ █▄▀█ ▀█▄▀█▀▀████[0m
+        [40;37;1m█████▀▀ ▄▀▄ ▀▀ █▀█▄ ▀█▀██▀▄█ █▀▀▀▀▀ ▀████[0m
+        [40;37;1m████ ▄▀█▄▄▄ ▀█▄█▄▄ ▄▀▄█ ▄▀▀▀▀▀▀█▄▄▀▄ ████[0m
+        [40;37;1m████ █▀▄█▀▄▄▄   ▄▄█▄▀▄█▀   █▀▄█▄▄▀ ▄▀████[0m
+        [40;37;1m████▄██▄██▄▄ ██▄   ▄▀ █▀ ▀   ▄▄▄  ▀▄ ████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▄███▀▄█  █▄█▀▀█  █▄█    █████[0m
+        [40;37;1m████ █   █ █ ▄▄ █▄▄▄▀▄█ ▀█ ▀▄ ▄  █▀▄█████[0m
+        [40;37;1m████ █▄▄▄█ █ ▀ █▄▄▀▄██▀▀  ▀█▄█ ███▀▄█████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▄▄██▄███▄██▄█▄▄▄▄▄▄█▄█▄█████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+    crash_test.go:137: signer killed with SIGABRT, pid 57449; script rc 11
+    crash_test.go:146: the signer's crash trace reached the terminal:
+        owner: npub13j8mfpcd4hy5rnelszhjry7ahte0zcrpwpa35kkxpt8hc5gjpqfs58wa62 (8c8fb4870dadc941cf3f80af2193ddbaf2f16061707b1a5ac60acf7c51120813)
+        relay: ws://127.0.0.1:55903
+        share: /private/tmp/4e-1926639754/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b (check this against what amq-owner-sign shows)
+        grants requested: 8
+        == B: the owner signs the grants (amq-owner-sign, key through the pipe)
+           OWNER: amq-owner-sign shows the body; check it is 490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b and type its first 8 characters.
+        check the body pubkey against the share output, then type its first 8 characters to sign: You are about to sign these grants and publish a policy for this body.
+        session:     amq-squad
+        body pubkey: 490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b
+          kind 20003: kind=20003&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 1059: kind=1059&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 24200: kind=24200&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 44200: kind=44200&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 10100: kind=10100&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 0: kind=0&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 9: kind=9&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 40003: kind=40003&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+        490c3228
+        owner nsec or hex (hidden): owner pubkey: 8c8fb4870dadc941cf3f80af2193ddbaf2f16061707b1a5ac60acf7c51120813
+        wrote 8 signed grants to /private/tmp/4e-1926639754/.amq-squad/buzz/bundle.json
+        SIGABRT: abort
+        PC=0x18a96b50c m=0 sigcode=0
+        
+        goroutine 0 gp=0x105051d40 m=0 mp=0x105052720 [idle]:
+        runtime.pthread_cond_wait(0x105052c88, 0x105052c48)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/sys_darwin.go:488 +0x20 fp=0x16b53dff0 sp=0x16b53dfc0 pc=0x104925690
+        runtime.semasleep(0xffffffffffffffff)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/os_darwin.go:77 +0x80 fp=0x16b53e050 sp=0x16b53dff0 pc=0x104901380
+        runtime.notesleep(0x105052878)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/lock_sema.go:62 +0xac fp=0x16b53e080 sp=0x16b53e050 pc=0x1048d838c
+        runtime.mPark(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:1967
+        runtime.stopm()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:3008 +0x84 fp=0x16b53e0b0 sp=0x16b53e080 pc=0x10490b934
+        runtime.findRunnable()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:3796 +0xffc fp=0x16b53e280 sp=0x16b53e0b0 pc=0x10490d6bc
+        runtime.schedule()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:4164 +0x90 fp=0x16b53e2c0 sp=0x16b53e280 pc=0x10490ea30
+        runtime.park_m(0x1a61e2a661e0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:4304 +0x244 fp=0x16b53e320 sp=0x16b53e2c0 pc=0x10490eeb4
+        runtime.mcall()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:339 +0x54 fp=0x16b53e330 sp=0x16b53e320 pc=0x10493e704
+        
+        goroutine 1 gp=0x1a61e281c1e0 m=nil [select]:
+        runtime.gopark(0x1a61e28589f0?, 0x5?, 0x38?, 0x87?, 0x1a61e285888e?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e2858700 sp=0x1a61e28586e0 pc=0x10493955c
+        runtime.selectgo(0x1a61e28589f0, 0x1a61e2858884, 0x104bbc7d6?, 0x0, 0x1a61e28d2930?, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/select.go:351 +0x83c fp=0x1a61e2858840 sp=0x1a61e2858700 pc=0x10491a2ec
+        net/http.(*persistConn).roundTrip(0x1a61e2818c80, 0x1a61e29962d0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2916 +0x708 fp=0x1a61e2858a80 sp=0x1a61e2858840 pc=0x104ae6e88
+        net/http.(*Transport).roundTrip(0x10504ae20, 0x1a61e2818b40)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:704 +0x7e8 fp=0x1a61e2858c60 sp=0x1a61e2858a80 pc=0x104adc748
+        net/http.(*Transport).RoundTrip(0x808080695a5c087b?, 0x104fe2a40?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/roundtrip.go:33 +0x20 fp=0x1a61e2858c80 sp=0x1a61e2858c60 pc=0x104ae90f0
+        net/http.send(0x1a61e2818b40, {0x104fe2a40, 0x10504ae20}, {0x104fcce40?, 0xe?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:264 +0x4a0 fp=0x1a61e2858e70 sp=0x1a61e2858c80 pc=0x104ab42d0
+        net/http.(*Client).send(0x1a61e29a1d40, 0x1a61e2818b40, {0x8?, 0x104bba578?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:185 +0x1e4 fp=0x1a61e2858f10 sp=0x1a61e2858e70 pc=0x104ab3ce4
+        net/http.(*Client).do(0x1a61e29a1d40, 0x1a61e2818b40)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:733 +0x710 fp=0x1a61e2859110 sp=0x1a61e2858f10 pc=0x104ab5b00
+        net/http.(*Client).Do(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:592
+        github.com/coder/websocket.handshakeRequest({0x104fe67d8, 0x1a61e28c57a0}, {0x1a61e28464f8?, 0x160?}, 0x1a61e28ce840, 0x1a61e2a22304, {0x1a61e2846510, 0x18})
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:223 +0x7cc fp=0x1a61e28592c0 sp=0x1a61e2859110 pc=0x104b5612c
+        github.com/coder/websocket.dial({0x104fe67d8?, 0x1a61e28c57a0?}, {0x1a61e28464f8, 0x14}, 0x1a61e28594d8?, {0x0, 0x0})
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:143 +0x1f4 fp=0x1a61e2859480 sp=0x1a61e28592c0 pc=0x104b55034
+        github.com/coder/websocket.Dial(...)
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:121
+        fiatjaf.com/nostr.(*Relay).newConnection(0x1a61e2986240, {0x104fe67d8, 0x1a61e28c57a0}, 0x0)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:240 +0x218 fp=0x1a61e28595f0 sp=0x1a61e2859480 pc=0x104b673b8
+        fiatjaf.com/nostr.(*Relay).ConnectWithClient(0x1a61e2986240, {0x104fe67d8, 0x1a61e28c57a0}, 0x0)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:213 +0xdc fp=0x1a61e2859670 sp=0x1a61e28595f0 pc=0x104b6701c
+        fiatjaf.com/nostr.(*Relay).Connect(...)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:188
+        fiatjaf.com/nostr.RelayConnect({0x104fe67d8, 0x1a61e28c57a0}, {0x16b53ee2b?, 0x10?}, {0x0, 0x0, 0x0, 0x0, 0x0})
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:134 +0x60 fp=0x1a61e28596d0 sp=0x1a61e2859670 pc=0x104b66ee0
+        main.publishPolicy({0x104fe67d8, 0x1a61e28c57a0}, {0x16b53ee2b?, _}, {{0x87, 0xbb, 0x9b, 0x81, 0xc4, 0x32, ...}, ...}, ...)
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:304 +0x50 fp=0x1a61e2859870 sp=0x1a61e28596d0 pc=0x104b747d0
+        main.run({{0x16b53edb1, 0x34}, {0x16b53edec, 0x36}, {0x16b53ee2b, 0x14}, {0x16b53ee47, 0x9}}, 0x104fded60, 0x1a61e299de88, ...)
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:175 +0x918 fp=0x1a61e2859e00 sp=0x1a61e2859870 pc=0x104b730d8
+        main.runMain({0x1a61e283a130, 0x8, 0x8}, {0x104fe2518, 0x1a61e281a040}, {0x104fe2518, 0x1a61e281a048})
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:89 +0x3ec fp=0x1a61e2859ee0 sp=0x1a61e2859e00 pc=0x104b723dc
+        main.main()
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:58 +0x6c fp=0x1a61e2859f30 sp=0x1a61e2859ee0 pc=0x104b71fcc
+        runtime.main()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:290 +0x2b4 fp=0x1a61e2859fd0 sp=0x1a61e2859f30 pc=0x104906bb4
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e2859fd0 sp=0x1a61e2859fd0 pc=0x1049407b4
+        
+        goroutine 2 gp=0x1a61e281c780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a8f90 sp=0x1a61e28a8f70 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.forcegchelper()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:375 +0xb4 fp=0x1a61e28a8fd0 sp=0x1a61e28a8f90 pc=0x104906ed4
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a8fd0 sp=0x1a61e28a8fd0 pc=0x1049407b4
+        created by runtime.init.7 in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:363 +0x24
+        
+        goroutine 3 gp=0x1a61e281cd20 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a9770 sp=0x1a61e28a9750 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.bgsweep(0x1a61e28c0000)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcsweep.go:279 +0x9c fp=0x1a61e28a97b0 sp=0x1a61e28a9770 pc=0x1048f213c
+        runtime.gcenable.gowrap1()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:214 +0x20 fp=0x1a61e28a97d0 sp=0x1a61e28a97b0 pc=0x1048e38b0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a97d0 sp=0x1a61e28a97d0 pc=0x1049407b4
+        created by runtime.gcenable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:214 +0x6c
+        
+        goroutine 4 gp=0x1a61e281cf00 m=nil [GC scavenge wait]:
+        runtime.gopark(0x1a61e28c0000?, 0x104c84318?, 0x1?, 0x0?, 0x1a61e281cf00?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a9f60 sp=0x1a61e28a9f40 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.(*scavengerState).park(0x1050517a0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcscavenge.go:425 +0x5c fp=0x1a61e28a9f90 sp=0x1a61e28a9f60 pc=0x1048efd2c
+        runtime.bgscavenge(0x1a61e28c0000)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcscavenge.go:653 +0x44 fp=0x1a61e28a9fb0 sp=0x1a61e28a9f90 pc=0x1048f0264
+        runtime.gcenable.gowrap2()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:215 +0x20 fp=0x1a61e28a9fd0 sp=0x1a61e28a9fb0 pc=0x1048e3870
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a9fd0 sp=0x1a61e28a9fd0 pc=0x1049407b4
+        created by runtime.gcenable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:215 +0xac
+        
+        goroutine 5 gp=0x1a61e281d4a0 m=nil [GOMAXPROCS updater (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28aa770 sp=0x1a61e28aa750 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.updateMaxProcsGoroutine()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:7095 +0xf4 fp=0x1a61e28aa7d0 sp=0x1a61e28aa770 pc=0x104915524
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28aa7d0 sp=0x1a61e28aa7d0 pc=0x1049407b4
+        created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:7083 +0x48
+        
+        goroutine 6 gp=0x1a61e281d680 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0xb8?, 0x85?, 0x10493a104?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a8580 sp=0x1a61e28a8560 pc=0x10493955c
+        runtime.runFinalizers()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mfinal.go:210 +0x100 fp=0x1a61e28a87d0 sp=0x1a61e28a8580 pc=0x1048e28d0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a87d0 sp=0x1a61e28a87d0 pc=0x1049407b4
+        created by runtime.createfing in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mfinal.go:172 +0x78
+        
+        goroutine 7 gp=0x1a61e281d860 m=nil [cleanup wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28aaf50 sp=0x1a61e28aaf30 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.(*cleanupQueue).dequeue(0x105051b80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:522 +0x160 fp=0x1a61e28aaf90 sp=0x1a61e28aaf50 pc=0x1048df860
+        runtime.runCleanups()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:718 +0x40 fp=0x1a61e28aafd0 sp=0x1a61e28aaf90 pc=0x1048dffb0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28aafd0 sp=0x1a61e28aafd0 pc=0x1049407b4
+        created by runtime.(*cleanupQueue).createGs in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:672 +0x108
+        
+        goroutine 8 gp=0x1a61e281da40 m=nil [chan receive]:
+        runtime.gopark(0x1a61e28ab6e8?, 0x104974de0?, 0x40?, 0x5?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28ab6c0 sp=0x1a61e28ab6a0 pc=0x10493955c
+        runtime.chanrecv(0x1a61e2910000, 0x0, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/chan.go:667 +0x470 fp=0x1a61e28ab740 sp=0x1a61e28ab6c0 pc=0x1048d2af0
+        runtime.chanrecv1(0x1a61e2996230?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/chan.go:509 +0x14 fp=0x1a61e28ab770 sp=0x1a61e28ab740 pc=0x1048d2644
+        fiatjaf.com/nostr.NewRelay.func1()
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:101 +0x3c fp=0x1a61e28ab7d0 sp=0x1a61e28ab770 pc=0x104b66d7c
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28ab7d0 sp=0x1a61e28ab7d0 pc=0x1049407b4
+        created by fiatjaf.com/nostr.NewRelay in goroutine 1
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:100 +0x21c
+        
+        goroutine 10 gp=0x1a61e2a661e0 m=nil [IO wait]:
+        runtime.gopark(0x1a61e28d4b18?, 0x1049622a8?, 0x80?, 0x3a?, 0x1a61e28d4b00?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28d4ac0 sp=0x1a61e28d4aa0 pc=0x10493955c
+        runtime.netpollblock(0x1a61e2a5b000?, 0x1000?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/netpoll.go:575 +0x150 fp=0x1a61e28d4b00 sp=0x1a61e28d4ac0 pc=0x1049005b0
+        internal/poll.runtime_pollWait(0x1072c6200, 0x72)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/netpoll.go:351 +0xa0 fp=0x1a61e28d4b30 sp=0x1a61e28d4b00 pc=0x104938770
+        internal/poll.(*pollDesc).wait(0x1a61e2994600?, 0x1a61e2a5b000?, 0x0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_poll_runtime.go:84 +0x28 fp=0x1a61e28d4b60 sp=0x1a61e28d4b30 pc=0x10498e538
+        internal/poll.(*pollDesc).waitRead(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_poll_runtime.go:89
+        internal/poll.(*FD).Read(0x1a61e2994600, {0x1a61e2a5b000, 0x1000, 0x1000})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_unix.go:165 +0x234 fp=0x1a61e28d4c00 sp=0x1a61e28d4b60 pc=0x10498ef34
+        net.(*netFD).Read(0x1a61e2994600, {0x1a61e2a5b000?, 0x0?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/fd_posix.go:68 +0x28 fp=0x1a61e28d4c50 sp=0x1a61e28d4c00 pc=0x104a1b8c8
+        net.(*conn).Read(0x1a61e281a1c8, {0x1a61e2a5b000?, 0x100000000?, 0x14bdfdd68?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/net.go:196 +0x34 fp=0x1a61e28d4ca0 sp=0x1a61e28d4c50 pc=0x104a23444
+        net/http.(*persistConn).Read(0x1a61e2818c80, {0x1a61e2a5b000?, 0x1a61e28abd58?, 0x104ae4a04?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2174 +0x48 fp=0x1a61e28d4d00 sp=0x1a61e28d4ca0 pc=0x104ae3e68
+        bufio.(*Reader).fill(0x1a61e28ce900)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/bufio/bufio.go:113 +0xe0 fp=0x1a61e28d4d40 sp=0x1a61e28d4d00 pc=0x10495a320
+        bufio.(*Reader).Peek(0x1a61e28ce900, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/bufio/bufio.go:152 +0x58 fp=0x1a61e28d4d60 sp=0x1a61e28d4d40 pc=0x10495a468
+        net/http.(*persistConn).readLoop(0x1a61e2818c80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2330 +0x110 fp=0x1a61e28d4fb0 sp=0x1a61e28d4d60 pc=0x104ae4a90
+        net/http.(*Transport).dialConn.gowrap2()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1994 +0x20 fp=0x1a61e28d4fd0 sp=0x1a61e28d4fb0 pc=0x104ae34f0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28d4fd0 sp=0x1a61e28d4fd0 pc=0x1049407b4
+        created by net/http.(*Transport).dialConn in goroutine 9
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1994 +0x109c
+        
+        goroutine 11 gp=0x1a61e2a663c0 m=nil [select]:
+        runtime.gopark(0x1a61e2c5cf38?, 0x2?, 0x60?, 0xd8?, 0x1a61e2c5cee4?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e2c5cd60 sp=0x1a61e2c5cd40 pc=0x10493955c
+        runtime.selectgo(0x1a61e2c5cf38, 0x1a61e2c5cee0, 0x1a61e28d0b00?, 0x0, 0x1a61e2a622a0?, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/select.go:351 +0x83c fp=0x1a61e2c5cea0 sp=0x1a61e2c5cd60 pc=0x10491a2ec
+        net/http.(*persistConn).writeLoop(0x1a61e2818c80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2657 +0x98 fp=0x1a61e2c5cfb0 sp=0x1a61e2c5cea0 pc=0x104ae60c8
+        net/http.(*Transport).dialConn.gowrap3()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1995 +0x20 fp=0x1a61e2c5cfd0 sp=0x1a61e2c5cfb0 pc=0x104ae34b0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e2c5cfd0 sp=0x1a61e2c5cfd0 pc=0x1049407b4
+        created by net/http.(*Transport).dialConn in goroutine 9
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1995 +0x10e4
+        
+        r0      0x104
+        r1      0x0
+        r2      0x300
+        r3      0x0
+        r4      0x0
+        r5      0xa0
+        r6      0x0
+        r7      0x0
+        r8      0x16b53ded8
+        r9      0x0
+        r10     0x0
+        r11     0x2
+        r12     0x2
+        r13     0x0
+        r14     0x0
+        r15     0x0
+        r16     0x131
+        r17     0x1f8a2b310
+        r18     0x0
+        r19     0x105052c48
+        r20     0x105052c88
+        r21     0x1f73ea260
+        r22     0x0
+        r23     0x0
+        r24     0x300
+        r25     0x301
+        r26     0x400
+        r27     0x10503f000
+        r28     0x105051d40
+        r29     0x16b53df50
+        lr      0x18a9ac128
+        sp      0x16b53dec0
+        pc      0x18a96b50c
+        fault   0x18a96b50c
+           amq-owner-sign failed. If it said the key is not valid, check that BUZZ_OWNER_KEY_CMD prints the key and one newline only (no printf or echo wrapper).
+           (the kind 30177 policy was not published; the next run retries it, or set BUZZ_SKIP_POLICY=1)
+        == C: amq-remote share --bundle (enroll)
+        grants enrolled: 8
+        == D: amq-remote share --target --relay --presence "amq-squad"
+        == D: amq-remote up (background, publishes the profile and presence)
+             doctor: "presence": "configured"
+             doctor: "state": "auth_pending"
+        == D: OWNER STEP (phone or Buzz Desktop): open a DM with the agent named "amq-squad"
+             and send the DM channel id back: rerun with BUZZ_DM_CHANNEL=<channel id>.
+             agent npub: npub1fyxry2r4kcy0r2kpfuh6n5rywlw8sz0449w44wytjefd37q0w99slrzc4y
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▀█ █▄▀ ▀▄██▄█▄▀▄▀█ ▄▄▄▄▄ ████[0m
+        [40;37;1m████ █   █ █▀▀▀█ ▀▄ ▀▀ █ ▄▀█▄█ █   █ ████[0m
+        [40;37;1m████ █▄▄▄█ █▀ █▀▀▄▄▀▀▄▀▄█  ▄██ █▄▄▄█ ████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█ ▀▄█▄█▄▀ ▀ █▄▄▄▄▄▄▄████[0m
+        [40;37;1m████▄▄▄ ▄▀▄▄▄▄▀▄▀ ▀▄ ▄█▀▄█▄ ▄ ▀▄█▄▀ ▀████[0m
+        [40;37;1m████▀  █▀▄▄▀▀█▄█▀█▀▄ ▄█▀█ █▀ ▀▄ ▄█▀▄█████[0m
+        [40;37;1m██████ ▀▀ ▄██ ▄█▄▄ ▄▄▄▄  ▀▀▀▀▀▀█▄▄█ ▀████[0m
+        [40;37;1m█████▄▀▀█ ▄█▄▀  ▄▄▀▄▄█▀▀▄▀▄▀ █▀ ▀▀▀ ▀████[0m
+        [40;37;1m████ ▀▀▀ ▀▄  ▀▄▄▀ ▄▄▄▄▄▀ █▄▀█ ▀█▄▀█▀▀████[0m
+        [40;37;1m█████▀▀ ▄▀▄ ▀▀ █▀█▄ ▀█▀██▀▄█ █▀▀▀▀▀ ▀████[0m
+        [40;37;1m████ ▄▀█▄▄▄ ▀█▄█▄▄ ▄▀▄█ ▄▀▀▀▀▀▀█▄▄▀▄ ████[0m
+        [40;37;1m████ █▀▄█▀▄▄▄   ▄▄█▄▀▄█▀   █▀▄█▄▄▀ ▄▀████[0m
+        [40;37;1m████▄██▄██▄▄ ██▄   ▄▀ █▀ ▀   ▄▄▄  ▀▄ ████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▄███▀▄█  █▄█▀▀█  █▄█    █████[0m
+        [40;37;1m████ █   █ █ ▄▄ █▄▄▄▀▄█ ▀█ ▀▄ ▄  █▀▄█████[0m
+        [40;37;1m████ █▄▄▄█ █ ▀ █▄▄▀▄██▀▀  ▀█▄█ ███▀▄█████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▄▄██▄███▄██▄█▄▄▄▄▄▄█▄█▄█████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+    crash_test.go:149: the prompt or the crash notice is missing:
+        owner: npub13j8mfpcd4hy5rnelszhjry7ahte0zcrpwpa35kkxpt8hc5gjpqfs58wa62 (8c8fb4870dadc941cf3f80af2193ddbaf2f16061707b1a5ac60acf7c51120813)
+        relay: ws://127.0.0.1:55903
+        share: /private/tmp/4e-1926639754/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b (check this against what amq-owner-sign shows)
+        grants requested: 8
+        == B: the owner signs the grants (amq-owner-sign, key through the pipe)
+           OWNER: amq-owner-sign shows the body; check it is 490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b and type its first 8 characters.
+        check the body pubkey against the share output, then type its first 8 characters to sign: You are about to sign these grants and publish a policy for this body.
+        session:     amq-squad
+        body pubkey: 490c322875b608f1aac14f2fa9d06477dc7809f5a95d5ab88b9652d8f80f714b
+          kind 20003: kind=20003&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 1059: kind=1059&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 24200: kind=24200&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 44200: kind=44200&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 10100: kind=10100&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 0: kind=0&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 9: kind=9&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+          kind 40003: kind=40003&created_at<1795435597 (until 2026-11-23T12:06:37Z)
+        490c3228
+        owner nsec or hex (hidden): owner pubkey: 8c8fb4870dadc941cf3f80af2193ddbaf2f16061707b1a5ac60acf7c51120813
+        wrote 8 signed grants to /private/tmp/4e-1926639754/.amq-squad/buzz/bundle.json
+        SIGABRT: abort
+        PC=0x18a96b50c m=0 sigcode=0
+        
+        goroutine 0 gp=0x105051d40 m=0 mp=0x105052720 [idle]:
+        runtime.pthread_cond_wait(0x105052c88, 0x105052c48)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/sys_darwin.go:488 +0x20 fp=0x16b53dff0 sp=0x16b53dfc0 pc=0x104925690
+        runtime.semasleep(0xffffffffffffffff)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/os_darwin.go:77 +0x80 fp=0x16b53e050 sp=0x16b53dff0 pc=0x104901380
+        runtime.notesleep(0x105052878)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/lock_sema.go:62 +0xac fp=0x16b53e080 sp=0x16b53e050 pc=0x1048d838c
+        runtime.mPark(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:1967
+        runtime.stopm()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:3008 +0x84 fp=0x16b53e0b0 sp=0x16b53e080 pc=0x10490b934
+        runtime.findRunnable()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:3796 +0xffc fp=0x16b53e280 sp=0x16b53e0b0 pc=0x10490d6bc
+        runtime.schedule()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:4164 +0x90 fp=0x16b53e2c0 sp=0x16b53e280 pc=0x10490ea30
+        runtime.park_m(0x1a61e2a661e0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:4304 +0x244 fp=0x16b53e320 sp=0x16b53e2c0 pc=0x10490eeb4
+        runtime.mcall()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:339 +0x54 fp=0x16b53e330 sp=0x16b53e320 pc=0x10493e704
+        
+        goroutine 1 gp=0x1a61e281c1e0 m=nil [select]:
+        runtime.gopark(0x1a61e28589f0?, 0x5?, 0x38?, 0x87?, 0x1a61e285888e?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e2858700 sp=0x1a61e28586e0 pc=0x10493955c
+        runtime.selectgo(0x1a61e28589f0, 0x1a61e2858884, 0x104bbc7d6?, 0x0, 0x1a61e28d2930?, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/select.go:351 +0x83c fp=0x1a61e2858840 sp=0x1a61e2858700 pc=0x10491a2ec
+        net/http.(*persistConn).roundTrip(0x1a61e2818c80, 0x1a61e29962d0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2916 +0x708 fp=0x1a61e2858a80 sp=0x1a61e2858840 pc=0x104ae6e88
+        net/http.(*Transport).roundTrip(0x10504ae20, 0x1a61e2818b40)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:704 +0x7e8 fp=0x1a61e2858c60 sp=0x1a61e2858a80 pc=0x104adc748
+        net/http.(*Transport).RoundTrip(0x808080695a5c087b?, 0x104fe2a40?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/roundtrip.go:33 +0x20 fp=0x1a61e2858c80 sp=0x1a61e2858c60 pc=0x104ae90f0
+        net/http.send(0x1a61e2818b40, {0x104fe2a40, 0x10504ae20}, {0x104fcce40?, 0xe?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:264 +0x4a0 fp=0x1a61e2858e70 sp=0x1a61e2858c80 pc=0x104ab42d0
+        net/http.(*Client).send(0x1a61e29a1d40, 0x1a61e2818b40, {0x8?, 0x104bba578?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:185 +0x1e4 fp=0x1a61e2858f10 sp=0x1a61e2858e70 pc=0x104ab3ce4
+        net/http.(*Client).do(0x1a61e29a1d40, 0x1a61e2818b40)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:733 +0x710 fp=0x1a61e2859110 sp=0x1a61e2858f10 pc=0x104ab5b00
+        net/http.(*Client).Do(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/client.go:592
+        github.com/coder/websocket.handshakeRequest({0x104fe67d8, 0x1a61e28c57a0}, {0x1a61e28464f8?, 0x160?}, 0x1a61e28ce840, 0x1a61e2a22304, {0x1a61e2846510, 0x18})
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:223 +0x7cc fp=0x1a61e28592c0 sp=0x1a61e2859110 pc=0x104b5612c
+        github.com/coder/websocket.dial({0x104fe67d8?, 0x1a61e28c57a0?}, {0x1a61e28464f8, 0x14}, 0x1a61e28594d8?, {0x0, 0x0})
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:143 +0x1f4 fp=0x1a61e2859480 sp=0x1a61e28592c0 pc=0x104b55034
+        github.com/coder/websocket.Dial(...)
+        	/Users/runner/go/pkg/mod/github.com/coder/websocket@v1.8.15/dial.go:121
+        fiatjaf.com/nostr.(*Relay).newConnection(0x1a61e2986240, {0x104fe67d8, 0x1a61e28c57a0}, 0x0)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:240 +0x218 fp=0x1a61e28595f0 sp=0x1a61e2859480 pc=0x104b673b8
+        fiatjaf.com/nostr.(*Relay).ConnectWithClient(0x1a61e2986240, {0x104fe67d8, 0x1a61e28c57a0}, 0x0)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:213 +0xdc fp=0x1a61e2859670 sp=0x1a61e28595f0 pc=0x104b6701c
+        fiatjaf.com/nostr.(*Relay).Connect(...)
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:188
+        fiatjaf.com/nostr.RelayConnect({0x104fe67d8, 0x1a61e28c57a0}, {0x16b53ee2b?, 0x10?}, {0x0, 0x0, 0x0, 0x0, 0x0})
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:134 +0x60 fp=0x1a61e28596d0 sp=0x1a61e2859670 pc=0x104b66ee0
+        main.publishPolicy({0x104fe67d8, 0x1a61e28c57a0}, {0x16b53ee2b?, _}, {{0x87, 0xbb, 0x9b, 0x81, 0xc4, 0x32, ...}, ...}, ...)
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:304 +0x50 fp=0x1a61e2859870 sp=0x1a61e28596d0 pc=0x104b747d0
+        main.run({{0x16b53edb1, 0x34}, {0x16b53edec, 0x36}, {0x16b53ee2b, 0x14}, {0x16b53ee47, 0x9}}, 0x104fded60, 0x1a61e299de88, ...)
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:175 +0x918 fp=0x1a61e2859e00 sp=0x1a61e2859870 pc=0x104b730d8
+        main.runMain({0x1a61e283a130, 0x8, 0x8}, {0x104fe2518, 0x1a61e281a040}, {0x104fe2518, 0x1a61e281a048})
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:89 +0x3ec fp=0x1a61e2859ee0 sp=0x1a61e2859e00 pc=0x104b723dc
+        main.main()
+        	/Users/runner/work/agent-message-queue/agent-message-queue/cmd/amq-owner-sign/main.go:58 +0x6c fp=0x1a61e2859f30 sp=0x1a61e2859ee0 pc=0x104b71fcc
+        runtime.main()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:290 +0x2b4 fp=0x1a61e2859fd0 sp=0x1a61e2859f30 pc=0x104906bb4
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e2859fd0 sp=0x1a61e2859fd0 pc=0x1049407b4
+        
+        goroutine 2 gp=0x1a61e281c780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a8f90 sp=0x1a61e28a8f70 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.forcegchelper()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:375 +0xb4 fp=0x1a61e28a8fd0 sp=0x1a61e28a8f90 pc=0x104906ed4
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a8fd0 sp=0x1a61e28a8fd0 pc=0x1049407b4
+        created by runtime.init.7 in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:363 +0x24
+        
+        goroutine 3 gp=0x1a61e281cd20 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a9770 sp=0x1a61e28a9750 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.bgsweep(0x1a61e28c0000)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcsweep.go:279 +0x9c fp=0x1a61e28a97b0 sp=0x1a61e28a9770 pc=0x1048f213c
+        runtime.gcenable.gowrap1()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:214 +0x20 fp=0x1a61e28a97d0 sp=0x1a61e28a97b0 pc=0x1048e38b0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a97d0 sp=0x1a61e28a97d0 pc=0x1049407b4
+        created by runtime.gcenable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:214 +0x6c
+        
+        goroutine 4 gp=0x1a61e281cf00 m=nil [GC scavenge wait]:
+        runtime.gopark(0x1a61e28c0000?, 0x104c84318?, 0x1?, 0x0?, 0x1a61e281cf00?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a9f60 sp=0x1a61e28a9f40 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.(*scavengerState).park(0x1050517a0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcscavenge.go:425 +0x5c fp=0x1a61e28a9f90 sp=0x1a61e28a9f60 pc=0x1048efd2c
+        runtime.bgscavenge(0x1a61e28c0000)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgcscavenge.go:653 +0x44 fp=0x1a61e28a9fb0 sp=0x1a61e28a9f90 pc=0x1048f0264
+        runtime.gcenable.gowrap2()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:215 +0x20 fp=0x1a61e28a9fd0 sp=0x1a61e28a9fb0 pc=0x1048e3870
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a9fd0 sp=0x1a61e28a9fd0 pc=0x1049407b4
+        created by runtime.gcenable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mgc.go:215 +0xac
+        
+        goroutine 5 gp=0x1a61e281d4a0 m=nil [GOMAXPROCS updater (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28aa770 sp=0x1a61e28aa750 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.updateMaxProcsGoroutine()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:7095 +0xf4 fp=0x1a61e28aa7d0 sp=0x1a61e28aa770 pc=0x104915524
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28aa7d0 sp=0x1a61e28aa7d0 pc=0x1049407b4
+        created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:7083 +0x48
+        
+        goroutine 6 gp=0x1a61e281d680 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0xb8?, 0x85?, 0x10493a104?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28a8580 sp=0x1a61e28a8560 pc=0x10493955c
+        runtime.runFinalizers()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mfinal.go:210 +0x100 fp=0x1a61e28a87d0 sp=0x1a61e28a8580 pc=0x1048e28d0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28a87d0 sp=0x1a61e28a87d0 pc=0x1049407b4
+        created by runtime.createfing in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mfinal.go:172 +0x78
+        
+        goroutine 7 gp=0x1a61e281d860 m=nil [cleanup wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28aaf50 sp=0x1a61e28aaf30 pc=0x10493955c
+        runtime.goparkunlock(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:468
+        runtime.(*cleanupQueue).dequeue(0x105051b80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:522 +0x160 fp=0x1a61e28aaf90 sp=0x1a61e28aaf50 pc=0x1048df860
+        runtime.runCleanups()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:718 +0x40 fp=0x1a61e28aafd0 sp=0x1a61e28aaf90 pc=0x1048dffb0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28aafd0 sp=0x1a61e28aafd0 pc=0x1049407b4
+        created by runtime.(*cleanupQueue).createGs in goroutine 1
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/mcleanup.go:672 +0x108
+        
+        goroutine 8 gp=0x1a61e281da40 m=nil [chan receive]:
+        runtime.gopark(0x1a61e28ab6e8?, 0x104974de0?, 0x40?, 0x5?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28ab6c0 sp=0x1a61e28ab6a0 pc=0x10493955c
+        runtime.chanrecv(0x1a61e2910000, 0x0, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/chan.go:667 +0x470 fp=0x1a61e28ab740 sp=0x1a61e28ab6c0 pc=0x1048d2af0
+        runtime.chanrecv1(0x1a61e2996230?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/chan.go:509 +0x14 fp=0x1a61e28ab770 sp=0x1a61e28ab740 pc=0x1048d2644
+        fiatjaf.com/nostr.NewRelay.func1()
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:101 +0x3c fp=0x1a61e28ab7d0 sp=0x1a61e28ab770 pc=0x104b66d7c
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28ab7d0 sp=0x1a61e28ab7d0 pc=0x1049407b4
+        created by fiatjaf.com/nostr.NewRelay in goroutine 1
+        	/Users/runner/go/pkg/mod/fiatjaf.com/nostr@v0.0.0-20260916040958-27e395a0f6e7/relay.go:100 +0x21c
+        
+        goroutine 10 gp=0x1a61e2a661e0 m=nil [IO wait]:
+        runtime.gopark(0x1a61e28d4b18?, 0x1049622a8?, 0x80?, 0x3a?, 0x1a61e28d4b00?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e28d4ac0 sp=0x1a61e28d4aa0 pc=0x10493955c
+        runtime.netpollblock(0x1a61e2a5b000?, 0x1000?, 0x0?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/netpoll.go:575 +0x150 fp=0x1a61e28d4b00 sp=0x1a61e28d4ac0 pc=0x1049005b0
+        internal/poll.runtime_pollWait(0x1072c6200, 0x72)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/netpoll.go:351 +0xa0 fp=0x1a61e28d4b30 sp=0x1a61e28d4b00 pc=0x104938770
+        internal/poll.(*pollDesc).wait(0x1a61e2994600?, 0x1a61e2a5b000?, 0x0)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_poll_runtime.go:84 +0x28 fp=0x1a61e28d4b60 sp=0x1a61e28d4b30 pc=0x10498e538
+        internal/poll.(*pollDesc).waitRead(...)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_poll_runtime.go:89
+        internal/poll.(*FD).Read(0x1a61e2994600, {0x1a61e2a5b000, 0x1000, 0x1000})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/internal/poll/fd_unix.go:165 +0x234 fp=0x1a61e28d4c00 sp=0x1a61e28d4b60 pc=0x10498ef34
+        net.(*netFD).Read(0x1a61e2994600, {0x1a61e2a5b000?, 0x0?, 0x0?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/fd_posix.go:68 +0x28 fp=0x1a61e28d4c50 sp=0x1a61e28d4c00 pc=0x104a1b8c8
+        net.(*conn).Read(0x1a61e281a1c8, {0x1a61e2a5b000?, 0x100000000?, 0x14bdfdd68?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/net.go:196 +0x34 fp=0x1a61e28d4ca0 sp=0x1a61e28d4c50 pc=0x104a23444
+        net/http.(*persistConn).Read(0x1a61e2818c80, {0x1a61e2a5b000?, 0x1a61e28abd58?, 0x104ae4a04?})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2174 +0x48 fp=0x1a61e28d4d00 sp=0x1a61e28d4ca0 pc=0x104ae3e68
+        bufio.(*Reader).fill(0x1a61e28ce900)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/bufio/bufio.go:113 +0xe0 fp=0x1a61e28d4d40 sp=0x1a61e28d4d00 pc=0x10495a320
+        bufio.(*Reader).Peek(0x1a61e28ce900, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/bufio/bufio.go:152 +0x58 fp=0x1a61e28d4d60 sp=0x1a61e28d4d40 pc=0x10495a468
+        net/http.(*persistConn).readLoop(0x1a61e2818c80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2330 +0x110 fp=0x1a61e28d4fb0 sp=0x1a61e28d4d60 pc=0x104ae4a90
+        net/http.(*Transport).dialConn.gowrap2()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1994 +0x20 fp=0x1a61e28d4fd0 sp=0x1a61e28d4fb0 pc=0x104ae34f0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e28d4fd0 sp=0x1a61e28d4fd0 pc=0x1049407b4
+        created by net/http.(*Transport).dialConn in goroutine 9
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1994 +0x109c
+        
+        goroutine 11 gp=0x1a61e2a663c0 m=nil [select]:
+        runtime.gopark(0x1a61e2c5cf38?, 0x2?, 0x60?, 0xd8?, 0x1a61e2c5cee4?)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/proc.go:462 +0xbc fp=0x1a61e2c5cd60 sp=0x1a61e2c5cd40 pc=0x10493955c
+        runtime.selectgo(0x1a61e2c5cf38, 0x1a61e2c5cee0, 0x1a61e28d0b00?, 0x0, 0x1a61e2a622a0?, 0x1)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/select.go:351 +0x83c fp=0x1a61e2c5cea0 sp=0x1a61e2c5cd60 pc=0x10491a2ec
+        net/http.(*persistConn).writeLoop(0x1a61e2818c80)
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:2657 +0x98 fp=0x1a61e2c5cfb0 sp=0x1a61e2c5cea0 pc=0x104ae60c8
+        net/http.(*Transport).dialConn.gowrap3()
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1995 +0x20 fp=0x1a61e2c5cfd0 sp=0x1a61e2c5cfb0 pc=0x104ae34b0
+        runtime.goexit({})
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/runtime/asm_arm64.s:1447 +0x4 fp=0x1a61e2c5cfd0 sp=0x1a61e2c5cfd0 pc=0x1049407b4
+        created by net/http.(*Transport).dialConn in goroutine 9
+        	/Users/runner/hostedtoolcache/go/1.26.10/arm64/src/net/http/transport.go:1995 +0x10e4
+        
+        r0      0x104
+        r1      0x0
+        r2      0x300
+        r3      0x0
+        r4      0x0
+        r5      0xa0
+        r6      0x0
+        r7      0x0
+        r8      0x16b53ded8
+        r9      0x0
+        r10     0x0
+        r11     0x2
+        r12     0x2
+        r13     0x0
+        r14     0x0
+        r15     0x0
+        r16     0x131
+        r17     0x1f8a2b310
+        r18     0x0
+        r19     0x105052c48
+        r20     0x105052c88
+        r21     0x1f73ea260
+        r22     0x0
+        r23     0x0
+        r24     0x300
+        r25     0x301
+        r26     0x400
+        r27     0x10503f000
+        r28     0x105051d40
+        r29     0x16b53df50
+        lr      0x18a9ac128
+        sp      0x16b53dec0
+        pc      0x18a96b50c
+        fault   0x18a96b50c
+           amq-owner-sign failed. If it said the key is not valid, check that BUZZ_OWNER_KEY_CMD prints the key and one newline only (no printf or echo wrapper).
+           (the kind 30177 policy was not published; the next run retries it, or set BUZZ_SKIP_POLICY=1)
+        == C: amq-remote share --bundle (enroll)
+        grants enrolled: 8
+        == D: amq-remote share --target --relay --presence "amq-squad"
+        == D: amq-remote up (background, publishes the profile and presence)
+             doctor: "presence": "configured"
+             doctor: "state": "auth_pending"
+        == D: OWNER STEP (phone or Buzz Desktop): open a DM with the agent named "amq-squad"
+             and send the DM channel id back: rerun with BUZZ_DM_CHANNEL=<channel id>.
+             agent npub: npub1fyxry2r4kcy0r2kpfuh6n5rywlw8sz0449w44wytjefd37q0w99slrzc4y
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▀█ █▄▀ ▀▄██▄█▄▀▄▀█ ▄▄▄▄▄ ████[0m
+        [40;37;1m████ █   █ █▀▀▀█ ▀▄ ▀▀ █ ▄▀█▄█ █   █ ████[0m
+        [40;37;1m████ █▄▄▄█ █▀ █▀▀▄▄▀▀▄▀▄█  ▄██ █▄▄▄█ ████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█ ▀▄█▄█▄▀ ▀ █▄▄▄▄▄▄▄████[0m
+        [40;37;1m████▄▄▄ ▄▀▄▄▄▄▀▄▀ ▀▄ ▄█▀▄█▄ ▄ ▀▄█▄▀ ▀████[0m
+        [40;37;1m████▀  █▀▄▄▀▀█▄█▀█▀▄ ▄█▀█ █▀ ▀▄ ▄█▀▄█████[0m
+        [40;37;1m██████ ▀▀ ▄██ ▄█▄▄ ▄▄▄▄  ▀▀▀▀▀▀█▄▄█ ▀████[0m
+        [40;37;1m█████▄▀▀█ ▄█▄▀  ▄▄▀▄▄█▀▀▄▀▄▀ █▀ ▀▀▀ ▀████[0m
+        [40;37;1m████ ▀▀▀ ▀▄  ▀▄▄▀ ▄▄▄▄▄▀ █▄▀█ ▀█▄▀█▀▀████[0m
+        [40;37;1m█████▀▀ ▄▀▄ ▀▀ █▀█▄ ▀█▀██▀▄█ █▀▀▀▀▀ ▀████[0m
+        [40;37;1m████ ▄▀█▄▄▄ ▀█▄█▄▄ ▄▀▄█ ▄▀▀▀▀▀▀█▄▄▀▄ ████[0m
+        [40;37;1m████ █▀▄█▀▄▄▄   ▄▄█▄▀▄█▀   █▀▄█▄▄▀ ▄▀████[0m
+        [40;37;1m████▄██▄██▄▄ ██▄   ▄▀ █▀ ▀   ▄▄▄  ▀▄ ████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▄███▀▄█  █▄█▀▀█  █▄█    █████[0m
+        [40;37;1m████ █   █ █ ▄▄ █▄▄▄▀▄█ ▀█ ▀▄ ▄  █▀▄█████[0m
+        [40;37;1m████ █▄▄▄█ █ ▀ █▄▄▀▄██▀▀  ▀█▄█ ███▀▄█████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▄▄██▄███▄██▄█▄▄▄▄▄▄█▄█▄█████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+    crash_test.go:211: CRASH-PATH CANARY: signer limits "core=0 gotraceback=none", 0 core files, 28 outputs and files scanned (HOME, the shim dir, [/private/tmp/4e-1926639754 /cores]): FAILED
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	7.210s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	9.296s
+
+## 2a high: share_root must be under ~/.amq-squad/buzz/ (binding)
+file internal/gateverify/binding.go; test TestBindingShareRootMustBeUnderTheBuzzDir in ./internal/gateverify/
+revert: 'case b.ShareRoot != "" && !UnderBuzzDir(b.ShareRoot):' -> 'case b.ShareRoot != "" && (!filepath.IsAbs(b.ShareRoot) || filepath.Clean(b.ShareRoot) != b.ShareRoot):'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestBindingShareRootMustBeUnderTheBuzzDir (0.01s)
+    binding_test.go:46: share_root "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestBindingShareRootMustBeUnderTheBuzzDir4084227520/001/code/repo/.buzz" accepted: <nil>
+    binding_test.go:46: share_root "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestBindingShareRootMustBeUnderTheBuzzDir4084227520/001/.amq-squad/buzz" accepted: <nil>
+    binding_test.go:46: share_root "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestBindingShareRootMustBeUnderTheBuzzDir4084227520/001/.amq-squad/buzz-evil/root" accepted: <nil>
+    binding_test.go:46: share_root "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestBindingShareRootMustBeUnderTheBuzzDir4084227520/001/.amq-squad/x" accepted: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/gateverify	0.582s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	0.571s
+
+## 2b high: the body key is in the protected set by construction (LoadShare)
+file internal/buzz/share.go; test TestLoadShare in ./internal/buzz/
+revert: 'if !gateverify.UnderBuzzDir(root) {' -> 'if false {'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestLoadShare (0.02s)
+    --- FAIL: TestLoadShare/outside_the_buzz_dir (0.00s)
+        buzz_test.go:90: share at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLoadShareoutside_the_buzz_dir2765558237/001/root: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.439s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.338s
+
+## 3a medium: routing only to lead seats (Deliver)
+file internal/buzz/route.go; test TestRoutingOnlyToLeadSeats in ./internal/buzz/
+revert: 'case t.Registry == nil:' -> 'case false:'
+revert: 'if err := t.Registry.Lead(t.Root, r.Lead); err != nil {' -> 'if err := error(nil); err != nil {'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestRoutingOnlyToLeadSeats (0.00s)
+    review_test.go:59: @worker = {Mailbox:lead-a MailboxID:msg-1 Lead:worker LeadID:msg-2 Refused:}, sent [{Root:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRoutingOnlyToLeadSeats4146453579/001 From:buzz To:lead-a Subject:Buzz: message from the owner for worker Body:@worker run the migration Labels:[buzz nostr:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd] Refs:[]} {Root:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRoutingOnlyToLeadSeats4146453579/001 From:buzz To:worker Subject:Buzz: from the owner, routed by lead-a Body:run the migration Labels:[buzz nostr:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd routed] Refs:[msg-1]}], <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.386s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.417s
+
+## 3b medium: attach refuses a non-lead destination (CLI)
+file internal/cli/remote.go; test TestRemoteAttachOnce in ./internal/cli/
+revert: '\tif len(refused) > 0 {\n' -> '\tif false {\n'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestRemoteAttachOnce (0.01s)
+    remote_test.go:174: --leads worker: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.671s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.537s
+
+## 4 medium: only EEXIST is a duplicate mark
+file internal/buzz/pump.go; test TestPumpMarkFailureKeepsTheDM in ./internal/buzz/
+revert: '\tif errors.Is(err, os.ErrExist) {\n\t\treturn false, nil\n\t}\n\tif err != nil {\n\t\treturn false, err\n\t}' -> '\tif err != nil {\n\t\treturn false, nil\n\t}'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestPumpMarkFailureKeepsTheDM (0.01s)
+    review_test.go:88: unwritable marks: handled [], sent 0, err <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.515s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.341s
+
+## 5 medium: a future-dated DM is quarantined and never moves the cursor
+file internal/buzz/pump.go; test TestPumpQuarantinesAFutureDatedDM in ./internal/buzz/
+revert: 'if it.e.CreatedAt > horizon {' -> 'if false && it.e.CreatedAt > horizon {'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestPumpQuarantinesAFutureDatedDM (0.01s)
+    review_test.go:106: future DM: [{EventID:3f54a3bcd96d25fe37a3dbaaf7dfa1d13c4a87e2a7d05a3b0cfa8e98acc9a564 Kind:route Gate:<nil> Delivery:0x6af9d952e140 Reply:delivered to lead-a Error:}], <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.446s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.331s
+
+RESULT: every row fails when its fix is reverted and passes with it

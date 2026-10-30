@@ -10,11 +10,52 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
+
+func seedWaitPostureContextMessage(t *testing.T, base, session, owner, box string, header map[string]any) {
+	t.Helper()
+	dir := filepath.Join(base, session, "agents", owner, "inbox", box)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.MarshalIndent(header, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := header["id"].(string)
+	content := append([]byte("---json\n"), b...)
+	content = append(content, []byte("\n---\nbody\n")...)
+	if err := os.WriteFile(filepath.Join(dir, id+".md"), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type waitPostureFixture struct {
+	dir, base, root, session string
+}
+
+func (f waitPostureFixture) installSnapshot(t *testing.T) {
+	t.Helper()
+	snap, err := state.BuildWithThresholds(f.dir, f.base, state.DefaultProbe, state.Thresholds{OperatorHandle: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := waitPostureLoadSnapshot
+	waitPostureLoadSnapshot = func(string, string) (state.Snapshot, error) { return snap, nil }
+	t.Cleanup(func() { waitPostureLoadSnapshot = previous })
+}
+
+func (f waitPostureFixture) request(timeout time.Duration) waitPostureRequest {
+	return waitPostureRequest{
+		Command: "collect", WaitKind: "collect_watch", ProjectDir: f.dir,
+		Profile: squadnamespace.DefaultProfile, Session: f.session, Root: f.root,
+		Timeout: timeout, Blocking: true,
+	}
+}
 
 func TestGuardOwnedWaitUsesCollapsedCallerGateState(t *testing.T) {
 	fx := newWaitPostureFixture(t, team.OperatorInteractionLeadPane)
@@ -105,24 +146,6 @@ func TestGuardOwnedWaitGateTerminalLifecycleIntegration(t *testing.T) {
 	}
 }
 
-func seedWaitPostureContextMessage(t *testing.T, base, session, owner, box string, header map[string]any) {
-	t.Helper()
-	dir := filepath.Join(base, session, "agents", owner, "inbox", box)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	b, err := json.MarshalIndent(header, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := header["id"].(string)
-	content := append([]byte("---json\n"), b...)
-	content = append(content, []byte("\n---\nbody\n")...)
-	if err := os.WriteFile(filepath.Join(dir, id+".md"), content, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestGuardOwnedWaitTimeoutBoundaryAndOverrideAudit(t *testing.T) {
 	fx := newWaitPostureFixture(t, team.OperatorInteractionLeadPane)
 	fx.installSnapshot(t)
@@ -154,7 +177,7 @@ func TestGuardOwnedWaitTimeoutBoundaryAndOverrideAudit(t *testing.T) {
 	if err := guardOwnedWait(override); err != nil {
 		t.Fatalf("audited override: %v", err)
 	}
-	if audit.Command != "collect" || audit.WaitKind != "collect_watch" || audit.Actor != "cto" || audit.PaneID != "%7" || audit.Timeout != "2m1s" || audit.Reason != override.Reason || audit.Namespace != "default/s" {
+	if audit.Command != "collect" || audit.WaitKind != "collect_watch" || audit.Actor != "cto" || audit.Timeout != "2m1s" || audit.Reason != override.Reason || audit.Namespace != "default/s" {
 		t.Fatalf("audit = %+v", audit)
 	}
 
@@ -173,200 +196,19 @@ func TestGuardOwnedWaitPreservesOutsideModeAndNonLead(t *testing.T) {
 	leadPane := newWaitPostureFixture(t, team.OperatorInteractionLeadPane)
 	req := leadPane.request(time.Hour)
 	previousActor := waitPostureResolveCurrentActor
-	waitPostureResolveCurrentActor = func(string, string, string, team.Team) (verifiedOperatorActor, error) {
-		return verifiedOperatorActor{Role: "qa", Handle: "qa", Profile: team.DefaultProfile, Session: "s", Root: leadPane.root, PaneID: "%9"}, nil
+	waitPostureResolveCurrentActor = func(string, string, string, team.Team) (verifiedOperatorActor, bool, error) {
+		return verifiedOperatorActor{Role: "qa", Handle: "qa", Profile: squadnamespace.DefaultProfile, Session: "s", Root: leadPane.root}, true, nil
 	}
 	if err := guardOwnedWait(req); err != nil {
 		t.Fatalf("nonlead wait changed: %v", err)
 	}
 
-	waitPostureResolveCurrentActor = func(string, string, string, team.Team) (verifiedOperatorActor, error) {
-		return verifiedOperatorActor{}, errors.New("pane unknown")
+	waitPostureResolveCurrentActor = func(string, string, string, team.Team) (verifiedOperatorActor, bool, error) {
+		return verifiedOperatorActor{}, true, errors.New("identity unknown")
 	}
 	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
 	if err := guardOwnedWait(leadPane.request(time.Second)); err == nil || !strings.Contains(err.Error(), "park/end the turn") {
 		t.Fatalf("lead-pane uncertainty error = %v", err)
-	}
-}
-
-func TestGuardOwnedWaitDefaultCurrentPaneActorIdentity(t *testing.T) {
-	t.Run("outside tmux remains unchanged", func(t *testing.T) {
-		req := installRealWaitPosturePane(t, "cto", "%outside-seed", true)
-		t.Setenv("TMUX_PANE", "")
-		t.Setenv("AM_ME", "")
-		t.Setenv("AM_ROOT", "")
-		if err := guardOwnedWait(req); err != nil {
-			t.Fatalf("outside-tmux wait changed: %v", err)
-		}
-	})
-
-	t.Run("external lead without inherited amq identity is guarded", func(t *testing.T) {
-		req := installRealWaitPosturePane(t, "cto", "%lead", true)
-		t.Setenv("AM_ME", "")
-		t.Setenv("AM_ROOT", "")
-		t.Setenv("AM_BASE_ROOT", "")
-		t.Setenv("AM_SESSION", "")
-		if err := guardOwnedWait(req); err == nil || !strings.Contains(err.Error(), "exceeds") || !strings.Contains(err.Error(), "%lead") {
-			t.Fatalf("external lead posture error = %v", err)
-		}
-	})
-
-	t.Run("lead alternate mailbox cannot change pane actor", func(t *testing.T) {
-		req := installRealWaitPosturePane(t, "cto", "%lead-alt", false)
-		t.Setenv("AM_ME", "qa")
-		if err := guardOwnedWait(req); err == nil || !strings.Contains(err.Error(), "exceeds") {
-			t.Fatalf("alternate mailbox lead posture error = %v", err)
-		}
-	})
-
-	t.Run("verified qa pane remains unchanged", func(t *testing.T) {
-		req := installRealWaitPosturePane(t, "qa", "%qa", false)
-		t.Setenv("AM_ME", "cto")
-		if err := guardOwnedWait(req); err != nil {
-			t.Fatalf("verified nonlead pane changed: %v", err)
-		}
-	})
-
-	t.Run("nonempty unknown pane fails closed", func(t *testing.T) {
-		req := installRealWaitPosturePane(t, "cto", "%known", false)
-		t.Setenv("TMUX_PANE", "%unknown")
-		if err := guardOwnedWait(req); err == nil || !strings.Contains(err.Error(), "could not be verified") {
-			t.Fatalf("unknown-pane posture error = %v", err)
-		}
-	})
-}
-
-func TestGuardOwnedWaitFailsClosedOnAmbiguousCurrentPaneActor(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		order []string
-		amMe  string
-	}{
-		{name: "cto scanned first with qa mailbox selected", order: []string{"cto", "qa"}, amMe: "qa"},
-		{name: "qa scanned first with cto mailbox selected", order: []string{"qa", "cto"}, amMe: "cto"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fx := newAmbiguousCurrentPaneFixture(t, tc.order)
-			t.Setenv("AM_ME", tc.amMe)
-			previousActor := waitPostureResolveCurrentActor
-			waitPostureResolveCurrentActor = defaultVerifiedCurrentPaneActor
-			t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
-			previousSnapshot := waitPostureLoadSnapshot
-			waitPostureLoadSnapshot = func(string, string) (state.Snapshot, error) {
-				t.Fatal("ambiguous pane must fail before collapsed-state scan")
-				return state.Snapshot{}, nil
-			}
-			t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
-
-			req := waitPostureRequest{
-				Command: "collect", WaitKind: "collect_watch", ProjectDir: fx.dir,
-				Profile: team.DefaultProfile, Session: "s", Root: fx.root,
-				Timeout: 121 * time.Second, Blocking: true,
-			}
-			err := guardOwnedWait(req)
-			if err == nil {
-				t.Fatal("ambiguous current pane must fail closed")
-			}
-			got := err.Error()
-			for _, want := range []string{"could not be verified", "ambiguous", "cto/cto", "qa/qa", "park/end the turn"} {
-				if !strings.Contains(got, want) {
-					t.Fatalf("guard ambiguity error missing %q: %v", want, err)
-				}
-			}
-			if strings.Index(got, "cto/cto") > strings.Index(got, "qa/qa") {
-				t.Fatalf("guard ambiguity tuples are not deterministic: %v", err)
-			}
-		})
-	}
-}
-
-func installRealWaitPosturePane(t *testing.T, role, pane string, external bool) waitPostureRequest {
-	t.Helper()
-	dir := t.TempDir()
-	chdir(t, dir)
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
-	cfg := team.Team{
-		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}, {Role: "qa", Binary: "codex", Handle: "qa", Session: "s"}},
-	}
-	if err := team.Write(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	base := filepath.Join(dir, ".agent-mail")
-	root := filepath.Join(base, "s")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	rec := launch.Record{
-		CWD: dir, Binary: "codex", Role: role, Handle: role, TeamProfile: team.DefaultProfile,
-		Root: root, TeamHome: dir, AgentPID: os.Getpid(), External: external,
-		Tmux: &launch.TmuxInfo{PaneID: pane},
-	}
-	if external {
-		rec.AdoptionMode = adoptionModeExternalProjectLead
-	}
-	writeMemberLaunchRecord(t, base, "s", role, rec)
-	t.Setenv("TMUX_PANE", pane)
-	previousActor := waitPostureResolveCurrentActor
-	waitPostureResolveCurrentActor = defaultVerifiedCurrentPaneActor
-	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
-	previousSnapshot := waitPostureLoadSnapshot
-	waitPostureLoadSnapshot = func(string, string) (state.Snapshot, error) {
-		return state.Snapshot{Sessions: []state.Session{{Name: "s", TeamProfile: team.DefaultProfile, NamespaceID: "default/s", Root: root}}}, nil
-	}
-	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
-	return waitPostureRequest{Command: "collect", WaitKind: "collect_watch", ProjectDir: dir, Profile: team.DefaultProfile, Session: "s", Root: root, Timeout: 121 * time.Second, Blocking: true}
-}
-
-func TestGuardOwnedWaitNamedProfileUsesExactSelectedRoot(t *testing.T) {
-	t.Setenv("AM_ME", "cto")
-	t.Setenv("TMUX_PANE", "%8")
-	dir := t.TempDir()
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
-	cfg := team.Team{
-		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
-	}
-	if err := team.WriteProfile(dir, "review", cfg); err != nil {
-		t.Fatal(err)
-	}
-	selectedRoot := squadnamespace.AMQRoot(dir, "review", "s")
-	legacyRoot := squadnamespace.AMQRoot(dir, team.DefaultProfile, "s")
-	previousActor := waitPostureResolveCurrentActor
-	waitPostureResolveCurrentActor = func(string, string, string, team.Team) (verifiedOperatorActor, error) {
-		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: "review", Session: "s", Root: selectedRoot, PaneID: "%8"}, nil
-	}
-	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
-
-	selected := state.Session{Name: "s", TeamProfile: "review", NamespaceID: "review/s", Root: selectedRoot}
-	legacy := state.Session{Name: "s", TeamProfile: team.DefaultProfile, NamespaceID: "default/s", Root: legacyRoot, Coordination: state.Coordination{Threads: []state.ThreadSummary{{
-		ID: "gate/legacy", OperatorGate: &state.OperatorGateSignal{From: "cto"},
-	}}}}
-	previousSnapshot := waitPostureLoadSnapshot
-	waitPostureLoadSnapshot = func(string, string) (state.Snapshot, error) {
-		return state.Snapshot{Sessions: []state.Session{selected, legacy}}, nil
-	}
-	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
-
-	req := waitPostureRequest{Command: "collect", WaitKind: "collect_watch", ProjectDir: dir, Profile: "review", Session: "s", Root: selectedRoot, Timeout: time.Minute, Blocking: true}
-	if err := guardOwnedWait(req); err != nil {
-		t.Fatalf("legacy/default gate affected selected named root: %v", err)
-	}
-
-	selected.Coordination.Threads = []state.ThreadSummary{{ID: "gate/selected", OperatorGate: &state.OperatorGateSignal{From: "cto"}}}
-	var audit waitPostureAuditRecord
-	previousAudit := waitPostureAppendAudit
-	waitPostureAppendAudit = func(rec waitPostureAuditRecord) error { audit = rec; return nil }
-	t.Cleanup(func() { waitPostureAppendAudit = previousAudit })
-	req.Override = true
-	req.Reason = "selected-root diagnostic"
-	if err := guardOwnedWait(req); err != nil {
-		t.Fatalf("selected-root override: %v", err)
-	}
-	if audit.Profile != "review" || audit.Namespace != "review/s" || audit.Root != selectedRoot || strings.Join(audit.Gates, ",") != "gate/selected" {
-		t.Fatalf("audit selected wrong namespace/gates: %+v", audit)
 	}
 }
 
@@ -382,8 +224,8 @@ func TestWriteWaitPostureAuditSerializesCompleteJSONLines(t *testing.T) {
 			defer wg.Done()
 			errs <- writeWaitPostureAudit(waitPostureAuditRecord{
 				At: time.Unix(int64(i), 0).UTC(), Command: "collect", WaitKind: "collect_watch",
-				Project: dir, Profile: team.DefaultProfile, Session: "s", Namespace: "default/s",
-				Root: filepath.Join(dir, ".agent-mail", "s"), Actor: "cto", PaneID: "%7",
+				Project: dir, Profile: squadnamespace.DefaultProfile, Session: "s", Namespace: "default/s",
+				Root: filepath.Join(dir, ".agent-mail", "s"), Actor: "cto",
 				Timeout: "2m1s", Reason: "writer",
 			})
 		}()
@@ -395,7 +237,7 @@ func TestWriteWaitPostureAuditSerializesCompleteJSONLines(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	path := filepath.Join(dir, team.DirName, "wait-posture-audit", team.DefaultProfile, "s.jsonl")
+	path := filepath.Join(dir, team.DirName, "wait-posture-audit", squadnamespace.DefaultProfile, "s.jsonl")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -451,20 +293,14 @@ func TestGuardOwnedWaitRealAuditWriteAndSyncFailuresRefuse(t *testing.T) {
 	}
 }
 
-type waitPostureFixture struct {
-	dir, base, root, session string
-}
-
 func newWaitPostureFixture(t *testing.T, mode string) waitPostureFixture {
 	t.Helper()
 	t.Setenv("AM_ME", "")
-	t.Setenv("TMUX_PANE", "%7")
 	dir := t.TempDir()
 	chdir(t, dir)
-	op := team.DefaultOperator()
-	op.InteractionMode = mode
+	opMode := mode
 	cfg := team.Team{
-		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, OperatorInteraction: opMode,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}, {Role: "qa", Binary: "claude", Handle: "qa", Session: "s"}},
 	}
 	if err := team.Write(dir, cfg); err != nil {
@@ -474,28 +310,78 @@ func newWaitPostureFixture(t *testing.T, mode string) waitPostureFixture {
 	root := filepath.Join(base, "s")
 	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{CWD: dir, Binary: "codex", Role: "cto", Root: root, TeamHome: dir})
 	previousActor := waitPostureResolveCurrentActor
-	waitPostureResolveCurrentActor = func(string, string, string, team.Team) (verifiedOperatorActor, error) {
-		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: team.DefaultProfile, Session: "s", Root: root, PaneID: "%7"}, nil
+	waitPostureResolveCurrentActor = func(string, string, string, team.Team) (verifiedOperatorActor, bool, error) {
+		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: squadnamespace.DefaultProfile, Session: "s", Root: root}, true, nil
 	}
 	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
 	return waitPostureFixture{dir: dir, base: base, root: root, session: "s"}
 }
 
-func (f waitPostureFixture) installSnapshot(t *testing.T) {
-	t.Helper()
-	snap, err := state.BuildWithThresholds(f.dir, f.base, state.DefaultProbe, state.Thresholds{OperatorHandle: "user"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := waitPostureLoadSnapshot
-	waitPostureLoadSnapshot = func(string, string) (state.Snapshot, error) { return snap, nil }
-	t.Cleanup(func() { waitPostureLoadSnapshot = previous })
+// TestGuardOwnedWaitDefaultEnvActorIdentity replaces the v2 verified-pane
+// identity tests: 3.0 (2a-2) identifies the lead by injected AM_ME/AM_ROOT.
+func TestGuardOwnedWaitDefaultEnvActorIdentity(t *testing.T) {
+	t.Run("no injected identity remains unchanged", func(t *testing.T) {
+		req := installEnvWaitPostureTeam(t)
+		t.Setenv("AM_ME", "")
+		t.Setenv("AM_ROOT", "")
+		if err := guardOwnedWait(req); err != nil {
+			t.Fatalf("identity-free wait changed: %v", err)
+		}
+	})
+	t.Run("lead identity is guarded", func(t *testing.T) {
+		req := installEnvWaitPostureTeam(t)
+		t.Setenv("AM_ME", "cto")
+		t.Setenv("AM_ROOT", req.Root)
+		if err := guardOwnedWait(req); err == nil || !strings.Contains(err.Error(), "exceeds") || !strings.Contains(err.Error(), "as lead cto") {
+			t.Fatalf("lead posture error = %v", err)
+		}
+	})
+	t.Run("nonlead identity remains unchanged", func(t *testing.T) {
+		req := installEnvWaitPostureTeam(t)
+		t.Setenv("AM_ME", "qa")
+		t.Setenv("AM_ROOT", req.Root)
+		if err := guardOwnedWait(req); err != nil {
+			t.Fatalf("nonlead wait changed: %v", err)
+		}
+	})
+	t.Run("lead handle with a foreign root fails closed", func(t *testing.T) {
+		req := installEnvWaitPostureTeam(t)
+		t.Setenv("AM_ME", "cto")
+		t.Setenv("AM_ROOT", filepath.Join(t.TempDir(), "elsewhere"))
+		if err := guardOwnedWait(req); err == nil || !strings.Contains(err.Error(), "could not be verified") {
+			t.Fatalf("foreign-root posture error = %v", err)
+		}
+	})
 }
 
-func (f waitPostureFixture) request(timeout time.Duration) waitPostureRequest {
-	return waitPostureRequest{
-		Command: "collect", WaitKind: "collect_watch", ProjectDir: f.dir,
-		Profile: team.DefaultProfile, Session: f.session, Root: f.root,
-		Timeout: timeout, Blocking: true,
+func installEnvWaitPostureTeam(t *testing.T) waitPostureRequest {
+	t.Helper()
+	t.Setenv("AM_BASE_ROOT", "")
+	t.Setenv("AM_SESSION", "")
+	dir := t.TempDir()
+	chdir(t, dir)
+	opMode := team.OperatorInteractionLeadPane
+	cfg := team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, OperatorInteraction: opMode,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}, {Role: "qa", Binary: "codex", Handle: "qa", Session: "s"}},
 	}
+	if err := team.Write(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	root := squadnamespace.AMQRoot(dir, squadnamespace.DefaultProfile, "s")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousActor := waitPostureResolveCurrentActor
+	waitPostureResolveCurrentActor = currentEnvRosterActor
+	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
+	previousVerified := resolveVerifiedOperatorActor
+	resolveVerifiedOperatorActor = defaultVerifiedOperatorActor
+	t.Cleanup(func() { resolveVerifiedOperatorActor = previousVerified })
+	previousSnapshot := waitPostureLoadSnapshot
+	waitPostureLoadSnapshot = func(string, string) (state.Snapshot, error) {
+		return state.Snapshot{Sessions: []state.Session{{Name: "s", TeamProfile: squadnamespace.DefaultProfile, NamespaceID: "default/s", Root: root}}}, nil
+	}
+	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
+	return waitPostureRequest{Command: "collect", WaitKind: "collect_watch", ProjectDir: dir, Profile: squadnamespace.DefaultProfile, Session: "s", Root: root, Timeout: 121 * time.Second, Blocking: true}
 }

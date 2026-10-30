@@ -1,0 +1,2 @@
+# Tests that format an environment into their output on purpose: "path FuncName  # reason".
+# Empty: every such test names only the failing variable (briefs ruling 18, item 3).

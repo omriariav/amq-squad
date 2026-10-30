@@ -7,9 +7,7 @@ import (
 )
 
 // DefaultOperatorHandle is the mailbox handle that represents the human
-// operator. In real data the agents are cpo/cto/senior-dev/qa AND `user`;
-// `user` is the concrete signal for the "needs-you" triage tier. It is
-// configurable via Thresholds.OperatorHandle.
+// operator.
 const DefaultOperatorHandle = "user"
 
 // ThreadStatus is the derived lifecycle state of a thread, computed from the
@@ -17,17 +15,10 @@ const DefaultOperatorHandle = "user"
 type ThreadStatus string
 
 const (
-	// ThreadOpen: an ordinary in-progress thread with nothing outstanding.
-	ThreadOpen ThreadStatus = "open"
-	// ThreadAwaitingReply: the latest message is an unanswered question /
-	// review_request / decision — someone owes a response.
-	ThreadAwaitingReply ThreadStatus = "awaiting-reply"
-	// ThreadBlocked: a block has been explicitly declared in the thread and not
-	// yet cleared.
-	ThreadBlocked ThreadStatus = "blocked"
-	// ThreadResolved: the latest message is a terminal answer/review_response,
-	// closing out the outstanding ask.
-	ThreadResolved ThreadStatus = "resolved"
+	ThreadOpen          ThreadStatus = "open"           // nothing outstanding
+	ThreadAwaitingReply ThreadStatus = "awaiting-reply" // an unanswered question, review request or decision
+	ThreadBlocked       ThreadStatus = "blocked"        // a declared block not yet cleared
+	ThreadResolved      ThreadStatus = "resolved"       // the latest message answers the ask
 )
 
 func (s OperatorGateState) IsTerminal() bool {
@@ -43,56 +34,32 @@ func (s OperatorGateState) IsTerminal() bool {
 // severity: NeedsYou > Blocked > Gated > AtRisk > Clear.
 type Triage string
 
+// NeedsYou: an actionable ask addressed to the operator, waiting-for-operator
+// prose, or a block awaiting the human. Blocked: a declared block (the owner
+// may be another agent). Gated: paused on a policy, release, QA or
+// authorization gate. AtRisk: an agent-to-agent ask aging past ReviewAge, a
+// quiet heartbeat, or a dead process with a live mailbox.
 const (
-	// TriageNeedsYou: an actionable unanswered message addressed TO the operator
-	// handle, explicit waiting-for-operator prose, or a declared block awaiting
-	// the human. The concrete "the human must act" signal.
 	TriageNeedsYou Triage = "needs-you"
-	// TriageBlocked: an agent has explicitly declared a block (kind/marker); the
-	// owner may be another agent.
-	TriageBlocked Triage = "blocked"
-	// TriageGated: work is intentionally paused by a policy, release, QA, or
-	// authorization gate. It is visible attention, but not a peer blocker.
-	TriageGated Triage = "gated"
-	// TriageAtRisk: an agent<->agent unanswered review/question aging past
-	// ReviewAge, or a heartbeat gone quiet past Heartbeat, or the
-	// dead-mailbox-live case. Aging, not yet a hard block.
-	TriageAtRisk Triage = "at-risk"
-	// TriageClear: nothing outstanding.
-	TriageClear Triage = "clear"
+	TriageBlocked  Triage = "blocked"
+	TriageGated    Triage = "gated"
+	TriageAtRisk   Triage = "at-risk"
+	TriageClear    Triage = "clear"
 )
 
 // AttnReason classifies WHY a needs-you thread needs the human, derived from the
-// message addressed to the operator handle. It is meaningful ONLY on a needs-you
-// thread (Triage == TriageNeedsYou); on every other thread it is AttnNone.
-//
-// Agents are taught (bootstrap + team-rules) the emit convention that makes
-// these fire on real data: a thread to "user" with subject `APPROVAL: ...`
-// classifies AttnApprove, and `DONE: ...` classifies AttnGoalReached. When no
-// thread is addressed to "user" the board simply shows AttnNone — that is
-// correct, not a bug. Tests seed user-addressed approve/done threads to exercise
-// the classify + render path end-to-end against the taught prefixes.
+// message addressed to the operator handle.
 type AttnReason string
 
 const (
-	// AttnNone: not a needs-you thread (or no reason classified).
-	AttnNone AttnReason = ""
-	// AttnApprove: the agent is paused awaiting a human to approve an action / a
-	// command run / a permission grant. The hot, act-now reason — sorted first.
-	AttnApprove AttnReason = "approve"
-	// AttnGoalReached: the team signalled done / goal reached — the human is asked
-	// to review and close. A distinct REVIEW reason; it must NOT read as a bare
-	// "healthy / nothing to do" green check, so it stays inside NEEDS YOU below
-	// approve.
-	AttnGoalReached AttnReason = "goal-reached"
-	// AttnGeneric: a plain question to the human with no approve/done markers.
-	AttnGeneric AttnReason = "generic"
+	AttnNone        AttnReason = ""             // not a needs-you thread
+	AttnApprove     AttnReason = "approve"      // awaiting an approval; sorted first
+	AttnGoalReached AttnReason = "goal-reached" // the team signalled done; review and close
+	AttnGeneric     AttnReason = "generic"      // a plain question
 )
 
-// Rank orders reasons for the NEEDS YOU block: approve (act now) above
-// goal-reached (review) above generic above none. Lower sorts first. Exported so
-// a render layer can sort needs-you items across sessions/projects by the SAME
-// precedence the state layer uses.
+// Rank orders reasons for the NEEDS YOU block: approve (act now) above goal-
+// reached (review) above generic above none.
 func (a AttnReason) Rank() int {
 	switch a {
 	case AttnApprove:
@@ -106,10 +73,7 @@ func (a AttnReason) Rank() int {
 	}
 }
 
-// OperatorGateEscalation is the age band for an unanswered operator gate. These
-// named thresholds mirror the operational contract: an initial notify is
-// immediate, a reminder fires around 30m, and a strong warning appears around
-// 2h so poll-required virtual-operator gates cannot sit silently for hours.
+// OperatorGateEscalation is the age band for an unanswered operator gate.
 type OperatorGateEscalation string
 
 const (
@@ -135,19 +99,6 @@ func OperatorGateEscalationForAge(age time.Duration) OperatorGateEscalation {
 		return OperatorGateEscalationReminder
 	default:
 		return OperatorGateEscalationInitial
-	}
-}
-
-func OperatorGateEscalationRank(e OperatorGateEscalation) int {
-	switch e {
-	case OperatorGateEscalationStrongWarning:
-		return 2
-	case OperatorGateEscalationReminder:
-		return 1
-	case OperatorGateEscalationInitial:
-		return 0
-	default:
-		return -1
 	}
 }
 
@@ -202,21 +153,9 @@ type OperatorGateSignal struct {
 	Terminalizable bool
 }
 
-// FreshnessSource records WHERE a derived time came from, so the console can be
-// honest about how much to trust an age. embedded-time is most trustworthy;
-// mtime is a filesystem fallback; observed is the snapshot clock.
-type FreshnessSource string
-
-const (
-	SourceEmbedded FreshnessSource = "embedded-time"
-	SourceMtime    FreshnessSource = "mtime"
-	SourceObserved FreshnessSource = "observed"
-)
-
 // Freshness annotates a derived field with how old its underlying signal is and
 // whether that age has crossed the relevant staleness threshold.
 type Freshness struct {
-	Source   FreshnessSource
 	Observed time.Time     // the timestamp the age is measured from
 	Age      time.Duration // now - Observed (>=0)
 	Stale    bool          // Age exceeded the governing threshold
@@ -232,12 +171,6 @@ type Thresholds struct {
 	Heartbeat time.Duration
 	// ReviewAge: an unanswered review/question older than this is at risk.
 	ReviewAge time.Duration
-	// StaleAfter: a thread whose last event is older than this is STALE. Stale
-	// threads (and the at-risk/blocked triage they carry) are age-decayed: they
-	// weight ~0 for attention ranking and render dim/parenthesized rather than as
-	// live attention. This is the window that separates "what is alive / what
-	// needs me now" from ancient noise on long-stopped squads.
-	StaleAfter time.Duration
 	// OperatorHandle is the human's mailbox handle (default "user").
 	OperatorHandle string
 }
@@ -248,9 +181,6 @@ const (
 	DefaultHeartbeat               = 90 * time.Second
 	DefaultReviewAge               = 45 * time.Minute
 	DefaultNeedsYouHistoricalAfter = 24 * time.Hour
-	// DefaultStaleAfter: 72h. A thread untouched for three days is treated as
-	// stale — its triage no longer counts as LIVE attention.
-	DefaultStaleAfter = 72 * time.Hour
 )
 
 func withThresholdDefaults(t Thresholds) Thresholds {
@@ -263,9 +193,6 @@ func withThresholdDefaults(t Thresholds) Thresholds {
 	if t.ReviewAge <= 0 {
 		t.ReviewAge = DefaultReviewAge
 	}
-	if t.StaleAfter <= 0 {
-		t.StaleAfter = DefaultStaleAfter
-	}
 	if strings.TrimSpace(t.OperatorHandle) == "" {
 		t.OperatorHandle = DefaultOperatorHandle
 	}
@@ -275,27 +202,17 @@ func withThresholdDefaults(t Thresholds) Thresholds {
 // ThreadSummary collapses every message sharing a canonical thread id into one
 // derived row. Participants are the union of from+to across the thread.
 type ThreadSummary struct {
-	ID             string
-	LatestID       string
-	Participants   []string // union of from + to, sorted
-	Subject        string   // latest non-empty subject
-	Kind           Kind     // latest recognized kind
-	Labels         []string // union of AMQ labels observed on messages in the thread
-	Orchestrator   string   // latest orchestrator metadata, when present
-	FromProject    string   // latest cross-project sender metadata, when present
-	ReplyProject   string   // latest cross-project reply metadata, when present
-	ExternalTaskID string   // latest verified external task id from orchestrator context
-	Status         ThreadStatus
-	LastEventAt    time.Time
-	MessageCount   int
-	UnreadBy       []string // recipients still holding a copy in inbox/new
-	Triage         Triage
-	Freshness      Freshness
-	// Stale is true when now - LastEventAt exceeds Thresholds.StaleAfter. A stale
-	// thread's triage is age-decayed: it is NOT counted as LIVE attention and is
-	// rendered dim/parenthesized. Needs-you uses Historical instead of Stale when
-	// the ask is old or no active agent is present to be waiting on the operator.
-	Stale bool
+	ID           string
+	LatestID     string
+	Participants []string // union of from + to, sorted
+	Subject      string   // latest non-empty subject
+	Kind         Kind     // latest recognized kind
+	Status       ThreadStatus
+	LastEventAt  time.Time
+	MessageCount int
+	UnreadBy     []string // recipients still holding a copy in inbox/new
+	Triage       Triage
+	Freshness    Freshness
 	// Historical is true for a needs-you ask retained for context when it is not
 	// current operator action, such as an old ask or a stopped session with no
 	// active non-operator agent.
@@ -311,76 +228,6 @@ type ThreadSummary struct {
 	// gate/<topic> ask. It is independent of LastEventAt because later chatter in
 	// the thread must not hide the age of the still-unanswered gate.
 	OperatorGate *OperatorGateSignal
-}
-
-// Edge is a directed from->to message count across a session.
-type Edge struct {
-	From  string
-	To    string
-	Count int
-}
-
-// TimelineEvent is a DERIVED, human-readable state transition (not a raw
-// message dump). Summary reads like "qa blocked on cto".
-type TimelineEvent struct {
-	At      time.Time
-	Kind    Kind
-	Summary string
-	Source  string // thread id the transition came from
-}
-
-// TriageRollup is the per-session / per-snapshot headline count the console and
-// board render: "N needs-you, M at-risk, K blocked". The at-risk/blocked counts
-// are split into LIVE (recent, non-stale) and STALE (age-decayed) so a surface
-// can lead with what is alive and demote ancient noise. NeedsYou is live only
-// when it represents current operator action; historical needs-you is counted
-// separately.
-type TriageRollup struct {
-	NeedsYou           int
-	NeedsYouHistorical int // old retained needs-you asks, not current operator action
-	AtRisk             int // LIVE at-risk (non-stale)
-	Blocked            int // LIVE blocked (non-stale)
-	Gated              int // LIVE intentionally gated (non-stale)
-	AtRiskStale        int // age-decayed at-risk
-	BlockedStale       int // age-decayed blocked
-	GatedStale         int // age-decayed gated
-	Clear              int
-}
-
-// Add folds another rollup into this one.
-func (r *TriageRollup) Add(o TriageRollup) {
-	r.NeedsYou += o.NeedsYou
-	r.NeedsYouHistorical += o.NeedsYouHistorical
-	r.AtRisk += o.AtRisk
-	r.Blocked += o.Blocked
-	r.Gated += o.Gated
-	r.AtRiskStale += o.AtRiskStale
-	r.BlockedStale += o.BlockedStale
-	r.GatedStale += o.GatedStale
-	r.Clear += o.Clear
-}
-
-// HasLiveAttention reports whether the rollup carries any LIVE (non-stale)
-// outstanding item: needs-you, live at-risk, live blocked, or live gated.
-func (r TriageRollup) HasLiveAttention() bool {
-	return r.NeedsYou > 0 || r.AtRisk > 0 || r.Blocked > 0 || r.Gated > 0
-}
-
-// TopAttnReason returns the most urgent needs-you reason across a session's
-// threads (approve > goal-reached > generic), or AttnNone when the session has
-// no needs-you thread. Surfaces the single reason a session-level summary should
-// lead with.
-func (c Coordination) TopAttnReason() AttnReason {
-	best := AttnNone
-	for _, t := range c.Threads {
-		if t.Triage != TriageNeedsYou || t.Historical || t.AttnReason == AttnNone {
-			continue
-		}
-		if best == AttnNone || t.AttnReason.Rank() < best.Rank() {
-			best = t.AttnReason
-		}
-	}
-	return best
 }
 
 // NeedsYouThreads returns the needs-you threads carried by a coordination view,
@@ -413,80 +260,6 @@ func needsYouWaitSince(t ThreadSummary) time.Time {
 		return t.OperatorGate.Since
 	}
 	return t.LastEventAt
-}
-
-// countTriage tallies a bare triage tier into the rollup's LIVE buckets. It is
-// retained for callers that recompute a rollup from a triage value alone (e.g.
-// the status board's filtered re-rollup) and have no per-thread staleness in
-// hand; such callers treat every counted item as live. Prefer countThread when
-// a ThreadSummary (with its Stale flag) is available.
-func (r *TriageRollup) countTriage(t Triage) {
-	switch t {
-	case TriageNeedsYou:
-		r.NeedsYou++
-	case TriageAtRisk:
-		r.AtRisk++
-	case TriageBlocked:
-		r.Blocked++
-	case TriageGated:
-		r.Gated++
-	default:
-		r.Clear++
-	}
-}
-
-// countThread tallies one thread's triage into the rollup, routing at-risk and
-// blocked/gated into the LIVE or STALE bucket by the thread's Stale flag, and
-// routing historical needs-you away from the live operator-action bucket.
-func (r *TriageRollup) countThread(t ThreadSummary) {
-	switch t.Triage {
-	case TriageNeedsYou:
-		if t.Historical {
-			r.NeedsYouHistorical++
-		} else {
-			r.NeedsYou++
-		}
-	case TriageAtRisk:
-		if t.Stale {
-			r.AtRiskStale++
-		} else {
-			r.AtRisk++
-		}
-	case TriageBlocked:
-		if t.Stale {
-			r.BlockedStale++
-		} else {
-			r.Blocked++
-		}
-	case TriageGated:
-		if t.Stale {
-			r.GatedStale++
-		} else {
-			r.Gated++
-		}
-	default:
-		r.Clear++
-	}
-}
-
-// String renders the rollup the way the board/console label it. Stale counts are
-// shown in parentheses only when present, keeping the live counts primary.
-func (r TriageRollup) String() string {
-	s := itoa(r.NeedsYou) + " needs-you, " + itoa(r.AtRisk) + " at-risk, " + itoa(r.Blocked) + " blocked"
-	if r.Gated > 0 {
-		s += ", " + itoa(r.Gated) + " gated"
-	}
-	if r.NeedsYouHistorical > 0 || r.AtRiskStale > 0 || r.BlockedStale > 0 || r.GatedStale > 0 {
-		stale := itoa(r.AtRiskStale) + " at-risk, " + itoa(r.BlockedStale) + " blocked stale"
-		if r.NeedsYouHistorical > 0 {
-			stale = itoa(r.NeedsYouHistorical) + " needs-you historical, " + stale
-		}
-		if r.GatedStale > 0 {
-			stale += ", " + itoa(r.GatedStale) + " gated stale"
-		}
-		s += " (" + stale + ")"
-	}
-	return s
 }
 
 // blockMarkers are case-insensitive substrings in a message body that declare a

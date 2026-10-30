@@ -218,7 +218,22 @@ UNKNOWN_SUBCOMMAND_LIST = re.compile(
 
 NO_POSITIONALS = re.compile(r"takes no positional arguments", re.I)
 
+# 3.0 verbs whose one positional argument is a PATH, not a subcommand:
+#   error: trust takes exactly one repository path; got 2
+#   error: migrate takes exactly one v2 profile path; got 2
+# `amq-squad trust P` therefore names no subcommand, and the second token must not be
+# checked as one. Anchored to a line-leading `error:` and bound to the probed verb, the
+# same two defences as UNKNOWN_SUBCOMMAND_LIST, so prose cannot declare a verb
+# positional. Without this the gate could not observe `trust`'s subcommand list and
+# refused to render a verdict for a correct reference.
+POSITIONAL_ONLY = re.compile(
+    r"^[ \t]*error:\s*(?P<verb>[a-z][a-z0-9-]*) takes exactly one [a-z0-9 -]+; got \d+\s*$",
+    re.M,
+)
+
 _SUB_SURFACE_CACHE: dict[tuple[str, str], tuple[set[str], bool]] = {}
+# Verbs observed to take one positional argument instead of a subcommand.
+_POSITIONAL_VERBS: set[tuple[str, str]] = set()
 
 
 def subcommand_surface(binary: str, verb: str) -> tuple[set[str], bool]:
@@ -258,8 +273,14 @@ def subcommand_surface(binary: str, verb: str) -> tuple[set[str], bool]:
         listed = set(re.findall(r"'([A-Za-z][A-Za-z0-9-]*)'", match.group("list")))
 
     combined = usage | listed
+    positional = POSITIONAL_ONLY.search(text)
     if combined:
         result = (combined, True)
+    elif positional and positional.group("verb") == verb:
+        # The verb takes a positional argument and has no subcommands: the second
+        # token is an argument, observable as such.
+        _POSITIONAL_VERBS.add((binary, verb))
+        result = (set(), True)
     elif NO_POSITIONALS.search(text):
         # The verb genuinely has no subcommands, so any claimed one is drift.
         result = (set(), True)
@@ -548,7 +569,11 @@ def main() -> int:
             if not observable:
                 unobservable_paths.append(f"amq-squad {verb} {sub} (could not read {verb}'s subcommand list)")
                 continue
-            if sub not in subs:
+            if (binary, verb) in _POSITIONAL_VERBS:
+                # `trust P`: P is the verb's positional argument; check the flags
+                # against the verb itself.
+                sub = None
+            elif sub not in subs:
                 failures.append(
                     f"subcommand 'amq-squad {verb} {sub}' is named in the skills but {verb} has no such "
                     f"subcommand (valid: {', '.join(sorted(subs)) or 'none'})"

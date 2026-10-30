@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,28 +8,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime/debug"
-	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-
-	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
+	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
-// expects to interoperate with. Bumped manually when amq-squad starts to
-// depend on newer AMQ behavior; the doctor check compares the running amq
-// binary's reported version against this floor.
-const doctorMinAMQVersion = "0.60.0"
+// runs with: the release of the module go.mod pins (5-amq-A fix round, one
+// floor for one binary). Every 3.0 path needs that release's launch
+// adapters (the pi mint adapter, the Codex sandbox pins) and its mailbox.
+// The amq env check, the installed-binary rows (doctor_amq_floor.go) and
+// the real-AMQ CI lane's pinned version all read this one value.
+const doctorMinAMQVersion = "0.116.2"
 
 type doctorStatus string
 
@@ -42,94 +35,53 @@ const (
 
 // doctorCheck is one diagnostic result.
 type doctorCheck struct {
-	Name            string                     `json:"name"`
-	Status          doctorStatus               `json:"status"`
-	Detail          string                     `json:"detail,omitempty"`
-	Kind            string                     `json:"kind,omitempty"`
-	Role            string                     `json:"role,omitempty"`
-	GoalSupervision *GoalSupervisionAssessment `json:"goal_supervision,omitempty"`
+	Name   string       `json:"name"`
+	Status doctorStatus `json:"status"`
+	Detail string       `json:"detail,omitempty"`
+	Kind   string       `json:"kind,omitempty"`
 }
 
 // doctorEnvelopeData is the kind="doctor" payload. team_home is the project
-// root the report was scoped to. profile is the selected team profile.
-// workstream is set only when that profile resolves one.
+// root the report was scoped to (the repository whose Codex trust is checked).
 type doctorEnvelopeData struct {
-	TeamHome   string                      `json:"team_home"`
-	Profile    string                      `json:"profile,omitempty"`
-	Workstream string                      `json:"workstream,omitempty"`
-	Versions   versionAlignmentData        `json:"versions"`
-	Checks     []doctorCheck               `json:"checks"`
-	Profiles   []doctorProfileEnvelopeData `json:"profiles,omitempty"`
+	TeamHome string        `json:"team_home"`
+	Checks   []doctorCheck `json:"checks"`
 }
 
-// doctorProfileEnvelopeData is one per-profile doctor result when
-// `doctor --all-profiles --json` is requested.
-type doctorProfileEnvelopeData struct {
-	Profile    string        `json:"profile"`
-	Workstream string        `json:"workstream,omitempty"`
-	Checks     []doctorCheck `json:"checks"`
-}
-
-// doctorExecution is the shared seam every doctor check reads from. Mirrors
-// the statusExecution / downExecution pattern so unit tests can supply
-// fakes for `amq env`, tmux discovery, and the liveness probe without
-// touching the real binaries.
+// doctorExecution is the shared seam every doctor check reads from, so unit
+// tests can supply fakes for `amq env` and the liveness probe without touching
+// the real binaries.
 type doctorExecution struct {
 	ProjectDir    string
 	Out           io.Writer
 	JSON          bool
-	AllProfiles   bool
-	FixAMQRoot    bool
 	ResolveAMQEnv func(projectDir string) (amqEnv, error)
-	// ResolveAMQRootAuthority resolves each configured member's exact session
-	// root. It is separate from ResolveAMQEnv because doctor --fix-amq-root is
-	// profile/workstream aware instead of a repo-cwd-only AMQ probe.
-	ResolveAMQRootAuthority amqRootAuthorityEnvResolver
-	RunAMQOps               func(projectDir string, env amqEnv) ([]byte, error)
-	LookPath                func(name string) (string, error)
-	Probe                   duplicateLaunchProbe
-	WakeOverride            func(t team.Team, workstream string) []doctorCheck
-	WorkstreamHint          string
-	Profile                 string
-	// Getenv reads process environment (injectable so the tmux extended-keys
-	// check can be driven deterministically in tests). Defaults to os.Getenv.
+	RunAMQOps     func(projectDir string, env amqEnv) ([]byte, error)
+	LookPath      func(name string) (string, error)
+	Probe         duplicateLaunchProbe
+	// Getenv reads process environment (injectable for tests). Defaults to os.Getenv.
 	Getenv func(name string) string
 	// LookupEnv preserves the distinction between an absent value and an
 	// explicitly empty AM_SESSION. AMQ 0.42.1 introduced that distinction as
 	// part of the injected identity contract; 0.60.0 is the supported floor.
 	LookupEnv func(name string) (string, bool)
-	// TmuxShowOptions returns the value of a server-scoped tmux option (the seam
-	// behind `tmux show-options -s <name>`). It returns the raw value and ok =
-	// false when the option is unset or tmux is unavailable. Injectable so the
-	// extended-keys check never shells real tmux in tests.
-	TmuxShowOptions func(name string) (value string, ok bool)
 	// RunningVersion is the version of the binary executing `doctor` (threaded
 	// from Run). Empty or "dev" for an unstamped local build.
 	RunningVersion string
+	// Fix lets the pi runtime rows repair (doctor --fix, brief 4-1).
+	Fix bool
+	// ReleaseDrift, when set, adds the tag and release checks (3-2).
+	ReleaseDrift func() []doctorCheck
 	// PathBinaryVersion resolves the `amq-squad` found on PATH and its reported
 	// version. found=false when none is on PATH. Injectable so the version-skew
 	// check never shells a real binary in tests.
 	PathBinaryVersion func() (path, version string, found bool)
-	// CodexSkillCacheRoot returns the local Codex plugin cache directory for the
-	// amq-squad skill bundle. Injectable so tests do not read the operator's
-	// home directory.
-	CodexSkillCacheRoot func() string
-	// ClaudeSkillCacheRoot returns the local Claude plugin cache directory for
-	// the amq-squad skill bundle. Injectable so tests do not read the operator's
-	// home directory.
-	ClaudeSkillCacheRoot func() string
-	// SkillMDContent reads the body and path of the installed amq-squad skill's
-	// SKILL.md for the given running version (e.g. "v2.11.0"). found=false when
-	// no matching skill bundle is available. Injectable so tests do not read the
-	// operator's home directory.
-	SkillMDContent func(runningVersion string) (content, path string, found bool)
-	// PaneLister lists tmux panes for orphan-pane detection. ResolveBaseRoot
-	// resolves the AMQ base root whose launch records are treated as current.
-	PaneLister      tmuxpane.PaneLister
-	ResolveBaseRoot func(projectDir string) (string, error)
-	// WorktreeDiagnostics provides the stable machine-readable isolation rows.
-	// A nil seam emits skipped rows so unit tests never invoke a real Git binary.
-	WorktreeDiagnostics func(t team.Team, profile, session string) ([]worktreeplan.Diagnostic, error)
+	// ToolVersion runs `<name> --version` for the installed AMQ floor rows
+	// (brief 5-amq-A); nil skips them, so unit tests never shell a real amq.
+	ToolVersion func(name string) (path, out string, found bool, err error)
+	// Host is the plan 16.2 probe of the host (doctor_host.go). A nil Host
+	// skips the host rows, so unit tests never probe the real machine.
+	Host *doctorHost
 }
 
 func defaultDoctorExecution(projectDir string) doctorExecution {
@@ -139,49 +91,15 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		ResolveAMQRootAuthority: resolveAMQEnvForTeamProfile,
-		RunAMQOps:               defaultDoctorAMQOps,
-		LookPath:                exec.LookPath,
-		Probe:                   defaultDuplicateLaunchProbe,
-		Getenv:                  os.Getenv,
-		LookupEnv:               os.LookupEnv,
-		TmuxShowOptions:         defaultTmuxShowServerOption,
-		PathBinaryVersion:       defaultPathBinaryVersion,
-		CodexSkillCacheRoot:     defaultCodexSkillCacheRoot,
-		ClaudeSkillCacheRoot:    defaultClaudeSkillCacheRoot,
-		SkillMDContent:          defaultSkillMDContent,
-		PaneLister:              statusPaneLister,
-		ResolveBaseRoot:         scanBaseRootForProject,
-		WorktreeDiagnostics:     defaultDoctorWorktreeDiagnostics,
+		RunAMQOps:         defaultDoctorAMQOps,
+		LookPath:          exec.LookPath,
+		Probe:             defaultDuplicateLaunchProbe,
+		Getenv:            os.Getenv,
+		LookupEnv:         os.LookupEnv,
+		PathBinaryVersion: defaultPathBinaryVersion,
+		ToolVersion:       defaultToolVersion,
+		Host:              defaultDoctorHost(),
 	}
-}
-
-func defaultCodexSkillCacheRoot() string {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return ""
-	}
-	return filepath.Join(home, ".codex", "plugins", "cache", "amq-squad", "amq-squad")
-}
-
-// defaultSkillMDContent reads the amq-squad SKILL.md from the Codex plugin
-// cache for the given running version. found=false when the cache root is
-// unavailable or the versioned bundle does not contain a SKILL.md.
-func defaultSkillMDContent(runningVersion string) (string, string, bool) {
-	root := defaultCodexSkillCacheRoot()
-	if strings.TrimSpace(root) == "" {
-		return "", "", false
-	}
-	ver := strings.TrimPrefix(strings.TrimSpace(runningVersion), "v")
-	if ver == "" {
-		return "", "", false
-	}
-	skillPath := filepath.Join(root, ver, "skills", "amq-squad", "SKILL.md")
-	data, err := os.ReadFile(skillPath)
-	if err != nil {
-		return "", "", false
-	}
-	return string(data), skillPath, true
 }
 
 // defaultPathBinaryVersion resolves the `amq-squad` on PATH and runs
@@ -219,7 +137,7 @@ func parseAmqSquadVersion(out string) string {
 // team member/task primitives.)
 func doctorCheckVersionSkew(d doctorExecution) doctorCheck {
 	const name = "amq-squad on PATH"
-	const install = "go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest"
+	const install = "go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@latest"
 
 	// Skip (and do NOT shell out) for an unstamped dev/test build: the version
 	// is only meaningful for an installed/released binary.
@@ -249,199 +167,40 @@ func doctorCheckVersionSkew(d doctorExecution) doctorCheck {
 		Detail: fmt.Sprintf("version skew: PATH amq-squad is %s (%s) but this process is %s; agents launched by amq-squad inherit the PATH binary, so orchestration uses %s. Reinstall to align: %s", pathVer, path, running, pathVer, install)}
 }
 
-func doctorCheckCodexSkillCache(d doctorExecution) doctorCheck {
-	const name = "Codex skill cache"
-	running := strings.TrimSpace(d.RunningVersion)
-	if running == "" || running == "dev" || running == "(devel)" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "running a dev/unstamped build; skill-cache check skipped"}
-	}
-	want := strings.TrimPrefix(running, "v")
-	if want == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "running version unavailable; skill-cache check skipped"}
-	}
-	rootFn := d.CodexSkillCacheRoot
-	if rootFn == nil {
-		rootFn = defaultCodexSkillCacheRoot
-	}
-	root := strings.TrimSpace(rootFn())
-	if root == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "Codex cache root unavailable; skipped"}
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return doctorCheck{Name: name, Status: doctorOK, Detail: "no amq-squad Codex skill cache found; skipped"}
-		}
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: fmt.Sprintf("cannot inspect %s: %v", root, err)}
-	}
-	var versions []string
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			versions = append(versions, entry.Name())
-		}
-	}
-	if len(versions) == 0 {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no cached amq-squad skill versions found; skipped"}
-	}
-	wantPath := filepath.Join(root, want)
-	info, err := os.Lstat(wantPath)
-	if err != nil {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorWarn,
-			Detail: fmt.Sprintf("released skill bundle %s is not directly cached under %s; found %s. Refresh the Codex plugin/skill cache instead of relying on stale pointers or compatibility symlinks.",
-				want, root, strings.Join(versions, ", ")),
-		}
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorWarn,
-			Detail: fmt.Sprintf("released skill bundle %s is a symlink at %s; refresh the Codex plugin/skill cache so it resolves to the installed bundle directly.",
-				want, wantPath),
-		}
-	}
-	if _, err := os.Stat(filepath.Join(wantPath, "skills", "amq-squad", "SKILL.md")); err != nil {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorWarn,
-			Detail: fmt.Sprintf("released skill bundle %s exists but skills/amq-squad/SKILL.md is missing or unreadable: %v", want, err),
-		}
-	}
-	return doctorCheck{
-		Name:   name,
-		Status: doctorOK,
-		Detail: fmt.Sprintf("released skill bundle %s is cached directly at %s", want, wantPath),
-	}
-}
-
-// skillVersionFrontmatterRE reads the shipped version from a skill's YAML
-// frontmatter. #534 removed the "Skill version: X.Y.Z" body preamble -- a mandatory
-// sentence before any useful work, hardcoded in 7 files -- and moved the identity to
-// frontmatter stamped by scripts/generate-plugin-skills.py from the plugin manifest.
-//
-// SHARED SHAPE: this must stay equivalent to the pattern used by
-// scripts/check-skill-frontmatter.py and by the release validator, so binary,
-// validator, and generator agree by construction:
-//
-//	^version:\s*"?([0-9]+\.[0-9]+\.[0-9]+)"?
-//
-// One deliberate difference: Go's \s matches newlines, so an (?m)-anchored `\s*`
-// could cross a line boundary and capture a version from a LATER line. The character
-// class is narrowed to [ \t]* to keep the match on its own line.
-var skillVersionFrontmatterRE = regexp.MustCompile(`(?m)^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+)"?`)
-
-// skillFrontmatterBlockRE captures the body of the OPENING frontmatter block only.
-var skillFrontmatterBlockRE = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?(?:\n|\z)`)
-
-// skillFrontmatterVersion reads the shipped version from a skill document's opening
-// frontmatter. Scoping to that block matters as much as the pattern: a bare
-// whole-document search would also match a line beginning "version:" anywhere in the
-// BODY -- a YAML example inside a fence, say -- and report it as the skill's identity.
-// No shipped skill contains such a line today, so this is defence in depth rather than
-// a live fix.
-//
-// Credit: amq-dev-2 arrived at opening-frontmatter-only scoping for #566's Python
-// validator; matching it here keeps binary and validator agreeing by construction
-// instead of by each being independently reasonable.
-func skillFrontmatterVersion(content string) (string, bool) {
-	block := skillFrontmatterBlockRE.FindStringSubmatch(content)
-	if block == nil {
-		return "", false
-	}
-	m := skillVersionFrontmatterRE.FindStringSubmatch(block[1])
-	if m == nil {
-		return "", false
-	}
-	return m[1], true
-}
-
-// doctorCheckSkillVersion verifies that the installed amq-squad skill's frontmatter
-// version matches the running binary. Agents load the
-// cached skill on session start; if skill and binary differ they silently
-// diverge in capability. Complements doctorCheckCodexSkillCache (which checks
-// for structural presence) by verifying content alignment.
-func doctorCheckSkillVersion(d doctorExecution) doctorCheck {
-	const name = "skill version"
-	running := strings.TrimSpace(d.RunningVersion)
-	if running == "" || running == "dev" || running == "(devel)" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "running a dev build; skill-version check skipped"}
-	}
-	reader := d.SkillMDContent
-	if reader == nil {
-		reader = defaultSkillMDContent
-	}
-	content, skillPath, found := reader(running)
-	if !found {
-		return doctorCheck{Name: name, Status: doctorWarn,
-			Detail: fmt.Sprintf("no installed skill bundle found for %s; cannot verify skill/binary alignment. The skill must be installed so each agent session loads the matching build.", running)}
-	}
-	version, ok := skillFrontmatterVersion(content)
-	if !ok {
-		return doctorCheck{Name: name, Status: doctorWarn,
-			Detail: fmt.Sprintf("installed skill at %s has no frontmatter `version:` field; cannot verify alignment. The skill bundle may be stale or incomplete.", skillPath)}
-	}
-	installed := "v" + version
-	want := running
-	if !strings.HasPrefix(want, "v") {
-		want = "v" + want
-	}
-	if installed == want {
-		return doctorCheck{Name: name, Status: doctorOK,
-			Detail: fmt.Sprintf("skill %s matches binary %s (%s)", installed, running, skillPath)}
-	}
-	return doctorCheck{Name: name, Status: doctorWarn,
-		Detail: fmt.Sprintf("skill/binary version skew: installed skill is %s but binary is %s (%s); agents load the cached skill on session start, so they may use outdated behavior. Refresh the Codex plugin cache to align.", installed, running, skillPath)}
-}
-
-// defaultTmuxShowServerOption reads a server-scoped tmux option via
-// `tmux show-options -s <name>`. tmux prints "<name> <value>"; we return the
-// value. ok is false when tmux is unavailable or the option is unset (tmux
-// exits non-zero / prints nothing), so the caller treats it as off/unknown.
-// READ-ONLY: amq-squad never runs `tmux set-option`.
-func defaultTmuxShowServerOption(name string) (string, bool) {
-	out, err := exec.Command("tmux", "show-options", "-s", name).Output()
-	if err != nil {
-		return "", false
-	}
-	fields := strings.Fields(strings.TrimSpace(string(out)))
-	if len(fields) < 2 {
-		return "", false
-	}
-	return fields[len(fields)-1], true
-}
-
 func runDoctor(args []string, version string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned doctor envelope instead of the human table")
-	projectFlag := fs.String("project", "", "project/team-home directory to check (default: cwd)")
-	profileFlag := fs.String("profile", "", "team profile to check (default: default profile)")
-	sessionFlag := fs.String("session", "", "workstream whose registered worktrees should be checked")
-	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
-	allProfiles := fs.Bool("all-profiles", false, "check every configured team profile instead of one selected profile")
-	fixAMQRoot := fs.Bool("fix-amq-root", false, "repair the selected workstream's exact AMQ root config and mailboxes before checking")
+	projectFlag := fs.String("project", "", "repository to check for Codex trust (default: cwd)")
+	writeRegistry := fs.Bool("write-registry", false, "write ~/.amq-squad/registry.yaml from this probe")
+	probe := fs.Bool("probe", false, "also run the slow probes: R12 tool-call and edit probe per local model, direct TTFT, Codex model ids (implies --write-registry)")
+	runs := fs.Int("runs", registry.ShipN, "R12 probe runs per local model with --probe")
+	usageScan := fs.Duration("usage-scan", 0, "also list the Claude and Codex session files that carried a usage-limit or 429 signal in this window (e.g. 168h)")
+	fixFlag := fs.Bool("fix", false, "repair: remove a rejected pi runtime and runtimes beyond the last two")
+	registerScopedFlagAliases(fs, projectFlag, nil, nil)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad doctor - check this project's amq-squad / AMQ setup
+		fmt.Fprint(os.Stderr, `amq-squad doctor - probe this host for amq-squad 3.0 (plan 5 and 16.2)
 
 Usage:
-  amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--session NAME] [--fix-amq-root] [--json]
+  amq-squad doctor [--project DIR] [--json] [--write-registry] [--probe [--runs N]] [--usage-scan DUR] [--fix]
 
-Checks: AMQ version and ops diagnostics, the amq-squad on PATH vs this build
-(version skew — spawned agents inherit the PATH binary), selected team profile,
-tmux availability, configured members' wake health, and CLAUDE.md / AGENTS.md
-marker integrity plus pointer-sync drift for the selected profile's sync
-targets. Use --all-profiles for project health across every configured profile.
---session selects the worktree plan checked alongside profile health.
-Read-only unless --fix-amq-root is passed. The repair flag is intentionally
-limited to one selected profile/workstream and cannot be combined with --json
-or --all-profiles. Exits non-zero if any check is "fail".
+Checks: the AMQ version and launch API, the amq-squad on PATH vs this build,
+the AMQ identity pin and ops; then the tools on PATH (claude, codex, the
+built-in pi, grok, cursor-agent, ollama, amq, amq-remote, tmux, gh) with their
+versions against the versions the AMQ launch API verified and their login
+state, RAM and GPU, the registry entries, the full re-hash of the embedded pi
+runtime, sleep and the amq-remote login service, project roots codex-cli does
+not trust, the Codex notify fan-out line, exported key names in the shell
+profile, the owner's global agent config against the preflight copy, and the
+grants file mode. A missing optional tool is one status line, not a failure.
+Without --write-registry, --probe or --fix (pi runtime repair) doctor writes nothing. Exits non-zero if
+any check is "fail".
 
 Examples:
   amq-squad doctor
   amq-squad doctor --project ~/Code/app
-  amq-squad doctor --profile review
-  amq-squad doctor --profile review --fix-amq-root
-  amq-squad doctor --all-profiles
+  amq-squad doctor --write-registry
+  amq-squad doctor --probe --runs 5
+  amq-squad doctor --usage-scan 168h
   amq-squad doctor --json | jq '.data.checks[] | select(.status=="fail")'
 `)
 	}
@@ -451,31 +210,66 @@ Examples:
 	if fs.NArg() > 0 {
 		return usageErrorf("doctor takes no positional arguments; got %d", fs.NArg())
 	}
-	if flagWasSet(fs, "session") && !*fixAMQRoot {
-		fmt.Fprintln(os.Stderr, "ignoring --session: doctor checks project/profile health, not one session; the additive worktree diagnostics use it only to select a plan")
+	if *runs < 1 {
+		return usageErrorf("--runs must be at least 1")
 	}
-	if *allProfiles && flagWasSet(fs, "profile") {
-		return usageErrorf("--all-profiles cannot be combined with --profile")
+	// Before any registry read, runtime load or provider call: a seat never
+	// writes owner state, the registry or the pi runtimes (brief 3.0.1-t15).
+	if err := refuseDoctorWriteInSeat(os.Getenv, *writeRegistry, *probe, *fixFlag); err != nil {
+		return err
 	}
-	if *fixAMQRoot && *jsonOut {
-		return usageErrorf("--fix-amq-root cannot be combined with --json")
-	}
-	if *fixAMQRoot && *allProfiles {
-		return usageErrorf("--fix-amq-root cannot be combined with --all-profiles; select one profile")
-	}
-	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	emitContextDiagnostics(ctx)
-	d := defaultDoctorExecution(ctx.ProjectDir)
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project") || flagWasSet(fs, "p"))
+	if err != nil {
+		return err
+	}
+	d := defaultDoctorExecution(projectDir)
 	d.JSON = *jsonOut
-	d.Profile = ctx.Profile
-	d.WorkstreamHint = ctx.Session
-	d.AllProfiles = *allProfiles
-	d.FixAMQRoot = *fixAMQRoot
 	d.RunningVersion = version
-	return executeDoctor(d)
+	d.Host.WriteRegistry = *writeRegistry || *probe
+	d.Host.Probe = *probe
+	d.Host.ProbeRuns = *runs
+	d.Host.UsageScan = *usageScan
+	d.Fix = *fixFlag
+	syncRegistryRuntimePin()
+	d.ReleaseDrift = withClearChecks(doctorReleaseDriftFor(os.Getenv, os.Getenv("AM_ROOT")), os.Getenv("AM_ROOT"))
+	return doctorExecute(d)
+}
+
+// doctorExecute is runDoctor's last step (a seam: the seat refusal rows
+// swap in a fake host so a reverted guard never probes the real machine).
+var doctorExecute = executeDoctor
+
+// errSeatOwnerState is the reason doctor refuses --probe, --write-registry
+// and --fix inside a seat.
+var errSeatOwnerState = errors.New("seat_owner_state_refused")
+
+// refuseDoctorWriteInSeat fails closed when a writing doctor runs inside a
+// seat (brief 3.0.1-t15, R54). --probe and --write-registry write the
+// owner's registry (~/.amq-squad/registry.yaml) and --fix removes pi
+// runtimes under ~/.amq-squad/runtime. A seat's binary may be built from the
+// branch it edits, so a seat never runs them; the owner does, from their own
+// terminal with the installed binary. Plain doctor writes nothing and still
+// runs in a seat: a seat may read host facts.
+func refuseDoctorWriteInSeat(getenv func(string) string, writeRegistry, probe, fix bool) error {
+	if !writeRegistry && !probe && !fix {
+		return nil
+	}
+	marker := seatEnvMarker(getenv)
+	if marker == "" {
+		return nil
+	}
+	flag, target := "--fix", "the owner's pi runtimes (~/.amq-squad/runtime)"
+	switch {
+	case probe:
+		flag, target = "--probe", "the owner's registry (~/.amq-squad/registry.yaml)"
+	case writeRegistry:
+		flag, target = "--write-registry", "the owner's registry (~/.amq-squad/registry.yaml)"
+	}
+	return fmt.Errorf("doctor: %w: %s is set, so this process is a seat; doctor %s writes %s and seats never run doctor against owner state. The owner runs `amq-squad doctor %s` from their own terminal with the installed binary; plain `amq-squad doctor` (writes nothing) still runs here", errSeatOwnerState, marker, flag, target, flag)
 }
 
 func resolveProjectDirFlag(cwd, project string, explicit bool) (string, error) {
@@ -486,7 +280,7 @@ func resolveProjectDirFlag(cwd, project string, explicit bool) (string, error) {
 	if project == "" {
 		return "", usageErrorf("--project requires a directory")
 	}
-	dir, err := expandPath(project)
+	dir, err := filepath.Abs(project)
 	if err != nil {
 		return "", fmt.Errorf("resolve --project: %w", err)
 	}
@@ -501,25 +295,11 @@ func resolveProjectDirFlag(cwd, project string, explicit bool) (string, error) {
 }
 
 func executeDoctor(d doctorExecution) error {
-	if d.AllProfiles {
-		if d.FixAMQRoot {
-			return fmt.Errorf("doctor --fix-amq-root requires one selected profile")
-		}
-		return executeDoctorAllProfiles(d)
-	}
-	if d.FixAMQRoot {
-		if err := doctorFixAMQRoot(d); err != nil {
-			return fmt.Errorf("doctor --fix-amq-root: %w", err)
-		}
-	}
-	checks, workstream := runDoctorChecks(d)
+	checks := runDoctorChecks(d)
 	if d.JSON {
 		if err := writeJSONEnvelope(d.Out, "doctor", doctorEnvelopeData{
-			TeamHome:   canonicalFilesystemPath(d.ProjectDir),
-			Profile:    doctorProfile(d),
-			Workstream: workstream,
-			Versions:   buildVersionAlignment(versionAlignmentSourcesFromDoctor(d)),
-			Checks:     checks,
+			TeamHome: canonicalFilesystemPath(d.ProjectDir),
+			Checks:   checks,
 		}); err != nil {
 			return err
 		}
@@ -530,95 +310,6 @@ func executeDoctor(d doctorExecution) error {
 		return fmt.Errorf("doctor: %d check(s) failed", fails)
 	}
 	return nil
-}
-
-func executeDoctorAllProfiles(d doctorExecution) error {
-	profiles, err := doctorProfilesToCheck(d.ProjectDir)
-	if err != nil {
-		return fmt.Errorf("list profiles: %w", err)
-	}
-	results := make([]doctorProfileEnvelopeData, 0, len(profiles))
-	summaries := make([]doctorCheck, 0, len(profiles))
-	totalFails := 0
-	for _, profile := range profiles {
-		profileExec := d
-		profileExec.Profile = profile
-		profileExec.AllProfiles = false
-		checks, workstream := runDoctorChecks(profileExec)
-		fails := countFails(checks)
-		totalFails += fails
-		nonOK := countNonOK(checks)
-		summaries = append(summaries, doctorCheck{
-			Name:   "profile " + profile,
-			Status: doctorProfileSummaryStatus(fails, nonOK),
-			Detail: doctorProfileSummaryDetail(workstream, len(checks), fails, nonOK),
-		})
-		results = append(results, doctorProfileEnvelopeData{
-			Profile:    profile,
-			Workstream: workstream,
-			Checks:     checks,
-		})
-	}
-	if d.JSON {
-		if err := writeJSONEnvelope(d.Out, "doctor", doctorEnvelopeData{
-			TeamHome: canonicalFilesystemPath(d.ProjectDir),
-			Profile:  "all",
-			Versions: buildVersionAlignment(versionAlignmentSourcesFromDoctor(d)),
-			Checks:   summaries,
-			Profiles: results,
-		}); err != nil {
-			return err
-		}
-	} else {
-		for i, result := range results {
-			if i > 0 {
-				fmt.Fprintln(d.Out)
-			}
-			workstream := result.Workstream
-			if workstream == "" {
-				workstream = "(default)"
-			}
-			fmt.Fprintf(d.Out, "PROFILE %s  WORKSTREAM %s\n", result.Profile, workstream)
-			writeDoctorTable(d.Out, result.Checks)
-		}
-	}
-	if totalFails > 0 {
-		return fmt.Errorf("doctor: %d check(s) failed", totalFails)
-	}
-	return nil
-}
-
-func doctorProfilesToCheck(projectDir string) ([]string, error) {
-	var profiles []string
-	if team.Exists(projectDir) {
-		profiles = append(profiles, team.DefaultProfile)
-	}
-	named, err := team.ListProfiles(projectDir)
-	if err != nil {
-		return nil, err
-	}
-	profiles = append(profiles, named...)
-	if len(profiles) == 0 {
-		return []string{team.DefaultProfile}, nil
-	}
-	return profiles, nil
-}
-
-func doctorProfileSummaryStatus(fails, nonOK int) doctorStatus {
-	if fails > 0 {
-		return doctorFail
-	}
-	if nonOK > 0 {
-		return doctorWarn
-	}
-	return doctorOK
-}
-
-func doctorProfileSummaryDetail(workstream string, checks, fails, nonOK int) string {
-	if workstream == "" {
-		workstream = "(default)"
-	}
-	return fmt.Sprintf("workstream %s; %d checks, %d failed, %d non-ok", workstream, checks, fails, nonOK)
 }
 
 func countFails(checks []doctorCheck) int {
@@ -658,472 +349,31 @@ func countNonOK(checks []doctorCheck) int {
 	return n
 }
 
-func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
-	checks := []doctorCheck{}
-	checks = append(checks, doctorCheckAMQVersion(d))
-	checks = append(checks, doctorCheckLaunchapiCompatibility(d))
-	checks = append(checks, doctorCheckAdoptionFloor(d))
-	checks = append(checks, doctorCheckAMQModulePin(d))
-	checks = append(checks, doctorCheckAMQIdentityPin(d))
-	checks = append(checks, doctorCheckAMQRootAuthority(d))
-	checks = append(checks, doctorCheckAMQOps(d))
-	checks = append(checks, doctorCheckVersionSkew(d))
-	checks = append(checks, doctorCheckCodexSkillCache(d))
-	checks = append(checks, doctorCheckSkillVersion(d))
-	checks = append(checks, doctorCheckTeamConfig(d))
-	checks = append(checks, doctorCheckToolProfiles(d))
-	checks = append(checks, doctorCheckTeamRulesRoster(d))
-	checks = append(checks, doctorCheckTmux(d))
-	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
-	checks = append(checks, doctorCheckOrphanPanes(d))
-	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
-	checks = append(checks, doctorCheckPointerSync(d)...)
-	wakeChecks, workstream := doctorCheckWake(d)
-	checks = append(checks, wakeChecks...)
-	checks = append(checks, doctorCheckNotificationWatcher(d, workstream))
-	checks = append(checks, doctorCheckWorktrees(d, workstream)...)
-	return checks, workstream
-}
-
-func doctorAMQRootAuthorityContext(d doctorExecution) (team.Team, string, error) {
-	profile := doctorProfile(d)
-	t, err := team.ReadProfile(d.ProjectDir, profile)
-	if err != nil {
-		return team.Team{}, "", err
+// runDoctorChecks runs the AMQ checks, then the host probe of plan 16.2.
+// The v2 team, worktree, pane and wake-mirror checks are gone (16.2).
+func runDoctorChecks(d doctorExecution) []doctorCheck {
+	checks := []doctorCheck{
+		doctorCheckAMQVersion(d),
+		doctorCheckLaunchapiCompatibility(d),
+		doctorCheckAdoptionFloor(d),
+		doctorCheckAMQIdentityPin(d),
+		doctorCheckAMQOps(d),
+		doctorCheckVersionSkew(d),
 	}
-	workstream, err := resolveTeamWorkstreamName(
-		t,
-		strings.TrimSpace(d.WorkstreamHint),
-		strings.TrimSpace(d.WorkstreamHint) != "",
-	)
-	if err != nil {
-		return team.Team{}, "", err
+	checks = append(checks, doctorCheckInstalledAMQFloor(d)...)
+	if d.ReleaseDrift != nil {
+		checks = append(checks, d.ReleaseDrift()...)
 	}
-	return t, workstream, nil
-}
-
-func doctorAMQRootAuthorityResolver(d doctorExecution) amqRootAuthorityEnvResolver {
-	if d.ResolveAMQRootAuthority != nil {
-		return d.ResolveAMQRootAuthority
-	}
-	return resolveAMQEnvForTeamProfile
-}
-
-func doctorFixAMQRoot(d doctorExecution) error {
-	t, workstream, err := doctorAMQRootAuthorityContext(d)
-	if err != nil {
-		return err
-	}
-	return repairTeamAMQRootAuthority(
-		t,
-		doctorProfile(d),
-		workstream,
-		d.Out,
-		doctorAMQRootAuthorityResolver(d),
-		true, // --fix-amq-root is an explicit, deliberate repair; always show the full trail.
-	)
-}
-
-// doctorCheckAMQRootAuthority is the read-only half of --fix-amq-root. AMQ
-// 0.49.8+ refuses explicit-root writes when meta/config.json is absent, so a
-// healthy version/ops report must not conceal a configless live session root.
-func doctorCheckAMQRootAuthority(d doctorExecution) doctorCheck {
-	const name = "amq root authority"
-	profile := doctorProfile(d)
-	if !team.ExistsProfile(d.ProjectDir, profile) {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "team profile unavailable; skipped"}
-	}
-	t, workstream, err := doctorAMQRootAuthorityContext(d)
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
-	}
-	handles := amqAuthorityHandles(t)
-	if len(handles) == 0 {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: "configured team has no AMQ authority handles"}
-	}
-	resolve := doctorAMQRootAuthorityResolver(d)
-	seen := map[string]bool{}
-	var findings []string
-	checked := 0
-	for _, member := range orderedTeamMembers(t.Members) {
-		cwd := member.EffectiveCWD(t.Project)
-		env, err := resolve(cwd, profile, workstream, memberHandle(member))
-		if err != nil {
-			return doctorCheck{
-				Name:   name,
-				Status: doctorFail,
-				Detail: fmt.Sprintf("resolve exact root for %s: %v", member.Role, err),
-			}
-		}
-		root := absoluteAMQRoot(cwd, env.Root)
-		if seen[root] {
-			continue
-		}
-		seen[root] = true
-		exists, err := directoryExists(root)
-		if err != nil {
-			return doctorCheck{
-				Name:   name,
-				Status: doctorFail,
-				Detail: fmt.Sprintf("inspect exact root for %s: %v", member.Role, err),
-			}
-		}
-		if !exists {
-			continue
-		}
-		checked++
-		configPath := filepath.Join(root, "meta", "config.json")
-		raw, _, exists, err := readAMQRootConfig(configPath)
-		if err != nil {
-			findings = append(findings, err.Error())
-			continue
-		}
-		if !exists {
-			findings = append(findings, fmt.Sprintf("%s is missing", configPath))
-			continue
-		}
-		document, err := decodeAMQRootConfig(configPath, raw)
-		if err != nil {
-			findings = append(findings, err.Error())
-			continue
-		}
-		var configured []string
-		if err := json.Unmarshal(document["agents"], &configured); err != nil {
-			findings = append(findings, fmt.Sprintf("decode AMQ root agents at %s: %v", configPath, err))
-			continue
-		}
-		if !equalStrings(configured, handles) {
-			findings = append(findings, fmt.Sprintf(
-				"%s agents=%v, want %v",
-				configPath,
-				configured,
-				handles,
-			))
-		}
-	}
-	if checked == 0 {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorOK,
-			Detail: "no existing exact session roots; skipped",
-		}
-	}
-	if len(findings) > 0 {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorFail,
-			Detail: strings.Join(findings, "; ") + "; run `amq-squad doctor --fix-amq-root` for the selected profile/workstream",
-		}
-	}
-	return doctorCheck{
-		Name:   name,
-		Status: doctorOK,
-		Detail: fmt.Sprintf("%d exact session root(s) have the configured AMQ authority roster", checked),
-	}
-}
-
-// doctorCheckGoalSupervision remains only for legacy direct tests until the
-// goal-supervision deletion step. runDoctorChecks does not invoke it.
-func doctorCheckGoalSupervision(d doctorExecution, workstream string) doctorCheck {
-	const name = "goal supervision"
-	profile := doctorProfile(d)
-	if strings.TrimSpace(workstream) == "" || !team.ExistsProfile(d.ProjectDir, profile) {
-		return doctorCheck{
-			Name: name, Kind: "goal_supervision", Status: doctorWarn,
-			Detail: "no resolved team workstream; goal supervision assessment is unavailable",
-		}
-	}
-	_, assessment, err := resolveGoalSupervisionAssessment(d.ProjectDir, profile, workstream, d.Probe)
-	if err != nil {
-		return doctorCheck{
-			Name: name, Kind: "goal_supervision", Status: doctorWarn,
-			Detail: "team config unreadable; assessment unavailable",
-		}
-	}
-	status := doctorOK
-	if assessment.AttentionRequired || !assessment.Source.Complete || !assessment.Invariants.OK {
-		status = doctorWarn
-	}
-	return doctorCheck{
-		Name: name, Kind: "goal_supervision", Status: status,
-		Detail: fmt.Sprintf(
-			"state=%s eligible=%t automatic=%t policy=%s@%d fingerprint=%s",
-			assessment.State, assessment.Eligible, assessment.AutomaticResumeAllowed,
-			assessment.Policy.Mode, assessment.Policy.Revision, assessment.Fingerprint,
-		),
-		GoalSupervision: &assessment,
-	}
-}
-
-var worktreeDiagnosticKinds = []string{
-	"store",
-	"shared-index-collision",
-	"duplicate-worktree-identity",
-	"worktree-plan-drift",
-	"worktree-handoff-cleanliness",
-	"coordination-root-divergence",
-	"registered-worktree-liveness",
-}
-
-func defaultDoctorWorktreeDiagnostics(t team.Team, profile, session string) ([]worktreeplan.Diagnostic, error) {
-	service, err := worktreeplan.NewService(t, profile, session, worktreeplan.ExecGit{}, nil)
-	if err != nil {
-		return nil, err
-	}
-	inspection, err := service.Inspect()
-	if err != nil {
-		return nil, err
-	}
-	rows := doctorRuntimeRows(t, profile, session, defaultDuplicateLaunchProbe)
-	inspection.Diagnostics = stateAwareSharedIndexDiagnostics(inspection, rows, profile, session)
-	return inspection.Diagnostics, nil
-}
-
-// doctorRuntimeRows computes only the runtime state needed by the worktree
-// collision check. Keeping this independent from buildStatusRows avoids
-// recursively attaching worktree diagnostics back into doctor.
-func doctorRuntimeRows(t team.Team, profile, session string, probe duplicateLaunchProbe) []statusRecord {
-	var rows []statusRecord
-	replacement := newBatchReplacementPaneResolver()
-	for _, member := range orderedTeamMembers(t.Members) {
-		if team.EffectiveActorMode(t, member) != team.ActorModeImplementation {
-			continue
-		}
-		cwd := member.EffectiveCWD(t.Project)
-		env, err := resolveAMQEnvForTeamProfile(cwd, profile, session, member.Handle)
-		if err != nil {
-			rows = append(rows, statusRecord{
-				Role: member.Role, Status: statusStateStale,
-				Detail: fmt.Sprintf("runtime resolution for role %s failed: %v", member.Role, err),
-			})
-			continue
-		}
-		root := absoluteAMQRoot(cwd, env.Root)
-		handle := member.Handle
-		if env.Me != "" {
-			handle = env.Me
-		}
-		live := classifyAgentLivenessWithReplacementResolver(
-			filepath.Join(root, "agents", handle), root, profile, handle,
-			member.Role, member.Binary, session, cwd, probe, replacement,
-		)
-		rows = append(rows, statusRecord{Role: member.Role, Status: live.Status})
-	}
-	return rows
-}
-
-func stateAwareSharedIndexDiagnostics(inspection worktreeplan.Inspection, rows []statusRecord, profile, session string) []worktreeplan.Diagnostic {
-	if inspection.Set.SharedCWDException.Enabled {
-		return inspection.Diagnostics
-	}
-	liveRoles := map[string]bool{}
-	var runtimeUncertainty []string
-	for _, row := range rows {
-		if row.Status == statusStateLive || row.Status == statusStateWakeLive {
-			liveRoles[strings.ToLower(strings.TrimSpace(row.Role))] = true
-		}
-		if strings.TrimSpace(row.Detail) != "" {
-			runtimeUncertainty = append(runtimeUncertainty, strings.TrimSpace(row.Detail))
-		}
-	}
-	allByIndex := map[string][]string{}
-	liveByIndex := map[string][]string{}
-	for _, member := range inspection.Members {
-		if member.State == worktreeplan.StateCleaned || strings.TrimSpace(member.Index) == "" {
-			continue
-		}
-		allByIndex[member.Index] = append(allByIndex[member.Index], member.Role)
-		if liveRoles[strings.ToLower(strings.TrimSpace(member.Role))] {
-			liveByIndex[member.Index] = append(liveByIndex[member.Index], member.Role)
-		}
-	}
-	allCollisions := sharedIndexCollisionDetails(allByIndex)
-	if len(allCollisions) == 0 {
-		return inspection.Diagnostics
-	}
-	liveCollisions := sharedIndexCollisionDetails(liveByIndex)
-	remedy := fmt.Sprintf(
-		"remedy before concurrent mutation: run 'amq-squad worktree plan --role R --task ID --base SHA --scope PATH... --profile %s --session %s', then 'amq-squad worktree materialize --role R --task ID --base SHA --scope PATH... --profile %s --session %s --yes'",
-		profile, session, profile, session,
-	)
-	replacement := worktreeplan.Diagnostic{
-		Kind: "shared-index-collision", Status: worktreeplan.DiagnosticWarn,
-		Detail: strings.Join(allCollisions, "; ") + "; fewer than two affected members are live, so this warning does not fail doctor; " + remedy,
-	}
-	if len(liveCollisions) > 0 {
-		replacement.Status = worktreeplan.DiagnosticFail
-		replacement.Detail = strings.Join(liveCollisions, "; ") + " while live; " + remedy
-	}
-	if len(runtimeUncertainty) > 0 {
-		sort.Strings(runtimeUncertainty)
-		replacement.Detail += "; runtime liveness uncertainty: " + strings.Join(runtimeUncertainty, "; ")
-	}
-	out := append([]worktreeplan.Diagnostic(nil), inspection.Diagnostics...)
-	for i := range out {
-		if out[i].Kind == "shared-index-collision" {
-			out[i] = replacement
-			return out
-		}
-	}
-	return append(out, replacement)
-}
-
-func sharedIndexCollisionDetails(byIndex map[string][]string) []string {
-	var collisions []string
-	for index, roles := range byIndex {
-		if len(roles) < 2 {
-			continue
-		}
-		sort.Strings(roles)
-		collisions = append(collisions, strings.Join(roles, ",")+" share "+index)
-	}
-	sort.Strings(collisions)
-	return collisions
-}
-
-func doctorCheckWorktrees(d doctorExecution, workstream string) []doctorCheck {
-	if strings.TrimSpace(workstream) == "" {
-		return skippedWorktreeDoctorChecks("workstream unresolved; skipped")
-	}
-	t, err := team.ReadProfile(d.ProjectDir, doctorProfile(d))
-	if err != nil {
-		return skippedWorktreeDoctorChecks("team config unavailable; skipped")
-	}
-	if d.WorktreeDiagnostics == nil {
-		return skippedWorktreeDoctorChecks("worktree diagnostic seam unavailable; skipped")
-	}
-	diagnostics, err := d.WorktreeDiagnostics(t, doctorProfile(d), workstream)
-	if err != nil {
-		checks := skippedWorktreeDoctorChecks("worktree inspection unavailable; skipped")
-		checks[0].Status = doctorFail
-		checks[0].Detail = err.Error()
-		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			checks[2].Status = doctorFail
-			checks[2].Detail = err.Error()
-		}
-		return checks
-	}
-	byKind := map[string]worktreeplan.Diagnostic{}
-	for _, diagnostic := range diagnostics {
-		byKind[diagnostic.Kind] = diagnostic
-	}
-	checks := make([]doctorCheck, 0, len(worktreeDiagnosticKinds))
-	for _, kind := range worktreeDiagnosticKinds {
-		diagnostic, ok := byKind[kind]
-		if !ok {
-			checks = append(checks, doctorCheck{Name: "worktree/" + kind, Kind: kind, Status: doctorFail, Detail: "diagnostic row missing"})
-			continue
-		}
-		status := doctorOK
-		switch diagnostic.Status {
-		case worktreeplan.DiagnosticWarn:
-			status = doctorWarn
-		case worktreeplan.DiagnosticFail:
-			status = doctorFail
-		}
-		checks = append(checks, doctorCheck{
-			Name: "worktree/" + kind, Kind: kind, Role: diagnostic.Role,
-			Status: status, Detail: diagnostic.Detail,
-		})
+	if d.Host != nil {
+		d.Host.Fix = d.Fix
+		checks = append(checks, d.Host.checks(d.ProjectDir)...)
+		// The host probe shows the pi runtime row (brief 4-1); the versions
+		// row and its --fix prune follow it.
+		checks = append(checks, doctorPiRuntimeVersionsRows(d.Fix)...)
+	} else {
+		checks = append(checks, doctorCheckPiRuntime(d.Fix)...)
 	}
 	return checks
-}
-
-func skippedWorktreeDoctorChecks(detail string) []doctorCheck {
-	checks := make([]doctorCheck, 0, len(worktreeDiagnosticKinds))
-	for _, kind := range worktreeDiagnosticKinds {
-		checks = append(checks, doctorCheck{Name: "worktree/" + kind, Kind: kind, Status: doctorOK, Detail: detail})
-	}
-	return checks
-}
-
-// doctorCheckTaskCompletionEvidence remains only for legacy direct tests until
-// the completion-evidence deletion step. runDoctorChecks does not invoke it.
-func doctorCheckTaskCompletionEvidence(d doctorExecution, workstream string) doctorCheck {
-	const name = "task completion evidence"
-	if strings.TrimSpace(workstream) == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "workstream unresolved; skipped"}
-	}
-	warnings, err := statusTaskWarnings(d.ProjectDir, doctorProfile(d), workstream)
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: err.Error()}
-	}
-	var findings []string
-	for _, warning := range warnings {
-		if strings.HasPrefix(warning.Kind, "task_completion_") {
-			finding := warning.Kind + ": " + warning.Detail
-			if warning.SuggestedCommand != "" {
-				finding += " next=" + warning.SuggestedCommand
-			}
-			findings = append(findings, finding)
-		}
-	}
-	if len(findings) == 0 {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no completion evidence drift"}
-	}
-	sort.Strings(findings)
-	return doctorCheck{Name: name, Status: doctorWarn, Detail: strings.Join(findings, "; ")}
-}
-
-func doctorCheckToolProfiles(d doctorExecution) doctorCheck {
-	const name = "member tool profiles"
-	profile := doctorProfile(d)
-	if !team.ExistsProfile(d.ProjectDir, profile) {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no team profile; skipped"}
-	}
-	t, err := team.ReadProfile(d.ProjectDir, profile)
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
-	}
-	if err := validateMemberOverlayPaths(t, t.Members); err != nil {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
-	}
-	var fullWorkers []string
-	var policies []string
-	for _, member := range orderedTeamMembers(t.Members) {
-		policies = append(policies, member.Role+"="+member.EffectiveToolProfile())
-		if member.Role != t.Lead && member.EffectiveToolProfile() == team.ToolProfileFull {
-			fullWorkers = append(fullWorkers, member.Role)
-		}
-	}
-	if len(fullWorkers) >= 2 {
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: "multiple workers inherit the full operator tool surface: " + strings.Join(fullWorkers, ", ") + "; prefer generated lean role profiles unless full access is intentional"}
-	}
-	return doctorCheck{Name: name, Status: doctorOK, Detail: strings.Join(policies, ", ")}
-}
-
-func doctorCheckNotificationWatcher(d doctorExecution, workstream string) doctorCheck {
-	const name = "notification watcher"
-	profile := doctorProfile(d)
-	t, err := team.ReadProfile(d.ProjectDir, profile)
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "team config unavailable; skipped"}
-	}
-	policy := team.EffectiveOperatorNotifications(t.Operator)
-	if !policy.Enabled {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "notifications disabled"}
-	}
-	if strings.TrimSpace(workstream) == "" {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: "UNHEALTHY: notifications_enabled=true but workstream is unresolved"}
-	}
-	now := time.Now()
-	if d.Probe.Now != nil {
-		now = d.Probe.Now()
-	}
-	watcher := inspectNotificationWatcher(t, profile, workstream, now)
-	if watcher.Health == "inactive" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("inactive (session cleanly stopped); runtime %s", watcher.RuntimePath)}
-	}
-	if watcher.Health == "external-active" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("active on remote watcher host %s; backend=%s backend_running=%t mailbox=%s heartbeat=%s runtime=%s", watcher.Host, watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.RuntimePath)}
-	}
-	if watcher.Health == "degraded" {
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: fmt.Sprintf("DEGRADED: notifications watcher active; backend=%s backend_running=%t mailbox=%s watch_restarts=%d failure_streak=%d collect_pending=%t collect_retries=%d max_failures=%d; %s (runtime %s)", watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.WatchRestarts, watcher.WatchFailures, watcher.CollectPending, watcher.CollectRetries, watcher.WatchMaxRetries, watcher.Reason, watcher.RuntimePath)}
-	}
-	if watcher.Health != "healthy" {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: fmt.Sprintf("UNHEALTHY: notifications_enabled=true; %s (runtime %s)", watcher.Reason, watcher.RuntimePath)}
-	}
-	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("healthy pid=%d host=%s backend=%s backend_running=%t mailbox=%s watch_restarts=%d failure_streak=%d collect_pending=%t collect_retries=%d max_failures=%d heartbeat=%s last_scan=%s last_watch=%s last_collect=%s state=%s schema=%d", watcher.PID, watcher.Host, watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.WatchRestarts, watcher.WatchFailures, watcher.CollectPending, watcher.CollectRetries, watcher.WatchMaxRetries, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.LastScanAt.UTC().Format(time.RFC3339), watcher.LastWatchAt.UTC().Format(time.RFC3339), watcher.LastCollectAt.UTC().Format(time.RFC3339), watcher.StatePath, watcher.SchemaVersion)}
 }
 
 func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {
@@ -1139,13 +389,6 @@ func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {
 		Env: amqCommandEnv(ctx),
 		Arg: []string{"doctor", "--ops", "--json"},
 	})
-}
-
-func doctorProfile(d doctorExecution) string {
-	if strings.TrimSpace(d.Profile) == "" {
-		return team.DefaultProfile
-	}
-	return strings.TrimSpace(d.Profile)
 }
 
 func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
@@ -1178,6 +421,7 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		return doctorCheck{
 			Name:   "amq version",
 			Status: doctorFail,
+			Kind:   doctorAMQBelowFloor,
 			Detail: fmt.Sprintf("amq %s is older than required %s; run `amq upgrade` to update", got, doctorMinAMQVersion),
 		}
 	}
@@ -1207,32 +451,6 @@ func doctorCheckLaunchapiCompatibility(d doctorExecution) doctorCheck {
 	}
 }
 
-// pinnedAMQModulePath is the launchapi module amq-squad's go.mod pins.
-const pinnedAMQModulePath = "github.com/avivsinai/agent-message-queue"
-
-// pinnedAMQModuleVersion resolves the linked agent-message-queue module
-// version via runtime/debug.ReadBuildInfo(). A package var so tests can
-// stub it: `go test -c` binaries in this toolchain embed zero dependency
-// entries (see adoptionseam's TestPinnedAMQModuleAtOrAboveAdoptionFloor doc
-// comment for the confirmed empirical finding across packages), so a real
-// ReadBuildInfo call inside `go test` would always report not-found
-// regardless of what is actually pinned. A normally built/installed binary
-// (not a test binary) does carry the real Deps list.
-var pinnedAMQModuleVersion = defaultPinnedAMQModuleVersion
-
-func defaultPinnedAMQModuleVersion() (string, bool) {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "", false
-	}
-	for _, dep := range info.Deps {
-		if dep.Path == pinnedAMQModulePath {
-			return dep.Version, true
-		}
-	}
-	return "", false
-}
-
 // doctorCheckAdoptionFloor warns (never fails) when the PATH `amq` binary
 // reports a version below adoptionseam.AdoptionFloorAMQVersion -- the
 // version the launchapi backend's negotiated contract was verified against
@@ -1259,43 +477,6 @@ func doctorCheckAdoptionFloor(d doctorExecution) doctorCheck {
 			Detail: fmt.Sprintf("PATH amq %s is below the launchapi adoption floor %s; the launchapi launch backend was verified against %s and later -- older amq releases are untested for it (advisory only, does not block legacy operation)", got, adoptionseam.AdoptionFloorAMQVersion, adoptionseam.AdoptionFloorAMQVersion)}
 	}
 	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("amq %s meets the launchapi adoption floor %s", got, adoptionseam.AdoptionFloorAMQVersion)}
-}
-
-// doctorCheckAMQModulePin warns (never fails) when the PATH `amq` binary
-// reports a version newer than the github.com/avivsinai/agent-message-queue
-// module amq-squad's go.mod pins (gh#766). The launchapi backend runs
-// in-process against the pinned module, not the PATH amq binary, so a newer
-// PATH amq cannot make the launchapi path use newer behavior either way --
-// this is purely a heads-up that amq-squad's own launchapi integration has
-// not yet been verified against what the operator has installed.
-func doctorCheckAMQModulePin(d doctorExecution) doctorCheck {
-	const name = "amq vs pinned launchapi module"
-	env, err := d.ResolveAMQEnv(d.ProjectDir)
-	if err != nil || strings.TrimSpace(env.AMQVersion) == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "amq version unavailable; see 'amq version' check"}
-	}
-	got := strings.TrimSpace(env.AMQVersion)
-	parsed, ok := parseSemverParts(got)
-	if !ok {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("amq returned unparseable version %q; see 'amq version' check", got)}
-	}
-	resolve := pinnedAMQModuleVersion
-	if resolve == nil {
-		resolve = defaultPinnedAMQModuleVersion
-	}
-	pinned, found := resolve()
-	if !found {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "pinned launchapi module version unavailable (unstamped/test build); check skipped"}
-	}
-	pinnedParsed, ok := parseSemverParts(pinned)
-	if !ok {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("pinned module version %q unparseable; check skipped", pinned)}
-	}
-	if compareSemverParts(parsed, pinnedParsed) > 0 {
-		return doctorCheck{Name: name, Status: doctorWarn,
-			Detail: fmt.Sprintf("PATH amq %s is newer than the %s module this build pins (%s); amq-squad's launchapi integration has not been verified against %s", got, pinnedAMQModulePath, pinned, got)}
-	}
-	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("amq %s is at or below the pinned launchapi module version %s", got, pinned)}
 }
 
 func doctorCheckAMQIdentityPin(d doctorExecution) doctorCheck {
@@ -1376,468 +557,6 @@ func doctorCheckAMQOps(d doctorExecution) doctorCheck {
 	}
 }
 
-func doctorCheckTeamConfig(d doctorExecution) doctorCheck {
-	profile := doctorProfile(d)
-	path := team.ProfilePath(d.ProjectDir, profile)
-	if !team.ExistsProfile(d.ProjectDir, profile) {
-		if profile == team.DefaultProfile {
-			if profiles, err := team.ListProfiles(d.ProjectDir); err == nil && len(profiles) > 0 {
-				return doctorCheck{
-					Name:   "team config",
-					Status: doctorWarn,
-					Detail: "no default team profile; configured profiles: " + strings.Join(profiles, ", ") + " (run 'amq-squad doctor --profile <name>')",
-				}
-			}
-		}
-		return doctorCheck{
-			Name:   "team config",
-			Status: doctorWarn,
-			Detail: fmt.Sprintf("no team profile %q (run '%s')", profile, profileInitCommand(profile)),
-		}
-	}
-	if _, err := team.ReadProfile(d.ProjectDir, profile); err != nil {
-		return doctorCheck{
-			Name:   "team config",
-			Status: doctorFail,
-			Detail: fmt.Sprintf("invalid %s: %v", filepath.Base(path), err),
-		}
-	}
-	return doctorCheck{
-		Name:   "team config",
-		Status: doctorOK,
-		Detail: path,
-	}
-}
-
-// doctorCheckTeamRulesRoster is a NON-FAILING hint that the shared
-// team-rules.md no longer describes the selected profile's roster. team-rules.md
-// is one shared file per team-home written no-clobber, so a profile created
-// after the file already existed inherits a roster description authored for a
-// different profile (finding #155). This NEVER fails: agents route from the live
-// routing block injected at bootstrap, not from this file's "## Role Scope"
-// roster, so the drift is cosmetic. It only nudges the operator to reconcile the
-// doc. ok when there is no profile/file (the pointer-sync check covers a missing
-// file) or the file names every member. Deliberately does NOT suggest
-// `team rules init --force`: that re-renders the DEFAULT profile, which for a
-// named profile would stamp the wrong roster.
-func doctorCheckTeamRulesRoster(d doctorExecution) doctorCheck {
-	const name = "team-rules roster"
-	profile := doctorProfile(d)
-	if !team.ExistsProfile(d.ProjectDir, profile) {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no team profile; skipped"}
-	}
-	t, err := team.ReadProfile(d.ProjectDir, profile)
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "team config unreadable; skipped"}
-	}
-	body, err := rules.Read(d.ProjectDir)
-	if err != nil {
-		// A missing/unreadable team-rules.md is reported by the pointer-sync check.
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no team-rules.md; skipped"}
-	}
-	var missing []string
-	for _, m := range orderedTeamMembers(t.Members) {
-		if !strings.Contains(body, memberRosterPrefix(m)) {
-			missing = append(missing, m.Role)
-		}
-	}
-	if len(missing) == 0 {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: rules.Path(d.ProjectDir) + " describes the " + profile + " roster"}
-	}
-	return doctorCheck{
-		Name:   name,
-		Status: doctorWarn,
-		Detail: fmt.Sprintf("%s does not describe profile %q member(s): %s. team-rules.md is shared per team-home and was left unchanged when this profile was created; agents route from the live bootstrap block, so this is cosmetic. Reconcile the doc, or keep profile-specific norms in each role.md.",
-			rules.Path(d.ProjectDir), profile, strings.Join(missing, ", ")),
-	}
-}
-
-func doctorCheckTmux(d doctorExecution) doctorCheck {
-	path, err := d.LookPath("tmux")
-	if err != nil {
-		return doctorCheck{
-			Name:   "tmux",
-			Status: doctorFail,
-			Detail: "tmux not found on PATH (required for 'up' with --terminal tmux)",
-		}
-	}
-	return doctorCheck{Name: "tmux", Status: doctorOK, Detail: path}
-}
-
-// doctorCheckTmuxExtendedKeys is an INFORMATIONAL hint (never fail) about plain
-// tmux dropping modified keys. When running inside tmux ($TMUX set) with the
-// server-wide `extended-keys` option off or unset, modified keys like
-// Shift+Enter (used for newline-in-input by some agents) don't reach the agent.
-// We surface the opt-in tmux settings the operator can apply themselves, and
-// note that iTerm2's tmux -CC (the attach_control action) avoids this entirely.
-//
-// amq-squad does NOT change the tmux server for you: this check only READS
-// `tmux show-options -s extended-keys` and PRINTS the hint. It is a no-op (ok)
-// when not inside tmux or when extended-keys is already on.
-func doctorCheckTmuxExtendedKeys(d doctorExecution) doctorCheck {
-	const name = "tmux extended-keys"
-	getenv := d.Getenv
-	if getenv == nil {
-		getenv = os.Getenv
-	}
-	if strings.TrimSpace(getenv("TMUX")) == "" {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorOK,
-			Detail: "not running inside tmux; skipped",
-		}
-	}
-	if d.TmuxShowOptions == nil {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorOK,
-			Detail: "extended-keys probe unavailable; skipped",
-		}
-	}
-	value, ok := d.TmuxShowOptions("extended-keys")
-	value = strings.TrimSpace(value)
-	if ok && value != "" && value != "off" {
-		return doctorCheck{
-			Name:   name,
-			Status: doctorOK,
-			Detail: "extended-keys " + value + " (modified keys like Shift+Enter reach agents)",
-		}
-	}
-	state := "unset"
-	if ok && value != "" {
-		state = value
-	}
-	return doctorCheck{
-		Name:   name,
-		Status: doctorOK,
-		Detail: "extended-keys " + state + ": modified keys (e.g. Shift+Enter) may not reach agents in plain tmux. " +
-			"This is a server-wide tmux setting you opt into (amq-squad does not change it for you); enable with: " +
-			"tmux set-option -s extended-keys on; tmux set-option -s extended-keys-format csi-u; " +
-			"tmux set-option -as terminal-features 'xterm*:extkeys'. " +
-			"iTerm2 tmux -CC (the attach_control action) avoids this entirely.",
-	}
-}
-
-func doctorCheckOrphanPanes(d doctorExecution) doctorCheck {
-	const name = "orphan panes"
-	lister := d.PaneLister
-	if lister == nil {
-		lister = statusPaneLister
-	}
-	resolve := d.ResolveBaseRoot
-	if resolve == nil {
-		resolve = scanBaseRootForProject
-	}
-	baseRoot, err := resolve(d.ProjectDir)
-	if err != nil || strings.TrimSpace(baseRoot) == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "AMQ base root unavailable; skipped"}
-	}
-	panes, err := lister()
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "tmux pane scan unavailable; skipped"}
-	}
-	records, err := liveLaunchPaneTokens(d.ProjectDir, filepath.Clean(baseRoot))
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "launch-record scan unavailable; skipped"}
-	}
-	orphans := findOrphanPanes(panes, records, "")
-	if len(orphans) == 0 {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no orphan amq-squad panes found"}
-	}
-	sessions := map[string]bool{}
-	for _, p := range orphans {
-		sessions[p.Session] = true
-	}
-	statusCommand := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --json"
-	doctorCommand := "amq-squad doctor --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile)
-	detail := fmt.Sprintf("%d orphan pane(s) found across %d session(s); inspect retained launch state with '%s' and '%s'", len(orphans), len(sessions), statusCommand, doctorCommand)
-	if len(sessions) == 1 {
-		for s := range sessions {
-			scopedStatus := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --session " + shellQuote(s) + " --json"
-			detail = fmt.Sprintf("%d orphan pane(s) found; inspect retained launch state with '%s' and '%s'", len(orphans), scopedStatus, doctorCommand)
-		}
-	}
-	return doctorCheck{Name: name, Status: doctorWarn, Detail: detail}
-}
-
-func doctorCheckMarkerIntegrity(d doctorExecution) []doctorCheck {
-	dirs, err := doctorMarkerDirs(d)
-	if err != nil {
-		return []doctorCheck{{
-			Name:   "markers",
-			Status: doctorWarn,
-			Detail: err.Error(),
-		}}
-	}
-	files := []string{rules.ClaudeFile, rules.AgentsFile}
-	out := make([]doctorCheck, 0, len(files)*len(dirs))
-	for _, dir := range dirs {
-		for _, name := range files {
-			check := inspectMarkerIntegrity(dir, name)
-			if len(dirs) > 1 {
-				check.Name = "markers " + filepath.Base(dir) + "/" + name
-			}
-			out = append(out, check)
-		}
-	}
-	return out
-}
-
-func doctorMarkerDirs(d doctorExecution) ([]string, error) {
-	profile := doctorProfile(d)
-	if !team.ExistsProfile(d.ProjectDir, profile) {
-		return []string{d.ProjectDir}, nil
-	}
-	t, err := team.ReadProfile(d.ProjectDir, profile)
-	if err != nil {
-		return nil, fmt.Errorf("read team profile %q for marker targets: %w", profile, err)
-	}
-	projectDir := t.Project
-	if strings.TrimSpace(projectDir) == "" {
-		projectDir = d.ProjectDir
-	}
-	dirs, err := syncTargetDirs(projectDir, t.Members, true)
-	if err != nil {
-		return nil, err
-	}
-	if profile == team.DefaultProfile {
-		dirs, err = ensureTeamHomeSyncTarget(dirs, d.ProjectDir)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(dirs) == 0 {
-		return []string{d.ProjectDir}, nil
-	}
-	return dirs, nil
-}
-
-func inspectMarkerIntegrity(dir, name string) doctorCheck {
-	path := filepath.Join(dir, name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return doctorCheck{
-				Name:   "markers " + name,
-				Status: doctorWarn,
-				Detail: name + " not found (run 'amq-squad team sync --apply' to create it)",
-			}
-		}
-		return doctorCheck{
-			Name:   "markers " + name,
-			Status: doctorFail,
-			Detail: fmt.Sprintf("read %s: %v", path, err),
-		}
-	}
-	body := string(data)
-	begins := strings.Count(body, rules.BeginMarker)
-	ends := strings.Count(body, rules.EndMarker)
-	if begins == 0 && ends == 0 {
-		return doctorCheck{
-			Name:   "markers " + name,
-			Status: doctorWarn,
-			Detail: "no amq-squad managed block (run 'amq-squad team sync --apply')",
-		}
-	}
-	if begins != 1 || ends != 1 {
-		return doctorCheck{
-			Name:   "markers " + name,
-			Status: doctorFail,
-			Detail: fmt.Sprintf("unbalanced markers: %d begin / %d end", begins, ends),
-		}
-	}
-	beginIdx := strings.Index(body, rules.BeginMarker)
-	endIdx := strings.Index(body, rules.EndMarker)
-	if beginIdx > endIdx {
-		return doctorCheck{
-			Name:   "markers " + name,
-			Status: doctorFail,
-			Detail: "end marker appears before begin marker",
-		}
-	}
-	return doctorCheck{
-		Name:   "markers " + name,
-		Status: doctorOK,
-		Detail: path,
-	}
-}
-
-func doctorCheckPointerSync(d doctorExecution) []doctorCheck {
-	body, err := rules.Read(d.ProjectDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []doctorCheck{{
-				Name:   "pointer sync",
-				Status: doctorWarn,
-				Detail: "no team-rules.md at " + rules.Path(d.ProjectDir) + " (run 'amq-squad team rules init')",
-			}}
-		}
-		return []doctorCheck{{
-			Name:   "pointer sync",
-			Status: doctorFail,
-			Detail: fmt.Sprintf("read %s: %v", rules.Path(d.ProjectDir), err),
-		}}
-	}
-	dirs, err := doctorMarkerDirs(d)
-	if err != nil {
-		return []doctorCheck{{
-			Name:   "pointer sync",
-			Status: doctorWarn,
-			Detail: err.Error(),
-		}}
-	}
-	hint := doctorSyncCommandHint(d, dirs)
-	out := []doctorCheck{}
-	for _, dir := range dirs {
-		plans, err := rules.Plan(dir, body)
-		if err != nil {
-			out = append(out, doctorCheck{
-				Name:   "pointer sync " + filepath.Base(dir),
-				Status: doctorFail,
-				Detail: fmt.Sprintf("plan %s: %v", dir, err),
-			})
-			continue
-		}
-		for _, p := range plans {
-			name := "pointer sync " + p.Basename
-			if len(dirs) > 1 {
-				name = "pointer sync " + filepath.Base(dir) + "/" + p.Basename
-			}
-			if p.Unchanged {
-				out = append(out, doctorCheck{Name: name, Status: doctorOK, Detail: p.Target})
-				continue
-			}
-			out = append(out, doctorCheck{
-				Name:   name,
-				Status: doctorWarn,
-				Detail: describePointerSyncDrift(p) + " (run '" + hint + "')",
-			})
-		}
-	}
-	return out
-}
-
-func describePointerSyncDrift(p rules.SyncPlan) string {
-	switch {
-	case p.Creating:
-		return p.Basename + " missing"
-	case p.Adopting:
-		return p.Basename + " has no managed block"
-	default:
-		return p.Basename + " managed block out of date"
-	}
-}
-
-// doctorSyncCommandHint is deliberately left printing `team sync`, not
-// migrated to `init` (gh#762): the --allow-outside escape hatch below has no
-// equivalent on `init` (init's pointer-stub apply has no allow-outside
-// concept), so swapping the printed verb here would print a command that
-// does not accept the very flag this function conditionally appends. `team
-// sync` stays fully functional as a deprecation redirect, so this hint is
-// correct as printed.
-func doctorSyncCommandHint(d doctorExecution, dirs []string) string {
-	args := []string{"amq-squad", "team", "sync"}
-	profile := doctorProfile(d)
-	if profile != team.DefaultProfile {
-		args = append(args, "--profile", profile)
-	}
-	args = append(args, "--apply")
-	if doctorSyncNeedsAllowOutside(d.ProjectDir, dirs) {
-		args = append(args, "--allow-outside")
-	}
-	return strings.Join(args, " ")
-}
-
-func doctorSyncNeedsAllowOutside(projectDir string, dirs []string) bool {
-	home, err := canonicalDir(projectDir)
-	if err != nil {
-		return false
-	}
-	for _, dir := range dirs {
-		clean, err := canonicalDir(dir)
-		if err != nil {
-			continue
-		}
-		if !pathWithin(home, clean) {
-			return true
-		}
-	}
-	return false
-}
-
-// doctorCheckWake reuses classifyMemberStatus to classify the selected
-// profile's configured members. Returns the resolved workstream alongside
-// the checks so the JSON envelope can include it. No live signals or
-// "missing" map to ok; "stale" maps to warn. AMQ env resolution failures
-// surface as warn with the underlying error in detail.
-func doctorCheckWake(d doctorExecution) ([]doctorCheck, string) {
-	profile := doctorProfile(d)
-	if d.WakeOverride != nil {
-		// Tests can inject a deterministic wake-check builder.
-		t, err := team.ReadProfile(d.ProjectDir, profile)
-		if err != nil {
-			return nil, ""
-		}
-		workstream, err := resolveTeamWorkstreamName(t, d.WorkstreamHint, d.WorkstreamHint != "")
-		if err != nil {
-			return nil, ""
-		}
-		return d.WakeOverride(t, workstream), workstream
-	}
-	if !team.ExistsProfile(d.ProjectDir, profile) {
-		return []doctorCheck{{
-			Name:   "wake",
-			Status: doctorWarn,
-			Detail: fmt.Sprintf("no team configured for profile %q; skipping wake checks", profile),
-		}}, ""
-	}
-	t, err := team.ReadProfile(d.ProjectDir, profile)
-	if err != nil {
-		return []doctorCheck{{
-			Name:   "wake",
-			Status: doctorWarn,
-			Detail: "team config unreadable; skipping wake checks",
-		}}, ""
-	}
-	workstream, err := resolveTeamWorkstreamName(t, d.WorkstreamHint, d.WorkstreamHint != "")
-	if err != nil {
-		return []doctorCheck{{
-			Name:   "wake",
-			Status: doctorWarn,
-			Detail: fmt.Sprintf("could not resolve workstream: %v", err),
-		}}, ""
-	}
-	probe := d.Probe
-	checks := make([]doctorCheck, 0, len(t.Members))
-	for _, m := range orderedTeamMembers(t.Members) {
-		rec := classifyMemberStatus(t, profile, m, workstream, probe)
-		checks = append(checks, doctorCheckFromStatus(rec))
-	}
-	checks = append(checks, doctorCheckGlobalNOCRegistration(t, profile, workstream))
-	return checks, workstream
-}
-
-// doctorCheckFromStatus maps a statusRecord into a doctorCheck. live and
-// missing are ok; stale is warn. Any amq-env failure that classifyMember
-// reports as missing-with-detail surfaces as warn so the operator sees the
-// underlying error.
-func doctorCheckFromStatus(s statusRecord) doctorCheck {
-	name := "wake " + s.Role
-	switch s.Status {
-	case statusStateLive:
-		return doctorCheck{Name: name, Status: doctorOK, Detail: s.Detail}
-	case statusStateMissing:
-		if strings.HasPrefix(s.Detail, "amq env unresolved") {
-			return doctorCheck{Name: name, Status: doctorWarn, Detail: s.Detail}
-		}
-		return doctorCheck{Name: name, Status: doctorOK, Detail: s.Detail}
-	case statusStateStale:
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: s.Detail}
-	default:
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: s.Detail}
-	}
-}
-
 // compareSemverParts returns -1, 0, or 1 comparing a to b.
 func compareSemverParts(a, b [3]int) int {
 	for i := 0; i < 3; i++ {
@@ -1880,6 +599,14 @@ func parseSemverParts(s string) ([3]int, bool) {
 	return out, true
 }
 
+func semverHasPrerelease(version string) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if build := strings.IndexByte(version, '+'); build >= 0 {
+		version = version[:build]
+	}
+	return strings.Contains(version, "-")
+}
+
 // semverMeetsStableFloor compares a possibly-prerelease version against a
 // stable minimum. A prerelease with the same core is older than the stable
 // release (0.49.0-rc1 < 0.49.0), while a prerelease with a higher core remains
@@ -1901,12 +628,4 @@ func semverMeetsStableFloor(version, minimum string) bool {
 	default:
 		return !semverHasPrerelease(version)
 	}
-}
-
-func semverHasPrerelease(version string) bool {
-	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
-	if build := strings.IndexByte(version, '+'); build >= 0 {
-		version = version[:build]
-	}
-	return strings.Contains(version, "-")
 }
