@@ -21,7 +21,12 @@ import (
 const taskWidenUsage = `amq-squad task widen - the lead's decision to add paths to a task's declared files
 
 Usage:
-  amq-squad task widen ID --files GLOB,... --reason TEXT [--root DIR | --project P --session S] [--json]
+  amq-squad task widen ID (--files GLOB,... | --path PATH ...) --reason TEXT [--root DIR | --project P --session S] [--json]
+
+--path is an exact repository-relative file path (repeatable): the glob
+characters in it (*, ?, [) are literal and a comma is part of the name, so
+it adds that one file and nothing else (the lead's widen tool uses it).
+--files takes comma-separated globs.
 
 A recorded lead decision (plan 4.3, 7.2): the paths join the task's
 declared_files inside the grant. The verb takes no --me: it sends the
@@ -80,11 +85,21 @@ func runTaskWiden(args []string, out io.Writer) error {
 	f.fs.Usage = func() { fmt.Fprint(os.Stderr, taskWidenUsage) }
 	files := f.fs.String("files", "", "comma-separated globs to add (repo-relative)")
 	reason := f.fs.String("reason", "", "why the lead widens the task")
+	var exact multiFlag
+	f.fs.Var(&exact, "path", "an exact repository-relative file path to add (repeatable; glob characters in it are literal)")
 	if err := parseFlags(f.fs, rest); err != nil {
 		return err
 	}
-	if id == "" || f.fs.NArg() > 0 || strings.TrimSpace(*files) == "" || strings.TrimSpace(*reason) == "" {
-		return usageErrorf("task widen: ID, --files and --reason are required")
+	if id == "" || f.fs.NArg() > 0 || (strings.TrimSpace(*files) == "" && len(exact) == 0) || strings.TrimSpace(*reason) == "" {
+		return usageErrorf("task widen: ID, --files or --path, and --reason are required")
+	}
+	added := splitList(*files)
+	for _, p := range exact {
+		g, err := task.LiteralGlob(p)
+		if err != nil {
+			return usageErrorf("task widen --path: %v", err)
+		}
+		added = append(added, g)
 	}
 	if flagWasSet(f.fs, "me") {
 		return usageErrorf("task widen: takes no --me; the scheduler proves the lead from the process, never from a flag")
@@ -101,7 +116,7 @@ func runTaskWiden(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("task widen: no running scheduler for %s (the widening is the scheduler's to apply): %v", root, err)
 	}
-	req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: id, Files: splitList(*files), Reason: strings.TrimSpace(*reason)}
+	req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: id, Files: added, Reason: strings.TrimSpace(*reason)}
 	var reply schedproc.DecideReply
 	if rec.DecisionSocket == "" {
 		// The fourth pass: the socket opens only after the start-up barrier.

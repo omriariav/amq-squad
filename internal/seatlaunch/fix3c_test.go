@@ -92,7 +92,7 @@ func TestRejectLogIsRateLimitedAndCapped(t *testing.T) {
 	var mu sync.Mutex
 	now := time.Now()
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	srv, err := startProofServer(q, newLaunchID(), Options{Now: time.Now, ProofClock: clock})
+	srv, err := startProofServer(q, newLaunchID(), Options{Now: time.Now, ProofClock: clock, PaneShell: func(string) (int, string, bool) { return 0, "", false }, PaneID: func(int) string { return "" }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestVanishingProcessEntryIsOriginUnknown(t *testing.T) {
 		t.Fatalf("a vanished entry was judged: in %v known %v", in, known)
 	}
 	q := shortSquad(t)
-	o := Options{Now: time.Now, PaneShell: func(string) (int, string, bool) { return 100, "s100", true }}
+	o := Options{Now: time.Now, PaneShell: func(string) (int, string, bool) { return 100, "s100", true }, PaneID: func(int) string { return "" }}
 	srv, err := startProofServer(q, newLaunchID(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +318,7 @@ func TestWindowIsPerTicketFromMinting(t *testing.T) {
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 	advance := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
 	q := shortSquad(t)
-	srv, err := startProofServer(q, newLaunchID(), Options{Now: time.Now, ProofClock: clock})
+	srv, err := startProofServer(q, newLaunchID(), Options{Now: time.Now, ProofClock: clock, PaneShell: func(string) (int, string, bool) { return 0, "", false }, PaneID: func(int) string { return "" }})
 	if err != nil {
 		t.Fatal(err)
 	}

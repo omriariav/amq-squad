@@ -90,6 +90,7 @@ func Build(det Detection, prev Registry, opts BuildOptions) Registry {
 				}
 			}
 			e.ConcurrencyPool = e.QuotaPool
+			e.SeatEnv = append([]string(nil), ClaudeSeatEnv...)
 			setVendorState(&e, claude)
 			r.Entries = append(r.Entries, e)
 		}

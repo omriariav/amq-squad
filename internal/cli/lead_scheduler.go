@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -62,6 +63,14 @@ func (s *supervisor) loop(ctx context.Context) {
 			fmt.Fprintf(s.log, "lead: scheduler process stopped with the lead\n")
 			return
 		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == ExitSchedulerRefused {
+			// A refusal (3.0.1 t16: the roster launch refused at prepare or
+			// apply, a decision the owner has to make) is not a crash: a
+			// restart would be refused the same way.
+			fmt.Fprintf(s.log, "lead: scheduler process refused to start (exit %d, the reason is above); not restarted\n", ExitSchedulerRefused)
+			return
+		}
 		if time.Since(began) < s.fastFail {
 			fast++
 		} else {
@@ -108,13 +117,22 @@ func leadPools(models []string, thinking string) []string {
 	return out
 }
 
+// ExitSchedulerRefused is scheduler run's exit when its roster launch was
+// refused at start (3.0.1 t16): the lead's supervisor does not restart it.
+const ExitSchedulerRefused = 17
+
 // leadSchedulerCommand is the child the lead's team mode runs: `scheduler
-// run` with the lead's handle and one --lead-pool per lead pool. It passes
-// no PR flag: the commit step binds by default under a merge grant (3.0.1
-// t14), and the lead never turns that off.
-func leadSchedulerCommand(self, seats, lead string, pools []string) func(ctx context.Context) *exec.Cmd {
+// run` with the lead's handle, one --lead-pool per lead pool, and --trust
+// when the owner passed it to `lead --team` (a flag the owner typed is his
+// standing answer for this session). It passes no PR flag: the commit step
+// binds by default under a merge grant (3.0.1 t14), and the lead never turns
+// that off.
+func leadSchedulerCommand(self, seats, lead string, pools []string, trust bool) func(ctx context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
 		args := []string{"scheduler", "run", "--seats", seats, "--lead", lead}
+		if trust {
+			args = append(args, "--trust")
+		}
 		for _, p := range pools {
 			args = append(args, "--lead-pool", p)
 		}
@@ -135,7 +153,7 @@ var startedByLeadTeam = func() bool {
 // startLeadScheduler supervises `amq-squad scheduler run` for the lead;
 // leadPools are the lead's own pools, which the router's concurrency caps
 // count (a pi lead on the Ollama GPU).
-func startLeadScheduler(seats, lead string, leadPools []string) (*supervisor, error) {
+func startLeadScheduler(seats, lead string, leadPools []string, trust bool) (*supervisor, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -145,7 +163,7 @@ func startLeadScheduler(seats, lead string, leadPools []string) (*supervisor, er
 		return nil, err
 	}
 	s := &supervisor{log: logf, backoff: time.Second, maxDelay: 30 * time.Second, fastFail: 10 * time.Second, maxFast: 5,
-		command: leadSchedulerCommand(self, seats, lead, leadPools)}
+		command: leadSchedulerCommand(self, seats, lead, leadPools, trust)}
 	s.start()
 	return s, nil
 }

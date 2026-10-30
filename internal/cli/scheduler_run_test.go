@@ -37,6 +37,28 @@ func (f *cliFakeLauncher) RequestSeat(r scheduler.SeatRequest) error {
 	s.Post(scheduler.Event{Kind: scheduler.SeatUp, At: time.Now(), Handle: q.Seats[0].Handle, Pool: r.Pool, RequestID: r.ID})
 	return nil
 }
+
+// LaunchRoster is the roster launch (3.0.1 t16) through the real roster
+// plan: every planned seat comes up with its request id.
+func (f *cliFakeLauncher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOutcome {
+	q, err := f.sl.PlanRoster(reqs)
+	if err != nil {
+		return scheduler.RosterOutcome{Stage: "launch_error", Detail: err.Error()}
+	}
+	f.mu.Lock()
+	f.reqs = append(f.reqs, reqs...)
+	s := f.s
+	f.mu.Unlock()
+	out := scheduler.RosterOutcome{Stage: scheduler.RosterApplied}
+	for i, seat := range q.Seats {
+		if s == nil {
+			continue // a fixture that never wires the scheduler in
+		}
+		s.Post(scheduler.Event{Kind: scheduler.SeatUp, At: time.Now(), Handle: seat.Handle, Pool: reqs[i].Pool, RequestID: reqs[i].ID})
+		out.Seats = append(out.Seats, scheduler.RosterSeatState{Handle: seat.Handle, Up: true})
+	}
+	return out
+}
 func (f *cliFakeLauncher) CancelSeatRequest(scheduler.SeatRequest) error { return nil }
 func (f *cliFakeLauncher) CloseSeat(string, string) error                { return nil }
 

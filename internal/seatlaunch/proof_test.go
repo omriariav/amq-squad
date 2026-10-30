@@ -273,7 +273,7 @@ func TestTokenMintedSixtyOneSecondsEarlierIsExpired(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 	launchID := newLaunchID()
-	srv, err := startProofServer(q, launchID, Options{Now: time.Now, ProofClock: clock})
+	srv, err := startProofServer(q, launchID, Options{Now: time.Now, ProofClock: clock, PaneShell: func(string) (int, string, bool) { return 0, "", false }, PaneID: func(int) string { return "" }})
 	if err != nil {
 		t.Fatal(err)
 	}
