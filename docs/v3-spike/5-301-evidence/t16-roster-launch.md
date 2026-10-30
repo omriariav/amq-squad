@@ -209,7 +209,7 @@ cat > seats.json <<JSON
  {"handle": "impl-1", "runtime": "claude", "model": "sonnet", "effort": "medium", "role_file": "$PWD/roles/impl.md", "worktree": "$PWD/../t16-wt/impl-1", "branch": "seat/impl-1"},
  {"handle": "rev-1", "runtime": "codex", "model": "gpt-5.4", "effort": "medium", "role_file": "$PWD/roles/impl.md", "worktree": "$PWD/../t16-wt/rev-1", "branch": "seat/rev-1"}]}
 JSON
-amq-squad lead --team --scheduler-seats seats.json      # or: amq-squad scheduler run --seats seats.json --lead lead --trust
+amq-squad lead --team --scheduler-seats seats.json --trust   # round 4: the owner run starts here, never a hand-started scheduler
 LOG="$ROOT/extensions/amq-squad/scheduler/decisions.jsonl"
 jq -c 'select(.kind|test("roster_|seat_up|seat_not_up"))' "$LOG"
 # pass: one roster_launched ("2 seats in one apply"), seat_up impl-1, seat_up rev-1, no seat_not_up
@@ -230,7 +230,10 @@ kill "$(jq .pid "$ROOT/extensions/amq-squad/launch/rev-1/proof.json")"   # rev-1
 jq -c 'select(.kind|test("seat_adopted|roster_incomplete"))' "$LOG"           # impl-1 adopted, rev-1 missing
 amq-squad task add --title C --class implement --files c.txt --pool codex:gpt-5.4:medium --root "$ROOT"
 jq -c 'select(.kind=="seat_replacement_needs_relaunch")' "$LOG"              # once, reason binding_present_without_resumable_conversation
-amq-squad scheduler relaunch --root "$ROOT" --reason "rev-1 gone"           # from the lead's pane
+# the relaunch (round 4): the owner asks the manager in the pi TUI, in words,
+# to relaunch the roster because rev-1 is gone; the manager calls its tool
+# amq_scheduler_relaunch, which runs `amq-squad scheduler relaunch --reason ...`
+# from the lead's process. Record the owner's words and the tool call as the row.
 jq -c 'select(.kind|test("roster_relaunch|seat_closed|roster_launch|task_reset"))' "$LOG"
 # pass: seat_closed impl-1 roster_relaunch, roster_launched, task_reset t3, then t3 dispatched to rev-1
 # if instead roster_launch_failed ... binding_present_without_resumable_conversation: the closed
@@ -456,3 +459,54 @@ in team mode until a tool such as `amq_scheduler_relaunch` (internal/piruntime,
 outside this brief's files) runs it. `task widen` is in the same position
 for a team-mode lead. The owner's own shell is not a descendant of the lead
 process and is refused (not_lead), by design.
+
+## Round 4: the lead's two decisions as tools (reviewer ruling A)
+
+The open point of round 3 (no caller for the relaunch in team mode) is
+closed by two native pi tools, `amq_scheduler_relaunch` and
+`amq_task_widen`, added to TeamLeadTools (internal/piruntime/launch.go), so
+R53's set stays the one list (docs/v3.1-plan.md's R53 row names them).
+
+- **Where they live.** The native tools are the pi package's TypeScript,
+  pi/extensions/lib/tools.ts, built into the embedded payload; Go holds
+  only the name list. Each tool is a thin wrapper over the CLI verb, the
+  same decision-socket call path: `amq-squad scheduler relaunch --reason R
+  --json` and `amq-squad task widen ID --files ... --reason R --json`. No
+  second implementation of either verb.
+- **The widen tool's scope.** There is no seat-side widening request with an
+  id; the request is the commit step's refusal on the task. The tool reads
+  the task (`amq-squad task show ID --json`), requires state blocked with
+  block_reason outside_declared_files, and takes the paths that refusal
+  names from its block_detail (seatcommit's `describe`: "outside_declared_files:
+  a, b (declared: ...)"). Its schema is the task id, the lead's reason and an
+  optional `files` that must be a subset of those paths; the default is all
+  of them. A fabricated path is refused before any verb runs; a refusal that
+  lists more than eight paths ("and N more") is refused rather than guessed.
+  The grant's limits and the growth gate stay the verb's (CheckWiden).
+- **The role.** The team lead's role text (internal/cli/pi_lead_team.md)
+  names both tools at the step where a task comes back blocked; the pi
+  package README lists them.
+
+Rows: TestLeadToolVerbsAreProvedFromTheLeadsDescendant (internal/cli: the two
+CLI verbs run in a child of the team-mode lead, as the tool's child of pi
+does, are proved over the real socket and acted on; the same verbs from a
+process that does not descend from the lead, as a roster pane's process
+does not, are refused not_lead and nothing is applied; not_lead is the
+decision socket's code for a readable chain that does not reach the lead,
+origin_unknown is kept for an unreadable one), and in pi/test/tools.test.ts
+"argv: the relaunch and the widening are the CLI verbs; the widening takes
+only refused paths" and "the lead's widen tool reads the refusal and never
+widens by a fabricated path". TestLeadTeamHasNoWriteTools (internal/cli/pi_test.go)
+pins the list with the two names.
+
+**Limit of 3.0.1.** A hand-started scheduler (`amq-squad scheduler run`
+outside `lead --team`: the ledger path, with no lead seat) has no caller for
+the relaunch or the widening: no proved lead process exists to run the
+verbs. So the 3.0.1 owner run starts through `amq-squad lead --team
+--scheduler-seats FILE --trust`, and the replacement leg's owner-run row is
+the owner asking the manager in the pi TUI to relaunch, recorded as such
+(the owner-run row above). Brief 1 decides whether a hand start ever has a
+lead.
+
+Tests run with `npm ci --offline --ignore-scripts` in pi/ (the local npm
+cache, no network); node_modules is gitignored.
