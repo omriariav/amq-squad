@@ -20,6 +20,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
@@ -97,6 +98,15 @@ type Options struct {
 	// calls it only for a squad with a Codex seat, on the Codex home the
 	// seats read ($CODEX_HOME of Env, else Home/.codex).
 	CodexDialogHook func(codexDir string) seatexec.CodexDialogHook
+	// CodexTrust reads the Codex config's trust entries (default
+	// hostcheck.ReadCodexTrust, read only); a test seam, called only for a
+	// squad with a Codex seat.
+	CodexTrust func(configPath string) (hostcheck.CodexTrust, error)
+	// ClaudeWakeConditions reads a Claude seat's wake conditions from the
+	// config dir claudeseat.Write produces for it (default: a scratch copy,
+	// removed after the read; the seat's own dir is written only after
+	// Prepare); a test seam.
+	ClaudeWakeConditions func(permissionMode, worktree string) SeatWakeConditions
 }
 
 // SeatState is one seat's state after the launch.
@@ -166,6 +176,12 @@ func (o Options) withDefaults() Options {
 	if o.CodexDialogHook == nil {
 		o.CodexDialogHook = seatexec.ReadCodexDialogHook
 	}
+	if o.CodexTrust == nil {
+		o.CodexTrust = hostcheck.ReadCodexTrust
+	}
+	if o.ClaudeWakeConditions == nil {
+		o.ClaudeWakeConditions = scratchClaudeWakeConditions
+	}
 	if o.PinFor == nil {
 		home := o.Home
 		var once sync.Once
@@ -218,14 +234,9 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 			break
 		}
 	}
-	// A Codex seat's wake needs AMQ's Codex dialog hook on the host (3.0.1):
-	// the launch checks the owner's step instead of assuming it.
-	for _, s := range q.Seats {
-		if s.Runtime == "codex" {
-			q.CodexDialogHookReady = o.CodexDialogHook(seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))).Ready()
-			break
-		}
-	}
+	// Each seat's wake conditions (3.0.1), read before Compile: the launch
+	// checks the owner's host steps instead of assuming them.
+	q.WakeConditions = readWakeConditions(q, o)
 	c, err := Compile(q, rulesSHA, o.LookPath, o.Now())
 	if err != nil {
 		return res, err

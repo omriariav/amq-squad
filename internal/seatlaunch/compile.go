@@ -19,6 +19,7 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
+	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/launchintent"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
@@ -81,11 +82,10 @@ type Squad struct {
 	// for this binary: every pi seat's executable, the file AMQ's pi adapter
 	// probes; seat-exec runs the verified embedded runtime in its place.
 	PiShim string `json:"-"`
-	// CodexDialogHookReady is the launch's read of the host (3.0.1): AMQ's
-	// Codex dialog hook entries are present (seatexec.ReadCodexDialogHook).
-	// A Codex seat launches with its AMQ wake only when it is true. Never
-	// from the seat file.
-	CodexDialogHookReady bool `json:"-"`
+	// WakeConditions are the launch's reads of each seat's wake conditions
+	// (3.0.1), by handle. Never from the seat file; a seat with no entry
+	// has none met, so its wake stays off.
+	WakeConditions map[string]SeatWakeConditions `json:"-"`
 }
 
 // ReasonProviderNotPinned refuses a Claude seat whose provider is not the
@@ -129,25 +129,46 @@ const WakeRule = "amq-squad 3.0.1: the scheduler's doorbell is the seat's next t
 // a doorbell could answer pi's folder-trust or an extension prompt.
 const PiWakeAuditReason = "amq-squad 3.0.1: a pi seat has no AMQ wake until its embedded runtime loads AMQ's pi extension (the doorbell's dialog guard)"
 
-// ClaudeWakeAuditReason is a Claude Code seat's disabled-wake reason when its
-// permission mode can prompt: the seat's own CLAUDE_CONFIG_DIR carries no
-// AMQ dialog hook (the owner's 'amq wake install-dialog-hook' writes
-// ~/.claude/settings.json, which a seat never reads), so a raw doorbell
-// could answer a permission prompt unattended.
-const ClaudeWakeAuditReason = "amq-squad 3.0.1: a Claude Code seat whose permission mode can prompt has no AMQ wake, because its config dir carries no AMQ dialog hook and a doorbell could answer the prompt"
+// SeatWakeConditions are the fail-closed conditions of a seat's AMQ wake
+// (3.0.1, the reviewer's ruling), read by the launch. The zero value meets
+// none of them. Each Why names the unmet condition by file and key only.
+type SeatWakeConditions struct {
+	// Claude Code: the seat's config dir runs the guard that denies
+	// AskUserQuestion and ExitPlanMode (seatexec.ClaudeDialogGuardWired) ...
+	ClaudeGuardWired bool
+	ClaudeGuardWhy   string
+	// ... and rules out every first-run screen
+	// (claudeseat.StartupScreensClosed; false until t6).
+	ClaudeScreensClosed bool
+	ClaudeScreensWhy    string
+	// Codex: AMQ's Codex dialog hook entries are on the host
+	// (seatexec.ReadCodexDialogHook) ...
+	CodexHookReady bool
+	CodexHookWhy   string
+	// ... and the Codex config trusts the seat's worktree
+	// ([projects."<worktree>"] trust_level = "trusted", hostcheck).
+	CodexTrusted  bool
+	CodexTrustWhy string
+}
 
-// CodexWakeAuditReason is a Codex seat's disabled-wake reason when the host
-// lacks AMQ's Codex dialog hook; it names the owner's step.
-const CodexWakeAuditReason = "amq-squad 3.0.1: a Codex seat has no AMQ wake until AMQ's Codex dialog hook is on the host: " + seatexec.CodexDialogHookFix
+// ClaudeNoWake and CodexNoWake begin a Claude Code or Codex seat's
+// disabled-wake audit reason; the unmet condition follows.
+const (
+	ClaudeNoWake = "amq-squad 3.0.1: no AMQ wake for this Claude Code seat: "
+	CodexNoWake  = "amq-squad 3.0.1: no AMQ wake for this Codex seat: "
+)
 
 // SeatWake is a seat's AMQ wake policy (3.0.1). Raw typing into a pane
-// means a doorbell that lands on a prompt answers it unattended, so the
-// wake is required only for a seat that never prompts unattended:
-//   - Claude Code: only when permissionMode never prompts (dontAsk, what
-//     internal/claudeseat writes); otherwise off (ClaudeWakeAuditReason).
-//   - Codex: only when codexHookReady (AMQ's Codex dialog hook on the
-//     host holds the doorbell at an approval prompt); otherwise off
-//     (CodexWakeAuditReason, the owner's step).
+// means a doorbell that lands on a prompt or a dialog answers it
+// unattended, so the wake is required only when every condition of the
+// seat's runtime holds; an unmet condition keeps the wake off with the
+// named audit reason, never a launch failure (the seat runs and is kicked
+// by hand, as in 3.0):
+//   - Claude Code: permission mode dontAsk (no permission prompt); the
+//     guard denies AskUserQuestion and ExitPlanMode in the seat's config
+//     dir; the startup screens are closed (claudeseat, t6).
+//   - Codex: AMQ's Codex dialog hook on the host (it holds the doorbell at
+//     an approval prompt); the Codex config trusts the seat's worktree.
 //   - pi: off (PiWakeAuditReason).
 //
 // An enabled wake is the one amq coop exec starts beside the provider
@@ -158,21 +179,115 @@ const CodexWakeAuditReason = "amq-squad 3.0.1: a Codex seat has no AMQ wake unti
 // a seat: it refuses a wrapper and a custom CLAUDE_CONFIG_DIR
 // (internal/cli/wake_claude_native_unix.go:56-60), and every seat runs
 // behind seat-exec.
-func SeatWake(runtime, permissionMode string, codexHookReady bool) (require bool, injector *launchapi.InjectorOptionsV1, auditReason string) {
+func SeatWake(runtime, permissionMode string, c SeatWakeConditions) (require bool, injector *launchapi.InjectorOptionsV1, auditReason string) {
 	raw := &launchapi.InjectorOptionsV1{Mode: launchapi.InjectorRaw}
 	switch runtime {
 	case "claude":
-		if permissionMode == "dontAsk" {
-			return true, raw, ""
+		switch {
+		case permissionMode != "dontAsk":
+			return false, nil, ClaudeNoWake + "permission mode " + permissionMode + " can prompt, and the seat's config dir carries no AMQ dialog hook"
+		case !c.ClaudeGuardWired:
+			return false, nil, ClaudeNoWake + "the guard does not deny AskUserQuestion and ExitPlanMode in the seat's config dir (" + c.ClaudeGuardWhy + ")"
+		case !c.ClaudeScreensClosed:
+			return false, nil, ClaudeNoWake + "the startup screens are not verified closed (" + c.ClaudeScreensWhy + ")"
 		}
-		return false, nil, ClaudeWakeAuditReason
+		return true, raw, ""
 	case "codex":
-		if codexHookReady {
-			return true, raw, ""
+		switch {
+		case !c.CodexHookReady:
+			return false, nil, CodexNoWake + "AMQ's Codex dialog hook is not on the host (" + c.CodexHookWhy + "); fix: " + seatexec.CodexDialogHookFix
+		case !c.CodexTrusted:
+			return false, nil, CodexNoWake + "the Codex config does not trust the seat's worktree (" + c.CodexTrustWhy + ")"
 		}
-		return false, nil, CodexWakeAuditReason
+		return true, raw, ""
 	}
 	return false, nil, PiWakeAuditReason
+}
+
+// readWakeConditions reads every seat's wake conditions through the launch's
+// read seams. The Codex reads run once, only for a squad with a Codex seat,
+// on the Codex home the seats read ($CODEX_HOME of the launch environment,
+// else <home>/.codex; seat-exec overrides neither).
+func readWakeConditions(q Squad, o Options) map[string]SeatWakeConditions {
+	out := map[string]SeatWakeConditions{}
+	var hook *seatexec.CodexDialogHook
+	var trust *hostcheck.CodexTrust
+	var trustErr error
+	codexDir := seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))
+	for _, s := range q.Seats {
+		var c SeatWakeConditions
+		switch s.Runtime {
+		case "claude":
+			c = o.ClaudeWakeConditions(permissionMode(s.Runtime), s.Worktree)
+		case "codex":
+			if hook == nil {
+				h := o.CodexDialogHook(codexDir)
+				hook = &h
+				t, err := o.CodexTrust(filepath.Join(codexDir, "config.toml"))
+				trust, trustErr = &t, err
+			}
+			c.CodexHookReady, c.CodexHookWhy = hook.Ready(), codexHookWhy(*hook)
+			c.CodexTrusted, c.CodexTrustWhy = codexTrusts(*trust, trustErr, filepath.Join(codexDir, "config.toml"), s.Worktree)
+		}
+		out[s.Handle] = c
+	}
+	return out
+}
+
+// codexHookWhy names what the hook read found missing (names only).
+func codexHookWhy(h seatexec.CodexDialogHook) string {
+	switch {
+	case len(h.HooksOff) > 0:
+		return strings.Join(h.HooksOff, " and ") + " is false in " + h.ConfigPath
+	case h.Unreadable != "":
+		return h.HooksPath + ": " + h.Unreadable
+	case len(h.Missing) > 0:
+		return "no AMQ_DIALOG_HOOK entry for " + strings.Join(h.Missing, ", ") + " in " + h.HooksPath
+	}
+	return ""
+}
+
+// codexTrusts reports whether the Codex config has the trusted entry for the
+// worktree (as given, or with symlinks resolved), the read doctor's "codex
+// trust" row makes; key names only.
+func codexTrusts(ct hostcheck.CodexTrust, err error, configPath, worktree string) (bool, string) {
+	if err != nil {
+		return false, "cannot read " + configPath
+	}
+	roots := []string{filepath.Clean(worktree)}
+	if real, rerr := filepath.EvalSymlinks(worktree); rerr == nil && real != roots[0] {
+		roots = append(roots, real)
+	}
+	for _, r := range roots {
+		if len(ct.UntrustedRoots([]string{r})) == 0 {
+			return true, ""
+		}
+	}
+	return false, "no [projects.\"" + roots[0] + "\"] trust_level = \"trusted\" in " + configPath + "; 'amq-squad trust " + roots[0] + "' prints the owner's steps"
+}
+
+// scratchClaudeWakeConditions writes the config dir claudeseat.Write
+// produces for a seat into a scratch directory, reads the Claude wake
+// conditions there, and removes it. The conditions depend only on Write's
+// inputs (mode, plugin files, seed), so the seat's own dir, written after
+// Prepare, carries the same answer; the scratch copy keeps a dry run and a
+// launch stopped at its decisions from staging anything.
+func scratchClaudeWakeConditions(permissionMode, worktree string) SeatWakeConditions {
+	var c SeatWakeConditions
+	tmp, err := os.MkdirTemp("", "amq-squad-claude-wake-")
+	if err != nil {
+		c.ClaudeGuardWhy, c.ClaudeScreensWhy = "scratch config dir: "+err.Error(), "scratch config dir: "+err.Error()
+		return c
+	}
+	defer os.RemoveAll(tmp)
+	dir := filepath.Join(tmp, "config")
+	if _, err := claudeseat.Write(dir, permissionMode, worktree, time.Unix(0, 0)); err != nil {
+		c.ClaudeGuardWhy, c.ClaudeScreensWhy = "scratch config dir: "+err.Error(), "scratch config dir: "+err.Error()
+		return c
+	}
+	c.ClaudeGuardWired, c.ClaudeGuardWhy = seatexec.ClaudeDialogGuardWired(dir)
+	c.ClaudeScreensClosed, c.ClaudeScreensWhy = claudeseat.StartupScreensClosed(dir)
+	return c
 }
 
 // ReasonWakeNotAdmitted refuses a launch whose Prepare preview shows a seat
@@ -196,21 +311,29 @@ type SeatWakeFacts struct {
 }
 
 // admittedWakes reads each runnable seat's wake from the Prepare preview and
-// checks it against the compiled request. A seat the preview does not list,
-// or lists without execution options, has no facts (an older AMQ); a listed
-// seat whose admitted wake differs from the compiled one refuses the launch.
+// checks it against the compiled request. Every seat needs that evidence: a
+// seat the preview does not list, or lists without execution options, or
+// whose admitted wake differs from the compiled one, refuses the launch
+// before Apply.
 func admittedWakes(req launchapi.PrepareRequestV1, preview launchapi.PreviewV1) (map[string]*SeatWakeFacts, error) {
 	want := map[string]*launchapi.ExecutionOptionsV1{}
+	var order []string
 	for _, p := range req.Intent.Participants {
 		if p.Runnable && p.Execution != nil {
 			want[p.Handle] = p.Execution
+			order = append(order, p.Handle)
 		}
 	}
 	out := map[string]*SeatWakeFacts{}
 	for _, p := range preview.Participants {
 		w, ok := want[p.Handle]
-		if !ok || p.Execution == nil {
+		if !ok {
 			continue
+		}
+		// The pinned AMQ echoes execution options for every runnable
+		// participant (launchapi/prepare.go:200-203); none is no evidence.
+		if p.Execution == nil {
+			return nil, fmt.Errorf("seat %s: %s: AMQ's Prepare preview carries no execution options for the seat, so its wake is unverified (%s)", p.Handle, ReasonWakeNotAdmitted, WakeRule)
 		}
 		got := p.Execution
 		facts := &SeatWakeFacts{RequireWake: got.RequireWake, Mode: string(got.Wake.Mode), AuditReason: got.Wake.AuditReason, Source: "amq_prepare_preview"}
@@ -226,6 +349,11 @@ func admittedWakes(req launchapi.PrepareRequestV1, preview launchapi.PreviewV1) 
 				p.Handle, ReasonWakeNotAdmitted, facts.Mode, facts.RequireWake, orNone(facts.Injector), w.Wake.Mode, w.RequireWake, orNone(wantInjector), WakeRule)
 		}
 		out[p.Handle] = facts
+	}
+	for _, h := range order {
+		if out[h] == nil {
+			return nil, fmt.Errorf("seat %s: %s: AMQ's Prepare preview lists no participant for the seat, so its wake is unverified (%s)", h, ReasonWakeNotAdmitted, WakeRule)
+		}
 	}
 	return out, nil
 }
@@ -415,7 +543,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		if s.Resume {
 			policy = launchapi.ResumePolicyResume
 		}
-		requireWake, injector, wakeReason := SeatWake(s.Runtime, permissionMode(s.Runtime), q.CodexDialogHookReady)
+		requireWake, injector, wakeReason := SeatWake(s.Runtime, permissionMode(s.Runtime), q.WakeConditions[s.Handle])
 		seats = append(seats, launchintent.SeatFacts{
 			Handle: s.Handle, Executable: provider, Args: ProviderArgs(s),
 			Wrapper:         &launchapi.WrapperV1{Executable: q.Wrapper, Args: []string{"seat-exec", "--seat", s.Handle}},
