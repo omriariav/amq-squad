@@ -289,6 +289,11 @@ const ToolUnpinned = "tool_unpinned"
 // longer the digest the launch probed (phase 5 release prep).
 const PinChangedSinceProbe = "pin_changed_since_probe"
 
+// ClaudePinMismatch refuses a Claude seat whose pinned claude, at the pin's
+// path, does not hash to the registry pin (3.0.1 t6, reviewer addition):
+// the seat's config checks are facts about the pinned 2.1.314 binary.
+const ClaudePinMismatch = "claude_pin_mismatch"
+
 // pinnedProvider is a Claude seat's executable: argv[0] must be the path the
 // registry pins for claude, opened through the anchored walk and hashed to
 // the pin's sha256 (registry.OpenPinned).
@@ -313,8 +318,16 @@ func pinnedProvider(home, argv0, probed string) (string, error) {
 	if filepath.Clean(argv0) != pin.Path {
 		return "", refusef(ToolUnpinned, "the provider %s is not the pinned claude %s", argv0, pin.Path)
 	}
+	// The bytes about to run are the pin's (registry.OpenPinned, the check
+	// doctor's pin rows run). claudeseat's bookkeeping sets and permission-
+	// reader walk are facts about the pinned binary, so a binary that
+	// hashes otherwise (an upgrade in place) fails closed here, before any
+	// config check, until the owner re-pins and the sets are re-walked.
 	tool, code, detail := registry.OpenPinned("claude", pin.Path, pin.SHA256)
 	if tool == nil {
+		if code == registry.PinMismatch {
+			return "", refusef(ClaudePinMismatch, "%s", detail)
+		}
 		return "", refusef(ToolUnpinned, "%s: %s", code, detail)
 	}
 	tool.Close()
@@ -532,6 +545,14 @@ func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self, token strin
 		// The seat's credential, from the owner's token file only; a value from
 		// the parent environment never survives (the overlay replaces it).
 		m[claudeseat.TokenVar] = token
+		// The registry's Claude seat environment (3.0.1 t6, the reviewer's
+		// ruling): nonessential traffic off, so the flag client never writes
+		// its cache into the seat's config dir, where it would be drift.
+		for _, kv := range registry.ClaudeSeatEnv {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				m[k] = v
+			}
+		}
 	}
 	if rec.Runtime == "pi" {
 		// The launcher (amq-squad pi run) starts the seat's pi with the

@@ -55,6 +55,20 @@ closes.
 
 ## 3.0.x
 
+- Upstream ask 20 (AMQ): join a fresh participant into a present binding.
+  AMQ v0.116.2 refuses a fresh seat launched into a session whose binding
+  is present (`binding_present_without_resumable_conversation`,
+  internal/launch/reconcile.go:1358), and its on_live keep join creates
+  only a seat missing from the binding's resources (liveseat.go:58-72), so
+  a seat that ran and is gone cannot be replaced. 3.0.1 t16 launches the
+  roster in one apply and replaces a gone seat by relaunching the whole
+  roster (`amq-squad scheduler relaunch`); with the ask, the scheduler can
+  replace one seat in place. The lead files the ask.
+- Conditional (3.0.1 t16 ruling 3): pi seats park like the others, on the
+  rule that the model memory is the local server's (ollama's keep_alive
+  unloads an idle model; the seat process holds none). If the owner run
+  measures GPU memory held by a parked pi seat after the keep-alive window,
+  close-on-park for pi seats becomes a 3.0.x item.
 - Speed of launches and communication (owner, 2026-10-30, the first
   dogfood squad: "we need to speed up the agent launches and comms, it's
   taking too much"). Measured on the day: a seat launch to its first turn
@@ -184,7 +198,10 @@ closes.
 - Test flakes still open after the hygiene branches: internal/seatlaunch
   TestProofConnectionsAreBounded and
   TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (TempDir cleanup
-  races); the internal/cli hung-guard row was fixed on v3-5-hygiene2
+  races); internal/seatlaunch TestPiSeatPlansThroughTheUpstreamAdapter under
+  host load (AMQ's tmux detection has a 5 s deadline, backend_common.go:16;
+  a loaded host misses it and Prepare says launcher_not_available; seen in
+  3.0.1 t16, see its execution note); the internal/cli hung-guard row was fixed on v3-5-hygiene2
   (merged c15ac65b). Keep the failing full-run output before any fix. Spike
   log, test-hygiene list.
 - `amq-squad uninstall --json`: the verb has no JSON envelope. Plan 16.4
@@ -230,6 +247,28 @@ closes.
   the launch declares (an upstream ask). Until then a Codex seat's wake
   requires the Codex config's trust entry for its worktree, which rules out
   the trust screen only.
+- Claude seat config digest (3.0.1 t6, reviewer ruling 2026-10-30): if
+  the owner-run live row (docs/v3-spike/5-claudeseat-execution.md) shows
+  that Claude Code 2.1.314 never creates a `projects` entry for the
+  worktree's canonical repository root, tighten the `.claude.json` digest
+  from "keys carrying trust or a permission input" to the bare `projects`
+  key set, so any added entry moves it. If the entry does appear, record
+  its keys there and keep the current digest.
+- The Claude seat config checks are facts about the pinned Claude Code
+  binary (3.0.1 t6): the bookkeeping sets pI and kI and the walk of their
+  keys against the binary's permission readers. Today a re-pin's step is to
+  re-extract internal/claudeseat/testdata/claude-*-bookkeeping.js and re-walk
+  by hand (the execution note's method); make the re-walk a check, so that
+  doctor's pin row refuses a pin whose sets differ from the code's.
+- Claude seats and external CLAUDE.md includes (3.0.1 t6, fifth commit):
+  when a CLAUDE.md the seat loads at start imports a file outside its
+  worktree, Claude Code 2.1.314 opens its external-includes dialog unless
+  the project entry approves the includes. claudeseat never seeds that
+  approval, so such a seat's wake stays off and seat-exec refuses it
+  (claude_external_includes_pending). Decide how approval is granted: an
+  owner-signed per-worktree approval written into the seat's config at
+  launch, or a host check that names the imports for the owner to move
+  inside the worktree.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 

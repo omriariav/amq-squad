@@ -86,7 +86,7 @@ func (s Store) WidenGated(id, actor, reason string, paths, gates []string, dur t
 				dur = DefaultLeaseDuration
 			}
 			at := now
-			t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.Attempt = StateInProgress, "", "", "", t.Attempt+1
+			t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.Attempt = StateInProgress, "", "", "", nil, t.Attempt+1
 			t.Lease = &Lease{Holder: t.Report.By, GrantedAt: now, ExpiresAt: now.Add(dur), ClaimedAt: &at, RenewedAt: &at}
 		}
 		return nil
@@ -105,7 +105,7 @@ func (s Store) Rearm(id string, dur time.Duration, now time.Time) (Task, error) 
 			dur = DefaultLeaseDuration
 		}
 		at := now
-		t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.Attempt = StateInProgress, "", "", "", t.Attempt+1
+		t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.Attempt = StateInProgress, "", "", "", nil, t.Attempt+1
 		t.Lease = &Lease{Holder: t.Report.By, GrantedAt: now, ExpiresAt: now.Add(dur), ClaimedAt: &at, RenewedAt: &at}
 		return nil
 	})

@@ -41,6 +41,11 @@ type Config struct {
 	// holds its head (the phase 5 re-pass ruling); "" leaves it unsealed.
 	SealRoot string
 	Lead     string // the lead handle: widening is the lead's decision (2b-2); written to the state file
+	// Roster, when set, is roster mode (3.0.1 t16): every seat of it
+	// launches in one AMQ apply, idle seats are parked and dispatched to,
+	// MaxSeats caps live leases, and a gone seat is replaced only by the
+	// lead's relaunch of the whole roster. Empty: seats start on demand.
+	Roster []RosterSeat
 }
 
 // EventKind orders events applied in one tick.
@@ -50,6 +55,10 @@ const (
 	SeatUp       EventKind = iota // a requested (or existing) seat joined with its pool
 	SeatGone                      // the seat's session ended
 	SeatActivity                  // the seat did something (renews its claimed lease)
+	// SeatLaunchFailed is a launch of the request's seat that failed or did
+	// not resolve (3.0.1 t17): the launcher posts it once per request with
+	// the stage, AMQ's reason code and the failure detail.
+	SeatLaunchFailed
 )
 
 // Event is one input observed between ticks. Producers post them from any
@@ -68,6 +77,16 @@ type Event struct {
 	// (lead ruling; a recovery path, if one is ever needed, comes behind an
 	// explicit flag in phase 5).
 	RequestID string
+	// LaunchID groups the requests of one launch attempt (SeatLaunchFailed):
+	// a roster whose two seats of one pool fail in one apply is one failure
+	// of that pool, not a repeat.
+	LaunchID string
+	// Stage, ReasonCode and Detail: a SeatLaunchFailed's failure (the
+	// detail redacted), or a SeatGone's cause (process_exited and what the
+	// liveness check saw).
+	Stage      string
+	ReasonCode string
+	Detail     string
 }
 
 // Decision is one action the scheduler took; the log is what the
@@ -78,10 +97,15 @@ type Decision struct {
 	Seat   string `json:"seat,omitempty"`
 	Pool   string `json:"pool,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Stage and ReasonCode: a launch failure's stage and AMQ's reason code
+	// (seat_launch_failed), or a gone seat's cause (3.0.1 t17).
+	Stage      string `json:"stage,omitempty"`
+	ReasonCode string `json:"reason_code,omitempty"`
 }
 
 type seat struct {
 	pool         task.Pool
+	requestID    string // the request it joined on: the identity the liveness check reads the launch ledger by
 	freeSince    time.Time
 	lastActivity time.Time
 	unresponsive bool   // held a lease it never claimed; no dispatch until it shows activity
@@ -113,6 +137,7 @@ type Scheduler struct {
 	Preparer  SeatPreparer     // nil: a seat is dispatched to as it is
 	Limits    UsageLimitSource // nil: no usage-limit events
 	Exits     ExitChecker      // nil: no exit check off the done path (R3)
+	Liveness  SeatLiveness     // nil: no per-tick process check (3.0.1 t17)
 	Config    Config
 	// Incarnation qualifies every request id (seat-req-<incarnation>-<n>) so
 	// an arrival from before a restart never matches a new reservation. New
@@ -122,6 +147,9 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	pending []Event
+	// relaunchAsk is the lead's relaunch decision (its reason) waiting for
+	// the next tick (RequestRelaunch); set under mu.
+	relaunchAsk *string
 
 	seats       map[string]*seat
 	requests    []request
@@ -145,6 +173,26 @@ type Scheduler struct {
 	commitState map[string]string
 	// commitDeferrals counts deferrals with no exits ledger (tests).
 	commitDeferrals map[string]int
+	// Roster mode (3.0.1 t16): rosterInit is the first tick's adoption
+	// verdict done; rosterOwed a roster launch owed; relaunching the lead's
+	// relaunch in progress; heldReason the last dispatch_held logged.
+	rosterInit  bool
+	rosterOwed  bool
+	relaunching bool
+	heldReason  string
+	// Launch failures (3.0.1 t17): the last failure per pool, the tasks
+	// blocked on a repeated one (task id -> the pool and the failure's
+	// sequence number), the requests whose failure was noted while a failed
+	// roster launch settles, and the failures' sequence counter.
+	launchFailures map[string]*LaunchFailure
+	launchBlocked  map[string]launchBlock
+	failedReqs     map[string]bool
+	failSeq        int
+	// livenessNote is the last unknown liveness answer logged per seat.
+	livenessNote map[string]string
+	// goneQueued are the gone attempts (handle#request) whose exit check
+	// was queued: one check per attempt (3.0.1 t17).
+	goneQueued map[string]bool
 }
 
 // Options configure a production scheduler (New).
@@ -159,6 +207,7 @@ type Options struct {
 	Preparer    SeatPreparer
 	Limits      UsageLimitSource
 	Exits       ExitChecker
+	Liveness    SeatLiveness
 	Config      Config
 	Incarnation string // default: a fresh random nonce
 }
@@ -184,7 +233,7 @@ func New(o Options) (*Scheduler, error) {
 		return nil, errors.New("scheduler: the incarnation may not contain '-'")
 	}
 	return &Scheduler{Store: o.Store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: o.Limits, Exits: o.Exits, Config: o.Config, Incarnation: o.Incarnation}, nil
+		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: o.Limits, Exits: o.Exits, Liveness: o.Liveness, Config: o.Config, Incarnation: o.Incarnation}, nil
 }
 
 const requestIDPrefix = "seat-req-"
@@ -242,6 +291,9 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	var out []Decision
 	log := func(d Decision) { out = append(out, d) }
 
+	// The per-tick liveness of the roster's seats (3.0.1 t17): a seat whose
+	// process is gone is posted SeatGone and applied in this tick.
+	s.checkLiveness(now, log)
 	if err := s.applyEvents(now, cfg, log); err != nil {
 		return out, err
 	}
@@ -310,6 +362,18 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 		log(Decision{Kind: "dispatch_held", Reason: "a seat of the previous incarnation is not closed yet"})
 		s.closeIdle(list, now, cfg, log)
 		return out, s.writeState(now, cfg)
+	}
+	// Roster mode: the owed roster launch, or the lead's relaunch, before
+	// any dispatch (3.0.1 t16).
+	if hold, err := s.rosterStep(list, now, cfg, log); err != nil {
+		return out, err
+	} else if hold {
+		s.closeIdle(list, now, cfg, log)
+		return out, s.writeState(now, cfg)
+	}
+	s.heldReason = ""
+	if list, err = s.Store.List(); err != nil {
+		return out, err
 	}
 	if err := s.dispatch(list, now, cfg, log); err != nil {
 		return out, err
@@ -383,12 +447,22 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				}
 				continue
 			}
-			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At}
+			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, requestID: ev.RequestID}
 			log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
+			s.clearLaunchFailures(ev.Pool)
+		case SeatLaunchFailed:
+			s.noteLaunchFailure(ev, log)
 		case SeatGone:
+			// The attempt the gone is for: the request it names, else the
+			// live seat's (3.0.1 t17); the exit queue checks one attempt once.
+			attempt := ev.RequestID
+			if st := s.seats[ev.Handle]; st != nil && attempt == "" {
+				attempt = st.requestID
+			}
 			if s.seats[ev.Handle] != nil {
 				delete(s.seats, ev.Handle)
-				log(Decision{Kind: "seat_gone", Seat: ev.Handle})
+				delete(s.livenessNote, ev.Handle)
+				log(Decision{Kind: "seat_gone", Seat: ev.Handle, ReasonCode: ev.ReasonCode, Reason: ev.Detail})
 			}
 			// R3, P1-9: the exit check at every gone seat, known to this
 			// incarnation or not (after a restart the map starts empty), before
@@ -407,7 +481,9 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			} else {
 				// N3: the slot (and the seat's staged evidence) stays held until
 				// this check is decided; runExits releases it.
-				s.queueExit(exitItem{Handle: ev.Handle, TaskID: held, Why: "gone", Gone: true, At: ev.At})
+				if !s.queueExit(exitItem{Handle: ev.Handle, TaskID: held, Why: "gone", Gone: true, At: ev.At, Attempt: attempt}) && attempt != "" {
+					log(Decision{Kind: "exit_check_duplicate", Seat: ev.Handle, Reason: "the exit check of attempt " + attempt + " is already queued or done; this gone is dropped"})
+				}
 			}
 		case SeatActivity:
 			st := s.seats[ev.Handle]
@@ -427,6 +503,19 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			if renewed {
 				log(Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: ev.Handle})
 			}
+		}
+	}
+	s.mu.Lock()
+	ask := s.relaunchAsk
+	s.relaunchAsk = nil
+	s.mu.Unlock()
+	if ask != nil {
+		switch {
+		case !s.rosterMode():
+			log(Decision{Kind: "roster_relaunch_refused", Reason: "the scheduler runs no roster"})
+		case !s.relaunching:
+			s.relaunching = true
+			log(Decision{Kind: "roster_relaunch_requested", Reason: firstNonEmpty(*ask, "the lead's decision")})
 		}
 	}
 	return nil
@@ -561,7 +650,7 @@ func (s *Scheduler) applyCommit(holder string, t task.Task, res CommitResult, no
 			return err
 		}
 	}
-	refused, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now)
+	refused, err := s.Store.RefuseCommitPaths(t.ID, res.ReasonCode, res.Detail, res.Route, res.RefusedPaths, now)
 	if err != nil {
 		return err
 	}
@@ -670,6 +759,13 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			continue
 		}
 		if handle := s.idleSeat(list, t, *r.Pool); handle != "" {
+			// Roster mode: the seat cap bounds live leases (3.0.1 t16).
+			if s.rosterMode() && leases(list) >= cfg.MaxSeats {
+				if err := s.wait(t, task.WaitSeatCap, now); err != nil {
+					return err
+				}
+				continue
+			}
 			if s.Preparer != nil {
 				if err := s.Preparer.PrepareSeat(handle); err != nil {
 					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
@@ -693,12 +789,32 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				return err
 			}
 			list = replace(list, got)
+			delete(s.launchBlocked, t.ID)
 			log(Decision{Kind: "dispatched", TaskID: t.ID, Seat: handle, Pool: r.Pool.Key()})
 			if s.Doorbell != nil {
 				if err := s.Doorbell.Ring(handle, got); err != nil {
 					log(Decision{Kind: "doorbell_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
 				}
 			}
+			continue
+		}
+		if s.rosterMode() {
+			// No seat is requested in roster mode: the roster is up.
+			got, err := s.rosterNoIdleSeat(t, *r.Pool, now, log)
+			if err != nil {
+				return err
+			}
+			if got != nil {
+				list = replace(list, *got)
+			}
+			continue
+		}
+		// A repeated launch failure of the pool blocks the task for the lead
+		// with the failure's reason; no seat is requested again (3.0.1 t17).
+		if got, err := s.blockOnLaunchFailure(t, *r.Pool, now, log); err != nil {
+			return err
+		} else if got != nil {
+			list = replace(list, *got)
 			continue
 		}
 		requested := 0
@@ -709,7 +825,7 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 		}
 		if waitingFor[*r.Pool] < requested {
 			waitingFor[*r.Pool]++
-			if err := s.wait(t, task.WaitSeatStarting, now); err != nil {
+			if err := s.waitForSeat(t, *r.Pool, now); err != nil {
 				return err
 			}
 			continue
@@ -735,7 +851,7 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			s.requests = append(s.requests, request{req: req, at: now})
 			waitingFor[*r.Pool]++
 			log(Decision{Kind: "seat_requested", TaskID: t.ID, Pool: r.Pool.Key()})
-			if err := s.wait(t, task.WaitSeatStarting, now); err != nil {
+			if err := s.waitForSeat(t, *r.Pool, now); err != nil {
 				return err
 			}
 		}
@@ -754,7 +870,11 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 	}
 	var handles []string
 	for h, st := range s.seats {
-		if st.pool == p && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
+		serves := st.pool == p
+		if s.rosterMode() {
+			serves = PoolServes(st.pool, p)
+		}
+		if serves && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
 			handles = append(handles, h)
 		}
 	}
@@ -796,7 +916,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
-			if (st.closing == closeExpired || st.closing == closeRestart) && s.closeUnconfirmed(h) {
+			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch) && s.closeUnconfirmed(h) {
 				st.awaitGone = true
 				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
 				continue
@@ -809,6 +929,9 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 		if task.HeldBy(h, list) != nil {
 			st.freeSince = now
 			continue
+		}
+		if s.rosterMode() && !st.unresponsive {
+			continue // a parked roster seat stays up (3.0.1 t16)
 		}
 		idle := st.freeSince
 		if st.lastActivity.After(idle) {
@@ -842,6 +965,17 @@ type State struct {
 	// Refused are the last refused seat arrivals (request_missing: no request
 	// id, an unmanaged seat; request_cancelled; request_unknown).
 	Refused []RefusedSeat `json:"refused"`
+	// Roster mode (3.0.1 t16): the roster's handles, and whether the lead's
+	// relaunch is in progress.
+	Roster          []string `json:"roster,omitempty"`
+	RelaunchPending bool     `json:"relaunch_pending,omitempty"`
+	// LaunchFailures are the last launch failure of each pool whose seat
+	// has not come up since (3.0.1 t17): status shows the reason on the
+	// seat's row in place of seat_starting.
+	LaunchFailures []LaunchFailure `json:"launch_failures,omitempty"`
+	// LaunchBlocked are the tasks blocked on a repeated launch failure:
+	// restored at a restart with LaunchFailures (RestoreLaunchFailures).
+	LaunchBlocked []LaunchBlockedTask `json:"launch_blocked,omitempty"`
 }
 
 // RefusedUnmanaged is the refusal reason of a SeatUp without a request id.
@@ -878,6 +1012,11 @@ func (s *Scheduler) Occupancy() []SeatView {
 		if closing == "" && v.awaitGone {
 			closing = "awaiting seat_gone"
 		}
+		if s.rosterMode() && closing == "" {
+			// A roster seat occupies a concurrency pool only while it holds a
+			// lease, which the router counts from the task (3.0.1 t16).
+			continue
+		}
 		out = append(out, SeatView{Handle: h, Pool: v.pool, Unresponsive: v.unresponsive, Closing: closing})
 	}
 	for _, r := range s.requests {
@@ -909,7 +1048,10 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	if cfg.StatePath == "" {
 		return nil
 	}
-	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...)}
+	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...), RelaunchPending: s.relaunching}
+	for _, rs := range cfg.Roster {
+		st.Roster = append(st.Roster, rs.Handle)
+	}
 	if !s.limitSince.IsZero() {
 		since := s.limitSince
 		st.UsageLimitSince = &since
@@ -927,6 +1069,8 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 		}
 	}
 	sort.Slice(st.Seats, func(i, j int) bool { return st.Seats[i].Handle < st.Seats[j].Handle })
+	st.LaunchFailures = s.launchFailureList()
+	st.LaunchBlocked = s.launchBlockedList()
 	raw, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err

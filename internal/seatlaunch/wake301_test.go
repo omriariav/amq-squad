@@ -364,11 +364,12 @@ func TestCodexTrustsTheSeatWorktree(t *testing.T) {
 	}
 }
 
-// The default Claude read: the config dir claudeseat.Write produces wires
-// the guard deny of AskUserQuestion and ExitPlanMode, and its startup
-// screens are unverified until t6, so a Claude seat's wake stays off today,
-// through Launch too, and nothing is staged by the read.
-func TestClaudeWakeStaysOffUntilTheStartupScreensAreClosed(t *testing.T) {
+// The default Claude read (3.0.1 t6 in): the config dir claudeseat.Write
+// produces wires the guard deny of AskUserQuestion and ExitPlanMode and
+// closes the startup screens (claudeseat.StartupScreensClosed), so a Claude
+// seat's wake turns on through Launch, and nothing is staged by the read.
+// The screens-open branch is the injected "claude screens open" row above.
+func TestClaudeWakeTurnsOnOnceTheStartupScreensAreClosed(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 	c := scratchClaudeWakeConditions(ClaudePermissionMode, t.TempDir())
@@ -378,7 +379,7 @@ func TestClaudeWakeStaysOffUntilTheStartupScreensAreClosed(t *testing.T) {
 	if !c.ClaudeGuardWired || c.ClaudeGuardWhy != "" {
 		t.Fatalf("the seat's config dir does not wire the guard deny: %+v", c)
 	}
-	if c.ClaudeScreensClosed || c.ClaudeScreensWhy != claudeseat.OnboardingUnverified {
+	if !c.ClaudeScreensClosed || c.ClaudeScreensWhy != "" {
 		t.Fatalf("startup screens: %+v", c)
 	}
 	q := testSquad(t)
@@ -397,7 +398,7 @@ func TestClaudeWakeStaysOffUntilTheStartupScreensAreClosed(t *testing.T) {
 	for _, p := range res.Prepare.Preview.Participants {
 		if p.Handle == "cto" {
 			found = true
-			if p.Execution.RequireWake || !strings.Contains(p.Execution.Wake.AuditReason, claudeseat.OnboardingUnverified) {
+			if !p.Execution.RequireWake || p.Execution.Wake.Mode != "enabled" || p.Execution.Wake.AuditReason != "" {
 				t.Fatalf("the Claude seat's wake: %+v", p.Execution)
 			}
 		}

@@ -31,9 +31,16 @@ it, which happens only when the owner's signed answer is recorded by the core
   the reason code and the file in `block_detail`) back to `pending`, discards
   the seat's report, and the scheduler leases it again. It never widens the
   declared files. A widening is a different act (`Widen` in the store, a
-  recorded lead decision inside the grant's limits); it is not a package tool
-  yet, and a widening that would cross a grant limit is refused by the core
-  and escalates to an owner-signed gate, never decided by the model.
+  recorded lead decision inside the grant's limits): `amq_task_widen` (lead
+  only, 3.0.1) runs `amq-squad task widen` with only the paths the task's
+  outside_declared_files refusal names, and a widening that would cross a
+  grant limit is refused by the core and escalates to an owner-signed gate,
+  never decided by the model.
+- **`amq_scheduler_relaunch` (lead only, 3.0.1) runs `amq-squad scheduler
+  relaunch --reason R`**: a gone seat is replaced by relaunching the roster.
+  Both decisions reach the scheduler over its decision socket, which proves
+  the lead from the calling process's ancestry (the team-mode lead that
+  started the scheduler).
 - **The refusal reaches the lead through the task store first.** The commit
   step writes the refusal into the task (`blocked`, `block_reason`,
   `block_detail`, `block_route: lead`); that record is the truth, and
@@ -44,7 +51,8 @@ it, which happens only when the owner's signed answer is recorded by the core
 - **Native tools**: `amq_send`, `amq_drain`, `amq_reply` (the amq CLI, bodies
   on stdin), `amq_task_list`, `amq_task_claim`, `amq_task_done` (the kept
   `amq-squad task` verbs); the team lead also has `amq_task_add`,
-  `amq_task_reset`, `amq_repo_read` and `amq_repo_list` (read-only, scoped to
+  `amq_task_reset`, `amq_task_widen`, `amq_scheduler_relaunch`,
+  `amq_repo_read` and `amq_repo_list` (read-only, scoped to
   the repository root) and `amq_status`, and nothing else (amendment 26: no
   bash, read, edit or write; commands are a seat's task). The solo lead keeps
   pi's coding tools.

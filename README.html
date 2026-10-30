@@ -533,7 +533,7 @@ required action such as AMQ's trust confirmation stops the launch with
 exit 10 and is never answered for you.</p></li>
 <li><p>the pi lead in team mode with the scheduler beside it; the lead
 never edits code, it dispatches through the task store, and the
-scheduler starts seats on demand:</p>
+scheduler launches the squad's roster at start:</p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--scheduler-seats</span> seats.json <span class="at">--dry-run</span></span></code></pre></div>
 <p>(drop <code>--dry-run</code> to start it; a pi-runtime build
 only).</p></li>
@@ -575,6 +575,31 @@ Binding is the default under a merge grant: the step opens the pushed
 branch's draft PR and binds it to the task with no flag, and
 <code>--no-open-pr</code> is refused while the repository has a merge
 grant.</li>
+<li><strong>The roster.</strong> The scheduler launches every seat of
+the seat list that has a worktree of its own in one AMQ launch at start;
+a seat with no lease is parked and gets the next task of its pool.
+<code>max_seats</code> caps the leases held at once, not the seats up.
+AMQ refuses a fresh seat into a session whose binding is present, so a
+gone seat is not replaced on its own: its pool's next task blocks for
+the lead (<code>seat_replacement_needs_relaunch</code>), and the lead's
+<code>amq-squad scheduler relaunch</code> lets the other seats finish,
+closes them and launches the roster again. The lead and the scheduler
+run outside the roster's tmux session (the lead's own seat is never in
+the roster). A restarted scheduler adopts the live seats. A roster
+launch that AMQ refuses stops the scheduler with the stage, AMQ's reason
+and the detail in its decisions log, and the lead's supervisor does not
+restart it;
+<code>amq-squad lead --team --scheduler-seats seats.json --trust</code>
+is the owner's standing answer to AMQ's trust confirmation for that
+session. A seat launch that fails or never resolves is a
+<code>seat_launch_failed</code> decision with its stage, AMQ's reason
+code and the redacted detail; status shows that reason on the seat's row
+in place of <code>seat_starting</code>, and a second failure of the pool
+with the same reason blocks the waiting task for the lead instead of
+retrying. Each tick the scheduler checks every live roster seat's
+process against its accepted proof (pid and start stamp) and takes a
+seat whose process ended as gone (<code>process_exited</code>), so its
+pool's next task takes the relaunch path.</li>
 <li><strong>Merge.</strong>
 <code>merge-train --request FILE --dry-run</code> plans and checks the
 lead's ordered PR set against the merge grant; the real run uses the
@@ -647,9 +672,9 @@ the reference. The verbs:</p>
 </tr>
 <tr>
 <td>Launch</td>
-<td><code>launch</code>, <code>lead</code>, <code>scheduler run</code>,
-<code>seat-exec</code> (AMQ runs it),
-<code>pi run/verify/path</code></td>
+<td><code>launch</code>, <code>lead</code>,
+<code>scheduler run/relaunch</code>, <code>seat-exec</code> (AMQ runs
+it), <code>pi run/verify/path</code></td>
 </tr>
 <tr>
 <td>Work</td>

@@ -93,6 +93,14 @@ type Options struct {
 	// (default: the embedded runtime must load, then piruntime.EnsureShim
 	// under Home); a test seam.
 	PiShim func(home, wrapper string) (string, error)
+	// BeforeApply checks a ready Prepare before anything is staged or
+	// applied (3.0.1 t16, the roster launch): a non-empty reason stops the
+	// launch at stage resource_present with the detail, so AMQ never sees
+	// an Apply it would refuse.
+	BeforeApply func(prepared launchapi.PrepareResultV1) (reason, detail string)
+	// PaneID is the tmux pane id whose shell is pid (default: a read-only
+	// tmux list-panes); a test seam.
+	PaneID func(shell int) string
 	// CodexDialogHook reads AMQ's Codex dialog hook in a Codex home (default
 	// seatexec.ReadCodexDialogHook, read only); a test seam. The launch
 	// calls it only for a squad with a Codex seat, on the Codex home the
@@ -261,7 +269,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	res.Prepare, res.FailureDetail = &prepared, detail
+	res.Prepare, res.FailureDetail = &prepared, amqDetail(detail)
 	if prepared.Outcome != launchapi.PrepareOutcomeReady && prepared.Outcome != launchapi.PrepareOutcomeActionRequired {
 		res.Stage = "prepare_refused"
 		res.NextActions = []string{"fix the cause named by the prepare reason (" + prepared.Reason + "), then run the same amq-squad launch again"}
@@ -277,6 +285,13 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, o.Standing))
 	if err != nil {
 		return res, err
+	}
+	if o.BeforeApply != nil && !o.DryRun {
+		if reason, detail := o.BeforeApply(prepared); reason != "" {
+			res.Stage, res.FailureDetail = "resource_present", amqDetail(reason+": "+detail)
+			res.NextActions = []string{"the named panes must end before the launch can apply (" + reason + ")"}
+			return res, nil
+		}
 	}
 	if o.DryRun {
 		res.Stage = "prepared"
@@ -383,7 +398,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	res.Apply, res.FailureDetail = &applied, detail
+	res.Apply, res.FailureDetail = &applied, amqDetail(detail)
 	recordApply(c, applied, detail, o.Now())
 	if applied.Outcome != "applied" {
 		res.Stage = "apply_failed"
@@ -445,10 +460,13 @@ func prepareCLI(ctx context.Context, q Squad, o Options, req launchapi.PrepareRe
 	if err != nil {
 		return res, "", fmt.Errorf("amq launch --prepare: %w", err)
 	}
+	// AMQ's stderr through the chokepoint, before anything wraps it
+	// (amqDetail, 3.0.1 t17).
+	stderr := amqDetail(string(errOut))
 	if jerr := json.Unmarshal(out, &res); jerr != nil || res.ResultVersion == 0 {
-		return res, "", fmt.Errorf("amq launch --prepare exited %d without a PrepareResult: %s", code, strings.TrimSpace(string(errOut)))
+		return res, "", fmt.Errorf("amq launch --prepare exited %d without a PrepareResult: %s", code, stderr)
 	}
-	return res, strings.TrimSpace(string(errOut)), nil
+	return res, stderr, nil
 }
 
 func applyCLI(ctx context.Context, q Squad, o Options, req launchapi.ApplyRequestV1, env []string) (launchapi.ApplyResultV1, string, error) {
@@ -458,12 +476,12 @@ func applyCLI(ctx context.Context, q Squad, o Options, req launchapi.ApplyReques
 	if err != nil {
 		return res, "", fmt.Errorf("amq launch --apply: %w", err)
 	}
-	detail := strings.TrimSpace(string(errOut))
+	detail := amqDetail(string(errOut)) // the chokepoint, before the prefix
 	if jerr := json.Unmarshal(out, &res); jerr != nil || res.ResultVersion == 0 {
 		return res, "", fmt.Errorf("amq launch --apply exited %d without an ApplyResult: %s", code, detail)
 	}
 	// FailureDetail is not in the JSON DTO; the CLI prints it on stderr (R48).
-	res.FailureDetail = detail
+	res.FailureDetail = amqDetail(detail)
 	return res, detail, nil
 }
 
@@ -502,7 +520,7 @@ func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.
 		// fields change; the ticket stays as the launcher left it.
 		_ = launch.UpdateStaged(rec.Root, rec.Handle, func(cur *launch.Record) error {
 			cur.LaunchNonce = r.BindingGeneration
-			cur.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: detail, At: now.UTC()}
+			cur.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: amqDetail(detail), At: now.UTC()}
 			return nil
 		})
 	}

@@ -68,6 +68,25 @@ func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
 			c.Process.Kill()
 		}
 	})
+	// Close every request's proof server before TempDir is removed (3.0.1
+	// t16, round 5): a server left open runs out its window on its watcher
+	// goroutine and marks its unused token in launch/<handle> after the body
+	// returned, racing the removal ("directory not empty"). Closing twice is
+	// safe; the launcher's wg is not awaited (a failed row with its gate
+	// still closed would hang the cleanup).
+	t.Cleanup(func() {
+		f.l.mu.Lock()
+		var srvs []*proofServer
+		for _, r := range f.l.reqs {
+			if r.proof != nil {
+				srvs = append(srvs, r.proof)
+			}
+		}
+		f.l.mu.Unlock()
+		for _, s := range srvs {
+			s.close()
+		}
+	})
 	opts := launchOpts(t, fake, map[string]string{"sha256:a1": "trust_exact_subject"})
 	opts.Wait = 300 * time.Millisecond
 	f.l = &Launcher{
@@ -148,7 +167,8 @@ func TestLauncherCancelConfirmsFailedAndUnknownRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.l.Wait()
-	if len(f.events) != 0 {
+	// No SeatUp; the failure is posted once, with its stage (3.0.1 t17).
+	if len(f.events) != 1 || f.events[0].Kind != scheduler.SeatLaunchFailed || f.events[0].Stage != "apply_failed" || f.events[0].RequestID != req.ID {
 		t.Fatalf("a failed launch posted %+v", f.events)
 	}
 	if err := f.l.CancelSeatRequest(req); err != nil {
@@ -257,5 +277,79 @@ func publishExecRaw(t *testing.T, q Squad, handle string, ex *launch.Exec) {
 	t.Helper()
 	if err := launch.WriteUnderRecordLock(filepath.Join(q.SessionRoot(), "agents", handle), launch.Record{Handle: handle, Exec: ex}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// 3.0.1 t16 round 5 (reviewer ruling, a defect): the expiry mark of a
+// launch's proof window is a compare-and-set on the staged record's launch
+// id. Request A's apply is not applied, so A fails and its cancel succeeds
+// at once while its proof server stays open for the 60 s window; 30 s later
+// request B for the same handle restages launch/cto with its own launch id
+// and token; when A's window ends, A's watcher must not mark B's token
+// expired. The record keeps B's launch, request and token, and B's seat
+// proves after A's window (seat-exec reads that token). Reverted (the mark
+// rewrites whatever is staged), B's token reads expired and its seat is
+// refused proof_expired.
+func TestExpiredWindowNeverMarksALaterLaunchsToken(t *testing.T) {
+	f := newLauncherFixture(t, "action_required")
+	var mu sync.Mutex
+	now := time.Now()
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	advance := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	f.l.Options.ProofClock, f.l.Clock = clock, clock
+	a := scheduler.SeatRequest{ID: "seat-req-a", Pool: poolA}
+	if err := f.l.RequestSeat(a); err != nil {
+		t.Fatal(err)
+	}
+	f.l.Wait()
+	if err := f.l.CancelSeatRequest(a); err != nil {
+		t.Fatalf("A not applied: its cancel is confirmed at once: %v", err)
+	}
+	advance(30 * time.Second)
+	f.fake.apply.Outcome, f.fake.apply.Disposition = "applied", "committed"
+	b := scheduler.SeatRequest{ID: "seat-req-b", Pool: poolA}
+	if err := f.l.RequestSeat(b); err != nil {
+		t.Fatal(err)
+	}
+	f.l.Wait()
+	staged := func() launch.Record {
+		raw, err := os.ReadFile(filepath.Join(launch.StagedDir(f.q.SessionRoot(), "cto"), launch.FileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, err := launch.Decode(raw)
+		if err != nil || rec.Proof == nil {
+			t.Fatalf("staged record: %v", err)
+		}
+		return rec
+	}
+	before := staged()
+	f.l.mu.Lock()
+	launchA, launchB := f.l.reqs[a.ID].launchID, f.l.reqs[b.ID].launchID
+	f.l.mu.Unlock()
+	if before.LaunchID != launchB || before.RequestID != b.ID || launchA == launchB {
+		t.Fatalf("B's restaged record: launch %s request %s (A %s, B %s)", before.LaunchID, before.RequestID, launchA, launchB)
+	}
+	advance(31 * time.Second) // A's window ends; B's has 29 s left
+	// Wait for A's watcher to have closed A's server (its expiry marks are
+	// written before done closes), bounded (Codex on round 5, item 3).
+	f.l.mu.Lock()
+	srvA := f.l.reqs[a.ID].proof
+	f.l.mu.Unlock()
+	select {
+	case <-srvA.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("A's window watcher never closed A's proof server")
+	}
+	after := staged()
+	if after.LaunchID != launchB || after.RequestID != b.ID || after.Proof.Token != before.Proof.Token {
+		t.Fatalf("A's window rewrote B's record: token %q (was %q), launch %s, request %s", after.Proof.Token, before.Proof.Token, after.LaunchID, after.RequestID)
+	}
+	if p := prove(t, f.q, "cto", false, nil); !p.reply.OK {
+		t.Fatalf("B's seat was refused after A's window: %+v", p.reply)
+	}
+	log, _ := os.ReadFile(filepath.Join(f.q.SessionRoot(), "extensions", "amq-squad", "launch", "proof-rejects.log"))
+	if !strings.Contains(string(log), `"code":"token_mark_stale"`) || !strings.Contains(string(log), launchA) || !strings.Contains(string(log), launchB) {
+		t.Fatalf("the skipped mark is not logged with both launches:\n%s", log)
 	}
 }

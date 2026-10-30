@@ -18,6 +18,12 @@ import (
 type LiveSeat struct {
 	Handle string
 	Pool   task.Pool
+	// The proof's and the staged record's identities and the record's
+	// worktree (3.0.1 t16: an adoption takes the seat only when the record
+	// is the proof's own).
+	ProofLaunchID, ProofRequestID   string
+	RecordLaunchID, RecordRequestID string
+	Worktree                        string
 }
 
 // startTokenOf is a test seam.
@@ -39,10 +45,11 @@ func LiveSeats(root string) []LiveSeat {
 		if now, ok := startTokenOf(e.PID); !ok || now != e.Start {
 			continue // gone, or the pid reused
 		}
-		seat := LiveSeat{Handle: e.Handle}
+		seat := LiveSeat{Handle: e.Handle, ProofLaunchID: e.LaunchID, ProofRequestID: e.RequestID}
 		if raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, e.Handle), launch.FileName)); err == nil {
 			if rec, err := launch.Decode(raw); err == nil {
 				seat.Pool = task.Pool{Runtime: rec.Runtime, Model: rec.Model, Effort: rec.Effort}
+				seat.RecordLaunchID, seat.RecordRequestID, seat.Worktree = rec.LaunchID, rec.RequestID, rec.Worktree
 			}
 		}
 		out = append(out, seat)

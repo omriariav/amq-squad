@@ -70,6 +70,9 @@ type exitItem struct {
 	// Deferrals counts a commit step's deferrals in a row (why commit),
 	// persisted so the limit holds across restarts.
 	Deferrals int `json:"deferrals,omitempty"`
+	// Attempt is the launch attempt a gone check is for: the request id the
+	// seat joined on (3.0.1 t17). One attempt's gone is checked once.
+	Attempt string `json:"attempt,omitempty"`
 }
 
 // SeatGoneObserver is a SeatLauncher told when a gone seat may be forgotten
@@ -122,12 +125,28 @@ func (s *Scheduler) AdoptClosing(handle string, pool task.Pool, at time.Time) {
 	}
 }
 
-func (s *Scheduler) queueExit(it exitItem) {
+func (s *Scheduler) queueExit(it exitItem) bool {
 	if s.Exits == nil || it.Handle == "" {
-		return
+		return false
+	}
+	// One exit check per gone attempt (3.0.1 t17, the reviewer's ruling): a
+	// second SeatGone for the same seat and attempt (the liveness check's,
+	// then a launcher's confirmation) is dropped here, before it runs a
+	// second check or a second slot release. A repeated check by design (R3,
+	// P1-9) is for another attempt, or a gone that names none.
+	if it.Gone && it.Attempt != "" {
+		key := it.Handle + "#" + it.Attempt
+		if s.goneQueued[key] {
+			return false
+		}
+		if s.goneQueued == nil {
+			s.goneQueued = map[string]bool{}
+		}
+		s.goneQueued[key] = true
 	}
 	s.exitQueue = append(s.exitQueue, it)
 	s.saveExits()
+	return true
 }
 
 // The exits ledger (N3): the queue of pending exit checks, written at every

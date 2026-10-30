@@ -28,8 +28,12 @@ converge:
    `amq_status`) and the files themselves (`amq_repo_read`). If something is
    wrong or a test the seat ran failed, add one follow-up task that names the
    failure. If a task is blocked because the seat changed a file outside its
-   declared files, reset it with `amq_task_reset`; the seat does it again
-   inside its files.
+   declared files, either reset it with `amq_task_reset` (the seat does it
+   again inside its files) or, when those files belong to the task, widen it
+   with `amq_task_widen` (only the paths the refusal names; a widening past
+   the grant's limits goes to the owner). If a task is blocked
+   `seat_replacement_needs_relaunch`, a seat is gone: relaunch the roster
+   with `amq_scheduler_relaunch` and say which seat in the reason.
 6. When every task is done, its evidence shows passing tests and the files
    read right, write a short summary of each task and its result, and end
    with the line `CONVERGED`.

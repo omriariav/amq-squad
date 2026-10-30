@@ -60,24 +60,19 @@ func TestWriteLaysOutTheSeatConfigDir(t *testing.T) {
 	if _, err := Write(planted, "dontAsk", "/wt/c1", t0); err == nil {
 		t.Fatal("a dir that already existed (not created by this launch) was used")
 	}
-	if len(w.Seeded) != 0 {
-		t.Fatalf("seeded %v with an empty Seed", w.Seeded)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude.json")); !os.IsNotExist(err) {
-		t.Fatal("an empty Seed wrote .claude.json")
-	}
 }
 
-// The digest covers settings.json and the plugin files only: Claude Code's
-// own state (projects, session files, .claude.json) does not move it; a
-// managed byte does.
+// The digest covers settings.json, the plugin files and the first-run facts
+// only: Claude Code's own state (projects, session files, the rest of
+// .claude.json) does not move it; a managed byte does.
 func TestDigestCoversOnlyTheManagedFiles(t *testing.T) {
 	dir := Dir(t.TempDir(), "c1", "l")
 	w, err := Write(dir, "dontAsk", "/wt", t0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"projects/-wt/session.jsonl", ".claude.json", "todos/x.json", "statsig/y"} {
+	os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"numStartups":3,"userID":"u","hasCompletedOnboarding":true,"projects":{"/wt":{"hasTrustDialogAccepted":true,"lastCost":1},"/repo":{"allowedTools":[]}}}`), 0o644)
+	for _, p := range []string{"projects/-wt/session.jsonl", "todos/x.json", "statsig/y"} {
 		full := filepath.Join(dir, filepath.FromSlash(p))
 		os.MkdirAll(filepath.Dir(full), 0o700)
 		os.WriteFile(full, []byte("claude state"), 0o600)
@@ -88,18 +83,6 @@ func TestDigestCoversOnlyTheManagedFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "plugins", "installed_plugins.json"), []byte("{}"), 0o600)
 	if d, _ := Digest(dir); d == w.Digest {
 		t.Fatal("a managed file changed and the digest did not")
-	}
-}
-
-// The first-run seed is an explicit list: when set, exactly those keys are
-// written and reported.
-func TestSeedIsExplicit(t *testing.T) {
-	prev := Seed
-	t.Cleanup(func() { Seed = prev })
-	Seed = map[string]any{"hasCompletedOnboarding": true, "theme": "dark"}
-	w, err := Write(Dir(t.TempDir(), "c1", "l"), "dontAsk", "/wt", t0)
-	if err != nil || strings.Join(w.Seeded, ",") != "hasCompletedOnboarding,theme" {
-		t.Fatalf("seeded %v %v", w.Seeded, err)
 	}
 }
 
