@@ -227,25 +227,35 @@ ok  	github.com/omriariav/amq-squad/v3/internal/cli
    whole-roster failure logs `roster_launch_failed` and one
    `seat_launch_failed` per seat. Kept so every t16 row keeps its meaning;
    `seat_launch_failed` is the one with the fields.
-5. **A second SeatGone for one seat.** No producer posts one for a seat
-   the scheduler has already closed or seen gone. The liveness check asks
-   only about seats still in the seat map that are neither closing nor
-   awaiting their SeatGone (internal/scheduler/launchfail.go:136-139). The
-   scheduler's own confirmed close deletes the seat from that map
-   (scheduler.go:913 and :939, roster.go:317), so the check never asks
-   about it again. The reverse also holds: the liveness SeatGone deletes
-   the seat in the same tick (scheduler.go:453-454), and every close path
-   walks only that map (scheduler.go:887, roster.go:293), so the seat is
-   never closed after it. If a second SeatGone did arrive, it would not be
-   a full no-op. The seat_gone decision and the seat map are guarded by the
-   map check at scheduler.go:453. The exit check part is not guarded:
-   with an exit checker, a second "gone" exit item is queued
-   (scheduler.go:475; queueExit at exits.go:125-131 does not deduplicate),
-   so the check runs twice. Without one, the launcher's SeatGone is called
-   twice (scheduler.go:468-471), and `Slots.Release` is idempotent
-   (schedproc/slots.go:74-81). A one-line guard would make the exit queue
-   a no-op too: skip the item when `exitPendingItem` (exits.go:271)
-   already holds it. It is not applied here.
+5. **A second SeatGone for one seat changes nothing.** The liveness
+   check is the only SeatGone producer in production
+   (internal/scheduler/launchfail.go, checkLiveness); the AMQ launcher's
+   close (closeOwed) posts none. The check asks only about seats in the seat
+   map that are neither closing nor awaiting their SeatGone, and the gone it
+   posts deletes the seat in the same tick, so it never fires twice for one
+   seat. Any other producer is covered too (round 4): the SeatGone handler
+   (scheduler.go, the SeatGone case) first asks `goneRepeat`
+   (launchfail.go), and a repeat or stale gone is logged
+   `seat_gone_ignored` and does nothing else. That means no second
+   seat_gone, no second exit check (`queueExit` does not deduplicate), no
+   second slot release through the launcher's SeatGone, and no task or seat
+   touched. A gone is a repeat when the request it names was already seen
+   gone. It is stale when it names a request other than the live seat's.
+   A gone that names no request is a repeat when the handle was already
+   seen gone and has not come up since (SeatUp and the restart's adoption
+   clear that). The liveness gone names the seat's request. The first gone
+   of a handle this incarnation never knew still runs its exit check (R3,
+   P1-9). The one case left open: a gone that names no request, arriving
+   after a new seat of the same handle came up, is taken as that seat's
+   end, so a new producer must name the request. Row:
+   TestASecondSeatGoneForOneSeatChangesNothing (a liveness gone, then a
+   gone with no request and the same request's gone again: one seat_gone,
+   one exit check, one release, the held task unchanged; a late gone of
+   the earlier request after a new seat of the handle came up, and a gone
+   naming another request against a live seat, leave the seat up). The
+   revert check (`revert_check_t17_gone.py`) undoes each of four parts
+   alone (the guard, the no-request repeat, the stale request, the
+   liveness gone's request id), and the row fails each time.
 6. **Liveness is roster mode only**, as the brief says; on-demand seats are
    test-only since t16 and still close on idleness. A seat that dies while
    it holds a lease takes the existing gone-seat path: its exit check is
