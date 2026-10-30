@@ -330,7 +330,16 @@ func TestExpiredWindowNeverMarksALaterLaunchsToken(t *testing.T) {
 		t.Fatalf("B's restaged record: launch %s request %s (A %s, B %s)", before.LaunchID, before.RequestID, launchA, launchB)
 	}
 	advance(31 * time.Second) // A's window ends; B's has 29 s left
-	time.Sleep(600 * time.Millisecond)
+	// Wait for A's watcher to have closed A's server (its expiry marks are
+	// written before done closes), bounded (Codex on round 5, item 3).
+	f.l.mu.Lock()
+	srvA := f.l.reqs[a.ID].proof
+	f.l.mu.Unlock()
+	select {
+	case <-srvA.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("A's window watcher never closed A's proof server")
+	}
 	after := staged()
 	if after.LaunchID != launchB || after.RequestID != b.ID || after.Proof.Token != before.Proof.Token {
 		t.Fatalf("A's window rewrote B's record: token %q (was %q), launch %s, request %s", after.Proof.Token, before.Proof.Token, after.LaunchID, after.RequestID)
