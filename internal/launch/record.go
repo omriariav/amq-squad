@@ -66,6 +66,7 @@ type Record struct {
 	Binary           string     `json:"binary"`
 	Argv             []string   `json:"argv,omitempty"`
 	SharedWorkstream bool       `json:"shared_workstream,omitempty"`
+	WakeRequired     bool       `json:"wake_required,omitempty"` // the launch compiled a required AMQ wake; seat-exec re-checks it (3.0.1)
 	Conversation     string     `json:"conversation,omitempty"`
 	Role             string     `json:"role,omitempty"`
 	Launcher         string     `json:"launcher,omitempty"`
@@ -96,8 +97,7 @@ type Exec struct {
 	PID          int       `json:"pid,omitempty"`
 	ProcessStart string    `json:"process_start,omitempty"` // procinfo.StartToken: raw ticks or kinfo timeval
 	ProviderArgv []string  `json:"provider_argv,omitempty"`
-	// LauncherArgv is a pi seat's exec: the embedded runtime's launcher
-	// (amq-squad pi run) with the adapter's provider argv after "--".
+	// LauncherArgv is a pi seat's exec: the embedded runtime's launcher (amq-squad pi run) with the adapter's provider argv after "--".
 	LauncherArgv  []string `json:"launcher_argv,omitempty"`
 	IdentityProof string   `json:"identity_proof,omitempty"`
 }

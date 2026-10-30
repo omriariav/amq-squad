@@ -287,9 +287,9 @@ entries:
   status: keep
 - path: internal/claudeseat/claudeseat.go
   v2_lines: 0
-  current_lines: 560
+  current_lines: 575
   fate: new
-  target_lines: 560
+  target_lines: 575
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: a Claude seat's own CLAUDE_CONFIG_DIR per launch: the hooks plugin and dontAsk with no allow rule, its digest and the check"
@@ -597,9 +597,9 @@ entries:
   status: new
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 787
+  current_lines: 816
   fate: new
-  target_lines: 787
+  target_lines: 816
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -919,9 +919,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 548
+  current_lines: 558
   fate: new
-  target_lines: 548
+  target_lines: 558
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
@@ -2905,7 +2905,7 @@ entries:
   note: "retired in 2b-2; class 1 ledger reason: minimal launch record; seat-exec writes it"
 - path: internal/launchintent/launchintent.go
   v2_lines: 538
-  current_lines: 538
+  current_lines: 544
   fate: keep
   target_lines: 450
   cluster: launchintent
@@ -3979,6 +3979,24 @@ entries:
   extract: ""
   reason: "5-amq-A: the Codex sandbox pins as provider arguments (AMQ v0.110.0 admits them, upstream ask 17) and sandbox_pins_missing"
   status: new
+- path: internal/seatexec/claudeguard.go
+  v2_lines: 0
+  current_lines: 94
+  fate: new
+  target_lines: 94
+  cluster: seatexec
+  extract: ""
+  reason: "3.0.1 t9: the seat-denied dialog tools and the read-only check that a Claude seat's config dir wires their guard deny (a Claude wake condition)"
+  status: new
+- path: internal/seatexec/codexhook.go
+  v2_lines: 0
+  current_lines: 109
+  fate: new
+  target_lines: 109
+  cluster: seatexec
+  extract: ""
+  reason: "3.0.1 t9: the read-only detection of AMQ's Codex dialog hook that gates a Codex seat's wake and feeds doctor's row"
+  status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
   current_lines: 196
@@ -4017,18 +4035,18 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 721
+  current_lines: 730
   fate: new
-  target_lines: 721
+  target_lines: 730
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 441
+  current_lines: 694
   fate: new
-  target_lines: 441
+  target_lines: 694
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -4089,18 +4107,18 @@ entries:
   status: new
 - path: internal/seatlaunch/report.go
   v2_lines: 0
-  current_lines: 73
+  current_lines: 76
   fate: new
-  target_lines: 73
+  target_lines: 76
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 594
+  current_lines: 631
   fate: new
-  target_lines: 594
+  target_lines: 631
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

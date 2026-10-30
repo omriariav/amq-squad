@@ -55,6 +55,19 @@ closes.
 
 ## 3.0.x
 
+- Speed of launches and communication (owner, 2026-10-30, the first
+  dogfood squad: "we need to speed up the agent launches and comms, it's
+  taking too much"). Measured on the day: a seat launch to its first turn
+  is seconds, but the path from "task added" to "seat working" ran through
+  the trust confirmation (the mayor's start cannot carry it, t8), the
+  quarantine cycle (each owner config change costs a signed clear), the
+  first-run screens of a Claude seat (t6), the Codex folder trust per
+  worktree, and the missing wake that leaves a seat idle after its first
+  turn (t9); and every owner-side step was a terminal and a phone round
+  trip. The 3.1 measure: time from `task add` to the seat's first tool
+  call, and from a seat's reply to the owner's phone, both recorded per
+  run; the targets are set when the first clean run gives the baseline.
+
 - The 3.0 Claude plugin is unreachable through the public marketplace: the
   marketplace source is the repository (omriariav/amq-squad) and Claude
   Code reads its default branch, main, which carries v2.31; the owner's
@@ -205,6 +218,18 @@ closes.
   status, can bring it back. 5-amq-B.
 - A hung verification is an `attention` line in `remote attach`'s output,
   not a row in the status document's attention queue. 5-amq-B.
+- AMQ's startup hold misses every amq-squad seat (3.0.1 t9, a stated
+  limit). coop exec decides its Startup marker from the command binary
+  (internal/cli/coop_exec_trust.go:74-75 and coop_exec_unix.go:994 at AMQ
+  v0.116.2), and a seat's command binary is the seat-exec wrapper, so no
+  seat gets the hold, and a wake doorbell can reach a folder-trust, update
+  or hook-review screen. Claude's first-run screens close with t6 (the
+  seat's config dir born complete; claudeseat.StartupScreensClosed turns a
+  Claude seat's wake on only then). For AMQ's hold under a wrapper, one of
+  two: seat-exec names the inner binary to AMQ, or AMQ honours a binary
+  the launch declares (an upstream ask). Until then a Codex seat's wake
+  requires the Codex config's trust entry for its worktree, which rules out
+  the trust screen only.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 
