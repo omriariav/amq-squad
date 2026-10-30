@@ -6,6 +6,17 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.1
 
+**Direction for 3.1 (owner, 2026-10-30, in his words):** "we want to copy
+claude agents team but with more binaries and models, and experience needs
+to be seamless; the other main objective is able to work remotely via buzz
+or grok bot." Measured against the first day of use, the seams are: a team
+needs git and four commands before it exists (the documents squad and the
+solo-lead-to-squad bridge below); the pi lead runs local models only (the
+cloud entries below); the phone is one-way (agents' replies do not reach
+Buzz; a Grok bot face does not exist). Each 3.1 brief names which seam it
+closes.
+
+
 - A documents squad (owner, 2026-10-30: "why is git strict if the role is
   non-coding? I can also trigger a team in a PM folder"): in 3.0 a team
   needs a git repository because the worktrees isolate seats and the commit
