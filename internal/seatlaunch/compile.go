@@ -138,7 +138,8 @@ type SeatWakeConditions struct {
 	ClaudeGuardWired bool
 	ClaudeGuardWhy   string
 	// ... and rules out every first-run screen
-	// (claudeseat.StartupScreensClosed; false until t6).
+	// (claudeseat.StartupScreensClosed: true for the dir claudeseat.Write
+	// seeds since 3.0.1 t6, from what Write seeds only).
 	ClaudeScreensClosed bool
 	ClaudeScreensWhy    string
 	// Codex: AMQ's Codex dialog hook entries are on the host

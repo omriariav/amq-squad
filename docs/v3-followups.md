@@ -230,6 +230,28 @@ closes.
   the launch declares (an upstream ask). Until then a Codex seat's wake
   requires the Codex config's trust entry for its worktree, which rules out
   the trust screen only.
+- Claude seat config digest (3.0.1 t6, reviewer ruling 2026-10-30): if
+  the owner-run live row (docs/v3-spike/5-claudeseat-execution.md) shows
+  that Claude Code 2.1.314 never creates a `projects` entry for the
+  worktree's canonical repository root, tighten the `.claude.json` digest
+  from "keys carrying trust or a permission input" to the bare `projects`
+  key set, so any added entry moves it. If the entry does appear, record
+  its keys there and keep the current digest.
+- The Claude seat config checks are facts about the pinned Claude Code
+  binary (3.0.1 t6): the bookkeeping sets pI and kI and the walk of their
+  keys against the binary's permission readers. Today a re-pin's step is to
+  re-extract internal/claudeseat/testdata/claude-*-bookkeeping.js and re-walk
+  by hand (the execution note's method); make the re-walk a check, so that
+  doctor's pin row refuses a pin whose sets differ from the code's.
+- Claude seats and external CLAUDE.md includes (3.0.1 t6, fifth commit):
+  when a CLAUDE.md the seat loads at start imports a file outside its
+  worktree, Claude Code 2.1.314 opens its external-includes dialog unless
+  the project entry approves the includes. claudeseat never seeds that
+  approval, so such a seat's wake stays off and seat-exec refuses it
+  (claude_external_includes_pending). Decide how approval is granted: an
+  owner-signed per-worktree approval written into the seat's config at
+  launch, or a host check that names the imports for the owner to move
+  inside the worktree.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 

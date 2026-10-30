@@ -55,8 +55,14 @@ func TestClaudeSeatRunsWithItsOwnConfigDir(t *testing.T) {
 }
 
 // seat-exec refuses a Claude seat whose config dir is missing, not 0700, or
-// not what the launch wrote (claude_permission_mismatch), or whose plugin
-// does not run the guard (claude_hooks_missing).
+// not what the launch wrote (claude_permission_mismatch), whose plugin does
+// not run the guard or is not enabled (claude_hooks_missing), or that lacks
+// a first-run fact (3.0.1 t6): onboarding or the theme
+// (claude_onboarding_missing), or the worktree's trust (claude_trust_missing),
+// or whose .claude.json trusts another project or carries a permission
+// input (claude_config_unexpected).
+// The first-run rows re-record the digest: a launch that wrote the
+// incomplete dir is refused by name, not only by digest.
 func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 	cases := map[string]struct {
 		code    string
@@ -75,6 +81,57 @@ func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 			}
 			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
 			f.stage()
+		}},
+		"onboarding not complete, digest re-recorded": {ClaudeOnboardingMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"no theme, digest re-recorded": {ClaudeOnboardingMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":[]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"worktree not trusted, digest re-recorded": {ClaudeTrustMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"plugin not enabled, digest re-recorded": {ClaudeHooksMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":[]},"theme":"dark"}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"another entry trusted, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true},"/repo":{"hasTrustDialogAccepted":true}}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"canonical repository root entry, digest re-recorded": {ClaudeTrustRootRefused, func(f *fixture, dir string) {
+			// f.wt becomes a linked worktree of <base>/repo after the launch;
+			// seat-exec finds the root at check time too.
+			repo := filepath.Join(f.base, "repo")
+			admin := filepath.Join(repo, ".git", "worktrees", "wt1")
+			os.MkdirAll(admin, 0o700)
+			write(t, filepath.Join(admin, "commondir"), "../..\n", 0o600)
+			write(t, filepath.Join(admin, "gitdir"), filepath.Join(f.wt, ".git")+"\n", 0o600)
+			write(t, filepath.Join(f.wt, ".git"), "gitdir: "+admin+"\n", 0o600)
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true},"`+repo+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"allowedTools, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"allowedTools":["Bash(*)"],"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"a CLAUDE.md importing a file outside the worktree": {ClaudeExternalIncludesPending, func(f *fixture, dir string) {
+			outside := filepath.Join(f.base, "shared-rules.md")
+			write(t, outside, "shared\n", 0o600)
+			write(t, filepath.Join(f.wt, "CLAUDE.md"), "@"+outside+"\n", 0o600)
+		}},
+		"trust dropped after the launch": {ClaudePermissionMismatch, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"numStartups":1}`, 0o600)
 		}},
 	}
 	for name, tc := range cases {
