@@ -6,6 +6,16 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.1
 
+- A documents squad (owner, 2026-10-30: "why is git strict if the role is
+  non-coding? I can also trigger a team in a PM folder"): in 3.0 a team
+  needs a git repository because the worktrees isolate seats and the commit
+  step is the evidence of each seat's change; the work being documents
+  changes nothing in that. Today a `git init` with no remote is enough: the
+  commit step commits and does not push (push_url_missing is a note, not a
+  refusal). 3.1: a squad mode for non-code folders that keeps a repository
+  underneath for isolation and evidence without the owner setting it up or
+  seeing it, with the seats' output presented as files and messages.
+
 - Linux seats (platform decision 2026-10-29, plan 16.4; CI run
   40955238412). (a) The launch's proof socket binds and dials through
   descriptors on both ends (D1's pattern, the proof-side twin): on a Linux
