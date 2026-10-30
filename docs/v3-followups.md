@@ -198,6 +198,11 @@ closes.
   status, can bring it back. 5-amq-B.
 - A hung verification is an `attention` line in `remote attach`'s output,
   not a row in the status document's attention queue. 5-amq-B.
+- Seats run with the owner's HOME, so `~/.amq-squad` is reachable by any
+  tool a seat has; 3.0.1's doctor refusal keys on the seat environment
+  marker, a fence against a brief's or an agent's mistake, not against a
+  seat that unsets its environment. The real fence: a seat-owned
+  `AMQ_SQUAD_HOME` with a read-only registry mirror. 3.0.1-t15.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 

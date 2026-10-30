@@ -115,6 +115,65 @@ fails on each assertion alone. The drift-row check sees
 `release drift o/r`; the gh-call check sees 2 calls; the extensions check
 finds `<AM_ROOT>/extensions` written.
 
+### Plain doctor in a seat: every write or network path
+
+One walk of `internal/cli/doctor.go`, `internal/cli/doctor_host.go` and
+`internal/cli/doctor_release_drift.go`, following each call into its
+package. Lines are at this commit. "Plain"
+means no `--probe`, `--write-registry` or `--fix`. Those three are refused
+before any of this runs (doctor.go:218).
+
+| Path | Where | In a seat |
+|---|---|---|
+| Release-drift hook selection | doctor.go:238 into doctor_release_drift.go:76 (`doctorReleaseDriftFor`: in a seat it returns the skip row, :82; outside, the hook, :79) | skipped in a seat (one ok row naming the marker and the owner) |
+| Owner grants read for the drift hook | doctor_release_drift.go:59 (`grants.Load`) | skipped in a seat (never called) |
+| gh tag and release listing (network) | doctor_release_drift.go:63 via `doctorReleaseLister`, :68 (`mergetrain.GH`) | skipped in a seat |
+| `mergetrain.Drift`: writes baselines, coverage bindings and owner alerts under `<AM_ROOT>/extensions/amq-squad/alerts` | doctor_release_drift.go:38 (gate store opened at :25) | skipped in a seat |
+| Registry write `~/.amq-squad/registry.yaml` | doctor_host.go:228 (`registry.Write`, only under `--write-registry`/`--probe`) | skipped in a seat (refused, doctor.go:218) |
+| Provider probes: Codex model-id turns, R12 local probe, TTFT | doctor_host.go:220 (`runProbes`, only under `--probe`) | skipped in a seat (refused) |
+| Runtime removal and prune under `~/.amq-squad/runtime` | doctor_pi.go:77-78 and :113-114 (only under `--fix`) | skipped in a seat (refused) |
+| Registry reads | doctor_host.go:215, :476, :644 | read-only |
+| Runtime pin sync | doctor.go:237 (`syncRegistryRuntimePin`: in-memory pin from the embedded manifest) | read-only |
+| Runtime re-hash `~/.amq-squad/runtime/<name>` | doctor_host.go:99 into doctor_pi.go (`piruntime.Open`, descriptor-anchored reads); versions row doctor.go:372 (`piruntime.List`) | read-only |
+| `amq env --json` | doctor.go:356 into amq_env.go:54 (update check off: amq_env.go:58) | read-only (local subprocess) |
+| `amq doctor --ops --json` | doctor.go:360, :390 into amq.go:32 (update check off: amq.go:36). amq's ops checks write only under `--fix-wake-locks`/`--fix-mailboxes`, which are not passed (amq v0.116.2 internal/cli/doctor_ops.go) | read-only (local subprocess) |
+| PATH `amq-squad version` | doctor.go:361 into :113 (prints the version) | read-only (local subprocess) |
+| `amq`, `amq-remote`, `amq-owner-sign --version` | doctor.go:363 into doctor_amq_floor.go:46 (update check off: :48) | read-only (local subprocess) |
+| Tool detection: `<tool> --version` for claude, codex, grok, cursor-agent, ollama, amq, amq-remote, gh; `tmux -V`; 2 s timeout | doctor_host.go:96 into registry/detect.go:84, :118 | read-only (local subprocess; the third-party tool's own behaviour on `--version` is outside amq-squad's code) |
+| Login state per tool | registry/detect.go `detectLogin` (file presence only, no login command) | read-only |
+| Host facts: `sysctl`, `nvidia-smi` | registry/detect.go:348, :351, :365 | read-only (local subprocess) |
+| Ollama model list over HTTP | registry/detect.go:414-416 (refused unless the host is loopback) | read-only (loopback only, no internet) |
+| `pmset -g` | doctor_host.go:329 | read-only (local subprocess) |
+| `~/Library/LaunchAgents` listing | doctor_host.go:341 | read-only |
+| `amq-remote service status --json` | doctor_host.go:351 into buzz/service.go:44 | read-only (local subprocess) |
+| Buzz share grant signatures | doctor_host.go:355 (`buzzGrantCheck`: binding and share files, local signature check) | read-only |
+| Codex trust and notify line in the Codex config | doctor_host.go:118 | read-only |
+| Shell profile exports (names only), owner agent config against the preflight copy | doctor_host.go:119-120 | read-only |
+| Grants file and its mode, routing table, worktree allow rules | doctor_host.go:123-125 | read-only |
+| Push target and gh pin: grants read, `pin.Verify` re-hash, `command -v gh` and a sha256 of it | doctor_host.go:126 into :476-487 | read-only (gh is hashed, never run) |
+| Claude seat token status, claude pin | doctor_host.go:127-128 (token never printed; the installed claude is resolved and hashed, never run) | read-only |
+| Status contract self-check, squad.yaml golden | doctor_host.go:129-130 (in-memory) | read-only |
+| `--usage-scan` session-file scan | doctor_host.go:132 (only with the flag) | read-only |
+| Seat clear checks: clear mode from grants and the binding, open clear gates | doctor.go:238 into seat_clear_gate.go:293, :306 (`gatestore.Open` creates nothing; `IDs`, `Load`, `State`, `QuestionPublished` read) | read-only |
+| Output | doctor.go:300, :307 (stdout) | read-only |
+
+Nothing else in plain doctor writes or reaches past the host. Only the
+release-drift hook was neither read-only nor already refused, and it is
+the one this commit skips in a seat.
+
+### What the marker fences, and what it does not
+
+The seat environment marker is a fence against a brief's or an agent's
+mistake: a seat told to run `doctor --probe` (the t5 incident), or one
+that reaches for it unprompted, is refused with the reason. It is not a
+fence against a seat that unsets its own environment: `env -u AM_ME -u
+AMQ_SQUAD_SEAT -u AMQ_SQUAD_ROLE_PATH amq-squad doctor --probe` passes it.
+While seats run with the owner's HOME, `~/.amq-squad` (the registry, the
+runtimes, the grants) is reachable by any tool a seat has, doctor or not.
+The real fence is a seat-owned `AMQ_SQUAD_HOME` with a read-only registry
+mirror, so a seat never holds a path to the owner's state. That is a 3.0.x
+item (docs/v3-followups.md), not 3.0.1.
+
 ## Docs
 
 - README.md, the registry step of the doctor section: seats never probe.
