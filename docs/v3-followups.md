@@ -275,8 +275,8 @@ closes.
   seat that unsets its environment. The real fence: a seat-owned
   `AMQ_SQUAD_HOME` with a read-only registry mirror. 3.0.1-t15.
 - 3.0.2: `release prepare` checks only the shape of `--commit` (internal/releaseflow/releaseflow.go:116): a well-formed SHA that names nothing raises two owner gates (v3.0.1's void series). Resolve the commit before any gate: `git cat-file -e` locally and containment in the named branch on the remote, as TagCommit resolves the tag at :46; refuse with a named reason.
-- 3.0.x: `remote attach` does not start the amq-remote endpoint (`amq-remote up`, the enrollment script's step D) and does not notice it gone; moving the attach between sessions on 2026-10-30 left the owner's gate answers undelivered until the endpoint was restarted by hand. The attach checks the endpoint's pid file and socket at start and each interval and reports its absence as an attention line.
-- 3.0.x: `release publish` must repeat the prepare's `--notes` exactly (the notes are part of the release spec); the refusal "release spec changed" does not say which field moved. Name the field.
+- 3.0.x: `remote attach` does not start the amq-remote endpoint (`amq-remote up`, the enrollment script's step D) and does not notice it gone; moving the attach between sessions on 2026-10-30 left the owner's gate answers undelivered until the endpoint was restarted by hand. The attach checks for a live endpoint (pid file and socket) at start and each interval and refuses or says so; it never stops one.
+- 3.0.x: `release publish` must repeat the prepare's `--notes` exactly (the notes are part of the release spec); the refusal "release spec changed" does not say which field moved. Publish takes the prepared spec from the series store and refuses only a mismatch.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 
