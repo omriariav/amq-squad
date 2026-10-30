@@ -6,8 +6,9 @@ Branch v3-301-t7 from origin/v3 at a1a67151. Host: the owner's macOS laptop, 202
 
 `TestBlockIsLinearOnALongLine` (internal/redact/block_test.go) no longer races Block
 against an absolute wall-clock bound. It times Block in one process on a 64 KiB
-line and on a 1 MiB line. Each line is a credential-named key, an equals sign and
-a one-letter value, repeated, built at run time. The 1 MiB line holds 16x the
+line and on a 1 MiB line. Each line repeats one assignment, built at run time;
+Block's output renders each one as `password=<redacted> `. The input value is a
+single letter. The 1 MiB line holds 16x the
 values and must take no more than 64x the time. One warm-up Block call on the
 small line runs first. The two sizes are then timed in three interleaved pairs,
 small then large, and the best of each size counts. If that best ratio is over
@@ -122,8 +123,9 @@ brief's example shape and fails as required.
   16.75 s (first commit); ok, 165.8 s, this test 17.57 s (fix commit).
 - `go test -count=1 -run TestNoCredentialShapedValueUnderDocsOrEvidence ./internal/redact`:
   failed on the first commit's note (two lines held the literal pair), ok on the fix commit.
-- The line is a credential-named key, an equals sign and a one-letter value,
-  repeated and built at run time. The one-letter value matches no
+- The line repeats one assignment, built at run time, which Block renders as
+  `password=<redacted> `. The input value is a single letter that matches no
   RealCredentialShapes entry, and no test output prints a value. This note
-  describes the pair in words, so the repository-wide credential-shape test
+  shows the assignment only in Block's redacted form and never puts the key
+  name next to the input value, so the repository-wide credential-shape test
   (TestNoCredentialShapedValueUnderDocsOrEvidence) passes on it.
