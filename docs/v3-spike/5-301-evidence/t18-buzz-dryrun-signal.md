@@ -130,3 +130,53 @@ enroll_test.go:423: the routed message is not in lead-a's and lead-b's inboxes
 ```
 
 route.go was restored with `git checkout` and the tree was clean after.
+
+## Fix round (Codex pass on 20717346)
+
+- **The budget ends the whole process tree.** `exec.CommandContext`'s default
+  cancel kills only the direct child, so serve or attach could outlive the
+  budget and race the scratch HOME's removal. Each run now goes through
+  `guardTree` (internal/buzz/proctree_test.go): the root starts its own
+  process group, and on cancel the guard records the root's descendants
+  from `ps` and the group, then sends them TERM. That covers the plain
+  script runs, the pty runs, the rehearsal commands, `amq init` and
+  `remote attach`. The descendants walk is what reaches the pty child, since
+  script(1) starts it in its own session outside the group. After the run
+  returns, `reap` sends KILL to anything left after a 3 s grace. It waits
+  until no recorded pid and no group member is alive, and only then does any
+  cleanup run. A survivor fails the test.
+- **Hang path, the reap row.** These checks used a temporary budget and were
+  not committed:
+
+  ```
+  REAPED: run 2 (owner signs through the pipe): process group 67954 and pids [67955 67973 67974 67954] (the root and its descendants when recorded), none alive
+  hung: run 2 (owner signs through the pipe) did not finish (the run's 5s budget ran out)
+  REAPED: run 1 (phase A): process group 68701 and pids [68703 68701] (the root and its descendants when recorded), none alive
+  hung: run 1 (phase A) did not finish (the run's 300ms budget ran out)
+  ```
+
+  A `ps` diff of amq-remote, script(1) and enroll.sh processes before and
+  after each check showed no new process left.
+- **`remote attach`.** `stopAttach` records attach's tree before the
+  interrupt and reaps it after. Every normal run logs
+  `REAPED: rehearsal: 4.2 remote attach: ... none alive` (10 of 10 below).
+- **`amq init` in the dry run.** It runs under the budget and with the
+  test's environment, so it gets the scratch HOME and
+  `AMQ_NO_UPDATE_CHECK=1`. Before, it inherited the real environment, and
+  amq v0.116.2 starts its update notifier before it dispatches init
+  (internal/cli/cli.go). `amq --version` returns before the notifier, so the
+  version probes are unchanged.
+- **The one step that is not offline.** The test builds amq-squad with
+  `go build` under the real HOME and the gate host's module cache, before
+  the budget starts. If a dependency is missing from the cache, that build
+  downloads it. It is unchanged here. The 3.0.x follow-up is a build with
+  `GOFLAGS=-mod=mod GOPROXY=off` or a vendored tree.
+
+Runs after the fix round, this host, with no added load (load average 6.6
+to 9.2):
+
+- Gate: `go build ./... && go vet ./internal/buzz && go test -count=1 ./internal/buzz`
+  green (41.3 s).
+- `go test -count=10 -run TestOwnerScriptDryRun -v ./internal/buzz`: 10 of
+  10 PASS, 308.2 s. Per-run times: 30.84 29.81 31.89 30.71 32.91 30.31
+  30.32 30.42 30.54 30.17.

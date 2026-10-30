@@ -86,6 +86,12 @@ closes.
   the test relay, one 5 minute budget ends a hung run and names the step,
   and no duration fails the test. Evidence:
   docs/v3-spike/5-301-evidence/t18-buzz-dryrun-signal.md.
+- The buzz dry run's one step that is not offline (found in t18's Codex
+  pass, 2026-10-30): TestOwnerScriptDryRun and
+  TestOwnerSignerCrashLeavesNoKey build amq-squad with `go build` under the
+  real HOME and the gate host's module cache, and a missing dependency is
+  downloaded. Build offline in the test: `GOFLAGS=-mod=mod GOPROXY=off` (a
+  missing module fails the build as an error), or a vendored tree.
 
 - The pi lead on a cloud model (owner, 2026-10-30: "can I start pi and use
   a codex / claude model in it?"): the registry builds pi entries for

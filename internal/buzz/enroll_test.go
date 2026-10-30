@@ -154,7 +154,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	var runs []run
 	plain := func(name string, extra ...string) run {
 		cmd := exec.CommandContext(ctx, "bash", script, npub, relay.url())
-		cmd.WaitDelay = 5 * time.Second
+		tree := guardTree(cmd)
 		cmd.Env = append(slices.Clone(env), extra...)
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e
@@ -162,6 +162,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		err := cmd.Run()
 		r := run{name: name, out: o.String(), errOut: e.String(), took: time.Since(start)}
 		if ctx.Err() != nil {
+			tree.reap(t, name) // before any cleanup removes the scratch HOME
 			t.Fatalf("hung: %s did not finish (%v)\n%s%s", name, context.Cause(ctx), r.out, r.errOut)
 		}
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -268,7 +269,13 @@ func TestOwnerScriptDryRun(t *testing.T) {
 
 	// the squad: one lead (lead-a) the agent attaches to, lead-b routable
 	squad := filepath.Join(realTempDir(t), "root")
-	if out, err := exec.Command("amq", "init", "--root", squad, "--agents", "buzz,lead-a,lead-b").CombinedOutput(); err != nil {
+	initCmd := exec.CommandContext(ctx, "amq", "init", "--root", squad, "--agents", "buzz,lead-a,lead-b")
+	initCmd.Env = env // the scratch HOME and AMQ_NO_UPDATE_CHECK=1: amq starts its update notifier before init
+	initTree := guardTree(initCmd)
+	if out, err := initCmd.CombinedOutput(); ctx.Err() != nil {
+		initTree.reap(t, "amq init")
+		t.Fatalf("hung: amq init did not finish (%v)\n%s", context.Cause(ctx), out)
+	} else if err != nil {
 		t.Fatalf("amq init: %v\n%s", err, out)
 	}
 	target, err := Resolve(squad, "lead-a", []string{"lead-b"})
@@ -574,7 +581,7 @@ func ptyRun(ctx context.Context, t *testing.T, name, scriptPath string, args, en
 		}
 		cmd = exec.CommandContext(ctx, "script", "-q", "-e", "-c", strings.Join(quoted, " "), "/dev/null")
 	}
-	cmd.WaitDelay = 5 * time.Second
+	tree := guardTree(cmd)
 	cmd.Env = env
 	w, err := cmd.StdinPipe() // an OS pipe: Wait closes it after the exit
 	if err != nil {
@@ -593,6 +600,7 @@ func ptyRun(ctx context.Context, t *testing.T, name, scriptPath string, args, en
 	err = cmd.Wait()
 	r := run{name: name, out: out.String(), took: time.Since(start)}
 	if ctx.Err() != nil { // Errorf: a caller may run this off the test goroutine
+		tree.reap(t, name) // before any cleanup removes the scratch HOME
 		t.Errorf("hung: %s did not finish (%v)\n%s", name, context.Cause(ctx), r.out)
 		r.rc = -1
 		return r

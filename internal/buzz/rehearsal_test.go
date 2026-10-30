@@ -54,13 +54,14 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	var runs []run
 	sh := func(name string, argv ...string) run {
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-		cmd.WaitDelay = 5 * time.Second
+		tree := guardTree(cmd)
 		cmd.Env, cmd.Dir = env, home
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e
 		err := cmd.Run()
 		r := run{name: "rehearsal: " + name, out: o.String(), errOut: e.String()}
 		if ctx.Err() != nil {
+			tree.reap(t, r.name) // before any cleanup removes the scratch HOME
 			t.Fatalf("hung: %s did not finish (%v)\n%s%s", r.name, context.Cause(ctx), r.out, r.errOut)
 		}
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -119,8 +120,9 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	}
 	// 4.1, 4.2 the operator session runs, attach (no --lead: the operator)
 	presence("active")
-	attach := exec.Command(amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
+	attach := exec.CommandContext(ctx, amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
 	attach.Env, attach.Dir = env, home
+	attachTree := guardTree(attach) // the budget TERMs attach and the endpoint it starts
 	aout, aerr := syncBuffer{bell: &relay.bell}, syncBuffer{}
 	attach.Stdout, attach.Stderr = &aout, &aerr
 	if err := attach.Start(); err != nil {
@@ -132,6 +134,7 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 			return
 		}
 		stopped = true
+		attachTree.record(attach.Process.Pid) // attach and the endpoint it started, while attach links them
 		_ = attach.Process.Signal(os.Interrupt)
 		done := make(chan error, 1)
 		go func() { done <- attach.Wait() }()
@@ -141,6 +144,7 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 			_ = attach.Process.Kill()
 			<-done
 		}
+		attachTree.reap(t, "rehearsal: 4.2 remote attach") // nothing it started outlives it
 		runs = append(runs, run{name: "rehearsal: 4.2 remote attach", out: aout.String(), errOut: aerr.String()})
 		t.Logf("rehearsal: 4.2 remote attach output:\n%s%s", aout.String(), aerr.String())
 	}
