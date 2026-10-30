@@ -166,21 +166,16 @@ route.go was restored with `git checkout` and the tree was clean after.
   amq v0.116.2 starts its update notifier before it dispatches init
   (internal/cli/cli.go). `amq --version` returns before the notifier, so the
   version probes are unchanged.
-- **The amq-squad build is offline.** The test builds amq-squad with
-  `go build` under the real HOME, before the budget starts, now with
-  `GOPROXY=off` (reviewer ruling 2026-10-30). The build compiles this tree
-  from the same go.mod the test binary was just built from, so the module
-  cache holds every module by construction. A missing module fails the
-  build closed with a clear message instead of being downloaded. The crash
-  test builds through the same helper. `GOFLAGS=-mod=mod` was not needed.
-  Fail-closed check against an empty module cache
-  (`GOMODCACHE=<empty dir> GOPROXY=off go build ./cmd/amq-squad`): exit 1,
-  nothing fetched (the cache held only go's lock files), and each import
-  reads:
-
-  ```
-  ../nostr/event.go:26:2: module lookup disabled by GOPROXY=off
-  ```
+- **The amq-squad build runs with `GOPROXY=off`** in both buzz tests that
+  build it, so a missing module fails closed instead of being downloaded.
+- **The crash test's first run is guarded.** Its phase A `bash enroll.sh`
+  run goes through `guardTree` under its own budget, like the dry run's
+  runs.
+- **Left as is: the enrollment endpoint's final kill.** The tree walk
+  reaches the background enrollment endpoint (`amq-remote up`) only while
+  its parent still links it. The endpoint is stopped by the existing
+  `stopPID` cleanup: TERM, up to 5 s, then KILL, with no wait after the
+  KILL.
 
 Runs after the fix round, this host, with no added load (load average 6.6
 to 9.2):

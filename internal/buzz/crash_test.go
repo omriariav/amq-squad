@@ -103,9 +103,15 @@ func TestOwnerSignerCrashLeavesNoKey(t *testing.T) {
 		"BUZZ_NO_CLIPBOARD=1", "BUZZ_UP_SETTLE=1", "AMQ_NO_UPDATE_CHECK=1")
 	t.Cleanup(func() { stopPID(filepath.Join(home, ".amq-squad", "buzz", "enroll-up.pid")) })
 
-	first := exec.Command("bash", script, npub, relayURL)
+	firstCtx := budget(t) // ends a hung phase A run only
+	first := exec.CommandContext(firstCtx, "bash", script, npub, relayURL)
 	first.Env = env
+	firstTree := guardTree(first)
 	out1, _ := first.CombinedOutput()
+	if firstCtx.Err() != nil {
+		firstTree.reap(t, "phase A") // before any cleanup removes the scratch HOME
+		t.Fatalf("hung: phase A did not finish (%v)\n%s", context.Cause(firstCtx), out1)
+	}
 	shareTxt, _ := os.ReadFile(filepath.Join(home, ".amq-squad", "buzz", "share.txt"))
 	body := ""
 	for _, line := range strings.Split(string(shareTxt), "\n") {
