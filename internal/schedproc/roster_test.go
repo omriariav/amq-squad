@@ -314,7 +314,9 @@ func TestSupervisingLeadProvesTheTeamModeLead(t *testing.T) {
 		t.Fatalf("the team-mode lead: %+v %v", reply, err)
 	}
 	s.Close()
-	s = serve(SupervisingLead(me, start+"-reused", procinfo.StartToken))
+	// The parent recorded at start is gone and its pid reused: the stamp
+	// read at the decision differs from the one recorded.
+	s = serve(SupervisingLead(me, start, func(int) (string, bool) { return start + "-reused", true }))
 	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedOriginUnknown || relaunched != 1 {
 		t.Fatalf("a reused parent: %+v %v", reply, err)
 	}
