@@ -125,6 +125,11 @@ func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
 			f.stage()
 		}},
+		"a CLAUDE.md importing a file outside the worktree": {ClaudeExternalIncludesPending, func(f *fixture, dir string) {
+			outside := filepath.Join(f.base, "shared-rules.md")
+			write(t, outside, "shared\n", 0o600)
+			write(t, filepath.Join(f.wt, "CLAUDE.md"), "@"+outside+"\n", 0o600)
+		}},
 		"trust dropped after the launch": {ClaudePermissionMismatch, func(f *fixture, dir string) {
 			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"numStartups":1}`, 0o600)
 		}},

@@ -652,8 +652,10 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 // and a theme (claude_onboarding_missing), the worktree's trust under its
 // NFC keys (claude_trust_missing), no entry for the canonical repository
 // root (claude_trust_root_refused), nothing beyond the launch's keys and
-// the binary's bookkeeping (claude_config_unexpected), and the hooks plugin
-// enabled and wired (claude_hooks_missing). It reads only what Write seeds
+// the binary's bookkeeping and no trust or permission input of the wrong
+// shape (claude_config_unexpected), no CLAUDE.md import from outside the
+// worktree pending approval (claude_external_includes_pending), and the
+// hooks plugin enabled and wired (claude_hooks_missing). It reads only what Write seeds
 // (settings.json, .claude.json, the worktree pointer, plugins/) and the
 // worktree's own .git layout, never anything Claude Code writes after the
 // launch. It returns the reason code and the detail of the first gap ("",
@@ -667,6 +669,11 @@ func screensGap(dir string) (string, string) {
 	if err != nil || json.Unmarshal(raw, &settings) != nil {
 		return OnboardingMissing, "the seat's settings.json is missing or unreadable"
 	}
+	if cfg, err := readGlobalConfig(dir); err == nil {
+		if bad := malformedInputs(cfg); len(bad) > 0 {
+			return ConfigUnexpected, "the seat's " + GlobalConfigFile + " carries a trust or permission input of the wrong shape (2.1.314 tests them by truthiness): " + strings.Join(bad, "; ")
+		}
+	}
 	onboarding, trust := firstRunGaps(dir, settings.Theme)
 	if len(onboarding) > 0 {
 		return OnboardingMissing, "the seat's Claude config dir is not past first-run onboarding: " + strings.Join(onboarding, "; ")
@@ -679,6 +686,11 @@ func screensGap(dir string) (string, string) {
 	}
 	if extra := unexpectedConfig(dir); len(extra) > 0 {
 		return ConfigUnexpected, "the seat's " + GlobalConfigFile + " carries what the launch did not write and Claude Code does not keep as bookkeeping: " + strings.Join(extra, "; ")
+	}
+	if worktree, err := recordedWorktree(dir); err == nil {
+		if ext := ExternalIncludes(worktree); len(ext) > 0 {
+			return ExternalIncludesPending, "a CLAUDE.md the seat loads at start imports files outside its worktree and nothing approves them, so Claude Code would open its external-includes dialog: " + strings.Join(ext, "; ")
+		}
 	}
 	if !settings.EnabledPlugins[PluginKey] {
 		return HooksMissing, "the amq-squad plugin is not enabled in the seat's settings.json"
@@ -770,9 +782,11 @@ const OnboardingUnverified = "claude_onboarding_unverified"
 // condition of the seat's wake (3.0.1). In 2.1.314 those are the onboarding
 // flow (hasCompletedOnboarding, with the theme in settings.json), the folder
 // trust dialog (projects[<worktree>].hasTrustDialogAccepted under the NFC
-// keys, with no canonical-root entry and nothing else in projects), and the
-// hooks, which the binary holds until that trust (loadHooksModulesHeldForTrust)
-// and which run only with the plugin enabled and wired. It is screensGap,
+// keys, with no canonical-root entry and nothing else in projects), the
+// external-includes dialog (no CLAUDE.md the seat loads imports a file
+// outside its worktree), and the hooks, which the binary holds until that
+// trust (loadHooksModulesHeldForTrust) and which run only with the plugin
+// enabled and wired. It is screensGap,
 // the check seat-exec's Check runs before exec: one source of truth.
 //
 // It depends only on what Write seeds, never on anything written after the

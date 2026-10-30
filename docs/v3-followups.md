@@ -217,6 +217,15 @@ closes.
   from "keys carrying trust or a permission input" to the bare `projects`
   key set, so any added entry moves it. If the entry does appear, record
   its keys there and keep the current digest.
+- Claude seats and external CLAUDE.md includes (3.0.1 t6, fifth commit):
+  when a CLAUDE.md the seat loads at start imports a file outside its
+  worktree, Claude Code 2.1.314 opens its external-includes dialog unless
+  the project entry approves the includes. claudeseat never seeds that
+  approval, so such a seat's wake stays off and seat-exec refuses it
+  (claude_external_includes_pending). Decide how approval is granted: an
+  owner-signed per-worktree approval written into the seat's config at
+  launch, or a host check that names the imports for the owner to move
+  inside the worktree.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 

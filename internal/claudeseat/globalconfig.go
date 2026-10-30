@@ -49,43 +49,61 @@ var bookkeepingProject = setOf("lastCost", "lastAPIDuration", "lastAPIDurationWi
 	"seenTeamArtifactPaths", "hasUnseenTeamArtifacts", "hasClaudeMdExternalIncludesWarningShown", "history",
 	"projectOnboardingSeenCount", "hasCompletedProjectOnboarding", "devIntentsDetected")
 
-// How a permission input enters the digest: its value, its key names only
-// (a map whose values may hold a secret), only that it is set (a
-// credential or a command), or the count of approved entries.
+// permissionPathBookkeeping are the keys of the binary's bookkeeping sets
+// whose values 2.1.314 reads on a permission path (the fifth commit's walk,
+// listed with their readers in docs/v3-spike/5-claudeseat-execution.md):
+// mcpLegacyKeyOwners (kW and Fn, the legacy-key MCP grant behind the flag
+// tengu_marlin_thicket), cachedGrowthBookFeatures (the flag values
+// getAllFeatures falls back to, tengu_marlin_thicket among them) and, in a
+// project entry, hasClaudeMdExternalIncludesWarningShown (p9s skips the
+// external-includes dialog on it). Check refuses them before exec; they are
+// not bookkeeping for the allowance.
+var permissionPathBookkeeping = setOf("mcpLegacyKeyOwners", "cachedGrowthBookFeatures", "hasClaudeMdExternalIncludesWarningShown")
+
+// inputKind is a permission input's expected shape, which also fixes its
+// digest form.
+type inputKind int
+
 const (
-	asValue = iota
-	asNames
-	asPresence
-	asApprovedCount
+	kindBool      inputKind = iota // a bool; true enters the digest
+	kindStrings                    // a list of strings; the list enters
+	kindNames                      // an object whose values may hold a secret; its key names enter
+	kindSecret                     // a string credential or command; "set" enters
+	kindApprovals                  // {approved: [...], rejected: [...]}; the approved count enters
+	kindObject                     // an object; the object enters
+	kindCount                      // an object; its presence and entry count enter, even empty
 )
 
 // permissionGlobal are the top-level permission inputs.
-var permissionGlobal = map[string]int{
-	"mcpServers":                    asNames,         // user-scope MCP servers
-	"env":                           asNames,         // the legacy global environment
-	"primaryApiKey":                 asPresence,      // a /login managed key
-	"apiKeyHelper":                  asPresence,      // a command that prints a key
-	"customApiKeyResponses":         asApprovedCount, // approved API keys
-	"bypassPermissionsModeAccepted": asValue,
-	"allowedTools":                  asValue,
-	"permissions":                   asValue,
-	"enableAllProjectMcpServers":    asValue,
-	"enabledMcpjsonServers":         asValue,
+var permissionGlobal = map[string]inputKind{
+	"mcpServers":                    kindNames,     // user-scope MCP servers
+	"env":                           kindNames,     // the legacy global environment
+	"primaryApiKey":                 kindSecret,    // a /login managed key
+	"apiKeyHelper":                  kindSecret,    // a command that prints a key
+	"customApiKeyResponses":         kindApprovals, // approved API keys
+	"bypassPermissionsModeAccepted": kindBool,
+	"allowedTools":                  kindStrings,
+	"permissions":                   kindObject,
+	"enableAllProjectMcpServers":    kindBool,
+	"enabledMcpjsonServers":         kindStrings,
+	"mcpLegacyKeyOwners":            kindCount, // bookkeeping in pI, read on the MCP grant path
 }
 
 // permissionProject are the project-entry permission inputs: the entry
-// defaults of 2.1.314 (fEe) that are not bookkeeping, and the reviewer's
+// defaults of 2.1.314 (fEe) that are not bookkeeping, the external-includes
+// warning state (bookkeeping in kI, read by p9s), and the reviewer's
 // permissions.
-var permissionProject = map[string]int{
-	trustKey:                              asValue,
-	"allowedTools":                        asValue,
-	"mcpServers":                          asNames, // local-scope MCP servers
-	"enabledMcpjsonServers":               asValue,
-	"disabledMcpjsonServers":              asValue,
-	"enableAllProjectMcpServers":          asValue,
-	"mcpContextUris":                      asValue,
-	"hasClaudeMdExternalIncludesApproved": asValue,
-	"permissions":                         asValue,
+var permissionProject = map[string]inputKind{
+	trustKey:                                  kindBool,
+	"allowedTools":                            kindStrings,
+	"mcpServers":                              kindNames, // local-scope MCP servers
+	"enabledMcpjsonServers":                   kindStrings,
+	"disabledMcpjsonServers":                  kindStrings,
+	"enableAllProjectMcpServers":              kindBool,
+	"mcpContextUris":                          kindStrings,
+	"hasClaudeMdExternalIncludesApproved":     kindBool,
+	"hasClaudeMdExternalIncludesWarningShown": kindBool,
+	"permissions":                             kindObject,
 }
 
 func setOf(keys ...string) map[string]bool {
@@ -96,71 +114,131 @@ func setOf(keys ...string) map[string]bool {
 	return m
 }
 
-// summarize is a permission input's digest form, and false when the value
-// is a default (null, false, "", an empty list or map, no approved key),
-// which Claude Code writes into a new project entry and which grants
-// nothing.
-func summarize(how int, v any) (any, bool) {
-	switch t := v.(type) {
-	case nil:
+func stringList(v any) ([]any, bool) {
+	l, ok := v.([]any)
+	if !ok {
 		return nil, false
-	case bool:
-		if !t {
-			return nil, false
-		}
-	case string:
-		if t == "" {
-			return nil, false
-		}
-	case []any:
-		if len(t) == 0 {
-			return nil, false
-		}
-	case map[string]any:
-		if len(t) == 0 {
+	}
+	for _, e := range l {
+		if _, ok := e.(string); !ok {
 			return nil, false
 		}
 	}
-	switch how {
-	case asNames:
+	return l, true
+}
+
+// summarize is a permission input's digest form. present is false for an
+// absent or default value of the right shape (null, false, "", an empty
+// list or object, no approved key), which Claude Code writes into a new
+// project entry and which grants nothing. A value of any other shape is
+// malformed: the binary tests trust and the bypass flags by truthiness, so
+// {} or [] would grant; it is never dropped, and its form is
+// "malformed:<key>".
+func summarize(key string, kind inputKind, v any) (form any, present, malformed bool) {
+	if v == nil {
+		return nil, false, false
+	}
+	bad := func() (any, bool, bool) { return "malformed:" + key, true, true }
+	switch kind {
+	case kindBool:
+		b, ok := v.(bool)
+		if !ok {
+			return bad()
+		}
+		return true, b, false
+	case kindStrings:
+		l, ok := stringList(v)
+		if !ok {
+			return bad()
+		}
+		return l, len(l) > 0, false
+	case kindNames:
 		m, ok := v.(map[string]any)
 		if !ok {
-			return "not an object", true
+			return bad()
 		}
 		names := make([]string, 0, len(m))
 		for k := range m {
 			names = append(names, k)
 		}
 		sort.Strings(names)
-		return names, true
-	case asPresence:
-		return "set", true
-	case asApprovedCount:
+		return names, len(m) > 0, false
+	case kindSecret:
+		str, ok := v.(string)
+		if !ok {
+			return bad()
+		}
+		return "set", str != "", false
+	case kindApprovals:
 		m, ok := v.(map[string]any)
 		if !ok {
-			return "not an object", true
+			return bad()
 		}
-		approved, _ := m["approved"].([]any)
-		if len(approved) == 0 {
-			if _, isList := m["approved"].([]any); isList || m["approved"] == nil {
-				return nil, false
+		var approved []any
+		for _, f := range []string{"approved", "rejected"} {
+			if m[f] == nil {
+				continue
 			}
-			return "approved is not a list", true
+			l, ok := stringList(m[f])
+			if !ok {
+				return bad()
+			}
+			if f == "approved" {
+				approved = l
+			}
 		}
-		return len(approved), true
+		return len(approved), len(approved) > 0, false
+	case kindObject:
+		m, ok := v.(map[string]any)
+		if !ok {
+			return bad()
+		}
+		return m, len(m) > 0, false
+	case kindCount:
+		m, ok := v.(map[string]any)
+		if !ok {
+			return bad()
+		}
+		return map[string]int{"count": len(m)}, true, false
 	}
-	return v, true
+	return bad()
 }
 
-// permissionInputs is the digest form of one object's permission inputs
-// (non-default values only).
-func permissionInputs(obj map[string]any, inputs map[string]int) map[string]any {
+// permissionInputs is the digest form of one object's permission inputs:
+// every present or malformed one.
+func permissionInputs(obj map[string]any, inputs map[string]inputKind) map[string]any {
 	out := map[string]any{}
-	for k, how := range inputs {
-		if s, ok := summarize(how, obj[k]); ok {
-			out[k] = s
+	for k, kind := range inputs {
+		if form, present, _ := summarize(k, kind, obj[k]); present {
+			out[k] = form
 		}
 	}
+	return out
+}
+
+// malformedInputs names every permission input of a .claude.json whose
+// value is not of its expected shape, at the top level and in every
+// project entry (names only).
+func malformedInputs(cfg map[string]any) []string {
+	var out []string
+	for k, kind := range permissionGlobal {
+		if _, _, bad := summarize(k, kind, cfg[k]); bad {
+			out = append(out, "malformed: "+k)
+		}
+	}
+	projects, _ := cfg[projectsKey].(map[string]any)
+	for p, e := range projects {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		for k, kind := range permissionProject {
+			if _, _, bad := summarize(k, kind, entry[k]); bad {
+				out = append(out, fmt.Sprintf("malformed: %s[%q].%s", projectsKey, p, k))
+			}
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -199,7 +277,9 @@ func configFacts(raw []byte, present bool, trusted []string) []byte {
 			in = map[string]any{}
 		}
 		entry, _ := all[k].(map[string]any)
-		in[trustKey] = entry[trustKey]
+		if _, set := in[trustKey]; !set {
+			in[trustKey] = entry[trustKey]
+		}
 		if _, bad := projects[k].(string); !bad {
 			projects[k] = in
 		}
@@ -339,7 +419,7 @@ func unexpectedConfig(dir string) []string {
 	var out []string
 	for k, v := range cfg {
 		switch {
-		case k == onboardedKey || bookkeepingGlobal[k]:
+		case k == onboardedKey || bookkeepingGlobal[k] && !permissionPathBookkeeping[k]:
 		case k == projectsKey:
 			projects, ok := v.(map[string]any)
 			if !ok {
@@ -357,7 +437,7 @@ func unexpectedConfig(dir string) []string {
 					continue
 				}
 				for f := range entry {
-					if f != trustKey && !bookkeepingProject[f] {
+					if f != trustKey && (!bookkeepingProject[f] || permissionPathBookkeeping[f]) {
 						out = append(out, fmt.Sprintf("%s[%q].%s", projectsKey, p, f))
 					}
 				}

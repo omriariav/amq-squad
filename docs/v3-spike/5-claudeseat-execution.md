@@ -69,6 +69,114 @@ Rows, each failing when reverted:
 | `TestStartupScreensClosedDependsOnlyOnTheSeed` (claudeseat): a scratch dir and a seat dir written for the same inputs give the same answer | the stub put back |
 | `TestClaudeWakeTurnsOnOnceTheStartupScreensAreClosed` (seatlaunch): the default read closes the screens and the Claude seat's wake is enabled through Launch, with nothing staged | the stub put back |
 
+### Fifth commit: Codex's second pass
+
+**1. Malformed inputs are drift.** The binary's trust check is a truthiness test (`fI`: `if(e.projects?.[n]?.hasTrustDialogAccepted)return!0`). So `{}` or `[]` grants trust, but `summarize` used to drop it as an empty value.
+- Every permission input now has an expected shape: a bool for trust and the other flags, a list of strings for the tool and server lists, an object for the MCP server maps, `env` and `permissions`, a string for the stored key and the key helper, and `{approved, rejected}` lists for the API-key answers.
+- A value of any other shape, empty or not, enters the digest as `malformed:<key>` and is never dropped.
+- A default of the right shape (false, an empty list or object) still grants nothing and stays out of the digest. Claude Code writes such an entry for the canonical root at run time.
+- Check, before exec, refuses a malformed input anywhere in `.claude.json` as `claude_config_unexpected`, naming the key and never the value. This runs before the other first-run checks, so `{}` trust on the root entry is refused under this reason.
+
+**2. Bookkeeping keys on a permission path.** Codex found that `mcpLegacyKeyOwners`, in the binary's bookkeeping set `pI`, is read on the MCP grant path, and that `cachedGrowthBookFeatures` can switch that path on through `tengu_marlin_thicket`. So the bookkeeping sets are not a security allowlist by themselves.
+- I walked all 72 keys of `pI` and `kI` against the binary's permission readers: trust, allowed tools, MCP grants, external includes and bypass flags. A script listed every read site of each key, outside the set literals and the defaults, and flagged sites near those readers. I then read each flagged site.
+- Three keys are permission inputs and are refused before exec with any content, as `claude_config_unexpected` naming the key. In the digest, `mcpLegacyKeyOwners` enters by presence and entry count, and `hasClaudeMdExternalIncludesWarningShown` enters as a bool input.
+- **`cachedGrowthBookFeatures` is not in the digest. This departs from the ruling, and I asked the lead for a ruling.** In 2.1.314, `syncRemoteEvalToDisk` writes `cachedGrowthBookFeatures`, `cachedExperimentFeatures`, `cachedExperimentData` and `cachedGrowthBookFeaturesAt` into the global config after every successful flag fetch. Seats run without `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`; only the mode probe sets it. So a digest over the flag cache would move at every seat's first fetch, and every Claude seat would be quarantined as `claude_config_changed`.
+- The residual: a same-UID process could seed flag values into a running seat's cache until the next fetch. Once a fetch is fresh, the remote values take precedence (`getAllFeatures` returns `remoteEvalFeatureValues` when any are present).
+
+| set | key | verdict |
+| --- | --- | --- |
+| pI | `numStartups` | bookkeeping, no permission reader found: its permission-adjacent reads are tip triggers (`isTriggered` of the hooks and MCP tips) |
+| pI | `skillUsage` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `pluginUsage` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `memoryUsageCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `promptQueueUseCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `btwUseCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `queuedCommandUpHintCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `lspRecommendationIgnoredCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `promptSuggestionUnusedStreak` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `tipsHistory` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `tipLifetimeShownCounts` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `tipsHistoryByCommand` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `seenNotifications` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `announcementImpressions` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `savedModelSuccessorShown` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `seenSecurityWarnings` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `subagentConfigWarningShown` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `subagentConfigChecks` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `subagentConfigClassifierCalls` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `lastShownEmergencyTip` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `subscriptionNoticeCount` | bookkeeping, no permission reader found: read by `Do()`, the fresh-config test used only under `CLAUDE_CODE_CCR_SKIP_FRESH_MIGRATIONS`, which the seat scrub drops |
+| pI | `subscriptionUpsellShownCount` | bookkeeping, no permission reader found: no read site beyond the bookkeeping set and the defaults |
+| pI | `passesUpsellSeenCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `fullscreenUpsellSeenCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `fullscreenDownsellSeenCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `voiceLangHintShownCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `voiceFooterHintSeenCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `experimentNoticesSeenCount` | bookkeeping, no permission reader found: no read site beyond the bookkeeping set and the defaults |
+| pI | `cachedGrowthBookFeatures` | **permission input, refused**: the flag values `getAllFeatures` and `readSavedFlags` fall back to until a fetch is fresh, `tengu_marlin_thicket` (the gate of `kW`) among them; `syncRemoteEvalToDisk` rewrites it after each fetch |
+| pI | `cachedGrowthBookFeaturesAt` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `cachedArtifactRoster` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `artifactRosterDenied` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `promoStartupStatusCache` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `groveChoiceSeenAt` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `unusedLimitResetStatusCache` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `apiCreditLinkStatusCache` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `cachedDynamicConfigs` | bookkeeping, no permission reader found: no read site beyond the bookkeeping set and the defaults |
+| pI | `cachedExperimentFeatures` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `cachedExperimentData` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `mcpLegacyKeyOwners` | **permission input, refused**: `kW` reads it, behind the flag `tengu_marlin_thicket`, to resolve a legacy-key MCP server's owner; `Fn` writes it; `mee` refuses a tool whose `mcpInfo.legacyGrantRefused` is set |
+| pI | `firstStartTime` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `claudeCodeFirstTokenDate` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| pI | `startupPrefetchedAt` | bookkeeping, no permission reader found: startup prefetch scheduling |
+| kI | `lastCost` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastAPIDuration` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastAPIDurationWithoutRetries` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastToolDuration` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastDuration` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastStartTime` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastLinesAdded` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastLinesRemoved` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastTotalInputTokens` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastTotalOutputTokens` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastTotalCacheCreationInputTokens` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastTotalCacheReadInputTokens` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastTotalWebSearchRequests` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastFpsAverage` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastFpsLow1Pct` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastSessionId` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastGracefulShutdown` | bookkeeping, no permission reader found: the project-config save stamps it (`gracefulExitStampedProjects`), and `tengu_exit` telemetry reads it |
+| kI | `lastVersionBase` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `lastModelUsage` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `lastSessionMetrics` | bookkeeping, no permission reader found: its permission-adjacent reads are the `tengu_exit` telemetry event |
+| kI | `exampleFiles` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `exampleFilesGeneratedAt` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `seenTeamArtifactPaths` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `hasUnseenTeamArtifacts` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `hasClaudeMdExternalIncludesWarningShown` | **permission input, refused**: `p9s` skips the external-includes dialog when it is set; `kFn` writes it with the approval |
+| kI | `history` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `projectOnboardingSeenCount` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `hasCompletedProjectOnboarding` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+| kI | `devIntentsDetected` | bookkeeping, no permission reader found: no read site near trust, allowed-tools, MCP-grant, external-includes or bypass code |
+
+**3. External CLAUDE.md includes.** The 2.1.314 startup calls `p9s` and opens `ClaudeMdExternalIncludesDialog` when a memory file the seat loads at start is external, unless `hasClaudeMdExternalIncludesApproved` or `hasClaudeMdExternalIncludesWarningShown` is set. `Write` seeds neither, and never will silently.
+- **The binary's rule.** In `lmn`, a file is external when its type is not User, it was reached through an import (`parent`) or a link (`linkedFrom`), and `!lB(path)`. `lB(e)` is `lu(e, ve())`: inside the original cwd, which for a seat is its worktree.
+- **The import syntax (`MHo`).** It walks markdown text, skipping code blocks and code spans and stripping HTML comments, and matches `(?:^|\s)@((?:[^\s\\]|\\ )+)`. A `#fragment` is cut and `\ ` becomes a space. A path counts when it starts with `./`, `~/` or `/` (not `/` alone), or with `[a-zA-Z0-9._-]`. It resolves against the including file's directory, to a depth of 5 (`A2r`).
+- **What the scan reads.** `claudeseat.ExternalIncludes` follows that rule over the start-time memory files: `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and `.claude/rules/**/*.md` in the worktree and in each ancestor, plus the managed CLAUDE.md.
+- **It errs toward finding an import.** Indented code is read as text, and any existing regular file counts, whatever its extension. A false finding only keeps a seat's wake off.
+- **The shared check.** `screensGap` returns `claude_external_includes_pending` when any external file is found. `StartupScreensClosed` is then false, so the launch keeps the seat's wake off. seat-exec's Check refuses the seat before exec, because it would stop at the dialog.
+- **Until approval is decided.** A worktree with external includes keeps its seat's wake off, and the seat does not start, until a 3.0.x item decides how approval is granted. That item is in `docs/v3-followups.md`.
+
+Rows, each failing when reverted:
+
+| row | it fails when this is reverted |
+| --- | --- |
+| `TestMalformedTrustOrPermissionInputs` (claudeseat): `{}` and `[]` trust on the root entry, `{}` trust on another entry, a string bypass flag, `allowedTools` as an object or with a non-string rule, `mcpServers` as a list each move the digest and are refused naming the key; a defaults entry of the right shape keeps the digest | the bool shape check in `summarize` (four cases); the malformed scan in the shared check (all seven) |
+| `TestPermissionPathBookkeepingIsRefused` (claudeseat): `mcpLegacyKeyOwners` (empty or not), `cachedGrowthBookFeatures` and the external-includes warning state are refused before exec; `mcpLegacyKeyOwners` and the warning state move the digest when added, `cachedGrowthBookFeatures` does not | the permission-path set (all four); `mcpLegacyKeyOwners` in the digest (two) |
+| `TestExternalIncludesKeepTheScreensOpen` (claudeseat): an absolute import, a relative one, one nested in an import inside the worktree, one in an ancestor's CLAUDE.md, one under `~/` (HOME set to a temp dir), a linked rules file and the managed CLAUDE.md each give `claude_external_includes_pending` from `StartupScreensClosed` and Check; imports inside the worktree, in code fences, code spans and HTML comments, of a missing file, or a bare word close nothing | the check in the shared function (all seven pending cases); ancestor scanning; fence skipping; linked memory files |
+| `TestClaudeSeatConfigDirIsChecked/a_CLAUDE.md_importing_a_file_outside_the_worktree` (seatexec): seat-exec refuses before exec | the check in the shared function |
+
+No row reads the host's managed CLAUDE.md: the package's `TestMain` points it at a path that does not exist, and the one row that needs it sets its own. The host has none either.
+
 ## Field names and their sources
 
 Binary: `~/.amq-squad/bin/claude`, the registry's pin, sha256 `21d6e7b9a6f07b4cfcb7df13760b3b72aa25e084e13a5354413382987ba832ed`, every chunk stamped `Version: 2.1.314`. Read only with `strings -n 6` (no execution). Each quote below is minified code from those strings.
@@ -145,7 +253,7 @@ Revert check, each change reverted alone, with `go test ./internal/claudeseat ./
 | condition (b): Check's allowlist | `TestASecondExecOnAUsedConfigDirNeverExecs/Claude_Code's_own_state_in_the_dir` |
 | fix round: hashing the whole file instead of the projection | `TestBookkeepingKeysPassAndKeepTheDigest`, `TestDigestCoversOnlyTheManagedFiles`, `TestDigestCoversTheFirstRunFacts` |
 
-No test reaches the network or touches the real HOME. The new rows use temp dirs and files only, and seat-exec's fixture mocks the exec. The pre-existing live probe row (`TestModeProbeOnTheInstalledClaude`) runs the real Claude Code only under `AMQ_SQUAD_LIVE=1`, with a scratch HOME, config dir and cwd. The `.claude.json` fixtures carry no credential-shaped value. The canary in the refusal row (`canary-not-a-secret-value`) is a plain word, not a credential shape. Nit 4: seat-exec's pre-existing token canary was `sk-ant-oat01-CANARY-2b2b-9f3c`, an OAuth-token prefix. It is now `canary-claude-token-2b2b-9f3c`, a one-line rename. Every row compares the canary by substring and `ReadToken` checks no shape, so the rows keep their meaning. Neither literal matches `redact.RealCredentialShapes`.
+No test reaches the network or touches the real HOME. The new rows use temp dirs and files only, and seat-exec's fixture mocks the exec. The pre-existing live probe row (`TestModeProbeOnTheInstalledClaude`) runs the real Claude Code only under `AMQ_SQUAD_LIVE=1`, with a scratch HOME, config dir and cwd. The `.claude.json` fixtures carry no credential-shaped value. The canary in the refusal row (`canary-not-a-secret-value`) is a plain word, not a credential shape. Nit 4: seat-exec's pre-existing token canary began with the old prefix of a provider token. It is now `canary-claude-token-2b2b-9f3c`, a one-line rename. Every row compares the canary by substring and `ReadToken` checks no shape, so the rows keep their meaning. Neither literal matches `redact.RealCredentialShapes`.
 
 ## Owner-run row (3.0.1 owner run)
 

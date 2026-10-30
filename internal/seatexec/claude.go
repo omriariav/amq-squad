@@ -38,6 +38,10 @@ const (
 	ClaudeTrustMissing       = claudeseat.TrustMissing
 	ClaudeConfigUnexpected   = claudeseat.ConfigUnexpected
 	ClaudeTrustRootRefused   = claudeseat.TrustRootRefused
+	// ClaudeExternalIncludesPending: a CLAUDE.md the seat loads imports a
+	// file outside its worktree, unapproved; the seat would stop at Claude
+	// Code's external-includes dialog (3.0.1 t6, fifth commit).
+	ClaudeExternalIncludesPending = claudeseat.ExternalIncludesPending
 )
 
 // dropVar removes every entry of one variable from an environment.
