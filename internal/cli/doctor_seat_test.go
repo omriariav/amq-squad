@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
@@ -47,7 +51,7 @@ func fakeDoctorExecute(t *testing.T, home string, reached *bool) {
 	doctorExecute = func(d doctorExecution) error {
 		*reached = true
 		fake := newDoctorExec(t, t.TempDir())
-		fake.JSON, fake.Out = true, &bytes.Buffer{}
+		fake.JSON, fake.Out, fake.Fix = true, &bytes.Buffer{}, d.Fix
 		h := hostWith(t, home, "amq", "claude")
 		h.WriteRegistry, h.Probe, h.ProbeRuns = d.Host.WriteRegistry, d.Host.Probe, d.Host.ProbeRuns
 		h.ProbeCodex = func(context.Context, registry.Env, string, string, string) registry.CodexVerdict {
@@ -123,6 +127,68 @@ func TestDoctorSeatRefusesProbeAndWriteRegistry(t *testing.T) {
 			}
 		}
 	}
+}
+
+// doctor --fix removes pi runtimes under ~/.amq-squad/runtime, so inside a
+// seat it refuses with the same reason and the runtime dir is unchanged: an
+// unpacked current runtime plus two older ones, the oldest of which --fix
+// would prune.
+func TestDoctorSeatRefusesFix(t *testing.T) {
+	for _, marker := range seatEnvMarkers {
+		t.Run(marker, func(t *testing.T) {
+			seatDoctorEnv(t)
+			_, home := piFixture(t)
+			chdir(t, t.TempDir())
+			if err := Run([]string{"pi", "run", "--no-package"}, "test"); err != nil {
+				t.Fatal(err)
+			}
+			base := filepath.Join(home, ".amq-squad", "runtime")
+			addOldRuntime(t, base, "pi-old-1", 3*time.Hour)
+			addOldRuntime(t, base, "pi-old-2", 2*time.Hour)
+			before := runtimeTree(t, base)
+			t.Setenv(marker, "t15-seat")
+			reached := false
+			fakeDoctorExecute(t, home, &reached)
+
+			err := runDoctor([]string{"--fix"}, "test")
+			if err == nil || !errors.Is(err, errSeatOwnerState) {
+				t.Fatalf("doctor --fix inside a seat: err %v, want %v", err, errSeatOwnerState)
+			}
+			for _, want := range []string{"seat_owner_state_refused", marker + " is set", "amq-squad doctor --fix", "~/.amq-squad/runtime"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("refusal %q does not name %q", err, want)
+				}
+			}
+			if reached {
+				t.Fatal("doctor --fix ran past the seat guard")
+			}
+			if after := runtimeTree(t, base); after != before {
+				t.Fatalf("runtime dir changed inside a seat:\nbefore %s\nafter  %s", before, after)
+			}
+		})
+	}
+}
+
+// runtimeTree lists every path under base with its mode, size and mtime.
+func runtimeTree(t *testing.T, base string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(base, p)
+		fmt.Fprintf(&b, "%s %s %d %d;", rel, info.Mode(), info.Size(), info.ModTime().UnixNano())
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
 }
 
 // Plain doctor writes nothing and still runs inside a seat.

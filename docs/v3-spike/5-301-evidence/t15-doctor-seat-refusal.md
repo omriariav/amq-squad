@@ -61,6 +61,29 @@ fails: all 24 subtests of TestDoctorSeatRefusesProbeAndWriteRegistry fail
 (doctor reaches execute and, for the write flags, the temp registry changes).
 Restoring the guard turns them green.
 
+## Second commit: --fix joins the refusal
+
+The lead widened the scope after review. `doctor --fix` removes pi runtimes
+under `~/.amq-squad/runtime` (a rejected current runtime, and runtimes
+beyond the last two), so it is owner state too. `refuseDoctorWriteInSeat`
+now takes the fix flag and refuses `--fix` inside a seat with the same
+reason, `seat_owner_state_refused`, naming `~/.amq-squad/runtime` and the
+owner-run `amq-squad doctor --fix`. The pi lead stays refused (it carries
+`AM_ME=lead`); the lead records that decision for the reviewer.
+
+| Row | What it holds |
+|---|---|
+| TestDoctorSeatRefusesFix | per marker: a temp HOME with an unpacked current runtime and two older ones (`--fix` would prune the oldest); `--fix` refuses with the reason and the owner-run command, never reaches execute, and the runtime tree (path, mode, size, mtime) is unchanged |
+
+Revert check: with the guard passing `false` for fix, all three subtests
+fail. With the error and reached assertions also removed, the tree
+comparison alone fails ("runtime dir changed inside a seat"): the reverted
+run pruned `pi-old-1`.
+
+The wizard reference `plugins/skills-src/wizard/references/readiness.md`
+(and its two mirrors, byte-identical to the source) now says the owner runs
+`--probe`, `--write-registry` and `--fix`, and seats never do.
+
 ## Docs
 
 - README.md, the registry step of the doctor section: seats never probe.
@@ -72,8 +95,7 @@ Restoring the guard turns them green.
   purpose: the skill-invocation gate executes inline spans with flags, and a
   real probe reaches the providers.
 - docs/skills.md does not name `--probe`, so it is unchanged.
-- Not edited (outside the declared files): the wizard reference
-  `plugins/skills-src/wizard/references/readiness.md` also names `--probe`.
+- The wizard reference readiness.md: see the second commit above.
 
 ## Commands
 
