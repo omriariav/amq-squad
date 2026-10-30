@@ -414,6 +414,24 @@ func (s Store) Fail(id, holder, reason string, now time.Time) (Task, error) {
 // Block stops a pending or in-progress task for a decision. On an
 // in-progress task only the holder may block it.
 func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Task, error) {
+	return s.BlockWithPaths(id, actor, reason, detail, route, nil, now)
+}
+
+// BlockWithPaths records the normalized paths of a seat's typed widening
+// request. A lead can then widen exactly those paths instead of relying on a
+// free-text explanation.
+func (s Store) BlockWithPaths(id, actor, reason, detail, route string, paths []string, now time.Time) (Task, error) {
+	reason = strings.TrimSpace(reason)
+	if (reason == "widen_requested") != (len(paths) > 0) {
+		return Task{}, fmt.Errorf("widen_requested blocks require --paths, and --paths require reason widen_requested")
+	}
+	var refused []string
+	if len(paths) > 0 {
+		var err error
+		if refused, err = CleanDeclaredFiles(paths); err != nil {
+			return Task{}, err
+		}
+	}
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		switch t.State {
 		case StateInProgress:
@@ -426,7 +444,11 @@ func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Ta
 		default:
 			return fmt.Errorf("task %s is %s; only pending or in-progress tasks block", t.ID, t.State)
 		}
-		return block(t, reason, detail+byActor(actor), route)
+		if err := block(t, reason, detail+byActor(actor), route); err != nil {
+			return err
+		}
+		t.RefusedPaths = refused
+		return nil
 	})
 }
 

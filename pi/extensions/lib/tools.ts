@@ -82,6 +82,25 @@ export const toolArgv = {
 		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
 		return ["task", "reset", p.id, "--me", cfg.me];
 	},
+	taskBlock(cfg: Config, p: { id: string; reason: string; paths?: string[]; detail?: string }): string[] {
+		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
+		if (!p.reason?.trim()) throw new Error("reason is required");
+		const paths = p.paths?.map((path) => path.trim()).filter(Boolean) ?? [];
+		if ((p.reason === "widen_requested") !== (paths.length > 0)) throw new Error("widen_requested requires paths, and paths require reason widen_requested");
+		const a = ["task", "block", p.id, "--me", cfg.me, "--reason", p.reason];
+		if (paths.length) a.push("--paths", paths.join(","));
+		if (p.detail?.trim()) a.push("--detail", p.detail);
+		return a;
+	},
+	taskShow(_cfg: Config, p: { id: string }): string[] {
+		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
+		return ["task", "show", p.id, "--json"];
+	},
+	taskWiden(_cfg: Config, p: { id: string; paths: string[]; reason: string }): string[] {
+		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
+		if (!p.paths.length || !p.reason?.trim()) throw new Error("recorded paths and a reason are required");
+		return ["task", "widen", p.id, "--files", p.paths.join(","), "--reason", p.reason];
+	},
 	taskAdd(_cfg: Config, p: { title: string; class: string; description?: string; files?: string[]; depends_on?: string[]; pool?: string; priority?: number }): string[] {
 		if (!CLASSES.includes(p.class)) throw new Error(`class must be one of ${CLASSES.join(", ")}`);
 		const a = ["task", "add", "--title", p.title, "--class", p.class];
@@ -167,7 +186,36 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskDone(cfg, p), undefined, cfg, signal);
 		},
 	});
+	reg({
+		name: "amq_task_block",
+		label: "Task block",
+		description: "Block your current task for a typed decision. For a scope widen, use widen_requested and name every refused path.",
+		parameters: Type.Object({
+			id: Type.String(),
+			reason: Type.String(),
+			paths: Type.Optional(Type.Array(Type.String())),
+			detail: Type.Optional(Type.String()),
+		}),
+		async execute(_id, p, signal) {
+			return call(runner, cfg.bin, toolArgv.taskBlock(cfg, p), undefined, cfg, signal);
+		},
+	});
 	if (cfg.lead) {
+		reg({
+			name: "amq_task_widen",
+			label: "Task widen",
+			description: "Widen only a task that has a typed widen_requested block, using exactly its recorded refused paths.",
+			parameters: Type.Object({ id: Type.String(), reason: Type.String() }),
+			async execute(_id, p, signal) {
+				const shown = await runner(cfg.bin, toolArgv.taskShow(cfg, p), { timeoutMs: Math.max(cfg.hookTimeoutMs, 30000), signal });
+				if (shown.spawnError || shown.timedOut || shown.code !== 0) throw new Error(`task show failed (${describe(shown, 30000)})`);
+				let task: { block_reason?: string; refused_paths?: string[] } | undefined;
+				try { task = JSON.parse(shown.stdout).data?.task; } catch { throw new Error("task show returned invalid JSON"); }
+				const paths = task?.refused_paths ?? [];
+				if (task?.block_reason !== "widen_requested" || !paths.length) throw new Error("task widen requires a widen_requested block with recorded refused paths");
+				return call(runner, cfg.bin, toolArgv.taskWiden(cfg, { id: p.id, paths, reason: p.reason }), undefined, cfg, signal);
+			},
+		});
 		reg({
 			name: "amq_task_add",
 			label: "Task add",

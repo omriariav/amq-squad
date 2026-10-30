@@ -290,6 +290,25 @@ func TestSetRepinsOnlyBeforeTheFirstClaim(t *testing.T) {
 	}
 }
 
+func TestBlockWithPathsRecordsOnlyTypedWidenRequests(t *testing.T) {
+	s := newStore(t)
+	a := mustAdd(t, s, AddInput{Title: "a"})
+	if _, err := s.Claim(a.ID, "h", nil, time.Hour, t0); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := s.BlockWithPaths(a.ID, "h", "widen_requested", "need generated file", RouteLead, []string{"gen/output.go", "gen/output.go"}, t0)
+	if err != nil || blocked.BlockReason != "widen_requested" || strings.Join(blocked.RefusedPaths, ",") != "gen/output.go" {
+		t.Fatalf("typed widen block: %+v %v", blocked, err)
+	}
+	b := mustAdd(t, s, AddInput{Title: "b"})
+	if _, err := s.BlockWithPaths(b.ID, "lead", "widen_requested", "", RouteLead, nil, t0); err == nil || !strings.Contains(err.Error(), "require --paths") {
+		t.Fatalf("widen request without paths: %v", err)
+	}
+	if _, err := s.BlockWithPaths(b.ID, "lead", "needs_decision", "", RouteLead, []string{"b.go"}, t0); err == nil || !strings.Contains(err.Error(), "paths require") {
+		t.Fatalf("non-widen block with paths: %v", err)
+	}
+}
+
 func TestSetWaitWritesOnlyOnChange(t *testing.T) {
 	s := newStore(t)
 	a := mustAdd(t, s, AddInput{Title: "a"})

@@ -52,6 +52,7 @@ type Task struct {
 	BlockReason   string        `json:"block_reason,omitempty"`
 	BlockRoute    string        `json:"block_route,omitempty"`
 	BlockDetail   string        `json:"block_detail,omitempty"`
+	RefusedPaths  []string      `json:"refused_paths,omitempty"`
 	Report        *Report       `json:"report"`
 	Evidence      string        `json:"evidence,omitempty"`
 	CancelReason  string        `json:"cancel_reason,omitempty"`
