@@ -160,3 +160,36 @@ func TestListTimesOutOnAHungServer(t *testing.T) {
 		t.Fatalf("a hung server: %v after %s", err, time.Since(began))
 	}
 }
+
+// 3.0.1 t16 round 7 (reviewer): the chain is a sequence of (pid, stamp)
+// pairs, each the pair the previous hop read and validated as a parent: the
+// next hop walks that pid only while it still carries that stamp. A parent
+// replaced between being read as one and being walked (its pid reused by a
+// process with another stamp) is unknown, never followed. Reverted (each hop
+// taking a fresh stamp as the child's), the replacement's ancestry is walked.
+func TestReachesWalksOnlyTheValidatedPairs(t *testing.T) {
+	lead := []Pane{{Shell: 80, Start: tk(80), Agent: "lead"}}
+	parent := map[int]int{100: 90, 90: 80, 80: 1}
+	reads := map[int]int{}
+	prevP, prevS := parentOf, startTokenOf
+	t.Cleanup(func() { parentOf, startTokenOf = prevP, prevS })
+	parentOf = func(p int) (int, bool) { v, ok := parent[p]; return v, ok }
+	startTokenOf = func(p int) (string, bool) {
+		reads[p]++
+		switch p {
+		case 100:
+			return "linux-ticks:1000", true
+		case 90:
+			if reads[90] > 1 {
+				return "linux-ticks:850", true // after its read as a parent: another process, between 80 and 100 in age
+			}
+			return "linux-ticks:900", true
+		case 80:
+			return tk(80), true
+		}
+		return "", false
+	}
+	if p, known := Reaches(100, "linux-ticks:1000", lead); known || p != nil {
+		t.Fatalf("a parent replaced between hops was walked: %+v %v", p, known)
+	}
+}

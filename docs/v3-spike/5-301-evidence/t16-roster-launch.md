@@ -685,12 +685,17 @@ or network in the rows.
    the tmux stub, and the roster fixture sets its own: a launch's grant read
    (grants.Load, ~/.amq-squad/grants.yaml) never reaches the owner's. Row:
    TestRowsRunUnderATempHome (HOME is not the passwd home).
-6. **Redaction at the source.** amq's stderr is redacted with redact.Block
-   where the launch reads it (`amqDiagnostic` in run.go), so the staged
-   record's Apply.FailureDetail, Report's output and the scheduler's
-   decisions all get the redacted text (t17 inherits it from the same
-   place). Row: TestAmqFailureDetailIsRedactedWhereItIsRead (a multiline
-   canary in the record, the report and the result).
+6. **Redaction at the source: superseded by t17.** This round redacted
+   amq's stderr with redact.Block where the launch reads it (`amqDiagnostic`
+   in run.go; row TestAmqFailureDetailIsRedactedWhereItIsRead). The lead had
+   moved that work to t17, and t17's merge of this round removed
+   `amqDiagnostic` in favour of t17's chokepoint `amqDetail`
+   (internal/seatlaunch/amqoutput.go: every AMQ output that becomes a reason
+   or a detail goes through it, redact.Block on the raw bytes before any
+   prefix or wrapping, with a go/ast source-scan row that fails on a
+   bypass). On this branch run.go keeps `amqDiagnostic` as pushed; t17's
+   chokepoint is the one that ships, and this branch does not touch it
+   further.
 7. **An unreadable lead stamp is unknown.** The team-mode lead's state has
    three values (`schedproc.LeadState`): gone only on a dead pid or a changed
    stamp; a live pid whose stamp cannot be read (a permission or transient
@@ -703,6 +708,41 @@ or network in the rows.
 
 Revert check of the round: 14 mutations, each failing its row (panechain 3,
 schedproc 1, task 2, seatcommit 1, scheduler 1, cli 1, seatlaunch 3, pi 2).
+
+**The reviewer's additions to the round (rows by name).**
+- Each hop a consistent snapshot: the chain is a sequence of (pid, stamp)
+  pairs, each the pair the previous hop read and validated as a parent; a
+  hop walks that pid only while it still carries that stamp (checked
+  against the pair, never a fresh stamp taken as the truth), with the
+  parent-no-later-than-child check and the re-read of the child's parent
+  pid kept; any mismatch is origin_unknown, and the depth bound is unknown
+  (TestReachesBoundIsUnknown). Row TestReachesWalksOnlyTheValidatedPairs: a
+  parent replaced between being read and being walked, by a process whose
+  age passes the order check, is unknown; it fails with the pair check
+  removed.
+- The refused-paths list is written by the commit step alone. The store's
+  only writer is Store.RefuseCommitPaths, called by the scheduler's commit
+  application and by `seat commit`, which refuses a seat (harness_only,
+  AMQ_SQUAD_SEAT set); block_detail is rendered by the commit step from the
+  same violation paths and never parsed back; the widen tool reads only the
+  list. Row TestSeatCannotWriteTheRefusedPaths (internal/cli): from a seat's
+  shell (AMQ_SQUAD_SEAT set, its own --me), `task block` of its own task
+  with the outside_declared_files reason and a forged detail records no
+  list; block, done, fail, release, reset, set, cancel, claim and renew
+  leave a refused task's list unchanged; `seat commit` refuses the seat.
+  Revert checks: it fails when a seat's reset is allowed (the creator check
+  removed) and when `seat commit` admits a seat. The same-UID limit stands
+  as recorded: a process that clears AMQ_SQUAD_SEAT is outside the row.
+- A seat can never make the supervisor exit. Row
+  TestProbeFailureDuringADialLeavesTheSchedulerRunning (internal/schedproc):
+  a stamp probe failure injected while a dialer sends a decision; the
+  decision is refused origin_unknown, the scheduler logs lead_unknown,
+  keeps ticking and stops only when cancelled. Revert check: it fails when
+  an unreadable stamp is read as gone.
+- The exact mode `task widen --path` is named in `task`'s usage on its own
+  line (the docs row pinning the `--files` line is unchanged).
+
+Revert checks of the additions: 4 mutations, each failing its row.
 
 Files beyond the earlier lists: internal/panechain (the walk), internal/task
 and internal/seatcommit (widened by the ruling), internal/cli/task_widen.go

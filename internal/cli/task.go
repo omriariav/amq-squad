@@ -38,6 +38,7 @@ Usage:
   amq-squad task reset ID --me H [--pool runtime:model:effort]
   amq-squad task set ID --me H [--priority N] [--pool runtime:model:effort]
   amq-squad task cancel ID --me H --reason R
+  amq-squad task widen ID --path PATH [--path PATH]... --reason TEXT   (exact files: glob characters literal, a comma part of the name)
   amq-squad task widen ID --files GLOB,... --reason TEXT   (the lead; no --me: the scheduler proves the lead from the process)
   amq-squad task reconcile [--json]
 Store flags (every verb): --root DIR (default AM_ROOT), or --project/--profile/--session.
