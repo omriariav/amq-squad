@@ -172,8 +172,7 @@ func colorStatus(policy outputPolicy, status string) string {
 
 // quietNotice emits a non-data success/progress message to stderr unless
 // the current policy is --quiet. Use this for the small set of locked
-// notices: team init wrote, team rules init wrote/already-exists, team
-// sync apply wrote-N, tmux launch success, launch dry-run note.
+// notices: tmux launch success, launch dry-run note.
 // Warnings and errors must NOT route through this helper.
 func quietNotice(format string, args ...any) {
 	if currentOutputPolicy.Quiet {

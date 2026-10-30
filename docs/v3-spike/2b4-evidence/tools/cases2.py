@@ -1,0 +1,38 @@
+PKG = "./internal/routing/"
+R = "internal/routing/router.go"
+CASES = [
+    ("explore down only with a mechanical verifier", R, "if r.o.Table.MayRouteDown(t.Class) && !escalated {", "if !escalated {", "TestAcceptance1ClassTable$", PKG),
+    # held three ways: the explicit guard, no mechanical verifier (no way down) and the ladder
+    # (plan and advisor have no tier above); the revert removes the guard and gives plan a tier above
+    ("plan and review never explored", [(R, 'if t.Class != "plan" && t.Class != "review" && share > 0 {', "if share > 0 {"),
+                                        ("internal/routing/table.go", "\tcase TierTask:\n\t\treturn TierPlan\n\t}\n\treturn t\n}\n\n// down", "\tcase TierTask:\n\t\treturn TierPlan\n\tcase TierPlan:\n\t\treturn TierAdvisor\n\t}\n\treturn t\n}\n\n// down")],
+     "TestAcceptance1ClassTable$", PKG),
+    ("reviewer family differs", R, 'if impl != "" && Family(e) == impl {', "if false {", "TestAcceptance1ReviewerFamilyDiffers$", PKG),
+    ("implementer family from the dependency", R, "\t\timpl = implementerFamily(t, list)\n", "\t\timpl = \"\"\n", "TestAcceptance1ReviewerFamilyDiffers$", PKG),
+    ("implement over 3 files escalates", R, "f.DeclaredFiles > ImplementFileLimit || f.Sensitive", "f.Sensitive", "TestImplementEscalatesToPlan$", PKG),
+    ("implement sensitive escalates", R, "f.DeclaredFiles > ImplementFileLimit || f.Sensitive || f.NoTests", "f.DeclaredFiles > ImplementFileLimit || f.NoTests", "TestImplementEscalatesToPlan$", PKG),
+    ("implement no tests escalates", R, "f.DeclaredFiles > ImplementFileLimit || f.Sensitive || f.NoTests", "f.DeclaredFiles > ImplementFileLimit || f.Sensitive", "TestImplementEscalatesToPlan$", PKG),
+    ("escalated implement not explored down", R, "if r.o.Table.MayRouteDown(t.Class) && !escalated {", "if r.o.Table.MayRouteDown(t.Class) {", "TestImplementEscalatesToPlan$", PKG),
+    ("local path never to a vendor", R, "if required == grants.PrivacyLocal && privacy != grants.PrivacyLocal {", "if false && privacy != \"\" {", "TestAcceptance2LocalOnlyPathNeverGoesToAVendor$", PKG),
+    ("local grant is local-only", R, "\tif r.o.Grants.PrivacyClass == grants.PrivacyLocal {\n\t\trequired = grants.PrivacyLocal", "\tif false {\n\t\trequired = grants.PrivacyLocal", "TestAcceptance2LocalOnlyPathNeverGoesToAVendor$", PKG),
+    ("privacy names the wait", R, "for _, r := range []string{SkipConcurrencyCap, SkipCostCap, SkipPrivacyClass, SkipReviewerFamily} {", "for _, r := range []string{SkipConcurrencyCap, SkipCostCap, SkipReviewerFamily} {", "TestAcceptance2LocalOnlyPathNeverGoesToAVendor$", PKG),
+    ("above 32k skips Ollama", R, 'if Family(e) == "ollama" && f.InputTokens > OllamaTokenLimit {', "if false {", "TestAcceptance3Escalation$", PKG),
+    ("above 100k skips Haiku", R, 'if strings.Contains(e.Model, "haiku") && f.InputTokens > HaikuTokenLimit {', "if false {", "TestAcceptance3Escalation$", PKG),
+    ("retry one tier up", R, "\t\ttier = up(tier)\n", "\t\t_ = up(tier)\n", "TestAcceptance3Escalation$", PKG),
+    ("retry never repeats an entry", R, "\tif used[e] {\n\t\treturn SkipUsedBefore", "\tif false {\n\t\treturn SkipUsedBefore", "TestAcceptance3Escalation$", PKG),
+    ("retry skip list grows", R, "\t\t\td.Skipped = append(d.Skipped, pd.Skipped...)\n", "\t\t\t_ = pd\n", "TestAcceptance3Escalation$", PKG),
+    ("unclaimed is not a failure", R, "case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeCommitRefused, task.OutcomeBlocked:", "case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeCommitRefused, task.OutcomeBlocked, task.OutcomeUnclaimed:", "TestAcceptance3Escalation$", PKG),
+    ("chain used up blocks", R, "if allUsed && len(chain) > 0 {", "if false && allUsed {", "TestAcceptance3Escalation$", PKG),
+    ("max attempts block", R, "if failures >= r.o.MaxAttempts {", "if false {", "TestRetriesExhaustedAfterMaxAttempts$", PKG),
+    ("verified check", R, "\tif !reg.Verified {\n\t\treturn SkipUnverified", "\tif false {\n\t\treturn SkipUnverified", "TestFourChecks$", PKG),
+    ("registry entry required", R, "\tif !inReg {\n\t\treturn SkipNotInRegistry", "\tif false {\n\t\treturn SkipNotInRegistry", "TestFourChecks$", PKG),
+    ("grant permitted runtimes", R, "\tif !r.o.Grants.RuntimePermitted(e.Runtime) {", "\tif false {", "TestFourChecks$", PKG),
+    ("concurrency cap", R, "if reg.ConcurrencyCap > 0 && r.inUse(reg, list) >= reg.ConcurrencyCap {", "if false {", "TestFourChecks$", PKG),
+    ("cost_index cap", R, "max > 0 && reg.CostIndex > max {", "max > 0 && false {", "TestFourChecks$", PKG),
+    ("grant per-day budget", R, 'if b := r.o.Grants.CostPerDayUSD; b > 0 && reg.CostTier != "free" && r.spent[now.UTC().Format(time.DateOnly)] >= b {', "if false {", "TestGrantDailyBudgetStops$", PKG),
+    ("budget is per UTC day", R, "if b := r.o.Grants.CostPerDayUSD; b > 0 && reg.CostTier != \"free\" && r.spent[now.UTC().Format(time.DateOnly)] >= b {", "if b := r.o.Grants.CostPerDayUSD; b > 0 && reg.CostTier != \"free\" && r.spent[now.UTC().Format(time.DateOnly)]+r.spent[now.UTC().Add(-24*time.Hour).Format(time.DateOnly)] >= b {", "TestGrantDailyBudgetStops$", PKG),
+    ("probation never first", R, "if reg.Probation && n == 1 {", "if false {", "TestProbationNeverFirst$", PKG),
+    ("pin never routes plan down", R, "TierRank(pinTier) >= TierRank(tableTier) || tbl.MayRouteDown(t.Class)", "true", "TestLeadPin$", PKG),
+    ("pin is still checked", R, "d.Policy, d.Propensity, chain = PolicyLeadPin, 1, []task.Pool{*t.Pool}", "d.Policy, d.Propensity, chain = PolicyLeadPin, 1, nil\n\t\t\treturn d, scheduler.Route{Pool: t.Pool}", "TestLeadPin$", PKG),
+    ("router answers the scheduler", R, "\t\treturn d, scheduler.Route{Pool: &pick, Detail:", "\t\t_ = pick\n\t\treturn d, scheduler.Route{Wait: task.WaitNoRoute, Detail:", "TestRouterInsideTheScheduler$", PKG),
+]

@@ -1,0 +1,2 @@
+# hygiene2 after: go test -race -count=20 -run ^TestDecisionAdapterKillsAHungGuardGroup$ ./internal/cli (idle host)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	60.416s

@@ -1,0 +1,69 @@
+{
+  "request_version": 1,
+  "prepare": {
+    "request_version": 1,
+    "target": {
+      "project_root": "/Users/omri/.amq-squad/spike/s4/project",
+      "base_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail",
+      "session_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4-106-1",
+      "session": "s4-106-1"
+    },
+    "launcher": "tmux",
+    "intent": {
+      "intent_version": 1,
+      "participants": [
+        {
+          "handle": "operator",
+          "runnable": false
+        },
+        {
+          "handle": "s4-codex",
+          "runnable": true,
+          "executable": "codex",
+          "args": [
+            "--model",
+            "gpt-6-astra",
+            "-c",
+            "model_reasoning_effort=medium",
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request"
+          ],
+          "wrapper": {
+            "executable": "/Users/omri/.amq-squad/spike/bin/seat-exec",
+            "args": [
+              "--seat",
+              "s4-codex"
+            ]
+          },
+          "cwd": {
+            "kind": "absolute",
+            "path": "/Users/omri/.amq-squad/spike/s4/project-wt"
+          },
+          "resume_policy": "resume",
+          "execution": {
+            "require_wake": false,
+            "no_gitignore": true,
+            "wake": {
+              "mode": "disabled",
+              "audit_reason": "S4 manually driven launch probe"
+            }
+          },
+          "initial_input": {
+            "kind": "argument",
+            "text": "Without running any command: reply with the token S4_RESUMED and the exact token you replied with in your first turn of this conversation, then stop."
+          }
+        }
+      ]
+    }
+  },
+  "subject_schema": 2,
+  "subject_digest": "sha256:d8f97a3674c85d398576feebf06a8b900b1b49159605a468303c84f1fe7b6b89",
+  "decisions": [
+    {
+      "action_id": "sha256:360f797e1003e708eaff2eaa0b931b797a22dcdfc253a5e8a99675158c10857f",
+      "choice": "trust_exact_subject"
+    }
+  ]
+}

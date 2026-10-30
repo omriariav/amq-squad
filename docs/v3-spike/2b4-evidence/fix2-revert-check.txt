@@ -1,0 +1,352 @@
+========================================================================
+## rule: N1 a retry re-validates the recorded tier
+## test: ./internal/routing/ TestFix2HistoryIsCheckedNotTrusted$
+## edit internal/routing/router.go:
+-		if !slices.Contains(r.classTiers(t.Class, spec.Tier, false), base) {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestFix2HistoryIsCheckedNotTrusted
+    fix2_test.go:34: plan retried on claude:haiku:low's recorded tier: {Pool:0x172c235725d0 Wait: Block: Detail:routing: smol lead_pin}
+--- FAIL: TestFix2HistoryIsCheckedNotTrusted (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.237s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2HistoryIsCheckedNotTrusted
+--- PASS: TestFix2HistoryIsCheckedNotTrusted (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.234s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1 validated by the class's own rules
+## test: ./internal/routing/ TestFix2EscalationIsAFloor$
+## edit internal/routing/router.go:
+-		if !slices.Contains(r.classTiers(t.Class, spec.Tier, false), base) {
++		if !slices.Contains(r.classTiers(t.Class, tableTier, escalated), base) {
+## reverted run (exit 1):
+=== RUN   TestFix2EscalationIsAFloor
+    fix2_test.go:65: pin "": retry after escalation {Task:t1 Attempt:2 Class:implement Features:{DeclaredFiles:4 SizeBand:4+ InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:plan UsedTier: Entry:<nil> Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC} {Pool:<nil> Wait: Block:pin_unresolved Detail:routing: recorded starting tier "task" of t1 is not a tier class implement may run on}
+--- FAIL: TestFix2EscalationIsAFloor (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.240s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2EscalationIsAFloor
+--- PASS: TestFix2EscalationIsAFloor (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.243s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N2 the escalation is a floor
+## test: ./internal/routing/ TestFix2EscalationIsAFloor$
+## edit internal/routing/router.go:
+-		if escalated && TierRank(base) < TierRank(tableTier) {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestFix2EscalationIsAFloor
+    fix2_test.go:65: pin "": retry after escalation {Task:t1 Attempt:2 Class:implement Features:{DeclaredFiles:4 SizeBand:4+ InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:plan UsedTier:task Entry:0x5b6bea5f6600 Skipped:[] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC} {Pool:0x5b6bea5f6600 Wait: Block: Detail:routing: task table}
+--- FAIL: TestFix2EscalationIsAFloor (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.229s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2EscalationIsAFloor
+--- PASS: TestFix2EscalationIsAFloor (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.253s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N2 a pin below the floor is dropped
+## test: ./internal/routing/ TestFix2EscalationIsAFloor$
+## edit internal/routing/router.go:
+-			base, pin = tableTier, nil
++			base = tableTier
+## reverted run (exit 1):
+=== RUN   TestFix2EscalationIsAFloor
+    fix2_test.go:65: pin "claude:sonnet:medium": retry after escalation {Task:t1 Attempt:2 Class:implement Features:{DeclaredFiles:4 SizeBand:4+ InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:plan UsedTier:plan Entry:0x1620dadea7e0 Skipped:[] Policy:lead_pin Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC} {Pool:0x1620dadea7e0 Wait: Block: Detail:routing: plan lead_pin}
+--- FAIL: TestFix2EscalationIsAFloor (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.249s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2EscalationIsAFloor
+--- PASS: TestFix2EscalationIsAFloor (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.243s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-4 the log is re-verified each route
+## test: ./internal/routing/ TestFix2LogDurabilityIsReverified$
+## edit internal/routing/durable.go:
+-	if size == r.logSize && (size == 0 || tailParses(path)) {
+		return nil
+	}
++	if true {
+		return nil
+	}
+## reverted run (exit 1):
+=== RUN   TestFix2LogDurabilityIsReverified
+    fix2_test.go:96: after truncation: {Pool:0x14c583a2f350 Wait: Block: Detail:routing: plan table}, 0 rows
+--- FAIL: TestFix2LogDurabilityIsReverified (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.290s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2LogDurabilityIsReverified
+--- PASS: TestFix2LogDurabilityIsReverified (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.293s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-4 the last row must parse
+## test: ./internal/routing/ TestFix2LogDurabilityIsReverified$
+## edit internal/routing/durable.go:
+-	if size := fileSize(OutcomePath(r.o.Root)); size > 0 && !tailParses(OutcomePath(r.o.Root)) {
++	if size := fileSize(OutcomePath(r.o.Root)); size < 0 {
+## reverted run (exit 1):
+=== RUN   TestFix2LogDurabilityIsReverified
+    fix2_test.go:110: torn foreign tail: {Pool:0x126694167710 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestFix2LogDurabilityIsReverified (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.283s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2LogDurabilityIsReverified
+--- PASS: TestFix2LogDurabilityIsReverified (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.268s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-4 a pending decision stops every route
+## test: ./internal/routing/ TestFix2LogDurabilityIsReverified$
+## edit internal/routing/durable.go:
+-	if err := r.writePendingDecisions(); err != nil {
+		return err
+	}
++	if err := r.writePendingDecisions(); err != nil && false {
+		return err
+	}
+## reverted run (exit 1):
+=== RUN   TestFix2LogDurabilityIsReverified
+    fix2_test.go:136: b dispatched past a pending decision: {Pool:0xb6218623b00 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestFix2LogDurabilityIsReverified (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.277s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2LogDurabilityIsReverified
+--- PASS: TestFix2LogDurabilityIsReverified (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.262s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-4 a failed decision stays pending
+## test: ./internal/routing/ TestFix2LogDurabilityIsReverified$
+## edit internal/routing/durable.go:
+-		if err := AppendJSONL(DecisionPath(r.o.Root), r.pendingDec[0]); err != nil {
+
++		if err := AppendJSONL(DecisionPath(r.o.Root), r.pendingDec[0]); err != nil {
+			r.pendingDec = nil
+
+## reverted run (exit 1):
+=== RUN   TestFix2LogDurabilityIsReverified
+    fix2_test.go:136: b dispatched past a pending decision: {Pool:0x63d0f2c1aa0 Wait: Block: Detail:routing: plan table}
+--- FAIL: TestFix2LogDurabilityIsReverified (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.378s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2LogDurabilityIsReverified
+--- PASS: TestFix2LogDurabilityIsReverified (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.727s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 declared trees are walked
+## test: ./internal/routing/ TestFix2DeclaredTreesAreWalked$
+## edit internal/routing/canon.go:
+-	if expand {
+		if why := treeLeaves(dir); why != "" {
++	if false && expand {
+		if why := treeLeaves(dir); why != "" {
+## reverted run (exit 1):
+=== RUN   TestFix2DeclaredTreesAreWalked
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1611687232/001: public/: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1611687232/001: public/*.go: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1611687232/001: public/**: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1611687232/002/repo-link: public/: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1611687232/002/repo-link: public/*.go: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1611687232/002/repo-link: public/**: vendor (), want local
+--- FAIL: TestFix2DeclaredTreesAreWalked (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.351s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2DeclaredTreesAreWalked
+--- PASS: TestFix2DeclaredTreesAreWalked (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.262s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 globs are walked under their prefix
+## test: ./internal/routing/ TestFix2DeclaredTreesAreWalked$
+## edit internal/routing/canon.go:
+-			out = append(out, segs[i:]...)
+			expand = true
+			break
++			out = append(out, segs[i:]...)
+			expand = tree
+			break
+## reverted run (exit 1):
+=== RUN   TestFix2DeclaredTreesAreWalked
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2859692006/001: public/*.go: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2859692006/001: public/**: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2859692006/002/repo-link: public/*.go: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2859692006/002/repo-link: public/**: vendor (), want local
+--- FAIL: TestFix2DeclaredTreesAreWalked (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.237s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2DeclaredTreesAreWalked
+--- PASS: TestFix2DeclaredTreesAreWalked (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.252s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 a link leaving the tree is local-only
+## test: ./internal/routing/ TestFix2DeclaredTreesAreWalked$
+## edit internal/routing/canon.go:
+-err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
++err != nil || rel == "never"
+## reverted run (exit 1):
+=== RUN   TestFix2DeclaredTreesAreWalked
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2541910272/001: public/: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2541910272/001: public/*.go: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2541910272/001: public/**: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2541910272/002/repo-link: public/: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2541910272/002/repo-link: public/*.go: vendor (), want local
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked2541910272/002/repo-link: public/**: vendor (), want local
+--- FAIL: TestFix2DeclaredTreesAreWalked (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.255s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2DeclaredTreesAreWalked
+--- PASS: TestFix2DeclaredTreesAreWalked (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.242s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the root's ancestors resolved once
+## test: ./internal/routing/ TestFix2DeclaredTreesAreWalked$
+## edit internal/routing/canon.go:
+-		return grants.PrivacyVendor, ""
+	}
+	root = ResolveRoot(root)
++		return grants.PrivacyVendor, ""
+	}
+## reverted run (exit 1):
+=== RUN   TestFix2DeclaredTreesAreWalked
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1515464939/001: docs/: local (symlink at /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1515464939/001/docs/abs leaves the declared tree), want vendor
+    fix2_test.go:192: root /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1515464939/002/repo-link: docs/: local (symlink at /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFix2DeclaredTreesAreWalked1515464939/002/repo-link/docs/abs leaves the declared tree), want vendor
+--- FAIL: TestFix2DeclaredTreesAreWalked (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.250s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2DeclaredTreesAreWalked
+--- PASS: TestFix2DeclaredTreesAreWalked (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.245s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit b a missing seed is refused
+## test: ./internal/routing/ TestFix2SeedIsCheckedNotRegenerated$
+## edit internal/routing/seed.go:
+-	case sessionStarted(root):
++	case false && sessionStarted(root):
+## reverted run (exit 1):
+=== RUN   TestFix2SeedIsCheckedNotRegenerated
+    fix2_test.go:229: missing: <nil>
+--- FAIL: TestFix2SeedIsCheckedNotRegenerated (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.249s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2SeedIsCheckedNotRegenerated
+--- PASS: TestFix2SeedIsCheckedNotRegenerated (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.254s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit b mode 0600 required
+## test: ./internal/routing/ TestFix2SeedIsCheckedNotRegenerated$
+## edit internal/routing/seed.go:
+-runtime.GOOS != "windows" && st.Mode().Perm() != 0o600
++runtime.GOOS != "windows" && false
+## reverted run (exit 1):
+=== RUN   TestFix2SeedIsCheckedNotRegenerated
+    fix2_test.go:229: mode 0644: <nil>
+--- FAIL: TestFix2SeedIsCheckedNotRegenerated (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.256s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2SeedIsCheckedNotRegenerated
+--- PASS: TestFix2SeedIsCheckedNotRegenerated (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.253s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: limit b 32 raw bytes required
+## test: ./internal/routing/ TestFix2SeedIsCheckedNotRegenerated$
+## edit internal/routing/seed.go:
+-	if st.Size() != SeedBytes {
++	if false {
+## edit internal/routing/seed.go:
+-	if len(raw) != SeedBytes {
++	if len(raw) == 0 {
+## reverted run (exit 1):
+=== RUN   TestFix2SeedIsCheckedNotRegenerated
+    fix2_test.go:229: 31 bytes: <nil>
+--- FAIL: TestFix2SeedIsCheckedNotRegenerated (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.226s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2SeedIsCheckedNotRegenerated
+--- PASS: TestFix2SeedIsCheckedNotRegenerated (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.240s
+
+## verdict: OK (fails reverted, passes restored)

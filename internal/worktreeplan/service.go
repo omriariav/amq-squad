@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type Service struct {
@@ -27,10 +27,10 @@ func NewService(t team.Team, profile, session string, git GitRunner, now func() 
 		return nil, fmt.Errorf("team home is required")
 	}
 	if strings.TrimSpace(profile) == "" {
-		profile = team.DefaultProfile
+		profile = squadnamespace.DefaultProfile
 	}
-	if profile != team.DefaultProfile {
-		if err := team.ValidateProfileName(profile); err != nil {
+	if profile != squadnamespace.DefaultProfile {
+		if err := squadnamespace.ValidateProfile(profile); err != nil {
 			return nil, err
 		}
 	}
@@ -39,13 +39,13 @@ func NewService(t team.Team, profile, session string, git GitRunner, now func() 
 		return nil, fmt.Errorf("resolve team home: %w", err)
 	}
 	t.Project = filepath.Clean(project)
-	// A linked worktree may contain the tracked team.json, but its persisted
+	// A linked worktree may contain the tracked squad.yaml, but its persisted
 	// control_root still points at the canonical team-home. Prefer that copy
 	// when it exists so no lifecycle mutation ever rewrites a worktree-local
 	// control plane.
 	control := ControlRoot(t)
-	if control != t.Project && team.ExistsProfile(control, profile) {
-		canonical, readErr := team.ReadProfile(control, profile)
+	if control != t.Project && team.ExistsFor(control, profile) {
+		canonical, readErr := team.ReadFor(control, profile)
 		if readErr != nil {
 			return nil, fmt.Errorf("read canonical team profile at control root: %w", readErr)
 		}
@@ -584,8 +584,8 @@ func (s *Service) member(role string) (team.Member, error) {
 }
 
 func (s *Service) setMemberCWD(record Record, cwd string) error {
-	err := team.WithProfileLock(s.team.Project, s.profile, func() error {
-		current, err := team.ReadProfile(s.team.Project, s.profile)
+	err := team.WithLock(s.team.Project, func() error {
+		current, err := team.ReadFor(s.team.Project, s.profile)
 		if err != nil {
 			return err
 		}
@@ -600,7 +600,7 @@ func (s *Service) setMemberCWD(record Record, cwd string) error {
 				return fmt.Errorf("refuse member cwd overwrite: %s now points at %s", record.Role, existing)
 			}
 			current.Members[i].CWD = filepath.Clean(cwd)
-			return team.WriteProfileUnderLock(s.team.Project, s.profile, current)
+			return team.WriteUnderLock(s.team.Project, current)
 		}
 		return fmt.Errorf("role %q disappeared from team profile", record.Role)
 	})
@@ -615,8 +615,8 @@ func (s *Service) setMemberCWD(record Record, cwd string) error {
 }
 
 func (s *Service) restoreMemberCWD(record Record) error {
-	err := team.WithProfileLock(s.team.Project, s.profile, func() error {
-		current, err := team.ReadProfile(s.team.Project, s.profile)
+	err := team.WithLock(s.team.Project, func() error {
+		current, err := team.ReadFor(s.team.Project, s.profile)
 		if err != nil {
 			return err
 		}
@@ -640,7 +640,7 @@ func (s *Service) restoreMemberCWD(record Record) error {
 			} else {
 				current.Members[i].CWD = ""
 			}
-			return team.WriteProfileUnderLock(s.team.Project, s.profile, current)
+			return team.WriteUnderLock(s.team.Project, current)
 		}
 		return fmt.Errorf("role %q disappeared from team profile", record.Role)
 	})
@@ -919,7 +919,7 @@ func effectiveHandle(member team.Member) string {
 
 func normalizedProfile(profile string) string {
 	if strings.TrimSpace(profile) == "" {
-		return team.DefaultProfile
+		return squadnamespace.DefaultProfile
 	}
 	return strings.TrimSpace(profile)
 }

@@ -1,0 +1,25 @@
+go build -ldflags "-X main.version=v2.31.0-591-g2bb0f15d-dirty" -o amq-squad ./cmd/amq-squad
+skill-invocation-check: 69 documented invocation(s) execute cleanly; none reached for gh (stubbed)
+  17 flagless inline reference(s) not executed (existence gate covers them):
+    plugins/skills-src/cli/SKILL.md:28: amq-squad doctor
+    plugins/skills-src/wizard/SKILL.md:33: amq-squad roles
+    plugins/skills-src/amq-squad/references/team-rules-template.md:4: amq-squad team propose
+    plugins/skills-src/amq-squad/references/team-rules-template.md:15: amq-squad brief
+    plugins/skills-src/amq-squad/references/team-rules-template.md:38: amq-squad team propose
+    plugins/skills-src/amq-squad/references/team-rules-template.md:52: amq-squad task claim
+    plugins/skills-src/amq-squad/references/team-rules-template.md:70: amq-squad gate raise
+    plugins/skills-src/amq-squad/references/team-rules-template.md:78: amq-squad verify
+    plugins/skills-src/cli/references/primitives.md:49: amq-squad dispatch
+    plugins/skills-src/cli/references/primitives.md:58: amq-squad dispatch
+    plugins/skills-src/cli/references/primitives.md:70: amq-squad launch
+    plugins/skills-src/cli/references/primitives.md:72: amq-squad migrate
+    plugins/skills-src/wizard/references/briefs-template.md:9: amq-squad brief
+    plugins/skills-src/wizard/references/pointer-stub-template.md:3: amq-squad team apply
+    plugins/skills-src/wizard/references/pointer-stub-template.md:5: amq-squad team propose
+    plugins/skills-src/wizard/references/roles.md:5: amq-squad roles
+    plugins/skills-src/wizard/references/worktrees.md:47: amq-squad worktree
+.........................
+----------------------------------------------------------------------
+Ran 25 tests in 0.739s
+
+OK

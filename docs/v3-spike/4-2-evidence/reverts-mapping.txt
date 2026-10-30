@@ -1,0 +1,585 @@
+=== MUTATION: allow -> no decision (undo allow to allow)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: MappingTable
+replaced:
+		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"amq-squad guard: allowed"}}\n'
+
+with:
+		:
+
+result: FAILS as required (exit 1)
+--- full output ---
+.EF
+======================================================================
+ERROR: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='allowed')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 176, in test_every_guard_reason_code_maps_per_the_table
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 186, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(seen, {"allowed", "gate_release", "gate_send", "gate_credential", "gate_grow", "seat_merge",
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                            "force_push", "push_delete", "push_other_branch", "protected_path", "grants_invalid"})
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Items in the second set but not the first:
+'allowed'
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.900s
+
+FAILED (failures=1, errors=1)
+
+--- restored, same tests: exit 0 ---
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.609s
+
+OK
+
+
+=== MUTATION: deny -> no decision (undo deny to deny)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: MappingTable FaultTable.test_deny_blocks
+replaced:
+		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"amq-squad guard: %s"}}\n' "$reason"
+
+with:
+		:
+
+result: FAILS as required (exit 1)
+--- full output ---
+EEEEEEEFF
+======================================================================
+ERROR: test_deny_reason_carries_quotes_and_backslashes_as_valid_json (__main__.MappingTable.test_deny_reason_carries_quotes_and_backslashes_as_valid_json)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 194, in test_deny_reason_carries_quotes_and_backslashes_as_valid_json
+    json.loads(out)  # valid JSON
+    ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+ERROR: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='seat_merge')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 176, in test_every_guard_reason_code_maps_per_the_table
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+ERROR: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='force_push')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 176, in test_every_guard_reason_code_maps_per_the_table
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+ERROR: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='push_delete')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 176, in test_every_guard_reason_code_maps_per_the_table
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+ERROR: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='push_other_branch')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 176, in test_every_guard_reason_code_maps_per_the_table
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+ERROR: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='protected_path')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 176, in test_every_guard_reason_code_maps_per_the_table
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+ERROR: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='grants_invalid')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 176, in test_every_guard_reason_code_maps_per_the_table
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 186, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(seen, {"allowed", "gate_release", "gate_send", "gate_credential", "gate_grow", "seat_merge",
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                            "force_push", "push_delete", "push_other_branch", "protected_path", "grants_invalid"})
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Items in the second set but not the first:
+'push_other_branch'
+'grants_invalid'
+'seat_merge'
+'force_push'
+'push_delete'
+'protected_path'
+
+======================================================================
+FAIL: test_deny_blocks (__main__.FaultTable.test_deny_blocks)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 258, in test_deny_blocks
+    self.assertEqual(claude_decision(rc, out, to), "block")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'proceed' != 'block'
+- proceed
++ block
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.635s
+
+FAILED (failures=2, errors=7)
+
+--- restored, same tests: exit 0 ---
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.624s
+
+OK
+
+
+=== MUTATION: needs_gate -> ask (the forbidden mapping)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: MappingTable NeedsGateNeverAsks
+replaced:
+"permissionDecision":"deny","permissionDecisionReason":"raise the gate
+with:
+"permissionDecision":"ask","permissionDecisionReason":"raise the gate
+result: FAILS as required (exit 1)
+--- full output ---
+.FFFFFF
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_release')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'ask' != 'deny'
+- ask
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_send')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'ask' != 'deny'
+- ask
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_credential')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'ask' != 'deny'
+- ask
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_grow')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'ask' != 'deny'
+- ask
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 186, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(seen, {"allowed", "gate_release", "gate_send", "gate_credential", "gate_grow", "seat_merge",
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                            "force_push", "push_delete", "push_other_branch", "protected_path", "grants_invalid"})
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Items in the second set but not the first:
+'gate_grow'
+'gate_release'
+'gate_credential'
+'gate_send'
+
+======================================================================
+FAIL: test_git_tag_without_an_answer_is_denied_with_the_gate_reason (__main__.NeedsGateNeverAsks.test_git_tag_without_an_answer_is_denied_with_the_gate_reason)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 210, in test_git_tag_without_an_answer_is_denied_with_the_gate_reason
+    self.assertEqual(d["permissionDecision"], "deny")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'ask' != 'deny'
+- ask
++ deny
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.679s
+
+FAILED (failures=6)
+
+--- restored, same tests: exit 0 ---
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.624s
+
+OK
+
+
+=== MUTATION: needs_gate -> allow
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: MappingTable NeedsGateNeverAsks
+replaced:
+"permissionDecision":"deny","permissionDecisionReason":"raise the gate
+with:
+"permissionDecision":"allow","permissionDecisionReason":"raise the gate
+result: FAILS as required (exit 1)
+--- full output ---
+.FFFFFF
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_release')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'allow' != 'deny'
+- allow
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_send')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'allow' != 'deny'
+- allow
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_credential')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'allow' != 'deny'
+- allow
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_grow')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 178, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecision"], want)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'allow' != 'deny'
+- allow
++ deny
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 186, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(seen, {"allowed", "gate_release", "gate_send", "gate_credential", "gate_grow", "seat_merge",
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                            "force_push", "push_delete", "push_other_branch", "protected_path", "grants_invalid"})
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Items in the second set but not the first:
+'gate_send'
+'gate_grow'
+'gate_credential'
+'gate_release'
+
+======================================================================
+FAIL: test_git_tag_without_an_answer_is_denied_with_the_gate_reason (__main__.NeedsGateNeverAsks.test_git_tag_without_an_answer_is_denied_with_the_gate_reason)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 210, in test_git_tag_without_an_answer_is_denied_with_the_gate_reason
+    self.assertEqual(d["permissionDecision"], "deny")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'allow' != 'deny'
+- allow
++ deny
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.579s
+
+FAILED (failures=6)
+
+--- restored, same tests: exit 0 ---
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.674s
+
+OK
+
+
+=== MUTATION: needs_gate reason without action_class and target
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: MappingTable NeedsGateNeverAsks
+replaced:
+raise the gate for %s %s"}}\n' "$class" "$target"
+with:
+gate required"}}\n'
+result: FAILS as required (exit 1)
+--- full output ---
+FFFFFFF
+======================================================================
+FAIL: test_deny_reason_carries_quotes_and_backslashes_as_valid_json (__main__.MappingTable.test_deny_reason_carries_quotes_and_backslashes_as_valid_json)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 201, in test_deny_reason_carries_quotes_and_backslashes_as_valid_json
+    self.assertEqual(d["permissionDecisionReason"], "raise the gate for %s %s" % (g["action_class"], g["target"]))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gate required' != 'raise the gate for tag git tag v1x'
+- gate required
++ raise the gate for tag git tag v1x
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_release')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 181, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecisionReason"], "raise the gate for %s %s" % (g["action_class"], g["target"]))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gate required' != 'raise the gate for tag git tag v1'
+- gate required
++ raise the gate for tag git tag v1
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_send')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 181, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecisionReason"], "raise the gate for %s %s" % (g["action_class"], g["target"]))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gate required' != 'raise the gate for external_send mcp__slack__send_message C1'
+- gate required
++ raise the gate for external_send mcp__slack__send_message C1
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_credential')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 181, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecisionReason"], "raise the gate for %s %s" % (g["action_class"], g["target"]))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gate required' != 'raise the gate for credential_change gh auth login'
+- gate required
++ raise the gate for credential_change gh auth login
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) (reason_code='gate_grow')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 181, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(d["permissionDecisionReason"], "raise the gate for %s %s" % (g["action_class"], g["target"]))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gate required' != 'raise the gate for spawn grow /private/va[90 chars]ts=3'
+- gate required
++ raise the gate for spawn grow /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/hooktest-1zz6s7ov/project/.agent-mail/s1 seats=3
+
+
+======================================================================
+FAIL: test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 186, in test_every_guard_reason_code_maps_per_the_table
+    self.assertEqual(seen, {"allowed", "gate_release", "gate_send", "gate_credential", "gate_grow", "seat_merge",
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                            "force_push", "push_delete", "push_other_branch", "protected_path", "grants_invalid"})
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Items in the second set but not the first:
+'gate_release'
+'gate_credential'
+'gate_grow'
+'gate_send'
+
+======================================================================
+FAIL: test_git_tag_without_an_answer_is_denied_with_the_gate_reason (__main__.NeedsGateNeverAsks.test_git_tag_without_an_answer_is_denied_with_the_gate_reason)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 211, in test_git_tag_without_an_answer_is_denied_with_the_gate_reason
+    self.assertEqual(d["permissionDecisionReason"], "raise the gate for tag git tag v1")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gate required' != 'raise the gate for tag git tag v1'
+- gate required
++ raise the gate for tag git tag v1
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.747s
+
+FAILED (failures=7)
+
+--- restored, same tests: exit 0 ---
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.690s
+
+OK
+
+
+=== MUTATION: outside a seat: drop the AM_ME early exit
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: OutsideASeat
+replaced:
+[ -n "${AM_ME:-}" ] || exit 0
+
+with:
+
+result: FAILS as required (exit 1)
+--- full output ---
+outside a seat (attempt 1): 60 runs, p50 16.0 ms, p95 26.8 ms, max 29.3 ms
+outside a seat (attempt 2): 60 runs, p50 15.6 ms, p95 38.7 ms, max 74.9 ms
+outside a seat (attempt 3): 60 runs, p50 18.4 ms, p95 61.1 ms, max 102.7 ms
+.F
+======================================================================
+FAIL: test_overhead_under_20ms_per_call (__main__.OutsideASeat.test_overhead_under_20ms_per_call)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 246, in test_overhead_under_20ms_per_call
+    self.assertLess(p95, 20.0)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^
+AssertionError: 61.09508406370878 not less than 20.0
+
+----------------------------------------------------------------------
+Ran 2 tests in 3.863s
+
+FAILED (failures=1)
+
+--- restored, same tests: exit 0 ---
+outside a seat (attempt 1): 60 runs, p50 6.8 ms, p95 12.3 ms, max 22.0 ms
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.508s
+
+OK
+
+
+SUMMARY: 6 mutations, 0 problems

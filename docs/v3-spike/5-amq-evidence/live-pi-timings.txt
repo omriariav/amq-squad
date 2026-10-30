@@ -1,0 +1,10 @@
+11 cold_install_ms=1930.635 prepare_ms=14.654 launch_to_up_ms=2557.249 up_to_pi_ready_ms=815.065 prompt_to_answer_ms=3685.065 launcher_rehash_ms=None launcher_rest_ms=None launcher_check_ms=None
+12 cold_install_ms=1177.784 prepare_ms=14.053 launch_to_up_ms=2439.423 up_to_pi_ready_ms=806.232 prompt_to_answer_ms=3750.978 launcher_rehash_ms=None launcher_rest_ms=None launcher_check_ms=None
+13 cold_install_ms=1172.782 prepare_ms=14.03 launch_to_up_ms=2466.724 up_to_pi_ready_ms=753.14 prompt_to_answer_ms=3953.756 launcher_rehash_ms=None launcher_rest_ms=None launcher_check_ms=None
+14 cold_install_ms=1174.614 prepare_ms=13.939 launch_to_up_ms=2465.004 up_to_pi_ready_ms=805.535 prompt_to_answer_ms=3873.004 launcher_rehash_ms=None launcher_rest_ms=None launcher_check_ms=None
+15 cold_install_ms=1187.744 prepare_ms=14.264 launch_to_up_ms=2458.694 up_to_pi_ready_ms=808.249 prompt_to_answer_ms=4018.616 launcher_rehash_ms=None launcher_rest_ms=None launcher_check_ms=None
+median cold_install_ms = 1177.8 (1172.8..1930.6, n=5)
+median prepare_ms = 14.1 (13.9..14.7, n=5)
+median launch_to_up_ms = 2465.0 (2439.4..2557.2, n=5)
+median up_to_pi_ready_ms = 806.2 (753.1..815.1, n=5)
+median prompt_to_answer_ms = 3873.0 (3685.1..4018.6, n=5)

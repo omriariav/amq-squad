@@ -1,9 +1,6 @@
 package attention
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
 	"time"
 )
 
@@ -30,21 +27,6 @@ type Event struct {
 	Cleared        bool      `json:"-"`
 }
 
-func SelfApprovedKey(profile, session, thread string) string {
-	return profile + "/" + session + "\x00self_approved\x00" + thread
-}
-func HumanOnlyGateKey(profile, session, thread string) string {
-	return profile + "/" + session + "\x00human_only_gate\x00" + thread
-}
-
 func GateKey(profile, session, thread string) string {
 	return profile + "/" + session + "\x00gate\x00" + thread
-}
-func LocalInputKey(profile, session, role string) string {
-	return profile + "/" + session + "\x00local_input_blocked\x00" + role
-}
-func LocalInputFingerprint(pane, kind string, destructive bool, summary string) string {
-	text := strings.Join([]string{pane, kind, strings.ToLower(strings.TrimSpace(summary)), map[bool]string{true: "1", false: "0"}[destructive]}, "\x00")
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
 }

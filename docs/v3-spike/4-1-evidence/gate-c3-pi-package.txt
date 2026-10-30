@@ -1,0 +1,41 @@
+lint ok: 13 files, pi 1.3.0
+(node:25634) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ before_agent_start injects role and context every turn and the role message once (1073.305959ms)
+✔ a resumed session that already holds the role message gets no second one (2431.781542ms)
+✔ tool_call: allow passes, deny blocks, guard failure blocks (4006.639459ms)
+✔ needs_gate holds until guard allows (a verified gate answer) (3315.376333ms)
+✔ needs_gate times out and blocks; the same call is then capped (908.980209ms)
+✔ an approval tool: a local confirm races the remote answer (722.639ms)
+✔ bridge revision 4: the remote answer approves the held call under an owned ref (1419.098625ms)
+✔ no owned ref: raiseApproval returns null (the local face answers) (0.2765ms)
+✔ tool_result writes one evidence line (611.876208ms)
+✔ without an AMQ identity the package is inactive (0.345333ms)
+✔ the first decision from any face wins: remote before local (21.301708ms)
+✔ the first decision from any face wins: local before remote (11.4515ms)
+✔ a late second answer does not change the decision (41.912667ms)
+✔ timeout and abort block (41.470333ms)
+✔ a throwing face blocks (fail closed) (0.1025ms)
+✔ several held calls in parallel resolve independently (61.732709ms)
+✔ the retry cap stops a storm (0.277375ms)
+✔ guard fails closed: exit 1, timeout, missing binary, no verdict (1208.502667ms)
+✔ guard verdicts map to allow, block and needs_gate (7094.521042ms)
+✔ guard is called with the seat and --stdin (1205.979959ms)
+✔ context section states what AMQ is, the task and gates (0.505625ms)
+✔ evidence ingest gets one tool_result payload with an outcome (1357.798166ms)
+✔ config needs an AMQ identity (0.411833ms)
+✔ run reports spawn errors and timeouts (101.610958ms)
+✔ writes outside the task's declared files are blocked in session (0.619042ms)
+✔ the lead's reset tool (0.880709ms)
+✔ argv: bodies go on stdin, recipients and kinds are checked (0.823334ms)
+✔ registered tools run the configured binaries with the body on stdin (2624.7215ms)
+✔ a failing amq is an error tool result (thrown) (2161.368833ms)
+✔ model restriction (0.176125ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18522.1495

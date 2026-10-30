@@ -1,6 +1,6 @@
 ---
 name: "amq-team-setup"
 description: "Deprecated redirect for the former setup wizard skill. Use amq-squad:wizard."
-version: "2.31.0"  # x-release-please-version
+version: "3.0.1"  # x-release-please-version
 ---
-Use `amq-squad:wizard` for goal intake, team design, role authoring, team/profile setup, and launch preview.
+Use `amq-squad:wizard` for goal intake, squad design, role authoring, the squad.yaml digest flow, the brief, and the launch.

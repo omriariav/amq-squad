@@ -1,0 +1,5 @@
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 118 packages in 1s
+{"files":6441,"manifest_sha256":"2c5f711654b6ab074397490cf50b3ff9a1566c6d37cb8a81e8bf3410860aacad","payload_bytes":55659309,"payload_sha256":"668f0c9c60c7e1e44bd50265f0c63259b0b98fb44241c38f5a4e8f825ac11471","unpacked_bytes":179335322,"version":"pi-1.3.0-node-22.21.1-darwin-arm64"}
+{"binary":"/Users/omri/code/amq-squad/.claude/worktrees/agent-a28812eaea493cdaf/build/pi/amq-squad","binary_bytes":68225842}

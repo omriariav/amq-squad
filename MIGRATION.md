@@ -1,3 +1,22 @@
+# Moving to 3.0
+
+For an installed v2, 3.0 changes the following. The rules live in the docs, not here.
+
+- The v2 profile gives way to `squad.yaml` schema 1; see [docs/squad-yaml.md](docs/squad-yaml.md).
+- `amq-squad migrate <profile>` is a dry run by default and writes only with `--write`.
+- It never touches `grants.yaml` or `registry.yaml`; it writes `grants.yaml.proposed` beside them.
+- It prints the unmapped fields, which you settle by hand.
+- Owner setup list (plan section 16.4 in [docs/v3-plan.md](docs/v3-plan.md)): the claude pin.
+- Owner setup: the gh pin.
+- Owner setup: the token file.
+- Owner setup: `amq-squad trust` per seat repository.
+- Owner setup: the Codex notify line.
+- Install from the `/v3` module path: `go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.1`.
+
+The sections below are the earlier v2 migration guide, unchanged.
+
+---
+
 # Migrating to amq-squad 2.0.0
 
 2.0.0 is a breaking release. The breaking surface is intentionally small and

@@ -1,0 +1,71 @@
+==============================================================================
+ROW the lead restarts the scheduler process
+fix reverted in internal/cli/lead_scheduler.go:
+- 		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
++ 		return
+$ go test -count=1 -race -run ^(TestLeadSupervisesTheSchedulerProcess)$ ./internal/cli   (fix reverted)
+--- FAIL: TestLeadSupervisesTheSchedulerProcess (10.02s)
+    lead_scheduler_test.go:42: the scheduler process did not start
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	10.451s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLeadSupervisesTheSchedulerProcess)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.505s
+
+ROW the lead restarts the scheduler process: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the scheduler process stops with the lead
+fix reverted in internal/cli/lead_scheduler.go:
+- 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
++ 		cmd.Cancel = func() error { return nil }
+		_ = syscall.SIGTERM
+$ go test -count=1 -race -run ^(TestLeadSupervisesTheSchedulerProcess)$ ./internal/cli   (fix reverted)
+--- FAIL: TestLeadSupervisesTheSchedulerProcess (10.05s)
+    lead_scheduler_test.go:49: the scheduler process took 10.001861125s to stop (SIGTERM, not the kill after the wait delay)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	10.514s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLeadSupervisesTheSchedulerProcess)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.377s
+
+ROW the scheduler process stops with the lead: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW repeated fast failures stop the restarts
+fix reverted in internal/cli/lead_scheduler.go:
+- 		if fast >= s.maxFast {
++ 		if false {
+$ go test -count=1 -race -run ^(TestLeadSchedulerGivesUpOnFastFailures)$ ./internal/cli   (fix reverted)
+--- FAIL: TestLeadSchedulerGivesUpOnFastFailures (10.00s)
+    lead_scheduler_test.go:68: the supervisor never gave up
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	10.552s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLeadSchedulerGivesUpOnFastFailures)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.361s
+
+ROW repeated fast failures stop the restarts: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the default pool routes a pool-less task
+fix reverted in internal/scheduler/hooks.go:
+- 	if t.Pool == nil && r.Pool != nil {
++ 	if false {
+$ go test -count=1 -race -run ^(TestDefaultRouterDefaultPool)$ ./internal/scheduler   (fix reverted)
+--- FAIL: TestDefaultRouterDefaultPool (0.00s)
+    milestoneb_test.go:80: default pool: {Pool:<nil> Wait:no_route Block: Detail:}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.267s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDefaultRouterDefaultPool)$ ./internal/scheduler   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.259s
+
+ROW the default pool routes a pool-less task: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

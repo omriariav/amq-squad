@@ -1,56 +1,15 @@
 package cli
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-)
-
-// dispatchNudgePrompt is the drain-only prompt amq-squad injects into a
-// worker's pane after queuing a durable task. It deliberately carries NO task
-// content: the task body lives only in the durable AMQ message (the single
-// source of truth), so the worker reads it with `amq drain` and there is no risk
-// of a pane-injected copy diverging from — or double-delivering — the queued
-// message. amq-squad nudges through the agent's OWN tmux pane — which it launched
-// and tracks by exact pane id — so it has a pane-precise, tmux-native way to poke
-// an idle agent into draining, independent of amq's own wake path.
-//
-// The exact root is explicit because AMQ 0.49.8+ refuses ambiguous repo-cwd
-// routing. The target pane's existing AM_ME remains authoritative: adding
-// --me here is redundant when healthy and makes a configless-root recovery
-// command refuse precisely when the nudge is needed most.
-func dispatchNudgePrompt(root string) string {
-	return "amq-squad dispatch: a new message is queued in your inbox. " +
-		"Run `amq drain --include-body --root " + shellQuote(strings.TrimSpace(root)) +
-		"` now and act on the newest item. Do not wait to be polled."
-}
-
-// dispatchOutcome reports how the best-effort pane nudge resolved. PaneID is the
-// pane that was nudged (empty when none was). SubmitState distinguishes a
-// confirmed Enter from a staged-but-unconfirmed prompt. Skipped carries a
-// human-readable reason the nudge did not happen (no live pane, or busy without
-// --force); a skip is NOT an error because the durable task is already queued.
-type dispatchOutcome struct {
-	PaneID      string `json:"pane_id,omitempty"`
-	Skipped     string `json:"skipped,omitempty"`
-	SubmitState string `json:"submit_state,omitempty"`
-	Detail      string `json:"detail,omitempty"`
-}
-
-const (
-	dispatchSubmitConfirmed   = "submit_confirmed"
-	dispatchSubmitUnconfirmed = "submit_unconfirmed"
-	dispatchSubmitQueued      = "submit_queued"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const (
@@ -58,35 +17,6 @@ const (
 	dispatchAnswerDefaultWaitFor   = "drained"
 	dispatchAnswerDefaultWaitAfter = 60 * time.Second
 )
-
-type dispatchEnvelopeData struct {
-	Session   string          `json:"session"`
-	Role      string          `json:"role"`
-	Assignee  string          `json:"assignee"`
-	Thread    string          `json:"thread,omitempty"`
-	Kind      string          `json:"kind"`
-	MessageID string          `json:"message_id,omitempty"`
-	TaskID    string          `json:"task_id,omitempty"`
-	Root      string          `json:"root"`
-	Nudge     dispatchOutcome `json:"nudge"`
-}
-
-// dispatchWakePane delivers a rooted dispatchNudgePrompt to a member's live
-// pane. dispatchRoot is the already-resolved durable-send root; carrying it
-// across the nudge boundary prevents fallback runtime discovery from selecting
-// a different mailbox below a worktree cwd. It is a package var so tests can
-// drive runDispatch without a tmux server.
-var dispatchWakePane = defaultDispatchWakePaneAtRoot
-
-// dispatchRecipientWakeLive reports whether the dispatch recipient currently has
-// a positively-live wake sidecar, so dispatch can rely on durable AMQ + wake
-// delivery (#289) instead of injecting pane keystrokes. Package var so tests can
-// drive the wake-first branch without real liveness probing.
-var dispatchRecipientWakeLive = defaultDispatchRecipientWakeLive
-
-// dispatchClaimTask is the simple-mode atomic claim seam. The AMQ message is
-// deliberately separate from task-store state.
-var dispatchClaimTask = taskstore.ClaimForProfile
 
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
@@ -103,63 +33,44 @@ func runDispatch(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
-	forceFlag := fs.Bool("force", false, "nudge the pane even if the agent looks busy (mid-turn)")
-	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
 	waitForFlag := fs.String("wait-for", "", "AMQ receipt stage to wait for after send (default: drained for --kind answer; use none to disable)")
 	waitTimeoutFlag := fs.Duration("wait-timeout", dispatchAnswerDefaultWaitAfter, "maximum time to wait for the AMQ receipt stage")
 	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
 	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
-	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
-	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
-	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
-	taskIDFlag := fs.String("task", "", "link dispatch metadata to an existing native task id")
-	taskIntent := fs.String("task-intent", "", "structured created-task intent: implement|review|audit|lifecycle")
-	taskArtifact := fs.String("task-artifact", "", "structured created-task artifact")
-	taskExpectedBase := fs.String("task-expected-base", "", "structured created-task expected base SHA")
-	taskImplementer := fs.String("task-implementer", "", "structured created-task implementer")
-	taskReviewer := fs.String("task-reviewer", "", "structured created-task reviewer")
-	taskParallelWork := fs.Bool("task-parallel-work", false, "explicitly allow competing implementation for the artifact")
+	createTaskFlag := fs.Bool("create-task", false, "create a task in the squad's task store and lease it to the child before dispatch")
+	taskIDFlag := fs.String("task", "", "lease an existing pending task (or confirm the child's lease) before dispatch")
+	taskClass := fs.String("task-class", "", "class of the created task (required with --create-task): "+strings.Join(taskstore.Classes, ", "))
+	taskFiles := fs.String("task-files", "", "comma-separated declared file globs of the created task")
+	taskPool := fs.String("task-pool", "", "runtime:model:effort of the created task")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad dispatch - queue a durable task for a child and wake it to drain
+		fmt.Fprint(os.Stderr, `amq-squad dispatch - queue a durable task for a child
 
 Usage:
   amq-squad dispatch [--project DIR] [--profile NAME] --session S --role ROLE
                      [--from HANDLE] [--thread THREAD] [--kind todo] --subject SUBJ
                      (--body TEXT | --body-file FILE) [--priority P]
-                     [--force] [--no-wake] [--wait-for STAGE] [--wait-timeout DURATION]
+                     [--wait-for STAGE] [--wait-timeout DURATION]
                      [--override-wait-posture --wait-posture-reason WHY]
-                     [--override-namespace-conflict --reason WHY]
-                     [--create-task | --task ID] [--json]
+                     [--create-task --task-class C [--task-files G,...] [--task-pool P] | --task ID] [--json]
 
-The deterministic lead-to-child dispatch. It does two things, in order:
-  1. Sends a DURABLE AMQ message to the workstream's resolved root (the single
-     source of truth), so the task survives even if the child is down. This is
-     root-correct for an external lead, exactly like 'amq-squad amq send'.
-  2. Nudges the child's exact tmux pane with a FIXED drain-only prompt so an
-     idle agent wakes and runs 'amq drain'. The task body is NEVER injected into
-     the pane — only the durable message carries it — so there is no double
-     delivery. (Because amq-squad launched the agents it knows each one's exact
-     tmux pane, so it wakes by pane id — a pane-precise, tmux-native nudge.)
-
-By default the nudge is skipped when the agent looks busy (a prompt pushed over
-a working agent is lost); the task stays queued and the agent drains it on its
-next turn. Pass --force to nudge anyway, or --no-wake to queue without nudging.
-When the recipient launch record uses --wake-inject-mode none, dispatch never
-injects pane input. --force cannot override that zero-input contract and is
-rejected before anything is queued; re-run without --force for durable-only
-delivery.
+The deterministic lead-to-child dispatch: it sends a DURABLE AMQ message to
+the workstream's resolved root (the single source of truth), so the task
+survives even if the child is down. The root is resolved from the team home, so
+it is correct for an external lead too. The child picks it up through AMQ (its
+next drain); dispatch never types into a terminal.
 
 After dispatch, the lead should read the child's completion/report message with
 the printed root-correct 'amq drain --include-body --root ... --me ...' command.
 Draining the task message does not prove the task is complete; wait for the
 child's explicit report on the durable task thread.
 
-With --create-task or --task ID, dispatch creates (when requested) and atomically
-claims the native task before sending AMQ. Task state and message delivery are
-separate in simple mode: a failed send leaves the task in_progress, with no
-outbox, delivery state, or automatic retry. Inspect the AMQ mailbox before
-deciding whether to send again.
+With --create-task or --task ID, dispatch creates (when requested) the task in
+the squad's task store and grants its lease to the child before sending AMQ.
+Dispatch is tracked by the lease, not by the mail: the message is a doorbell.
+The child claims the lease (amq-squad task claim); if it never does, the lease
+expires and the task returns to the pool for another seat. A failed send
+leaves the lease in place; it expires the same way.
 
 Use --body-file FILE or --body-file - (stdin) for task bodies containing code,
 commands, backticks, or $() syntax. Inline --body is suitable only for short
@@ -204,10 +115,13 @@ Examples:
 	}
 	emitContextDiagnostics(resolvedContext)
 	projectDir, profile := resolvedContext.ProjectDir, resolvedContext.Profile
-	if !team.ExistsProfile(projectDir, profile) {
+	if err := team.CheckProfile(profile); err != nil {
+		return err
+	}
+	if !team.ExistsFor(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
-	t, err := team.ReadProfile(projectDir, profile)
+	t, err := team.ReadFor(projectDir, profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
@@ -222,28 +136,17 @@ Examples:
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)
 	}
-	if err := ensureNoNamespaceConflictWithOverride("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
-		Allowed: *overrideNamespaceConflict,
-		Reason:  *overrideNamespaceReason,
-	}); err != nil {
-		return err
-	}
 	ns := squadnamespace.Resolve(projectDir, profile, workstream)
 	from, err := resolveDispatchSender(t, *fromFlag)
 	if err != nil {
 		return err
 	}
-	if _, _, err := verifyRuntimeActionByHandle("dispatch authorizer", projectDir, profile, workstream, from); err != nil {
-		return err
-	}
-	executionContract := executionContractForTeam(t, profile, workstream, "", "", "")
+	executionContract := executionContractForTeam(t, profile, workstream, "", "")
 	currentActorContract := actorExecutionContractForTeam(t, member.Role, memberHandle(member), executionContract)
 	currentActorMode := team.EffectiveActorMode(t, member)
 	currentActorImplementationAllowed := currentActorContract.ImplementationAllowedForYou
-	// Option 3 (#176): warn when the dispatcher handle differs from the
-	// team.json configured lead. Children report to the task's From field
-	// (the dispatcher), not the configured lead, so the operator needs to
-	// know if they are routing to a different mailbox than they might expect.
+	// #176: children report to the dispatcher (the task's From), so warn when
+	// it differs from the configured lead.
 	if t.Orchestrated && strings.TrimSpace(t.Lead) != "" {
 		if configuredLead, ok := teamMemberByRole(t, t.Lead); ok {
 			if ch := memberHandle(configuredLead); ch != "" && ch != from {
@@ -263,49 +166,43 @@ Examples:
 		return fmt.Errorf("resolve amq root for dispatch: %w", err)
 	}
 	ctx.Me = from
-	recipientWakeInjectMode := dispatchRecipientWakeInjectMode(ctx.Root, member.Handle)
-	if *forceFlag && recipientWakeInjectMode == "none" {
-		return usageErrorf("refusing --force pane nudge for zero-input worker %s: wake-inject-mode none is active; re-run without --force to queue the task durably", member.Handle)
-	}
 
 	taskID := strings.TrimSpace(*taskIDFlag)
-	var createInput *taskstore.AddInput
-	if *createTaskFlag && dispatchIntentRequiresImplementation(strings.TrimSpace(*taskIntent)) && !currentActorImplementationAllowed {
-		return dispatchActorIntentRefusal("create-task", strings.TrimSpace(*taskIntent), currentActorContract, currentActorMode)
+	if *createTaskFlag && !taskstore.ValidClass(strings.TrimSpace(*taskClass)) {
+		return usageErrorf("dispatch --create-task requires --task-class (one of %s)", strings.Join(taskstore.Classes, ", "))
 	}
-	if *createTaskFlag {
-		createInput = &taskstore.AddInput{
-			Title: *subjectFlag, Description: taskBody, AssignTo: member.Handle,
-			Intent: *taskIntent, Artifact: *taskArtifact, ExpectedBaseSHA: *taskExpectedBase,
-			Implementer: *taskImplementer, Reviewer: *taskReviewer, ParallelWorkExplicit: *taskParallelWork,
-		}
+	if *createTaskFlag && dispatchClassRequiresImplementation(strings.TrimSpace(*taskClass)) && !currentActorImplementationAllowed {
+		return dispatchActorIntentRefusal("create-task", strings.TrimSpace(*taskClass), currentActorContract, currentActorMode)
 	}
-	if taskID != "" {
-		currentTask, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID)
+	pool, err := parsePoolFlag(*taskPool)
+	if err != nil {
+		return err
+	}
+	var leased *taskstore.Task
+	if taskID != "" || *createTaskFlag {
+		store, err := taskstore.Open(absAMQRoot(projectDir, ctx.Root))
 		if err != nil {
 			return err
 		}
-		if err := validateDispatchTask(currentTask, member.Handle, projectDir, profile, workstream); err != nil {
-			return err
-		}
-		if dispatchIntentRequiresImplementation(currentTask.Intent) && !currentActorImplementationAllowed {
-			return dispatchActorIntentRefusal("task "+currentTask.ID, currentTask.Intent, currentActorContract, currentActorMode)
-		}
-	}
-	var claimedTask *taskstore.Task
-	if taskID != "" || createInput != nil {
-		if createInput != nil {
-			created, addErr := taskstore.AddForProfile(projectDir, profile, workstream, *createInput, taskNow())
+		if *createTaskFlag {
+			created, addErr := store.Add(taskstore.AddInput{
+				Title: *subjectFlag, Description: taskBody, Class: strings.TrimSpace(*taskClass),
+				DeclaredFiles: splitList(*taskFiles), Pool: pool, ProjectPath: projectDir, CreatedBy: from,
+			}, taskNow())
 			if addErr != nil {
-				return fmt.Errorf("create native task before dispatch: %w", addErr)
+				return fmt.Errorf("create task before dispatch: %w", addErr)
 			}
 			taskID = created.ID
+		} else if current, getErr := store.Get(taskID); getErr != nil {
+			return getErr
+		} else if dispatchClassRequiresImplementation(current.Class) && !currentActorImplementationAllowed {
+			return dispatchActorIntentRefusal("task "+current.ID, current.Class, currentActorContract, currentActorMode)
 		}
-		claimed, _, claimErr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
-		if claimErr != nil {
-			return fmt.Errorf("claim native task %s before dispatch: %w", taskID, claimErr)
+		got, leaseErr := leaseDispatchedTask(store, taskID, member.Handle, taskNow())
+		if leaseErr != nil {
+			return fmt.Errorf("lease task %s before dispatch: %w", taskID, leaseErr)
 		}
-		claimedTask = &claimed
+		leased = &got
 	}
 
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
@@ -316,18 +213,15 @@ Examples:
 	msgID := sendResult.MessageID
 	if err != nil {
 		if !dispatchSendWaitTimedOut(out, err, waitFor) {
-			if claimedTask != nil {
-				return fmt.Errorf("dispatch send to %s failed after task %s was claimed; the task remains in_progress and no automatic retry will occur (inspect AMQ before deciding whether to send again): %w", *roleFlag, taskID, err)
+			if leased != nil {
+				return fmt.Errorf("dispatch send to %s failed after task %s was leased to %s; the lease stays and returns the task to the pool if it is never claimed: %w", *roleFlag, taskID, member.Handle, err)
 			}
 			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 		}
 	}
 	waitTimedOut := dispatchSendWaitTimedOut(out, err, waitFor)
-	// Print our OWN authoritative, session-aware summary rather than echoing
-	// `amq send`'s raw line — that line renders an empty "session:" for a
-	// --root-only send, which reads like a bug. We know the session, root, and
-	// handle here; pull the message id out of amq's output. Fall back to amq's
-	// raw line only if the id can't be parsed (so nothing is ever hidden).
+	// Our own session-aware summary (amq's raw line renders an empty "session:"
+	// for a --root-only send); amq's raw line only when no message id parses.
 	if !*jsonOut {
 		if msgID != "" {
 			taskText := ""
@@ -337,7 +231,7 @@ Examples:
 			waitText := ""
 			if waitFor != "" {
 				if waitTimedOut {
-					waitText = fmt.Sprintf("; queued, %s receipt unconfirmed after %s; do NOT re-send, nudge drain instead", waitFor, waitTimeout)
+					waitText = fmt.Sprintf("; queued, %s receipt unconfirmed after %s; do NOT re-send", waitFor, waitTimeout)
 				} else {
 					waitText = fmt.Sprintf("; waited for %s receipt up to %s", waitFor, waitTimeout)
 				}
@@ -353,145 +247,10 @@ Examples:
 		fmt.Printf("Next: drain the child report with `%s`\n", dispatchDrainCommand(ctx.Root, from))
 	}
 
-	outcome := dispatchOutcome{}
-	if *noWakeFlag {
-		if *jsonOut {
-			return printJSONEnvelope("dispatch", mutationResult{
-				Command:   "dispatch",
-				Status:    "queued",
-				Project:   projectDir,
-				Session:   workstream,
-				Profile:   profile,
-				Namespace: ns,
-				ID:        taskID,
-				TaskID:    taskID,
-				Role:      member.Role,
-				Assignee:  member.Handle,
-				Handle:    member.Handle,
-				MessageID: msgID,
-				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
-			})
-		}
-		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
-		return nil
-	}
-
-	wakeLive := dispatchRecipientWakeLive(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag)
-	// A recipient launched with wake-inject-mode=none has an explicit zero-input
-	// contract. Honor it before wake-first: a live none-mode sidecar emits an
-	// attention notice but cannot inject a drain command, so it must not be
-	// reported as queued_wake_delivered.
-	if recipientWakeInjectMode == "none" {
-		if *jsonOut {
-			return printJSONEnvelope("dispatch", mutationResult{
-				Command:   "dispatch",
-				Status:    "queued_zero_input",
-				Project:   projectDir,
-				Session:   workstream,
-				Profile:   profile,
-				Namespace: ns,
-				ID:        taskID,
-				TaskID:    taskID,
-				Role:      member.Role,
-				Assignee:  member.Handle,
-				Handle:    member.Handle,
-				MessageID: msgID,
-				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
-			})
-		}
-		if wakeLive {
-			quietNotice("Queued for zero-input worker %s; wake emitted a notice but did not inject a drain command.\n", member.Handle)
-		} else {
-			quietNotice("Skipped pane nudge for zero-input worker %s; the task is queued durably.\n", member.Handle)
-		}
-		return nil
-	}
-
-	if _, _, identityErr := verifyRuntimeActionByHandle("dispatch wake", projectDir, profile, workstream, member.Handle); identityErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: task queued, but recipient wake was refused: %v\n", identityErr)
-		if *jsonOut {
-			return printJSONEnvelope("dispatch", mutationResult{
-				Command: "dispatch", Status: "queued_wake_refused", Project: projectDir, Session: workstream, Profile: profile,
-				Namespace: ns, ID: taskID, TaskID: taskID, Role: member.Role, Assignee: member.Handle, Handle: member.Handle,
-				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
-			})
-		}
-		return nil
-	}
-
-	// Wake-first (#289): if the recipient has a positively-live wake sidecar, the
-	// durable AMQ message wakes and drains it (reinforced by the #283/#288
-	// drain-on-arrival injection). Normal worker direction must NOT inject pane
-	// keystrokes; raw send-keys is last-resort recovery only. --force bypasses
-	// this to force an explicit, clearly-marked pane override.
-	if !*forceFlag && wakeLive {
-		if *jsonOut {
-			return printJSONEnvelope("dispatch", mutationResult{
-				Command:   "dispatch",
-				Status:    "queued_wake_delivered",
-				Project:   projectDir,
-				Session:   workstream,
-				Profile:   profile,
-				Namespace: ns,
-				ID:        taskID,
-				TaskID:    taskID,
-				Role:      member.Role,
-				Assignee:  member.Handle,
-				Handle:    member.Handle,
-				MessageID: msgID,
-				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
-			})
-		}
-		quietNotice("Dispatched to %s via durable AMQ + wake (recipient wake-live; no pane injection).\n", *roleFlag)
-		return nil
-	}
-
-	outcome, werr := dispatchWakePane(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag, *forceFlag, ctx.Root)
-	if werr != nil {
-		// The durable task is already queued; a wake failure is advisory, not a
-		// dispatch failure. Surface it (warnings bypass quietNotice) so the
-		// operator can nudge or resume manually, but exit 0.
-		fmt.Fprintf(os.Stderr, "warning: task queued, but the pane nudge failed: %v\n", werr)
-		if *jsonOut {
-			return printJSONEnvelope("dispatch", mutationResult{
-				Command:   "dispatch",
-				Status:    "queued_nudge_failed",
-				Project:   projectDir,
-				Session:   workstream,
-				Profile:   profile,
-				Namespace: ns,
-				ID:        taskID,
-				TaskID:    taskID,
-				Role:      member.Role,
-				Assignee:  member.Handle,
-				Handle:    member.Handle,
-				MessageID: msgID,
-				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
-			})
-		}
-		return nil
-	}
-	if outcome.PaneID != "" && outcome.SubmitState == "" {
-		outcome.SubmitState = dispatchSubmitConfirmed
-	}
 	if *jsonOut {
-		status := "queued"
-		if outcome.PaneID != "" {
-			status = "queued_and_nudged"
-			switch outcome.SubmitState {
-			case dispatchSubmitQueued:
-				status = "queued_nudge_submit_queued"
-			case dispatchSubmitUnconfirmed:
-				status = "queued_nudge_submit_unconfirmed"
-			}
-		}
 		return printJSONEnvelope("dispatch", mutationResult{
 			Command:   "dispatch",
-			Status:    status,
+			Status:    "queued",
 			Project:   projectDir,
 			Session:   workstream,
 			Profile:   profile,
@@ -506,94 +265,33 @@ Examples:
 			Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
 		})
 	}
-	if outcome.PaneID != "" {
-		switch outcome.SubmitState {
-		case dispatchSubmitQueued:
-			quietNotice("Nudged %s pane %s to drain; the prompt is queued in the pane input and will submit when the agent goes idle.\n", *roleFlag, outcome.PaneID)
-		case dispatchSubmitUnconfirmed:
-			quietNotice("Nudged %s pane %s to drain, but submit was unconfirmed; durable task remains queued.\n", *roleFlag, outcome.PaneID)
-		default:
-			quietNotice("Nudged %s pane %s to drain.\n", *roleFlag, outcome.PaneID)
-		}
-	} else {
-		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
-	}
 	return nil
 }
 
-func dispatchIntentRequiresImplementation(intent string) bool {
-	intent = strings.TrimSpace(intent)
-	return intent == taskstore.IntentImplement || intent == taskstore.IntentLifecycle
+func dispatchClassRequiresImplementation(class string) bool {
+	return strings.TrimSpace(class) == "implement"
 }
 
-func dispatchActorIntentRefusal(subject, intent string, actor actorExecutionData, actorMode string) error {
-	return fmt.Errorf("%s dispatch refused: intent %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation or lifecycle work to an implementation actor", subject, intent, actor.ActorRole, actor.ActorHandle, actorMode)
+func dispatchActorIntentRefusal(subject, class string, actor actorExecutionData, actorMode string) error {
+	return fmt.Errorf("%s dispatch refused: class %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation work to an implementation actor", subject, class, actor.ActorRole, actor.ActorHandle, actorMode)
 }
 
-func dispatchRecipientWakeInjectMode(root, handle string) string {
-	rec, err := launch.Read(filepath.Join(root, "agents", strings.TrimSpace(handle)))
+// leaseDispatchedTask grants a pending task's lease to the assignee, or
+// accepts a lease the assignee already holds. Any other state refuses.
+func leaseDispatchedTask(store taskstore.Store, id, assignee string, now time.Time) (taskstore.Task, error) {
+	current, err := store.Get(id)
 	if err != nil {
-		return ""
+		return taskstore.Task{}, err
 	}
-	return strings.ToLower(strings.TrimSpace(rec.WakeInjectMode))
-}
-
-func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, session string) error {
-	assignee = strings.TrimSpace(assignee)
-	if authority := taskstore.AuthorityActor(t); authority != "" && authority != assignee {
-		return fmt.Errorf("task %s %s authority actor is %s; dispatch target uses handle %s", t.ID, t.Intent, authority, assignee)
-	}
-	assigned := strings.TrimSpace(t.AssignedTo)
-	if assigned != "" && assigned != assignee {
-		return fmt.Errorf("task %s is assigned to %s; dispatch target uses handle %s", t.ID, assigned, assignee)
-	}
-	switch t.Status {
-	case taskstore.StatusPending:
-		tasks, err := taskstore.ListForProfile(projectDir, profile, session)
-		if err != nil {
-			return err
-		}
-		byID := make(map[string]taskstore.Task, len(tasks))
-		for _, task := range tasks {
-			byID[task.ID] = task
-		}
-		for _, dep := range t.DependsOn {
-			d, ok := byID[dep]
-			if !ok {
-				return fmt.Errorf("task %s depends on %s, which does not exist", t.ID, dep)
-			}
-			if d.Status != taskstore.StatusCompleted {
-				return fmt.Errorf("task %s is blocked on %s (%s); complete it before dispatch", t.ID, dep, d.Status)
-			}
-		}
-		return nil
-	case taskstore.StatusInProgress:
-		return nil
-	case taskstore.StatusCompletedPendingReconcile, taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked, taskstore.StatusCancelled:
-		return fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", t.ID, t.Status)
+	switch {
+	case current.State == taskstore.StatePending:
+		return store.Grant(id, assignee, nil, taskLeaseDuration, now)
+	case current.State == taskstore.StateInProgress && current.Lease != nil && current.Lease.Holder == assignee:
+		return current, nil
+	case current.State == taskstore.StateInProgress && current.Lease != nil:
+		return taskstore.Task{}, fmt.Errorf("task %s is leased to %s, not %s", id, current.Lease.Holder, assignee)
 	default:
-		return fmt.Errorf("task %s has unknown status %q; dispatch requires pending or in_progress", t.ID, t.Status)
-	}
-}
-
-func autoClaimDispatchedTask(projectDir, profile, session, taskID, assignee string, now time.Time) (taskstore.Task, bool, error) {
-	current, err := taskstore.ShowForProfile(projectDir, profile, session, taskID)
-	if err != nil {
-		return taskstore.Task{}, false, err
-	}
-	if err := validateDispatchTask(current, assignee, projectDir, profile, session); err != nil {
-		return taskstore.Task{}, false, err
-	}
-	switch current.Status {
-	case taskstore.StatusPending:
-		claimed, err := dispatchClaimTask(projectDir, profile, session, taskID, assignee, now)
-		return claimed, err == nil, err
-	case taskstore.StatusInProgress:
-		return current, false, nil
-	case taskstore.StatusCompletedPendingReconcile:
-		return taskstore.Task{}, false, fmt.Errorf("task %s is completed_pending_reconcile; exact evidence reconciliation is required before dispatch", current.ID)
-	default:
-		return taskstore.Task{}, false, fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", current.ID, current.Status)
+		return taskstore.Task{}, fmt.Errorf("task %s is %s; dispatch requires pending, or a lease the target already holds", id, current.State)
 	}
 }
 
@@ -687,167 +385,10 @@ func resolveDispatchSender(t team.Team, fromFlag string) (string, error) {
 // honoring the canonical member ordering.
 func teamMemberByRole(t team.Team, role string) (team.Member, bool) {
 	role = strings.ToLower(strings.TrimSpace(role))
-	for _, m := range orderedTeamMembers(t.Members) {
+	for _, m := range t.Members {
 		if strings.ToLower(m.Role) == role {
 			return m, true
 		}
 	}
 	return team.Member{}, false
-}
-
-// defaultDispatchRecipientWakeLive resolves the recipient's launch record and
-// reports whether its wake sidecar is verified live (Signals.WakeAlive). Only a
-// positively-live wake helper qualifies for wake-first delivery; anything
-// uncertain (no record, no root, dead sidecar) returns false so dispatch falls
-// back to the explicit last-resort pane nudge. Read-only.
-func defaultDispatchRecipientWakeLive(projectDir, profile, session string, explicitSession bool, role string) bool {
-	mr, workstream, err := resolveDispatchMemberRuntime(projectDir, profile, session, explicitSession, role)
-	if err != nil || !mr.HasRecord {
-		return false
-	}
-	root := strings.TrimSpace(mr.Record.Root)
-	if root == "" {
-		return false
-	}
-	live := classifyAgentLiveness(mr.AgentDir, root, mr.Profile, mr.Handle, mr.Member.Role, mr.Member.Binary, workstream, mr.CWD, defaultDuplicateLaunchProbe)
-	return live.Signals.WakeAlive
-}
-
-// defaultDispatchWakePane is retained for direct runtime-control callers and
-// tests. Production dispatch already owns the authoritative durable-send root
-// and calls defaultDispatchWakePaneAtRoot so send and nudge cannot diverge.
-func defaultDispatchWakePane(projectDir, profile, session string, explicitSession bool, role string, force bool) (dispatchOutcome, error) {
-	mr, workstream, err := resolveDispatchMemberRuntime(projectDir, profile, session, explicitSession, role)
-	if err != nil {
-		return dispatchOutcome{}, err
-	}
-	ctx, err := resolveAMQContextForNamespace(projectDir, profile, workstream, mr.Handle)
-	if err != nil {
-		return dispatchOutcome{}, fmt.Errorf("resolve exact AMQ root for dispatch nudge: %w", err)
-	}
-	return dispatchWakePaneForRuntime(mr, workstream, force, ctx.Root)
-}
-
-func defaultDispatchWakePaneAtRoot(projectDir, profile, session string, explicitSession bool, role string, force bool, dispatchRoot string) (dispatchOutcome, error) {
-	mr, workstream, err := resolveDispatchMemberRuntime(projectDir, profile, session, explicitSession, role)
-	if err != nil {
-		return dispatchOutcome{}, err
-	}
-	return dispatchWakePaneForRuntime(mr, workstream, force, dispatchRoot)
-}
-
-func dispatchWakePaneForRuntime(mr memberRuntime, workstream string, force bool, dispatchRoot string) (dispatchOutcome, error) {
-	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
-		return dispatchOutcome{Skipped: reason + "; durable AMQ dispatch was queued"}, nil
-	}
-	panes, err := statusPaneLister()
-	if err != nil {
-		if tmuxpane.IsPermissionDenied(err) {
-			return dispatchOutcome{}, errTmuxAccessDenied()
-		}
-		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
-		// tmux -CC even when the recorded pane is still directly addressable.
-		// Degrade to no scan and let resolveControlTarget address the recorded
-		// id directly.
-		panes = nil
-	}
-	paneID, _, ok := resolveControlTarget(mr, workstream, panes)
-	if !ok || strings.TrimSpace(paneID) == "" {
-		return dispatchOutcome{Skipped: "no live pane (the agent is not running; it will drain the queued task on next start)"}, nil
-	}
-	if !force {
-		// Don't talk over a working agent: a prompt pushed into a busy pane lands
-		// in a tool-result buffer and is lost. The durable task is still queued,
-		// so skipping is safe — the agent drains it between turns.
-		if busy, berr := paneBusyForSend(paneID); berr == nil && busy {
-			return dispatchOutcome{Skipped: fmt.Sprintf("pane %s is busy (mid-turn); the agent drains the task when idle, or re-dispatch with --force", paneID)}, nil
-		}
-	}
-	// Canonicalize the authoritative durable-send root (for example /var/... to
-	// /private/var/... on Darwin). Never derive it from mr.AgentDir: the no-record
-	// fallback may construct AgentDir below a worktree-local .agent-mail even
-	// though the durable message was sent to the canonical team-home namespace.
-	root := canonicalFilesystemPath(dispatchRoot)
-	if strings.TrimSpace(root) == "" || root == "." {
-		return dispatchOutcome{}, fmt.Errorf("resolve exact AMQ root for dispatch nudge from durable-send root %q", dispatchRoot)
-	}
-	err = sendPromptToPane(paneID, dispatchNudgePrompt(root))
-	return classifyNudgeResult(paneID, err, paneBusyForSend)
-}
-
-// resolveDispatchMemberRuntime selects the recipient launch record through the
-// same team-home scan and profile/session/team-home/handle authority used by
-// status. Falling back to the legacy runtime resolver preserves support for
-// members with no launch record, while recorded worktree-cwd members no longer
-// get looked up beneath their worktree-local .agent-mail directory.
-func resolveDispatchMemberRuntime(projectDir, profile, session string, explicitSession bool, role string) (memberRuntime, string, error) {
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		return memberRuntime{}, "", fmt.Errorf("read team: %w", err)
-	}
-	workstream, err := resolveTeamWorkstreamName(t, session, explicitSession)
-	if err != nil {
-		return memberRuntime{}, "", err
-	}
-	member, ok := teamMemberByRole(t, role)
-	if !ok {
-		return memberRuntime{}, workstream, fmt.Errorf("no team member with role %q in this team", strings.ToLower(strings.TrimSpace(role)))
-	}
-	entries, scanErr := launch.ScanEntries(t.Project)
-	if scanErr != nil {
-		return memberRuntime{}, workstream, fmt.Errorf("scan launch records: %w", scanErr)
-	}
-	selection := selectStatusLaunchRecord(t, profile, member, workstream, defaultDuplicateLaunchProbe, entries)
-	if len(selection.DuplicatePaths) > 0 {
-		return memberRuntime{}, workstream, fmt.Errorf("multiple authoritative live launch records for %s: %s", memberHandle(member), strings.Join(selection.DuplicatePaths, ", "))
-	}
-	if !selection.Found {
-		return resolveMemberRuntime(projectDir, profile, session, explicitSession, role)
-	}
-	rec := selection.Entry.Record
-	handle := strings.TrimSpace(rec.Handle)
-	if handle == "" {
-		handle = memberHandle(member)
-	}
-	cwd := member.EffectiveCWD(t.Project)
-	if strings.TrimSpace(rec.CWD) != "" {
-		cwd = rec.CWD
-	}
-	return memberRuntime{
-		Member: member, Profile: profile, Handle: handle, CWD: cwd,
-		AgentDir: selection.Entry.AgentDir, HasRecord: true, Record: rec,
-	}, workstream, nil
-}
-
-// classifyNudgeResult maps a pane-nudge result to a dispatchOutcome. A
-// SubmitUnconfirmedError is ambiguous, NOT a failure: the Enter could not be
-// confirmed, but often the agent was already woken (the amq wake sidecar drained
-// the durable task first) and is now working — which is exactly why its input
-// box looked unchanged. So if the pane is now busy, count the wake as delivered;
-// otherwise report a soft skip (the durable task is queued and the worker drains
-// it on its next turn). Only a hard error (dead pane, bracketed-paste leak,
-// tmux denied) is a real failure. paneBusy is injected for testing.
-func classifyNudgeResult(paneID string, sendErr error, paneBusy func(string) (bool, error)) (dispatchOutcome, error) {
-	if sendErr == nil {
-		return dispatchOutcome{PaneID: paneID, SubmitState: dispatchSubmitConfirmed}, nil
-	}
-	var queued *tmuxpane.QueuedInputError
-	if errors.As(sendErr, &queued) {
-		return dispatchOutcome{
-			PaneID:      paneID,
-			SubmitState: dispatchSubmitQueued,
-			Detail:      fmt.Sprintf("pane %s has the prompt queued in its input; it will submit when the agent goes idle", paneID),
-		}, nil
-	}
-	var unconfirmed *tmuxpane.SubmitUnconfirmedError
-	if errors.As(sendErr, &unconfirmed) {
-		detail := fmt.Sprintf("pane %s was staged and Enter was attempted, but submission could not be confirmed after %d attempts", paneID, unconfirmed.Attempts)
-		if busy, berr := paneBusy(paneID); berr == nil && busy {
-			detail += "; pane is now busy, so the agent may already be processing the durable task"
-		} else {
-			detail += "; pane may still need a manual Enter or a drain-only re-nudge"
-		}
-		return dispatchOutcome{PaneID: paneID, SubmitState: dispatchSubmitUnconfirmed, Detail: detail}, nil
-	}
-	return dispatchOutcome{}, sendErr
 }

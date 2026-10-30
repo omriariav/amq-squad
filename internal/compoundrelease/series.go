@@ -12,10 +12,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const (
@@ -129,8 +129,8 @@ func enumerateSessionSeries(scope SessionScope) (*os.Root, string, []enumeratedS
 func normalizeSessionScope(scope SessionScope) (SessionScope, error) {
 	scope.Profile = squadnamespace.NormalizeProfile(scope.Profile)
 	scope.Session = strings.TrimSpace(scope.Session)
-	if scope.Profile != team.DefaultProfile {
-		if err := team.ValidateProfileName(scope.Profile); err != nil {
+	if scope.Profile != squadnamespace.DefaultProfile {
+		if err := squadnamespace.ValidateProfile(scope.Profile); err != nil {
 			return SessionScope{}, err
 		}
 	}

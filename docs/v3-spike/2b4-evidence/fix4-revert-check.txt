@@ -1,0 +1,370 @@
+========================================================================
+## rule: N1a rows carry seq and prev when written
+## test: ./internal/routing/ TestFix4ChainCatchesDeleteReorderDuplicate$
+## edit internal/routing/router.go:
+-					row.Seq, row.Prev = r.head.Seq+1, r.head.Tag
+
++					_ = r.head
+
+## reverted run (exit 1):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+    fix4_test.go:65: delete the middle row: problems [{ID:order:b9abcf4d01fc1a97 Task:t1 What:row 0 is a duplicate or out of order (chain at 0)} {ID:order:fdbbda70e7b9841f Task:t3 What:row 0 is a duplicate or out of order (chain at 0)}] (verified true, err <nil>)
+--- FAIL: TestFix4ChainCatchesDeleteReorderDuplicate (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.280s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+--- PASS: TestFix4ChainCatchesDeleteReorderDuplicate (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.377s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1a a gap is a break
+## test: ./internal/routing/ TestFix4ChainCatchesDeleteReorderDuplicate$
+## edit internal/routing/chain.go:
+-		case row.Seq > head.Seq+1:
+
++		case false:
+
+## reverted run (exit 1):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+    fix4_test.go:65: delete the middle row: problems [{ID:order:62b2fad9f653697e Task:t3 What:row 3 is a duplicate or out of order (chain at 1)}] (verified true, err <nil>)
+--- FAIL: TestFix4ChainCatchesDeleteReorderDuplicate (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.335s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+--- PASS: TestFix4ChainCatchesDeleteReorderDuplicate (0.10s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.420s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1a a duplicate or reorder is a break and not used
+## test: ./internal/routing/ TestFix4ChainCatchesDeleteReorderDuplicate$
+## edit internal/routing/chain.go:
+-		default:
+			problems = append(problems, Problem{ID: lineID("order", line), Task: row.Task,
++		default:
+			_ = append(problems, Problem{ID: lineID("order", line), Task: row.Task,
+## reverted run (exit 1):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+    fix4_test.go:65: duplicate a cost row: problems [] (verified true, err <nil>)
+--- FAIL: TestFix4ChainCatchesDeleteReorderDuplicate (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.591s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+--- PASS: TestFix4ChainCatchesDeleteReorderDuplicate (0.15s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.547s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1a duplicates are not counted
+## test: ./internal/routing/ TestFix4ChainCatchesDeleteReorderDuplicate$
+## edit internal/routing/chain.go:
+-				What: fmt.Sprintf("row %d is a duplicate or out of order (chain at %d)", row.Seq, head.Seq)})
+			continue
++				What: fmt.Sprintf("row %d is a duplicate or out of order (chain at %d)", row.Seq, head.Seq)})
+## reverted run (exit 1):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+    fix4_test.go:73: duplicate a cost row: t2 counted 2 times
+--- FAIL: TestFix4ChainCatchesDeleteReorderDuplicate (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.433s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+--- PASS: TestFix4ChainCatchesDeleteReorderDuplicate (0.10s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.467s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1a the router reads the chain
+## test: ./internal/routing/ TestFix4ChainCatchesDeleteReorderDuplicate$
+## edit internal/routing/durable.go:
+-	good, problems, head, err := verifyChain(path, r.key)
++	rows, _, err := ReadRows(path)
+	good, problems, head := rows, []Problem(nil), chainHead{}
+## reverted run (exit 1):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+    fix4_test.go:78: delete the middle row: the restarted router saw nothing
+--- FAIL: TestFix4ChainCatchesDeleteReorderDuplicate (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.386s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+--- PASS: TestFix4ChainCatchesDeleteReorderDuplicate (0.10s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.462s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b a break holds the tasks it may have cost a row
+## test: ./internal/routing/ TestHoldTamperedTaskOthersRoute$
+## edit internal/routing/durable.go:
+-	if err := r.holdForProblems(list, now); err != nil {
+		return err
+	}
++
+## reverted run (exit 1):
+=== RUN   TestHoldTamperedTaskOthersRoute
+    hold_test.go:33: A: {Pool:0x7ab615eb4d0 Wait: Block: Detail:routing: task manual}
+--- FAIL: TestHoldTamperedTaskOthersRoute (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.492s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestHoldTamperedTaskOthersRoute
+--- PASS: TestHoldTamperedTaskOthersRoute (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.370s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b a held task's rows are not logged again
+## test: ./internal/routing/ TestFix3TamperedRowsAreAbsentAndReported$
+## edit internal/routing/router.go:
+-		if r.held(t.ID) {
+			continue
++		if false && r.held(t.ID) {
+			continue
+## reverted run (exit 1):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+    fix3_test.go:102: keep mtime false: 2 lines, held true
+--- FAIL: TestFix3TamperedRowsAreAbsentAndReported (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.308s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TamperedRowsAreAbsentAndReported
+--- PASS: TestFix3TamperedRowsAreAbsentAndReported (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.321s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b a held task routes no further
+## test: ./internal/routing/ TestHoldTamperedTaskOthersRoute$
+## edit internal/routing/router.go:
+-	if hold, held := r.holdTampered(t, now); held {
++	if hold, held := r.holdTampered(t, now); held && false {
+## reverted run (exit 1):
+=== RUN   TestHoldTamperedTaskOthersRoute
+    hold_test.go:33: A: {Pool:0x5ea89b09d410 Wait: Block: Detail:routing: task manual}
+--- FAIL: TestHoldTamperedTaskOthersRoute (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.362s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestHoldTamperedTaskOthersRoute
+--- PASS: TestHoldTamperedTaskOthersRoute (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.300s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b only the lead's reset clears it
+## test: ./internal/routing/ TestHoldTamperedTaskOthersRoute$
+## edit internal/routing/tamper.go:
+-	if t.State == task.StatePending && t.UpdatedAt.After(at) {
++	if t.State == task.StatePending && !at.IsZero() {
+## reverted run (exit 1):
+=== RUN   TestHoldTamperedTaskOthersRoute
+    hold_test.go:33: A: {Pool:0x11777080b5c0 Wait: Block: Detail:routing: task manual}
+--- FAIL: TestHoldTamperedTaskOthersRoute (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.316s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestHoldTamperedTaskOthersRoute
+--- PASS: TestHoldTamperedTaskOthersRoute (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.564s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b the hold survives a restart
+## test: ./internal/routing/ TestHoldTamperedTaskOthersRoute$
+## edit internal/routing/tamper.go:
+-		r.tamperBlockedAt[rec.Task] = rec.At
+
++		_ = rec.At
+
+## reverted run (exit 1):
+=== RUN   TestHoldTamperedTaskOthersRoute
+    hold_test.go:33: A: {Pool:0x304dd7e6f5f0 Wait: Block: Detail:routing: task manual}
+--- FAIL: TestHoldTamperedTaskOthersRoute (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.384s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestHoldTamperedTaskOthersRoute
+--- PASS: TestHoldTamperedTaskOthersRoute (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.309s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b a break with no task holds the unlogged
+## test: ./internal/routing/ TestFix4ChainCatchesDeleteReorderDuplicate$
+## edit internal/routing/tamper.go:
+-	if unknown {
+
++	if false && unknown {
+
+## reverted run (exit 1):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+    fix4_test.go:83: delete the middle row: t2 not held
+--- FAIL: TestFix4ChainCatchesDeleteReorderDuplicate (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.420s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4ChainCatchesDeleteReorderDuplicate
+--- PASS: TestFix4ChainCatchesDeleteReorderDuplicate (0.08s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.364s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b a row gone under the running router holds its task
+## test: ./internal/routing/ TestFix2LogDurabilityIsReverified$
+## edit internal/routing/durable.go:
+-			if !r.logged[k] {
+				problems = append(problems, Problem{ID: "lost:" + k
++			if false && !r.logged[k] {
+				problems = append(problems, Problem{ID: "lost:" + k
+## reverted run (exit 1):
+=== RUN   TestFix2LogDurabilityIsReverified
+    fix2_test.go:98: after truncation: {Pool:0x42721980b500 Wait: Block: Detail:routing: plan table}, 1 rows, held false
+--- FAIL: TestFix2LogDurabilityIsReverified (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.271s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix2LogDurabilityIsReverified
+--- PASS: TestFix2LogDurabilityIsReverified (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.369s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1b a known break holds once
+## test: ./internal/routing/ TestFix4KnownBreakHoldsOnce$
+## edit internal/routing/tamper.go:
+-		if r.knownProblems[p.ID] {
+			continue
+		}
++		if r.knownProblems[p.ID] && false {
+			continue
+		}
+## reverted run (exit 1):
+=== RUN   TestFix4KnownBreakHoldsOnce
+    fix4_test.go:131: the known gap held t2 again: {Pool:<nil> Wait: Block:history_tampered Detail:routing: the outcome history of t2 may have lost a row (history_tampered); its remaining history may not forbid a tier the lost row did; review it and `amq-squad task reset t2`}
+--- FAIL: TestFix4KnownBreakHoldsOnce (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.354s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4KnownBreakHoldsOnce
+--- PASS: TestFix4KnownBreakHoldsOnce (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.386s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: N1c a wrong-schema line is a break
+## test: ./internal/routing/ TestFix4WrongSchemaLineIsReported$
+## edit internal/routing/chain.go:
+-		if json.Unmarshal(line, &row) != nil || row.Schema != RowSchema || row.Task == "" || !row.Verify(key) {
++		if json.Unmarshal(line, &row) != nil || row.Task == "" || !row.Verify(key) {
+			continue
+		}
+		if row.Schema != RowSchema {
+			continue
+		}
+		if false {
+## reverted run (exit 1):
+=== RUN   TestFix4WrongSchemaLineIsReported
+    fix4_test.go:105: problems [{ID:gap:2-2 Task:t3 What:rows 2 to 2 are missing before row 3} {ID:lost:t2/1 Task:t2 What:row t2/1 was in the log and is gone}], t2 held true
+--- FAIL: TestFix4WrongSchemaLineIsReported (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.269s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4WrongSchemaLineIsReported
+--- PASS: TestFix4WrongSchemaLineIsReported (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.264s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-4 Flush runs the same checks as Route
+## test: ./internal/routing/ TestFix3TailBeforeFlushAndRecoveryKeepsPolicy$
+## edit internal/routing/router.go:
+-	return r.durable(list, r.o.Now())
+}
+
+func (r *Router) flush(
++	return r.flush(list, r.o.Now())
+}
+
+func (r *Router) flush(
+## reverted run (exit 1):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+    fix3_test.go:255: Flush past a torn tail: <nil>
+--- FAIL: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.339s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix3TailBeforeFlushAndRecoveryKeepsPolicy
+--- PASS: TestFix3TailBeforeFlushAndRecoveryKeepsPolicy (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.287s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: new: the seed open does not block
+## test: ./internal/routing/ TestFix4SeedFIFODoesNotHang$
+## edit internal/routing/seed_unix.go:
+-os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK
++os.O_RDONLY|syscall.O_NOFOLLOW|0*syscall.O_NONBLOCK
+## reverted run (exit 1):
+=== RUN   TestFix4SeedFIFODoesNotHang
+    fix4_fifo_unix_test.go:31: opening a FIFO seed hung
+--- FAIL: TestFix4SeedFIFODoesNotHang (3.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	3.270s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFix4SeedFIFODoesNotHang
+--- PASS: TestFix4SeedFIFODoesNotHang (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.267s
+
+## verdict: OK (fails reverted, passes restored)

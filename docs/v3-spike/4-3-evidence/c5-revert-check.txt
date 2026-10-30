@@ -1,0 +1,289 @@
+# 4-3 revert check of the four P1 fixes of commit 5
+# date: 2026-10-24T11:36:33Z
+# head: d13ded88796f53a5ce6fc696529114ca8855cfa0
+# go: go version go1.27.1 darwin/arm64
+# Each step undoes one fix in the working tree, runs only its test rows
+# (go test -count=1 -v -run ROWS ./internal/fleet/...), expects them to
+# FAIL, and restores the file. The final step re-runs all rows on the
+# restored tree and expects PASS.
+
+## revert P1 1 label vs checkout: run ^TestMayorAuthorizesTheCheckoutNotTheLabel$ (expect FAIL)
+## diff of the revert:
+--- /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmp.DOezBhbMnZ/mayor.go	2026-10-24 14:36:33
++++ internal/fleet/mayor.go	2026-10-24 14:36:33
+@@ -265,7 +265,7 @@
+ 	}
+ 	s.Repository, s.ProjectPath = id, canonical
+ 	fleet := g.Fleet
+-	if !fleet.RepositoryPermitted(id) {
++	if !fleet.RepositoryPermitted(label) { // REVERT P1 1
+ 		detail := fmt.Sprintf("the checkout %s is %s, not in the fleet grant's permitted_repositories %v", canonical, id, fleet.PermittedRepositories)
+ 		if label != "" && !strings.EqualFold(label, id) {
+ 			detail += fmt.Sprintf(" (the request's label %q is display only)", label)
+=== RUN   TestMayorAuthorizesTheCheckoutNotTheLabel
+    review_test.go:27: a permitted label beside a disallowed checkout: {Outcome:started Reason: Detail: Digest:sha256:app Proposal:<nil>}
+--- FAIL: TestMayorAuthorizesTheCheckoutNotTheLabel (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.868s
+FAIL
+## RESULT P1 1 label vs checkout: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 2 capacity inside the lock: run ^TestConcurrentStartsTakeOneSlot$ (expect FAIL)
+## diff of the revert:
+--- /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmp.DOezBhbMnZ/mayor.go	2026-10-24 14:36:33
++++ internal/fleet/mayor.go	2026-10-24 14:36:35
+@@ -314,7 +314,7 @@
+ 			recordWaiting(r, w)
+ 			return nil
+ 		}
+-		r.Squads = append(r.Squads, s) // the reserved slot
++		// REVERT P1 2: no reservation inside the admission lock
+ 		r.Waiting = slices.DeleteFunc(r.Waiting, func(w Waiting) bool { return w.Name == s.Name })
+ 		return nil
+ 	})
+@@ -337,6 +337,15 @@
+ 		}
+ 		return Result{Outcome: OutcomeRefused, Reason: ReasonLaunchFailure, Detail: err.Error()}, nil
+ 	}
++	if err := Update(m.RegistryPath, func(r *Registry) error { // REVERT P1 2: register after the launch
++		if _, dup := r.Find(s.Name); dup {
++			return fmt.Errorf("squad %s registered meanwhile", s.Name)
++		}
++		r.Squads = append(r.Squads, s)
++		return nil
++	}); err != nil {
++		return Result{}, err
++	}
+ 	return Result{Outcome: OutcomeStarted, Digest: digest}, nil
+ }
+ 
+=== RUN   TestConcurrentStartsTakeOneSlot
+    review_test.go:163: max_squads 1, two concurrent starts: 2 started, registry [web app]
+--- FAIL: TestConcurrentStartsTakeOneSlot (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.475s
+FAIL
+## RESULT P1 2 capacity inside the lock: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 3 grant reload on retry: run ^TestRetryReloadsTheGrant$ (expect FAIL)
+## diff of the revert:
+--- /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmp.DOezBhbMnZ/mayor.go	2026-10-24 14:36:33
++++ internal/fleet/mayor.go	2026-10-24 14:36:36
+@@ -247,7 +247,7 @@
+ 	if m.Grant == nil {
+ 		return Result{}, errors.New("the mayor needs a grant source")
+ 	}
+-	g, err := m.Grant()
++	g, err := revertCachedGrant(m) // REVERT P1 3
+ 	if err != nil {
+ 		return m.refuse(s.Name, ReasonGrantInvalid, err.Error())
+ 	}
+@@ -383,3 +383,18 @@
+ 	}
+ 	return true, "the repository root has no .amqrc; the launch API refuses to provision a session under it (upstream ask 2)"
+ }
++
++// REVERT CHECK ONLY: the grant read once and cached per mayor, as bfe61050
++// held it in Mayor.Grant for every later start and retry.
++var revertCachedGrants = map[*Mayor]grants.Resolved{}
++
++func revertCachedGrant(m *Mayor) (grants.Resolved, error) {
++	if g, ok := revertCachedGrants[m]; ok {
++		return g, nil
++	}
++	g, err := m.Grant()
++	if err == nil {
++		revertCachedGrants[m] = g
++	}
++	return g, err
++}
+=== RUN   TestRetryReloadsTheGrant
+    review_test.go:209: retry after the permission was removed: map[web:{Outcome:started Reason: Detail: Digest:sha256:web Proposal:<nil>}] <nil>
+--- FAIL: TestRetryReloadsTheGrant (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.531s
+FAIL
+## RESULT P1 3 grant reload on retry: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 4 anchored registry: run ^TestRegistryAnchoredFromHome$ (expect FAIL)
+## diff of the revert:
+--- /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmp.DOezBhbMnZ/store.go	2026-10-24 14:36:33
++++ internal/fleet/store.go	2026-10-24 14:36:37
+@@ -1,82 +1,26 @@
+ package fleet
+ 
++// REVERT CHECK ONLY: the pre-fix path-based Read and Update of bfe61050
++// (registry.go:158-233), dropped in over store.go for the P1 4 revert run.
++
+ import (
+ 	"errors"
+ 	"fmt"
+-	"io/fs"
+ 	"os"
+ 	"path/filepath"
+-	"strings"
+ 
+ 	"github.com/omriariav/amq-squad/v3/internal/flock"
+-	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
+ )
+ 
+-// The registry file is reached through descriptors (internal/fsanchor):
+-// the directory is opened from an anchor one component at a time with
+-// O_NOFOLLOW, and the lock, the read, the temp file and the rename all go
+-// relative to that descriptor, with fsync of the file and the directory.
+-// Under the home directory the anchor is the home directory itself (so
+-// ~/.amq-squad cannot be a symlink); a --fleet-file outside it is anchored
+-// at its deepest real ancestor directory.
+-
+-// anchorFor splits path into an anchor and the components below it.
+-func anchorFor(path string) (base string, rel []string, name string, err error) {
+-	path = filepath.Clean(path)
+-	if !filepath.IsAbs(path) {
+-		return "", nil, "", fmt.Errorf("fleet registry path %q must be absolute", path)
+-	}
+-	dir, name := filepath.Split(path)
+-	dir = filepath.Clean(dir)
+-	if home, herr := os.UserHomeDir(); herr == nil && home != "" {
+-		home = filepath.Clean(home)
+-		if r, rerr := filepath.Rel(home, dir); rerr == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+-			if r != "." {
+-				rel = strings.Split(r, string(filepath.Separator))
+-			}
+-			return home, rel, name, nil
+-		}
+-	}
+-	// outside the home directory: the deepest ancestor that is a real
+-	// directory (Lstat, so a symlink is never the anchor) is the anchor, and
+-	// every component below it is opened with O_NOFOLLOW
+-	for p := dir; ; p = filepath.Dir(p) {
+-		if st, err := os.Lstat(p); err == nil && st.IsDir() {
+-			return p, rel, name, nil
+-		}
+-		parent := filepath.Dir(p)
+-		if parent == p {
+-			return "", nil, "", fmt.Errorf("fleet registry path %q has no existing ancestor directory", path)
+-		}
+-		rel = append([]string{filepath.Base(p)}, rel...)
+-	}
+-}
+-
+-func openDir(path string, mkdir bool) (*fsanchor.AnchoredDir, string, error) {
+-	base, rel, name, err := anchorFor(path)
+-	if err != nil {
+-		return nil, "", err
+-	}
+-	d, err := fsanchor.OpenAnchored(base, rel, mkdir)
+-	if err != nil {
+-		return nil, "", fmt.Errorf("fleet registry directory: %w", err)
+-	}
+-	return d, name, nil
+-}
+-
+-// Read reads and validates the registry at path. A missing file or
+-// directory is fs.ErrNotExist; a symlinked component or file is refused.
+ func Read(path string) (Registry, error) {
+-	d, name, err := openDir(path, false)
++	info, err := os.Lstat(path)
+ 	if err != nil {
+ 		return Registry{}, err
+ 	}
+-	defer d.Close()
+-	return readIn(d, name, path)
+-}
+-
+-func readIn(d *fsanchor.AnchoredDir, name, path string) (Registry, error) {
+-	raw, err := fsanchor.ReadEntry(d, name)
++	if !info.Mode().IsRegular() {
++		return Registry{}, fmt.Errorf("%s must be a non-symlink regular file", path)
++	}
++	raw, err := os.ReadFile(path)
+ 	if err != nil {
+ 		return Registry{}, err
+ 	}
+@@ -87,24 +31,21 @@
+ 	return r, r.Validate()
+ }
+ 
+-// Update applies mutate to the registry at path under an exclusive lock on
+-// <name>.lock and replaces the file atomically. A missing file starts empty;
+-// missing directories are created 0700. A mutation that fails, or leaves an
+-// invalid registry, writes nothing.
+ func Update(path string, mutate func(*Registry) error) error {
+-	d, name, err := openDir(path, true)
+-	if err != nil {
++	dir := filepath.Dir(path)
++	if err := os.MkdirAll(dir, 0o700); err != nil {
+ 		return err
+ 	}
+-	defer d.Close()
+-	lock, err := d.OpenLock(name + ".lock")
+-	if err != nil {
+-		return err
++	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
++		return fmt.Errorf("fleet registry directory %s must be a non-symlink directory", dir)
+ 	}
+-	defer lock.Close()
+-	return flock.WithFile(lock, name+".lock", func() error {
+-		r, err := readIn(d, name, path)
+-		if errors.Is(err, fs.ErrNotExist) {
++	lockPath := path + ".lock"
++	if info, err := os.Lstat(lockPath); err == nil && !info.Mode().IsRegular() {
++		return fmt.Errorf("fleet registry lock must be a non-symlink regular file")
++	}
++	return flock.WithLock(lockPath, func() error {
++		r, err := Read(path)
++		if errors.Is(err, os.ErrNotExist) {
+ 			r, err = Registry{Schema: Schema}, nil
+ 		}
+ 		if err != nil {
+@@ -116,6 +57,26 @@
+ 		if err := r.Validate(); err != nil {
+ 			return err
+ 		}
+-		return d.WriteAtomic(name, []byte(Render(r)))
++		return writeAtomic(path, []byte(Render(r)))
+ 	})
+ }
++
++func writeAtomic(path string, data []byte) error {
++	tmp, err := os.CreateTemp(filepath.Dir(path), ".fleet-*.tmp")
++	if err != nil {
++		return err
++	}
++	defer os.Remove(tmp.Name())
++	if _, err := tmp.Write(data); err != nil {
++		tmp.Close()
++		return err
++	}
++	if err := tmp.Sync(); err != nil {
++		tmp.Close()
++		return err
++	}
++	if err := tmp.Close(); err != nil {
++		return err
++	}
++	return os.Rename(tmp.Name(), path)
++}
+=== RUN   TestRegistryAnchoredFromHome
+    review_test.go:238: an update through a symlinked ~/.amq-squad succeeded
+--- FAIL: TestRegistryAnchoredFromHome (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.431s
+FAIL
+## RESULT P1 4 anchored registry: FAILED with the fix reverted, as expected (exit 1)
+
+## restored tree: all four rows (expect PASS)
+## files restored byte for byte
+=== RUN   TestMayorAuthorizesTheCheckoutNotTheLabel
+--- PASS: TestMayorAuthorizesTheCheckoutNotTheLabel (0.12s)
+=== RUN   TestConcurrentStartsTakeOneSlot
+--- PASS: TestConcurrentStartsTakeOneSlot (0.25s)
+=== RUN   TestRetryReloadsTheGrant
+--- PASS: TestRetryReloadsTheGrant (0.11s)
+=== RUN   TestRegistryAnchoredFromHome
+--- PASS: TestRegistryAnchoredFromHome (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	1.210s
+## RESULT restored: PASS
+
+# revert check: every reverted fix failed its rows; restored tree passes

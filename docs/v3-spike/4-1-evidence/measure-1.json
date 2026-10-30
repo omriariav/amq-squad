@@ -1,0 +1,92 @@
+{
+  "binary": "/Users/omri/code/amq-squad/.claude/worktrees/agent-a28812eaea493cdaf/build/pi/amq-squad",
+  "binary_bytes": 68158450,
+  "model": "ollama/qwen2.5:32b",
+  "path_tools_found": [],
+  "cold_install": {
+    "wall_s": 19.31,
+    "cold": true,
+    "rehash_ms": 18550.9,
+    "other_ms": 18593.5,
+    "files": 6439,
+    "bytes": 179321896,
+    "runtime": "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+  },
+  "unpacked": {
+    "dir": "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641",
+    "files_on_disk": 6441,
+    "bytes_on_disk": 180702041
+  },
+  "warm_check": {
+    "runs": 7,
+    "rehash_ms_median": 116.1,
+    "rehash_ms_range": [
+      112.3,
+      120.5
+    ],
+    "other_ms_median": 2.9,
+    "wall_ms_median": 132.3
+  },
+  "cold_prompt": {
+    "first_text_s": 12.844,
+    "total_s": 12.99,
+    "answer": "42",
+    "exit": 0,
+    "timing": {
+      "cold": true,
+      "rehash_ms": 2363.0,
+      "other_ms": 30.8,
+      "files": 6439,
+      "bytes": 179321896,
+      "runtime": "/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+    },
+    "stderr_tail": "amq-squad pi: cold=true rehash_ms=2363.0 rest_ms=30.8 files=6439 bytes=179321896 runtime=/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+  },
+  "warm_prompts": [
+    {
+      "first_text_s": 0.386,
+      "total_s": 0.49,
+      "answer": "42",
+      "exit": 0,
+      "timing": {
+        "cold": false,
+        "rehash_ms": 126.5,
+        "other_ms": 14.7,
+        "files": 6439,
+        "bytes": 179321896,
+        "runtime": "/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+      },
+      "stderr_tail": "amq-squad pi: cold=false rehash_ms=126.5 rest_ms=14.7 files=6439 bytes=179321896 runtime=/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+    },
+    {
+      "first_text_s": 0.374,
+      "total_s": 0.48,
+      "answer": "42",
+      "exit": 0,
+      "timing": {
+        "cold": false,
+        "rehash_ms": 119.4,
+        "other_ms": 12.5,
+        "files": 6439,
+        "bytes": 179321896,
+        "runtime": "/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+      },
+      "stderr_tail": "amq-squad pi: cold=false rehash_ms=119.4 rest_ms=12.5 files=6439 bytes=179321896 runtime=/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+    },
+    {
+      "first_text_s": 0.367,
+      "total_s": 0.471,
+      "answer": "42",
+      "exit": 0,
+      "timing": {
+        "cold": false,
+        "rehash_ms": 116.9,
+        "other_ms": 12.8,
+        "files": 6439,
+        "bytes": 179321896,
+        "runtime": "/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+      },
+      "stderr_tail": "amq-squad pi: cold=false rehash_ms=116.9 rest_ms=12.8 files=6439 bytes=179321896 runtime=/Users/omri/.amq-squad/spike/4-1/home/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+# Environment-inheritance test, names only (2026-10-21 closure, session s4e). No values recorded.
+## launching shell names matching KEY|TOKEN|SECRET|PASS|CRED
+CLAUDE_CODE_MESSAGING_TOKEN
+GEMINI_API_KEY
+## of those, present in codex seat (pid 54052):
+(none above = none reached)
+## codex seat names not in tmux global env
+AM_BASE_ROOT
+AM_BASE_ROOT_ID
+AM_ME
+AM_ROOT
+AM_ROOT_ID
+AM_SESSION
+AMQ_LAUNCH_NONCE
+AMQ_SQUAD_ROLE_PATH
+AMQ_SQUAD_ROOT
+AMQ_SQUAD_SEAT
+AMQ_WAKE_OWNER
+CODEX_MANAGED_BY_NPM
+CODEX_MANAGED_PACKAGE_ROOT
+TMUX
+TMUX_PANE
+## launching shell names absent from seat
+AI_AGENT
+CLAUDE_CODE_CHILD_SESSION
+CLAUDE_CODE_DISABLE_AUTO_MEMORY
+CLAUDE_CODE_ENTRYPOINT
+CLAUDE_CODE_EXECPATH
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+CLAUDE_CODE_MESSAGING_SOCKET
+CLAUDE_CODE_MESSAGING_TOKEN
+CLAUDE_CODE_SESSION_ATTENDED
+CLAUDE_CODE_SESSION_ID
+CLAUDE_EFFORT
+CLAUDE_PID
+CLAUDE_PLUGIN_DATA
+CLAUDE_PULSE_HIDE_COST
+CLAUDECODE
+CODEX_COMPANION_SESSION_ID
+CODEX_COMPANION_TRANSCRIPT_PATH
+COREPACK_ENABLE_AUTO_PIN
+ENABLE_TOOL_SEARCH
+GEMINI_API_KEY
+GIT_EDITOR
+MEMORY_HOME
+NoDefaultCurrentDirectoryInExePath
+RED_ALERT_CITIES
+SQLITE_EXEMPT_PATH_FROM_VNODE_GUARDS
+## seat names matching broad pattern
+## notable capability names in seat
+SSH_AUTH_SOCK
+## tool level (see env-names-codex-shelltool.txt)
+GEMINI_API_KEY present in the Codex seat shell-tool env (added by shell startup, not inherited by the process)

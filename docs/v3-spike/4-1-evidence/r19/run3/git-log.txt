@@ -1,0 +1,4 @@
+be5d75b t3: Implement IsEven(n int) bool (pi-1)
+517525b t2: Implement Reverse(s string) string (pi-1)
+fa28c63 t1: Implement Max(a, b int) int (pi-1)
+69a207b fixture

@@ -1,0 +1,75 @@
+# gate fix2 at 2026-10-24T19:02:02Z, HEAD 87e45acd plus the working tree
+# host check: seat-exec or lead processes (none expected)
+none (seat-exec, scheduler run, pi run, amq coop, amq-remote)
+## gofmt -l internal cmd (empty expected)
+exit 0
+## go build ./...
+exit 0
+## go vet ./...
+exit 0
+## GOOS=linux go build ./...
+exit 0
+## GOOS=windows go build ./...
+exit 0
+## go test ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.779s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	0.370s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	2.106s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.107s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	1.767s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	1.430s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	38.003s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	13.042s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	30.514s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	16.802s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	4.058s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	9.687s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	5.382s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	9.606s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	4.825s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	6.370s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	3.122s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	5.662s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	51.598s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	5.675s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	5.666s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	5.830s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	5.661s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	21.728s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	8.781s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	4.950s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.573s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	25.482s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	15.219s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	6.773s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	10.806s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	8.193s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	16.207s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	5.190s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	3.174s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	18.962s
+exit 0
+## go test -race ./internal/mergetrain/ ./internal/releaseflow/ ./internal/ledger/ ./internal/seatexec/
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	775.571s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	4.799s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	1.382s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	3.209s
+exit 0
+## scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        83      43515        21636
+replace        2       2431            0
+review         4       3687         2803
+delete       138      49894            0
+new           65          0        14246
+TOTAL        350     111761        49333
+target sum 35087 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+gate total within band: MET, 32849 against 29790..36410 (deferred-replace rows excluded: 0 lines) [--final]
+like for like, class 1 and 2 rows and their targets removed: 27149 lines against a target sum of 32505 (-16.5 percent over)
+class 1 (deferred-2b): 5700 lines, 3118 over target; class 2 (deferred-3): 0 lines, 0 over target; class 3 (accepted-3 and other non-keep rows): 1355 over target
+3.0 additions: 65 files, 14250 lines (fate new; outside the target-sum rule and the band gate)
+manifest-check: OK
+exit 0

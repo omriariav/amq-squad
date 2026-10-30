@@ -1,0 +1,22 @@
+schema: 1
+session: v31
+lead: cto
+seats:
+  - handle: cto
+    role: cto
+    runtime: pi
+  - handle: senior-dev
+    role: senior-dev
+    runtime: claude
+    model: opus
+    effort: medium
+  - handle: qa
+    role: qa
+    runtime: codex
+    model: gpt-5.6-sol
+    effort: high
+  - handle: scribe
+    role: scribe
+    runtime: claude
+    model: sonnet
+    effort: medium

@@ -1,0 +1,17 @@
+{
+  "seat_handle": "s4-claude",
+  "runtime": "claude",
+  "provider_argv": [
+    "/Users/omri/.local/bin/claude",
+    "--model",
+    "sonnet",
+    "--effort",
+    "medium",
+    "--name",
+    "s4-claude",
+    "--session-id",
+    "3881094c-f890-4101-be4d-f91c11c4ee57",
+    "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+  ],
+  "timestamp": "2026-10-20T21:19:08.139149Z"
+}

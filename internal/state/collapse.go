@@ -7,76 +7,46 @@ import (
 	"time"
 )
 
-// Coordination is the derived read-only coordination model for a session: its
-// threads, edges, timeline, triage rollup, and any scan warnings. It is built
-// purely from scanned mailbox messages plus the injected clock + thresholds.
+// Coordination is a session's derived read-only model: threads (with triage)
+// and scan warnings, built from scanned messages, an injected clock and thresholds.
 type Coordination struct {
-	Threads          []ThreadSummary
-	Edges            []Edge
-	Timeline         []TimelineEvent
-	ExternalEvidence []ExternalEvidenceRow
-	Rollup           TriageRollup
-	Warnings         []Warning
+	Threads  []ThreadSummary
+	Warnings []Warning
 }
 
-// collapseInput is the raw material for building a session's coordination view:
-// every message observed across every agent inbox in the session, deduplicated
-// by (msgid, owner, state) at scan time, plus the agents' liveness for the
-// heartbeat/at-risk signals.
+// collapseInput is every message in the session's inboxes (deduplicated by
+// msgid, owner, state) plus agent liveness for the heartbeat/at-risk signals.
 type collapseInput struct {
 	messages []Message
 	agents   []Agent
 	warnings []Warning
 }
 
-// ProjectCoordination is the minimal read-only projection seam for callers
-// that already own one physical mailbox scan and need to remove claimed
-// evidence before ordinary latest-message selection. It performs no I/O and
-// preserves the same collapse semantics as Snapshot construction.
+// ProjectCoordination collapses an already-scanned (and filtered) message set
+// with the same semantics as Snapshot construction; it performs no I/O.
 func ProjectCoordination(messages []Message, agents []Agent, warnings []Warning, now time.Time, th Thresholds) Coordination {
 	return buildCoordination(collapseInput{messages: messages, agents: agents, warnings: warnings}, now, th)
 }
 
-// buildCoordination collapses messages into threads, builds the edge list and a
-// human-readable timeline, then computes triage per thread and rolls it up. now
-// and thresholds are injected; the function reads no clock and no disk itself.
+// buildCoordination collapses messages into triaged threads; it reads no clock or disk.
 func buildCoordination(in collapseInput, now time.Time, th Thresholds) Coordination {
 	th = withThresholdDefaults(th)
 
-	threads := collapseThreads(in.messages, now, th, in.agents)
-	edges := buildEdges(in.messages)
-	timeline := buildTimeline(threads, in.messages)
-	externalEvidence := BuildExternalEvidence(threads)
-
-	var rollup TriageRollup
-	for _, t := range threads {
-		rollup.countThread(t)
-	}
-
 	return Coordination{
-		Threads:          threads,
-		Edges:            edges,
-		Timeline:         timeline,
-		ExternalEvidence: externalEvidence,
-		Rollup:           rollup,
-		Warnings:         in.warnings,
+		Threads:  collapseThreads(in.messages, now, th, in.agents),
+		Warnings: in.warnings,
 	}
 }
 
 // threadAccumulator gathers everything about one canonical thread as messages
 // stream in, so the final summary is a single pass.
 type threadAccumulator struct {
-	id             string
-	participants   map[string]bool
-	subject        string
-	lastKind       Kind
-	labels         map[string]bool
-	orchestrator   string
-	fromProject    string
-	replyProject   string
-	externalTaskID string
-	lastEventAt    time.Time
-	count          int
+	id           string
+	participants map[string]bool
+	subject      string
+	lastKind     Kind
+	lastEventAt  time.Time
+	count        int
 	// unreadBy: recipient handle -> still has an unread copy (inbox/new).
 	unreadBy map[string]bool
 	// readBy: recipient handle -> has a read copy (inbox/cur). Used so a later
@@ -89,9 +59,8 @@ type threadAccumulator struct {
 	messages    []Message
 }
 
-// collapseThreads groups messages by canonical thread id and derives a summary
-// per thread: union participants, latest subject/kind, status, unread-by, and
-// triage+freshness.
+// collapseThreads summarizes each canonical thread: participants, latest
+// subject/kind, status, unread-by, triage and freshness.
 func collapseThreads(msgs []Message, now time.Time, th Thresholds, agents []Agent) []ThreadSummary {
 	accs := map[string]*threadAccumulator{}
 	var order []string
@@ -102,7 +71,6 @@ func collapseThreads(msgs []Message, now time.Time, th Thresholds, agents []Agen
 			acc = &threadAccumulator{
 				id:           m.Thread,
 				participants: map[string]bool{},
-				labels:       map[string]bool{},
 				unreadBy:     map[string]bool{},
 				readBy:       map[string]bool{},
 			}
@@ -129,11 +97,6 @@ func (a *threadAccumulator) observe(m Message) {
 	for _, r := range m.To {
 		a.participants[r] = true
 	}
-	for _, label := range m.Labels {
-		if label != "" {
-			a.labels[label] = true
-		}
-	}
 
 	// unread-by is per RECIPIENT, decided by where the recipient's own copy
 	// sits. A copy in inbox/new => that owner has it unread; a copy in inbox/cur
@@ -159,10 +122,6 @@ func (a *threadAccumulator) observe(m Message) {
 		if m.Subject != "" {
 			a.subject = m.Subject
 		}
-		a.orchestrator = m.Orchestrator
-		a.fromProject = m.FromProject
-		a.replyProject = m.ReplyProject
-		a.externalTaskID = m.ExternalTaskID
 	} else if a.subject == "" && m.Subject != "" {
 		a.subject = m.Subject
 	}
@@ -179,14 +138,12 @@ func (a *threadAccumulator) observe(m Message) {
 
 func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Agent) ThreadSummary {
 	parts := keysSorted(a.participants)
-	labels := keysSorted(a.labels)
 	unread := keysSorted(a.unreadBy)
 	operatorGateState, operatorGate := ResolveOperatorGate(a.messages, th.OperatorHandle, now)
 
 	status := deriveStatus(a)
-	fresh := computeFreshness(a.lastEventAt, a.latest, now, governingThreshold(status, th))
+	fresh := computeFreshness(a.lastEventAt, now, governingThreshold(status, th))
 	triage := computeTriage(a, status, fresh, now, th, agents, operatorGate)
-	stale := isStale(a.lastEventAt, now, th.StaleAfter, triage)
 	reason := classifyAttnReason(a, triage)
 	if operatorGate != nil && triage == TriageNeedsYou {
 		reason = operatorGate.Reason
@@ -199,18 +156,12 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 		Participants:      parts,
 		Subject:           a.subject,
 		Kind:              a.lastKind,
-		Labels:            labels,
-		Orchestrator:      a.orchestrator,
-		FromProject:       a.fromProject,
-		ReplyProject:      a.replyProject,
-		ExternalTaskID:    a.externalTaskID,
 		Status:            status,
 		LastEventAt:       a.lastEventAt,
 		MessageCount:      a.count,
 		UnreadBy:          unread,
 		Triage:            triage,
 		Freshness:         fresh,
-		Stale:             stale,
 		Historical:        historical,
 		AttnReason:        reason,
 		OperatorGateState: operatorGateState,
@@ -507,7 +458,7 @@ func isHistoricalNeedsYou(triage Triage, fresh Freshness, agents []Agent, operat
 
 func agentCanCurrentlyNeedOperator(l Liveness) bool {
 	switch l {
-	case LivenessAlive, LivenessWakeLive, LivenessDeadMailboxLive:
+	case LivenessAlive, LivenessDeadMailboxLive:
 		return true
 	default:
 		return false
@@ -522,24 +473,16 @@ var approveMarkers = []string{
 	"confirm", "[y/n]", "(y/n)", "y/n", "run this", "ok to",
 }
 
-// goalMarkers are case-insensitive substrings that mean the team signalled the
-// work is DONE / the goal is reached and the human should review and close.
-// "done" is deliberately NOT a bare substring here: it false-positives on
-// ordinary words that embed it ("abandoned", "condoned", "redone"). The "done"
-// signal — including the taught `DONE:` subject prefix — is matched as a whole
-// word by hasGoalWord instead, while the broader goal phrases below stay
-// substring matches.
+// goalMarkers are substrings meaning the goal is reached and the human should
+// review and close. "done" is matched as a whole word by hasGoalWord instead,
+// since as a substring it hits "abandoned" or "redone".
 var goalMarkers = []string{
 	"complete", "completed", "shipped", "goal reached",
 	"finished", "ready to close", "✅",
 }
 
-// hasGoalWord reports whether a lowercased subject carries a "done" goal signal
-// as a whole word, WITHOUT the substring false positives of bare "done" (e.g.
-// "abandoned", "condoned", "redone"). It matches the taught `done:` subject
-// prefix and a standalone "done" token (bounded by non-letters), so
-// "DONE: epic complete" / "all done" / "we are done" classify goal-reached
-// while "abandoned the retry" does not.
+// hasGoalWord reports a whole-word "done" (the taught `DONE:` prefix, "all
+// done"), bounded by non-letters, so "abandoned the retry" does not match.
 func hasGoalWord(subjLower string) bool {
 	const w = "done"
 	for i := 0; i+len(w) <= len(subjLower); i++ {
@@ -563,16 +506,8 @@ func isASCIILetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
-// classifyAttnReason derives WHY a needs-you thread needs the human from the
-// subject of the message addressed to the operator. It returns AttnNone for any
-// non-needs-you thread (the field is meaningful only on needs-you).
-//
-// Precedence: APPROVE (paused awaiting permission, act now) wins over
-// GOAL-REACHED (review + close); a plain question with neither marker is
-// AttnGeneric. Agents are taught (bootstrap + team-rules) to emit the goal
-// signal as a `DONE:` subject prefix; that prefix and a standalone "done" word
-// are matched by hasGoalWord (word-bounded, so "abandoned" does not trip it),
-// while the broader goal phrases stay substring matches in goalMarkers.
+// classifyAttnReason says why a needs-you thread needs the human (AttnNone for
+// other threads). Approve wins over goal-reached; neither marker is generic.
 func classifyAttnReason(a *threadAccumulator, triage Triage) AttnReason {
 	if triage != TriageNeedsYou {
 		return AttnNone
@@ -598,20 +533,6 @@ func ClassifyAttnSubject(subject string) AttnReason {
 		}
 	}
 	return AttnGeneric
-}
-
-// isStale reports whether a thread is age-decayed: its last event is older than
-// staleAfter. Needs-you uses the Historical flag instead of Stale when it is not
-// current operator action. A thread with no recorded last-event time (zero) is
-// not considered stale because there is no age to decay against.
-func isStale(lastEventAt, now time.Time, staleAfter time.Duration, triage Triage) bool {
-	if triage == TriageNeedsYou {
-		return false
-	}
-	if lastEventAt.IsZero() || staleAfter <= 0 {
-		return false
-	}
-	return now.Sub(lastEventAt) > staleAfter
 }
 
 // deriveStatus computes the thread lifecycle status from the LATEST message
@@ -652,11 +573,7 @@ func governingThreshold(status ThreadStatus, th Thresholds) time.Duration {
 
 // computeFreshness measures the thread's age from its last event and flags
 // staleness against the governing threshold.
-func computeFreshness(at time.Time, latest Message, now time.Time, threshold time.Duration) Freshness {
-	src := SourceObserved
-	if !at.IsZero() {
-		src = createdSource(latestHeaderCreated(latest))
-	}
+func computeFreshness(at time.Time, now time.Time, threshold time.Duration) Freshness {
 	age := time.Duration(0)
 	if !at.IsZero() {
 		age = now.Sub(at)
@@ -665,24 +582,10 @@ func computeFreshness(at time.Time, latest Message, now time.Time, threshold tim
 		}
 	}
 	return Freshness{
-		Source:   src,
 		Observed: at,
 		Age:      age,
 		Stale:    threshold > 0 && age > threshold,
 	}
-}
-
-// latestHeaderCreated reconstructs whether the latest message had an embedded
-// created time (vs a filesystem-mtime fallback). We re-derive from the parsed
-// time being non-zero and matching an embedded format is not recoverable post
-// hoc, so we conservatively report embedded when Created is set and the message
-// was schema-OK; mtime otherwise. (The raw header string is not retained on the
-// Message, so this is the available signal.)
-func latestHeaderCreated(m Message) string {
-	if !m.Created.IsZero() && m.SchemaOK {
-		return m.Created.UTC().Format(time.RFC3339Nano)
-	}
-	return ""
 }
 
 // computeTriage classifies a thread into a triage tier. Severity order is
@@ -835,12 +738,8 @@ func heartbeatQuiet(participants map[string]bool, agents []Agent, now time.Time,
 		if !participants[ag.Handle] {
 			continue
 		}
-		// A genuinely ALIVE agent (its process verified live by signal-0 + binary
-		// match) is NOT "quiet" just because its presence heartbeat FILE is stale.
-		// Presence and process liveness can disagree (e.g. an agent that does not
-		// rewrite presence.json on every turn); trusting a stale presence file
-		// here flips every awaiting-reply thread the live agent participates in to
-		// at-risk, inflating the count. Only a NOT-alive participant can be quiet.
+		// A verified-alive agent is not quiet just because presence.json is old
+		// (agents need not rewrite it every turn); only a not-alive one can be.
 		if ag.Liveness == LivenessAlive {
 			continue
 		}
@@ -863,126 +762,6 @@ func deadMailboxLiveParticipant(participants map[string]bool, agents []Agent) bo
 		}
 	}
 	return false
-}
-
-// buildEdges tallies directed from->to message counts across the session.
-// Self-edges (from==to) are dropped. Edges are sorted for determinism.
-func buildEdges(msgs []Message) []Edge {
-	type key struct{ from, to string }
-	counts := map[key]int{}
-	for _, m := range msgs {
-		// Edges are computed from the SENT direction once per message. A message
-		// is observed in multiple recipient inboxes; count it once per
-		// (from,to) by only counting the copy in the recipient's own inbox.
-		for _, to := range m.To {
-			if m.From == "" || to == "" || m.From == to {
-				continue
-			}
-			// Count once per recipient copy: only when this is the recipient's
-			// own inbox copy (m.Owner == to) OR the sender's outbox is not
-			// scanned. To avoid double counting across multiple inbox copies of
-			// the same message, count only the recipient-owned copy.
-			if m.Owner != "" && m.Owner != to {
-				continue
-			}
-			counts[key{m.From, to}]++
-		}
-	}
-	edges := make([]Edge, 0, len(counts))
-	for k, c := range counts {
-		edges = append(edges, Edge{From: k.from, To: k.to, Count: c})
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].From != edges[j].From {
-			return edges[i].From < edges[j].From
-		}
-		return edges[i].To < edges[j].To
-	})
-	return edges
-}
-
-// buildTimeline derives human-readable state-transition events. It emits one
-// event per thread for its current derived state (not a raw message dump),
-// sorted by time. The phrasing reads like "qa blocked on cto".
-func buildTimeline(threads []ThreadSummary, msgs []Message) []TimelineEvent {
-	// Index latest message per thread for actor/owner phrasing.
-	latest := map[string]Message{}
-	for _, m := range msgs {
-		cur, ok := latest[m.Thread]
-		if !ok || !m.Created.Before(cur.Created) {
-			latest[m.Thread] = m
-		}
-	}
-
-	var events []TimelineEvent
-	for _, t := range threads {
-		m := latest[t.ID]
-		summary := phraseTransition(t, m)
-		if summary == "" {
-			continue
-		}
-		events = append(events, TimelineEvent{
-			At:      t.LastEventAt,
-			Kind:    t.Kind,
-			Summary: summary,
-			Source:  t.ID,
-		})
-	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if !events[i].At.Equal(events[j].At) {
-			return events[i].At.Before(events[j].At)
-		}
-		return events[i].Source < events[j].Source
-	})
-	return events
-}
-
-// phraseTransition renders a human sentence for a thread's current state.
-func phraseTransition(t ThreadSummary, m Message) string {
-	from := m.From
-	owner := primaryRecipient(m)
-	switch t.Status {
-	case ThreadBlocked:
-		if from != "" && owner != "" {
-			return from + " blocked on " + owner
-		}
-		if from != "" {
-			return from + " declared a block"
-		}
-		return "block declared in " + t.ID
-	case ThreadAwaitingReply:
-		verb := "awaiting reply"
-		switch m.Kind {
-		case KindReviewRequest:
-			verb = "awaiting review"
-		case KindQuestion:
-			verb = "asked a question"
-		case KindDecision:
-			verb = "awaiting decision ack"
-		}
-		if from != "" && owner != "" {
-			return from + " -> " + owner + ": " + verb
-		}
-		if from != "" {
-			return from + " " + verb
-		}
-		return verb + " in " + t.ID
-	case ThreadResolved:
-		if from != "" {
-			return from + " resolved " + shortThread(t.ID)
-		}
-		return shortThread(t.ID) + " resolved"
-	default:
-		return ""
-	}
-}
-
-// shortThread trims a namespace prefix for compact timeline phrasing.
-func shortThread(id string) string {
-	if i := strings.IndexByte(id, '/'); i >= 0 && i+1 < len(id) {
-		return id[i+1:]
-	}
-	return id
 }
 
 // keysSorted returns the sorted keys of a string-set map.

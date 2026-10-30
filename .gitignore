@@ -26,3 +26,7 @@ amq-squad-rc-*
 # loads the checker via importlib, which writes __pycache__).
 __pycache__/
 *.pyc
+
+# Built pi runtime (scripts/build-pi-runtime.sh) and the pi package tree
+/build/
+/pi/node_modules/

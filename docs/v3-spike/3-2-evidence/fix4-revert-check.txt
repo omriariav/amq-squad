@@ -1,0 +1,199 @@
+## 1 binding keyed by repository and PR: revert internal/mergetrain/binding.go; go test -run 'TestRealRunReadsTheTaskBoundToThePR' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'if t.PRNumber == pr && strings.EqualFold(t.PRRepository, repository) {'
+-- to:       'if t.PRNumber == pr && (strings.EqualFold(t.PRRepository, repository) || true) {'
+--- FAIL: TestRealRunReadsTheTaskBoundToThePR (0.56s)
+    fix2_test.go:80: binding [{Number:1 Task:t1 DeclaredFiles:[pkg/a.go] BoundHead:478631ee95510f042cda5ccfd81d75eeb7649140 Unbound:} {Number:2 Task:t3 DeclaredFiles:[pkg/] BoundHead:6b91e01d14fcf67bb57bbc4d1e931425e67c64c4 Unbound:} {Number:3 Task:t2 DeclaredFiles:[pkg/c.go] BoundHead:0000000000000000000000000000000000000000 Unbound:}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.915s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.287s
+
+## 2 the train binds the SHA its rebase reported: revert internal/mergetrain/train.go; go test -run 'TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\t\tif err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {'
+-- to:       '\t\t\t\tif rb, _ := t.Forge.PR(ctx, req.Repository, p.Number); rb.HeadSHA != "" {\n\t\t\t\t\tpushed = rb.HeadSHA\n\t\t\t\t}\n\t\t\t\tif err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {'
+--- FAIL: TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush (2.48s)
+    fix3_test.go:65: a push after the rebase was bound or merged: <nil> [{Number:2 Task:t1 Head:1e6f68b6e34a8b6a2d56c8983f5869534a941677 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:416e174eeb549e6f472084d379c4d8b87c56f31b base:91cb6bcd37e3e599e5f6503a34a3557c86e28a1a} {Number:4 Task:t2 Head:df6297adcabd0b434ae9cbe488943df76923bcc1 Draft:true Changed:5 Files:[late.txt pkg/d.go shared.txt] Refusals:[{Rule:task_scope Detail:late.txt is outside task t2's declared files [pkg/d.go shared.txt]}] GateID:merge-68e0e37732b946ff GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:refused Merged: base:416e174eeb549e6f472084d379c4d8b87c56f31b}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.833s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	4.603s
+
+## 3 the check re-reads the task store: revert internal/mergetrain/train.go; go test -run 'TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tif bound {\n\t\t// the check reads the binding'
+-- to:       '\tif false && bound {\n\t\t// the check reads the binding'
+--- FAIL: TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush (1.16s)
+    fix3_test.go:45: rebased PR refused: <nil> [{Number:2 Task:t1 Head:b07058e233857f4be35ee338552631f9f94ec87a Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:2643abf514e4572c8f444bb5fc8a3e6f53ce204c base:f93b16daf29cb12a7d389dc66e4cea543d422a93} {Number:4 Task:t2 Head:4a2b80e3f6e676bdd85c722bdf0ba4e9326aef49 Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[{Rule:pr_head_moved Detail:PR #4 head 4a2b80e3f6e6 is not the pr_head 39b079369276 bound to task t2; re-bind through the commit step}] GateID:merge-13452872cd964aad GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:refused Merged: base:2643abf514e4572c8f444bb5fc8a3e6f53ce204c}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.513s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	4.540s
+
+## 3 the rebind audit entry before the binding write: revert internal/mergetrain/train.go; go test -run 'TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\t\tif err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed}); err != nil {\n\t\t\t\t\treturn err\n\t\t\t\t}\n\t\t\t\tif err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {\n\t\t\t\t\treturn fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pushed), err)\n\t\t\t\t}'
+-- to:       '\t\t\t\tif err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {\n\t\t\t\t\treturn fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pushed), err)\n\t\t\t\t}\n\t\t\t\tif err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed}); err != nil {\n\t\t\t\t\treturn err\n\t\t\t\t}'
+--- FAIL: TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush (4.41s)
+    fix3_test.go:89: the rebind audit entry was not written before the binding write
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	4.760s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	4.561s
+
+## 4 a binding without pr_head is unbound: revert internal/mergetrain/binding.go; go test -run 'TestBindingWithoutAHeadIsUnbound' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tcase bound[0].PRHead == "":'
+-- to:       '\tcase false:'
+--- FAIL: TestBindingWithoutAHeadIsUnbound (0.56s)
+    fix2_test.go:112: a binding without pr_head was accepted: {Number:1 Task:t1 DeclaredFiles:[pkg/a.go] BoundHead: Unbound:}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.886s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.727s
+
+## 5 BindPR writes the binding in the store transaction: revert internal/task/bind.go; go test -run 'TestBindPRSurvivesMutations' ./internal/task/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tt.PRRepository, t.PRNumber, t.PRHead = repository, pr, head\n'
+-- to:       '\t\t_ = t\n'
+--- FAIL: TestBindPRSurvivesMutations (0.11s)
+    bind_test.go:30: binding or lease lost: <nil> {Schema:1 ID:t1 Title:a Description: Class:implement State:in_progress Priority:0 DependsOn:[] DeclaredFiles:[x.go] ProjectPath: Pool:<nil> Lease:0x4a35db0018c0 Attempt:1 Attempts:[] WaitReason: BlockReason: BlockRoute: BlockDetail: Report:<nil> Evidence: CancelReason: ScopeChanges:[] PRRepository: PRNumber:0 PRHead: CreatedBy: CreatedAt:2026-10-24 12:00:00 +0000 UTC UpdatedAt:2026-10-24 12:00:03 +0000 UTC ClosedAt:<nil>}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.454s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.446s
+
+## 6 tag rule bypass actors: revert internal/releaseflow/gh.go; go test -run 'TestTagRulesetWithBypassActorsIsUnmet' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tcase len(rs.BypassActors) > 0:'
+-- to:       '\tcase false:'
+--- FAIL: TestTagRulesetWithBypassActorsIsUnmet (0.00s)
+    releaseflow_test.go:406: a bypassable tag rule protected the tag: true ""
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.348s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.333s
+
+## 7 no exclusion list: revert internal/releaseflow/gh.go; go test -run 'TestTagRuleCoversPatterns' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tif len(exclude) > 0 {'
+-- to:       '\tif false {'
+--- FAIL: TestTagRuleCoversPatterns (0.00s)
+    releaseflow_test.go:393: [~ALL] [refs/tags/v1.**]: covered true why ""
+    releaseflow_test.go:393: [refs/tags/v*] [refs/tags/v0*]: covered true why ""
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.353s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.252s
+
+## 7 one * only: revert internal/releaseflow/gh.go; go test -run 'TestTagRuleCoversPatterns' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: ' || strings.Count(rest, "*") > 1:'
+-- to:       ':'
+--- FAIL: TestTagRuleCoversPatterns (0.00s)
+    releaseflow_test.go:393: [refs/tags/**] []: covered false why ""
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.555s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.227s
+
+## 8 read-back compared to the created draft: revert internal/releaseflow/releaseflow.go; go test -run 'TestEditedDraftIsDeletedAuditedAndAlerted' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tif !found || !same(got, want) || !same(created, want) {'
+-- to:       '\t\tif !found {'
+--- FAIL: TestEditedDraftIsDeletedAuditedAndAlerted (0.35s)
+    releaseflow_test.go:438: read 1: an edited draft was published: <nil> [owner/fixture@v0.9.0]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.716s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.199s
+
+## 8 re-read before the publish: revert internal/releaseflow/releaseflow.go; go test -run 'TestEditedDraftIsDeletedAuditedAndAlerted' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tif !found || !same(again, d) {'
+-- to:       '\tif !found {'
+--- FAIL: TestEditedDraftIsDeletedAuditedAndAlerted (0.64s)
+    releaseflow_test.go:438: read 2: an edited draft was published: <nil> [owner/fixture@v0.9.0]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.996s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.213s
+
+## 9 a failed deletion is a draft_orphan alert: revert internal/releaseflow/releaseflow.go; go test -run 'TestEditedDraftIsDeletedAuditedAndAlerted' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'f.alert(root, repo, "draft_orphan", tag'
+-- to:       'f.alert(root, repo, "draft_other", tag'
+--- FAIL: TestEditedDraftIsDeletedAuditedAndAlerted (0.98s)
+    releaseflow_test.go:466: a failed deletion raised no draft_orphan alert: [{ID:draft-other-468c84cecb5c Repository:owner/fixture Kind:draft_other Name:v1.2.0 SHA: At:2026-10-24T20:09:02Z Detail:draft release 1 for v1.2.0 on owner/fixture could not be deleted after tag v1.2.0 names a69171ef561ab3881db7e761f44e82abc78f2c04: HTTP 500} {ID:tag-moved-ceb7377b3425 Repository:owner/fixture Kind:tag_moved Name:v1.2.0 SHA:a69171ef561ab3881db7e761f44e82abc78f2c04 At:2026-10-24T20:09:02Z Detail:tag v1.2.0 on owner/fixture moved from the approved bbfc211db8df3f6e8c977cf5d6c995f3da7b2e2e to a69171ef561ab3881db7e761f44e82abc78f2c04 before the release}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.340s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.183s
+
+## 9 the deletion is audited: revert internal/releaseflow/releaseflow.go; go test -run 'TestEditedDraftIsDeletedAuditedAndAlerted' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\taerr := note("draft_"+strings.TrimPrefix(cause.Error(), "draft_"), d, why+"; "+result)'
+-- to:       '\t\t_ = result\n\t\tvar aerr error'
+--- FAIL: TestEditedDraftIsDeletedAuditedAndAlerted (0.32s)
+    releaseflow_test.go:445: read 1: audit {"schema":"amq-squad-merge-audit/1","at":"2026-10-24T20:09:05.053696Z","run":"","kind":"draft_created","repository":"owner/fixture","base":"","pr":1,"head":"3ea3cf6633e44f80a407cd6abf7b4af94b8978e4","detail":"draft 1 (v1.2.0 at 3ea3cf6633e44f80a407cd6abf7b4af94b8978e4): created"}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.649s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	1.196s
+
+## 10 the draft id is recorded at creation: revert internal/releaseflow/releaseflow.go; go test -run 'TestOrphanDraftIsRecoveredOnTheNextRun' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tif err := writeOnce(record, created); err != nil {'
+-- to:       '\t\tif err := error(nil); err != nil {'
+--- FAIL: TestOrphanDraftIsRecoveredOnTheNextRun (0.31s)
+    releaseflow_test.go:488: no publication lock record for the draft: stat /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestOrphanDraftIsRecoveredOnTheNextRun1316715642/001/root/extensions/amq-squad/releases/release-v1-f0f540c73b4a7acc027dc1cd52bbf602d1f74ba1d56e69c03e1ae1ba3f213f53/draft.json: no such file or directory
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.679s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.581s
+
+## D1/D2 a local push target refuses a real run: revert internal/mergetrain/train.go; go test -run 'TestLocalPushTargetRefusesARealRun' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tif !t.DryRun {\n\t\t\tres.Stopped = fmt.Sprintf("push_target_local'
+-- to:       '\t\tif false {\n\t\t\tres.Stopped = fmt.Sprintf("push_target_local'
+--- FAIL: TestLocalPushTargetRefusesARealRun (0.72s)
+    pushtarget_test.go:35: a real run against a local push target: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.083s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.801s
+
+## D1/D2 push_url scheme check: revert internal/grants/parse.go; go test -run 'TestLocalPushTargetRefusesARealRun' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'err == nil && !ValidPushURL(m.PushURL) {'
+-- to:       'err == nil && false {'
+--- FAIL: TestLocalPushTargetRefusesARealRun (0.55s)
+    pushtarget_test.go:28: push_url http://github.com/owner/fixture.git accepted
+    pushtarget_test.go:28: push_url git://github.com/owner/fixture.git accepted
+    pushtarget_test.go:28: push_url "ext::sh -c touch% /tmp/x" accepted
+    pushtarget_test.go:28: push_url fd::3 accepted
+    pushtarget_test.go:28: push_url https://gitlab.com/owner/fixture.git accepted
+    pushtarget_test.go:28: push_url relative/path.git accepted
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.924s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.796s
+
+SUMMARY: every row fails on its assertion when reverted and passes restored

@@ -1,0 +1,151 @@
+row: 10a/10b reaction cleanup is not an alteration
+  revert: internal/gateverify/history.go (func reactionCleanup(d nostr.Event, ids []string) bool {)
+  reverted: FAIL --- FAIL: TestHistoryCheck (0.78s); --- FAIL: TestHistoryCheck/10a_reaction_deleted_by_the_attachment_(body_key) (0.05s); --- FAIL: TestHistoryCheck/10b_reaction_deleted_by_the_owner's_Desktop_since_the_question (0.05s)
+  restored: PASS
+  OK (fails when reverted)
+row: 10c the answer's own edits and deletions refuse
+  revert: internal/gateverify/history.go (if answer.ID != "" {)
+  reverted: FAIL --- FAIL: TestHistoryCheck (0.98s); --- FAIL: TestHistoryCheck/10c_the_answer_edited (0.08s); --- FAIL: TestHistoryCheck/10c_the_answer_deleted_under_a_reaction_k_tag (0.08s); --- FAIL: TestHistoryCheck/10c_the_answer_deleted_by_another_key (0.08s)
+  restored: PASS
+  OK (fails when reverted)
+row: 3 one connection per verification, closed after
+  revert: internal/buzz/inbound.go (defer closeFn())
+  reverted: FAIL --- FAIL: TestVerifierConnectionOnTheRelay (5.15s); --- FAIL: TestHandlerVerifierConnectionPerAnswer (0.11s)
+  restored: PASS
+  OK (fails when reverted)
+row: 3 the verification is capped (10 s)
+  revert: internal/buzz/inbound.go (vctx, cancel := context.WithTimeout(ctx, limit))
+  reverted: FAIL 
+  restored: PASS
+  OK (fails when reverted)
+row: 4 intermediate lines are status, one result per inbound
+  revert: internal/buzz/inbound.go (if err := h.Inbox.Reply(ctx, hd.MessageID, text, true); err != nil {)
+  reverted: FAIL --- FAIL: TestHandlerGatesAndRouting (0.08s); --- FAIL: TestHandlerReplyTable (0.38s); --- FAIL: TestHandlerReplyTable/verified (0.08s); --- FAIL: TestHandlerReplyTable/wrong_pubkey (0.05s); --- FAIL: TestHandlerReplyTable/outside_window (0.05s); --- FAIL: TestHandlerReplyTable/bad_signature (0.05s)
+  restored: PASS
+  OK (fails when reverted)
+row: 5 the same event delivered twice is handled once
+  revert: internal/buzz/inbound.go (if h.seen[id] {)
+  reverted: FAIL --- FAIL: TestHandlerDuplicateDeliveryHandledOnce (0.10s)
+  restored: PASS
+  OK (fails when reverted)
+row: 1/4 one path: remote bind refuses a share not bound to the mailbox adapter
+  revert: internal/cli/remote.go (mb, err := buzz.CheckMailboxShare(sh.Root, sh.Session, *channel, *relay))
+  reverted: FAIL --- FAIL: TestRemoteBindWritesTheOwnerFiles (0.03s)
+  restored: PASS
+  OK (fails when reverted)
+
+== fix round 1, reviewer rulings 1 to 3 (on the final fix-round tree)
+row: F1 (ruling 2) a deletion counts only when signed by the owner's key
+  revert: internal/gateverify/history.go (2 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (0.88s); --- FAIL: TestHistoryCheck/question_deleted_by_another_key_(a_relay_ignores_it) (0.05s); --- FAIL: TestHistoryCheck/10c_another_key_posts_a_kind_5_naming_the_answer (0.05s)
+  restored: PASS
+  OK (fails when reverted)
+row: F2 (ruling 2) the owner's deletion of the answer refuses
+  revert: internal/gateverify/history.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (0.90s); --- FAIL: TestHistoryCheck/10a_the_owner_deletes_the_answer (0.09s)
+  restored: PASS
+  OK (fails when reverted)
+row: F3 (ruling 2) the body's reaction cleanup is no alteration
+  revert: internal/gateverify/history.go (2 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (0.79s); --- FAIL: TestHistoryCheck/a_body_deletion_of_something_else (0.05s); --- FAIL: TestHistoryCheck/10b_the_body_deletes_its_own_reaction (0.05s)
+  restored: PASS
+  OK (fails when reverted)
+row: F4 (ruling 3) a hung verification is a row in the status attention queue
+  revert: internal/buzz/inbound.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHungVerificationIsInTheStatusAttentionQueue (0.32s)
+  restored: PASS
+  OK (fails when reverted)
+row: F5 (ruling 3) the row is shown only while its gate is open
+  revert: internal/status/classify.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestGateAlertShownOnlyWhileTheGateIsOpen (0.00s)
+  restored: PASS
+  OK (fails when reverted)
+
+== fix round 1, Codex findings on a360f98c (C3's reverted run fails by the test binary's 120 s timeout: the held lock blocks)
+row: C1 (B-P1) routing acts on the fetched event, never the AMQ body
+  revert: internal/buzz/inbound.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents (0.06s)
+  restored: PASS
+  OK (fails when reverted)
+row: C2 (B-P1) a label whose event is not fetched marks nothing
+  revert: internal/buzz/inbound.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents (0.09s)
+  restored: PASS
+  OK (fails when reverted)
+row: C3 (B-P4) gate locks are bounded by the verification's context
+  revert: internal/gateverify/core.go (1 replacement(s))
+  reverted: FAIL 
+  restored: PASS
+  OK (fails when reverted)
+row: C4 (B-P6) attach checks the binding before it starts the endpoint
+  revert: internal/cli/remote.go (2 replacement(s))
+  reverted: FAIL --- FAIL: TestAttachChecksTheBindingBeforeTheEndpoint (0.05s)
+  restored: PASS
+  OK (fails when reverted)
+row: C5 (B-P7) the once-only record is durable
+  revert: internal/buzz/seen.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestSeenRecordSurvivesARestart (0.02s)
+  restored: PASS
+  OK (fails when reverted)
+row: C6 (small) an unreadable inbox is an owner alert
+  revert: internal/buzz/inbound.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestUnreadableInboxIsAnAlert (0.02s)
+  restored: PASS
+  OK (fails when reverted)
+row: C7 (small) the share's grants verify locally
+  revert: internal/buzz/share.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestShareGrantsVerifyLocally (0.02s)
+  restored: PASS
+  OK (fails when reverted)
+row: C7b (small) the doctor row fails on unverified grants
+  revert: internal/cli/doctor_host.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestDoctorBuzzGrantRow (0.06s)
+  restored: PASS
+  OK (fails when reverted)
+
+== fix round 2, the re-pass residuals on 1974caa4 (R4b's reverted run fails by the test binary's 120 s timeout: the wait spins)
+row: R1 (item 1) a route is marked only after its forward succeeded
+  revert: internal/buzz/inbound.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestFailedForwardLeavesNoMark (0.01s)
+  restored: PASS
+  OK (fails when reverted)
+row: R2 (item 2) forwarded text passes redact.Block
+  revert: internal/buzz/route.go (3 replacement(s))
+  reverted: FAIL --- FAIL: TestForwardedTextIsRedacted (0.01s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3a (item 3a) any body-signed deletion since the question refuses
+  revert: internal/gateverify/history.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (1.02s); --- FAIL: TestHistoryCheck/10b/3_the_body_deletes_anything_since_the_question_(foreign_use_of_the_body_key) (0.08s); --- FAIL: TestHiddenDeletedEditIsReasked (0.18s); --- FAIL: TestHiddenDeletedEditIsReasked/body (0.08s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3b (item 3b) an owner deletion with a hidden target refuses
+  revert: internal/gateverify/history.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (1.01s); --- FAIL: TestHistoryCheck/3_an_owner_deletion_since_the_question_whose_target_is_hidden (0.08s); --- FAIL: TestHistoryCheck/3_an_owner_deletion_tagged_k_7_and_k_40003,_target_hidden (0.08s); --- FAIL: TestHiddenDeletedEditIsReasked (0.18s); --- FAIL: TestHiddenDeletedEditIsReasked/owner (0.08s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3c (item 3b) the owner's k=7 reaction cleanup is accepted
+  revert: internal/gateverify/history.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHistoryCheck (1.00s); --- FAIL: TestHistoryCheck/3_the_owner's_reaction_cleanup_(every_k_tag_7),_target_hidden (0.07s)
+  restored: PASS
+  OK (fails when reverted)
+row: R3d (item 3b) altered_history is a re-ask, not a lockout
+  revert: internal/gateverify/core.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHiddenDeletedEditIsReasked (0.10s); --- FAIL: TestHiddenDeletedEditIsReasked/owner (0.05s); --- FAIL: TestHiddenDeletedEditIsReasked/body (0.04s)
+  restored: PASS
+  OK (fails when reverted)
+row: R4a (item 4) a lock taken after the deadline is released
+  revert: internal/gatestore/store.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestGateLockChecksTheContextAroundEveryAttempt (0.00s)
+  restored: PASS
+  OK (fails when reverted)
+row: R4b (item 4) the context is checked before every attempt
+  revert: internal/gatestore/store.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestGateLockChecksTheContextAroundEveryAttempt (0.00s)
+  restored: PASS
+  OK (fails when reverted)
+row: R5 (item 5) a lock timeout is verify_timeout
+  revert: internal/gateverify/verify.go (1 replacement(s))
+  reverted: FAIL --- FAIL: TestHeldGateLockIsTheTimeoutPath (0.37s)
+  restored: PASS
+  OK (fails when reverted)

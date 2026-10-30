@@ -9,13 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestMaterializeHandoffAndCleanupLifecycle(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	service := newTestService(t, configured, team.DefaultProfile, "release-24")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "release-24")
 	req := Request{Role: "worker", TaskID: "t3", Base: "HEAD", Scope: []string{"internal/runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "release-24")}
 
 	preview, planned, err := service.Plan(req)
@@ -25,7 +26,7 @@ func TestMaterializeHandoffAndCleanupLifecycle(t *testing.T) {
 	if planned.State != StatePlanned || preview.AcceptedBaseSHA == "" {
 		t.Fatalf("preview = %+v / %+v", preview, planned)
 	}
-	if _, exists, err := Read(configured, team.DefaultProfile, "release-24"); err != nil || exists {
+	if _, exists, err := Read(configured, squadnamespace.DefaultProfile, "release-24"); err != nil || exists {
 		t.Fatalf("plan must be read-only: exists=%t err=%v", exists, err)
 	}
 
@@ -36,7 +37,7 @@ func TestMaterializeHandoffAndCleanupLifecycle(t *testing.T) {
 	if materialized.State != StateMaterialized || set.AcceptedBaseSHA != materialized.BaseSHA {
 		t.Fatalf("materialized = %+v set=%+v", materialized, set)
 	}
-	current, err := team.ReadProfile(repo, team.DefaultProfile)
+	current, err := team.Read(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestMaterializeHandoffAndCleanupLifecycle(t *testing.T) {
 	if cleaned.State != StateCleaned || cleaned.HandoffSHA != "" || pathExists(materialized.Path) {
 		t.Fatalf("cleaned = %+v path-exists=%t", cleaned, pathExists(materialized.Path))
 	}
-	current, err = team.ReadProfile(repo, team.DefaultProfile)
+	current, err = team.Read(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +95,8 @@ func TestCleanupAcceptsSequentialTaskBranchAndRemovableCoordinationResidue(t *te
 	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte(".agent-mail/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	service := newTestService(t, configured, team.DefaultProfile, "release-24")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "release-24")
 	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"internal/runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "release-24")}
 	_, record, err := service.Materialize(req)
 	if err != nil {
@@ -151,8 +152,8 @@ func TestCleanupRefusesUniqueWorktreeLocalCoordinationState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte(".agent-mail/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	service := newTestService(t, configured, team.DefaultProfile, "release-24")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "release-24")
 	_, record, err := service.Materialize(Request{
 		Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"internal/runtime/**"},
 		AMQRoot: filepath.Join(repo, ".agent-mail", "release-24"),
@@ -186,9 +187,9 @@ func TestCleanupRefusesUniqueWorktreeLocalCoordinationState(t *testing.T) {
 
 func TestPlanPreviewIsDeterministicAndTimestampFree(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
 	tick := 0
-	service, err := NewService(configured, team.DefaultProfile, "deterministic", ExecGit{}, func() time.Time {
+	service, err := NewService(configured, squadnamespace.DefaultProfile, "deterministic", ExecGit{}, func() time.Time {
 		tick++
 		return time.Date(2026, 7, 23, 10, 0, tick, 0, time.UTC)
 	})
@@ -229,8 +230,8 @@ func TestPlanPreviewIsDeterministicAndTimestampFree(t *testing.T) {
 func TestMaterializeRefusesOccupiedPathAndBranchWithoutCreatingStore(t *testing.T) {
 	t.Run("path", func(t *testing.T) {
 		repo := newTestRepo(t)
-		configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-		service := newTestService(t, configured, team.DefaultProfile, "collision")
+		configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+		service := newTestService(t, configured, squadnamespace.DefaultProfile, "collision")
 		req := Request{
 			Role: "worker", TaskID: "t3", Base: "HEAD", Scope: []string{"internal/**"},
 			Path: filepath.Join(t.TempDir(), "occupied"), AMQRoot: filepath.Join(repo, ".agent-mail", "collision"),
@@ -241,15 +242,15 @@ func TestMaterializeRefusesOccupiedPathAndBranchWithoutCreatingStore(t *testing.
 		if _, _, err := service.Materialize(req); err == nil || !strings.Contains(err.Error(), "occupied unknown") {
 			t.Fatalf("error = %v", err)
 		}
-		if _, exists, err := Read(configured, team.DefaultProfile, "collision"); err != nil || exists {
+		if _, exists, err := Read(configured, squadnamespace.DefaultProfile, "collision"); err != nil || exists {
 			t.Fatalf("refusal mutated store: exists=%t err=%v", exists, err)
 		}
 	})
 
 	t.Run("branch", func(t *testing.T) {
 		repo := newTestRepo(t)
-		configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-		service := newTestService(t, configured, team.DefaultProfile, "collision")
+		configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+		service := newTestService(t, configured, squadnamespace.DefaultProfile, "collision")
 		req := Request{Role: "worker", TaskID: "t3", Base: "HEAD", Scope: []string{"internal/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "collision")}
 		_, preview, err := service.Plan(req)
 		if err != nil {
@@ -259,7 +260,7 @@ func TestMaterializeRefusesOccupiedPathAndBranchWithoutCreatingStore(t *testing.
 		if _, _, err := service.Materialize(req); err == nil || !strings.Contains(err.Error(), "existing branch") {
 			t.Fatalf("error = %v", err)
 		}
-		if _, exists, err := Read(configured, team.DefaultProfile, "collision"); err != nil || exists {
+		if _, exists, err := Read(configured, squadnamespace.DefaultProfile, "collision"); err != nil || exists {
 			t.Fatalf("refusal mutated store: exists=%t err=%v", exists, err)
 		}
 	})
@@ -267,15 +268,15 @@ func TestMaterializeRefusesOccupiedPathAndBranchWithoutCreatingStore(t *testing.
 
 func TestPlannedBranchCrashRecoveryAndCleanupRefusals(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, "named", "worker")
-	service := newTestService(t, configured, "named", "recovery")
-	req := Request{Role: "worker", TaskID: "t9", Base: "HEAD", Scope: []string{"cmd/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "named", "recovery")}
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "recovery")
+	req := Request{Role: "worker", TaskID: "t9", Base: "HEAD", Scope: []string{"cmd/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "recovery")}
 	set, planned, err := service.Plan(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := WithLock(configured, "named", "recovery", func() error {
-		return WriteUnderLock(configured, "named", "recovery", set)
+	if err := WithLock(configured, squadnamespace.DefaultProfile, "recovery", func() error {
+		return WriteUnderLock(configured, squadnamespace.DefaultProfile, "recovery", set)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -322,8 +323,8 @@ func TestPlannedBranchCrashRecoveryAndCleanupRefusals(t *testing.T) {
 // never carry the marker).
 func TestCleanupReconcilesGoneWorktreeAsCleaned(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	service := newTestService(t, configured, team.DefaultProfile, "gone")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "gone")
 	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "gone")}
 	_, materialized, err := service.Materialize(req)
 	if err != nil {
@@ -368,8 +369,8 @@ func TestCleanupReconcilesGoneWorktreeAsCleaned(t *testing.T) {
 
 func TestInspectionDiagnosesSharedIndexAndCoordinationDivergence(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "one", "two")
-	service := newTestService(t, configured, team.DefaultProfile, "diagnostics")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "one", "two")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "diagnostics")
 	inspection, err := service.Inspect()
 	if err != nil {
 		t.Fatal(err)
@@ -412,8 +413,8 @@ func TestInspectionDiagnosesSharedIndexAndCoordinationDivergence(t *testing.T) {
 
 func TestAcceptedBaseDriftAndHandoffDrift(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	service := newTestService(t, configured, team.DefaultProfile, "drift")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "drift")
 	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "drift")}
 	_, record, err := service.Materialize(req)
 	if err != nil {
@@ -455,8 +456,8 @@ func TestAcceptedBaseDriftAndHandoffDrift(t *testing.T) {
 // the stored accepted base as a side effect of the refused call.
 func TestMaterializeStillFailsClosedOnDriftWithoutAcknowledgement(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	service := newTestService(t, configured, team.DefaultProfile, "drift-noack")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "drift-noack")
 	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "drift-noack")}
 	if _, _, err := service.Materialize(req); err != nil {
 		t.Fatal(err)
@@ -493,8 +494,8 @@ func TestMaterializeStillFailsClosedOnDriftWithoutAcknowledgement(t *testing.T) 
 // worktree actually materializes at that new base.
 func TestMaterializeAdvancesAcceptedBaseWithExplicitAcknowledgement(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	service := newTestService(t, configured, team.DefaultProfile, "drift-ack")
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "drift-ack")
 	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "drift-ack")}
 	_, first, err := service.Materialize(req)
 	if err != nil {
@@ -532,28 +533,28 @@ func TestMaterializeAdvancesAcceptedBaseWithExplicitAcknowledgement(t *testing.T
 
 func TestLinkedWorktreeServiceReanchorsCanonicalTeamHome(t *testing.T) {
 	repo := newTestRepo(t)
-	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
-	runGit(t, repo, "add", team.ProfilePath(repo, team.DefaultProfile))
+	configured := writeTestTeam(t, repo, squadnamespace.DefaultProfile, "worker")
+	runGit(t, repo, "add", team.SquadPath(repo))
 	runGit(t, repo, "commit", "-m", "track team profile")
-	configured, err := team.ReadProfile(repo, team.DefaultProfile)
+	configured, err := team.Read(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := newTestService(t, configured, team.DefaultProfile, "linked")
+	service := newTestService(t, configured, squadnamespace.DefaultProfile, "linked")
 	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "linked")}
 	_, record, err := service.Materialize(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	linkedProfile, err := team.ReadProfile(record.Path, team.DefaultProfile)
+	linkedProfile, err := team.Read(record.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	linkedService := newTestService(t, linkedProfile, team.DefaultProfile, "linked")
+	linkedService := newTestService(t, linkedProfile, squadnamespace.DefaultProfile, "linked")
 	if linkedService.team.Project != repo {
 		t.Fatalf("service team-home = %q, want canonical %q", linkedService.team.Project, repo)
 	}
-	if got := StorePath(linkedService.team, team.DefaultProfile, "linked"); !strings.HasPrefix(got, filepath.Join(repo, team.DirName, DirName)) {
+	if got := StorePath(linkedService.team, squadnamespace.DefaultProfile, "linked"); !strings.HasPrefix(got, filepath.Join(repo, team.DirName, DirName)) {
 		t.Fatalf("store path = %q, want canonical root", got)
 	}
 }
@@ -574,6 +575,7 @@ func newTestRepo(t *testing.T) string {
 
 func writeTestTeam(t *testing.T, repo, profile string, roles ...string) team.Team {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir()) // squad.yaml writes read the owner grants file
 	members := make([]team.Member, 0, len(roles))
 	for _, role := range roles {
 		members = append(members, team.Member{
@@ -582,15 +584,13 @@ func writeTestTeam(t *testing.T, repo, profile string, roles ...string) team.Tea
 		})
 	}
 	configured := team.Team{
-		Schema: team.SchemaVersion, Members: members,
+		Members:     members,
 		ControlRoot: repo, TargetProjectRoot: repo,
 	}
-	operator := team.DisabledOperator()
-	configured.Operator = &operator
-	if err := team.WriteProfile(repo, profile, configured); err != nil {
+	if err := team.Write(repo, configured); err != nil {
 		t.Fatal(err)
 	}
-	read, err := team.ReadProfile(repo, profile)
+	read, err := team.ReadFor(repo, profile)
 	if err != nil {
 		t.Fatal(err)
 	}

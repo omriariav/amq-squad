@@ -1,0 +1,154 @@
+==============================================================================
+ROW one scheduler process per squad
+fix reverted in internal/schedproc/process.go:
+- 	case !acquired:
+		return ErrRunning
+
++ 	case !acquired:
+
+$ go test -count=1 -race -run ^(TestProcessDispatchesAndStopsOnAUsageLimit)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestProcessDispatchesAndStopsOnAUsageLimit (0.41s)
+    process_test.go:105: a second process: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	1.198s
+FAIL
+
+$ go test -count=1 -race -run ^(TestProcessDispatchesAndStopsOnAUsageLimit)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.451s
+
+ROW one scheduler process per squad: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW a usage limit before the start is history
+fix reverted in internal/schedproc/process.go:
+- 			if since.Before(start) {
+				since = start
+			}
+
++ 			_ = start
+
+$ go test -count=1 -race -run ^(TestUsageLimitBeforeTheStartIsHistory)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestUsageLimitBeforeTheStartIsHistory (10.15s)
+    process_test.go:170: timed out waiting for a decision
+    testing.go:1617: TempDir RemoveAll cleanup: unlinkat /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestUsageLimitBeforeTheStartIsHistory3622532745/001/extensions/amq-squad: directory not empty
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	16.808s
+FAIL
+
+$ go test -count=1 -race -run ^(TestUsageLimitBeforeTheStartIsHistory)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	2.109s
+
+ROW a usage limit before the start is history: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the doorbell sends as the scheduler, never the caller
+fix reverted in internal/schedproc/amq.go:
+- 	env := append(scrubAMQ(os.Environ()), 
++ 	env := append(os.Environ(), 
+$ go test -count=1 -race -run ^(TestDoorbellAndLeadNoticeSend)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestDoorbellAndLeadNoticeSend (0.00s)
+    slots_test.go:159: two AM_ME in [TERM_SESSION_ID=w0t1p0:B5A8555F-BD8A-40A4-9432-0C3DF7A4D8C9 SSH_AUTH_SOCK=<redacted> LC_TERMINAL_VERSION=3.7.3 ITERM_PROFILE=omri SQLITE_EXEMPT_PATH_FROM_VNODE_GUARDS=/Users/omri/Library/WebKit/Databases OSLogRateLimit=64 XPC_FLAGS=0x0 LANG=he_IL.UTF-8 SHELL=/bin/zsh TERM_FEATURES=T3CwLrMSc7UUw9Ts3BFGsSyHNoSxFP COLORTERM=truecolor COMMAND_MODE=unix2003 TERM=xterm-256color TERMINFO_DIRS=/Applications/iTerm.app/Contents/Resources/terminfo:/usr/share/terminfo HOME=/Users/omri TMPDIR=/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/ USER=omri XPC_SERVICE_NAME=0 LOGNAME=omri __CF_USER_TEXT_ENCODING=0x1F5:0x0:0x0 ITERM_INJECT_SHELL_INTEGRATION=1 SHLVL=2 OLDPWD=/Users/omri/code/amq-squad/.claude/worktrees/agent-a4c9efee2491e72e4 HOMEBREW_PREFIX=/opt/homebrew HOMEBREW_CELLAR=/opt/homebrew/Cellar HOMEBREW_REPOSITORY=/opt/homebrew FPATH=/Users/omri/.grok/completions/zsh:/Users/omri/.oh-my-zsh/plugins/git:/Users/omri/.oh-my-zsh/functions:/Users/omri/.oh-my-zsh/completions:/Users/omri/.oh-my-zsh/custom/functions:/Users/omri/.oh-my-zsh/custom/completions:/Users/omri/.oh-my-zsh/cache/completions:/opt/homebrew/share/zsh/site-functions:/usr/local/share/zsh/site-functions:/usr/share/zsh/site-functions:/usr/share/zsh/5.9/functions INFOPATH=/opt/homebrew/share/info: P9K_TTY=old _P9K_TTY=/dev/ttys001 ZSH=/Users/omri/.oh-my-zsh PAGER=less LESS=-R LSCOLORS=Gxfxcxdxbxegedabagacad LS_COLORS=di=1;36:ln=35:so=32:pi=33:ex=31:bd=34;46:cd=34;43:su=30;41:sg=30;46:tw=30;42:ow=30;43 P9K_SSH=0 _P9K_SSH_TTY=/dev/ttys001 NVM_DIR=/Users/omri/.nvm NVM_CD_FLAGS=-q NVM_BIN=/Users/omri/.nvm/versions/node/v22.21.1/bin NVM_INC=/Users/omri/.nvm/versions/node/v22.21.1/include/node CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=15000 CLAUDE_PULSE_DENSITY=taboola TMUX_SESSION_CC=1 MEMORY_HOME=/Users/omri/code/personal-memory GEMINI_API_KEY=<redacted> NoDefaultCurrentDirectoryInExePath=1 COREPACK_ENABLE_AUTO_PIN=0 AI_AGENT=claude-code_2-1-309_agent CLAUDE_CODE_ENTRYPOINT=cli INVOCATION_ID= LAUNCHCTL_ENV_REEXEC=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 RED_ALERT_CITIES=Tel Aviv - Across the Yarkon,Ramla CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 ENABLE_TOOL_SEARCH=true CLAUDE_PULSE_HIDE_COST=1 CLAUDE_JOB_DIR=/Users/omri/.claude/jobs/6dd424c9 CLAUDE_CODE_MESSAGING_SOCKET=/tmp/cc-socks/39797.sock CLAUDE_CODE_MESSAGING_TOKEN=<redacted> CLAUDE_CODE_BRIDGE_SESSION_ID=session_01DweoyBP65psWdJtwN3gdnu GIT_EDITOR=true CLAUDE_CODE_EXECPATH=/Users/omri/.local/share/claude/versions/2.1.309 CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=6dd424c9-2657-447d-b593-3936e4933ade CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_SESSION_ATTENDED=0 CLAUDE_PID=39797 CLAUDE_EFFORT=high CODEX_COMPANION_SESSION_ID=6dd424c9-2657-447d-b593-3936e4933ade CODEX_COMPANION_TRANSCRIPT_PATH=/Users/omri/.claude/projects/-Users-omri-code-amq-squad/6dd424c9-2657-447d-b593-3936e4933ade.jsonl CLAUDE_PLUGIN_DATA=/Users/omri/.claude/plugins/data/codex-openai-codex _=/opt/homebrew/bin/python3 PATH=/opt/homebrew/Cellar/go/1.27.1/libexec/bin:/Users/omri/.grok/bin:/Users/omri/bin:/Users/omri/.nvm/versions/node/v22.21.1/bin:/Users/omri/go/bin:/opt/homebrew/bin:/Users/omri/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Library/TeX/texbin:/opt/homebrew/bin:/Applications/iTerm.app/Contents/Resources/utilities PWD=/Users/omri/code/amq-squad/.claude/worktrees/agent-a4c9efee2491e72e4/internal/schedproc AM_ME=lead AM_ME=scheduler AM_ROOT=/r/s1 AMQ_NO_UPDATE_CHECK=1 AM_BASE_ROOT=/r AM_SESSION=s1]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.344s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDoorbellAndLeadNoticeSend)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.293s
+
+ROW the doorbell sends as the scheduler, never the caller: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the repository root is never a seat worktree
+fix reverted in internal/schedproc/slots.go:
+- 	if seat.Worktree == "" || filepath.Clean(seat.Worktree) == root {
++ 	if seat.Worktree == "" {
+$ go test -count=1 -race -run ^(TestSlotsPlanWorktreesAndRelease)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestSlotsPlanWorktreesAndRelease (0.64s)
+    slots_test.go:85: a repository-root seat: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.890s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSlotsPlanWorktreesAndRelease)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.838s
+
+ROW the repository root is never a seat worktree: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW a seat in use is not planned twice
+fix reverted in internal/schedproc/slots.go:
+- if !poolMatches(req.Pool, seat) || s.inUse[seat.Handle] != "" || s.closed[seat.Handle] {
++ if !poolMatches(req.Pool, seat) || s.closed[seat.Handle] {
+$ go test -count=1 -race -run ^(TestSlotsPlanWorktreesAndRelease)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestSlotsPlanWorktreesAndRelease (0.67s)
+    slots_test.go:78: a seat in use was planned twice
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	1.203s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSlotsPlanWorktreesAndRelease)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.862s
+
+ROW a seat in use is not planned twice: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW repeated deferrals become commit_failed
+fix reverted in internal/schedproc/committer.go:
+- 		if c.deferred[t.ID] < max {
++ 		if true {
+$ go test -count=1 -race -run ^(TestCommitterDeferralsAndQuarantine)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestCommitterDeferralsAndQuarantine (0.00s)
+    slots_test.go:139: 3: {OK:false ReasonCode: Detail:push Route: Deferred:true Quarantine:false}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.253s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCommitterDeferralsAndQuarantine)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.251s
+
+ROW repeated deferrals become commit_failed: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the external path records the commit base
+fix reverted in internal/schedproc/slots.go:
+- 	if _, err := seatcommit.RecordWorktreeBase(e.Slots.Git, rec.Root, seat.Handle, seat.Worktree, seat.Branch, e.Slots.now()); err != nil {
++ 	if _, err := seatcommit.ReadLedger(rec.Root, seat.Handle); false && err != nil {
+$ go test -count=1 -race -run ^(TestExternalLauncherStagesAndWritesTheRequest)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestExternalLauncherStagesAndWritesTheRequest (0.31s)
+    slots_test.go:110: commit base: {Schema:0 Handle: Worktree: Branch: Base: Head: Commits:[] At:0001-01-01 00:00:00 +0000 UTC Quarantine:<nil>} open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestExternalLauncherStagesAndWritesTheRequest1946814605/001/repo/.agent-mail/s1/extensions/amq-squad/commits/p1.json: no such file or directory
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.651s
+FAIL
+
+$ go test -count=1 -race -run ^(TestExternalLauncherStagesAndWritesTheRequest)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.723s
+
+ROW the external path records the commit base: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW status does not list the scheduler mailbox
+fix reverted in internal/status/collect.go:
+- e.Name() == o.OperatorHandle || e.Name() == scheduler.SenderHandle ||
++ e.Name() == o.OperatorHandle || false && e.Name() == scheduler.SenderHandle ||
+$ go test -count=1 -race -run ^(TestSeatRoleJoinsFromTheLaunchRecord)$ ./internal/status   (fix reverted)
+--- FAIL: TestSeatRoleJoinsFromTheLaunchRecord (0.06s)
+    role_join_test.go:48: the scheduler mailbox is listed as a seat: [{Handle:impl-1 Role:implementer Runtime:claude Model:sonnet Effort:high State:stale ReasonCode:no_live_signal Bucket:inactive BucketMarker: TaskID: ProjectPath:/wt/impl-1 LastActivityAt:<nil> LastMessageAt:<nil> LastMessage: PromptState:unknown TokensIn:<nil> TokensOut:<nil>} {Handle:lead Role:lead Runtime:pi Model:qwen3.6:27b Effort:medium State:unknown ReasonCode:no_signal Bucket:inactive BucketMarker:unknown TaskID: ProjectPath:/repo LastActivityAt:<nil> LastMessageAt:<nil> LastMessage: PromptState:unknown TokensIn:<nil> TokensOut:<nil>} {Handle:scheduler Role: Runtime: Model: Effort: State:unknown ReasonCode:no_signal Bucket:inactive BucketMarker:unknown TaskID: ProjectPath: LastActivityAt:<nil> LastMessageAt:<nil> LastMessage: PromptState:unknown TokensIn:<nil> TokensOut:<nil>}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/status	0.386s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatRoleJoinsFromTheLaunchRecord)$ ./internal/status   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	1.275s
+
+ROW status does not list the scheduler mailbox: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the scheduler verb rings through AMQ from the scheduler mailbox
+fix reverted in internal/cli/scheduler_run.go:
+- 		Doorbell:  schedproc.Doorbell{Sender: sender},
++ 		Doorbell:  nil,
+$ go test -count=1 -race -run ^(TestSchedulerRunVerbDispatchesRingsAndStops)$ ./internal/cli   (fix reverted)
+--- FAIL: TestSchedulerRunVerbDispatchesRingsAndStops (0.21s)
+    scheduler_run_test.go:140: doorbell sends: []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.613s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSchedulerRunVerbDispatchesRingsAndStops)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.730s
+
+ROW the scheduler verb rings through AMQ from the scheduler mailbox: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

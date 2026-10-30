@@ -1,0 +1,15 @@
+# item 1 revert check, PTY wait-posture test
+# pane shell startup takes 7 s (SHELL=wrapper that sleeps 7 s; stands in for rc files under full-suite load)
+## fix reverted (fixed 5 s deadline from submit)
+    wait_posture_pty_test.go:119: dispatch did not refuse before deadline; pane:
+        env AM_SESSION=s AM_ME=cto AM_ROOT=/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_
+        hxr0000gn/T/TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout3211321266/001/.a
+        gent-mail/s AM_BASE_ROOT=/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/
+        T/TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout3211321266/001/.agent-mail
+        /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRealPTYWaitPostureR
+        efusesNamedGateBeforeTimeout3211321266/001/amq-squad dispatch --project /private
+        /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRealPTYWaitPostureRefusesNa
+## fix restored (warm-up sync, measured deadline)
+--- PASS: TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout (11.62s)
+PASS
+# 72 busy loops on 18 cores, 3 runs of the old test: 6.9, 8.2, 8.3 s, all PASS (CPU load alone did not reproduce; shell startup is the load-sensitive step)

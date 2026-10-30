@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "handle": "s4-codex",
+  "state": "stale",
+  "identity": {
+    "provider": "",
+    "id": ""
+  },
+  "provider_version": "0.147.0",
+  "launch_nonce": "<redacted>",
+  "execution_evidence": {
+    "backend": "tmux",
+    "profile": "tmux/darwin/v1",
+    "outcome": "created",
+    "launch_nonce": "<redacted>"
+  },
+  "reason": "evidence_missing"
+}

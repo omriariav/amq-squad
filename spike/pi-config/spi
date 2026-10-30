@@ -1,0 +1,11 @@
+#!/bin/sh
+# spi: run the spike's pi with an isolated config dir (never ~/.pi).
+# Installed copy lives at ~/.amq-squad/spike/s5/bin/spi.
+PI_CODING_AGENT_DIR="$HOME/.amq-squad/spike/s5/pi-agent"
+PI_OFFLINE=1
+PI_SKIP_VERSION_CHECK=1
+PI_TELEMETRY=0
+# Keep the seats' go test build cache inside the spike dir.
+GOCACHE="$HOME/.amq-squad/spike/s5/gocache"
+export PI_CODING_AGENT_DIR PI_OFFLINE PI_SKIP_VERSION_CHECK PI_TELEMETRY GOCACHE
+exec "$HOME/.amq-squad/spike/pi/node_modules/.bin/pi" "$@"

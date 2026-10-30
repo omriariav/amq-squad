@@ -6,114 +6,83 @@ detail.
 
 ## The loop
 
-```
-amq-squad status --session S --json
+```sh
+amq-squad status --project P --session S --json
 ```
 
-`status` returns one record-first runtime and coordination projection. Select one
-bounded action from live records, claimed work, inbox state, and open gates. Act,
-push the durable update, then park/end the turn so the session notifier can wake
-new AMQ work. Re-read the active brief when scope, tasks, or status indicate an
+`status` returns the status contract, schema 1 (`docs/status-contract.md`). Select
+one bounded action from `attention[]` (each item has a stable `id`, a `kind`, a
+`severity` and an optional `action` with an `argv`), the `needs_you` bucket, and the
+task rows. Act, push the durable update, then park/end the turn so AMQ wake can
+deliver new work. Re-read the active brief when scope, tasks, or status indicate an
 update.
 
-Every status pass must inspect `records[].local_input` and
-`warnings[].kind == "local_input_blocked"` before the lead treats child silence
-as idle or parks. The status command already performs the bounded managed-child
-pane-tail scan; do not hand-roll another polling loop. A detected permission or
-confirmation prompt is a blocker, not authorization: inspect the exact action
-and target, avoid nudging or typing into the modal while authority is unresolved,
-and raise the matching operator gate when the action is not already authorized.
-After operator direction and recovery, rerun status and verify that the same
-prompt cleared. Absence of `local_input` means “not observed,” not “proven
-clear.”
+A seat row's `state` is one of `needs_you`, `blocked`, `waiting`, `online`, `stale`
+or `unknown`; `live` says whether its session is up or its lease is live, whatever
+its state. A seat that is `online` with no task is in the `ready` bucket and can take
+work. `prompt_state` (`running`, `idle`, `unknown`) comes from the evidence ledger;
+`unknown` is not proof of idleness.
 
-## Dispatch
+## Planning and dispatch
 
-Dispatch durable `todo` messages linked to native tasks. Pane input is wake or
-fallback only — when a durable task exists, its body is the authoritative task
-body and a pane prompt is not.
+Create tasks in the store; the scheduler grants leases to seats of the task's pool.
+`dispatch --create-task` (or `--task ID`) grants the lease and sends the doorbell in
+one step. Pane input is never the assignment; the lease is.
 
-Verify actor capability and task intent before dispatching. An implementation
-dispatch requires an implementation-capable actor plus structured intent,
-artifact, expected base, implementer, reviewer, and dependencies.
+```sh
+amq-squad task add --title TEXT --class review --project P --session S
+amq-squad dispatch --project P --session S --role ROLE --subject TEXT --body-file FILE --task ID
+```
+
+Give an implementation task its declared files (`--files`) and one implementer; a
+review task gets a different seat than the one that implemented it.
 
 ## Review risk tiers
 
-Batch review at invariant or candidate-head boundaries, not after every
-micro-edit. Match depth to risk:
+Batch review at invariant or candidate-head boundaries, not after every micro-edit.
+Match depth to risk:
 
 | Risk | Change shape | Required evidence |
 |---|---|---|
 | Low | docs, projections | focused regular tests plus drift checks |
 | Medium | state transitions | adversarial identity/idempotence tests, focused race tests |
-| High | authority, lifecycle, release, recovery | exact-head full regular and race suites, immutable evidence |
+| High | authority, lifecycle, release, recovery | exact-head full regular and race suites, recorded evidence |
 
-Before any merge-ready claim: two independent reviewers verify the **exact head
-SHA** being proposed, and `amq-squad verify merge` runs for that head. A review
-against a branch name, a stale checkout, or an earlier SHA does not count.
+Before any merge-ready claim: an independent reviewer verifies the **exact head SHA**
+being proposed, and the evidence names subject, head SHA, CI and review. A review
+against a branch name, a stale checkout, or an earlier SHA does not count. The merge
+train then checks the grant, and `verify merge` reads its audit log afterwards.
 
 ## Reconciliation
 
-Reconcile one invariant batch at a time. Completion atomically binds the
-completion generation, the DONE report intent, and any exact task-scoped gate
-correlation.
+```sh
+amq-squad task reconcile --project P --session S --json
+```
 
-Completion reconciliation may clear only a request generation that is already
-terminal or superseded. **It must never answer or close an unresolved human
-gate.** An open human decision stays unsuppressed.
+`task reconcile` replays the store's journal under its lock and lists the in-progress
+tasks whose lease expired without a report; the scheduler returns those to the pool.
+It changes no task and never answers or closes a gate: an open owner decision stays
+open until the owner answers it.
 
 ## Evidence
 
-Record command evidence for anything a reviewer would otherwise re-run. Prefer
-`amq-squad evidence run` so the attempt is immutable and bound to the task rather
-than pasted into a message.
-
-Two lifecycle constraints that cost real time when missed:
-
-- The evidence cwd must be **inside the project**. A sibling worktree is
-  refused, so create a detached worktree under the project and record there.
-- That worktree must stay alive until `task done` completes, because DONE
-  re-validates the attempt's command-subject snapshot in the recorded cwd.
-
-If a blocker task completes during an evidence run, the link fails with a
-compare-and-swap error. `amq-squad evidence recover TASK ATTEMPT --me H --session S` fixes
-it, and under parallel work that recover step is normal rather than exceptional.
+The hook ledger is the evidence: one line per tool result of each seat, redacted when
+read. `verify merge --task ID` joins a task's ledger lines inside its lease windows
+and its outcome-log rows. Ask seats to name their checks in `task done --evidence`;
+do not paste command output into a message as proof.
 
 ## Dispatch and drain
 
-Dispatch over durable AMQ, not pane injection. An AMQ message queues and survives pane
-death; `amq-squad send` writes into a live pane and is the fallback or nudge only.
+Dispatch over durable AMQ, not pane injection. An AMQ message queues and survives a
+stopped seat; the scheduler restarts a seat on demand for its pool.
 
-```sh
-amq send --to fullstack --thread p2p/cto__fullstack --kind todo \
-  --subject "Task: rate-limiter" --body - --wait-for drained --wait-timeout 60s <<'EOF'
-Implement the rate-limiter per the brief. Push a review_request to me when the diff
-is ready. Report any blocker as a question.
-EOF
-```
+Seats PUSH reports; drain once rather than poll. Inside your seat, bare
+`amq drain --include-body` reads your inbox with the identity the launch set.
 
-Confirm children are live BEFORE dispatching — a message to a dead pane queues silently
-and looks delivered:
+### No blocking waits in the lead
 
-```sh
-amq-squad status --session S --json | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
-```
-
-Children PUSH reports; the lead drains once rather than polls:
-
-```sh
-amq drain --include-body --root ROOT --me cto
-```
-
-### Wait posture is enforced, not advisory
-
-In `lead_pane` mode the binary verifies the live roster pane before its own
-blocking waits and REFUSES a configured lead when a caller-raised `gate/<topic>`
-is unresolved, when a wait would exceed 120 seconds, or when a wait is unbounded.
-That covers wrapped `amq watch` and amq-squad-owned send/reply waits.
-
-The audited escape hatch is `--override-wait-posture --wait-posture-reason <why>`.
-
-Direct external `amq watch` and hand-written `sleep`/`until` loops cannot be
-intercepted and remain forbidden lead posture. Drain once, then park the turn and
-let the session notifier wake it.
+`dispatch` accepts `--wait-for STAGE --wait-timeout DURATION`; a wait longer than the
+lead posture allows is refused unless you pass `--override-wait-posture
+--wait-posture-reason WHY`, which is recorded. Hand-written `sleep` or `until` loops
+cannot be intercepted and remain forbidden lead posture. Drain once, then park the
+turn.

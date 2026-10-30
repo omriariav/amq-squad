@@ -1,0 +1,4 @@
+0.107.0
+2.1.310 (Claude Code)
+codex-cli 0.163.0
+tmux 3.7c

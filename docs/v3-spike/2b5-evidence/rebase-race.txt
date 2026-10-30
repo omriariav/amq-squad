@@ -1,0 +1,4 @@
+ok  	github.com/omriariav/amq-squad/v3/internal/team	3.502s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	2.618s
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	1.773s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	4.686s

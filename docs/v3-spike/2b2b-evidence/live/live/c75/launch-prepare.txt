@@ -1,0 +1,7 @@
+prepare: outcome action_required, reason untrusted_config_digest (subject sha256:201170e1a06e7468053793b7419d070186fd738820e60983092336d493658904, trust sha256:6efb4b8da168308c4692dbe51401bf17963a0e4a1cca2c1f4139ba53ea0c35a7)
+amq: untrusted_config_digest
+pending decision: sha256:43441b4887fc65f0cb18d250d19beea4a3d8a256fb0bbc52bd67d68e1139f4c8 trust_confirmation (untrusted_config_digest) for c75
+next: answer trust_confirmation (untrusted_config_digest, handles c75): re-run amq-squad launch with --decision sha256:43441b4887fc65f0cb18d250d19beea4a3d8a256fb0bbc52bd67d68e1139f4c8=<trust_exact_subject|deny>
+next: the answers bind subject sha256:201170e1a06e7468053793b7419d070186fd738820e60983092336d493658904; if the squad changes, Prepare returns new action ids
+error: launch: 1 required action(s) need an explicit --decision
+exit=10

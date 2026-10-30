@@ -1,0 +1,13 @@
+== installed (PATH as is) ==
+fail amq installed floor - /opt/homebrew/bin/amq 0.107.0 is below the installed floor 0.116.2; upgrade: amq upgrade --all -y (Homebrew: brew upgrade avivsinai/tap/amq)
+fail amq-remote installed floor - /opt/homebrew/bin/amq-remote 0.107.0 is below the installed floor 0.116.2; upgrade: amq upgrade --all -y (Homebrew: brew upgrade avivsinai/tap/amq)
+fail amq-owner-sign installed floor - /opt/homebrew/bin/amq-owner-sign 0.107.0 is below the installed floor 0.116.2; upgrade: amq upgrade --all -y (Homebrew: brew upgrade avivsinai/tap/amq)
+== v0.116.2 builds first on PATH ==
+ok amq installed floor - /Users/omri/code/amq-squad/.claude/worktrees/agent-a4032adfd991c6ae0/build/amq-0.116.2/amq 0.116.2 (floor 0.116.2)
+ok amq-remote installed floor - /Users/omri/code/amq-squad/.claude/worktrees/agent-a4032adfd991c6ae0/build/amq-0.116.2/amq-remote 0.116.2 (floor 0.116.2)
+ok amq-owner-sign installed floor - /Users/omri/code/amq-squad/.claude/worktrees/agent-a4032adfd991c6ae0/build/amq-0.116.2/amq-owner-sign 0.116.2 (floor 0.116.2)
+== digests ==
+795bfae13faa70972f971497c0d20ab3a0ea1c979b6af3dd87f2c550368fdf42  build/amq-0.116.2/amq
+73e04f060816895e0187bc30ea1fb4062d3f5e18e3c36b6fb2deeaca3fe031e7  build/amq-0.116.2/amq-remote
+c2aa34f763f7cab4d2522113c21b2b58871e9116c6e3057e6efa6a775ade85ef  build/amq-0.116.2/amq-owner-sign
+b698601f32cb9db90c0d02a184135f43ad13bba1a20900de101ddd420778a987  build/pi/amq-squad

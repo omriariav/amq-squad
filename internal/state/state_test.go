@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // fixedNow returns a deterministic clock anchored at a known instant so
@@ -42,7 +42,7 @@ func seedAgent(t *testing.T, base, session, handle string, rec launch.Record) st
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := launch.Write(agentDir, rec); err != nil {
+	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 	return agentDir
@@ -52,12 +52,6 @@ func seedPresence(t *testing.T, agentDir, handle, status string, lastSeen time.T
 	t.Helper()
 	pres := presenceFile{Schema: 1, Handle: handle, Status: status, LastSeen: lastSeen}
 	writeJSON(t, presencePath(agentDir), pres)
-}
-
-func seedWakeLock(t *testing.T, agentDir string, pid int, root string) {
-	t.Helper()
-	lock := wakeLockFile{PID: pid, Root: root, Started: testNow.Add(-time.Hour)}
-	writeJSON(t, wakeLockPath(agentDir), lock)
 }
 
 func writeJSON(t *testing.T, path string, v any) {
@@ -104,7 +98,7 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 		map[int]bool{1111: true, 2222: true, 3333: true},
 		nil,
 	)
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -141,26 +135,6 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 	}
 }
 
-func TestBuildCarriesTmuxRuntimeForConsoleActions(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-	seedAgent(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 1111,
-		Tmux: &launch.TmuxInfo{Session: "mux", WindowID: "@1", WindowName: "cto", PaneID: "%7", Target: "new-window"},
-	})
-	snap, err := Build(proj, base, fakeProbe(map[int]bool{1111: true}, map[int]bool{1111: true}, nil))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	a := findAgent(t, snap, "cto")
-	if a.Tmux == nil {
-		t.Fatal("tmux runtime should be present")
-	}
-	if a.Tmux.Session != "mux" || a.Tmux.PaneID != "%7" || !a.Tmux.PaneAlive {
-		t.Fatalf("bad tmux runtime: %+v", a.Tmux)
-	}
-}
-
 func TestBuildNormalizesRelativeLaunchRoot(t *testing.T) {
 	proj := t.TempDir()
 	base := filepath.Join(proj, ".agent-mail")
@@ -172,7 +146,7 @@ func TestBuildNormalizesRelativeLaunchRoot(t *testing.T) {
 		Root:    ".agent-mail/live-1",
 	})
 
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +167,7 @@ func TestClassifyAlive(t *testing.T) {
 	})
 	probe := fakeProbe(map[int]bool{1234: true}, map[int]bool{1234: true}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +186,7 @@ func TestClassifyStaleWhenRecordedPIDDeadAndNoPresence(t *testing.T) {
 	// PID dead, no presence file at all.
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +207,7 @@ func TestClassifyStalePresenceLies(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-26*24*time.Hour))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +234,7 @@ func TestClassifyDeadMailboxLive(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-10*time.Second))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +259,7 @@ func TestClassifyDeadMailboxLiveNonActiveStatus(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "idle", testNow.Add(-5*time.Second))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +283,7 @@ func TestClassifyFreshOfflinePresenceIsNotMailboxLive(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "offline", testNow.Add(-5*time.Second))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,105 +307,13 @@ func TestClassifyAlivePresenceOnlyNoPID(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-3*time.Second))
 	probe := fakeProbe(nil, nil, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := findAgent(t, snap, "cto")
 	if a.Liveness != LivenessAlive {
 		t.Fatalf("Liveness = %q, want alive (fresh active presence, no recorded pid)", a.Liveness)
-	}
-}
-
-func TestClassifyWakeLiveFromVerifiedWake(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-	agentDir := seedAgent(t, base, "s", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Session: "s", Root: filepath.Join(base, "s"),
-	})
-	seedWakeLock(t, agentDir, 9001, filepath.Join(base, "s"))
-
-	snap, err := Build(proj, base, fakeProbe(map[int]bool{9001: true}, map[int]bool{9001: true}, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := findAgent(t, snap, "cto")
-	if a.Liveness != LivenessWakeLive {
-		t.Fatalf("Liveness = %q, want wake-live", a.Liveness)
-	}
-	if a.WakeHealth != WakeHealth("pid:9001") {
-		t.Fatalf("WakeHealth = %q, want pid:9001", a.WakeHealth)
-	}
-}
-
-func TestWakeProcessMatcherAcceptsSymlinkedAbsoluteRoot(t *testing.T) {
-	realBase := t.TempDir()
-	linkBase := filepath.Join(t.TempDir(), "linked")
-	if err := os.Symlink(realBase, linkBase); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	expected := filepath.Join(realBase, ".agent-mail", "issue-96")
-	actual := filepath.Join(linkBase, ".agent-mail", "issue-96")
-	if err := os.MkdirAll(expected, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	args := "amq wake --me cto --root " + actual
-	if !wakeProcessMatcher("cto", expected)(args) {
-		t.Fatalf("wake matcher should accept symlink-equivalent root: args=%q expected=%q", args, expected)
-	}
-}
-
-func TestWakeHealthLabels(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-
-	// alive agent with a live wake at a different PID -> pid:<wakepid>
-	dirA := seedAgent(t, base, "s", "live", launch.Record{
-		Binary: "codex", Handle: "live", Session: "s", AgentPID: 1000, Root: filepath.Join(base, "s"),
-	})
-	seedWakeLock(t, dirA, 5000, filepath.Join(base, "s"))
-
-	// alive agent with NO wake lock -> missing
-	seedAgent(t, base, "s", "nowake", launch.Record{
-		Binary: "codex", Handle: "nowake", Session: "s", AgentPID: 1001,
-	})
-
-	// alive agent with a wake lock whose PID is dead -> stale
-	dirC := seedAgent(t, base, "s", "deadwake", launch.Record{
-		Binary: "codex", Handle: "deadwake", Session: "s", AgentPID: 1002, Root: filepath.Join(base, "s"),
-	})
-	seedWakeLock(t, dirC, 6000, filepath.Join(base, "s"))
-
-	// dead agent -> wake health not investigated (none)
-	seedAgent(t, base, "s", "dead", launch.Record{
-		Binary: "codex", Handle: "dead", Session: "s", AgentPID: 1003,
-	})
-
-	probe := fakeProbe(
-		map[int]bool{1000: true, 1001: true, 1002: true, 1003: false, 5000: true, 6000: false},
-		map[int]bool{1000: true, 1001: true, 1002: true, 5000: true},
-		nil,
-	)
-	snap, err := Build(proj, base, probe)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if got := findAgent(t, snap, "live").WakeHealth; got != WakeHealth("pid:5000") {
-		t.Fatalf("live WakeHealth = %q, want pid:5000", got)
-	}
-	if got := findAgent(t, snap, "nowake").WakeHealth; got != WakeHealthMissing {
-		t.Fatalf("nowake WakeHealth = %q, want missing", got)
-	}
-	if got := findAgent(t, snap, "deadwake").WakeHealth; got != WakeHealthStale {
-		t.Fatalf("deadwake WakeHealth = %q, want stale", got)
-	}
-	if got := findAgent(t, snap, "dead").WakeHealth; got != WakeHealthNone {
-		t.Fatalf("dead WakeHealth = %q, want none", got)
-	}
-	// Wake PID is the wake pid, NOT the agent pid.
-	if wp := findAgent(t, snap, "live").WakePID; wp != 5000 {
-		t.Fatalf("live WakePID = %d, want 5000 (wake pid, not agent pid)", wp)
 	}
 }
 
@@ -447,7 +329,6 @@ func TestBuildNeverExecsAMQ(t *testing.T) {
 		Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1234, Root: filepath.Join(base, "s"),
 	})
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-1*time.Second))
-	seedWakeLock(t, agentDir, 7777, filepath.Join(base, "s"))
 
 	// Break PATH so any exec of amq/ps would error. The fake probe must be the
 	// only liveness source.
@@ -455,11 +336,11 @@ func TestBuildNeverExecsAMQ(t *testing.T) {
 
 	var calls []int
 	probe := fakeProbe(
-		map[int]bool{1234: true, 7777: true},
-		map[int]bool{1234: true, 7777: true},
+		map[int]bool{1234: true},
+		map[int]bool{1234: true},
 		&calls,
 	)
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatalf("Build with empty PATH must still work via the injected probe: %v", err)
 	}
@@ -490,7 +371,7 @@ func TestProbeDefaultsFilledWhenNil(t *testing.T) {
 	})
 	// Pass only a Now seam; PIDAlive/ProcessMatch must be defaulted, not panic.
 	probe := Probe{Now: func() time.Time { return testNow }}
-	if _, err := Build(proj, base, probe); err != nil {
+	if _, err := BuildWithThresholds(proj, base, probe, Thresholds{}); err != nil {
 		t.Fatalf("Build with partial probe should not error: %v", err)
 	}
 }
@@ -503,7 +384,7 @@ func TestClassifyMissingWhenNoSignals(t *testing.T) {
 	seedAgent(t, base, "s", "cto", launch.Record{
 		Binary: "codex", Handle: "cto", Session: "s",
 	})
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +404,7 @@ func TestClassifyDeadWhenOnlyStalePresenceNoPID(t *testing.T) {
 		Binary: "codex", Handle: "cto", Session: "s",
 	})
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-26*24*time.Hour))
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +417,7 @@ func TestClassifyDeadWhenOnlyStalePresenceNoPID(t *testing.T) {
 func TestEmptyBaseRootYieldsNoSessions(t *testing.T) {
 	base := t.TempDir()
 	proj := t.TempDir()
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}

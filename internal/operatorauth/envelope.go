@@ -96,8 +96,14 @@ type AuthorizationEnvelope struct {
 	Signature        AuthorizationSignature `json:"signature"`
 }
 
+// ValidateAuthorizationPayload checks an approval payload. A signed deny
+// record (DecisionDenied) never passes it; see ValidateDenialPayload.
 func ValidateAuthorizationPayload(p AuthorizationPayload) error {
-	if p.SchemaVersion != AuthorizationEnvelopeSchemaVersion || p.TaxonomyVersion != ActionTaxonomyVersion || p.Decision != "approved" {
+	return validatePayload(p, DecisionApproved)
+}
+
+func validatePayload(p AuthorizationPayload, decision string) error {
+	if p.SchemaVersion != AuthorizationEnvelopeSchemaVersion || p.TaxonomyVersion != ActionTaxonomyVersion || p.Decision != decision {
 		return fmt.Errorf("authorization payload schema, taxonomy, or decision is invalid")
 	}
 	for name, value := range map[string]string{
@@ -253,7 +259,7 @@ func NewAuthorizationEnvelope(payload AuthorizationPayload, signer Authorization
 	}
 	payload.SchemaVersion = AuthorizationEnvelopeSchemaVersion
 	payload.TaxonomyVersion = ActionTaxonomyVersion
-	payload.Decision = "approved"
+	payload.Decision = DecisionApproved
 	evidenceDigest, err := AuthorizationEvidenceDigest(payload.Evidence)
 	if err != nil {
 		return AuthorizationEnvelope{}, err

@@ -1,0 +1,6 @@
+=== RUN   TestCommitStepTiming
+    timing_test.go:52: commit step, commit and push: median 121.378041ms of 10 (min 113.279625ms, max 155.457666ms)
+    timing_test.go:53: commit step, refusal: median 48.617729ms of 10 (min 46.893833ms, max 49.377ms)
+--- PASS: TestCommitStepTiming (3.51s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	3.836s

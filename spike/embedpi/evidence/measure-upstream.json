@@ -1,0 +1,329 @@
+{
+  "candidate": "upstream",
+  "version": "pi-1.3.0-upstream-bun-darwin-arm64",
+  "runtime": "/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109",
+  "binary_bytes": 34225842,
+  "payload_bytes": 31034086,
+  "unpacked_bytes": 84395233,
+  "files": 209,
+  "env": {
+    "HOME": "/Users/omri",
+    "PATH": "/usr/bin:/bin",
+    "TERM": "xterm",
+    "PI_CODING_AGENT_DIR": "/Users/omri/.amq-squad/spike/s3/agent",
+    "PI_OFFLINE": "1",
+    "PI_SKIP_VERSION_CHECK": "1",
+    "PI_TELEMETRY": "0",
+    "EMBEDPI_TIMING": "1"
+  },
+  "pi_args": [
+    "--provider",
+    "ollama",
+    "--model",
+    "qwen2.5:32b",
+    "--no-session",
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--no-mcp",
+    "--no-tools",
+    "--thinking",
+    "off"
+  ],
+  "prompt": "What is 17 plus 25? Reply with just the number.",
+  "stripped_path_lookup": "PATH=/usr/bin:/bin",
+  "ollama_preload_s": 7.406,
+  "cold_version": [
+    {
+      "label": "cold-version-0",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": false,
+      "unpack_verify_ms": 396.556,
+      "wall_s": 1.3679
+    },
+    {
+      "label": "cold-version-1",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": false,
+      "unpack_verify_ms": 374.929,
+      "wall_s": 1.2302
+    },
+    {
+      "label": "cold-version-2",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": false,
+      "unpack_verify_ms": 364.116,
+      "wall_s": 1.2175
+    }
+  ],
+  "warm_version": [
+    {
+      "label": "warm-version-0",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.113,
+      "wall_s": 0.1537
+    },
+    {
+      "label": "warm-version-1",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.104,
+      "wall_s": 0.1525
+    },
+    {
+      "label": "warm-version-2",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.115,
+      "wall_s": 0.1614
+    },
+    {
+      "label": "warm-version-3",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.109,
+      "wall_s": 0.1522
+    },
+    {
+      "label": "warm-version-4",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.107,
+      "wall_s": 0.1607
+    }
+  ],
+  "warm_full_verify": {
+    "label": "warm-full-verify",
+    "exit": 0,
+    "stdout": "1.3.0",
+    "cache_hit": true,
+    "unpack_verify_ms": 36.233,
+    "wall_s": 0.1929
+  },
+  "cold_prompt": {
+    "label": "cold-prompt",
+    "exit": 0,
+    "answer": "42",
+    "cache_hit": false,
+    "unpack_verify_ms": 351.314,
+    "first_token_s": 2.2756,
+    "total_s": 2.3684,
+    "stderr": "embedpi cache_hit=false unpack_verify_ms=351.314 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109"
+  },
+  "warm_prompt": [
+    {
+      "label": "warm-prompt-0",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.112,
+      "first_token_s": 0.2627,
+      "total_s": 0.351,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.112 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109"
+    },
+    {
+      "label": "warm-prompt-1",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.113,
+      "first_token_s": 0.2835,
+      "total_s": 0.3725,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.113 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109"
+    },
+    {
+      "label": "warm-prompt-2",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.17,
+      "first_token_s": 0.2605,
+      "total_s": 0.347,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.170 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109"
+    }
+  ],
+  "cold_stub_prompt": {
+    "label": "cold-stub-prompt",
+    "exit": 0,
+    "answer": "42",
+    "cache_hit": false,
+    "unpack_verify_ms": 350.845,
+    "first_token_s": 1.2416,
+    "total_s": 1.2444,
+    "stderr": "embedpi cache_hit=false unpack_verify_ms=350.845 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109",
+    "launch_to_request_s": 1.2391
+  },
+  "warm_stub_prompt": [
+    {
+      "label": "warm-stub-prompt-0",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.105,
+      "first_token_s": 0.1891,
+      "total_s": 0.1921,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.105 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109",
+      "launch_to_request_s": 0.187
+    },
+    {
+      "label": "warm-stub-prompt-1",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.119,
+      "first_token_s": 0.1877,
+      "total_s": 0.1908,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.119 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109",
+      "launch_to_request_s": 0.1855
+    },
+    {
+      "label": "warm-stub-prompt-2",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.113,
+      "first_token_s": 0.1934,
+      "total_s": 0.1964,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.113 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109",
+      "launch_to_request_s": 0.1912
+    },
+    {
+      "label": "warm-stub-prompt-3",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.11,
+      "first_token_s": 0.1889,
+      "total_s": 0.1921,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.110 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109",
+      "launch_to_request_s": 0.1868
+    },
+    {
+      "label": "warm-stub-prompt-4",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 0.109,
+      "first_token_s": 0.2169,
+      "total_s": 0.2198,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=0.109 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109",
+      "launch_to_request_s": 0.2133
+    }
+  ],
+  "xattr_unpacked_exe": {
+    "argv": [
+      "/usr/bin/xattr",
+      "-l",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109/pi"
+    ],
+    "exit": 0,
+    "out": "com.apple.provenance: \u0001\u0002"
+  },
+  "xattr_runtime_dir": {
+    "argv": [
+      "/usr/bin/xattr",
+      "-l",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109"
+    ],
+    "exit": 0,
+    "out": "com.apple.provenance: \u0001\u0002"
+  },
+  "spctl_unpacked_exe": {
+    "argv": [
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "execute",
+      "-vvv",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109/pi"
+    ],
+    "exit": 1,
+    "out": "/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109/pi: invalid signature (code or signature have been modified)"
+  },
+  "codesign_unpacked_exe": {
+    "argv": [
+      "/usr/bin/codesign",
+      "-dvv",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109/pi"
+    ],
+    "exit": 0,
+    "out": "Executable=/Users/omri/.amq-squad/runtime/pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109/pi\nIdentifier=a.out\nFormat=Mach-O thin (arm64)\nCodeDirectory v=20400 size=597662 flags=0x20002(adhoc,linker-signed) hashes=18674+0 location=embedded\nSignature=adhoc\nInfo.plist=not bound\nTeamIdentifier=not set\nSealed Resources=none\nInternal requirements=none"
+  },
+  "xattr_launcher": {
+    "argv": [
+      "/usr/bin/xattr",
+      "-l",
+      "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-upstream"
+    ],
+    "exit": 0,
+    "out": "com.apple.provenance: \u0001\u0002"
+  },
+  "spctl_launcher": {
+    "argv": [
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "execute",
+      "-vvv",
+      "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-upstream"
+    ],
+    "exit": 3,
+    "out": "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-upstream: rejected"
+  },
+  "codesign_launcher": {
+    "argv": [
+      "/usr/bin/codesign",
+      "-dvv",
+      "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-upstream"
+    ],
+    "exit": 0,
+    "out": "Executable=/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-upstream\nIdentifier=a.out\nFormat=Mach-O thin (arm64)\nCodeDirectory v=20400 size=265438 flags=0x20002(adhoc,linker-signed) hashes=8292+0 location=embedded\nSignature=adhoc\nInfo.plist=not bound\nTeamIdentifier=not set\nSealed Resources=none\nInternal requirements=none"
+  },
+  "native_files": [
+    "native/darwin/prebuilds/darwin-arm64/darwin-platform.node"
+  ],
+  "summary": {
+    "binary_mb": 34.23,
+    "payload_mb": 31.03,
+    "unpacked_mb": 84.4,
+    "files": 209,
+    "cold_unpack_ms_median": 374.929,
+    "cold_version_wall_s_median": 1.2302,
+    "warm_unpack_ms_median": 0.109,
+    "warm_version_wall_s_median": 0.1537,
+    "warm_full_verify_ms": 36.233,
+    "cold_prompt_first_token_s": 2.2756,
+    "cold_prompt_total_s": 2.3684,
+    "warm_prompt_first_token_s_median": 0.2627,
+    "warm_prompt_total_s_median": 0.351,
+    "answers": [
+      "42",
+      "42",
+      "42",
+      "42"
+    ],
+    "cold_stub_launch_to_request_s": 1.2391,
+    "cold_stub_total_s": 1.2444,
+    "warm_stub_launch_to_request_s_median": 0.187,
+    "warm_stub_total_s_median": 0.1921,
+    "stub_answers": [
+      "42",
+      "42",
+      "42",
+      "42",
+      "42",
+      "42"
+    ]
+  }
+}

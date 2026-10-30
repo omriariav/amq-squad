@@ -3,6 +3,10 @@
 Field failures from live lead runs, newest first. Entries graduate into the Gotchas
 table in `SKILL.md` once they generalise.
 
+> **3.0 note.** Entries written before 3.0 name v2 verbs that 3.0 removed (`start`,
+> `resume`, `down`, `send`, `agent up`, `team member`, `evidence run`, profiles). The
+> lesson stands; the command does not. Use `SKILL.md` for the 3.0 form.
+
 ---
 
 ## Local permission prompts are part of lead supervision

@@ -1,0 +1,64 @@
+{
+  "result_version": 1,
+  "subject_schema": 2,
+  "outcome": "action_required",
+  "reason_code": "capture_version_unsupported",
+  "subject_digest": "sha256:8a5bafefb7abbc52c819c85422ab156d7b04d8f75ef3de11809f60d5dc1714a1",
+  "plan_digest": "sha256:92ff80717660576ec5651b809154eea684270a04640f4d05d8d428dedf84ebe3",
+  "trust_digest": "",
+  "semantic_digest": "",
+  "backend": "",
+  "profile": "tmux/darwin/v1",
+  "disposition": "not_applied",
+  "roster": {
+    "desired": [
+      "operator",
+      "s4-codex"
+    ],
+    "present": [
+      "operator",
+      "s4-codex"
+    ],
+    "missing": [],
+    "extra": [
+      "s4-claude",
+      "user"
+    ]
+  },
+  "observations": [
+    {
+      "handle": "operator",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none"
+    },
+    {
+      "handle": "s4-codex",
+      "mailbox": "present",
+      "runnable": true,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none"
+    },
+    {
+      "handle": "s4-claude",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none",
+      "reason_code": "extra_mailbox_preserved"
+    },
+    {
+      "handle": "user",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none",
+      "reason_code": "extra_mailbox_preserved"
+    }
+  ]
+}

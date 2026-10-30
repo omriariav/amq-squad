@@ -1,0 +1,1747 @@
+========================================================================
+## rule: 1 shadow worktree at the snapshot tree, never the live worktree
+## test: ./internal/seatcommit/ TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree$
+## edit internal/seatcommit/verifier.go:
+-	cmd.Dir, cmd.Env, cmd.Stdin = work, verifierEnv(o.Root, private, modcache, o.Grants.Grants.VerifierGoproxy), nil
++	cmd.Dir, cmd.Env, cmd.Stdin = sh.rp.Worktree, verifierEnv(o.Root, private, modcache, o.Grants.Grants.VerifierGoproxy), nil
+## reverted run (exit 1):
+=== RUN   TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree
+    verifier_test.go:140: the verifier ran in "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree1087005689/001/wt/s1", not a shadow worktree
+--- FAIL: TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree (0.66s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.031s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree
+--- PASS: TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree (0.66s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.921s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 1 the exit code is the verdict
+## test: ./internal/seatcommit/ TestVerifierExitCodeIsTheVerdict$
+## edit internal/seatcommit/verifier.go:
+-	if run.exit == 0 && run.reason == "" {
++	if run.reason == "" {
+## reverted run (exit 1):
+=== RUN   TestVerifierExitCodeIsTheVerdict
+    verifier_test.go:158: exit 3: ok true 
+--- FAIL: TestVerifierExitCodeIsTheVerdict (0.61s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.981s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierExitCodeIsTheVerdict
+--- PASS: TestVerifierExitCodeIsTheVerdict (0.54s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.780s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 1 the wall-time bound is a fail verdict (verifier_timeout)
+## test: ./internal/seatcommit/ TestVerifierTimeoutIsAFailVerdict$
+## edit internal/seatcommit/verifier.go:
+-	timer := time.AfterFunc(p.timeout, func() { kill(ReasonVerifierTimeout) })
++	timer := time.AfterFunc(p.timeout+time.Hour, func() { kill(ReasonVerifierTimeout) })
+## reverted run (exit 1):
+=== RUN   TestVerifierTimeoutIsAFailVerdict
+    verifier_test.go:178: the verifier ran past its bound
+--- FAIL: TestVerifierTimeoutIsAFailVerdict (30.28s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	30.643s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierTimeoutIsAFailVerdict
+--- PASS: TestVerifierTimeoutIsAFailVerdict (1.36s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.732s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 1 the bounds are the grant's (verifier_timeout)
+## test: ./internal/seatcommit/ TestVerifierTimeoutIsAFailVerdict$
+## edit internal/seatcommit/verifier.go:
+-	timeout, limit, par := g.VerifierBounds()
++	g.VerifierTimeout = 0
+	timeout, limit, par := g.VerifierBounds()
+## reverted run (exit 1):
+=== RUN   TestVerifierTimeoutIsAFailVerdict
+    verifier_test.go:178: the verifier ran past its bound
+--- FAIL: TestVerifierTimeoutIsAFailVerdict (30.28s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	30.646s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierTimeoutIsAFailVerdict
+--- PASS: TestVerifierTimeoutIsAFailVerdict (1.35s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.611s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 1 the output bound is a fail verdict (verifier_output_exceeded), truncated with the marker
+## test: ./internal/seatcommit/ TestVerifierOutputIsBoundedAndRedactedIntoTheLedger$
+## edit internal/seatcommit/verifier.go:
+-	if len(p) > room {
++	if false && len(p) > room {
+## reverted run (exit 1):
+=== RUN   TestVerifierOutputIsBoundedAndRedactedIntoTheLedger
+    verifier_test.go:205: a verifier over its output limit:  &{Class:implement CommandDigest:sha256:37ec4ca8daa3ca010b7ba37f33e031fad0b70dabda09633e59f3988fa255c3a0 Tree:355c1af2b59380513f3bf9f2917e024d9f6bfe6f Result:pass ExitCode:0 Reason: DurationMS:223 OutputBytes:4164 Truncated:false Reused:false Evidence:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestVerifierOutputIsBoundedAndRedactedIntoTheLedger3394057099/001/amq/sess/extensions/amq-squad/ledger/s1.jsonl}
+--- FAIL: TestVerifierOutputIsBoundedAndRedactedIntoTheLedger (0.67s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.040s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierOutputIsBoundedAndRedactedIntoTheLedger
+--- PASS: TestVerifierOutputIsBoundedAndRedactedIntoTheLedger (0.52s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.796s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 1 the output goes through the redaction step
+## test: ./internal/seatcommit/ TestFailVerdictBlocksWithTheTailAndNoPush$
+## edit internal/seatcommit/verifier.go:
+-	out := redact.Block(string(raw))
++	out := redact.Placeholder[:0] + string(raw)
+## reverted run (exit 1):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+    verifier_test.go:278: the block detail carries a credential: the tail is not the redacted output
+--- FAIL: TestFailVerdictBlocksWithTheTailAndNoPush (0.59s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.957s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+--- PASS: TestFailVerdictBlocksWithTheTailAndNoPush (0.57s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.833s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 1 the output goes to the evidence ledger
+## test: ./internal/seatcommit/ TestVerifierOutputIsBoundedAndRedactedIntoTheLedger$
+## edit internal/seatcommit/verifier.go:
+-	if err := writeVerifierEvidence(path, o, cur, out, run.output); err != nil {
++	if err := error(nil); err != nil {
+## reverted run (exit 1):
+=== RUN   TestVerifierOutputIsBoundedAndRedactedIntoTheLedger
+    verifier_test.go:209: no verifier line in the evidence ledger
+--- FAIL: TestVerifierOutputIsBoundedAndRedactedIntoTheLedger (0.54s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.902s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierOutputIsBoundedAndRedactedIntoTheLedger
+--- PASS: TestVerifierOutputIsBoundedAndRedactedIntoTheLedger (0.55s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.811s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 1 the grant keys verifier_timeout parse
+## test: ./internal/grants/ TestVerifierBoundsFromTheGrant$
+## edit internal/grants/parse.go:
+-		case "verifier_timeout":
++		case "verifier_timeout_x":
+## reverted run (exit 1):
+=== RUN   TestVerifierBoundsFromTheGrant
+    verifier_bounds_test.go:17: grants.yaml: line 2: verifier_timeout: unknown key
+--- FAIL: TestVerifierBoundsFromTheGrant (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/grants	0.336s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierBoundsFromTheGrant
+--- PASS: TestVerifierBoundsFromTheGrant (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	0.212s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 2 a verdict on another tree than the lease's snapshot is verdict_tree_mismatch
+## test: ./internal/task/ TestVerdictTreeMustBeTheLeasesSnapshot$
+## edit internal/task/verdict.go:
+-		case v.Tree != t.Lease.Snapshot:
++		case false:
+## reverted run (exit 1):
+=== RUN   TestVerdictTreeMustBeTheLeasesSnapshot
+    verifier_rules_test.go:46: a verdict on another tree than the snapshot: <nil>
+--- FAIL: TestVerdictTreeMustBeTheLeasesSnapshot (0.10s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.436s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerdictTreeMustBeTheLeasesSnapshot
+--- PASS: TestVerdictTreeMustBeTheLeasesSnapshot (0.11s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.449s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 2 the snapshot never moves under a recorded verdict
+## test: ./internal/task/ TestVerdictTreeMustBeTheLeasesSnapshot$
+## edit internal/task/verdict.go:
+-			} else if t.Lease.Verdict.Tree != tree {
++			} else if false {
+## reverted run (exit 1):
+=== RUN   TestVerdictTreeMustBeTheLeasesSnapshot
+    verifier_rules_test.go:53: the snapshot moved under a recorded verdict: <nil>
+--- FAIL: TestVerdictTreeMustBeTheLeasesSnapshot (0.11s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.447s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerdictTreeMustBeTheLeasesSnapshot
+--- PASS: TestVerdictTreeMustBeTheLeasesSnapshot (0.11s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.345s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 2 guard denies a seat's call of the commit step (harness_only)
+## test: ./internal/cli/ TestSeatCannotRecordAVerdict$
+## edit internal/cli/hook_guard.go:
+-		if a.harness != "" {
++		if false && a.harness != "" {
+## reverted run (exit 1):
+=== RUN   TestSeatCannotRecordAVerdict
+    verifier_harness_only_test.go:28: guard on a seat's "amq-squad seat commit --seat s1": allow allowed
+    verifier_harness_only_test.go:28: guard on a seat's "/usr/local/bin/amq-squad seat commit --seat s1 --root /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatCannotRecordAVerdict3852549172/002": allow allowed
+    verifier_harness_only_test.go:28: guard on a seat's "sh -c 'amq-squad scheduler run --project . --session s'": allow allowed
+    verifier_harness_only_test.go:28: guard on a seat's "env FOO=1 amq-squad seat commit --seat s1 --json": allow allowed
+--- FAIL: TestSeatCannotRecordAVerdict (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.419s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestSeatCannotRecordAVerdict
+--- PASS: TestSeatCannotRecordAVerdict (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.311s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 2 seat commit refuses inside a seat
+## test: ./internal/cli/ TestSeatCannotRecordAVerdict$
+## edit internal/cli/seat_commit.go:
+-	if os.Getenv("AMQ_SQUAD_SEAT") != "" {
+		return usageErrorf("seat commit: harness_only
++	if false {
+		return usageErrorf("seat commit: harness_only
+## reverted run (exit 1):
+=== RUN   TestSeatCannotRecordAVerdict
+    verifier_harness_only_test.go:36: seat commit inside a seat: seat commit: seat s1 has no done report awaiting the commit step
+--- FAIL: TestSeatCannotRecordAVerdict (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.419s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestSeatCannotRecordAVerdict
+--- PASS: TestSeatCannotRecordAVerdict (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.312s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3 the probe's verdict is pass exactly when the predicate holds
+## test: ./internal/registry/ TestProbeRunsRecordTheirPredicateAsAVerdict$
+## edit internal/registry/probeverdict.go:
+-	if r.Pass {
+		v.Result = task.VerdictPass
++	if true {
+		v.Result = task.VerdictPass
+## reverted run (exit 1):
+=== RUN   TestProbeRunsRecordTheirPredicateAsAVerdict
+    probeverdict_test.go:60: a run whose predicate fails: {Verifier:r12 Result:pass Source:r12 probe predicate r12-v3 (doctor, outside a session: unsealed) Detail:failed checks: final_line_exact At:0001-01-01 00:00:00 +0000 UTC Tree:2425fe100332b6346c73139f16821b854477b892 CommandDigest:sha256:8f2939cdb0b64f4aaf7c92a3bb0a0b172e36e628573eae6b2529eb37652c84f1 Tag: PrevCommandDigest:}
+--- FAIL: TestProbeRunsRecordTheirPredicateAsAVerdict (0.12s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/registry	0.486s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestProbeRunsRecordTheirPredicateAsAVerdict
+--- PASS: TestProbeRunsRecordTheirPredicateAsAVerdict (0.12s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	0.377s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4 the start check refuses a gated class with no command
+## test: ./internal/routing/ TestVerifierGateWithNoCommandIsRefusedAtTheStart$
+## edit internal/routing/router.go:
+-	r.unverified = o.Grants.UnconfiguredGate()
++	r.unverified = nil
+## reverted run (exit 1):
+=== RUN   TestVerifierGateWithNoCommandIsRefusedAtTheStart
+    verifier_gate_test.go:25: a gated class with no command: {Pool:0x314c868ed1d0 Wait: Block: Detail:routing: task table}
+--- FAIL: TestVerifierGateWithNoCommandIsRefusedAtTheStart (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.353s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierGateWithNoCommandIsRefusedAtTheStart
+--- PASS: TestVerifierGateWithNoCommandIsRefusedAtTheStart (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.248s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4 the claim path refuses a gated class with no command
+## test: ./internal/task/ TestClaimRefusesAGatedClassWithNoCommand$
+## edit internal/task/verdict.go:
+-	if err == nil && required && cmd == "" {
+		return &VerifierUnconfiguredError
++	if false && err == nil && required && cmd == "" {
+		return &VerifierUnconfiguredError
+## reverted run (exit 1):
+=== RUN   TestClaimRefusesAGatedClassWithNoCommand
+    verifier_rules_test.go:71: a claim of a gated class with no command: <nil>
+--- FAIL: TestClaimRefusesAGatedClassWithNoCommand (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.407s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestClaimRefusesAGatedClassWithNoCommand
+--- PASS: TestClaimRefusesAGatedClassWithNoCommand (0.07s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.296s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4 the scheduler blocks the claim path's refusal for the lead
+## test: ./internal/scheduler/ TestSchedulerBlocksAGatedClassWithNoCommandAtTheGrant$
+## edit internal/scheduler/scheduler.go:
+-			if errors.As(err, &unverified) {
++			if false && errors.As(err, &unverified) {
+## reverted run (exit 1):
+=== RUN   TestSchedulerBlocksAGatedClassWithNoCommandAtTheGrant
+    verifier_gate_test.go:24: grants_invalid: verifiers: class implement is in the squad's verifier gate and the owner grant names no verifier command for it (verifiers.implement); a task of class implement is not dispatched
+--- FAIL: TestSchedulerBlocksAGatedClassWithNoCommandAtTheGrant (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.387s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestSchedulerBlocksAGatedClassWithNoCommandAtTheGrant
+--- PASS: TestSchedulerBlocksAGatedClassWithNoCommandAtTheGrant (0.09s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.329s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4 a lease-time change still blocks at the commit step (verdict_missing, no push)
+## test: ./internal/seatcommit/ TestLeaseTimeVerifierChangeStillBlocksTheDoneReport$
+## edit internal/seatcommit/verifier.go:
+-		if g.VerifierRequired(class) {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestLeaseTimeVerifierChangeStillBlocksTheDoneReport
+    verifier_test.go:230: a gated class with no command at the commit step: ok true 
+--- FAIL: TestLeaseTimeVerifierChangeStillBlocksTheDoneReport (0.37s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.733s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLeaseTimeVerifierChangeStillBlocksTheDoneReport
+--- PASS: TestLeaseTimeVerifierChangeStillBlocksTheDoneReport (0.31s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.570s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4 a lease-time change still blocks the done report (the store, named)
+## test: ./internal/task/ TestRepassGateOnlyForAConfiguredVerifier$
+## edit internal/task/lease.go:
+-	if required && cmd == "" {
++	if false && required && cmd == "" {
+## reverted run (exit 1):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+    verdict_test.go:144: a gated class with no grant command: blocked verdict_missing "class implement completes only on a recorded tests verdict from the harness; the done report has none"
+--- FAIL: TestRepassGateOnlyForAConfiguredVerifier (0.22s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.548s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassGateOnlyForAConfiguredVerifier
+--- PASS: TestRepassGateOnlyForAConfiguredVerifier (0.25s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.478s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 5 unconfigured and ungated completes with none (routing row)
+## test: ./internal/routing/ TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes$
+## edit internal/task/lease.go:
+-	return required, ""
++	return required || true, ""
+## reverted run (exit 1):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+    repass_test.go:389: done with no verifier configured: blocked verdict_missing <nil>
+--- FAIL: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.418s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes
+--- PASS: TestRepassUnconfiguredVerifierRoutesAtTierAndCompletes (0.07s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.311s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 5 unconfigured and ungated runs nothing at the commit step
+## test: ./internal/seatcommit/ TestUnconfiguredVerifierRunsNothingAtTheCommitStep$
+## edit internal/seatcommit/verifier.go:
+-		if g.VerifierRequired(class) {
++		if true {
+## reverted run (exit 1):
+=== RUN   TestUnconfiguredVerifierRunsNothingAtTheCommitStep
+    verifier_test.go:249: no verifier configured: ok false pushed false <nil>
+--- FAIL: TestUnconfiguredVerifierRunsNothingAtTheCommitStep (0.32s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.686s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestUnconfiguredVerifierRunsNothingAtTheCommitStep
+--- PASS: TestUnconfiguredVerifierRunsNothingAtTheCommitStep (0.40s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.655s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 6 the block detail is the output's tail within 4 KiB
+## test: ./internal/seatcommit/ TestFailVerdictBlocksWithTheTailAndNoPush$
+## edit internal/seatcommit/verifier.go:
+-	if room := task.VerdictDetailCap - len(head); len(tail) > room {
++	if room := task.VerdictDetailCap - len(head); false && len(tail) > room {
+## reverted run (exit 1):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+    verifier_test.go:275: the block: verdict_failed lead, 10432 bytes of detail
+--- FAIL: TestFailVerdictBlocksWithTheTailAndNoPush (0.58s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.951s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+--- PASS: TestFailVerdictBlocksWithTheTailAndNoPush (0.57s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.831s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 6 a fail verdict means no push
+## test: ./internal/seatcommit/ TestFailVerdictBlocksWithTheTailAndNoPush$
+## edit internal/seatcommit/verifier.go:
+-	if out.Result != task.VerdictPass {
+		return res.refuse(task.BlockVerdictFailed
++	if false {
+		return res.refuse(task.BlockVerdictFailed
+## reverted run (exit 1):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+    verifier_test.go:268: a fail verdict:  pushed true
+--- FAIL: TestFailVerdictBlocksWithTheTailAndNoPush (0.64s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.010s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+--- PASS: TestFailVerdictBlocksWithTheTailAndNoPush (0.58s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.843s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 6 the fail verdict stays on the attempt (a failed attempt for escalation)
+## test: ./internal/seatcommit/ TestFailVerdictBlocksWithTheTailAndNoPush$
+## edit internal/task/lease.go:
+-Outcome: outcome, Detail: detail, Verdict: v})
++Outcome: outcome, Detail: detail, Verdict: nil})
+## reverted run (exit 1):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+    verifier_test.go:288: the attempt does not carry the fail verdict for escalation
+--- FAIL: TestFailVerdictBlocksWithTheTailAndNoPush (0.59s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.953s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFailVerdictBlocksWithTheTailAndNoPush
+--- PASS: TestFailVerdictBlocksWithTheTailAndNoPush (0.59s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.855s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 6 a pass verdict is recorded and completion proceeds to the push
+## test: ./internal/seatcommit/ TestPassVerdictCompletesAndPushes$
+## edit internal/seatcommit/verifier.go:
+-	if _, err := store.RecordVerdict(o.Task.ID, verdict, o.Now()); err != nil {
++	if _, err := store.Get(o.Task.ID); verdict.Tree == "" && err != nil {
+## reverted run (exit 1):
+=== RUN   TestPassVerdictCompletesAndPushes
+    verifier_test.go:303: a pass verdict did not complete: blocked verdict_missing <nil>
+--- FAIL: TestPassVerdictCompletesAndPushes (0.75s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.114s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestPassVerdictCompletesAndPushes
+--- PASS: TestPassVerdictCompletesAndPushes (0.67s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.928s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 7 the diff check refuses before the verifier runs
+## test: ./internal/seatcommit/ TestVerifierOrderInsideTheCommitStep$
+## edit internal/seatcommit/commit.go:
+-	res.Violations = check(o, g, rec, repoRoot, parent, tree, entries, declared, &res)
++	if r, done := verify(o, sh, res); done && !o.DryRun {
+		return r
+	}
+	res.Violations = check(o, g, rec, repoRoot, parent, tree, entries, declared, &res)
+## reverted run (exit 1):
+=== RUN   TestVerifierOrderInsideTheCommitStep
+    verifier_test.go:322: the verifier ran before the diff check refused
+--- FAIL: TestVerifierOrderInsideTheCommitStep (0.66s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.027s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierOrderInsideTheCommitStep
+--- PASS: TestVerifierOrderInsideTheCommitStep (1.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.274s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 8 the verifier's environment is built from nothing (a seat's)
+## test: ./internal/seatcommit/ TestVerifierEnvironmentIsASeats$
+## edit internal/seatcommit/verifier.go:
+-	return append(env, hardenedVars...)
+}
++	return append(append(os.Environ(), env...), hardenedVars...)
+}
+## reverted run (exit 1):
+=== RUN   TestVerifierEnvironmentIsASeats
+    verifier_test.go:360: the verifier's environment carries CLAUDE_JOB_DIR
+    verifier_test.go:360: the verifier's environment carries AMQ_SQUAD_BIN
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+    verifier_test.go:360: the verifier's environment carries SSH_AUTH_SOCK
+    verifier_test.go:360: the verifier's environment carries AM_ROOT
+    verifier_test.go:360: the verifier's environment carries CLAUDE_PULSE_HIDE_COST
+    verifier_test.go:360: the verifier's environment carries CLAUDE_PID
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_SESSION_ATTENDED
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_EXECPATH
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_MESSAGING_SOCKET
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_CHILD_SESSION
+    verifier_test.go:360: the verifier's environment carries AMQ_SQUAD_SEAT
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_ENTRYPOINT
+    verifier_test.go:360: the verifier's environment carries CLAUDE_PLUGIN_DATA
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_MESSAGING_TOKEN
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_DISABLE_AUTO_MEMORY
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CONFIG_DIR
+    verifier_test.go:360: the verifier's environment carries GEMINI_API_KEY
+    verifier_test.go:360: the verifier's environment carries AM_ME
+    verifier_test.go:360: the verifier's environment carries CLAUDE_PULSE_DENSITY
+    verifier_test.go:360: the verifier's environment carries GH_TOKEN
+    verifier_test.go:360: the verifier's environment carries CLAUDE_EFFORT
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_SESSION_ID
+    verifier_test.go:360: the verifier's environment carries CLAUDE_CODE_BRIDGE_SESSION_ID
+--- FAIL: TestVerifierEnvironmentIsASeats (0.65s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.021s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierEnvironmentIsASeats
+--- PASS: TestVerifierEnvironmentIsASeats (0.63s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.866s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 9 argv[0] is an absolute path or a registry pin; go test with no pin is grants_invalid
+## test: ./internal/seatcommit/ TestVerifierToolIsAnAbsolutePathOrAPin$
+## edit internal/seatcommit/verifier.go:
+-		if err != nil || !ok {
+			return nil, ReasonGrants
++		if false && (err != nil || !ok) {
+			return nil, ReasonGrants
+## reverted run (exit 1):
+=== RUN   TestVerifierToolIsAnAbsolutePathOrAPin
+    verifier_test.go:386: go test with no pin for go: tool_unpinned
+--- FAIL: TestVerifierToolIsAnAbsolutePathOrAPin (0.28s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.649s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierToolIsAnAbsolutePathOrAPin
+--- PASS: TestVerifierToolIsAnAbsolutePathOrAPin (0.71s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.968s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 10 the owner's config is diffed again after the verifier
+## test: ./internal/seatcommit/ TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict$
+## edit internal/seatcommit/verifier.go:
+-	if code != "" {
+		res.Verifier.Result = "discarded"
++	if false && code != "" {
+		res.Verifier.Result = "discarded"
+## reverted run (exit 1):
+=== RUN   TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict
+    verifier_test.go:421: a config change during the verifier:  quarantine false pushed true
+--- FAIL: TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict (0.76s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.127s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict
+--- PASS: TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict (0.70s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.964s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 11 completion verifies the seal: an inserted verdict is verdict_missing
+## test: ./internal/task/ TestUnsealedVerdictIsVerdictMissing$
+## edit internal/task/lease.go:
+-		if unsealed = s.verdictInvalid(*t); unsealed != "" {
++		if unsealed = ""; false {
+## reverted run (exit 1):
+=== RUN   TestUnsealedVerdictIsVerdictMissing
+    verifier_rules_test.go:120: a verdict inserted with no tag: completed  <nil>
+--- FAIL: TestUnsealedVerdictIsVerdictMissing (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.404s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestUnsealedVerdictIsVerdictMissing
+--- PASS: TestUnsealedVerdictIsVerdictMissing (0.29s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.514s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 11 the tree and the command digest are inside the signed bytes
+## test: ./internal/task/ TestUnsealedVerdictIsVerdictMissing$
+## edit internal/task/verdict.go:
+-	case !hmac.Equal([]byte(sealchain.Tag(key, verdictLabel, sealBody(t, *v))), []byte(v.Tag)):
++	case false && !hmac.Equal([]byte(sealchain.Tag(key, verdictLabel, sealBody(t, *v))), []byte(v.Tag)):
+## reverted run (exit 1):
+=== RUN   TestUnsealedVerdictIsVerdictMissing
+    verifier_rules_test.go:130: a sealed fail edited to pass: completed  <nil>
+--- FAIL: TestUnsealedVerdictIsVerdictMissing (0.18s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.516s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestUnsealedVerdictIsVerdictMissing
+--- PASS: TestUnsealedVerdictIsVerdictMissing (0.28s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.512s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 12 the process group is killed whole at the bound
+## test: ./internal/seatcommit/ TestVerifierProcessGroupKilledWholeAtTheBound$
+## edit internal/seatcommit/verifier_unix.go:
+-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
++		_ = cmd.Process.Kill()
+## reverted run (exit 1):
+=== RUN   TestVerifierProcessGroupKilledWholeAtTheBound
+    verifier_unix_test.go:50: a child in the verifier's process group survived the bound
+--- FAIL: TestVerifierProcessGroupKilledWholeAtTheBound (4.36s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	4.722s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierProcessGroupKilledWholeAtTheBound
+--- PASS: TestVerifierProcessGroupKilledWholeAtTheBound (4.36s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	4.619s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 12 an escaped descendant holding stdout does not extend the bound (WaitDelay)
+## test: ./internal/seatcommit/ TestVerifierProcessGroupKilledWholeAtTheBound$
+## edit internal/seatcommit/verifier.go:
+-	cmd.WaitDelay = verifierWaitDelay
++	cmd.WaitDelay = 0
+## reverted run (exit 1):
+=== RUN   TestVerifierProcessGroupKilledWholeAtTheBound
+    verifier_unix_test.go:44: an escaped descendant holding stdout extended the verifier past its bound
+--- FAIL: TestVerifierProcessGroupKilledWholeAtTheBound (30.28s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	30.648s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierProcessGroupKilledWholeAtTheBound
+--- PASS: TestVerifierProcessGroupKilledWholeAtTheBound (4.35s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	4.620s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 12 at most verifier_parallelism run at once; the step waits with a status row
+## test: ./internal/seatcommit/ TestVerifierParallelismWaitsWithAStatusRow$
+## edit internal/seatcommit/verifier.go:
+-		for i := 0; i < p.parallelism; i++ {
++		for i := 0; i < p.parallelism+1; i++ {
+## reverted run (exit 1):
+=== RUN   TestVerifierParallelismWaitsWithAStatusRow
+    verifier_test.go:456: the step ran past the parallelism bound: ok true
+--- FAIL: TestVerifierParallelismWaitsWithAStatusRow (0.65s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.020s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierParallelismWaitsWithAStatusRow
+--- PASS: TestVerifierParallelismWaitsWithAStatusRow (0.70s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.963s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 12 the waiting row is a status attention row
+## test: ./internal/status/ TestStatusNamesACommitStepWaitingForAVerifierSlot$
+## edit internal/status/classify.go:
+-	for _, w := range in.VerifierWaiting {
++	for _, w := range in.VerifierWaiting[:0] {
+## reverted run (exit 1):
+=== RUN   TestStatusNamesACommitStepWaitingForAVerifierSlot
+    verifier_waiting_test.go:33: 0 verifier_waiting rows, want 1
+--- FAIL: TestStatusNamesACommitStepWaitingForAVerifierSlot (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/status	0.355s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestStatusNamesACommitStepWaitingForAVerifierSlot
+--- PASS: TestStatusNamesACommitStepWaitingForAVerifierSlot (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/status	0.353s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-a only a sealed verdict is reused; an unsealed pass runs the verifier
+## test: ./internal/seatcommit/ TestUnsealedPassIsNotReusedAtTheCommitStep$
+## edit internal/seatcommit/verifier.go:
+-	v, unsealed := store.SealedVerdict(cur)
++	v, unsealed := cur.Lease.Verdict, ""
+## reverted run (exit 1):
+=== RUN   TestUnsealedPassIsNotReusedAtTheCommitStep
+    verifier_fix_test.go:58: an unsealed pass: verifier ran false, , pushed true
+--- FAIL: TestUnsealedPassIsNotReusedAtTheCommitStep (0.40s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.763s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestUnsealedPassIsNotReusedAtTheCommitStep
+--- PASS: TestUnsealedPassIsNotReusedAtTheCommitStep (0.59s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.856s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-b a truncated capture drops its partial last line before the redaction
+## test: ./internal/seatcommit/ TestTruncatedOutputNeverKeepsACutCredential$
+## edit internal/seatcommit/verifier.go:
+-	if truncated {
+		if i := bytes.LastIndexByte(raw, '\n'); i >= 0 {
++	if false {
+		if i := bytes.LastIndexByte(raw, '\n'); i >= 0 {
+## reverted run (exit 1):
+=== RUN   TestTruncatedOutputNeverKeepsACutCredential
+    verifier_fix_test.go:82: a credential cut at the cap reached the ledger or the block detail
+--- FAIL: TestTruncatedOutputNeverKeepsACutCredential (0.55s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.918s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestTruncatedOutputNeverKeepsACutCredential
+--- PASS: TestTruncatedOutputNeverKeepsACutCredential (0.54s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.803s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-a a changed command supersedes the verdict on the same tree
+## test: ./internal/seatcommit/ TestChangedCommandSupersedesTheVerdict$
+## edit internal/task/verdict.go:
+-			if old.CommandDigest == v.CommandDigest {
++			if true {
+## reverted run (exit 1):
+=== RUN   TestChangedCommandSupersedesTheVerdict
+    verifier_fix_test.go:109: the run after the command changed: ok false  record the verdict: task t1 attempt 1 already has a pass verdict of this command on this tree
+--- FAIL: TestChangedCommandSupersedesTheVerdict (0.91s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.278s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestChangedCommandSupersedesTheVerdict
+--- PASS: TestChangedCommandSupersedesTheVerdict (1.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.276s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (i) a grant command as an argv list
+## test: ./internal/seatcommit/ TestVerifierCommandAsAnArgvList$
+## edit internal/seatcommit/verifier.go:
+-argv: g.VerifierArgs(class),
++argv: strings.Fields(cmd),
+## reverted run (exit 1):
+=== RUN   TestVerifierCommandAsAnArgvList
+    verifier_fix_test.go:142: an argv list: ok false grants_invalid
+--- FAIL: TestVerifierCommandAsAnArgvList (0.28s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.650s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierCommandAsAnArgvList
+--- PASS: TestVerifierCommandAsAnArgvList (0.64s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.918s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (b) the verifier-only module cache under the session root (two runs, one fetch)
+## test: ./internal/seatcommit/ TestVerifierModuleCacheTwoRunsOneFetch$
+## edit internal/seatcommit/verifier.go:
+-"GOMODCACHE=" + modcache,
++"GOMODCACHE=" + filepath.Join(private, "gopath", "pkg", "mod"),
+## reverted run (exit 1):
+=== RUN   TestVerifierModuleCacheTwoRunsOneFetch
+    verifier_fix_test.go:187: the first run did not fetch into the verifier's module cache
+--- FAIL: TestVerifierModuleCacheTwoRunsOneFetch (0.49s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.861s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierModuleCacheTwoRunsOneFetch
+--- PASS: TestVerifierModuleCacheTwoRunsOneFetch (0.77s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.034s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (c) the commit step runs off the tick
+## test: ./internal/schedproc/ TestCommitStepRunsOffTheTick$
+## edit internal/schedproc/committer.go:
+-	if !c.finished(j, wait) {
++	if !c.finished(j, time.Hour) {
+## reverted run (exit 1):
+=== RUN   TestCommitStepRunsOffTheTick
+    liveness_test.go:92: the tick waited for the running commit step
+--- FAIL: TestCommitStepRunsOffTheTick (10.19s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	10.554s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestCommitStepRunsOffTheTick
+--- PASS: TestCommitStepRunsOffTheTick (0.30s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.672s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (c) a running step holds its exits-queue entry
+## test: ./internal/schedproc/ TestCommitStepRunsOffTheTick$
+## edit internal/scheduler/scheduler.go:
+-	s.commitEntry(holder, t.ID, now)
+	res := s.Committer.Commit(holder, t)
++	res := s.Committer.Commit(holder, t)
+## edit internal/scheduler/exits.go:
+-	s.commitEntry(handle, taskID, now)
+	prev := s.commitState[taskID]
++	prev := s.commitState[taskID]
+## reverted run (exit 1):
+=== RUN   TestCommitStepRunsOffTheTick
+    liveness_test.go:100: the running commit step is not in the exits queue
+--- FAIL: TestCommitStepRunsOffTheTick (0.24s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.598s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestCommitStepRunsOffTheTick
+--- PASS: TestCommitStepRunsOffTheTick (0.31s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.557s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (c) a restart mid-run defers, verifier_interrupted, and never runs it twice
+## test: ./internal/seatcommit/ TestVerifierInterruptedByARestartRunsOnce$
+## edit internal/seatcommit/verifier.go:
+-	if cur.Lease.Snapshot == res.Tree && cur.Lease.SnapshotCommand == p.digest && store.SnapshotSealed(cur) {
++	if false {
+## reverted run (exit 1):
+=== RUN   TestVerifierInterruptedByARestartRunsOnce
+    verifier_restart_unix_test.go:80: the adopted step: deferred false verdict_failed
+--- FAIL: TestVerifierInterruptedByARestartRunsOnce (30.75s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	31.120s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestVerifierInterruptedByARestartRunsOnce
+--- PASS: TestVerifierInterruptedByARestartRunsOnce (0.76s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.020s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (ii) ledger.Append redacts every line on write
+## test: ./internal/cli/ TestMalformedReportCarryingATokenLeavesNoTokenOnDisk$
+## edit internal/ledger/append.go:
+-		red, err := RedactForWrite(raw)
++		red, err := raw, error(nil)
+## reverted run (exit 1):
+=== RUN   TestMalformedReportCarryingATokenLeavesNoTokenOnDisk
+    ledger_redact_write_test.go:32: a credential reached the hook ledger on disk
+--- FAIL: TestMalformedReportCarryingATokenLeavesNoTokenOnDisk (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.429s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestMalformedReportCarryingATokenLeavesNoTokenOnDisk
+--- PASS: TestMalformedReportCarryingATokenLeavesNoTokenOnDisk (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.436s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: (ii) a malformed payload is a redacted printable prefix, never verbatim (with the write-side layer off)
+## test: ./internal/cli/ TestMalformedReportCarryingATokenLeavesNoTokenOnDisk$
+## edit internal/ledger/append.go:
+-		red, err := RedactForWrite(raw)
++		red, err := raw, error(nil)
+## edit internal/cli/hook_ingest.go:
+-	out, _ := redact.Capped(string(b), hookPrefixKeep)
+	return out
++	return redact.Placeholder[:0] + string(b)
+## reverted run (exit 1):
+=== RUN   TestMalformedReportCarryingATokenLeavesNoTokenOnDisk
+    ledger_redact_write_test.go:32: a credential reached the hook ledger on disk
+--- FAIL: TestMalformedReportCarryingATokenLeavesNoTokenOnDisk (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.433s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestMalformedReportCarryingATokenLeavesNoTokenOnDisk
+--- PASS: TestMalformedReportCarryingATokenLeavesNoTokenOnDisk (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.328s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-1 the exit check of a seat with a pending commit step is deferred off the ledger
+## test: ./internal/schedproc/ TestTickNeverWaitsOnARunningStepsSeat$
+## edit internal/scheduler/exits.go:
+-		if s.commitPending(it.Handle) {
++		if false && s.commitPending(it.Handle) {
+## reverted run (exit 1):
+=== RUN   TestTickNeverWaitsOnARunningStepsSeat
+    liveness2_test.go:144: the tick waited
+--- FAIL: TestTickNeverWaitsOnARunningStepsSeat (10.26s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	10.619s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestTickNeverWaitsOnARunningStepsSeat
+--- PASS: TestTickNeverWaitsOnARunningStepsSeat (0.26s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.509s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-1 the exit check's ledger lock is a try-lock
+## test: ./internal/seatcommit/ TestTickPathLedgerUsersNeverWait$
+## edit internal/seatcommit/commit.go:
+-	err := withLedgerTryLock(o.Root, o.Handle, func() error {
+		if terr := verifyEvidence(o)
++	err := withLedgerLock(o.Root, o.Handle, func() error {
+		if terr := verifyEvidence(o)
+## reverted run (exit 1):
+=== RUN   TestTickPathLedgerUsersNeverWait
+    verifier_fix2_test.go:49: a tick-path ledger user waited for the commit step's lock
+--- FAIL: TestTickPathLedgerUsersNeverWait (10.29s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	10.656s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestTickPathLedgerUsersNeverWait
+--- PASS: TestTickPathLedgerUsersNeverWait (0.28s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.543s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-1 CleanSeat's ledger lock is a try-lock
+## test: ./internal/seatcommit/ TestTickPathLedgerUsersNeverWait$
+## edit internal/seatcommit/commit.go:
+-	err = withLedgerTryLock(root, handle, func() error {
++	err = withLedgerLock(root, handle, func() error {
+## reverted run (exit 1):
+=== RUN   TestTickPathLedgerUsersNeverWait
+    verifier_fix2_test.go:49: a tick-path ledger user waited for the commit step's lock
+--- FAIL: TestTickPathLedgerUsersNeverWait (10.30s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	10.669s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestTickPathLedgerUsersNeverWait
+--- PASS: TestTickPathLedgerUsersNeverWait (0.28s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.534s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the JSON name rule spans lines
+## test: ./internal/seatcommit/ TestMultiLineCredentialNeverReachesTheEvidence$/json
+## edit internal/redact/redact.go:
+-	for _, m := range jsonBlockRE.FindAllStringSubmatchIndex(text, -1) {
++	for _, m := range jsonBlockRE.FindAllStringSubmatchIndex("", -1) {
+## reverted run (exit 1):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/json
+    verifier_fix2_test.go:75: a split credential reached the ledger or the block detail
+--- FAIL: TestMultiLineCredentialNeverReachesTheEvidence (0.67s)
+    --- FAIL: TestMultiLineCredentialNeverReachesTheEvidence/json (0.67s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.037s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/json
+--- PASS: TestMultiLineCredentialNeverReachesTheEvidence (0.55s)
+    --- PASS: TestMultiLineCredentialNeverReachesTheEvidence/json (0.55s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.810s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the YAML key line and its value line
+## test: ./internal/seatcommit/ TestMultiLineCredentialNeverReachesTheEvidence$/yaml$
+## edit internal/redact/redact.go:
+-	return Text(yamlBlocks(out.String()))
++	return Text(out.String())
+## reverted run (exit 1):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml
+    verifier_fix2_test.go:75: a split credential reached the ledger or the block detail
+--- FAIL: TestMultiLineCredentialNeverReachesTheEvidence (0.65s)
+    --- FAIL: TestMultiLineCredentialNeverReachesTheEvidence/yaml (0.65s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.021s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml
+--- PASS: TestMultiLineCredentialNeverReachesTheEvidence (0.54s)
+    --- PASS: TestMultiLineCredentialNeverReachesTheEvidence/yaml (0.54s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.804s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P1-2 the retained buffer is redacted whole, not line by line
+## test: ./internal/seatcommit/ TestMultiLineCredentialNeverReachesTheEvidence$
+## edit internal/seatcommit/verifier.go:
+-	out := redact.Block(string(raw))
++	out := redact.Text(string(raw))
+## reverted run (exit 1):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml
+    verifier_fix2_test.go:75: a split credential reached the ledger or the block detail
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted
+    verifier_fix2_test.go:75: a split credential reached the ledger or the block detail
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/json
+    verifier_fix2_test.go:75: a split credential reached the ledger or the block detail
+--- FAIL: TestMultiLineCredentialNeverReachesTheEvidence (1.72s)
+    --- FAIL: TestMultiLineCredentialNeverReachesTheEvidence/yaml (0.54s)
+    --- FAIL: TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted (0.64s)
+    --- FAIL: TestMultiLineCredentialNeverReachesTheEvidence/json (0.54s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	2.093s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/json
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted
+--- PASS: TestMultiLineCredentialNeverReachesTheEvidence (1.63s)
+    --- PASS: TestMultiLineCredentialNeverReachesTheEvidence/json (0.55s)
+    --- PASS: TestMultiLineCredentialNeverReachesTheEvidence/yaml (0.55s)
+    --- PASS: TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted (0.54s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.893s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-1 a cancelled task's step is cancelled and its entry dropped
+## test: ./internal/schedproc/ TestCancelDuringARunningStepFreesTheSeat$
+## edit internal/scheduler/scheduler.go:
+-	s.sweepCommits(list, log)
+
++
+## reverted run (exit 1):
+=== RUN   TestCancelDuringARunningStepFreesTheSeat
+    liveness2_test.go:193: after the cancel: the next task leased to "seat-t2" (want seat-t1), the step cancelled false
+--- FAIL: TestCancelDuringARunningStepFreesTheSeat (0.29s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.648s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestCancelDuringARunningStepFreesTheSeat
+--- PASS: TestCancelDuringARunningStepFreesTheSeat (0.28s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.535s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-1 a cancel kills the verifier's group
+## test: ./internal/seatcommit/ TestCancelledStepKillsTheVerifier$
+## edit internal/seatcommit/verifier.go:
+-				kill(ReasonVerifierCancelled)
++				_ = ReasonVerifierCancelled
+## reverted run (exit 1):
+=== RUN   TestCancelledStepKillsTheVerifier
+    verifier_fix2_test.go:107: a cancelled step's verifier kept running
+--- FAIL: TestCancelledStepKillsTheVerifier (15.67s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	16.038s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestCancelledStepKillsTheVerifier
+--- PASS: TestCancelledStepKillsTheVerifier (0.64s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.904s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-2 an attempt archives an unsealed verdict as invalid
+## test: ./internal/routing/ TestUnsignedPassArchivesAsInvalid$
+## edit internal/task/lease.go:
+-	if v != nil && s.verdictInvalid(*t) != "" {
++	if false {
+## reverted run (exit 1):
+=== RUN   TestUnsignedPassArchivesAsInvalid
+    verdict_archive_test.go:52: the archived verdict: &{Verifier:tests Result:pass Source:seat commit verifier Detail: At:2026-10-25 11:00:00 +0000 UTC Tree:tree-x CommandDigest:sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881 Tag: PrevCommandDigest:}
+--- FAIL: TestUnsignedPassArchivesAsInvalid (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.439s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestUnsignedPassArchivesAsInvalid
+--- PASS: TestUnsignedPassArchivesAsInvalid (0.07s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.428s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-2 the report says invalid, never pass
+## test: ./internal/routing/ TestUnsignedPassArchivesAsInvalid$
+## edit internal/routing/router.go:
+-		case task.VerdictInvalid:
+			return VerifierInvalid // never a pass from an unverified archive
+
++
+## reverted run (exit 1):
+=== RUN   TestUnsignedPassArchivesAsInvalid
+    verdict_archive_test.go:55: the report's verifier_result: fail, want invalid
+--- FAIL: TestUnsignedPassArchivesAsInvalid (0.07s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.421s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestUnsignedPassArchivesAsInvalid
+--- PASS: TestUnsignedPassArchivesAsInvalid (0.06s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.320s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-3 the committer keeps a decided result until it is applied
+## test: ./internal/schedproc/ TestFailedApplicationRetriesTheApplicationNotTheStep$
+## edit internal/schedproc/committer.go:
+-	j.final = &final
+	return final
++	delete(c.jobs, t.ID)
+	return final
+## reverted run (exit 1):
+=== RUN   TestFailedApplicationRetriesTheApplicationNotTheStep
+    liveness2_test.go:231: after the retried application: completed, 2 steps
+--- FAIL: TestFailedApplicationRetriesTheApplicationNotTheStep (0.19s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.542s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFailedApplicationRetriesTheApplicationNotTheStep
+--- PASS: TestFailedApplicationRetriesTheApplicationNotTheStep (0.18s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.436s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-3 a failed application is not marked applied
+## test: ./internal/schedproc/ TestFailedApplicationRetriesTheApplicationNotTheStep$
+## edit internal/scheduler/scheduler.go:
+-	if err := s.applyCommit(holder, t, res, now, log); err != nil {
+		return err
+	}
++	if err := s.applyCommit(holder, t, res, now, log); err != nil {
+		s.Committer.(CommitApplier).Applied(t.ID)
+		return err
+	}
+## reverted run (exit 1):
+=== RUN   TestFailedApplicationRetriesTheApplicationNotTheStep
+    liveness2_test.go:231: after the retried application: completed, 2 steps
+--- FAIL: TestFailedApplicationRetriesTheApplicationNotTheStep (0.20s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.557s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestFailedApplicationRetriesTheApplicationNotTheStep
+--- PASS: TestFailedApplicationRetriesTheApplicationNotTheStep (0.19s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.443s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 the deferral count is persisted in the exits entry
+## test: ./internal/schedproc/ TestDeferralCountSurvivesRestarts$
+## edit internal/scheduler/exits.go:
+-	Deferrals int `json:"deferrals,omitempty"`
++	Deferrals int `json:"-"`
+## reverted run (exit 1):
+=== RUN   TestDeferralCountSurvivesRestarts
+    liveness2_test.go:256: after three deferrals across two restarts: in_progress  
+--- FAIL: TestDeferralCountSurvivesRestarts (0.21s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.565s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDeferralCountSurvivesRestarts
+--- PASS: TestDeferralCountSurvivesRestarts (0.27s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.521s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: P2-4 at the limit an interrupted step blocks verifier_interrupted for the lead
+## test: ./internal/schedproc/ TestDeferralCountSurvivesRestarts$
+## edit internal/scheduler/scheduler.go:
+-		if res.ReasonCode == ReasonVerifierInterrupted {
++		if false {
+## reverted run (exit 1):
+=== RUN   TestDeferralCountSurvivesRestarts
+    liveness2_test.go:256: after three deferrals across two restarts: blocked commit_failed lead
+--- FAIL: TestDeferralCountSurvivesRestarts (0.24s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.598s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDeferralCountSurvivesRestarts
+--- PASS: TestDeferralCountSurvivesRestarts (0.26s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.510s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: small: the step's exits entry is written before the step starts
+## test: ./internal/schedproc/ TestCommitEntryIsWrittenBeforeTheStepStarts$
+## edit internal/scheduler/scheduler.go:
+-	s.commitEntry(holder, t.ID, now)
+	res := s.Committer.Commit(holder, t)
++	res := s.Committer.Commit(holder, t)
+## reverted run (exit 1):
+=== RUN   TestCommitEntryIsWrittenBeforeTheStepStarts
+    liveness2_test.go:279: the step started before its exits entry was written
+--- FAIL: TestCommitEntryIsWrittenBeforeTheStepStarts (0.17s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.523s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestCommitEntryIsWrittenBeforeTheStepStarts
+--- PASS: TestCommitEntryIsWrittenBeforeTheStepStarts (0.18s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.426s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-3 the ingest prefix is redacted before its cut
+## test: ./internal/cli/ TestIngestPrefixRedactsBeforeTheCut$
+## edit internal/cli/hook_ingest.go:
+-	out, _ := redact.Capped(string(b), hookPrefixKeep)
+	return out
++	if len(b) > hookPrefixKeep {
+		b = b[:hookPrefixKeep]
+	}
+	return redact.Block(string(b))
+## reverted run (exit 1):
+=== RUN   TestIngestPrefixRedactsBeforeTheCut
+    ingest_cap_test.go:24: a credential after the prefix cut reached the hook ledger
+--- FAIL: TestIngestPrefixRedactsBeforeTheCut (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.434s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestIngestPrefixRedactsBeforeTheCut
+--- PASS: TestIngestPrefixRedactsBeforeTheCut (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.334s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-4 Line is one builder pass over the sorted spans
+## test: ./internal/redact/ TestBlockIsLinearOnALongLine$
+## edit internal/redact/redact.go:
+-	var out strings.Builder
+	out.Grow(len(line))
+	at := 0
+	for _, s := range merged {
+		rep := Placeholder
+		if s[1]-s[0] >= 2 && line[s[0]] == '"' && line[s[1]-1] == '"' || jsonValueAt(line, s[0]) {
+			rep = `"` + Placeholder + `"` // a JSON value stays a JSON string
+		}
+		out.WriteString(line[at:s[0]])
+		out.WriteString(rep)
+		at = s[1]
+	}
+	out.WriteString(line[at:])
+	return out.String()
++	for i := len(merged) - 1; i >= 0; i-- {
+		s := merged[i]
+		rep := Placeholder
+		if s[1]-s[0] >= 2 && line[s[0]] == '"' && line[s[1]-1] == '"' || jsonValueAt(line, s[0]) {
+			rep = `"` + Placeholder + `"`
+		}
+		line = line[:s[0]] + rep + line[s[1]:]
+	}
+	return line
+## reverted run (exit 1):
+=== RUN   TestBlockIsLinearOnALongLine
+    block_test.go:22: a 1 MiB line with 95325 values took over 2s
+--- FAIL: TestBlockIsLinearOnALongLine (2.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/redact	2.336s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestBlockIsLinearOnALongLine
+    block_test.go:28: 1 MiB, 95325 values: 182ms
+--- PASS: TestBlockIsLinearOnALongLine (0.18s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	0.517s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-5 the deferral limit's refusal is retained until applied
+## test: ./internal/schedproc/ TestDeferralLimitRefusalIsRetained$
+## edit internal/scheduler/scheduler.go:
+-		if d, ok := s.Committer.(CommitDecider); ok {
+			d.Decide(t.ID, res)
+		}
++		_ = CommitDecider(nil)
+## reverted run (exit 1):
+=== RUN   TestDeferralLimitRefusalIsRetained
+    limit_retained_test.go:49: after the retried refusal: blocked verifier_interrupted, 4 steps
+--- FAIL: TestDeferralLimitRefusalIsRetained (0.25s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.605s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDeferralLimitRefusalIsRetained
+--- PASS: TestDeferralLimitRefusalIsRetained (0.23s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.485s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-1 CleanSeat's git work runs outside the store lock (the old WithSeatFree restored)
+## test: ./internal/seatcommit/ TestCleanSeatHoldsNoStoreLockAcrossGit$
+## edit internal/seatcommit/commit.go:
+-		list, nonce, err := store.ReserveSeat(handle, now)
+		if err != nil {
+			return err
+		}
+		var derr error
+		discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
+		if derr != nil {
+			return derr
+		}
+		return store.ReleaseSeat(handle, nonce)
++		return store.WithSeatFree(handle, func(list []task.Task) error {
+			var derr error
+			discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
+			return derr
+		})
+## edit internal/task/scope.go:
+-// Escalate routes a blocked task to the owner
++func (s Store) WithSeatFree(handle string, fn func(list []Task) error) error {
+	return s.withLock(true, func() error {
+		list, err := readDir(s.Dir)
+		if err != nil {
+			return err
+		}
+		if held := HeldBy(handle, list); held != nil {
+			return fmt.Errorf("seat %s holds task %s", handle, held.ID)
+		}
+		return fn(list)
+	})
+}
+
+// Escalate routes a blocked task to the owner
+## reverted run (exit 1):
+=== RUN   TestCleanSeatHoldsNoStoreLockAcrossGit
+    cleanseat_lock_test.go:56: a store read waited for CleanSeat's git work
+--- FAIL: TestCleanSeatHoldsNoStoreLockAcrossGit (10.68s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	11.042s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestCleanSeatHoldsNoStoreLockAcrossGit
+--- PASS: TestCleanSeatHoldsNoStoreLockAcrossGit (10.70s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	10.969s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-1 a seat being cleaned is refused a lease
+## test: ./internal/seatcommit/ TestCleanSeatHoldsNoStoreLockAcrossGit$
+## edit internal/task/lease.go:
+-		if err := unclean(all.dir, holder); err != nil {
++		if err := unclean(all.dir, holder); false && err != nil {
+## reverted run (exit 1):
+=== RUN   TestCleanSeatHoldsNoStoreLockAcrossGit
+    cleanseat_lock_test.go:62: a claim by the seat being cleaned: <nil>
+--- FAIL: TestCleanSeatHoldsNoStoreLockAcrossGit (0.67s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.047s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestCleanSeatHoldsNoStoreLockAcrossGit
+--- PASS: TestCleanSeatHoldsNoStoreLockAcrossGit (10.69s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	11.061s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-2 a quoted YAML scalar holding a colon is a value
+## test: ./internal/redact/ TestBlockRedactsAQuotedYAMLScalarWithAColon$
+## edit internal/redact/redact.go:
+-			if q := quoteOpen(lines[j]); q != 0 {
++			if q := quoteOpen(lines[j]); q != 0 && !strings.Contains(lines[j], ": ") {
+## edit internal/redact/redact.go:
+-			if indentOf(l) <= keyCol {
++			if indentOf(l) <= keyCol || strings.Contains(l, ": ") {
+## reverted run (exit 1):
+=== RUN   TestBlockRedactsAQuotedYAMLScalarWithAColon
+    block_test.go:37: a quoted YAML value with a colon survived
+--- FAIL: TestBlockRedactsAQuotedYAMLScalarWithAColon (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.335s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestBlockRedactsAQuotedYAMLScalarWithAColon
+--- PASS: TestBlockRedactsAQuotedYAMLScalarWithAColon (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	0.227s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 3-2 the quoted YAML value never reaches the evidence or the tail
+## test: ./internal/seatcommit/ TestMultiLineCredentialNeverReachesTheEvidence$/yaml_quoted
+## edit internal/redact/redact.go:
+-			if q := quoteOpen(lines[j]); q != 0 {
++			if q := quoteOpen(lines[j]); q != 0 && !strings.Contains(lines[j], ": ") {
+## edit internal/redact/redact.go:
+-			if indentOf(l) <= keyCol {
++			if indentOf(l) <= keyCol || strings.Contains(l, ": ") {
+## reverted run (exit 1):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted
+    verifier_fix2_test.go:75: a split credential reached the ledger or the block detail
+--- FAIL: TestMultiLineCredentialNeverReachesTheEvidence (0.56s)
+    --- FAIL: TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted (0.56s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.929s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence
+=== RUN   TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted
+--- PASS: TestMultiLineCredentialNeverReachesTheEvidence (0.54s)
+    --- PASS: TestMultiLineCredentialNeverReachesTheEvidence/yaml_quoted (0.54s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.810s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-1 a marker refuses a lease whatever its age (an interrupted clean)
+## test: ./internal/seatcommit/ TestInterruptedCleanLeavesTheSeatUnclean$
+## edit internal/task/unclean.go:
+-	case m != nil:
+
++	case m != nil && time.Since(m.At) < SeatReservationTTL:
+
+## reverted run (exit 1):
+=== RUN   TestInterruptedCleanLeavesTheSeatUnclean
+    unclean_marker_test.go:42: a direct claim past the TTL: <nil>
+--- FAIL: TestInterruptedCleanLeavesTheSeatUnclean (0.63s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.004s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestInterruptedCleanLeavesTheSeatUnclean
+--- PASS: TestInterruptedCleanLeavesTheSeatUnclean (0.61s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.878s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-1 a marker refuses a lease whatever its age (a live cleaner)
+## test: ./internal/seatcommit/ TestLiveCleanerPastTheTTLHoldsTheSeat$
+## edit internal/task/unclean.go:
+-	case m != nil:
+
++	case m != nil && time.Since(m.At) < SeatReservationTTL:
+
+## reverted run (exit 1):
+=== RUN   TestLiveCleanerPastTheTTLHoldsTheSeat
+    unclean_marker_test.go:75: a claim during a live clean past the TTL: <nil>
+--- FAIL: TestLiveCleanerPastTheTTLHoldsTheSeat (0.66s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.916s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestLiveCleanerPastTheTTLHoldsTheSeat
+--- PASS: TestLiveCleanerPastTheTTLHoldsTheSeat (5.69s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	5.951s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-1 only a completed clean removes the marker
+## test: ./internal/seatcommit/ TestInterruptedCleanLeavesTheSeatUnclean$
+## edit internal/seatcommit/commit.go:
+-		if derr != nil {
+			return derr
+		}
+		return store.ReleaseSeat(handle, nonce)
++		if rerr := store.ReleaseSeat(handle, nonce); derr == nil {
+			derr = rerr
+		}
+		return derr
+## reverted run (exit 1):
+=== RUN   TestInterruptedCleanLeavesTheSeatUnclean
+    unclean_marker_test.go:42: a direct claim past the TTL: <nil>
+--- FAIL: TestInterruptedCleanLeavesTheSeatUnclean (0.53s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.908s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestInterruptedCleanLeavesTheSeatUnclean
+--- PASS: TestInterruptedCleanLeavesTheSeatUnclean (0.61s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.878s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-2 a cleaner releases only its own marker (the nonce)
+## test: ./internal/task/ TestOnlyTheCleanersOwnMarkerIsReleased$
+## edit internal/task/unclean.go:
+-	case m == nil || m.Nonce != nonce:
++	case m == nil:
+## reverted run (exit 1):
+=== RUN   TestOnlyTheCleanersOwnMarkerIsReleased
+    unclean_test.go:31: A's release after B's takeover: <nil>
+--- FAIL: TestOnlyTheCleanersOwnMarkerIsReleased (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.365s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestOnlyTheCleanersOwnMarkerIsReleased
+--- PASS: TestOnlyTheCleanersOwnMarkerIsReleased (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.274s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-2 a fresh marker is never overwritten
+## test: ./internal/task/ TestOnlyTheCleanersOwnMarkerIsReleased$
+## edit internal/task/unclean.go:
+-	} else if m != nil && now.Sub(m.At) < SeatReservationTTL {
++	} else if false {
+## reverted run (exit 1):
+=== RUN   TestOnlyTheCleanersOwnMarkerIsReleased
+    unclean_test.go:24: a second cleaner over a fresh marker: <nil>
+--- FAIL: TestOnlyTheCleanersOwnMarkerIsReleased (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.367s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestOnlyTheCleanersOwnMarkerIsReleased
+--- PASS: TestOnlyTheCleanersOwnMarkerIsReleased (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.279s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-3 a malformed or unreadable marker is seat_unclean, never fail-open
+## test: ./internal/task/ TestMalformedOrUnreadableMarkerIsUnclean$
+## edit internal/task/unclean.go:
+-	case err != nil:
+		return fmt.Errorf("%w: seat %s: %v", ErrSeatUnclean, holder, err)
++	case err != nil:
+		return nil
+## reverted run (exit 1):
+=== RUN   TestMalformedOrUnreadableMarkerIsUnclean
+    unclean_test.go:57: a claim over a malformed marker: <nil>
+--- FAIL: TestMalformedOrUnreadableMarkerIsUnclean (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.394s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestMalformedOrUnreadableMarkerIsUnclean
+--- PASS: TestMalformedOrUnreadableMarkerIsUnclean (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/task	0.262s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-3 status names an invalid marker for the lead
+## test: ./internal/status/ TestStatusNamesAnInvalidUncleanMarker$
+## edit internal/status/classify.go:
+-	for _, m := range in.SeatMarkers {
++	for _, m := range in.SeatMarkers[:0] {
+## reverted run (exit 1):
+=== RUN   TestStatusNamesAnInvalidUncleanMarker
+    unclean_marker_test.go:26: no unclean_marker_invalid row naming /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStatusNamesAnInvalidUncleanMarker1208723218/001/extensions/amq-squad/tasks/reserved/s3
+--- FAIL: TestStatusNamesAnInvalidUncleanMarker (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/status	0.345s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestStatusNamesAnInvalidUncleanMarker
+--- PASS: TestStatusNamesAnInvalidUncleanMarker (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/status	0.246s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-4 a quoted scalar is redacted through its closing quote
+## test: ./internal/redact/ TestBlockRedactsAContinuedQuotedYAMLScalar$
+## edit internal/redact/redact.go:
+-				if end := closingLine(lines, j, q); end >= 0 {
++				if end := closingLine(lines, j, q); false && end >= 0 {
+## reverted run (exit 1):
+=== RUN   TestBlockRedactsAContinuedQuotedYAMLScalar
+    block_test.go:60: a quoted scalar continued at the key's column: redacted short of its closing quote
+--- FAIL: TestBlockRedactsAContinuedQuotedYAMLScalar (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.343s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestBlockRedactsAContinuedQuotedYAMLScalar
+--- PASS: TestBlockRedactsAContinuedQuotedYAMLScalar (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	0.228s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: 4-5 a credential key owns its block (a nested mapping)
+## test: ./internal/redact/ TestBlockRedactsANestedMappingUnderACredentialKey$
+## edit internal/redact/redact.go:
+-			if indentOf(l) <= keyCol {
++			if indentOf(l) <= keyCol || strings.HasSuffix(strings.TrimSpace(l), ":") {
+## reverted run (exit 1):
+=== RUN   TestBlockRedactsANestedMappingUnderACredentialKey
+    block_test.go:70: a nested mapping under a credential key survived, or the next key went
+--- FAIL: TestBlockRedactsANestedMappingUnderACredentialKey (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/redact	0.356s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestBlockRedactsANestedMappingUnderACredentialKey
+--- PASS: TestBlockRedactsANestedMappingUnderACredentialKey (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	0.224s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## summary: 75 rule(s), 0 not OK

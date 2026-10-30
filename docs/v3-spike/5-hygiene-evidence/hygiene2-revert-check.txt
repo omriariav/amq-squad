@@ -1,0 +1,7 @@
+# hygiene2 revert check: TestDecisionAdapterKillsAHungGuardGroup under 160 busy loops on an 18-core host, 20 runs each
+## old test (fixed 1 s watchdog, stand-in not measured)
+   2     repass5_fix_test.go:39: no sleeper pid: ""
+   2 --- FAIL: TestDecisionAdapterKillsAHungGuardGroup (Ns)
+   1 FAIL
+## new test (watchdog from the measured readiness step, atomic pid publish, waited read)
+   1 PASS

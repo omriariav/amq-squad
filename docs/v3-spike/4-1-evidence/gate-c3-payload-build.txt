@@ -1,0 +1,2 @@
+{"files":6439,"manifest_sha256":"883b1f48de00675f00a9e10a15f4f747b2f75b4d28a6a19bfe56649f220b2972","payload_bytes":55653626,"payload_sha256":"1a4bd2eeec3809d98d5626304f3937d704ed8691ae9ab29d0bfde44e7c099617","unpacked_bytes":179325123,"version":"pi-1.3.0-node-22.21.1-darwin-arm64"}
+{"binary":"/Users/omri/code/amq-squad/.claude/worktrees/agent-a28812eaea493cdaf/build/pi/amq-squad","binary_bytes":68175122}

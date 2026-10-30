@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // TestHelpSurfacesIncludeExamples is the Step 11F coverage guard: every
@@ -15,40 +18,22 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"help"},
 		{"roles", "--help"},
 		{"version", "--help"},
-		{"completion", "--help"},
 		{"doctor", "--help"},
 		{"status", "--help"},
 		{"dispatch", "--help"},
-		{"start", "--help"},
-		{"down", "--help"},
-		{"resume", "--help"},
-		{"new", "--help"},
-		{"new", "team", "--help"},
-		{"new", "profile", "--help"},
-		{"new", "session", "--help"},
 		{"team", "--help"},
-		{"team", "init", "--help"},
-		// gh#758/t11: "team resume --help" deliberately omitted here.
-		// `team resume` was deleted outright (a hard error, not a
-		// deprecation notice like the other legacy verbs above), so its
-		// --help is a one-line redirect to `amq-squad resume` with no
-		// Examples: section or usage doc to check -- there is no longer a
-		// help surface here matching this table's contract.
-		{"team", "sync", "--help"},
-		{"team", "profiles", "--help"},
-		{"team", "rm", "--help"},
-		{"team", "delete", "--help"},
-		{"team", "rules", "--help"},
-		{"team", "rules", "show", "--help"},
-		{"team", "rules", "init", "--help"},
-		{"agent", "--help"},
-		{"agent", "up", "--help"},
-		{"agent", "resume", "--help"},
-		{"goal", "--help"},
+		{"team", "propose", "--help"},
+		{"team", "apply", "--help"},
+		{"team", "show", "--help"},
+		{"team", "check", "--help"},
+		{"team", "draft-rules", "--help"},
 		{"operator", "--help"},
 		{"gate", "--help"},
 		{"gate", "raise", "--help"},
 		{"gate", "close", "--help"},
+		{"context", "--help"},
+		{"guard", "--help"},
+		{"evidence", "ingest", "--help"},
 	}
 	for _, args := range cases {
 		stdout, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -77,28 +62,20 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
-		{name: "start --help", args: []string{"start", "--help"}, want: "amq-squad start"},
-		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
+		{name: "team propose --help", args: []string{"team", "propose", "--help"}, want: "amq-squad team propose"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
-		{name: "resume --help", args: []string{"resume", "--help"}, want: "amq-squad resume"},
-		{name: "new --help", args: []string{"new", "--help"}, want: "amq-squad new"},
-		{name: "new team --help", args: []string{"new", "team", "--help"}, want: "amq-squad new team"},
-		{name: "new profile --help", args: []string{"new", "profile", "--help"}, want: "amq-squad new profile"},
-		{name: "new session --help", args: []string{"new", "session", "--help"}, want: "amq-squad new session"},
 		{name: "roles --help", args: []string{"roles", "--help"}, want: "amq-squad roles"},
-		{name: "team rules show --help", args: []string{"team", "rules", "show", "--help"}, want: "amq-squad team rules show"},
+		{name: "team show --help", args: []string{"team", "show", "--help"}, want: "amq-squad team show"},
 		{name: "version --help", args: []string{"version", "--help"}, want: "amq-squad version"},
-		{name: "completion --help", args: []string{"completion", "--help"}, want: "amq-squad completion"},
 		{name: "doctor --help", args: []string{"doctor", "--help"}, want: "amq-squad doctor"},
-		{name: "agent --help", args: []string{"agent", "--help"}, want: "amq-squad agent"},
-		{name: "agent up --help", args: []string{"agent", "up", "--help"}, want: "amq-squad agent up"},
-		{name: "agent resume --help", args: []string{"agent", "resume", "--help"}, want: "amq-squad agent resume"},
-		{name: "goal --help", args: []string{"goal", "--help"}, want: "amq-squad goal"},
 		{name: "operator --help", args: []string{"operator", "--help"}, want: "amq-squad operator"},
 		{name: "gate --help", args: []string{"gate", "--help"}, want: "amq-squad gate"},
 		{name: "gate raise --help", args: []string{"gate", "raise", "--help"}, want: "amq-squad gate raise"},
 		{name: "gate close --help", args: []string{"gate", "close", "--help"}, want: "amq-squad gate close"},
+		{name: "context --help", args: []string{"context", "--help"}, want: "amq-squad context --me HANDLE"},
+		{name: "guard --help", args: []string{"guard", "--help"}, want: "amq-squad guard --me HANDLE --stdin"},
+		{name: "evidence ingest --help", args: []string{"evidence", "ingest", "--help"}, want: "amq-squad evidence ingest --me HANDLE"},
+		{name: "evidence --help", args: []string{"evidence", "--help"}, want: "amq-squad evidence ingest --me HANDLE"},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
@@ -136,32 +113,12 @@ func TestGateTopLevelDiscoveryIncludesRaiseAndClose(t *testing.T) {
 	}
 }
 
-func TestNewSessionHelpDocumentsSeededBriefs(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"new", "session", "--help"}, "test") })
-	if err != nil {
-		t.Fatalf("new session --help: %v", err)
-	}
-	for _, want := range []string{
-		"--profile NAME",
-		"--seed-from",
-		"file:<path>",
-		"issue:<n>",
-		"gh:owner/repo#<n>",
-		"amq-squad new session --profile review issue-98",
-		"amq-squad new session issue-98 --seed-from issue:31",
-	} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("new session --help should mention %q, got:\n%s", want, stderr)
-		}
-	}
-}
-
-func TestDoctorHelpDocumentsProfile(t *testing.T) {
+func TestDoctorHelpDocumentsProbe(t *testing.T) {
 	_, stderr, err := captureOutput(t, func() error { return Run([]string{"doctor", "--help"}, "test") })
 	if err != nil {
 		t.Fatalf("doctor --help: %v", err)
 	}
-	for _, want := range []string{"--project DIR", "--profile NAME", "--all-profiles", "selected profile", "pointer-sync drift", "amq-squad doctor --project ~/Code/app", "amq-squad doctor --profile review"} {
+	for _, want := range []string{"--project DIR", "--write-registry", "--probe", "amq-squad doctor --project ~/Code/app", "not trust"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("doctor --help should mention %q, got:\n%s", want, stderr)
 		}
@@ -180,113 +137,6 @@ func TestStatusHelpDocumentsProject(t *testing.T) {
 	}
 }
 
-func TestAgentHelpDocumentsProject(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{name: "agent up", args: []string{"agent", "up", "--help"}, want: []string{"--project DIR", "amq-squad agent up codex --project ~/Code/app"}},
-		{name: "agent resume", args: []string{"agent", "resume", "--help"}, want: []string{"--project", "amq-squad agent resume cto --project ~/Code/app"}},
-	}
-	for _, tc := range cases {
-		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
-		if err != nil {
-			t.Fatalf("%s --help: %v", tc.name, err)
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(stderr, want) {
-				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
-			}
-		}
-	}
-}
-
-func TestLifecycleHelpDocumentsProject(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{name: "start", args: []string{"start", "--help"}, want: []string{"--project DIR", "amq-squad start --project ~/Code/app"}},
-		{name: "down", args: []string{"down", "--help"}, want: []string{"--project DIR", "amq-squad down --project ~/Code/app"}},
-		{name: "resume", args: []string{"resume", "--help"}, want: []string{"--project DIR", "amq-squad resume --project ~/Code/app"}},
-	}
-	for _, tc := range cases {
-		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
-		if err != nil {
-			t.Fatalf("%s --help: %v", tc.name, err)
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(stderr, want) {
-				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
-			}
-		}
-	}
-}
-
-func TestStartHelpDescribesSingleReconcileCommand(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"start", "--help"}, "test") })
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"reconcile one canonical team workstream", "By default, start previews", "Rerunning keeps verified live roles", "and rolls forward", "partial managed launches"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("start help missing %q:\n%s", want, stderr)
-		}
-	}
-	for _, stale := range []string{"--prepare", "[--go]", " --go ", " --go\n"} {
-		if strings.Contains(stderr, stale) {
-			t.Fatalf("start help still advertises %q:\n%s", stale, stderr)
-		}
-	}
-}
-
-// TestGoalGroupHelp asserts gh#761's surviving `goal` surface: draft and
-// supervise-resume are the only documented subcommands (apply/claim/
-// deliver/retry-attempt/start were removed in v2.31.0 -- see
-// TestGoalUnknownSubcommandEnumeratesCompleteSurface and
-// removedGoalSubcommandError for their redirect), and the help text names
-// the removal explicitly so an operator who remembers the old surface is
-// pointed at the replacement rather than left guessing.
-func TestGoalGroupHelp(t *testing.T) {
-	for _, args := range [][]string{{"goal", "--help"}, {"goal", "-h"}} {
-		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
-		if err != nil {
-			t.Errorf("Run %v: returned %v, want nil", args, err)
-			continue
-		}
-		for _, want := range []string{
-			"amq-squad goal",
-			"Subcommands:",
-			"draft",
-			"supervise-resume",
-			"Examples:",
-			"amq-squad goal draft",
-			"gh#761",
-			"--goal TEXT",
-		} {
-			if !strings.Contains(stderr, want) {
-				t.Errorf("Run %v: missing %q in help output:\n%s", args, want, stderr)
-			}
-		}
-		for _, stale := range []string{"amq-squad goal apply", "amq-squad goal deliver", "amq-squad goal start", "amq-squad goal claim", "amq-squad goal retry-attempt"} {
-			if strings.Contains(stderr, stale) {
-				t.Errorf("Run %v: help output still advertises removed subcommand usage %q:\n%s", args, stale, stderr)
-			}
-		}
-		subcommands := helpSection(t, stderr, "Subcommands:", "gh#761")
-		// Subcommands must appear in alphabetical order.
-		draftPos := strings.Index(subcommands, "draft")
-		superviseResumePos := strings.Index(subcommands, "supervise-resume")
-		if draftPos < 0 || superviseResumePos < 0 {
-			t.Errorf("Run %v: all goal subcommands must appear in help output", args)
-		} else if !(draftPos < superviseResumePos) {
-			t.Errorf("Run %v: subcommands must be alphabetical (draft, supervise-resume)", args)
-		}
-	}
-}
-
 func TestOperatorGroupHelp(t *testing.T) {
 	for _, args := range [][]string{{"operator", "--help"}, {"operator", "-h"}, {"operator"}} {
 		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -298,14 +148,10 @@ func TestOperatorGroupHelp(t *testing.T) {
 			"amq-squad operator",
 			"Subcommands:",
 			"answer",
-			"directive",
-			"poll",
-			"status",
-			"watch",
+			"inbox",
 			"Examples:",
 			"amq-squad operator answer",
-			"amq-squad operator directive",
-			"amq-squad operator status",
+			"amq-squad operator inbox",
 		} {
 			if !strings.Contains(stderr, want) {
 				t.Errorf("Run %v: missing %q in help output:\n%s", args, want, stderr)
@@ -313,15 +159,15 @@ func TestOperatorGroupHelp(t *testing.T) {
 		}
 		subcommands := helpSection(t, stderr, "Subcommands:", "Run 'amq-squad")
 		// Subcommands must appear in alphabetical order.
-		answerPos := strings.Index(subcommands, "answer")
-		directivePos := strings.Index(subcommands, "directive")
-		pollPos := strings.Index(subcommands, "poll")
-		statusPos := strings.Index(subcommands, "status")
-		watchPos := strings.Index(subcommands, "watch")
-		if answerPos < 0 || directivePos < 0 || pollPos < 0 || statusPos < 0 || watchPos < 0 {
-			t.Errorf("Run %v: all operator subcommands must appear in help output", args)
-		} else if !(answerPos < directivePos && directivePos < pollPos && pollPos < statusPos && statusPos < watchPos) {
-			t.Errorf("Run %v: subcommands must be alphabetical (answer < directive < poll < status < watch)", args)
+		for _, name := range operatorSubcommands {
+			if !strings.Contains(subcommands, name) {
+				t.Errorf("Run %v: dispatched subcommand %q missing from help output", args, name)
+			}
+		}
+		for _, removed := range []string{"directive", "poll", "watch", "send", "self-approve"} {
+			if strings.Contains(subcommands, removed) {
+				t.Errorf("Run %v: help still names removed subcommand %q", args, removed)
+			}
 		}
 	}
 }
@@ -340,22 +186,9 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 	return rest[:end]
 }
 
-// TestGoalUnknownSubcommandEnumeratesCompleteSurface asserts the
-// unknown-subcommand path's enumeration matches gh#761's surviving surface
-// (draft, supervise-resume) -- the five removed names never reach this
-// path: they get their own specific removedGoalSubcommandError redirect
-// instead (see TestGoalLegacySubcommandsAreGone in goal_test.go).
-func TestGoalUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return Run([]string{"goal", "bogus"}, "test") })
-	want := `unknown 'goal' subcommand: "bogus". Try 'draft' or 'supervise-resume'.`
-	if err == nil || err.Error() != want {
-		t.Fatalf("goal unknown-subcommand error = %v, want %q", err, want)
-	}
-}
-
 func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
-	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', 'send', 'directive', 'poll', 'status', or 'watch'.`
+	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'inbox', or 'start-squad'.`
 	if err == nil || err.Error() != want {
 		t.Fatalf("operator unknown-subcommand error = %v, want %q", err, want)
 	}
@@ -367,16 +200,8 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{name: "team init", args: []string{"team", "init", "--help"}, want: []string{"--project DIR", "amq-squad team init --project ~/Code/app"}},
-		{name: "team profiles", args: []string{"team", "profiles", "--help"}, want: []string{"--project DIR", "amq-squad team profiles --project ~/Code/app"}},
-		{name: "team rm", args: []string{"team", "rm", "--help"}, want: []string{"--project DIR", "amq-squad team delete review --project ~/Code/app --yes"}},
-		{name: "team delete", args: []string{"team", "delete", "--help"}, want: []string{"--project DIR", "Deletes the selected team profile config only"}},
-		{name: "team sync", args: []string{"team", "sync", "--help"}, want: []string{"--project DIR", "amq-squad team sync --project ~/Code/app --apply"}},
-		// gh#758/t11: "team resume" omitted -- deleted outright (hard
-		// error), its --help is a one-line redirect with no "--project
-		// DIR" usage doc to check, unlike the other legacy verbs above.
-		{name: "team rules show", args: []string{"team", "rules", "show", "--help"}, want: []string{"--project DIR", "amq-squad team rules show --project ~/Code/app"}},
-		{name: "team rules init", args: []string{"team", "rules", "init", "--help"}, want: []string{"--project DIR", "amq-squad team rules init --project ~/Code/app"}},
+		{name: "team propose", args: []string{"team", "propose", "--help"}, want: []string{"--project DIR", "amq-squad team propose --project ~/Code/app"}},
+		{name: "team apply", args: []string{"team", "apply", "--help"}, want: []string{"--project DIR", "amq-squad team apply --digest"}},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
@@ -388,5 +213,107 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
 			}
 		}
+	}
+}
+
+// commandTextSubcommands is what each verb dispatches, for the guards below.
+func commandTextSubcommands() map[string][]string {
+	return map[string][]string{
+		"team":     append(append([]string(nil), teamSubcommandHints...), "resume"),
+		"task":     append(append([]string(nil), taskSubcommands...), "ls", "complete"),
+		"operator": operatorSubcommands,
+		"amq":      {"env", "route"},
+	}
+}
+
+// assertTextNamesRegisteredCommands fails on any `amq-squad VERB [SUB]` in text
+// whose verb is not registered, or whose SUB is not dispatched for verbs that
+// take subcommands (2a-2: stale names in kept text).
+func assertTextNamesRegisteredCommands(t *testing.T, label, text string) {
+	t.Helper()
+	registered := map[string]bool{"version": true}
+	for _, name := range commandNames("v-test") {
+		registered[name] = true
+	}
+	subs := commandTextSubcommands()
+	found := 0
+	for _, m := range regexp.MustCompile(`amq-squad ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?`).FindAllStringSubmatch(text, -1) {
+		verb, sub := m[1], m[2]
+		if !registered[verb] {
+			continue // prose ("amq-squad injects ..."), checked by the backtick guard
+		}
+		found++
+		allowed, hasSubs := subs[verb]
+		if !hasSubs || sub == "" {
+			continue
+		}
+		ok := false
+		for _, a := range allowed {
+			ok = ok || a == sub
+		}
+		if !ok {
+			t.Errorf("%s names %q, but %s dispatches %v", label, "amq-squad "+verb+" "+sub, verb, allowed)
+		}
+	}
+	for _, m := range regexp.MustCompile("`amq-squad ([a-z][a-z-]*)").FindAllStringSubmatch(text, -1) {
+		if !registered[m[1]] {
+			t.Errorf("%s names %q, which is not a registered command", label, "amq-squad "+m[1])
+		}
+	}
+	_ = found
+}
+
+func TestGeneratedTeamRulesNameRegisteredCommands(t *testing.T) {
+	for _, mode := range []string{"", team.OperatorInteractionLeadPane, team.OperatorInteractionSeparateTerminal, team.OperatorInteractionNOC} {
+		opMode := mode
+		body, err := renderTeamRules(team.Team{
+			Project: t.TempDir(), OperatorInteraction: opMode, Orchestrated: true, Lead: "cto",
+			Members: []team.Member{
+				{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"},
+				{Role: "dev-1", Binary: "claude", Handle: "dev-1", Session: "s", ActorMode: team.ActorModeImplementation},
+				{Role: "dev-2", Binary: "codex", Handle: "dev-2", Session: "s", ActorMode: team.ActorModeImplementation},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertTextNamesRegisteredCommands(t, "team rules (mode "+mode+")", body)
+		for _, removed := range []string{"tmux", "DIRECTIVE:", "local_input", "wake nudge"} {
+			if strings.Contains(body, removed) {
+				t.Errorf("team rules (mode %s) still mention removed %q", mode, removed)
+			}
+		}
+	}
+}
+
+func TestCommandSummariesAndUsageNameDispatchedSubcommands(t *testing.T) {
+	subs := commandTextSubcommands()
+	for _, verb := range []string{"team", "task"} {
+		summary := commandSummary(verb)
+		open, close := strings.Index(summary, "("), strings.LastIndex(summary, ")")
+		if open < 0 || close < open {
+			t.Fatalf("%s summary lists no subcommands: %q", verb, summary)
+		}
+		for _, name := range strings.FieldsFunc(summary[open+1:close], func(r rune) bool { return r == ',' || r == ' ' || r == '/' }) {
+			ok := false
+			for _, a := range subs[verb] {
+				ok = ok || a == name
+			}
+			if !ok {
+				t.Errorf("%s summary names %q, which %s does not dispatch", verb, name, verb)
+			}
+		}
+	}
+	_, teamUsage, _ := captureOutput(t, func() error { printTeamUsage(); return nil })
+	assertTextNamesRegisteredCommands(t, "team usage", teamUsage)
+	if strings.Contains(teamUsage, "team operator self") {
+		t.Errorf("team usage still names the removed team operator self subcommand:\n%s", teamUsage)
+	}
+	_, taskUsage, _ := captureOutput(t, func() error { return runTask(nil) })
+	assertTextNamesRegisteredCommands(t, "task usage", taskUsage)
+	_, dispatchUsage, _ := captureOutput(t, func() error { return runDispatch([]string{"--help"}) })
+	assertTextNamesRegisteredCommands(t, "dispatch usage", dispatchUsage)
+	if strings.Contains(dispatchUsage, "amq-squad amq send") {
+		t.Errorf("dispatch usage still names the removed amq send wrapper")
 	}
 }

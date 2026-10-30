@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // withOutputPolicy sets currentOutputPolicy for one test and restores it
@@ -230,66 +230,6 @@ func TestDoctorJSONNeverANSIEvenWhenColorEnabled(t *testing.T) {
 	}
 }
 
-// TestStatusHumanOutputColorMatrix mirrors the doctor color matrix for
-// status. statusExecution + classifyMemberStatus paths.
-func TestStatusHumanOutputColorMatrix(t *testing.T) {
-	setupFakeAMQSessionRoots(t)
-	seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	t.Run("color on emits ANSI", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: true})
-		stdout, _, err := captureOutput(t, func() error {
-			return runStatus([]string{"--session", "issue-96"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(stdout, "\x1b[") {
-			t.Errorf("expected ANSI in colored status output:\n%s", stdout)
-		}
-	})
-	t.Run("color off emits plain", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: false})
-		stdout, _, err := captureOutput(t, func() error {
-			return runStatus([]string{"--session", "issue-96"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(stdout, "\x1b[") {
-			t.Errorf("plain status output should not contain ANSI:\n%s", stdout)
-		}
-	})
-}
-
-// TestDownHumanOutputColorMatrix mirrors the doctor color matrix for the
-// down table. Calls renderDownReports directly with a curated report set.
-func TestDownHumanOutputColorMatrix(t *testing.T) {
-	reports := []downReport{
-		{Role: "cto", Status: downStatusStopped, Detail: "SIGTERM sent to pid 1"},
-		{Role: "fullstack", Status: downStatusFailed, Detail: "boom"},
-	}
-	t.Run("color on emits ANSI", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: true})
-		var b strings.Builder
-		_ = renderDownReports(&b, "stop", "issue-96", reports)
-		if !strings.Contains(b.String(), "\x1b[") {
-			t.Errorf("expected ANSI in colored down output:\n%s", b.String())
-		}
-	})
-	t.Run("color off emits plain", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: false})
-		var b strings.Builder
-		_ = renderDownReports(&b, "stop", "issue-96", reports)
-		if strings.Contains(b.String(), "\x1b[") {
-			t.Errorf("plain down output should not contain ANSI:\n%s", b.String())
-		}
-	})
-}
-
 // TestRunGlobalFlagFormsExercised drives Run() with the four positions cto
 // listed (before/after subcommand for both --quiet and --color), proving
 // the global parser hooks into the real dispatch path.
@@ -330,28 +270,6 @@ func TestRunGlobalFlagFormsExercised(t *testing.T) {
 	}
 }
 
-func TestCompletionContainsGlobalFlags(t *testing.T) {
-	cases := map[string][]string{
-		"bash": {"--quiet", "--verbose", "--color"},
-		"zsh":  {"'--quiet'", "'--verbose'", "'--color'"},
-		// fish emits long flags with `-l 'name'`.
-		"fish": {"-l 'quiet'", "-l 'verbose'", "-l 'color'"},
-	}
-	for shell, wants := range cases {
-		stdout, _, err := captureOutput(t, func() error {
-			return runCompletion([]string{shell})
-		})
-		if err != nil {
-			t.Fatalf("%s: %v", shell, err)
-		}
-		for _, want := range wants {
-			if !strings.Contains(stdout, want) {
-				t.Errorf("%s completion missing %q", shell, want)
-			}
-		}
-	}
-}
-
 func TestRootHelpDocumentsOutputFlags(t *testing.T) {
 	stdout, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "test") })
 	if err != nil {
@@ -361,79 +279,6 @@ func TestRootHelpDocumentsOutputFlags(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("root --help missing %q in:\n%s", want, stdout)
 		}
-	}
-}
-
-// TestQuietSuppressesTeamRulesInitNotice covers a concrete locked notice
-// site: `team rules init` writes "Wrote ..." to stderr. Under --quiet the
-// line must be absent; without --quiet it must be present.
-func TestQuietSuppressesTeamRulesInitNotice(t *testing.T) {
-	t.Run("loud emits the wrote notice", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{})
-		dir := t.TempDir()
-		chdir(t, dir)
-		_, stderr, err := captureOutput(t, func() error {
-			return runTeam([]string{"rules", "init"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(stderr, "Wrote ") {
-			t.Errorf("loud team rules init should print Wrote notice, got stderr:\n%s", stderr)
-		}
-	})
-	t.Run("quiet suppresses the wrote notice", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Quiet: true})
-		dir := t.TempDir()
-		chdir(t, dir)
-		_, stderr, err := captureOutput(t, func() error {
-			return runTeam([]string{"rules", "init"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(stderr, "Wrote ") {
-			t.Errorf("quiet team rules init should not print the Wrote notice, got stderr:\n%s", stderr)
-		}
-	})
-}
-
-// TestQuietDoesNotSuppressWarningsOrErrors confirms --quiet only gates
-// non-data notices: actual error output still appears.
-func TestQuietDoesNotSuppressWarningsOrErrors(t *testing.T) {
-	withOutputPolicy(t, outputPolicy{Quiet: true})
-	dir := t.TempDir()
-	chdir(t, dir)
-	// up in a dir with no team.json returns a non-UsageError, which the
-	// command itself surfaces as a plain returned error. The error must
-	// not be swallowed by --quiet (errors flow through main, not
-	// quietNotice).
-	_, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--no-bootstrap"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "no team configured") {
-		t.Fatalf("--quiet must not swallow command errors; got %v", err)
-	}
-}
-
-// TestQuietDoesNotSuppressDryRunStdout covers the contract that --quiet
-// only suppresses non-data stderr notices: stdout data (dry-run command
-// preview) must still appear.
-func TestQuietDoesNotSuppressDryRunStdout(t *testing.T) {
-	withOutputPolicy(t, outputPolicy{Quiet: true})
-	seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
-	stdout, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--no-bootstrap"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout, "agent up") {
-		t.Errorf("--quiet must not suppress dry-run command output on stdout:\n%s", stdout)
 	}
 }
 
@@ -462,5 +307,42 @@ func TestDoctorVerboseFooter(t *testing.T) {
 	_ = executeDoctor(d)
 	if strings.Contains(jsonOut.String(), "verbose:") {
 		t.Errorf("JSON doctor output must not include the verbose footer:\n%s", jsonOut.String())
+	}
+}
+
+// TestQuietDoesNotSuppressDryRunStdout covers the contract that --quiet
+// only suppresses non-data stderr notices: stdout data (the roles
+// listing) must still appear.
+func TestQuietDoesNotSuppressDryRunStdout(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{Quiet: true})
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	stdout, _, err := captureOutput(t, func() error {
+		return runRoles(nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "cto") {
+		t.Errorf("--quiet must not suppress dry-run command output on stdout:\n%s", stdout)
+	}
+}
+
+// TestQuietDoesNotSuppressWarningsOrErrors confirms --quiet only gates
+// non-data notices: actual error output still appears.
+func TestQuietDoesNotSuppressWarningsOrErrors(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{Quiet: true})
+	dir := t.TempDir()
+	chdir(t, dir)
+	// team show in a dir with no squad.yaml returns a plain error, which
+	// --quiet must not swallow (errors flow through main, not quietNotice).
+	_, _, err := captureOutput(t, func() error {
+		return runTeam([]string{"show"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "no squad.yaml") {
+		t.Fatalf("--quiet must not swallow command errors; got %v", err)
 	}
 }

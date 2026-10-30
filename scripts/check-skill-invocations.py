@@ -86,6 +86,12 @@ PLACEHOLDERS = {
     "X": "9",
     "Y": "9",
     "Z": "9",
+    # 3.0 store verbs take the AMQ session root itself (--root ROOT), and the
+    # merge, release and worktree verbs name a commit, a tag and a PR number.
+    "ROOT": "{fixture}/.agent-mail/issue-1",
+    "SHA": "a" * 40,
+    "TAG": "v9.9.9",
+    "N": "9",
 }
 
 # `gate raise` validates --kind/--action against the shared catalog before
@@ -351,14 +357,83 @@ def make_fixture(root: Path, index: int) -> Path:
     return fixture
 
 
-def clean_env() -> dict[str, str]:
+# The GitHub CLI's credential and host variables. With HOME moved gh has no stored
+# login, but these survive a plain environment copy, and gh without auth still
+# reaches api.github.com anonymously.
+GH_ENV_KEYS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+
+GH_STUB_MESSAGE = "gh stub: no network from the skill gate"
+GH_STUB_LOG = "gh-stub.log"
+GH_STUB_VERSION = "gh version 0.0.0-skill-gate-stub"
+
+
+def install_gh_stub(home: Path) -> Path:
+    """Write a refusing `gh` into <home>/bin and return that directory.
+
+    The documented merge-train, release, verify and trust invocations can reach for
+    gh. `gh --version` alone prints GH_STUB_VERSION and exits 0 (a local version
+    probe; doctor runs it). Any other argv exits 1 with GH_STUB_MESSAGE on stderr and appends its argv to
+    <home>/gh-stub.log, so a call is caught even when amq-squad swallows gh's
+    stderr. git stays real.
+    """
+    bindir = home / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    stub = bindir / "gh"
+    log = home / GH_STUB_LOG
+    stub.write_text(
+        "#!/bin/sh\n"
+        # `gh --version` is a local probe (doctor's gh pin row runs it): one
+        # fixed line, exit 0, not logged. Every other argv is refused and logged.
+        'if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then\n'
+        f"  echo {shlex.quote(GH_STUB_VERSION)}\n"
+        "  exit 0\n"
+        "fi\n"
+        f"printf 'gh %s\\n' \"$*\" >> {shlex.quote(str(log))}\n"
+        f"echo {shlex.quote(GH_STUB_MESSAGE)} >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    return bindir
+
+
+def clean_env(home: Path | None = None) -> dict[str, str]:
+    """The environment every documented invocation runs under.
+
+    AM_* and AMQ_* (the seat identity, AMQ_SQUAD_CONFIG) and the tmux variables are
+    dropped. With `home`, HOME and XDG_CONFIG_HOME point at that throwaway directory:
+    3.0 verbs read and write ~/.amq-squad (grants.yaml, fleet.yaml, the gate binding)
+    and ~/.config/amq-squad/config.json (the drafter). Run against the real home, a
+    documented `gate raise --action tag` could post to the owner's Buzz DM through
+    the owner's gate binding, and a documented `role draft` could call the owner's
+    configured drafter: both reach the network, and neither may run from this gate.
+    """
     import os
 
     env = dict(os.environ)
     for key in list(env):
-        if key.startswith(("AM_", "AMQ_")) or key in ("TMUX", "TMUX_PANE"):
+        if key.startswith(("AM_", "AMQ_")) or key in ("TMUX", "TMUX_PANE") or key in GH_ENV_KEYS:
             env.pop(key)
+    if home is not None:
+        env["HOME"] = str(home)
+        env["XDG_CONFIG_HOME"] = str(home / ".config")
+        # The refusing gh goes first on PATH, so no documented invocation can reach
+        # GitHub through the PATH lookup.
+        env["PATH"] = str(install_gh_stub(home)) + os.pathsep + env.get("PATH", "")
     return env
+
+
+def gh_stub_calls(env: dict[str, str]) -> list[str]:
+    """The gh calls the stub recorded under this environment's home, then reset."""
+    home = env.get("HOME")
+    if not home:
+        return []
+    log = Path(home) / GH_STUB_LOG
+    if not log.exists():
+        return []
+    calls = log.read_text(encoding="utf-8").splitlines()
+    log.unlink()
+    return calls
 
 
 def run_invocation(binary: str, command: str, fixture: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -378,6 +453,11 @@ def run_invocation(binary: str, command: str, fixture: Path, env: dict[str, str]
         # A crash is never an acceptable outcome for a documented command,
         # whatever exit code the runtime maps it to.
         return -1, "panicked: " + proc.stderr.strip().splitlines()[0]
+    calls = gh_stub_calls(env)
+    if calls or GH_STUB_MESSAGE in (proc.stderr or "") + (proc.stdout or ""):
+        # Reaching for gh is reaching for the network: a documented invocation
+        # must stop before it, whatever exit code it then returned.
+        return -1, f"{GH_STUB_MESSAGE} (reached for gh: {'; '.join(calls) or 'see stderr'})"
     detail = (proc.stderr or proc.stdout).strip().splitlines()
     return proc.returncode, detail[0] if detail else ""
 
@@ -392,10 +472,16 @@ def main() -> int:
     if not invocations:
         print("no invocations extracted — extraction is broken, refusing to pass", file=sys.stderr)
         return 1
-    env = clean_env()
     failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="skill-inv-") as tmp:
-        root = Path(tmp)
+        # Resolved: macOS puts the temp dir under /var, a symlink to /private/var, and
+        # the 3.0 verbs open their roots anchored (no symlinked ancestor), so an
+        # unresolved fixture made every anchored open refuse before parsing anything
+        # the gate exists to check.
+        root = Path(tmp).resolve()
+        home = root / "home"
+        home.mkdir()
+        env = clean_env(home)
         for index, (path, line, command) in enumerate(invocations):
             fixture = make_fixture(root, index)
             try:
@@ -417,7 +503,7 @@ def main() -> int:
         for failure in failures:
             print(failure + "\n", file=sys.stderr)
         return 1
-    print(f"skill-invocation-check: {len(invocations)} documented invocation(s) execute cleanly")
+    print(f"skill-invocation-check: {len(invocations)} documented invocation(s) execute cleanly; none reached for gh (stubbed)")
     if skipped:
         print(f"  {len(skipped)} flagless inline reference(s) not executed (existence gate covers them):")
         for path, line, span in skipped:

@@ -1,0 +1,167 @@
+{
+  "model": "ollama/qwen2.5:32b",
+  "runs": {
+    "lead": [
+      {
+        "series": "lead",
+        "runtime_cold": false,
+        "rehash_ms": 124.9,
+        "launch_rest_ms": 18.0,
+        "node_ready_ms": 839.1,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 7.8,
+        "model_ms": 5011.5,
+        "first_token_ms": 6001.3,
+        "total_ms": 6104.4,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "lead",
+        "runtime_cold": false,
+        "rehash_ms": 114.6,
+        "launch_rest_ms": 10.9,
+        "node_ready_ms": 147.6,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 7.5,
+        "model_ms": 81.9,
+        "first_token_ms": 362.5,
+        "total_ms": 466.1,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "lead",
+        "runtime_cold": false,
+        "rehash_ms": 115.1,
+        "launch_rest_ms": 11.6,
+        "node_ready_ms": 146.6,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 7.7,
+        "model_ms": 81.4,
+        "first_token_ms": 362.4,
+        "total_ms": 465.5,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "lead",
+        "runtime_cold": false,
+        "rehash_ms": 119.7,
+        "launch_rest_ms": 12.5,
+        "node_ready_ms": 148.4,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 7.4,
+        "model_ms": 81.6,
+        "first_token_ms": 369.6,
+        "total_ms": 472.3,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "lead",
+        "runtime_cold": false,
+        "rehash_ms": 116.3,
+        "launch_rest_ms": 11.3,
+        "node_ready_ms": 147.1,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 7.4,
+        "model_ms": 79.9,
+        "first_token_ms": 362.0,
+        "total_ms": 464.1,
+        "answer": "42",
+        "exit": 0
+      }
+    ],
+    "control": [
+      {
+        "series": "control",
+        "runtime_cold": false,
+        "rehash_ms": 115.4,
+        "launch_rest_ms": 12.3,
+        "node_ready_ms": 132.6,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 0.9,
+        "model_ms": 1085.2,
+        "first_token_ms": 1346.4,
+        "total_ms": 1430.4,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "control",
+        "runtime_cold": false,
+        "rehash_ms": 119.6,
+        "launch_rest_ms": 12.2,
+        "node_ready_ms": 134.5,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 0.9,
+        "model_ms": 70.5,
+        "first_token_ms": 337.7,
+        "total_ms": 426.6,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "control",
+        "runtime_cold": false,
+        "rehash_ms": 118.5,
+        "launch_rest_ms": 12.1,
+        "node_ready_ms": 128.3,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 1.0,
+        "model_ms": 72.7,
+        "first_token_ms": 332.6,
+        "total_ms": 421.2,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "control",
+        "runtime_cold": false,
+        "rehash_ms": 117.0,
+        "launch_rest_ms": 12.3,
+        "node_ready_ms": 129.1,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 0.8,
+        "model_ms": 70.0,
+        "first_token_ms": 329.2,
+        "total_ms": 414.5,
+        "answer": "42",
+        "exit": 0
+      },
+      {
+        "series": "control",
+        "runtime_cold": false,
+        "rehash_ms": 121.3,
+        "launch_rest_ms": 12.0,
+        "node_ready_ms": 129.7,
+        "first_event": "session",
+        "ready_to_agent_start_ms": 0.9,
+        "model_ms": 69.2,
+        "first_token_ms": 333.1,
+        "total_ms": 423.4,
+        "answer": "42",
+        "exit": 0
+      }
+    ]
+  },
+  "medians": {
+    "lead": {
+      "rehash_ms": 116.3,
+      "launch_rest_ms": 11.6,
+      "node_ready_ms": 147.6,
+      "ready_to_agent_start_ms": 7.5,
+      "model_ms": 81.6,
+      "first_token_ms": 362.5
+    },
+    "control": {
+      "rehash_ms": 118.5,
+      "launch_rest_ms": 12.2,
+      "node_ready_ms": 129.7,
+      "ready_to_agent_start_ms": 0.9,
+      "model_ms": 70.5,
+      "first_token_ms": 333.1
+    }
+  }
+}

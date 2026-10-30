@@ -1,0 +1,49 @@
+## drift_alerts: revert internal/mergetrain/drift.go; go test -run 'TestDriftAlertsOnUngatedTagsAndReleases' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: '\t\tfor _, t := range targets {\n\t\t\tif accepted[t] {'
+-- to:       '\t\tfor _, t := range targets {\n\t\t\tif accepted[t] || true {'
+--- FAIL: TestDriftAlertsOnUngatedTagsAndReleases (0.78s)
+    acceptance_test.go:396: ungated tag and release: <nil> []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.131s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.229s
+
+## drift_gate_covers: revert internal/mergetrain/drift.go; go test -run 'TestDriftAlertsOnUngatedTagsAndReleases' ./internal/mergetrain/: FAILS with the fix reverted (good)
+-- reverted: '\t\tfor _, t := range targets {\n\t\t\tif accepted[t] {'
+-- to:       '\t\tfor _, t := range targets {\n\t\t\tif false && accepted[t] {'
+--- FAIL: TestDriftAlertsOnUngatedTagsAndReleases (1.10s)
+    acceptance_test.go:409: after the tag's gate: <nil> [{ID:ungated-tag-fd8f6ee43e5a Repository:owner/fixture Kind:tag Name:v1 SHA:5c67f03607a104e986cad925e85bb98ce583eaba At:2026-10-24T14:08:21Z Detail:tag v1 on owner/fixture has no accepted owner gate} {ID:ungated-release-605507fe8072 Repository:owner/fixture Kind:release Name:v1 SHA: At:2026-10-24T14:08:21Z Detail:release v1 on owner/fixture has no accepted owner gate}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.486s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.015s
+
+## status_owner_alert: revert internal/status/classify.go; go test -run 'TestOwnerAlertBecomesNeedsYouAttention' ./internal/status/: FAILS with the fix reverted (good)
+-- reverted: '\tfor _, a := range in.Alerts {\n'
+-- to:       '\tfor _, a := range in.Alerts[:0] {\n'
+--- FAIL: TestOwnerAlertBecomesNeedsYouAttention (0.00s)
+    alerts_test.go:38: attention []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/status	0.241s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/status	0.238s
+
+## doctor_release_drift: revert internal/cli/doctor_release_drift.go; go test -run 'TestDoctorReleaseDriftFailsOnAnUngatedTag' ./internal/cli/: FAILS with the fix reverted (good)
+-- reverted: '\t\tcase len(alerts) > 0:'
+-- to:       '\t\tcase false:'
+--- FAIL: TestDoctorReleaseDriftFailsOnAnUngatedTag (0.02s)
+    doctor_release_drift_test.go:43: ungated tag and release: [{Name:release drift o/r Status:ok Detail:every tag and release since the baseline has an accepted owner gate Kind: Role:}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.302s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.338s
+
+SUMMARY: all reverted rows failed and pass restored

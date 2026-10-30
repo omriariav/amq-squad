@@ -1,0 +1,75 @@
+2026-10-24T17:44:31Z
+ea62759a docs: upstream ask 17, the Codex sandbox pins as provider arguments (brief 2b-2)
+=== go build ./...
+=== exit 0
+=== go vet ./...
+=== exit 0
+=== go test -count=1 ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.802s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	1.271s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	2.132s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.611s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	2.529s
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	3.145s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	3.614s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	64.772s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	27.593s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	49.618s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	25.629s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	3.636s
+?   	github.com/omriariav/amq-squad/v3/internal/fsanchor	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	9.044s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	6.982s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	15.259s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	5.804s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	8.398s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	5.021s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	7.740s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	6.628s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	7.348s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	8.478s
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	20.540s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	7.991s
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	61.826s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	13.107s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	6.157s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	5.962s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	31.585s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	23.284s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	16.212s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	15.472s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	11.879s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	21.917s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	5.896s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	5.341s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	6.074s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	25.036s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	3.237s
+ok  	github.com/omriariav/amq-squad/v3/scripts	6.271s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	4.283s
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
+=== exit 0
+=== scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        84      43515        21719
+replace        2       2431            0
+review         4       3687         2803
+delete       140      49894            0
+new          109          0        20496
+TOTAL        397     111761        55666
+target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+v2 rows kept: 29,153, ceiling 36,410 (deferred-replace rows excluded: 1657 lines) [--final]
+3.0 additions: 109 files, 20,291 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 49,444 lines (v2 rows kept plus 3.0 additions)
+like for like, class 1 and 2 rows and their targets removed: 27144 lines against a target sum of 33333 (-18.6 percent over)
+class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 1194 over target
+manifest-check: OK
+=== exit 0
+=== env GOOS=linux go build ./...
+=== exit 0
+=== env GOOS=windows go build ./...
+=== exit 0
+GATE OK

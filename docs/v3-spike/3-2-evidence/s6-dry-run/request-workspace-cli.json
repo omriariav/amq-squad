@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "repository": "omriariav/workspace-cli",
+  "base": "main",
+  "required_checks": ["build (1.25)"],
+  "prs": [
+    {"number": 216, "task": "W7", "declared_files": ["cmd/sheets_test.go"]},
+    {"number": 217, "task": "W3", "declared_files": ["cmd/sheets.go", "cmd/sheets_test.go"]},
+    {"number": 218, "task": "W12", "declared_files": ["internal/client/factory_test.go"]},
+    {"number": 219, "task": "W5", "declared_files": ["cmd/root.go", "internal/client/factory.go"]},
+    {"number": 220, "task": "W2", "declared_files": ["cmd/drive.go", "cmd/drive_test.go"]},
+    {"number": 221, "task": "W6", "declared_files": ["cmd/gmail.go", "cmd/gmail_test.go"]},
+    {"number": 222, "task": "W4", "declared_files": ["cmd/slides.go", "cmd/slides_test.go"]},
+    {"number": 223, "task": "W8", "declared_files": ["cmd/hooks_test.go"]},
+    {"number": 224, "task": "W9", "declared_files": ["internal/auth/oauth_test.go"]}
+  ]
+}

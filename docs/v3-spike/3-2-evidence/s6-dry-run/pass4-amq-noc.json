@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "kind": "merge_train",
+  "data": {
+    "run": "mt-20261024T174243Z-3e7f3d1e",
+    "repository": "omriariav/amq-noc",
+    "base": "main",
+    "base_sha": "d7ff91b2d086f97a3e5de1232bb3334661a42f3c",
+    "dry_run": true,
+    "manual": false,
+    "protection": {
+      "required_checks": null,
+      "direct_push_refused": false,
+      "force_push_refused": false,
+      "notes": [
+        "no ruleset and no branch protection"
+      ]
+    },
+    "protection_met": false,
+    "ci_checks": [
+      {
+        "context": "ci"
+      }
+    ],
+    "pairs": [
+      {
+        "number": 79,
+        "head": "2f30ba21d1232060d28228ab5c85c60c4a4f69d5"
+      },
+      {
+        "number": 80,
+        "head": "f0216a58e81750dca048b7b3a8c97bf8af4bcd05"
+      },
+      {
+        "number": 81,
+        "head": "a581b16e77532145ac71aefe98ca86c71bfe66d3"
+      },
+      {
+        "number": 82,
+        "head": "90443c368f2c462f60e01b29fe026205271fe3f2"
+      },
+      {
+        "number": 83,
+        "head": "e821e63de4cb417c234107cd8169231737a26539"
+      },
+      {
+        "number": 84,
+        "head": "635c578665269ef895d9e5f4116973a1cf5daf7a"
+      },
+      {
+        "number": 85,
+        "head": "376298aeeac2b54ff49302daeca8872a788ad86b"
+      },
+      {
+        "number": 86,
+        "head": "ebcf929690ecf46ddc55b298965a31eb17d05315"
+      },
+      {
+        "number": 87,
+        "head": "9ae9a4ac7124276015cae7ffca0aad9791a1caed"
+      }
+    ],
+    "digest": "sha256:2b7668b8c2612d8baf87efb232a9ccf7bddb9f494f85a3ad97cbd14808d561b1",
+    "digests": [
+      "sha256:2b7668b8c2612d8baf87efb232a9ccf7bddb9f494f85a3ad97cbd14808d561b1"
+    ],
+    "prs": [
+      {
+        "number": 79,
+        "task": "N10",
+        "head": "2f30ba21d1232060d28228ab5c85c60c4a4f69d5",
+        "draft": true,
+        "changed_lines": 109,
+        "files": [
+          "internal/cli/list_test.go"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 80,
+        "task": "N3",
+        "head": "f0216a58e81750dca048b7b3a8c97bf8af4bcd05",
+        "draft": true,
+        "changed_lines": 127,
+        "files": [
+          "internal/console/noc_golden_test.go",
+          "internal/console/testdata/board_needs_you_80x24.golden"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 81,
+        "task": "N2",
+        "head": "a581b16e77532145ac71aefe98ca86c71bfe66d3",
+        "draft": true,
+        "changed_lines": 46,
+        "files": [
+          "PLAN.md",
+          "QA-02-06-26.md"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 82,
+        "task": "N5",
+        "head": "90443c368f2c462f60e01b29fe026205271fe3f2",
+        "draft": true,
+        "changed_lines": 184,
+        "files": [
+          "internal/cli/agent_args_test.go"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 83,
+        "task": "N6",
+        "head": "e821e63de4cb417c234107cd8169231737a26539",
+        "draft": true,
+        "changed_lines": 207,
+        "files": [
+          "internal/cli/amq_env_test.go"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 84,
+        "task": "N7",
+        "head": "635c578665269ef895d9e5f4116973a1cf5daf7a",
+        "draft": true,
+        "changed_lines": 187,
+        "files": [
+          "internal/cli/briefs_seed_test.go"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 85,
+        "task": "N8",
+        "head": "376298aeeac2b54ff49302daeca8872a788ad86b",
+        "draft": true,
+        "changed_lines": 78,
+        "files": [
+          "internal/act/act_test.go"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 86,
+        "task": "N9",
+        "head": "ebcf929690ecf46ddc55b298965a31eb17d05315",
+        "draft": true,
+        "changed_lines": 137,
+        "files": [
+          "internal/cli/doctor_test.go"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      },
+      {
+        "number": 87,
+        "task": "N13",
+        "head": "9ae9a4ac7124276015cae7ffca0aad9791a1caed",
+        "draft": true,
+        "changed_lines": 75,
+        "files": [
+          "internal/rules/rules.go",
+          "internal/rules/rules_test.go"
+        ],
+        "rebase_for_ci": true,
+        "status": "planned"
+      }
+    ],
+    "wall_ms": 27729,
+    "gh_calls": 68
+  }
+}

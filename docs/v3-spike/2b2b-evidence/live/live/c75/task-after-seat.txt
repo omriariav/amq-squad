@@ -1,0 +1,7 @@
+t1  append codex-7.5
+  state:    in_progress
+  class:    implement
+  priority: 0
+  files:    note.txt
+  lease:    c75, claimed 2026-10-24T17:45:54Z, expires 2026-10-24T17:55:54Z, 0 renewals
+  attempt:  1

@@ -1,116 +1,39 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/reviewrebind"
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/ledger"
+	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
+	"github.com/omriariav/amq-squad/v3/internal/releaseflow"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
-
-const (
-	verifyMergeStateSuccess = "success"
-	verifyMergeStateClean   = "clean"
-)
-
-type verifyMergeEvidence struct {
-	Subject         string                      `json:"subject"`
-	HeadSHA         string                      `json:"head_sha"`
-	Base            string                      `json:"base,omitempty"`
-	CI              verifyMergeCheck            `json:"ci"`
-	Review          verifyMergeCheck            `json:"review"`
-	ReviewRebinding *verifyMergeReviewRebinding `json:"review_rebinding,omitempty"`
-	Exceptions      []verifyMergeException      `json:"exceptions"`
-}
-
-type verifyMergeCheck struct {
-	State     string `json:"state"`
-	SHA       string `json:"sha"`
-	Source    string `json:"source"`
-	CheckedAt string `json:"checked_at"`
-	URL       string `json:"url,omitempty"`
-}
-
-type verifyMergeException struct {
-	Name     string `json:"name"`
-	Approved bool   `json:"approved"`
-	Gate     string `json:"gate,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-}
-
-type verifyMergeReviewRebinding struct {
-	ArtifactID string `json:"artifact_id"`
-}
-
-type verifyMergeResult struct {
-	OK              bool                        `json:"ok"`
-	Subject         string                      `json:"subject,omitempty"`
-	HeadSHA         string                      `json:"head_sha,omitempty"`
-	EvidenceSummary *verifyMergeEvidenceSummary `json:"evidence_summary,omitempty"`
-	Failures        []verifyMergeFailure        `json:"failures,omitempty"`
-}
-
-type verifyMergeFailure struct {
-	Code   string `json:"code"`
-	Detail string `json:"detail"`
-}
-
-type verifyMergeEvidenceSummary struct {
-	CI              verifyMergeCheckSummary            `json:"ci"`
-	Review          verifyMergeCheckSummary            `json:"review"`
-	ReviewRebinding *verifyMergeReviewRebindingSummary `json:"review_rebinding,omitempty"`
-	Exceptions      []verifyMergeExceptionSummary      `json:"exceptions,omitempty"`
-}
-
-type verifyMergeReviewRebindingSummary struct {
-	ArtifactID     string `json:"artifact_id"`
-	ProofType      string `json:"proof_type"`
-	OldHead        string `json:"old_head"`
-	NewHead        string `json:"new_head"`
-	ArtifactSHA256 string `json:"artifact_sha256"`
-}
-
-type verifyMergeCheckSummary struct {
-	State     string `json:"state"`
-	SHA       string `json:"sha"`
-	Source    string `json:"source"`
-	CheckedAt string `json:"checked_at"`
-	URL       string `json:"url,omitempty"`
-}
-
-type verifyMergeExceptionSummary struct {
-	Name     string `json:"name"`
-	Approved bool   `json:"approved"`
-	Gate     string `json:"gate,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-}
 
 func runVerify(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprint(os.Stderr, `amq-squad verify - deterministic preflight checks
+		fmt.Fprint(os.Stderr, `amq-squad verify - deterministic preflight and evidence checks
 
 Usage:
   amq-squad verify action --project DIR --session S --gate TOPIC --action KIND --target TARGET [--json]
   amq-squad verify authorization --file FILE --action KIND --target TARGET --trust-store FILE [--json]
   amq-squad verify rebind --project DIR --old-head A --new-head B [options]
-  amq-squad verify merge --project DIR --evidence <file|-> [--json]
-  amq-squad verify release --evidence <file|-> [--json]
+  amq-squad verify merge --repository OWNER/NAME --pr N [--task ID] [--root DIR] [--json]
+  amq-squad verify release --tag TAG [--task ID] [--root DIR] [--json]
   amq-squad verify release-plan --repository OWNER/REPO --branch BRANCH --head SHA --version VERSION [options]
 
-The action guard validates a resolved operator gate for high-risk actions
-(default/protected branch push, tags, GitHub releases, external sends). The
-merge preflight validates normalized per-PR evidence (CI + review at a head
-SHA). The release preflight validates a final-release-commit co-sign gate: an
-exact-SHA developer co-sign AND an operator release approval before publish.
-None of these commands queries providers, infers state, merges, pushes, tags,
-releases, or mutates remote state. 'verify rebind' writes only a local immutable
-proof artifact after successful Git-object verification. 'APPROVED to release'
-alone never authorizes publish: push/tag/release require bound authorization
-evidence, and remain operator-performed. Failed evidence prints the failed
+action and authorization check a gate's answer for one action and target.
+merge and release read the evidence 3.0 keeps, never a v2 evidence file: the
+merge train's audit log (the batch digest, the rules check, the merge under
+the owner's identity), the release flow's records and gates, and, with
+--task, the task's hook ledger lines (its lease holders' lines inside their
+lease windows) and its outcome log rows, redacted. None of these commands
+merges, pushes, tags or releases. Failed evidence prints the failed
 conditions and exits non-zero.
 `)
 		if len(args) == 0 {
@@ -125,10 +48,8 @@ conditions and exits non-zero.
 		return runVerifyAuthorization(args[1:])
 	case "rebind":
 		return runVerifyRebind(args[1:])
-	case "merge":
-		return runVerifyMerge(args[1:])
-	case "release":
-		return runVerifyRelease(args[1:])
+	case "merge", "release":
+		return runVerifyEvidence(args[0], args[1:])
 	case "release-plan":
 		return runVerifyReleasePlan(args[1:])
 	default:
@@ -136,476 +57,172 @@ conditions and exits non-zero.
 	}
 }
 
-func runVerifyMerge(args []string) error {
-	fs := flag.NewFlagSet("verify merge", flag.ContinueOnError)
-	project := fs.String("project", ".", "Git project containing any review rebinding artifact")
-	evidencePath := fs.String("evidence", "", "path to normalized merge evidence JSON, or '-' for stdin (required)")
+type verifyMergeFailure struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail"`
+}
+
+// verifyEvidenceResult is the evidence of one merge or one release.
+type verifyEvidenceResult struct {
+	OK       bool               `json:"ok"`
+	Kind     string             `json:"kind"` // merge | release
+	Subject  string             `json:"subject"`
+	Audit    []mergetrain.Entry `json:"audit,omitempty"`
+	Release  []releaseflow.Step `json:"release,omitempty"`
+	Ledger   []ledger.TaskLine  `json:"ledger,omitempty"`
+	Outcomes []json.RawMessage  `json:"outcomes,omitempty"`
+	// Incomplete says the task's evidence could not be read whole, with the
+	// reasons (5 re-pass, P2-7): it is never dropped in silence.
+	Incomplete        bool                 `json:"incomplete,omitempty"`
+	IncompleteReasons []string             `json:"incomplete_reasons,omitempty"`
+	Failures          []verifyMergeFailure `json:"failures,omitempty"`
+}
+
+func runVerifyEvidence(kind string, args []string) error {
+	fs := flag.NewFlagSet("verify "+kind, flag.ContinueOnError)
+	repo := fs.String("repository", "", "owner/name (merge)")
+	pr := fs.Int("pr", 0, "PR number (merge)")
+	tag := fs.String("tag", "", "release tag (release)")
+	taskID := fs.String("task", "", "task whose ledger and outcome rows to include")
+	root := fs.String("root", "", "session root (default AM_ROOT)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad verify merge - validate merge-readiness evidence
-
-Usage:
-  amq-squad verify merge --project DIR --evidence <file|->
-  amq-squad verify merge --project DIR --evidence <file|-> --json
-
-Evidence schema:
-  {
-    "subject": "PR or change identifier",
-    "head_sha": "current change head SHA",
-    "ci": {"state": "success", "sha": "same SHA", "source": "...", "checked_at": "..."},
-    "review": {"state": "clean", "sha": "same SHA", "source": "...", "checked_at": "..."},
-    "exceptions": [{"name": "...", "approved": true, "gate": "gate/topic"}]
-  }
-
-When review.sha is an older reviewed commit, review_rebinding must identify the
-canonical immutable proof artifact:
-
-  "review_rebinding": {"artifact_id": "<old-head>--<new-head>.json"}
-
-The artifact must bind review.sha to head_sha and its tree or scoped patch-id
-proof is re-run from Git objects. CI always remains bound directly to head_sha.
-Failed evidence prints machine-readable failures under --json and exits non-zero.
-`)
-	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	r := firstOf(strings.TrimSpace(*root), strings.TrimSpace(os.Getenv("AM_ROOT")))
+	if r == "" || !filepath.IsAbs(r) {
+		return usageErrorf("verify %s: the session root must be absolute (--root or AM_ROOT)", kind)
 	}
-	path := strings.TrimSpace(*evidencePath)
-	if path == "" {
-		return usageErrorf("--evidence is required")
+	var res verifyEvidenceResult
+	var err error
+	if kind == "merge" {
+		if *repo == "" || *pr < 1 {
+			return usageErrorf("verify merge: --repository and --pr are required")
+		}
+		res, err = mergeEvidence(r, *repo, *pr)
+	} else {
+		if *tag == "" {
+			return usageErrorf("verify release: --tag is required")
+		}
+		res, err = releaseEvidence(r, *tag)
 	}
-	evidence, err := readVerifyMergeEvidence(path, os.Stdin)
 	if err != nil {
-		return err
+		return fmt.Errorf("verify %s: %w", kind, err)
 	}
-	result := validateVerifyMergeEvidenceAtProject(evidence, strings.TrimSpace(*project))
-	if *jsonOut {
-		if err := printJSONEnvelope("verify_merge", result); err != nil {
+	if *taskID != "" {
+		store, err := task.Open(r)
+		if err != nil {
 			return err
 		}
-		if !result.OK {
-			return UsageError("merge preflight failed")
-		}
-		return nil
-	}
-	if result.OK {
-		fmt.Printf("merge preflight passed for %s at %s\n", displaySubject(evidence), strings.TrimSpace(evidence.HeadSHA))
-		return nil
-	}
-	fmt.Printf("merge preflight failed for %s at %s\n", displaySubject(evidence), strings.TrimSpace(evidence.HeadSHA))
-	for _, f := range result.Failures {
-		fmt.Printf("- %s: %s\n", f.Code, f.Detail)
-	}
-	return UsageError("merge preflight failed")
-}
-
-func readVerifyMergeEvidence(path string, stdin io.Reader) (verifyMergeEvidence, error) {
-	var r io.Reader
-	if path == "-" {
-		r = stdin
-	} else {
-		f, err := os.Open(path)
+		t, err := store.Get(*taskID)
 		if err != nil {
-			return verifyMergeEvidence{}, fmt.Errorf("read evidence: %w", err)
+			return fmt.Errorf("verify %s: task %s: %w", kind, *taskID, err)
 		}
-		defer f.Close()
-		r = f
+		var why, more []string
+		if res.Ledger, why, err = ledger.ForTask(r, t, hookNow()); err != nil {
+			return err
+		}
+		if res.Outcomes, more, err = ledger.Outcomes(r, t.ID); err != nil {
+			return err
+		}
+		res.IncompleteReasons = append(why, more...)
+		res.Incomplete = len(res.IncompleteReasons) > 0
 	}
-	var evidence verifyMergeEvidence
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&evidence); err != nil {
-		return verifyMergeEvidence{}, fmt.Errorf("decode evidence: %w", err)
+	if *jsonOut {
+		if err := printJSONEnvelope("verify_"+kind, res); err != nil {
+			return err
+		}
+	} else {
+		fmt.Printf("%s evidence for %s: ok %v (%d audit entries, %d release steps, %d ledger lines, %d outcome rows)\n",
+			kind, res.Subject, res.OK, len(res.Audit), len(res.Release), len(res.Ledger), len(res.Outcomes))
+		for _, f := range res.Failures {
+			fmt.Printf("- %s: %s\n", f.Code, f.Detail)
+		}
+		for _, why := range res.IncompleteReasons {
+			fmt.Printf("- incomplete evidence: %s\n", why)
+		}
 	}
-	var extra struct{}
-	if err := dec.Decode(&extra); err != io.EOF {
-		return verifyMergeEvidence{}, fmt.Errorf("decode evidence: multiple JSON values")
+	if !res.OK {
+		return UsageError(kind + " evidence failed")
 	}
-	return evidence, nil
+	return nil
 }
 
-func validateVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeResult {
-	return validateVerifyMergeEvidenceAtProject(e, "")
-}
-
-func validateVerifyMergeEvidenceAtProject(e verifyMergeEvidence, projectDir string) verifyMergeResult {
-	result := verifyMergeResult{
-		Subject: strings.TrimSpace(e.Subject),
-		HeadSHA: strings.TrimSpace(e.HeadSHA),
+// mergeEvidence: the PR merged through the train when its last audit entry
+// is a merge whose head is the head of the last batch digest naming it.
+func mergeEvidence(root, repo string, pr int) (verifyEvidenceResult, error) {
+	res := verifyEvidenceResult{Kind: "merge", Subject: fmt.Sprintf("%s#%d", repo, pr)}
+	entries, err := mergetrain.AuditFor(root).Read()
+	if err != nil {
+		return res, err
 	}
-	if result.HeadSHA == "" {
-		result.Failures = append(result.Failures, verifyMergeFailure{
-			Code:   "missing_head_sha",
-			Detail: "head_sha is required",
-		})
-	}
-	result.Failures = append(result.Failures, validateVerifyMergeCheck("ci", e.CI, result.HeadSHA, verifyMergeStateSuccess)...)
-	result.Failures = append(result.Failures, validateVerifyMergeCheck("review", e.Review, "", verifyMergeStateClean)...)
-	reviewSHA := strings.TrimSpace(e.Review.SHA)
-	var rebindingSummary *verifyMergeReviewRebindingSummary
-	if result.HeadSHA != "" && reviewSHA != "" {
-		switch {
-		case reviewSHA == result.HeadSHA && e.ReviewRebinding != nil:
-			result.Failures = append(result.Failures, verifyMergeFailure{
-				Code:   "review_rebinding_unnecessary",
-				Detail: "review_rebinding must be omitted when review.sha already equals head_sha",
-			})
-		case reviewSHA != result.HeadSHA && e.ReviewRebinding == nil:
-			result.Failures = append(result.Failures, verifyMergeFailure{
-				Code:   "review_stale_sha",
-				Detail: fmt.Sprintf("review.sha is %q, want head_sha %q or a valid review_rebinding artifact", reviewSHA, result.HeadSHA),
-			})
-		case reviewSHA != result.HeadSHA:
-			summary, err := verifyMergeRebinding(projectDir, *e.ReviewRebinding, reviewSHA, result.HeadSHA, strings.TrimSpace(e.Base))
-			if err != nil {
-				result.Failures = append(result.Failures, verifyMergeFailure{
-					Code:   "review_rebinding_invalid",
-					Detail: err.Error(),
-				})
-			} else {
-				rebindingSummary = &summary
+	var batchHead string
+	for _, e := range entries {
+		if e.Repository != repo {
+			continue
+		}
+		if e.Kind == "batch" && !e.DryRun {
+			for _, p := range e.Pairs {
+				if p.Number == pr {
+					batchHead = p.Head
+				}
 			}
 		}
-	}
-	for i, ex := range e.Exceptions {
-		name := strings.TrimSpace(ex.Name)
-		switch {
-		case name == "":
-			result.Failures = append(result.Failures, verifyMergeFailure{
-				Code:   "unnamed_exception",
-				Detail: fmt.Sprintf("exceptions[%d] has no name", i),
-			})
-		case !ex.Approved:
-			result.Failures = append(result.Failures, verifyMergeFailure{
-				Code:   "unapproved_exception",
-				Detail: fmt.Sprintf("exception %q is not approved", name),
-			})
+		if e.PR == pr {
+			res.Audit = append(res.Audit, e)
 		}
 	}
-	result.OK = len(result.Failures) == 0
-	if result.OK {
-		summary := summarizeVerifyMergeEvidence(e)
-		summary.ReviewRebinding = rebindingSummary
-		result.EvidenceSummary = &summary
-	}
-	return result
-}
-
-func verifyMergeRebinding(projectDir string, ref verifyMergeReviewRebinding, reviewSHA, headSHA, base string) (verifyMergeReviewRebindingSummary, error) {
-	projectDir = strings.TrimSpace(projectDir)
-	if projectDir == "" {
-		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("a Git --project is required to re-prove review rebinding")
-	}
-	id := strings.TrimSpace(ref.ArtifactID)
-	if id == "" || id != ref.ArtifactID {
-		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("review_rebinding.artifact_id must be a non-empty canonical ID")
-	}
-	store, err := reviewrebind.OpenStore(projectDir, false)
-	if err != nil {
-		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("open rebinding store: %w", err)
-	}
-	defer store.Close()
-	artifact, err := store.Read(id)
-	if err != nil {
-		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("read rebinding artifact: %w", err)
-	}
-	if artifact.OldHead != reviewSHA || artifact.NewHead != headSHA {
-		return verifyMergeReviewRebindingSummary{}, fmt.Errorf(
-			"artifact direction is %s -> %s, want review.sha %s -> head_sha %s",
-			artifact.OldHead, artifact.NewHead, reviewSHA, headSHA,
-		)
-	}
-	if artifact.ProofType == reviewrebind.ProofPatchID {
-		if base == "" {
-			return verifyMergeReviewRebindingSummary{}, fmt.Errorf("patch-id rebinding requires merge evidence base")
-		}
-		resolvedBase, err := reviewrebind.ResolveCommit(context.Background(), projectDir, base)
-		if err != nil {
-			return verifyMergeReviewRebindingSummary{}, fmt.Errorf("resolve merge evidence base: %w", err)
-		}
-		if resolvedBase != artifact.NewBase {
-			return verifyMergeReviewRebindingSummary{}, fmt.Errorf(
-				"artifact new_base is %s, want merge evidence base %s",
-				artifact.NewBase, resolvedBase,
-			)
+	var last *mergetrain.Entry
+	for i := range res.Audit {
+		if !res.Audit[i].DryRun {
+			last = &res.Audit[i]
 		}
 	}
-	if err := reviewrebind.Verify(context.Background(), projectDir, artifact); err != nil {
-		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("re-prove rebinding artifact: %w", err)
-	}
-	return verifyMergeReviewRebindingSummary{
-		ArtifactID:     id,
-		ProofType:      artifact.ProofType,
-		OldHead:        artifact.OldHead,
-		NewHead:        artifact.NewHead,
-		ArtifactSHA256: artifact.ArtifactSHA256,
-	}, nil
-}
-
-func summarizeVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeEvidenceSummary {
-	summary := verifyMergeEvidenceSummary{
-		CI:     summarizeVerifyMergeCheck(e.CI),
-		Review: summarizeVerifyMergeCheck(e.Review),
-	}
-	for _, ex := range e.Exceptions {
-		summary.Exceptions = append(summary.Exceptions, verifyMergeExceptionSummary{
-			Name:     strings.TrimSpace(ex.Name),
-			Approved: ex.Approved,
-			Gate:     strings.TrimSpace(ex.Gate),
-			Reason:   strings.TrimSpace(ex.Reason),
-		})
-	}
-	return summary
-}
-
-func summarizeVerifyMergeCheck(check verifyMergeCheck) verifyMergeCheckSummary {
-	return verifyMergeCheckSummary{
-		State:     strings.TrimSpace(check.State),
-		SHA:       strings.TrimSpace(check.SHA),
-		Source:    strings.TrimSpace(check.Source),
-		CheckedAt: strings.TrimSpace(check.CheckedAt),
-		URL:       strings.TrimSpace(check.URL),
-	}
-}
-
-func validateVerifyMergeCheck(field string, check verifyMergeCheck, headSHA string, wantState string) []verifyMergeFailure {
-	var failures []verifyMergeFailure
-	state := strings.TrimSpace(check.State)
-	sha := strings.TrimSpace(check.SHA)
-	if state == "" {
-		failures = append(failures, verifyMergeFailure{
-			Code:   field + "_missing_state",
-			Detail: field + ".state is required",
-		})
-	} else if state != wantState {
-		failures = append(failures, verifyMergeFailure{
-			Code:   field + "_state_not_" + wantState,
-			Detail: fmt.Sprintf("%s.state is %q, want %q", field, state, wantState),
-		})
-	}
-	if sha == "" {
-		failures = append(failures, verifyMergeFailure{
-			Code:   field + "_missing_sha",
-			Detail: field + ".sha is required",
-		})
-	} else if headSHA != "" && sha != headSHA {
-		failures = append(failures, verifyMergeFailure{
-			Code:   field + "_stale_sha",
-			Detail: fmt.Sprintf("%s.sha is %q, want head_sha %q", field, sha, headSHA),
-		})
-	}
-	return failures
-}
-
-func displaySubject(e verifyMergeEvidence) string {
-	if s := strings.TrimSpace(e.Subject); s != "" {
-		return s
-	}
-	return "change"
-}
-
-const verifyReleaseStateApproved = "approved"
-
-// verifyReleaseEvidence is the normalized evidence for the #285 final-release
-// co-sign gate. It is a DIFFERENT artifact from merge evidence: it binds release
-// CI, a developer co-sign, and an operator release approval to the exact final
-// assembled release commit SHA before publish.
-type verifyReleaseEvidence struct {
-	Subject          string                        `json:"subject"`
-	Version          string                        `json:"version"`
-	ReleaseCommitSHA string                        `json:"release_commit_sha"`
-	CI               verifyMergeCheck              `json:"ci"`
-	Cosign           verifyReleaseCosign           `json:"cosign"`
-	OperatorApproval verifyReleaseOperatorApproval `json:"operator_release_approval"`
-}
-
-type verifyReleaseCosign struct {
-	State string `json:"state"`
-	SHA   string `json:"sha"`
-	// Reviewer is the developer co-signing the final release commit; must be a
-	// SECOND actor, not the release-lead.
-	Reviewer string `json:"reviewer"`
-	// DistinctFromReleaseLead asserts the co-signer is a different actor than the
-	// release-lead. amq-squad cannot infer this from git alone, so the evidence
-	// must assert it and the gate validates the assertion.
-	DistinctFromReleaseLead bool   `json:"distinct_from_release_lead"`
-	Source                  string `json:"source"`
-	CheckedAt               string `json:"checked_at"`
-	URL                     string `json:"url,omitempty"`
-}
-
-type verifyReleaseOperatorApproval struct {
-	Approved  bool   `json:"approved"`
-	Gate      string `json:"gate"`
-	Source    string `json:"source"`
-	CheckedAt string `json:"checked_at"`
-	Reason    string `json:"reason,omitempty"`
-}
-
-type verifyReleaseResult struct {
-	OK               bool                          `json:"ok"`
-	Subject          string                        `json:"subject,omitempty"`
-	Version          string                        `json:"version,omitempty"`
-	ReleaseCommitSHA string                        `json:"release_commit_sha,omitempty"`
-	EvidenceSummary  *verifyReleaseEvidenceSummary `json:"evidence_summary,omitempty"`
-	Failures         []verifyMergeFailure          `json:"failures,omitempty"`
-}
-
-type verifyReleaseEvidenceSummary struct {
-	CI               verifyMergeCheckSummary       `json:"ci"`
-	Cosign           verifyReleaseCosign           `json:"cosign"`
-	OperatorApproval verifyReleaseOperatorApproval `json:"operator_release_approval"`
-}
-
-func runVerifyRelease(args []string) error {
-	fs := flag.NewFlagSet("verify release", flag.ContinueOnError)
-	evidencePath := fs.String("evidence", "", "path to normalized release evidence JSON, or '-' for stdin (required)")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad verify release - validate the final-release-commit co-sign gate (#285)
-
-Usage:
-  amq-squad verify release --evidence <file|->
-  amq-squad verify release --evidence <file|-> --json
-
-Evidence schema:
-  {
-    "subject": "release vX.Y.Z",
-    "version": "vX.Y.Z",
-    "release_commit_sha": "<final assembled release commit SHA>",
-    "ci": {"state": "success", "sha": "<release_commit_sha>", "source": "...", "checked_at": "..."},
-    "cosign": {"state": "approved", "sha": "<release_commit_sha>", "reviewer": "<dev, not release-lead>", "distinct_from_release_lead": true, "source": "...", "checked_at": "..."},
-    "operator_release_approval": {"approved": true, "gate": "gate/<topic>", "source": "...", "checked_at": "..."}
-  }
-
-Publish-ready requires BOTH an exact-SHA developer co-sign and an approved
-operator release gate; neither substitutes for the other. The command never
-pushes, tags, or releases. Failed evidence prints the failed conditions and
-exits non-zero.
-`)
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() > 0 {
-		return usageErrorf("unexpected argument %q", fs.Arg(0))
-	}
-	path := strings.TrimSpace(*evidencePath)
-	if path == "" {
-		return usageErrorf("--evidence is required")
-	}
-	evidence, err := readVerifyReleaseEvidence(path, os.Stdin)
-	if err != nil {
-		return err
-	}
-	result := validateVerifyReleaseEvidence(evidence)
-	if *jsonOut {
-		if err := printJSONEnvelope("verify_release", result); err != nil {
-			return err
-		}
-		if !result.OK {
-			return UsageError("release preflight failed")
-		}
-		return nil
-	}
-	subject := strings.TrimSpace(evidence.Subject)
-	if subject == "" {
-		subject = "release"
-	}
-	if result.OK {
-		fmt.Printf("release preflight passed for %s at %s\n", subject, strings.TrimSpace(evidence.ReleaseCommitSHA))
-		return nil
-	}
-	fmt.Printf("release preflight failed for %s at %s\n", subject, strings.TrimSpace(evidence.ReleaseCommitSHA))
-	for _, f := range result.Failures {
-		fmt.Printf("- %s: %s\n", f.Code, f.Detail)
-	}
-	return UsageError("release preflight failed")
-}
-
-func readVerifyReleaseEvidence(path string, stdin io.Reader) (verifyReleaseEvidence, error) {
-	var r io.Reader
-	if path == "-" {
-		r = stdin
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return verifyReleaseEvidence{}, fmt.Errorf("read evidence: %w", err)
-		}
-		defer f.Close()
-		r = f
-	}
-	var evidence verifyReleaseEvidence
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&evidence); err != nil {
-		return verifyReleaseEvidence{}, fmt.Errorf("decode evidence: %w", err)
-	}
-	var extra struct{}
-	if err := dec.Decode(&extra); err != io.EOF {
-		return verifyReleaseEvidence{}, fmt.Errorf("decode evidence: multiple JSON values")
-	}
-	return evidence, nil
-}
-
-func validateVerifyReleaseEvidence(e verifyReleaseEvidence) verifyReleaseResult {
-	result := verifyReleaseResult{
-		Subject:          strings.TrimSpace(e.Subject),
-		Version:          strings.TrimSpace(e.Version),
-		ReleaseCommitSHA: strings.TrimSpace(e.ReleaseCommitSHA),
-	}
-	sha := result.ReleaseCommitSHA
-	if sha == "" {
-		result.Failures = append(result.Failures, verifyMergeFailure{
-			Code:   "missing_release_commit_sha",
-			Detail: "release_commit_sha is required",
-		})
-	}
-	// Release CI must be green and bound to the exact final release commit.
-	result.Failures = append(result.Failures, validateVerifyMergeCheck("ci", e.CI, sha, verifyMergeStateSuccess)...)
-
-	// Developer co-sign on the exact final release commit (a SECOND actor).
-	cs := e.Cosign
-	state := strings.TrimSpace(cs.State)
 	switch {
-	case state == "":
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_missing_state", Detail: "cosign.state is required"})
-	case state != verifyReleaseStateApproved:
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_state_not_approved", Detail: fmt.Sprintf("cosign.state is %q, want %q", state, verifyReleaseStateApproved)})
+	case last == nil:
+		res.Failures = append(res.Failures, verifyMergeFailure{"no_merge", "the audit log has no real-run entry for this PR"})
+	case last.Kind != "merge":
+		res.Failures = append(res.Failures, verifyMergeFailure{"not_merged", "the last entry is " + last.Kind + ": " + last.Detail})
+	case last.Head != batchHead:
+		res.Failures = append(res.Failures, verifyMergeFailure{"digest_mismatch", "the merged head " + last.Head + " is not the head of the last batch digest (" + batchHead + ")"})
 	}
-	csSHA := strings.TrimSpace(cs.SHA)
-	if csSHA == "" {
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_missing_sha", Detail: "cosign.sha is required"})
-	} else if sha != "" && csSHA != sha {
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_stale_sha", Detail: fmt.Sprintf("cosign.sha is %q, want release_commit_sha %q (the co-sign must be on the exact final release commit)", csSHA, sha)})
-	}
-	if strings.TrimSpace(cs.Reviewer) == "" {
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_missing_reviewer", Detail: "cosign.reviewer is required (the developer co-signing the final release commit)"})
-	}
-	if !cs.DistinctFromReleaseLead {
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_not_distinct_actor", Detail: "cosign.distinct_from_release_lead must be true: the co-signer must be a second actor, not the release-lead"})
-	}
+	res.OK = len(res.Failures) == 0
+	return res, nil
+}
 
-	// Operator release approval is a SEPARATE required gate; it never substitutes
-	// for the co-sign, and the co-sign never substitutes for it.
-	op := e.OperatorApproval
-	if !op.Approved {
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "operator_approval_not_approved", Detail: "operator_release_approval.approved must be true"})
+// releaseEvidence: both children of the tag's release ran, each after its
+// gate's accepted decision.
+func releaseEvidence(root, tag string) (verifyEvidenceResult, error) {
+	res := verifyEvidenceResult{Kind: "release", Subject: tag}
+	gates, err := gatestore.Open(root)
+	if err != nil {
+		return res, err
 	}
-	if strings.TrimSpace(op.Gate) == "" && strings.TrimSpace(op.Source) == "" {
-		result.Failures = append(result.Failures, verifyMergeFailure{Code: "operator_approval_missing_reference", Detail: "operator_release_approval requires a gate or source reference"})
-	}
-
-	result.OK = len(result.Failures) == 0
-	if result.OK {
-		result.EvidenceSummary = &verifyReleaseEvidenceSummary{
-			CI:               summarizeVerifyMergeCheck(e.CI),
-			Cosign:           cs,
-			OperatorApproval: op,
+	dirs, _ := filepath.Glob(filepath.Join(root, "extensions", "amq-squad", "releases", "*"))
+	for _, dir := range dirs {
+		var steps []releaseflow.Step
+		for _, role := range []string{"tag", "github_release"} {
+			raw, err := os.ReadFile(filepath.Join(dir, role+".json"))
+			if err != nil {
+				continue
+			}
+			var st releaseflow.Step
+			if json.Unmarshal(raw, &st) == nil {
+				steps = append(steps, st)
+			}
+		}
+		if len(steps) > 0 && strings.HasPrefix(steps[0].Target, "git tag "+tag+" ") {
+			res.Release = steps
 		}
 	}
-	return result
+	if len(res.Release) != 2 {
+		res.Failures = append(res.Failures, verifyMergeFailure{"not_released", fmt.Sprintf("%d of 2 release steps ran for %s", len(res.Release), tag)})
+	}
+	for _, st := range res.Release {
+		if d := gates.Decision(st.GateID); d != gatestore.StateAccepted {
+			res.Failures = append(res.Failures, verifyMergeFailure{"gate_not_accepted", st.Role + " gate " + st.GateID + " is " + d})
+		}
+	}
+	res.OK = len(res.Failures) == 0
+	return res, nil
 }

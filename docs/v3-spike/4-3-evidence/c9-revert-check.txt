@@ -1,0 +1,289 @@
+# 4-3 revert check of commit 9 (Codex re-pass of d02dd2fc: identity, fencing, liveness, adapters)
+# head: d02dd2fc056b65a419f2666835850aca8be8aeea (working tree: the commit under test)
+# go: go version go1.27.1 darwin/arm64
+# Each step undoes one fix in place, runs only its test rows, expects FAIL,
+# and restores the file byte for byte. The last step runs every row.
+
+## revert identity 1 a mapped path resolved through symlinks: internal/fleet/identity.go; run ^TestMappedSymlinkPathIsUnidentified$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/identity.go
++++ internal/fleet/identity.go (reverted)
+@@ -57,7 +57,8 @@
+ 	}
+ 	var fromGrant, remote string
+ 	for _, rp := range f.RepositoryPaths {
+-		mapped, err := openNoFollow(rp.Path)
++		rpReal, _ := filepath.EvalSymlinks(rp.Path) // REVERT identity 1
++		mapped, err := openNoFollow(rpReal)
+ 		if err != nil {
+ 			if p, perr := filepath.EvalSymlinks(rp.Path); perr == nil && (p == mainPath || p == canonical) {
+ 				return "", "", fmt.Errorf("the fleet grant maps %s through a symlink (%v); a mapped path must be the checkout itself", rp.Path, err)
+=== RUN   TestMappedSymlinkPathIsUnidentified
+    review3_test.go:44: a symlinked mapped path identified the checkout as "owner/app"
+--- FAIL: TestMappedSymlinkPathIsUnidentified (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.360s
+FAIL
+## RESULT identity 1 a mapped path resolved through symlinks: FAILED with the fix reverted, as expected (exit 1)
+
+## revert identity 2 the identity file read by path: internal/fleet/identity.go; run ^TestSymlinkedIdentityDirIsRefused$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/identity.go
++++ internal/fleet/identity.go (reverted)
+@@ -6,6 +6,7 @@
+ 	"errors"
+ 	"fmt"
+ 	"io/fs"
++	"os"
+ 	"path/filepath"
+ 	"strings"
+ 
+@@ -144,7 +145,7 @@
+ 
+ // identityFile is the checkout's .amq-squad/repository, "" when absent.
+ func identityFile(d *fsanchor.AnchoredDir, path string) (string, error) {
+-	raw, err := readBelow(d, ".amq-squad", "repository")
++	raw, err := os.ReadFile(filepath.Join(path, ".amq-squad", "repository")) // REVERT identity 2
+ 	if notExist(err) {
+ 		return "", nil
+ 	}
+=== RUN   TestSymlinkedIdentityDirIsRefused
+    review3_test.go:65: a symlinked .amq-squad lent the identity "owner/other"
+--- FAIL: TestSymlinkedIdentityDirIsRefused (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.956s
+FAIL
+## RESULT identity 2 the identity file read by path: FAILED with the fix reverted, as expected (exit 1)
+
+## revert identity 3 a worktree identified by itself: internal/fleet/identity.go; run ^TestWorktreeIdentityIsItsMainCheckouts$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/identity.go
++++ internal/fleet/identity.go (reverted)
+@@ -48,7 +48,7 @@
+ 		return "", "", fmt.Errorf("repository root %s: %w", canonical, err)
+ 	}
+ 	defer checkout.Close()
+-	main, mainPath, err := mainCheckout(checkout, canonical)
++	main, mainPath, err := checkout, canonical, error(nil) // REVERT identity 3
+ 	if err != nil {
+ 		return "", "", err
+ 	}
+=== RUN   TestWorktreeIdentityIsItsMainCheckouts
+    review3_test.go:80: a worktree identified itself as "owner/wt" with its main checkout unidentified
+--- FAIL: TestWorktreeIdentityIsItsMainCheckouts (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.364s
+FAIL
+## RESULT identity 3 a worktree identified by itself: FAILED with the fix reverted, as expected (exit 1)
+
+## revert reservation a reclaimed reservation deleted, not fenced: internal/fleet/registry.go; run ^TestFencedLateLaunchIsClosed$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/registry.go
++++ internal/fleet/registry.go (reverted)
+@@ -176,8 +176,7 @@
+ 			// deleted. It no longer counts; a late promotion against it
+ 			// closes the launched seats (launch_fenced).
+ 			r.record(s, reason, now)
+-			s.Phase, s.FencedReason = PhaseFenced, reason
+-			keep = append(keep, s)
++			// REVERT reservation: deleted, not fenced
+ 		}
+ 	}
+ 	r.Squads = keep
+=== RUN   TestFencedLateLaunchIsClosed
+    review3_test.go:143: the stalled reservation is not fenced: [{Name:web Root:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFencedLateLaunchIsClosed2959677198/001/web/.agent-mail/web ProjectPath:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestFencedLateLaunchIsClosed2959677198/001/web Repository:owner/web Lead:lead Session: Project: Phase: Reservation: Incarnation: MayorPID: MayorStart: PhaseSince: LiveSeats: FencedReason:}]
+--- FAIL: TestFencedLateLaunchIsClosed (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.493s
+FAIL
+## RESULT reservation a reclaimed reservation deleted, not fenced: FAILED with the fix reverted, as expected (exit 1)
+
+## revert liveness 1 the clock read before the lock: internal/fleet/mayor.go; run ^TestAdmissionReadsTheClockUnderTheLock$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -343,7 +343,7 @@
+ 	var held *Result
+ 	inc := m.incarnation()
+ 	err = Update(m.RegistryPath, func(r *Registry) error {
+-		now := m.now() // read under the lock, not before it
++		// REVERT liveness 1: the clock read before the lock
+ 		r.ReleaseStale(now, m.PhaseWindow, m.incarnationAlive)
+ 		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
+ 			return errDuplicate
+=== RUN   TestAdmissionReadsTheClockUnderTheLock
+    review3_test.go:201: waiting since [{Name:web Repository:owner/web ProjectPath:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestAdmissionReadsTheClockUnderTheLock3853574936/001/web Cap:max_squads Since:2026-10-24T12:00:00Z Detail:1 of max_squads 1 taken}], want 2026-10-24T13:00:00Z (the clock under the lock)
+--- FAIL: TestAdmissionReadsTheClockUnderTheLock (0.23s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.582s
+FAIL
+## RESULT liveness 1 the clock read before the lock: FAILED with the fix reverted, as expected (exit 1)
+
+## revert liveness 2 a start time within one second: internal/fleet/mayor.go; run ^TestReusedPidNearTheStartTimeIsGone$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -576,7 +576,7 @@
+ 	switch {
+ 	case !ok:
+ 		return LivenessUnknown
+-	case got.Equal(start):
++	case got.Sub(start).Abs() < time.Second: // REVERT liveness 2
+ 		// exact equality of the recorded start time, the same rule as
+ 		// 2b-2's CloseSeat: a reused pid never passes on a near time
+ 		return LivenessAlive
+=== RUN   TestReusedPidNearTheStartTimeIsGone
+    review3_test.go:221: a pid started 500 ms after the record is 0, want gone
+--- FAIL: TestReusedPidNearTheStartTimeIsGone (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.447s
+FAIL
+## RESULT liveness 2 a start time within one second: FAILED with the fix reverted, as expected (exit 1)
+
+## revert adapters a no rollback of the squad files: internal/fleet/mayor.go; run ^(TestFailedLaunchRollsBackAndPendingIsRefused|TestLaunchFailureRollsBackTheSquadFiles)$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -408,7 +408,7 @@
+ 	}
+ 	// nothing is live: roll the squad files back, then release the
+ 	// reservation by its id
+-	if applied {
++	if false && applied { // REVERT adapters a
+ 		if rerr := m.Squads.Rollback(s.ProjectPath, digest); rerr != nil {
+ 			return Result{}, errors.Join(err, fmt.Errorf("roll back the squad files of %s: %w", s.Name, rerr))
+ 		}
+=== RUN   TestFailedLaunchRollsBackAndPendingIsRefused
+    review3_test.go:263: rolled back [], registry []
+--- FAIL: TestFailedLaunchRollsBackAndPendingIsRefused (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.426s
+=== RUN   TestLaunchFailureRollsBackTheSquadFiles
+    fleet_adapters_review_test.go:94: squad.yaml survived a failed launch: <nil>
+--- FAIL: TestLaunchFailureRollsBackTheSquadFiles (0.09s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.594s
+FAIL
+## RESULT adapters a no rollback of the squad files: FAILED with the fix reverted, as expected (exit 1)
+
+## revert adapters b decisions_pending read as success: internal/cli/fleet_adapters.go; run ^TestDecisionsPendingIsNotASuccess$ (expect FAIL)
+## diff of the revert:
+--- internal/cli/fleet_adapters.go
++++ internal/cli/fleet_adapters.go (reverted)
+@@ -221,7 +221,7 @@
+ // actions for the owner; some seats up is a partial launch; none up is a
+ // plain error.
+ func launchOutcome(res seatlaunch.Result, err error) error {
+-	if err == nil && res.Stage == "decisions_pending" {
++	if false && res.Stage == "decisions_pending" { // REVERT adapters b
+ 		var actions []string
+ 		for _, a := range res.Pending {
+ 			var choices []string
+@@ -232,7 +232,7 @@
+ 		}
+ 		return &fleet.DecisionsPendingError{Actions: actions}
+ 	}
+-	if err == nil && res.Stage == "applied" && len(res.Seats) > 0 && !res.Failed() {
++	if err == nil && !res.Failed() {
+ 		return nil
+ 	}
+ 	var up []string
+=== RUN   TestDecisionsPendingIsNotASuccess
+    fleet_adapters_review_test.go:110: decisions pending = <nil>
+--- FAIL: TestDecisionsPendingIsNotASuccess (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.405s
+FAIL
+## RESULT adapters b decisions_pending read as success: FAILED with the fix reverted, as expected (exit 1)
+
+## revert adapters c the session flag moves the launch: internal/fleet/mayor.go; run ^TestStartRunsUnderTheRegisteredRoot$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -313,7 +313,7 @@
+ 	if err := (Registry{Schema: Schema, Squads: []Squad{s}}).Validate(); err != nil {
+ 		return Result{}, err
+ 	}
+-	if s.Session != "" && s.Session != filepath.Base(s.Root) {
++	if false { // REVERT adapters c
+ 		// the launch runs under the registered root, whose base name is the
+ 		// session (Codex re-pass, adapters P2 c)
+ 		return m.refuse(s.Name, ReasonSession, fmt.Sprintf("session %q is not the registered root %s (its session is %q)", s.Session, s.Root, filepath.Base(s.Root)))
+@@ -382,7 +382,7 @@
+ 		err := errors.New("the mayor needs a squad.yaml writer and a roster launcher")
+ 		return Result{}, errors.Join(err, m.setPhase(resv, "", ""))
+ 	}
+-	lr := LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: filepath.Base(s.Root), SquadYAML: req.SquadYAML}
++	lr := LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: s.SessionName(), SquadYAML: req.SquadYAML}
+ 	digest, applied, err := m.launch(ctx, req, resv, &lr)
+ 	if err == nil {
+ 		perr := m.setPhase(resv, PhaseRunning, "")
+=== RUN   TestStartRunsUnderTheRegisteredRoot
+    review3_test.go:236: a session that is not the root's: {Outcome:started Reason: Detail: Digest:sha256:app Proposal:<nil>}
+--- FAIL: TestStartRunsUnderTheRegisteredRoot (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.389s
+FAIL
+## RESULT adapters c the session flag moves the launch: FAILED with the fix reverted, as expected (exit 1)
+
+## revert adapters c the roster session from the request: internal/cli/fleet_adapters.go; run ^TestStartSquadRefusesASessionFlag$ (expect FAIL)
+## diff of the revert:
+--- internal/cli/fleet_adapters.go
++++ internal/cli/fleet_adapters.go (reverted)
+@@ -199,7 +199,7 @@
+ 	}
+ 	// the launch root is the registered root: its parent is the base, its
+ 	// name the session (a separate session flag never moves the launch)
+-	return seatlaunch.Squad{ProjectRoot: req.ProjectPath, BaseRoot: filepath.Dir(req.Root), Session: filepath.Base(req.Root), Seats: seats}, nil
++	return seatlaunch.Squad{ProjectRoot: req.ProjectPath, BaseRoot: filepath.Dir(req.Root), Session: req.Session, Seats: seats}, nil
+ }
+ 
+ // roleText is a seat's role.md: the repository's staged custom role, else
+=== RUN   TestStartSquadRefusesASessionFlag
+    fleet_adapters_review_test.go:129: roster squad = {ProjectRoot:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStartSquadRefusesASessionFlag3124780412/002 BaseRoot:/r/base Session:elsewhere Operator: TeamHome: Profile: RulesPath: Launcher: Seats:[{Handle:lead Runtime:claude Model: Effort: Role:# CTO
+        
+        Architecture, tradeoffs, final technical review.
+        
+        Owns technical direction, architecture, and engineering tradeoffs. Signs off on the shape of the system.
+         Worktree:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStartSquadRefusesASessionFlag3124780412/002 Branch: EnvNeeds:[] Resume:false InitialInput: Provider: RequestID: roleInFirstMessage:false} {Handle:dev Runtime:codex Model: Effort: Role:# Senior Developer
+        
+        Takes harder code paths and reviews junior work.
+        
+        Owns complex implementation, code review, and technical mentorship. Turns architecture into maintainable changes.
+         Worktree:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStartSquadRefusesASessionFlag3124780412/002 Branch: EnvNeeds:[] Resume:false InitialInput: Provider: RequestID: roleInFirstMessage:false}] Wrapper: AMQPath:} <nil>, want session app under /r/base
+--- FAIL: TestStartSquadRefusesASessionFlag (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.404s
+FAIL
+## RESULT adapters c the roster session from the request: FAILED with the fix reverted, as expected (exit 1)
+
+## restored tree: every row (expect PASS)
+=== RUN   TestLaunchFailureRollsBackTheSquadFiles
+--- PASS: TestLaunchFailureRollsBackTheSquadFiles (0.10s)
+=== RUN   TestDecisionsPendingIsNotASuccess
+--- PASS: TestDecisionsPendingIsNotASuccess (0.00s)
+=== RUN   TestStartSquadRefusesASessionFlag
+--- PASS: TestStartSquadRefusesASessionFlag (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.412s
+=== RUN   TestMappedSymlinkPathIsUnidentified
+--- PASS: TestMappedSymlinkPathIsUnidentified (0.00s)
+=== RUN   TestSymlinkedIdentityDirIsRefused
+--- PASS: TestSymlinkedIdentityDirIsRefused (0.00s)
+=== RUN   TestWorktreeIdentityIsItsMainCheckouts
+--- PASS: TestWorktreeIdentityIsItsMainCheckouts (0.00s)
+=== RUN   TestFencedLateLaunchIsClosed
+--- PASS: TestFencedLateLaunchIsClosed (0.04s)
+=== RUN   TestAdmissionReadsTheClockUnderTheLock
+--- PASS: TestAdmissionReadsTheClockUnderTheLock (0.23s)
+=== RUN   TestReusedPidNearTheStartTimeIsGone
+--- PASS: TestReusedPidNearTheStartTimeIsGone (0.00s)
+=== RUN   TestStartRunsUnderTheRegisteredRoot
+--- PASS: TestStartRunsUnderTheRegisteredRoot (0.02s)
+=== RUN   TestFailedLaunchRollsBackAndPendingIsRefused
+--- PASS: TestFailedLaunchRollsBackAndPendingIsRefused (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	0.847s
+## RESULT restored: PASS
+
+# revert check: every reverted fix failed its rows; restored tree passes

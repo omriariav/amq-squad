@@ -1,0 +1,52 @@
+# go test ./... at c1c6c6cc + working tree, 2026-10-24T13:05:45Z, exit 0
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.356s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	0.767s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	37.720s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	19.705s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	33.272s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	9.696s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	12.880s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	4.154s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	2.393s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	3.684s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	13.515s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	4.560s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	11.970s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	5.583s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/team	4.900s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	17.650s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	4.839s
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a7e5422b6f1f73d68/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        84      43515        21719
+replace        2       2431            0
+review         4       3687         2803
+delete       140      49894            0
+new           55          0        12113
+TOTAL        343     111761        47283
+target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+gate total within band: NOT MET, 29426 against 29790..36410 (deferred-replace rows excluded: 1657 lines), accepted by the end-of-2a-2 decision [--final]
+like for like, class 1 and 2 rows and their targets removed: 26559 lines against a target sum of 32733 (-18.9 percent over)
+class 1 (deferred-2b): 858 lines, 258 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 1194 over target
+3.0 additions: 55 files, 11926 lines (fate new; outside the target-sum rule and the band gate)
+manifest-check: OK

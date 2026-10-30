@@ -1,0 +1,42 @@
+=== RUN   TestLivePiSeatThroughTheAdapter
+    live_pi_darwin_test.go:97: first pass:
+        prepare: outcome action_required, reason untrusted_config_digest (subject sha256:b3b1c78113f852b76401030cd8e96705aaf539349e340fcf11a6bf4b1f6e6783, trust sha256:0498f5ee3bf6a8419616cb415ec3f531f5dc9f8a9b20aa20626f91ec38a2827e)
+        amq: untrusted_config_digest
+        pending decision: sha256:be5c35ccaf902ada598fd9e9a2b770e6ffaed716c6a13e234c32dfad1f18bd3e trust_confirmation (untrusted_config_digest) for scout
+        next: answer trust_confirmation (untrusted_config_digest, handles scout): re-run amq-squad launch with --decision sha256:be5c35ccaf902ada598fd9e9a2b770e6ffaed716c6a13e234c32dfad1f18bd3e=<trust_exact_subject|deny>
+        next: the answers bind subject sha256:b3b1c78113f852b76401030cd8e96705aaf539349e340fcf11a6bf4b1f6e6783; if the squad changes, Prepare returns new action ids
+    live_pi_darwin_test.go:111: apply pass:
+        prepare: outcome action_required, reason untrusted_config_digest (subject sha256:b3b1c78113f852b76401030cd8e96705aaf539349e340fcf11a6bf4b1f6e6783, trust sha256:0498f5ee3bf6a8419616cb415ec3f531f5dc9f8a9b20aa20626f91ec38a2827e)
+        apply: outcome applied, reason_code none, disposition committed, backend tmux
+        apply: failure_detail none
+          seat scout: conversation pending, execution pending, resource tmux:v1:pane:%0
+        seat scout: up
+    live_pi_darwin_test.go:185: pane after the answer:
+        
+         [amq-squad-role]
+        
+         Your role (amq-squad seat scout)
+        
+         Role: scout
+        
+         You are the scout seat of a live launch probe. Answer the operator's question
+         briefly.
+        
+         AMQ is the Agent Message Queue: a local mail system on this machine that
+         connects you to the other agents (seats) of your team. It is not "Advanced
+         Message Queuing". Reach other seats only with the native tools amq_send,
+         amq_drain and amq_reply (and the amq_task_* tools for the task store); never
+         run the amq CLI through bash.
+        
+        
+         PINEAPPLE
+        
+        ────────────────────────────────────────────────────────────────────────────────
+        
+        ────────────────────────────────────────────────────────────────────────────────
+        /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLivePiSeatThroug...
+        ↑2.1k ↓4 R413 CH16.3% 1.9%/131k (auto)                               qwen2.5:32b
+    live_pi_darwin_test.go:201: timings: map[cold_install_ms:1930.635 launch_to_up_ms:2557.249 launcher_argv:[/Users/omri/code/amq-squad/.claude/worktrees/agent-a4032adfd991c6ae0/build/pi/amq-squad pi run --seat scout --model ollama/qwen2.5:32b -- --session-id b17f0832-630a-89a3-93e9-0dffd9c5c2dc] model:ollama/qwen2.5:32b prepare_ms:14.654 prompt_to_answer_ms:3685.065 provider_argv:[/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLivePiSeatThroughTheAdapter1911078400/001/home/.amq-squad/pi-launch/pi --session-id b17f0832-630a-89a3-93e9-0dffd9c5c2dc] session_file:/home/.amq-squad/pi-agent/scout/sessions/--private-var-folders-gx-wg9xtfn96wx9z4gkb9mp_hxr0000gn-T-TestLivePiSeatThroughTheAdapter1911078400-001-wt-scout--/2026-10-28T15-38-33-974Z_b17f0832-630a-89a3-93e9-0dffd9c5c2dc.jsonl up_to_pi_ready_ms:815.065]
+--- PASS: TestLivePiSeatThroughTheAdapter (9.82s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	10.085s

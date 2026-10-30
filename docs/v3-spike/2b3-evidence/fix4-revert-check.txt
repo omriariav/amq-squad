@@ -1,0 +1,38 @@
+# fix 4 revert check, 2026-10-24T11:50:11Z, tree 3cc7b779 + working changes
+
+## item 1: TestDetectReadsNoRuntimeFile
+reverted -> fails as expected: TestDetectReadsNoRuntimeFile (review3_test.go:37: detection hung on a FIFO manifest)
+--- test output with the fix reverted:
+--- FAIL: TestDetectReadsNoRuntimeFile (5.06s)
+    review3_test.go:37: detection hung on a FIFO manifest
+
+## item 2: TestResultLineMustBeExact
+reverted -> fails as expected: TestResultLineMustBeExact (review3_test.go:46: " RESULT: PASS ": {Pass:true FalseSuccess:false Reported:PASS Checks:map[final_line_exact:true go_te)
+--- test output with the fix reverted:
+--- FAIL: TestResultLineMustBeExact (0.00s)
+    review3_test.go:46: " RESULT: PASS ": {Pass:true FalseSuccess:false Reported:PASS Checks:map[final_line_exact:true go_test_confirmed:true independent_go_test:true read_confirmed:true worktree_exact:true] ToolErrors:0 Tools:[read edit bash] Errors:[] FirstTextMS:-1}
+
+## item 3: TestProbeKillsSetsidDescendants
+reverted -> fails as expected: TestProbeKillsSetsidDescendants (review3_test.go:81: a setsid descendant survived the probe and wrote after it)
+--- test output with the fix reverted:
+--- FAIL: TestProbeKillsSetsidDescendants (16.60s)
+    review3_test.go:81: a setsid descendant survived the probe and wrote after it
+
+## item 4: TestRedactPathsDoNotCollide
+reverted -> fails as expected: TestRedactPathsDoNotCollide (hostcheck_test.go:161: the changed key is not named alone:)
+--- test output with the fix reverted:
+--- FAIL: TestRedactPathsDoNotCollide (0.01s)
+    hostcheck_test.go:161: the changed key is not named alone:
+
+## after the reverts: the tree is restored
+ M internal/cli/doctor_host.go
+ M internal/hostcheck/hostcheck_test.go
+ M internal/hostcheck/redact.go
+ M internal/registry/detect.go
+ M internal/registry/detect_test.go
+ M internal/registry/probe.go
+ M internal/registry/probe_proc_other.go
+ M internal/registry/probe_proc_unix.go
+ M internal/registry/probe_test.go
+ M internal/registry/review_test.go
+?? internal/registry/review3_test.go

@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 )
 
 func TestRunOwnedAMQSendUsesTransportAcceptanceWithoutLocalReceipt(t *testing.T) {
@@ -22,7 +20,7 @@ func TestRunOwnedAMQSendUsesTransportAcceptanceWithoutLocalReceipt(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || string(out) != "Sent msg-accepted to qa\n" || result.MessageID != "msg-accepted" || !result.Invoked || result.Reconciled {
+	if calls != 1 || string(out) != "Sent msg-accepted to qa\n" || result.MessageID != "msg-accepted" || !result.Invoked {
 		t.Fatalf("calls=%d out=%q result=%+v", calls, out, result)
 	}
 }
@@ -36,27 +34,7 @@ func TestRunOwnedAMQSendPreservesStableIDAlongsideTransportError(t *testing.T) {
 	}
 
 	_, result, err := runOwnedAMQSend(ownedAMQSendOptions{}, amqCommandRequest{Arg: []string{"send"}})
-	if !errors.Is(err, sendErr) || result.MessageID != "msg-timeout" || !result.Invoked || result.Reconciled {
-		t.Fatalf("err=%v result=%+v", err, result)
-	}
-}
-
-func TestRunOwnedAMQSendReconcilesWithoutTransportInvocation(t *testing.T) {
-	previous := runAMQCommand
-	t.Cleanup(func() { runAMQCommand = previous })
-	runAMQCommand = func(amqCommandRequest) ([]byte, error) {
-		t.Fatal("reconciled send invoked AMQ")
-		return nil, nil
-	}
-	boundary, err := newDurableInvocationBoundary(func(func() error) (durableInvocationResult, error) {
-		return newDurableReconciledExistingResult("msg-existing")
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, result, err := runOwnedAMQSend(ownedAMQSendOptions{Invocation: boundary}, amqCommandRequest{Arg: []string{"send"}})
-	if err != nil || result.MessageID != "msg-existing" || result.Invoked || !result.Reconciled {
+	if !errors.Is(err, sendErr) || result.MessageID != "msg-timeout" || !result.Invoked {
 		t.Fatalf("err=%v result=%+v", err, result)
 	}
 }
@@ -89,10 +67,6 @@ func TestRunOwnedAMQSendBindsCommittedEvidenceToSendRequest(t *testing.T) {
 	})
 	if !errors.Is(err, sendErr) || result.MessageID != "msg-committed" || !result.Invoked {
 		t.Fatalf("err=%v result=%+v", err, result)
-	}
-	outcome := taskAMQDeliveryOutcome(result, err)
-	if outcome.State != taskstore.DeliveryDelivered || outcome.MessageID != "msg-committed" {
-		t.Fatalf("genuine committed-indeterminate outcome = %+v", outcome)
 	}
 }
 
@@ -131,26 +105,7 @@ func TestRunOwnedAMQSendRejectsCommittedEvidenceUnboundFromRequest(t *testing.T)
 			if !errors.Is(err, sendErr) || result.MessageID != "" || !result.Invoked {
 				t.Fatalf("err=%v result=%+v", err, result)
 			}
-			outcome := taskAMQDeliveryOutcome(result, err)
-			if outcome.State != taskstore.DeliveryUncertain || outcome.MessageID != "" {
-				t.Fatalf("unbound committed evidence outcome = %+v", outcome)
-			}
 		})
-	}
-}
-
-func TestCommittedDeliveryEvidenceBindsReplyToResolvedRecipient(t *testing.T) {
-	root := t.TempDir()
-	evidence := committedDeliveryEvidence{
-		MessageID: "reply-committed",
-		FinalPath: filepath.Join(root, "agents", "original-sender", "inbox", "new", "reply-committed.md"),
-	}
-	req := amqCommandRequest{Arg: []string{"reply", "--root", root, "--me", "qa", "--id", "original-message", "--body", "done"}}
-	if !committedDeliveryEvidenceMatchesRequest(ownedAMQSendOptions{ReplyRecipient: "original-sender"}, req, evidence) {
-		t.Fatal("reply evidence did not bind to the resolved original sender")
-	}
-	if committedDeliveryEvidenceMatchesRequest(ownedAMQSendOptions{ReplyRecipient: "thread-derived-guess"}, req, evidence) {
-		t.Fatal("reply evidence bound to a recipient other than the resolved original sender")
 	}
 }
 

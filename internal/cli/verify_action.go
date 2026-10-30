@@ -1,22 +1,20 @@
 package cli
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const (
@@ -35,9 +33,6 @@ type verifyActionExecution struct {
 	Action            string
 	Target            string
 	To                string
-	BaseRoot          string
-	ResolveBaseRoot   func(projectDir string) (string, error)
-	Probe             state.Probe
 	Now               func() time.Time
 	Out               io.Writer
 	JSON              bool
@@ -48,30 +43,29 @@ type verifyActionExecution struct {
 }
 
 type verifyActionResult struct {
-	Action                    string                                      `json:"action"`
-	Target                    string                                      `json:"target"`
-	Gate                      string                                      `json:"gate"`
-	Decision                  string                                      `json:"decision"`
-	AnsweredBy                string                                      `json:"answered_by,omitempty"`
-	MessageID                 string                                      `json:"message_id,omitempty"`
-	GateKind                  string                                      `json:"gate_kind,omitempty"`
-	ApprovalSource            string                                      `json:"approval_source,omitempty"`
-	SelfApproved              bool                                        `json:"self_approved"`
-	TypedAuthority            bool                                        `json:"typed_authority"`
-	TypedEligible             bool                                        `json:"typed_eligible"`
-	EnvelopeEligible          bool                                        `json:"envelope_eligible"`
-	EnvelopeEligibilityReason string                                      `json:"envelope_eligibility_reason"`
-	QuestionMessageID         string                                      `json:"question_message_id,omitempty"`
-	AnswerMessageID           string                                      `json:"answer_message_id,omitempty"`
-	QuestionCreatedAt         string                                      `json:"question_created_at,omitempty"`
-	AnswerCreatedAt           string                                      `json:"answer_created_at,omitempty"`
-	AnsweredByRole            string                                      `json:"answered_by_role,omitempty"`
-	Namespace                 *operatorauth.NamespaceBinding              `json:"namespace,omitempty"`
-	Note                      string                                      `json:"note,omitempty"`
-	AuthorizationID           string                                      `json:"authorization_id,omitempty"`
-	AuthorizationPath         string                                      `json:"authorization_path,omitempty"`
-	AuthorizationKeyID        string                                      `json:"authorization_key_id,omitempty"`
-	Compound                  *operatorauth.AuthorizationCompoundEvidence `json:"compound,omitempty"`
+	Action                    string                         `json:"action"`
+	Target                    string                         `json:"target"`
+	Gate                      string                         `json:"gate"`
+	Decision                  string                         `json:"decision"`
+	AnsweredBy                string                         `json:"answered_by,omitempty"`
+	MessageID                 string                         `json:"message_id,omitempty"`
+	GateKind                  string                         `json:"gate_kind,omitempty"`
+	ApprovalSource            string                         `json:"approval_source,omitempty"`
+	SelfApproved              bool                           `json:"self_approved"`
+	TypedAuthority            bool                           `json:"typed_authority"`
+	TypedEligible             bool                           `json:"typed_eligible"`
+	EnvelopeEligible          bool                           `json:"envelope_eligible"`
+	EnvelopeEligibilityReason string                         `json:"envelope_eligibility_reason"`
+	QuestionMessageID         string                         `json:"question_message_id,omitempty"`
+	AnswerMessageID           string                         `json:"answer_message_id,omitempty"`
+	QuestionCreatedAt         string                         `json:"question_created_at,omitempty"`
+	AnswerCreatedAt           string                         `json:"answer_created_at,omitempty"`
+	AnsweredByRole            string                         `json:"answered_by_role,omitempty"`
+	Namespace                 *operatorauth.NamespaceBinding `json:"namespace,omitempty"`
+	Note                      string                         `json:"note,omitempty"`
+	AuthorizationID           string                         `json:"authorization_id,omitempty"`
+	AuthorizationPath         string                         `json:"authorization_path,omitempty"`
+	AuthorizationKeyID        string                         `json:"authorization_key_id,omitempty"`
 	approval                  *operatorauth.ApprovalContext
 	Failures                  []verifyMergeFailure `json:"failures,omitempty"`
 }
@@ -103,25 +97,20 @@ Usage:
 High-risk actions:
   %s
 
-Both the gate question and the operator answer must bind to the same action and
-target. Put explicit binding text in the gate and answer, for example:
-  Action: github_release
-  Target: draft v1.41.0 release for omriariav/workspace-cli
-
---emit-authorization requires a human-approved typed result and an explicit
-owner-controlled Ed25519 PKCS#8 private key with mode 0600. Consume the
-immutable artifact with 'amq-squad verify authorization', which checks an
-explicit trust store and rebinds the current namespace, gate, receipt,
-policy/preflight, and compound-release evidence. Neither command performs the
-external action.
+A typed action (tag, github_release, package_publish, external_send,
+credential_change, spawn) is approved only by a verified owner answer in the
+session's gate store; merges are the merge train's (merge_train). feature_branch_push
+needs an operator answer that binds the same Action: and Target: as the question;
+--emit-authorization then signs it with an owner-provisioned Ed25519 PKCS#8 key
+(mode 0600), for 'amq-squad verify authorization'. Neither performs the action.
 
 Exit codes:
   0 approved
   10 pending
   11 denied
-  12 no matching gate
+  12 no gate (no gate record for the topic; a merge kind goes to merge-train)
   13 unbound or mismatched operator answer
-`, strings.Join(catalogActionNames(), ", "))
+`, strings.Join(operatorauth.SupportedActions(), ", "))
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -160,7 +149,7 @@ Exit codes:
 		return err
 	}
 	emitContextDiagnostics(ctx)
-	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, resolve)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, resolve)
 	if err != nil {
 		return err
 	}
@@ -179,10 +168,6 @@ Exit codes:
 		SigningKeyFile:    *signingKeyFile,
 		AuthorizationOut:  *authorizationOut,
 	}, selectedReleaseContext(ctx))
-}
-
-func catalogActionNames() []string {
-	return operatorauth.SupportedActions()
 }
 
 type verifyActionKindsData struct {
@@ -206,68 +191,7 @@ func printVerifyActionKinds(jsonOut bool) error {
 	return nil
 }
 
-func executeVerifyAction(x verifyActionExecution) error {
-	out := x.Out
-	if out == nil {
-		out = os.Stdout
-	}
-	now := x.Now
-	if now == nil {
-		now = time.Now
-	}
-	action, err := normalizeHighRiskAction(x.Action)
-	if err != nil {
-		return err
-	}
-	target := x.Target
-	if err := operatorauth.ValidateCanonicalSingleLineField("target", target, true); err != nil {
-		return usageErrorf("verify action: %v", err)
-	}
-	gate, err := canonicalGateTopic(x.Gate)
-	if err != nil {
-		return usageErrorf("verify action: %v", err)
-	}
-	session := strings.TrimSpace(x.Session)
-	if session == "" {
-		return usageErrorf("verify action requires --session")
-	}
-	profile := squadnamespace.NormalizeProfile(x.Profile)
-	baseRoot := strings.TrimSpace(x.BaseRoot)
-	if baseRoot == "" {
-		resolve := x.ResolveBaseRoot
-		if resolve == nil {
-			resolve = scanBaseRootForProject
-		}
-		baseRoot, err = resolve(x.ProjectDir)
-		if err != nil {
-			return fmt.Errorf("resolve AMQ base root: %w", err)
-		}
-	}
-	snap, err := state.Build(x.ProjectDir, baseRoot, x.Probe)
-	if err != nil {
-		return fmt.Errorf("scan AMQ base root: %w", err)
-	}
-	sess, ok := findThreadsSession(snap.Sessions, profile, session)
-	if !ok {
-		return fmt.Errorf("session %q for profile %q not found under %s", session, profile, baseRoot)
-	}
-	cfg, err := team.ReadProfile(x.ProjectDir, profile)
-	if err != nil {
-		return fmt.Errorf("read team profile: %w", err)
-	}
-	operatorHandle := team.EffectiveOperator(cfg).Handle
-	msgs, warnings := state.ScanSessionMessages(sess.Root, now)
-	if len(warnings) > 0 {
-		return usageErrorf("verify action message scan degraded; refusing authorization")
-	}
-	result := decideTypedVerifyActionWithPolicy(msgs, gate, action, target, operatorHandle, cfg, session, x.ProjectDir, profile)
-	return emitVerifyActionResult(out, result, x.To, x.JSON)
-}
-
-// executeVerifyActionInSelectedContext is the admitted-context execution seam
-// used by the CLI. It never rediscovers a conventional AMQ root after context
-// admission. Release-owned questions are evaluated only while their immutable
-// compound-release claim remains guarded and current.
+// executeVerifyActionInSelectedContext is the CLI's admitted-context execution seam.
 func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliReleaseSelectedContext) error {
 	out := x.Out
 	if out == nil {
@@ -294,7 +218,20 @@ func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliR
 	if selected.ProjectDir != x.ProjectDir || !squadnamespace.ProfilesEqual(selected.Profile, x.Profile) || selected.Session != x.Session {
 		return usageErrorf("verify action selected context does not match admitted command tuple")
 	}
-	cfg, err := team.ReadProfile(selected.ProjectDir, selected.Profile)
+	if action == "default_branch_push" || action == "protected_branch_push" { // 3-2: the merge train replaces the v2 merge kinds
+		return emitVerifyActionResult(out, verifyActionFailure(action, x.Target, gate, actionDecisionNoGate, "merge_train", "merges to the default or a protected branch go through 'amq-squad merge-train' under the merge grant"), x.To, x.JSON)
+	}
+	if typedGateAction(action) {
+		// The typed gates live in the gate store; the store's answers/<id>.json
+		// is the signed authorization (verify authorization --gate checks it).
+		if x.EmitAuthorization {
+			return usageErrorf("verify action: a typed gate's authorization is the gate store's answers/<id>.json; check it with 'amq-squad verify authorization --gate ID'")
+		}
+		result := storeVerifyAction(selected.SessionRoot, gateNamespace(selected.ProjectDir, selected.Profile, selected.Session, selected.NamespaceGeneration), gate, action, x.Target)
+		captureVerifyActionResult(x.Capture, result)
+		return emitVerifyActionResult(out, result, x.To, x.JSON)
+	}
+	cfg, err := team.ReadFor(selected.ProjectDir, selected.Profile)
 	if err != nil {
 		return fmt.Errorf("read team profile: %w", err)
 	}
@@ -309,8 +246,6 @@ func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliR
 	}
 
 	var result verifyActionResult
-	signedInsideGuard := false
-	var authorizationErr error
 	switch classification.Disposition {
 	case cliReleaseDomainOrdinary:
 		current, currentErr := latestGateQuestionInSelectedContext(selected, gate, now)
@@ -327,48 +262,15 @@ func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliR
 			result = verifyActionFailure(action, x.Target, gate, actionDecisionPending, "selected_message_scan_degraded", "selected AMQ message scan is degraded")
 			break
 		}
-		result = decideTypedVerifyActionWithAuthorityPolicy(msgs, gate, action, x.Target, operatorHandle, cfg, selected.Session, selected.ProjectDir, selected.Profile, true)
+		result = decideTypedVerifyActionWithPolicy(msgs, gate, action, x.Target, operatorHandle, cfg, selected.Session, selected.ProjectDir, selected.Profile)
 	case cliReleaseDomainReleaseOwned:
-		if !classification.Eligible {
-			result = verifyActionFailure(action, x.Target, gate, actionDecisionPending, "compound_release_claim_ineligible", classification.Reason)
-			break
-		}
-		guarded, guardErr := classification.NewGuardedUse()
-		if guardErr != nil {
-			result = verifyActionFailure(action, x.Target, gate, actionDecisionPending, "compound_release_guard_unavailable", guardErr.Error())
-			break
-		}
-		guardErr = guarded.Run(func(observation cliReleaseGuardObservation) error {
-			result = decideTypedVerifyActionWithAuthorityPolicy(observation.Messages(), gate, action, x.Target, operatorHandle, cfg, selected.Session, selected.ProjectDir, selected.Profile, false)
-			if result.Decision == actionDecisionApproved && classification.Claim != nil {
-				result.Compound = &operatorauth.AuthorizationCompoundEvidence{
-					ReleaseID: classification.Marker.ReleaseID, ParentGate: classification.Claim.Scope.ParentGate,
-					SeriesID: classification.Claim.SeriesID, GenerationID: classification.Claim.GenerationID,
-					PreparedManifestID: classification.Claim.PreparedManifestID, ActiveManifestID: classification.Claim.ActiveManifestID,
-					Role: classification.Claim.Role, ManifestSHA256: classification.Claim.ActiveSHA256,
-				}
-				if x.EmitAuthorization {
-					authorizationErr = emitSignedVerifyAuthorization(&result, selected, x.SigningKeyFile, x.AuthorizationOut, now())
-					signedInsideGuard = authorizationErr == nil
-					return authorizationErr
-				}
-			}
-			return nil
-		})
-		if authorizationErr != nil {
-			result.EnvelopeEligible = false
-			result.EnvelopeEligibilityReason = "authorization_emission_failed"
-			captureVerifyActionResult(x.Capture, result)
-			_ = emitVerifyActionResult(out, result, x.To, x.JSON)
-			return authorizationErr
-		}
-		if guardErr != nil {
-			result = verifyActionFailure(action, x.Target, gate, actionDecisionPending, "compound_release_guard_failed", guardErr.Error())
-		}
+		// release-owned children are tag and github_release: typed gates,
+		// decided from the gate store above, never from an AMQ answer
+		result = verifyActionFailure(action, x.Target, gate, actionDecisionUnbound, "release_owned_gate_is_typed", "a release-owned gate is a typed gate; it is answered only by the owner's signed Buzz reply")
 	default:
 		result = verifyActionFailure(action, x.Target, gate, actionDecisionPending, "compound_release_domain_unknown", classification.Reason)
 	}
-	if result.Decision == actionDecisionApproved && x.EmitAuthorization && !signedInsideGuard {
+	if result.Decision == actionDecisionApproved && x.EmitAuthorization {
 		if err := emitSignedVerifyAuthorization(&result, selected, x.SigningKeyFile, x.AuthorizationOut, now()); err != nil {
 			result.EnvelopeEligible = false
 			result.EnvelopeEligibilityReason = "authorization_emission_failed"
@@ -390,10 +292,6 @@ func captureVerifyActionResult(dst *verifyActionResult, src verifyActionResult) 
 		namespace := *src.Namespace
 		copyResult.Namespace = &namespace
 	}
-	if src.Compound != nil {
-		compound := *src.Compound
-		copyResult.Compound = &compound
-	}
 	if src.approval != nil {
 		approval := *src.approval
 		copyResult.approval = &approval
@@ -411,55 +309,32 @@ func verifyActionFailure(action, target, gate, decision, code, detail string) ve
 
 func emitVerifyActionResult(out io.Writer, result verifyActionResult, to string, jsonOut bool) error {
 	annotateVerifyActionEligibility(&result)
-	if jsonOut {
-		if err := writeJSONEnvelope(out, "verify_action", result); err != nil {
-			return err
-		}
-		return verifyActionErr(result)
+	if !jsonOut {
+		renderVerifyAction(out, result, to)
+	} else if err := writeJSONEnvelope(out, "verify_action", result); err != nil {
+		return err
 	}
-	renderVerifyAction(out, result, to)
 	return verifyActionErr(result)
 }
 
 func annotateVerifyActionEligibility(result *verifyActionResult) {
 	if result.EnvelopeEligible && result.AuthorizationID != "" && result.AuthorizationPath != "" {
-		result.TypedAuthority = true
-		result.TypedEligible = true
+		result.TypedAuthority, result.TypedEligible = true, true
 		result.EnvelopeEligibilityReason = "signed_authorization_emitted"
 		return
 	}
 	result.EnvelopeEligible = false
-	if result.Decision == actionDecisionApproved && (result.ApprovalSource == "human" || result.ApprovalSource == "self_operator") {
-		result.TypedAuthority = true
-		result.TypedEligible = true
+	if result.Decision == actionDecisionApproved && result.ApprovalSource == "human" {
+		result.TypedAuthority, result.TypedEligible = true, true
 		result.EnvelopeEligibilityReason = "signer_unconfigured"
 		return
 	}
-	result.TypedAuthority = false
-	result.TypedEligible = false
+	result.TypedAuthority, result.TypedEligible = false, false
 	if len(result.Failures) > 0 && result.Failures[0].Code != "" {
 		result.EnvelopeEligibilityReason = result.Failures[0].Code
 		return
 	}
 	result.EnvelopeEligibilityReason = "typed_authority_not_approved"
-}
-
-func verifyActionOperatorHandle(projectDir, profile string) (string, error) {
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return team.DefaultOperatorHandle, nil
-		}
-		return "", fmt.Errorf("read team profile: %w", err)
-	}
-	op := team.EffectiveOperator(t)
-	if !op.Enabled {
-		return "", usageErrorf("verify action requires an enabled operator gate for profile %q", profile)
-	}
-	if strings.TrimSpace(op.Handle) == "" {
-		return team.DefaultOperatorHandle, nil
-	}
-	return strings.TrimSpace(op.Handle), nil
 }
 
 func normalizeHighRiskAction(raw string) (string, error) {
@@ -470,8 +345,7 @@ func normalizeHighRiskAction(raw string) (string, error) {
 	if err == nil {
 		return canonical, nil
 	}
-	allowed := operatorauth.SupportedActions()
-	return "", usageErrorf("unsupported --action %q; run 'amq-squad verify action --list-kinds' for canonical hard-verifier kinds (%s); custom actions are not mapped to built-in kinds and require an explicitly bound operator gate with exact action/target plus manual verification", raw, strings.Join(allowed, ", "))
+	return "", usageErrorf("unsupported --action %q; run 'amq-squad verify action --list-kinds' for canonical hard-verifier kinds (%s); custom actions are not mapped to built-in kinds and require an explicitly bound operator gate with exact action/target plus manual verification", raw, strings.Join(operatorauth.SupportedActions(), ", "))
 }
 
 type typedHumanEvidenceResolution struct {
@@ -562,11 +436,8 @@ func validateTypedQuestionRouting(cfg team.Team, session, operatorHandle string,
 	return fmt.Errorf("typed question requester is not a roster member in this session")
 }
 
+// decideTypedVerifyActionWithPolicy: only a human operator answer binds a typed gate (2a-2).
 func decideTypedVerifyActionWithPolicy(msgs []state.Message, gate, action, target, humanHandle string, cfg team.Team, session, projectDir, profile string) verifyActionResult {
-	return decideTypedVerifyActionWithAuthorityPolicy(msgs, gate, action, target, humanHandle, cfg, session, projectDir, profile, true)
-}
-
-func decideTypedVerifyActionWithAuthorityPolicy(msgs []state.Message, gate, action, target, humanHandle string, cfg team.Team, session, projectDir, profile string, allowSelf bool) verifyActionResult {
 	result := verifyActionResult{Action: action, Target: target, Gate: gate, Decision: actionDecisionNoGate}
 	var conflict bool
 	msgs, conflict = dedupeSecurityMessages(msgs)
@@ -644,82 +515,9 @@ func decideTypedVerifyActionWithAuthorityPolicy(msgs []state.Message, gate, acti
 		}
 		return result
 	}
-	if !allowSelf {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "gate_pending", Detail: "release-owned authorization requires a valid human operator answer"}}
-		return result
-	}
-
-	view := team.EffectiveSelfOperator(cfg, session)
-	if !view.Enabled || operatorauth.Evaluate(request.GateKind, request.Action, view.AllowedGateKinds) != nil {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "gate_pending", Detail: "typed gate has no valid human answer and self policy does not authorize it"}}
-		return result
-	}
-	var selfAnswer *state.Message
-	for i := range msgs {
-		msg := msgs[i]
-		if msg.Thread == gate && msg.Kind == state.KindAnswer && msg.From == view.LeadHandle && messageAfter(msg, *question) && (selfAnswer == nil || messageAfter(msg, *selfAnswer)) {
-			copy := msg
-			selfAnswer = &copy
-		}
-	}
-	if selfAnswer == nil || !validTypedSelfAnswerEnvelope(*selfAnswer, *question, request, gate) {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "self_answer_envelope_invalid", Detail: "self answer has invalid kind, routing, subject, or rendered binding"}}
-		return result
-	}
-	if !selfAnswer.ApprovalPresent || !selfAnswer.ApprovalValid || selfAnswer.Approval == nil {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "self_approval_context_invalid", Detail: "self answer has missing or malformed v2 typed approval context"}}
-		return result
-	}
-	a := *selfAnswer.Approval
-	if a.SchemaVersion != operatorauth.ApprovalSchemaVersion || a.TaxonomyVersion != operatorauth.ActionTaxonomyVersion || a.Source != "self_operator" || !a.SelfApproved || a.AnsweredByHandle != view.LeadHandle || a.AnsweredByRole != view.LeadRole || a.QuestionMessageID != question.ID || a.GateKind != request.GateKind || a.Action != request.Action || a.Target != request.Target || a.Note != request.Note {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "self_approval_forged", Detail: "typed self approval does not exactly match actor, request, action, target, and note"}}
-		return result
-	}
-	if a.PolicyRevision != view.PolicyRevision || a.PolicyHash != view.PolicyHash {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "self_policy_revoked", Detail: "current self policy revision/hash differs from the answer"}}
-		return result
-	}
-	if err := validateApprovalReceipt(projectDir, profile, session, gate, *selfAnswer, a); err != nil {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "self_receipt_invalid", Detail: err.Error()}}
-		return result
-	}
-	if request.GateKind != operatorauth.GateMerge {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "self_preflight_unimplemented", Detail: "self preflight is implemented only for merge capabilities"}}
-		return result
-	}
-	if err := revalidateSelfApprovalEvidence(projectDir, a, target); err != nil {
-		result.Decision = actionDecisionPending
-		result.Failures = []verifyMergeFailure{{Code: "self_preflight_stale", Detail: err.Error()}}
-		return result
-	}
-	actor, err := verifiedCurrentRosterActor(projectDir, profile, session, cfg)
-	if err != nil || actor.Handle == view.LeadHandle {
-		result.Decision = actionDecisionPending
-		detail := "self-approving lead cannot execute the merge"
-		if err != nil {
-			detail = err.Error()
-		}
-		result.Failures = []verifyMergeFailure{{Code: "self_merge_actor_conflict", Detail: detail}}
-		return result
-	}
-	approval := a
-	return verifyActionResult{Action: action, Target: target, Gate: gate, GateKind: request.GateKind, Decision: actionDecisionApproved, AnsweredBy: view.LeadHandle, MessageID: selfAnswer.ID, ApprovalSource: "self_operator", SelfApproved: true,
-		QuestionMessageID: question.ID, AnswerMessageID: selfAnswer.ID, QuestionCreatedAt: question.Created.UTC().Format(time.RFC3339Nano), AnswerCreatedAt: selfAnswer.Created.UTC().Format(time.RFC3339Nano), AnsweredByRole: view.LeadRole,
-		Namespace: &requestNamespace, Note: request.Note, approval: &approval}
-}
-
-func validTypedSelfAnswerEnvelope(answer, question state.Message, request operatorauth.GateRequestContext, gate string) bool {
-	return answer.Thread == gate && answer.Kind == state.KindAnswer && len(answer.To) == 1 && answer.To[0] == question.From &&
-		classifyTypedDecision(authoritySubject(answer), gate) == actionDecisionApproved &&
-		validateTypedAuthorityBody(answer, request) == nil && messageAfter(answer, question)
+	result.Decision = actionDecisionPending
+	result.Failures = []verifyMergeFailure{{Code: "gate_pending", Detail: "typed gate has no valid human operator answer"}}
+	return result
 }
 
 func authoritySubject(msg state.Message) string {
@@ -756,44 +554,6 @@ func latestGateQuestionCandidate(msgs []state.Message, gate string) *state.Messa
 	return latest
 }
 
-func revalidateSelfApprovalEvidence(projectDir string, approval operatorauth.ApprovalContext, target string) error {
-	path := strings.TrimSpace(approval.PreflightPath)
-	if path == "" {
-		return fmt.Errorf("approval omitted preflight path")
-	}
-	rel, err := filepath.Rel(projectDir, path)
-	evidencePrefix := filepath.Join(team.DirName, "evidence") + string(os.PathSeparator)
-	if err != nil || !strings.HasPrefix(rel, evidencePrefix) {
-		return fmt.Errorf("preflight path is outside project evidence namespace")
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	sum := sha256.Sum256(b)
-	if fmt.Sprintf("sha256:%x", sum) != approval.PreflightSHA256 {
-		return fmt.Errorf("preflight digest changed")
-	}
-	var evidence verifyMergeEvidence
-	dec := json.NewDecoder(strings.NewReader(string(b)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&evidence); err != nil {
-		return err
-	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("preflight evidence contains trailing JSON values")
-	}
-	if result := validateVerifyMergeEvidenceAtProject(evidence, projectDir); !result.OK || evidence.Base == "" {
-		return fmt.Errorf("verify merge evidence is no longer valid")
-	}
-	parsed, parseErr := operatorauth.ParseMergeTarget(target)
-	if parseErr != nil || parsed.Subject != evidence.Subject || parsed.Head != evidence.HeadSHA || parsed.Base != evidence.Base {
-		return fmt.Errorf("preflight no longer binds exact PR/head/base")
-	}
-	return nil
-}
-
 func validateApprovalReceipt(projectDir, profile, session, gate string, answer state.Message, approval operatorauth.ApprovalContext) error {
 	path := selfApprovalReceiptPath(projectDir, profile, session, gate, approval.QuestionMessageID, answer.ID)
 	b, err := os.ReadFile(path)
@@ -825,11 +585,6 @@ func validTypedHumanApproval(msg state.Message, humanHandle, questionID string, 
 	a := msg.Approval
 	capability, err := operatorauth.ValidateGateAction(a.GateKind, a.Action)
 	return err == nil && a.SchemaVersion == operatorauth.ApprovalSchemaVersion && a.TaxonomyVersion == operatorauth.ActionTaxonomyVersion && a.Source == "human" && !a.SelfApproved && a.QuestionMessageID == questionID && a.AnsweredByHandle == humanHandle && a.AnsweredByRole == "operator" && capability.GateKind == binding.GateKind && capability.Action == action && a.Target == target
-}
-
-func canonicalGateActionMatches(kind, action, wantKind, wantAction string) bool {
-	capability, err := operatorauth.ValidateGateAction(kind, action)
-	return err == nil && capability.GateKind == wantKind && capability.Action == wantAction
 }
 
 func dedupeSecurityMessages(msgs []state.Message) ([]state.Message, bool) {
@@ -891,54 +646,6 @@ func securityContextEqual(a, b state.Message) bool {
 	return aErr == nil && bErr == nil && string(aRequest) == string(bRequest) && a.AuthorizationRequestPresent == b.AuthorizationRequestPresent && a.AuthorizationRequestValid == b.AuthorizationRequestValid && a.AuthorizationRequestError == b.AuthorizationRequestError
 }
 
-func strictBindingMatches(text, action, target string) bool {
-	action = normalizeBindingValue(action)
-	target = normalizeBindingValue(target)
-	values := bindingFields(text)
-	if normalizeBindingValue(values["action"]) == action && normalizeBindingValue(values["target"]) == target {
-		return true
-	}
-	return false
-}
-
-func bindingFields(text string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(text, "\n") {
-		key, val, ok := strings.Cut(line, ":")
-		if !ok {
-			key, val, ok = strings.Cut(line, "=")
-		}
-		if !ok {
-			continue
-		}
-		k := strings.ToLower(strings.TrimSpace(key))
-		if k == "action" || k == "target" {
-			out[k] = strings.TrimSpace(val)
-		}
-	}
-	return out
-}
-
-func normalizeBindingValue(s string) string {
-	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(s))), " ")
-}
-
-func classifyDecision(text string) string {
-	for _, line := range strings.Split(decisionText(text), "\n") {
-		line = strings.TrimSpace(line)
-		if hasDecisionPrefixToken(line, "denied") {
-			return actionDecisionDenied
-		}
-	}
-	for _, line := range strings.Split(decisionText(text), "\n") {
-		line = strings.TrimSpace(line)
-		if hasDecisionPrefixToken(line, "approved") {
-			return actionDecisionApproved
-		}
-	}
-	return actionDecisionPending
-}
-
 func classifyTypedDecision(subject, gate string) string {
 	if err := operatorauth.ValidateCanonicalSingleLineField("typed answer subject", subject, true); err != nil {
 		return actionDecisionPending
@@ -952,20 +659,6 @@ func classifyTypedDecision(subject, gate string) string {
 	default:
 		return actionDecisionPending
 	}
-}
-
-func hasDecisionPrefixToken(line, token string) bool {
-	if !strings.HasPrefix(line, token) {
-		return false
-	}
-	if len(line) == len(token) {
-		return true
-	}
-	return line[len(token)] == ':'
-}
-
-func decisionText(text string) string {
-	return strings.ToLower(strings.TrimSpace(text))
 }
 
 func messageAfter(a, b state.Message) bool {
@@ -989,12 +682,10 @@ func renderVerifyAction(out io.Writer, result verifyActionResult, to string) {
 	for _, f := range result.Failures {
 		fmt.Fprintf(out, "- %s: %s\n", f.Code, f.Detail)
 	}
-	if result.Decision != actionDecisionApproved {
-		target := strings.TrimSpace(to)
-		if target == "" {
-			target = "<lead>"
-		}
-		fmt.Fprintf(out, "Resolve with: amq-squad operator answer --gate %s --to %s --approved --reason \"Action: %s\\nTarget: %s\"\n", strings.TrimPrefix(result.Gate, "gate/"), target, result.Action, result.Target)
+	if result.Decision != actionDecisionApproved && typedGateAction(result.Action) {
+		fmt.Fprintf(out, "Resolve with: the owner's signed Buzz answer in the gate thread, then amq-squad gate answer\n")
+	} else if result.Decision != actionDecisionApproved {
+		fmt.Fprintf(out, "Resolve with: amq-squad operator answer --gate %s --to %s --approved --reason \"Action: %s\\nTarget: %s\"\n", strings.TrimPrefix(result.Gate, "gate/"), firstOf(strings.TrimSpace(to), "<lead>"), result.Action, result.Target)
 	}
 }
 

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "handle": "s4-claude",
+  "state": "ready",
+  "identity": {
+    "provider": "claude",
+    "id": "d2f9c1b2-b804-4eb2-85a4-a86452178854"
+  },
+  "provider_version": "2.1.306",
+  "launch_nonce": "<redacted>",
+  "execution_evidence": {
+    "backend": "commands",
+    "profile": "commands/any/v1",
+    "outcome": "created",
+    "launch_nonce": "<redacted>",
+    "conversation_id": "d2f9c1b2-b804-4eb2-85a4-a86452178854"
+  }
+}

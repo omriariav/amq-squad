@@ -1,0 +1,5 @@
+=== RUN   TestTickBudget
+    timing_test.go:44: tick over 100 tasks (96 pending, 4 leased, cap reached): median 12.106145ms of 10 (min 10.037416ms, max 18.914583ms)
+--- PASS: TestTickBudget (6.16s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	6.507s

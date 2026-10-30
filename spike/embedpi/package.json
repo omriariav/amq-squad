@@ -1,0 +1,8 @@
+{
+  "name": "amq-squad-s3-runtime",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.3.0"
+  }
+}

@@ -1,0 +1,72 @@
+PATH: go toolchain + system dirs; claude, codex, tmux: none
+/usr/bin/git
+0.116.2
+=== RUN   TestRealLaunchapiInspectSessionTargetShape
+    liveness_real_launchapi_target_test.go:54: real AMQ binary=/Users/omri/go/bin/amq version=0.116.2
+    liveness_real_launchapi_target_test.go:67: launchapiSessionInspect outcome=0 evidence="binding_missing"
+--- PASS: TestRealLaunchapiInspectSessionTargetShape (0.06s)
+=== RUN   TestRealAMQGateCloseReplyRefsCompatibility
+--- PASS: TestRealAMQGateCloseReplyRefsCompatibility (0.11s)
+=== RUN   TestRealAMQDoctorGlobalRepairScope
+=== RUN   TestRealAMQDoctorGlobalRepairScope/measured_0.49.8/0.49.9_roster
+=== RUN   TestRealAMQDoctorGlobalRepairScope/pre-0.49.7_alpha_only
+=== RUN   TestRealAMQDoctorGlobalRepairScope/unrelated_extra_mailbox
+=== RUN   TestRealAMQDoctorGlobalRepairScope/unrelated_extra_outside_agents
+=== RUN   TestRealAMQDoctorGlobalRepairScope/user_subtree_prefix_impostor
+=== RUN   TestRealAMQDoctorGlobalRepairScope/target_repair_missing
+=== RUN   TestRealAMQDoctorGlobalRepairScope/target_repair_duplicated
+=== RUN   TestRealAMQDoctorGlobalRepairScope/no_creations_at_all
+--- PASS: TestRealAMQDoctorGlobalRepairScope (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/measured_0.49.8/0.49.9_roster (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/pre-0.49.7_alpha_only (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/unrelated_extra_mailbox (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/unrelated_extra_outside_agents (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/user_subtree_prefix_impostor (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/target_repair_missing (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/target_repair_duplicated (0.00s)
+    --- PASS: TestRealAMQDoctorGlobalRepairScope/no_creations_at_all (0.00s)
+=== RUN   TestRealAMQCompatibility
+    real_amq_compatibility_test.go:941: real AMQ binary=/Users/omri/go/bin/amq version=0.116.2 requested=v0.116.2
+=== RUN   TestRealAMQCompatibility/sessionful_default_profile
+=== RUN   TestRealAMQCompatibility/exact_root_named_profile
+=== RUN   TestRealAMQCompatibility/three_actor_100_message_isolation
+=== RUN   TestRealAMQCompatibility/committed_delivery_wording_contract
+=== RUN   TestRealAMQCompatibility/coop_exec_drains_preexisting_goal_with_zero_injection
+=== RUN   TestRealAMQCompatibility/external_wake_suppresses_backlog_and_injects_post-baseline_resend
+=== RUN   TestRealAMQCompatibility/doctor_repairs_malformed_configured_mailbox
+=== RUN   TestRealAMQCompatibility/canonical_root_authority
+=== RUN   TestRealAMQCompatibility/post-coop_child_identity
+=== RUN   TestRealAMQCompatibility/orchestration_contract_default
+=== RUN   TestRealAMQCompatibility/orchestration_contract_named_profile_refused
+--- PASS: TestRealAMQCompatibility (10.84s)
+    --- PASS: TestRealAMQCompatibility/sessionful_default_profile (0.13s)
+    --- PASS: TestRealAMQCompatibility/exact_root_named_profile (0.11s)
+    --- PASS: TestRealAMQCompatibility/three_actor_100_message_isolation (5.62s)
+    --- PASS: TestRealAMQCompatibility/committed_delivery_wording_contract (0.00s)
+    --- PASS: TestRealAMQCompatibility/coop_exec_drains_preexisting_goal_with_zero_injection (1.85s)
+    --- PASS: TestRealAMQCompatibility/external_wake_suppresses_backlog_and_injects_post-baseline_resend (1.54s)
+    --- PASS: TestRealAMQCompatibility/doctor_repairs_malformed_configured_mailbox (0.06s)
+    --- PASS: TestRealAMQCompatibility/canonical_root_authority (0.00s)
+    --- PASS: TestRealAMQCompatibility/post-coop_child_identity (0.11s)
+    --- PASS: TestRealAMQCompatibility/orchestration_contract_default (1.35s)
+    --- PASS: TestRealAMQCompatibility/orchestration_contract_named_profile_refused (0.06s)
+=== RUN   TestRealAMQFixtureEnvSanitizesManagedContext
+--- PASS: TestRealAMQFixtureEnvSanitizesManagedContext (0.00s)
+=== RUN   TestRealAMQProcessEnvSanitizesManagedContext
+--- PASS: TestRealAMQProcessEnvSanitizesManagedContext (0.00s)
+=== RUN   TestNestedWorktreeRootDiscoveryOnAMQ074
+    real_amq_nested_worktree_discovery_test.go:41: real AMQ binary=/Users/omri/go/bin/amq version=0.116.2
+--- PASS: TestNestedWorktreeRootDiscoveryOnAMQ074 (0.50s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	12.129s
+=== RUN   TestCompiledIntentAcceptedByReleasedAMQ
+--- PASS: TestCompiledIntentAcceptedByReleasedAMQ (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	0.235s
+=== RUN   TestApplyForwardsSubjectSchemaFromPrepareResult
+    adoptionseam_test.go:208: outcome=action_required reason=untrusted_config_digest required_actions=[{ActionID:sha256:2eccd9fc389379920f26b66ba5ba660961f7421d9040c2d147e656111658aa55 Kind:trust_confirmation Handles:[worker] Resources:[sha256:3cc86de0637481d8f0ad7502239e6803e0b2a1d94fcd0f09081f3c7533a77003] AllowedDecisions:[trust_exact_subject deny] ReasonCode:untrusted_config_digest}]
+    adoptionseam_test.go:230: apply outcome=action_required reason_code=backend_create_failed failure_detail=create tmux session: tmux new-session -d -P -F #{session_id}	#{window_id}	#{pane_id} -s amq-003-7d420b42ab-s-043a7187 -n worker -e AMQ_LAUNCH_NONCE=a0185d34-903a-4061-a958-94c80e656ecd cd /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestApplyForwardsSubjectSchemaFromPrepareResult1402133152/003 && env AMQ_INTERNAL_LAUNCH_NONCE=a0185d34-903a-4061-a958-94c80e656ecd /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/go-build1338533762/b147/adoptionseam.test coop exec --root /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestApplyForwardsSubjectSchemaFromPrepareResult1402133152/003/.agent-mail/s --me worker --require-wake /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestApplyForwardsSubjectSchemaFromPrepareResult1402133152/002/claude -- --session-id a0185d34-903a-4061-a958-94c80e656ecd: exit status 1: tmux probe stub: answers -V only follow_ups=[]
+--- PASS: TestApplyForwardsSubjectSchemaFromPrepareResult (0.66s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	1.172s
+lane exit=0

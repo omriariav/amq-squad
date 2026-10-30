@@ -1,0 +1,4 @@
+=== RUN   TestLiveR7FirstRun
+--- PASS: TestLiveR7FirstRun (11.67s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	12.311s

@@ -1,0 +1,76 @@
+# go test ./... at 077b043b + working tree, 2026-10-24T11:25:57Z, exit 1
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.494s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	(cached)
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+warning: amq-squad: --session "stream1" implies --root .agent-mail/stream1; ignoring conflicting --root "/ignored".
+warning: amq-squad: --session "stream1" implies --root .agent-mail/stream1; ignoring conflicting --root "/p/.agent-mail".
+wrote brief /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestBriefSeedFromRefusesOverwriteWithoutForce2093113494/001/.amq-squad/briefs/issue-96.md
+Sent gate raise to user on gate/release-safe: q-safe
+Sent operator answer to cto on gate/release-safe: a-safe
+Added t1 "unchanged context": pending
+Sent launchapi required action to user on gate/launchapi-trust_confirmation-a1: msg-gate
+Sent launchapi required action to user on gate/launchapi-stale_conversation_decision-a2: msg-gate
+Sent launchapi required action to user on gate/launchapi-rebind_confirmation-a3: msg-gate
+Sent launchapi required action to user on gate/launchapi-unsupported_capability_ack-a4: msg-gate
+Sent launchapi required action to user on gate/launchapi-stale_conversation_decision-a2: msg-gate
+Sent launchapi required action to user on gate/launchapi-unsupported_capability_ack-a4: msg-gate
+--- FAIL: TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout (9.19s)
+    wait_posture_pty_test.go:119: dispatch did not refuse before deadline; pane:
+        
+        omri@Omris-MacBook-Pro 001 % env AM_SESSION=s AM_ME=cto AM_ROOT=/var/folders/gx/
+        wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRealPTYWaitPostureRefusesNamedGateBeforeTim
+        eout660991573/001/.agent-mail/s AM_BASE_ROOT=/var/folders/gx/wg9xtfn96wx9z4gkb9m
+        p_hxr0000gn/T/TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout660991573/001/.
+        agent-mail /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRealPTYWaitPostu
+        reRefusesNamedGateBeforeTimeout660991573/001/amq-squad dispatch --project /var/f
+        olders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRealPTYWaitPostureRefusesNamedGat
+        eBeforeTimeout660991573/001 --session s --role qa --subject 'real PTY wait' --bo
+        dy 'plain prose' --wait-for drained --wait-timeout 30s >/var/folders/gx/wg9xtfn9
+        6wx9z4gkb9mp_hxr0000gn/T/TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout6609
+        91573/001/watch.out 2>&1; code=$?; printf '%s\n' "$code" >/var/folders/gx/wg9xtf
+        n96wx9z4gkb9mp_hxr0000gn/T/TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout66
+        0991573/001/watch.done
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	49.843s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	17.811s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	30.066s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	7.958s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/state	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/task	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/team	3.665s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	13.706s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	(cached)
+FAIL

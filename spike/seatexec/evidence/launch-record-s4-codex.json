@@ -1,0 +1,19 @@
+{
+  "seat_handle": "s4-codex",
+  "runtime": "codex",
+  "provider_argv": [
+    "/Users/omri/.amq-squad/spike/codex-0.147/node_modules/.bin/codex",
+    "--model",
+    "gpt-6-astra",
+    "-c",
+    "model_reasoning_effort=medium",
+    "--sandbox",
+    "workspace-write",
+    "--ask-for-approval",
+    "on-request",
+    "-c",
+    "notify=[\"/opt/homebrew/Cellar/amq/0.102.0/bin/amq\",\"__codex-notify\",\"--root\",\"/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4\",\"--handle\",\"s4-codex\"]",
+    "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+  ],
+  "timestamp": "2026-10-20T21:19:08.094073Z"
+}

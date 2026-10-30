@@ -1,0 +1,147 @@
+# 4-5 re-pass fix 3: revert check, 2026-10-24T17:58:14Z
+Each fix is reverted in place, its test row runs and must FAIL, then the fix is restored and the row must PASS.
+
+## item 2: the share root and body key through the no-follow walk
+file internal/buzz/share.go; test TestShareRootAndBodyKeyAreNotFollowed in ./internal/buzz/
+revert: 'd, err := fsanchor.OpenAnchored(home, parts, false)' -> 'd, err := fsanchor.OpenAnchored(func() string { r, _ := filepath.EvalSymlinks(root); return r }(), parts[len(parts)-4:], false)'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestShareRootAndBodyKeyAreNotFollowed (0.05s)
+    fix3_test.go:35: a share root symlinked into a workspace loaded
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.475s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.495s
+
+## high a: the squad identity is in the question text
+file internal/gatestore/record.go; test TestSquadIdentitySeparatesTheQuestions in ./internal/buzz/
+revert: '\tif squad != "" {\n\t\thead = append(head, "squad: "+squad)\n\t}\n' -> ''
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestSquadIdentitySeparatesTheQuestions (0.31s)
+    fix3_test.go:84: the two squads' questions are not distinct: af3cd3c2d57494c56a7b0ff7b17e9d385ed3528411e57918564ee5199fd62a35 addb4427d9d9a473b6214ff2c2f6afdf5e255ed5b7f7759dff0af895edf81c9c, squads "root-sha256:c04c29bb3fed1cceff715505b307c2d5a4027fc1ef1dc5beb9e55b047314ac8a" "root-sha256:a09c79b7c2d4b5c7f19cf41a70e6db3f4fd2ebf487767a0fcb936b6d532fa20d"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.710s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.711s
+
+## high b: the question tag carries the squad identity
+file internal/gateverify/core.go; test TestSquadIdentitySeparatesTheQuestions in ./internal/buzz/
+revert: 'extra = [][]string{{"squad", rec.Squad}}' -> 'extra = nil'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestSquadIdentitySeparatesTheQuestions (0.28s)
+    fix3_test.go:95: the reply to A's question: [{EventID:554e296b874b0adcd25a8baeaa2f41753e8cb7f844eca31205cba93732e7a8f6 Kind:gate Gate:0x17be0bc1ea10 Delivery:<nil> Reply:amq-squad gate rel-1: answer not accepted (bad_gate_question). Error:}], <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.677s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.663s
+
+## high c: a record without squad identity is unverifiable
+file internal/gateverify/verify.go; test TestSquadIdentitySeparatesTheQuestions in ./internal/buzz/
+revert: '\tif rec.Squad == "" {\n' -> '\tif false {\n'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestSquadIdentitySeparatesTheQuestions (0.36s)
+    fix3_test.go:106: a record without squad identity: malformed_event: event: missing field "id"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.733s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.452s
+
+## medium 1: an ambiguous answer is resolved by its thread or refused unconsumed
+file internal/buzz/pump.go; test TestPumpAmbiguousAnswerIsNotConsumed in ./internal/buzz/
+revert: '\tif len(match) == 1 {\n\t\treturn match[0], nil\n\t}\n\treturn nil, names' -> '\treturn holders[0], nil'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestPumpAmbiguousAnswerIsNotConsumed (0.17s)
+    fix3_test.go:123: ambiguous answer: [{EventID:c36270b8fef9b4f74a0b3927fa750ecc06ec35e1b990655fffb3f751e126dba3 Kind:gate Gate:0x13472899e690 Delivery:<nil> Reply: Error:}], <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.614s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.672s
+
+## medium 2: squad cores on the registered root only
+file internal/cli/remote.go; test TestSquadCoresUseTheRegisteredRoot in ./internal/cli/
+revert: '\t\tcase filepath.Clean(sel.Root) != root:\n' -> '\t\tcase false:\n'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestSquadCoresUseTheRegisteredRoot (0.02s)
+    remote_fix3_test.go:200: a squad resolving away from its registered root: 1 cores, []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.575s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.502s
+
+## medium 3: the seat must still name a lead role
+file internal/buzz/leads.go; test TestFleetLeadsChecksTheSeatRole in ./internal/buzz/
+revert: 'Lead(s.Root, handle); err != nil {' -> 'Lead(s.Root, handle); false && err != nil {'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestFleetLeadsChecksTheSeatRole (0.00s)
+    fix3_test.go:151: a registry lead whose seat is an implementer: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.621s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.342s
+
+## medium 4a: a lead handle two squads share is ambiguous
+file internal/buzz/leads.go; test TestFleetLeadsAmbiguousAndQualified in ./internal/buzz/
+revert: '\tcase 1:\n\tdefault:\n' -> '\tdefault:\n\tcase -1:\n'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestFleetLeadsAmbiguousAndQualified (0.00s)
+    fix3_test.go:171: bare cto: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.426s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.346s
+
+## medium 4b: the fleet registry is read again every tick
+file internal/cli/remote.go; test TestRemoteAttachRereadsTheFleetRegistry in ./internal/cli/
+revert: '\t\tif m.fleet != nil {\n\t\t\tif nm, err := f.mode(sel, version); err != nil {' -> '\t\tif false && m.fleet != nil {\n\t\t\tif nm, err := f.mode(sel, version); err != nil {'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestRemoteAttachRereadsTheFleetRegistry (10.26s)
+    remote_fix3_test.go:163: timed out waiting for the message routed to the new squad's lead
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	10.816s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.706s
+
+## medium 5: marks directory per full channel id
+file internal/buzz/pump.go; test TestMarksDirIsPerFullChannelID in ./internal/buzz/
+revert: '\tsum := sha256.Sum256([]byte(channel))\n\treturn filepath.Join(shareRoot, "attach", "seen", hex.EncodeToString(sum[:16]))' -> '\t_, _ = sha256.Sum256, hex.EncodeToString\n\treturn filepath.Join(shareRoot, "attach", "seen", strings.ReplaceAll(channel, ":", "_"))'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestMarksDirIsPerFullChannelID (0.00s)
+    fix3_test.go:196: marks dirs: /s/attach/seen/a_b /s/attach/seen/a_b
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.408s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	0.312s
+
+## medium 6: presence expires after two missed status ticks
+file internal/cli/remote.go; test TestRemotePresenceExpiresWithoutStatus in ./internal/cli/
+revert: 'if misses++; misses >= MissedStatusTicks {' -> 'if misses++; false && misses >= MissedStatusTicks {'
+reverted: rc 1 (FAILS as required)
+--- reverted output ---
+--- FAIL: TestRemotePresenceExpiresWithoutStatus (10.09s)
+    remote_fix3_test.go:179: timed out waiting for presence to expire
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	10.589s
+FAIL
+restored: rc 0 (passes)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.455s
+
+RESULT: every row fails when its fix is reverted and passes with it

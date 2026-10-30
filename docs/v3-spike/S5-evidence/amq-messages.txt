@@ -1,0 +1,105 @@
+---json
+{
+  "schema": 1,
+  "id": "2026-10-20T21-20-42.028Z_pid52474_19bb2087",
+  "from": "pi-lead",
+  "to": [
+    "pi-1"
+  ],
+  "thread": "p2p/pi-1__pi-lead",
+  "subject": "Implement Max(a, b int) int",
+  "created": "2026-10-20T21:20:42.028273Z",
+  "priority": "normal",
+  "kind": "todo"
+}
+---
+Create max.go and max_test.go in the current directory (package calc). max.go must define: func Max(a, b int) int that returns the larger of a and b. max_test.go must contain a table-driven TestMax covering edge cases (equal values, negative numbers, mixed signs). Reply when 'go test ./...' passes.
+---json
+{
+  "schema": 1,
+  "id": "2026-10-20T21-20-42.028Z_pid52475_43fa1522",
+  "from": "pi-lead",
+  "to": [
+    "pi-1"
+  ],
+  "thread": "p2p/pi-1__pi-lead",
+  "subject": "Implement Reverse(s string) string",
+  "created": "2026-10-20T21:20:42.028259Z",
+  "priority": "normal",
+  "kind": "todo"
+}
+---
+Create reverse.go and reverse_test.go in the current directory (package calc). reverse.go must define: func Reverse(s string) string that returns s with its runes reversed (handle multi-byte UTF-8 correctly). reverse_test.go must contain a table-driven TestReverse covering empty string, single rune, multi-rune ASCII, and multi-byte Unicode. Reply when 'go test ./...' passes.
+---json
+{
+  "schema": 1,
+  "id": "2026-10-20T21-20-42.028Z_pid52476_01bd12ce",
+  "from": "pi-lead",
+  "to": [
+    "pi-1"
+  ],
+  "thread": "p2p/pi-1__pi-lead",
+  "subject": "Implement IsEven(n int) bool",
+  "created": "2026-10-20T21:20:42.028247Z",
+  "priority": "normal",
+  "kind": "todo"
+}
+---
+Create even.go and even_test.go in the current directory (package calc). even.go must define: func IsEven(n int) bool that reports whether n is even. even_test.go must contain a table-driven TestIsEven covering positive, negative, zero, and odd/even values. Reply when 'go test ./...' passes.
+---json
+{
+  "schema": 1,
+  "id": "2026-10-20T21-23-21.488Z_pid68709_c392f392",
+  "from": "pi-1",
+  "to": [
+    "pi-lead"
+  ],
+  "thread": "p2p/pi-1__pi-lead",
+  "subject": "Re: Implement Max(a, b int) int",
+  "created": "2026-10-20T21:23:21.488132Z",
+  "refs": [
+    "2026-10-20T21-20-42.028Z_pid52474_19bb2087"
+  ],
+  "priority": "normal",
+  "kind": "todo"
+}
+---
+Done. max.go (Max(a, b int) int) and max_test.go created. go test ./... passes.
+---json
+{
+  "schema": 1,
+  "id": "2026-10-20T21-23-21.488Z_pid68710_ac637b29",
+  "from": "pi-1",
+  "to": [
+    "pi-lead"
+  ],
+  "thread": "p2p/pi-1__pi-lead",
+  "subject": "Re: Implement Reverse(s string) string",
+  "created": "2026-10-20T21:23:21.488253Z",
+  "refs": [
+    "2026-10-20T21-20-42.028Z_pid52475_43fa1522"
+  ],
+  "priority": "normal",
+  "kind": "todo"
+}
+---
+Done. reverse.go (Reverse(s string) string, UTF-8 aware) and reverse_test.go created. go test ./... passes.
+---json
+{
+  "schema": 1,
+  "id": "2026-10-20T21-23-21.488Z_pid68711_1aa32276",
+  "from": "pi-1",
+  "to": [
+    "pi-lead"
+  ],
+  "thread": "p2p/pi-1__pi-lead",
+  "subject": "Re: Implement IsEven(n int) bool",
+  "created": "2026-10-20T21:23:21.4883Z",
+  "refs": [
+    "2026-10-20T21-20-42.028Z_pid52476_01bd12ce"
+  ],
+  "priority": "normal",
+  "kind": "todo"
+}
+---
+Done. even.go (IsEven(n int) bool) and even_test.go created. go test ./... passes.

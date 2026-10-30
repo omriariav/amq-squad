@@ -7,183 +7,151 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
 )
 
-const (
-	transactionJournalName = ".transaction.json"
-	transactionJournalTmp  = ".transaction.json.tmp"
+// The journal commit protocol (docs/task-store-design.md, kept from v2):
+// write and fsync the journal temp file, rename it to the journal, fsync the
+// directory (the commit point), write, rename and fsync each after-image,
+// remove the journal, fsync the directory. A locked reader or writer replays
+// a committed journal first; a lock-free reader overlays it (Snapshot).
 
-	transactionPhaseBeforeJournalRename = "before_journal_rename"
-	transactionPhaseAfterJournalCommit  = "after_journal_commit"
-	transactionPhaseMidApply            = "mid_apply"
-	transactionPhaseAfterAllApply       = "after_all_apply"
-	transactionPhaseBeforeJournalRemove = "before_journal_remove"
-	transactionPhaseAfterJournalRemove  = "after_journal_remove"
+const (
+	journalName = ".transaction.json"
+	journalTmp  = ".transaction.json.tmp"
 )
 
-// transactionFault is a deterministic crash/failure seam. Production leaves
-// it nil. Tests inject failures at the named durable boundaries above.
-var transactionFault func(phase string, index int) error
+// Fault phases for the crash tests.
+const (
+	phaseBeforeCommit = "before_commit"
+	phaseAfterCommit  = "after_commit"
+	phaseMidApply     = "mid_apply"
+)
 
-type transactionJournal struct {
-	SchemaVersion int       `json:"schema_version"`
-	ID            string    `json:"id"`
-	CommittedAt   time.Time `json:"committed_at"`
-	Tasks         []Task    `json:"tasks"`
+// fault is a deterministic crash seam; nil in production.
+var fault func(phase string) error
+
+type journal struct {
+	Schema      int       `json:"schema"`
+	ID          string    `json:"id"`
+	CommittedAt time.Time `json:"committed_at"`
+	Tasks       []Task    `json:"tasks"`
 }
 
-// CommittedTransactionError means the journal publication commit point was
-// crossed, but applying or clearing its after-images failed. The next official
-// read/mutation replays the committed journal under the same store lock.
-type CommittedTransactionError struct {
-	TransactionID string
-	Cause         error
+// CommittedError means the commit point was crossed but applying the
+// after-images failed; the next locked access replays the journal.
+type CommittedError struct {
+	ID    string
+	Cause error
 }
 
-func (e *CommittedTransactionError) Error() string {
-	return fmt.Sprintf("task transaction %s committed but needs recovery: %v", e.TransactionID, e.Cause)
+func (e *CommittedError) Error() string {
+	return fmt.Sprintf("task transaction %s committed but needs replay: %v", e.ID, e.Cause)
 }
 
-func (e *CommittedTransactionError) Unwrap() error { return e.Cause }
+func (e *CommittedError) Unwrap() error { return e.Cause }
 
-func commitTasks(dir string, changed []Task, now time.Time) error {
+func commit(dir string, changed []Task, now time.Time) error {
 	if len(changed) == 0 {
 		return nil
 	}
-	changed = append([]Task(nil), changed...)
 	sortTasks(changed)
-	j := transactionJournal{
-		SchemaVersion: 1,
-		ID:            transactionID(changed, now),
-		CommittedAt:   now,
-		Tasks:         changed,
+	ids := make([]string, len(changed))
+	for i, t := range changed {
+		ids[i] = t.ID
 	}
-	b, err := json.MarshalIndent(j, "", "  ")
+	j := journal{Schema: Schema, ID: fmt.Sprintf("txn-%d-%s", now.UnixNano(), strings.Join(ids, "-")), CommittedAt: now, Tasks: changed}
+	raw, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal task transaction: %w", err)
 	}
-	tmp := filepath.Join(dir, transactionJournalTmp)
-	journal := filepath.Join(dir, transactionJournalName)
-	if err := writeSyncedFile(tmp, b, 0o644); err != nil {
-		return fmt.Errorf("write task transaction journal: %w", err)
+	if err := writeSynced(filepath.Join(dir, journalTmp), raw); err != nil {
+		return fmt.Errorf("write task journal: %w", err)
 	}
-	if err := callTransactionFault(transactionPhaseBeforeJournalRename, -1); err != nil {
+	if err := callFault(phaseBeforeCommit); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, journal); err != nil {
-		return fmt.Errorf("publish task transaction journal: %w", err)
+	if err := os.Rename(filepath.Join(dir, journalTmp), filepath.Join(dir, journalName)); err != nil {
+		return fmt.Errorf("publish task journal: %w", err)
 	}
-	if err := syncDirectory(dir); err != nil {
-		return fmt.Errorf("sync published task transaction journal: %w", err)
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("sync task journal: %w", err)
 	}
-	if err := callTransactionFault(transactionPhaseAfterJournalCommit, -1); err != nil {
-		return &CommittedTransactionError{TransactionID: j.ID, Cause: err}
+	if err := callFault(phaseAfterCommit); err != nil {
+		return &CommittedError{ID: j.ID, Cause: err}
 	}
-	if err := applyCommittedJournal(dir, j, true); err != nil {
-		return &CommittedTransactionError{TransactionID: j.ID, Cause: err}
+	if err := apply(dir, j, true); err != nil {
+		return &CommittedError{ID: j.ID, Cause: err}
 	}
 	return nil
 }
 
-func transactionID(tasks []Task, now time.Time) string {
-	ids := make([]string, 0, len(tasks))
-	for _, t := range tasks {
-		ids = append(ids, t.ID)
+func recoverJournal(dir string) error {
+	raw, err := os.ReadFile(filepath.Join(dir, journalName))
+	if os.IsNotExist(err) {
+		return nil
 	}
-	sort.Strings(ids)
-	return fmt.Sprintf("txn-%d-%s", now.UnixNano(), strings.Join(ids, "-"))
-}
-
-func recoverCommittedTransaction(dir string) (string, error) {
-	path := filepath.Join(dir, transactionJournalName)
-	b, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("read committed task transaction: %w", err)
+		return fmt.Errorf("read task journal: %w", err)
 	}
-	var j transactionJournal
-	if err := json.Unmarshal(b, &j); err != nil {
-		return "", fmt.Errorf("parse committed task transaction: %w", err)
+	var j journal
+	if err := json.Unmarshal(raw, &j); err != nil {
+		return fmt.Errorf("parse committed task journal: %w", err)
 	}
-	if j.SchemaVersion != 1 || strings.TrimSpace(j.ID) == "" || len(j.Tasks) == 0 {
-		return "", fmt.Errorf("invalid committed task transaction journal")
+	if j.ID == "" || len(j.Tasks) == 0 {
+		return fmt.Errorf("invalid committed task journal")
 	}
-	if err := applyCommittedJournal(dir, j, false); err != nil {
-		return j.ID, err
-	}
-	return j.ID, nil
+	return apply(dir, j, false)
 }
 
-func applyCommittedJournal(dir string, j transactionJournal, injectFaults bool) error {
+func apply(dir string, j journal, faults bool) error {
 	for i, t := range j.Tasks {
-		if err := writeTaskAfterImage(dir, t); err != nil {
-			return err
+		raw, err := json.MarshalIndent(t, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal task %s: %w", t.ID, err)
 		}
-		if injectFaults && i < len(j.Tasks)-1 {
-			if err := callTransactionFault(transactionPhaseMidApply, i); err != nil {
+		path := filepath.Join(dir, t.ID+".json")
+		if err := writeSynced(path+".tmp", raw); err != nil {
+			return fmt.Errorf("write task %s: %w", t.ID, err)
+		}
+		if err := os.Rename(path+".tmp", path); err != nil {
+			return fmt.Errorf("publish task %s: %w", t.ID, err)
+		}
+		if faults && i < len(j.Tasks)-1 {
+			if err := callFault(phaseMidApply); err != nil {
 				return err
 			}
 		}
 	}
-	if injectFaults {
-		if err := callTransactionFault(transactionPhaseAfterAllApply, len(j.Tasks)); err != nil {
-			return err
-		}
-		if err := callTransactionFault(transactionPhaseBeforeJournalRemove, len(j.Tasks)); err != nil {
-			return err
-		}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("sync task files: %w", err)
 	}
-	if err := os.Remove(filepath.Join(dir, transactionJournalName)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove committed task transaction journal: %w", err)
+	// The generation moves before the journal goes, so a lock-free reader
+	// that saw neither the journal nor the new generation saw no part of this
+	// transaction (Snapshot).
+	if err := bumpGeneration(dir); err != nil {
+		return fmt.Errorf("bump task store generation: %w", err)
 	}
-	if err := syncDirectory(dir); err != nil {
-		return fmt.Errorf("sync cleared task transaction journal: %w", err)
+	if err := os.Remove(filepath.Join(dir, journalName)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove task journal: %w", err)
 	}
-	if injectFaults {
-		if err := callTransactionFault(transactionPhaseAfterJournalRemove, len(j.Tasks)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return syncDir(dir)
 }
 
-func callTransactionFault(phase string, index int) error {
-	if transactionFault == nil {
+func callFault(phase string) error {
+	if fault == nil {
 		return nil
 	}
-	if err := transactionFault(phase, index); err != nil {
+	if err := fault(phase); err != nil {
 		return fmt.Errorf("injected task transaction failure at %s: %w", phase, err)
 	}
 	return nil
 }
 
-func writeTaskAfterImage(dir string, t Task) error {
-	b, err := json.MarshalIndent(t, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal task: %w", err)
-	}
-	path := filepath.Join(dir, t.ID+".json")
-	tmp := path + ".tmp"
-	if err := writeSyncedFile(tmp, b, 0o644); err != nil {
-		return fmt.Errorf("write task after-image: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("publish task after-image: %w", err)
-	}
-	if err := syncDirectory(dir); err != nil {
-		return fmt.Errorf("sync task after-image: %w", err)
-	}
-	return nil
-}
-
-func writeSyncedFile(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+func writeSynced(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
@@ -198,12 +166,8 @@ func writeSyncedFile(path string, data []byte, mode os.FileMode) error {
 	return f.Close()
 }
 
-// syncDirectory makes rename/remove durability explicit on platforms that
-// support directory fsync (Unix, including Linux and macOS). Windows does not
-// expose the same portable contract through os.File.Sync, so it is a documented
-// best-effort no-op there. EINVAL/ENOTSUP are likewise treated as unsupported,
-// not as evidence that the file contents themselves failed to sync.
-func syncDirectory(dir string) error {
+// syncDir makes renames durable where directory fsync exists (Unix).
+func syncDir(dir string) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}

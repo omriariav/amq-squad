@@ -1,0 +1,16 @@
+owner: npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g (232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71)
+relay: wss://omriariav.communities.buzz.xyz
+share: /Users/omri/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+body:  209d429a475f6ffa460c68c0e69e556ee4d608744e931978bdce9db500960e11 (check this against what amq-owner-sign shows)
+grants requested: 8
+grants enrolled: 8
+== E: amq-remote share --target amq-squad --dm-channel <channel> --native-session attach --min-evidence submitted
+== E: amq-squad remote bind
+gate binding written: /Users/omri/.amq-squad/gate-binding.json
+body npub1yzw59xj8tahl53svdrqwd8j4dmjdvzr5f6f3j79ae6wm2qykpcgs7d3289 (209d429a475f6ffa460c68c0e69e556ee4d608744e931978bdce9db500960e11), owner 232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71
+8 grants (kinds [20003 1059 24200 44200 10100 0 9 40003]), expire 2026-11-28T20:31:45Z
+share target amq-squad: kind mailbox, handle attach, reply_timeout 60s, DM commands on (channel f4e526d5-3f22-4486-8c18-dd99f5442b43)
+created /Users/omri/.amq-squad/issuer-key.pem
+created /Users/omri/.amq-squad/authorization-trust.json
+== F: stopping the enrollment endpoint (amq-squad remote attach runs it from now on)
+enrolled. next: amq-squad remote attach --lead <lead handle> --project <dir> --session <session>

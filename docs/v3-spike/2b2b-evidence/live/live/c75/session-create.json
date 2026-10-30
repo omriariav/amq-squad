@@ -1,0 +1,9 @@
+{
+  "name": "c75",
+  "path": "~/code/amq-squad/.claude/worktrees/agent-a4c9efee2491e72e4/build/scratch-7-5/repo/.agent-mail/c75",
+  "agents": [
+    "c75",
+    "operator",
+    "scheduler"
+  ]
+}

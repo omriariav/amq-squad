@@ -1,18 +1,28 @@
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
 
-// TestGeneralOperationFloorUnchanged locks gh#736's "two floors,
-// deliberately" contract: the general-operation AMQ floor (wake/mail path,
-// proven on amq 0.60.x) is untouched by the v2.30.0 milestone. The opt-in
-// launchapi backend gets its own, separate, higher floor
-// (internal/adoptionseam.AdoptionFloorAMQVersion / AdoptionFloorContractSemver)
-// so users who never touch launchapi are not taxed for zero benefit. The two
-// floors merge only when the launchapi backend becomes the auto default
-// (gh#733's v2.31.0+ line).
+	"github.com/omriariav/amq-squad/v3/internal/registry"
+)
+
+// TestGeneralOperationFloorUnchanged pins the one AMQ floor of 3.0 (5-amq-A
+// fix round): doctorMinAMQVersion is the release of the module go.mod pins,
+// v0.116.2, and the installed-binary floor is the same constant. Every 3.0
+// path needs that release's launch adapters and its mailbox, so there is no
+// separate, lower general-operation floor any more (gh#736's two floors
+// merged when the launch API became the only launch path). Raise it only
+// together with the go.mod pin.
 func TestGeneralOperationFloorUnchanged(t *testing.T) {
-	const wantUnchanged = "0.60.0"
-	if doctorMinAMQVersion != wantUnchanged {
-		t.Fatalf("doctorMinAMQVersion = %q, want it unchanged at %q by the v2.30.0 milestone (raise it only alongside a deliberate general-operation floor bump, not as a side effect of the opt-in launchapi backend)", doctorMinAMQVersion, wantUnchanged)
+	const want = "0.116.2"
+	if doctorMinAMQVersion != want {
+		t.Fatalf("doctorMinAMQVersion = %q, want %q (raise it only with the go.mod pin)", doctorMinAMQVersion, want)
+	}
+	if doctorInstalledAMQFloor != doctorMinAMQVersion {
+		t.Fatalf("the installed-binary floor %q is not doctorMinAMQVersion %q: one floor for one binary", doctorInstalledAMQFloor, doctorMinAMQVersion)
+	}
+	if "v"+want != registry.PinnedAMQModule || strings.TrimPrefix(registry.PinnedAMQModule, "v") != doctorMinAMQVersion {
+		t.Fatalf("doctorMinAMQVersion %s is not the go.mod pin %s", doctorMinAMQVersion, registry.PinnedAMQModule)
 	}
 }

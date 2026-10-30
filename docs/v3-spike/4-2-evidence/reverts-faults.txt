@@ -1,0 +1,478 @@
+=== MUTATION: guard exit 1 -> deny (fail closed instead of open)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: FaultTable.test_guard_exit_one_fails_open_and_is_logged
+replaced:
+log "fail-open: guard exit $rc"
+		exit 0
+
+with:
+log "fail-open: guard exit $rc"
+		printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"guard failed"}}\n'
+		exit 0
+
+result: FAILS as required (exit 1)
+--- full output ---
+F
+======================================================================
+FAIL: test_guard_exit_one_fails_open_and_is_logged (__main__.FaultTable.test_guard_exit_one_fails_open_and_is_logged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 279, in test_guard_exit_one_fails_open_and_is_logged
+    self.assertEqual((rc, out, to), (0, "", False))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '{"hookSpecificOutput":{"hookEventName":"P[88 chars]alse) != (0, '', False)
+
+First differing element 1:
+'{"hookSpecificOutput":{"hookEventName":"P[80 chars]}}\n'
+''
+
++ (0, '', False)
+- (0,
+-  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"guard '
+-  'failed"}}\n',
+-  False)
+
+----------------------------------------------------------------------
+Ran 1 test in 0.021s
+
+FAILED (failures=1)
+
+--- restored, same tests: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.019s
+
+OK
+
+
+=== MUTATION: guard exit 1 -> propagate exit 2
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: FaultTable.test_guard_exit_one_fails_open_and_is_logged
+replaced:
+log "fail-open: guard exit $rc"
+		exit 0
+
+with:
+log "fail-open: guard exit $rc"
+		exit 2
+
+result: FAILS as required (exit 1)
+--- full output ---
+F
+======================================================================
+FAIL: test_guard_exit_one_fails_open_and_is_logged (__main__.FaultTable.test_guard_exit_one_fails_open_and_is_logged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 279, in test_guard_exit_one_fails_open_and_is_logged
+    self.assertEqual((rc, out, to), (0, "", False))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, '', False) != (0, '', False)
+
+First differing element 0:
+2
+0
+
+- (2, '', False)
+?  ^
+
++ (0, '', False)
+?  ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.020s
+
+FAILED (failures=1)
+
+--- restored, same tests: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.019s
+
+OK
+
+
+=== MUTATION: missing binary -> deny (fail closed)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: FaultTable.test_missing_command_fails_open_and_is_logged
+replaced:
+{ log "fail-open: $bin not found on PATH"; exit 0; }
+with:
+{ log "fail-open: $bin not found on PATH"; printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"}}\n'; exit 0; }
+result: FAILS as required (exit 1)
+--- full output ---
+F
+======================================================================
+FAIL: test_missing_command_fails_open_and_is_logged (__main__.FaultTable.test_missing_command_fails_open_and_is_logged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 288, in test_missing_command_fails_open_and_is_logged
+    self.assertEqual((rc, out, to), (0, "", False))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '{"hookSpecificOutput":{"hookEventName":"P[46 chars]alse) != (0, '', False)
+
+First differing element 1:
+'{"hookSpecificOutput":{"hookEventName":"P[38 chars]}}\n'
+''
+
++ (0, '', False)
+- (0,
+-  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"}}\n',
+-  False)
+
+----------------------------------------------------------------------
+Ran 1 test in 0.014s
+
+FAILED (failures=1)
+
+--- restored, same tests: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.014s
+
+OK
+
+
+=== MUTATION: timeout 5 -> 2 in hooks.json (configured timeout changes)
+file: plugins/claude/hooks/hooks.json
+tests: FaultTable.test_timeout_fails_open_after_the_configured_timeout Manifest
+replaced:
+"timeout": 5
+with:
+"timeout": 2
+result: FAILS as required (exit 1)
+--- full output ---
+..F
+======================================================================
+FAIL: test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file (__main__.Manifest.test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 371, in test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file
+    self.assertEqual(entry["timeout"], 5, event)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 5 : SessionStart
+
+----------------------------------------------------------------------
+Ran 3 tests in 5.007s
+
+FAILED (failures=1)
+
+--- restored, same tests: exit 0 ---
+...
+----------------------------------------------------------------------
+Ran 3 tests in 5.006s
+
+OK
+
+
+=== MUTATION: timeout 5 -> 30 in hooks.json
+file: plugins/claude/hooks/hooks.json
+tests: Manifest
+replaced:
+"timeout": 5
+with:
+"timeout": 30
+result: FAILS as required (exit 1)
+--- full output ---
+.F
+======================================================================
+FAIL: test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file (__main__.Manifest.test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 371, in test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file
+    self.assertEqual(entry["timeout"], 5, event)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 30 != 5 : SessionStart
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.000s
+
+FAILED (failures=1)
+
+--- restored, same tests: exit 0 ---
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.000s
+
+OK
+
+
+=== MUTATION: context failure propagates its exit code (UserPromptSubmit would be erased)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: FaultTable.test_other_events_never_exit_two
+replaced:
+log "fail-open: context exit $rc"
+		exit 0
+
+with:
+log "fail-open: context exit $rc"
+		exit "$rc"
+
+result: FAILS as required (exit 1)
+--- full output ---
+FF
+======================================================================
+FAIL: test_other_events_never_exit_two (__main__.FaultTable.test_other_events_never_exit_two) (event='SessionStart')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 311, in test_other_events_never_exit_two
+    self.assertEqual((rc, out, err), (0, "", ""))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, '', '') != (0, '', '')
+
+First differing element 0:
+2
+0
+
+- (2, '', '')
+?  ^
+
++ (0, '', '')
+?  ^
+
+
+======================================================================
+FAIL: test_other_events_never_exit_two (__main__.FaultTable.test_other_events_never_exit_two) (event='UserPromptSubmit')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 311, in test_other_events_never_exit_two
+    self.assertEqual((rc, out, err), (0, "", ""))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, '', '') != (0, '', '')
+
+First differing element 0:
+2
+0
+
+- (2, '', '')
+?  ^
+
++ (0, '', '')
+?  ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.049s
+
+FAILED (failures=2)
+
+--- restored, same tests: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.048s
+
+OK
+
+
+=== MUTATION: evidence ingest failure propagates its exit code
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: FaultTable.test_other_events_never_exit_two
+replaced:
+[ "$rc" -eq 0 ] || log "fail-open: evidence ingest exit $rc"
+
+with:
+[ "$rc" -eq 0 ] || exit "$rc"
+
+result: FAILS as required (exit 1)
+--- full output ---
+FF
+======================================================================
+FAIL: test_other_events_never_exit_two (__main__.FaultTable.test_other_events_never_exit_two) (event='PostToolUse')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 311, in test_other_events_never_exit_two
+    self.assertEqual((rc, out, err), (0, "", ""))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, '', '') != (0, '', '')
+
+First differing element 0:
+2
+0
+
+- (2, '', '')
+?  ^
+
++ (0, '', '')
+?  ^
+
+
+======================================================================
+FAIL: test_other_events_never_exit_two (__main__.FaultTable.test_other_events_never_exit_two)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 313, in test_other_events_never_exit_two
+    self.assertIn("fail-open: evidence ingest exit 2", s.log())
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'fail-open: evidence ingest exit 2' not found in 'error: context: no mailbox for "cto" under /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/hooktest-spvsfwk1/project/.agent-mail/s1\n2026-10-24T13:13:18Z session-start fail-open: context exit 2\nerror: context: no mailbox for "cto" under /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/hooktest-spvsfwk1/project/.agent-mail/s1\n2026-10-24T13:13:18Z user-prompt fail-open: context exit 2\nerror: evidence ingest: no mailbox for "cto" under /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/hooktest-spvsfwk1/project/.agent-mail/s1\n'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.048s
+
+FAILED (failures=2)
+
+--- restored, same tests: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.051s
+
+OK
+
+
+=== MUTATION: post-tool does not call evidence ingest
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: Evidence
+replaced:
+"$bin" evidence ingest --me "$AM_ME" >/dev/null 2>>"$logf"
+with:
+true
+result: FAILS as required (exit 1)
+--- full output ---
+E
+======================================================================
+ERROR: test_twenty_tool_calls_give_twenty_ledger_lines (__main__.Evidence.test_twenty_tool_calls_give_twenty_ledger_lines)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 361, in test_twenty_tool_calls_give_twenty_ledger_lines
+    lines = [json.loads(l) for l in read(path).splitlines()]
+                                    ~~~~^^^^^^
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 32, in read
+    with open(path) as f:
+         ~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/hooktest-601qcoiu/project/.agent-mail/s1/extensions/amq-squad/ledger/cto.jsonl'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.142s
+
+FAILED (errors=1)
+
+--- restored, same tests: exit 0 ---
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.362s
+
+OK
+
+
+=== MUTATION: user-prompt injects nothing (context only at session start)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: ContextInjection
+replaced:
+session-start | user-prompt)
+
+with:
+session-start)
+
+result: FAILS as required (exit 1)
+--- full output ---
+E
+======================================================================
+ERROR: test_session_start_and_every_prompt_carry_role_rules_task_and_gates (__main__.ContextInjection.test_session_start_and_every_prompt_carry_role_rules_task_and_gates)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 337, in test_session_start_and_every_prompt_carry_role_rules_task_and_gates
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+----------------------------------------------------------------------
+Ran 1 test in 0.087s
+
+FAILED (errors=1)
+
+--- restored, same tests: exit 0 ---
+context injection: last run 18.0 ms
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.122s
+
+OK
+
+
+=== MUTATION: json_escape drops the quote escape
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: ContextInjection
+replaced:
+gsub(/"/,"\\\""); 
+with:
+
+result: FAILS as required (exit 1)
+--- full output ---
+E
+======================================================================
+ERROR: test_session_start_and_every_prompt_carry_role_rules_task_and_gates (__main__.ContextInjection.test_session_start_and_every_prompt_carry_role_rules_task_and_gates)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 337, in test_session_start_and_every_prompt_carry_role_rules_task_and_gates
+    d = decision(out)
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 129, in decision
+    return json.loads(out)["hookSpecificOutput"]
+           ~~~~~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 374, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ~~~~~~~~~~~~~~^^^^^^^^
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 1 column 147 (char 146)
+
+----------------------------------------------------------------------
+Ran 1 test in 0.079s
+
+FAILED (errors=1)
+
+--- restored, same tests: exit 0 ---
+context injection: last run 14.5 ms
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.104s
+
+OK
+
+
+=== MUTATION: context --json -> context (text, no --json)
+file: plugins/claude/hooks/amq-squad-hook.sh
+tests: ContextInjection
+replaced:
+"$bin" context --me "$AM_ME" --json
+with:
+"$bin" context --me "$AM_ME"
+result: FAILS as required (exit 1)
+--- full output ---
+E
+======================================================================
+ERROR: test_session_start_and_every_prompt_carry_role_rules_task_and_gates (__main__.ContextInjection.test_session_start_and_every_prompt_carry_role_rules_task_and_gates)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/scripts/test_claude_hooks.py", line 343, in test_session_start_and_every_prompt_carry_role_rules_task_and_gates
+    payload = json.loads(text[text.index("{"):])["data"]
+                              ~~~~~~~~~~^^^^^
+ValueError: substring not found
+
+----------------------------------------------------------------------
+Ran 1 test in 0.076s
+
+FAILED (errors=1)
+
+--- restored, same tests: exit 0 ---
+context injection: last run 15.6 ms
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.107s
+
+OK
+
+
+SUMMARY: 11 mutations, 0 problems

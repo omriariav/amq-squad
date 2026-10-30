@@ -1,0 +1,136 @@
+{
+  "checks": {
+    "completed_through_commit_step": true,
+    "final_line_exact": false,
+    "go_test_confirmed": true,
+    "independent_go_test": true,
+    "read_confirmed": true,
+    "worktree_exact_harness_commit": true
+  },
+  "classed_tasks": 1,
+  "completed_tasks": 1,
+  "decision_kinds": {
+    "completed": 1,
+    "dispatched": 1,
+    "scheduler_started": 1,
+    "scheduler_stopped": 1,
+    "seat_requested": 1,
+    "seat_up": 1
+  },
+  "false_success": false,
+  "harness_commits": 1,
+  "independent_go_test_ok": true,
+  "label": "r12-1",
+  "lead_turns": 0,
+  "mode": "r12",
+  "model": "ollama/qwen3.6:27b",
+  "numstat": "1\t1\tcalc.go",
+  "pass": false,
+  "seconds": 129,
+  "stood_in": [
+    "pi launch: External request file read by this harness, seat_up by scheduler post, one pi run turn per doorbell",
+    "wake: the harness reads the AMQ doorbell from the seat inbox and starts the turn with it",
+    "merge train: the harness fast-forwards main to seat/pi-1 after each completed task"
+  ],
+  "tasks": [
+    {
+      "ID": "t1",
+      "Title": "R12 probe: Greeting",
+      "Class": "implement",
+      "State": "completed",
+      "BlockReason": "",
+      "Files": [
+        "calc.go"
+      ]
+    }
+  ],
+  "worker_calls": [
+    {
+      "turn": 1,
+      "tool": "amq_task_claim",
+      "args": "{\"id\":\"t1\"}",
+      "out": "Claim t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T17:46:31Z"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_task_list",
+      "args": "{\"state\":\"in_progress\"}",
+      "out": "{\n  \"schema_version\": 1,\n  \"kind\": \"tasks\",\n  \"data\": {\n    \"root\": \"$JOB/live/r12-1/proj/.agent-mail/collab\",\n    \"tasks\": [\n      {\n        \"schema\": 1,\n        \"id\": \"t1\",\n        \"title\": \"R12 probe: Greeting\",\n        \"description\": \"You are working in a Go module in the current directory.\\n1. Read the file calc.go.\\n2. Make exactly one one-line edit: cha..."
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"ls -la\"}",
+      "out": "total 40\ndrwxr-xr-x@ 7 omri  staff  224 Oct 24 20:36 .\ndrwxr-xr-x@ 9 omri  staff  288 Oct 24 20:36 ..\n-rw-r--r--@ 1 omri  staff   90 Oct 24 20:36 .git\n-rw-r--r--@ 1 omri  staff   13 Oct 24 20:36 .gitignore\n-rw-r--r--@ 1 omri  staff  173 Oct 24 20:36 calc.go\n-rw-r--r--@ 1 omri  staff  288 Oct 24 20:36 calc_test.go\n-rw-r--r--@ 1 omri  staff   38 Oct 24 20:36 go.mod\n"
+    },
+    {
+      "turn": 1,
+      "tool": "read",
+      "args": "{\"path\":\"calc.go\"}",
+      "out": "package calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "edit",
+      "args": "{\"path\":\"calc.go\",\"edits\":[{\"newText\":\"\\treturn \\\"hello, world\\\"\",\"oldText\":\"\\treturn \\\"hello\\\"\"}]}",
+      "out": "Successfully replaced 1 block(s) in calc.go."
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"cd $JOB/live/r12-1/proj \u0026\u0026 go test ./...\"}",
+      "out": "--- FAIL: TestGreeting (0.00s)\n    calc_test.go:7: Greeting() = \"hello\", want \"hello, world\"\nFAIL\nFAIL\texample.com/probecalc\t0.349s\nFAIL\n\n\nCommand exited with code 1",
+      "is_error": true
+    },
+    {
+      "turn": 1,
+      "tool": "read",
+      "args": "{\"path\":\"calc.go\"}",
+      "out": "package calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello, world\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"cd $JOB/live/r12-1/proj \u0026\u0026 go clean -cache \u0026\u0026 go test ./... -v\",\"timeout\":60}",
+      "out": "=== RUN   TestGreeting\n    calc_test.go:7: Greeting() = \"hello\", want \"hello, world\"\n--- FAIL: TestGreeting (0.00s)\n=== RUN   TestAdd\n--- PASS: TestAdd (0.00s)\nFAIL\nFAIL\texample.com/probecalc\t0.236s\nFAIL\n\n\nCommand exited with code 1",
+      "is_error": true
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"pwd \u0026\u0026 cat calc.go\"}",
+      "out": "$JOB/live/r12-1/wt-pi-1\npackage calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello, world\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"cat $JOB/live/r12-1/proj/calc.go\"}",
+      "out": "package calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"ls -la $JOB/live/r12-1/wt-pi-1/\"}",
+      "out": "total 40\ndrwxr-xr-x@  7 omri  staff  224 Oct 24 20:36 .\ndrwxr-xr-x@ 10 omri  staff  320 Oct 24 20:36 ..\n-rw-r--r--@  1 omri  staff   90 Oct 24 20:36 .git\n-rw-r--r--@  1 omri  staff   13 Oct 24 20:36 .gitignore\n-rw-r--r--@  1 omri  staff  180 Oct 24 20:36 calc.go\n-rw-r--r--@  1 omri  staff  288 Oct 24 20:36 calc_test.go\n-rw-r--r--@  1 omri  staff   38 Oct 24 20:36 go.mod\n"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"go test ./... -v\"}",
+      "out": "=== RUN   TestGreeting\n--- PASS: TestGreeting (0.00s)\n=== RUN   TestAdd\n--- PASS: TestAdd (0.00s)\nPASS\nok  \texample.com/probecalc\t0.669s\n"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_task_done",
+      "args": "{\"evidence\":\"go test ./... -v\\nPASS\\nok  \\texample.com/probecalc\\t0.669s\",\"id\":\"t1\"}",
+      "out": "Done t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T17:47:52Z"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_send",
+      "args": "{\"body\":\"Task t1 (R12 probe: Greeting) completed - changed Greeting return from \\\"hello\\\" to \\\"hello, world\\\", all tests pass.\",\"kind\":\"status\",\"to\":\"pi-lead\"}",
+      "out": "{\n  \"id\": \"2026-10-24T17-38-16.264Z_pid82712_754c5af2\",\n  \"outbox\": {\n    \"error\": \"\",\n    \"written\": true\n  },\n  \"root\": \"$JOB/live/r12-1/proj/.agent-mail/collab\",\n  \"session\": \"collab\",\n  \"source_root\": \"$JOB/live/r12-1/proj/.agent-mail/collab\",\n  \"subject\": \"\",\n  \"thread\": \"p2p/pi-1__pi-lead\",\n  \"to\": [\n    \"pi-lead\"\n  ..."
+    }
+  ],
+  "worker_turns": 1
+}

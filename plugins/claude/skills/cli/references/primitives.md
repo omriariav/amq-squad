@@ -1,116 +1,72 @@
-# Operator primitives and namespace resolution
+# Operator primitives and root resolution
 
 ## Which primitive for which intent
 
 | Intent | Primitive | Notes |
 |---|---|---|
-| See current state | `status` | projection; `--json` for a stable shape |
-| Check the setup | `doctor` | severity is a contract, not advice |
+| See current state | `status` | the status contract; `--json` for the schema 1 document |
+| See every squad | `status --fleet` | reads `~/.amq-squad/fleet.yaml`, one document per squad |
+| Check the host | `doctor` | severity is a contract, not advice; it writes nothing by default |
+| A seat's own view | `context` | role, rules digest, current task, open gates; reads only |
 | Decide what to do next | `status` | inspect one JSON snapshot and select one bounded action |
-| Watch for events | `status` then park | the session notifier wakes pending AMQ work |
-| Reach the human | `gate` | typed decisions surface through status; never self-approve |
-| Assign work | `dispatch` | durable; pane input is fallback |
+| Watch for events | `status` then park | AMQ wake delivers pending work to the seat |
 | Move task state | `task` | the task store is the source of transitions |
-| Prove a command ran | `evidence` | immutable, task-bound |
-| Ask a human decision | `gate` | an open decision stays unsuppressed |
-| Check an action is allowed | `verify` | read-only; non-zero is a blocker |
-| Diagnose resolution | `doctor` | pass project/profile/session explicitly when ambiguity exists |
-| Inspect messaging | `amq` | env, ops, route, who, drain, list, read, thread |
+| Queue work for a seat | `dispatch` | durable AMQ; with `--create-task` or `--task` it also grants the lease |
+| Prove what ran | `evidence list` | the hook ledger, redacted; read-only |
+| Check one tool call | `guard` | allow, needs_gate or deny; advisory, deterministic |
+| Reach the owner | `gate` | typed gates are answered only by the owner's signed reply |
+| Check an action is approved | `verify action` | read-only; non-zero is a blocker |
+| Check merge or release evidence | `verify merge`, `verify release` | read-only; never merges or tags |
+| Inspect messaging | `amq env`, `amq route` | the resolved AMQ context and one route explained |
+| List roles | `roles` | catalog roles and staged custom roles |
 
-## Namespace resolution, one dimension at a time
+## Root resolution
 
-Three dimensions resolve independently, and conflating them is the most common
-namespace error.
+3.0 has one squad per repository (`<repo root>/squad.yaml`) and keeps the task store,
+the ledgers and the gate store under the AMQ session root
+(`<root>/extensions/amq-squad/`). Two ways name that root:
 
-**Project** is *where the team-home is*. It decides which `.amq-squad/` directory is
-authoritative. A relative path resolves against the project, not against your shell's
-working directory — that distinction matters because a persisted record anchored to a
-shell cwd reads differently depending on where the next command runs.
-
-**Profile** is *which roster inside that project*. A project can hold several. Named
-profiles require `--profile` for mutations; omitting it fails closed rather than
-guessing.
-
-**Session** is *which workstream namespace*. It scopes tasks, gates, and mailboxes.
-
-### Precedence
-
-| Source | Wins over | Notes |
-|---|---|---|
-| explicit flags | everything | always unambiguous; prefer them in scripts |
-| injected environment | launch records | what a launched agent inherits |
-| live launch records | project config | ambiguous when several are live |
-| project config | documented defaults | `.amqrc` and friends |
-
-When two live launch records disagree, resolution is **ambiguous** and the CLI
-refuses rather than picking. That refusal is the feature. Pass explicit
-project/profile/session coordinates, then use `doctor` and `status` to inspect the
-selected record.
-
-## Failure mode to expect
-
-```
-error: ambiguous profile at live_launch_record precedence
-```
-
-Cause: more than one live launch record resolves for this project. Fix: pass
-`--profile NAME` explicitly. The CLI prints that fix itself, which is worth reading
-before reaching for anything more elaborate.
-
-## Runtime control (tmux)
-
-amq-squad owns the tmux control contract. Drive agents by stable command, never raw
-`tmux send-keys`, and target the recorded **pane id** rather than a window name — names
-are not stable across a session's life.
+- `--root DIR`, else the `AM_ROOT` environment variable. Inside a seat the launch
+  record sets it; a flag may fill an unset variable but never contradicts a set one.
+- `--project DIR --session S`: the root resolved from the repository's AMQ
+  configuration (`.amqrc`) and the session name.
 
 ```sh
-amq-squad focus --session S --role cto                          # bring a pane into view
-amq-squad send --session S --role cto --body-file ./prompt.md   # deliver a prompt and submit
-cat prompt.md | amq-squad send --session S --role qa --body-file -
+amq-squad amq env --project P --session S --json
+amq-squad amq route --to ROLE --project P --session S --json
 ```
 
-`send` stages text in a tmux paste buffer, so multi-line text and shell metacharacters
-arrive verbatim, and it carries a **busy-guard**: it refuses to deliver into a mid-turn
-pane unless you pass `--force`. That refusal is a feature — interrupting a pane
-mid-turn corrupts the agent's own transcript.
+`amq env` prints the resolved context; `amq route` explains where a message to one
+handle would go, including cross-project routing (`--target-project`,
+`--target-session`). Read them before suspecting the mailbox.
 
-**`amq-squad send` is pane delivery, not a message.** It has no `--kind` and no
-`--thread`. To post an inter-agent message use `amq send`, which is a different tool
-with a different transport.
+## Messaging
 
-### The two body-passing rules are NOT the same
+Inside a seat, use bare `amq send`, `amq drain` and `amq thread`: the launch set the
+whole identity. From the owner's terminal, pass the root explicitly to raw `amq`
+(`amq drain --root ROOT --me H --include-body`).
+
+`amq-squad dispatch` is the lead's durable send: it resolves the root from the
+repository, sends one AMQ message, and with `--create-task` or `--task ID` grants the
+task's lease to the seat before sending. The message is a doorbell; the lease is the
+assignment.
+
+### Body-passing rules
 
 | tool | flag for file or stdin |
 |---|---|
-| `amq-squad send` | `--body-file FILE`, or `--body-file -` for stdin |
+| `amq-squad dispatch` | `--body-file FILE`, or `--body-file -` for stdin |
 | bare `amq send` | `--body @file`, or `--body -` for stdin; **`--body-file` does not exist** |
 
 Use a file or stdin for anything containing code, backticks, or `$()`. Inline `--body`
 is for short plain prose only, because the calling shell expands it before the tool
-ever sees it — a body with backticks arrives mangled or empty.
+ever sees it.
 
-## Session lifecycle
+## What 3.0 removed
 
-```sh
-amq-squad status --session S --json           # read-only runtime and coordination projection
-amq-squad down --role R --session S           # or --all; a selector is REQUIRED
-amq-squad resume --session S                  # PLAN ONLY: prints the action table
-amq-squad resume --session S --exec           # actually reopens the panes
-amq-squad start --project DIR --profile PROFILE  # reconcile the profile's scoped session
-```
-
-Several of those have surprising defaults. Every row below was verified by running the
-command, not by reading its flags:
-
-| command | the surprise |
-|---|---|
-| `down` | exactly one selector is MANDATORY, `--role R` or `--all`. `down --session S` alone stops nothing and exits on a usage error |
-| `resume` | plan-only by default. It prints a per-member action table and copy-pasteable commands; without `--exec` nothing reopens |
-| `status` | read-only and record-first; use `--json` for a stable projection |
-| `start` | reconciles the selected profile's session; pin/select a fresh session in the roster first when branching work |
-
-`start` reconciles an existing session by design: verified live roles stay running,
-stopped roles respawn, and a partial launch rolls forward. Use `resume` instead when
-the goal is to reattach saved conversations from launch history. `down` stops actors
-without deleting their durable mailbox or launch history; automatic session deletion
-is deliberately absent.
+The v2 runtime-control and lifecycle verbs are gone: there is no `start`, `resume`,
+`down`, `send`, `focus`, `agent`, `init` or `wizard` verb, and no `team member`,
+`team sync` or `team shared-cwd-exception`. Seats start through the AMQ launch API
+(`amq-squad launch`, or the scheduler on demand), a stopped seat is the scheduler's
+to restart, and the squad is `squad.yaml`, changed only through `team propose` and
+`team apply`. `amq-squad migrate` converts a v2 profile once.

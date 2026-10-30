@@ -1,0 +1,751 @@
+Criterion 4 PASSES on AMQ v0.106.1 (re-check 2026-10-23, codex-cli 0.163.0, no prefix): Apply exits 0 with the Codex conversation `pending`, `__codex-notify` promotes it to `ready` with the real thread identity, the operator notify forward runs, the Claude record names `tmux`, and a resume Prepare plans `resume` with no `stale_conversation` (applied once, same thread resumed). Issues #1157 and #1158 are fixed in v0.106.1 (PR #1174). See "Re-check on AMQ v0.106.1 (2026-10-23)" at the end.
+
+Closure run: the owner pre-trusts the scratch root
+`/Users/omri/.amq-squad/spike/s4/project` for codex-cli. Then a fresh
+Prepare and Apply runs with the same two-seat shape and Codex 0.147.0
+(`request.py` unchanged). It must capture both role acknowledgements
+(`S4_ROLE_VISIBLE` from each seat) and a completed Codex identity capture
+(conversation `ready` through `__codex-notify`). The Claude fault
+measurements below stand and do not need to be rerun.
+
+# S4: wrapper launch of one Claude seat and one Codex seat
+
+Run 2026-10-21 00:17 to 00:27 IDT on the owner's Mac. AMQ 0.102.0 (contract
+0.61.1), claude 2.1.305, codex-cli 0.147.0 (spike prefix) and 0.154.0
+(Homebrew), tmux 3.7c. Branch `spike/s4-wrapper`, cut from `v3`.
+
+Roster note: the implementer was swapped from Codex to Opus because of the
+sandbox on the Codex subagent in this Claude Code harness. The reviewer
+family is Codex.
+
+## Grade
+
+- **Claude seat: demonstrated.** The launch API accepted the wrapper shape. The
+  trust digest binds `--model sonnet --effort medium` and the wrapper argv.
+  The pane started under AMQ. The wrapper wrote the launch record and
+  `role.md`, set only the three `AMQ_SQUAD_*` variables, and exec'd Claude in
+  place. SessionStart saw the variables and injected the role. The model read
+  the role and answered `S4_ROLE_VISIBLE — seat handle: s4-claude`. The
+  PreToolUse fail-open behavior is measured below.
+- **Codex seat: BLOCKED BY OWNER DECISION.** This is not a FAIL. The launch
+  API accepted the wrapper shape on 0.147.0. The trust digest binds the
+  model, the effort, the sandbox, the approval flags, and the wrapper. Apply
+  committed a pane, and the wrapper ran: it wrote the record and role and
+  set the environment. codex-cli then stopped on its own folder-trust prompt
+  before the model ran. Answering "Yes" writes to `~/.codex/config.toml`, and
+  the owner's rule keeps that file untouched, so I answered "No" and the seat
+  quit. The seat therefore never read the role, and the notify forward and
+  the worktree commit test could not run.
+
+**S6 dependency:** the 0.147.0 prefix **does** pass the AMQ capture gate:
+Apply accepted it, committed, and created the pane. It **did not** produce a
+working fresh Codex seat, because of codex's trust prompt. That prompt
+appears for any project root not already trusted in `CODEX_HOME/config.toml`.
+On 0.154.0, Apply refuses with `capture_version_unsupported` before creating
+anything.
+
+## Finding: a fresh Codex seat stops on codex's folder-trust prompt
+
+- A fresh Codex seat under the AMQ launch API shows codex's own prompt: "Do
+  you trust the contents of this directory? 1. Yes, continue 2. No, quit".
+  Codex applies trust to the git repository root, and for a linked worktree
+  that is the main repository's root (see
+  `spike/seatexec/evidence/pane-codex-0147-trust-prompt.txt`).
+- "Yes" persists `[projects."<root>"] trust_level = "trusted"` in
+  `CODEX_HOME/config.toml`. "No" quits the seat. I answered "No". The SHA-256
+  of `~/.codex/config.toml` was the same before and after that keypress
+  (`6fa20145…fe619`).
+- The launch grammar has no override for this. Codex `-c` admits only
+  `model_reasoning_effort` and `approvals_reviewer` (`adapter_codex.go`,
+  `codexConfigOverrideValues`). Passing `--sandbox` and `--ask-for-approval`
+  does not suppress the prompt on 0.147.0.
+- The wrapper may set only environment and role (R4), so it cannot add
+  `-c projects...` or point `CODEX_HOME` elsewhere.
+- So amq-squad 3.0 must do one of two things. Either it asks the owner to
+  pre-trust each project root in `CODEX_HOME/config.toml` (a doctor check
+  plus an owner action), or it treats the prompt as a seat-start step the
+  owner answers in the pane.
+- S6 will hit this prompt for amq-noc and workspace-cli. Neither is in the
+  trusted list.
+- The trusted project paths (read-only from `~/.codex/config.toml`) are:
+  `/Users/omri/code/{mac-migration, agent-message-queue, amq-squad,
+  tmux-resurrect-launchd, sari_plygrnd, screenshots-housekeeping,
+  personal-memory, yoetz}` and `/Users/omri/Documents/Codex/2026-10-06/t`.
+  None of them is scratch-safe. A linked git worktree of a trusted repository
+  placed under `~/.amq-squad/spike/` would inherit trust, because trust is
+  applied at the repository root. But creating one writes into that
+  repository's `.git`, so I did not do it and did not launch there.
+- **Observation (writer unknown):** after the seat started,
+  `~/.codex/config.toml` changed. Its mtime moved to 00:19:17, and
+  `[marketplaces.omri-marketplace] last_updated` reads
+  `2026-10-20T21:19:14Z`. Another Codex session (tmux `memory-wpp`) was live
+  on the host at the same time. This run does not identify the writer, and
+  the file was left as it was.
+- **Reproduction test** (not yet run):
+  1. Launch the exact binary (`~/.amq-squad/spike/codex-0.147/…/codex`)
+     against a disposable, non-symlinked copy of the relevant `CODEX_HOME`
+     state. Only that process tree may use it.
+  2. Hash, diff and trace writes to that copy (for example with `fs_usage`
+     filtered to the process tree) before launch and again at the
+     unanswered trust prompt.
+  3. Leave the owner's `~/.codex/config.toml` untouched throughout.
+
+  If the copy changes, codex-cli writes its own config on start. If it does
+  not, the writer was the other session.
+
+## Prepare preview (0.147.0 on PATH)
+
+`amq launch --request request.json --prepare --json` exited 6 with
+`action_required` / `untrusted_config_digest`. The only required action was
+`trust_confirmation` with the choices `trust_exact_subject` and `deny`.
+
+```text
+subject_schema 2
+subject_digest sha256:b4fd7570f408f81b9408c4a17e7c2a80f01e65f31bef941d0b4300bd4f8ed0ee
+plan_digest    sha256:4bddb1d695822c516c5d1ff06f85842300de5b0962bb3ab3d4fdf2dc1b277cd1
+trust_digest   sha256:d7a93ce9bc59663340e8653ea9fa22471780a9ae73afd9c28423d653e6f55c33
+backend tmux, profile tmux/darwin/v1, placement session/columns
+
+s4-claude argv:
+  /Users/omri/.amq-squad/spike/bin/seat-exec --seat s4-claude
+  /Users/omri/.local/bin/claude --model sonnet --effort medium --name s4-claude
+  --session-id ${launch_nonce} "<role bootstrap>"
+  cwd /Users/omri/.amq-squad/spike/s4/project
+s4-codex argv:
+  /Users/omri/.amq-squad/spike/bin/seat-exec --seat s4-codex
+  /Users/omri/.amq-squad/spike/codex-0.147/node_modules/.bin/codex --model gpt-6-astra
+  -c model_reasoning_effort=medium --sandbox workspace-write --ask-for-approval on-request
+  -c notify=["/opt/homebrew/Cellar/amq/0.102.0/bin/amq","__codex-notify","--root",
+     "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4","--handle","s4-codex"]
+  "<role bootstrap>"
+  cwd /Users/omri/.amq-squad/spike/s4/project-wt   (linked worktree; external cwd admitted)
+```
+
+Grammar notes:
+
+- `--name s4-claude` (the plain handle) is admitted. When `--name` is
+  already present, AMQ does not add its own `--name <session>/<handle>`
+  (`adapter_claude.go:66`).
+- `preview.capabilities[claude].allowed_argument_forms` lists only
+  `--allowedTools`, `-n`, and `--name`. `--model` and `--effort` are accepted
+  (`adapter_claude.go:127-128`) but not advertised. That is upstream ask 4.
+- Codex `verified_provider_version` is 0.147.0, and Prepare does not check
+  the installed version.
+
+Digest sensitivity (`evidence/digest-sensitivity.json`, Prepare-only, one
+field changed per probe):
+
+| Change | Trust digest | Plan digest |
+| --- | --- | --- |
+| Claude `--model opus` | changed | changed |
+| Claude `--effort high` | changed | changed |
+| Codex `--model gpt-5.5` | changed | changed |
+| Codex `model_reasoning_effort=high` | changed | changed |
+| Codex `--sandbox read-only` | changed | changed |
+| Wrapper args `--seat other` | changed | changed |
+| `initial_input` text | **unchanged** | changed |
+
+Argv trust is not content integrity. The trust digest binds the wrapper's
+path and args (`internal/launch/wrapper.go:12`, the `Wrapper{Executable,
+Args}` struct). It does not bind the wrapper binary's bytes or the bytes of
+`role.md`, which the wrapper writes at exec time.
+`TrustSemanticDigest` (`plan.go:244`) also excludes the initial-input
+content. Subject schema 2 does record the on-disk identity of the provider
+and wrapper at Prepare and refuses a swap after authorization
+(`authorized_identity_changed`, `docs/launch-api.md`). That is identity
+pinning for one launch, not a trusted content hash.
+
+## Apply results
+
+| Codex version | Apply result | Panes | Notes |
+| --- | --- | --- | --- |
+| 0.147.0 (spike prefix) with Claude | exit 6, `action_required`, `reason_code: evidence_missing`, `disposition: committed`, binding generation `3881094c-…` | `%14` Claude, `%15` Codex, in tmux session `amq-project-ad3b7461b1-s4-5b840157` | The capture gate passed. Per-seat observations: Claude conversation `pending`; Codex conversation `stale` (`evidence/apply-0147.json:51`); both executions `pending`. The Codex seat then stopped on codex's trust prompt (see the finding above). |
+| 0.154.0 (Homebrew), Codex only, session `s4-0154` | exit 6, `action_required`, `reason_code: capture_version_unsupported`, `disposition: not_applied`, empty trust digest | none | Matches the pin at `adapter_codex.go:13,65`. Prepare on 0.154.0 had succeeded with `untrusted_config_digest`. |
+
+Live checks after the 0.147.0 Apply:
+
+- `tmux list-panes -a` showed two AMQ panes, with `@amq_pane_agent` set to
+  `s4-claude` and `s4-codex` (`evidence/list-panes.txt`).
+- Both seat extension directories hold `launch.json` (handle, runtime,
+  provider argv, timestamp) and `role.md`, with mode 0600 in a 0700
+  directory (`evidence/launch-record-*.json`,
+  `evidence/seat-extension-modes.txt`).
+- Exec in place: the process watcher saw PID 43362 run
+  `amq __launch-exec …`, then `seat-exec --seat s4-codex …`, then
+  `node …/codex …` (`evidence/codex-exec-chain.txt`). In the Claude pane,
+  `pane_current_command` was `2.1.305`, meaning the pane's process is Claude
+  itself. AMQ 0.102.0 runs the pane through `amq __launch-exec`; the plan's
+  `amq coop exec` line is from older releases.
+- The Codex seat's environment held `AMQ_SQUAD_SEAT`, `AMQ_SQUAD_ROOT`,
+  `AMQ_SQUAD_ROLE_PATH`, plus AMQ's own `AM_ME`, `AM_ROOT`, `AM_ROOT_ID`,
+  `AMQ_LAUNCH_NONCE`, and `AMQ_WAKE_OWNER` (`evidence/codex-seat-env.txt`).
+- The Claude SessionStart file (`evidence/sessionstart-env.log`) contained:
+
+  ```
+  2026-10-21T00:20:15 {"AMQ_SQUAD_ROLE_PATH": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4/agents/s4-claude/extensions/io.github.omriariav.amq-squad/role.md", "AMQ_SQUAD_ROOT": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4", "AMQ_SQUAD_SEAT": "s4-claude", "AM_ME": "s4-claude", "AM_ROOT": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4"}
+  ```
+
+- The Claude status line read `Son5.5 M`, which is Sonnet at medium effort.
+  The bootstrap ran `cat "$AMQ_SQUAD_ROLE_PATH"`, and the model replied
+  `S4_ROLE_VISIBLE — seat handle: s4-claude`.
+- Claude showed its own workspace-trust dialog first. I accepted it. This
+  writes the project entry to `~/.claude.json`, not to
+  `~/.claude/settings.json`.
+
+### Does the seat inherit the launching shell's environment? Open
+
+The evidence does not settle this.
+
+- The SessionStart hook recorded only an allowlist: `AMQ_SQUAD_*` plus
+  `AM_ME` and `AM_ROOT` (`evidence/sessionstart-env.log`).
+- The Codex seat dump (`evidence/codex-seat-env.txt`) was filtered to
+  `AMQ_*`/`AM_*` names when it was taken.
+- Neither dump lists other variable names, so this run cannot say whether
+  provider keys or other secrets were visible to the seat.
+
+What the source suggests (not verified live): AMQ 0.102.0's tmux backend
+creates the session with `tmux new-session … -e AMQ_TMUX_NONCE=… <exec
+line>` (`internal/launch/tmux.go:174,1420`). The exec line adds only the
+allowlisted overlay (COLORTERM, LANG, LC_ALL, NO_COLOR, TERM;
+`adapter_env.go:14-24`), and seat-exec passes `os.Environ()` through
+unchanged (`main.go`, the `syscall.Exec` call).
+
+So a tmux-launched seat would see the **tmux server's global environment**,
+not the environment of the shell that ran `amq launch`. Any secret exported
+when the tmux server started would reach every seat. With the `commands`
+launcher or another backend, the inheritance may differ.
+
+One-line test that settles it. Run it in the seat, for example as the
+SessionStart hook or a `!` command in the Claude pane. It prints names
+only:
+
+```sh
+env | cut -d= -f1 | sort | grep -Ei 'KEY|TOKEN|SECRET|PASS|CRED'; tmux show-environment -g | cut -d= -f1 | grep -Ei 'KEY|TOKEN|SECRET|PASS|CRED'
+```
+
+Read the result this way. If the first list is non-empty, a 2b requirement
+is needed: seat-exec scrubs provider keys for seats that do not need them.
+Whether those names also appear in the tmux global list shows where they
+came from.
+
+## PreToolUse fault table (Claude 2.1.305, live seat)
+
+Setup: project-scope `.claude/settings.json` only (copy in
+`evidence/claude-project-settings.json`). The PreToolUse matcher is `Bash`,
+with command `.claude/hooks/pretool.py` and a configured `timeout: 5`. The
+fault mode is read at run time, so all trials ran in one live seat with no
+restart. Each trial sent one prompt over `tmux send-keys`: "Use the Bash tool
+exactly once to run: ls -1 # s4-fault-<mode>". Claude ran in the owner's
+default auto mode.
+
+Registration: the hook is a blocking `"type": "command"` hook with
+`"timeout": 5` and no `async` setting (`evidence/claude-project-settings.json`).
+The fail-open result is therefore not an artifact of a non-blocking
+registration.
+
+Other hooks ran in the same tool calls: the owner's user-scope claude-mem
+`PreToolUse` hook (`claude-mem hook claude-code file-context`, 132–183 ms,
+`hook_success`). Its time is inside column A. There is one
+observation per condition and no repeats.
+
+Timing sources:
+
+- Column A: `tool_use` to `tool_result`, from the timestamps in the session
+  JSONL.
+- Column B: Claude's own hook attachment record for `pretool.py`
+  (`durationMs`, `timedOut`, `exitCode`).
+- Column C: whether our `PostToolUse` hook fired.
+- Excerpts with tool_use ids are in `evidence/fault-jsonl-excerpts.jsonl`.
+
+| Condition | tool_use id | Tool call proceeded? | A: tool_use to result | B: `pretool.py` as recorded by Claude | C: PostToolUse | Pane shows |
+| --- | --- | --- | --- | --- | --- | --- |
+| Baseline: exit 0, command `cat "$AMQ_SQUAD_ROLE_PATH"` | `toolu_014UCz…` | yes | 0.884 s (21:20:17.767 to 21:20:18.651Z) | exit 0 (Pre to Post hook 0.65 s) | fired | normal |
+| Control: JSON deny | `toolu_01TaTq…` | **no** (blocked) | 0.166 s (21:20:52.723 to 52.889Z), `is_error` true | deny honored | **absent** (PostToolUse missing because the tool was denied) | "PreToolUse:Bash hook error: S4 control: deny" |
+| (a) sleeps 30 s, timeout 5 s | `toolu_01ESvT…` | **yes** | **5.111 s** (21:22:16.518 to 21:22:21.629Z) | `hook_cancelled`, `durationMs 5034`, `timedOut true`, `timeoutMs 5000`; the process was killed (its post-sleep log line never appeared) | fired | nothing visible to the model |
+| (b) exit 1, no JSON deny | `toolu_013Hwy…` | **yes** | **0.356 s** (21:23:10.933 to 11.289Z) | `hook_non_blocking_error`, `exitCode 1`, `durationMs 44` | fired | "Failed with non-blocking status code: s4 fault: exit 1 without JSON deny" |
+| (c) hook command missing | `toolu_01YByG…` | **yes** | **0.440 s** (21:23:42.141 to 42.581Z) | `hook_non_blocking_error`, `exitCode 127`, `durationMs 15` | fired | "Failed with non-blocking status code: /bin/sh: …/pretool.py: No such file or directory" |
+
+Conclusion: the PreToolUse hook failed open for these three faults on Claude
+2.1.305. Only the explicit JSON deny blocked. Exit 2 blocks by Claude's
+documented contract, but this run did not test it. In the timeout case the
+hook duration was 5.034 s, and the tool-use-to-result time was 5.111 s. Plan
+4.4 ("fails open on crash") holds for this version, and security must not
+depend on this hook (plan 7.3).
+
+## seat-exec prototype limits
+
+- `os.OpenRoot(seatPath)` at `spike/seatexec/main.go:65` follows symlinks
+  in the initial path. If the `agents` directory or the seat directory is
+  redirected, the extension writes can land outside the AMQ root. `os.Root`
+  only constrains traversal below the opened directory.
+- File ownership and the permissions of existing directories are not
+  checked. Only the files the wrapper creates get 0600, and only the
+  directories it creates get 0700.
+- Production must anchor traversal to the verified AMQ root, for example
+  through AMQ's delivery-root identity (`AM_ROOT_ID`). Every component must
+  be opened without following symlinks.
+- The extra `--root` flag at `main.go:27` exceeds the `--seat`-only
+  interface in R4. The prototype also accepts `AM_ROOT`, which is
+  sufficient on its own.
+- The hook was a project-scope `.claude/settings.json` stub, which replaced
+  the planned user-scope plugin (plan 4.3). The fault behavior is a
+  property of Claude's hook runner, but the plugin delivery path itself was
+  not exercised.
+- **Fix before first use in 2b:** anchor traversal to the verified AMQ root
+  with no symlink following in the initial path, drop `--root`, and ship
+  the hook as the user-scope plugin.
+
+## Notify finding (AMQ 0.102.0)
+
+Not observed live. The Codex seat never completed a turn, because it stopped
+at the trust prompt, so `amq __codex-notify` never ran. The passive
+process-table watcher (`notify-watch.sh`, 20 ms polling, with no change to
+the owner's command) logged no `__codex-notify` process and no
+`SkyComputerUseClient turn-ended` process.
+
+I read `~/.codex/config.toml` read-only. The owner's notify is
+`["…/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended"]`.
+
+From the v0.102.0 source (tag checked out):
+
+- `docs/launch-api.md:155` states that AMQ forwards the identical payload to
+  the operator's configured notify command after it publishes the identity.
+- `internal/cli/codex_notify.go:53` records the evidence and publishes the
+  identity first. `:56` forwards afterwards. A forwarding error only prints
+  a warning, and the handler still returns success.
+- `:66-99`: the forward reads `notify` from `CODEX_HOME/config.toml` (or
+  `~/.codex/config.toml`, `:120`). It appends the payload as the last
+  argument. It skips the forward if the target is the AMQ binary itself
+  (`:86`). It applies a 10 s timeout (`:18`) and discards stdout and stderr
+  (`:103`).
+- `internal/launch/adapter_codex.go:129` builds the `-c notify=[amq,
+  __codex-notify, --root, R, --handle, H]` override. It replaces the owner's
+  notify for the seat, so the owner's client fires only through this forward.
+
+On 0.102.0, then, the forward to the owner's command is designed and coded
+to happen after capture. That fits the docs, but it is not empirically
+verified. Verifying it needs one completed Codex turn on 0.147.0 in a
+project the owner has pre-trusted.
+
+## Worktree commit test (upstream ask 5): not run
+
+The Codex seat was launched with cwd `/Users/omri/.amq-squad/spike/s4/project-wt`.
+That is a linked worktree whose shared `.git` sits at `…/s4/project/.git`,
+outside the seat's cwd. The seat stopped at codex's trust prompt before the
+model could act, so the test did not run. There is no pass/fail result, and
+no sandbox evidence for ask 5 came out of the launch API. The test needs the
+owner to pre-trust `/Users/omri/.amq-squad/spike/s4/project`, after which the
+launch can be repeated unchanged: `request.py` already sets the worktree cwd.
+
+## Exact commands
+
+Wrapper (`spike/seatexec`, own `go.mod`, go 1.25 for `os.Root`):
+
+```sh
+cd spike/seatexec && go vet . && go build -o ~/.amq-squad/spike/bin/seat-exec .
+python3 spike/seatexec/smoke.py ~/.amq-squad/spike/bin/seat-exec     # PASS
+npm_config_cache=~/.amq-squad/spike/npm-cache npm install @openai/codex@0.147.0 --prefix ~/.amq-squad/spike/codex-0.147
+```
+
+Scratch project:
+
+```sh
+git init -b main ~/.amq-squad/spike/s4/project
+# .amqrc {"root":".agent-mail"} mode 0600, README, .gitignore; initial commit
+amq init --root ~/.amq-squad/spike/s4/project/.agent-mail --agents operator,s4-claude,s4-codex
+amq session create s4 --root ~/.amq-squad/spike/s4/project/.agent-mail --me operator --json
+git -C ~/.amq-squad/spike/s4/project worktree add ~/.amq-squad/spike/s4/project-wt -b s4-codex-wt
+# .claude/settings.json + .claude/hooks/{s4hook.py,pretool.py} in the project only
+```
+
+Launch. `amq-spike.sh` sets `XDG_STATE_HOME=~/.amq-squad/spike/s4/state`
+with `amq/launch` pre-created, so the trust grants stay in the spike and
+`~/.amq` is never created:
+
+```sh
+python3 spike/seatexec/request.py > ~/.amq-squad/spike/s4/request.json
+CODEX_PIN=0147 spike/seatexec/amq-spike.sh launch --request ~/.amq-squad/spike/s4/request.json --prepare --json > prepare-0147.json
+python3 spike/seatexec/digest-probe.py ~/.amq-squad/spike/s4/request.json spike/seatexec/amq-spike.sh
+python3 spike/seatexec/apply-request.py request.json prepare-0147.json > apply-0147.json
+CODEX_PIN=0147 spike/seatexec/amq-spike.sh launch --apply apply-0147.json --json
+tmux send-keys -t %14 Down Enter            # Claude workspace trust: Yes
+tmux send-keys -t %15 2 Enter               # codex trust: No, quit (owner decision)
+spike/seatexec/fault-run.sh %14 deny|sleep|exit1|missing
+python3 spike/seatexec/fault-table.py evidence/hook-events.jsonl ~/.claude/projects/-Users-omri--amq-squad-spike-s4-project/<session>.jsonl
+amq session create s4-0154 --root ~/.amq-squad/spike/s4/project/.agent-mail --me operator --json
+python3 spike/seatexec/request.py --only codex --session s4-0154 > request-0154.json
+spike/seatexec/amq-spike.sh launch --request request-0154.json --prepare --json   # codex 0.154.0
+spike/seatexec/amq-spike.sh launch --apply apply-0154.json --json                 # capture_version_unsupported
+tmux kill-session -t amq-project-ad3b7461b1-s4-5b840157
+```
+
+## Cleanup and host state
+
+- The spike tmux session is killed, and the watcher is stopped. No spike
+  processes remain, and the owner's tmux sessions are untouched.
+- `~/.amq` was not created. The launch state lives in
+  `~/.amq-squad/spike/s4/state/amq/launch`.
+- Outside `~/.amq-squad/spike/`, I wrote nothing directly. The providers
+  wrote the following themselves:
+  - Claude: its trust entry in `~/.claude.json` and the session JSONL under
+    `~/.claude/projects/-Users-omri--amq-squad-spike-s4-project/`.
+  - codex 0.147.0: its log and state sqlite files in `~/.codex`.
+  - `~/.codex/config.toml` changed during the run, writer unknown (see the
+    observation under the finding).
+- `~/.claude/settings.json` and `~/go/bin/amq-squad` are untouched, and the
+  main module is untouched (the spike has its own `go.mod`).
+
+## Blockers
+
+1. The codex folder-trust prompt needs the owner to grant pre-trust of the
+   scratch project root in `~/.codex/config.toml`. It blocks the Codex role
+   check, the notify observation, and the worktree commit test.
+
+## Open items (not established by this run)
+
+1. Live notify-forwarding evidence after capture: a completed Codex turn,
+   capture `ready`, and the owner's notify command observed to fire through
+   `__codex-notify`.
+2. The worktree commit probe (upstream ask 5): commit from a
+   `--sandbox workspace-write` Codex seat whose shared `.git` sits outside
+   its cwd.
+3. Codex model availability and registry verification under R9 to R12.
+   Prepare accepting `--model gpt-6-astra` on 0.147.0 shows only that the
+   grammar admits it. It does not show that the model serves on that
+   client, and it is not a tool-call or edit probe.
+
+## Open questions for phase 2b
+
+1. Codex trust: should amq-squad doctor check `CODEX_HOME/config.toml` for
+   each project root and ask the owner to add trust, or should the prompt be
+   a documented seat-start step? Should upstream offer an AMQ-admitted
+   override, such as a `-c projects.<root>.trust_level` form, or a launch
+   preflight that reports `provider_trust_required`?
+2. If the reproduction test shows that codex-cli writes
+   `CODEX_HOME/config.toml` at start, is that acceptable for managed seats?
+   See reviewer ruling 2.
+3. `initial_input` is outside the trust digest. The role bootstrap text can
+   change without fresh trust. Is that acceptable if the role content is
+   carried by the wrapper (whose args are trust-bound) and not by the
+   prompt?
+4. Claude's PreToolUse fails open in all three faults. Is the guard for
+   Claude seats acceptable as advisory only, with enforcement in plan 7.3?
+   Should the wrapper refuse to exec when the hook command is missing
+   (a startup check)?
+5. Upstream ask 4 should also cover advertising `--model` and `--effort` in
+   `allowed_argument_forms`. They are admitted today but not listed.
+6. After the codex pin fix (AMQ #1107/#1108), the 0.147.0 prefix can be
+   dropped. Until then S6 needs both the prefix and pre-trusted roots.
+
+## Reviewer rulings (lead session, 2026-10-21 01:50)
+
+1. The role comes only from role.md in the seat directory; initial_input
+   may carry at most a pointer. The AMQ trust digest binds the wrapper path
+   and argv, not the wrapper binary bytes and not role.md bytes, so content
+   integrity of role.md is amq-squad's job: in 2b the Go core records the
+   SHA-256 of role.md in the seat's launch record when it writes the file,
+   and seat-exec recomputes it before exec and refuses to start on mismatch.
+   The record lives under the AMQ root, outside the project tree, so a repo
+   cannot alter it. Wrapper binary integrity is the same trust as the amq
+   binary itself, an absolute path outside the project on the owner's
+   filesystem: accepted, not solved.
+2. Codex config mtime moved after seat start with another Codex session
+   live. Writer unproven; not an owner question. The morning Codex follow-up
+   reproduces it with no other Codex process on the host: hash config.toml
+   before launch, after the trust prompt, after the first turn. If codex-cli
+   rewrites its own config on start, the answer is "accept and document that
+   codex-cli owns its config file". A per-seat CODEX_HOME stays rejected:
+   the env overlay allowlist has five keys and CODEX_HOME is not one.
+3. The PreToolUse fault table is the spike's best evidence for "hooks are
+   UX, not security". The three rows go into the final report under
+   criterion 4 and are referenced from the v3-plan amendment that keeps R32
+   enforcement in the Go core. To confirm: the hook was registered as a
+   blocking hook type, so fail-open is not an artifact of a non-blocking
+   registration (Codex reviewer checks this).
+
+Owner question left from S4: pre-trust the scratch project and the two
+load-test repos for codex-cli.
+
+## Codex review (reviewer-openai, xhigh)
+
+Verdict: accepted with edits. Criterion 4 is not passed. The Claude seat is
+demonstrated, and the Codex seat is blocked by owner decision. The edits
+below are applied in this revision.
+
+- **Blocker:** closing the criterion needs Codex role visibility (an
+  `S4_ROLE_VISIBLE` acknowledgement from the Codex seat) and live
+  notify-forwarding evidence after a completed capture. See the closure run
+  at the top.
+- **Major:** the earlier text attributed the `~/.codex/config.toml` write
+  to the Codex seat without support. It is now an unattributed observation
+  with a reproduction test.
+- **Major:** the symlink limit of seat-exec was undocumented
+  (`os.OpenRoot` at `main.go:65` follows symlinks in the initial path). It
+  is now under "seat-exec prototype limits".
+- **Minor:** the fault conclusion is scoped to the three faults on Claude
+  2.1.305. The timeout row now reports measured numbers (5.034 s hook,
+  5.111 s tool-use-to-result) and no longer says "exactly the timeout".
+- **Minor:** the real baseline (`cat`, 0.884 s) is named. The co-running
+  claude-mem hooks are noted, with one observation per condition.
+- **Minor:** in the deny row, the missing event is PostToolUse, not "hook
+  never ran". The blocking registration (`type: command`, timeout 5, no
+  async) is documented.
+- **Minor:** unchecked ownership and permissions of existing directories,
+  the extra `--root` flag (`main.go:27`) beyond the `--seat`-only interface,
+  and the project-scope hook stub in place of the user-scope plugin.
+- **Minor:** added evidence: JSONL excerpts for the fault rows
+  (`evidence/fault-jsonl-excerpts.jsonl`) and a file-mode listing
+  (`evidence/seat-extension-modes.txt`).
+- **Minor:** the Apply description now says the Codex conversation was
+  `stale` (`apply-0147.json:51`), not pending. Argv trust is distinguished
+  from content integrity (`wrapper.go:12`, `plan.go:244`).
+- **Minor:** open items now list live notify forwarding, the worktree commit
+  probe (ask 5), and Codex model availability and registry verification
+  under R9 to R12, none of which Prepare acceptance establishes.
+
+## Closure run (2026-10-21 morning)
+
+Run 08:16 to 08:26 IDT on the owner's Mac, branch `v3-s4-closure`. AMQ
+0.102.0 (contract 0.61.1), claude 2.1.306 (the seat reported this version;
+the earlier run had 2.1.305), codex-cli 0.147.0 from the spike prefix, tmux.
+`request.py` is unchanged. Each attempt ran a fresh `amq session create`, then
+`request.py --session <s>`, Prepare (`untrusted_config_digest`, one
+`trust_confirmation`), `apply-request.py`, and Apply. Every Apply returned
+exit 6, `action_required`, `evidence_missing`, `disposition: committed`, and
+created two panes. The owner's pre-trust of
+`/Users/omri/.amq-squad/spike/s4/project` worked: no Codex seat showed the
+folder-trust prompt, and no prompt was answered in the owner's
+`CODEX_HOME`. The Claude fault measurements were not rerun.
+
+Evidence is under `spike/seatexec/evidence/closure/`. Launch nonces are
+redacted. The raw files are under `~/.amq-squad/spike/s4/closure/` and
+`~/.amq-squad/spike/s4/codex-home-probe/`.
+
+Model note (open item 3): the Codex model had to change, through
+`request.py`'s existing `--model` flag.
+
+- `s4c` used `gpt-6-astra`, the owner's default. The 0.147.0 seat started,
+  but the API answered: "The 'gpt-6-astra' model requires a newer version of
+  Codex".
+- `s4d` used `gpt-5.5`. The API answered: "The 'gpt-5.5' model is not
+  supported when using Codex with a ChatGPT account".
+- The 0.147.0 `/model` picker lists `gpt-5.6-sol` (default),
+  `gpt-5.6-terra` and `gpt-5.6-luna`.
+- `s4e` used `gpt-5.6-sol` and is the run graded below. Its trust digest is
+  `sha256:3e8cd644…df24` and its subject digest `sha256:20796551…da3a`.
+
+The 0.147.0 pin and the owner's default model are incompatible. Prepare
+accepts both model ids, so only a live turn shows the incompatibility.
+
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| 1 | `S4_ROLE_VISIBLE` from both seats | **PASS.** Claude: `S4_ROLE_VISIBLE — seat handle: s4-claude`. Codex: ran `cat "$AMQ_SQUAD_ROLE_PATH"`, then replied `S4_ROLE_VISIBLE s4-codex`. Both seats received the role only through the wrapper's `role.md`. | `evidence/closure/pane-claude-s4e.txt:16`, `evidence/closure/pane-codex-s4e.txt:45` |
+| 2 | Codex identity capture `ready` through `__codex-notify` | **FAIL (AMQ 0.102.0 defect).** Codex completed a turn, and codex ran `amq __codex-notify --root …/s4e --handle s4-codex '<agent-turn-complete payload>'` (pid 55703, parent the codex binary 54052, 08:19:46.628). It ran again for the second turn (08:22:48). The conversation stayed `stale` / `evidence_missing`, and no evidence file was written. The source explains it. Apply finalizes capture-mode seats with `Final: true` and the backend's create-time evidence (`internal/launch/reconcile.go:793-797`). No backend supplies Codex evidence at create, so `captureCodexIdentity` returns `stale`/`evidence_missing` (`capture.go:235-238`). `recordCodexNotify` then refuses any record that is not `pending`: "pending codex conversation does not match notify generation" (`execution.go:859-861`). `docs/launch-api.md:159` says "An unused Codex launch remains pending", and the code does not match it. The original run's `stale` (`apply-0147.json:51`) has the same cause. The exact stderr of the hook was not captured, because codex discards it. | `evidence/closure/notify-watch.log`, `evidence/closure/conversation-s4-codex.json`, `evidence/closure/apply-s4e.json` |
+| 3 | Live notify forward after the completed capture | **NOT OBSERVED (blocked by item 2).** The forward runs only after a successful record (`internal/cli/codex_notify.go:53-58`), so it never ran. The libproc watcher (`spike/seatexec/notify-watch.py`, about 2 ms scans, verified to catch a 5 ms process) logged both `__codex-notify` processes and no `SkyComputerUseClient` process. | `evidence/closure/notify-watch.log` |
+| 4 | Worktree commit probe (upstream ask 5) | **NO.** In-sandbox `git commit --allow-empty` in `…/s4/project-wt` (common dir `…/s4/project/.git`) exited 128 with `fatal: Unable to create '/Users/omri/.amq-squad/spike/s4/project/.git/worktrees/project-wt/index.lock': Operation not permitted`. The seat ran under `--sandbox workspace-write`, the model was told not to ask for escalation, no approval was requested or given, and `git log` in the worktree still shows only `init`. The model's own pane reply left the error out. The tool output is in the rollout JSONL. | `evidence/closure/codex-wt-commit-probe.jsonl`, `evidence/closure/pane-codex-s4e.txt` |
+| 5 | Config rewrite, isolated `CODEX_HOME` copy | **PARTIAL.** The copy of the owner's `config.toml` sat in `~/.amq-squad/spike/s4/codex-home-probe/home`, and codex 0.147.0 started there in an untrusted git dir (`…/s4/trust-probe`). Codex **rewrote `config.toml` on start, before any prompt was answered**: five `[marketplaces.*] last_updated` values changed (`1c0461…` to `8d47ef…`). That is the same key as the 00:19 observation, so codex-cli's start-time marketplace sync is the likely writer. The trust prompt was not reached: with no `auth.json` in the copy, codex shows the sign-in screen first. I did not copy credentials, so the trust-answer diff is still open. The owner's `~/.codex/config.toml` hash was `1c0461…` before and after all three seat launches today, so the sync did not run against the owner's home this morning. Throttle state outside `config.toml` is a plausible reason, unverified. | `evidence/closure/codexhome-config-diff.txt`, `codexhome-config-sha.txt`, `codexhome-pane-signin.txt`, `owner-config-sha-{before,after}.txt` |
+| 6 | Environment inheritance, names only | **FLAG: `GEMINI_API_KEY` reaches the Codex seat's shell tool. It does not reach the seat process.** Process level: the Codex seat process (68 names) and the Claude seat process (66 names) carry no `*_API_KEY`, `*_TOKEN` or `*_SECRET` name. Both names flagged in the launching shell (`GEMINI_API_KEY`, `CLAUDE_CODE_MESSAGING_TOKEN`) are absent. The process environment is the tmux server's global environment plus the AMQ and wrapper overlay (`AM_*`, `AMQ_*`, `AMQ_SQUAD_*`) and `TMUX`, `TMUX_PANE`, `CODEX_MANAGED_*`. That confirms the source reading above. Tool level: the in-sandbox `env` run by the Codex model listed 79 names, including `GEMINI_API_KEY` and `MEMORY_HOME`, which are not in the process environment, plus codex's own `CODEX_SANDBOX*`, `CODEX_THREAD_ID`, `CODEX_CI`. The tool shell's startup (the owner's shell profile or a file it sources) adds the key, so scrubbing in seat-exec would not remove it. I did not identify the source file. The Claude seat's Bash tool was not probed, and the same mechanism probably applies. `SSH_AUTH_SOCK` reaches both seats: it is a credential-capable socket, not a secret value. | `evidence/closure/env-inheritance.txt`, `env-names-codex-seat.txt`, `env-names-codex-shelltool.txt`, `env-names-claude-seat.txt`, `env-names-tmux-global.txt` |
+
+Grade reasoning. The closure required both role acknowledgements and a
+completed Codex capture. Role visibility now holds for both seats, and the
+trust-prompt blocker is gone. The capture cannot complete on the released
+AMQ 0.102.0 with any backend: no create path supplies Codex evidence, and
+the notify path accepts only `pending`. Criterion 4 stays **NOT PASSED**.
+The block is upstream; nothing is wrong with the wrapper or the request.
+
+New upstream asks:
+
+- (a) AMQ: keep a capture-mode Codex conversation `pending` after Apply
+  (as `docs/launch-api.md:159` says), or let `__codex-notify` promote a
+  `stale`/`evidence_missing` record from the same launch nonce. Then rerun
+  items 2 and 3 unchanged.
+- (b) AMQ, minor: the Claude mint-path conversation record says
+  `backend: commands` / `commands/any/v1` for a tmux launch, because
+  `execution.go:660` hardcodes `CommandsBackendName`
+  (`evidence/closure/conversation-s4-claude.json`).
+
+Phase 2b inputs from this run:
+
+- Ask 5 is answered: a `workspace-write` Codex seat cannot commit in a
+  linked worktree whose git dir is outside the writable root.
+- codex-cli writes its own `config.toml` at start. Per reviewer ruling 2,
+  accept this and document that codex-cli owns its config file.
+- The seat process environment is the tmux server's global environment, so
+  a secret exported when the tmux server started would reach every seat.
+  None does today. Provider tool shells also source the owner's shell
+  profile, and today that adds `GEMINI_API_KEY` in the Codex seat. A 2b
+  scrub in seat-exec cannot cover this. It needs a provider-side policy
+  (codex `shell_environment_policy`, which the launch grammar does not
+  admit today) or an owner action on the profile.
+
+Side effects: codex wrote its session rollouts and sqlite state in `~/.codex`
+for the three seats, and plugin and marketplace caches in the isolated home.
+The Claude seats used the project's `.claude/settings.json`. Its PreToolUse
+fault mode was still `missing` from the fault table, so each Claude ack shows
+the non-blocking hook error. The spike tmux sessions (`s4c`, `s4d`, `s4e`,
+`s4-chome`) are killed and the watcher is stopped. `~/.codex/config.toml`,
+`~/.claude/settings.json` and `~/go/bin/amq-squad` are untouched.
+
+## Re-run on AMQ v0.104.0 (2026-10-22)
+
+Run 11:29 to 11:33 IDT on the owner's Mac, branch `v3-s4-rerun-104` (cut
+from `v3`). The owner upgraded `amq`, `amq-remote`, `amq-owner-sign` and
+`amq-acp` to 0.104.0 through Homebrew before the run. `request.py` is
+unchanged (two-seat shape, wrapper `seat-exec --seat <handle>` only, model
+and effort in the provider arguments, Codex cwd the linked worktree). The
+Codex model is the owner's default `gpt-6-astra`; no `CODEX_PIN`, so the
+codex-cli on `PATH` ran. Fresh session `s4-104-1`; the 0.102.0 evidence
+(`s4`, `s4c` to `s4e`) is untouched. Raw evidence, launch nonce redacted, is
+under `spike/seatexec/evidence/rerun-104/`; the unredacted files are under
+`~/.amq-squad/spike/s4/rerun-104/`.
+
+| Component | Version | Path |
+| --- | --- | --- |
+| amq | 0.104.0 (result_version 1, subject schema 2, contract 0.61 range) | `/opt/homebrew/Cellar/amq/0.104.0/bin/amq` |
+| codex-cli | 0.163.0 | `/opt/homebrew/bin/codex` on PATH, resolved by AMQ to `/opt/homebrew/Caskroom/codex/0.163.0/bin/codex` |
+| claude | 2.1.308 | `/Users/omri/.local/bin/claude` |
+| tmux | 3.7c | |
+
+Upstream changes checked in the v0.104.0 source (tag tarball, compared with
+v0.102.0):
+
+- PR #1137 (merged 2026-10-22 06:44Z): `__codex-notify` no longer needs
+  `AMQ_INTERNAL_LAUNCH_NONCE`. It reads the seat ticket, takes the lease under
+  the ticket's nonce, and binds only when the ticket is `spawn_attempted` or
+  `acknowledged` and the receiver runs under the ticket's recorded
+  `provider_process` (`internal/launch/execution.go:920-953`,
+  `lease.go:390`). `PrepareExecution` records that process at
+  `spawn_attempted` (`execution.go:651-661`).
+- PR #1125 (merged 2026-10-21): Codex `grammar_version` 1 to 2,
+  `--ask-for-approval` admits only `on-request` (`adapter_codex.go:219`),
+  `codexCaptureVerifiedVersion` 0.163.0 with floor 0.147.0, per-seat
+  `provider_project_contained` refusal in Prepare (`prepare.go`,
+  `prepareFreshCaptureRefusal`).
+- Not changed: `internal/launch/reconcile.go` is byte-identical to v0.102.0
+  (`cmp`), so `finalizeCreatedState` still calls `CaptureIdentity` with
+  `Final: true` and the backend's create-time evidence (`:792-797`), and no
+  backend supplies Codex evidence at create (`CaptureEvidence` is never
+  populated in `tmux.go` or `commands.go`). `captureCodexIdentity` still
+  returns `stale`/`evidence_missing` for that call (`capture.go:236-239`).
+  `recordCodexNotify` still accepts only a `pending` record
+  (`execution.go:870-871`). The Claude mint path still hardcodes
+  `CommandsBackendName` (`execution.go:681`). `docs/launch-api.md` still
+  says "An unused Codex launch stays pending and cannot be resumed".
+- Grammar effect on `request.py`: none. The Claude participant uses
+  `--model`, `--effort`, `--name`; the Codex participant uses `--model`,
+  `-c model_reasoning_effort=medium`, `--sandbox workspace-write`,
+  `--ask-for-approval on-request`. All were admitted.
+
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| 0 | Prepare | Exit 6, `action_required` / `untrusted_config_digest`, one `trust_confirmation` (`trust_exact_subject` or `deny`) for both handles. Backend tmux, profile `tmux/darwin/v1`, placement session/columns. Capabilities: claude `grammar_version` 2, `verified_provider_version` 2.1.233, forms `--allowedTools`, `-n`, `--name`; codex `grammar_version` **2** (was 1 on 0.102.0), `verified_provider_version` **0.163.0** (was 0.147.0), forms `-c`, overrides `model_reasoning_effort` and `approvals_reviewer`. No `capture_version_unsupported` for 0.163.0, so the 0.147.0 prefix is no longer needed. Subject `sha256:b00ccf54…9c44`, plan `sha256:7940777c…d0ec`, trust `sha256:ab0b5ba9…ddc8`. Digest sensitivity (Prepare-only, one field per probe) is the same as on 0.102.0: Claude `--model opus`, Claude `--effort high`, Codex `--model gpt-5.5`, Codex effort `high`, Codex `--sandbox read-only`, wrapper `--seat other` each change the trust and plan digests; the `initial_input` text changes only the plan digest. `planned_writes` is empty. | `evidence/rerun-104/prepare.json`, `digest-sensitivity.json` |
+| 1 | Apply | Exit 6, `action_required`, `reason_code: evidence_missing`, `disposition: committed`, backend tmux, `binding_generation` equal to the launch nonce. Two panes in tmux session `amq-project-ad3b7461b1-s4-104-1-1851902c`: `%67` (`@amq_pane_agent` s4-claude, pane command `2.1.308`, pid 9228) and `%68` (s4-codex, pane command `codex`, pid 9233). Observations: s4-claude conversation `pending`, execution `pending`; s4-codex conversation **`stale`**, execution `pending`. Same shape as every 0.102.0 Apply. | `apply.json`, `apply.stderr`, `list-panes.txt`, `binding.json` |
+| 2 | `S4_ROLE_VISIBLE` from both seats | **PASS.** Claude: `S4_ROLE_VISIBLE — seat handle: s4-claude` (done 11:30; status line `Son5.5 M`, `amq:s4-104-1@s4-claude`). Codex: ran `cat "$AMQ_SQUAD_ROLE_PATH"`, replied `S4_ROLE_VISIBLE s4-codex` ("Worked for 11s • 11:30"; status line `GPT-6-Astra medium`). No Codex folder-trust prompt (owner pre-trust of the scratch root), no Claude workspace-trust dialog (entry already in `~/.claude.json`). `gpt-6-astra` serves on codex-cli 0.163.0, which closes the model note from the closure run. The wrapper wrote `launch.json` and `role.md` (0600 in 0700 directories) under `agents/<handle>/extensions/io.github.omriariav.amq-squad/`; the SessionStart hook saw `AMQ_SQUAD_SEAT`, `AMQ_SQUAD_ROOT`, `AMQ_SQUAD_ROLE_PATH`, `AM_ME`, `AM_ROOT`; PreToolUse ran in baseline mode `ok` for the single `cat`. | `pane-claude-final.txt:16`, `pane-codex-final.txt:16-18`, `sessionstart-env.log`, `hook-events.jsonl` |
+| 3 | Codex identity capture `ready` through `__codex-notify` | **FAIL (same AMQ defect, ask 12; #1137 is in effect but does not reach it).** The execution ticket after Apply is `spawn_attempted` and carries the new `provider_process` (`pid 9233`, start token, boot id); 9233 is the pane pid and the parent of both notify processes, so the #1137 binding condition is met. codex-cli ran `amq __codex-notify --root …/s4-104-1 --handle s4-codex '<agent-turn-complete payload>'` twice: 11:30:44.838 (pid 10937) and 11:30:49.295 (pid 11189). The conversation record stayed `stale` / `evidence_missing` with an empty identity, and no evidence file exists under `meta/launch`. Cause, by source: Apply wrote `stale` (`reconcile.go:792-797`, `capture.go:236-239`), and the receiver, after binding, refuses any record that is not `pending`: `"pending codex conversation does not match notify generation"` (`execution.go:870-871`). The hook's own stderr is discarded by codex, and the codex log database (`~/.codex/logs_2.sqlite`, read from a copy) has no row reporting the hook's result (the only rows matching `notify` are codex's own `thread_start.notify_started` spans), so that string is from the source, not captured live. Diagnostic replay of the second real payload from outside the provider process tree exited 1 with the new refusal, verbatim: `codex capture receiver does not run under the seat's provider process`. That is #1137 working as designed; it also means a replay from a shell cannot reach the `pending` check. | `execution-s4-codex.json`, `conversation-s4-codex.json`, `notify-watch.log:1-2`, `replay-outside.argv.json`, `replay-outside.err` |
+| 4 | Live notify forward after the completed capture | **NOT OBSERVED (blocked by item 3).** The forward runs only after a successful record (`internal/cli/codex_notify.go:48-51`). The libproc watcher logged both notify processes and my replay, and no `SkyComputerUseClient` process. | `notify-watch.log` |
+| 5 | Resume attempt of the Codex seat | **Not possible; refusal captured.** Capture did not complete, so there is no resume id. A Prepare-only probe with the Codex participant at `resume_policy: resume` (no Apply) exited 6 with `stale_conversation`: required action `stale_conversation_decision` for `s4-codex` with choices `fresh_once` or `abort`, observations s4-codex conversation `stale`, execution `spawn_attempted`; the planned outcome would be `fresh`. | `request-resume-probe.json`, `prepare-resume-probe.json` |
+| 6 | Claude conversation record `backend` field (ask 13) | **Still wrong.** State `ready`, identity the launch nonce, `execution_evidence.backend: "commands"`, `profile: "commands/any/v1"` for a tmux launch. The Codex record on the same launch says `backend: "tmux"`. `execution.go:681` is unchanged. | `conversation-s4-claude.json`, `conversation-s4-codex.json` |
+| 7 | New finding: codex-tui fires notify for its title thread first | On 0.163.0 the first `__codex-notify` (11:30:44.838) carried `thread-id 01a162bb-ded9-…` with `input-messages` beginning "Generate a concise, single-line task title…" and `last-assistant-message` `{"title":"Show seat role"}`. The second (11:30:49.295) carried the real thread `01a162bb-cc74-…` (the only rollout file written, `~/.codex/sessions/2026/10/22/rollout-…-01a162bb-cc74-….jsonl`) with `last-assistant-message` `S4_ROLE_VISIBLE s4-codex`. The codex log shows a `thread/start` with `rpc.request_id=temporary-structured-…` at 11:30:42 for that side thread. Both thread ids are UUIDv7 and share the seat cwd, so both pass `ParseCodexNotifyEvidence`. When ask 12 is fixed, a receiver that binds the first notify would record the title thread as the seat's conversation and refuse the real one as a `CodexNotifyConflictError`. This belongs in the ask 12 filing. | `notify-watch.log:1-2` |
+| 8 | Host state and teardown | `~/.claude/settings.json` hash unchanged (`65fb8dfe…3170`). `~/.codex/config.toml` hash changed from `1c0461ac…bdfd` to `f0c44564…f428` with mtime 11:30:37, the second the Codex seat started; its `[marketplaces.*] last_updated` values still read 2026-10-20 and the `[projects.*]` list holds 12 roots including the owner's pre-trust of the scratch root. No before-copy exists, so the changed bytes are not identified; this matches closure item 5 (codex-cli rewrites its config at start) and is not an action of this run. `~/go/bin/amq-squad` untouched. Teardown as in the closure: `tmux kill-session -t amq-project-ad3b7461b1-s4-104-1-1851902c`, watcher killed; afterwards no `s4-` pane, no `seat-exec`, `__codex-notify` or watcher process, pids 9228 and 9233 gone. The providers wrote their own state: one codex rollout and the Claude session JSONL. | `owner-config-sha-before.txt`, `owner-config-sha-after.txt`, `ended-at.txt` |
+
+**Verdict: criterion 4 NOT PASSED on AMQ v0.104.0.** Blocking reason: the
+Codex identity capture still cannot complete. Apply finalizes the Codex
+conversation `stale` / `evidence_missing` (`reconcile.go:792-797`, unchanged
+since 0.102.0) and `__codex-notify` records only a `pending` conversation
+(`execution.go:870-871`), so the two live notify calls changed nothing and
+the operator notify forward never ran. Everything the plan text names is now
+demonstrated on 0.104.0 with the released codex-cli: both seats live under
+AMQ, model and effort in the trust digest, the wrapper setting only
+environment and role, both role acknowledgements, the fault table from the
+first run. The remaining block is the closure condition from the Codex
+review (completed capture plus live forward), and it is upstream.
+
+- **Ask 12: still open in v0.104.0.** New evidence: `conversation-s4-codex.json`
+  (`stale` / `evidence_missing` after Apply and after two notifies),
+  `execution-s4-codex.json` (`spawn_attempted`, `provider_process` pid 9233),
+  `notify-watch.log` (both notifies under pid 9233), `cmp` of
+  `reconcile.go` v0.102.0 against v0.104.0 identical, `execution.go:870-871`
+  unchanged. PR #1137 fixed the nonce binding (the receiver no longer needs
+  `AMQ_INTERNAL_LAUNCH_NONCE`) and did not touch the `pending`-only record
+  check or the Apply-time finalization. Add item 7 (title-thread notify
+  comes first) to the filing.
+- **Ask 13: still open in v0.104.0.** `conversation-s4-claude.json` says
+  `backend: commands` / `commands/any/v1` for a tmux launch;
+  `execution.go:681` still hardcodes `CommandsBackendName`.
+
+Not done in this run: no second Codex turn, no worktree commit probe, no
+environment-name dumps (all measured in the closure run and unchanged by
+the upgrade), no Apply of the resume probe, and no in-tree capture of the
+receiver's stderr (codex discards it; a replay from the seat's shell tool
+would run inside the sandbox and need an approval I did not give).
+
+
+## Re-check on AMQ v0.106.1 (2026-10-23)
+
+Run 08:46 to 08:50 IDT on the owner's Mac, branch `v3-s4-recheck-106` (cut
+from `v3`). The owner installed `amq`, `amq-remote`, `amq-owner-sign` and
+`amq-acp` 0.106.1. Upstream PR #1174 ("capture Codex seats after Apply and
+record the real backend", closes #1157 and #1158) is in this release. Its
+description changes no request field: `request.py` is unchanged (two-seat
+shape, wrapper `seat-exec --seat <handle>` only, model and effort in the
+provider arguments, Codex cwd the linked worktree, model `gpt-6-astra`, no
+`CODEX_PIN`). Fresh session `s4-106-1`. Raw evidence, launch nonce
+redacted, is under `spike/seatexec/evidence/recheck-106/`; the unredacted
+files are under `~/.amq-squad/spike/s4/recheck-106/`.
+
+| Component | Version | Path |
+| --- | --- | --- |
+| amq | 0.106.1 (result_version 1, subject schema 2) | `/opt/homebrew/Cellar/amq/0.106.1/bin/amq` |
+| codex-cli | 0.163.0 | `/opt/homebrew/bin/codex` (resolved to `/opt/homebrew/Caskroom/codex/0.163.0/bin/codex`) |
+| claude | 2.1.308 | `/Users/omri/.local/bin/claude` |
+| tmux | 3.7c | |
+
+What PR #1174 says it changes: Apply leaves a capture-mode Codex seat
+`pending` with exit 0; the `__codex-notify` receiver promotes it, binding
+only a notify whose rollout under `CODEX_HOME` starts with a `session_meta`
+carrying the seat cwd, `source` `cli` and (if present) `thread_source`
+`user` (so the title-generation thread binds nothing); a resumed seat's
+notify for its captured thread counts as already captured and is still
+forwarded; Claude and Grok tickets carry the real backend.
+
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| 0 | Prepare | Exit 6, `action_required` / `untrusted_config_digest`, one `trust_confirmation` for both handles (unchanged). Capabilities: claude `grammar_version` 2, `verified_provider_version` 2.1.233; codex `grammar_version` 2, `verified_provider_version` 0.163.0. Subject `sha256:dd0033b7…5b75`, plan `sha256:9d0f6b7c…91e2`, trust `sha256:ae5af805…dbad2b4`. | `prepare.json`, `request.json` |
+| 1 | Apply | **Exit 0, `outcome: applied`, `disposition: committed`**, backend tmux, profile `tmux/darwin/v1`. Observations: s4-claude conversation `pending` / execution `pending` (pane `%87`), s4-codex conversation **`pending`** / execution `pending` (pane `%88`). On 0.104.0 this was exit 6 `evidence_missing` with the Codex conversation `stale`. | `apply.json`, `apply.stderr` (empty), `list-panes.txt` |
+| 2 | `S4_ROLE_VISIBLE` from both seats | **PASS.** Claude: `S4_ROLE_VISIBLE — seat handle: s4-claude`. Codex: ran `cat "$AMQ_SQUAD_ROLE_PATH"`, replied `S4_ROLE_VISIBLE s4-codex` ("Worked for 13s • 08:47"). No folder-trust prompt, none answered. | `pane-claude-final.txt:16`, `pane-codex-final.txt` |
+| 3 | Codex conversation after the first turn | **`ready`.** `state: ready`, identity `{provider: codex, id: 01a1674c-845f-7821-b8d8-d9498cf00956}`, `provider_version` 0.163.0, `execution_evidence.backend: tmux`, one `evidence_refs` entry. The identity equals the thread of the only new rollout (`~/.codex/sessions/2026/10/23/rollout-2026-10-23T08-47-10-01a1674c-845f-….jsonl`). | `conversation-s4-codex.json`, `evidence-codex-provider-capture.json` |
+| 4 | `__codex-notify` recorded | **YES.** The provider-capture evidence file exists under `meta/launch/evidence/` (`source: codex_notify_v1`, observed 05:47:23Z, `last-assistant-message` `S4_ROLE_VISIBLE s4-codex`). The watcher saw two notifies from codex (pid 24869, the pane process): 08:47:15.318 for the title-generation thread `01a1674c-8cf6-…` (`last-assistant-message` `{"title":"Run seat role visibility check"}`), then 08:47:23.693 for the real thread `01a1674c-845f-…`. The record bound the real thread, not the first notify, which is the title-thread behaviour that was open item 7 on 0.104.0. | `notify-watch.log:1-3`, `conversation-s4-codex.json` |
+| 5 | Live notify forward | **OBSERVED for the real thread.** After the successful record the receiver (pid 26518) spawned `SkyComputerUseClient` (pid 26523, from `~/.codex/computer-use/Codex Computer Use.app`), the owner's operator notify. Also at the resumed turn (item 7): receiver pid 33057, `SkyComputerUseClient` pid 33061. The title-thread notify at 08:47:15 spawned a second `amq __codex-notify` child (pid 26283, argv identical) and no `SkyComputerUseClient`; I did not trace what that child does. | `notify-watch.log` |
+| 6 | Claude conversation `execution_evidence.backend` | **`tmux`** (profile `tmux/darwin/v1`), state `ready`, identity the launch nonce. | `conversation-s4-claude.json` |
+| 7 | Resume probe of the Codex seat | **No `stale_conversation` refusal.** (a) Prepare-only with the Codex participant at `resume_policy: resume` while both seats were still live: exit 6 `untrusted_config_digest` only (one `trust_confirmation`); s4-codex observed conversation `ready` / execution `spawn_attempted`, `planned_outcome: resume`, argv `codex resume --model gpt-6-astra … 01a1674c-845f-7821-b8d8-d9498cf00956`. (b) I killed the tmux session, prepared again (same result), applied once with `trust_exact_subject`: exit 0 `applied`, new pane `%89`; the pane showed the first turn's transcript, so the same thread resumed. I typed a recall question in the pane (operator input, no approval): the seat replied `S4_RESUMED S4_ROLE_VISIBLE`. The conversation record was byte-identical after the resume (`diff` empty), the rollout set had no second file for the day, and the resumed turn's notify (08:49:05) was forwarded to `SkyComputerUseClient`. The resumed Apply's argv carries no initial input (the Prepare preview omits it for a resume), so the changed first-prompt text in `request-resume-apply.json` was not delivered. | `prepare-resume-probe-live.json`, `prepare-resume-apply.json`, `apply-resume.json`, `pane-codex-resumed.txt`, `conversation-s4-codex-after-resume.json`, `execution-s4-codex-after-resume.json` |
+| 8 | Host state and teardown | `~/.claude/settings.json` hash unchanged (`65fb8dfe…3170`). `~/.codex/config.toml` hash changed between runs (`1ea4dd99…77b7` at start of this run, `60d5eaf2…13a0` at the end), as on 0.104.0 and the closure run: codex-cli rewrites its own config at start; not an action of this run. Nothing under `~/.amq-squad` outside `spike/` touched; `~/go/bin/amq-squad` untouched. Teardown: `tmux kill-session` for `amq-project-ad3b7461b1-s4-106-1-607f234f` (twice: after the first turn, then after the resume probe), watcher pid 24556 killed. Afterwards `ps` shows no `seat-exec`, `__codex-notify`, watcher, `s4-claude` or `s4-codex` process and `tmux ls` has no `s4` session. | `owner-config-sha-before.txt`, `owner-config-sha-after.txt`, `ended-at.txt` |
+
+**Verdict: criterion 4 PASSES on AMQ v0.106.1.** Both seats ran under AMQ
+with model and effort in the trust digest and the wrapper setting only
+environment and role; both read their role; Apply returned exit 0 with the
+Codex conversation `pending`; the Codex conversation became `ready` with the
+real thread identity after the seat's first turn through `__codex-notify`;
+the operator notify forward ran live; the Claude record names `tmux`; and a
+`resume` Prepare plans `resume` with no `stale_conversation`, and applying it
+resumed the same Codex thread.
+
+- **#1157: fixed in v0.106.1, with evidence.** Apply exit 0 and the Codex
+  conversation `pending` (`apply.json`); `ready` with identity
+  `01a1674c-845f-7821-b8d8-d9498cf00956` after one turn
+  (`conversation-s4-codex.json`); evidence file written
+  (`evidence-codex-provider-capture.json`); title-thread notify did not bind;
+  the notify forward ran; the resume planned and applied on the same thread.
+  This closes upstream ask 12.
+- **#1158: fixed in v0.106.1, with evidence.** The Claude conversation
+  record says `execution_evidence.backend: "tmux"`, profile `tmux/darwin/v1`
+  (`conversation-s4-claude.json`); on 0.104.0 it said `commands` /
+  `commands/any/v1`. This closes ask 13.
+
+Not done in this run: no second fresh Codex seat with a slow first turn (the
+title-first ordering was observed once naturally: title notify 8 s before the
+real one), no worktree commit probe, no environment-name dumps, no Claude
+PreToolUse fault trials (all measured in earlier runs and independent of the
+AMQ version), no trace of the second `__codex-notify` child spawned for the
+title-thread notify. The resumed pane's initial prompt was not delivered by
+design (a resume carries no initial input), so the memory check used a
+prompt typed into the pane.

@@ -1,0 +1,24 @@
+› Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH…
+  └ Runtime: codex
+
+    Read this role and report S4_ROLE_VISIBLE with your seat handle. Perform on…
+    + 4 lines (⌃t to expand)
+
+• S4_ROLE_VISIBLE s4-codex
+
+  Worked for 13s • 08:47
+
+
+› Without running any command: reply with the token S4_RESUMED and the exact
+  token you replied with in your first turn.
+
+
+• S4_RESUMED S4_ROLE_VISIBLE
+
+  Worked for 2s • 08:49
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra medium · Run seat role visibility check · s4-codex-wt · No change…
+  ? for shortcuts                                     ⚠ 2 warnings · f2 to view

@@ -1,0 +1,1 @@
+rebased onto v3 2c4167e0 (go.mod agent-message-queue v0.116.2): go build ./... ok; go vet ./... ok; GOOS=linux go build ./... ok; GOOS=windows go build ./... ok

@@ -1,0 +1,625 @@
+========================================================================
+## rule: proposal: raise on redo
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-case canRaise && s.RedoRate >= RedoRateRaise:
++case false:
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: extract smol band 1: proposal "no change: 4 tasks, no signal", want "raise extract size band 1 from smol to task: 2 of 4 tasks redone"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.219s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.214s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: proposal: raise on dominated cost
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-s.Dominated = s.CostUSD != nil && s.UpCostUSD != nil && *s.CostUSD >= *s.UpCostUSD
++s.Dominated = false
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: script smol band 2-3: proposal "no change: 4 tasks, no signal", want "raise script size band 2-3 from smol to task: cost with redo 0.0100 USD a task against 0.0050 USD one tier up"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.233s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.294s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: proposal: findings traced to smol
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-case s.Tier == TierSmol && s.SmolFindings > 0:
++case false:
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: summarize smol band 1: proposal "no change: 3 tasks, no signal", want "raise summarize size band 1 from smol to task: 4 review finding(s) traced"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.224s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.221s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: proposal: long wait
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-case time.Duration(s.MeanWaitMS)*time.Millisecond > LongWait && len(s.Waits) > 0:
++case false:
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: implement task band 2-3: proposal "no change: 3 tasks, no signal", want "change the task chain: mean wait 20m0s, mostly concurrency_cap"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.559s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.231s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: proposal: a tier down
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-case s.Tasks >= MinTasksForDown && s.Redone == 0 && s.SmolFindings == 0 && tbl.MayRouteDown(s.Class) && down(s.Tier) != "":
++case false:
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: implement task band 1: proposal "no change: 5 tasks, no signal", want "try implement size band 1 on smol, one tier down: no redo in 5 tasks"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.241s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.244s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: proposal: too few tasks
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-	case s.Tasks < MinTasksForChange:
++	case false:
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: extract task band 1: proposal "no change: 2 tasks, no signal", want "no change: 2 task(s)"
+    report_test.go:164: review advisor band 1: proposal "no change: 1 tasks, no signal", want "no change: 1 task(s)"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.242s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.292s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: runtimes with incomplete evidence excluded
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-if perRuntime[r.Runtime].Incomplete == 0 {
++if true {
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:146: used 28, unpriced [codex:gpt-5.6-sol:high pi:ollama/qwen3.6:27b:low]
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.245s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.224s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: evidence is the token counts
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/outcome.go:
+-return r.TokensIn != nil && r.TokensOut != nil
+
++return r.TokensIn != nil && r.TokensOut != nil && r.CostUSD != nil
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:143: window 28 rows, excluded [{Runtime:codex Rows:3 Incomplete:3} {Runtime:pi Rows:3 Incomplete:3}]
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.309s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.225s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: the week window
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-if r.EndedAt.Before(rep.Since) || !r.EndedAt.Before(now) {
++if false {
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:143: window 29 rows, excluded [{Runtime:codex Rows:3 Incomplete:3}]
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.241s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.232s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: redo only at a higher tier
+## test: ./internal/routing/ TestReportRedoAndCostRules$
+## edit internal/routing/report.go:
+-if TierRank(later.UsedTier) > TierRank(r.UsedTier) {
++if later.UsedTier != "" {
+## reverted run (exit 1):
+=== RUN   TestReportRedoAndCostRules
+    report_test.go:194: same-tier retry: [extract smol band 1]
+--- FAIL: TestReportRedoAndCostRules (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.329s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestReportRedoAndCostRules
+--- PASS: TestReportRedoAndCostRules (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.236s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: unpriced attempt means unknown cost
+## test: ./internal/routing/ TestReportRedoAndCostRules$
+## edit internal/routing/report.go:
+-			if r.CostUSD == nil {
+				known = false
+				break
+			}
++			if r.CostUSD == nil {
+				continue
+			}
+## reverted run (exit 1):
+=== RUN   TestReportRedoAndCostRules
+    report_test.go:199: unpriced attempt counted: 0.1
+--- FAIL: TestReportRedoAndCostRules (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.238s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestReportRedoAndCostRules
+--- PASS: TestReportRedoAndCostRules (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.227s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: unpriced entries named
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-				rep.Unpriced = append(rep.Unpriced, r.Entry)
+
++				_ = r.Entry
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:146: used 25, unpriced []
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.250s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.225s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: findings once per bucket
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-if b, ok := smolOut[dep]; ok && !traced[b] {
++if b, ok := smolOut[dep]; ok {
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: summarize smol band 1: proposal "raise summarize size band 1 from smol to task: 8 review finding(s) traced to its smol outputs", want "raise summarize size band 1 from smol to task: 4 review finding(s) traced"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.228s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.231s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: findings traced by attempt id
+## test: ./internal/routing/ TestAcceptance6WeeklyReport$
+## edit internal/routing/report.go:
+-				smolOut[key(id, r.Attempt)] = b
+
++				smolOut[id] = b
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance6WeeklyReport
+    report_test.go:164: summarize smol band 1: proposal "no change: 3 tasks, no signal", want "raise summarize size band 1 from smol to task: 4 review finding(s) traced"
+--- FAIL: TestAcceptance6WeeklyReport (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.226s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance6WeeklyReport
+--- PASS: TestAcceptance6WeeklyReport (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.232s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: row names the consumed attempt
+## test: ./internal/routing/ TestConsumedSmolOutputs$
+## edit internal/routing/router.go:
+-		if k := r.smolDone[dep]; k != "" {
+			row.ConsumedSmolOutputs = append(row.ConsumedSmolOutputs, k)
++		if k := r.smolDone[dep]; k != "" {
+			row.ConsumedSmolOutputs = append(row.ConsumedSmolOutputs, dep)
+## reverted run (exit 1):
+=== RUN   TestConsumedSmolOutputs
+    outcome_test.go:336: rows [{Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t1 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:pi:ollama/qwen3.6:27b:low Runtime:pi Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified}] Policy:table Propensity:1 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> CostIndex:0 WallMS:0 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:pass ReviewFindings:<nil> ConsumedSmolOutputs:[] Holder: GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC} {Schema:1 At:2026-10-24 12:00:00 +0000 UTC Task:t2 Attempt:1 Class:review Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:advisor UsedTier:advisor Entry:codex:gpt-5.6-sol:xhigh Runtime:codex Skipped:[] Policy:table Propensity:1 ExplorationShare:0 TokensIn:<nil> TokensOut:<nil> CostUSD:<nil> CostIndex:0 WallMS:0 WaitMS:0 WaitReasons:[] Outcome:completed VerifierResult:none ReviewFindings:0x7fd2b707b2c8 ConsumedSmolOutputs:[t1] Holder: GrantedAt:2026-10-24 12:00:00 +0000 UTC EndedAt:2026-10-24 12:00:00 +0000 UTC}]
+--- FAIL: TestConsumedSmolOutputs (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.231s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestConsumedSmolOutputs
+--- PASS: TestConsumedSmolOutputs (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.242s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: row records cost_index
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-			row.CostIndex = reg.CostIndex
+
++			_ = reg
+
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:292: implement row cost 0x600b2f13810 wait 120000 wall 80000
+--- FAIL: TestAcceptance5EveryAttemptHasARow (0.70s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.941s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (0.73s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.984s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: ledger usage by default under a root
+## test: ./internal/routing/ TestAcceptance5EveryAttemptHasARow$
+## edit internal/routing/router.go:
+-if o.Usage == nil && o.Root != "" {
++if false {
+## reverted run (exit 1):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+    outcome_test.go:276: row {"schema":1,"at":"2026-10-24T12:05:00Z","task":"t1","attempt":1,"class":"extract","features":{"declared_files":0,"size_band":"1","input_tokens":2,"sensitive":false,"no_tests":false,"privacy":"vendor"},"table_tier":"smol","used_tier":"smol","entry":"pi:ollama/qwen3.6:27b:low","runtime":"pi","skipped":[{"entry":"pi:ollama/qwen3.6:35b-a3b:low","reason":"unverified"}],"policy":"table","propensity":1,"exploration_share":0,"tokens_in":null,"tokens_out":null,"cost_usd":null,"cost_index":0,"wall_ms":40000,"wait_ms":120000,"wait_reasons":["seat_starting"],"outcome":"completed","verifier_result":"pass","review_findings":null,"consumed_smol_outputs":[],"holder":"seat1","granted_at":"2026-10-24T12:02:00Z","ended_at":"2026-10-24T12:02:40Z"}
+--- FAIL: TestAcceptance5EveryAttemptHasARow (0.69s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.971s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestAcceptance5EveryAttemptHasARow
+--- PASS: TestAcceptance5EveryAttemptHasARow (0.72s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.952s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: budget stop only for priced entries
+## test: ./internal/routing/ TestGrantDailyBudgetStops$
+## edit internal/routing/router.go:
+-if _, priced := r.o.Table.Prices[e]; priced {
++if true {
+## reverted run (exit 1):
+=== RUN   TestGrantDailyBudgetStops
+    router_test.go:366: free local entry under a spent budget: {Task:t2 Attempt:1 Class:extract Features:{DeclaredFiles:0 SizeBand:1 InputTokens:0 Sensitive:false NoTests:false Privacy:vendor PrivacyGlob: ImplementerFamily:} TableTier:smol UsedTier:smol Entry:<nil> Skipped:[{Entry:pi:ollama/qwen3.6:35b-a3b:low Reason:unverified} {Entry:pi:ollama/qwen3.6:27b:low Reason:cost_cap} {Entry:pi:anthropic/haiku:low Reason:not_in_registry} {Entry:claude:haiku:low Reason:cost_cap} {Entry:codex:gpt-5.6-luna:low Reason:cost_cap}] Policy:table Propensity:1 ExplorationShare:0 WaitReasons:[] At:2026-10-24 12:00:00 +0000 UTC}
+--- FAIL: TestGrantDailyBudgetStops (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.239s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestGrantDailyBudgetStops
+--- PASS: TestGrantDailyBudgetStops (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.248s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: prices in the owner file only
+## test: ./internal/routing/ TestRoutingFileRefusals/prices_in_the_repository_file$
+## edit internal/routing/file.go:
+-			if repo {
+				err = e.Errf("only the owner's file
++			if false {
+				err = e.Errf("only the owner's file
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/prices_in_the_repository_file
+    file_test.go:159: err = <nil>, want "only the owner's file"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/prices_in_the_repository_file (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.241s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/prices_in_the_repository_file
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/prices_in_the_repository_file (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.244s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: price complete
+## test: ./internal/routing/ TestRoutingFileRefusals/price_incomplete$
+## edit internal/routing/file.go:
+-if pl.Runtime == "" || !in || !out {
++if pl.Runtime == "" || (!in && !out && false) {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/price_incomplete
+    file_test.go:159: err = <nil>, want "needs entry, input_usd_per_mtok"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/price_incomplete (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.338s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/price_incomplete
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_incomplete (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.250s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: price not repeated
+## test: ./internal/routing/ TestRoutingFileRefusals/price_repeated$
+## edit internal/routing/file.go:
+-if _, dup := t.Prices[pl]; dup {
++if _, dup := t.Prices[pl]; dup && false {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/price_repeated
+    file_test.go:159: err = <nil>, want "repeated"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/price_repeated (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.238s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/price_repeated
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_repeated (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.237s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: price entry form
+## test: ./internal/routing/ TestRoutingFileRefusals/price_bad_entry$
+## edit internal/routing/file.go:
+-if pl, err = task.ParsePool(s); err == nil && pl.Effort == "" {
++if pl, err = task.ParsePool(s + ":x:y"); err == nil && pl.Effort == "" {
+## reverted run (exit 1):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/price_bad_entry
+    file_test.go:159: err = <nil>, want "runtime:model:effort"
+--- FAIL: TestRoutingFileRefusals (0.00s)
+    --- FAIL: TestRoutingFileRefusals/price_bad_entry (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/routing	0.239s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingFileRefusals
+=== RUN   TestRoutingFileRefusals/price_bad_entry
+--- PASS: TestRoutingFileRefusals (0.00s)
+    --- PASS: TestRoutingFileRefusals/price_bad_entry (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	0.240s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: status names the wait reason
+## test: ./internal/cli/ TestStatusNamesTheRoutingWaitReason$
+## edit internal/status/classify.go:
+-row.State, row.ReasonCode = StateWaiting, firstNonEmpty(t.WaitReason, "queued")
++row.State, row.ReasonCode = StateWaiting, "queued"
+## reverted run (exit 1):
+=== RUN   TestStatusNamesTheRoutingWaitReason
+    routing_test.go:125: task row = [{ID:t1 Title:rotate the vault key Class:implement TaskState:pending State:waiting ReasonCode:queued Bucket:working BucketMarker: Pool:<nil> LeaseHolder: LeaseExpiresAt:<nil> LeaseClaimed:false Attempt:0 WaitReason:privacy_class BlockReason: DependsOn:[] ProjectPath: CreatedAt:2026-10-24 12:00:00 +0000 UTC UpdatedAt:2026-10-24 12:00:00 +0000 UTC}]
+--- FAIL: TestStatusNamesTheRoutingWaitReason (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.348s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestStatusNamesTheRoutingWaitReason
+--- PASS: TestStatusNamesTheRoutingWaitReason (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.352s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: router sets the privacy wait
+## test: ./internal/cli/ TestStatusNamesTheRoutingWaitReason$
+## edit internal/routing/router.go:
+-for _, r := range []string{SkipConcurrencyCap, SkipCostCap, SkipPrivacyClass, SkipReviewerFamily} {
++for _, r := range []string{SkipConcurrencyCap, SkipCostCap, SkipReviewerFamily} {
+## reverted run (exit 1):
+=== RUN   TestStatusNamesTheRoutingWaitReason
+    routing_test.go:125: task row = [{ID:t1 Title:rotate the vault key Class:implement TaskState:pending State:waiting ReasonCode:no_route Bucket:working BucketMarker: Pool:<nil> LeaseHolder: LeaseExpiresAt:<nil> LeaseClaimed:false Attempt:0 WaitReason:no_route BlockReason: DependsOn:[] ProjectPath: CreatedAt:2026-10-24 12:00:00 +0000 UTC UpdatedAt:2026-10-24 12:00:00 +0000 UTC}]
+--- FAIL: TestStatusNamesTheRoutingWaitReason (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.353s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestStatusNamesTheRoutingWaitReason
+--- PASS: TestStatusNamesTheRoutingWaitReason (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.447s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: report needs --week
+## test: ./internal/cli/ TestRoutingReportWeekOnTheFixtureLog$
+## edit internal/cli/routing.go:
+-	if !*week {
++	if false && !*week {
+## reverted run (exit 1):
+=== RUN   TestRoutingReportWeekOnTheFixtureLog
+    routing_test.go:63: no --week: <nil>
+--- FAIL: TestRoutingReportWeekOnTheFixtureLog (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.441s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingReportWeekOnTheFixtureLog
+--- PASS: TestRoutingReportWeekOnTheFixtureLog (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.650s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: report reads the repository file
+## test: ./internal/cli/ TestRoutingReportRefusesABadRepositoryFile$
+## edit internal/cli/routing.go:
+-	tbl, err := routing.Load(home, repoRoot)
++	tbl, err := routing.Default(), error(nil)
+	_, _ = repoRoot, home
+## reverted run (exit 1):
+=== RUN   TestRoutingReportRefusesABadRepositoryFile
+    routing_test.go:79: err = <nil>
+--- FAIL: TestRoutingReportRefusesABadRepositoryFile (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.570s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestRoutingReportRefusesABadRepositoryFile
+--- PASS: TestRoutingReportRefusesABadRepositoryFile (0.00s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.487s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: doctor fails an invalid table
+## test: ./internal/cli/ TestDoctorRoutingRow$
+## edit internal/cli/routing.go:
+-	if err != nil {
+		return doctorCheck{Name: "routing", Status: doctorFail
++	if err != nil && false {
+		return doctorCheck{Name: "routing", Status: doctorFail
+## reverted run (exit 1):
+=== RUN   TestDoctorRoutingRow
+    routing_test.go:147: invalid: {Name:routing Status:ok Detail:default table: 0 classes, 0 chain entries, exploration_share 0 Kind:}
+--- FAIL: TestDoctorRoutingRow (0.00s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.637s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDoctorRoutingRow
+--- PASS: TestDoctorRoutingRow (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.514s
+
+## verdict: OK (fails reverted, passes restored)
+========================================================================
+## rule: doctor warns on unpriced entries
+## test: ./internal/cli/ TestDoctorRoutingRow$
+## edit internal/cli/routing.go:
+-	if len(unpriced) > 0 {
++	if false {
+## reverted run (exit 1):
+=== RUN   TestDoctorRoutingRow
+    routing_test.go:166: unpriced: {Name:routing Status:ok Detail:default table + /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDoctorRoutingRow1426442872/001/.amq-squad/routing.yaml: 6 classes, 13 chain entries, exploration_share 0.05 Kind:}
+--- FAIL: TestDoctorRoutingRow (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.383s
+FAIL
+
+## restored run (exit 0):
+=== RUN   TestDoctorRoutingRow
+--- PASS: TestDoctorRoutingRow (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.310s
+
+## verdict: OK (fails reverted, passes restored)

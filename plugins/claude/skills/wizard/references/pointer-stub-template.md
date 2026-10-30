@@ -1,6 +1,10 @@
 # Pointer Stub Template
 
-`amq-squad team sync --apply` writes a small managed block into the project's `CLAUDE.md` and `AGENTS.md`. This file shows the exact shape so reviewers know what to expect. Do not hand-author the block; let `team sync` own it.
+`amq-squad team apply` writes a small managed block into `CLAUDE.md` and `AGENTS.md`
+at the repository root and in each existing seat directory inside the repository.
+`amq-squad team propose` lists those files with their action and sha256 before
+anything is written. This file shows the block's shape so reviewers know what to
+expect. Do not hand-author the block; the digest flow owns it.
 
 ## Markers
 
@@ -12,11 +16,12 @@ The managed block is delimited by exact-match markers:
 <!-- amq-squad:managed:end -->
 ```
 
-`team sync` only touches content between these markers. Any free-form prose outside the markers is preserved verbatim.
+The digest flow only touches content between these markers. Any free-form prose
+outside the markers is preserved verbatim.
 
 ## What goes inside
 
-The managed block points at the three durable context layers; it does not duplicate them.
+The managed block points at the durable context layers; it does not duplicate them.
 
 ```markdown
 <!-- amq-squad:managed:begin -->
@@ -30,20 +35,14 @@ These files are the source of truth. Do not duplicate their content here.
 <!-- amq-squad:managed:end -->
 ```
 
-The exact wording is `amq-squad team sync`'s responsibility and may evolve. Reviewers should compare against `team sync` output (`amq-squad team sync` previews drift; exit 1 means drift exists).
+The exact wording is the binary's responsibility and may evolve. Compare against the
+files `team apply` wrote rather than this copy.
 
 ## Rules
 
-- Hand-editing inside the markers is unsupported. `team sync --apply` will overwrite it.
-- If a project's `CLAUDE.md` / `AGENTS.md` is missing, `team sync --apply` creates it with the managed block as the only content.
-- If the markers are missing but the file exists, `team sync --apply` appends a managed block at the end of the file.
-- Removing the managed block manually is fine; the next `team sync --apply` will re-add it.
-
-## Drift detection
-
-`amq-squad team sync` (no flag) is a read-only preview:
-
-- Exit 0: no drift; files match the desired stub.
-- Exit 1: drift; the printed diff shows what would change.
-
-CI can run `amq-squad team sync` to enforce that the managed block stays in sync without writing.
+- The managed blocks are protected paths: guard denies a seat's write to them, and a
+  seat diff touching them is refused by the commit step and raises the growth gate.
+- If `CLAUDE.md` or `AGENTS.md` is missing, `team apply` creates it with the managed
+  block as the only content.
+- If a pointer stub changed since the proposal, `team apply` refuses and writes
+  nothing; run `team propose` again.

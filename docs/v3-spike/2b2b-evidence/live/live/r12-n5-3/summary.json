@@ -1,0 +1,105 @@
+{
+  "checks": {
+    "completed_through_commit_step": true,
+    "final_line_exact": false,
+    "go_test_confirmed": true,
+    "independent_go_test": true,
+    "read_confirmed": true,
+    "worktree_exact_harness_commit": true
+  },
+  "classed_tasks": 1,
+  "completed_tasks": 1,
+  "decision_kinds": {
+    "completed": 1,
+    "dispatched": 1,
+    "scheduler_started": 1,
+    "scheduler_stopped": 1,
+    "seat_requested": 1,
+    "seat_up": 1
+  },
+  "false_success": false,
+  "harness_commits": 1,
+  "independent_go_test_ok": true,
+  "label": "r12-n5-3",
+  "lead_turns": 0,
+  "mode": "r12",
+  "model": "ollama/qwen3.6:27b",
+  "numstat": "1\t1\tcalc.go",
+  "pass": false,
+  "seconds": 37,
+  "stood_in": [
+    "pi launch: External request file read by this harness, seat_up by scheduler post, one pi run turn per doorbell",
+    "wake: the harness reads the AMQ doorbell from the seat inbox and starts the turn with it",
+    "merge train: the harness fast-forwards main to seat/pi-1 after each completed task"
+  ],
+  "tasks": [
+    {
+      "ID": "t1",
+      "Title": "R12 probe: Greeting",
+      "Class": "implement",
+      "State": "completed",
+      "BlockReason": "",
+      "Files": [
+        "calc.go"
+      ]
+    }
+  ],
+  "worker_calls": [
+    {
+      "turn": 1,
+      "tool": "amq_task_claim",
+      "args": "{\"id\":\"t1\"}",
+      "out": "Claim t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T17:50:45Z"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"ls -la\"}",
+      "out": "total 40\ndrwxr-xr-x@ 7 omri  staff  224 Oct 24 20:40 .\ndrwxr-xr-x@ 9 omri  staff  288 Oct 24 20:40 ..\n-rw-r--r--@ 1 omri  staff   93 Oct 24 20:40 .git\n-rw-r--r--@ 1 omri  staff   13 Oct 24 20:40 .gitignore\n-rw-r--r--@ 1 omri  staff  173 Oct 24 20:40 calc.go\n-rw-r--r--@ 1 omri  staff  288 Oct 24 20:40 calc_test.go\n-rw-r--r--@ 1 omri  staff   38 Oct 24 20:40 go.mod\n"
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"cat calc.go 2\u003e/dev/null || echo \\\"File does not exist yet\\\"\"}",
+      "out": "package calc\n\n// Greeting returns the greeting text.\nfunc Greeting() string {\n\treturn \"hello\"\n}\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "read",
+      "args": "{\"path\":\"calc_test.go\"}",
+      "out": "package calc\n\nimport \"testing\"\n\nfunc TestGreeting(t *testing.T) {\n\tif got := Greeting(); got != \"hello, world\" {\n\t\tt.Fatalf(\"Greeting() = %q, want %q\", got, \"hello, world\")\n\t}\n}\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(2, 3); got != 5 {\n\t\tt.Fatalf(\"Add(2, 3) = %d, want 5\", got)\n\t}\n}\n"
+    },
+    {
+      "turn": 1,
+      "tool": "edit",
+      "args": "{\"path\":\"calc.go\",\"edits\":[{\"newText\":\"\\treturn \\\"hello, world\\\"\",\"oldText\":\"\\treturn \\\"hello\\\"\"}]}",
+      "out": "Successfully replaced 1 block(s) in calc.go."
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"cd / \u0026\u0026 go test ./...\"}",
+      "out": "# ./...\npattern ./...: directory prefix / does not contain main module or its selected dependencies\nFAIL\t./... [setup failed]\nFAIL\n\n\nCommand exited with code 1",
+      "is_error": true
+    },
+    {
+      "turn": 1,
+      "tool": "bash",
+      "args": "{\"command\":\"pwd \u0026\u0026 go test ./...\"}",
+      "out": "$JOB/live/r12-n5-3/wt-pi-1\nok  \texample.com/probecalc\t0.407s\n"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_task_done",
+      "args": "{\"evidence\":\"go test ./... -\u003e ok  example.com/probecalc  0.407s\",\"id\":\"t1\"}",
+      "out": "Done t1 \"R12 probe: Greeting\": in_progress lease pi-1 until 2026-10-24T17:50:45Z"
+    },
+    {
+      "turn": 1,
+      "tool": "amq_send",
+      "args": "{\"body\":\"Task t1 (R12 probe: Greeting) done — fixed Greeting() to return \\\"hello, world\\\" and tests pass.\",\"kind\":\"status\",\"to\":\"pi-lead\"}",
+      "out": "{\n  \"id\": \"2026-10-24T17-41-09.856Z_pid98086_b2b14bb6\",\n  \"outbox\": {\n    \"error\": \"\",\n    \"written\": true\n  },\n  \"root\": \"$JOB/live/r12-n5-3/proj/.agent-mail/collab\",\n  \"session\": \"collab\",\n  \"source_root\": \"$JOB/live/r12-n5-3/proj/.agent-mail/collab\",\n  \"subject\": \"\",\n  \"thread\": \"p2p/pi-1__pi-lead\",\n  \"to\": [\n    \"pi-le..."
+    }
+  ],
+  "worker_turns": 1
+}

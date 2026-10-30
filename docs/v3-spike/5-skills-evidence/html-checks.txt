@@ -1,0 +1,2 @@
+docs/skills.html is in sync with docs/skills.md
+README.html is in sync with README.md

@@ -1,0 +1,55 @@
+{
+  "body_keys": {
+    "s1gate": {
+      "attestation": "enrolled",
+      "body_pubkey": "45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a",
+      "kinds": {
+        "0": {
+          "expires": "2026-11-21T08:06:37Z"
+        },
+        "10100": {
+          "expires": "2026-11-21T08:06:37Z"
+        },
+        "1059": {
+          "expires": "2026-11-21T08:06:37Z"
+        },
+        "20003": {
+          "expires": "2026-11-21T08:06:37Z"
+        },
+        "24200": {
+          "expires": "2026-11-21T08:06:37Z"
+        },
+        "40003": {
+          "expires": "2026-11-21T08:06:37Z"
+        },
+        "44200": {
+          "expires": "2026-11-21T08:06:37Z"
+        },
+        "9": {
+          "expires": "2026-11-21T08:06:37Z"
+        }
+      }
+    }
+  },
+  "endpoint": "reachable",
+  "failing": [],
+  "records": {},
+  "relay": {
+    "url": "wss://omriariav.communities.buzz.xyz",
+    "shares": [
+      {
+        "session": "s1gate",
+        "target": "gate-fake",
+        "state": "authenticated",
+        "since": "2026-10-22T08:11:37Z",
+        "commands": "subscription_active",
+        "presence": "online",
+        "discovery": "policy_present"
+      }
+    ]
+  },
+  "root": "/Users/omri/.amq-squad/spike/s1/root",
+  "socket": "/Users/omri/.amq-squad/spike/s1/root/extensions/remote/endpoint.sock",
+  "state_dir": "/Users/omri/.amq-squad/spike/s1/root/extensions/remote",
+  "targets": 1
+}

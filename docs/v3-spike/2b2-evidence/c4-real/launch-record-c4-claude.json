@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "handle": "c4-claude",
+  "root": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/.agent-mail/c4",
+  "base_root": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/.agent-mail",
+  "session": "c4",
+  "runtime": "claude",
+  "model": "sonnet",
+  "effort": "medium",
+  "role_path": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/.agent-mail/c4/agents/c4-claude/extensions/io.github.omriariav.amq-squad/role.md",
+  "role_sha256": "sha256:e399ec527d81179197baa0e2acde075bb801210f1da3d46c1c0ff30969d46a83",
+  "worktree": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e",
+  "amq_path": "/opt/homebrew/bin/amq",
+  "launch_nonce": "<redacted-nonce>",
+  "apply": {
+    "outcome": "applied",
+    "at": "2026-10-24T09:34:08.240918Z"
+  },
+  "exec": {
+    "at": "2026-10-24T09:34:08.292335Z",
+    "outcome": "exec",
+    "pid": 50296,
+    "provider_argv": [
+      "~/.local/bin/claude",
+      "--model",
+      "sonnet",
+      "--effort",
+      "medium",
+      "--session-id",
+      "<redacted-nonce>",
+      "Your seat role is in the file named by the environment variable AMQ_SQUAD_ROLE_PATH. Read it first and follow it. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then do what it says."
+    ],
+    "drain_proof": "amq drain"
+  },
+  "cwd": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e",
+  "binary": "claude",
+  "started_at": "2026-10-24T09:34:07.648487Z",
+  "team_home": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e"
+}

@@ -1,0 +1,1 @@
+scheduler for $JOB/live/r12-n5-3/proj/.agent-mail/collab (session collab, lead pi-lead, max 12 seats, tick 1s); decisions in $JOB/live/r12-n5-3/proj/.agent-mail/collab/extensions/amq-squad/scheduler/decisions.jsonl

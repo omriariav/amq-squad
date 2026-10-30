@@ -1,0 +1,14 @@
+owner: npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g (232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71)
+relay: wss://omriariav.communities.buzz.xyz
+share: /Users/omri/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+== A: amq init (endpoint handle remote, mailbox handle attach)
+== A: amq-remote share --enable buzz-dm --enable buzz-profile --days 30
+save this output, sign it in one step, then enroll the bundle:
+  amq-owner-sign --share <this-output> --out <bundle.json> --relay <wss-url>
+  amq-remote share --root /Users/omri/.amq-squad/buzz/root --session amq-squad --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
+body:  209d429a475f6ffa460c68c0e69e556ee4d608744e931978bdce9db500960e11 (check this against what amq-owner-sign shows)
+grants requested: 8
+== B: the owner signs the grants (amq-owner-sign, key through the pipe)
+   OWNER STEP: set BUZZ_OWNER_KEY_CMD to your password manager's read command and rerun, e.g.
+     BUZZ_OWNER_KEY_CMD='op read "op://<vault>/<item>/<field>"' docs/v3-buzz/enroll.sh npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g wss://omriariav.communities.buzz.xyz
+   The key goes from that command straight into amq-owner-sign and nowhere else.

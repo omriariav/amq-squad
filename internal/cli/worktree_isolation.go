@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type worktreeIsolationResult struct {
@@ -60,8 +60,7 @@ type worktreeIsolationResult struct {
 //     sentence describes #537's target contract; if it has not landed in the tree
 //     you are reading, doctor still fails unconditionally on the collision.
 //   - REMEDY. doctor names `worktree plan|materialize`, which require --task ID.
-//     At preparation no tasks exist, so that remedy is unrunnable here and naming
-//     it would be false. This row names the pre-launch mechanisms instead.
+//     At preparation no tasks exist, so this row names the profile fields instead.
 //
 // So "agree" means same condition, same exception semantics, same vocabulary,
 // with stage-appropriate severity and remedy. If you change one side's condition
@@ -144,53 +143,24 @@ func worktreeIsolationCheckForSession(t team.Team, profile, session string) work
 		Artifact: "worktree_isolation",
 		Status:   "blocked",
 		Evidence: fmt.Sprintf("2+ mutation-capable members share one working directory without a recorded exception: %s", evidence),
-		Fix:      worktreeIsolationFix(t.Project, profile, session, sharedCwdCollisionRoles(groups)),
+		Fix:      worktreeIsolationFix(t.Project, profile, sharedCwdCollisionRoles(groups)),
 	}
 }
 
-// worktreeIsolationFix names remedies that are ACTUALLY EXECUTABLE against the
-// EXACT roster that is blocked.
-//
-// #538: the original text said "give each mutation-capable member its own --cwd
-// (isolated worktree)" and named no command, so the operator concluded the flag
-// did not exist and lost more time here than anywhere else in the run. A remedy
-// the reader cannot execute is not a remedy.
-//
-// Second review F1: naming commands is not enough -- they must be SCOPED. An
-// unscoped `team member update` targets the default profile, so for a blocked
-// NAMED profile the suggested command would silently mutate a different roster.
-// And a creation-time remedy is wrong here by construction: this profile already
-// exists (readiness just read it), so `new profile NAME` would build an unrelated
-// roster rather than fix this one. The creation forms belong only to the
-// transactional-rollback case, which the preparation failure message owns.
-func worktreeIsolationFix(project, profile, session string, roles []string) string {
+// worktreeIsolationFix names remedies against the EXACT blocked profile (#538):
+// the profile file of this project and profile, never another roster, and no
+// creation form (the profile exists). 3.0 (2a-2): the v2 `team member update`
+// and `team shared-cwd-exception set` verbs are gone, so the remedy names the
+// profile fields; squad.yaml owns them in 2b.
+func worktreeIsolationFix(project, profile string, roles []string) string {
 	example := "ROLE"
 	if len(roles) > 0 {
 		example = roles[0]
 	}
-	scope := ""
-	if p := strings.TrimSpace(project); p != "" {
-		scope += " --project " + shellQuote(p)
-	}
-	// Only a non-default profile needs naming; adding --profile default would be
-	// noise that invites cargo-culting it onto commands that reject it.
-	if pr := strings.TrimSpace(profile); pr != "" && pr != team.DefaultProfile {
-		scope += " --profile " + shellQuote(pr)
-	}
-	// team member update uses --session as a mutation, not a scoping flag. Add
-	// the preparation session only to the exception command that treats it as
-	// compatibility context.
-	exceptionScope := scope
-	if session := strings.TrimSpace(session); session != "" {
-		exceptionScope += " --session " + shellQuote(session)
-	}
-	return strings.Join([]string{
-		"give each mutation-capable member its own working directory with " +
-			"'amq-squad team member update " + example + " --cwd /path/to/worktree" + scope + "'" +
-			" (repeat per member; a relative --cwd resolves against the project)",
-		"or accept the shared checkout deliberately with " +
-			`'amq-squad team shared-cwd-exception set "<reason>"` + exceptionScope + "'",
-	}, "; ")
+	path := team.SquadPath(project)
+	return "give each mutation-capable member its own working directory: set members[].cwd for " + example +
+		" (and each other colliding implementer) in " + shellQuote(path) + "; a relative cwd resolves against the project" +
+		"; or accept the shared checkout deliberately: set \"shared_cwd_exception\": \"<reason>\" in " + shellQuote(path)
 }
 
 // sharedCwdCollisionRoles returns the colliding roles in deterministic order, so

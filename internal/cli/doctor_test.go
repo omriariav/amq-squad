@@ -2,251 +2,150 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
 )
 
-func TestDoctorSharedIndexCollisionIsStateAware(t *testing.T) {
-	inspection := worktreeplan.Inspection{
-		Members: []worktreeplan.MemberStatus{
-			{Role: "one", Index: "/repo/.git/index", State: worktreeplan.StateUnplanned},
-			{Role: "two", Index: "/repo/.git/index", State: worktreeplan.StateUnplanned},
-		},
-		Diagnostics: []worktreeplan.Diagnostic{{
-			Kind: "shared-index-collision", Status: worktreeplan.DiagnosticFail,
-			Detail: "one,two share /repo/.git/index",
-		}},
+func decodeDoctorJSON(t *testing.T, buf *bytes.Buffer) doctorEnvelopeData {
+	t.Helper()
+	env := decodeJSONEnvelope[doctorEnvelopeData](t, buf.String())
+	if env.Kind != "doctor" {
+		t.Fatalf("envelope kind = %q, want doctor", env.Kind)
 	}
-	diagnosticFor := func(rows []statusRecord) worktreeplan.Diagnostic {
-		diagnostics := stateAwareSharedIndexDiagnostics(inspection, rows, "review", "s")
-		for _, diagnostic := range diagnostics {
-			if diagnostic.Kind == "shared-index-collision" {
-				return diagnostic
+	return env.Data
+}
+
+func TestRunDoctorRejectsPositionalArgs(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"foo"}, "") })
+	if err == nil {
+		t.Fatal("positional arg should be UsageError")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestRunDoctorRejectsUnknownFlag(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"--banana"}, "") })
+	if err == nil {
+		t.Fatal("unknown flag should fail")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("unknown flag should be UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestRunDoctorProjectTargetsOtherDir(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+	t.Setenv("PATH", "")
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDoctor([]string{"--project", project, "--json"}, "")
+	})
+	if err == nil {
+		t.Fatal("doctor with PATH stripped should fail health checks, preserving JSON output")
+	}
+	env := decodeJSONEnvelope[doctorEnvelopeData](t, stdout)
+	if env.Data.TeamHome != canonicalFilesystemPath(project) {
+		t.Fatalf("doctor --project team_home = %q, want %s", env.Data.TeamHome, canonicalFilesystemPath(project))
+	}
+}
+
+func TestRunDoctorProjectValidation(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	_, _, err := captureOutput(t, func() error {
+		return runDoctor([]string{"--project", missing, "--json"}, "")
+	})
+	if err == nil || !strings.Contains(err.Error(), "--project") {
+		t.Fatalf("doctor --project missing error = %v, want --project error", err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runDoctor([]string{"--project", "", "--json"}, "")
+	})
+	if err == nil || !strings.Contains(err.Error(), "--project requires a directory") {
+		t.Fatalf("doctor empty --project error = %v, want directory guidance", err)
+	}
+}
+
+func TestDoctorAMQVersionResolutionDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	t.Setenv("AM_ROOT_ID", "v1:test:inherited-root")
+	t.Setenv("AM_BASE_ROOT_ID", "v1:test:inherited-base")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  echo "update available" >&2
+  exit 91
+fi
+if [ -n "$AM_ROOT_ID$AM_BASE_ROOT_ID" ]; then
+  echo "inherited AMQ root identity metadata leaked" >&2
+  exit 92
+fi
+printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.116.2"}'
+`)
+
+	d := defaultDoctorExecution(t.TempDir())
+	check := doctorCheckAMQVersion(d)
+	if check.Status != doctorOK || !strings.Contains(check.Detail, "amq 0.116.2") {
+		t.Fatalf("doctor amq version check = %+v, want ok 0.116.2", check)
+	}
+	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
+		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
+	}
+}
+
+func TestDoctorAMQIdentityPinHealth(t *testing.T) {
+	check := func(values map[string]string) doctorCheck {
+		return doctorCheckAMQIdentityPin(doctorExecution{
+			LookupEnv: func(key string) (string, bool) {
+				value, ok := values[key]
+				return value, ok
+			},
+		})
+	}
+	tests := []struct {
+		name   string
+		values map[string]string
+		status doctorStatus
+		want   string
+	}{
+		{name: "no injected pin", values: map[string]string{}, status: doctorOK, want: "no injected"},
+		{name: "sessionful", values: map[string]string{"AM_ROOT": "/mail/issue-96", "AM_BASE_ROOT": "/mail", "AM_SESSION": "issue-96", "AM_ME": "cto"}, status: doctorOK, want: "healthy sessionful"},
+		{name: "exact root sessionless", values: map[string]string{"AM_ROOT": "/mail/review/issue-96", "AM_BASE_ROOT": "/mail/review/issue-96", "AM_ME": "cto"}, status: doctorOK, want: "healthy exact-root/sessionless"},
+		{name: "legacy partial", values: map[string]string{"AM_ROOT": "/mail/issue-96", "AM_BASE_ROOT": "/mail", "AM_ME": "cto"}, status: doctorWarn, want: "stop and resume/relaunch"},
+		{name: "inconsistent empty session", values: map[string]string{"AM_ROOT": "/mail/issue-96", "AM_BASE_ROOT": "/mail", "AM_SESSION": "", "AM_ME": "cto"}, status: doctorWarn, want: "legacy or inconsistent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := check(tt.values)
+			if got.Status != tt.status || !strings.Contains(got.Detail, tt.want) {
+				t.Fatalf("doctor pin check = %+v, want status %s and %q", got, tt.status, tt.want)
 			}
-		}
-		t.Fatal("shared-index-collision diagnostic missing")
-		return worktreeplan.Diagnostic{}
-	}
-
-	stopped := diagnosticFor([]statusRecord{
-		{Role: "one", Status: statusStateStale},
-		{Role: "two", Status: statusStateMissing},
-	})
-	if stopped.Status != worktreeplan.DiagnosticWarn {
-		t.Fatalf("stopped collision = %+v, want warn", stopped)
-	}
-	for _, want := range []string{
-		"fewer than two affected members are live",
-		"warning does not fail doctor",
-		"amq-squad worktree plan --role R --task ID --base SHA --scope PATH... --profile review --session s",
-		"amq-squad worktree materialize --role R --task ID --base SHA --scope PATH... --profile review --session s --yes",
-	} {
-		if !strings.Contains(stopped.Detail, want) {
-			t.Fatalf("stopped collision missing %q: %+v", want, stopped)
-		}
-	}
-	if fails := countFails([]doctorCheck{{Status: doctorWarn, Detail: stopped.Detail}}); fails != 0 {
-		t.Fatalf("warning changed doctor exit contract: %d fails", fails)
-	}
-
-	oneLive := diagnosticFor([]statusRecord{
-		{Role: "one", Status: statusStateLive},
-		{Role: "two", Status: statusStateStale, Detail: "runtime resolution for role two failed: synthetic env error"},
-	})
-	if oneLive.Status != worktreeplan.DiagnosticWarn {
-		t.Fatalf("one-live collision = %+v, want warn", oneLive)
-	}
-	for _, want := range []string{"role two", "synthetic env error"} {
-		if !strings.Contains(oneLive.Detail, want) {
-			t.Fatalf("runtime uncertainty missing %q: %+v", want, oneLive)
-		}
-	}
-
-	bothLive := diagnosticFor([]statusRecord{
-		{Role: "one", Status: statusStateLive},
-		{Role: "two", Status: statusStateWakeLive},
-	})
-	if bothLive.Status != worktreeplan.DiagnosticFail || !strings.Contains(bothLive.Detail, "while live") {
-		t.Fatalf("live collision = %+v, want fail", bothLive)
+		})
 	}
 }
 
-func TestDoctorDiscoversLiveReplacementPanesForSharedIndexCollision(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	repo := seedReviewGitRepo(t)
-	const session = "replacement-live"
-	members := []team.Member{
-		{Role: "one", Handle: "one", Binary: "codex", Session: session},
-		{Role: "two", Handle: "two", Binary: "codex", Session: session},
-	}
-	if err := team.WriteProfile(repo, team.DefaultProfile, team.Team{Project: repo, Members: members}); err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(base, session)
-	for i, member := range members {
-		agentDir := filepath.Join(root, "agents", member.Handle)
-		if err := launch.Write(agentDir, launch.Record{
-			TeamHome: repo, TeamProfile: team.DefaultProfile, Session: session,
-			Role: member.Role, Handle: member.Handle, Root: root, CWD: repo,
-			Binary: member.Binary, AgentPID: 900000 + i, StartedAt: time.Now().Add(-time.Hour),
-		}); err != nil {
-			t.Fatal(err)
+func findCheck(checks []doctorCheck, name string) *doctorCheck {
+	for i, c := range checks {
+		if c.Name == name {
+			return &checks[i]
 		}
 	}
-	previousLister := statusPaneLister
-	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
-		return []tmuxpane.TmuxPane{
-			{Session: session, Window: "0", Pane: "1", Command: "codex", CWD: repo, Title: "amq:" + session + ":one"},
-			{Session: session, Window: "0", Pane: "2", Command: "codex", CWD: repo, Title: "amq:" + session + ":two"},
-		}, nil
-	}
-	t.Cleanup(func() { statusPaneLister = previousLister })
-
-	checks := doctorCheckWorktrees(doctorExecution{
-		ProjectDir: repo, Profile: team.DefaultProfile,
-		WorktreeDiagnostics: defaultDoctorWorktreeDiagnostics,
-	}, session)
-	var collision doctorCheck
-	for _, check := range checks {
-		if check.Kind == "shared-index-collision" {
-			collision = check
-			break
-		}
-	}
-	if collision.Status != doctorFail || !strings.Contains(collision.Detail, "one,two share") || !strings.Contains(collision.Detail, "while live") {
-		t.Fatalf("replacement-live shared index collision = %+v, want fail", collision)
-	}
+	return nil
 }
 
-func TestDoctorStoppedUnplannedSharedIndexDoesNotFail(t *testing.T) {
-	repo := seedReviewGitRepo(t)
-	if err := team.WriteProfile(repo, team.DefaultProfile, team.Team{
-		Project: repo,
-		Members: []team.Member{
-			{Role: "one", Handle: "one", Binary: "codex", Session: "stopped"},
-			{Role: "two", Handle: "two", Binary: "codex", Session: "stopped"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := doctorExecution{
-		ProjectDir: repo, Profile: team.DefaultProfile,
-		WorktreeDiagnostics: defaultDoctorWorktreeDiagnostics,
-	}
-	checks := doctorCheckWorktrees(d, "stopped")
-	if fails := countFails(checks); fails != 0 {
-		t.Fatalf("stopped, unplanned same-cwd profile produced %d doctor failures: %+v", fails, checks)
-	}
-	var collision doctorCheck
-	for _, check := range checks {
-		if check.Kind == "shared-index-collision" {
-			collision = check
-			break
+func firstLineWith(s, needle string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, needle) {
+			return line
 		}
 	}
-	if collision.Status != doctorWarn {
-		t.Fatalf("shared-index collision = %+v, want warn", collision)
-	}
-	for _, want := range []string{"one,two share", "fewer than two affected members are live", "worktree materialize"} {
-		if !strings.Contains(collision.Detail, want) {
-			t.Fatalf("collision missing %q: %+v", want, collision)
-		}
-	}
-}
-
-func TestDoctorToolProfilesWarnsForMultipleNonLeadFullWorkers(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Project:      dir,
-		Orchestrated: true,
-		Lead:         "cto",
-		Members: []team.Member{
-			{Role: "cto", Handle: "cto", Binary: "codex", ToolProfile: team.ToolProfileFull},
-			{Role: "backend-dev", Handle: "backend-dev", Binary: "codex", ToolProfile: team.ToolProfileFull},
-			{Role: "qa", Handle: "qa", Binary: "codex", ToolProfile: team.ToolProfileFull},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	check := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
-	if check.Status != doctorWarn {
-		t.Fatalf("multiple full worker check = %+v, want warn", check)
-	}
-	for _, want := range []string{"backend-dev", "qa", "multiple workers inherit the full operator tool surface", "prefer generated lean role profiles"} {
-		if !strings.Contains(check.Detail, want) {
-			t.Fatalf("multiple full worker warning missing %q: %+v", want, check)
-		}
-	}
-}
-
-func TestDoctorToolProfilesReportsGeneratedLeanPolicyAndFailsOnDrift(t *testing.T) {
-	codexHome := t.TempDir()
-	t.Setenv("CODEX_HOME", codexHome)
-	t.Setenv("HOME", t.TempDir())
-	dir := seedTeam(t, team.Team{
-		Project:      "",
-		Orchestrated: true,
-		Lead:         "cto",
-		Members: []team.Member{
-			{Role: "cto", Handle: "cto", Binary: "codex", ToolProfile: team.ToolProfileFull},
-			{Role: "backend-dev", Handle: "backend-dev", Binary: "codex"},
-		},
-	})
-	writeFile(t, filepath.Join(codexHome, "config.toml"), "[mcp_servers.github]\ncommand = \"github\"\n")
-	if _, _, err := captureOutput(t, func() error {
-		return runTeamOverlay([]string{"init", "--role", "backend-dev", "--tool-profile", "coding", "--allow-tools", "mcp:github"})
-	}); err != nil {
-		t.Fatalf("generate lean policy: %v", err)
-	}
-
-	ready := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
-	if ready.Status != doctorOK {
-		t.Fatalf("generated lean policy should be ready: %+v", ready)
-	}
-	for _, want := range []string{"backend-dev=coding", "cto=full"} {
-		if !strings.Contains(ready.Detail, want) {
-			t.Fatalf("generated lean policy omits effective assignment %q: %+v", want, ready)
-		}
-	}
-
-	backend := readTeamMember(t, dir, "backend-dev")
-	paths := codexConfigPaths(backend.ToolArgs())
-	if len(paths) == 0 {
-		t.Fatalf("generated Codex profile path unresolved: %+v", backend)
-	}
-	original, err := os.ReadFile(paths[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Run("materialization drift", func(t *testing.T) {
-		writeFile(t, paths[0], "# tampered generated policy\n")
-		check := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
-		if check.Status != doctorFail || !strings.Contains(check.Detail, "selected Codex profile content differs") {
-			t.Fatalf("materialization drift reported ready: %+v", check)
-		}
-		if err := os.WriteFile(paths[0], original, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("source drift", func(t *testing.T) {
-		writeFile(t, filepath.Join(dir, ".codex", "config.toml"), "[plugins.\"late-project-helper\"]\nenabled = true\n")
-		check := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
-		if check.Status != doctorFail || !strings.Contains(check.Detail, "tool policy drift/not-ready") || !strings.Contains(check.Detail, "late-project-helper") {
-			t.Fatalf("source drift reported ready: %+v", check)
-		}
-	})
+	return ""
 }
 
 func newDoctorExec(t *testing.T, dir string) doctorExecution {
@@ -256,11 +155,6 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		Out:        &bytes.Buffer{},
 		ResolveAMQEnv: func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(dir, ".agent-mail")}, nil
-		},
-		// Unrelated doctor tests should not acquire a live-AMQ dependency.
-		// Root-authority cases override this seam with an existing exact root.
-		ResolveAMQRootAuthority: func(string, string, string, string) (amqEnv, error) {
-			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(dir, "missing-amq-root")}, nil
 		},
 		RunAMQOps: func(string, amqEnv) ([]byte, error) {
 			return []byte(`{"status":"ok"}`), nil
@@ -272,118 +166,6 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 			return "", errors.New("not found")
 		},
 		Probe: defaultDuplicateLaunchProbe,
-		WakeOverride: func(team.Team, string) []doctorCheck {
-			return []doctorCheck{{Name: "wake cto", Status: doctorOK, Detail: "no live signals"}}
-		},
-		CodexSkillCacheRoot: func() string {
-			return filepath.Join(dir, ".codex-cache", "amq-squad")
-		},
-	}
-}
-
-func writeDoctorRootAuthorityTeam(t *testing.T, dir, workstream string) {
-	t.Helper()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Schema:     team.SchemaVersion,
-		Project:    dir,
-		Workstream: workstream,
-		Members: []team.Member{{
-			Role: "lead", Binary: "codex", Handle: "lead", Session: workstream,
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDoctorCheckAMQRootAuthorityDetectsConfiglessRootWithoutMutation(t *testing.T) {
-	dir := t.TempDir()
-	const workstream = "issue-588"
-	writeDoctorRootAuthorityTeam(t, dir, workstream)
-	root := filepath.Join(dir, ".agent-mail", workstream)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	d.ResolveAMQRootAuthority = func(projectDir, profile, session, handle string) (amqEnv, error) {
-		if projectDir != dir || profile != team.DefaultProfile || session != workstream || handle != "lead" {
-			t.Fatalf("root authority tuple = %q %q %q %q", projectDir, profile, session, handle)
-		}
-		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
-	}
-	check := doctorCheckAMQRootAuthority(d)
-	if check.Status != doctorFail || !strings.Contains(check.Detail, "meta/config.json is missing") ||
-		!strings.Contains(check.Detail, "--fix-amq-root") {
-		t.Fatalf("configless root check = %+v", check)
-	}
-	if _, err := os.Stat(filepath.Join(root, "meta", "config.json")); !os.IsNotExist(err) {
-		t.Fatalf("read-only doctor mutated configless root: %v", err)
-	}
-}
-
-func TestDoctorCheckAMQRootAuthoritySkipsUncreatedRoot(t *testing.T) {
-	dir := t.TempDir()
-	const workstream = "future-session"
-	writeDoctorRootAuthorityTeam(t, dir, workstream)
-	root := filepath.Join(dir, ".agent-mail", workstream)
-	d := newDoctorExec(t, dir)
-	d.ResolveAMQRootAuthority = func(_, _, _, _ string) (amqEnv, error) {
-		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
-	}
-	check := doctorCheckAMQRootAuthority(d)
-	if check.Status != doctorOK || check.Detail != "no existing exact session roots; skipped" {
-		t.Fatalf("uncreated root check = %+v", check)
-	}
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatalf("read-only doctor materialized an uncreated root: %v", err)
-	}
-}
-
-func TestExecuteDoctorFixAMQRootRepairsAndReports(t *testing.T) {
-	dir := t.TempDir()
-	const workstream = "issue-588"
-	writeDoctorRootAuthorityTeam(t, dir, workstream)
-	root := filepath.Join(dir, ".agent-mail", workstream)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	previousRun := runAMQCommand
-	t.Cleanup(func() { runAMQCommand = previousRun })
-	runAMQCommand = func(request amqCommandRequest) ([]byte, error) {
-		if got := amqFlagValue(request.Arg, "root"); got != root {
-			t.Fatalf("mailbox repair root = %q, want %q", got, root)
-		}
-		return []byte(`{"mailbox_repair":{"created_paths":["agents/lead/inbox/new"]},"summary":{"error":0}}`), nil
-	}
-	d := newDoctorExec(t, dir)
-	d.FixAMQRoot = true
-	d.ResolveAMQRootAuthority = func(projectDir, profile, session, handle string) (amqEnv, error) {
-		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
-	}
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor --fix-amq-root failed: %v\n%s", err, buf.String())
-	}
-	for _, want := range []string{
-		"AMQ root authority: wrote " + filepath.Join(root, "meta", "config.json"),
-		"AMQ root authority: created " + filepath.Join(root, "agents", "lead", "inbox", "new"),
-		"amq root authority",
-		"1 exact session root(s)",
-	} {
-		if !strings.Contains(buf.String(), want) {
-			t.Fatalf("doctor repair output missing %q:\n%s", want, buf.String())
-		}
-	}
-	data, err := os.ReadFile(filepath.Join(root, "meta", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config amqRootConfigDocument
-	if err := json.Unmarshal(data, &config); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"lead", team.DefaultOperatorHandle}; !reflect.DeepEqual(config.Agents, want) {
-		t.Fatalf("repaired authority agents = %v, want %v", config.Agents, want)
 	}
 }
 
@@ -410,97 +192,6 @@ func TestExecuteDoctorAMQOpsFailure(t *testing.T) {
 	}
 }
 
-func decodeDoctorJSON(t *testing.T, buf *bytes.Buffer) doctorEnvelopeData {
-	t.Helper()
-	env := decodeJSONEnvelope[doctorEnvelopeData](t, buf.String())
-	if env.Kind != "doctor" {
-		t.Fatalf("envelope kind = %q, want doctor", env.Kind)
-	}
-	return env.Data
-}
-
-func writeDoctorManagedMarkers(t *testing.T, dir string) {
-	t.Helper()
-	body := []byte(rules.BeginMarker + "\nmanaged\n" + rules.EndMarker + "\n")
-	for _, name := range []string{rules.ClaudeFile, rules.AgentsFile} {
-		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func syncDoctorPointers(t *testing.T, dir, rulesBody string) {
-	t.Helper()
-	plans, err := rules.Plan(dir, rulesBody)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rules.Apply(plans); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRunDoctorRejectsPositionalArgs(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"foo"}, "") })
-	if err == nil {
-		t.Fatal("positional arg should be UsageError")
-	}
-	if _, ok := err.(UsageError); !ok {
-		t.Fatalf("want UsageError, got %T: %v", err, err)
-	}
-}
-
-func TestRunDoctorRejectsUnknownFlag(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"--banana"}, "") })
-	if err == nil {
-		t.Fatal("unknown flag should fail")
-	}
-	if _, ok := err.(UsageError); !ok {
-		t.Fatalf("unknown flag should be UsageError, got %T: %v", err, err)
-	}
-}
-
-func TestRunDoctorRejectsAllProfilesWithProfile(t *testing.T) {
-	_, _, err := captureOutput(t, func() error {
-		return runDoctor([]string{"--all-profiles", "--profile", "review"}, "")
-	})
-	if err == nil || !strings.Contains(err.Error(), "--all-profiles cannot be combined with --profile") {
-		t.Fatalf("all-profiles/profile error = %v", err)
-	}
-}
-
-func TestRunDoctorFixAMQRootRejectsBroadOrJSONModes(t *testing.T) {
-	for _, args := range [][]string{
-		{"--fix-amq-root", "--json"},
-		{"--fix-amq-root", "--all-profiles"},
-	} {
-		_, _, err := captureOutput(t, func() error {
-			return runDoctor(args, "")
-		})
-		if err == nil || !strings.Contains(err.Error(), "--fix-amq-root cannot be combined") {
-			t.Fatalf("runDoctor(%v) error = %v, want bounded mutation usage error", args, err)
-		}
-	}
-}
-
-func TestRunDoctorProjectTargetsOtherDir(t *testing.T) {
-	project := t.TempDir()
-	other := t.TempDir()
-	chdir(t, other)
-	t.Setenv("PATH", "")
-
-	stdout, _, err := captureOutput(t, func() error {
-		return runDoctor([]string{"--project", project, "--json"}, "")
-	})
-	if err == nil {
-		t.Fatal("doctor with PATH stripped should fail health checks, preserving JSON output")
-	}
-	env := decodeJSONEnvelope[doctorEnvelopeData](t, stdout)
-	if env.Data.TeamHome != canonicalFilesystemPath(project) {
-		t.Fatalf("doctor --project team_home = %q, want %s", env.Data.TeamHome, canonicalFilesystemPath(project))
-	}
-}
-
 func TestExecuteDoctorJSONCanonicalizesTeamHome(t *testing.T) {
 	project := t.TempDir()
 	link := filepath.Join(t.TempDir(), "project-link")
@@ -516,23 +207,6 @@ func TestExecuteDoctorJSONCanonicalizesTeamHome(t *testing.T) {
 	env := decodeJSONEnvelope[doctorEnvelopeData](t, out.String())
 	if env.Data.TeamHome != canonicalFilesystemPath(project) {
 		t.Fatalf("doctor JSON team_home = %q, want canonical %q", env.Data.TeamHome, canonicalFilesystemPath(project))
-	}
-}
-
-func TestRunDoctorProjectValidation(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "missing")
-	_, _, err := captureOutput(t, func() error {
-		return runDoctor([]string{"--project", missing, "--json"}, "")
-	})
-	if err == nil || !strings.Contains(err.Error(), "--project") {
-		t.Fatalf("doctor --project missing error = %v, want --project error", err)
-	}
-
-	_, _, err = captureOutput(t, func() error {
-		return runDoctor([]string{"--project", "", "--json"}, "")
-	})
-	if err == nil || !strings.Contains(err.Error(), "--project requires a directory") {
-		t.Fatalf("doctor empty --project error = %v, want directory guidance", err)
 	}
 }
 
@@ -559,32 +233,6 @@ func TestExecuteDoctorAMQVersionTooOld(t *testing.T) {
 	}
 	if !strings.Contains(got.Detail, "amq upgrade") {
 		t.Errorf("detail should point at amq upgrade: %q", got.Detail)
-	}
-}
-
-func TestDoctorAMQVersionResolutionDisablesChildUpdateCheck(t *testing.T) {
-	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
-	t.Setenv("AM_ROOT_ID", "v1:test:inherited-root")
-	t.Setenv("AM_BASE_ROOT_ID", "v1:test:inherited-base")
-	setupFakeAMQScript(t, `#!/bin/sh
-if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
-  echo "update available" >&2
-  exit 91
-fi
-if [ -n "$AM_ROOT_ID$AM_BASE_ROOT_ID" ]; then
-  echo "inherited AMQ root identity metadata leaked" >&2
-  exit 92
-fi
-printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.60.0"}'
-`)
-
-	d := defaultDoctorExecution(t.TempDir())
-	check := doctorCheckAMQVersion(d)
-	if check.Status != doctorOK || !strings.Contains(check.Detail, "amq 0.60.0") {
-		t.Fatalf("doctor amq version check = %+v, want ok 0.60.0", check)
-	}
-	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
-		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
 	}
 }
 
@@ -637,9 +285,10 @@ func TestExecuteDoctorAMQEnvCommandFails(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorAMQVersionAccepts0600AndNewerCanary(t *testing.T) {
+// The floor is doctorMinAMQVersion, 0.116.2 since the 5-amq-A fix round.
+func TestExecuteDoctorAMQVersionAcceptsTheFloorAndNewerCanary(t *testing.T) {
 	dir := t.TempDir()
-	for _, v := range []string{"0.60.0", "v0.61.0-rc1", "0.61.0", "1.0.0+build60"} {
+	for _, v := range []string{"0.116.2", "v0.117.0-rc1", "0.117.0", "1.0.0+build60"} {
 		d := newDoctorExec(t, dir)
 		d.ResolveAMQEnv = func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: v, Root: dir}, nil
@@ -657,8 +306,8 @@ func TestExecuteDoctorAMQVersionAccepts0600AndNewerCanary(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorAMQVersionRejectsOlderThan0600(t *testing.T) {
-	for _, version := range []string{"0.42.1", "0.52.2", "0.54.0", "0.57.3", "0.59.1", "0.60.0-rc1"} {
+func TestExecuteDoctorAMQVersionRejectsOlderThanTheFloor(t *testing.T) {
+	for _, version := range []string{"0.42.1", "0.60.0", "0.74.1", "0.107.0", "0.116.1", "0.116.2-rc1"} {
 		t.Run(version, func(t *testing.T) {
 			dir := t.TempDir()
 			d := newDoctorExec(t, dir)
@@ -668,574 +317,16 @@ func TestExecuteDoctorAMQVersionRejectsOlderThan0600(t *testing.T) {
 			var buf bytes.Buffer
 			d.Out = &buf
 			if err := executeDoctor(d); err == nil {
-				t.Fatalf("doctor should fail when amq %s is below the 0.60.0 floor", version)
+				t.Fatalf("doctor should fail when amq %s is below the 0.116.2 floor", version)
 			}
 			amqLine := firstLineWith(buf.String(), "amq version")
-			if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.60.0") {
+			if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.116.2") {
 				t.Fatalf("unexpected amq version line: %q\n%s", amqLine, buf.String())
 			}
 			if !strings.Contains(amqLine, "amq upgrade") {
 				t.Fatalf("amq version line should point at amq upgrade: %q", amqLine)
 			}
 		})
-	}
-}
-
-func TestDoctorAMQIdentityPinHealth(t *testing.T) {
-	check := func(values map[string]string) doctorCheck {
-		return doctorCheckAMQIdentityPin(doctorExecution{
-			LookupEnv: func(key string) (string, bool) {
-				value, ok := values[key]
-				return value, ok
-			},
-		})
-	}
-	tests := []struct {
-		name   string
-		values map[string]string
-		status doctorStatus
-		want   string
-	}{
-		{name: "no injected pin", values: map[string]string{}, status: doctorOK, want: "no injected"},
-		{name: "sessionful", values: map[string]string{"AM_ROOT": "/mail/issue-96", "AM_BASE_ROOT": "/mail", "AM_SESSION": "issue-96", "AM_ME": "cto"}, status: doctorOK, want: "healthy sessionful"},
-		{name: "exact root sessionless", values: map[string]string{"AM_ROOT": "/mail/review/issue-96", "AM_BASE_ROOT": "/mail/review/issue-96", "AM_ME": "cto"}, status: doctorOK, want: "healthy exact-root/sessionless"},
-		{name: "legacy partial", values: map[string]string{"AM_ROOT": "/mail/issue-96", "AM_BASE_ROOT": "/mail", "AM_ME": "cto"}, status: doctorWarn, want: "stop and resume/relaunch"},
-		{name: "inconsistent empty session", values: map[string]string{"AM_ROOT": "/mail/issue-96", "AM_BASE_ROOT": "/mail", "AM_SESSION": "", "AM_ME": "cto"}, status: doctorWarn, want: "legacy or inconsistent"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := check(tt.values)
-			if got.Status != tt.status || !strings.Contains(got.Detail, tt.want) {
-				t.Fatalf("doctor pin check = %+v, want status %s and %q", got, tt.status, tt.want)
-			}
-		})
-	}
-}
-
-func TestExecuteDoctorTeamConfigMissingWarn(t *testing.T) {
-	dir := t.TempDir()
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("missing team should not fail: %v", err)
-	}
-	row := firstLineWith(buf.String(), "team config")
-	if !strings.Contains(row, "warn") {
-		t.Errorf("missing team config should warn, got: %q", row)
-	}
-}
-
-func TestExecuteDoctorDefaultMissingButNamedProfilesGuideProfile(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("named-profile-only project should warn, not fail: %v", err)
-	}
-	row := firstLineWith(buf.String(), "team config")
-	for _, want := range []string{"warn", "no default team profile", "review", "--profile <name>"} {
-		if !strings.Contains(row, want) {
-			t.Errorf("team config row missing %q: %q", want, row)
-		}
-	}
-}
-
-func TestExecuteDoctorNamedProfile(t *testing.T) {
-	dir := t.TempDir()
-	writeDoctorManagedMarkers(t, dir)
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	d.Profile = "review"
-	d.JSON = true
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor --profile review failed: %v\n%s", err, buf.String())
-	}
-	data := decodeDoctorJSON(t, &buf)
-	if data.Profile != "review" {
-		t.Fatalf("profile = %q, want review", data.Profile)
-	}
-	if data.Workstream != "review" {
-		t.Fatalf("workstream = %q, want review", data.Workstream)
-	}
-	got := findCheck(data.Checks, "team config")
-	if got == nil || got.Status != doctorOK || got.Detail != team.ProfilePath(dir, "review") {
-		t.Fatalf("team config check = %+v, want named profile path", got)
-	}
-}
-
-func TestExecuteDoctorAllProfilesChecksDefaultAndNamed(t *testing.T) {
-	dir := t.TempDir()
-	writeDoctorManagedMarkers(t, dir)
-	if err := team.Write(dir, team.Team{
-		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
-		Workstream: "main",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members:    []team.Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "review"}},
-		Workstream: "review",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	d.AllProfiles = true
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor --all-profiles failed: %v\n%s", err, buf.String())
-	}
-	out := buf.String()
-	for _, want := range []string{"PROFILE default", "WORKSTREAM main", "PROFILE review", "WORKSTREAM review"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("all-profiles output missing %q:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "no default team profile") {
-		t.Fatalf("all-profiles output should check configured profiles, not warn about missing default:\n%s", out)
-	}
-}
-
-func TestExecuteDoctorAllProfilesJSONNamedOnly(t *testing.T) {
-	dir := t.TempDir()
-	writeDoctorManagedMarkers(t, dir)
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-		Workstream: "review",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	d.AllProfiles = true
-	d.JSON = true
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor --all-profiles --json failed: %v\n%s", err, buf.String())
-	}
-	data := decodeDoctorJSON(t, &buf)
-	if data.Profile != "all" {
-		t.Fatalf("profile = %q, want all", data.Profile)
-	}
-	if len(data.Profiles) != 1 || data.Profiles[0].Profile != "review" {
-		t.Fatalf("profiles = %+v, want only review", data.Profiles)
-	}
-	if got := findCheck(data.Checks, "profile review"); got == nil || got.Status == doctorFail {
-		t.Fatalf("summary check = %+v, want non-failing profile review", got)
-	}
-	for _, c := range data.Checks {
-		if strings.Contains(c.Name, "default") {
-			t.Fatalf("named-only all-profiles summary should not include default: %+v", data.Checks)
-		}
-	}
-}
-
-func TestExecuteDoctorNamedProfileMarkersUseMemberCWD(t *testing.T) {
-	dir := t.TempDir()
-	memberDir := t.TempDir()
-	writeDoctorManagedMarkers(t, memberDir)
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review", CWD: memberDir}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	d.Profile = "review"
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor --profile review failed: %v\n%s", err, buf.String())
-	}
-	out := buf.String()
-	if strings.Contains(out, "not found") {
-		t.Fatalf("named profile doctor should not inspect missing team-home markers:\n%s", out)
-	}
-	if !strings.Contains(out, filepath.Join(memberDir, rules.AgentsFile)) {
-		t.Fatalf("named profile marker check should inspect member cwd:\n%s", out)
-	}
-}
-
-func TestExecuteDoctorTeamConfigCorruptFails(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".amq-squad"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(team.Path(dir), []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err == nil {
-		t.Fatal("corrupt team.json should fail doctor")
-	}
-	row := firstLineWith(buf.String(), "team config")
-	if !strings.Contains(row, "fail") {
-		t.Errorf("corrupt team config should fail, got: %q", row)
-	}
-}
-
-func TestExecuteDoctorTmuxMissingFails(t *testing.T) {
-	dir := t.TempDir()
-	d := newDoctorExec(t, dir)
-	d.LookPath = func(string) (string, error) { return "", errors.New("not found") }
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err == nil {
-		t.Fatal("missing tmux should fail")
-	}
-	row := firstLineWith(buf.String(), "tmux")
-	if !strings.Contains(row, "fail") {
-		t.Errorf("missing tmux should fail, got: %q", row)
-	}
-}
-
-func TestDoctorCheckTmuxExtendedKeys(t *testing.T) {
-	// Not inside tmux -> skipped, OK, no hint.
-	t.Run("not in tmux", func(t *testing.T) {
-		d := doctorExecution{
-			Getenv:          func(string) string { return "" },
-			TmuxShowOptions: func(string) (string, bool) { t.Fatal("must not probe tmux when $TMUX is unset"); return "", false },
-		}
-		c := doctorCheckTmuxExtendedKeys(d)
-		if c.Status != doctorOK {
-			t.Errorf("not-in-tmux status = %q, want ok", c.Status)
-		}
-		if !strings.Contains(c.Detail, "skipped") || strings.Contains(c.Detail, "Shift+Enter") {
-			t.Errorf("not-in-tmux detail should be a skip with no hint: %q", c.Detail)
-		}
-	})
-
-	// Inside tmux, extended-keys off -> OK (never fails) WITH the hint.
-	t.Run("off shows hint", func(t *testing.T) {
-		d := doctorExecution{
-			Getenv:          func(name string) string { return map[string]string{"TMUX": "/tmp/tmux-1/default,1,0"}[name] },
-			TmuxShowOptions: func(string) (string, bool) { return "off", true },
-		}
-		c := doctorCheckTmuxExtendedKeys(d)
-		if c.Status != doctorOK {
-			t.Errorf("extended-keys off must NOT fail doctor; status = %q", c.Status)
-		}
-		for _, want := range []string{
-			"Shift+Enter",
-			"tmux set-option -s extended-keys on",
-			"extended-keys-format csi-u",
-			"xterm*:extkeys",
-			"tmux -CC",
-			"amq-squad does not change it for you",
-		} {
-			if !strings.Contains(c.Detail, want) {
-				t.Errorf("hint missing %q: %q", want, c.Detail)
-			}
-		}
-	})
-
-	// Inside tmux, extended-keys unset (ok=false) -> OK with the hint too.
-	t.Run("unset shows hint", func(t *testing.T) {
-		d := doctorExecution{
-			Getenv:          func(string) string { return "/tmp/tmux-1/default,1,0" },
-			TmuxShowOptions: func(string) (string, bool) { return "", false },
-		}
-		c := doctorCheckTmuxExtendedKeys(d)
-		if c.Status != doctorOK || !strings.Contains(c.Detail, "Shift+Enter") {
-			t.Errorf("unset extended-keys should be ok with hint, got %+v", c)
-		}
-		if !strings.Contains(c.Detail, "unset") {
-			t.Errorf("unset detail should name the unset state: %q", c.Detail)
-		}
-	})
-
-	// Inside tmux, extended-keys on -> OK, no hint.
-	t.Run("on no hint", func(t *testing.T) {
-		d := doctorExecution{
-			Getenv:          func(string) string { return "/tmp/tmux-1/default,1,0" },
-			TmuxShowOptions: func(string) (string, bool) { return "on", true },
-		}
-		c := doctorCheckTmuxExtendedKeys(d)
-		if c.Status != doctorOK {
-			t.Errorf("extended-keys on status = %q, want ok", c.Status)
-		}
-		// The remediation hint (set-option commands) must be absent when on.
-		if strings.Contains(c.Detail, "set-option") || strings.Contains(c.Detail, "may not reach agents") {
-			t.Errorf("extended-keys on must not print the hint: %q", c.Detail)
-		}
-	})
-}
-
-func TestExecuteDoctorMarkerIntegrity(t *testing.T) {
-	cases := map[string]struct {
-		body   string
-		expect doctorStatus
-	}{
-		"ok":         {body: rules.BeginMarker + "\nhi\n" + rules.EndMarker + "\n", expect: doctorOK},
-		"no_markers": {body: "# Project\nsome content\n", expect: doctorWarn},
-		"two_begins": {body: rules.BeginMarker + "\n" + rules.BeginMarker + "\n" + rules.EndMarker + "\n", expect: doctorFail},
-		"reversed":   {body: rules.EndMarker + "\n\n" + rules.BeginMarker + "\n", expect: doctorFail},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, rules.ClaudeFile), []byte(tc.body), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			d := newDoctorExec(t, dir)
-			var buf bytes.Buffer
-			d.Out = &buf
-			_ = executeDoctor(d)
-			row := firstLineWith(buf.String(), "markers "+rules.ClaudeFile)
-			if !strings.Contains(row, string(tc.expect)) {
-				t.Errorf("CLAUDE.md marker check should be %s, got: %q", tc.expect, row)
-			}
-		})
-	}
-}
-
-func TestExecuteDoctorMarkerIntegrityMissingWarn(t *testing.T) {
-	dir := t.TempDir()
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	_ = executeDoctor(d)
-	row := firstLineWith(buf.String(), "markers "+rules.ClaudeFile)
-	if !strings.Contains(row, "warn") {
-		t.Errorf("missing CLAUDE.md should warn, got: %q", row)
-	}
-}
-
-func TestExecuteDoctorPointerSyncOKWhenApplied(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	body := "# Team Rules\n"
-	if err := rules.Write(dir, body); err != nil {
-		t.Fatal(err)
-	}
-	syncDoctorPointers(t, dir, body)
-
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor failed: %v\n%s", err, buf.String())
-	}
-	row := firstLineWith(buf.String(), "pointer sync "+rules.ClaudeFile)
-	if !strings.Contains(row, "ok") {
-		t.Fatalf("synced pointer should be ok, got: %q", row)
-	}
-}
-
-func TestExecuteDoctorPointerSyncWarnsOnDrift(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := rules.Write(dir, "# Team Rules\n"); err != nil {
-		t.Fatal(err)
-	}
-	writeDoctorManagedMarkers(t, dir)
-
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor drift warning should not fail: %v\n%s", err, buf.String())
-	}
-	row := firstLineWith(buf.String(), "pointer sync "+rules.ClaudeFile)
-	for _, want := range []string{"warn", "out of date", "amq-squad team sync --apply"} {
-		if !strings.Contains(row, want) {
-			t.Fatalf("pointer drift row missing %q: %q", want, row)
-		}
-	}
-}
-
-func TestExecuteDoctorTeamRulesRosterWarnsOnDrift(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// A team-rules.md that does NOT name the cto member: the shared file was
-	// authored for a different roster (finding #155). The hint warns, but never
-	// fails — agents route from the live bootstrap block.
-	if err := rules.Write(dir, "# Team Rules\n\n## Role Scope\n\n- pm (Product Manager): handle `pm`, ...\n"); err != nil {
-		t.Fatal(err)
-	}
-
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("roster drift hint must not fail doctor: %v\n%s", err, buf.String())
-	}
-	row := firstLineWith(buf.String(), "team-rules roster")
-	for _, want := range []string{"warn", "cto", "cosmetic"} {
-		if !strings.Contains(row, want) {
-			t.Fatalf("roster drift row missing %q: %q", want, row)
-		}
-	}
-	// The hint must NOT steer the operator at `team rules init --force` (that
-	// re-renders the default profile = wrong roster for a named profile).
-	if strings.Contains(row, "--force") {
-		t.Errorf("roster drift row must not suggest --force: %q", row)
-	}
-}
-
-func TestExecuteDoctorTeamRulesRosterOKWhenDescribed(t *testing.T) {
-	dir := t.TempDir()
-	tm := team.Team{
-		Project: dir,
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	}
-	if err := team.WriteProfile(dir, team.DefaultProfile, tm); err != nil {
-		t.Fatal(err)
-	}
-	body, err := renderTeamRules(tm)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rules.Write(dir, body); err != nil {
-		t.Fatal(err)
-	}
-
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor failed: %v\n%s", err, buf.String())
-	}
-	row := firstLineWith(buf.String(), "team-rules roster")
-	if !strings.Contains(row, "ok") {
-		t.Fatalf("team-rules that describes the roster should be ok, got: %q", row)
-	}
-}
-
-func TestExecuteDoctorPointerSyncNamedProfileOutsideHint(t *testing.T) {
-	dir := t.TempDir()
-	memberDir := t.TempDir()
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review", CWD: memberDir}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := rules.Write(dir, "# Team Rules\n"); err != nil {
-		t.Fatal(err)
-	}
-
-	d := newDoctorExec(t, dir)
-	d.Profile = "review"
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor named-profile pointer warning should not fail: %v\n%s", err, buf.String())
-	}
-	row := firstLineWith(buf.String(), "pointer sync "+rules.ClaudeFile)
-	if row == "" {
-		row = firstLineWith(buf.String(), "pointer sync "+filepath.Base(memberDir)+"/"+rules.ClaudeFile)
-	}
-	for _, want := range []string{"warn", "missing", "amq-squad team sync --profile review --apply --allow-outside"} {
-		if !strings.Contains(row, want) {
-			t.Fatalf("named pointer sync row missing %q: %q\nfull output:\n%s", want, row, buf.String())
-		}
-	}
-}
-
-func TestExecuteDoctorWakeReuseClassifyMemberStatus(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// cto is live (PID alive + binary match) -> ok.
-	// fullstack has no signals -> ok.
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{Binary: "codex", Handle: "cto", AgentPID: 9999})
-	d := doctorExecution{
-		ProjectDir: dir,
-		Out:        &bytes.Buffer{},
-		ResolveAMQEnv: func(string) (amqEnv, error) {
-			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(base, "issue-96")}, nil
-		},
-		ResolveAMQRootAuthority: func(_, _, _, _ string) (amqEnv, error) {
-			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(dir, "missing-amq-root")}, nil
-		},
-		LookPath: func(string) (string, error) { return "/usr/bin/tmux", nil },
-		Probe: duplicateLaunchProbe{
-			PIDAlive:     func(pid int) bool { return pid == 9999 },
-			ProcessMatch: func(pid int, _ func(string) bool) bool { return pid == 9999 },
-			Now:          func() time.Time { return time.Now() },
-		},
-	}
-	d.JSON = true
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor failed: %v\n%s", err, d.Out)
-	}
-	out := d.Out.(*bytes.Buffer).String()
-	env := decodeJSONEnvelope[doctorEnvelopeData](t, out)
-	if env.Data.Workstream != "issue-96" {
-		t.Errorf("envelope workstream = %q, want issue-96", env.Data.Workstream)
-	}
-	if env.Data.TeamHome != canonicalFilesystemPath(dir) {
-		t.Errorf("envelope team_home = %q, want %s", env.Data.TeamHome, canonicalFilesystemPath(dir))
-	}
-	ctoCheck := findCheck(env.Data.Checks, "wake cto")
-	if ctoCheck == nil || ctoCheck.Status != doctorOK {
-		t.Errorf("wake cto = %+v, want ok", ctoCheck)
-	}
-}
-
-// Per cto: AMQ env resolution failures must surface in detail and not panic.
-func TestExecuteDoctorWakeHandlesAMQEnvErrorPerMember(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// PATH has no amq binary -> resolveAMQEnvInDir fails per member.
-	t.Setenv("PATH", "")
-	d := doctorExecution{
-		ProjectDir:    dir,
-		Out:           &bytes.Buffer{},
-		ResolveAMQEnv: func(string) (amqEnv, error) { return amqEnv{AMQVersion: doctorMinAMQVersion}, nil },
-		LookPath:      func(string) (string, error) { return "/usr/bin/tmux", nil },
-		Probe:         defaultDuplicateLaunchProbe,
-	}
-	if err := executeDoctor(d); err != nil {
-		// Wake env failure is warn, not fail; other checks may pass.
-		// Doctor returns error only when any check is fail.
-		// We only require: no panic, detail present.
-		_ = err
-	}
-	if !strings.Contains(d.Out.(*bytes.Buffer).String(), "amq env unresolved") {
-		// The status-classifier path prints this detail when amq env fails.
-		t.Errorf("expected amq env unresolved detail in:\n%s", d.Out.(*bytes.Buffer).String())
 	}
 }
 
@@ -1259,22 +350,4 @@ func TestExecuteDoctorJSONFailKeepsStdoutPure(t *testing.T) {
 	if len(env.Checks) == 0 {
 		t.Fatal("envelope must include checks")
 	}
-}
-
-func findCheck(checks []doctorCheck, name string) *doctorCheck {
-	for i, c := range checks {
-		if c.Name == name {
-			return &checks[i]
-		}
-	}
-	return nil
-}
-
-func firstLineWith(s, needle string) string {
-	for _, line := range strings.Split(s, "\n") {
-		if strings.Contains(line, needle) {
-			return line
-		}
-	}
-	return ""
 }

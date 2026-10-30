@@ -1,0 +1,37 @@
+# S6 load test: {{REPO}} ({{SESSION}})
+
+This is a measured load test of amq-squad, run on the real {{REPO}} repository with real tasks.
+Goal: get every task below to an open draft pull request (or an honestly recorded failure) and report.
+Nothing is merged by anyone in this squad.
+
+## Facts
+
+- Repository root (lead checkout, team home): `{{ROOT}}`
+- Project flag for every amq-squad command: `--project {{ROOT}} --session {{SESSION}}`
+- Implementer worktrees (detached, one per implementer): `fullstack` works in `{{ROOT}}/.s6-wt/impl-a`, `backend-dev` works in `{{ROOT}}/.s6-wt/impl-b`.
+- Tasks live in the native task store: `amq-squad task list --project {{ROOT}} --session {{SESSION}}`. There are {{COUNT}} tasks, titled `<task-id>: <title>` ({{TASKIDS}}). `amq-squad task show <store-id> ...` prints the full brief of a task, including its files, verify command, conflict note and special instructions.
+- Baseline: {{BASELINE}}
+- Team rules file: `{{ROOT}}/.amq-squad/team-rules.md` (the S6 rules are repeated below and are binding).
+
+{{RULES}}
+
+## Lead (planner, does not implement)
+
+1. Start immediately; do not wait for further instructions. Run `amq-squad task list --project {{ROOT}} --session {{SESSION}}` once. The implementers may come up a few minutes after you: if `status` shows them not live yet, dispatch anyway (the durable AMQ mailbox holds the message) or park and re-check on the next wake; never add, start, restart or replace a member yourself.
+2. Dispatch one task at a time to each implementer (`fullstack`, `backend-dev`) so both are busy and neither holds more than one task. Use `amq-squad dispatch --project {{ROOT}} --session {{SESSION}} --role <role> --task <store-id> --subject "<task-id>: <title>" --body-file <file>` with the task brief (`amq-squad task show <store-id> ...`) saved to a file under your scratchpad.
+3. Order: interleave small and medium tasks. Where two tasks list a conflict (see each task's conflict note), give them to different implementers at the same time; do not serialize them to avoid the conflict, the conflict is part of the measurement.
+4. When an implementer reports DONE or FAILED, record it, then dispatch the next undispatched task to that implementer. Do a light sanity check only (the PR exists, the verify result is in the PR body). Do not deep-review, do not ask for rework unless the PR is missing or the verify command was not run.
+5. You never implement, never merge, never push, never open PRs. If a seat is stuck or blocked on a prompt you cannot resolve, raise a gate to the operator and say so in your summary.
+6. When all {{COUNT}} tasks have either a PR or a recorded failure (or the operator tells you to stop), send the operator (`user`) one final AMQ message: a table of task-id, outcome, PR URL or failure reason, and any seat problem you saw. Then idle.
+7. Keep your own turns cheap: read `amq-squad status --project {{ROOT}} --session {{SESSION}} --json` once per wake, act on one item, then park. Do not poll in a loop.
+
+## Implementers (`fullstack`, `backend-dev`)
+
+For each dispatched task:
+1. Claim it if the dispatch has not already (`amq-squad task claim <store-id> --me <your-handle> --project {{ROOT}} --session {{SESSION}}`). `task show` gives the full brief.
+2. In your own worktree: `git fetch origin main`, then `git switch -c loadtest/<task-id> origin/main`. (Your worktree starts detached; that is expected.)
+3. Make the change described by the task, in the listed file(s) only. Follow the neighbouring code's style. Run `gofmt` on what you touched.
+4. Run the task's verify command from your worktree root. Fix failures that are in your change. If the verify command cannot pass for a reason outside your change, say so in the PR body.
+5. `git add <the task's files>`, commit with message `<task-id>: <title>`, `git push -u origin loadtest/<task-id>`, then `gh pr create --draft --base main --head loadtest/<task-id> --title "[loadtest] <task-id>: <title>" --body-file <file>` where the body contains: what changed, the verify command and its result, and any special-instruction line the task asked for.
+6. `amq-squad task done <store-id> --me <your-handle> --project {{ROOT}} --session {{SESSION}}`, send the AMQ status message to the lead, then `git switch --detach origin/main` and stop until the next dispatch.
+7. Failure path: `amq-squad task fail <store-id> --me <your-handle> --reason "<why>" --project {{ROOT}} --session {{SESSION}}`, send `FAILED: ...`, `git switch --detach origin/main`, stop.

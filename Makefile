@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci go-files-scope-test skill-command-check skill-invocation-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
+.PHONY: claude-hooks-test build test fmt fmt-check vet ci go-files-scope-test skill-command-check skill-invocation-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
 
 # Peer worktrees live under .worktrees/ inside this project, so a bare `find .` pulls in
 # other checkouts' .go files. Without the exclusion, fmt-check false-fails on another
@@ -8,17 +8,32 @@
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*' -not -path './.worktrees/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
+# The HTML renders are byte-compared against a fresh render, and pandoc's output
+# differs between releases (3.8.3 and 3.11 differ in the <html> attributes, the
+# generator meta and the inline CSS), so the renders are pinned to ONE pandoc
+# release. ci.yml installs exactly this version; a host with another pandoc gets a
+# loud version error from the -check targets instead of a false "stale". Point
+# PANDOC at a pinned copy (make docs-html PANDOC=/path/to/pandoc) when the system
+# pandoc is a different release.
+PANDOC ?= pandoc
+PANDOC_VERSION = 3.11
+PANDOC_VERSION_CHECK = found="$$($(PANDOC) --version | head -n 1)"; \
+	if [ "$$found" != "pandoc $(PANDOC_VERSION)" ]; then \
+		echo "pandoc $(PANDOC_VERSION) is required for the HTML renders (found: $$found); install it or pass PANDOC=/path/to/pandoc-$(PANDOC_VERSION)" >&2; \
+		exit 1; \
+	fi
+
 # README.html is a generated render of README.md. PANDOC_CMD is the single
 # source of truth for how it is built, shared by the regenerate and freshness
 # targets so they cannot diverge.
-PANDOC_CMD = pandoc README.md -f gfm -t html5 -s --toc --toc-depth=2 \
+PANDOC_CMD = $(PANDOC) README.md -f gfm -t html5 -s --toc --toc-depth=2 \
 	--metadata title="amq-squad — role-aware agent team launcher" \
 	--include-in-header=docs/readme-head.html
 
 # docs/skills.html is a generated render of docs/skills.md (the deep skills
 # guide). SKILLS_PANDOC_CMD mirrors PANDOC_CMD so the regenerate and freshness
 # targets cannot diverge.
-SKILLS_PANDOC_CMD = pandoc docs/skills.md -f gfm -t html5 -s --toc --toc-depth=2 \
+SKILLS_PANDOC_CMD = $(PANDOC) docs/skills.md -f gfm -t html5 -s --toc --toc-depth=2 \
 	--metadata title="amq-squad — using the skills" \
 	--include-in-header=docs/readme-head.html
 
@@ -46,7 +61,7 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check skill-invocation-check release-validator-test go-files-scope-test
+ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check skill-invocation-check release-validator-test go-files-scope-test claude-hooks-test
 
 # Every CLI command and flag named in the skills must exist in the binary (#534).
 # The skills drifting from the binary has been a recurring release-note problem;
@@ -90,6 +105,12 @@ skill-routing-check:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skill-routing-check" >&2; exit 1; }
 	@python3 scripts/check-current-skill-routing.py
 
+# The Claude Code hooks plugin (plugins/claude/hooks): the verdict mapping, the
+# fail-open cases and the context and evidence paths, against the built binary.
+claude-hooks-test: build
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for claude-hooks-test" >&2; exit 1; }
+	@python3 scripts/test_claude_hooks.py ./amq-squad
+
 release-check:
 	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v2.8.1" >&2; exit 1)
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-check" >&2; exit 1; }
@@ -108,7 +129,8 @@ release-validator-test:
 # Regenerate the browsable README.html from README.md. Run this whenever
 # README.md changes (the release process bumps README.md, so it runs here).
 readme-html:
-	@command -v pandoc >/dev/null 2>&1 || { echo "pandoc is required: brew install pandoc" >&2; exit 1; }
+	@command -v $(PANDOC) >/dev/null 2>&1 || { echo "pandoc is required: brew install pandoc" >&2; exit 1; }
+	@$(PANDOC_VERSION_CHECK)
 	$(PANDOC_CMD) -o README.html
 	@echo "regenerated README.html"
 
@@ -116,9 +138,10 @@ readme-html:
 # a release PR cannot merge a README.md change without the matching README.html).
 # Skips cleanly when pandoc is absent so pandoc-less CI is not blocked.
 readme-html-check:
-	@if ! command -v pandoc >/dev/null 2>&1; then \
+	@if ! command -v $(PANDOC) >/dev/null 2>&1; then \
 		echo "pandoc not found; skipping README.html freshness check"; \
 	else \
+		$(PANDOC_VERSION_CHECK); \
 		tmp="$$(mktemp)"; \
 		trap 'rm -f "$$tmp"' EXIT; \
 		$(PANDOC_CMD) -o "$$tmp"; \
@@ -132,16 +155,18 @@ readme-html-check:
 # Regenerate docs/skills.html from docs/skills.md. Run whenever the skills guide
 # changes (the release process bumps docs alongside README).
 docs-html:
-	@command -v pandoc >/dev/null 2>&1 || { echo "pandoc is required: brew install pandoc" >&2; exit 1; }
+	@command -v $(PANDOC) >/dev/null 2>&1 || { echo "pandoc is required: brew install pandoc" >&2; exit 1; }
+	@$(PANDOC_VERSION_CHECK)
 	$(SKILLS_PANDOC_CMD) -o docs/skills.html
 	@echo "regenerated docs/skills.html"
 
 # Fail if docs/skills.html is stale relative to docs/skills.md (drift guard, part
 # of ci). Skips cleanly when pandoc is absent so pandoc-less CI is not blocked.
 docs-html-check:
-	@if ! command -v pandoc >/dev/null 2>&1; then \
+	@if ! command -v $(PANDOC) >/dev/null 2>&1; then \
 		echo "pandoc not found; skipping docs/skills.html freshness check"; \
 	else \
+		$(PANDOC_VERSION_CHECK); \
 		tmp="$$(mktemp)"; \
 		trap 'rm -f "$$tmp"' EXIT; \
 		$(SKILLS_PANDOC_CMD) -o "$$tmp"; \
@@ -169,7 +194,7 @@ release-smoke:
 	@$(MAKE) --no-print-directory release-check VERSION="$(VERSION)"
 	@tmp="$$(mktemp -d)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
-	GOBIN="$$tmp" GOPROXY=direct go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@$(VERSION); \
+	GOBIN="$$tmp" GOPROXY=direct go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@$(VERSION); \
 	got="$$("$$tmp/amq-squad" version)"; \
 	want="amq-squad $(VERSION)"; \
 	if [ "$$got" != "$$want" ]; then \

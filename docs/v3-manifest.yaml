@@ -1,0 +1,4922 @@
+# amq-squad 3.0 keep/delete manifest (task S7, plan 16.1)
+# One entry per non-test Go file under internal/. v2_lines are wc -l counts on branch v3.
+# Strict line format (parsed by scripts/manifest-check.sh with awk; do not reflow or reorder):
+#   - path: <file>        starts an entry; these keys follow, one per line, in this order:
+#     v2_lines, fate (keep|shrink|delete|replace|review), target_lines, cluster, extract, reason, status
+#   status: pending | deleted | trimmed | shrunk | keep | deferred-replace | deferred-2b | deferred-3 |
+#   accepted-3 | new. fate new (status new) marks a 3.0 addition (2a-3): v2_lines 0, target_lines equal to
+#   its size and informational; manifest-check keeps new rows out of the target-sum rule and the band gate.
+#   Executors flip it to deleted in the commit that deletes the file; every status but pending
+#   and deleted carries current_lines after v2_lines (see scripts/manifest-check.sh header for each status).
+#   At the close of 2a-2 no row is pending or trimmed.
+#   extract and reason are double-quoted strings with no inner double quotes.
+#   note (optional, after status): a "2a-2 debit" note marks a 2a-1 holding file; manifest-check lists it.
+#   replaced_by, retired_in (optional, after status, before note; 2b-5 merge ruling): a row retired from 2b on
+#   (deleted, or shrunk below half its target) names its fate-new replacement row or "<brief> acceptance <n>" in
+#   replaced_by; retired_in names the brief when the note does not (manifest-check check 8).
+#   deferred-2b, deferred-3 and accepted-3 rows carry a note quoting their class and manifest reason.
+#
+# Owner defaults applied (plan 4.4, bracketed defaults):
+#   - bootstrapack: delete.
+#   - fleet registry in global_noc.go: keep (about 150 lines).
+#   - down: returns as a thin stop-squad verb, about 150 lines, phase 2b (inside the C11 400 budget).
+#   - commandevidence/subject.go: kept, 400 lines, ported into guard (adds 400 to the 4.2 total).
+#
+# Target-line distribution rules for shrink clusters and packages:
+#   1. Where the manifest-pass report or section 4 names a per-file figure, it is used; the rest is set
+#      by hand so the cluster sums to the section 4.3 figure (C3, C7, C11, C12, C13, C14, C17, C18, C19,
+#      C23, C26, C27).
+#   2. Otherwise the cluster or package target is split proportionally to v2_lines (rounded; the
+#      remainder goes to the largest file).
+#   3. Files cut or extracted away entirely get 0. In a delete cluster with a nonzero 4.3 figure
+#      (C4, C7, C11, C28) the host files named in extract carry the budget with fate shrink.
+#   4. fate=keep when the cluster/package table says keep, or target >= 95 percent of v2_lines;
+#      fate=review marks files the research flags for line-by-line or pane-reference review.
+
+# decisions: lead decisions that manifest-check --final honors (see scripts/manifest-check.sh).
+decisions: [end-of-2a-2]
+entries:
+- path: internal/act/control.go
+  v2_lines: 400
+  fate: delete
+  target_lines: 0
+  cluster: act
+  extract: ""
+  reason: "NOC control argv; amq-noc owns controls"
+  status: deleted
+- path: internal/activity/activity.go
+  v2_lines: 263
+  current_lines: 199
+  fate: shrink
+  target_lines: 200
+  cluster: activity
+  extract: "Normalize, Read, Write; drop SymphonySnapshot"
+  reason: "seat activity file feeds seat state; drop SymphonySnapshot"
+  status: shrunk
+
+- path: internal/adoptionseam/adoptionseam.go
+  v2_lines: 200
+  current_lines: 200
+  fate: keep
+  target_lines: 168
+  cluster: adoptionseam
+  extract: ""
+  reason: "launchapi Prepare and Apply seam"
+  status: keep
+- path: internal/adoptionseam/floor.go
+  v2_lines: 98
+  current_lines: 104
+  fate: keep
+  target_lines: 82
+  cluster: adoptionseam
+  extract: ""
+  reason: "launchapi Prepare and Apply seam"
+  status: keep
+- path: internal/agentcatalog/catalog.go
+  v2_lines: 174
+  current_lines: 174
+  fate: keep
+  target_lines: 174
+  cluster: agentcatalog
+  extract: ""
+  reason: "built-in runtime, model, effort tiers; registry seed"
+  status: keep
+- path: internal/amqexec/env.go
+  v2_lines: 32
+  current_lines: 32
+  fate: keep
+  target_lines: 32
+  cluster: amqexec
+  extract: ""
+  reason: "AMQ env helper"
+  status: keep
+- path: internal/atomicfile/anchored.go
+  v2_lines: 0
+  current_lines: 61
+  fate: new
+  target_lines: 61
+  cluster: atomicfile
+  extract: ""
+  reason: "4-1 rebase: WriteAt, the directory-descriptor-relative durable write fsanchor.WriteAtomic calls"
+  status: new
+- path: internal/atomicfile/atomicfile.go
+  v2_lines: 0
+  current_lines: 148
+  fate: new
+  target_lines: 148
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: the one durable writer (O_EXCL random temp, fsync, rename) and the staged multi-file transaction with rollback; replaces gatestore writeAtomic's body and rules atomicWriteFile"
+  status: new
+- path: internal/atomicfile/syncdir_unix.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: directory fsync, moved from gatestore (3-1, fate new)"
+  status: new
+- path: internal/atomicfile/syncdir_windows.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: directory fsync no-op on Windows, moved from gatestore (3-1, fate new)"
+  status: new
+- path: internal/attention/dedup.go
+  v2_lines: 119
+  fate: delete
+  target_lines: 0
+  cluster: attention
+  extract: ""
+  reason: "renotify dedup dropped"
+  status: deleted
+- path: internal/attention/event.go
+  v2_lines: 50
+  current_lines: 32
+  fate: shrink
+  target_lines: 50
+  cluster: attention
+  extract: ""
+  reason: "stable ids for attention[]"
+  status: shrunk
+- path: internal/autonomy/autonomy.go
+  v2_lines: 283
+  fate: delete
+  target_lines: 0
+  cluster: autonomy
+  extract: ""
+  reason: "replaced by grants.yaml"
+  status: deleted
+- path: internal/bootstrapack/bootstrapack.go
+  v2_lines: 246
+  fate: delete
+  target_lines: 0
+  cluster: bootstrapack
+  extract: ""
+  reason: "hooks inject every turn (owner default applied)"
+  status: deleted
+- path: internal/buzz/amqinbox.go
+  v2_lines: 0
+  current_lines: 103
+  fate: new
+  target_lines: 103
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B: the attach inbox through the amq CLI (list, read to cur, reply answer or status)"
+  status: new
+- path: internal/buzz/attention.go
+  v2_lines: 0
+  current_lines: 90
+  fate: new
+  target_lines: 90
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B fix round: owner alerts in the status attention queue (a hung verification, an unreadable attach inbox)"
+  status: new
+- path: internal/buzz/endpoint.go
+  v2_lines: 0
+  current_lines: 166
+  fate: new
+  target_lines: 166
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the share's amq-remote endpoint, run only while the bound session is present (presence through amq-remote)"
+  status: new
+- path: internal/buzz/inbound.go
+  v2_lines: 0
+  current_lines: 474
+  fate: new
+  target_lines: 474
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B: the handler of serve's deliveries: one take, the verifier's own connection per answer, one reply per message"
+  status: new
+- path: internal/buzz/leads.go
+  v2_lines: 0
+  current_lines: 144
+  fate: new
+  target_lines: 144
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the lead registry: the fleet registry (operator mode) and the launch records (one squad); routing only to leads"
+  status: new
+- path: internal/buzz/manifest.go
+  v2_lines: 0
+  current_lines: 119
+  fate: new
+  target_lines: 119
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B: the one path: the share bound to the mailbox adapter with DM commands on, checked in the share's manifest"
+  status: new
+- path: internal/buzz/presence.go
+  v2_lines: 0
+  current_lines: 158
+  fate: new
+  target_lines: 158
+  cluster: buzz
+  extract: ""
+  reason: "4-5: presence and the activity line derived from the status document (one squad or a fleet, ruling 16)"
+  status: new
+- path: internal/buzz/route.go
+  v2_lines: 0
+  current_lines: 179
+  fate: new
+  target_lines: 179
+  cluster: buzz
+  extract: ""
+  reason: "4-5: phone messages into AMQ: the bound mailbox, then onward to a named lead"
+  status: new
+- path: internal/buzz/seen.go
+  v2_lines: 0
+  current_lines: 125
+  fate: new
+  target_lines: 125
+  cluster: buzz
+  extract: ""
+  reason: "5-amq-B fix round: the durable once-only record of handled event ids, bounded to the window"
+  status: new
+- path: internal/buzz/service.go
+  v2_lines: 0
+  current_lines: 83
+  fate: new
+  target_lines: 83
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the amq-remote login service check behind an interface (doctor warning of plan 8; 2b-3 wires it)"
+  status: new
+- path: internal/buzz/share.go
+  v2_lines: 0
+  current_lines: 295
+  fate: new
+  target_lines: 295
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the enrolled amq-remote share (body key, owner grants) read in amq-remote's layout; no owner key"
+  status: new
+- path: internal/buzz/target.go
+  v2_lines: 0
+  current_lines: 80
+  fate: new
+  target_lines: 80
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the mailbox the Buzz agent binds to: the operator user handle (AttachToOperator), or one squad lead with --lead"
+  status: new
+- path: internal/buzz/transport.go
+  v2_lines: 0
+  current_lines: 104
+  fate: new
+  target_lines: 104
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the gate core's transport: the share body signs in to the relay (fills 3-1's gateTransport seam)"
+  status: new
+- path: internal/catalog/catalog.go
+  v2_lines: 245
+  current_lines: 245
+  fate: keep
+  target_lines: 245
+  cluster: catalog
+  extract: ""
+  reason: "role catalog"
+  status: keep
+- path: internal/claudeseat/claudeseat.go
+  v2_lines: 0
+  current_lines: 575
+  fate: new
+  target_lines: 575
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: a Claude seat's own CLAUDE_CONFIG_DIR per launch: the hooks plugin and dontAsk with no allow rule, its digest and the check"
+  status: new
+- path: internal/claudeseat/owner_other.go
+  v2_lines: 0
+  current_lines: 18
+  fate: new
+  target_lines: 18
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: owner uid of the seat config dir (other platforms: not checked)"
+  status: new
+- path: internal/claudeseat/owner_unix.go
+  v2_lines: 0
+  current_lines: 30
+  fate: new
+  target_lines: 30
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: owner uid of the seat config dir (unix)"
+  status: new
+- path: internal/claudeseat/probe.go
+  v2_lines: 0
+  current_lines: 231
+  fate: new
+  target_lines: 231
+  cluster: seatexec
+  extract: ""
+  reason: "phase 5 re-pass of 4-2: the launch's probe of the effective permission mode on the installed Claude Code"
+  status: new
+- path: internal/claudeseat/reports.go
+  v2_lines: 0
+  current_lines: 71
+  fate: new
+  target_lines: 71
+  cluster: claudeseat
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (P1-10): the hook digest reports; a silent hook is the drift signal"
+  status: new
+- path: internal/claudeseat/token.go
+  v2_lines: 0
+  current_lines: 103
+  fate: new
+  target_lines: 103
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: the owner's Claude token file for seats (claude_token_insecure, the rotation window, the residual)"
+  status: new
+- path: internal/cli/agent_args.go
+  v2_lines: 235
+  current_lines: 88
+  fate: shrink
+  target_lines: 200
+  cluster: C23
+  extract: ""
+  reason: "provider-argument assembly is R4"
+  status: shrunk
+- path: internal/cli/agent_catalog.go
+  v2_lines: 162
+  fate: shrink
+  target_lines: 130
+  cluster: C23
+  extract: ""
+  reason: "provider-argument assembly is R4"
+  status: deleted
+  replaced_by: "internal/team/squad.go"
+  note: "2b-5: dead since effort.go and team init went (no production caller of loadAgentCatalog); model and effort are squad.yaml seat fields (reason: provider-argument assembly is R4)"
+
+- path: internal/cli/agent_defaults.go
+  v2_lines: 459
+  current_lines: 53
+  fate: shrink
+  target_lines: 300
+  cluster: C23
+  extract: "claudeInScopePreauthAllowlist (:42)"
+  reason: "provider-argument assembly is R4"
+  status: shrunk
+- path: internal/cli/agent.go
+  v2_lines: 339
+  fate: delete
+  target_lines: 0
+  cluster: C23
+  extract: ""
+  reason: "cut: provider-argument assembly is R4"
+  status: deleted
+- path: internal/cli/amq_env.go
+  v2_lines: 284
+  current_lines: 177
+  fate: shrink
+  target_lines: 150
+  cluster: C14
+  extract: ""
+  reason: "keep context resolution, send, env pinning"
+  status: accepted-3
+  note: "class 3, accepted-3; owner reassigned to 4-3 at the 2b-2 halfway (status, doctor and operator consumers): keep context resolution, send, env pinning"
+
+- path: internal/cli/amq_root_authority.go
+  v2_lines: 592
+  fate: shrink
+  target_lines: 200
+  cluster: C13
+  extract: "reconcileAMQRootConfig: review"
+  reason: "guard ancestor; keep decision flow and signed auth"
+  status: deleted
+- path: internal/cli/amq_send.go
+  v2_lines: 338
+  current_lines: 121
+  fate: shrink
+  target_lines: 150
+  cluster: C14
+  extract: ""
+  reason: "keep context resolution, send, env pinning"
+  status: shrunk
+  note: "3-2: the owned send boundary without the v2 durable-invocation seam of the release answer path; context resolution, send, env pinning stay"
+
+- path: internal/cli/amq.go
+  v2_lines: 1572
+  current_lines: 435
+  fate: shrink
+  target_lines: 400
+  cluster: C14
+  extract: "resolveAMQContext (:158), amqCommandEnv (:376), runAndWriteAMQ (:401)"
+  reason: "keep context resolution, send, env pinning; 5-docs-F: the amq --help usage path"
+  status: accepted-3
+  note: "class 3, accepted-3; owner reassigned to 4-3 at the 2b-2 halfway (status, doctor and operator consumers): keep context resolution, send, env pinning"
+
+- path: internal/cli/body_warning.go
+  v2_lines: 71
+  current_lines: 126
+  fate: keep
+  target_lines: 55
+  cluster: C29
+  extract: ""
+  reason: "cli core kept; registry rewritten"
+  status: keep
+- path: internal/cli/bootstrap_failure.go
+  v2_lines: 402
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/bootstrap.go
+  v2_lines: 703
+  fate: shrink
+  target_lines: 470
+  cluster: C12
+  extract: "buildBootstrapPrompt (:77), bootstrapContextFor (:247), sanitizeBootstrapContext (:98), routeCommandFor (:529)"
+  reason: "context verb ancestor; cut pane/wake/goal"
+  status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
+  retired_in: 2b-2
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
+- path: internal/cli/brief.go
+  v2_lines: 127
+  current_lines: 100
+  fate: shrink
+  target_lines: 100
+  cluster: C27
+  extract: ""
+  reason: "brief drafting kept"
+  status: shrunk
+- path: internal/cli/briefs_seed.go
+  v2_lines: 234
+  current_lines: 203
+  fate: shrink
+  target_lines: 170
+  cluster: C27
+  extract: ""
+  reason: "brief drafting kept"
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting kept"
+
+- path: internal/cli/briefs.go
+  v2_lines: 197
+  current_lines: 169
+  fate: shrink
+  target_lines: 180
+  cluster: C27
+  extract: ""
+  reason: "brief drafting kept"
+  status: shrunk
+- path: internal/cli/claude_rename.go
+  v2_lines: 143
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/cli.go
+  v2_lines: 279
+  current_lines: 197
+  fate: keep
+  target_lines: 215
+  cluster: C29
+  extract: ""
+  reason: "cli core kept; registry rewritten"
+  status: keep
+- path: internal/cli/collect_lock_exclusive.go
+  v2_lines: 59
+  fate: delete
+  target_lines: 0
+  cluster: C20
+  extract: ""
+  reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
+  status: deleted
+- path: internal/cli/collect_lock_unix.go
+  v2_lines: 51
+  fate: delete
+  target_lines: 0
+  cluster: C20
+  extract: ""
+  reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
+  status: deleted
+- path: internal/cli/collect_lock_windows.go
+  v2_lines: 9
+  fate: delete
+  target_lines: 0
+  cluster: C20
+  extract: ""
+  reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
+  status: deleted
+- path: internal/cli/collect_support.go
+  v2_lines: 571
+  fate: delete
+  target_lines: 0
+  cluster: C20
+  extract: ""
+  reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
+  status: deleted
+- path: internal/cli/command_registry.go
+  v2_lines: 131
+  current_lines: 117
+  fate: keep
+  target_lines: 101
+  cluster: C29
+  extract: "rewritten for the 3.0 command set"
+  reason: "cli core kept; registry rewritten"
+  status: keep
+- path: internal/cli/completion.go
+  v2_lines: 996
+  fate: delete
+  target_lines: 0
+  cluster: C24
+  extract: ""
+  reason: "regenerate small if wanted"
+  status: deleted
+- path: internal/cli/compound_release_attention.go
+  v2_lines: 301
+  current_lines: 297
+  fate: keep
+  target_lines: 271
+  cluster: C21
+  extract: ""
+  reason: "release gate flow kept (16.1)"
+  status: keep
+- path: internal/cli/compound_release_domain.go
+  v2_lines: 386
+  current_lines: 293
+  fate: keep
+  target_lines: 348
+  cluster: C21
+  extract: ""
+  reason: "release gate flow kept (16.1)"
+  status: keep
+- path: internal/cli/context_resolution.go
+  v2_lines: 1020
+  current_lines: 302
+  fate: shrink
+  target_lines: 551
+  cluster: C26
+  extract: "resolveScopedCommandContext (:94)"
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: shrunk
+  note: "2b-5: flags, then the injected identity, then defaults with the squad.yaml session; the .amqrc source and the candidate diagnostics are gone (2b-2 had cut the launch-side inputs, 846 -> 783; was deferred-2b: context resolution kept, simplified by squad.yaml)"
+- path: internal/cli/dispatch.go
+  v2_lines: 853
+  current_lines: 391
+  fate: shrink
+  target_lines: 450
+  cluster: C19
+  extract: "queue-then-AMQ-send; drop dispatchNudgePrompt"
+  reason: "keep lifecycle CLI, drop pane nudges"
+  status: shrunk
+- path: internal/cli/doctor.go
+  v2_lines: 1912
+  current_lines: 592
+  fate: shrink
+  target_lines: 600
+  cluster: C15
+  extract: "framework (:44, :661) and version/launchapi/floor/pin/AMQ-ops checks; drop tmux, pane, marker, notification, goal, wake, roster checks"
+  reason: "probe per plan 16.2"
+  status: shrunk
+- path: internal/cli/doctor_amq_floor.go
+  v2_lines: 0
+  current_lines: 87
+  fate: new
+  target_lines: 87
+  cluster: cli
+  extract: ""
+  reason: "5-amq-A: doctor's installed AMQ floor (amq, amq-remote, amq-owner-sign --version at or above v0.116.2, the install line below it)"
+  status: new
+- path: internal/cli/doctor_host.go
+  v2_lines: 0
+  current_lines: 816
+  fate: new
+  target_lines: 816
+  cluster: cli
+  extract: ""
+  reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
+  status: new
+- path: internal/cli/doctor_device_other.go
+  v2_lines: 0
+  current_lines: 6
+  fate: new
+  target_lines: 6
+  cluster: cli
+  extract: ""
+  reason: "phase 5 release prep: device number of a file, for doctor's claude pin hard-link note"
+  status: new
+- path: internal/cli/doctor_device_unix.go
+  v2_lines: 0
+  current_lines: 21
+  fate: new
+  target_lines: 21
+  cluster: cli
+  extract: ""
+  reason: "phase 5 release prep: device number of a file, for doctor's claude pin hard-link note"
+  status: new
+- path: internal/cli/doctor_pi.go
+  v2_lines: 0
+  current_lines: 129
+  fate: new
+  target_lines: 129
+  cluster: pi
+  extract: ""
+  reason: "4-1: doctor pi runtime rows (piruntime re-hash, keep the last two, --fix) and the registry runtime pin"
+  status: new
+- path: internal/cli/doctor_release_drift.go
+  v2_lines: 0
+  current_lines: 64
+  fate: new
+  target_lines: 64
+  cluster: verbs
+  extract: ""
+  reason: "3-2 (ruling 12): doctor's tag and release drift check"
+  status: new
+- path: internal/cli/doctor_status.go
+  v2_lines: 0
+  current_lines: 53
+  fate: new
+  target_lines: 53
+  cluster: cli
+  extract: ""
+  reason: "2b-3: doctor's status contract self-check against 2b-1's schema 1"
+  status: new
+- path: internal/cli/down.go
+  v2_lines: 1780
+  fate: delete
+  target_lines: 0
+  cluster: C11
+  extract: ""
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: deleted
+- path: internal/cli/drafter_config.go
+  v2_lines: 102
+  current_lines: 102
+  fate: keep
+  target_lines: 100
+  cluster: C27
+  extract: ""
+  reason: "brief drafting kept"
+  status: keep
+- path: internal/cli/effort.go
+  v2_lines: 239
+  fate: shrink
+  target_lines: 180
+  cluster: C23
+  extract: ""
+  reason: "provider-argument assembly is R4"
+  status: deleted
+  replaced_by: "internal/team/squad.go"
+  note: "2b-5: effort is a squad.yaml seat field and travels as a provider argument; the team init role=effort flag is gone (reason: provider-argument assembly is R4)"
+- path: internal/cli/evidence.go
+  v2_lines: 774
+  fate: replace
+  target_lines: 0
+  cluster: C20
+  extract: "evidenceSecretName (:747), evidenceTaskLink (:561) semantics for the ledger"
+  reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
+  status: deleted
+  replaced_by: "internal/cli/hook_evidence_list.go"
+  retired_in: 2b-1
+- path: internal/cli/execution_mode.go
+  v2_lines: 682
+  current_lines: 282
+  fate: review
+  target_lines: 331
+  cluster: C25
+  extract: "faultRemedy action object only; executionContract (:233) goes"
+  reason: "keep fault remedy object only"
+  status: shrunk
+- path: internal/cli/exit.go
+  v2_lines: 174
+  current_lines: 186
+  fate: keep
+  target_lines: 174
+  cluster: C11
+  extract: "kept whole: exit-code taxonomy, PartialError (:39), ActionDecisionError (:49), parseFlags (:103)"
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: keep
+- path: internal/cli/external_orchestrator_lifecycle.go
+  v2_lines: 365
+  fate: delete
+  target_lines: 0
+  cluster: C9
+  extract: ""
+  reason: "lead is built-in pi (R2)"
+  status: deleted
+- path: internal/cli/external_orchestrator_registry.go
+  v2_lines: 710
+  fate: delete
+  target_lines: 0
+  cluster: C9
+  extract: ""
+  reason: "lead is built-in pi (R2)"
+  status: deleted
+- path: internal/cli/fleet_adapters.go
+  v2_lines: 0
+  current_lines: 269
+  fate: new
+  target_lines: 269
+  cluster: cli
+  extract: ""
+  reason: "4-3: the mayor's adapters, squad.yaml through 2b-5's digest flow (SquadWriter) and the roster through 2b-2's seat launch (RosterLauncher)"
+  status: new
+- path: internal/cli/fleet.go
+  v2_lines: 0
+  current_lines: 310
+  fate: new
+  target_lines: 310
+  cluster: cli
+  extract: ""
+  reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
+  status: new
+- path: internal/cli/termsafe.go
+  v2_lines: 0
+  current_lines: 43
+  fate: new
+  target_lines: 43
+  cluster: cli
+  extract: ""
+  reason: "phase 5 re-pass of 4-3: the one escaping of untrusted fields printed to a human (C0, C1, DEL, invalid UTF-8)"
+  status: new
+- path: internal/cli/gate_close.go
+  v2_lines: 253
+  current_lines: 240
+  fate: keep
+  target_lines: 228
+  cluster: C21
+  extract: ""
+  reason: "release gate flow kept (16.1)"
+  status: keep
+- path: internal/cli/gate.go
+  v2_lines: 178
+  current_lines: 216
+  fate: keep
+  target_lines: 160
+  cluster: C21
+  extract: ""
+  reason: "release gate flow kept (16.1)"
+  status: keep
+- path: internal/cli/gate_store.go
+  v2_lines: 0
+  current_lines: 479
+  fate: new
+  target_lines: 479
+  cluster: verbs
+  extract: ""
+  reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate; 4-5: the transport default is the Buzz share"
+  status: new
+- path: internal/cli/global_noc.go
+  v2_lines: 601
+  fate: shrink
+  target_lines: 265
+  cluster: C3
+  extract: "fleet registry read/write (:117-265) kept per 4.4 default"
+  reason: "fleet board belongs to amq-noc"
+  status: deleted
+  replaced_by: "internal/fleet/registry.go"
+  note: "4-3: the fleet registry read/write extract renamed into internal/fleet/registry.go (fate new), fleet.yaml for status --fleet (plan 16.3); the NOC launch and run types had no reader"
+- path: internal/cli/global_status_doctor.go
+  v2_lines: 224
+  fate: delete
+  target_lines: 0
+  cluster: C3
+  extract: ""
+  reason: "cut: fleet board belongs to amq-noc"
+  status: deleted
+- path: internal/cli/global_status.go
+  v2_lines: 752
+  fate: shrink
+  target_lines: 300
+  cluster: C3
+  extract: ""
+  reason: "fleet board belongs to amq-noc"
+  status: deleted
+- path: internal/cli/goal_attempt.go
+  v2_lines: 130
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal_supervise_resume.go
+  v2_lines: 564
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal_supervision_binding_revalidation.go
+  v2_lines: 171
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal_supervision_delivery_gates.go
+  v2_lines: 285
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal_supervision_delivery.go
+  v2_lines: 468
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal_supervision_gates.go
+  v2_lines: 346
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal_supervision_resume.go
+  v2_lines: 571
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal_supervision.go
+  v2_lines: 1067
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/goal.go
+  v2_lines: 1983
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: ""
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/hook_context.go
+  v2_lines: 0
+  current_lines: 258
+  fate: new
+  target_lines: 258
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
+  status: new
+- path: internal/cli/hook_decision.go
+  v2_lines: 0
+  current_lines: 224
+  fate: new
+  target_lines: 224
+  cluster: verbs
+  extract: ""
+  reason: "phase 5 re-pass of 4-2: the Go adapter from a guard verdict to the Claude PreToolUse decision"
+  status: new
+- path: internal/cli/hook_decision_other.go
+  v2_lines: 0
+  current_lines: 14
+  fate: new
+  target_lines: 14
+  cluster: verbs
+  extract: ""
+  reason: "phase 5 re-pass fix round: the PreToolUse adapter's guard child killed by its handle off unix"
+  status: new
+- path: internal/cli/hook_decision_unix.go
+  v2_lines: 0
+  current_lines: 19
+  fate: new
+  target_lines: 19
+  cluster: verbs
+  extract: ""
+  reason: "phase 5 re-pass fix round: the PreToolUse adapter's guard child in its own process group, killed whole"
+  status: new
+- path: internal/cli/hook_evidence_list.go
+  v2_lines: 0
+  current_lines: 117
+  fate: new
+  target_lines: 117
+  cluster: verbs
+  extract: ""
+  reason: "2b-1: the evidence verb dispatcher and evidence list, the read of the hook ledger with secret-name redaction"
+  status: new
+- path: internal/cli/hook_guard.go
+  v2_lines: 0
+  current_lines: 558
+  fate: new
+  target_lines: 558
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
+  status: new
+- path: internal/cli/hook_guard_env.go
+  v2_lines: 0
+  current_lines: 343
+  fate: new
+  target_lines: 343
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split; 4-5: ~/.amq-squad/buzz/ protected"
+  status: new
+- path: internal/cli/hook_identity.go
+  v2_lines: 0
+  current_lines: 140
+  fate: new
+  target_lines: 140
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: hook verb identity from AM_ME/AM_ROOT/AM_SESSION (R52), exit contract"
+  status: new
+- path: internal/cli/hook_ingest.go
+  v2_lines: 0
+  current_lines: 202
+  fate: new
+  target_lines: 202
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: evidence ingest: append-only seat ledger, seed of the 2b evidence ledger"
+  status: new
+- path: internal/cli/hook_store.go
+  v2_lines: 0
+  current_lines: 119
+  fate: new
+  target_lines: 119
+  cluster: verbs
+  extract: ""
+  reason: "2a-3: read-only gate store with verified envelopes; 3-1: grants come from internal/grants (schema 1)"
+  status: new
+- path: internal/cli/init.go
+  v2_lines: 284
+  fate: shrink
+  target_lines: 150
+  cluster: C4
+  extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)"
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+  replaced_by: "internal/team/digest.go"
+  note: "2b-5: dead since 2a (no caller of computeInitPlan); team propose and team apply are the digest flow (reason: legacy wizard/start scaffolding)"
+- path: internal/cli/json.go
+  v2_lines: 47
+  current_lines: 47
+  fate: keep
+  target_lines: 36
+  cluster: C29
+  extract: ""
+  reason: "cli core kept; registry rewritten"
+  status: keep
+- path: internal/cli/launch.go
+  v2_lines: 1214
+  current_lines: 137
+  fate: shrink
+  target_lines: 300
+  cluster: C28
+  extract: "writeLaunchRecordWithSnapshot (:757), rollbackLaunchRecordIfCurrent (:780), role write (:1182-1196), resolveAMQEnvForLaunch (:917), normalizedAgentBinary (:1093), ensureLauncherExecutable (:900), stringListFlag (:84) into seat-exec"
+  reason: "legacy launch driver; extracts move to seat-exec"
+  status: shrunk
+  replaced_by: "internal/seatlaunch/run.go"
+  note: "2b-2: the kept-dead extracts (launch record write and rollback, seedRoleStub, ensureLauncherExecutable) are deleted; seat-exec and internal/seatlaunch replace them"
+- path: internal/cli/launch_seats.go
+  v2_lines: 0
+  current_lines: 136
+  fate: new
+  target_lines: 136
+  cluster: verbs
+  extract: ""
+  reason: "2b-2: the launch verb (reads the typed seat list; internal/seatlaunch does the work)"
+  status: new
+- path: internal/cli/layout_finalize.go
+  v2_lines: 224
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/layout_preset.go
+  v2_lines: 111
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/lead_identity.go
+  v2_lines: 145
+  fate: delete
+  target_lines: 0
+  cluster: C9
+  extract: "sameFilesystemPath, currentWorkingDirMatches"
+  reason: "lead is built-in pi (R2)"
+  status: deleted
+- path: internal/cli/lead_scheduler.go
+  v2_lines: 0
+  current_lines: 149
+  fate: new
+  target_lines: 149
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the lead's team mode starts and supervises the scheduler process (ruling 15)"
+  status: new
+- path: internal/cli/list.go
+  v2_lines: 226
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: ""
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/live_identity.go
+  v2_lines: 323
+  fate: delete
+  target_lines: 0
+  cluster: C10
+  extract: ""
+  reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
+  status: deleted
+- path: internal/cli/liveness.go
+  v2_lines: 641
+  current_lines: 355
+  fate: shrink
+  target_lines: 356
+  cluster: C10
+  extract: "verdict vocabulary (agentLivenessVerdict) as closed seat-state list; cut pane and wake inputs"
+  reason: "liveness vocabulary kept, pane/wake inputs cut"
+  status: shrunk
+- path: internal/cli/merge_train.go
+  v2_lines: 0
+  current_lines: 286
+  fate: new
+  target_lines: 286
+  cluster: verbs
+  extract: ""
+  reason: "3-2: the merge-train verb: the lead's ordered PR set, dry run, manual stop, gate wiring"
+  status: new
+- path: internal/cli/model_defaults.go
+  v2_lines: 170
+  fate: shrink
+  target_lines: 130
+  cluster: C23
+  extract: ""
+  reason: "provider-argument assembly is R4"
+  status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
+
+- path: internal/cli/mutation_json.go
+  v2_lines: 53
+  current_lines: 57
+  fate: keep
+  target_lines: 41
+  cluster: C29
+  extract: ""
+  reason: "cli core kept; registry rewritten"
+  status: keep
+- path: internal/cli/namespace_conflict.go
+  v2_lines: 514
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_migration_adapters.go
+  v2_lines: 293
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_migration_cli.go
+  v2_lines: 239
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_migration_guard.go
+  v2_lines: 573
+  current_lines: 133
+  fate: shrink
+  target_lines: 133
+  cluster: C7
+  extract: "acquireNamespaceWriterAdmission (:253), acquireRevalidatedContextWriter (:42), acquireRevalidatedAMQWriter (:67), validateReResolvedContext (:84), namespaceAdmissionLocks"
+  reason: "no v2 compat; migration goes"
+  status: shrunk
+- path: internal/cli/namespace_migration_native_claims.go
+  v2_lines: 134
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_migration_plan.go
+  v2_lines: 665
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_migration_tx.go
+  v2_lines: 998
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_open_other.go
+  v2_lines: 18
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_open_unix.go
+  v2_lines: 117
+  current_lines: 117
+  fate: shrink
+  target_lines: 117
+  cluster: C7
+  extract: "safe open kept whole"
+  reason: "no v2 compat; migration goes"
+  status: shrunk
+- path: internal/cli/namespace_rename_darwin.go
+  v2_lines: 9
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_rename_linux.go
+  v2_lines: 9
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/namespace_rename_other.go
+  v2_lines: 9
+  fate: delete
+  target_lines: 0
+  cluster: C7
+  extract: ""
+  reason: "no v2 compat; migration goes"
+  status: deleted
+- path: internal/cli/native_args.go
+  v2_lines: 169
+  current_lines: 85
+  fate: shrink
+  target_lines: 130
+  cluster: C23
+  extract: ""
+  reason: "provider-argument assembly is R4"
+  status: shrunk
+- path: internal/cli/new.go
+  v2_lines: 654
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: "peelProjectFlag, runInProject arg helpers"
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/notification_amq_watch.go
+  v2_lines: 303
+  fate: delete
+  target_lines: 0
+  cluster: C8
+  extract: ""
+  reason: "supervised watchers; attention lives in status"
+  status: deleted
+- path: internal/cli/notification_watcher.go
+  v2_lines: 1192
+  fate: delete
+  target_lines: 0
+  cluster: C8
+  extract: ""
+  reason: "supervised watchers; attention lives in status"
+  status: deleted
+- path: internal/cli/operator_attention.go
+  v2_lines: 1210
+  current_lines: 452
+  fate: shrink
+  target_lines: 400
+  cluster: C17
+  extract: "collectGateAttentionProjection (:433)"
+  reason: "keep gate raise/answer and attention projection"
+  status: accepted-3
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
+
+- path: internal/cli/operator_control.go
+  v2_lines: 393
+  fate: delete
+  target_lines: 0
+  cluster: C2
+  extract: "runBroadcast/runOperatorSend if broadcast stays as a verb"
+  reason: "terminal control, pane-only; shape extracted to status"
+  status: deleted
+- path: internal/cli/operator_delivery.go
+  v2_lines: 117
+  fate: delete
+  target_lines: 0
+  cluster: C17
+  extract: ""
+  reason: "cut: keep gate raise/answer and attention projection"
+  status: deleted
+- path: internal/cli/operator_guard.go
+  v2_lines: 63
+  current_lines: 63
+  fate: keep
+  target_lines: 63
+  cluster: C17
+  extract: ""
+  reason: "keep gate raise/answer and attention projection"
+  status: keep
+- path: internal/cli/operator_handoff_card.go
+  v2_lines: 216
+  fate: delete
+  target_lines: 0
+  cluster: C17
+  extract: ""
+  reason: "cut: keep gate raise/answer and attention projection"
+  status: deleted
+- path: internal/cli/operator_identity.go
+  v2_lines: 153
+  current_lines: 63
+  fate: shrink
+  target_lines: 100
+  cluster: C17
+  extract: ""
+  reason: "keep gate raise/answer and attention projection"
+  status: shrunk
+- path: internal/cli/operator_mode.go
+  v2_lines: 15
+  current_lines: 15
+  fate: keep
+  target_lines: 15
+  cluster: C17
+  extract: ""
+  reason: "keep gate raise/answer and attention projection"
+  status: keep
+- path: internal/cli/operator_self_approve.go
+  v2_lines: 669
+  current_lines: 107
+  fate: shrink
+  target_lines: 300
+  cluster: C17
+  extract: ""
+  reason: "keep gate raise/answer and attention projection"
+  status: shrunk
+- path: internal/cli/operator.go
+  v2_lines: 1775
+  current_lines: 489
+  fate: shrink
+  target_lines: 600
+  cluster: C17
+  extract: ""
+  reason: "keep gate raise/answer and attention projection"
+  status: shrunk
+  note: "4-3: 756 -> 499 (495 after the verb cut, then the start-squad dispatch line and usage); the v2 operator status verb (the per-squad AMQ-thread projection and its unread and open-gate counters) deleted and replaced by operator inbox over the fleet (internal/cli/fleet.go), and the dead releaseOperatorAnswerEnvelope; the remainder is operator answer (merge-kind and launchapi decision AMQ gates), which 3-2 decides"
+
+- path: internal/cli/orchestrate.go
+  v2_lines: 404
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/orphan_panes.go
+  v2_lines: 89
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/output.go
+  v2_lines: 197
+  current_lines: 196
+  fate: keep
+  target_lines: 152
+  cluster: C29
+  extract: ""
+  reason: "cli core kept; registry rewritten"
+  status: keep
+- path: internal/cli/pane_adopt.go
+  v2_lines: 78
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pane_cleanup_manifest_other.go
+  v2_lines: 13
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pane_cleanup_manifest_rename_darwin.go
+  v2_lines: 9
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pane_cleanup_manifest_rename_linux.go
+  v2_lines: 9
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pane_cleanup_manifest_unix.go
+  v2_lines: 324
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pane_cleanup_manifest.go
+  v2_lines: 138
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pane_cleanup_rm.go
+  v2_lines: 312
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pane_cleanup.go
+  v2_lines: 637
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/pathnorm_case_darwin.go
+  v2_lines: 32
+  current_lines: 32
+  fate: keep
+  target_lines: 32
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: keep
+- path: internal/cli/pathnorm_case_other.go
+  v2_lines: 9
+  current_lines: 9
+  fate: keep
+  target_lines: 9
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: keep
+- path: internal/cli/pathnorm_case_portable.go
+  v2_lines: 70
+  current_lines: 70
+  fate: keep
+  target_lines: 70
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: keep
+- path: internal/cli/pathnorm_volume_other.go
+  v2_lines: 7
+  current_lines: 7
+  fate: keep
+  target_lines: 7
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: keep
+- path: internal/cli/pathnorm_volume_windows.go
+  v2_lines: 12
+  current_lines: 12
+  fate: keep
+  target_lines: 12
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: keep
+- path: internal/cli/pathnorm.go
+  v2_lines: 243
+  current_lines: 105
+  fate: shrink
+  target_lines: 120
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: shrunk
+- path: internal/cli/pi.go
+  v2_lines: 0
+  current_lines: 515
+  fate: new
+  target_lines: 515
+  cluster: pi
+  extract: ""
+  reason: "4-1: pi verb: run (child process, exit 70 refusal), verify, path; 5-docs-F: the pi verify --help usage"
+  status: new
+- path: internal/cli/pi_exec_other.go
+  v2_lines: 0
+  current_lines: 11
+  fate: new
+  target_lines: 11
+  cluster: pi
+  extract: ""
+  reason: "4-1: child-run stub for non-unix builds"
+  status: new
+- path: internal/cli/pi_exec_unix.go
+  v2_lines: 0
+  current_lines: 55
+  fate: new
+  target_lines: 55
+  cluster: pi
+  extract: ""
+  reason: "4-1: run the embedded node as a child with signal forwarding (unix)"
+  status: new
+- path: internal/cli/pi_lead.go
+  v2_lines: 0
+  current_lines: 241
+  fate: new
+  target_lines: 241
+  cluster: pi
+  extract: ""
+  reason: "4-1: lead verb: solo first run under ~/.amq-squad only (R7) and the team lead (R19, amendment 26)"
+  status: new
+- path: internal/cli/pi_tty_bsd.go
+  v2_lines: 0
+  current_lines: 13
+  fate: new
+  target_lines: 13
+  cluster: pi
+  extract: ""
+  reason: "4-1 review item 5: the termios ioctl TTY check (darwin, BSD)"
+  status: new
+- path: internal/cli/pi_tty_linux.go
+  v2_lines: 0
+  current_lines: 11
+  fate: new
+  target_lines: 11
+  cluster: pi
+  extract: ""
+  reason: "4-1 review item 5: the termios ioctl TTY check (linux)"
+  status: new
+- path: internal/cli/pi_tty_other.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: pi
+  extract: ""
+  reason: "4-1 review item 5: no TTY elsewhere (the built-in pi is unix only)"
+  status: new
+- path: internal/cli/plan.go
+  v2_lines: 256
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: ""
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/preflight.go
+  v2_lines: 681
+  current_lines: 95
+  fate: shrink
+  target_lines: 100
+  cluster: C12
+  extract: ""
+  reason: "context verb ancestor; cut pane/wake/goal"
+  status: shrunk
+- path: internal/cli/preview_flags.go
+  v2_lines: 193
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: ""
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/profiles.go
+  v2_lines: 144
+  fate: delete
+  target_lines: 0
+  cluster: C26
+  extract: ""
+  reason: "cut: context resolution kept, simplified by squad.yaml"
+  status: deleted
+- path: internal/cli/project_dirs.go
+  v2_lines: 33
+  current_lines: 33
+  fate: keep
+  target_lines: 33
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: keep
+- path: internal/cli/recovery_transition_cas.go
+  v2_lines: 146
+  fate: delete
+  target_lines: 0
+  cluster: C6
+  extract: ""
+  reason: "recovery transition only reached from goal/resume"
+  status: deleted
+- path: internal/cli/recovery_transition_contract.go
+  v2_lines: 297
+  fate: delete
+  target_lines: 0
+  cluster: C6
+  extract: ""
+  reason: "recovery transition only reached from goal/resume"
+  status: deleted
+- path: internal/cli/recovery_transition_publication.go
+  v2_lines: 195
+  fate: delete
+  target_lines: 0
+  cluster: C6
+  extract: ""
+  reason: "recovery transition only reached from goal/resume"
+  status: deleted
+- path: internal/cli/recovery_transition_scan.go
+  v2_lines: 229
+  fate: delete
+  target_lines: 0
+  cluster: C6
+  extract: ""
+  reason: "recovery transition only reached from goal/resume"
+  status: deleted
+- path: internal/cli/recovery_transition.go
+  v2_lines: 582
+  fate: delete
+  target_lines: 0
+  cluster: C6
+  extract: ""
+  reason: "recovery transition only reached from goal/resume"
+  status: deleted
+- path: internal/cli/release_flow.go
+  v2_lines: 0
+  current_lines: 142
+  fate: new
+  target_lines: 142
+  cluster: verbs
+  extract: ""
+  reason: "3-2: the release verb: prepare (both gates) and publish (each child after its verified answer)"
+  status: new
+- path: internal/cli/release_plan.go
+  v2_lines: 435
+  current_lines: 445
+  fate: keep
+  target_lines: 393
+  cluster: C21
+  extract: ""
+  reason: "release gate flow kept (16.1); 5-docs-F: verify release-plan --help prints its usage and flags"
+  status: keep
+- path: internal/cli/remote.go
+  v2_lines: 0
+  current_lines: 710
+  fate: new
+  target_lines: 710
+  cluster: verbs
+  extract: ""
+  reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"
+  status: new
+- path: internal/cli/restore.go
+  v2_lines: 758
+  current_lines: 60
+  fate: shrink
+  target_lines: 80
+  cluster: C11
+  extract: "shellQuote (:713), shellCommand (:731)"
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: shrunk
+- path: internal/cli/resume_exec.go
+  v2_lines: 249
+  fate: delete
+  target_lines: 0
+  cluster: C11
+  extract: ""
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: deleted
+- path: internal/cli/resume_goal.go
+  v2_lines: 619
+  fate: delete
+  target_lines: 0
+  cluster: C5
+  extract: "digestBytes (:383)"
+  reason: "goal supervision removed"
+  status: deleted
+- path: internal/cli/resume_required_actions.go
+  v2_lines: 167
+  fate: delete
+  target_lines: 0
+  cluster: C11
+  extract: ""
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: deleted
+- path: internal/cli/resume_shared.go
+  v2_lines: 124
+  fate: delete
+  target_lines: 0
+  cluster: C11
+  extract: ""
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: deleted
+- path: internal/cli/resume.go
+  v2_lines: 342
+  fate: delete
+  target_lines: 0
+  cluster: C11
+  extract: ""
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: deleted
+- path: internal/cli/role_draft.go
+  v2_lines: 493
+  current_lines: 150
+  fate: shrink
+  target_lines: 150
+  cluster: C23
+  extract: ""
+  reason: "provider-argument assembly is R4"
+  status: shrunk
+  note: "2b-5: a 3.0 role is a prompt for a squad.yaml seat; no frontmatter, binary or peers (was accepted-3: provider-argument assembly is R4)"
+
+- path: internal/cli/roles.go
+  v2_lines: 146
+  current_lines: 69
+  fate: shrink
+  target_lines: 80
+  cluster: C23
+  extract: ""
+  reason: "provider-argument assembly is R4"
+  status: shrunk
+  note: "2b-5: lists the roles a squad.yaml seat may name (was accepted-3: provider-argument assembly is R4)"
+
+- path: internal/cli/routing.go
+  v2_lines: 0
+  current_lines: 154
+  fate: new
+  target_lines: 154
+  cluster: cli
+  extract: ""
+  reason: "2b-4: amq-squad routing report --week; doctor routing row (table validity, unpriced entries under a budget)"
+  status: new
+- path: internal/cli/run_shell_silence.go
+  v2_lines: 31
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/run_start_terminal_context.go
+  v2_lines: 59
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/runtime_actions.go
+  v2_lines: 639
+  fate: delete
+  target_lines: 0
+  cluster: C2
+  extract: "argv+id action shape into status; resolveProjectProfile, compareCWD, sameResolvedDir, readPromptBody generic helpers"
+  reason: "terminal control, pane-only; shape extracted to status"
+  status: deleted
+- path: internal/cli/runtime_identity.go
+  v2_lines: 164
+  fate: delete
+  target_lines: 0
+  cluster: C2
+  extract: ""
+  reason: "terminal control, pane-only; shape extracted to status"
+  status: deleted
+- path: internal/cli/runtime_json.go
+  v2_lines: 454
+  fate: delete
+  target_lines: 0
+  cluster: C2
+  extract: ""
+  reason: "terminal control, pane-only; shape extracted to status"
+  status: deleted
+- path: internal/cli/scheduler_run.go
+  v2_lines: 0
+  current_lines: 295
+  fate: new
+  target_lines: 295
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler run verb (wiring the real hooks); the scheduler post verb retired in 5-amq-C"
+  status: new
+- path: internal/cli/seat_clear_gate.go
+  v2_lines: 0
+  current_lines: 337
+  fate: new
+  target_lines: 337
+  cluster: seatcommit
+  extract: ""
+  reason: "5-clear: the Buzz-signed seat clear: the request half (the quarantine_clear gate raised and posted), the answer check, the commit-time proof check, doctor rows"
+  status: new
+- path: internal/cli/seat_commit.go
+  v2_lines: 0
+  current_lines: 414
+  fate: new
+  target_lines: 414
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
+  status: new
+- path: internal/cli/seat_exec.go
+  v2_lines: 0
+  current_lines: 70
+  fate: new
+  target_lines: 70
+  cluster: verbs
+  extract: ""
+  reason: "2b-2: the seat-exec verb (argument parsing; the wrapper lives in internal/seatexec)"
+  status: new
+- path: internal/cli/seat_owner.go
+  v2_lines: 0
+  current_lines: 196
+  fate: new
+  target_lines: 196
+  cluster: seatcommit
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1: the owner-terminal proof of seat clear (R1), the signed clear key and trust store, the PR binding lookup"
+  status: new
+- path: internal/cli/seat_owner_other.go
+  v2_lines: 0
+  current_lines: 16
+  fate: new
+  target_lines: 16
+  cluster: seatcommit
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R5): the non-unix stub of the owner terminal"
+  status: new
+- path: internal/cli/seat_owner_tty_darwin.go
+  v2_lines: 0
+  current_lines: 10
+  fate: new
+  target_lines: 10
+  cluster: misc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2"
+  status: new
+- path: internal/cli/seat_owner_tty_linux.go
+  v2_lines: 0
+  current_lines: 10
+  fate: new
+  target_lines: 10
+  cluster: misc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2"
+  status: new
+- path: internal/cli/seat_owner_unix.go
+  v2_lines: 0
+  current_lines: 80
+  fate: new
+  target_lines: 80
+  cluster: seatcommit
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R5): the owner controlling terminal and its device for seat clear"
+  status: new
+- path: internal/cli/session_notifier.go
+  v2_lines: 866
+  fate: delete
+  target_lines: 0
+  cluster: C8
+  extract: ""
+  reason: "supervised watchers; attention lives in status"
+  status: deleted
+- path: internal/cli/session_reset_support.go
+  v2_lines: 691
+  current_lines: 46
+  fate: shrink
+  target_lines: 46
+  cluster: C11
+  extract: "allowInterspersedFlags (:98)"
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: shrunk
+- path: internal/cli/setup.go
+  v2_lines: 479
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: ""
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/simple_start_brief_draft.go
+  v2_lines: 236
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: ""
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/simple_start.go
+  v2_lines: 1345
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: ""
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/simple_wizard.go
+  v2_lines: 800
+  fate: delete
+  target_lines: 0
+  cluster: C4
+  extract: ""
+  reason: "legacy wizard/start scaffolding"
+  status: deleted
+- path: internal/cli/status_board.go
+  v2_lines: 765
+  fate: delete
+  target_lines: 0
+  cluster: C3
+  extract: ""
+  reason: "cut: fleet board belongs to amq-noc"
+  status: deleted
+- path: internal/cli/status.go
+  v2_lines: 1951
+  current_lines: 449
+  fate: shrink
+  target_lines: 900
+  cluster: C16
+  extract: ""
+  reason: "contract producer; cut pane/runtime fields"
+  status: shrunk
+- path: internal/cli/target_root.go
+  v2_lines: 157
+  fate: shrink
+  target_lines: 100
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: deleted
+- path: internal/cli/task_completion_evidence.go
+  v2_lines: 386
+  fate: shrink
+  target_lines: 250
+  cluster: C19
+  extract: ""
+  reason: "keep lifecycle CLI, drop pane nudges"
+  status: deleted
+  replaced_by: "2b-1 acceptance 7"
+  retired_in: 2b-1
+
+- path: internal/cli/task_selection.go
+  v2_lines: 216
+  fate: shrink
+  target_lines: 150
+  cluster: C19
+  extract: ""
+  reason: "keep lifecycle CLI, drop pane nudges"
+  status: deleted
+  replaced_by: "2b-1 acceptance 8"
+  retired_in: 2b-1
+
+- path: internal/cli/task.go
+  v2_lines: 1309
+  current_lines: 543
+  fate: shrink
+  target_lines: 800
+  cluster: C19
+  extract: ""
+  reason: "keep lifecycle CLI, drop pane nudges"
+  status: shrunk
+
+- path: internal/cli/task_widen.go
+  v2_lines: 0
+  current_lines: 218
+  fate: new
+  target_lines: 218
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the task widen verb (the lead widening path inside the grant, the growth gate past it)"
+  status: new
+- path: internal/cli/team_autonomous.go
+  v2_lines: 147
+  fate: delete
+  target_lines: 0
+  cluster: C18
+  extract: ""
+  reason: "cut: rewrite around squad.yaml in 2b"
+  status: deleted
+- path: internal/cli/team_launch_bootstrap.go
+  v2_lines: 151
+  fate: shrink
+  target_lines: 50
+  cluster: C12
+  extract: ""
+  reason: "context verb ancestor; cut pane/wake/goal"
+  status: deleted
+- path: internal/cli/team_launch_iterm2.go
+  v2_lines: 198
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/team_launch_launchapi.go
+  v2_lines: 794
+  fate: shrink
+  target_lines: 600
+  cluster: C18
+  extract: "cut tmuxTeamLaunchBackend.Validate (:37) and legacyTeamLaunchBackend (:111); inline tmux presence check if still needed; rewrite in 2b"
+  reason: "rewrite around squad.yaml in 2b"
+  status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
+- path: internal/cli/team_launch_native_terminal.go
+  v2_lines: 36
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/team_launch_terminal.go
+  v2_lines: 175
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/team_launch_tmux_session.go
+  v2_lines: 417
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/team_launch_tmux.go
+  v2_lines: 1096
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/team_launch.go
+  v2_lines: 1063
+  fate: shrink
+  target_lines: 250
+  cluster: C18
+  extract: ""
+  reason: "rewrite around squad.yaml in 2b"
+  status: deleted
+  replaced_by: "internal/seatlaunch/run.go"
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
+- path: internal/cli/team_lead.go
+  v2_lines: 1175
+  fate: delete
+  target_lines: 0
+  cluster: C18
+  extract: ""
+  reason: "cut: rewrite around squad.yaml in 2b"
+  status: deleted
+- path: internal/cli/team_member_control_continue.go
+  v2_lines: 328
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/team_member_diff.go
+  v2_lines: 149
+  fate: delete
+  target_lines: 0
+  cluster: C18
+  extract: ""
+  reason: "cut: rewrite around squad.yaml in 2b"
+  status: deleted
+- path: internal/cli/team_member.go
+  v2_lines: 1051
+  fate: delete
+  target_lines: 0
+  cluster: C18
+  extract: ""
+  reason: "cut: rewrite around squad.yaml in 2b"
+  status: deleted
+- path: internal/cli/team_operator.go
+  v2_lines: 207
+  fate: shrink
+  target_lines: 122
+  cluster: C17
+  extract: ""
+  reason: "keep gate raise/answer and attention projection"
+  status: deleted
+  replaced_by: "internal/team/squad.go"
+  note: "2b-5: team operator set is gone; squad.yaml carries operator_interaction (reason: keep gate raise/answer and attention projection)"
+- path: internal/cli/team_overlay.go
+  v2_lines: 1310
+  fate: delete
+  target_lines: 0
+  cluster: C18
+  extract: ""
+  reason: "cut: rewrite around squad.yaml in 2b"
+  status: deleted
+- path: internal/cli/team_rm.go
+  v2_lines: 223
+  fate: delete
+  target_lines: 0
+  cluster: C18
+  extract: ""
+  reason: "cut: rewrite around squad.yaml in 2b"
+  status: deleted
+- path: internal/cli/team_rules_draft.go
+  v2_lines: 237
+  current_lines: 147
+  fate: shrink
+  target_lines: 150
+  cluster: C18
+  extract: ""
+  reason: "rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: the one drafter seam plus the team-rules fragment; the shared draft-text checks moved to drafter/text.go (was deferred-2b: rewrite around squad.yaml in 2b)"
+- path: internal/cli/team_rules.go
+  v2_lines: 515
+  current_lines: 251
+  fate: shrink
+  target_lines: 300
+  cluster: C18
+  extract: "renderTeamRules (:40)"
+  reason: "rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: team rules rendered from squad.yaml; renderTeamRules kept as the extract (was deferred-2b: rewrite around squad.yaml in 2b)"
+- path: internal/cli/team_shared_cwd.go
+  v2_lines: 142
+  fate: delete
+  target_lines: 0
+  cluster: C18
+  extract: ""
+  reason: "cut: rewrite around squad.yaml in 2b"
+  status: deleted
+- path: internal/cli/team.go
+  v2_lines: 2579
+  current_lines: 365
+  fate: shrink
+  target_lines: 365
+  cluster: C18
+  extract: ""
+  reason: "rewrite around squad.yaml in 2b; 5-docs-F: a repeated per-seat flag of team propose and apply is refused (target 350 to 365 for the refusal type)"
+  status: shrunk
+  note: "2b-5: rewritten around squad.yaml; the verbs are team propose, apply, show, check and draft-rules (was deferred-2b: rewrite around squad.yaml in 2b)"
+- path: internal/cli/thread_session.go
+  v2_lines: 16
+  current_lines: 16
+  fate: keep
+  target_lines: 16
+  cluster: C26
+  extract: ""
+  reason: "context resolution kept, simplified by squad.yaml"
+  status: keep
+- path: internal/cli/tmux_exact_id.go
+  v2_lines: 27
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/trust.go
+  v2_lines: 0
+  current_lines: 67
+  fate: new
+  target_lines: 67
+  cluster: cli
+  extract: ""
+  reason: "2b-3: amq-squad trust <repo>, owner-run codex-cli trust steps and the candidate notify line; writes nothing"
+  status: new
+- path: internal/cli/up.go
+  v2_lines: 431
+  fate: delete
+  target_lines: 0
+  cluster: C11
+  extract: "briefCandidateEnvelope (:424)"
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: deleted
+- path: internal/cli/uninstall.go
+  v2_lines: 0
+  current_lines: 108
+  fate: new
+  target_lines: 108
+  cluster: cli
+  extract: ""
+  reason: "5-uninstall: amq-squad uninstall verb, dry run by default; --write, --owner-files, --purge"
+  status: new
+- path: internal/cli/v3_holding.go
+  v2_lines: 832
+  fate: shrink
+  target_lines: 832
+  cluster: holding
+  extract: ""
+  reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
+  status: deleted
+  note: "holding debit paid in 2a-2 commit 21 (file deleted)"
+- path: internal/cli/verify_action.go
+  v2_lines: 1010
+  current_lines: 700
+  fate: shrink
+  target_lines: 700
+  cluster: C13
+  extract: "guard verb ancestors (:81, :569)"
+  reason: "guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  note: "3-1: shrunk at target; typed actions decide from the gate store (storeVerifyAction); 3-2: default_branch_push and protected_branch_push are refused (merge_train), the merge train replaces them; the v2 AMQ path stays for feature_branch_push; reason was: guard ancestor; keep decision flow and signed auth"
+
+- path: internal/cli/verify_authorization.go
+  v2_lines: 337
+  current_lines: 296
+  fate: shrink
+  target_lines: 300
+  cluster: C13
+  extract: ""
+  reason: "guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  note: "3-1: shrunk at target; --gate verifies answers/<id>.json (gate_store.go), --file stays for merge kinds until 3-2; reason was: guard ancestor; keep decision flow and signed auth"
+
+- path: internal/cli/verify_rebind.go
+  v2_lines: 126
+  current_lines: 100
+  fate: shrink
+  target_lines: 100
+  cluster: C13
+  extract: ""
+  reason: "guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  note: "3-1: shrunk at target, behavior unchanged (review rebinding for verify merge, 3-2); reason was: guard ancestor; keep decision flow and signed auth"
+
+- path: internal/cli/verify.go
+  v2_lines: 611
+  current_lines: 228
+  fate: shrink
+  target_lines: 500
+  cluster: C13
+  extract: ""
+  reason: "guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  replaced_by: "internal/mergetrain/audit.go"
+  note: "3-2: verify merge and release read the merge train audit log, the release flow records and gates, and the ledger readers; the v2 evidence-file validators are gone"
+
+- path: internal/cli/version_alignment.go
+  v2_lines: 318
+  fate: delete
+  target_lines: 0
+  cluster: C10
+  extract: ""
+  reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
+  status: deleted
+- path: internal/cli/visibility.go
+  v2_lines: 107
+  fate: delete
+  target_lines: 0
+  cluster: C11
+  extract: ""
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: deleted
+- path: internal/cli/wait_posture.go
+  v2_lines: 303
+  current_lines: 279
+  fate: shrink
+  target_lines: 279
+  cluster: C11
+  extract: "guardOwnedWait (:67), durableSendWaitPosture (:170)"
+  reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: shrunk
+- path: internal/cli/wake_inject.go
+  v2_lines: 42
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/wake_lock_compat.go
+  v2_lines: 171
+  fate: delete
+  target_lines: 0
+  cluster: C1
+  extract: ""
+  reason: "tmux, terminal, wake, pane code (R6)"
+  status: deleted
+- path: internal/cli/workstream.go
+  v2_lines: 353
+  current_lines: 176
+  fate: shrink
+  target_lines: 100
+  cluster: C27
+  extract: ""
+  reason: "brief drafting kept"
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting kept"
+
+- path: internal/cli/worktree_isolation.go
+  v2_lines: 321
+  current_lines: 291
+  fate: keep
+  target_lines: 282
+  cluster: C22
+  extract: ""
+  reason: "worktree per seat"
+  status: keep
+- path: internal/cli/worktree.go
+  v2_lines: 362
+  current_lines: 362
+  fate: keep
+  target_lines: 318
+  cluster: C22
+  extract: ""
+  reason: "worktree per seat"
+  status: keep
+- path: internal/commandevidence/doc.go
+  v2_lines: 7
+  fate: delete
+  target_lines: 0
+  cluster: commandevidence
+  extract: ""
+  reason: "package doc"
+  status: deleted
+- path: internal/commandevidence/evidence.go
+  v2_lines: 1657
+  fate: replace
+  target_lines: 0
+  cluster: commandevidence
+  extract: "redaction rules before deletion"
+  reason: "replaced by evidence ledger"
+  status: deleted
+  replaced_by: "internal/ledger/ledger.go"
+  note: "3-2: deleted; its redaction (secret names, secret arguments) and task link (lease holders' lines in their lease windows) live in internal/ledger, read by evidence list and verify merge/release"
+- path: internal/commandevidence/subject.go
+  v2_lines: 405
+  current_lines: 400
+  fate: shrink
+  target_lines: 400
+  cluster: commandevidence
+  extract: "whole file ported into guard"
+  reason: "kept as guard target-digest helper (owner default applied)"
+  status: shrunk
+  note: "3-1: at target; stays the evidence command-subject helper (commandevidence, task); gate target strings and the digest live in internal/gatetarget"
+
+- path: internal/compoundrelease/eligibility.go
+  v2_lines: 590
+  current_lines: 590
+  fate: keep
+  target_lines: 540
+  cluster: compoundrelease
+  extract: ""
+  reason: "release gate flow"
+  status: keep
+- path: internal/compoundrelease/guard.go
+  v2_lines: 143
+  current_lines: 143
+  fate: keep
+  target_lines: 131
+  cluster: compoundrelease
+  extract: ""
+  reason: "release gate flow"
+  status: keep
+- path: internal/compoundrelease/reconcile.go
+  v2_lines: 494
+  current_lines: 328
+  fate: review
+  target_lines: 452
+  cluster: compoundrelease
+  extract: ""
+  reason: "review for pane references"
+  status: shrunk
+  note: "3-2: the child questions are typed gates (ChildGate) instead of mail; the mailbox readers the v2 eligibility projection and invocation guard still use stay at the end of the file for 4-3"
+- path: internal/compoundrelease/series.go
+  v2_lines: 500
+  current_lines: 500
+  fate: keep
+  target_lines: 457
+  cluster: compoundrelease
+  extract: ""
+  reason: "release gate flow"
+  status: keep
+- path: internal/compoundrelease/store.go
+  v2_lines: 1515
+  current_lines: 1380
+  fate: review
+  target_lines: 1385
+  cluster: compoundrelease
+  extract: ""
+  reason: "review for pane references"
+  status: shrunk
+  note: "3-2 (lead ruling): the successor writer (PrepareSuccessor, completeSuccessor) is deleted; the reader tests write superseded states as data (successor_fixture_test.go); Create, StartPublishing, Activate are live in the release flow"
+- path: internal/compoundrelease/transition.go
+  v2_lines: 257
+  current_lines: 257
+  fate: keep
+  target_lines: 235
+  cluster: compoundrelease
+  extract: ""
+  reason: "release gate flow"
+  status: keep
+  note: "reviewed 2a-2 (lead ruling 9): writer paths kept-dead as the phase 3 release flow ancestor"
+- path: internal/console/actions.go
+  v2_lines: 115
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/attach.go
+  v2_lines: 133
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/control.go
+  v2_lines: 346
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/filter.go
+  v2_lines: 269
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/labels.go
+  v2_lines: 277
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/model.go
+  v2_lines: 255
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/rows.go
+  v2_lines: 422
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/run.go
+  v2_lines: 332
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/update.go
+  v2_lines: 330
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/view.go
+  v2_lines: 969
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/console/watcher.go
+  v2_lines: 178
+  fate: delete
+  target_lines: 0
+  cluster: console
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/drafter/config.go
+  v2_lines: 262
+  current_lines: 259
+  fate: shrink
+  target_lines: 201
+  cluster: drafter
+  extract: ""
+  reason: "brief drafting as off-path verb"
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting as off-path verb"
+
+- path: internal/drafter/run.go
+  v2_lines: 324
+  current_lines: 324
+  fate: shrink
+  target_lines: 249
+  cluster: drafter
+  extract: ""
+  reason: "brief drafting as off-path verb"
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting as off-path verb"
+
+- path: internal/drafter/text.go
+  v2_lines: 0
+  current_lines: 83
+  fate: shrink
+  target_lines: 83
+  cluster: C18
+  extract: ""
+  reason: "2b-5: split from internal/cli/team_rules_draft.go (its draft-text checks, shared by brief, team-rules and role drafting); moved v2 code, counted in the band"
+  status: shrunk
+  note: "split from internal/cli/team_rules_draft.go (shrunk 296 -> 147): normalizeDraftText, matchRoleBullets, nonEmptyTrimmedLines, normalizeMarkdownBulletMarker, allMarkdownBullets; target_lines is the moved size, added to the target sum"
+- path: internal/fleet/identity.go
+  v2_lines: 0
+  current_lines: 251
+  fate: new
+  target_lines: 251
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the repository identity of a canonical checkout (origin remote, else .amq-squad/repository) the mayor authorizes on"
+  status: new
+- path: internal/fleet/mailbox.go
+  v2_lines: 0
+  current_lines: 38
+  fate: new
+  target_lines: 38
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the operator mailbox routes over AMQ cross-project routing, as argv"
+  status: new
+- path: internal/fleet/mayor.go
+  v2_lines: 0
+  current_lines: 663
+  fate: new
+  target_lines: 663
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
+  status: new
+- path: internal/fleet/registry.go
+  v2_lines: 0
+  current_lines: 518
+  fate: new
+  target_lines: 518
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the fleet registry ~/.amq-squad/fleet.yaml (renamed from the global_noc.go extract): strict schema 1, locked atomic update"
+  status: new
+- path: internal/fleet/status.go
+  v2_lines: 0
+  current_lines: 129
+  fate: new
+  target_lines: 129
+  cluster: fleet
+  extract: ""
+  reason: "4-3: status --fleet over the registry (ruling 16) and the manual-mode inbox: open gates of all squads in one list, lead questions"
+  status: new
+- path: internal/fleet/store.go
+  v2_lines: 0
+  current_lines: 119
+  fate: new
+  target_lines: 119
+  cluster: fleet
+  extract: ""
+  reason: "4-3: fleet.yaml read and locked update through internal/fsanchor, anchored at HOME"
+  status: new
+- path: internal/flock/flock_other.go
+  v2_lines: 22
+  current_lines: 22
+  fate: keep
+  target_lines: 22
+  cluster: flock
+  extract: ""
+  reason: "six importers"
+  status: keep
+- path: internal/flock/flock_unix.go
+  v2_lines: 41
+  current_lines: 41
+  fate: keep
+  target_lines: 41
+  cluster: flock
+  extract: ""
+  reason: "six importers"
+  status: keep
+- path: internal/flock/flock.go
+  v2_lines: 170
+  current_lines: 170
+  fate: keep
+  target_lines: 170
+  cluster: flock
+  extract: ""
+  reason: "six importers"
+  status: keep
+- path: internal/fsanchor/fleet_extra.go
+  v2_lines: 0
+  current_lines: 59
+  fate: new
+  target_lines: 59
+  cluster: fsanchor
+  extract: ""
+  reason: "4-3: OpenLock and Path beyond the lifted set, for the fleet registry lock (unix)"
+  status: new
+- path: internal/fsanchor/fleet_extra_other.go
+  v2_lines: 0
+  current_lines: 54
+  fate: new
+  target_lines: 54
+  cluster: fsanchor
+  extract: ""
+  reason: "4-3: the non-unix twin of fleet_extra.go"
+  status: new
+- path: internal/fsanchor/open_other.go
+  v2_lines: 0
+  current_lines: 93
+  fate: new
+  target_lines: 93
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-3 anchored directory, non-unix variant (Lstat per component, not race-free); WriteAtomic on atomicfile"
+  status: new
+- path: internal/fsanchor/open_unix.go
+  v2_lines: 0
+  current_lines: 166
+  fate: new
+  target_lines: 166
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-3 anchored directory lifted for 4-1 and 4-3: the anchor opened from / with O_NOFOLLOW, WriteAtomic on atomicfile"
+  status: new
+- path: internal/fsanchor/pi_extra.go
+  v2_lines: 0
+  current_lines: 48
+  fate: new
+  target_lines: 48
+  cluster: fsanchor
+  extract: ""
+  reason: "4-1: OpenPath for the identity re-check of the pi launch set before exec"
+  status: new
+- path: internal/fsanchor/pi_extra_other.go
+  v2_lines: 0
+  current_lines: 37
+  fate: new
+  target_lines: 37
+  cluster: fsanchor
+  extract: ""
+  reason: "4-1 review 2: the staging operations off unix (paths; not race-free)"
+  status: new
+- path: internal/fsanchor/pi_extra_unix.go
+  v2_lines: 0
+  current_lines: 148
+  fate: new
+  target_lines: 148
+  cluster: fsanchor
+  extract: ""
+  reason: "4-1 review 2: descriptor-relative staging (mkdir, create, lock, rename, remove) for the pi cold install"
+  status: new
+- path: internal/fsanchor/routing_extra.go
+  v2_lines: 0
+  current_lines: 27
+  fate: new
+  target_lines: 27
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-4 rebase: Readlink relative to an anchored descriptor (readlinkat), for routing's no-follow walk"
+  status: new
+- path: internal/fsanchor/routing_extra_other.go
+  v2_lines: 0
+  current_lines: 20
+  fate: new
+  target_lines: 20
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-4 rebase: the non-unix twin of routing_extra.go"
+  status: new
+- path: internal/fsanchor/walk.go
+  v2_lines: 0
+  current_lines: 94
+  fate: new
+  target_lines: 94
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-3 walkAnchored and readEntry, the manifest skip as a parameter (shared with 4-3)"
+  status: new
+- path: internal/gatestore/clear.go
+  v2_lines: 0
+  current_lines: 84
+  fate: new
+  target_lines: 84
+  cluster: gatestore
+  extract: ""
+  reason: "5-clear: the seat clear request file and the single-use mark of a gate a clear consumed"
+  status: new
+- path: internal/gatestore/record.go
+  v2_lines: 0
+  current_lines: 277
+  fate: new
+  target_lines: 277
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: the immutable gate record, its owner-facing text and the answer tuple; 4-5: squad identity (amendment 28)"
+  status: new
+- path: internal/gatestore/squad.go
+  v2_lines: 0
+  current_lines: 31
+  fate: new
+  target_lines: 31
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: the squad identity of a gate store root, canonical (symlinks resolved, device and inode; amendment 28)"
+  status: new
+- path: internal/gatestore/squad_other.go
+  v2_lines: 0
+  current_lines: 9
+  fate: new
+  target_lines: 9
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: off unix, the squad identity is the resolved path alone"
+  status: new
+- path: internal/gatestore/squad_unix.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: the root directory device and inode for the squad identity"
+  status: new
+- path: internal/gatestore/store.go
+  v2_lines: 0
+  current_lines: 786
+  fate: new
+  target_lines: 786
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask; 4-5: squad identity (amendment 28)"
+  status: new
+- path: internal/gatestore/syncdir_unix.go
+  v2_lines: 0
+  fate: delete
+  target_lines: 0
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: directory fsync"
+  status: deleted
+  replaced_by: "internal/atomicfile/syncdir_unix.go"
+  note: "2b-5 review fix: moved to internal/atomicfile/syncdir_unix.go, the shared durable writer"
+- path: internal/gatestore/syncdir_windows.go
+  v2_lines: 0
+  fate: delete
+  target_lines: 0
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: directory fsync off unix (none)"
+  status: deleted
+  replaced_by: "internal/atomicfile/syncdir_windows.go"
+  note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
+- path: internal/gatetarget/gatetarget.go
+  v2_lines: 0
+  current_lines: 186
+  fate: new
+  target_lines: 186
+  cluster: gatetarget
+  extract: ""
+  reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
+  status: new
+- path: internal/gateverify/answer.go
+  v2_lines: 0
+  current_lines: 205
+  fate: new
+  target_lines: 205
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: envelope and deny record from a verified answer; the bip340 slot-in check for consumers"
+  status: new
+- path: internal/gateverify/binding.go
+  v2_lines: 0
+  current_lines: 116
+  fate: new
+  target_lines: 116
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the owner's gate binding file (relay, channel, owner and body keys, carriers, issuer key); 4-5: share_root and share_session"
+  status: new
+- path: internal/gateverify/clear.go
+  v2_lines: 0
+  current_lines: 141
+  fate: new
+  target_lines: 141
+  cluster: gateverify
+  extract: ""
+  reason: "5-clear: AuthorizeClear and CheckClear: a quarantine_clear gate verified as the typed gates are, for one handle, nonce and quarantine"
+  status: new
+- path: internal/gateverify/core.go
+  v2_lines: 0
+  current_lines: 346
+  fate: new
+  target_lines: 346
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path; 4-5: squad identity (amendment 28)"
+  status: new
+- path: internal/gateverify/growth.go
+  v2_lines: 0
+  current_lines: 102
+  fate: new
+  target_lines: 102
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the growth gate and accepted-gate lookup, decided by the full owner-signature check in the caller's namespace"
+  status: new
+- path: internal/gateverify/history.go
+  v2_lines: 0
+  current_lines: 213
+  fate: new
+  target_lines: 213
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the question's edit and deletion history from the relay (upstream CheckHistory rules)"
+  status: new
+- path: internal/gateverify/relay.go
+  v2_lines: 0
+  current_lines: 416
+  fate: new
+  target_lines: 416
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: relay interface and the websocket client with NIP-42 body sign-in (ported from S1)"
+  status: new
+- path: internal/gateverify/verify.go
+  v2_lines: 0
+  current_lines: 257
+  fate: new
+  target_lines: 257
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread; 4-5: squad identity (amendment 28)"
+  status: new
+- path: internal/grants/grants.go
+  v2_lines: 0
+  current_lines: 636
+  fate: new
+  target_lines: 636
+  cluster: grants
+  extract: ""
+  reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
+  status: new
+- path: internal/grants/parse.go
+  v2_lines: 0
+  current_lines: 453
+  fate: new
+  target_lines: 453
+  cluster: grants
+  extract: ""
+  reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
+  status: new
+- path: internal/grants/secure_other.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: grants
+  extract: ""
+  reason: "3-1: owner grants trust check off unix (none)"
+  status: new
+- path: internal/grants/secure_unix.go
+  v2_lines: 0
+  current_lines: 37
+  fate: new
+  target_lines: 37
+  cluster: grants
+  extract: ""
+  reason: "3-1: owner grants file trust check (mode, owner, symlink)"
+  status: new
+- path: internal/hostcheck/codextrust.go
+  v2_lines: 0
+  current_lines: 139
+  fate: new
+  target_lines: 139
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: codex-cli trust list, notify line presence, trust steps text (amendment 1, 16.8)"
+  status: new
+- path: internal/hostcheck/configdiff.go
+  v2_lines: 0
+  current_lines: 122
+  fate: new
+  target_lines: 122
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: owner global agent config against the preflight copy, redacted line diff (amendment 18)"
+  status: new
+- path: internal/hostcheck/host.go
+  v2_lines: 0
+  current_lines: 42
+  fate: new
+  target_lines: 42
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: sleep and amq-remote login service (plan 8), grants file path"
+  status: new
+- path: internal/hostcheck/profile.go
+  v2_lines: 0
+  current_lines: 139
+  fate: new
+  target_lines: 139
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: shell-profile check for exported key names (amendment 17)"
+  status: new
+- path: internal/hostcheck/redact.go
+  v2_lines: 0
+  current_lines: 205
+  fate: new
+  target_lines: 205
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: structural JSON and TOML redaction of secret fields before the config diff (review P1 1)"
+  status: new
+- path: internal/launch/proof.go
+  v2_lines: 0
+  current_lines: 197
+  fate: new
+  target_lines: 197
+  cluster: launch
+  extract: ""
+  reason: "2b-2 item 4: the proof ticket, message, launch ledger and alarms"
+  status: new
+- path: internal/launch/record.go
+  v2_lines: 704
+  current_lines: 250
+  fate: shrink
+  target_lines: 250
+  cluster: launch
+  extract: ""
+  reason: "minimal launch record; seat-exec writes it"
+  status: shrunk
+  note: "retired in 2b-2; class 1 ledger reason: minimal launch record; seat-exec writes it"
+- path: internal/launchintent/launchintent.go
+  v2_lines: 538
+  current_lines: 544
+  fate: keep
+  target_lines: 450
+  cluster: launchintent
+  extract: ""
+  reason: "the launch compiler"
+  status: keep
+- path: internal/leadsession/leadsession.go
+  v2_lines: 0
+  current_lines: 86
+  fate: new
+  target_lines: 86
+  cluster: leadsession
+  extract: ""
+  reason: "4-3: the one lead-session entrypoint; the grant alone gives squad or fleet scope (R39)"
+  status: new
+- path: internal/ledger/ledger.go
+  v2_lines: 0
+  current_lines: 370
+  fate: new
+  target_lines: 370
+  cluster: ledger
+  extract: ""
+  reason: "3-2: the readers of the hook ledger and the outcome log: redaction and the task link (replaces commandevidence/evidence.go)"
+  status: new
+- path: internal/ledger/append.go
+  v2_lines: 0
+  current_lines: 147
+  fate: new
+  target_lines: 147
+  cluster: ledger
+  extract: ""
+  reason: "v3-5-verifier: the one writer of a seat hook ledger (moved from the ingest verb), the verifier evidence line uses it"
+  status: new
+- path: internal/liveidentity/identity.go
+  v2_lines: 257
+  fate: delete
+  target_lines: 0
+  cluster: liveidentity
+  extract: ""
+  reason: "AMQ owns liveness"
+  status: deleted
+- path: internal/mergetrain/audit.go
+  v2_lines: 0
+  current_lines: 171
+  fate: new
+  target_lines: 171
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: batch digest (S1 merge formula) and the append-only audit log"
+  status: new
+- path: internal/mergetrain/binding.go
+  v2_lines: 0
+  current_lines: 85
+  fate: new
+  target_lines: 85
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2 fix 2 (P1-4): the task-to-PR binding the harness commit step writes (pr_number, pr_head)"
+  status: new
+- path: internal/mergetrain/checks.go
+  v2_lines: 0
+  current_lines: 249
+  fate: new
+  target_lines: 249
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the six grant limits and the task scope, checked by the core"
+  status: new
+- path: internal/mergetrain/custody.go
+  v2_lines: 0
+  current_lines: 43
+  fate: new
+  target_lines: 43
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: credential custody check over the seat-exec scrub (R33)"
+  status: new
+- path: internal/mergetrain/drift.go
+  v2_lines: 0
+  current_lines: 236
+  fate: new
+  target_lines: 236
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2 (ruling 12): tags and releases without an accepted owner gate become owner alerts"
+  status: new
+- path: internal/mergetrain/escalate.go
+  v2_lines: 0
+  current_lines: 73
+  fate: new
+  target_lines: 73
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: a refusal's owner-signed gate through the 3-1 gate store"
+  status: new
+- path: internal/mergetrain/forge.go
+  v2_lines: 0
+  current_lines: 96
+  fate: new
+  target_lines: 96
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the train's view of the code host"
+  status: new
+- path: internal/mergetrain/gh.go
+  v2_lines: 0
+  current_lines: 410
+  fate: new
+  target_lines: 410
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the Forge over the owner's gh; branch protection read"
+  status: new
+- path: internal/mergetrain/train.go
+  v2_lines: 0
+  current_lines: 679
+  fate: new
+  target_lines: 679
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the deterministic merge train loop (plan 7.2, 7.3, R34)"
+  status: new
+- path: internal/namespace/namespace.go
+  v2_lines: 120
+  current_lines: 140
+  fate: keep
+  target_lines: 120
+  cluster: namespace
+  extract: ""
+  reason: "path scheme; drop team profile import"
+  status: keep
+- path: internal/nostr/event.go
+  v2_lines: 0
+  current_lines: 499
+  fate: new
+  target_lines: 499
+  cluster: nostr
+  extract: ""
+  reason: "3-1: strict NIP-01 events, canonical id, BIP-340 verify with the explicit r<p, s<n check (ported from S1)"
+  status: new
+- path: internal/nostr/key.go
+  v2_lines: 0
+  current_lines: 58
+  fate: new
+  target_lines: 58
+  cluster: nostr
+  extract: ""
+  reason: "3-1: the body key signer for the core's own questions and re-asks (never the owner key)"
+  status: new
+- path: internal/nostr/npub.go
+  v2_lines: 0
+  current_lines: 116
+  fate: new
+  target_lines: 116
+  cluster: nostr
+  extract: ""
+  reason: "3-1: NIP-19 npub encode and decode (ported from S1)"
+  status: new
+- path: internal/notifier/command.go
+  v2_lines: 51
+  fate: delete
+  target_lines: 0
+  cluster: notifier
+  extract: ""
+  reason: "NOC renders attention"
+  status: deleted
+- path: internal/notifier/desktop_darwin.go
+  v2_lines: 43
+  fate: delete
+  target_lines: 0
+  cluster: notifier
+  extract: ""
+  reason: "NOC renders attention"
+  status: deleted
+- path: internal/notifier/desktop_other.go
+  v2_lines: 20
+  fate: delete
+  target_lines: 0
+  cluster: notifier
+  extract: ""
+  reason: "NOC renders attention"
+  status: deleted
+- path: internal/notifier/sink.go
+  v2_lines: 41
+  fate: delete
+  target_lines: 0
+  cluster: notifier
+  extract: ""
+  reason: "NOC renders attention"
+  status: deleted
+- path: internal/operatorauth/action.go
+  v2_lines: 13
+  current_lines: 13
+  fate: keep
+  target_lines: 12
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/canonical.go
+  v2_lines: 87
+  current_lines: 94
+  fate: keep
+  target_lines: 77
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/denial.go
+  v2_lines: 0
+  current_lines: 85
+  fate: new
+  target_lines: 85
+  cluster: operatorauth
+  extract: ""
+  reason: "3-1: the signed deny record (S1 open question 5), its own signing domain"
+  status: new
+- path: internal/operatorauth/envelope.go
+  v2_lines: 345
+  current_lines: 351
+  fate: keep
+  target_lines: 305
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/evidence.go
+  v2_lines: 485
+  current_lines: 485
+  fate: keep
+  target_lines: 430
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/policy.go
+  v2_lines: 280
+  current_lines: 301
+  fate: keep
+  target_lines: 248
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/release.go
+  v2_lines: 483
+  current_lines: 483
+  fate: keep
+  target_lines: 428
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/revocation.go
+  v2_lines: 59
+  current_lines: 59
+  fate: keep
+  target_lines: 52
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/secure_file_other.go
+  v2_lines: 26
+  current_lines: 26
+  fate: keep
+  target_lines: 23
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/secure_file_unix.go
+  v2_lines: 83
+  current_lines: 83
+  fate: keep
+  target_lines: 73
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/signer.go
+  v2_lines: 76
+  current_lines: 76
+  fate: keep
+  target_lines: 67
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/operatorauth/trust.go
+  v2_lines: 96
+  current_lines: 96
+  fate: keep
+  target_lines: 85
+  cluster: operatorauth
+  extract: ""
+  reason: "gates and envelopes; bip340 evidence in phase 3"
+  status: keep
+- path: internal/panechain/panechain.go
+  v2_lines: 0
+  current_lines: 127
+  fate: new
+  target_lines: 127
+  cluster: seatexec
+  extract: ""
+  reason: "brief 2b-2 milestone B rebase: the seat-pane lookup and the stamped parent chain (amendment 28 proof) for the owner proof and the scheduler"
+  status: new
+- path: internal/piruntime/embed_amqpi.go
+  v2_lines: 0
+  current_lines: 23
+  fate: new
+  target_lines: 23
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: go:embed of the payload under the amqpi build tag"
+  status: new
+- path: internal/piruntime/embed_none.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: no-payload stub for default, linux and windows builds"
+  status: new
+- path: internal/piruntime/install.go
+  v2_lines: 0
+  current_lines: 628
+  fate: new
+  target_lines: 628
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: anchored unpack and full re-hash; launch-set check by identity and by content before exec"
+  status: new
+- path: internal/piruntime/launch.go
+  v2_lines: 0
+  current_lines: 395
+  fate: new
+  target_lines: 395
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: pi launch: forced env applied last over every overlay (NODE_*, JITI_* filtered), per-seat agent dir, team lead tools"
+  status: new
+- path: internal/piruntime/manifest.go
+  v2_lines: 0
+  current_lines: 181
+  fate: new
+  target_lines: 181
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: embedded pi payload manifest, its digest (the trust root) and the preload"
+  status: new
+- path: internal/piruntime/pack.go
+  v2_lines: 0
+  current_lines: 117
+  fate: new
+  target_lines: 117
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: normalized payload packer used by scripts/build-pi-runtime.sh"
+  status: new
+- path: internal/piruntime/prune.go
+  v2_lines: 0
+  current_lines: 99
+  fate: new
+  target_lines: 99
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: list runtimes and keep the last two (doctor --fix, ruling 3)"
+  status: new
+- path: internal/piruntime/session.go
+  v2_lines: 0
+  current_lines: 147
+  fate: new
+  target_lines: 147
+  cluster: piruntime
+  extract: ""
+  reason: "4-1: pinned pi 1.3.0 session layout and the amendment 23 resume refusal"
+  status: new
+- path: internal/piruntime/shim.go
+  v2_lines: 0
+  current_lines: 108
+  fate: new
+  target_lines: 108
+  cluster: piruntime
+  extract: ""
+  reason: "5-amq-A: the pi launch shim AMQ's pi adapter probes; seat-exec runs the embedded runtime in its place"
+  status: new
+- path: internal/piruntime/shim_other.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: piruntime
+  extract: ""
+  reason: "5-amq-A: the shim's owner check (not unix)"
+  status: new
+- path: internal/piruntime/shim_unix.go
+  v2_lines: 0
+  current_lines: 22
+  fate: new
+  target_lines: 22
+  cluster: piruntime
+  extract: ""
+  reason: "5-amq-A: the shim's owner check (unix)"
+  status: new
+- path: internal/procinfo/native_darwin.go
+  v2_lines: 82
+  current_lines: 31
+  fate: shrink
+  target_lines: 41
+  cluster: procinfo
+  extract: ""
+  reason: "PID liveness only; drop TTY/ChildrenIndex"
+  status: shrunk
+- path: internal/procinfo/native_linux.go
+  v2_lines: 195
+  current_lines: 71
+  fate: shrink
+  target_lines: 97
+  cluster: procinfo
+  extract: ""
+  reason: "PID liveness only; drop TTY/ChildrenIndex"
+  status: shrunk
+- path: internal/procinfo/native_other.go
+  v2_lines: 21
+  current_lines: 10
+  fate: shrink
+  target_lines: 10
+  cluster: procinfo
+  extract: ""
+  reason: "PID liveness only; drop TTY/ChildrenIndex"
+  status: shrunk
+
+- path: internal/procinfo/parse.go
+  v2_lines: 62
+  current_lines: 62
+  fate: shrink
+  target_lines: 31
+  cluster: procinfo
+  extract: ""
+  reason: "PID liveness only; drop TTY/ChildrenIndex"
+  status: accepted-3
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
+
+- path: internal/procinfo/procinfo.go
+  v2_lines: 143
+  current_lines: 111
+  fate: shrink
+  target_lines: 71
+  cluster: procinfo
+  extract: "Alive (:57), StartTime (:45), Match (:75)"
+  reason: "PID liveness only; drop TTY/ChildrenIndex"
+  status: accepted-3
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
+
+- path: internal/procinfo/stamp.go
+  v2_lines: 0
+  current_lines: 28
+  fate: new
+  target_lines: 28
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/procinfo/stamp_darwin.go
+  v2_lines: 0
+  current_lines: 31
+  fate: new
+  target_lines: 31
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/procinfo/stamp_linux.go
+  v2_lines: 0
+  current_lines: 50
+  fate: new
+  target_lines: 50
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/procinfo/stamp_other.go
+  v2_lines: 0
+  current_lines: 9
+  fate: new
+  target_lines: 9
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/redact/redact.go
+  v2_lines: 0
+  current_lines: 688
+  fate: new
+  target_lines: 688
+  cluster: redact
+  extract: ""
+  reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
+  status: new
+- path: internal/registry/build.go
+  v2_lines: 0
+  current_lines: 261
+  fate: new
+  target_lines: 261
+  cluster: registry
+  extract: ""
+  reason: "2b-3: registry entries from detection; R12 verified rule; concurrency caps; launch check"
+  status: new
+- path: internal/registry/codexmodel.go
+  v2_lines: 0
+  current_lines: 128
+  fate: new
+  target_lines: 128
+  cluster: registry
+  extract: ""
+  reason: "2b-3: Codex model id check against the codex-cli version before launch (amendment 17)"
+  status: new
+- path: internal/registry/detect.go
+  v2_lines: 0
+  current_lines: 455
+  fate: new
+  target_lines: 455
+  cluster: registry
+  extract: ""
+  reason: "2b-3: detection of plan 5: PATH, versions, login state without a login, Ollama models, RAM and GPU"
+  status: new
+- path: internal/registry/format.go
+  v2_lines: 0
+  current_lines: 348
+  fate: new
+  target_lines: 348
+  cluster: registry
+  extract: ""
+  reason: "2b-3: registry.yaml strict YAML subset, format and parse"
+  status: new
+- path: internal/registry/localprobe.go
+  v2_lines: 0
+  current_lines: 162
+  fate: new
+  target_lines: 162
+  cluster: registry
+  extract: ""
+  reason: "2b-3: direct TTFT against Ollama, the isolated pi probe environment, the pi command"
+  status: new
+- path: internal/registry/pins.go
+  v2_lines: 0
+  current_lines: 212
+  fate: new
+  target_lines: 212
+  cluster: registry
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (D2): owner-pinned harness tools (gh) with the launch re-hash"
+  status: new
+- path: internal/registry/probe.go
+  v2_lines: 0
+  current_lines: 460
+  fate: new
+  target_lines: 460
+  cluster: registry
+  extract: ""
+  reason: "2b-3: the R12 probe: predicate v2 (S5), fixture repo, pi JSON events, tally"
+  status: new
+- path: internal/registry/probeverdict.go
+  v2_lines: 0
+  current_lines: 134
+  fate: new
+  target_lines: 134
+  cluster: registry
+  extract: ""
+  reason: "v3-5-verifier rule 3: the R12 probe predicate as a verdict on the checkout tree; the scheduled probe task record"
+  status: new
+- path: internal/registry/probe_proc_other.go
+  v2_lines: 0
+  current_lines: 19
+  fate: new
+  target_lines: 19
+  cluster: registry
+  extract: ""
+  reason: "2b-3: probe process cleanup off unix"
+  status: new
+- path: internal/registry/probe_proc_unix.go
+  v2_lines: 0
+  current_lines: 162
+  fate: new
+  target_lines: 162
+  cluster: registry
+  extract: ""
+  reason: "2b-3: the probe's pi as a session leader; descendants tracked by parent chain and session id and killed before verification"
+  status: new
+- path: internal/registry/registry.go
+  v2_lines: 0
+  current_lines: 246
+  fate: new
+  target_lines: 246
+  cluster: registry
+  extract: ""
+  reason: "2b-3: registry entry type (plan 5, R10), lookup, path, atomic write"
+  status: new
+- path: internal/registry/runtime.go
+  v2_lines: 0
+  current_lines: 181
+  fate: new
+  target_lines: 181
+  cluster: registry
+  extract: ""
+  reason: "2b-3: full re-hash of the embedded pi runtime (ruled: every launch)"
+  status: new
+- path: internal/registry/versions.go
+  v2_lines: 0
+  current_lines: 33
+  fate: new
+  target_lines: 33
+  cluster: registry
+  extract: ""
+  reason: "2b-3: provider versions the pinned AMQ launch API verified"
+  status: new
+- path: internal/releaseflow/gh.go
+  v2_lines: 0
+  current_lines: 216
+  fate: new
+  target_lines: 216
+  cluster: releaseflow
+  extract: ""
+  reason: "3-2: the release executor over the owner's gh"
+  status: new
+- path: internal/releaseflow/releaseflow.go
+  v2_lines: 0
+  current_lines: 542
+  fate: new
+  target_lines: 542
+  cluster: releaseflow
+  extract: ""
+  reason: "3-2: the release gate flow: typed tag and release gates, then the compoundrelease writer's release"
+  status: new
+- path: internal/reviewrebind/rebind.go
+  v2_lines: 837
+  current_lines: 837
+  fate: keep
+  target_lines: 700
+  cluster: reviewrebind
+  extract: ""
+  reason: "merge-train rebind proof (amendment 2)"
+  status: keep
+- path: internal/role/parse.go
+  v2_lines: 367
+  current_lines: 367
+  fate: keep
+  target_lines: 280
+  cluster: role
+  extract: ""
+  reason: "role files in the seat directory"
+  status: keep
+- path: internal/role/role.go
+  v2_lines: 222
+  current_lines: 222
+  fate: keep
+  target_lines: 170
+  cluster: role
+  extract: ""
+  reason: "role files in the seat directory"
+  status: keep
+- path: internal/routing/canon.go
+  v2_lines: 0
+  current_lines: 309
+  fate: new
+  target_lines: 309
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 1: canonical repository paths for path rules (no-follow walk, case folding, links local-only)"
+  status: new
+- path: internal/routing/chain.go
+  v2_lines: 0
+  current_lines: 190
+  fate: new
+  target_lines: 190
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 4: the outcome log as a signed hash chain (seq, prev); breaks are history_tampered"
+  status: new
+- path: internal/routing/durable.go
+  v2_lines: 0
+  current_lines: 266
+  fate: new
+  target_lines: 266
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 2: durability before dispatch: log size and tail re-verified, pending decisions"
+  status: new
+- path: internal/routing/file.go
+  v2_lines: 0
+  current_lines: 456
+  fate: new
+  target_lines: 456
+  cluster: routing
+  extract: ""
+  reason: "2b-4: routing.yaml overlay through yamlsub (user, repository), privacy path rules"
+  status: new
+- path: internal/routing/head.go
+  v2_lines: 0
+  current_lines: 139
+  fate: new
+  target_lines: 139
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 5: the signed head record (chain heads, seed identity, open breaks)"
+  status: new
+- path: internal/routing/open.go
+  v2_lines: 0
+  current_lines: 57
+  fate: new
+  target_lines: 57
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 1: the scheduler start step; routing_invalid refuses the start"
+  status: new
+- path: internal/routing/outcome.go
+  v2_lines: 0
+  current_lines: 255
+  fate: new
+  target_lines: 255
+  cluster: routing
+  extract: ""
+  reason: "2b-4: outcome log row (6.4 fields), append-only JSONL with flock and fsync"
+  status: new
+- path: internal/routing/report.go
+  v2_lines: 0
+  current_lines: 416
+  fate: new
+  target_lines: 416
+  cluster: routing
+  extract: ""
+  reason: "2b-4: weekly routing report per class, tier and size band; one proposal per bucket, never applied"
+  status: new
+- path: internal/routing/router.go
+  v2_lines: 0
+  current_lines: 1036
+  fate: new
+  target_lines: 1036
+  cluster: routing
+  extract: ""
+  reason: "2b-4: scheduler.Router: chain selection with the four checks, escalation, family rule, exploration, outcome rows"
+  status: new
+- path: internal/routing/seed.go
+  v2_lines: 0
+  current_lines: 91
+  fate: new
+  target_lines: 91
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 1: random exploration seed per session, persisted under the AMQ root"
+  status: new
+- path: internal/routing/table.go
+  v2_lines: 0
+  current_lines: 327
+  fate: new
+  target_lines: 327
+  cluster: routing
+  extract: ""
+  reason: "2b-4: routing class table, tiers, default chains v1, required companions, size bands"
+  status: new
+- path: internal/routing/tamper.go
+  v2_lines: 0
+  current_lines: 243
+  fate: new
+  target_lines: 243
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 4: the history_tampered hold, cleared by the lead's task reset"
+  status: new
+- path: internal/routing/usage.go
+  v2_lines: 0
+  current_lines: 71
+  fate: new
+  target_lines: 71
+  cluster: routing
+  extract: ""
+  reason: "2b-4: attempt tokens and cost from the hook ledger and a price table"
+  status: new
+- path: internal/rules/rules.go
+  v2_lines: 301
+  current_lines: 278
+  fate: keep
+  target_lines: 250
+  cluster: rules
+  extract: ""
+  reason: "managed rules block; guarded path"
+  status: keep
+- path: internal/runtimeaction/actions.go
+  v2_lines: 154
+  fate: delete
+  target_lines: 0
+  cluster: runtimeaction
+  extract: "argv plus id action shape into the status contract first"
+  reason: "importer count reaches zero with C2"
+  status: deleted
+- path: internal/runtimecontrol/capabilities.go
+  v2_lines: 237
+  fate: delete
+  target_lines: 0
+  cluster: runtimecontrol
+  extract: ""
+  reason: "terminal capability registry"
+  status: deleted
+- path: internal/runtimecontrol/context.go
+  v2_lines: 222
+  fate: delete
+  target_lines: 0
+  cluster: runtimecontrol
+  extract: ""
+  reason: "terminal capability registry"
+  status: deleted
+- path: internal/runtimecontrol/controller.go
+  v2_lines: 92
+  fate: delete
+  target_lines: 0
+  cluster: runtimecontrol
+  extract: ""
+  reason: "terminal capability registry"
+  status: deleted
+- path: internal/schedproc/amq.go
+  v2_lines: 0
+  current_lines: 132
+  fate: new
+  target_lines: 132
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the AMQ doorbell and the lead notice, sent from the scheduler mailbox"
+  status: new
+- path: internal/schedproc/committer.go
+  v2_lines: 0
+  current_lines: 202
+  fate: new
+  target_lines: 202
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler's Committer over the seat commit step, deferrals to commit_failed"
+  status: new
+- path: internal/schedproc/decide.go
+  v2_lines: 0
+  current_lines: 271
+  fate: new
+  target_lines: 265
+  cluster: schedproc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R4): the scheduler decision socket; a widening only from the lead pane chain; 5-ci-D: SendDecision dials through seatlaunch.DialPrivate"
+  status: new
+- path: internal/schedproc/limits.go
+  v2_lines: 0
+  current_lines: 45
+  fate: new
+  target_lines: 45
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the usage-limit source over the owner's home and every Claude seat's config dir"
+  status: new
+- path: internal/schedproc/prepare.go
+  v2_lines: 0
+  current_lines: 54
+  fate: new
+  target_lines: 54
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler's SeatPreparer: a seat's worktree back to the commit parent before a new lease"
+  status: new
+- path: internal/schedproc/process.go
+  v2_lines: 0
+  current_lines: 235
+  fate: new
+  target_lines: 235
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler process of one squad (ruling 15): one per squad, the tick loop, the usage-limit window; the external event drain retired in 5-amq-C"
+  status: new
+- path: internal/schedproc/rebuild.go
+  v2_lines: 0
+  current_lines: 104
+  fate: new
+  target_lines: 104
+  cluster: schedproc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (N2): the seat map rebuilt from the launch ledger at a restart"
+  status: new
+- path: internal/schedproc/requests.go
+  v2_lines: 0
+  current_lines: 75
+  fate: new
+  target_lines: 75
+  cluster: schedproc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1 (R1): the scheduler launch record and the drain of the lead widening messages"
+  status: new
+- path: internal/schedproc/slots.go
+  v2_lines: 0
+  current_lines: 236
+  fate: new
+  target_lines: 236
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: seat slots from the typed seat list, worktrees, the runtime launcher router; the external (pi stand-in) launcher retired in 5-amq-C (pi launches through seatlaunch and AMQ pi adapter); async close: no production implementer after the stand-in's removal; delegation always confirmed; removal in 3.0.x"
+  status: new
+- path: internal/scheduler/exits.go
+  v2_lines: 0
+  current_lines: 599
+  fate: new
+  target_lines: 599
+  cluster: scheduler
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat; async close: no production implementer after the stand-in's removal; delegation always confirmed; removal in 3.0.x"
+  status: new
+- path: internal/scheduler/hooks.go
+  v2_lines: 0
+  current_lines: 165
+  fate: new
+  target_lines: 165
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
+  status: new
+- path: internal/scheduler/scheduler.go
+  v2_lines: 0
+  current_lines: 967
+  fate: new
+  target_lines: 967
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
+  status: new
+- path: internal/scheduler/usage_limit.go
+  v2_lines: 0
+  current_lines: 41
+  fate: new
+  target_lines: 41
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: usage-limit event interface (2b-3 implements the detector)"
+  status: new
+- path: internal/sealchain/sealchain.go
+  v2_lines: 0
+  current_lines: 381
+  fate: new
+  target_lines: 381
+  cluster: routing
+  extract: ""
+  reason: "phase 5 re-pass of 2b-2 B (ruling): the routing chain's tag, seed and signed-head rule as a leaf package, shared by routing and the sealed commits ledger and exits queue"
+  status: new
+- path: internal/sealchain/seed_other.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 3 (moved from internal/routing by the phase 5 re-pass of 2b-2 B): the seed opened after an Lstat link refusal (no O_NOFOLLOW)"
+  status: new
+- path: internal/sealchain/seed_unix.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 3 (moved from internal/routing by the phase 5 re-pass of 2b-2 B): the seed opened with O_NOFOLLOW"
+  status: new
+- path: internal/seatcommit/commit.go
+  v2_lines: 0
+  current_lines: 1271
+  fate: new
+  target_lines: 1271
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
+  status: new
+- path: internal/seatcommit/verifier.go
+  v2_lines: 0
+  current_lines: 767
+  fate: new
+  target_lines: 767
+  cluster: seatcommit
+  extract: ""
+  reason: "v3-5-verifier: the verdict producer: the class verifier in the shadow worktree, seat-class environment, bounds, slots, evidence"
+  status: new
+- path: internal/seatcommit/verifier_unix.go
+  v2_lines: 0
+  current_lines: 19
+  fate: new
+  target_lines: 19
+  cluster: seatcommit
+  extract: ""
+  reason: "v3-5-verifier: the verifier process group (unix)"
+  status: new
+- path: internal/seatcommit/verifier_other.go
+  v2_lines: 0
+  current_lines: 15
+  fate: new
+  target_lines: 15
+  cluster: seatcommit
+  extract: ""
+  reason: "v3-5-verifier: the verifier process kill (non-unix)"
+  status: new
+- path: internal/seatcommit/evidence_purge.go
+  v2_lines: 0
+  current_lines: 167
+  fate: new
+  target_lines: 167
+  cluster: seatcommit
+  extract: ""
+  reason: "5-uninstall: delete the evidence refs a ledger records, through the hardened git (uninstall --purge)"
+  status: new
+- path: internal/seatcommit/git.go
+  v2_lines: 0
+  current_lines: 520
+  fate: new
+  target_lines: 520
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the harness git runner (hooks off, no GIT_* redirection) and diff parsers"
+  status: new
+- path: internal/seatcommit/ledger.go
+  v2_lines: 0
+  current_lines: 619
+  fate: new
+  target_lines: 619
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
+  status: new
+- path: internal/seatcommit/policy.go
+  v2_lines: 0
+  current_lines: 336
+  fate: new
+  target_lines: 336
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: declared-files, protected-path, managed-block and size-cap checks; growth-gate targets"
+  status: new
+- path: internal/seatcommit/widen.go
+  v2_lines: 0
+  current_lines: 182
+  fate: new
+  target_lines: 182
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the widening check against the grant (protected paths, size cap on the dry-run diff)"
+  status: new
+- path: internal/seatexec/anchor_unix.go
+  v2_lines: 0
+  current_lines: 173
+  fate: new
+  target_lines: 173
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/claude.go
+  v2_lines: 0
+  current_lines: 94
+  fate: new
+  target_lines: 94
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: Claude seat preflight: the user-scope hook plugin and the recorded permission mode as one unit (claude_hooks_missing, R36)"
+  status: new
+- path: internal/seatexec/codex.go
+  v2_lines: 0
+  current_lines: 30
+  fate: new
+  target_lines: 30
+  cluster: seatexec
+  extract: ""
+  reason: "5-amq-A: the Codex sandbox pins as provider arguments (AMQ v0.110.0 admits them, upstream ask 17) and sandbox_pins_missing"
+  status: new
+- path: internal/seatexec/claudeguard.go
+  v2_lines: 0
+  current_lines: 94
+  fate: new
+  target_lines: 94
+  cluster: seatexec
+  extract: ""
+  reason: "3.0.1 t9: the seat-denied dialog tools and the read-only check that a Claude seat's config dir wires their guard deny (a Claude wake condition)"
+  status: new
+- path: internal/seatexec/codexhook.go
+  v2_lines: 0
+  current_lines: 109
+  fate: new
+  target_lines: 109
+  cluster: seatexec
+  extract: ""
+  reason: "3.0.1 t9: the read-only detection of AMQ's Codex dialog hook that gates a Codex seat's wake and feeds doctor's row"
+  status: new
+- path: internal/seatexec/env.go
+  v2_lines: 0
+  current_lines: 196
+  fate: new
+  target_lines: 196
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/options.go
+  v2_lines: 0
+  current_lines: 231
+  fate: new
+  target_lines: 231
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/pi.go
+  v2_lines: 0
+  current_lines: 129
+  fate: new
+  target_lines: 129
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/seatexec_other.go
+  v2_lines: 0
+  current_lines: 34
+  fate: new
+  target_lines: 34
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/seatexec_unix.go
+  v2_lines: 0
+  current_lines: 730
+  fate: new
+  target_lines: 730
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatlaunch/compile.go
+  v2_lines: 0
+  current_lines: 694
+  fate: new
+  target_lines: 694
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
+  status: new
+- path: internal/seatlaunch/launcher.go
+  v2_lines: 0
+  current_lines: 560
+  fate: new
+  target_lines: 560
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
+  status: new
+- path: internal/seatlaunch/private_socket_other.go
+  v2_lines: 0
+  current_lines: 27
+  fate: new
+  target_lines: 23
+  cluster: seatlaunch
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R4): the non-unix stub of the private socket and DialPrivate"
+  status: new
+- path: internal/seatlaunch/private_socket_unix.go
+  v2_lines: 0
+  current_lines: 133
+  fate: new
+  target_lines: 59
+  cluster: seatlaunch
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 2 (R4): the proof socket bind shared with the scheduler decision socket; 5-ci-D: DialPrivate, the bounded dial (anchored directory, socket and owner checks, /proc/self/fd on Linux)"
+  status: new
+- path: internal/seatlaunch/proof_other.go
+  v2_lines: 0
+  current_lines: 29
+  fate: new
+  target_lines: 29
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_peer_unix.go
+  v2_lines: 0
+  current_lines: 93
+  fate: new
+  target_lines: 93
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_unix.go
+  v2_lines: 0
+  current_lines: 622
+  fate: new
+  target_lines: 622
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/report.go
+  v2_lines: 0
+  current_lines: 76
+  fate: new
+  target_lines: 76
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
+  status: new
+- path: internal/seatlaunch/run.go
+  v2_lines: 0
+  current_lines: 631
+  fate: new
+  target_lines: 631
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
+  status: new
+- path: internal/state/collapse.go
+  v2_lines: 996
+  current_lines: 775
+  fate: review
+  target_lines: 635
+  cluster: state
+  extract: ""
+  reason: "line-by-line review (largest state file)"
+  status: accepted-3
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
+
+- path: internal/state/coordination.go
+  v2_lines: 629
+  current_lines: 402
+  fate: shrink
+  target_lines: 402
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: shrunk
+
+- path: internal/state/external_evidence.go
+  v2_lines: 110
+  fate: shrink
+  target_lines: 70
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: deleted
+  replaced_by: "internal/status/classify.go"
+  retired_in: 2b-1
+
+- path: internal/state/files.go
+  v2_lines: 59
+  current_lines: 32
+  fate: shrink
+  target_lines: 38
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: shrunk
+- path: internal/state/flow.go
+  v2_lines: 136
+  fate: shrink
+  target_lines: 87
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: deleted
+- path: internal/state/mailbox.go
+  v2_lines: 122
+  current_lines: 115
+  fate: shrink
+  target_lines: 78
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: accepted-3
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
+
+- path: internal/state/match.go
+  v2_lines: 192
+  current_lines: 26
+  fate: shrink
+  target_lines: 123
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: shrunk
+- path: internal/state/message.go
+  v2_lines: 618
+  current_lines: 582
+  fate: shrink
+  target_lines: 395
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: accepted-3
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
+
+- path: internal/state/snapshot.go
+  v2_lines: 398
+  current_lines: 248
+  fate: shrink
+  target_lines: 254
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: shrunk
+
+- path: internal/state/state.go
+  v2_lines: 184
+  current_lines: 113
+  fate: shrink
+  target_lines: 118
+  cluster: state
+  extract: ""
+  reason: "classifier base; line-by-line review"
+  status: shrunk
+
+- path: internal/status/classify.go
+  v2_lines: 0
+  current_lines: 448
+  fate: new
+  target_lines: 448
+  cluster: status
+  extract: ""
+  reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
+  status: new
+- path: internal/status/collect.go
+  v2_lines: 0
+  current_lines: 454
+  fate: new
+  target_lines: 454
+  cluster: status
+  extract: ""
+  reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"
+  status: new
+- path: internal/status/compat.go
+  v2_lines: 0
+  current_lines: 111
+  fate: new
+  target_lines: 111
+  cluster: status
+  extract: ""
+  reason: "2b-1: additive-change check of the status contract against the golden fixture"
+  status: new
+- path: internal/status/fleet.go
+  v2_lines: 0
+  current_lines: 100
+  fate: new
+  target_lines: 100
+  cluster: status
+  extract: ""
+  reason: "4-3: the fleet form of the status contract (ruling 16) and IsFleet"
+  status: new
+- path: internal/status/golden.go
+  v2_lines: 0
+  current_lines: 10
+  fate: new
+  target_lines: 10
+  cluster: status
+  extract: ""
+  reason: "2b-3: the schema 1 golden fixture embedded for doctor's status contract self-check"
+  status: new
+- path: internal/status/schema.go
+  v2_lines: 0
+  current_lines: 266
+  fate: new
+  target_lines: 266
+  cluster: status
+  extract: ""
+  reason: "2b-1: status contract schema 1, classifier states, bucket table; 4-5: seat live"
+  status: new
+- path: internal/task/bind.go
+  v2_lines: 0
+  current_lines: 42
+  fate: new
+  target_lines: 42
+  cluster: task
+  extract: ""
+  reason: "3-2 fix 4: Store.BindPR, the PR binding inside the store's transaction (milestone B's names)"
+  status: new
+- path: internal/task/class.go
+  v2_lines: 0
+  current_lines: 165
+  fate: new
+  target_lines: 165
+  cluster: task
+  extract: ""
+  reason: "2b-1: 3.0 task schema vocabulary: states, classes, wait reasons, outcomes, pool"
+  status: new
+- path: internal/task/command_evidence.go
+  v2_lines: 225
+  fate: shrink
+  target_lines: 188
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
+
+- path: internal/task/completion_reconcile.go
+  v2_lines: 235
+  fate: shrink
+  target_lines: 197
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
+
+- path: internal/task/files.go
+  v2_lines: 0
+  current_lines: 152
+  fate: new
+  target_lines: 152
+  cluster: task
+  extract: ""
+  reason: "2b-1: declared_files normalization and the conservative file-lock overlap"
+  status: new
+- path: internal/task/leadership.go
+  v2_lines: 156
+  fate: shrink
+  target_lines: 131
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
+
+- path: internal/task/lease.go
+  v2_lines: 0
+  current_lines: 544
+  fate: new
+  target_lines: 544
+  cluster: task
+  extract: ""
+  reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
+  status: new
+- path: internal/task/verdict.go
+  v2_lines: 0
+  current_lines: 286
+  fate: new
+  target_lines: 286
+  cluster: task
+  extract: ""
+  reason: "v3-5-verifier: the sealed verdict (RecordSnapshot, RecordVerdict, the seal and tree check) and the dispatch refusal of a gated class with no command"
+  status: new
+- path: internal/task/lifecycle_event.go
+  v2_lines: 216
+  fate: shrink
+  target_lines: 181
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
+
+- path: internal/task/lifecycle.go
+  v2_lines: 1366
+  fate: shrink
+  target_lines: 1144
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
+- path: internal/task/quarantine.go
+  v2_lines: 0
+  current_lines: 149
+  fate: new
+  target_lines: 149
+  cluster: task
+  extract: ""
+  reason: "2b-2 B: seat quarantine after a global config change: no new lease until the owner clears it"
+  status: new
+- path: internal/task/reconcile.go
+  v2_lines: 239
+  fate: shrink
+  target_lines: 200
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
+
+- path: internal/task/reset_by.go
+  v2_lines: 0
+  current_lines: 41
+  fate: new
+  target_lines: 41
+  cluster: task
+  extract: ""
+  reason: "4-1 review 2 (amendment 26): a lead resets only its own squad's task, never an owner-routed block"
+  status: new
+- path: internal/task/scope.go
+  v2_lines: 0
+  current_lines: 168
+  fate: new
+  target_lines: 168
+  cluster: task
+  extract: ""
+  reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"
+  status: new
+- path: internal/task/unclean.go
+  v2_lines: 0
+  current_lines: 234
+  fate: new
+  target_lines: 234
+  cluster: task
+  extract: ""
+  reason: "v3-5-verifier fourth round: the unclean marker of a seat CleanSeat cleans (nonce, takeover after the TTL, fail closed)"
+  status: new
+- path: internal/task/task.go
+  v2_lines: 807
+  current_lines: 508
+  fate: shrink
+  target_lines: 676
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: shrunk
+
+- path: internal/task/transaction.go
+  v2_lines: 219
+  current_lines: 183
+  fate: shrink
+  target_lines: 183
+  cluster: task
+  extract: ""
+  reason: "five states and leases exist; pools are new"
+  status: shrunk
+
+- path: internal/team/clone.go
+  v2_lines: 49
+  fate: shrink
+  target_lines: 19
+  cluster: team
+  extract: ""
+  reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
+  status: deleted
+- path: internal/team/digest.go
+  v2_lines: 0
+  current_lines: 163
+  fate: new
+  target_lines: 163
+  cluster: team
+  extract: ""
+  reason: "2b-5: the digest flow of R8: plan every file the squad writes, one digest, apply on a matching digest"
+  status: new
+- path: internal/team/launch.go
+  v2_lines: 0
+  current_lines: 29
+  fate: new
+  target_lines: 29
+  cluster: team
+  extract: ""
+  reason: "2b-5: squad.yaml to 2b-2s typed seat list (seatlaunch.Seat); provider arguments and the argument-form check are seatlaunch.ProviderArgs and CheckArgumentForms"
+  status: new
+- path: internal/team/squad.go
+  v2_lines: 0
+  current_lines: 502
+  fate: new
+  target_lines: 502
+  cluster: team
+  extract: ""
+  reason: "2b-5: squad.yaml schema 1, strict parse, widening errors, render, example"
+  status: new
+- path: internal/team/team.go
+  v2_lines: 1640
+  current_lines: 354
+  fate: shrink
+  target_lines: 631
+  cluster: team
+  extract: ""
+  reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
+  status: shrunk
+  note: "2b-5: the in-memory form of squad.yaml; the v2 profile model is gone (was deferred-2b: rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a)"
+- path: internal/tmuxharness/harness.go
+  v2_lines: 485
+  fate: delete
+  target_lines: 0
+  cluster: tmuxharness
+  extract: ""
+  reason: "no importers"
+  status: deleted
+- path: internal/tmuxpane/busy.go
+  v2_lines: 64
+  fate: delete
+  target_lines: 0
+  cluster: tmuxpane
+  extract: ""
+  reason: "R6; delete last after six cli callers are cut"
+  status: deleted
+- path: internal/tmuxpane/deliver.go
+  v2_lines: 389
+  fate: delete
+  target_lines: 0
+  cluster: tmuxpane
+  extract: ""
+  reason: "R6; delete last after six cli callers are cut"
+  status: deleted
+- path: internal/tmuxpane/local_input.go
+  v2_lines: 118
+  fate: delete
+  target_lines: 0
+  cluster: tmuxpane
+  extract: ""
+  reason: "R6; delete last after six cli callers are cut"
+  status: deleted
+- path: internal/tmuxpane/tmux.go
+  v2_lines: 1115
+  fate: delete
+  target_lines: 0
+  cluster: tmuxpane
+  extract: ""
+  reason: "R6; delete last after six cli callers are cut"
+  status: deleted
+- path: internal/uninstall/uninstall.go
+  v2_lines: 0
+  current_lines: 145
+  fate: new
+  target_lines: 145
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: options, coded errors, Run (plan, busy check, execute)"
+  status: new
+- path: internal/uninstall/plan.go
+  v2_lines: 0
+  current_lines: 609
+  fate: new
+  target_lines: 609
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: the layout discovery through the fsanchor walk and the grouped removal plan"
+  status: new
+- path: internal/uninstall/busy.go
+  v2_lines: 0
+  current_lines: 194
+  fate: new
+  target_lines: 194
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: uninstall_busy checks (scheduler lock and socket, live seat, proof window, commit step)"
+  status: new
+- path: internal/uninstall/execute.go
+  v2_lines: 0
+  current_lines: 362
+  fate: new
+  target_lines: 362
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: group order, removal through anchored descriptors, secret overwrite, report"
+  status: new
+- path: internal/uninstall/lock.go
+  v2_lines: 0
+  current_lines: 104
+  fate: new
+  target_lines: 104
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: the scheduler lock held for a writing run (excludes a scheduler and a second uninstall)"
+  status: new
+- path: internal/uninstall/nlink_unix.go
+  v2_lines: 0
+  current_lines: 20
+  fate: new
+  target_lines: 20
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: link count of an open file (a hard-linked secret is not zeroed)"
+  status: new
+- path: internal/uninstall/nlink_other.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: link count of an open file, non-unix twin"
+  status: new
+- path: internal/uninstall/worktree_id.go
+  v2_lines: 0
+  current_lines: 92
+  fate: new
+  target_lines: 92
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: the verified worktree directory (gitdir by inode) and its removal through the descriptor"
+  status: new
+- path: internal/uninstall/worktree_unix.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: fstatat identity of the entry at the parent and rmdir (unix)"
+  status: new
+- path: internal/uninstall/worktree_other.go
+  v2_lines: 0
+  current_lines: 29
+  fate: new
+  target_lines: 29
+  cluster: uninstall
+  extract: ""
+  reason: "5-uninstall: path-compared identity and rmdir, non-unix twin"
+  status: new
+- path: internal/usagelimit/codex.go
+  v2_lines: 0
+  current_lines: 161
+  fate: new
+  target_lines: 161
+  cluster: usagelimit
+  extract: ""
+  reason: "2b-3: usage-limit signals in codex-cli rollout files; per-file summary for the owner scan"
+  status: new
+- path: internal/usagelimit/usagelimit.go
+  v2_lines: 0
+  current_lines: 371
+  fate: new
+  target_lines: 371
+  cluster: usagelimit
+  extract: ""
+  reason: "2b-3: usage-limit detector over provider session files; Claude transcript classification (S6 scanner)"
+  status: new
+- path: internal/userconfig/config.go
+  v2_lines: 150
+  current_lines: 150
+  fate: keep
+  target_lines: 150
+  cluster: userconfig
+  extract: ""
+  reason: "~/.amq-squad; grants.yaml lives beside it"
+  status: keep
+- path: internal/wizard/bubbletea.go
+  v2_lines: 1942
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/capabilities.go
+  v2_lines: 100
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/composition_policy.go
+  v2_lines: 39
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/discovery.go
+  v2_lines: 249
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/goal_binding.go
+  v2_lines: 98
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/launch_shape.go
+  v2_lines: 90
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/numbered.go
+  v2_lines: 1018
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/previews.go
+  v2_lines: 32
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/profile_flow.go
+  v2_lines: 468
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/routing.go
+  v2_lines: 308
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: "routing table ancestor: move to its 3.0 home before deletion"
+  reason: "extracted first, then deleted"
+  status: deleted
+- path: internal/wizard/spec.go
+  v2_lines: 453
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/terminal_context.go
+  v2_lines: 125
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/wizard/tool_policy.go
+  v2_lines: 40
+  fate: delete
+  target_lines: 0
+  cluster: wizard
+  extract: ""
+  reason: "replaced by pi package wizard"
+  status: deleted
+- path: internal/worktreeplan/git.go
+  v2_lines: 144
+  current_lines: 144
+  fate: keep
+  target_lines: 114
+  cluster: worktreeplan
+  extract: ""
+  reason: "worktree per seat"
+  status: keep
+- path: internal/worktreeplan/model.go
+  v2_lines: 353
+  current_lines: 353
+  fate: keep
+  target_lines: 279
+  cluster: worktreeplan
+  extract: ""
+  reason: "worktree per seat"
+  status: keep
+- path: internal/worktreeplan/residue.go
+  v2_lines: 206
+  current_lines: 206
+  fate: keep
+  target_lines: 163
+  cluster: worktreeplan
+  extract: ""
+  reason: "worktree per seat"
+  status: keep
+- path: internal/worktreeplan/service.go
+  v2_lines: 944
+  current_lines: 944
+  fate: keep
+  target_lines: 744
+  cluster: worktreeplan
+  extract: ""
+  reason: "worktree per seat"
+  status: keep
+- path: internal/yamlsub/yamlsub.go
+  v2_lines: 0
+  current_lines: 347
+  fate: new
+  target_lines: 347
+  cluster: grants
+  extract: ""
+  reason: "2b-5: the YAML subset reader shared by the owner grants file and squad.yaml (moved out of grants/parse.go)"
+  status: new
+- path: internal/team/squad_keys.go
+  v2_lines: 0
+  current_lines: 194
+  fate: new
+  target_lines: 194
+  cluster: team
+  extract: ""
+  reason: "v3-5-migrate: squad.yaml schema 1 final form, the key list with each key's relation to the grant, the never-settable keys, the error codes"
+  status: new
+- path: internal/team/golden.go
+  v2_lines: 0
+  current_lines: 87
+  fate: new
+  target_lines: 87
+  cluster: team
+  extract: ""
+  reason: "v3-5-migrate: the embedded golden squad.yaml and its self-check (squad_yaml_golden_drift)"
+  status: new
+- path: internal/cli/doctor_squad.go
+  v2_lines: 0
+  current_lines: 20
+  fate: new
+  target_lines: 20
+  cluster: cli
+  extract: ""
+  reason: "v3-5-migrate: doctor's squad.yaml golden self-check row"
+  status: new
+- path: internal/cli/migrate.go
+  v2_lines: 0
+  current_lines: 142
+  fate: new
+  target_lines: 142
+  cluster: cli
+  extract: ""
+  reason: "v3-5-migrate: the migrate verb (dry run, --write, --remove-v2)"
+  status: new
+- path: internal/migrate/map.go
+  v2_lines: 0
+  current_lines: 463
+  fate: new
+  target_lines: 463
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the v2 profile to squad.yaml mapping, role prompts, the grants proposal"
+  status: new
+- path: internal/migrate/plan.go
+  v2_lines: 0
+  current_lines: 258
+  fate: new
+  target_lines: 258
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the migrate plan, unmapped report data, output validation"
+  status: new
+- path: internal/migrate/report.go
+  v2_lines: 0
+  current_lines: 71
+  fate: new
+  target_lines: 71
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the migrate report text"
+  status: new
+- path: internal/migrate/safety.go
+  v2_lines: 0
+  current_lines: 192
+  fate: new
+  target_lines: 192
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: refusal codes, safety-default and credential checks"
+  status: new
+- path: internal/migrate/v2.go
+  v2_lines: 0
+  current_lines: 295
+  fate: new
+  target_lines: 295
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the v2 file readers (read-only) and the field names read from main"
+  status: new
+- path: internal/migrate/write.go
+  v2_lines: 0
+  current_lines: 163
+  fate: new
+  target_lines: 163
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: write-when-absent, the removal flag"
+  status: new
+- path: internal/migrate/root.go
+  v2_lines: 0
+  current_lines: 320
+  fate: new
+  target_lines: 320
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the one project-root descriptor of a run; reads, creates and removes through it, a symlink on the way is refused"
+  status: new
+- path: internal/migrate/root_unix.go
+  v2_lines: 0
+  current_lines: 47
+  fate: new
+  target_lines: 47
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: descriptor identity, unlinkat and linkat for the root walk"
+  status: new
+- path: internal/migrate/root_other.go
+  v2_lines: 0
+  current_lines: 27
+  fate: new
+  target_lines: 27
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the non-unix twins of the root walk (path-based)"
+  status: new
+- path: internal/migrate/leak.go
+  v2_lines: 0
+  current_lines: 127
+  fate: new
+  target_lines: 127
+  cluster: migrate
+  extract: ""
+  reason: "v3-5-migrate: the output funnel helpers, location classes, the partial report"
+  status: new

@@ -1,30 +1,23 @@
 # Brief Template
 
-Canonical shape for the selected namespace's brief. Every member of the
-workstream namespace reads this same file, so the brief stays short, concrete, and
-**uniform regardless of where the goal came from** — a Jira ticket, a GitHub
-issue or PR, a doc URL, a local `.md`, or a one-line operator prompt. The wizard
-DRAFTS this from your source and shows it for confirmation before saving: a raw
-ticket description is not a brief.
+Canonical shape for a workstream brief. Every seat of the squad reads this same file,
+so the brief stays short, concrete, and **uniform regardless of where the goal came
+from**: a Jira ticket, a GitHub issue or PR, a doc URL, a local `.md`, or a one-line
+operator prompt. A raw ticket description is not a brief.
 
-The brief lives at team-home and is **per profile/session namespace** — author or
-refresh it at the start of each workstream, not only at first team creation.
-Whether the live skill drafts it in-session or `brief --goal` uses the
-configured drafter, keep exactly the title and six level-two sections below,
-once each and in order. Point at the source of truth; do not paste its full
-contents here.
+The brief lives at `<repo root>/.amq-squad/briefs/<session>.md`, one per session.
+Write it with `amq-squad brief`:
 
-The exact paths are:
+- `--goal TEXT` drafts it through the configured drafter and validates it; when the
+  drafter needs in-session completion it prints the drafting prompt and stages
+  nothing. Complete the prompt in the session, save the result, and seed it.
+- `--seed-from file:<path>`, `issue:<n>` or `gh:owner/repo#<n>` seeds it without a
+  drafter (the issue forms read GitHub through gh).
+- `--dry-run` prints the candidate to stdout without writing; without `--force` an
+  existing brief is never overwritten.
 
-- named profile `R`, session `S`: `P/.amq-squad/briefs/R/S.md`;
-- default profile, session `S`: `P/.amq-squad/briefs/S.md`.
-
-Do not save named-profile work at the default path: `start` will not read it.
-`status --json` prints the resolved canonical path at
-`data.namespace.paths.brief` (`data.goal_binding.brief_path` should agree), and
-the start plan prints it on the `brief:` line. A live in-session draft is saved
-with the current file-edit tool only after its bytes are approved, then displayed
-in full with `cat PATH` before start.
+Keep the title and six level-two sections below, once each and in order. Point at the
+source of truth; do not paste its full contents here.
 
 ---
 
@@ -37,9 +30,8 @@ The outcome in 1-2 sentences. What "done" looks like, not the task list.
 ## Source
 
 Where this came from: `JIRA PROJ-123` / `gh#96` / `https://...` /
-`file:./design.md` / "operator prompt". Link or id only — do not duplicate the
-source body here. A binary-generated draft also identifies that it came from
-the operator goal through the configured drafter and names the selected profile.
+`file:./design.md` / "operator prompt". Link or id only; do not duplicate the source
+body here.
 
 ## Scope
 
@@ -47,15 +39,15 @@ the operator goal through the configured drafter and names the selected profile.
 
 ## Out of scope
 
-- Nearby work that is explicitly NOT in this workstream, so members do not
-  silently widen.
+- Nearby work that is explicitly NOT in this workstream, so seats do not silently
+  widen.
 
 ## Team shape
 
-- One bullet per configured seat, preserving the exact role, handle, and binary
-  tuple: ``- `<role>` (`<handle>`, `<binary>`): responsibility for this goal.``
+- One bullet per seat, preserving the exact role, handle, and runtime tuple:
+  ``- `<role>` (`<handle>`, `<runtime>`): responsibility for this goal.``
 
 ## Acceptance
 
 - How we know it is done (observable criteria).
-- Who signs off (typically CTO; QA or CPO when relevant).
+- Who signs off (typically the lead; QA when present).

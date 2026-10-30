@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // AC7: `send` between agents is delivered, and NO receipt artifacts exist
