@@ -99,6 +99,13 @@ type run struct {
 //     it stops.
 //
 // The key is a throwaway generated here. It is never a real owner key.
+//
+// Each wait blocks on what the serve loop emits on the local relay (await:
+// presence and profile rows, serve's running row at a delivery, its result
+// rows, the verifier's connection closing), never on a polling deadline.
+// One budget (runBudget, from after the build) ends a hung run and names
+// the step; the behaviour checks run after each signal and no duration
+// fails the test.
 func TestOwnerScriptDryRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short")
@@ -120,6 +127,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatalf("build amq-squad: %v\n%s", err, out)
 	}
 	t.Setenv("HOME", home) // after the build (the Go cache stays in the real HOME); the test reads the share as the owner would
+	ctx := budget(t)       // the run's one deadline, from after the build
 	script, _ := filepath.Abs("../../docs/v3-buzz/enroll.sh")
 	relay := newWSRelay(t)
 
@@ -145,13 +153,17 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		"BUZZ_NO_CLIPBOARD=1", "BUZZ_UP_SETTLE=4", "AMQ_NO_UPDATE_CHECK=1")
 	var runs []run
 	plain := func(name string, extra ...string) run {
-		cmd := exec.Command("bash", script, npub, relay.url())
+		cmd := exec.CommandContext(ctx, "bash", script, npub, relay.url())
+		cmd.WaitDelay = 5 * time.Second
 		cmd.Env = append(slices.Clone(env), extra...)
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e
 		start := time.Now()
 		err := cmd.Run()
 		r := run{name: name, out: o.String(), errOut: e.String(), took: time.Since(start)}
+		if ctx.Err() != nil {
+			t.Fatalf("hung: %s did not finish (%v)\n%s%s", name, context.Cause(ctx), r.out, r.errOut)
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			r.rc = ee.ExitCode()
 		} else if err != nil {
@@ -199,7 +211,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	}
 
 	// run 2: the owner step through the pipe, the body prefix typed on the pty
-	r2 := ptyRun(t, "run 2 (owner signs through the pipe)", script, []string{npub, relay.url()}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD="+keyCmd), body[:8]+"\n")
+	r2 := ptyRun(ctx, t, "run 2 (owner signs through the pipe)", script, []string{npub, relay.url()}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD="+keyCmd), body[:8]+"\n")
 	runs = append(runs, r2)
 	if r2.rc != 11 {
 		t.Fatalf("run 2: rc %d\n%s", r2.rc, r2.out)
@@ -227,7 +239,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if len(relay.mem.events(30177, owner.pubHex())) != 1 {
 		t.Fatal("the owner's kind 30177 policy is not on the relay")
 	}
-	waitFor(t, 20*time.Second, "profile and online status from the enrollment endpoint", func() bool {
+	await(ctx, t, &relay.bell, "profile and online status from the enrollment endpoint", func() bool {
 		return len(relay.mem.events(0, body)) > 0 && lastStatus(relay, body) == "online"
 	})
 	if !relay.signedIn(body) {
@@ -239,10 +251,10 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if r3.rc != 0 {
 		t.Fatalf("run 3: rc %d", r3.rc)
 	}
-	waitFor(t, 15*time.Second, "offline at the enrollment endpoint's graceful stop", func() bool { return lastStatus(relay, body) == "offline" })
+	await(ctx, t, &relay.bell, "offline at the enrollment endpoint's graceful stop", func() bool { return lastStatus(relay, body) == "offline" })
 	// run 4: renewal for the same body, the key through the pipe again
 	time.Sleep(1100 * time.Millisecond) // a new window must end after the current one
-	r4 := ptyRun(t, "run 4 (renew)", script, []string{npub, relay.url()}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD="+keyCmd, "BUZZ_RENEW=1", "BUZZ_DM_CHANNEL=dm-4-5-dryrun"), body[:8]+"\n")
+	r4 := ptyRun(ctx, t, "run 4 (renew)", script, []string{npub, relay.url()}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD="+keyCmd, "BUZZ_RENEW=1", "BUZZ_DM_CHANNEL=dm-4-5-dryrun"), body[:8]+"\n")
 	runs = append(runs, r4)
 	renewed, err := LoadShare(shareRoot, DefaultShareSession)
 	if r4.rc != 0 || err != nil || renewed.BodyHex() != body || renewed.GrantCount() != 8 || !renewed.Expires().After(sh.Expires()) {
@@ -291,7 +303,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if act, err := sup.Apply(p); act != "started" || err != nil {
 		t.Fatalf("apply live: %q %v", act, err)
 	}
-	waitFor(t, 30*time.Second, "online while the lead runs", func() bool { return lastStatus(relay, body) == "online" })
+	await(ctx, t, &relay.bell, "online while the lead runs", func() bool { return lastStatus(relay, body) == "online" })
 	onlineAfter := time.Since(t0)
 	setPresence("active", time.Now().Add(-time.Hour)) // the session stopped: its presence goes stale
 	p, _ = FromStatus(doc(), "lead-a")
@@ -302,7 +314,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if act, err := sup.Apply(p); act != "stopped" || err != nil {
 		t.Fatalf("apply stopped: %q %v", act, err)
 	}
-	waitFor(t, 15*time.Second, "offline after the lead stops", func() bool { return lastStatus(relay, body) == "offline" })
+	await(ctx, t, &relay.bell, "offline after the lead stops", func() bool { return lastStatus(relay, body) == "offline" })
 	offlineAfter := time.Since(t1)
 	t.Logf("MEASURED: presence online %s after the status row went live; offline %s after it went stale", onlineAfter.Round(time.Millisecond), offlineAfter.Round(time.Millisecond))
 
@@ -316,7 +328,6 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatalf("the share is not bound to the mailbox adapter: %v", err)
 	}
 	t.Logf("MEASURED: share binding %+v", mb)
-	ctx := context.Background()
 	wsr, sh2, post, err := Connect(ctx, b, pin, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +355,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if act, err := sup.Apply(p); act != "started" || err != nil {
 		t.Fatalf("apply live for the serve rows: %q %v", act, err)
 	}
-	waitFor(t, 30*time.Second, "online before the DMs", func() bool { return lastStatus(relay, body) == "online" })
+	await(ctx, t, &relay.bell, "online before the DMs", func() bool { return lastStatus(relay, body) == "online" })
 	ownerDM := func(content, thread string) string {
 		tags := [][]string{{"h", pin.Channel}, {"p", body}}
 		if thread != "" {
@@ -361,12 +372,14 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	// one request at a time: the answer first, then the route
 	tAnswer := time.Now()
 	answerID := ownerDM("Approve rel-dry release "+prefix, q.EventID)
-	var delivered []Prompt
-	waitFor(t, 20*time.Second, "serve delivers the answer into the attach inbox", func() bool {
-		delivered, _ = inbox.New(ctx)
-		return len(delivered) == 1
-	})
+	// serve's running row for the answer: the delivery into the attach
+	// inbox is done (serveAdmitted)
+	await(ctx, t, &relay.bell, "serve delivers the answer into the attach inbox", func() bool { return serveAdmitted(relay, body, answerID) })
 	tDelivered := time.Since(tAnswer)
+	delivered, err := inbox.New(ctx)
+	if err != nil || len(delivered) != 1 {
+		t.Fatalf("the attach inbox after serve's delivery of the answer: %+v, %v", delivered, err)
+	}
 	if d := delivered[0]; d.From != CarrierHandle || d.Thread != "cockpit/"+pin.Channel || !slices.Equal(d.Labels, []string{"acp", "buzz", "nostr:" + answerID}) {
 		t.Fatalf("serve's delivery shape: %+v", d)
 	}
@@ -379,11 +392,11 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	}
 	stepTook := time.Since(tStep)
 	idsSeen := relay.idsREQs()
-	waitFor(t, 5*time.Second, "the verifier's connection closes", func() bool { return relay.open() == openBefore })
+	await(ctx, t, &relay.bell, "the verifier's connection closes", func() bool { return relay.open() == openBefore })
 	if len(idsSeen) == 0 || idsSeen[len(idsSeen)-1] != openBefore+1 {
 		t.Fatalf("connections at the verifier's REQ by id: %v (serve's: %d)", idsSeen, openBefore)
 	}
-	waitFor(t, 20*time.Second, "serve posts the accepted result row", func() bool { return bodyPosted(relay, body, "accepted rel-dry tag") })
+	await(ctx, t, &relay.bell, "serve posts the accepted result row", func() bool { return bodyPosted(relay, body, "accepted rel-dry tag") })
 	tRow := time.Since(tAnswer)
 	for _, k := range []int{9, 40003} {
 		for _, e := range relay.mem.events(k, body) {
@@ -392,16 +405,16 @@ func TestOwnerScriptDryRun(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("MEASURED (scratch-built amq-remote, local relay): owner answer to serve's delivery %s; handler step (fetch connection, verify, commit, reply) %s; answer to the result row on the relay %s; open connections at the fetch %d (serve %d), after %d",
+	t.Logf("MEASURED (scratch-built amq-remote, local relay): owner answer to serve's running row (delivery done) %s; handler step (fetch connection, verify, commit, reply) %s; answer to the result row on the relay %s; open connections at the fetch %d (serve %d), after %d",
 		tDelivered.Round(time.Millisecond), stepTook.Round(time.Millisecond), tRow.Round(time.Millisecond), idsSeen[len(idsSeen)-1], openBefore, relay.open())
 	if _, err := store.ReadAnswer("rel-dry"); err != nil {
 		t.Fatalf("no answer file: %v", err)
 	}
 	routeID := ownerDM("@lead-b please rebase #12", "")
-	waitFor(t, 20*time.Second, "serve delivers the route", func() bool {
-		delivered, _ = inbox.New(ctx)
-		return len(delivered) == 1
-	})
+	await(ctx, t, &relay.bell, "serve delivers the route", func() bool { return serveAdmitted(relay, body, routeID) })
+	if delivered, err = inbox.New(ctx); err != nil || len(delivered) != 1 {
+		t.Fatalf("the attach inbox after serve's delivery of the route: %+v, %v", delivered, err)
+	}
 	handled, err = h.Step(ctx)
 	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || handled[0].Reply != "routed lead-b" {
 		t.Fatalf("route: %+v, %v", handled, err)
@@ -409,7 +422,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if !inboxHas(t, squad, "lead-a", "nostr:"+routeID) || !inboxHas(t, squad, "lead-b", "nostr:"+routeID) {
 		t.Fatal("the routed message is not in lead-a's and lead-b's inboxes")
 	}
-	waitFor(t, 20*time.Second, "serve posts the routed result row", func() bool { return bodyPosted(relay, body, "routed lead-b") })
+	await(ctx, t, &relay.bell, "serve posts the routed result row", func() bool { return bodyPosted(relay, body, "routed lead-b") })
 	for _, e := range append(relay.mem.events(9, body), relay.mem.events(40003, body)...) {
 		if strings.Contains(e.Content, "please rebase") || strings.Contains(e.Content, "Approve rel-dry") {
 			t.Fatalf("a body post echoes the owner's text: %q", e.Content)
@@ -420,13 +433,13 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if act, err := sup.Apply(p); act != "stopped" || err != nil {
 		t.Fatalf("apply stopped after the serve rows: %q %v", act, err)
 	}
-	waitFor(t, 15*time.Second, "offline after the serve rows", func() bool { return lastStatus(relay, body) == "offline" })
+	await(ctx, t, &relay.bell, "offline after the serve rows", func() bool { return lastStatus(relay, body) == "offline" })
 
 	// the owner run (docs/v3-buzz/owner-run.md steps 0.3 to 7) rehearsed
 	// through the binary with the throwaway key: team init, gate raise,
 	// remote attach, the thread answer, gate status, verify action, the
 	// routed message in fullstack's inbox, presence on and off
-	runs = append(runs, rehearseOwnerRun(t, env, amqSquad, home, relay, owner, body)...)
+	runs = append(runs, rehearseOwnerRun(ctx, t, env, amqSquad, home, relay, owner, body)...)
 
 	// acceptance 2: the canary is in no output channel
 	var scanned, bytesScanned int
@@ -547,12 +560,10 @@ func stopPID(path string) {
 // ptyRun runs the script under script(1), so /dev/tty is a pty and the body
 // prefix is typed on it, while the key comes through BUZZ_OWNER_KEY_CMD's
 // pipe. The pty input stays open until the script exits (an early EOF reads
-// as "not confirmed").
-func ptyRun(t *testing.T, name, scriptPath string, args, env []string, typed string) run {
+// as "not confirmed"). ctx ends a run that hangs: the caller's budget.
+func ptyRun(ctx context.Context, t *testing.T, name, scriptPath string, args, env []string, typed string) run {
 	t.Helper()
 	argv := append([]string{"bash", scriptPath}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "darwin" {
 		cmd = exec.CommandContext(ctx, "script", append([]string{"-q", "/dev/null"}, argv...)...)
@@ -581,6 +592,11 @@ func ptyRun(t *testing.T, name, scriptPath string, args, env []string, typed str
 	}()
 	err = cmd.Wait()
 	r := run{name: name, out: out.String(), took: time.Since(start)}
+	if ctx.Err() != nil { // Errorf: a caller may run this off the test goroutine
+		t.Errorf("hung: %s did not finish (%v)\n%s", name, context.Cause(ctx), r.out)
+		r.rc = -1
+		return r
+	}
 	if ee, ok := err.(*exec.ExitError); ok {
 		r.rc = ee.ExitCode()
 	} else if err != nil {

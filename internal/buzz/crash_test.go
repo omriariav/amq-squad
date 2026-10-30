@@ -1,6 +1,7 @@
 package buzz
 
 import (
+	"context"
 	"encoding/hex"
 	"io/fs"
 	"net"
@@ -118,9 +119,11 @@ func TestOwnerSignerCrashLeavesNoKey(t *testing.T) {
 		t.Fatalf("phase A wrote no body:\n%s", out1)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second) // ptyRun's former bound; this test has no serve loop
+	defer cancel()
 	done := make(chan run, 1)
 	go func() {
-		done <- ptyRun(t, "signer killed mid-publish", wrapper, []string{npub, relayURL}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD=cat '"+keyFile+"'"), body[:8]+"\n")
+		done <- ptyRun(ctx, t, "signer killed mid-publish", wrapper, []string{npub, relayURL}, append(slices.Clone(env), "BUZZ_OWNER_KEY_CMD=cat '"+keyFile+"'"), body[:8]+"\n")
 	}()
 	// the shim's pid file appears when the signer starts; the body prefix is
 	// typed at 4 s, the key read and the grants signed, then the publish hangs
