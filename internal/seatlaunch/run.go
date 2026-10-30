@@ -20,6 +20,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
@@ -101,6 +102,20 @@ type Options struct {
 	// PaneID is the tmux pane id whose shell is pid (default: a read-only
 	// tmux list-panes); a test seam.
 	PaneID func(shell int) string
+	// CodexDialogHook reads AMQ's Codex dialog hook in a Codex home (default
+	// seatexec.ReadCodexDialogHook, read only); a test seam. The launch
+	// calls it only for a squad with a Codex seat, on the Codex home the
+	// seats read ($CODEX_HOME of Env, else Home/.codex).
+	CodexDialogHook func(codexDir string) seatexec.CodexDialogHook
+	// CodexTrust reads the Codex config's trust entries (default
+	// hostcheck.ReadCodexTrust, read only); a test seam, called only for a
+	// squad with a Codex seat.
+	CodexTrust func(configPath string) (hostcheck.CodexTrust, error)
+	// ClaudeWakeConditions reads a Claude seat's wake conditions from the
+	// config dir claudeseat.Write produces for it (default: a scratch copy,
+	// removed after the read; the seat's own dir is written only after
+	// Prepare); a test seam.
+	ClaudeWakeConditions func(permissionMode, worktree string) SeatWakeConditions
 }
 
 // SeatState is one seat's state after the launch.
@@ -113,6 +128,9 @@ type SeatState struct {
 	IdentityProof string `json:"identity_proof,omitempty"`
 	PID           int    `json:"pid,omitempty"`   // from the accepted proof
 	Start         string `json:"start,omitempty"` // its raw start stamp
+	// Wake is the wake AMQ admitted for the seat (3.0.1), nil when AMQ's
+	// Prepare preview carried no execution options for it.
+	Wake *SeatWakeFacts `json:"wake,omitempty"`
 }
 
 // Result is what the operator sees (R48, R50).
@@ -163,6 +181,15 @@ func (o Options) withDefaults() Options {
 	}
 	if o.PiShim == nil {
 		o.PiShim = defaultPiShim
+	}
+	if o.CodexDialogHook == nil {
+		o.CodexDialogHook = seatexec.ReadCodexDialogHook
+	}
+	if o.CodexTrust == nil {
+		o.CodexTrust = hostcheck.ReadCodexTrust
+	}
+	if o.ClaudeWakeConditions == nil {
+		o.ClaudeWakeConditions = scratchClaudeWakeConditions
 	}
 	if o.PinFor == nil {
 		home := o.Home
@@ -216,6 +243,9 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 			break
 		}
 	}
+	// Each seat's wake conditions (3.0.1), read before Compile: the launch
+	// checks the owner's host steps instead of assuming them.
+	q.WakeConditions = readWakeConditions(q, o)
 	c, err := Compile(q, rulesSHA, o.LookPath, o.Now())
 	if err != nil {
 		return res, err
@@ -247,6 +277,10 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		return res, nil
 	}
 	if err := CheckArgumentForms(q, prepared.Preview.Capabilities); err != nil {
+		return res, err
+	}
+	wakes, err := admittedWakes(c.Request, prepared.Preview)
+	if err != nil {
 		return res, err
 	}
 	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, o.Standing))
@@ -374,6 +408,9 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	}
 	res.Stage = "applied"
 	res.Seats = WaitSeats(ctx, q, launchID, srv, o.Wait, o.Poll)
+	for i := range res.Seats {
+		res.Seats[i].Wake = wakes[res.Seats[i].Handle]
+	}
 	return res, nil
 }
 

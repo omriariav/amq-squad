@@ -26,6 +26,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
@@ -403,7 +404,35 @@ func (h *doctorHost) codexChecks(det registry.Detection, projectDir string) []do
 	} else {
 		out = append(out, hostCheck("codex notify fan-out", doctorOK, "absent (candidate, plan 16.8; 'amq-squad trust' prints the line)"))
 	}
-	return out
+	return append(out, codexDialogHookCheck(filepath.Dir(path)))
+}
+
+// codexDialogHookCheck (3.0.1) reports AMQ's Codex dialog hook through the
+// launch's own read-only detection (seatexec.ReadCodexDialogHook): a Codex
+// seat launches with its wake only when the hook is present, so this row is
+// the owner's view of that precondition. It prints event and key names,
+// never a command or a value. Whether Codex trusts the entries is Codex's
+// own hash, which 'amq doctor --ops' reads.
+func codexDialogHookCheck(codexDir string) doctorCheck {
+	const name = "codex wake dialog hook"
+	h := seatexec.ReadCodexDialogHook(codexDir)
+	var c doctorCheck
+	switch {
+	case len(h.HooksOff) > 0:
+		c = hostCheck(name, doctorWarn, "%s is false in %s, so Codex runs no AMQ dialog hook and Codex seats launch without an AMQ wake; fix: set it to true, then %s",
+			strings.Join(h.HooksOff, " and "), h.ConfigPath, seatexec.CodexDialogHookFix)
+		c.Kind = "codex_dialog_hook_disabled"
+	case h.Unreadable != "":
+		c = hostCheck(name, doctorWarn, "%s: %s; Codex seats launch without an AMQ wake; fix: %s", h.HooksPath, h.Unreadable, seatexec.CodexDialogHookFix)
+		c.Kind = "codex_dialog_hook_missing"
+	case len(h.Missing) > 0:
+		c = hostCheck(name, doctorWarn, "AMQ's Codex dialog hook is missing for %s in %s, so Codex seats launch without an AMQ wake (a doorbell could answer a Codex approval prompt); fix: %s",
+			strings.Join(h.Missing, ", "), h.HooksPath, seatexec.CodexDialogHookFix)
+		c.Kind = "codex_dialog_hook_missing"
+	default:
+		c = hostCheck(name, doctorOK, "AMQ's Codex dialog hook is in %s for all %d events, so Codex seats launch with an AMQ wake; 'amq doctor --ops' reads whether Codex trusts it", h.HooksPath, len(seatexec.CodexDialogHookEvents))
+	}
+	return c
 }
 
 func profileCheck(home string) doctorCheck {

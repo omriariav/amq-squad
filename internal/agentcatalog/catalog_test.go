@@ -40,6 +40,18 @@ func TestBuiltinsCarryCapabilityTiersForRouting(t *testing.T) {
 	if got := tier("codex", "gpt-5.6-sol"); got != TierFrontier {
 		t.Fatalf("codex/gpt-5.6-sol tier = %q, want %q", got, TierFrontier)
 	}
+	for _, tc := range []struct{ model, want string }{
+		{"gpt-5.6-luna", TierBalanced},
+		{"gpt-6.1-sol", TierFrontier},
+		{"gpt-6-sol", TierFrontier},
+		{"gpt-6.1-terra", TierBalanced},
+		{"gpt-6-astra", TierBalanced},
+		{"gpt-6-luna", TierBalanced},
+	} {
+		if got := tier("codex", tc.model); got != tc.want {
+			t.Fatalf("codex/%s tier = %q, want %q", tc.model, got, tc.want)
+		}
+	}
 	// Efforts are not model-tiered; routing metadata stays zero on them.
 	for _, entry := range cat.Entries("claude", Efforts) {
 		if entry.CapabilityTier != "" {

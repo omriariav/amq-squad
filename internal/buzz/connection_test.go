@@ -36,7 +36,7 @@ func enrolledOnRelay(t *testing.T) (*wsRelay, gateverify.Binding, gateverify.Pin
 // attention row and a status line, not a result.
 func TestVerifierConnectionOnTheRelay(t *testing.T) {
 	relay, b, pin, f := enrolledOnRelay(t)
-	ctx := context.Background()
+	ctx := budget(t) // ends a hung run only; each connection close is awaited on the relay's bell
 	// gate raise posts the question on its own connection, then closes it
 	q := func(id string) (gatestore.Record, gatestore.Question, string) {
 		conn, sh, post, err := Connect(ctx, b, pin, time.Now())
@@ -50,7 +50,7 @@ func TestVerifierConnectionOnTheRelay(t *testing.T) {
 		return rec, qq, a
 	}
 	_, question, answer := q("rel-ws")
-	waitFor(t, 5*time.Second, "the raise connection closes", func() bool { return relay.open() == 0 })
+	await(ctx, t, &relay.bell, "the raise connection closes", func() bool { return relay.open() == 0 })
 	serve := &fakeServe{}
 	h := &Handler{Core: f.core, Dial: VerifyDialer(b, pin), Inbox: serve, Mail: &fakeMailer{}, Target: Target{Root: f.root, Handle: "lead-a"}}
 	id := f.ownerDMOn(t, relay, answer, question.EventID)
@@ -62,7 +62,7 @@ func TestVerifierConnectionOnTheRelay(t *testing.T) {
 	if ids := relay.idsREQs(); !slices.Equal(ids, []int{1}) {
 		t.Fatalf("connections open at each REQ by id: %v, want [1]", ids)
 	}
-	waitFor(t, 5*time.Second, "the verifier's connection closes", func() bool { return relay.open() == 0 })
+	await(ctx, t, &relay.bell, "the verifier's connection closes", func() bool { return relay.open() == 0 })
 	if res, _ := serve.result(msg); res != "accepted rel-ws tag" {
 		t.Fatalf("reply %q", res)
 	}
@@ -87,7 +87,7 @@ func TestVerifierConnectionOnTheRelay(t *testing.T) {
 	if st := serve.statuses(msg2); len(st) != 2 || st[1] != "timeout rel-ws2 verify_timeout" {
 		t.Fatalf("status lines %q", st)
 	}
-	waitFor(t, 5*time.Second, "the stalled connection closes", func() bool { return relay.open() == 0 })
+	await(ctx, t, &relay.bell, "the stalled connection closes", func() bool { return relay.open() == 0 })
 }
 
 // ownerDMOn publishes an owner DM on the websocket relay's store.

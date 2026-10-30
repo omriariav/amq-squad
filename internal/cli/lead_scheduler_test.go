@@ -123,3 +123,18 @@ func TestSupervisorDoesNotRestartARefusal(t *testing.T) {
 		t.Fatalf("%d starts\n%s", s.count(), log.String())
 	}
 }
+
+// 3.0.1 t14: the lead's team mode starts the scheduler with no flag that
+// turns the commit step's PR binding off (it binds by default under a
+// merge grant).
+func TestLeadSchedulerLeavesPRBindingOn(t *testing.T) {
+	cmd := leadSchedulerCommand("/bin/amq-squad", "seats.json", "lead", []string{"pi:m:high"}, false)(context.Background())
+	for _, a := range cmd.Args {
+		if a == "--no-open-pr" || strings.HasPrefix(a, "--open-pr=") || strings.HasPrefix(a, "--no-open-pr=") {
+			t.Fatalf("the lead's scheduler command passes %s: %q", a, cmd.Args)
+		}
+	}
+	if !slicesContains(cmd.Args, "--lead") {
+		t.Fatalf("args: %q", cmd.Args)
+	}
+}

@@ -29,7 +29,7 @@ type memRelay struct {
 	stall   bool
 	onQuery func()
 	// onPublish runs after an event is stored (the websocket relay's live
-	// subscriptions).
+	// subscriptions and its bell).
 	onPublish func(raw []byte)
 }
 
@@ -120,8 +120,11 @@ func matches(e nostr.Event, f gateverify.Filter) bool {
 // signer is recorded), no REQ or EVENT before AUTH, REQ up to EOSE and then
 // live (a stored event matching an open subscription is pushed, as serve's
 // DM subscription needs), CLOSE, EVENT with OK. It counts its connections.
-// It models a relay; it is not evidence about Buzz.
+// It rings its bell after each event stored and each connection opened,
+// signed in or closed: a test awaits what the serve loop emits on it
+// instead of polling. It models a relay; it is not evidence about Buzz.
 type wsRelay struct {
+	bell    bell
 	mem     memRelay
 	srv     *httptest.Server
 	self    string
@@ -152,7 +155,10 @@ func newWSRelay(t *testing.T) *wsRelay {
 	t.Helper()
 	selfKey, _ := nostr.NewSecretKey()
 	r := &wsRelay{self: selfKey.PublicHex(), selfKey: selfKey, conns: map[*wsConn]bool{}}
-	r.mem.onPublish = r.broadcast
+	r.mem.onPublish = func(raw []byte) {
+		r.broadcast(raw)
+		r.bell.ring()
+	}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if strings.Contains(req.Header.Get("Accept"), "application/nostr+json") {
 			w.Header().Set("Content-Type", "application/nostr+json")
@@ -252,10 +258,12 @@ func (r *wsRelay) serve(ws *websocket.Conn) {
 	r.conns[c] = true
 	r.total++
 	r.mu.Unlock()
+	r.bell.ring()
 	defer func() {
 		r.mu.Lock()
 		delete(r.conns, c)
 		r.mu.Unlock()
+		r.bell.ring()
 	}()
 	send := func(v any) { raw, _ := json.Marshal(v); c.write(raw) }
 	challenge := fmt.Sprintf("chal-%d", time.Now().UnixNano())
@@ -281,6 +289,7 @@ func (r *wsRelay) serve(ws *websocket.Conn) {
 				r.mu.Lock()
 				r.authed = append(r.authed, e.PubKey)
 				r.mu.Unlock()
+				r.bell.ring()
 			}
 			send([]any{"OK", e.ID, ok, map[bool]string{true: "", false: "restricted: bad auth"}[ok]})
 		case "EVENT":

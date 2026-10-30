@@ -30,7 +30,7 @@ import (
 const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 
 Usage:
-  amq-squad scheduler run --seats FILE --lead HANDLE [--lead-pool r:m:e]... [--tick 2s] [--trust] [--max-seats N] [--base-branch B]
+  amq-squad scheduler run --seats FILE --lead HANDLE [--lead-pool r:m:e]... [--tick 2s] [--trust] [--max-seats N] [--base-branch B] [--no-open-pr]
   amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
@@ -68,6 +68,14 @@ team mode passes its models, and only a process the lead's team mode started
 may pass it): a concurrency cap counts the lead's seat when it shares the
 pool, as a pi lead on the Ollama GPU does. A routing.yaml that
 does not load refuses the start with routing_invalid.
+
+The commit step binds by default under a merge grant: when the squad's
+repository has a merge grant, it opens (or finds) each pushed seat branch's
+draft PR and binds it to the task, since the merge train refuses an unbound
+task (task_unbound). --no-open-pr turns that off and is refused under a
+merge grant; without one there is no PR to open, and binding is off.
+--open-pr is a no-op kept for compatibility. The start line prints the
+effective choice.
 
 --trust is the owner's standing answer trust_exact_subject to AMQ's
 trust_confirmation for this squad's launches; without it a launch that needs
@@ -115,7 +123,8 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	trust := fs.Bool("trust", false, "the owner's standing trust of this squad's launch subjects")
 	maxSeats := fs.Int("max-seats", 0, "narrow the grant's seat cap")
 	baseBranch := fs.String("base-branch", "", "branch new seat worktrees start from (default: the grant's, else main)")
-	openPR := fs.Bool("open-pr", false, "the commit step opens (or finds) each pushed seat branch's draft PR and binds it to the task")
+	fs.Bool("open-pr", false, "no-op, kept for compatibility: the commit step binds each pushed seat branch's draft PR by default under a merge grant")
+	noOpenPR := fs.Bool("no-open-pr", false, "the commit step opens and binds no PR (refused when the repository has a merge grant)")
 	var leadPoolFlags multiFlag
 	fs.Var(&leadPoolFlags, "lead-pool", "runtime:model:effort of the lead's own seat (repeatable)")
 	if err := parseFlags(fs, args); err != nil {
@@ -161,6 +170,10 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	g, gerr := grants.Load(q.ProjectRoot)
 	if gerr != nil {
 		return fmt.Errorf("scheduler run: the grant: %w", gerr)
+	}
+	openPR, binding, err := commitStepOpensPR(g, *noOpenPR)
+	if err != nil {
+		return err
 	}
 	seatCap := min(g.MaxSeats, len(q.Seats)) // a lease needs a seat of the roster
 	if *maxSeats > 0 && *maxSeats < seatCap {
@@ -223,7 +236,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		sel.ctx = &c
 	}
 	committer := &schedproc.Committer{Root: root, Step: func(ctx context.Context, handle string, t task.Task) seatcommit.Result {
-		return commitStep(ctx, sel, handle, t, false, *openPR)
+		return commitStep(ctx, sel, handle, t, false, openPR)
 	}, ExitStep: func(handle, taskID, why string) seatcommit.Result {
 		return seatcommit.ExitCheck(seatcommit.Options{Root: root, Handle: handle, Task: task.Task{ID: taskID}, Now: taskNow, Clear: ownerTrust{Root: root}}, why)
 	}}
@@ -231,7 +244,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if limits == nil {
 		limits = schedproc.Limits{Home: usagelimit.ForHome(home, os.Getenv("CLAUDE_CONFIG_DIR"), os.Getenv("CODEX_HOME")), Root: root}
 	}
-	fmt.Fprintf(out, "scheduler for %s (session %s, lead %s, roster of %d seats, at most %d leases at once, tick %s); decisions in %s\n", root, q.Session, *lead, len(roster), seatCap, *tick, filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
+	fmt.Fprintf(out, "scheduler for %s (session %s, lead %s, roster of %d seats, at most %d leases at once, tick %s, PR binding %s); decisions in %s\n", root, q.Session, *lead, len(roster), seatCap, *tick, binding, filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
 	// A team-mode start (3.0.1 t16): the lead is this process's parent, its
 	// incarnation recorded now; the scheduler exits when it is gone.
 	decisions := decisionOptions(sel, q.ProjectRoot)
@@ -312,6 +325,26 @@ func schedulerSeatView(sched **scheduler.Scheduler) func() []scheduler.SeatView 
 		}
 		return (*sched).Occupancy()
 	}
+}
+
+// commitStepOpensPR is the commit step's PR choice (3.0.1 t14): with a
+// merge grant for the squad's repository (the push target the launch
+// records, seatcommit.TargetFor) the step opens (or finds) each pushed seat
+// branch's draft PR and binds it to the task through task.Store.BindPR, by
+// default, because the merge train refuses an unbound task (task_unbound).
+// --no-open-pr is the off-switch only without a merge grant. It also
+// returns the choice as the start line prints it.
+func commitStepOpensPR(g grants.Resolved, off bool) (bool, string, error) {
+	repo := seatcommit.TargetFor(g).Repository
+	switch {
+	case repo != "" && off:
+		return false, "", usageErrorf("scheduler run --no-open-pr: refused: %s has a merge grant, and the merge train needs each completed task bound to its PR", repo)
+	case repo != "":
+		return true, "on (merge grant " + repo + ")", nil
+	case off:
+		return false, "off (--no-open-pr)", nil
+	}
+	return false, "off (no merge grant)", nil
 }
 
 func insecureNote(g grants.Resolved) string {

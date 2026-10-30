@@ -66,7 +66,7 @@ func (t *Tool) set(k, v string) error {
 }
 
 func (e Entry) fields() []kv {
-	return []kv{
+	f := []kv{
 		{"runtime", q(e.Runtime)}, {"provider", q(e.Provider)}, {"model", q(e.Model)}, {"effort", q(e.Effort)},
 		{"verified", strconv.FormatBool(e.Verified)}, {"state", q(e.State)}, {"reason", q(e.Reason)},
 		{"cost_tier", q(e.CostTier)}, {"privacy_class", q(e.PrivacyClass)}, {"quota_pool", q(e.QuotaPool)},
@@ -80,6 +80,10 @@ func (e Entry) fields() []kv {
 		{"probe_false_successes", strconv.Itoa(e.ProbeFalseSuccess)}, {"probe_tool_errors", strconv.Itoa(e.ProbeToolErrors)},
 		{"probe_predicate", q(e.ProbePredicate)}, {"probe_version", q(e.ProbeVersion)},
 	}
+	if len(e.SeatEnv) > 0 { // written only where set, so other entries are unchanged
+		f = append(f, kv{"seat_env", list(e.SeatEnv)})
+	}
+	return f
 }
 
 func (e *Entry) set(k, v string) error {
@@ -140,6 +144,8 @@ func (e *Entry) set(k, v string) error {
 		return setStr(&e.ProbePredicate, v)
 	case "probe_version":
 		return setStr(&e.ProbeVersion, v)
+	case "seat_env":
+		return setList(&e.SeatEnv, v)
 	}
 	return unknownKey(k)
 }
