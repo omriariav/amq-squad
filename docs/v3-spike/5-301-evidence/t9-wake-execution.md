@@ -1,6 +1,6 @@
 # amq-squad 3.0.1, task t9: seats launched with AMQ wake enabled (brief 3.0.1-t9)
 
-Branch `v3-301-t9`, cut from `origin/v3` at a1a67151. One implementer, scratch worktree, three commits: the change, the first gating ruling (the Codex dialog hook as a wake precondition, the shared detection), then the reviewer rulings and Codex's findings (below). The rule: the scheduler's doorbell is the seat's next turn (`seatlaunch.WakeRule`). The defect (session v31, seat dev): every seat launched with wake disabled, so no AMQ wake ran in the pane and a scheduler doorbell sat in the inbox until the owner typed a line.
+Branch `v3-301-t9`, cut from `origin/v3` at a1a67151. One implementer, scratch worktree, four commits: the change, the first gating ruling (the Codex dialog hook as a wake precondition, the shared detection), the reviewer rulings and Codex's findings, then the reviewer's condition on the scratch read (below). The rule: the scheduler's doorbell is the seat's next turn (`seatlaunch.WakeRule`). The defect (session v31, seat dev): every seat launched with wake disabled, so no AMQ wake ran in the pane and a scheduler doorbell sat in the inbox until the owner typed a line.
 
 All AMQ citations are to the pinned module, `github.com/avivsinai/agent-message-queue@v0.116.2` (paths relative to its root).
 
@@ -50,6 +50,11 @@ Raw typing into a pane means a doorbell that lands on a prompt or a dialog answe
   - **Guard wired:** the seat's config dir runs that guard deny (`seatexec.ClaudeDialogGuardWired`). This read-only check reads the dir's `settings.json` (`enabledPlugins`), `plugins/installed_plugins.json` (the install must be inside the dir), and the installed plugin's `hooks/hooks.json`. That file needs a PreToolUse group whose matcher covers both tools and runs the hook script's `pre-tool` verb.
   - **Screens closed:** `claudeseat.StartupScreensClosed(dir)` holds. It returns false with `claude_onboarding_unverified` until t6 fills it in. So a Claude seat's wake turns on by itself when t6 merges, and never before.
 - **When the Claude conditions are read.** Compile runs before the seat's own config dir is written: the launch writes it only after Prepare and the decisions, and a row asserts nothing is staged before them. So the launch writes the dir `claudeseat.Write` produces into a scratch directory, reads the conditions there, and removes it (`scratchClaudeWakeConditions`). The conditions depend only on Write's inputs: mode, plugin files and seed. The seat's own dir therefore carries the same answer.
+- **The real dir is re-checked before exec** (the reviewer's condition, fourth commit).
+  - **Why:** the real config dir is written after the wake is already compiled into Prepare.
+  - **What is recorded:** the launch records the compiled wake in the seat's launch record (`WakeRequired`, a new field in `internal/launch/record.go`, outside the declared files).
+  - **What seat-exec does:** when the record says `WakeRequired`, seat-exec re-checks `ClaudeDialogGuardWired` on the real dir before exec. It refuses with `claude_dialog_guard_missing` when the deny is not there.
+  - **The scratch dir:** it is a fresh `os.MkdirTemp` directory, which Go creates mode 0700. A deferred `RemoveAll`, set right after it is created, removes it on every path: success, an unmet condition, a Write error or a panic.
 - **Codex** (ruling 2). Both must hold:
   - **Hook present:** AMQ's Codex dialog hook entries are on the host. This is the shared read-only `seatexec.ReadCodexDialogHook`, which doctor's row also uses.
   - **Worktree trusted:** the Codex config has `[projects."<worktree>"] trust_level = "trusted"` for the seat's worktree, as given or with symlinks resolved. This reuses doctor's read, `hostcheck.ReadCodexTrust`, and reads key names only.
@@ -84,6 +89,9 @@ The per-seat `launch.json` is `launch.Record` in `internal/launch/record.go`, wh
 | the Claude screens condition is unverified until t6 | TestStartupScreensClosedIsUnverifiedUntilT6 (claudeseat) | returning true |
 | the default Claude read: guard wired, screens unverified, so a Claude seat's wake is off through Launch, and the read stages nothing | TestClaudeWakeStaysOffUntilTheStartupScreensAreClosed (seatlaunch) | the scratch read ignoring the guard, or the screens condition skipped |
 | the launch reads the Codex hook and trust once, on `CODEX_HOME`, only with a Codex seat; met, hook missing and worktree untrusted, each with the report line | TestLaunchReadsTheCodexWakeConditions (seatlaunch) | either read ignored or not passed to Compile |
+| seat-exec re-checks the guard deny on the real Claude config dir when the record says `WakeRequired`: refuses `claude_dialog_guard_missing` when the real dir's PreToolUse hook covers Bash only; execs when wired, and without `WakeRequired` | TestClaudeWakeRecheckOnTheRealConfigDir (seatexec) | the re-check removed |
+| the staged launch record carries `WakeRequired` as compiled (Claude and Codex with conditions met: true; pi: false) | TestSeatWakePerRuntime (seatlaunch) | the record field not set |
+| the scratch read leaves nothing in its temp root | TestClaudeWakeStaysOffUntilTheStartupScreensAreClosed (seatlaunch) | the deferred removal dropped |
 | the Codex trust condition: trusted through a symlink, untrusted with the key-name reason, an unreadable config | TestCodexTrustsTheSeatWorktree (seatlaunch) | the symlink resolution or the unreadable branch removed |
 | admission evidence per seat: no participant, no execution options (wake on or off) refuse before Apply with the evidence named | TestLaunchRefusesAWakeAMQDidNotAdmit (seatlaunch) | either evidence check removed |
 | the shared Codex hook detection: AMQ's marker only (the owner's own hook on an event does not count), `features.hooks` | TestCodexWakeDialogHookRow (cli) | the marker test or the features read removed |

@@ -100,6 +100,13 @@ func TestSeatWakePerRuntime(t *testing.T) {
 	if !strings.Contains(string(body), `"require_wake":true`) {
 		t.Fatalf("no require_wake true on the wire:\n%s", body)
 	}
+	// The staged launch record carries the compiled wake, for seat-exec's
+	// re-check on the real config dir.
+	for _, rec := range c.Records {
+		if rec.WakeRequired != (rec.Handle != "pi1") {
+			t.Errorf("%s record WakeRequired %t", rec.Handle, rec.WakeRequired)
+		}
+	}
 }
 
 // echoWakes makes the fake AMQ answer Prepare as AMQ does: the preview echoes
@@ -362,7 +369,12 @@ func TestCodexTrustsTheSeatWorktree(t *testing.T) {
 // screens are unverified until t6, so a Claude seat's wake stays off today,
 // through Launch too, and nothing is staged by the read.
 func TestClaudeWakeStaysOffUntilTheStartupScreensAreClosed(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 	c := scratchClaudeWakeConditions(ClaudePermissionMode, t.TempDir())
+	if left, _ := os.ReadDir(tmp); len(left) != 0 {
+		t.Fatalf("the scratch config dir was left behind: %v", left)
+	}
 	if !c.ClaudeGuardWired || c.ClaudeGuardWhy != "" {
 		t.Fatalf("the seat's config dir does not wire the guard deny: %+v", c)
 	}

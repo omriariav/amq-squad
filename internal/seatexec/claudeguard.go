@@ -16,6 +16,11 @@ import (
 // to the lead. An AMQ wake doorbell's Enter could otherwise answer one.
 var SeatDeniedDialogTools = []string{"AskUserQuestion", "ExitPlanMode"}
 
+// ClaudeDialogGuardMissing refuses the exec of a Claude seat whose launch
+// admitted an AMQ wake when its real config dir does not run the guard deny
+// of SeatDeniedDialogTools.
+const ClaudeDialogGuardMissing = "claude_dialog_guard_missing"
+
 // ClaudeDialogGuardWired reports whether a Claude seat's config dir runs the
 // guard on PreToolUse for both SeatDeniedDialogTools: the amq-squad plugin
 // is enabled in settings.json, installed inside dir, and its hooks.json has

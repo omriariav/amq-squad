@@ -271,7 +271,13 @@ func codexTrusts(ct hostcheck.CodexTrust, err error, configPath, worktree string
 // conditions there, and removes it. The conditions depend only on Write's
 // inputs (mode, plugin files, seed), so the seat's own dir, written after
 // Prepare, carries the same answer; the scratch copy keeps a dry run and a
-// launch stopped at its decisions from staging anything.
+// launch stopped at its decisions from staging anything. The scratch dir is
+// a fresh os.MkdirTemp directory, which Go creates mode 0700, and the
+// deferred RemoveAll right after its creation removes it on every path:
+// success, an unmet condition, a Write error, a panic. Because the real dir
+// is written later, while the wake is already compiled into Prepare,
+// seat-exec re-checks the guard deny on the real dir before exec for a seat
+// whose record says WakeRequired (ClaudeDialogGuardMissing).
 func scratchClaudeWakeConditions(permissionMode, worktree string) SeatWakeConditions {
 	var c SeatWakeConditions
 	tmp, err := os.MkdirTemp("", "amq-squad-claude-wake-")
@@ -563,7 +569,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
 			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID, PermissionMode: permissionMode(s.Runtime), Credential: credentialSource(s.Runtime),
 			CWD: s.Worktree, Binary: s.Runtime, Role: s.RoleName, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
-			PiShim: piShimFor(s, q),
+			PiShim: piShimFor(s, q), WakeRequired: requireWake,
 		})
 	}
 	intent, target, err := launchintent.Compile(launchintent.Input{

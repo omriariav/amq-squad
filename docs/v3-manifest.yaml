@@ -2895,14 +2895,14 @@ entries:
   status: new
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 250
+  current_lines: 251
   fate: shrink
-  target_lines: 250
+  target_lines: 251
   cluster: launch
   extract: ""
   reason: "minimal launch record; seat-exec writes it"
   status: shrunk
-  note: "retired in 2b-2; class 1 ledger reason: minimal launch record; seat-exec writes it"
+  note: "retired in 2b-2; class 1 ledger reason: minimal launch record; seat-exec writes it. 3.0.1 t9: +1 line, the WakeRequired field seat-exec reads for its wake re-check (reviewer condition)"
 - path: internal/launchintent/launchintent.go
   v2_lines: 538
   current_lines: 544
@@ -3981,9 +3981,9 @@ entries:
   status: new
 - path: internal/seatexec/claudeguard.go
   v2_lines: 0
-  current_lines: 89
+  current_lines: 94
   fate: new
-  target_lines: 89
+  target_lines: 94
   cluster: seatexec
   extract: ""
   reason: "3.0.1 t9: the seat-denied dialog tools and the read-only check that a Claude seat's config dir wires their guard deny (a Claude wake condition)"
@@ -4035,18 +4035,18 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 721
+  current_lines: 730
   fate: new
-  target_lines: 721
+  target_lines: 730
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 688
+  current_lines: 694
   fate: new
-  target_lines: 688
+  target_lines: 694
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
