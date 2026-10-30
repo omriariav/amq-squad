@@ -104,6 +104,9 @@ type SeatState struct {
 	IdentityProof string `json:"identity_proof,omitempty"`
 	PID           int    `json:"pid,omitempty"`   // from the accepted proof
 	Start         string `json:"start,omitempty"` // its raw start stamp
+	// Wake is the wake AMQ admitted for the seat (3.0.1), nil when AMQ's
+	// Prepare preview carried no execution options for it.
+	Wake *SeatWakeFacts `json:"wake,omitempty"`
 }
 
 // Result is what the operator sees (R48, R50).
@@ -240,6 +243,10 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := CheckArgumentForms(q, prepared.Preview.Capabilities); err != nil {
 		return res, err
 	}
+	wakes, err := admittedWakes(c.Request, prepared.Preview)
+	if err != nil {
+		return res, err
+	}
 	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, o.Standing))
 	if err != nil {
 		return res, err
@@ -358,6 +365,9 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	}
 	res.Stage = "applied"
 	res.Seats = WaitSeats(ctx, q, launchID, srv, o.Wait, o.Poll)
+	for i := range res.Seats {
+		res.Seats[i].Wake = wakes[res.Seats[i].Handle]
+	}
 	return res, nil
 }
 

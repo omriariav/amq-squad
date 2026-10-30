@@ -37,6 +37,9 @@ func Report(w io.Writer, r Result) {
 	}
 	for _, s := range r.Seats {
 		fmt.Fprintf(w, "seat %s: %s%s%s\n", s.Handle, s.State, suffix(s.ReasonCode), suffix(s.Detail))
+		if wk := s.Wake; wk != nil {
+			fmt.Fprintf(w, "  seat %s wake: mode %s, require_wake %t, injector %s (AMQ prepare)\n", s.Handle, wk.Mode, wk.RequireWake, orNone(wk.Injector))
+		}
 	}
 	for _, n := range r.NextActions {
 		fmt.Fprintf(w, "next: %s\n", n)

@@ -108,6 +108,94 @@ const ClaudePermissionMode = "dontAsk"
 // CodexSandboxArgs are the Codex sandbox and approval flags (plan 4.3, 7.3).
 var CodexSandboxArgs = []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"}
 
+// WakeRule is the 3.0.1 wake rule: the scheduler's doorbell is the seat's
+// next turn. A seat that learns of a task only from an AMQ message in its
+// inbox idles after its first turn unless an AMQ wake turns that message
+// into terminal input (found 2026-10-30, session v31, seat dev). AMQ's
+// grammar forbids an audit reason on an enabled wake
+// (internal/launch/execution_options_grammar.go:35-38 at v0.116.2), so the
+// rule lives here and in the execution note, not in the launch request.
+const WakeRule = "amq-squad 3.0.1: the scheduler's doorbell is the seat's next turn"
+
+// PiWakeAuditReason is a pi seat's disabled-wake audit reason. AMQ's coop
+// exec would wake a pi seat too (paste, internal/harness/harness.go:85), but
+// its dialog guard runs only when pi loads AMQ's pi extension
+// (docs/wake-operations.md:587-599), which the embedded runtime does not, so
+// a doorbell could answer pi's folder-trust or an extension prompt.
+const PiWakeAuditReason = "amq-squad 3.0.1: a pi seat has no AMQ wake until its embedded runtime loads AMQ's pi extension (the doorbell's dialog guard)"
+
+// SeatWake is a seat's AMQ wake policy by runtime (3.0.1). Claude Code and
+// Codex seats require the wake that amq coop exec starts beside the
+// provider (internal/launch/commands.go:135-150 maps it to --require-wake
+// and --wake-inject-mode), typing raw: AMQ's own choice for both harnesses,
+// whose Ink input drops a bracketed-paste Enter
+// (internal/harness/harness.go:61-64, 81-82). claude-native is not open to
+// a seat: it refuses a wrapper and a custom CLAUDE_CONFIG_DIR
+// (internal/cli/wake_claude_native_unix.go:56-60), and every seat runs
+// behind seat-exec. A pi seat keeps its wake disabled (PiWakeAuditReason).
+func SeatWake(runtime string) (require bool, injector *launchapi.InjectorOptionsV1, auditReason string) {
+	switch runtime {
+	case "claude", "codex":
+		return true, &launchapi.InjectorOptionsV1{Mode: launchapi.InjectorRaw}, ""
+	}
+	return false, nil, PiWakeAuditReason
+}
+
+// ReasonWakeNotAdmitted refuses a launch whose Prepare preview shows a seat
+// with another wake than the one compiled: a Claude Code or Codex seat
+// without its wake idles after its first turn (WakeRule).
+const ReasonWakeNotAdmitted = "wake_not_admitted"
+
+// SeatWakeFacts is a seat's wake as AMQ reports it: Prepare's echo of the
+// participant's execution options (launchapi/prepare.go:200-203,
+// fromInternalExecutionOptions at :249 in v0.116.2). AMQ's ApplyResult and
+// its observations carry no wake field, and the wake process itself is
+// started by amq coop exec in the seat's pane, bound to the coop exec pid
+// that seat-exec and the provider keep by exec; it exits with the seat, so
+// a seat's close needs no wake close of its own.
+type SeatWakeFacts struct {
+	RequireWake bool   `json:"require_wake"`
+	Mode        string `json:"mode"`               // enabled | disabled
+	Injector    string `json:"injector,omitempty"` // raw | paste | auto | none | claude-native
+	AuditReason string `json:"audit_reason,omitempty"`
+	Source      string `json:"source"` // always "amq_prepare_preview"
+}
+
+// admittedWakes reads each runnable seat's wake from the Prepare preview and
+// checks it against the compiled request. A seat the preview does not list,
+// or lists without execution options, has no facts (an older AMQ); a listed
+// seat whose admitted wake differs from the compiled one refuses the launch.
+func admittedWakes(req launchapi.PrepareRequestV1, preview launchapi.PreviewV1) (map[string]*SeatWakeFacts, error) {
+	want := map[string]*launchapi.ExecutionOptionsV1{}
+	for _, p := range req.Intent.Participants {
+		if p.Runnable && p.Execution != nil {
+			want[p.Handle] = p.Execution
+		}
+	}
+	out := map[string]*SeatWakeFacts{}
+	for _, p := range preview.Participants {
+		w, ok := want[p.Handle]
+		if !ok || p.Execution == nil {
+			continue
+		}
+		got := p.Execution
+		facts := &SeatWakeFacts{RequireWake: got.RequireWake, Mode: string(got.Wake.Mode), AuditReason: got.Wake.AuditReason, Source: "amq_prepare_preview"}
+		if got.Wake.Injector != nil {
+			facts.Injector = string(got.Wake.Injector.Mode)
+		}
+		wantInjector := ""
+		if w.Wake.Injector != nil {
+			wantInjector = string(w.Wake.Injector.Mode)
+		}
+		if facts.RequireWake != w.RequireWake || facts.Mode != string(w.Wake.Mode) || facts.Injector != wantInjector {
+			return nil, fmt.Errorf("seat %s: %s: AMQ admitted wake mode %q, require_wake %t, injector %q; the launch compiled mode %q, require_wake %t, injector %q (%s)",
+				p.Handle, ReasonWakeNotAdmitted, facts.Mode, facts.RequireWake, orNone(facts.Injector), w.Wake.Mode, w.RequireWake, orNone(wantInjector), WakeRule)
+		}
+		out[p.Handle] = facts
+	}
+	return out, nil
+}
+
 // RolePointer is the whole of the role's part in initial_input: a pointer.
 const RolePointer = "Your seat role is in the file named by the environment variable AMQ_SQUAD_ROLE_PATH. Read it first and follow it."
 
@@ -293,6 +381,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		if s.Resume {
 			policy = launchapi.ResumePolicyResume
 		}
+		requireWake, injector, wakeReason := SeatWake(s.Runtime)
 		seats = append(seats, launchintent.SeatFacts{
 			Handle: s.Handle, Executable: provider, Args: ProviderArgs(s),
 			Wrapper:         &launchapi.WrapperV1{Executable: q.Wrapper, Args: []string{"seat-exec", "--seat", s.Handle}},
@@ -300,7 +389,9 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			ResumePolicy:    policy,
 			BootstrapPrompt: input,
 			NoGitignore:     true,
-			WakeAuditReason: "amq-squad 3.0 seats learn of work through task leases and doorbells (2b-1)",
+			RequireWake:     requireWake,
+			Injector:        injector,
+			WakeAuditReason: wakeReason,
 		})
 		role := []byte(s.Role)
 		out.Roles = append(out.Roles, role)

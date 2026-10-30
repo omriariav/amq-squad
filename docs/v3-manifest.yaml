@@ -597,9 +597,9 @@ entries:
   status: new
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 787
+  current_lines: 878
   fate: new
-  target_lines: 787
+  target_lines: 878
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -4026,9 +4026,9 @@ entries:
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 441
+  current_lines: 526
   fate: new
-  target_lines: 441
+  target_lines: 526
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -4089,9 +4089,9 @@ entries:
   status: new
 - path: internal/seatlaunch/report.go
   v2_lines: 0
-  current_lines: 73
+  current_lines: 76
   fate: new
-  target_lines: 73
+  target_lines: 76
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
