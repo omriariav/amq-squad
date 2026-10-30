@@ -55,6 +55,18 @@ closes.
 
 ## 3.0.x
 
+- The 3.0 Claude plugin is unreachable through the public marketplace: the
+  marketplace source is the repository (omriariav/amq-squad) and Claude
+  Code reads its default branch, main, which carries v2.31; the owner's
+  own install needed the marketplace re-pointed at the v3 checkout.
+  Options for the owner: make v3 the default branch (the repository's main
+  stays as the v2 line under a new name), or a marketplace entry that
+  names the branch. Found 2026-10-30 at the first Claude seat start.
+- Test hygiene: internal/redact TestBlockIsLinearOnALongLine bounds a
+  1 MiB line at 2 s of wall clock; the shared macOS runner missed it once
+  (PR #800's first run, green on the re-run). A measured bound, with the
+  buzz dry-run entry.
+
 - The pi lead on a cloud model (owner, 2026-10-30: "can I start pi and use
   a codex / claude model in it?"): the registry builds pi entries for
   Ollama models only (internal/registry/build.go); Anthropic and OpenAI
