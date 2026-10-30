@@ -1,0 +1,22 @@
+Codex catalog probe record
+==========================
+
+Command: go run ./cmd/amq-squad doctor --probe --runs 1
+Codex CLI: codex-cli 0.166.0
+Date: 2026-10-30
+
+The doctor probe issued one read-only `codex exec --json` turn per catalog
+model. Each accepted response had an exit-zero structured assistant answer of
+exactly `OK` (the ProbeCodexModel predicate). The doctor implementation
+implicitly wrote the owner registry while running; this file records its
+redacted model verdicts only and contains no credential values.
+
+model             verdict
+gpt-5.6-sol       usable (1/1)
+gpt-5.6-terra     usable (1/1)
+gpt-5.6-luna      usable (1/1)
+gpt-6.1-sol       usable (1/1)
+gpt-6-sol         usable (1/1)
+gpt-6.1-terra     usable (1/1)
+gpt-6-astra       usable (1/1)
+gpt-6-luna        usable (1/1)

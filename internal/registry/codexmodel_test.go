@@ -73,9 +73,36 @@ func TestCheckCodexModelBeforeLaunch(t *testing.T) {
 	if v := CheckCodexModel("0.163.0", "gpt-5.6-sol", nil); v.Usable || v.Known {
 		t.Fatalf("an unlisted version must leave the id unchecked: %+v", v)
 	}
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna"} {
+		if v := CheckCodexModel("0.166.0", model, nil); !v.Known || !v.Usable {
+			t.Fatalf("0.166.0/%s = %+v, want a cached usable probe result", model, v)
+		}
+	}
 	probed := map[string]CodexVerdict{"gpt-5.6-sol": {Model: "gpt-5.6-sol", Version: "0.163.0", Known: true, Usable: true}}
 	if v := CheckCodexModel("0.163.0", "gpt-5.6-sol", probed); !v.Usable {
 		t.Fatalf("probed id: %+v", v)
+	}
+}
+
+func TestBuildEmitsEveryCatalogCodexModel(t *testing.T) {
+	cat := agentcatalog.Builtins()
+	det := Detection{Tools: []Tool{{Name: "codex", Found: true, Version: "0.166.0", Login: "logged_in"}}}
+	r := Build(det, Registry{}, BuildOptions{Catalog: cat})
+	wantCost := map[string]string{
+		"gpt-5.6-sol": "high", "gpt-5.6-terra": "medium", "gpt-5.6-luna": "low",
+		"gpt-6.1-sol": "high", "gpt-6-sol": "high", "gpt-6.1-terra": "medium",
+		"gpt-6-astra": "high", "gpt-6-luna": "low",
+	}
+	for _, model := range cat.Entries("codex", agentcatalog.Models) {
+		for _, effort := range cat.Entries("codex", agentcatalog.Efforts) {
+			e, ok := r.Lookup("codex", model.Value, effort.Value)
+			if !ok {
+				t.Fatalf("missing registry entry for catalog model %s/%s", model.Value, effort.Value)
+			}
+			if e.CostTier != wantCost[model.Value] {
+				t.Fatalf("cost tier for %s = %q, want %q", model.Value, e.CostTier, wantCost[model.Value])
+			}
+		}
 	}
 }
 

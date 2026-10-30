@@ -45,7 +45,11 @@ const (
 )
 
 var claudeCost = map[string]string{"haiku": "low", "sonnet": "medium", "opus": "high", "fable": "high"}
-var codexCost = map[string]string{"gpt-5.6-sol": "high", "gpt-5.6-terra": "medium"}
+var codexCost = map[string]string{
+	"gpt-5.6-sol": "high", "gpt-5.6-terra": "medium", "gpt-5.6-luna": "low",
+	"gpt-6.1-sol": "high", "gpt-6-sol": "high", "gpt-6.1-terra": "medium",
+	"gpt-6-astra": "high", "gpt-6-luna": "low",
+}
 
 // workClasses maps a capability tier to the plan 6.1 classes an entry may take.
 func workClasses(tier string) []string {
