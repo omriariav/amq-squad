@@ -2008,6 +2008,18 @@ Release prep.
   row; target sum 35,185 within the band). Gate note: TestOwnerScriptDryRun
   failed once more in the full suite under load and passed 3 of 3 alone on
   the merge result (the hygiene-list entry). [2.8, phase 5 docs-F result]
+- **3.0.0 tagged and released 2026-10-30** at 813818cb through the release
+  flow: `release prepare` from the owner's operator session (a scratch
+  fleet under the owner's home; a root under /private/tmp is refused by
+  the compound release store's owner check, since macOS gives files there
+  the wheel group) raised the tag and github_release gates at 05:07:06Z;
+  the owner answered both in their Buzz threads (github_release handled
+  05:08:23Z, tag 05:08:32Z, both approved and verified); `release publish`
+  at 05:08:57Z tagged 813818cb and created the release, published at
+  05:09:03Z (https://github.com/omriariav/amq-squad/releases/tag/v3.0.0),
+  the tag's commit read back equal to the target. CI run 40958849281 green
+  on all four jobs at the tip below the target. Evidence
+  docs/v3-spike/5-release-evidence/release-2026-10-30/. [2.8, release]
 - migrate and the squad.yaml final form (the phase 5 table row), one
   brief after the verifier merge, because squad.yaml's package takes the
   verifier's add-only classes first. The final form freezes schema 1 for
