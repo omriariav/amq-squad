@@ -34,6 +34,26 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- Solo lead and teams (owner's first solo session, 2026-10-30, pi session
+  01a18b83 under ~/code/amq-test on ollama/qwen3.6:27b): asked to "review
+  this repo with two agents", the solo lead proposed a two-seat team in
+  prose, then answered "why not using a team?" with "I'm solo here, there
+  are no other seats" and did the review alone as two perspectives. The
+  solo role prompt should say what the lead can and cannot start, and the
+  lead should hand the owner the path that does start a team (team propose
+  and apply with the seats it proposed, then the launch; or the mayor),
+  instead of imitating one. Candidate for 3.1: the solo lead proposes a
+  squad.yaml draft (`team propose --from`) so one owner confirmation turns
+  the conversation into a squad ("the mayor proposes, the owner starts").
+- Solo lead host facts: the lead guessed a repository path (/repos/...)
+  before asking; the role prompt should carry where the owner's
+  repositories live (the fleet grant's repository_paths, or ~/code) and
+  the rule to ask for a path it cannot find.
+- Local model latency: on ollama/qwen3.6:27b a turn with a long tool result
+  took about two minutes; the solo lead should show a working indicator
+  and the registry row should carry a measured turn time so the owner can
+  pick a model knowingly.
+
 - Solo lead first turn (owner observation 2026-10-30, the first human run
   of `amq-squad lead`): the lead's role instruction takes effect only after
   the owner's first prompt; nothing is said at start. The solo lead should
