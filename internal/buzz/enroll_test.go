@@ -123,9 +123,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	pm := realTempDir(t)    // the password manager stand-in, outside HOME
 	bin := filepath.Join(home, "bin")
 	amqSquad := filepath.Join(bin, "amq-squad")
-	if out, err := exec.Command("go", "build", "-o", amqSquad, "../../cmd/amq-squad").CombinedOutput(); err != nil {
-		t.Fatalf("build amq-squad: %v\n%s", err, out)
-	}
+	buildOffline(t, amqSquad)
 	t.Setenv("HOME", home) // after the build (the Go cache stays in the real HOME); the test reads the share as the owner would
 	ctx := budget(t)       // the run's one deadline, from after the build
 	script, _ := filepath.Abs("../../docs/v3-buzz/enroll.sh")
@@ -491,6 +489,20 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		})
 	}
 	t.Logf("CANARY GREP: %d channels and files, %d bytes, canary forms %d (nsec1, hex, HEX): %s", scanned, bytesScanned, len(canaries), map[bool]string{true: "FOUND", false: "not found"}[t.Failed()])
+}
+
+// buildOffline builds amq-squad into out with GOPROXY=off. The tree is
+// built from the go.mod the test binary was just built from, so the module
+// cache holds every module it needs; a missing one fails the build closed
+// with a clear message instead of a download. It uses the real HOME (the Go
+// caches), so it runs before the test moves HOME.
+func buildOffline(t *testing.T, out string) {
+	t.Helper()
+	cmd := exec.Command("go", "build", "-o", out, "../../cmd/amq-squad")
+	cmd.Env = append(os.Environ(), "GOPROXY=off")
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build amq-squad offline (GOPROXY=off; the module cache must hold every module go.mod names, as it did for this test binary): %v\n%s", err, msg)
+	}
 }
 
 // shortTempDir is a temporary directory under /tmp, symlinks resolved.

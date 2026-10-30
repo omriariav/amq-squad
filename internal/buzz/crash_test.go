@@ -45,9 +45,7 @@ func TestOwnerSignerCrashLeavesNoKey(t *testing.T) {
 	pm, shimDir := realTempDir(t), realTempDir(t)
 	bin := filepath.Join(home, "bin")
 	amqSquad := filepath.Join(bin, "amq-squad")
-	if out, err := exec.Command("go", "build", "-o", amqSquad, "../../cmd/amq-squad").CombinedOutput(); err != nil {
-		t.Fatalf("build amq-squad: %v\n%s", err, out)
-	}
+	buildOffline(t, amqSquad)
 	script, _ := filepath.Abs("../../docs/v3-buzz/enroll.sh")
 
 	// a relay that accepts and never answers: the policy publication hangs
