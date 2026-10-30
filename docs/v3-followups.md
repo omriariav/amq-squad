@@ -78,8 +78,8 @@ closes.
   reaches the train: the linearity proof as a ratio measured in one
   process (a 1 MiB line against a 64 KiB line within a 64x factor), no
   absolute bound. Task t2 in the v31 store.
-- Done by 3.0.1 t18 (branch v3-301-t18; PR number at merge): the buzz
-  dry-run bound, the test-hygiene entry from 2026-10-29 (spike log).
+- Closed by 3.0.1 t18 (PR #810, branch v3-301-t18): the buzz dry-run
+  bound, the test-hygiene entry from 2026-10-29 (spike log).
   TestOwnerScriptDryRun waited on the serve loop with polling deadlines
   (five of 20 s among eleven, six more in its rehearsal) and one ran out at
   random under load. Each wait now blocks on what the serve loop emits on
