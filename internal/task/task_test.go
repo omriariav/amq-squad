@@ -268,6 +268,28 @@ func TestDispatchOrderAndPoolFilter(t *testing.T) {
 	}
 }
 
+func TestSetRepinsOnlyBeforeTheFirstClaim(t *testing.T) {
+	s := newStore(t)
+	initial := &Pool{Runtime: "claude", Model: "haiku", Effort: "low"}
+	repinned := &Pool{Runtime: "codex", Model: "gpt-5.6-terra", Effort: "medium"}
+	a := mustAdd(t, s, AddInput{Title: "a", Pool: initial})
+	got, err := s.Set(a.ID, nil, repinned, t0)
+	if err != nil || got.Pool == nil || *got.Pool != *repinned {
+		t.Fatalf("re-pin before claim: %+v %v", got, err)
+	}
+	if _, err := s.Claim(a.ID, "h", nil, time.Hour, t0); err != nil {
+		t.Fatal(err)
+	}
+	other := &Pool{Runtime: "claude", Model: "sonnet", Effort: "medium"}
+	if _, err := s.Set(a.ID, nil, other, t0); err == nil || !strings.Contains(err.Error(), "after the first claim") {
+		t.Fatalf("re-pin after claim: %v", err)
+	}
+	stored, err := s.Get(a.ID)
+	if err != nil || stored.Pool == nil || *stored.Pool != *repinned {
+		t.Fatalf("refused re-pin changed task: %+v %v", stored, err)
+	}
+}
+
 func TestSetWaitWritesOnlyOnChange(t *testing.T) {
 	s := newStore(t)
 	a := mustAdd(t, s, AddInput{Title: "a"})
