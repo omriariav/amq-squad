@@ -629,3 +629,82 @@ Codex also found: the launch id the right key (fresh random ids, duplicate
 handles rejected), the accept path unable to refuse a legitimate proof, the
 log fields credential-free, no lock cycle in the cleanup, and no real tmux
 or network in the rows.
+
+## Round 7: Codex on rounds 2 to 4 (two blockers, six should-fixes)
+
+1. **The parent-chain walk (blocker).** internal/panechain Reaches checked
+   only the child's start stamp per hop, so a parent pid reused by a later
+   process (a lead descendant taking an exited parent's pid between hops)
+   spliced the lead's ancestry onto a seat's process. Every hop now reads
+   the child's stamp, its parent pid, the parent's raw start stamp, then the
+   child's parent pid and stamp again: the parent must have started no later
+   than the child (stampOrder over procinfo's darwin-tv:SEC.USEC and
+   linux-ticks:N, compared as numbers), the child's parent pid and stamp
+   must be unchanged, and the next hop's stamp must be the one read for it
+   as a parent; any mismatch, or a stamp that cannot be ordered, is unknown.
+   The team-mode lead's proof inherits it (it is the same walk). Rows:
+   TestReachesRefusesAReusedParentPid (a reused parent refused; a normal
+   chain passes; a child reparented mid-hop unknown), TestStampOrder. The
+   existing walk row moved to real-format stamps (the order needs them).
+2. **Exact refused paths (blocker).** The widen tool parsed the refusal's
+   display text, which truncates at eight and cannot carry ", " or " ("
+   exactly (Codex reproduced three wrong widenings). The commit step's exact
+   outside paths (seatcommit `Result.OutsidePaths`, the violation's
+   untruncated list) are recorded on the task with the block
+   (`task.RefusedPaths`, `refused_paths`, through `Store.RefuseCommitPaths`,
+   from the scheduler's commit application and from `seat commit`), and
+   cleared with it (reset, widen, completion). The tool reads only
+   refused_paths; the default is exactly that list; any other path, and an
+   empty or missing list, is refused. Rows: TestRefusalOutsidePathsAreExact
+   (seatcommit: a real refusal over ten files with ", ", " (" and "*" in
+   names, exact while the display text says "and 2 more"),
+   TestRefuseCommitPathsRecordsTheExactPaths (task),
+   TestCommitRefusalRecordsItsRefusedPaths (scheduler), and the pi rows
+   (Codex's three shapes refused; names with ", " and " (" passed whole).
+3. **Literal names, not globs.** No exact-path mode existed, so `task widen`
+   gains one: `--path PATH` (repeatable). `task.LiteralGlob` turns a path into
+   the declared entry that matches only it (`*`, `?`, `[` become one-character
+   classes; a backslash, a control character, a directory or a path that is
+   not clean and relative is refused), and a comma stays part of the name
+   (no list splitting). The widen tool passes each file as one --path. Rows:
+   TestLiteralGlobMatchesOnlyThePath (task), TestTaskWidenPathIsExact (cli),
+   the pi argv row.
+4. **The pane check bound to the binding.** A recorded pane (%N) is the
+   binding's live resource only when the binding's own tmux server (the
+   socket in its instance identity) lists it in the binding's session (the
+   tmux:v1:session resource's id and name), with the seat's agent label and
+   the server pid the binding recorded as its epoch (tmux:v1:epoch, AMQ's
+   server incarnation). After a server restart a reused %N no longer reads
+   as present. It reads AMQ's binding record (meta/launch/binding.json)
+   directly: Prepare exposes only the per-handle resource. Row:
+   TestRecordedPaneIsPresentOnlyInTheBindingsServerAndSession. The cancel
+   path's pane check (an unresolved request's own pane) still compares the
+   id alone; a false "present" there only keeps a request unresolved (fail
+   closed), so it is left as it is.
+5. **No real HOME.** The seatlaunch TestMain sets HOME to a temp dir beside
+   the tmux stub, and the roster fixture sets its own: a launch's grant read
+   (grants.Load, ~/.amq-squad/grants.yaml) never reaches the owner's. Row:
+   TestRowsRunUnderATempHome (HOME is not the passwd home).
+6. **Redaction at the source.** amq's stderr is redacted with redact.Block
+   where the launch reads it (`amqDiagnostic` in run.go), so the staged
+   record's Apply.FailureDetail, Report's output and the scheduler's
+   decisions all get the redacted text (t17 inherits it from the same
+   place). Row: TestAmqFailureDetailIsRedactedWhereItIsRead (a multiline
+   canary in the record, the report and the result).
+7. **An unreadable lead stamp is unknown.** The team-mode lead's state has
+   three values (`schedproc.LeadState`): gone only on a dead pid or a changed
+   stamp; a live pid whose stamp cannot be read (a permission or transient
+   error), or an incarnation never recorded, is unknown: a decision is
+   origin_unknown, and the scheduler logs lead_unknown once, checks again
+   each tick and never exits on it. Row: TestUnreadableLeadStampIsUnknownNotGone.
+8. **The bound is unknown.** A walk that runs out of its 64 hops before the
+   chain ends returns unknown (origin_unknown), never not_lead. Row:
+   TestReachesBoundIsUnknown.
+
+Revert check of the round: 14 mutations, each failing its row (panechain 3,
+schedproc 1, task 2, seatcommit 1, scheduler 1, cli 1, seatlaunch 3, pi 2).
+
+Files beyond the earlier lists: internal/panechain (the walk), internal/task
+and internal/seatcommit (widened by the ruling), internal/cli/task_widen.go
+(the `--path` mode) and internal/cli/seat_commit.go (the second place a
+refusal is recorded).
