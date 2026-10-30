@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -212,6 +213,11 @@ Examples:
 	if *runs < 1 {
 		return usageErrorf("--runs must be at least 1")
 	}
+	// Before any registry read, runtime load or provider call: a seat never
+	// writes owner state, the registry or the pi runtimes (brief 3.0.1-t15).
+	if err := refuseDoctorWriteInSeat(os.Getenv, *writeRegistry, *probe, *fixFlag); err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -229,8 +235,41 @@ Examples:
 	d.Host.UsageScan = *usageScan
 	d.Fix = *fixFlag
 	syncRegistryRuntimePin()
-	d.ReleaseDrift = withClearChecks(doctorReleaseDriftHook(os.Getenv("AM_ROOT")), os.Getenv("AM_ROOT"))
-	return executeDoctor(d)
+	d.ReleaseDrift = withClearChecks(doctorReleaseDriftFor(os.Getenv, os.Getenv("AM_ROOT")), os.Getenv("AM_ROOT"))
+	return doctorExecute(d)
+}
+
+// doctorExecute is runDoctor's last step (a seam: the seat refusal rows
+// swap in a fake host so a reverted guard never probes the real machine).
+var doctorExecute = executeDoctor
+
+// errSeatOwnerState is the reason doctor refuses --probe, --write-registry
+// and --fix inside a seat.
+var errSeatOwnerState = errors.New("seat_owner_state_refused")
+
+// refuseDoctorWriteInSeat fails closed when a writing doctor runs inside a
+// seat (brief 3.0.1-t15, R54). --probe and --write-registry write the
+// owner's registry (~/.amq-squad/registry.yaml) and --fix removes pi
+// runtimes under ~/.amq-squad/runtime. A seat's binary may be built from the
+// branch it edits, so a seat never runs them; the owner does, from their own
+// terminal with the installed binary. Plain doctor writes nothing and still
+// runs in a seat: a seat may read host facts.
+func refuseDoctorWriteInSeat(getenv func(string) string, writeRegistry, probe, fix bool) error {
+	if !writeRegistry && !probe && !fix {
+		return nil
+	}
+	marker := seatEnvMarker(getenv)
+	if marker == "" {
+		return nil
+	}
+	flag, target := "--fix", "the owner's pi runtimes (~/.amq-squad/runtime)"
+	switch {
+	case probe:
+		flag, target = "--probe", "the owner's registry (~/.amq-squad/registry.yaml)"
+	case writeRegistry:
+		flag, target = "--write-registry", "the owner's registry (~/.amq-squad/registry.yaml)"
+	}
+	return fmt.Errorf("doctor: %w: %s is set, so this process is a seat; doctor %s writes %s and seats never run doctor against owner state. The owner runs `amq-squad doctor %s` from their own terminal with the installed binary; plain `amq-squad doctor` (writes nothing) still runs here", errSeatOwnerState, marker, flag, target, flag)
 }
 
 func resolveProjectDirFlag(cwd, project string, explicit bool) (string, error) {
