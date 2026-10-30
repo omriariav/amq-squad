@@ -148,7 +148,8 @@ func TestLauncherCancelConfirmsFailedAndUnknownRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.l.Wait()
-	if len(f.events) != 0 {
+	// No SeatUp; the failure is posted once, with its stage (3.0.1 t17).
+	if len(f.events) != 1 || f.events[0].Kind != scheduler.SeatLaunchFailed || f.events[0].Stage != "apply_failed" || f.events[0].RequestID != req.ID {
 		t.Fatalf("a failed launch posted %+v", f.events)
 	}
 	if err := f.l.CancelSeatRequest(req); err != nil {

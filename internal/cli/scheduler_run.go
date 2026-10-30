@@ -256,6 +256,9 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Decisions: decisions,
 		LeadGone:  leadGone,
 		Exits:     committer,
+		// The per-tick liveness of every roster seat from the launch ledger
+		// (3.0.1 t17): a seat whose process ended is gone within one tick.
+		Liveness:  &schedproc.Liveness{Root: root},
 		Launcher:  &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		Doorbell:  schedproc.Doorbell{Sender: sender},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},

@@ -50,7 +50,9 @@ func TestAmbiguousApplyObservationsKeepTheRequestUnresolved(t *testing.T) {
 		if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(p.pid) {
 			t.Fatalf("after the proof: %v, seat alive %v", err, procinfo.Alive(p.pid))
 		}
-		if len(f.events) != 0 {
+		// No SeatUp; the unresolved launch is posted once as a failure
+		// (apply_ambiguous), 3.0.1 t17.
+		if len(f.events) != 1 || f.events[0].Kind != scheduler.SeatLaunchFailed || f.events[0].ReasonCode != "apply_ambiguous" {
 			t.Fatalf("an ambiguous request posted %+v", f.events)
 		}
 	}

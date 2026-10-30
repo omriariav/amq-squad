@@ -483,7 +483,7 @@ func scenario(t *testing.T, seed int64) []Decision {
 	step() // requests seats
 	at := h.clk.Now()
 	// Each launched seat carries its request id back (seat-req-t-1..4 for t1..t4).
-	post(Event{SeatUp, at, "s-a", sonnet, "seat-req-t-1"}, Event{SeatUp, at, "s-b", sonnet, "seat-req-t-2"}, Event{SeatUp, at, "s-c", gpt, "seat-req-t-3"}, Event{SeatUp, at, "s-d", sonnet, "seat-req-t-4"})
+	post(Event{Kind: SeatUp, At: at, Handle: "s-a", Pool: sonnet, RequestID: "seat-req-t-1"}, Event{Kind: SeatUp, At: at, Handle: "s-b", Pool: sonnet, RequestID: "seat-req-t-2"}, Event{Kind: SeatUp, At: at, Handle: "s-c", Pool: gpt, RequestID: "seat-req-t-3"}, Event{Kind: SeatUp, At: at, Handle: "s-d", Pool: sonnet, RequestID: "seat-req-t-4"})
 	step()
 	h.clk.Add(time.Minute)
 	for _, id := range []string{"t1", "t2"} {
@@ -494,10 +494,10 @@ func scenario(t *testing.T, seed int64) []Decision {
 		}
 	}
 	at = h.clk.Now()
-	post(Event{SeatActivity, at, "s-a", task.Pool{}, ""}, Event{SeatActivity, at, "s-b", task.Pool{}, ""}, Event{SeatActivity, at, "s-c", task.Pool{}, ""})
+	post(Event{Kind: SeatActivity, At: at, Handle: "s-a"}, Event{Kind: SeatActivity, At: at, Handle: "s-b"}, Event{Kind: SeatActivity, At: at, Handle: "s-c"})
 	step()
 	h.clk.Add(10 * time.Minute) // unclaimed leases lapse
-	post(Event{SeatGone, h.clk.Now(), "s-d", task.Pool{}, ""}, Event{SeatActivity, h.clk.Now(), "s-a", task.Pool{}, ""})
+	post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-d"}, Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "s-a"})
 	step()
 	h.clk.Add(20 * time.Minute)
 	step()
