@@ -525,3 +525,19 @@ fetch` (the one networked step) on a host without the download cache. The
 3.0.1 owner run uses a binary built this way; a build without `-tags amqpi`
 carries no pi runtime and no tools. Not run here (it writes the owner's
 download cache under ~/.amq-squad).
+
+**A load-sensitive row (found at round 4's gate).** One run of the full
+gate failed internal/seatlaunch while the host was loaded (seatlaunch 72 s,
+cli 169 s, against about 25 s and 85 s unloaded); the package passed on the
+rerun. Under six concurrent copies of the seatlaunch suite the failure was
+reproduced 6 times in 12, every time in TestPiSeatPlansThroughTheUpstreamAdapter:
+`outcome unsupported (launcher_not_available)` at 5.0 s. That is AMQ's tmux
+detection (`tmux -V`, internal/launch/tmux.go:80) missing its 5 s deadline
+(backendCommandTimeout, backend_common.go:16), which the refusing stub's
+`-V` branch answers. To tell the stub from load, the same row ran with the
+real `tmux -V` (a version print; no server is contacted, and only that row
+was selected) beside the stub suites under heavier load: 16 stub suites and
+16 real-tmux runs all passed, so the comparison does not single out the
+stub; a process spawn under that load misses the deadline either way. The
+row stays as it is, listed with the open seatlaunch flakes in
+docs/v3-followups.md.

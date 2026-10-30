@@ -179,7 +179,10 @@ closes.
 - Test flakes still open after the hygiene branches: internal/seatlaunch
   TestProofConnectionsAreBounded and
   TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (TempDir cleanup
-  races); the internal/cli hung-guard row was fixed on v3-5-hygiene2
+  races); internal/seatlaunch TestPiSeatPlansThroughTheUpstreamAdapter under
+  host load (AMQ's tmux detection has a 5 s deadline, backend_common.go:16;
+  a loaded host misses it and Prepare says launcher_not_available; seen in
+  3.0.1 t16, see its execution note); the internal/cli hung-guard row was fixed on v3-5-hygiene2
   (merged c15ac65b). Keep the failing full-run output before any fix. Spike
   log, test-hygiene list.
 - `amq-squad uninstall --json`: the verb has no JSON envelope. Plan 16.4
