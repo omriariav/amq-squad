@@ -46,6 +46,9 @@ type Options struct {
 	Preparer  scheduler.SeatPreparer // nil: seats are dispatched to as they are
 	Limits    scheduler.UsageLimitSource
 	Exits     scheduler.ExitChecker // the exit check off the done path (R3); nil: none
+	// Liveness checks each live roster seat's process every tick (3.0.1
+	// t17; the verb passes the launch ledger's, Liveness); nil: none.
+	Liveness scheduler.SeatLiveness
 	// Admitted runs once the process holds the squad's lock, before anything
 	// else (the preflight baseline: a rejected duplicate process never
 	// touches it, P1 of the milestone B first pass). An error stops the run.
@@ -164,9 +167,17 @@ func Run(ctx context.Context, o Options) error {
 		})
 	}
 	s, err := scheduler.New(scheduler.Options{Store: store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: limits, Exits: o.Exits, Config: o.Config})
+		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: limits, Exits: o.Exits, Liveness: o.Liveness, Config: o.Config})
 	if err != nil {
 		return err
+	}
+	// The launch failures and the blocks on them survive a restart (3.0.1
+	// t17, Codex finding 2): the previous incarnation's state file holds
+	// them.
+	if st, err := scheduler.ReadState(o.Config.StatePath); err != nil {
+		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_unread", Reason: err.Error()})
+	} else if f, b := s.RestoreLaunchFailures(st); f+b > 0 {
+		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_restored", Reason: fmt.Sprintf("%d launch failures and %d tasks blocked on one, from the previous incarnation's state", f, b)})
 	}
 	if p, ok := o.Preparer.(interface {
 		SetLog(io.Writer, func() time.Time)

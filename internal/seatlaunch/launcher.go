@@ -148,12 +148,18 @@ func (l *Launcher) settleAll(rs []*request, res Result, err error) {
 	for _, r := range rs {
 		known[r.handle] = true
 	}
+	// One launch attempt: its seats' failures are one failure of a pool,
+	// not a repeat (3.0.1 t17).
+	attempt := res.LaunchID
+	if attempt == "" && len(rs) > 0 {
+		attempt = "attempt-" + rs[0].req.ID
+	}
 	for _, r := range rs {
-		l.settleOne(r, known, res, err)
+		l.settleOne(r, known, attempt, res, err)
 	}
 }
 
-func (l *Launcher) settleOne(r *request, known map[string]bool, res Result, err error) {
+func (l *Launcher) settleOne(r *request, known map[string]bool, attempt string, res Result, err error) {
 	var seat *SeatState
 	for i := range res.Seats {
 		if res.Seats[i].Handle == r.handle {
@@ -194,14 +200,49 @@ func (l *Launcher) settleOne(r *request, known map[string]bool, res Result, err 
 	default:
 		r.state, r.err = stateFailed, seatFailure(res, err, seat)
 	}
-	state := r.state
+	state, ambiguous := r.state, r.ambiguous
 	l.mu.Unlock()
 	switch state {
 	case stateUp:
 		l.Post(scheduler.Event{Kind: scheduler.SeatUp, At: l.now(), Handle: r.handle, Pool: r.req.Pool, RequestID: r.req.ID})
 	case stateClosing:
 		l.closeOwed(r)
+	case stateFailed, stateUnresolved:
+		// A failed or unresolved launch is the scheduler's decision, with
+		// its reason (3.0.1 t17): before, the failure stayed in r.err and
+		// the scheduler saw only the reservation expire.
+		stage, code, detail := launchFailure(res, err, seat, ambiguous)
+		if l.Post != nil {
+			l.Post(scheduler.Event{Kind: scheduler.SeatLaunchFailed, At: l.now(), Handle: r.handle, Pool: r.req.Pool, RequestID: r.req.ID,
+				LaunchID: attempt, Stage: stage, ReasonCode: code, Detail: amqDetail(detail)})
+		}
 	}
+}
+
+// launchFailure is one request's failure as the scheduler logs it: the
+// stage, AMQ's reason code and the failure detail. A launch that stopped
+// before its seats ran has the launch's own (rosterOutcome's); a seat of
+// an applied launch that did not prove is stage seat_not_up with its own
+// reason (apply_ambiguous when no one pane is its evidence).
+func launchFailure(res Result, err error, seat *SeatState, ambiguous bool) (stage, code, detail string) {
+	o := rosterOutcome(res, err)
+	if o.Stage != scheduler.RosterApplied {
+		return firstNonEmptyStr(o.Stage, "launch_error"), o.ReasonCode, o.Detail
+	}
+	switch {
+	case ambiguous:
+		return "seat_not_up", "apply_ambiguous", "AMQ observed more than one pane for the seat, or a pane for a handle the launch does not know; only its proof or a confirmed close settles it"
+	case seat == nil:
+		return "seat_not_up", "not_observed", "the applied launch reported no state for the seat"
+	}
+	return "seat_not_up", firstNonEmptyStr(seat.ReasonCode, seat.State), seat.Detail
+}
+
+func firstNonEmptyStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // placedSeat reports whether AMQ may have started this request's seat:

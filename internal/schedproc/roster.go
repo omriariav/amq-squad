@@ -149,7 +149,7 @@ func adoptLive(s *scheduler.Scheduler, root string, roster []scheduler.RosterSea
 		case cleanPath(ls.Worktree) != rs.Worktree:
 			reason += fmt.Sprintf("; its launch record's worktree %s is not the roster's %s", orDash(ls.Worktree), orDash(rs.Worktree))
 		default:
-			s.AdoptUp(ls.Handle, pool, now)
+			s.AdoptUpRequest(ls.Handle, ls.ProofRequestID, pool, now)
 			log(scheduler.Decision{Kind: "seat_adopted", Seat: ls.Handle, Pool: pool.Key(), Reason: reason + "; its accepted proof's pid and start stamp match the live process"})
 			continue
 		}

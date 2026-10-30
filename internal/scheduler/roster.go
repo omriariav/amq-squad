@@ -121,12 +121,19 @@ func (s *Scheduler) rosterFor(p task.Pool) []RosterSeat {
 // checked that its handle and pool are the roster's. Call before the first
 // Tick.
 func (s *Scheduler) AdoptUp(handle string, pool task.Pool, at time.Time) {
+	s.AdoptUpRequest(handle, "", pool, at)
+}
+
+// AdoptUpRequest is AdoptUp naming the request the seat's accepted proof
+// carries: the per-tick liveness check reads the launch ledger by it
+// (3.0.1 t17).
+func (s *Scheduler) AdoptUpRequest(handle, requestID string, pool task.Pool, at time.Time) {
 	s.loadExits()
 	if s.seats == nil {
 		s.seats = map[string]*seat{}
 	}
 	if s.seats[handle] == nil {
-		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at}
+		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, requestID: requestID}
 	}
 }
 
@@ -227,6 +234,9 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	if out.Stage != RosterApplied {
 		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}
 		log(Decision{Kind: "roster_launch_failed", Reason: e.Error()})
+		// Each seat's failure is a decision too, and the state is written
+		// before the process ends (3.0.1 t17).
+		s.settleRosterFailure(reqs, out, e, now, log)
 		return e
 	}
 	log(Decision{Kind: "roster_launched", Reason: fmt.Sprintf("launch %s: %d seats in one apply", firstNonEmpty(out.LaunchID, "-"), len(reqs))})
@@ -246,9 +256,13 @@ func (s *Scheduler) resetRelaunchBlocked(now time.Time, log func(Decision)) erro
 		return err
 	}
 	for _, t := range list {
-		if t.State != task.StateBlocked || t.BlockReason != ReasonSeatRelaunch {
+		_, onFailure := s.launchBlocked[t.ID]
+		if t.State != task.StateBlocked || (t.BlockReason != ReasonSeatRelaunch && !onFailure) {
 			continue
 		}
+		// A task blocked on a repeated launch failure is pending again
+		// too: the launch is the lead's retry (3.0.1 t17); if its pool's
+		// seat failed again, dispatch blocks it again with the reason.
 		if _, err := s.Store.Reset(t.ID, nil, now); err != nil {
 			return err
 		}
@@ -339,9 +353,22 @@ func (s *Scheduler) rosterNoIdleSeat(t task.Task, p task.Pool, now time.Time, lo
 		log(Decision{Kind: "seat_request_failed", TaskID: t.ID, Pool: p.Key(), Reason: fmt.Sprintf("no free seat in the squad's seat list for pool %s (no roster seat serves it)", p.Key())})
 		return nil, nil
 	}
+	live := false
+	for _, rs := range serving {
+		if st := s.seats[rs.Handle]; st != nil && st.closing == "" {
+			live = true
+		}
+	}
+	if !live {
+		// No live seat of the pool and its launch failed twice with one
+		// reason: the lead's block with that reason (3.0.1 t17).
+		if got, err := s.blockOnLaunchFailure(t, p, now, log); err != nil || got != nil {
+			return got, err
+		}
+	}
 	for _, q := range s.requests {
 		if PoolServes(q.req.Pool, p) {
-			return nil, s.wait(t, task.WaitSeatStarting, now)
+			return nil, s.waitForSeat(t, p, now)
 		}
 	}
 	if s.UsageLimited(now) {
@@ -357,6 +384,9 @@ func (s *Scheduler) rosterNoIdleSeat(t task.Task, p task.Pool, now time.Time, lo
 	log(Decision{Kind: ReasonSeatRelaunch, TaskID: t.ID, Seat: strings.Join(gone, ","), Pool: p.Key(), Reason: AMQBindingPresent})
 	detail := fmt.Sprintf("every roster seat of pool %s is gone (%s); AMQ refuses a fresh seat into the session's present binding (%s) until it can join a fresh participant (ask 20); the lead's decision: %s (the remaining seats finish what they hold and close, then the roster relaunches in one apply)",
 		p.Key(), strings.Join(gone, ", "), AMQBindingPresent, RelaunchVerb)
+	if f := s.failureFor(p); f != nil {
+		detail += fmt.Sprintf("; the pool's last launch failed at stage %s with reason %s: %s", f.Stage, f.Code(), firstNonEmpty(f.Detail, "no detail"))
+	}
 	got, err := s.Store.Block(t.ID, "", ReasonSeatRelaunch, detail, task.RouteLead, now)
 	if err != nil {
 		return nil, err
