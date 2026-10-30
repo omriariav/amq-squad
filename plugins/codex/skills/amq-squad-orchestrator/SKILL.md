@@ -1,7 +1,7 @@
 ---
 name: "amq-squad-orchestrator"
 description: "Deprecated compatibility redirect for the live lead skill. Use amq-squad:orchestrator."
-version: "3.0.0"  # x-release-please-version
+version: "3.0.1"  # x-release-please-version
 ---
 Use `amq-squad:orchestrator`. The old name is retained only for compatibility;
 the namespaced skill owns the live lead's planning, dispatch, status review,

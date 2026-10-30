@@ -11,7 +11,7 @@ For an installed v2, 3.0 changes the following. The rules live in the docs, not 
 - Owner setup: the token file.
 - Owner setup: `amq-squad trust` per seat repository.
 - Owner setup: the Codex notify line.
-- Install from the `/v3` module path: `go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.0`.
+- Install from the `/v3` module path: `go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.1`.
 
 The sections below are the earlier v2 migration guide, unchanged.
 
