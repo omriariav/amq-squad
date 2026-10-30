@@ -1,11 +1,12 @@
 # 3.0.1 t17: a failed seat launch is a decision, a gone seat is seen each tick (execution note)
 
-Branch v3-301-t17 on origin/v3-301-t16 39b82e10 (the brief named 609b0fd5
+Branch v3-301-t17 on origin/v3-301-t16 17cde302 (the brief named 609b0fd5
 or later; the branch was cut at 609b0fd5, fast-forwarded to 25812dd5 before
-the first commit, rebased onto bd435bff before it was pushed, and t16's
-round 5, 39b82e10, merged in). Round 5 touched
-internal/seatlaunch/launcher_test.go (a cleanup in newLauncherFixture and a
-new row) and proof_unix.go; the merge kept both sides without conflict. Brief:
+the first commit, rebased onto bd435bff before it was pushed, then t16's
+rounds 5, 39b82e10, and 6, 17cde302, merged in). Rounds 5 and 6 touched
+internal/seatlaunch/launcher_test.go (a cleanup in newLauncherFixture, a new
+row, its done-channel wait), proof_unix.go and the new staged.go; both
+merges kept both sides without conflict. Brief:
 3.0.1-t17, the reviewer rulings of 2026-10-30 (session v31).
 
 ## The day's evidence (2026-10-30, session v31)
