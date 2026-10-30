@@ -31,7 +31,7 @@ func (s Store) ResetBy(id, caller string, pool *Pool, now time.Time) (Task, erro
 		if t.CreatedBy != "" && t.CreatedBy != caller {
 			return fmt.Errorf("%w: task %s belongs to %s, not %s", ErrResetRefused, t.ID, t.CreatedBy, caller)
 		}
-		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail = StatePending, nil, "", "", ""
+		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = StatePending, nil, "", "", "", nil
 		if pool != nil {
 			p := *pool
 			t.Pool = &p

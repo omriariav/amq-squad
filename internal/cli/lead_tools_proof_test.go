@@ -133,3 +133,50 @@ func TestLeadToolVerbsAreProvedFromTheLeadsDescendant(t *testing.T) {
 		t.Fatalf("a refused decision was applied: relaunch %v, widen %+v", relaunched, widened)
 	}
 }
+
+// t16 round 7 (Codex 3): `task widen --path` adds exact files: each path's
+// glob characters are made literal (a file a seat named like a glob never
+// widens the scope) and a comma stays part of the name; the scheduler gets
+// those exact entries. Reverted (the tool's literal names read as globs
+// through --files), "src/*.go" covered every Go file in src and
+// "docs/a, b.md" split in two.
+func TestTaskWidenPathIsExact(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	if _, err := task.Open(root); err != nil {
+		t.Fatal(err)
+	}
+	me := os.Getpid()
+	start, ok := procinfo.StartToken(me)
+	if !ok {
+		t.Skip("no start stamp for this process")
+	}
+	var got []schedproc.WidenRequest
+	s, err := schedproc.ServeDecisions(schedproc.DecideOptions{Root: root, Lead: "lead", LeadPane: schedproc.SupervisingLead(me, start, procinfo.StartToken, procinfo.Alive),
+		Apply: func(_ string, req schedproc.WidenRequest) schedproc.DecideReply {
+			got = append(got, req)
+			return schedproc.DecideReply{OK: true}
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "lead", Root: root, PID: me, StartedAt: time.Now(), DecisionSocket: s.Path()}); err != nil {
+		t.Fatal(err)
+	}
+	prev := taskWidenSend
+	t.Cleanup(func() { taskWidenSend = prev })
+	taskWidenSend = func(string, []string) ([]byte, error) { return nil, nil }
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"widen", "t1", "--root", root, "--path", "src/*.go", "--path", "docs/a, b.md", "--reason", "they belong"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || strings.Join(got[0].Files, "|") != "src/[*].go|docs/a, b.md" {
+		t.Fatalf("the widening sent: %+v", got)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"widen", "t1", "--root", root, "--path", "a\\b.go", "--reason", "x"})
+	}); err == nil || len(got) != 1 {
+		t.Fatalf("a path the declared set cannot hold exactly was sent: %v", err)
+	}
+}

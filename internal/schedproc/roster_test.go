@@ -426,7 +426,7 @@ func TestSchedulerExitsWhenItsTeamModeLeadIsGone(t *testing.T) {
 	gone := false
 	var mu sync.Mutex
 	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
-		Config:   scheduler.Config{MaxSeats: 1, Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}}},
+		Config: scheduler.Config{MaxSeats: 1, Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}}},
 		LeadState: func() (LeadStatus, string) {
 			mu.Lock()
 			defer mu.Unlock()

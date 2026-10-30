@@ -91,17 +91,22 @@ export const toolArgv = {
 	},
 	// taskWiden is the lead's widening of a task the commit step refused for
 	// files outside its declared set (3.0.1 t16): the `amq-squad task widen`
-	// verb with only the paths that refusal names. refused is those paths
-	// (refusedPaths); files, when given, must be among them, so the tool
-	// never widens a task by a path the seat's refusal did not name.
+	// verb with only the paths that refusal recorded. refused is the task's
+	// refused_paths (refusedPaths); files, when given, must be among them, so
+	// the tool never widens a task by a path the seat's refusal did not name.
+	// Each file goes as one exact --path (round 7): the verb makes its glob
+	// characters literal and keeps a comma in the name, so a file named like
+	// a glob never widens the scope.
 	taskWiden(_cfg: Config, p: { id: string; reason: string; files?: string[] }, refused: string[]): string[] {
 		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
 		if (!p.reason?.trim()) throw new Error("reason is required: the lead's decision to widen");
 		const files = p.files?.length ? p.files : refused;
 		const unknown = files.filter((f) => !refused.includes(f));
 		if (unknown.length) throw new Error(`not a path the commit step refused for task ${p.id}: ${unknown.join(", ")} (refused: ${refused.join(", ")})`);
-		if (!files.length || files.some((f) => !f || f.includes(",") || f.startsWith("-"))) throw new Error("no path to widen by");
-		return ["task", "widen", p.id, "--files", files.join(","), "--reason", p.reason.trim(), "--json"];
+		if (!files.length || files.some((f) => !f)) throw new Error("no path to widen by");
+		const a = ["task", "widen", p.id];
+		for (const f of files) a.push("--path", f);
+		return [...a, "--reason", p.reason.trim(), "--json"];
 	},
 	taskAdd(_cfg: Config, p: { title: string; class: string; description?: string; files?: string[]; depends_on?: string[]; pool?: string; priority?: number }): string[] {
 		if (!CLASSES.includes(p.class)) throw new Error(`class must be one of ${CLASSES.join(", ")}`);
@@ -115,27 +120,21 @@ export const toolArgv = {
 	},
 };
 
-// refusedPaths is the paths a task's commit refusal names as outside its
-// declared files: the task (from `amq-squad task show --json`) must be
-// blocked with outside_declared_files, and the paths are read from the
-// refusal's detail as the commit step writes it ("outside_declared_files:
-// a.go, b.go (declared: ...)"; more than eight end with "and N more", which
-// is refused rather than guessed).
-export function refusedPaths(t: { id?: string; state?: string; block_reason?: string; block_detail?: string }): string[] {
-	const prefix = "outside_declared_files: ";
+// refusedPaths is the exact paths a task's commit refusal recorded outside
+// its declared files: the task (from `amq-squad task show --json`) must be
+// blocked with outside_declared_files, and the paths are its refused_paths
+// list, which the commit step writes with the block (round 7). The display
+// text in block_detail is never read: it truncates and cannot carry a name
+// with ", " or " (" exactly. An empty or missing list is refused.
+export function refusedPaths(t: { id?: string; state?: string; block_reason?: string; refused_paths?: unknown }): string[] {
 	if (t.state !== "blocked" || t.block_reason !== "outside_declared_files") {
 		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen`);
 	}
-	for (const seg of (t.block_detail ?? "").split("; ")) {
-		if (!seg.startsWith(prefix)) continue;
-		let rest = seg.slice(prefix.length);
-		const cut = rest.indexOf(" (");
-		if (cut >= 0) rest = rest.slice(0, cut);
-		if (/ and \d+ more$/.test(rest)) throw new Error(`task ${t.id}: the refusal names more paths than it lists; widen with amq-squad task widen from the owner's decision`);
-		const paths = rest.split(", ").map((x) => x.trim()).filter(Boolean);
-		if (paths.length) return paths;
+	const list = t.refused_paths;
+	if (!Array.isArray(list) || !list.length || !list.every((x) => typeof x === "string" && x !== "")) {
+		throw new Error(`task ${t.id ?? "?"}: the refusal recorded no refused paths (refused_paths); widen with amq-squad task widen from the owner's decision`);
 	}
-	throw new Error(`task ${t.id ?? "?"}: the refusal names no path`);
+	return list as string[];
 }
 
 export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = run): string[] {

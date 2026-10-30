@@ -289,3 +289,31 @@ func TestRelaunchRefusedWithoutARosterAndStateNamesIt(t *testing.T) {
 		t.Fatalf("state %+v %v", st, err)
 	}
 }
+
+// t16 round 7 (Codex 2): the commit step's refused paths reach the task
+// record with the block, exact (the scheduler's application of a refusal).
+// Reverted (RefuseCommit without the paths), the task carries none and the
+// lead's widen tool refuses for lack of a recorded list.
+func TestCommitRefusalRecordsItsRefusedPaths(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	paths := []string{"docs/a, b.md", "src/ (note)", "src/*.go"}
+	h.s.Committer = &scripted{results: []CommitResult{{ReasonCode: "outside_declared_files", Detail: "outside", Route: task.RouteLead, RefusedPaths: paths}}}
+	h.up("s1", sonnet)
+	tk, err := h.store.Add(task.AddInput{Title: "a", Class: "implement", Pool: &sonnet, DeclaredFiles: []string{"a.go"}}, h.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.tick()
+	now := h.clk.Now()
+	if _, err := h.store.Claim(tk.ID, "s1", nil, time.Hour, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.Done(tk.ID, "s1", "", "", now); err != nil {
+		t.Fatal(err)
+	}
+	h.tick()
+	got := h.get(tk.ID)
+	if got.State != task.StateBlocked || strings.Join(got.RefusedPaths, "|") != strings.Join(paths, "|") {
+		t.Fatalf("the refused task: state %s reason %s detail %s paths %q", got.State, got.BlockReason, got.BlockDetail, got.RefusedPaths)
+	}
+}

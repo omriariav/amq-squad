@@ -34,28 +34,34 @@ var ErrNoLease = errors.New("no lease held")
 
 // Task is one task file (schema 1).
 type Task struct {
-	Schema        int           `json:"schema"`
-	ID            string        `json:"id"`
-	Title         string        `json:"title"`
-	Description   string        `json:"description,omitempty"`
-	Class         string        `json:"class"`
-	State         string        `json:"state"`
-	Priority      int           `json:"priority"`
-	DependsOn     []string      `json:"depends_on"`
-	DeclaredFiles []string      `json:"declared_files"`
-	ProjectPath   string        `json:"project_path,omitempty"`
-	Pool          *Pool         `json:"pool"`
-	Lease         *Lease        `json:"lease"`
-	Attempt       int           `json:"attempt"`
-	Attempts      []Attempt     `json:"attempts,omitempty"`
-	WaitReason    string        `json:"wait_reason,omitempty"`
-	BlockReason   string        `json:"block_reason,omitempty"`
-	BlockRoute    string        `json:"block_route,omitempty"`
-	BlockDetail   string        `json:"block_detail,omitempty"`
-	Report        *Report       `json:"report"`
-	Evidence      string        `json:"evidence,omitempty"`
-	CancelReason  string        `json:"cancel_reason,omitempty"`
-	ScopeChanges  []ScopeChange `json:"scope_changes,omitempty"`
+	Schema        int       `json:"schema"`
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description,omitempty"`
+	Class         string    `json:"class"`
+	State         string    `json:"state"`
+	Priority      int       `json:"priority"`
+	DependsOn     []string  `json:"depends_on"`
+	DeclaredFiles []string  `json:"declared_files"`
+	ProjectPath   string    `json:"project_path,omitempty"`
+	Pool          *Pool     `json:"pool"`
+	Lease         *Lease    `json:"lease"`
+	Attempt       int       `json:"attempt"`
+	Attempts      []Attempt `json:"attempts,omitempty"`
+	WaitReason    string    `json:"wait_reason,omitempty"`
+	BlockReason   string    `json:"block_reason,omitempty"`
+	BlockRoute    string    `json:"block_route,omitempty"`
+	BlockDetail   string    `json:"block_detail,omitempty"`
+	// RefusedPaths are the exact paths a commit refusal found outside the
+	// declared files (outside_declared_files), as the commit step listed
+	// them, untruncated (3.0.1 t16 round 7): the lead's widening reads this
+	// list, never BlockDetail's display text. Set with the block, cleared
+	// with it.
+	RefusedPaths []string      `json:"refused_paths,omitempty"`
+	Report       *Report       `json:"report"`
+	Evidence     string        `json:"evidence,omitempty"`
+	CancelReason string        `json:"cancel_reason,omitempty"`
+	ScopeChanges []ScopeChange `json:"scope_changes,omitempty"`
 	// The PR binding (3-2 fix 4, milestone B's field names): the harness
 	// commit step, and the merge train after its own rebase, write it through
 	// BindPR; it survives every mutation like any other field.
