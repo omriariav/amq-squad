@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { registerTools, toolArgv } from "../extensions/lib/tools.ts";
+import { refusedPaths, registerTools, toolArgv } from "../extensions/lib/tools.ts";
 import { allowed, refOf } from "../extensions/lib/models.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import { FakePi, script, tmpdir } from "./fakepi.ts";
@@ -63,4 +63,50 @@ test("model restriction", () => {
 	assert.equal(allowed(["ollama/qwen3.6:27b"], { provider: "google", id: "gemini-2.5-pro" }), false);
 	assert.equal(allowed(["ollama/qwen3.6:27b"], { provider: "ollama", id: "qwen3.6:27b" }), true);
 	assert.equal(allowed([], { provider: "google", id: "x" }), true);
+});
+
+// 3.0.1 t16 round 4: the lead's two decisions as tools. Each runs the CLI
+// verb (the scheduler proves the lead from the calling process); the widen
+// tool carries the task id and the lead's reason, and only paths the task's
+// outside_declared_files refusal names.
+const refusedTask = {
+	id: "t3",
+	state: "blocked",
+	block_reason: "outside_declared_files",
+	block_detail: "outside_declared_files: internal/b.go, internal/c.go (declared: internal/a.go)",
+};
+
+test("argv: the relaunch and the widening are the CLI verbs; the widening takes only refused paths", () => {
+	assert.deepEqual(toolArgv.schedulerRelaunch(cfg(), { reason: "rev-1 is gone" }), ["scheduler", "relaunch", "--reason", "rev-1 is gone", "--json"]);
+	assert.throws(() => toolArgv.schedulerRelaunch(cfg(), { reason: " " }), /reason is required/);
+	const refused = refusedPaths(refusedTask);
+	assert.deepEqual(refused, ["internal/b.go", "internal/c.go"]);
+	assert.deepEqual(toolArgv.taskWiden(cfg(), { id: "t3", reason: "they belong" }, refused), ["task", "widen", "t3", "--files", "internal/b.go,internal/c.go", "--reason", "they belong", "--json"]);
+	assert.deepEqual(toolArgv.taskWiden(cfg(), { id: "t3", reason: "one belongs", files: ["internal/c.go"] }, refused), ["task", "widen", "t3", "--files", "internal/c.go", "--reason", "one belongs", "--json"]);
+	assert.throws(() => toolArgv.taskWiden(cfg(), { id: "t3", reason: "x", files: ["internal/b.go", "/etc/passwd"] }, refused), /not a path the commit step refused for task t3: \/etc\/passwd/);
+	assert.throws(() => toolArgv.taskWiden(cfg(), { id: "t3", reason: " " }, refused), /reason is required/);
+	assert.throws(() => refusedPaths({ ...refusedTask, state: "pending" }), /not blocked for files outside/);
+	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "size_cap" }), /not blocked for files outside/);
+	assert.throws(() => refusedPaths({ ...refusedTask, block_detail: "outside_declared_files: a, b, c, d, e, f, g, h and 2 more (declared: x)" }), /more paths than it lists/);
+});
+
+test("the lead's widen tool reads the refusal and never widens by a fabricated path", async () => {
+	const dir = tmpdir();
+	const log = path.join(dir, "log");
+	const show = JSON.stringify({ schema_version: 1, kind: "task", data: { root: "/r", task: refusedTask } });
+	const bin = script(dir, "amq-squad", `echo "amq-squad $@" >> ${log}; if [ "$2" = "show" ]; then echo '${show}'; else echo '{"ok":true}'; fi`);
+	const pi = new FakePi();
+	const names = registerTools(pi as any, cfg({ bin, lead: true }));
+	assert.ok(names.includes("amq_task_widen") && names.includes("amq_scheduler_relaunch"));
+	assert.ok(!registerTools(new FakePi() as any, cfg({ bin })).includes("amq_task_widen"), "a seat has no widen tool");
+	await pi.tools.get("amq_task_widen").execute("c1", { id: "t3", reason: "they belong" }, undefined, undefined, {});
+	await assert.rejects(pi.tools.get("amq_task_widen").execute("c2", { id: "t3", reason: "x", files: ["internal/evil.go"] }, undefined, undefined, {}), /not a path the commit step refused/);
+	await pi.tools.get("amq_scheduler_relaunch").execute("c3", { reason: "rev-1 is gone" }, undefined, undefined, {});
+	const lines = fs.readFileSync(log, "utf8").trim().split("\n");
+	assert.deepEqual(lines, [
+		"amq-squad task show t3 --json",
+		"amq-squad task widen t3 --files internal/b.go,internal/c.go --reason they belong --json",
+		"amq-squad task show t3 --json",
+		"amq-squad scheduler relaunch --reason rev-1 is gone --json",
+	]);
 });

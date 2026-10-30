@@ -82,6 +82,27 @@ export const toolArgv = {
 		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
 		return ["task", "reset", p.id, "--me", cfg.me];
 	},
+	// schedulerRelaunch is the lead's relaunch of the roster (3.0.1 t16): the
+	// `amq-squad scheduler relaunch` verb itself, which proves the lead over
+	// the scheduler's decision socket from this process's ancestry.
+	schedulerRelaunch(_cfg: Config, p: { reason: string }): string[] {
+		if (!p.reason?.trim()) throw new Error("reason is required: why the roster is relaunched (for example, which seat is gone)");
+		return ["scheduler", "relaunch", "--reason", p.reason.trim(), "--json"];
+	},
+	// taskWiden is the lead's widening of a task the commit step refused for
+	// files outside its declared set (3.0.1 t16): the `amq-squad task widen`
+	// verb with only the paths that refusal names. refused is those paths
+	// (refusedPaths); files, when given, must be among them, so the tool
+	// never widens a task by a path the seat's refusal did not name.
+	taskWiden(_cfg: Config, p: { id: string; reason: string; files?: string[] }, refused: string[]): string[] {
+		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
+		if (!p.reason?.trim()) throw new Error("reason is required: the lead's decision to widen");
+		const files = p.files?.length ? p.files : refused;
+		const unknown = files.filter((f) => !refused.includes(f));
+		if (unknown.length) throw new Error(`not a path the commit step refused for task ${p.id}: ${unknown.join(", ")} (refused: ${refused.join(", ")})`);
+		if (!files.length || files.some((f) => !f || f.includes(",") || f.startsWith("-"))) throw new Error("no path to widen by");
+		return ["task", "widen", p.id, "--files", files.join(","), "--reason", p.reason.trim(), "--json"];
+	},
 	taskAdd(_cfg: Config, p: { title: string; class: string; description?: string; files?: string[]; depends_on?: string[]; pool?: string; priority?: number }): string[] {
 		if (!CLASSES.includes(p.class)) throw new Error(`class must be one of ${CLASSES.join(", ")}`);
 		const a = ["task", "add", "--title", p.title, "--class", p.class];
@@ -93,6 +114,29 @@ export const toolArgv = {
 		return a;
 	},
 };
+
+// refusedPaths is the paths a task's commit refusal names as outside its
+// declared files: the task (from `amq-squad task show --json`) must be
+// blocked with outside_declared_files, and the paths are read from the
+// refusal's detail as the commit step writes it ("outside_declared_files:
+// a.go, b.go (declared: ...)"; more than eight end with "and N more", which
+// is refused rather than guessed).
+export function refusedPaths(t: { id?: string; state?: string; block_reason?: string; block_detail?: string }): string[] {
+	const prefix = "outside_declared_files: ";
+	if (t.state !== "blocked" || t.block_reason !== "outside_declared_files") {
+		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen`);
+	}
+	for (const seg of (t.block_detail ?? "").split("; ")) {
+		if (!seg.startsWith(prefix)) continue;
+		let rest = seg.slice(prefix.length);
+		const cut = rest.indexOf(" (");
+		if (cut >= 0) rest = rest.slice(0, cut);
+		if (/ and \d+ more$/.test(rest)) throw new Error(`task ${t.id}: the refusal names more paths than it lists; widen with amq-squad task widen from the owner's decision`);
+		const paths = rest.split(", ").map((x) => x.trim()).filter(Boolean);
+		if (paths.length) return paths;
+	}
+	throw new Error(`task ${t.id ?? "?"}: the refusal names no path`);
+}
 
 export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = run): string[] {
 	const names: string[] = [];
@@ -217,6 +261,42 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			parameters: Type.Object({}),
 			async execute(_id, _p, signal) {
 				return call(runner, cfg.bin, ["status", "--json"], undefined, cfg, signal);
+			},
+		});
+		reg({
+			name: "amq_scheduler_relaunch",
+			label: "Relaunch the roster",
+			description:
+				"Relaunch the squad's roster when a task is blocked seat_replacement_needs_relaunch (a seat is gone and AMQ cannot start one alone): " +
+				"the seats finish what they hold, every seat closes, and the roster starts again in one launch. Give the reason.",
+			promptSnippet: "amq_scheduler_relaunch: replace a gone seat by relaunching the roster",
+			parameters: Type.Object({ reason: Type.String({ description: "why: which seat is gone, which task waits" }) }),
+			async execute(_id, p, signal) {
+				return call(runner, cfg.bin, toolArgv.schedulerRelaunch(cfg, p), undefined, cfg, signal);
+			},
+		});
+		reg({
+			name: "amq_task_widen",
+			label: "Task widen",
+			description:
+				"Widen a task the harness refused for changing files outside its declared files (outside_declared_files), by the paths that refusal names " +
+				"and no others; files, if given, must be among them. Give your decision as the reason.",
+			promptSnippet: "amq_task_widen: accept a refused task's out-of-scope paths",
+			parameters: Type.Object({
+				id: Type.String({ description: "the refused task's id" }),
+				reason: Type.String({ description: "your decision: why these paths belong to the task" }),
+				files: Type.Optional(Type.Array(Type.String(), { description: "a subset of the paths the refusal names (default: all of them)" })),
+			}),
+			async execute(_id, p, signal) {
+				if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
+				const shown = await call(runner, cfg.bin, ["task", "show", p.id, "--json"], undefined, cfg, signal);
+				let t: Parameters<typeof refusedPaths>[0];
+				try {
+					t = JSON.parse(shown.content[0].text).data.task;
+				} catch {
+					throw new Error(`task ${p.id}: amq-squad task show did not return the task`);
+				}
+				return call(runner, cfg.bin, toolArgv.taskWiden(cfg, p, refusedPaths(t)), undefined, cfg, signal);
 			},
 		});
 		reg({

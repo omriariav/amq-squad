@@ -204,7 +204,7 @@ func TestLeadTeamHasNoWriteTools(t *testing.T) {
 			tools = call.argv[i+1]
 		}
 	}
-	want := "amq_send,amq_drain,amq_reply,amq_task_list,amq_task_add,amq_task_reset,amq_repo_read,amq_repo_list,amq_status"
+	want := "amq_send,amq_drain,amq_reply,amq_task_list,amq_task_add,amq_task_reset,amq_task_widen,amq_scheduler_relaunch,amq_repo_read,amq_repo_list,amq_status"
 	if tools != want || call.getenv("AMQ_SQUAD_LEAD") != "1" {
 		t.Fatalf("team lead --tools %q (want %q), lead=%q", tools, want, call.getenv("AMQ_SQUAD_LEAD"))
 	}
