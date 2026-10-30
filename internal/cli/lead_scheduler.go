@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
@@ -106,6 +107,34 @@ func leadPools(models []string, thinking string) []string {
 		out = append(out, "pi:"+m+":"+thinking)
 	}
 	return out
+}
+
+// resolveTeamLeadIdentity reads the same typed seats file the supervised
+// scheduler receives and turns its session coordinates into the pi lead's
+// complete AMQ identity. An explicit --lead and inherited AM_ME may not name
+// different actors: the scheduler and the tools must agree on one handle.
+func resolveTeamLeadIdentity(seats, explicitLead string) (piruntime.TeamIdentity, error) {
+	q, err := readLaunchSeats(seats)
+	if err != nil {
+		return piruntime.TeamIdentity{}, err
+	}
+	inherited := strings.TrimSpace(os.Getenv("AM_ME"))
+	explicitLead = strings.TrimSpace(explicitLead)
+	if explicitLead != "" && inherited != "" && explicitLead != inherited {
+		return piruntime.TeamIdentity{}, fmt.Errorf("--lead %q disagrees with AM_ME=%q", explicitLead, inherited)
+	}
+	handle := firstNonEmptyStr(explicitLead, inherited, "lead")
+	baseRoot := strings.TrimSpace(q.BaseRoot)
+	if baseRoot == "" {
+		baseRoot = filepath.Join(strings.TrimSpace(q.ProjectRoot), ".agent-mail")
+	}
+	// scheduler run normalizes the seats file before calling SessionRoot;
+	// apply the same path normalization so both processes pin the same root.
+	identity, err := piruntime.NewTeamIdentity(handle, filepath.Clean(baseRoot), q.Session)
+	if err != nil {
+		return piruntime.TeamIdentity{}, err
+	}
+	return identity, nil
 }
 
 // leadSchedulerCommand is the child the lead's team mode runs: `scheduler
