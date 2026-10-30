@@ -92,6 +92,14 @@ type Options struct {
 	// (default: the embedded runtime must load, then piruntime.EnsureShim
 	// under Home); a test seam.
 	PiShim func(home, wrapper string) (string, error)
+	// BeforeApply checks a ready Prepare before anything is staged or
+	// applied (3.0.1 t16, the roster launch): a non-empty reason stops the
+	// launch at stage resource_present with the detail, so AMQ never sees
+	// an Apply it would refuse.
+	BeforeApply func(prepared launchapi.PrepareResultV1) (reason, detail string)
+	// PaneID is the tmux pane id whose shell is pid (default: a read-only
+	// tmux list-panes); a test seam.
+	PaneID func(shell int) string
 }
 
 // SeatState is one seat's state after the launch.
@@ -243,6 +251,13 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, o.Standing))
 	if err != nil {
 		return res, err
+	}
+	if o.BeforeApply != nil && !o.DryRun {
+		if reason, detail := o.BeforeApply(prepared); reason != "" {
+			res.Stage, res.FailureDetail = "resource_present", reason+": "+detail
+			res.NextActions = []string{"the named panes must end before the launch can apply (" + reason + ")"}
+			return res, nil
+		}
 	}
 	if o.DryRun {
 		res.Stage = "prepared"

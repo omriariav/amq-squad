@@ -1,10 +1,13 @@
 package schedproc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -50,15 +53,24 @@ func (f *rosterLauncher) launched() int {
 	return len(f.launches)
 }
 
-// liveSeat stages a launch record and an accepted proof for a seat whose
-// process the startTokenOf seam reports alive.
+// liveSeat stages a launch record and an accepted proof of the same launch
+// and request for a seat whose process the startTokenOf seam reports alive;
+// its worktree is /w/<handle>.
 func liveSeat(t *testing.T, root, handle string, pid int, p task.Pool) {
+	t.Helper()
+	liveSeatOf(t, root, handle, pid, p, "L1", "L1")
+}
+
+// liveSeatOf is liveSeat whose record carries recordLaunch and whose proof
+// carries proofLaunch (a later launch that overwrote the record).
+func liveSeatOf(t *testing.T, root, handle string, pid int, p task.Pool, recordLaunch, proofLaunch string) {
 	t.Helper()
 	if err := os.MkdirAll(launch.StagedDir(root, handle), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	launch.WriteFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName), launch.Record{Handle: handle, Root: root, Session: "s", Runtime: p.Runtime, Model: p.Model, Effort: p.Effort, Worktree: "/w/" + handle, Branch: "seat/" + handle})
-	if err := launch.WriteProof(root, launch.ProofEntry{Handle: handle, PID: pid, Start: "live"}); err != nil {
+	launch.WriteFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName), launch.Record{Handle: handle, Root: root, Session: "s", Runtime: p.Runtime, Model: p.Model, Effort: p.Effort,
+		Worktree: "/w/" + handle, Branch: "seat/" + handle, LaunchID: recordLaunch, RequestID: "req-" + recordLaunch + "-" + handle})
+	if err := launch.WriteProof(root, launch.ProofEntry{Handle: handle, PID: pid, Start: "live", LaunchID: proofLaunch, RequestID: "req-" + proofLaunch + "-" + handle}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -128,7 +140,7 @@ func TestRestartAdoptsTheLiveRosterSeats(t *testing.T) {
 	tk, _ := store.Add(task.AddInput{Title: "work", Class: "implement", Pool: &sonnet}, time.Now())
 	l, log := &rosterLauncher{}, &lockedBuf{}
 	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
-		Config: scheduler.Config{MaxSeats: 2, Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}, {Handle: "x1", Pool: gptPool}}}},
+		Config: scheduler.Config{MaxSeats: 2, Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet, Worktree: "/w/c1"}, {Handle: "x1", Pool: gptPool, Worktree: "/w/x1"}}}},
 		l, func(ds []scheduler.Decision) bool { return decided(ds, "dispatched") })
 	if err != nil {
 		t.Fatal(err)
@@ -151,24 +163,31 @@ func TestRestartAdoptsTheLiveRosterSeats(t *testing.T) {
 	}
 }
 
-// t16 rule 2: a live seat outside the roster, or whose launch record names
-// another pool than the roster's, fails the adoption and is closed with the
-// reason; with no roster seat live the roster launches.
+// t16 rule 2 and Codex finding 1: a live seat outside the roster, whose
+// launch record names another pool or another worktree than the roster's,
+// or whose record is not its proof's own (a later launch overwrote it and
+// failed at Apply while the old process survived), fails the adoption and is
+// closed with the reason; with no roster seat live the roster launches.
 func TestRestartClosesALiveSeatTheRosterDoesNotProve(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
-	seamLive(t, 4242, 4343)
+	seamLive(t, 4242, 4343, 4444, 4545)
 	liveSeat(t, root, "c1", 4242, sonnet)
 	liveSeat(t, root, "x1", 4343, task.Pool{Runtime: "codex", Model: "gpt-old", Effort: "medium"})
+	liveSeatOf(t, root, "y1", 4444, gptPool, "L2", "L1")
+	liveSeat(t, root, "z1", 4545, gptPool)
 	l, log := &rosterLauncher{}, &lockedBuf{}
 	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
-		Config: scheduler.Config{MaxSeats: 2, Roster: []scheduler.RosterSeat{{Handle: "x1", Pool: gptPool}}}},
+		Config: scheduler.Config{MaxSeats: 2, Roster: []scheduler.RosterSeat{{Handle: "x1", Pool: gptPool, Worktree: "/w/x1"},
+			{Handle: "y1", Pool: gptPool, Worktree: "/w/y1"}, {Handle: "z1", Pool: gptPool, Worktree: "/w/elsewhere"}}}},
 		l, func(ds []scheduler.Decision) bool { return decided(ds, "roster_launched") })
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := log.String()
 	if !strings.Contains(text, `"seat":"c1","reason":"alive from a previous incarnation; not a seat of the roster"`) ||
-		!strings.Contains(text, `launch record's pool codex:gpt-old:medium is not the roster's codex:gpt-5.4:medium`) || strings.Contains(text, `"kind":"seat_adopted",`) {
+		!strings.Contains(text, `launch record's pool codex:gpt-old:medium is not the roster's codex:gpt-5.4:medium`) ||
+		!strings.Contains(text, `"seat":"y1","reason":"alive from a previous incarnation; its proof (launch L1, request req-L1-y1) is not its launch record's (launch L2, request req-L2-y1)"`) ||
+		!strings.Contains(text, `its launch record's worktree /w/z1 is not the roster's /w/elsewhere`) || strings.Contains(text, `"kind":"seat_adopted",`) {
 		t.Fatalf("log:\n%s", text)
 	}
 	if l.launched() != 1 {
@@ -285,12 +304,73 @@ func TestLauncherSendsTheRosterToOneLauncher(t *testing.T) {
 	}
 }
 
-// t16 ruling 1: a scheduler started by the lead's team mode takes its own
-// parent (the team-mode lead process, outside the roster's tmux session) as
-// the lead: a decision from that process or its descendants is proved over
-// the real socket, with the real kernel peer and parent chain; a parent
-// that is gone or reused is origin_unknown. Reverted, a lead with no proof
-// ledger entry (one outside the roster's binding) could send no decision.
+// TestRelaunchDialerHelper is not a test: run as a child
+// (AMQSQ_RELAUNCH_DIALER=1) it sends a relaunch over the socket named in its
+// environment and prints the reply, as the pi lead's tool would.
+func TestRelaunchDialerHelper(t *testing.T) {
+	if os.Getenv("AMQSQ_RELAUNCH_DIALER") != "1" {
+		t.Skip("helper process")
+	}
+	reply, err := SendRelaunch(os.Getenv("AMQSQ_ROOT"), os.Getenv("AMQSQ_SOCK"), RelaunchRequest{Reason: "from a child"})
+	if err != nil {
+		reply = DecideReply{Code: "dial_failed", Detail: err.Error()}
+	}
+	b, _ := json.Marshal(reply)
+	os.Stdout.Write(append(b, '\n'))
+	os.Exit(0)
+}
+
+// dialFromChild sends a relaunch from a child of this process.
+func dialFromChild(t *testing.T, s *DecisionServer) DecideReply {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRelaunchDialerHelper$")
+	cmd.Env = append(os.Environ(), "AMQSQ_RELAUNCH_DIALER=1", "AMQSQ_ROOT="+s.Root(), "AMQSQ_SOCK="+s.Path())
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("dialer: %v %s", err, out)
+	}
+	var reply DecideReply
+	if err := json.Unmarshal(bytes.TrimSpace(out), &reply); err != nil {
+		t.Fatalf("dialer output %q: %v", out, err)
+	}
+	return reply
+}
+
+// otherProcess starts a process outside this test's descent (a roster
+// pane's process stands for any process the lead did not start) and
+// returns its pid, its stamp and a stop that kills and reaps it.
+func otherProcess(t *testing.T) (int, string, func()) {
+	t.Helper()
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	start, ok := procinfo.StartToken(pid)
+	if !ok {
+		t.Fatal("no stamp for the other process")
+	}
+	stopped := false
+	stop := func() {
+		if !stopped {
+			stopped = true
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	}
+	t.Cleanup(stop)
+	return pid, start, stop
+}
+
+// t16 ruling 1 with the reviewer's conditions: a scheduler started by the
+// lead's team mode takes its own parent, the team-mode lead, as the lead's
+// incarnation; the proof is an ancestor whose pid and raw start stamp both
+// equal it, over the real socket, kernel peer and parent chain. Accepted:
+// the lead itself and the pi manager's child (a child of the lead). Refused:
+// a dialer that does not descend from the lead (not_lead), a chain whose
+// recorded pid carries another stamp (lead_gone), and any decision after the
+// lead ended (lead_gone). Reverted (the ledger lead only), the team-mode
+// lead outside the roster's binding could send no decision.
 func TestSupervisingLeadProvesTheTeamModeLead(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	me := os.Getpid()
@@ -309,15 +389,47 @@ func TestSupervisingLeadProvesTheTeamModeLead(t *testing.T) {
 		t.Cleanup(s.Close)
 		return s
 	}
+	// This test process is the team-mode lead.
 	s := serve(SupervisingLead(me, start, procinfo.StartToken))
 	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{Reason: "x"}); err != nil || !reply.OK || relaunched != 1 {
 		t.Fatalf("the team-mode lead: %+v %v", reply, err)
 	}
+	if reply := dialFromChild(t, s); !reply.OK || relaunched != 2 {
+		t.Fatalf("the pi manager's child: %+v", reply)
+	}
 	s.Close()
-	// The parent recorded at start is gone and its pid reused: the stamp
-	// read at the decision differs from the one recorded.
-	s = serve(SupervisingLead(me, start, func(int) (string, bool) { return start + "-reused", true }))
-	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedOriginUnknown || relaunched != 1 {
-		t.Fatalf("a reused parent: %+v %v", reply, err)
+	// The recorded pid in the chain with another stamp: the recorded
+	// incarnation is gone and its pid reused.
+	s = serve(SupervisingLead(me, start+"-earlier", procinfo.StartToken))
+	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedLeadGone || relaunched != 2 {
+		t.Fatalf("a reused pid in the chain: %+v %v", reply, err)
+	}
+	s.Close()
+	// The lead is another process: this dialer does not descend from it.
+	other, otherStart, stop := otherProcess(t)
+	s = serve(SupervisingLead(other, otherStart, procinfo.StartToken))
+	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedNotLead || relaunched != 2 {
+		t.Fatalf("a dialer outside the lead's descent: %+v %v", reply, err)
+	}
+	// The lead ends; a decision then is lead_gone.
+	stop()
+	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedLeadGone || relaunched != 2 {
+		t.Fatalf("after the lead ended: %+v %v", reply, err)
+	}
+}
+
+// t16 ruling 1: a scheduler whose team-mode lead is gone exits (lead_gone)
+// rather than serve a dead lead's socket.
+func TestSchedulerExitsWhenItsTeamModeLeadIsGone(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	l, log := &rosterLauncher{}, &lockedBuf{}
+	gone := false
+	var mu sync.Mutex
+	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
+		Config:   scheduler.Config{MaxSeats: 1, Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}}},
+		LeadGone: func() (bool, string) { mu.Lock(); defer mu.Unlock(); return gone, "the lead process ended" }},
+		l, func([]scheduler.Decision) bool { mu.Lock(); gone = true; mu.Unlock(); return false })
+	if !errors.Is(err, ErrLeadGone) || !strings.Contains(log.String(), `"kind":"scheduler_stopped","reason":"lead_gone: the lead process ended"`) {
+		t.Fatalf("err %v; log:\n%s", err, log.String())
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/avivsinai/agent-message-queue/launchapi"
+
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 )
 
@@ -61,9 +63,43 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 		l.reqs[r.ID] = rs[i]
 	}
 	l.mu.Unlock()
-	res, err := Launch(context.Background(), q, l.Options)
+	opts := l.Options
+	opts.BeforeApply = l.resourcesGone(reqs)
+	res, err := Launch(context.Background(), q, opts)
 	l.settleAll(rs, res, err)
 	return rosterOutcome(res, err)
+}
+
+// resourcesGone is the roster launch's check before Apply (3.0.1 t16, Codex
+// finding 3): AMQ applies a fresh roster only into a binding whose tmux
+// resources are gone, and a pane that outlived its seat's process (a
+// remain-on-exit pane, a pane of another process) fails the Apply and
+// stops the scheduler. Prepare names, per handle, the resource the session's
+// binding record holds (prepare.go applyBindingResources: the record's, not
+// a live inspection; AMQ keeps the record after the session ends), so each
+// named pane is asked whether it still exists through the launcher's
+// read-only pane check. A pane that exists, or whose state cannot be read,
+// refuses the launch before Apply with seat_replacement_resource_present.
+func (l *Launcher) resourcesGone(reqs []scheduler.SeatRequest) func(launchapi.PrepareResultV1) (string, string) {
+	mine := map[string]bool{}
+	for _, r := range reqs {
+		mine[r.Handle] = true
+	}
+	return func(p launchapi.PrepareResultV1) (string, string) {
+		var present []string
+		for _, o := range p.Observations {
+			if !mine[o.Handle] || o.Resource == "" || o.Resource == "none" {
+				continue
+			}
+			if gone, known := l.paneGone(o.Resource); !known || !gone {
+				present = append(present, o.Handle+" ("+o.Resource+")")
+			}
+		}
+		if len(present) == 0 {
+			return "", ""
+		}
+		return scheduler.ReasonResourcePresent, "the binding's resource is still present for " + strings.Join(present, ", ") + "; AMQ would refuse the Apply until it ends (a pane that outlives its process stays until AMQ can replace a seat in place, ask 20)"
+	}
 }
 
 // rosterOutcome is the scheduler's view of a roster launch: the stage, AMQ's
@@ -86,6 +122,8 @@ func rosterOutcome(res Result, err error) scheduler.RosterOutcome {
 		out.Detail = strings.Join(res.NextActions, "; ")
 	case res.Stage == "apply_failed" && res.Apply != nil:
 		out.ReasonCode = res.Apply.ReasonCode
+	case res.Stage == "resource_present":
+		out.ReasonCode = scheduler.ReasonResourcePresent
 	case res.Stage == "applied":
 		for _, s := range res.Seats {
 			out.Seats = append(out.Seats, scheduler.RosterSeatState{Handle: s.Handle, Up: s.Up, ReasonCode: s.ReasonCode, Detail: s.Detail})

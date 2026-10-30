@@ -195,14 +195,23 @@ func TestSchedulerTakesItsTeamModeParentAsTheLead(t *testing.T) {
 	schedulerLeadParent = func() (int, string, bool) { return me, start, true }
 	startedByLeadTeam = func() bool { return true }
 	d := decisionOptions(storeSelection{}, t.TempDir())
-	if d.LeadPane == nil {
-		t.Fatal("no team-mode lead")
+	gone, err := teamModeLead(d)
+	if err != nil || d.LeadPane == nil || gone == nil {
+		t.Fatalf("no team-mode lead: %v", err)
 	}
 	if p, err := d.LeadPane("/r", "lead"); err != nil || p.Shell != me || p.Start != start || p.Agent != "lead" {
 		t.Fatalf("lead pane %+v %v", p, err)
 	}
+	if g, _ := gone(); g {
+		t.Fatal("a live lead reported gone")
+	}
+	schedulerLeadParent = func() (int, string, bool) { return me, "", false }
+	if _, err := teamModeLead(decisionOptions(storeSelection{}, t.TempDir())); err == nil {
+		t.Fatal("a team-mode lead whose stamp cannot be read was accepted")
+	}
 	startedByLeadTeam = func() bool { return false }
-	if d := decisionOptions(storeSelection{}, t.TempDir()); d.LeadPane != nil {
+	d = decisionOptions(storeSelection{}, t.TempDir())
+	if gone, err := teamModeLead(d); err != nil || gone != nil || d.LeadPane != nil {
 		t.Fatal("a scheduler outside team mode took its parent as the lead")
 	}
 }

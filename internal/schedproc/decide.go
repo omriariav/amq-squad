@@ -66,7 +66,15 @@ const (
 	// (the exits ledger loaded, every adopted seat closed and confirmed
 	// gone); its decision socket is not open yet.
 	RefusedStarting = "scheduler_starting"
+	// RefusedLeadGone: the lead's recorded incarnation (the team-mode lead
+	// that started this scheduler) is gone or its pid reused; the scheduler
+	// exits rather than serve a dead lead's socket (3.0.1 t16).
+	RefusedLeadGone = "lead_gone"
 )
+
+// ErrLeadGone is SupervisingLead's error for a recorded lead incarnation
+// that is gone (its pid dead or carrying another start stamp).
+var ErrLeadGone = errors.New("lead_gone")
 
 // DecideReply is the scheduler's answer to one decision.
 type DecideReply struct {
@@ -125,16 +133,33 @@ func RecordedLeadPane(root, lead string) (panechain.Pane, error) {
 // proof instead, and its commands (pi runs as its child) descend from it.
 // The stamp is read again at every decision: a parent that is gone or
 // reused is origin_unknown.
+//
+// The proof is then panechain.Reaches as for a ledger lead: an ancestor of
+// the sender (the walk bounded at 64 hops, the stamp re-read at every hop)
+// whose pid and raw start stamp both equal the recorded incarnation. The
+// stamp is what makes it sound: the recorded pid can sit in another chain
+// only after the lead died and the pid was reused, and that pid then carries
+// another stamp. The two proofs never both apply to one scheduler: a
+// team-mode start uses this one, every other start the launch ledger's.
 func SupervisingLead(pid int, start string, stamp func(int) (string, bool)) func(root, lead string) (panechain.Pane, error) {
 	return func(_, lead string) (panechain.Pane, error) {
-		if pid <= 1 || start == "" {
-			return panechain.Pane{}, fmt.Errorf("the scheduler's team-mode lead process was not recorded at start")
-		}
-		if now, ok := stamp(pid); !ok || now != start {
-			return panechain.Pane{}, fmt.Errorf("the team-mode lead process %d that started this scheduler is gone or reused", pid)
+		if gone, why := LeadGone(pid, start, stamp); gone {
+			return panechain.Pane{}, fmt.Errorf("%w: %s", ErrLeadGone, why)
 		}
 		return panechain.Pane{Shell: pid, Start: start, Agent: lead}, nil
 	}
+}
+
+// LeadGone reports whether the recorded lead incarnation (pid and raw start
+// stamp) is gone: not recorded, dead, or its pid carrying another stamp.
+func LeadGone(pid int, start string, stamp func(int) (string, bool)) (bool, string) {
+	if pid <= 1 || start == "" {
+		return true, "the team-mode lead process that started this scheduler was not recorded"
+	}
+	if now, ok := stamp(pid); !ok || now != start {
+		return true, fmt.Sprintf("the team-mode lead process %d that started this scheduler is gone or its pid reused", pid)
+	}
+	return false, ""
 }
 
 // DecisionServer is the running socket.
@@ -277,6 +302,9 @@ func (s *DecisionServer) origin(conn *net.UnixConn) DecideReply {
 		return unknown(fmt.Sprintf("the start stamp of pid %d is unreadable", pid))
 	}
 	lead, err := s.o.LeadPane(s.o.Root, s.o.Lead)
+	if errors.Is(err, ErrLeadGone) {
+		return DecideReply{Code: RefusedLeadGone, Detail: err.Error() + "; refused, and the scheduler exits"}
+	}
 	if err != nil {
 		return unknown(err.Error())
 	}

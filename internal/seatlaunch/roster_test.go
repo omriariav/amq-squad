@@ -12,6 +12,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -60,6 +61,12 @@ func newRosterFixture(t *testing.T, apply launchapi.ApplyResultV1, prove2 bool) 
 	f.s = &scheduler.Scheduler{Store: store, Now: time.Now, Launcher: f.l, Incarnation: "t",
 		Config: scheduler.Config{MaxSeats: 2, Roster: []scheduler.RosterSeat{{Handle: "cto", Pool: poolA}, {Handle: "dev", Pool: poolDev}}}}
 	f.l.Post = f.s.Post
+	// Every pane question answered by a seam (no row reaches tmux; the
+	// package's refusing stub is the proof): no pane is labelled, every
+	// recorded pane is gone, unless a row says otherwise.
+	f.l.PanesFor = func(string) (int, bool) { return 0, true }
+	f.l.PaneGone = func(string) (bool, bool) { return true, true }
+	t.Cleanup(func() { noTmuxCalls(t) })
 	// Launch returns with the proof window open; close it before TempDir
 	// is removed (cleanups run last in, first out), as proofLaunch does.
 	t.Cleanup(func() {
@@ -145,7 +152,7 @@ func TestRosterLaunchIsOnePrepareAndOneApplyForEverySeat(t *testing.T) {
 func TestRosterApplyRefusalIsLoggedWithItsReason(t *testing.T) {
 	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "action_required", Disposition: "not_applied",
 		ReasonCode: scheduler.AMQBindingPresent}, false)
-	f.fake.applyErr = "launch: the session binding is present\nOPENAI_API_KEY=t16canaryvalue0042"
+	f.fake.applyErr = "launch: the session binding is present\nOPENAI_API_KEY=t16canaryvalue0042\napi_key:\n  \"t16canaryvalue0043\""
 	ds, err := f.s.Tick()
 	var failed *scheduler.RosterLaunchError
 	if !errors.As(err, &failed) || failed.Stage != "apply_failed" || failed.ReasonCode != scheduler.AMQBindingPresent {
@@ -156,7 +163,7 @@ func TestRosterApplyRefusalIsLoggedWithItsReason(t *testing.T) {
 		!strings.Contains(got[0].Reason, "the session binding is present") {
 		t.Fatalf("decisions: %+v", ds)
 	}
-	if strings.Contains(got[0].Reason, "t16canaryvalue0042") {
+	if strings.Contains(got[0].Reason, "t16canaryvalue0042") || strings.Contains(got[0].Reason, "t16canaryvalue0043") {
 		t.Fatalf("the failure decision carries the credential value: %s", got[0].Reason)
 	}
 	if len(kinds(ds, "seat_up")) != 0 {
@@ -191,5 +198,81 @@ func TestRosterSeatThatDidNotProveIsCancelledByItsOwnPane(t *testing.T) {
 	dev := f.plans[0][1]
 	if err := f.l.CancelSeatRequest(dev); err != nil || len(asked) != 1 || asked[0] != "tmux:v1:pane:%8" {
 		t.Fatalf("the cancel of dev's request: %v (panes asked %v)", err, asked)
+	}
+}
+
+// Codex finding 2: the placement and refusal verdicts are each seat's own.
+// Three roster seats: cto proves, dev's seat-exec refuses, ops is placed
+// (its pane observed) and never proves. ops stays unresolved, and its
+// cancel is confirmed only by its own pane's end; dev's refusal is final.
+// Reverted (a launch-wide verdict), dev's refusal made ops "not placed",
+// failed, and its cancel succeeded with its pane still there.
+func TestRosterPlacementIsEachSeatsOwn(t *testing.T) {
+	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed",
+		Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"},
+			{Handle: "dev", Runnable: true, Resource: "tmux:v1:pane:%8"}, {Handle: "ops", Runnable: true, Resource: "tmux:v1:pane:%9"}}}, false)
+	ops := f.q.Seats[0]
+	ops.Handle, ops.Worktree, ops.Branch, ops.Role = "ops", ops.Worktree+"-ops", "seat/ops", "# Role\n\nYou are the ops seat.\n"
+	f.q.Seats = append(f.q.Seats, ops)
+	f.s.Config.Roster = append(f.s.Config.Roster, scheduler.RosterSeat{Handle: "ops", Pool: poolA})
+	f.fake.onApply = func() {
+		if p := prove(t, f.q, "cto", false, nil); !p.reply.OK {
+			t.Errorf("cto's proof: %+v", p.reply)
+		}
+		publishExec(t, f.q, "dev", &launch.Exec{At: time.Now(), Outcome: "refused", ReasonCode: "identity_proof_failed", Detail: "refused"})
+	}
+	f.l.Options.Wait = 300 * time.Millisecond
+	present := true
+	f.l.PaneGone = func(string) (bool, bool) { return !present, true }
+	ds, err := f.s.Tick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kinds(ds, "seat_up")) != 1 || len(kinds(ds, "seat_not_up")) != 2 {
+		t.Fatalf("decisions %+v", ds)
+	}
+	reqs := map[string]scheduler.SeatRequest{}
+	for _, r := range f.plans[0] {
+		reqs[r.Handle] = r
+	}
+	if err := f.l.CancelSeatRequest(reqs["dev"]); err != nil {
+		t.Fatalf("dev refused: its cancel is confirmed at once: %v", err)
+	}
+	if err := f.l.CancelSeatRequest(reqs["ops"]); err == nil {
+		t.Fatal("ops's cancel was confirmed while its pane exists")
+	}
+	present = false
+	if err := f.l.CancelSeatRequest(reqs["ops"]); err != nil {
+		t.Fatalf("ops's pane ended: %v", err)
+	}
+}
+
+// Codex finding 3: a roster launch whose Prepare names a roster seat's
+// recorded pane that still exists (a pane that outlived its process) is
+// refused before Apply with seat_replacement_resource_present naming the
+// handle; AMQ never sees the Apply it would refuse. A recorded pane that
+// is gone does not stop the launch. Reverted, the launch went to Apply and
+// failed there.
+func TestRosterRelaunchRefusedWhileARecordedPaneLingers(t *testing.T) {
+	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}, false)
+	f.fake.prepare.Observations = []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"}, {Handle: "dev", Runnable: true, Resource: "none"}}
+	var asked []string
+	f.l.PaneGone = func(res string) (bool, bool) { asked = append(asked, res); return false, true }
+	ds, err := f.s.Tick()
+	var failed *scheduler.RosterLaunchError
+	if !errors.As(err, &failed) || failed.Stage != "resource_present" || failed.ReasonCode != scheduler.ReasonResourcePresent {
+		t.Fatalf("tick error: %v", err)
+	}
+	got := kinds(ds, "roster_launch_failed")
+	if len(got) != 1 || !strings.Contains(got[0].Reason, "cto (tmux:v1:pane:%7)") || strings.Contains(got[0].Reason, "dev (") || f.amqCalls("--apply") != 0 {
+		t.Fatalf("decisions %+v; amq calls %q", ds, f.fake.calls)
+	}
+	if len(asked) != 1 || asked[0] != "tmux:v1:pane:%7" {
+		t.Fatalf("panes asked: %v", asked)
+	}
+	g := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}, true)
+	g.fake.prepare.Observations = f.fake.prepare.Observations
+	if _, err := g.s.Tick(); err != nil || g.amqCalls("--apply") != 1 {
+		t.Fatalf("a recorded pane that is gone: %v; amq calls %q", err, g.fake.calls)
 	}
 }

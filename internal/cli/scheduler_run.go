@@ -232,6 +232,13 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		limits = schedproc.Limits{Home: usagelimit.ForHome(home, os.Getenv("CLAUDE_CONFIG_DIR"), os.Getenv("CODEX_HOME")), Root: root}
 	}
 	fmt.Fprintf(out, "scheduler for %s (session %s, lead %s, roster of %d seats, at most %d leases at once, tick %s); decisions in %s\n", root, q.Session, *lead, len(roster), seatCap, *tick, filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
+	// A team-mode start (3.0.1 t16): the lead is this process's parent, its
+	// incarnation recorded now; the scheduler exits when it is gone.
+	decisions := decisionOptions(sel, q.ProjectRoot)
+	leadGone, err := teamModeLead(decisions)
+	if err != nil {
+		return err
+	}
 	err = schedproc.Run(ctx, schedproc.Options{
 		Root:        root,
 		Session:     q.Session,
@@ -246,7 +253,8 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 			return nil
 		},
 		// R4: the lead's decisions over the scheduler's own socket.
-		Decisions: decisionOptions(sel, q.ProjectRoot),
+		Decisions: decisions,
+		LeadGone:  leadGone,
 		Exits:     committer,
 		Launcher:  &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		Doorbell:  schedproc.Doorbell{Sender: sender},
@@ -333,22 +341,34 @@ var schedulerLeadParent = func() (int, string, bool) {
 }
 
 // decisionOptions is the decision socket of scheduler run: the widening as
-// the lead's decision (R4). Started by the lead's team mode, the lead is the
-// scheduler's own parent (schedproc.SupervisingLead, 3.0.1 t16): the
-// team-mode lead runs outside the roster's tmux session and has no proof
-// ledger entry; otherwise the lead is the one the launch ledger recorded.
+// the lead's decision (R4). Its lead is the one the launch ledger recorded;
+// runSchedulerRun replaces it with the scheduler's own parent for a
+// team-mode start (schedproc.SupervisingLead, 3.0.1 t16).
 func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
 	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
 		return widenDecision(sel, projectRoot, lead, req)
 	}}
-	if startedByLeadTeam() {
-		pid, start, _ := schedulerLeadParent()
-		d.LeadPane = schedproc.SupervisingLead(pid, start, procinfo.StartToken)
-	}
 	if schedulerDecideSeams != nil {
 		schedulerDecideSeams(d)
 	}
 	return d
+}
+
+// teamModeLead wires a team-mode start's lead (3.0.1 t16): when the lead's
+// team mode started this scheduler, the decision socket's lead is this
+// process's parent, its incarnation (pid and raw start stamp) recorded now,
+// and the returned check reports it gone, which ends the scheduler. Any
+// other start keeps the launch ledger's lead and no check (nil).
+func teamModeLead(d *schedproc.DecideOptions) (func() (bool, string), error) {
+	if !startedByLeadTeam() {
+		return nil, nil
+	}
+	pid, start, ok := schedulerLeadParent()
+	if !ok {
+		return nil, fmt.Errorf("scheduler run: the start stamp of the team-mode lead (pid %d) cannot be read; the lead's decisions could not be proved", pid)
+	}
+	d.LeadPane = schedproc.SupervisingLead(pid, start, procinfo.StartToken)
+	return func() (bool, string) { return schedproc.LeadGone(pid, start, procinfo.StartToken) }, nil
 }
 
 // schedulerRelaunchSend sends the relaunch over the decision socket (a test

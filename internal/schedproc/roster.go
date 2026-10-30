@@ -34,7 +34,7 @@ func (s *Slots) Roster(lead string) (roster []scheduler.RosterSeat, excluded []s
 			excluded = append(excluded, err.Error())
 			continue
 		}
-		roster = append(roster, scheduler.RosterSeat{Handle: seat.Handle, Pool: SeatPool(seat)})
+		roster = append(roster, scheduler.RosterSeat{Handle: seat.Handle, Pool: SeatPool(seat), Worktree: cleanPath(seat.Worktree)})
 	}
 	return roster, excluded
 }
@@ -125,19 +125,29 @@ var _ scheduler.RosterLauncher = (*Launcher)(nil)
 // roster's pool is taken as up (seat_adopted); any other live seat is
 // closed, with the reason (seat_adopted_closing).
 func adoptLive(s *scheduler.Scheduler, root string, roster []scheduler.RosterSeat, now time.Time, log func(scheduler.Decision)) {
-	pools := map[string]task.Pool{}
+	seats := map[string]scheduler.RosterSeat{}
 	for _, rs := range roster {
-		pools[rs.Handle] = rs.Pool
+		seats[rs.Handle] = rs
 	}
 	for _, ls := range LiveSeats(root) {
-		pool, in := pools[ls.Handle]
+		rs, in := seats[ls.Handle]
+		pool := rs.Pool
 		reason := "alive from a previous incarnation"
 		switch {
 		case len(roster) == 0:
 		case !in:
 			reason += "; not a seat of the roster"
+		// Codex finding 1: the record must be the one the proof belongs to.
+		// A later launch that overwrote the staged record and failed at
+		// Apply leaves the old provider alive under a record that is not
+		// its own; its pool and worktree say nothing about that process.
+		case ls.ProofLaunchID == "" || ls.ProofLaunchID != ls.RecordLaunchID || ls.ProofRequestID != ls.RecordRequestID:
+			reason += fmt.Sprintf("; its proof (launch %s, request %s) is not its launch record's (launch %s, request %s)",
+				orDash(ls.ProofLaunchID), orDash(ls.ProofRequestID), orDash(ls.RecordLaunchID), orDash(ls.RecordRequestID))
 		case ls.Pool != pool:
 			reason += fmt.Sprintf("; its launch record's pool %s is not the roster's %s", ls.Pool.Key(), pool.Key())
+		case cleanPath(ls.Worktree) != rs.Worktree:
+			reason += fmt.Sprintf("; its launch record's worktree %s is not the roster's %s", orDash(ls.Worktree), orDash(rs.Worktree))
 		default:
 			s.AdoptUp(ls.Handle, pool, now)
 			log(scheduler.Decision{Kind: "seat_adopted", Seat: ls.Handle, Pool: pool.Key(), Reason: reason + "; its accepted proof's pid and start stamp match the live process"})
@@ -146,6 +156,13 @@ func adoptLive(s *scheduler.Scheduler, root string, roster []scheduler.RosterSea
 		s.AdoptClosing(ls.Handle, ls.Pool, now)
 		log(scheduler.Decision{Kind: "seat_adopted_closing", Seat: ls.Handle, Reason: reason})
 	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // relaunchDecision takes the lead's proved relaunch: the scheduler applies

@@ -55,6 +55,7 @@ type proofServer struct {
 	clock    func() time.Time // the token window: a monotonic clock (time.Now)
 
 	paneShell func(handle string) (pid int, start string, ok bool)
+	paneID    func(shell int) string // the pane id of a shell (Options.PaneID; default a read-only tmux query)
 	closeProc func(pid int, start string) error
 
 	mu       sync.Mutex
@@ -144,13 +145,16 @@ func startProofServer(q Squad, launchID string, o Options) (*proofServer, error)
 	}
 	s := &proofServer{ln: ln, dir: d, name: name, dev: uint64(st.Dev), ino: uint64(st.Ino), tmp: tmp,
 		root: q.SessionRoot(), session: q.Session, launchID: launchID, now: o.Now, clock: o.ProofClock,
-		paneShell: o.PaneShell, closeProc: o.CloseProcess, seats: map[string]*proofSeat{}, done: make(chan struct{}),
+		paneShell: o.PaneShell, paneID: o.PaneID, closeProc: o.CloseProcess, seats: map[string]*proofSeat{}, done: make(chan struct{}),
 		lim: proofLimits{conns: maxProofConns, read: proofReadTimeout, logCap: rejectLogCap, judge: judgeHook, mark: markTokenHook}}
 	if s.clock == nil {
 		s.clock = time.Now
 	}
 	if s.paneShell == nil {
 		s.paneShell = func(handle string) (int, string, bool) { return tmuxPaneShell(handle, o.Env) }
+	}
+	if s.paneID == nil {
+		s.paneID = paneIDOf
 	}
 	if s.closeProc == nil {
 		s.closeProc = func(pid int, start string) error { _, err := closeProcess(pid, start, closeGrace); return err }
@@ -314,7 +318,7 @@ func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) lau
 	if s.tokenLive(m) {
 		pane.shell, pane.shellStart, pane.ok = s.paneShell(m.Handle)
 		if pane.ok {
-			pane.id = paneIDOf(pane.shell)
+			pane.id = s.paneID(pane.shell)
 		}
 	}
 	return s.judgeLocked(m, peer, peerKnown, pane)

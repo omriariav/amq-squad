@@ -84,7 +84,7 @@ func TestPaneLookupIsBoundedAndOutsideTheMutex(t *testing.T) {
 				<-release
 			}
 			return paneOf(os.Getpid())(handle)
-		}}
+		}, PaneID: func(int) string { return "" }}
 		srv, err := startProofServer(q, newLaunchID(), o)
 		if err != nil {
 			t.Fatal(err)

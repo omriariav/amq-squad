@@ -25,6 +25,9 @@ import (
 type RosterSeat struct {
 	Handle string    `json:"handle"`
 	Pool   task.Pool `json:"pool"`
+	// Worktree is the seat's worktree in the current seat list: a live seat
+	// is adopted at a restart only when its launch record names it.
+	Worktree string `json:"worktree,omitempty"`
 }
 
 // RosterLauncher is a SeatLauncher that launches the whole roster in one
@@ -42,7 +45,7 @@ const RosterApplied = "applied"
 // RosterOutcome is a roster launch's result.
 type RosterOutcome struct {
 	LaunchID   string
-	Stage      string // applied | prepare_refused | decisions_pending | apply_failed | launch_error
+	Stage      string // applied | prepare_refused | decisions_pending | resource_present | apply_failed | launch_error
 	ReasonCode string // AMQ's reason code (prepare or apply), or the pending actions' kinds
 	Detail     string
 	Seats      []RosterSeatState // after an applied launch: each seat's state
@@ -76,6 +79,10 @@ const (
 	// AMQBindingPresent is the reason AMQ gives a fresh seat launched into
 	// the session's present binding.
 	AMQBindingPresent = "binding_present_without_resumable_conversation"
+	// ReasonResourcePresent refuses a roster launch whose Prepare names a
+	// tmux resource of a roster seat that still exists (a pane that outlived
+	// its process): AMQ would refuse the Apply.
+	ReasonResourcePresent = "seat_replacement_resource_present"
 	// RelaunchVerb is the lead's decision that relaunches the roster.
 	RelaunchVerb = "amq-squad scheduler relaunch"
 	// closeRelaunch is the closing reason of a seat the relaunch closes.
@@ -218,14 +225,14 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	}
 	out := rl.LaunchRoster(reqs)
 	if out.Stage != RosterApplied {
-		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Text(out.Detail)}
+		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}
 		log(Decision{Kind: "roster_launch_failed", Reason: e.Error()})
 		return e
 	}
 	log(Decision{Kind: "roster_launched", Reason: fmt.Sprintf("launch %s: %d seats in one apply", firstNonEmpty(out.LaunchID, "-"), len(reqs))})
 	for _, st := range out.Seats {
 		if !st.Up {
-			log(Decision{Kind: "seat_not_up", Seat: st.Handle, Reason: redact.Text(strings.TrimSpace(firstNonEmpty(st.ReasonCode, "not_started") + ": " + st.Detail))})
+			log(Decision{Kind: "seat_not_up", Seat: st.Handle, Reason: redact.Block(strings.TrimSpace(firstNonEmpty(st.ReasonCode, "not_started") + ": " + st.Detail))})
 		}
 	}
 	return nil

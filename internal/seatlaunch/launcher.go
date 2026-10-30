@@ -184,7 +184,7 @@ func (l *Launcher) settleOne(r *request, known map[string]bool, res Result, err 
 	case r.ambiguous:
 		// The proof or a confirmed close settles it (CancelSeatRequest).
 		r.state, r.err = stateUnresolved, fmt.Errorf("apply_ambiguous: AMQ observed %d pane(s) for %s and %d other(s); %v", mine, r.handle, len(res.Apply.Observations)-mine, seatFailure(res, err, seat))
-	case placed(res, err):
+	case placedSeat(res, err, seat):
 		r.state, r.err = stateUnresolved, seatFailure(res, err, seat)
 	default:
 		r.state, r.err = stateFailed, seatFailure(res, err, seat)
@@ -199,11 +199,14 @@ func (l *Launcher) settleOne(r *request, known map[string]bool, res Result, err 
 	}
 }
 
-// placed reports whether AMQ may have started the seat: Apply began and did
-// not report a clean refusal, and seat-exec did not refuse. An error or a
-// missing ApplyResult after Apply began is unknown, so placed: AMQ can create
-// the pane and then exit without valid JSON (fix 3 item 1).
-func placed(res Result, err error) bool {
+// placedSeat reports whether AMQ may have started this request's seat:
+// Apply began and did not report a clean refusal, and this seat's seat-exec
+// did not refuse. An error or a missing ApplyResult after Apply began is
+// unknown, so placed: AMQ can create the pane and then exit without valid
+// JSON (fix 3 item 1). The refusal is the seat's own (3.0.1 t16, Codex
+// finding 2): in a roster launch another seat's refusal says nothing about
+// this one, whose pane may still start.
+func placedSeat(res Result, err error, seat *SeatState) bool {
 	if !res.ApplyStarted {
 		return false
 	}
@@ -213,10 +216,8 @@ func placed(res Result, err error) bool {
 	if d := string(res.Apply.Disposition); d == "not_applied" || d == "rolled_back" {
 		return false
 	}
-	for _, s := range res.Seats {
-		if s.State == "refused" {
-			return false // seat-exec exited before exec: nothing runs
-		}
+	if seat != nil && seat.State == "refused" {
+		return false // seat-exec exited before exec: nothing runs
 	}
 	return true
 }

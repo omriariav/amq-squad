@@ -67,6 +67,10 @@ type Options struct {
 	// Started is called once the scheduler exists (its Post receives the
 	// launcher's events).
 	Started func(*scheduler.Scheduler)
+	// LeadGone, when set, reports that the lead the scheduler serves is gone
+	// (a team-mode start: its parent's recorded incarnation); the process
+	// then exits rather than serve a dead lead's socket (3.0.1 t16).
+	LeadGone func() (bool, string)
 }
 
 // Dir is the process's directory under the session root.
@@ -182,6 +186,12 @@ func Run(ctx context.Context, o Options) error {
 	timer := time.NewTicker(o.Tick)
 	defer timer.Stop()
 	for {
+		if o.LeadGone != nil {
+			if gone, why := o.LeadGone(); gone {
+				logLine(o.Log, o.Now(), scheduler.Decision{Kind: "scheduler_stopped", Reason: RefusedLeadGone + ": " + why})
+				return fmt.Errorf("scheduler: %w: %s", ErrLeadGone, why)
+			}
+		}
 		ds, err := s.Tick()
 		if f, ok := o.Router.(Flusher); ok {
 			if err := f.Flush(); err != nil {
