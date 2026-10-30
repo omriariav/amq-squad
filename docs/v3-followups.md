@@ -90,8 +90,15 @@ closes.
   wall-clock bound fails the train at random. Fix before brief 0's PR
   reaches the train: the linearity proof as a ratio measured in one
   process (a 1 MiB line against a 64 KiB line within a 64x factor), no
-  absolute bound. Task t2 in the v31 store. The buzz dry-run bound stays a
-  hygiene entry while it is off the required path.
+  absolute bound. Task t2 in the v31 store.
+- Closed by 3.0.1 t18 (PR #810, branch v3-301-t18): the buzz dry-run
+  bound, the test-hygiene entry from 2026-10-29 (spike log).
+  TestOwnerScriptDryRun waited on the serve loop with polling deadlines
+  (five of 20 s among eleven, six more in its rehearsal) and one ran out at
+  random under load. Each wait now blocks on what the serve loop emits on
+  the test relay, one 5 minute budget ends a hung run and names the step,
+  and no duration fails the test. Evidence:
+  docs/v3-spike/5-301-evidence/t18-buzz-dryrun-signal.md.
 
 - The pi lead on a cloud model (owner, 2026-10-30: "can I start pi and use
   a codex / claude model in it?"): the registry builds pi entries for
