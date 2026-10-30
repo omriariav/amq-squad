@@ -44,6 +44,17 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- The pi lead on a cloud model (owner, 2026-10-30: "can I start pi and use
+  a codex / claude model in it?"): the registry builds pi entries for
+  Ollama models only (internal/registry/build.go); Anthropic and OpenAI
+  models are entries of the claude and codex runtimes. pi itself speaks the
+  Anthropic and OpenAI APIs with an API key, and brief 5-amq-A already
+  carries a seat's declared credential (ANTHROPIC_API_KEY) into the pi
+  process. Add pi entries for anthropic/<model> and openai/<model> when the
+  key is present (credential_needs on the entry, privacy class and cost tier
+  set), probed like the Ollama ones, so `amq-squad lead --model
+  anthropic/<model>` runs the lead on a cloud model.
+
 - Solo lead and teams (owner's first solo session, 2026-10-30, pi session
   01a18b83 under ~/code/amq-test on ollama/qwen3.6:27b): asked to "review
   this repo with two agents", the solo lead proposed a two-seat team in
