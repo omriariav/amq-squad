@@ -597,9 +597,9 @@ entries:
   status: new
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 878
+  current_lines: 816
   fate: new
-  target_lines: 878
+  target_lines: 816
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -3979,6 +3979,15 @@ entries:
   extract: ""
   reason: "5-amq-A: the Codex sandbox pins as provider arguments (AMQ v0.110.0 admits them, upstream ask 17) and sandbox_pins_missing"
   status: new
+- path: internal/seatexec/codexhook.go
+  v2_lines: 0
+  current_lines: 109
+  fate: new
+  target_lines: 109
+  cluster: seatexec
+  extract: ""
+  reason: "3.0.1 t9: the read-only detection of AMQ's Codex dialog hook that gates a Codex seat's wake and feeds doctor's row"
+  status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
   current_lines: 196
@@ -4026,9 +4035,9 @@ entries:
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 526
+  current_lines: 560
   fate: new
-  target_lines: 526
+  target_lines: 560
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -4098,9 +4107,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 594
+  current_lines: 620
   fate: new
-  target_lines: 594
+  target_lines: 620
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

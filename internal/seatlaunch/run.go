@@ -92,6 +92,11 @@ type Options struct {
 	// (default: the embedded runtime must load, then piruntime.EnsureShim
 	// under Home); a test seam.
 	PiShim func(home, wrapper string) (string, error)
+	// CodexDialogHook reads AMQ's Codex dialog hook in a Codex home (default
+	// seatexec.ReadCodexDialogHook, read only); a test seam. The launch
+	// calls it only for a squad with a Codex seat, on the Codex home the
+	// seats read ($CODEX_HOME of Env, else Home/.codex).
+	CodexDialogHook func(codexDir string) seatexec.CodexDialogHook
 }
 
 // SeatState is one seat's state after the launch.
@@ -158,6 +163,9 @@ func (o Options) withDefaults() Options {
 	if o.PiShim == nil {
 		o.PiShim = defaultPiShim
 	}
+	if o.CodexDialogHook == nil {
+		o.CodexDialogHook = seatexec.ReadCodexDialogHook
+	}
 	if o.PinFor == nil {
 		home := o.Home
 		var once sync.Once
@@ -207,6 +215,14 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 			if q.PiShim, err = o.PiShim(o.Home, q.Wrapper); err != nil {
 				return res, fmt.Errorf("seat %s: %s: %w", s.Handle, ReasonPiShimMissing, err)
 			}
+			break
+		}
+	}
+	// A Codex seat's wake needs AMQ's Codex dialog hook on the host (3.0.1):
+	// the launch checks the owner's step instead of assuming it.
+	for _, s := range q.Seats {
+		if s.Runtime == "codex" {
+			q.CodexDialogHookReady = o.CodexDialogHook(seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))).Ready()
 			break
 		}
 	}

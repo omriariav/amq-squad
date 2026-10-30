@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/omriariav/amq-squad/v3/internal/buzz"
@@ -20,8 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/BurntSushi/toml"
-
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
@@ -29,6 +26,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
@@ -409,92 +407,32 @@ func (h *doctorHost) codexChecks(det registry.Detection, projectDir string) []do
 	return append(out, codexDialogHookCheck(filepath.Dir(path)))
 }
 
-// codexDialogHookEvents are the events AMQ's Codex dialog hook wires
-// (internal/cli/wake_dialog_codex_unix.go:37-44 at AMQ v0.116.2).
-var codexDialogHookEvents = []string{"Stop", "UserPromptSubmit", "Interrupt", "SessionStart", "SessionEnd", "PermissionRequest"}
-
-// codexDialogHookMarker prefixes every AMQ dialog hook command
-// (internal/cli/wake_dialog_unix.go:32 at AMQ v0.116.2).
-const codexDialogHookMarker = "AMQ_DIALOG_HOOK=1 "
-
-// CodexDialogHookFix is the owner's one-line fix for the codex wake dialog
-// hook row.
-const CodexDialogHookFix = "amq wake install-dialog-hook --harness codex, then open /hooks in Codex and trust the AMQ_DIALOG_HOOK entries"
-
-// codexDialogHookCheck (3.0.1): a Codex seat's AMQ wake types the doorbell
-// into the pane, and the seats run --ask-for-approval on-request; a doorbell
-// at a Codex approval prompt cancels the pending command and runs as a new
-// prompt (AMQ docs/wake-operations.md:458-473). AMQ's Codex dialog hook in
-// <codex home>/hooks.json holds the doorbell while a prompt is open. The row
-// reads hooks.json for AMQ's marked entries per event and config.toml's
-// [features] hooks and codex_hooks keys; it prints event and key names,
-// never a command or a value. Whether Codex trusts the entries is
-// Codex's own hash, which 'amq doctor --ops' reads.
+// codexDialogHookCheck (3.0.1) reports AMQ's Codex dialog hook through the
+// launch's own read-only detection (seatexec.ReadCodexDialogHook): a Codex
+// seat launches with its wake only when the hook is present, so this row is
+// the owner's view of that precondition. It prints event and key names,
+// never a command or a value. Whether Codex trusts the entries is Codex's
+// own hash, which 'amq doctor --ops' reads.
 func codexDialogHookCheck(codexDir string) doctorCheck {
 	const name = "codex wake dialog hook"
-	var cfg struct {
-		Features map[string]any `toml:"features"`
-	}
-	if raw, err := os.ReadFile(filepath.Join(codexDir, "config.toml")); err == nil {
-		_, _ = toml.Decode(string(raw), &cfg)
-	}
-	var off []string
-	for _, key := range []string{"hooks", "codex_hooks"} {
-		if v, ok := cfg.Features[key].(bool); ok && !v {
-			off = append(off, "features."+key)
-		}
-	}
-	if len(off) > 0 {
-		c := hostCheck(name, doctorWarn, "%s is false in %s, so Codex runs no AMQ dialog hook and a seat's wake doorbell can answer a Codex approval prompt; fix: set it to true, then %s",
-			strings.Join(off, " and "), filepath.Join(codexDir, "config.toml"), CodexDialogHookFix)
-		c.Kind = "codex_dialog_hook_disabled"
-		return c
-	}
-	path := filepath.Join(codexDir, "hooks.json")
-	present := map[string]bool{}
-	raw, err := os.ReadFile(path)
+	h := seatexec.ReadCodexDialogHook(codexDir)
+	var c doctorCheck
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		c := hostCheck(name, doctorWarn, "cannot read %s (%v); fix: %s", path, errors.Unwrap(err), CodexDialogHookFix)
+	case len(h.HooksOff) > 0:
+		c = hostCheck(name, doctorWarn, "%s is false in %s, so Codex runs no AMQ dialog hook and Codex seats launch without an AMQ wake; fix: set it to true, then %s",
+			strings.Join(h.HooksOff, " and "), h.ConfigPath, seatexec.CodexDialogHookFix)
+		c.Kind = "codex_dialog_hook_disabled"
+	case h.Unreadable != "":
+		c = hostCheck(name, doctorWarn, "%s: %s; Codex seats launch without an AMQ wake; fix: %s", h.HooksPath, h.Unreadable, seatexec.CodexDialogHookFix)
 		c.Kind = "codex_dialog_hook_missing"
-		return c
+	case len(h.Missing) > 0:
+		c = hostCheck(name, doctorWarn, "AMQ's Codex dialog hook is missing for %s in %s, so Codex seats launch without an AMQ wake (a doorbell could answer a Codex approval prompt); fix: %s",
+			strings.Join(h.Missing, ", "), h.HooksPath, seatexec.CodexDialogHookFix)
+		c.Kind = "codex_dialog_hook_missing"
 	default:
-		var file struct {
-			Hooks map[string][]struct {
-				Hooks []struct {
-					Command string `json:"command"`
-				} `json:"hooks"`
-			} `json:"hooks"`
-		}
-		if json.Unmarshal(raw, &file) != nil {
-			c := hostCheck(name, doctorWarn, "%s is not a Codex hooks file amq-squad can read; fix: %s", path, CodexDialogHookFix)
-			c.Kind = "codex_dialog_hook_missing"
-			return c
-		}
-		for event, groups := range file.Hooks {
-			for _, g := range groups {
-				for _, h := range g.Hooks {
-					if strings.HasPrefix(h.Command, codexDialogHookMarker) {
-						present[event] = true
-					}
-				}
-			}
-		}
+		c = hostCheck(name, doctorOK, "AMQ's Codex dialog hook is in %s for all %d events, so Codex seats launch with an AMQ wake; 'amq doctor --ops' reads whether Codex trusts it", h.HooksPath, len(seatexec.CodexDialogHookEvents))
 	}
-	var missing []string
-	for _, event := range codexDialogHookEvents {
-		if !present[event] {
-			missing = append(missing, event)
-		}
-	}
-	if len(missing) > 0 {
-		c := hostCheck(name, doctorWarn, "AMQ's Codex dialog hook is missing for %s in %s, so a Codex seat's wake doorbell can answer a Codex approval prompt (seats run --ask-for-approval on-request); fix: %s",
-			strings.Join(missing, ", "), path, CodexDialogHookFix)
-		c.Kind = "codex_dialog_hook_missing"
-		return c
-	}
-	return hostCheck(name, doctorOK, "AMQ's Codex dialog hook is in %s for all %d events; 'amq doctor --ops' reads whether Codex trusts it", path, len(codexDialogHookEvents))
+	return c
 }
 
 func profileCheck(home string) doctorCheck {

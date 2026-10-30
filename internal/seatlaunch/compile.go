@@ -81,6 +81,11 @@ type Squad struct {
 	// for this binary: every pi seat's executable, the file AMQ's pi adapter
 	// probes; seat-exec runs the verified embedded runtime in its place.
 	PiShim string `json:"-"`
+	// CodexDialogHookReady is the launch's read of the host (3.0.1): AMQ's
+	// Codex dialog hook entries are present (seatexec.ReadCodexDialogHook).
+	// A Codex seat launches with its AMQ wake only when it is true. Never
+	// from the seat file.
+	CodexDialogHookReady bool `json:"-"`
 }
 
 // ReasonProviderNotPinned refuses a Claude seat whose provider is not the
@@ -124,19 +129,48 @@ const WakeRule = "amq-squad 3.0.1: the scheduler's doorbell is the seat's next t
 // a doorbell could answer pi's folder-trust or an extension prompt.
 const PiWakeAuditReason = "amq-squad 3.0.1: a pi seat has no AMQ wake until its embedded runtime loads AMQ's pi extension (the doorbell's dialog guard)"
 
-// SeatWake is a seat's AMQ wake policy by runtime (3.0.1). Claude Code and
-// Codex seats require the wake that amq coop exec starts beside the
-// provider (internal/launch/commands.go:135-150 maps it to --require-wake
-// and --wake-inject-mode), typing raw: AMQ's own choice for both harnesses,
+// ClaudeWakeAuditReason is a Claude Code seat's disabled-wake reason when its
+// permission mode can prompt: the seat's own CLAUDE_CONFIG_DIR carries no
+// AMQ dialog hook (the owner's 'amq wake install-dialog-hook' writes
+// ~/.claude/settings.json, which a seat never reads), so a raw doorbell
+// could answer a permission prompt unattended.
+const ClaudeWakeAuditReason = "amq-squad 3.0.1: a Claude Code seat whose permission mode can prompt has no AMQ wake, because its config dir carries no AMQ dialog hook and a doorbell could answer the prompt"
+
+// CodexWakeAuditReason is a Codex seat's disabled-wake reason when the host
+// lacks AMQ's Codex dialog hook; it names the owner's step.
+const CodexWakeAuditReason = "amq-squad 3.0.1: a Codex seat has no AMQ wake until AMQ's Codex dialog hook is on the host: " + seatexec.CodexDialogHookFix
+
+// SeatWake is a seat's AMQ wake policy (3.0.1). Raw typing into a pane
+// means a doorbell that lands on a prompt answers it unattended, so the
+// wake is required only for a seat that never prompts unattended:
+//   - Claude Code: only when permissionMode never prompts (dontAsk, what
+//     internal/claudeseat writes); otherwise off (ClaudeWakeAuditReason).
+//   - Codex: only when codexHookReady (AMQ's Codex dialog hook on the
+//     host holds the doorbell at an approval prompt); otherwise off
+//     (CodexWakeAuditReason, the owner's step).
+//   - pi: off (PiWakeAuditReason).
+//
+// An enabled wake is the one amq coop exec starts beside the provider
+// (internal/launch/commands.go:135-150 maps it to --require-wake and
+// --wake-inject-mode), typing raw: AMQ's own choice for both harnesses,
 // whose Ink input drops a bracketed-paste Enter
 // (internal/harness/harness.go:61-64, 81-82). claude-native is not open to
 // a seat: it refuses a wrapper and a custom CLAUDE_CONFIG_DIR
 // (internal/cli/wake_claude_native_unix.go:56-60), and every seat runs
-// behind seat-exec. A pi seat keeps its wake disabled (PiWakeAuditReason).
-func SeatWake(runtime string) (require bool, injector *launchapi.InjectorOptionsV1, auditReason string) {
+// behind seat-exec.
+func SeatWake(runtime, permissionMode string, codexHookReady bool) (require bool, injector *launchapi.InjectorOptionsV1, auditReason string) {
+	raw := &launchapi.InjectorOptionsV1{Mode: launchapi.InjectorRaw}
 	switch runtime {
-	case "claude", "codex":
-		return true, &launchapi.InjectorOptionsV1{Mode: launchapi.InjectorRaw}, ""
+	case "claude":
+		if permissionMode == "dontAsk" {
+			return true, raw, ""
+		}
+		return false, nil, ClaudeWakeAuditReason
+	case "codex":
+		if codexHookReady {
+			return true, raw, ""
+		}
+		return false, nil, CodexWakeAuditReason
 	}
 	return false, nil, PiWakeAuditReason
 }
@@ -381,7 +415,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		if s.Resume {
 			policy = launchapi.ResumePolicyResume
 		}
-		requireWake, injector, wakeReason := SeatWake(s.Runtime)
+		requireWake, injector, wakeReason := SeatWake(s.Runtime, permissionMode(s.Runtime), q.CodexDialogHookReady)
 		seats = append(seats, launchintent.SeatFacts{
 			Handle: s.Handle, Executable: provider, Args: ProviderArgs(s),
 			Wrapper:         &launchapi.WrapperV1{Executable: q.Wrapper, Args: []string{"seat-exec", "--seat", s.Handle}},

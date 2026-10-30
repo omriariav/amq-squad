@@ -1,6 +1,6 @@
 # amq-squad 3.0.1, task t9: seats launched with AMQ wake enabled (brief 3.0.1-t9)
 
-Branch `v3-301-t9`, cut from `origin/v3` at a1a67151. One implementer, scratch worktree, one commit. The rule: the scheduler's doorbell is the seat's next turn (`seatlaunch.WakeRule`). The defect (session v31, seat dev): every seat launched with wake disabled, so no AMQ wake ran in the pane and a scheduler doorbell sat in the inbox until the owner typed a line.
+Branch `v3-301-t9`, cut from `origin/v3` at a1a67151. One implementer, scratch worktree, two commits: the change, then the reviewer ruling that gates the wake (below). The rule: the scheduler's doorbell is the seat's next turn (`seatlaunch.WakeRule`). The defect (session v31, seat dev): every seat launched with wake disabled, so no AMQ wake ran in the pane and a scheduler doorbell sat in the inbox until the owner typed a line.
 
 All AMQ citations are to the pinned module, `github.com/avivsinai/agent-message-queue@v0.116.2` (paths relative to its root).
 
@@ -37,6 +37,21 @@ All AMQ citations are to the pinned module, `github.com/avivsinai/agent-message-
   - The fix line is `amq wake install-dialog-hook --harness codex, then open /hooks in Codex and trust the AMQ_DIALOG_HOOK entries`.
   - Whether Codex trusts the entries is Codex's hash, and `amq doctor --ops` reads it.
 
+### The reviewer ruling (second commit): the wake is gated on the seat never prompting
+
+Raw typing into a pane means a doorbell that lands on a permission prompt answers it unattended. So the wake is required only for a seat that never prompts unattended (`seatlaunch.SeatWake(runtime, permissionMode, codexHookReady)`).
+
+- **Claude Code.** The wake is required only when the seat's launch permission mode is `dontAsk`, which never prompts and is what `internal/claudeseat` writes today. Any other mode keeps the wake off with `ClaudeWakeAuditReason`. That reason names the missing AMQ dialog hook: the seat's own config dir carries none (finding 7).
+- **Codex.** The wake is required only when AMQ's Codex dialog hook entries are present on the host. Otherwise it is off with `CodexWakeAuditReason`, which names the owner's step. The host step is a precondition the launch checks:
+  - The detection is one read-only function, `seatexec.ReadCodexDialogHook` in the new `internal/seatexec/codexhook.go`.
+  - The launch calls it through `Options.CodexDialogHook`, and doctor's row calls it too.
+  - It reads key and event names only, never a command or a value.
+  - The launch reads it only for a squad with a Codex seat, on the Codex home the seats read: `$CODEX_HOME` of the launch environment, else `<home>/.codex`.
+  - The result reaches Compile through `Squad.CodexDialogHookReady`. That field is `json:"-"`, so a seat file cannot claim it.
+  - Presence is what the launch can check. Whether Codex trusts the entries is Codex's own hash, which `amq doctor --ops` reads, so trusting them stays an owner step.
+- **pi.** Unchanged: off, with `PiWakeAuditReason`.
+- **Report.** The seat's wake line now ends with the audit reason when the wake is off. A Codex seat without the hook therefore shows the owner's step in the launch report.
+
 ### Not done: the per-seat launch record (stop and report)
 
 The per-seat `launch.json` is `launch.Record` in `internal/launch/record.go`, which is not declared. The scheduler's own `internal/schedproc` `launch.json` is the scheduler process record and holds no seats. To record the wake there, the following changes are needed.
@@ -55,10 +70,13 @@ The per-seat `launch.json` is `launch.Record` in `internal/launch/record.go`, wh
 | an injector needs a required wake | TestCompileWakeInjectorNeedsARequiredWake (launchintent) | dropping the guard |
 | doctor row: missing, partial, installed, `features.hooks = false`, no value printed | TestCodexWakeDialogHookRow (cli) | dropping the missing-events or features branch |
 | doctor row is wired into the Codex checks on `CODEX_HOME` | TestCodexWakeDialogHookRowIsInDoctor (cli) | dropping the append in `codexChecks` |
+| ruling: Claude wake only in `dontAsk`, Codex wake only with the hook, pi off; both branches through `SeatWake` and through Compile; the Codex reason names the owner's step | TestSeatWakeIsGatedOnTheSeatNeverPrompting (seatlaunch) | either gate forced open, or Compile not passing the readiness |
+| ruling: the launch reads the hook through the seam once, on `CODEX_HOME`, only for a squad with a Codex seat; a missing hook launches the Codex seat without its wake and the report names the step | TestLaunchChecksTheCodexHookBeforeTheCodexWake (seatlaunch) | the read ignored, `CODEX_HOME` ignored, the read made for any squad, `Ready` ignoring missing events, or the reason dropped from the report |
+| the shared detection: AMQ's marker only (the owner's own hook on an event does not count), `features.hooks` | TestCodexWakeDialogHookRow (cli) | the marker test or the features read removed |
 
 The brief asked for a row with wake facts "from a fake apply result". AMQ's ApplyResult has no wake field (finding 9), so the row reads the facts from the fake Prepare echo, which is where AMQ reports them.
 
-Each revert was applied by hand to a copy, the row was run and failed, and the file was restored. The canary strings in the doctor row were checked against `redact.RealCredentialShapes` and match none. No row reaches the network, HOME or tmux: the doctor rows use temp Codex homes, and the seatlaunch rows fake AMQ.
+Each revert was applied by hand to a copy, the row was run and failed, and the file was restored. The canary strings in the doctor row were checked against `redact.RealCredentialShapes` and match none. No test reads a real Codex home. As a tripwire, the default hook read was made to panic on the real `~/.codex` or `$CODEX_HOME`, and the full suite passed; the tripwire was then removed. No row reaches the network, HOME or tmux: the doctor rows use temp Codex homes, and the seatlaunch rows fake AMQ.
 
 Gate: `go build ./... && go vet ./internal/seatlaunch ./internal/launchintent ./internal/seatexec && go test -count=1 ./internal/seatlaunch ./internal/launchintent ./internal/seatexec ./internal/cli` passed. The full `go test -count=1 ./...` also passed. `scripts/manifest-check.sh` failed on the grown line counts of compile.go, report.go and doctor_host.go, so their `current_lines` and `target_lines` in `docs/v3-manifest.yaml` were updated. That file is outside the declared files; the edit is mechanical, and the check passes again.
 
@@ -67,14 +85,24 @@ Gate: `go build ./... && go vet ./internal/seatlaunch ./internal/launchintent ./
 This cannot run here: it needs a live AMQ, tmux and real seats. It uses the v31 roster in `squad.yaml`, run on the 3.0.1 build with this commit. `SEATS` is the JSON seat list the v31 start passed to `--seats`; `amq-squad launch` does not read squad.yaml directly.
 
 ```sh
-# 0. Host prerequisite for Codex seats (one time), then trust the entries in Codex /hooks.
+# The rule (reviewer ruling): a seat gets its wake only if it never prompts unattended.
+# Claude seats: only in dontAsk (the launch's mode). Codex seats: only with AMQ's Codex
+# dialog hook on the host; without it the launch starts them with no wake and says why.
+
+# Host step 1 (one time): install AMQ's Codex dialog hook into the Codex home the seats read.
 amq wake install-dialog-hook --harness codex
-amq-squad doctor | grep 'codex wake dialog hook'     # expect: ok ... all 6 events
+# Host step 2 (one time): open /hooks in Codex and trust the AMQ_DIALOG_HOOK entries
+# (or choose "Trust all" at the next Codex start). The launch checks presence only;
+# trust is Codex's own hash, so check it with:
+amq doctor --ops
+amq-squad doctor | grep 'codex wake dialog hook'     # expect: ok ... all 6 events, Codex seats launch with an AMQ wake
 
 # 1. The admitted wake, before anything starts.
 amq-squad launch --seats "$SEATS" --dry-run --json \
   | jq '.prepare.preview.participants[] | select(.runnable) | {handle, execution}'
-# expect senior-dev, qa, scribe: require_wake true, wake.mode "enabled", injector raw
+# expect senior-dev, scribe (Claude, dontAsk): require_wake true, wake.mode "enabled", injector raw
+# expect qa (Codex): the same with the hook installed; without it wake.mode "disabled"
+#   and an audit reason naming 'amq wake install-dialog-hook --harness codex'
 # expect cto (pi): wake.mode "disabled" with the pi audit reason
 
 # 2. Start the squad as in the v31 start (the scheduler launches the seats).

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
 // writeCodexHooks writes a Codex hooks.json with AMQ's marked entry for each
@@ -18,7 +19,9 @@ func writeCodexHooks(t *testing.T, dir string, events []string) {
 	for _, e := range events {
 		hooks[e] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "AMQ_DIALOG_HOOK=1 /opt/canary-bin/amq wake dialog close canary-zz9"}}}}
 	}
-	hooks["Stop"] = append(asSlice(hooks["Stop"]), map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/opt/owner-own-hook canary-owner"}}})
+	// The owner's own hook on PermissionRequest: an entry without the marker
+	// never counts as AMQ's.
+	hooks["PermissionRequest"] = append(asSlice(hooks["PermissionRequest"]), map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/opt/owner-own-hook canary-owner"}}})
 	b, err := json.Marshal(map[string]any{"hooks": hooks})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +44,7 @@ func TestCodexWakeDialogHookRow(t *testing.T) {
 	dir := t.TempDir() // a temp Codex home; never the real HOME
 
 	c := codexDialogHookCheck(dir)
-	if c.Status != doctorWarn || c.Kind != "codex_dialog_hook_missing" || !strings.Contains(c.Detail, "PermissionRequest") || !strings.Contains(c.Detail, CodexDialogHookFix) {
+	if c.Status != doctorWarn || c.Kind != "codex_dialog_hook_missing" || !strings.Contains(c.Detail, "PermissionRequest") || !strings.Contains(c.Detail, seatexec.CodexDialogHookFix) {
 		t.Fatalf("no hooks.json: %+v", c)
 	}
 
@@ -51,7 +54,7 @@ func TestCodexWakeDialogHookRow(t *testing.T) {
 		t.Fatalf("one event missing: %+v", c)
 	}
 
-	writeCodexHooks(t, dir, codexDialogHookEvents)
+	writeCodexHooks(t, dir, seatexec.CodexDialogHookEvents)
 	c = codexDialogHookCheck(dir)
 	if c.Status != doctorOK || !strings.Contains(c.Detail, "all 6 events") {
 		t.Fatalf("installed: %+v", c)
