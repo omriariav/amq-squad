@@ -390,7 +390,7 @@ func TestSupervisingLeadProvesTheTeamModeLead(t *testing.T) {
 		return s
 	}
 	// This test process is the team-mode lead.
-	s := serve(SupervisingLead(me, start, procinfo.StartToken))
+	s := serve(SupervisingLead(me, start, procinfo.StartToken, procinfo.Alive))
 	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{Reason: "x"}); err != nil || !reply.OK || relaunched != 1 {
 		t.Fatalf("the team-mode lead: %+v %v", reply, err)
 	}
@@ -400,14 +400,14 @@ func TestSupervisingLeadProvesTheTeamModeLead(t *testing.T) {
 	s.Close()
 	// The recorded pid in the chain with another stamp: the recorded
 	// incarnation is gone and its pid reused.
-	s = serve(SupervisingLead(me, start+"-earlier", procinfo.StartToken))
+	s = serve(SupervisingLead(me, start+"-earlier", procinfo.StartToken, procinfo.Alive))
 	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedLeadGone || relaunched != 2 {
 		t.Fatalf("a reused pid in the chain: %+v %v", reply, err)
 	}
 	s.Close()
 	// The lead is another process: this dialer does not descend from it.
 	other, otherStart, stop := otherProcess(t)
-	s = serve(SupervisingLead(other, otherStart, procinfo.StartToken))
+	s = serve(SupervisingLead(other, otherStart, procinfo.StartToken, procinfo.Alive))
 	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedNotLead || relaunched != 2 {
 		t.Fatalf("a dialer outside the lead's descent: %+v %v", reply, err)
 	}
@@ -427,9 +427,58 @@ func TestSchedulerExitsWhenItsTeamModeLeadIsGone(t *testing.T) {
 	var mu sync.Mutex
 	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
 		Config:   scheduler.Config{MaxSeats: 1, Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}}},
-		LeadGone: func() (bool, string) { mu.Lock(); defer mu.Unlock(); return gone, "the lead process ended" }},
+		LeadState: func() (LeadStatus, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if gone {
+				return LeadIsGone, "the lead process ended"
+			}
+			return LeadAlive, ""
+		}},
 		l, func([]scheduler.Decision) bool { mu.Lock(); gone = true; mu.Unlock(); return false })
 	if !errors.Is(err, ErrLeadGone) || !strings.Contains(log.String(), `"kind":"scheduler_stopped","reason":"lead_gone: the lead process ended"`) {
 		t.Fatalf("err %v; log:\n%s", err, log.String())
+	}
+}
+
+// t16 round 7 (Codex 7): a lead whose stamp cannot be read while its pid is
+// alive (a permission or transient error) is unknown, not gone: the
+// scheduler logs lead_unknown once, checks again each tick and never exits;
+// a decision then is origin_unknown, never lead_gone. Gone needs a dead pid
+// or a changed stamp. Reverted (any unreadable stamp is gone), the
+// scheduler exits on a transient read error.
+func TestUnreadableLeadStampIsUnknownNotGone(t *testing.T) {
+	unreadable := func(int) (string, bool) { return "", false }
+	if st, _ := LeadState(4242, "darwin-tv:1.1", unreadable, func(int) bool { return true }); st != LeadUnknown {
+		t.Fatalf("a live pid with an unreadable stamp: %v", st)
+	}
+	if st, _ := LeadState(4242, "darwin-tv:1.1", unreadable, func(int) bool { return false }); st != LeadIsGone {
+		t.Fatalf("a dead pid: %v", st)
+	}
+	if st, _ := LeadState(4242, "darwin-tv:1.1", func(int) (string, bool) { return "darwin-tv:2.2", true }, func(int) bool { return true }); st != LeadIsGone {
+		t.Fatalf("a changed stamp: %v", st)
+	}
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	s, err := ServeDecisions(DecideOptions{Root: root, Lead: "lead", LeadPane: SupervisingLead(os.Getpid(), "darwin-tv:1.1", unreadable, func(int) bool { return true }),
+		Apply:    func(string, WidenRequest) DecideReply { return DecideReply{OK: true} },
+		Relaunch: func(string, RelaunchRequest) DecideReply { return DecideReply{OK: true} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedOriginUnknown {
+		t.Fatalf("a decision while the lead is unknown: %+v %v", reply, err)
+	}
+	l, log := &rosterLauncher{}, &lockedBuf{}
+	ticks := 0
+	err = runUntil(t, Options{Root: root, Launcher: l, Log: log,
+		Config:    scheduler.Config{MaxSeats: 1, Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}}},
+		LeadState: func() (LeadStatus, string) { return LeadUnknown, "the stamp cannot be read" }},
+		l, func([]scheduler.Decision) bool { ticks++; return ticks >= 5 })
+	if err != nil {
+		t.Fatalf("the scheduler exited on an unknown lead: %v", err)
+	}
+	if n := strings.Count(log.String(), `"kind":"lead_unknown"`); n != 1 {
+		t.Fatalf("lead_unknown logged %d times:\n%s", n, log.String())
 	}
 }

@@ -254,7 +254,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		},
 		// R4: the lead's decisions over the scheduler's own socket.
 		Decisions: decisions,
-		LeadGone:  leadGone,
+		LeadState: leadGone,
 		Exits:     committer,
 		Launcher:  &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		Doorbell:  schedproc.Doorbell{Sender: sender},
@@ -359,7 +359,7 @@ func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOp
 // process's parent, its incarnation (pid and raw start stamp) recorded now,
 // and the returned check reports it gone, which ends the scheduler. Any
 // other start keeps the launch ledger's lead and no check (nil).
-func teamModeLead(d *schedproc.DecideOptions) (func() (bool, string), error) {
+func teamModeLead(d *schedproc.DecideOptions) (func() (schedproc.LeadStatus, string), error) {
 	if !startedByLeadTeam() {
 		return nil, nil
 	}
@@ -367,8 +367,10 @@ func teamModeLead(d *schedproc.DecideOptions) (func() (bool, string), error) {
 	if !ok {
 		return nil, fmt.Errorf("scheduler run: the start stamp of the team-mode lead (pid %d) cannot be read; the lead's decisions could not be proved", pid)
 	}
-	d.LeadPane = schedproc.SupervisingLead(pid, start, procinfo.StartToken)
-	return func() (bool, string) { return schedproc.LeadGone(pid, start, procinfo.StartToken) }, nil
+	d.LeadPane = schedproc.SupervisingLead(pid, start, procinfo.StartToken, procinfo.Alive)
+	return func() (schedproc.LeadStatus, string) {
+		return schedproc.LeadState(pid, start, procinfo.StartToken, procinfo.Alive)
+	}, nil
 }
 
 // schedulerRelaunchSend sends the relaunch over the decision socket (a test

@@ -202,8 +202,8 @@ func TestSchedulerTakesItsTeamModeParentAsTheLead(t *testing.T) {
 	if p, err := d.LeadPane("/r", "lead"); err != nil || p.Shell != me || p.Start != start || p.Agent != "lead" {
 		t.Fatalf("lead pane %+v %v", p, err)
 	}
-	if g, _ := gone(); g {
-		t.Fatal("a live lead reported gone")
+	if st, _ := gone(); st != schedproc.LeadAlive {
+		t.Fatalf("a live lead reported %v", st)
 	}
 	schedulerLeadParent = func() (int, string, bool) { return me, "", false }
 	if _, err := teamModeLead(decisionOptions(storeSelection{}, t.TempDir())); err == nil {

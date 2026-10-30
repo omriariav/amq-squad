@@ -100,7 +100,7 @@ func TestLeadToolVerbsAreProvedFromTheLeadsDescendant(t *testing.T) {
 		}
 		return s
 	}
-	s := serve(schedproc.SupervisingLead(me, start, procinfo.StartToken))
+	s := serve(schedproc.SupervisingLead(me, start, procinfo.StartToken, procinfo.Alive))
 	if out := runToolVerb(t, root, "relaunch"); !strings.Contains(out, "exit=0") {
 		t.Fatalf("relaunch from the lead's descendant:\n%s", out)
 	}
@@ -120,7 +120,7 @@ func TestLeadToolVerbsAreProvedFromTheLeadsDescendant(t *testing.T) {
 	}
 	t.Cleanup(func() { other.Process.Kill(); other.Wait() })
 	otherStart, _ := procinfo.StartToken(other.Process.Pid)
-	serve(schedproc.SupervisingLead(other.Process.Pid, otherStart, procinfo.StartToken))
+	serve(schedproc.SupervisingLead(other.Process.Pid, otherStart, procinfo.StartToken, procinfo.Alive))
 	for _, verb := range []string{"relaunch", "widen"} {
 		out := runToolVerb(t, root, verb)
 		if !strings.Contains(out, fmt.Sprintf("exit=%d", ExitCommitRefused)) || !strings.Contains(out, schedproc.RefusedNotLead) {
