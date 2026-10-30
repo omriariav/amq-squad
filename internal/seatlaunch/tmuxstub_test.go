@@ -5,7 +5,9 @@ package seatlaunch
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +67,24 @@ func noTmuxCalls(t *testing.T) {
 	}
 	if calls, _ := os.ReadFile(tmuxStubLog); len(calls) > 0 {
 		t.Errorf("this package's rows reached tmux:\n%s", calls)
+	}
+}
+
+// t16 round 7 (Codex 5): every row of this package runs with HOME in a
+// temp dir, never the account's real home (read from the passwd entry, not
+// the environment), so a launch's grant read (~/.amq-squad/grants.yaml)
+// never reaches the owner's. Reverted (the TestMain leaving HOME), HOME is
+// the real one.
+func TestRowsRunUnderATempHome(t *testing.T) {
+	if os.Getenv("AMQ_SQUAD_LIVE") == "1" {
+		t.Skip("the live rows use the real home")
+	}
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		t.Skip("no passwd home to compare with")
+	}
+	home := os.Getenv("HOME")
+	if home == "" || filepath.Clean(home) == filepath.Clean(u.HomeDir) || strings.HasPrefix(filepath.Clean(home)+"/", filepath.Clean(u.HomeDir)+"/.amq-squad") {
+		t.Fatalf("HOME is %q, the real home %q", home, u.HomeDir)
 	}
 }
