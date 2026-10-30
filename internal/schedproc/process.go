@@ -70,10 +70,12 @@ type Options struct {
 	// Started is called once the scheduler exists (its Post receives the
 	// launcher's events).
 	Started func(*scheduler.Scheduler)
-	// LeadGone, when set, reports that the lead the scheduler serves is gone
-	// (a team-mode start: its parent's recorded incarnation); the process
-	// then exits rather than serve a dead lead's socket (3.0.1 t16).
-	LeadGone func() (bool, string)
+	// LeadState, when set, reads the state of the lead the scheduler serves
+	// (a team-mode start: its parent's recorded incarnation). Gone ends the
+	// process rather than serve a dead lead's socket; unknown (a stamp that
+	// cannot be read) is logged once and checked again next tick, and never
+	// ends it (3.0.1 t16).
+	LeadState func() (LeadStatus, string)
 }
 
 // Dir is the process's directory under the session root.
@@ -196,11 +198,20 @@ func Run(ctx context.Context, o Options) error {
 	logLine(o.Log, o.Now(), scheduler.Decision{Kind: "scheduler_started", Reason: "incarnation " + s.Incarnation})
 	timer := time.NewTicker(o.Tick)
 	defer timer.Stop()
+	leadUnknown := false
 	for {
-		if o.LeadGone != nil {
-			if gone, why := o.LeadGone(); gone {
+		if o.LeadState != nil {
+			switch st, why := o.LeadState(); st {
+			case LeadIsGone:
 				logLine(o.Log, o.Now(), scheduler.Decision{Kind: "scheduler_stopped", Reason: RefusedLeadGone + ": " + why})
 				return fmt.Errorf("scheduler: %w: %s", ErrLeadGone, why)
+			case LeadUnknown:
+				if !leadUnknown {
+					logLine(o.Log, o.Now(), scheduler.Decision{Kind: "lead_unknown", Reason: why + "; checked again each tick"})
+				}
+				leadUnknown = true
+			default:
+				leadUnknown = false
 			}
 		}
 		ds, err := s.Tick()

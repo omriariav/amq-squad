@@ -334,3 +334,17 @@ func homeDir() string {
 	h, _ := os.UserHomeDir()
 	return h
 }
+
+// OutsidePaths is the exact paths a refusal found outside the task's
+// declared files (the outside_declared_files violation's Paths, in the
+// order the check found them, untruncated; describe() truncates its display
+// at eight). The task record keeps them (task.RefusedPaths, 3.0.1 t16 round
+// 7), so the lead's widening reads exact paths, never the display text.
+func (r Result) OutsidePaths() []string {
+	for _, v := range r.Violations {
+		if v.Reason == ReasonOutside {
+			return append([]string(nil), v.Paths...)
+		}
+	}
+	return nil
+}

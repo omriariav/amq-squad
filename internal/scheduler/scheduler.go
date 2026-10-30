@@ -652,7 +652,7 @@ func (s *Scheduler) applyCommit(holder string, t task.Task, res CommitResult, no
 			return err
 		}
 	}
-	refused, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now)
+	refused, err := s.Store.RefuseCommitPaths(t.ID, res.ReasonCode, res.Detail, res.Route, res.RefusedPaths, now)
 	if err != nil {
 		return err
 	}

@@ -141,25 +141,46 @@ func RecordedLeadPane(root, lead string) (panechain.Pane, error) {
 // only after the lead died and the pid was reused, and that pid then carries
 // another stamp. The two proofs never both apply to one scheduler: a
 // team-mode start uses this one, every other start the launch ledger's.
-func SupervisingLead(pid int, start string, stamp func(int) (string, bool)) func(root, lead string) (panechain.Pane, error) {
+func SupervisingLead(pid int, start string, stamp func(int) (string, bool), alive func(int) bool) func(root, lead string) (panechain.Pane, error) {
 	return func(_, lead string) (panechain.Pane, error) {
-		if gone, why := LeadGone(pid, start, stamp); gone {
+		switch st, why := LeadState(pid, start, stamp, alive); st {
+		case LeadIsGone:
 			return panechain.Pane{}, fmt.Errorf("%w: %s", ErrLeadGone, why)
+		case LeadUnknown:
+			return panechain.Pane{}, errors.New(why) // origin_unknown, never lead_gone
 		}
 		return panechain.Pane{Shell: pid, Start: start, Agent: lead}, nil
 	}
 }
 
-// LeadGone reports whether the recorded lead incarnation (pid and raw start
-// stamp) is gone: not recorded, dead, or its pid carrying another stamp.
-func LeadGone(pid int, start string, stamp func(int) (string, bool)) (bool, string) {
+// LeadStatus is the recorded lead incarnation's state.
+type LeadStatus int
+
+const (
+	LeadAlive   LeadStatus = iota // the pid carries the recorded stamp
+	LeadIsGone                    // confirmed: the pid is dead, or carries another stamp
+	LeadUnknown                   // the pid is alive but its stamp cannot be read (permission, a transient error)
+)
+
+// LeadState reads the recorded lead incarnation (pid and raw start stamp).
+// It is gone only on confirmed absence (the pid is not alive) or a changed
+// stamp (the pid reused); a stamp that cannot be read for a live pid, or an
+// incarnation never recorded, is unknown (3.0.1 t16 round 7: a permission
+// or transient read error proves nothing).
+func LeadState(pid int, start string, stamp func(int) (string, bool), alive func(int) bool) (LeadStatus, string) {
 	if pid <= 1 || start == "" {
-		return true, "the team-mode lead process that started this scheduler was not recorded"
+		return LeadUnknown, "the team-mode lead process that started this scheduler was not recorded"
 	}
-	if now, ok := stamp(pid); !ok || now != start {
-		return true, fmt.Sprintf("the team-mode lead process %d that started this scheduler is gone or its pid reused", pid)
+	now, ok := stamp(pid)
+	switch {
+	case ok && now == start:
+		return LeadAlive, ""
+	case ok:
+		return LeadIsGone, fmt.Sprintf("the team-mode lead process %d that started this scheduler is gone: its pid carries another start stamp", pid)
+	case !alive(pid):
+		return LeadIsGone, fmt.Sprintf("the team-mode lead process %d that started this scheduler is gone", pid)
 	}
-	return false, ""
+	return LeadUnknown, fmt.Sprintf("the start stamp of the team-mode lead process %d cannot be read; its state is unknown", pid)
 }
 
 // DecisionServer is the running socket.

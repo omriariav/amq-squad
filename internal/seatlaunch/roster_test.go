@@ -3,7 +3,12 @@
 package seatlaunch
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -33,6 +38,7 @@ var poolDev = task.Pool{Runtime: "codex", Model: "gpt-6-astra", Effort: "medium"
 
 func newRosterFixture(t *testing.T, apply launchapi.ApplyResultV1, prove2 bool) *rosterFixture {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir()) // the grant read at launch never reaches the real HOME
 	f := &rosterFixture{q: testSquad(t)}
 	f.fake = &fakeAMQ{t: t, prepare: preparedResult(), apply: apply}
 	f.fake.onApply = func() {
@@ -66,6 +72,7 @@ func newRosterFixture(t *testing.T, apply launchapi.ApplyResultV1, prove2 bool) 
 	// recorded pane is gone, unless a row says otherwise.
 	f.l.PanesFor = func(string) (int, bool) { return 0, true }
 	f.l.PaneGone = func(string) (bool, bool) { return true, true }
+	f.l.BindingPane = func(string, string, string) (bool, bool) { return false, true }
 	t.Cleanup(func() { noTmuxCalls(t) })
 	// Launch returns with the proof window open; close it before TempDir
 	// is removed (cleanups run last in, first out), as proofLaunch does.
@@ -257,7 +264,7 @@ func TestRosterRelaunchRefusedWhileARecordedPaneLingers(t *testing.T) {
 	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}, false)
 	f.fake.prepare.Observations = []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"}, {Handle: "dev", Runnable: true, Resource: "none"}}
 	var asked []string
-	f.l.PaneGone = func(res string) (bool, bool) { asked = append(asked, res); return false, true }
+	f.l.BindingPane = func(_, handle, res string) (bool, bool) { asked = append(asked, handle+" "+res); return true, true }
 	ds, err := f.s.Tick()
 	var failed *scheduler.RosterLaunchError
 	if !errors.As(err, &failed) || failed.Stage != "resource_present" || failed.ReasonCode != scheduler.ReasonResourcePresent {
@@ -267,12 +274,81 @@ func TestRosterRelaunchRefusedWhileARecordedPaneLingers(t *testing.T) {
 	if len(got) != 1 || !strings.Contains(got[0].Reason, "cto (tmux:v1:pane:%7)") || strings.Contains(got[0].Reason, "dev (") || f.amqCalls("--apply") != 0 {
 		t.Fatalf("decisions %+v; amq calls %q", ds, f.fake.calls)
 	}
-	if len(asked) != 1 || asked[0] != "tmux:v1:pane:%7" {
+	if len(asked) != 1 || asked[0] != "cto tmux:v1:pane:%7" {
 		t.Fatalf("panes asked: %v", asked)
 	}
 	g := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}, true)
 	g.fake.prepare.Observations = f.fake.prepare.Observations
 	if _, err := g.s.Tick(); err != nil || g.amqCalls("--apply") != 1 {
 		t.Fatalf("a recorded pane that is gone: %v; amq calls %q", err, g.fake.calls)
+	}
+}
+
+// t16 round 7 (Codex 4): a recorded pane is the binding's live resource only
+// when the binding's own server lists it in the binding's session (id and
+// name), with the seat's agent label and the server pid the binding recorded
+// as its epoch. After a tmux server restart an unrelated pane can carry the
+// old %N: in another session, under another server pid, or with another
+// label it is not present, so a relaunch is not refused for ever (exit 17).
+// Reverted (the %N alone), every such pane read as the seat's.
+func TestRecordedPaneIsPresentOnlyInTheBindingsServerAndSession(t *testing.T) {
+	var b amqBinding
+	if err := json.Unmarshal([]byte(`{"backend":"tmux","instance_identity":"tmux-socket:/tmp/tmux-501/default","resources":{"resources":[
+		{"opaque_id":"tmux:v1:session:$3:amq-proj-abc-s1-def"},{"opaque_id":"tmux:v1:epoch:4242"},{"opaque_id":"tmux:v1:pane:%7","agent":"cto"}]}}`), &b); err != nil {
+		t.Fatal(err)
+	}
+	row := func(pid, sid, name, pane, agent string) string {
+		return strings.Join([]string{pid, sid, name, pane, agent}, "\t")
+	}
+	for _, c := range []struct {
+		name, listing string
+		present       bool
+	}{
+		{"the seat's pane", row("4242", "$3", "amq-proj-abc-s1-def", "%7", "cto"), true},
+		{"%7 in another session", row("4242", "$0", "work", "%7", ""), false},
+		{"%7 after a server restart", row("5151", "$3", "amq-proj-abc-s1-def", "%7", "cto"), false},
+		{"%7 labelled for another seat", row("4242", "$3", "amq-proj-abc-s1-def", "%7", "dev"), false},
+		{"no %7", row("4242", "$3", "amq-proj-abc-s1-def", "%8", "dev"), false},
+	} {
+		if present, known := paneInBinding(b, "cto", "tmux:v1:pane:%7", c.listing+"\n"); !known || present != c.present {
+			t.Errorf("%s: present %v known %v", c.name, present, known)
+		}
+	}
+	if _, known := paneInBinding(amqBinding{}, "cto", "tmux:v1:pane:%7", ""); known {
+		t.Error("a binding without a session resource is known")
+	}
+	if _, known := bindingPanePresent(t.TempDir(), "cto", "tmux:v1:pane:%7", nil); known {
+		t.Error("a missing binding record is known")
+	}
+}
+
+// t16 round 7 (Codex 6): amq's stderr is redacted at the source, with the
+// multiline rules, so neither the staged record (Apply.FailureDetail) nor the
+// printed report carries a credential value, a quoted value on the line
+// after its key included. Reverted (the raw stderr kept), both carry it.
+func TestAmqFailureDetailIsRedactedWhereItIsRead(t *testing.T) {
+	q := testSquad(t)
+	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "action_required", Disposition: "not_applied", ReasonCode: scheduler.AMQBindingPresent}}
+	f.applyErr = "launch refused\napi_key:\n  \"t16canaryvalue0044\"\nOPENAI_API_KEY=t16canaryvalue0045"
+	res, err := Launch(context.Background(), q, launchOpts(t, f, map[string]string{"sha256:a1": "trust_exact_subject"}))
+	if err != nil || res.Stage != "apply_failed" {
+		t.Fatalf("launch: %s %v", res.Stage, err)
+	}
+	if res.proof != nil {
+		t.Cleanup(res.proof.close)
+	}
+	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "cto"), launch.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	Report(&out, res)
+	for name, text := range map[string]string{"staged record": string(raw), "report": out.String(), "result": res.FailureDetail} {
+		if strings.Contains(text, "t16canaryvalue0044") || strings.Contains(text, "t16canaryvalue0045") {
+			t.Errorf("the %s carries a credential value:\n%s", name, text)
+		}
+	}
+	if !strings.Contains(string(raw), "launch refused") {
+		t.Fatalf("the staged record lost the detail:\n%s", raw)
 	}
 }
