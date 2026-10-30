@@ -24,7 +24,9 @@ amq-squad team check --project P
 
 A missing optional tool is one status line, not a failure. Without `--write-registry`,
 `--probe` or `--fix` doctor writes nothing, and it exits non-zero when any check is
-`fail`. `doctor --json` is the same rows as a JSON envelope.
+`fail`. `doctor --json` is the same rows as a JSON envelope. The owner runs `--probe`
+(and `--write-registry`, `--fix`) from their own terminal; seats never do: inside a
+seat those flags refuse with `seat_owner_state_refused`.
 
 ## Drafter readiness
 

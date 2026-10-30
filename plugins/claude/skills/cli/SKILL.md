@@ -187,7 +187,9 @@ amq-squad trust P
 `doctor` probes the AMQ version and launch API, the tools on PATH with their
 versions and login state, the registry, the embedded pi runtime, codex-cli trust,
 the owner's global agent config against the preflight copy, and the grants file
-mode. Without `--write-registry`, `--probe` or `--fix` it writes nothing. `trust`
+mode. Without `--write-registry`, `--probe` or `--fix` it writes nothing. Seats
+never probe: inside a seat `--probe` and `--write-registry` refuse
+(`seat_owner_state_refused`); the owner runs the probe from their own terminal. `trust`
 prints the owner-run lines that trust a repository in codex-cli; it writes nothing.
 
 ## Gotchas

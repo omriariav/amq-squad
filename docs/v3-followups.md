@@ -269,6 +269,11 @@ closes.
   owner-signed per-worktree approval written into the seat's config at
   launch, or a host check that names the imports for the owner to move
   inside the worktree.
+- Seats run with the owner's HOME, so `~/.amq-squad` is reachable by any
+  tool a seat has; 3.0.1's doctor refusal keys on the seat environment
+  marker, a fence against a brief's or an agent's mistake, not against a
+  seat that unsets its environment. The real fence: a seat-owned
+  `AMQ_SQUAD_HOME` with a read-only registry mirror. 3.0.1-t15.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 

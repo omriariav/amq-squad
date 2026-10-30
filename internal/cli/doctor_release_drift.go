@@ -60,5 +60,26 @@ func doctorReleaseDriftHook(root string) func() []doctorCheck {
 	if err != nil || owner.Insecure {
 		return nil
 	}
-	return func() []doctorCheck { return doctorReleaseDrift(root, owner.Grants, &mergetrain.GH{}, time.Now()) }
+	return func() []doctorCheck { return doctorReleaseDrift(root, owner.Grants, doctorReleaseLister(), time.Now()) }
+}
+
+// doctorReleaseLister is the drift check's tag and release source, gh (a
+// seam: the seat rows count its calls and never reach GitHub).
+var doctorReleaseLister = func() mergetrain.ReleaseLister { return &mergetrain.GH{} }
+
+// doctorReleaseDriftFor is doctor's drift hook. Inside a seat (seatEnvMarker)
+// it is not installed: the check calls GitHub and mergetrain.Drift writes
+// baselines, coverage bindings and owner alerts under
+// <AM_ROOT>/extensions/amq-squad/alerts, squad state the owner session owns
+// (brief 3.0.1-t15 fix round). The seat sees one row saying the check was
+// skipped and that the owner runs it; the owner's grants are not even read.
+func doctorReleaseDriftFor(getenv func(string) string, root string) func() []doctorCheck {
+	marker := seatEnvMarker(getenv)
+	if marker == "" {
+		return doctorReleaseDriftHook(root)
+	}
+	return func() []doctorCheck {
+		return []doctorCheck{{Name: "release drift", Status: doctorOK,
+			Detail: fmt.Sprintf("skipped: %s is set, so this process is a seat; the tag and release drift check calls GitHub and writes owner alerts under the session root, so the owner runs it (amq-squad doctor from their own terminal)", marker)}}
+	}
 }
