@@ -559,6 +559,15 @@ present binding (ask 20). A roster launch that fails at prepare or apply
 is one decision with its stage, AMQ's reason and the detail, and the
 process exits with it, an exit the lead's supervisor does not restart;
 `lead --team --trust` passes the owner's standing trust answer through.
+Every failed or unresolved seat launch is a `seat_launch_failed` decision
+with its stage, AMQ's reason code and the redacted detail, which status
+shows on the seat's row in place of seat_starting, and a second failure of
+one pool with the same reason blocks the waiting task for the lead, never a
+silent retry. Each tick the scheduler checks every live roster seat's
+process by its accepted proof's pid and raw start stamp, one start-stamp
+read per seat, and a seat whose process is gone or whose pid was reused is
+gone (`process_exited`) within that tick. [3.0.1 t17;
+docs/v3-spike/5-301-evidence/t17-launch-failed.md]
 
 Amendment to R4 (3.0.1 t16, reviewer ruling 2026-10-30): "the lead
 proved from the process" has two forms, and one scheduler uses exactly

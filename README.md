@@ -289,7 +289,14 @@ amq-squad gate status --project . --session issue-96 --json
   AMQ's reason and the detail in its decisions log, and the lead's
   supervisor does not restart it; `amq-squad lead --team --scheduler-seats
   seats.json --trust` is the owner's standing answer to AMQ's trust
-  confirmation for that session.
+  confirmation for that session. A seat launch that fails or never resolves
+  is a `seat_launch_failed` decision with its stage, AMQ's reason code and the
+  redacted detail; status shows that reason on the seat's row in place of
+  `seat_starting`, and a second failure of the pool with the same reason
+  blocks the waiting task for the lead instead of retrying. Each tick the
+  scheduler checks every live roster seat's process against its accepted
+  proof (pid and start stamp) and takes a seat whose process ended as gone
+  (`process_exited`), so its pool's next task takes the relaunch path.
 - **Merge.** `merge-train --request FILE --dry-run` plans and checks the lead's
   ordered PR set against the merge grant; the real run uses the owner's gh,
   outside any seat. Seats never merge.
