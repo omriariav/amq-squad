@@ -194,6 +194,7 @@ the 3.0.1 build on PATH. `ROOT` is the session root.
 
 ```sh
 cd ~/scratch/t16-live && git init -q -b main && git commit -q --allow-empty -m base
+mkdir -p roles && printf '# Role: implementer\n\nYou implement tasks.\n' > roles/impl.md
 amq session create t16 --root "$PWD/.agent-mail" --me lead
 ROOT="$PWD/.agent-mail/t16"
 cat > seats.json <<JSON
