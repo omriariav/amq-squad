@@ -11,11 +11,16 @@ import (
 // R36; lead and reviewer rulings 2026-10-24). Every Claude seat runs with its
 // own CLAUDE_CONFIG_DIR, written fresh by the core for the launch
 // (internal/claudeseat): the hooks plugin at user scope, settings.json with
-// the launch's permission mode and no allow rule, nothing else. seat-exec
+// the launch's permission mode, no allow rule and a theme, and .claude.json
+// past first-run onboarding with the seat's worktree trusted (3.0.1 t6: the
+// seat config is born complete), nothing else. seat-exec
 // refuses claude_permission_mismatch when the argv does not carry exactly
 // the recorded mode or the dir is missing, not 0700, not ours, or not what
 // the launch wrote (the digest of its managed files), claude_hooks_missing
-// when its plugin does not run the guard on PreToolUse, and
+// when its plugin is not enabled or does not run the guard on PreToolUse,
+// claude_onboarding_missing when the dir is not past first-run onboarding
+// (no hasCompletedOnboarding or no theme), claude_trust_missing when it does
+// not record the seat's worktree as trusted, and
 // claude_allow_rules_present when the worktree's .claude/settings.json or
 // settings.local.json (which Claude still merges) carry allow rules. The
 // owner's user-scope settings never reach a seat.
@@ -25,6 +30,8 @@ const (
 	ClaudeHooksMissing       = claudeseat.HooksMissing
 	ClaudePermissionMismatch = claudeseat.PermissionMismatch
 	ClaudeAllowRulesPresent  = claudeseat.AllowRulesPresent
+	ClaudeOnboardingMissing  = claudeseat.OnboardingMissing
+	ClaudeTrustMissing       = claudeseat.TrustMissing
 )
 
 // dropVar removes every entry of one variable from an environment.

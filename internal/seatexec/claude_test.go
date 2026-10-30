@@ -55,8 +55,12 @@ func TestClaudeSeatRunsWithItsOwnConfigDir(t *testing.T) {
 }
 
 // seat-exec refuses a Claude seat whose config dir is missing, not 0700, or
-// not what the launch wrote (claude_permission_mismatch), or whose plugin
-// does not run the guard (claude_hooks_missing).
+// not what the launch wrote (claude_permission_mismatch), whose plugin does
+// not run the guard or is not enabled (claude_hooks_missing), or that lacks
+// a first-run fact (3.0.1 t6): onboarding or the theme
+// (claude_onboarding_missing), or the worktree's trust (claude_trust_missing).
+// The first-run rows re-record the digest: a launch that wrote the
+// incomplete dir is refused by name, not only by digest.
 func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 	cases := map[string]struct {
 		code    string
@@ -75,6 +79,29 @@ func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
 			}
 			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
 			f.stage()
+		}},
+		"onboarding not complete, digest re-recorded": {ClaudeOnboardingMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"no theme, digest re-recorded": {ClaudeOnboardingMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":[]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"worktree not trusted, digest re-recorded": {ClaudeTrustMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"plugin not enabled, digest re-recorded": {ClaudeHooksMissing, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":[]},"theme":"dark"}`, 0o600)
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+		"trust dropped after the launch": {ClaudePermissionMismatch, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"numStartups":1}`, 0o600)
 		}},
 	}
 	for name, tc := range cases {
