@@ -541,3 +541,54 @@ was selected) beside the stub suites under heavier load: 16 stub suites and
 stub; a process spawn under that load misses the deadline either way. The
 row stays as it is, listed with the open seatlaunch flakes in
 docs/v3-followups.md.
+
+## Round 5: the launcher fixture's leak and the expiry-mark clobber
+
+**The fixture leak (a test-side flake).** TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists
+failed now and then with "directory not empty" at TempDir removal. The
+launcher fixture never closed a request's proof server, so the window
+watcher (proof_unix.go, the goroutine started in startProofServer) closed
+it when the fake clock's jump ended the window and marked the unused token
+expired, rewriting launch/cto/launch.json through its lock file and an
+atomic rename after the body returned (the lead's chase: 12 failures in 600
+loaded runs unfixed, 0 in 600 fixed). newLauncherFixture now closes every
+request's proof server in a cleanup (closing twice is safe; the launcher's
+wg is not awaited, so a failed row with its gate closed cannot hang the
+cleanup), as the roster fixture already did.
+
+Load run on this branch, with the fix: `go test -c -o seat.test ./internal/seatlaunch`, then
+`./seat.test -test.run '^TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists$' -test.count=300`
+from internal/seatlaunch with four busy processes (`yes > /dev/null`)
+beside it: 300 runs, 0 failures, 0 "directory not empty" (exit 0, PASS).
+The unfixed count is the lead's chase (12 in 600).
+
+**The expiry-mark clobber (a production defect, reviewer ruling).** The
+proof server's marker write (markToken: the expiry mark at the window's
+close and on a late proof, and the consumed mark on an accepted proof)
+rewrote whatever record was staged under the handle, checking only that it
+had a ticket. The scenario, reproduced by the lead's chase: request A for
+cto is not applied (apply_failed) and keeps its proof server open for the
+whole 60 s window; A settles failed, its cancel succeeds at once and the
+slot is handed out again; request B restages launch/cto/launch.json with
+its own launch id and a fresh token within those 60 s; when A's window
+ends, A's watcher marks "expired" over B's token, and seat-exec
+(internal/seatexec/seatexec_unix.go:329) refuses B's valid seat with
+proof_expired while B's own server still holds the ticket unconsumed. The
+roster relaunch makes it reachable (a replaced handle restaged while a
+cancelled request's window runs); the unresolved path reaches it too once
+the pane is confirmed gone.
+
+The fix: markToken is a compare-and-set inside the same locked rewrite
+(launch.UpdateStaged): the marker is written only while the staged record's
+launch id is this server's; otherwise nothing is written and one line
+(`token_mark_stale`) naming both launch ids and both request ids goes to the
+launch directory's proof-rejects.log. On the proof-accept path the same
+guard turns a stale server's attempt to consume another launch's token into
+an error (proof_marker_failed), which is the right outcome: a server never
+consumes a token it did not mint.
+
+Row: TestExpiredWindowNeverMarksALaterLaunchsToken, the chase's five steps
+(A not applied, cancel; 30 s; B restaged, its launch id and token
+recorded; 31 s and 600 ms; the record still carries B's launch, request and
+token) plus B's seat proving after A's window and the logged line. With the
+compare removed it fails: `A's window rewrote B's record: token "expired"`.
