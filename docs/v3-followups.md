@@ -34,6 +34,13 @@ planning sessions that made them; nothing here is a release blocker.
 
 ## 3.0.x
 
+- Solo lead first turn (owner observation 2026-10-30, the first human run
+  of `amq-squad lead`): the lead's role instruction takes effect only after
+  the owner's first prompt; nothing is said at start. The solo lead should
+  open with its own first turn (who it is, which model, what it can do
+  here) before the owner types, or the instruction should be applied at
+  session start rather than on the first message.
+
 - Install and self-update write to a temp name and rename, never a copy
   over the existing file: the macOS kernel kills a binary copied over an
   existing signed executable (the cached code-signature check, signal 9);
