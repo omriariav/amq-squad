@@ -69,6 +69,18 @@ closes.
   unloads an idle model; the seat process holds none). If the owner run
   measures GPU memory held by a parked pi seat after the keep-alive window,
   close-on-park for pi seats becomes a 3.0.x item.
+- Speed of launches and communication (owner, 2026-10-30, the first
+  dogfood squad: "we need to speed up the agent launches and comms, it's
+  taking too much"). Measured on the day: a seat launch to its first turn
+  is seconds, but the path from "task added" to "seat working" ran through
+  the trust confirmation (the mayor's start cannot carry it, t8), the
+  quarantine cycle (each owner config change costs a signed clear), the
+  first-run screens of a Claude seat (t6), the Codex folder trust per
+  worktree, and the missing wake that leaves a seat idle after its first
+  turn (t9); and every owner-side step was a terminal and a phone round
+  trip. The 3.1 measure: time from `task add` to the seat's first tool
+  call, and from a seat's reply to the owner's phone, both recorded per
+  run; the targets are set when the first clean run gives the baseline.
 
 - The 3.0 Claude plugin is unreachable through the public marketplace: the
   marketplace source is the repository (omriariav/amq-squad) and Claude
@@ -92,8 +104,15 @@ closes.
   wall-clock bound fails the train at random. Fix before brief 0's PR
   reaches the train: the linearity proof as a ratio measured in one
   process (a 1 MiB line against a 64 KiB line within a 64x factor), no
-  absolute bound. Task t2 in the v31 store. The buzz dry-run bound stays a
-  hygiene entry while it is off the required path.
+  absolute bound. Task t2 in the v31 store.
+- Closed by 3.0.1 t18 (PR #810, branch v3-301-t18): the buzz dry-run
+  bound, the test-hygiene entry from 2026-10-29 (spike log).
+  TestOwnerScriptDryRun waited on the serve loop with polling deadlines
+  (five of 20 s among eleven, six more in its rehearsal) and one ran out at
+  random under load. Each wait now blocks on what the serve loop emits on
+  the test relay, one 5 minute budget ends a hung run and names the step,
+  and no duration fails the test. Evidence:
+  docs/v3-spike/5-301-evidence/t18-buzz-dryrun-signal.md.
 
 - The pi lead on a cloud model (owner, 2026-10-30: "can I start pi and use
   a codex / claude model in it?"): the registry builds pi entries for
@@ -216,6 +235,40 @@ closes.
   status, can bring it back. 5-amq-B.
 - A hung verification is an `attention` line in `remote attach`'s output,
   not a row in the status document's attention queue. 5-amq-B.
+- AMQ's startup hold misses every amq-squad seat (3.0.1 t9, a stated
+  limit). coop exec decides its Startup marker from the command binary
+  (internal/cli/coop_exec_trust.go:74-75 and coop_exec_unix.go:994 at AMQ
+  v0.116.2), and a seat's command binary is the seat-exec wrapper, so no
+  seat gets the hold, and a wake doorbell can reach a folder-trust, update
+  or hook-review screen. Claude's first-run screens close with t6 (the
+  seat's config dir born complete; claudeseat.StartupScreensClosed turns a
+  Claude seat's wake on only then). For AMQ's hold under a wrapper, one of
+  two: seat-exec names the inner binary to AMQ, or AMQ honours a binary
+  the launch declares (an upstream ask). Until then a Codex seat's wake
+  requires the Codex config's trust entry for its worktree, which rules out
+  the trust screen only.
+- Claude seat config digest (3.0.1 t6, reviewer ruling 2026-10-30): if
+  the owner-run live row (docs/v3-spike/5-claudeseat-execution.md) shows
+  that Claude Code 2.1.314 never creates a `projects` entry for the
+  worktree's canonical repository root, tighten the `.claude.json` digest
+  from "keys carrying trust or a permission input" to the bare `projects`
+  key set, so any added entry moves it. If the entry does appear, record
+  its keys there and keep the current digest.
+- The Claude seat config checks are facts about the pinned Claude Code
+  binary (3.0.1 t6): the bookkeeping sets pI and kI and the walk of their
+  keys against the binary's permission readers. Today a re-pin's step is to
+  re-extract internal/claudeseat/testdata/claude-*-bookkeeping.js and re-walk
+  by hand (the execution note's method); make the re-walk a check, so that
+  doctor's pin row refuses a pin whose sets differ from the code's.
+- Claude seats and external CLAUDE.md includes (3.0.1 t6, fifth commit):
+  when a CLAUDE.md the seat loads at start imports a file outside its
+  worktree, Claude Code 2.1.314 opens its external-includes dialog unless
+  the project entry approves the includes. claudeseat never seeds that
+  approval, so such a seat's wake stays off and seat-exec refuses it
+  (claude_external_includes_pending). Decide how approval is granted: an
+  owner-signed per-worktree approval written into the seat's config at
+  launch, or a host check that names the imports for the owner to move
+  inside the worktree.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 

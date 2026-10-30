@@ -90,7 +90,7 @@ func newFixture(t *testing.T, runtime string) *fixture {
 // user-scope allow rule, which never reaches a seat (its config dir is its own).
 // canaryToken is the test token: it may appear only in the provider's
 // environment.
-const canaryToken = "sk-ant-oat01-CANARY-2b2b-9f3c"
+const canaryToken = "canary-claude-token-2b2b-9f3c"
 
 const ownerSettings = `{"owner":true,"permissions":{"allow":["Bash(echo:*)"]}}`
 

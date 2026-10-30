@@ -124,7 +124,9 @@ const ExitSchedulerRefused = 17
 // leadSchedulerCommand is the child the lead's team mode runs: `scheduler
 // run` with the lead's handle, one --lead-pool per lead pool, and --trust
 // when the owner passed it to `lead --team` (a flag the owner typed is his
-// standing answer for this session).
+// standing answer for this session). It passes no PR flag: the commit step
+// binds by default under a merge grant (3.0.1 t14), and the lead never turns
+// that off.
 func leadSchedulerCommand(self, seats, lead string, pools []string, trust bool) func(ctx context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
 		args := []string{"scheduler", "run", "--seats", seats, "--lead", lead}

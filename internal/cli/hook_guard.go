@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
 const guardUsage = `amq-squad guard - one verdict for one tool call: allow, needs_gate or deny
@@ -202,6 +204,14 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	// through seat-exec's environment.
 	if names := namesTokenFile(call); names != "" {
 		return out("deny", "protected_path", names+" names the owner's Claude token file; seats never read or write it")
+	}
+	// A seat never answers a dialog, and a seat's question to anyone is AMQ
+	// mail to the lead (3.0.1). AskUserQuestion and ExitPlanMode open a
+	// dialog in the seat's pane that an AMQ wake doorbell's Enter could
+	// answer unattended, so both are denied in a seat; the deny is one of the
+	// conditions of a Claude seat's wake (seatexec.ClaudeDialogGuardWired).
+	if slices.Contains(seatexec.SeatDeniedDialogTools, call.Tool) {
+		return out("deny", "seat_dialog", call.Tool+" opens a dialog, and a seat never answers one: send the question to the lead as AMQ mail")
 	}
 	actions := classifyGuardCall(env, call)
 	for i := range actions { // a write to a credential path is the credential gate

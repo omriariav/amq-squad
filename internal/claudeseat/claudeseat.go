@@ -5,19 +5,28 @@
 // id>, inside the guard-protected extension dir), with exactly:
 //
 //   - settings.json: permissions.defaultMode (the launch's mode) and an empty
-//     allow list, and the amq-squad plugin enabled;
+//     allow list, the amq-squad plugin enabled (enabledPlugins), and the
+//     theme (Theme), which Claude Code 2.1.314 resolves from the user
+//     settings first;
 //   - the amq-squad hooks plugin, installed at user scope in Claude Code's
 //     layout (plugins/installed_plugins.json, plugins/known_marketplaces.json,
 //     plugins/cache/amq-squad/amq-squad/<version>/), from the files embedded in
 //     this binary;
-//   - the first-run seed (Seed), an explicit list that is empty until a live
-//     run shows Claude Code needs one.
+//   - the first-run state in .claude.json (Claude Code's global config under
+//     a custom CLAUDE_CONFIG_DIR): hasCompletedOnboarding, and
+//     projects[<worktree>].hasTrustDialogAccepted for the seat's worktree
+//     (3.0.1 t6; reviewer ruling 2026-10-30: the seat config is born
+//     complete, so the pane never opens the first-run flow or the trust
+//     dialog). The field names and their sources are in
+//     docs/v3-spike/5-claudeseat-execution.md.
 //
-// The launch record carries the digest of settings.json and the plugin files
-// (Managed). Everything else Claude Code writes into the dir as it runs
-// (projects, session files, todos, .claude.json updates) is its own state,
-// outside the digest. The owner's user-scope settings and permission rules
-// never reach the seat.
+// The launch record carries the digest of settings.json, the plugin files,
+// the worktree pointer and the first-run facts of .claude.json (their
+// values only: Claude Code rewrites the rest of that file as it runs).
+// Everything else Claude Code writes into the dir (projects, session files,
+// todos, the other .claude.json keys) is its own state, outside the digest.
+// The owner's user-scope settings and permission rules never reach the
+// seat.
 package claudeseat
 
 import (
@@ -38,6 +47,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/plugins"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Reason codes seat-exec refuses with.
@@ -53,6 +63,24 @@ const (
 	// exit, the seat's config dir no longer has the launch's digest; the
 	// seat is quarantined (milestone B first pass P1).
 	ConfigChanged = "claude_config_changed"
+	// OnboardingMissing: the seat's config dir does not carry the
+	// onboarding-complete state or a theme; Claude Code would open its
+	// first-run flow in the pane (3.0.1 t6).
+	OnboardingMissing = "claude_onboarding_missing"
+	// TrustMissing: the seat's config dir does not record the seat's
+	// worktree as trusted; Claude Code would open its trust dialog (3.0.1
+	// t6).
+	TrustMissing = "claude_trust_missing"
+	// ConfigUnexpected: the seat's .claude.json carries a key the launch
+	// did not write and Claude Code does not keep as bookkeeping: another
+	// project's entry (trust beyond the seat's worktree) or a permission
+	// input such as allowedTools (3.0.1 t6 fix round).
+	ConfigUnexpected = "claude_config_unexpected"
+	// TrustRootRefused: the seat's .claude.json has an entry for the
+	// worktree's canonical repository root, the key 2.1.314 checks first
+	// for trust; trust there would extend to every sibling worktree (3.0.1
+	// t6 fix round, reviewer addition).
+	TrustRootRefused = "claude_trust_root_refused"
 )
 
 // ConfigDrift reports whether a Claude seat's config dir differs from the
@@ -75,11 +103,102 @@ func ConfigDrift(root, handle, launchID, recorded string) (bool, string) {
 // PluginKey is the plugin's key ("<plugin>@<marketplace>").
 const PluginKey = "amq-squad@amq-squad"
 
-// Seed is the first-run state the core writes into .claude.json: the keys
-// that mark onboarding complete and the project trusted, if a live run
-// shows a fresh config dir stops at a first-run prompt. Empty: nothing is
-// seeded (2026-10-24, before the live run).
-var Seed = map[string]any{}
+// GlobalConfigFile is Claude Code's global config inside its config dir:
+// with CLAUDE_CONFIG_DIR set, 2.1.314 reads $CLAUDE_CONFIG_DIR/.claude.json
+// (the ".claude" + o6() + ".json" join, o6() empty in the prod build without
+// CLAUDE_CODE_CUSTOM_OAUTH_URL, which the seat scrub drops).
+const GlobalConfigFile = ".claude.json"
+
+// Theme is the theme the seat's settings.json names: "dark", Claude Code
+// 2.1.314's own default (resolveSetting("theme","dark")), set explicitly so
+// nothing in the seat asks for one.
+const Theme = "dark"
+
+// The first-run field names Claude Code 2.1.314 reads (sources in
+// docs/v3-spike/5-claudeseat-execution.md).
+const (
+	onboardedKey = "hasCompletedOnboarding"
+	projectsKey  = "projects"
+	trustKey     = "hasTrustDialogAccepted"
+)
+
+// trustKeys are the projects keys the launch records the worktree under: the
+// path as recorded and, when it differs, its symlink-resolved form (Claude
+// Code's own headless runner writes both), each NFC-normalized, as 2.1.314's
+// trust walk normalizes the cwd (`Nn(t){return t.normalize("NFC")}`).
+func trustKeys(worktree string) []string {
+	return pathKeys(worktree)
+}
+
+// pathKeys is a path's NFC form and, when it differs, its symlink-resolved
+// NFC form.
+func pathKeys(p string) []string {
+	keys := []string{norm.NFC.String(filepath.Clean(p))}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		if r := norm.NFC.String(real); r != keys[0] {
+			keys = append(keys, r)
+		}
+	}
+	return keys
+}
+
+// canonicalRoot is the main repository a git worktree belongs to, the way
+// 2.1.314 finds it (its Rt and sr): the worktree's .git file names a gitdir
+// under <common>/worktrees/, the gitdir's commondir names <common>, and the
+// root is <common>'s parent when <common> is a .git directory. "" when the
+// worktree is a main checkout (a .git directory), not a git worktree, or the
+// layout does not check out.
+func canonicalRoot(worktree string) string {
+	raw, err := os.ReadFile(filepath.Join(worktree, ".git"))
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return ""
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(worktree, gitdir)
+	}
+	gitdir = filepath.Clean(gitdir)
+	c, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil {
+		return ""
+	}
+	common := strings.TrimSpace(string(c))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitdir, common)
+	}
+	common = filepath.Clean(common)
+	if filepath.Dir(gitdir) != filepath.Join(common, "worktrees") {
+		return ""
+	}
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return common
+}
+
+// rootKeys are the projects keys of the worktree's canonical repository
+// root that are not the worktree's own keys (none for a main checkout).
+func rootKeys(worktree string, own []string) []string {
+	root := canonicalRoot(worktree)
+	if root == "" {
+		return nil
+	}
+	mine := map[string]bool{}
+	for _, k := range own {
+		mine[k] = true
+	}
+	var out []string
+	for _, k := range pathKeys(root) {
+		if !mine[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
 
 // Dir is the config dir of one launch of a seat.
 func Dir(root, handle, launchID string) string {
@@ -89,12 +208,13 @@ func Dir(root, handle, launchID string) string {
 // Written is what Write produced.
 type Written struct {
 	Dir    string
-	Digest string   // sha256 over the managed files
-	Seeded []string // the .claude.json keys seeded (sorted; empty when none)
+	Digest string   // sha256 over the managed files and the first-run facts
+	Seeded []string // the first-run facts written into .claude.json (sorted)
 }
 
 // Write creates the launch's config dir (it must not exist) with the
-// managed files and the seed.
+// managed files and the first-run state, all by value (no symlink into the
+// owner's config).
 func Write(dir, permissionMode, worktree string, now time.Time) (Written, error) {
 	w := Written{Dir: dir, Seeded: []string{}}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
@@ -114,6 +234,7 @@ func Write(dir, permissionMode, worktree string, now time.Time) (Written, error)
 		"settings.json": map[string]any{
 			"permissions":    map[string]any{"defaultMode": permissionMode, "allow": []string{}},
 			"enabledPlugins": map[string]bool{PluginKey: true},
+			"theme":          Theme,
 		},
 		"plugins/installed_plugins.json": map[string]any{"version": 2, "plugins": map[string]any{
 			PluginKey: []map[string]any{{"scope": "user", "installPath": install, "version": version, "installedAt": stamp, "lastUpdated": stamp}},
@@ -122,11 +243,24 @@ func Write(dir, permissionMode, worktree string, now time.Time) (Written, error)
 			"amq-squad": map[string]any{"source": map[string]any{"source": "directory", "path": marketplace}, "installLocation": marketplace, "lastUpdated": stamp},
 		},
 	}
+	first := map[string]any{onboardedKey: true}
+	w.Seeded = append(w.Seeded, onboardedKey)
 	if worktree != "" {
 		// The worktree's settings files are part of the digest (phase 5
 		// re-pass of 4-2, P1-1): Claude merges them into the seat's settings.
-		files[WorktreeFile] = map[string]string{"worktree": worktree}
+		// The trust keys are recorded with it, so the digest reads the same
+		// keys the launch wrote.
+		keys := trustKeys(worktree)
+		files[WorktreeFile] = map[string]any{"worktree": worktree, "trusted": keys, "canonical_root": rootKeys(worktree, keys)}
+		projects := map[string]any{}
+		for _, k := range keys {
+			projects[k] = map[string]bool{trustKey: true}
+			w.Seeded = append(w.Seeded, fmt.Sprintf("%s[%q].%s", projectsKey, k, trustKey))
+		}
+		first[projectsKey] = projects
 	}
+	files[GlobalConfigFile] = first
+	sort.Strings(w.Seeded)
 	for rel, v := range files {
 		raw, _ := json.MarshalIndent(v, "", "  ")
 		if err := writeFile(filepath.Join(dir, filepath.FromSlash(rel)), append(raw, '\n'), 0o600); err != nil {
@@ -156,18 +290,6 @@ func Write(dir, permissionMode, worktree string, now time.Time) (Written, error)
 	})
 	if err != nil {
 		return w, err
-	}
-	if len(Seed) > 0 {
-		seed := map[string]any{}
-		for k, v := range Seed {
-			seed[k] = v
-			w.Seeded = append(w.Seeded, k)
-		}
-		sort.Strings(w.Seeded)
-		raw, _ := json.MarshalIndent(seed, "", "  ")
-		if err := writeFile(filepath.Join(dir, ".claude.json"), append(raw, '\n'), 0o600); err != nil {
-			return w, err
-		}
 	}
 	w.Digest, err = Digest(dir)
 	return w, err
@@ -231,6 +353,18 @@ func recordedWorktree(dir string) (string, error) {
 		return "", fmt.Errorf("%s does not name an absolute worktree", WorktreeFile)
 	}
 	return w.Worktree, nil
+}
+
+// recordedTrust reads the trust keys the launch recorded in the worktree
+// pointer (none when it recorded none or cannot be parsed).
+func recordedTrust(raw []byte) []string {
+	var w struct {
+		Trusted []string `json:"trusted"`
+	}
+	if json.Unmarshal(raw, &w) != nil {
+		return nil
+	}
+	return w.Trusted
 }
 
 // readWorktreeSettings reads the worktree's .claude settings files through
@@ -354,6 +488,11 @@ func Digest(dir string) (string, error) {
 		data []byte
 	}
 	var entries []entry
+	var (
+		trusted       []string
+		globalRaw     []byte
+		globalPresent bool
+	)
 	read := func(rel string, f *os.File, mode uint32) error {
 		defer f.Close()
 		raw, err := io.ReadAll(f)
@@ -393,6 +532,25 @@ func Digest(dir string) (string, error) {
 			if err := read(name, f, mode); err != nil {
 				return "", err
 			}
+			trusted = recordedTrust(entries[len(entries)-1].data)
+		case GlobalConfigFile:
+			// Claude Code rewrites this file as it runs (numStartups, its
+			// own project state): only the first-run facts are hashed, read
+			// through the anchored descriptor like the managed files.
+			f, kind, _, _, err := d.OpenEntry(name)
+			if err != nil {
+				return "", err
+			}
+			if kind != fsanchor.KindRegular {
+				f.Close()
+				return "", fmt.Errorf("%s is not a regular file", name)
+			}
+			globalRaw, err = io.ReadAll(f)
+			f.Close()
+			if err != nil {
+				return "", err
+			}
+			globalPresent = true
 		case "plugins":
 			sub, err := d.Sub(name)
 			if err != nil {
@@ -410,6 +568,9 @@ func Digest(dir string) (string, error) {
 			}
 		}
 	}
+	// The first-run facts and the permission inputs of .claude.json, by
+	// value (3.0.1 t6).
+	entries = append(entries, entry{rel: GlobalConfigFile + "#facts", data: configFacts(globalRaw, globalPresent, trusted)})
 	// The worktree's settings files, which Claude merges: present with their
 	// bytes, or absent (phase 5 re-pass of 4-2, P1-1).
 	worktree, err := recordedWorktree(dir)
@@ -442,8 +603,13 @@ func Digest(dir string) (string, error) {
 // Check is seat-exec's check of a Claude seat's config dir before exec: it
 // exists, is a real directory, 0700, owned by uid, its managed files have
 // the launch's digest, its settings carry the launch's permission mode with
-// no allow rule, and its plugin runs the guard on PreToolUse. It returns the
-// reason code and the detail of the first failure ("" when it passes).
+// no allow rule, it is past first-run onboarding (hasCompletedOnboarding and
+// a theme: claude_onboarding_missing), its worktree is trusted
+// (claude_trust_missing), its .claude.json carries nothing beyond what the
+// launch wrote and Claude Code's bookkeeping (claude_config_unexpected), and
+// its plugin runs the guard on PreToolUse
+// (claude_hooks_missing). It returns the reason code and the detail of the
+// first failure ("" when it passes).
 func Check(dir string, uid int, digest, permissionMode string) (string, string) {
 	st, err := os.Lstat(dir)
 	switch {
@@ -461,24 +627,69 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 	if err != nil || digest == "" || got != digest {
 		return PermissionMismatch, fmt.Sprintf("the seat's Claude config dir is not what the launch wrote (digest %s, the launch record %s, %v)", got, digest, err)
 	}
-	var settings struct {
-		Permissions struct {
-			DefaultMode string   `json:"defaultMode"`
-			Allow       []string `json:"allow"`
-		} `json:"permissions"`
-		EnabledPlugins map[string]bool `json:"enabledPlugins"`
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
-	if err != nil || json.Unmarshal(raw, &settings) != nil {
+	// Exact keys: Go's struct decoding matches JSON keys in any case, Claude
+	// Code reads them exactly (fifth commit, the reviewer's key variants).
+	settings, err := readSettings(dir)
+	if err != nil {
 		return PermissionMismatch, "the seat's settings.json is unreadable"
 	}
-	if settings.Permissions.DefaultMode != permissionMode || len(settings.Permissions.Allow) != 0 {
-		return PermissionMismatch, fmt.Sprintf("the seat's settings.json has mode %q and %d allow rules; the launch record says %q and none", settings.Permissions.DefaultMode, len(settings.Permissions.Allow), permissionMode)
+	perms, _ := settings["permissions"].(map[string]any)
+	mode, _ := perms["defaultMode"].(string)
+	allow, isList := perms["allow"].([]any)
+	if mode != permissionMode || (perms["allow"] != nil && !isList) || len(allow) != 0 {
+		return PermissionMismatch, fmt.Sprintf("the seat's settings.json has mode %q and %d allow rules; the launch record says %q and none", mode, len(allow), permissionMode)
 	}
 	if env := ForbiddenSettingsEnv(dir); len(env) > 0 {
 		return SettingsEnvForbidden, "a settings file Claude merges for the seat sets a forbidden env variable: " + strings.Join(env, "; ")
 	}
-	if !settings.EnabledPlugins[PluginKey] {
+	return screensGap(dir)
+}
+
+// screensGap is the one check of what keeps a Claude seat's pane free of
+// first-run screens, shared by Check (seat-exec, before exec) and
+// StartupScreensClosed (the launch's wake condition): the onboarding state
+// and a theme (claude_onboarding_missing), the worktree's trust under its
+// NFC keys (claude_trust_missing), no entry for the canonical repository
+// root (claude_trust_root_refused), nothing beyond the launch's keys and
+// the binary's bookkeeping and no trust or permission input of the wrong
+// shape (claude_config_unexpected), no CLAUDE.md import from outside the
+// worktree pending approval (claude_external_includes_pending), and the
+// hooks plugin enabled and wired (claude_hooks_missing). It reads only what Write seeds
+// (settings.json, .claude.json, the worktree pointer, plugins/) and the
+// worktree's own .git layout, never anything Claude Code writes after the
+// launch. It returns the reason code and the detail of the first gap ("",
+// "" when there is none).
+func screensGap(dir string) (string, string) {
+	settings, err := readSettings(dir)
+	if err != nil {
+		return OnboardingMissing, "the seat's settings.json is missing or unreadable"
+	}
+	theme, _ := settings["theme"].(string)
+	plugins, _ := settings["enabledPlugins"].(map[string]any)
+	if cfg, err := readGlobalConfig(dir); err == nil {
+		if bad := malformedInputs(cfg); len(bad) > 0 {
+			return ConfigUnexpected, "the seat's " + GlobalConfigFile + " carries a trust or permission input of the wrong shape (2.1.314 tests them by truthiness): " + strings.Join(bad, "; ")
+		}
+	}
+	onboarding, trust := firstRunGaps(dir, theme)
+	if len(onboarding) > 0 {
+		return OnboardingMissing, "the seat's Claude config dir is not past first-run onboarding: " + strings.Join(onboarding, "; ")
+	}
+	if len(trust) > 0 {
+		return TrustMissing, "the seat's Claude config dir does not trust its worktree: " + strings.Join(trust, "; ")
+	}
+	if roots := trustedRoot(dir); len(roots) > 0 {
+		return TrustRootRefused, "the seat's " + GlobalConfigFile + " has an entry for the worktree's canonical repository root, which Claude Code checks first and which would trust every sibling worktree: " + strings.Join(roots, "; ")
+	}
+	if extra := unexpectedConfig(dir); len(extra) > 0 {
+		return ConfigUnexpected, "the seat's " + GlobalConfigFile + " carries what the launch did not write and Claude Code does not keep as bookkeeping: " + strings.Join(extra, "; ")
+	}
+	if worktree, err := recordedWorktree(dir); err == nil {
+		if ext := ExternalIncludes(worktree); len(ext) > 0 {
+			return ExternalIncludesPending, "a CLAUDE.md the seat loads at start imports files outside its worktree and nothing approves them, so Claude Code would open its external-includes dialog: " + strings.Join(ext, "; ")
+		}
+	}
+	if plugins[PluginKey] != true {
 		return HooksMissing, "the amq-squad plugin is not enabled in the seat's settings.json"
 	}
 	var installed struct {
@@ -487,7 +698,7 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 			InstallPath string `json:"installPath"`
 		} `json:"plugins"`
 	}
-	raw, err = os.ReadFile(filepath.Join(dir, "plugins", "installed_plugins.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "plugins", "installed_plugins.json"))
 	if err != nil || json.Unmarshal(raw, &installed) != nil {
 		return HooksMissing, "the seat's plugins/installed_plugins.json is missing or unreadable"
 	}
@@ -497,6 +708,23 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 		}
 	}
 	return HooksMissing, "the seat's amq-squad plugin install does not run amq-squad-hook.sh pre-tool on PreToolUse"
+}
+
+// readSettings reads the config dir's settings.json as an object, so every
+// key is matched exactly as Claude Code matches it.
+func readSettings(dir string) (map[string]any, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		return nil, fmt.Errorf("settings.json is null")
+	}
+	return m, nil
 }
 
 func inside(dir, p string) bool {
@@ -557,4 +785,35 @@ func WorktreeAllowRules(worktree string) []string {
 		}
 	}
 	return out
+}
+
+// OnboardingUnverified is StartupScreensClosed's reason when there is no
+// config dir to verify (it is missing or not a directory).
+const OnboardingUnverified = "claude_onboarding_unverified"
+
+// StartupScreensClosed reports whether a Claude seat's config dir rules out
+// every first-run screen that a raw AMQ wake doorbell could answer: a
+// condition of the seat's wake (3.0.1). In 2.1.314 those are the onboarding
+// flow (hasCompletedOnboarding, with the theme in settings.json), the folder
+// trust dialog (projects[<worktree>].hasTrustDialogAccepted under the NFC
+// keys, with no canonical-root entry and nothing else in projects), the
+// external-includes dialog (no CLAUDE.md the seat loads imports a file
+// outside its worktree), and the hooks, which the binary holds until that
+// trust (loadHooksModulesHeldForTrust) and which run only with the plugin
+// enabled and wired. It is screensGap,
+// the check seat-exec's Check runs before exec: one source of truth.
+//
+// It depends only on what Write seeds, never on anything written after the
+// launch: the launch's compile step calls it before the seat's own dir
+// exists, on a scratch dir Write produced for the same mode and worktree
+// (seatlaunch's scratchClaudeWakeConditions), and the seat's dir, written
+// later by the same Write, carries the same answer. It returns true and ""
+// when every screen is closed, else false and the reason code of the first
+// gap (claude_onboarding_unverified for a missing dir).
+func StartupScreensClosed(dir string) (bool, string) {
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return false, OnboardingUnverified
+	}
+	code, _ := screensGap(dir)
+	return code == "", code
 }

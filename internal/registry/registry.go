@@ -27,6 +27,8 @@
 //	                   the routing metadata cut from catalog.json (2a-2 ruling 13)
 //	probe_*            the R12 probe record: runs, passes, false successes,
 //	                   tool errors, predicate, and the version probed against
+//	seat_env           NAME=VALUE pairs every seat of the entry runs with
+//	                   (Claude entries: ClaudeSeatEnv); absent when none
 package registry
 
 import (
@@ -92,7 +94,21 @@ type Entry struct {
 	ProbeToolErrors    int
 	ProbePredicate     string
 	ProbeVersion       string
+	// SeatEnv is the environment every seat of the entry runs with, as
+	// NAME=VALUE (3.0.1 t6): ClaudeSeatEnv on the Claude entries, nothing
+	// elsewhere. seat-exec sets it; a manager that runs Claude seats its own
+	// way (the 3.1 pi manager) inherits it from here.
+	SeatEnv []string
 }
+
+// ClaudeSeatEnv is a Claude seat's environment fact (3.0.1 t6, the
+// reviewer's ruling): nonessential traffic off, so Claude Code 2.1.314's
+// flag client never fetches flags or writes its flag cache into the seat's
+// config dir (Wm() is !DISABLE_GROWTHBOOK && !gy(), and gy() holds when this
+// variable is set), and there is no update check and no telemetry. The cost
+// is the binary's default flag values. An owner must never unset it for
+// seats: the seat's config digest treats a flag cache as drift.
+var ClaudeSeatEnv = []string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"}
 
 // ID is runtime/model/effort, the key routing chains name.
 func (e Entry) ID() string { return e.Runtime + "/" + e.Model + "/" + e.Effort }

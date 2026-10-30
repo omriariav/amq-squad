@@ -458,7 +458,10 @@ then opens the draft PR as the harness, inside the standing grant's
 completion. An open PR on that branch bound to another task is refused
 (`pr_bound_elsewhere`), never reused, and the binding in the store,
 never a body trailer, is the PR's provenance. [2.7, briefs ruling 19;
-amendment 28] Between leases CleanSeat resets the seat and keeps the
+amendment 28] Binding is the default under a merge grant: the
+scheduler's commit step opens and binds with no flag, and `scheduler run
+--no-open-pr` is refused while the repository has one. [2.7, 3.0.1 task
+t14] Between leases CleanSeat resets the seat and keeps the
 discarded diff on the ledger. [2.7, milestone B result]
 
 pi seats start through the launch API like Claude and Codex seats, with
