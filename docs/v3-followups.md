@@ -211,6 +211,18 @@ closes.
   status, can bring it back. 5-amq-B.
 - A hung verification is an `attention` line in `remote attach`'s output,
   not a row in the status document's attention queue. 5-amq-B.
+- AMQ's startup hold misses every amq-squad seat (3.0.1 t9, a stated
+  limit). coop exec decides its Startup marker from the command binary
+  (internal/cli/coop_exec_trust.go:74-75 and coop_exec_unix.go:994 at AMQ
+  v0.116.2), and a seat's command binary is the seat-exec wrapper, so no
+  seat gets the hold, and a wake doorbell can reach a folder-trust, update
+  or hook-review screen. Claude's first-run screens close with t6 (the
+  seat's config dir born complete; claudeseat.StartupScreensClosed turns a
+  Claude seat's wake on only then). For AMQ's hold under a wrapper, one of
+  two: seat-exec names the inner binary to AMQ, or AMQ honours a binary
+  the launch declares (an upstream ask). Until then a Codex seat's wake
+  requires the Codex config's trust entry for its worktree, which rules out
+  the trust screen only.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 
