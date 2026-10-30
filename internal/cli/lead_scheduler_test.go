@@ -86,3 +86,40 @@ func waitPid(t *testing.T, path string, not int) int {
 	t.Fatal("the scheduler process did not start")
 	return 0
 }
+
+// t16 ruling 4: `lead --team --trust` passes --trust through to scheduler
+// run (the owner's standing answer for this session); without it the
+// scheduler runs without one, and --trust outside team mode is refused.
+func TestLeadTeamPassesTrustToTheScheduler(t *testing.T) {
+	with := leadSchedulerCommand("/bin/amq-squad", "/p/seats.json", "lead-1", nil, true)(context.Background())
+	without := leadSchedulerCommand("/bin/amq-squad", "/p/seats.json", "lead-1", nil, false)(context.Background())
+	if got := strings.Join(with.Args[1:], " "); got != "scheduler run --seats /p/seats.json --lead lead-1 --trust" {
+		t.Fatalf("with --trust: %s", got)
+	}
+	if got := strings.Join(without.Args[1:], " "); strings.Contains(got, "--trust") {
+		t.Fatalf("without --trust: %s", got)
+	}
+	t.Setenv("HOME", t.TempDir())
+	if _, _, err := captureOutput(t, func() error { return runLead([]string{"--trust"}) }); err == nil || !strings.Contains(err.Error(), "--trust needs --team --scheduler-seats") {
+		t.Fatalf("--trust alone: %v", err)
+	}
+}
+
+// t16 ruling 4: a scheduler process that exits refused (its roster launch
+// refused at start) is not restarted; a crash still is.
+func TestSupervisorDoesNotRestartARefusal(t *testing.T) {
+	log := &syncBuf{}
+	s := &supervisor{log: log, backoff: time.Millisecond, maxDelay: time.Millisecond, fastFail: time.Millisecond, maxFast: 100,
+		command: func(ctx context.Context) *exec.Cmd {
+			return exec.CommandContext(ctx, "sh", "-c", "exit "+strconv.Itoa(ExitSchedulerRefused))
+		}}
+	s.start()
+	select {
+	case <-s.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor kept restarting a refusal")
+	}
+	if s.count() != 1 || !strings.Contains(log.String(), "refused to start") {
+		t.Fatalf("%d starts\n%s", s.count(), log.String())
+	}
+}

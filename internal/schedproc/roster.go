@@ -19,11 +19,17 @@ func SeatPool(seat seatlaunch.Seat) task.Pool {
 }
 
 // Roster is the squad's roster: every seat of the seat list that can start.
-// A seat whose worktree is missing or is the repository root is left out
-// (the commit step moves the seat branch, so it was never started) and
+// The lead's own seat is left out (the roster's tmux session holds seats
+// only: a lead inside it keeps the binding present, and every relaunch is
+// refused), as is a seat whose worktree is missing or is the repository root
+// (the commit step moves the seat branch, so it was never started); each is
 // named in excluded with the reason.
-func (s *Slots) Roster() (roster []scheduler.RosterSeat, excluded []string) {
+func (s *Slots) Roster(lead string) (roster []scheduler.RosterSeat, excluded []string) {
 	for _, seat := range s.Squad.Seats {
+		if lead != "" && seat.Handle == lead {
+			excluded = append(excluded, fmt.Sprintf("seat %s is the lead (--lead); the lead runs outside the roster's tmux session", seat.Handle))
+			continue
+		}
 		if _, err := s.checkWorktree(seat); err != nil {
 			excluded = append(excluded, err.Error())
 			continue

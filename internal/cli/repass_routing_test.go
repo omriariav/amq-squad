@@ -54,7 +54,7 @@ func TestRepassLeadPoolOnlyFromTheLeadsTeamMode(t *testing.T) {
 // model at its thinking level to the scheduler child it starts.
 func TestRepassLeadForwardsItsPools(t *testing.T) {
 	pools := leadPools([]string{"ollama/qwen3.6:27b", "ollama/qwen3.6:35b-a3b"}, "high")
-	cmd := leadSchedulerCommand("/bin/amq-squad", "/p/seats.json", "lead-1", pools)(context.Background())
+	cmd := leadSchedulerCommand("/bin/amq-squad", "/p/seats.json", "lead-1", pools, false)(context.Background())
 	want := []string{"/bin/amq-squad", "scheduler", "run", "--seats", "/p/seats.json", "--lead", "lead-1",
 		"--lead-pool", "pi:ollama/qwen3.6:27b:high", "--lead-pool", "pi:ollama/qwen3.6:35b-a3b:high"}
 	if !slices.Equal(cmd.Args, want) {

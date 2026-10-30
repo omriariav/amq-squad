@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/routing"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
@@ -177,7 +178,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target}
 	// The roster (3.0.1 t16): every seat that can start launches in one
 	// apply; a seat with no worktree of its own never started and is named.
-	roster, excluded := slots.Roster()
+	roster, excluded := slots.Roster(*lead)
 	for _, why := range excluded {
 		fmt.Fprintf(out, "scheduler run: not in the roster: %s\n", why)
 	}
@@ -274,7 +275,23 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if errors.Is(err, schedproc.ErrRunning) {
 		return fmt.Errorf("scheduler run: %w (session root %s)", err, root)
 	}
+	var refused *scheduler.RosterLaunchError
+	if errors.As(err, &refused) && refused.Stage != "launch_error" {
+		// A refused roster launch is the owner's decision to make, not a
+		// crash: a distinct exit, which the lead's supervisor does not
+		// restart (3.0.1 t16).
+		return &codedExitError{code: ExitSchedulerRefused, msg: rosterRefusal(refused)}
+	}
 	return err
+}
+
+// rosterRefusal is the printed reason of a refused roster launch; a trust
+// confirmation names the flag that answers it.
+func rosterRefusal(e *scheduler.RosterLaunchError) string {
+	if e.Stage == "decisions_pending" && strings.Contains(e.ReasonCode, "trust_confirmation") {
+		return "scheduler run: the roster launch was refused at start: AMQ asks for the owner's trust confirmation of this squad's launch subject (trust_confirmation); start the lead with `amq-squad lead --team --scheduler-seats FILE --trust` (or `amq-squad scheduler run --trust`): a flag the owner types is the standing answer for this session"
+	}
+	return "scheduler run: the roster launch was refused at start: " + e.Error()
 }
 
 // schedulerSeatView is the router's seat view in scheduler run: the
@@ -307,12 +324,27 @@ func schedulerContext(q seatlaunch.Squad) (contextResolution, error) {
 // the pane listing and the chain walk).
 var schedulerDecideSeams func(*schedproc.DecideOptions)
 
+// schedulerLeadParent is the scheduler's parent process and its raw start
+// stamp (a test seam).
+var schedulerLeadParent = func() (int, string, bool) {
+	pid := os.Getppid()
+	start, ok := procinfo.StartToken(pid)
+	return pid, start, ok
+}
+
 // decisionOptions is the decision socket of scheduler run: the widening as
-// the lead's decision (R4).
+// the lead's decision (R4). Started by the lead's team mode, the lead is the
+// scheduler's own parent (schedproc.SupervisingLead, 3.0.1 t16): the
+// team-mode lead runs outside the roster's tmux session and has no proof
+// ledger entry; otherwise the lead is the one the launch ledger recorded.
 func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
 	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
 		return widenDecision(sel, projectRoot, lead, req)
 	}}
+	if startedByLeadTeam() {
+		pid, start, _ := schedulerLeadParent()
+		d.LeadPane = schedproc.SupervisingLead(pid, start, procinfo.StartToken)
+	}
 	if schedulerDecideSeams != nil {
 		schedulerDecideSeams(d)
 	}

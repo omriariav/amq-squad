@@ -116,6 +116,27 @@ func RecordedLeadPane(root, lead string) (panechain.Pane, error) {
 	return panechain.Pane{Shell: e.PID, Start: e.Start, Agent: lead}, nil
 }
 
+// SupervisingLead is the lead's incarnation when the scheduler was started
+// by the lead's team mode (3.0.1 t16): the scheduler's own parent process,
+// pid and raw start stamp read once at the scheduler's start. The team-mode
+// lead runs outside the roster's tmux session (a lead inside it keeps the
+// binding present, and AMQ then refuses every relaunch), so it has no proof
+// ledger entry under the session root; the kernel's parent link is its
+// proof instead, and its commands (pi runs as its child) descend from it.
+// The stamp is read again at every decision: a parent that is gone or
+// reused is origin_unknown.
+func SupervisingLead(pid int, start string, stamp func(int) (string, bool)) func(root, lead string) (panechain.Pane, error) {
+	return func(_, lead string) (panechain.Pane, error) {
+		if pid <= 1 || start == "" {
+			return panechain.Pane{}, fmt.Errorf("the scheduler's team-mode lead process was not recorded at start")
+		}
+		if now, ok := stamp(pid); !ok || now != start {
+			return panechain.Pane{}, fmt.Errorf("the team-mode lead process %d that started this scheduler is gone or reused", pid)
+		}
+		return panechain.Pane{Shell: pid, Start: start, Agent: lead}, nil
+	}
+}
+
 // DecisionServer is the running socket.
 type DecisionServer struct {
 	sock     *seatlaunch.PrivateSocket

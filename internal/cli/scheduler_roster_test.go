@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -36,6 +37,7 @@ func TestSchedulerRunLaunchesTheRosterAtStart(t *testing.T) {
 		seat("impl-1", "claude", "sonnet", filepath.Join(proj, "wt-impl-1")),
 		seat("rev-1", "codex", "gpt-5.4", filepath.Join(proj, "wt-rev-1")),
 		seat("root-1", "claude", "opus", proj),
+		seat("lead", "claude", "opus", filepath.Join(proj, "wt-lead")),
 	}})
 	seatsFile := filepath.Join(proj, "seats.json")
 	mustWrite(t, seatsFile, string(raw))
@@ -80,7 +82,7 @@ func TestSchedulerRunLaunchesTheRosterAtStart(t *testing.T) {
 	if len(fake.reqs) != 2 || fake.reqs[0].Handle != "impl-1" || fake.reqs[1].Handle != "rev-1" {
 		t.Fatalf("the roster launch: %+v", fake.reqs)
 	}
-	if !strings.Contains(stdout, "not in the roster: seat root-1 has no worktree of its own") || !strings.Contains(stdout, "roster of 2 seats") {
+	if !strings.Contains(stdout, "not in the roster: seat root-1 has no worktree of its own") || !strings.Contains(stdout, "not in the roster: seat lead is the lead") || !strings.Contains(stdout, "roster of 2 seats") {
 		t.Fatalf("stdout:\n%s", stdout)
 	}
 }
@@ -147,5 +149,60 @@ func TestStatusShowsTheRelaunchBlock(t *testing.T) {
 	text, _, err := captureOutput(t, func() error { return runStatusWithVersion(nil, "3.0.1-test") })
 	if err != nil || !strings.Contains(text, "blocked") || !strings.Contains(text, tk.ID+" blocked ("+scheduler.ReasonSeatRelaunch+")") {
 		t.Fatalf("status (%v):\n%s", err, text)
+	}
+}
+
+// refusingRoster is a launcher whose roster launch AMQ refuses.
+type refusingRoster struct {
+	cliFakeLauncher
+	out scheduler.RosterOutcome
+}
+
+func (f *refusingRoster) LaunchRoster([]scheduler.SeatRequest) scheduler.RosterOutcome { return f.out }
+
+// t16 ruling 4: without --trust, a roster launch whose Prepare asks for the
+// trust confirmation is refused at start, once: scheduler run exits with
+// the refusal code (which the lead's supervisor does not restart) and a
+// reason that names the flag. A launch error that is not AMQ's refusal
+// keeps the crash path.
+func TestSchedulerRunRefusesAtStartNamingTrust(t *testing.T) {
+	_, _, seatsFile := schedulerFixture(t)
+	f := &refusingRoster{out: scheduler.RosterOutcome{Stage: "decisions_pending", ReasonCode: "trust_confirmation", Detail: "answer trust_confirmation"}}
+	schedulerAMQLauncher = func(sl *schedproc.Slots, _ string, _ seatlaunch.Options) scheduler.SeatLauncher { f.sl = sl; return f }
+	_, _, err := captureOutput(t, func() error {
+		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+	})
+	if ExitCode(err) != ExitSchedulerRefused || !strings.Contains(err.Error(), "amq-squad lead --team --scheduler-seats FILE --trust") || !strings.Contains(err.Error(), "trust_confirmation") {
+		t.Fatalf("the refusal: %v (exit %d)", err, ExitCode(err))
+	}
+	f.out = scheduler.RosterOutcome{Stage: "launch_error", Detail: "the probe failed"}
+	_, _, err = captureOutput(t, func() error {
+		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+	})
+	if err == nil || ExitCode(err) == ExitSchedulerRefused {
+		t.Fatalf("a launch error took the refusal exit: %v", err)
+	}
+}
+
+// t16 ruling 1: started by the lead's team mode, the decision socket's lead
+// is the scheduler's own parent (the team-mode lead outside the roster's
+// tmux session); otherwise the launch ledger's lead, as before.
+func TestSchedulerTakesItsTeamModeParentAsTheLead(t *testing.T) {
+	me := os.Getpid()
+	start, _ := procinfo.StartToken(me)
+	prevTeam, prevParent := startedByLeadTeam, schedulerLeadParent
+	t.Cleanup(func() { startedByLeadTeam, schedulerLeadParent = prevTeam, prevParent })
+	schedulerLeadParent = func() (int, string, bool) { return me, start, true }
+	startedByLeadTeam = func() bool { return true }
+	d := decisionOptions(storeSelection{}, t.TempDir())
+	if d.LeadPane == nil {
+		t.Fatal("no team-mode lead")
+	}
+	if p, err := d.LeadPane("/r", "lead"); err != nil || p.Shell != me || p.Start != start || p.Agent != "lead" {
+		t.Fatalf("lead pane %+v %v", p, err)
+	}
+	startedByLeadTeam = func() bool { return false }
+	if d := decisionOptions(storeSelection{}, t.TempDir()); d.LeadPane != nil {
+		t.Fatal("a scheduler outside team mode took its parent as the lead")
 	}
 }

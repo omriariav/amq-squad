@@ -13,6 +13,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -249,7 +250,7 @@ func TestLeadsRelaunchReachesTheSchedulerOverItsSocket(t *testing.T) {
 func TestSlotsRosterAndItsPlan(t *testing.T) {
 	q := squadFixture(t)
 	s := &Slots{Squad: q}
-	roster, excluded := s.Roster()
+	roster, excluded := s.Roster("")
 	if len(roster) != 2 || roster[0].Handle != "c1" || roster[1].Handle != "p1" || roster[0].Pool != sonnet || len(excluded) != 1 || !strings.Contains(excluded[0], "seat root has no worktree of its own") {
 		t.Fatalf("roster %+v excluded %v", roster, excluded)
 	}
@@ -281,5 +282,40 @@ func TestLauncherSendsTheRosterToOneLauncher(t *testing.T) {
 	one := &Launcher{Slots: &Slots{}, ByRuntime: map[string]scheduler.SeatLauncher{"claude": a, "codex": a}}
 	if out := one.LaunchRoster(reqs); out.Stage != "prepare_refused" || a.launched() != 1 || len(a.launches[0]) != 2 {
 		t.Fatalf("one launcher: %+v", out)
+	}
+}
+
+// t16 ruling 1: a scheduler started by the lead's team mode takes its own
+// parent (the team-mode lead process, outside the roster's tmux session) as
+// the lead: a decision from that process or its descendants is proved over
+// the real socket, with the real kernel peer and parent chain; a parent
+// that is gone or reused is origin_unknown. Reverted, a lead with no proof
+// ledger entry (one outside the roster's binding) could send no decision.
+func TestSupervisingLeadProvesTheTeamModeLead(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	me := os.Getpid()
+	start, ok := procinfo.StartToken(me)
+	if !ok {
+		t.Skip("no start stamp for this process")
+	}
+	var relaunched int
+	serve := func(lead func(root, lead string) (panechain.Pane, error)) *DecisionServer {
+		s, err := ServeDecisions(DecideOptions{Root: root, Lead: "lead", LeadPane: lead,
+			Apply:    func(string, WidenRequest) DecideReply { return DecideReply{OK: true} },
+			Relaunch: func(string, RelaunchRequest) DecideReply { relaunched++; return DecideReply{OK: true} }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(s.Close)
+		return s
+	}
+	s := serve(SupervisingLead(me, start, procinfo.StartToken))
+	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{Reason: "x"}); err != nil || !reply.OK || relaunched != 1 {
+		t.Fatalf("the team-mode lead: %+v %v", reply, err)
+	}
+	s.Close()
+	s = serve(SupervisingLead(me, start+"-reused", procinfo.StartToken))
+	if reply, err := SendRelaunch(s.Root(), s.Path(), RelaunchRequest{}); err != nil || reply.Code != RefusedOriginUnknown || relaunched != 1 {
+		t.Fatalf("a reused parent: %+v %v", reply, err)
 	}
 }
