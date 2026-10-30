@@ -180,3 +180,63 @@ func TestTaskWidenPathIsExact(t *testing.T) {
 		t.Fatalf("a path the declared set cannot hold exactly was sent: %v", err)
 	}
 }
+
+// t16 round 7 (reviewer, item 2): the refused-paths list is the commit
+// step's alone. A seat's shell (AMQ_SQUAD_SEAT set, its own --me) cannot
+// write it: blocking its own task with the outside_declared_files reason and
+// a detail naming paths records no list (the widen tool then has nothing to
+// widen by), and no seat-callable verb (block, done, fail, release, reset,
+// set, cancel, claim, renew) alters the list of a task the commit step
+// refused; the commit step itself (seat commit) refuses a seat caller.
+func TestSeatCannotWriteTheRefusedPaths(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	t1, _ := store.Add(task.AddInput{Title: "refused", Class: "implement", DeclaredFiles: []string{"a.go"}, CreatedBy: "lead"}, now)
+	t2, _ := store.Add(task.AddInput{Title: "own", Class: "implement", DeclaredFiles: []string{"b.go"}, CreatedBy: "lead"}, now)
+	if _, err := store.Claim(t1.ID, "impl-1", nil, time.Hour, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Done(t1.ID, "impl-1", "", "", now); err != nil {
+		t.Fatal(err)
+	}
+	list := []string{"docs/a, b.md", "src/*.go"}
+	if _, err := store.RefuseCommitPaths(t1.ID, "outside_declared_files", "outside_declared_files: docs/a, b.md, src/*.go", task.RouteLead, list, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(t2.ID, "impl-2", nil, time.Hour, now); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMQ_SQUAD_SEAT", "impl-2")
+	run := func(args ...string) error {
+		_, _, err := captureOutput(t, func() error { return runTask(append(args, "--root", root)) })
+		return err
+	}
+	if err := run("block", t2.ID, "--me", "impl-2", "--reason", "outside_declared_files", "--detail", "outside_declared_files: evil.go (declared: b.go)"); err != nil {
+		t.Fatalf("the seat blocks its own task: %v", err)
+	}
+	if got, _ := store.Get(t2.ID); got.State != task.StateBlocked || len(got.RefusedPaths) != 0 {
+		t.Fatalf("a seat's own block recorded a refused list: %+v", got.RefusedPaths)
+	}
+	for _, args := range [][]string{
+		{"block", t1.ID, "--me", "impl-2", "--reason", "outside_declared_files", "--detail", "outside_declared_files: evil.go"},
+		{"done", t1.ID, "--me", "impl-2"}, {"fail", t1.ID, "--me", "impl-2", "--reason", "x"},
+		{"release", t1.ID, "--me", "impl-2", "--reason", "x"}, {"reset", t1.ID, "--me", "impl-2"},
+		{"set", t1.ID, "--me", "impl-2", "--priority", "9"}, {"cancel", t1.ID, "--me", "impl-2", "--reason", "x"},
+		{"claim", t1.ID, "--me", "impl-2"}, {"renew", "--me", "impl-2"},
+	} {
+		_ = run(args...)
+		if got, _ := store.Get(t1.ID); strings.Join(got.RefusedPaths, "|") != strings.Join(list, "|") {
+			t.Fatalf("task %v altered the refused list: %q", args, got.RefusedPaths)
+		}
+	}
+	if _, _, err := captureOutput(t, func() error { return runSeatCommit([]string{"--seat", "impl-1", "--root", root}, os.Stdout) }); err == nil || !strings.Contains(err.Error(), "harness_only") {
+		t.Fatalf("a seat ran the commit step: %v", err)
+	}
+	if got, _ := store.Get(t1.ID); strings.Join(got.RefusedPaths, "|") != strings.Join(list, "|") {
+		t.Fatalf("the list changed: %q", got.RefusedPaths)
+	}
+}

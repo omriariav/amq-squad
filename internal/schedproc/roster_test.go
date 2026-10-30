@@ -482,3 +482,71 @@ func TestUnreadableLeadStampIsUnknownNotGone(t *testing.T) {
 		t.Fatalf("lead_unknown logged %d times:\n%s", n, log.String())
 	}
 }
+
+// t16 round 7 (reviewer, item 7): a seat can never make the supervisor
+// exit. A stamp probe failure injected while a dialer (a seat's process)
+// sends a decision leaves the scheduler running: the decision is refused
+// origin_unknown, the scheduler logs lead_unknown, keeps ticking and stops
+// only when it is cancelled. Reverted (an unreadable stamp read as gone),
+// the dial's probe failure ends the scheduler with lead_gone.
+func TestProbeFailureDuringADialLeavesTheSchedulerRunning(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	me := os.Getpid()
+	start, ok := procinfo.StartToken(me)
+	if !ok {
+		t.Skip("no start stamp for this process")
+	}
+	var mu sync.Mutex
+	failing := false
+	stamp := func(pid int) (string, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if failing {
+			return "", false
+		}
+		return procinfo.StartToken(pid)
+	}
+	alive := func(int) bool { return true }
+	var once sync.Once
+	replies := make(chan DecideReply, 1)
+	l, log := &rosterLauncher{}, &lockedBuf{}
+	ticksAfter := 0
+	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
+		Config:    scheduler.Config{MaxSeats: 1, Lead: "lead", Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}}},
+		LeadState: func() (LeadStatus, string) { return LeadState(me, start, stamp, alive) },
+		Decisions: &DecideOptions{Apply: func(string, WidenRequest) DecideReply { return DecideReply{OK: true} },
+			Relaunch: func(string, RelaunchRequest) DecideReply { return DecideReply{OK: true} },
+			LeadPane: SupervisingLead(me, start, stamp, alive)}},
+		l, func([]scheduler.Decision) bool {
+			if rec, _ := ReadLaunchRecord(root); rec.DecisionSocket != "" {
+				once.Do(func() {
+					mu.Lock()
+					failing = true // the probe fails from here on, during the dial
+					mu.Unlock()
+					go func() {
+						reply, err := SendRelaunch(root, rec.DecisionSocket, RelaunchRequest{})
+						if err != nil {
+							reply = DecideReply{Code: err.Error()}
+						}
+						replies <- reply
+					}()
+				})
+			}
+			select {
+			case r := <-replies:
+				replies <- r
+				ticksAfter++
+			default:
+			}
+			return ticksAfter >= 5
+		})
+	if err != nil {
+		t.Fatalf("the scheduler exited: %v\n%s", err, log.String())
+	}
+	if r := <-replies; r.Code != RefusedOriginUnknown {
+		t.Fatalf("the decision during the probe failure: %+v", r)
+	}
+	if !strings.Contains(log.String(), `"kind":"lead_unknown"`) || strings.Contains(log.String(), "lead_gone") {
+		t.Fatalf("log:\n%s", log.String())
+	}
+}
