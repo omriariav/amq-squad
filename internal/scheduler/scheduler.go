@@ -181,8 +181,9 @@ type Scheduler struct {
 	relaunching bool
 	heldReason  string
 	// Launch failures (3.0.1 t17): the last failure per pool, the tasks
-	// blocked on a repeated one (task id -> pool key and when), and the
-	// requests whose failure this tick noted.
+	// blocked on a repeated one (task id -> the pool and the failure's
+	// sequence number), the requests whose failure was noted while a failed
+	// roster launch settles, and the failures' sequence counter.
 	launchFailures map[string]*LaunchFailure
 	launchBlocked  map[string]launchBlock
 	failedReqs     map[string]bool
