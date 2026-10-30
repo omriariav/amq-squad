@@ -55,6 +55,19 @@ closes.
 
 ## 3.0.x
 
+- Speed of launches and communication (owner, 2026-10-30, the first
+  dogfood squad: "we need to speed up the agent launches and comms, it's
+  taking too much"). Measured on the day: a seat launch to its first turn
+  is seconds, but the path from "task added" to "seat working" ran through
+  the trust confirmation (the mayor's start cannot carry it, t8), the
+  quarantine cycle (each owner config change costs a signed clear), the
+  first-run screens of a Claude seat (t6), the Codex folder trust per
+  worktree, and the missing wake that leaves a seat idle after its first
+  turn (t9); and every owner-side step was a terminal and a phone round
+  trip. The 3.1 measure: time from `task add` to the seat's first tool
+  call, and from a seat's reply to the owner's phone, both recorded per
+  run; the targets are set when the first clean run gives the baseline.
+
 - The 3.0 Claude plugin is unreachable through the public marketplace: the
   marketplace source is the repository (omriariav/amq-squad) and Claude
   Code reads its default branch, main, which carries v2.31; the owner's
