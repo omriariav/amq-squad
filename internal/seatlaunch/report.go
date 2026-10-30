@@ -20,7 +20,8 @@ func Report(w io.Writer, r Result) {
 	}
 	if a := r.Apply; a != nil {
 		fmt.Fprintf(w, "apply: outcome %s, reason_code %s, disposition %s, backend %s\n", a.Outcome, orNone(a.ReasonCode), orNone(string(a.Disposition)), orNone(a.Backend))
-		fmt.Fprintf(w, "apply: failure_detail %s\n", orNone(oneLine(a.FailureDetail)))
+		// AMQ's text through the chokepoint before oneLine flattens it.
+		fmt.Fprintf(w, "apply: failure_detail %s\n", orNone(oneLine(amqDetail(a.FailureDetail))))
 		for _, o := range a.Observations {
 			if o.Runnable {
 				fmt.Fprintf(w, "  seat %s: conversation %s, execution %s, resource %s%s\n", o.Handle, o.Conversation, o.Execution, o.Resource, suffix(o.ReasonCode))
@@ -29,8 +30,8 @@ func Report(w io.Writer, r Result) {
 		for _, f := range a.FollowUps {
 			fmt.Fprintf(w, "  follow-up: %s (%s) for %s\n", f.Kind, f.ReasonCode, strings.Join(f.Handles, ","))
 		}
-	} else if r.FailureDetail != "" {
-		fmt.Fprintf(w, "amq: %s\n", oneLine(r.FailureDetail))
+	} else if detail := amqDetail(r.FailureDetail); detail != "" {
+		fmt.Fprintf(w, "amq: %s\n", oneLine(detail))
 	}
 	for _, a := range r.Pending {
 		fmt.Fprintf(w, "pending decision: %s %s (%s) for %s\n", a.ActionID, a.Kind, a.ReasonCode, strings.Join(a.Handles, ","))

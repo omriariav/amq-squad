@@ -105,12 +105,12 @@ func (l *Launcher) resourcesGone(reqs []scheduler.SeatRequest) func(launchapi.Pr
 // rosterOutcome is the scheduler's view of a roster launch: the stage, AMQ's
 // reason code and the failure detail, or each seat's state once applied.
 func rosterOutcome(res Result, err error) scheduler.RosterOutcome {
-	out := scheduler.RosterOutcome{LaunchID: res.LaunchID, Stage: res.Stage, Detail: res.FailureDetail}
+	out := scheduler.RosterOutcome{LaunchID: res.LaunchID, Stage: res.Stage, Detail: amqDetail(res.FailureDetail)}
 	switch {
 	case err != nil && res.ApplyStarted:
-		out.Stage, out.Detail = "apply_failed", err.Error()
+		out.Stage, out.Detail = "apply_failed", amqDetail(err.Error())
 	case err != nil:
-		out.Stage, out.Detail = "launch_error", err.Error()
+		out.Stage, out.Detail = "launch_error", amqDetail(err.Error())
 	case res.Stage == "prepare_refused" && res.Prepare != nil:
 		out.ReasonCode = res.Prepare.Reason
 	case res.Stage == "decisions_pending":

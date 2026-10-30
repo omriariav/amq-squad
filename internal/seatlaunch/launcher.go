@@ -13,7 +13,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
-	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 )
 
@@ -210,7 +209,7 @@ func (l *Launcher) settleOne(r *request, known map[string]bool, attempt string, 
 		stage, code, detail := launchFailure(res, err, seat, ambiguous)
 		if l.Post != nil {
 			l.Post(scheduler.Event{Kind: scheduler.SeatLaunchFailed, At: l.now(), Handle: r.handle, Pool: r.req.Pool, RequestID: r.req.ID,
-				LaunchID: attempt, Stage: stage, ReasonCode: code, Detail: redact.Block(detail)})
+				LaunchID: attempt, Stage: stage, ReasonCode: code, Detail: amqDetail(detail)})
 		}
 	}
 }

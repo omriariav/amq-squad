@@ -5,6 +5,10 @@ package seatlaunch
 import (
 	"context"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +18,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -121,5 +126,192 @@ func TestInvalidJSONRosterFailureIsRedacted(t *testing.T) {
 	raw, err := os.ReadFile(statePath)
 	if err != nil || strings.Contains(string(raw), value) {
 		t.Fatalf("the state file (%v):\n%s", err, raw)
+	}
+}
+
+// The reviewer's chokepoint, the Apply's FailureDetail: an Apply AMQ
+// refuses with valid JSON and the canary on stderr (the key on stderr's
+// first line). The value is in none of roster_launch_failed, either
+// seat_launch_failed, the state file (status's only source of the detail),
+// the staged records' apply (recordApply), the Result's two FailureDetails
+// or the operator's report. Reverted (any carrier around amqDetail), the
+// value reaches it.
+func TestApplyFailureDetailGoesThroughTheChokepoint(t *testing.T) {
+	stderr, value := multilineCanary(t, "applydetail")
+	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "action_required", Disposition: "not_applied",
+		ReasonCode: scheduler.AMQBindingPresent}, false)
+	f.fake.applyErr = stderr
+	statePath := filepath.Join(t.TempDir(), "scheduler.json")
+	f.s.Config.StatePath = statePath
+	ds, err := f.s.Tick()
+	if err == nil {
+		t.Fatal("the refused apply did not fail the roster launch")
+	}
+	for _, d := range append(kinds(ds, "roster_launch_failed"), kinds(ds, scheduler.KindSeatLaunchFailed)...) {
+		if strings.Contains(d.Reason, value) {
+			t.Fatalf("the decision %+v", d)
+		}
+	}
+	files := []string{statePath}
+	for _, h := range []string{"cto", "dev"} {
+		files = append(files, filepath.Join(launch.StagedDir(f.q.SessionRoot(), h), launch.FileName))
+	}
+	for _, p := range files {
+		raw, err := os.ReadFile(p)
+		if err != nil || strings.Contains(string(raw), value) {
+			t.Fatalf("%s (%v):\n%s", p, err, raw)
+		}
+	}
+
+	g := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "action_required", Disposition: "not_applied", ReasonCode: scheduler.AMQBindingPresent}, applyErr: stderr}
+	res, err := Launch(context.Background(), testSquad(t), launchOpts(t, g, map[string]string{"sha256:a1": "trust_exact_subject"}))
+	if err != nil || res.Stage != "apply_failed" {
+		t.Fatalf("launch %s %v", res.Stage, err)
+	}
+	var out strings.Builder
+	Report(&out, res)
+	if strings.Contains(res.FailureDetail, value) || strings.Contains(res.Apply.FailureDetail, value) || strings.Contains(out.String(), value) || !strings.Contains(out.String(), "failure_detail") {
+		t.Fatalf("the result %q / %q; the report:\n%s", res.FailureDetail, res.Apply.FailureDetail, out.String())
+	}
+}
+
+// The report goes through the chokepoint itself, before oneLine flattens
+// the detail into one line (where the key is no longer at a line's start):
+// a Result whose FailureDetails hold AMQ's raw text prints neither value.
+// Reverted (oneLine on the raw detail), both values print.
+func TestReportRedactsBeforeItFlattens(t *testing.T) {
+	stderr, value := multilineCanary(t, "report")
+	for _, r := range []Result{{Apply: &launchapi.ApplyResultV1{Outcome: "action_required", FailureDetail: stderr}}, {FailureDetail: stderr}} {
+		var out strings.Builder
+		Report(&out, r)
+		if strings.Contains(out.String(), value) || !strings.Contains(out.String(), redact.Placeholder) {
+			t.Fatalf("the report:\n%s", out.String())
+		}
+	}
+	if once := amqDetail(stderr); amqDetail(once) != once {
+		t.Fatalf("the chokepoint is not idempotent: %q then %q", once, amqDetail(once))
+	}
+}
+
+// The chokepoint holds (the reviewer's row): over the package's non-test
+// Go files, RunAMQ's stderr is used only as amqDetail's argument (directly
+// or through string(...)), every read of a FailureDetail is amqDetail's
+// argument, and every write of one (an assignment or a composite literal
+// field) is an amqDetail call. A new caller that carries AMQ's output
+// around the chokepoint fails here, naming the file and line.
+func TestAMQOutputHasOneChokepoint(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isChoke := func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		id, ok := c.Fun.(*ast.Ident)
+		return ok && id.Name == "amqDetail"
+	}
+	isConv := func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		id, ok := c.Fun.(*ast.Ident)
+		return ok && id.Name == "string"
+	}
+	// throughChoke: the node at stack's top is amqDetail's argument, or the
+	// argument of string(...) that is.
+	throughChoke := func(stack []ast.Node) bool {
+		n := len(stack)
+		if n >= 2 && isChoke(stack[n-2]) {
+			return true
+		}
+		return n >= 3 && isConv(stack[n-2]) && isChoke(stack[n-3])
+	}
+	var bad []string
+	where := func(n ast.Node, what string) { bad = append(bad, fmt.Sprintf("%s: %s", fset.Position(n.Pos()), what)) }
+	sites := 0
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				stderrVars := map[string]bool{}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					as, ok := n.(*ast.AssignStmt)
+					if !ok || len(as.Rhs) != 1 || len(as.Lhs) < 2 {
+						return true
+					}
+					if c, ok := as.Rhs[0].(*ast.CallExpr); ok {
+						if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "RunAMQ" {
+							sites++
+							if id, ok := as.Lhs[1].(*ast.Ident); ok && id.Name != "_" {
+								stderrVars[id.Name] = true
+							}
+						}
+					}
+					return true
+				})
+				var stack []ast.Node
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					if n == nil {
+						stack = stack[:len(stack)-1]
+						return true
+					}
+					stack = append(stack, n)
+					switch x := n.(type) {
+					case *ast.AssignStmt:
+						for i, l := range x.Lhs {
+							if sel, ok := l.(*ast.SelectorExpr); ok && sel.Sel.Name == "FailureDetail" && (len(x.Rhs) != len(x.Lhs) || !isChoke(x.Rhs[i])) {
+								where(x, "a FailureDetail written around amqDetail")
+							}
+						}
+					case *ast.KeyValueExpr:
+						if k, ok := x.Key.(*ast.Ident); ok && k.Name == "FailureDetail" && !isChoke(x.Value) {
+							where(x, "a FailureDetail field written around amqDetail")
+						}
+					case *ast.SelectorExpr:
+						if x.Sel.Name != "FailureDetail" {
+							break
+						}
+						if p, ok := stack[len(stack)-2].(*ast.AssignStmt); ok {
+							for _, l := range p.Lhs {
+								if l == x {
+									return true // a write, checked above
+								}
+							}
+						}
+						if !throughChoke(stack) {
+							where(x, "a FailureDetail read around amqDetail")
+						}
+					case *ast.Ident:
+						if !stderrVars[x.Name] {
+							break
+						}
+						if p, ok := stack[len(stack)-2].(*ast.AssignStmt); ok {
+							for _, l := range p.Lhs {
+								if l == x {
+									return true // the RunAMQ assignment itself
+								}
+							}
+						}
+						if !throughChoke(stack) {
+							where(x, "RunAMQ's stderr used around amqDetail")
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	if sites != 2 {
+		t.Fatalf("RunAMQ is called at %d sites, want 2 (prepareCLI, applyCLI); a new site must bind its stderr and pass it to amqDetail", sites)
+	}
+	if len(bad) > 0 {
+		t.Fatalf("AMQ's output bypasses the chokepoint:\n%s", strings.Join(bad, "\n"))
 	}
 }
