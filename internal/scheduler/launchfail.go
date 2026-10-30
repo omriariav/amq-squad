@@ -154,8 +154,45 @@ func (s *Scheduler) checkLiveness(now time.Time, log func(Decision)) {
 		}
 		delete(s.livenessNote, h)
 		if gone {
-			s.Post(Event{Kind: SeatGone, At: now, Handle: h, ReasonCode: GoneProcessExited, Detail: detail})
+			s.Post(Event{Kind: SeatGone, At: now, Handle: h, RequestID: s.seats[h].requestID, ReasonCode: GoneProcessExited, Detail: detail})
 		}
+	}
+}
+
+// goneRepeat says why a SeatGone is not this seat's first end, or "": the
+// request it names was already seen gone; it names an earlier request than
+// the live seat's (a late gone of the seat's previous launch); or it names
+// no request and the handle was already seen gone and has not come up
+// since. Such a gone is ignored whole. The first gone of a handle this
+// incarnation never knew (after a restart) is not a repeat: its exit check
+// runs (R3, P1-9). A gone with no request id after a new seat of the same
+// handle came up cannot be told from that seat's own end, so a producer
+// names the request (the liveness check does).
+func (s *Scheduler) goneRepeat(ev Event) string {
+	st := s.seats[ev.Handle]
+	if ev.RequestID != "" {
+		if s.goneReqs[ev.RequestID] {
+			return "a repeat: the seat of request " + ev.RequestID + " was already seen gone"
+		}
+		if st != nil && st.requestID != "" && st.requestID != ev.RequestID {
+			return "stale: it names request " + ev.RequestID + ", the live seat is request " + st.requestID
+		}
+		return ""
+	}
+	if st == nil && s.goneHandles[ev.Handle] {
+		return "a repeat: the seat was already seen gone and has not come up since"
+	}
+	return ""
+}
+
+// noteGone records a seat's first end.
+func (s *Scheduler) noteGone(ev Event) {
+	if s.goneHandles == nil {
+		s.goneHandles, s.goneReqs = map[string]bool{}, map[string]bool{}
+	}
+	s.goneHandles[ev.Handle] = true
+	if ev.RequestID != "" {
+		s.goneReqs[ev.RequestID] = true
 	}
 }
 

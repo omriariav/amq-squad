@@ -134,6 +134,7 @@ func (s *Scheduler) AdoptUpRequest(handle, requestID string, pool task.Pool, at 
 	}
 	if s.seats[handle] == nil {
 		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, requestID: requestID}
+		delete(s.goneHandles, handle)
 	}
 }
 

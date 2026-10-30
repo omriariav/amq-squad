@@ -190,6 +190,10 @@ type Scheduler struct {
 	failSeq        int
 	// livenessNote is the last unknown liveness answer logged per seat.
 	livenessNote map[string]string
+	// goneReqs are the request ids whose seat was seen gone; goneHandles the
+	// handles seen gone and not up since (a gone with no request id).
+	goneReqs    map[string]bool
+	goneHandles map[string]bool
 }
 
 // Options configure a production scheduler (New).
@@ -445,11 +449,20 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				continue
 			}
 			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, requestID: ev.RequestID}
+			delete(s.goneHandles, ev.Handle)
 			log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
 			s.clearLaunchFailures(ev.Pool)
 		case SeatLaunchFailed:
 			s.noteLaunchFailure(ev, log)
 		case SeatGone:
+			// A repeat or a stale gone does nothing (3.0.1 t17): no second
+			// exit check, no second slot release, no seat closed for another
+			// seat's end.
+			if why := s.goneRepeat(ev); why != "" {
+				log(Decision{Kind: "seat_gone_ignored", Seat: ev.Handle, ReasonCode: ev.ReasonCode, Reason: why})
+				continue
+			}
+			s.noteGone(ev)
 			if s.seats[ev.Handle] != nil {
 				delete(s.seats, ev.Handle)
 				delete(s.livenessNote, ev.Handle)

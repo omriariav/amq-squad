@@ -353,3 +353,71 @@ func TestLaunchFailuresAndBlocksSurviveARestart(t *testing.T) {
 		t.Fatalf("the task: %+v", got)
 	}
 }
+
+// observingRoster is fakeRoster that counts the slot releases the
+// scheduler asks for (SeatGoneObserver).
+type observingRoster struct {
+	*fakeRoster
+	released []string
+}
+
+func (o *observingRoster) SeatGone(h string) { o.released = append(o.released, h) }
+
+// t17, the reviewer's double fire: a liveness gone, then a gone for the
+// same seat from another producer (no request id, as a launcher's
+// confirmation would carry), then the same request's gone again. The second
+// and third change nothing: one seat_gone, one exit check, one slot
+// release, the held task as it was. A gone that names the seat's earlier
+// request after a new seat of the handle came up leaves the new seat up.
+// Reverted (the handler takes every gone), the second queues a second exit
+// check and a second release, and the stale one closes the new seat.
+func TestASecondSeatGoneForOneSeatChangesNothing(t *testing.T) {
+	h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour}, rosterAB...)
+	obs := &observingRoster{fakeRoster: fr}
+	h.s.Launcher = obs
+	ex := &exitRecorder{}
+	h.s.Exits = ex
+	lv := &fakeLiveness{gone: map[string]bool{}, errs: map[string]error{}}
+	h.s.Liveness = lv
+	h.tick() // the roster launch
+	b := h.add("b", &gpt)
+	if ds := h.tick(); !has(ds, "dispatched", b.ID, "s-b") {
+		t.Fatalf("dispatch: %+v", ds)
+	}
+	if _, err := h.store.Claim(b.ID, "s-b", nil, time.Hour, h.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	lv.gone["s-b"] = true
+	ds := h.tick()
+	if count(ds, "seat_gone") != 1 || len(ex.calls) != 1 || len(obs.released) != 1 {
+		t.Fatalf("the first gone: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+	}
+	before := h.get(b.ID)
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-b"})
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-b", RequestID: "seat-req-t-2"})
+	ds = h.tick()
+	if count(ds, "seat_gone") != 0 || count(ds, "seat_gone_ignored") != 2 || len(ex.calls) != 1 || len(obs.released) != 1 {
+		t.Fatalf("the repeats: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+	}
+	after := h.get(b.ID)
+	if after.State != before.State || len(after.Attempts) != len(before.Attempts) || (after.Lease == nil) != (before.Lease == nil) || after.UpdatedAt != before.UpdatedAt {
+		t.Fatalf("the task changed: before %+v after %+v", before, after)
+	}
+	// A new seat of the handle comes up; a late gone of its earlier request
+	// leaves it up.
+	lv.gone["s-b"] = false
+	h.up("s-b", gpt)
+	h.tick()
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-b", RequestID: "seat-req-t-2"})
+	ds = h.tick()
+	if h.s.seats["s-b"] == nil || count(ds, "seat_gone") != 0 || !has(ds, "seat_gone_ignored", "", "s-b") || len(ex.calls) != 1 || len(obs.released) != 1 {
+		t.Fatalf("the stale gone: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+	}
+	// A gone naming a request never seen gone that is not the live seat's
+	// (a previous launch of the handle, as after a restart): s-a stays up.
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-a", RequestID: "seat-req-old-9"})
+	ds = h.tick()
+	if h.s.seats["s-a"] == nil || count(ds, "seat_gone") != 0 || !has(ds, "seat_gone_ignored", "", "s-a") || len(ex.calls) != 1 || len(obs.released) != 1 {
+		t.Fatalf("a gone of another request: %+v; exit checks %v; released %v", ds, ex.calls, obs.released)
+	}
+}
