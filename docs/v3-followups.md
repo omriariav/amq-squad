@@ -58,10 +58,18 @@ closes.
 - The 3.0 Claude plugin is unreachable through the public marketplace: the
   marketplace source is the repository (omriariav/amq-squad) and Claude
   Code reads its default branch, main, which carries v2.31; the owner's
-  own install needed the marketplace re-pointed at the v3 checkout.
-  Options for the owner: make v3 the default branch (the repository's main
-  stays as the v2 line under a new name), or a marketplace entry that
-  names the branch. Found 2026-10-30 at the first Claude seat start.
+  own install needed the marketplace re-pointed at the v3 checkout. Found
+  2026-10-30 at the first Claude seat start. One choice for the owner,
+  three options: (1) main carries 3.0 by the owner's merge on his
+  repository, outside the standing approval; recommended (reviewer), as
+  the first 3.0.x action, because a public marketplace that resolves to v2
+  while the release says 3.0 misleads every installer; (2) v3 becomes the
+  default branch (main stays as the v2 line under a new name); (3) a
+  marketplace entry naming the branch, the stopgap only if Claude Code's
+  marketplace format takes a ref, else the local re-point is the stopgap.
+  Either way: a release-check row that fails the next tag closed when the
+  marketplace's resolved ref does not carry the released version (3.0's
+  release check missed it).
 - Blocker for the train, not hygiene (reviewer ruling 2026-10-30):
   internal/redact TestBlockIsLinearOnALongLine bounds a 1 MiB line at 2 s
   of wall clock; the shared macOS runner missed it once (PR #800's first
@@ -71,12 +79,6 @@ closes.
   process (a 1 MiB line against a 64 KiB line within a 64x factor), no
   absolute bound. Task t2 in the v31 store. The buzz dry-run bound stays a
   hygiene entry while it is off the required path.
-- Release check: the next tag must fail closed when the marketplace's
-  resolved ref does not carry the released version (3.0's release check
-  missed it); the real fix for the marketplace gap above is main carrying
-  3.0, the owner's merge on his repository, recommended as the first 3.0.x
-  action; a branch name in the marketplace is the stopgap only if Claude
-  Code's marketplace format takes a ref.
 
 - The pi lead on a cloud model (owner, 2026-10-30: "can I start pi and use
   a codex / claude model in it?"): the registry builds pi entries for
