@@ -632,8 +632,6 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 			DefaultMode string   `json:"defaultMode"`
 			Allow       []string `json:"allow"`
 		} `json:"permissions"`
-		EnabledPlugins map[string]bool `json:"enabledPlugins"`
-		Theme          string          `json:"theme"`
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
 	if err != nil || json.Unmarshal(raw, &settings) != nil {
@@ -644,6 +642,30 @@ func Check(dir string, uid int, digest, permissionMode string) (string, string) 
 	}
 	if env := ForbiddenSettingsEnv(dir); len(env) > 0 {
 		return SettingsEnvForbidden, "a settings file Claude merges for the seat sets a forbidden env variable: " + strings.Join(env, "; ")
+	}
+	return screensGap(dir)
+}
+
+// screensGap is the one check of what keeps a Claude seat's pane free of
+// first-run screens, shared by Check (seat-exec, before exec) and
+// StartupScreensClosed (the launch's wake condition): the onboarding state
+// and a theme (claude_onboarding_missing), the worktree's trust under its
+// NFC keys (claude_trust_missing), no entry for the canonical repository
+// root (claude_trust_root_refused), nothing beyond the launch's keys and
+// the binary's bookkeeping (claude_config_unexpected), and the hooks plugin
+// enabled and wired (claude_hooks_missing). It reads only what Write seeds
+// (settings.json, .claude.json, the worktree pointer, plugins/) and the
+// worktree's own .git layout, never anything Claude Code writes after the
+// launch. It returns the reason code and the detail of the first gap ("",
+// "" when there is none).
+func screensGap(dir string) (string, string) {
+	var settings struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+		Theme          string          `json:"theme"`
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil || json.Unmarshal(raw, &settings) != nil {
+		return OnboardingMissing, "the seat's settings.json is missing or unreadable"
 	}
 	onboarding, trust := firstRunGaps(dir, settings.Theme)
 	if len(onboarding) > 0 {
@@ -739,17 +761,31 @@ func WorktreeAllowRules(worktree string) []string {
 	return out
 }
 
-// OnboardingUnverified is StartupScreensClosed's reason until the seat's
-// config dir is born complete (task t6).
+// OnboardingUnverified is StartupScreensClosed's reason when there is no
+// config dir to verify (it is missing or not a directory).
 const OnboardingUnverified = "claude_onboarding_unverified"
 
 // StartupScreensClosed reports whether a Claude seat's config dir rules out
-// every first-run screen (onboarding, folder trust, hook review) that a raw
-// AMQ wake doorbell could answer: a condition of the seat's wake (3.0.1).
-// Nothing is verified yet (Seed is empty), so it reports false with
-// OnboardingUnverified; t6 fills it in with the seeded onboarding, trust and
-// hooks keys verified, and a Claude seat's wake turns on then, never before.
+// every first-run screen that a raw AMQ wake doorbell could answer: a
+// condition of the seat's wake (3.0.1). In 2.1.314 those are the onboarding
+// flow (hasCompletedOnboarding, with the theme in settings.json), the folder
+// trust dialog (projects[<worktree>].hasTrustDialogAccepted under the NFC
+// keys, with no canonical-root entry and nothing else in projects), and the
+// hooks, which the binary holds until that trust (loadHooksModulesHeldForTrust)
+// and which run only with the plugin enabled and wired. It is screensGap,
+// the check seat-exec's Check runs before exec: one source of truth.
+//
+// It depends only on what Write seeds, never on anything written after the
+// launch: the launch's compile step calls it before the seat's own dir
+// exists, on a scratch dir Write produced for the same mode and worktree
+// (seatlaunch's scratchClaudeWakeConditions), and the seat's dir, written
+// later by the same Write, carries the same answer. It returns true and ""
+// when every screen is closed, else false and the reason code of the first
+// gap (claude_onboarding_unverified for a missing dir).
 func StartupScreensClosed(dir string) (bool, string) {
-	_ = dir
-	return false, OnboardingUnverified
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return false, OnboardingUnverified
+	}
+	code, _ := screensGap(dir)
+	return code == "", code
 }

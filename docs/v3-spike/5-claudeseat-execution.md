@@ -51,6 +51,24 @@ NFC (fix round, should-fix). Trust keys are NFC-normalized. The 2.1.314 trust wa
 
 `seatexec` exports the codes as `ClaudeOnboardingMissing`, `ClaudeTrustMissing`, `ClaudeTrustRootRefused` and `ClaudeConfigUnexpected`. No doctor check was added: seat-exec refuses by name before exec, and every Claude seat's dir is written by the launch, so there is nothing on the host for doctor to inspect ahead of a launch.
 
+### Fourth commit: `StartupScreensClosed` (t9's wake condition)
+
+t9 (`b929150d`) added `claudeseat.StartupScreensClosed(dir) (bool, string)` as a stub returning false with `claude_onboarding_unverified`. Its compile step gates a Claude seat's AMQ wake on that function. t6 now fills it in.
+
+- **One source of truth.** Check's first-run part moved into one function, `screensGap`, which Check and `StartupScreensClosed` both call. It covers the onboarding state and a theme, the worktree's trust under its NFC keys, no canonical-root entry, nothing beyond the launch's keys and the binary's bookkeeping, and the hooks plugin enabled and wired. Check keeps its own checks in front of it: the dir's mode and owner, the digest, the permission mode and the forbidden settings env.
+- **What it returns.** True and an empty reason when every screen is closed. Otherwise false and the code of the first gap: `claude_onboarding_missing`, `claude_trust_missing`, `claude_trust_root_refused`, `claude_config_unexpected` or `claude_hooks_missing`. A missing dir returns `claude_onboarding_unverified`.
+- **Only what `Write` seeds.** The compile step runs before the seat's own dir exists, on a scratch dir that `Write` produced for the same mode and worktree (seatlaunch's `scratchClaudeWakeConditions`). So the function reads only `settings.json`, `.claude.json`, the worktree pointer, `plugins/` and the worktree's own `.git` layout, never anything written after the launch. Its comment says so.
+- **Hook review.** In 2.1.314 the hooks wait on workspace trust: the startup sequence runs `loadHooksModulesHeldForTrust` after the trust step, and the strings show `hookModulesAwaitTrust` and `shouldSkipHookDueToTrust`. They show no separate hook-review dialog. So the trust entry closes the hook gate, and the wired plugin is what runs once it opens.
+- **Files outside the declared set.** Wake turns on for Claude seats now that t6 is in, so t9's "until t6" rows had to flip. `internal/claudeseat/startup301_test.go` now checks both branches. In `internal/seatlaunch/wake301_test.go`, `TestClaudeWakeStaysOffUntilTheStartupScreensAreClosed` became `TestClaudeWakeTurnsOnOnceTheStartupScreensAreClosed`: the default read closes the screens, and the Claude seat's prepare preview carries require_wake true and mode enabled. t9's injected "claude screens open" row still covers the off branch. One comment in `internal/seatlaunch/compile.go` changed from "false until t6".
+
+Rows, each failing when reverted:
+
+| row | reverted, it fails on |
+| --- | --- |
+| `TestStartupScreensClosed` (claudeseat): the seeded dir is closed; no dir, no worktree and each gap give the matching reason, and Check gives the same code on the same dir | the stub put back (every case); an always-true body (every gap case); Check without the shared check (the same-code assertions, and the earlier Check rows) |
+| `TestStartupScreensClosedDependsOnlyOnTheSeed` (claudeseat): a scratch dir and a seat dir written for the same inputs give the same answer | the stub put back |
+| `TestClaudeWakeTurnsOnOnceTheStartupScreensAreClosed` (seatlaunch): the default read closes the screens and the Claude seat's wake is enabled through Launch, with nothing staged | the stub put back |
+
 ## Field names and their sources
 
 Binary: `~/.amq-squad/bin/claude`, the registry's pin, sha256 `21d6e7b9a6f07b4cfcb7df13760b3b72aa25e084e13a5354413382987ba832ed`, every chunk stamped `Version: 2.1.314`. Read only with `strings -n 6` (no execution). Each quote below is minified code from those strings.
