@@ -34,6 +34,15 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// HOME too (round 7, Codex 5): a successful launch reads the owner's
+	// grant through the process HOME (grants.Load, ~/.amq-squad/grants.yaml);
+	// no row reads the real one.
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	os.Setenv("HOME", home)
 	tmuxStubLog = log
 	code := m.Run()
 	if calls, _ := os.ReadFile(log); len(calls) > 0 {

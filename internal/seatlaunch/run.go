@@ -22,6 +22,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
@@ -424,9 +425,9 @@ func prepareCLI(ctx context.Context, q Squad, o Options, req launchapi.PrepareRe
 		return res, "", fmt.Errorf("amq launch --prepare: %w", err)
 	}
 	if jerr := json.Unmarshal(out, &res); jerr != nil || res.ResultVersion == 0 {
-		return res, "", fmt.Errorf("amq launch --prepare exited %d without a PrepareResult: %s", code, strings.TrimSpace(string(errOut)))
+		return res, "", fmt.Errorf("amq launch --prepare exited %d without a PrepareResult: %s", code, amqDiagnostic(errOut))
 	}
-	return res, strings.TrimSpace(string(errOut)), nil
+	return res, amqDiagnostic(errOut), nil
 }
 
 func applyCLI(ctx context.Context, q Squad, o Options, req launchapi.ApplyRequestV1, env []string) (launchapi.ApplyResultV1, string, error) {
@@ -436,13 +437,22 @@ func applyCLI(ctx context.Context, q Squad, o Options, req launchapi.ApplyReques
 	if err != nil {
 		return res, "", fmt.Errorf("amq launch --apply: %w", err)
 	}
-	detail := strings.TrimSpace(string(errOut))
+	detail := amqDiagnostic(errOut)
 	if jerr := json.Unmarshal(out, &res); jerr != nil || res.ResultVersion == 0 {
 		return res, "", fmt.Errorf("amq launch --apply exited %d without an ApplyResult: %s", code, detail)
 	}
 	// FailureDetail is not in the JSON DTO; the CLI prints it on stderr (R48).
 	res.FailureDetail = detail
 	return res, detail, nil
+}
+
+// amqDiagnostic is amq's stderr as the launch keeps it: redacted at the
+// source (3.0.1 t16 round 7), with the multiline rules (redact.Block: a
+// quoted value on the line after its key), before it is persisted in the
+// staged record (Apply.FailureDetail), printed by Report, or logged by the
+// scheduler. Every reader of the failure detail gets the redacted text.
+func amqDiagnostic(stderr []byte) string {
+	return strings.TrimSpace(redact.Block(string(stderr)))
 }
 
 // runAMQCLI captures stdout and stderr in temp files, not pipes: amq may

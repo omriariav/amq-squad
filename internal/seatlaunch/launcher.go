@@ -45,6 +45,11 @@ type Launcher struct {
 	// false when that cannot be determined. Default: a read-only tmux
 	// list-panes query.
 	PaneGone func(resource string) (gone, ok bool)
+	// BindingPane reports whether a roster seat's recorded pane resource is
+	// still the binding's live pane (its server, session, epoch and agent
+	// label; bindingPanePresent); known is false when that cannot be read. A
+	// test seam.
+	BindingPane func(root, handle, resource string) (present, known bool)
 	// PanesFor counts the panes labelled with a handle (@amq_pane_agent);
 	// ok is false when that cannot be determined. Default: a read-only tmux
 	// list-panes query bounded at 2 s (the fix round's item 3).
