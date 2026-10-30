@@ -109,7 +109,14 @@ Decision kinds added: `roster_launched`, `roster_launch_failed`,
 `seat_closed` (`roster_relaunch`), `seat_adopted_closing` (not in the
 roster, pool changed).
 
-## Rows (fake AMQ, fake launcher; no network, no tmux, no real HOME)
+## Rows (fake AMQ, fake launcher; no network, no real HOME)
+
+No row reaches the tmux server: every seatlaunch row runs with a refusing
+tmux stub first on PATH (round 3; it answers only `tmux -V`, the version
+probe of AMQ's launcher detection, and fails the package run if anything
+else calls it), and the pane questions go through seams. Round 1 claimed
+"no tmux" without that proof, and it was not true: the proof server's pane
+id lookup ran `tmux list-panes -a` from every proving row (Codex finding 6).
 
 | Brief row | Test | Package |
 | --- | --- | --- |
@@ -308,7 +315,7 @@ session; (b) a scheduler started by the lead's team mode (the existing
 parent process, the team-mode lead, as the lead's incarnation
 (`schedproc.SupervisingLead`: its pid and raw start stamp read at the
 scheduler's start, the stamp re-read at every decision; gone or reused is
-origin_unknown). pi runs as that process's child, so the pi lead's commands
+lead_gone from round 3 on). pi runs as that process's child, so the pi lead's commands
 are proved by the same parent-chain walk as before. Outside team mode the
 ledger path is unchanged. The lead is told by message (this changes who
 counts as the lead from "the AMQ-launched proved seat" to "the team-mode
@@ -350,3 +357,102 @@ Files outside the first round's list: internal/cli/lead_scheduler.go and its
 test (widened by the ruling), internal/cli/pi_lead.go (the `--trust` flag of
 `lead`, three lines; the flag parsing lives there) and
 internal/cli/repass_routing_test.go (one call site of leadSchedulerCommand).
+
+## Round 3: Codex findings on 39e1ef01 and the reviewer's conditions
+
+**Codex 1: adoption matches the proof to its record.** `LiveSeats` now
+carries the proof's and the staged record's launch and request ids and the
+record's worktree; the roster seat carries its worktree. A live roster seat
+is adopted only when the proof's launch id is set and equals the record's,
+the request ids match, the pool is the roster's and the worktree is the
+roster's; otherwise it is closed with the reason (a later launch that
+overwrote the record and failed at Apply leaves the old provider alive
+under a record that is not its own). Row: TestRestartClosesALiveSeatTheRosterDoesNotProve
+(the overwritten record, the other worktree).
+
+**Codex 2: placement is each seat's own.** `placedSeat` judges the request's
+own seat: another seat's seat-exec refusal no longer makes a placed seat
+"not placed". Row: TestRosterPlacementIsEachSeatsOwn (cto proves, dev is
+refused, ops is placed and never proves; ops's cancel waits for its own
+pane).
+
+**Codex 3: a lingering resource is refused before Apply, with one
+correction.** Prepare's per-handle `resource` is the binding *record's*
+resource, not a live inspection (AMQ v0.116.2 internal/launch/prepare.go:686,
+`applyBindingResources` at 1424, copies `binding.Resources` into every
+observation; `binding.json` is never removed, binding.go has no delete
+path). So "a resource is named" holds after every launch, live or not, and
+refusing on it would refuse every relaunch. The check therefore asks, for
+each roster handle whose Prepare observation names a resource, whether that
+pane still exists, through the launcher's read-only pane check (the one the
+cancel path uses). A pane that exists, or whose state cannot be read,
+refuses the launch before anything is staged or applied: stage
+`resource_present`, reason `seat_replacement_resource_present`, the handles
+and panes named (`Options.BeforeApply`, used by `LaunchRoster`). It applies
+to every roster launch, the start and the relaunch. The scheduler logs
+roster_launch_failed and exits with the refusal code. Row:
+TestRosterRelaunchRefusedWhileARecordedPaneLingers (a lingering pane
+refused with no Apply; a recorded pane that is gone applies).
+
+The stated limit: a pane that outlives its process still leaves the roster
+unreplaceable until ask 20 lands, and `seat_replacement_resource_present`
+is the symptom the owner would see. The pane check is per pane; a roster
+session that keeps a window with no seat pane is not seen by it (the
+roster's session holds seats only, ruling 1), and AMQ's own refusal at
+Apply remains the backstop.
+
+**Codex 4: a dead parked seat goes undetected** (scheduler.go, closeIdle and
+no SeatGone producer). Not this brief's: t17 adds SeatGone each tick (open
+point 2 and ruling 2).
+
+**Codex 5: multiline redaction.** The failure detail and seat_not_up go
+through `redact.Block`, which masks a quoted value on the line after its key
+(`redact.Text` is line-based and let it through). Row: the canary row
+carries `api_key:` with the quoted value on the next line.
+
+**Codex 6: no row touches the tmux server.** `Options.PaneID` is the seam of
+the proof server's pane-id lookup; the shared test options stub it, and
+the rows that built their own proof-server options got no-pane seams (what
+a host tmux gave them before). The proof is the refusing stub on PATH in
+the package's TestMain (above). It found six rows that reached tmux:
+TestPiSeatPlansThroughTheUpstreamAdapter and
+TestCodexSandboxPinsAreAdmittedAndDigested (`tmux -V`, AMQ's detection,
+answered by the stub), TestVanishingProcessEntryIsOriginUnknown,
+TestWindowIsPerTicketFromMinting, TestTokenMintedSixtyOneSecondsEarlierIsExpired
+and TestPaneLookupIsBoundedAndOutsideTheMutex (`list-panes`, now seams).
+
+**Codex 7.** Plan 4.5's earlier sentences are rewritten: the barrier closes a
+seat of the previous incarnation only when the roster does not adopt it,
+and the seat cap counts live leases.
+
+**Reviewer conditions on the team-mode lead (approved with four).**
+(1) The proof is panechain.Reaches against the recorded incarnation: an
+ancestor whose pid and raw start stamp both equal it, the walk bounded at
+64 hops, the stamp read through procinfo; no match is not_lead or
+origin_unknown as before. A recorded incarnation that is gone or whose pid
+carries another stamp refuses with `lead_gone` (schedproc.ErrLeadGone,
+RefusedLeadGone), and `schedproc.Run` checks it before every tick and exits
+(`scheduler_stopped`, reason lead_gone) rather than serve a dead lead's
+socket. A team-mode start whose parent stamp cannot be read refuses to
+start. (2) The ledger path is unchanged for every other start; one
+scheduler uses one form (`teamModeLead` replaces the ledger lead only for
+a team-mode start). (3) Rows, each failing when reverted:
+TestSupervisingLeadProvesTheTeamModeLead (the lead and the pi manager's
+child, a child process dialing, accepted; a dialer outside the lead's
+descent, as a roster pane's process is, not_lead; the recorded pid in the
+chain with another stamp, lead_gone; the lead ended, lead_gone),
+TestSchedulerExitsWhenItsTeamModeLeadIsGone, and
+TestSchedulerTakesItsTeamModeParentAsTheLead (the wiring, the unreadable
+stamp, no parent lead outside team mode). (4) The amendment to R4 is in
+docs/v3.1-plan.md 3.4 and docs/v3-plan.md 4.5.
+
+**Open point found on the way (not built): the team-mode pi lead has no
+tool that sends the relaunch.** TeamLeadTools (internal/piruntime/launch.go:
+amq_send, amq_drain, amq_reply, amq_task_list, amq_task_add,
+amq_task_reset, amq_repo_read, amq_repo_list, amq_status) carries no shell
+and no relaunch tool, and only a descendant of the team-mode lead process
+is proved. So `amq-squad scheduler relaunch` is provable but has no caller
+in team mode until a tool such as `amq_scheduler_relaunch` (internal/piruntime,
+outside this brief's files) runs it. `task widen` is in the same position
+for a team-mode lead. The owner's own shell is not a descendant of the lead
+process and is refused (not_lead), by design.
