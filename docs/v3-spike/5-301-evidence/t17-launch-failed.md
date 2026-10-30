@@ -227,14 +227,36 @@ ok  	github.com/omriariav/amq-squad/v3/internal/cli
    whole-roster failure logs `roster_launch_failed` and one
    `seat_launch_failed` per seat. Kept so every t16 row keeps its meaning;
    `seat_launch_failed` is the one with the fields.
-5. **Liveness is roster mode only**, as the brief says; on-demand seats are
+5. **A second SeatGone for one seat.** No producer posts one for a seat
+   the scheduler has already closed or seen gone. The liveness check asks
+   only about seats still in the seat map that are neither closing nor
+   awaiting their SeatGone (internal/scheduler/launchfail.go:136-139). The
+   scheduler's own confirmed close deletes the seat from that map
+   (scheduler.go:913 and :939, roster.go:317), so the check never asks
+   about it again. The reverse also holds: the liveness SeatGone deletes
+   the seat in the same tick (scheduler.go:453-454), and every close path
+   walks only that map (scheduler.go:887, roster.go:293), so the seat is
+   never closed after it. If a second SeatGone did arrive, it would not be
+   a full no-op. The seat_gone decision and the seat map are guarded by the
+   map check at scheduler.go:453. The exit check part is not guarded:
+   with an exit checker, a second "gone" exit item is queued
+   (scheduler.go:475; queueExit at exits.go:125-131 does not deduplicate),
+   so the check runs twice. Without one, the launcher's SeatGone is called
+   twice (scheduler.go:468-471), and `Slots.Release` is idempotent
+   (schedproc/slots.go:74-81). A one-line guard would make the exit queue
+   a no-op too: skip the item when `exitPendingItem` (exits.go:271)
+   already holds it. It is not applied here.
+6. **Liveness is roster mode only**, as the brief says; on-demand seats are
    test-only since t16 and still close on idleness. A seat that dies while
    it holds a lease takes the existing gone-seat path: its exit check is
    queued with the task, and the lease runs to its expiry as before.
-6. **SeatActivity still has no producer.** The brief asked for SeatGone
+7. **SeatActivity still has no producer.** The brief asked for SeatGone
    only; a parked seat's activity is not observed (it renews no claimed
    lease, so nothing depends on it today).
-7. Outside the declared files: none. The new files are
+8. Outside the brief's declared files (seatlaunch's launcher.go and
+   roster.go): internal/seatlaunch/run.go, report.go and the new
+   amqoutput.go, for Codex finding 1 and the reviewer's chokepoint, which
+   the lead's messages named. The other new files are
    internal/scheduler/launchfail.go, internal/schedproc/liveness_ledger.go
    and internal/cli/status_launchfail.go, with their tests.
 
