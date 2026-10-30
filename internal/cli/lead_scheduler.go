@@ -109,7 +109,9 @@ func leadPools(models []string, thinking string) []string {
 }
 
 // leadSchedulerCommand is the child the lead's team mode runs: `scheduler
-// run` with the lead's handle and one --lead-pool per lead pool.
+// run` with the lead's handle and one --lead-pool per lead pool. It passes
+// no PR flag: the commit step binds by default under a merge grant (3.0.1
+// t14), and the lead never turns that off.
 func leadSchedulerCommand(self, seats, lead string, pools []string) func(ctx context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
 		args := []string{"scheduler", "run", "--seats", seats, "--lead", lead}
