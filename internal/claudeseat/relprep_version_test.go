@@ -11,7 +11,7 @@ import (
 // Go-side constant carries it in production code (claudeseat reads the
 // embedded manifest at run time, so the config dir's plugin cache path
 // follows the manifest), so this test is the one place the expectation lives.
-const expectedPluginVersion = "3.0.0"
+const expectedPluginVersion = "3.0.1"
 
 // Phase 5 release prep: the plugin manifest the seats install (embedded into
 // the binary) names the release version, and the file on disk under
