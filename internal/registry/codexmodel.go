@@ -15,7 +15,8 @@ import (
 
 // codexModelLists are the model ids a codex-cli version's own /model picker
 // lists, where observed. 0.147.0: S4 closure run, 2026-10-21 (S4 report).
-// 0.166.0: doctor probe, 2026-10-30; see
+// 0.166.0: probed over the catalog ids, 2026-10-30, not the picker (the row
+// cannot name an id the catalog lacks); see
 // docs/v3-spike/5-catalog-evidence/probe-codex-0.166.0.txt.
 var codexModelLists = map[string][]string{
 	"0.147.0": {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},

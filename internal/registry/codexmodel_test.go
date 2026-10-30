@@ -89,9 +89,9 @@ func TestBuildEmitsEveryCatalogCodexModel(t *testing.T) {
 	det := Detection{Tools: []Tool{{Name: "codex", Found: true, Version: "0.166.0", Login: "logged_in"}}}
 	r := Build(det, Registry{}, BuildOptions{Catalog: cat})
 	wantCost := map[string]string{
-		"gpt-5.6-sol": "high", "gpt-5.6-terra": "medium", "gpt-5.6-luna": "low",
+		"gpt-5.6-sol": "high", "gpt-5.6-terra": "medium", "gpt-5.6-luna": "medium",
 		"gpt-6.1-sol": "high", "gpt-6-sol": "high", "gpt-6.1-terra": "medium",
-		"gpt-6-astra": "high", "gpt-6-luna": "low",
+		"gpt-6-astra": "medium", "gpt-6-luna": "medium",
 	}
 	for _, model := range cat.Entries("codex", agentcatalog.Models) {
 		for _, effort := range cat.Entries("codex", agentcatalog.Efforts) {
