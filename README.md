@@ -233,8 +233,8 @@ behind `seat-exec`:
   is in `amq-squad launch --help`). A required action such as AMQ's trust
   confirmation stops the launch with exit 10 and is never answered for you.
 - the pi lead in team mode with the scheduler beside it; the lead never edits
-  code, it dispatches through the task store, and the scheduler starts seats
-  on demand:
+  code, it dispatches through the task store, and the scheduler launches the
+  squad's roster at start:
 
   ```sh
   amq-squad lead --team --scheduler-seats seats.json --dry-run
@@ -276,6 +276,16 @@ amq-squad gate status --project . --session issue-96 --json
   and a fast-forward push of the seat branch. A path outside the set comes back
   to the lead, whose decision is `task widen ID --files ... --reason ...`
   (no `--me`: the scheduler proves the lead from the process).
+- **The roster.** The scheduler launches every seat of the seat list that has
+  a worktree of its own in one AMQ launch at start; a seat with no lease is
+  parked and gets the next task of its pool. `max_seats` caps the leases held
+  at once, not the seats up. AMQ refuses a fresh seat into a session whose
+  binding is present, so a gone seat is not replaced on its own: its pool's
+  next task blocks for the lead (`seat_replacement_needs_relaunch`), and the
+  lead's `amq-squad scheduler relaunch` lets the other seats finish, closes
+  them and launches the roster again. A restarted scheduler adopts the live
+  seats. A roster launch that AMQ refuses stops the scheduler with the stage,
+  AMQ's reason and the detail in its decisions log.
 - **Merge.** `merge-train --request FILE --dry-run` plans and checks the lead's
   ordered PR set against the merge grant; the real run uses the owner's gh,
   outside any seat. Seats never merge.
@@ -330,7 +340,7 @@ amq-squad remote status
 | Area | Verbs |
 | --- | --- |
 | Host and setup | `doctor`, `trust`, `roles`, `role draft`, `team propose/apply/show/check/draft-rules`, `brief`, `migrate`, `uninstall`, `version` |
-| Launch | `launch`, `lead`, `scheduler run`, `seat-exec` (AMQ runs it), `pi run/verify/path` |
+| Launch | `launch`, `lead`, `scheduler run/relaunch`, `seat-exec` (AMQ runs it), `pi run/verify/path` |
 | Work | `task add/list/show/claim/renew/done/fail/block/release/reset/set/cancel/widen/reconcile`, `dispatch`, `seat commit`, `seat clear`, `worktree` |
 | Hook verbs | `context`, `guard`, `evidence ingest`, `evidence list` |
 | Gates and landing | `gate raise/answer/status/post/close`, `verify action/authorization/merge/release/release-plan/rebind`, `merge-train`, `release prepare/publish` |

@@ -534,6 +534,26 @@ the seat cap counts the seat list's slots. Restart recovery from the
 task store stays phase 5 (16.4). [2.7, briefs rulings 15 and 19;
 milestone B result]
 
+The roster launch (3.0.1, reviewer ruling 2026-10-30). AMQ refuses a
+fresh seat into a session's present binding unless every planned seat
+resumes (`binding_present_without_resumable_conversation`, v0.116.2
+reconcile), so a scheduler that launched one seat per request ran a
+single-seat squad. The scheduler therefore launches the roster, every
+seat of the typed seat list with a worktree of its own, in one AMQ
+prepare and one apply at start (one binding, every seat fresh); a seat
+that holds no lease is parked and gets the next task of its pool, and
+the seat cap and the registry's concurrency pools bound the leases held
+at once (max_seats caps live leases, not live panes). A restarted
+scheduler adopts the live roster seats it re-proves from the launch
+ledger and closes the rest. A gone seat is replaced only by relaunching
+the roster: its pool's next task blocks for the lead
+(`seat_replacement_needs_relaunch`), whose decision `amq-squad scheduler
+relaunch` lets the remaining seats finish, closes them and launches the
+roster again in one apply, until AMQ can join a fresh participant into a
+present binding (ask 20). A roster launch that fails at prepare or apply
+is one decision with its stage, AMQ's reason and the detail, and the
+process exits with it. [3.0.1 t16; docs/v3-spike/5-301-evidence/t16-roster-launch.md]
+
 ### 4.6 Status contract
 
 `amq-squad status --json` is a versioned contract. It carries:
