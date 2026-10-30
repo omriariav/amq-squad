@@ -431,8 +431,11 @@ and the seat cap counts live leases.
 **Reviewer conditions on the team-mode lead (approved with four).**
 (1) The proof is panechain.Reaches against the recorded incarnation: an
 ancestor whose pid and raw start stamp both equal it, the walk bounded at
-64 hops, the stamp read through procinfo; no match is not_lead or
-origin_unknown as before. A recorded incarnation that is gone or whose pid
+64 hops, the stamp read through procinfo. A readable chain with no match
+is not_lead, the decision socket's existing code; origin_unknown is kept for
+a chain that cannot be read (a vanished hop, an unreadable stamp). The
+reviewer's "refuses with origin_unknown as today" maps to not_lead, the code
+today's socket gives that case (ruling of round 4). A recorded incarnation that is gone or whose pid
 carries another stamp refuses with `lead_gone` (schedproc.ErrLeadGone,
 RefusedLeadGone), and `schedproc.Run` checks it before every tick and exits
 (`scheduler_stopped`, reason lead_gone) rather than serve a dead lead's
@@ -510,3 +513,15 @@ lead.
 
 Tests run with `npm ci --offline --ignore-scripts` in pi/ (the local npm
 cache, no network); node_modules is gitignored.
+
+**The payload rebuild.** The tools ship inside the embedded pi runtime, and
+the payload (internal/piruntime/payload/) is gitignored, so this branch's
+tools reach a binary only through a rebuild:
+`scripts/build-pi-runtime.sh build` (offline: stages Node, the pruned npm
+tree, the @amq-squad/pi package from pi/ and fd/rg, packs the payload and
+runs `go build -tags amqpi`, output build/pi/amq-squad; with `NPM_OFFLINE=1`
+npm reads only the cache), after a one-time `scripts/build-pi-runtime.sh
+fetch` (the one networked step) on a host without the download cache. The
+3.0.1 owner run uses a binary built this way; a build without `-tags amqpi`
+carries no pi runtime and no tools. Not run here (it writes the owner's
+download cache under ~/.amq-squad).
