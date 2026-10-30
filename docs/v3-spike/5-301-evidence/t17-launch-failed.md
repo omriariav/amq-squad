@@ -1,8 +1,9 @@
 # 3.0.1 t17: a failed seat launch is a decision, a gone seat is seen each tick (execution note)
 
-Branch v3-301-t17 from origin/v3-301-t16 25812dd5 (the brief named 609b0fd5
-or later; the branch was cut at 609b0fd5 and fast-forwarded to 25812dd5
-before the first commit, which touched none of t17's files). Brief:
+Branch v3-301-t17 on origin/v3-301-t16 bd435bff (the brief named 609b0fd5
+or later; the branch was cut at 609b0fd5, fast-forwarded to 25812dd5 before
+the first commit, and rebased onto bd435bff at the lead's request; t16's
+rounds after 609b0fd5 touch none of t17's files). Brief:
 3.0.1-t17, the reviewer rulings of 2026-10-30 (session v31).
 
 ## The day's evidence (2026-10-30, session v31)
