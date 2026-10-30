@@ -227,35 +227,25 @@ ok  	github.com/omriariav/amq-squad/v3/internal/cli
    whole-roster failure logs `roster_launch_failed` and one
    `seat_launch_failed` per seat. Kept so every t16 row keeps its meaning;
    `seat_launch_failed` is the one with the fields.
-5. **A second SeatGone for one seat changes nothing.** The liveness
-   check is the only SeatGone producer in production
-   (internal/scheduler/launchfail.go, checkLiveness); the AMQ launcher's
-   close (closeOwed) posts none. The check asks only about seats in the seat
-   map that are neither closing nor awaiting their SeatGone, and the gone it
-   posts deletes the seat in the same tick, so it never fires twice for one
-   seat. Any other producer is covered too (round 4): the SeatGone handler
-   (scheduler.go, the SeatGone case) first asks `goneRepeat`
-   (launchfail.go), and a repeat or stale gone is logged
-   `seat_gone_ignored` and does nothing else. That means no second
-   seat_gone, no second exit check (`queueExit` does not deduplicate), no
-   second slot release through the launcher's SeatGone, and no task or seat
-   touched. A gone is a repeat when the request it names was already seen
-   gone. It is stale when it names a request other than the live seat's.
-   A gone that names no request is a repeat when the handle was already
-   seen gone and has not come up since (SeatUp and the restart's adoption
-   clear that). The liveness gone names the seat's request. The first gone
-   of a handle this incarnation never knew still runs its exit check (R3,
-   P1-9). The one case left open: a gone that names no request, arriving
-   after a new seat of the same handle came up, is taken as that seat's
-   end, so a new producer must name the request. Row:
-   TestASecondSeatGoneForOneSeatChangesNothing (a liveness gone, then a
-   gone with no request and the same request's gone again: one seat_gone,
-   one exit check, one release, the held task unchanged; a late gone of
-   the earlier request after a new seat of the handle came up, and a gone
-   naming another request against a live seat, leave the seat up). The
-   revert check (`revert_check_t17_gone.py`) undoes each of four parts
-   alone (the guard, the no-request repeat, the stale request, the
-   liveness gone's request id), and the row fails each time.
+5. **A second SeatGone for one attempt is checked once** (the reviewer's
+   ruling, round 5, which replaced round 4's guard in the handler). The
+   exit queue deduplicates gone items by handle and attempt
+   (internal/scheduler/exits.go:137, in queueExit at :128). The attempt is
+   the request id the seat joined on: the SeatGone names it, or the live
+   seat's is taken (scheduler.go:458). The liveness gone names it. A second
+   item for the same gone seat and attempt is dropped before it runs, and
+   logged once as `exit_check_duplicate` (scheduler.go:485). So a liveness
+   gone followed by a launcher's confirmation gives one exit check and one
+   slot release, and the held task is untouched. A gone for a new attempt
+   of the same handle queues as before (R3, P1-9). A gone that names no
+   request for a handle no longer in the seat map has no attempt and still
+   queues, as before. Without an exit checker (tests only; the verb always
+   wires one) the launcher's SeatGone hook is called per gone. The liveness
+   check remains the only SeatGone producer in production. Row:
+   TestASecondSeatGoneForOneAttemptIsCheckedOnce. The revert check
+   (`revert_check_t17_dedupe.py`) undoes three parts alone: the dedupe, the
+   item's attempt, and the live seat's request for a gone that names none.
+   The row fails each time.
 6. **Liveness is roster mode only**, as the brief says; on-demand seats are
    test-only since t16 and still close on idleness. A seat that dies while
    it holds a lease takes the existing gone-seat path: its exit check is
@@ -393,3 +383,23 @@ each change undone alone:
 The three "around the chokepoint" mutations leak nothing today, because the
 detail they carry was already redacted at the stderr. Only the source scan
 catches them, which is the point of the row.
+
+## Round 5: t16's round 7 merged; the double fire per the reviewer's ruling
+
+t16's round 7 (8c0cf31e) is merged into t17 (a9a1c890). Its commit 4d12131e
+redacted amq's stderr at the source with a function of its own,
+`amqDiagnostic` in run.go, called in `prepareCLI` and `applyCLI`. That
+duplicated this branch's chokepoint. The merge keeps `amqDetail` at both
+calls and drops `amqDiagnostic` and its import, so `amqDetail` stays the
+one chokepoint and TestAMQOutputHasOneChokepoint passes. No t16 row
+asserted on `amqDiagnostic`. t16's note still names it (t16-roster-launch.md
+line 689); in this branch the function is `amqDetail` in amqoutput.go.
+
+The double fire follows the reviewer's ruling, item 5 above: the exit
+queue deduplicates by handle and attempt. Round 4's guard in the SeatGone
+handler (`goneRepeat`, the `seat_gone_ignored` decision) is removed with
+its row. Kept, the guard would have stopped a second gone before the queue
+saw it, so no row could fail when the dedupe is removed. What the guard did
+beyond the ruling is gone with it: a gone that names an earlier request
+than the live seat's now ends the live seat. No producer posts such a gone
+today.
