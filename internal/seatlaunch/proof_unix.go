@@ -353,7 +353,7 @@ func (s *proofServer) judgeLocked(m launch.ProofMessage, peer int, peerKnown boo
 	}
 	if !s.clock().Before(seat.deadline) {
 		seat.refused, seat.detail = "proof_expired", fmt.Sprintf("the token's %s window has passed", launch.ProofTTL)
-		if err := s.markToken(m.Handle, launch.TokenExpired); err != nil {
+		if err := s.markToken(m.Handle, seat.requestID, launch.TokenExpired); err != nil {
 			seat.detail += "; the expired marker could not be written: " + err.Error()
 		}
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
@@ -393,7 +393,7 @@ func (s *proofServer) judgeLocked(m launch.ProofMessage, peer int, peerKnown boo
 	// The consumed marker first (fix 3c (f)): a marker that cannot be
 	// written fails the seat's launch, so a readable token never stays
 	// valid behind an accepted proof.
-	if err := s.markToken(m.Handle, launch.TokenConsumed); err != nil {
+	if err := s.markToken(m.Handle, seat.requestID, launch.TokenConsumed); err != nil {
 		seat.refused, seat.detail = "proof_marker_failed", err.Error()
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
@@ -462,20 +462,66 @@ type rejectCount struct {
 }
 
 // markToken overwrites a seat's token in its staged record with a marker
-// (fix 3b (e)), so the used-up token is no longer readable there.
-func (s *proofServer) markToken(handle, marker string) error {
+// (fix 3b (e)), so the used-up token is no longer readable there. It is a
+// compare-and-set under the record's lock (3.0.1 t16): the marker is written
+// only while the staged record is still this server's launch. A later launch
+// of the same handle (a roster relaunch, a slot handed out again) restages
+// the record with its own launch id and token; a window that ends for the
+// earlier launch must not mark that token expired, or seat-exec refuses the
+// later seat (proof_expired). Then nothing is written and one line naming
+// both launches goes to the launch directory's log; the accept path gets the
+// error, so a stale server never consumes another launch's token.
+func (s *proofServer) markToken(handle, requestID, marker string) error {
 	if s.lim.mark != nil {
 		if err := s.lim.mark(handle, marker); err != nil {
 			return err
 		}
 	}
-	return launch.UpdateStaged(s.root, handle, func(rec *launch.Record) error {
+	var stale *staleMark
+	err := launch.UpdateStaged(s.root, handle, func(rec *launch.Record) error {
 		if rec.Proof == nil {
 			return fmt.Errorf("the staged record of %s has no ticket", handle)
+		}
+		if rec.LaunchID != s.launchID {
+			stale = &staleMark{handle: handle, marker: marker, ownLaunch: s.launchID, ownRequest: requestID, stagedLaunch: rec.LaunchID, stagedRequest: rec.RequestID}
+			return stale
 		}
 		rec.Proof.Token = marker
 		return nil
 	})
+	if stale != nil {
+		s.noteStale(stale)
+	}
+	return err
+}
+
+// staleMark is a token marker refused because the staged record belongs to
+// another launch of the handle.
+type staleMark struct {
+	handle, marker              string
+	ownLaunch, ownRequest       string
+	stagedLaunch, stagedRequest string
+}
+
+func (e *staleMark) Error() string {
+	return fmt.Sprintf("the staged record of %s is launch %s (request %s), not this launch %s (request %s); the %s marker is not written",
+		e.handle, e.stagedLaunch, e.stagedRequest, e.ownLaunch, e.ownRequest, e.marker)
+}
+
+// noteStale logs a refused marker in the launch directory's log.
+func (s *proofServer) noteStale(e *staleMark) {
+	line, _ := json.Marshal(map[string]any{"at": s.now().UTC(), "code": "token_mark_stale", "handle": e.handle, "marker": e.marker,
+		"launch_id": e.ownLaunch, "request_id": e.ownRequest, "staged_launch_id": e.stagedLaunch, "staged_request_id": e.stagedRequest})
+	path := filepath.Join(s.root, "extensions", "amq-squad", "launch", "proof-rejects.log")
+	s.rejMu.Lock()
+	defer s.rejMu.Unlock()
+	if st, err := os.Stat(path); err == nil && st.Size()+int64(len(line))+1 > s.lim.logCap {
+		os.Rename(path, path+".1")
+	}
+	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+		f.Write(append(line, '\n'))
+		f.Close()
+	}
 }
 
 // state reports a seat's proof: up (with its identity) or a refusal.
@@ -498,7 +544,7 @@ func (s *proofServer) close() {
 		s.mu.Lock()
 		for handle, seat := range s.seats {
 			if !seat.consumed {
-				_ = s.markToken(handle, launch.TokenExpired)
+				_ = s.markToken(handle, seat.requestID, launch.TokenExpired)
 			}
 		}
 		s.mu.Unlock()
