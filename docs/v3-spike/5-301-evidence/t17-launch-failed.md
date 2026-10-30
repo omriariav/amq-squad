@@ -249,8 +249,8 @@ that owns the quoted value on the next line only at a line's start, and
 the prefix buried the key. So stderr shaped as `api_key:` with the quoted
 value on the next line kept the value in the decision, the state file and
 status. Now both functions redact AMQ's raw stderr as one block before
-anything wraps it (`redactAMQOutput`), for the error and for the
-FailureDetail alike. Every reason and detail t17 logs takes AMQ's output
+anything wraps it, for the error and for the FailureDetail alike (round
+3 makes this the one chokepoint, `amqDetail`). Every reason and detail t17 logs takes AMQ's output
 from those two functions. The redaction in the launcher's event and in the
 scheduler stays, as a second pass. run.go is outside the brief's declared
 files; the lead's message named these functions.
@@ -308,3 +308,56 @@ each change undone alone, its rows run:
 The sequence mutation first disabled only the failures' restore point and
 the row passed, because the blocks' restore point also sets the counter.
 With both disabled it fails; the table records that form.
+
+## Round 3: the reviewer's chokepoint for finding 1 (2026-10-30)
+
+The reviewer replaced "on every path" with one chokepoint. `amqDetail`
+(internal/seatlaunch/amqoutput.go) is the one function that turns AMQ's
+output into a reason or a detail: it trims the raw text and runs
+`redact.Block` on it before anything prefixes, wraps or flattens it, and it
+is idempotent. Every carrier goes through it:
+
+- `prepareCLI` and `applyCLI` pass RunAMQ's stderr through it before their
+  error wrapping and before returning the detail.
+- Every write of a FailureDetail: the Result's (prepare, resource_present,
+  apply), the ApplyResult's, and the staged record's apply (`recordApply`).
+- The launch failure the launcher posts, and the roster outcome's detail
+  (the Result's FailureDetail and the launch error).
+- The operator's report (`Report`) reads both FailureDetails through it
+  before `oneLine` flattens them; flattening first would put the key in the
+  middle of a line, where the multiline rule does not see it.
+
+t16's round 7 was to redact Apply.FailureDetail at the source in run.go and
+report.go; the lead routes that to this chokepoint instead, so a merge of
+t16's round 7 is expected.
+
+| Row | What it holds | Package |
+| --- | --- | --- |
+| TestAMQOutputHasOneChokepoint | over the package's non-test Go files (go/ast): RunAMQ is called at exactly two sites; its stderr is used only as amqDetail's argument (directly or through string(...)); every FailureDetail read is amqDetail's argument; every FailureDetail write (assignment or composite field) is an amqDetail call; a bypass fails naming the file and line | seatlaunch |
+| TestApplyFailureDetailGoesThroughTheChokepoint | an Apply refused with valid JSON and the canary on stderr's first line: not in either decision kind, the state file, the staged records, the Result's two FailureDetails or the report | seatlaunch |
+| TestReportRedactsBeforeItFlattens | a Result holding AMQ's raw text prints neither value; amqDetail is idempotent | seatlaunch |
+| TestInvalidJSONStderrIsRedactedBeforeItIsWrapped, TestInvalidJSONRosterFailureIsRedacted, TestInvalidJSONThroughTheVerbLeavesNoCredentialInStatus | round 2's rows, now through the chokepoint | seatlaunch, cli |
+
+Status is checked end to end for the prepare caller (through `scheduler
+run` and the real launcher). For the other callers the rows check the state
+file, which is the only place status reads a launch failure's detail from.
+Driving an Apply through the verb would need the whole Claude seat setup
+(the mode probe, the argument forms, the proof socket) in the CLI package.
+
+Revert check (`revert_check_t17_choke.py` in the job's scratch directory),
+each change undone alone:
+
+| Mutation | Rows | Result |
+| --- | --- | --- |
+| the report's apply detail flattened raw | TestReportRedactsBeforeItFlattens, TestAMQOutputHasOneChokepoint | fail |
+| the report's result detail flattened raw | TestReportRedactsBeforeItFlattens, TestAMQOutputHasOneChokepoint | fail |
+| prepare's stderr wrapped raw | TestInvalidJSONStderrIsRedactedBeforeItIsWrapped/prepare, TestInvalidJSONThroughTheVerbLeavesNoCredentialInStatus, TestAMQOutputHasOneChokepoint | fail |
+| apply's stderr wrapped raw | TestInvalidJSONStderrIsRedactedBeforeItIsWrapped/apply, TestInvalidJSONRosterFailureIsRedacted, TestAMQOutputHasOneChokepoint | fail |
+| the staged record's apply detail around the chokepoint | TestAMQOutputHasOneChokepoint | fail |
+| the ApplyResult's detail around the chokepoint | TestAMQOutputHasOneChokepoint | fail |
+| the roster outcome's detail around the chokepoint | TestAMQOutputHasOneChokepoint | fail |
+| a new caller reads RunAMQ's stderr raw | TestAMQOutputHasOneChokepoint | fail |
+
+The three "around the chokepoint" mutations leak nothing today, because the
+detail they carry was already redacted at the stderr. Only the source scan
+catches them, which is the point of the row.
