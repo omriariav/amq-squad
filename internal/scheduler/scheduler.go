@@ -41,6 +41,11 @@ type Config struct {
 	// holds its head (the phase 5 re-pass ruling); "" leaves it unsealed.
 	SealRoot string
 	Lead     string // the lead handle: widening is the lead's decision (2b-2); written to the state file
+	// Roster, when set, is roster mode (3.0.1 t16): every seat of it
+	// launches in one AMQ apply, idle seats are parked and dispatched to,
+	// MaxSeats caps live leases, and a gone seat is replaced only by the
+	// lead's relaunch of the whole roster. Empty: seats start on demand.
+	Roster []RosterSeat
 }
 
 // EventKind orders events applied in one tick.
@@ -122,6 +127,9 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	pending []Event
+	// relaunchAsk is the lead's relaunch decision (its reason) waiting for
+	// the next tick (RequestRelaunch); set under mu.
+	relaunchAsk *string
 
 	seats       map[string]*seat
 	requests    []request
@@ -145,6 +153,13 @@ type Scheduler struct {
 	commitState map[string]string
 	// commitDeferrals counts deferrals with no exits ledger (tests).
 	commitDeferrals map[string]int
+	// Roster mode (3.0.1 t16): rosterInit is the first tick's adoption
+	// verdict done; rosterOwed a roster launch owed; relaunching the lead's
+	// relaunch in progress; heldReason the last dispatch_held logged.
+	rosterInit  bool
+	rosterOwed  bool
+	relaunching bool
+	heldReason  string
 }
 
 // Options configure a production scheduler (New).
@@ -311,6 +326,18 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 		s.closeIdle(list, now, cfg, log)
 		return out, s.writeState(now, cfg)
 	}
+	// Roster mode: the owed roster launch, or the lead's relaunch, before
+	// any dispatch (3.0.1 t16).
+	if hold, err := s.rosterStep(list, now, cfg, log); err != nil {
+		return out, err
+	} else if hold {
+		s.closeIdle(list, now, cfg, log)
+		return out, s.writeState(now, cfg)
+	}
+	s.heldReason = ""
+	if list, err = s.Store.List(); err != nil {
+		return out, err
+	}
 	if err := s.dispatch(list, now, cfg, log); err != nil {
 		return out, err
 	}
@@ -427,6 +454,19 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			if renewed {
 				log(Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: ev.Handle})
 			}
+		}
+	}
+	s.mu.Lock()
+	ask := s.relaunchAsk
+	s.relaunchAsk = nil
+	s.mu.Unlock()
+	if ask != nil {
+		switch {
+		case !s.rosterMode():
+			log(Decision{Kind: "roster_relaunch_refused", Reason: "the scheduler runs no roster"})
+		case !s.relaunching:
+			s.relaunching = true
+			log(Decision{Kind: "roster_relaunch_requested", Reason: firstNonEmpty(*ask, "the lead's decision")})
 		}
 	}
 	return nil
@@ -670,6 +710,13 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			continue
 		}
 		if handle := s.idleSeat(list, t, *r.Pool); handle != "" {
+			// Roster mode: the seat cap bounds live leases (3.0.1 t16).
+			if s.rosterMode() && leases(list) >= cfg.MaxSeats {
+				if err := s.wait(t, task.WaitSeatCap, now); err != nil {
+					return err
+				}
+				continue
+			}
 			if s.Preparer != nil {
 				if err := s.Preparer.PrepareSeat(handle); err != nil {
 					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
@@ -698,6 +745,17 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				if err := s.Doorbell.Ring(handle, got); err != nil {
 					log(Decision{Kind: "doorbell_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
 				}
+			}
+			continue
+		}
+		if s.rosterMode() {
+			// No seat is requested in roster mode: the roster is up.
+			got, err := s.rosterNoIdleSeat(t, *r.Pool, now, log)
+			if err != nil {
+				return err
+			}
+			if got != nil {
+				list = replace(list, *got)
 			}
 			continue
 		}
@@ -754,7 +812,11 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 	}
 	var handles []string
 	for h, st := range s.seats {
-		if st.pool == p && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
+		serves := st.pool == p
+		if s.rosterMode() {
+			serves = PoolServes(st.pool, p)
+		}
+		if serves && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
 			handles = append(handles, h)
 		}
 	}
@@ -796,7 +858,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
-			if (st.closing == closeExpired || st.closing == closeRestart) && s.closeUnconfirmed(h) {
+			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch) && s.closeUnconfirmed(h) {
 				st.awaitGone = true
 				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
 				continue
@@ -809,6 +871,9 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 		if task.HeldBy(h, list) != nil {
 			st.freeSince = now
 			continue
+		}
+		if s.rosterMode() && !st.unresponsive {
+			continue // a parked roster seat stays up (3.0.1 t16)
 		}
 		idle := st.freeSince
 		if st.lastActivity.After(idle) {
@@ -842,6 +907,10 @@ type State struct {
 	// Refused are the last refused seat arrivals (request_missing: no request
 	// id, an unmanaged seat; request_cancelled; request_unknown).
 	Refused []RefusedSeat `json:"refused"`
+	// Roster mode (3.0.1 t16): the roster's handles, and whether the lead's
+	// relaunch is in progress.
+	Roster          []string `json:"roster,omitempty"`
+	RelaunchPending bool     `json:"relaunch_pending,omitempty"`
 }
 
 // RefusedUnmanaged is the refusal reason of a SeatUp without a request id.
@@ -878,6 +947,11 @@ func (s *Scheduler) Occupancy() []SeatView {
 		if closing == "" && v.awaitGone {
 			closing = "awaiting seat_gone"
 		}
+		if s.rosterMode() && closing == "" {
+			// A roster seat occupies a concurrency pool only while it holds a
+			// lease, which the router counts from the task (3.0.1 t16).
+			continue
+		}
 		out = append(out, SeatView{Handle: h, Pool: v.pool, Unresponsive: v.unresponsive, Closing: closing})
 	}
 	for _, r := range s.requests {
@@ -909,7 +983,10 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	if cfg.StatePath == "" {
 		return nil
 	}
-	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...)}
+	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...), RelaunchPending: s.relaunching}
+	for _, rs := range cfg.Roster {
+		st.Roster = append(st.Roster, rs.Handle)
+	}
 	if !s.limitSince.IsZero() {
 		since := s.limitSince
 		st.UsageLimitSince = &since

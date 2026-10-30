@@ -378,6 +378,9 @@ func schedulerFixture(t *testing.T) (home, root, seatsFile string) {
 		{"handle": "impl-1", "runtime": "claude", "model": "sonnet", "effort": "medium", "role": "implementer", "role_file": filepath.Join(proj, "roles", "impl.md"), "worktree": filepath.Join(proj, "wt-impl-1")}}})
 	seatsFile = filepath.Join(proj, "seats.json")
 	mustWrite(t, seatsFile, string(raw))
+	// The roster launches at start (3.0.1 t16), so the seat's worktree must
+	// exist as the slots expect it.
+	os.MkdirAll(filepath.Join(proj, "wt-impl-1"), 0o755)
 	prevL, prevS, prevStarted := schedulerAMQLauncher, schedulerSendRun, schedulerStarted
 	t.Cleanup(func() { schedulerAMQLauncher, schedulerSendRun, schedulerStarted = prevL, prevS, prevStarted })
 	schedulerAMQLauncher = func(sl *schedproc.Slots, _ string, _ seatlaunch.Options) scheduler.SeatLauncher {

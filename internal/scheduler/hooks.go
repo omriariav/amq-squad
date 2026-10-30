@@ -13,6 +13,9 @@ type SeatRequest struct {
 	ID     string    `json:"id"` // seat-req-<incarnation>-<n>: unique across scheduler restarts
 	Pool   task.Pool `json:"pool"`
 	TaskID string    `json:"task_id"`
+	// Handle names the roster seat of a roster launch's request (3.0.1 t16);
+	// empty on an on-demand request, where the slots pick the seat.
+	Handle string `json:"handle,omitempty"`
 }
 
 // SeatLauncher starts and stops seats (2b-2). RequestSeat is asynchronous:

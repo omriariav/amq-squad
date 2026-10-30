@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,13 +30,21 @@ const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 
 Usage:
   amq-squad scheduler run --seats FILE --lead HANDLE [--lead-pool r:m:e]... [--tick 2s] [--trust] [--max-seats N] [--base-branch B]
+  amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
-over the squad's task store and wires its hooks: seats start through the AMQ
-launch API from the typed seat list FILE (the launch --seats format; each
-seat is a slot the scheduler starts on demand for its pool; pi seats too,
-through AMQ's pi adapter since v0.116); the doorbell is an AMQ message from
+over the squad's task store and wires its hooks: the roster, every seat of
+the typed seat list FILE (the launch --seats format) with a worktree of its
+own, starts at once through the AMQ launch API in one apply (pi seats too,
+through AMQ's pi adapter since v0.116); a seat that holds no lease is parked
+and gets the next task of its pool; --max-seats and the grant's max_seats cap
+the leases held at once, not the seats up. A seat that is gone is replaced
+only by relaunching the roster: AMQ refuses a fresh seat into the session's
+present binding, so a task whose pool has no live seat blocks for the lead
+(seat_replacement_needs_relaunch). A restarted scheduler adopts the live
+seats of the roster. A roster launch that fails at prepare or apply ends the
+process with its stage, AMQ's reason and the detail; the doorbell is an AMQ message from
 the "scheduler" mailbox, which the seat's AMQ wake delivers; the router is
 2b-4's routing table (the default table plus ~/.amq-squad/routing.yaml and
 the repository's, over the owner's registry), flushed once per tick so each
@@ -62,6 +71,11 @@ does not load refuses the start with routing_invalid.
 --trust is the owner's standing answer trust_exact_subject to AMQ's
 trust_confirmation for this squad's launches; without it a launch that needs
 it fails and is reported. --max-seats only narrows the grant.
+
+scheduler relaunch is the lead's decision to relaunch the roster, sent over
+the scheduler's decision socket (proved like task widen): the seats finish
+what they hold, every seat closes, the roster launches again in one apply,
+and the tasks blocked seat_replacement_needs_relaunch return to pending.
 `
 
 func runScheduler(args []string) error {
@@ -74,8 +88,10 @@ func runScheduler(args []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return runSchedulerRun(ctx, args[1:], os.Stdout)
+	case "relaunch":
+		return runSchedulerRelaunch(args[1:], os.Stdout)
 	default:
-		return unknownSubcommandError("scheduler", args[0], "run")
+		return unknownSubcommandError("scheduler", args[0], "run", "relaunch")
 	}
 }
 
@@ -145,7 +161,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if gerr != nil {
 		return fmt.Errorf("scheduler run: the grant: %w", gerr)
 	}
-	seatCap := min(g.MaxSeats, len(q.Seats)) // a seat request needs a free slot of the seat list
+	seatCap := min(g.MaxSeats, len(q.Seats)) // a lease needs a seat of the roster
 	if *maxSeats > 0 && *maxSeats < seatCap {
 		seatCap = *maxSeats
 	}
@@ -159,6 +175,15 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("scheduler run: the push target: %w", err)
 	}
 	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target}
+	// The roster (3.0.1 t16): every seat that can start launches in one
+	// apply; a seat with no worktree of its own never started and is named.
+	roster, excluded := slots.Roster()
+	for _, why := range excluded {
+		fmt.Fprintf(out, "scheduler run: not in the roster: %s\n", why)
+	}
+	if len(roster) == 0 {
+		return fmt.Errorf("scheduler run: the seat list %s has no seat that can start", *seats)
+	}
 	opts := seatlaunch.Options{KeepPreflight: true, Wait: 90 * time.Second, Target: &target}
 	if *trust {
 		opts.Standing = map[string]string{"trust_confirmation": "trust_exact_subject"}
@@ -168,7 +193,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if schedulerAMQLauncher != nil {
 		amqLauncher = schedulerAMQLauncher(slots, root, opts)
 	} else {
-		real = &seatlaunch.Launcher{Plan: slots.Plan, Options: opts, Root: root}
+		real = &seatlaunch.Launcher{Plan: slots.Plan, PlanRoster: slots.PlanRoster, Options: opts, Root: root}
 		amqLauncher = real
 	}
 	byRuntime := map[string]scheduler.SeatLauncher{"claude": amqLauncher, "codex": amqLauncher, "pi": amqLauncher}
@@ -205,7 +230,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if limits == nil {
 		limits = schedproc.Limits{Home: usagelimit.ForHome(home, os.Getenv("CLAUDE_CONFIG_DIR"), os.Getenv("CODEX_HOME")), Root: root}
 	}
-	fmt.Fprintf(out, "scheduler for %s (session %s, lead %s, max %d seats, tick %s); decisions in %s\n", root, q.Session, *lead, seatCap, *tick, filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
+	fmt.Fprintf(out, "scheduler for %s (session %s, lead %s, roster of %d seats, at most %d leases at once, tick %s); decisions in %s\n", root, q.Session, *lead, len(roster), seatCap, *tick, filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
 	err = schedproc.Run(ctx, schedproc.Options{
 		Root:        root,
 		Session:     q.Session,
@@ -230,7 +255,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Committer: committer,
 		Preparer:  &schedproc.CleanSeats{Root: root, Clear: ownerTrust{Root: root}},
 		Limits:    limits,
-		Config:    scheduler.Config{MaxSeats: seatCap, Lead: *lead},
+		Config:    scheduler.Config{MaxSeats: seatCap, Lead: *lead, Roster: roster},
 		Tick:      *tick,
 		Started: func(s *scheduler.Scheduler) {
 			sched = s // before the first tick: the router's seat view
@@ -292,4 +317,52 @@ func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOp
 		schedulerDecideSeams(d)
 	}
 	return d
+}
+
+// schedulerRelaunchSend sends the relaunch over the decision socket (a test
+// seam).
+var schedulerRelaunchSend = schedproc.SendRelaunch
+
+// runSchedulerRelaunch is the lead's relaunch of the roster (3.0.1 t16): a
+// replacement for a gone seat, since AMQ refuses a fresh seat into the
+// session's present binding until it can join one (ask 20).
+func runSchedulerRelaunch(args []string, out io.Writer) error {
+	f := newStoreFlags("scheduler relaunch")
+	f.fs.Usage = func() { fmt.Fprint(os.Stderr, schedulerUsage) }
+	reason := f.fs.String("reason", "", "why the lead relaunches the roster")
+	if err := parseFlags(f.fs, args); err != nil {
+		return err
+	}
+	if f.fs.NArg() > 0 {
+		return usageErrorf("scheduler relaunch: takes no arguments")
+	}
+	if flagWasSet(f.fs, "me") {
+		return usageErrorf("scheduler relaunch: takes no --me; the scheduler proves the lead from the process, never from a flag")
+	}
+	_, root, release, err := f.store(false)
+	if err != nil {
+		return err
+	}
+	release()
+	rec, err := schedproc.ReadLaunchRecord(root)
+	if err != nil {
+		return fmt.Errorf("scheduler relaunch: no running scheduler for %s (the relaunch is the scheduler's to run): %v", root, err)
+	}
+	var reply schedproc.DecideReply
+	if rec.DecisionSocket == "" {
+		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting, Detail: "the scheduler is starting: its decision socket opens once the exits ledger is loaded and every seat of the previous incarnation is closed and confirmed gone"}
+	} else if reply, err = schedulerRelaunchSend(root, rec.DecisionSocket, schedproc.RelaunchRequest{Reason: strings.TrimSpace(*reason)}); err != nil {
+		return fmt.Errorf("scheduler relaunch: the scheduler's decision socket: %w", err)
+	}
+	if *f.jsonOut {
+		if err := writeJSONEnvelope(out, "scheduler_relaunch", reply); err != nil {
+			return err
+		}
+	} else if reply.OK {
+		fmt.Fprintf(out, "scheduler relaunch: %s\n", reply.Detail)
+	}
+	if !reply.OK {
+		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("scheduler relaunch refused (%s): %s", reply.Code, reply.Detail)}
+	}
+	return nil
 }

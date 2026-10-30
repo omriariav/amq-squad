@@ -82,6 +82,9 @@ type DecideOptions struct {
 	Lead string
 	// Apply applies a widening the lead decided (the verb's core).
 	Apply func(lead string, req WidenRequest) DecideReply
+	// Relaunch takes the lead's relaunch of the roster (3.0.1 t16); nil
+	// refuses it (relaunch_unsupported: the scheduler runs no roster).
+	Relaunch func(lead string, req RelaunchRequest) DecideReply
 	// Seams for tests: the lead's recorded pane, the chain walk, a pid's
 	// start stamp and the kernel peer of a connection.
 	LeadPane   func(root, lead string) (panechain.Pane, error)
@@ -196,8 +199,10 @@ func (s *DecisionServer) serve() {
 			if reply.Code == "" {
 				reply = DecideReply{Code: "decision_malformed", Detail: "no decision"}
 				line, err := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
-				var req WidenRequest
-				if err == nil && json.Unmarshal(line, &req) == nil && req.Kind == WidenRequestKind {
+				var kind struct {
+					Kind string `json:"kind"`
+				}
+				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind) {
 					// The fourth pass: the ledger is read again and the
 					// sender proved again after the request is read; a lead
 					// record replaced meanwhile refuses it.
@@ -205,7 +210,7 @@ func (s *DecisionServer) serve() {
 						reply = again
 					} else {
 						conn.SetDeadline(time.Time{}) // the apply step is the scheduler's own work
-						reply = s.o.Apply(s.o.Lead, req)
+						reply = s.apply(kind.Kind, line)
 					}
 				}
 			}
@@ -213,6 +218,27 @@ func (s *DecisionServer) serve() {
 			b, _ := json.Marshal(reply)
 			conn.Write(append(b, '\n'))
 		}()
+	}
+}
+
+// apply runs a proved decision of a known kind.
+func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
+	switch kind {
+	case RelaunchRequestKind:
+		var req RelaunchRequest
+		if json.Unmarshal(line, &req) != nil {
+			return DecideReply{Code: "decision_malformed", Detail: "a relaunch that does not decode"}
+		}
+		if s.o.Relaunch == nil {
+			return DecideReply{Code: RefusedRelaunchUnsupported, Detail: "this scheduler runs no roster; there is nothing to relaunch"}
+		}
+		return s.o.Relaunch(s.o.Lead, req)
+	default:
+		var req WidenRequest
+		if json.Unmarshal(line, &req) != nil {
+			return DecideReply{Code: "decision_malformed", Detail: "a widening that does not decode"}
+		}
+		return s.o.Apply(s.o.Lead, req)
 	}
 }
 
@@ -248,6 +274,32 @@ func (s *DecisionServer) origin(conn *net.UnixConn) DecideReply {
 // dial goes through seatlaunch.DialPrivate, bounded like the bind: a
 // recorded path past sun_path (a deep root on Linux) is still dialable.
 func SendDecision(root, path string, req WidenRequest) (DecideReply, error) {
+	return sendDecision(root, path, req)
+}
+
+// SendRelaunch is the lead's relaunch of the roster over the scheduler's
+// socket (3.0.1 t16), proved and answered like a widening.
+func SendRelaunch(root, path string, req RelaunchRequest) (DecideReply, error) {
+	req.Kind = RelaunchRequestKind
+	return sendDecision(root, path, req)
+}
+
+// RelaunchRequestKind marks the lead's relaunch of the roster.
+const RelaunchRequestKind = "amq-squad.relaunch.v1"
+
+// RefusedRelaunchUnsupported: the scheduler runs no roster.
+const RefusedRelaunchUnsupported = "relaunch_unsupported"
+
+// RelaunchRequest is the lead's decision to relaunch the roster: the
+// remaining seats finish what they hold and close, and the roster launches
+// again in one apply (a replacement while AMQ cannot join a fresh seat into
+// a present binding, ask 20).
+type RelaunchRequest struct {
+	Kind   string `json:"kind"`
+	Reason string `json:"reason,omitempty"`
+}
+
+func sendDecision(root, path string, req any) (DecideReply, error) {
 	var reply DecideReply
 	c, err := seatlaunch.DialPrivate(root, path, DecisionSocketName)
 	if err != nil {

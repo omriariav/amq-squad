@@ -1,0 +1,153 @@
+package schedproc
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+// The roster launch (3.0.1 t16): the scheduler launches every seat of the
+// typed seat list in one AMQ apply and dispatches to the parked seats; the
+// slots govern dispatch, not launch.
+
+// SeatPool is the pool a seat of the seat list serves as a roster seat.
+func SeatPool(seat seatlaunch.Seat) task.Pool {
+	return task.Pool{Runtime: seat.Runtime, Model: seat.Model, Effort: seat.Effort}
+}
+
+// Roster is the squad's roster: every seat of the seat list that can start.
+// A seat whose worktree is missing or is the repository root is left out
+// (the commit step moves the seat branch, so it was never started) and
+// named in excluded with the reason.
+func (s *Slots) Roster() (roster []scheduler.RosterSeat, excluded []string) {
+	for _, seat := range s.Squad.Seats {
+		if _, err := s.checkWorktree(seat); err != nil {
+			excluded = append(excluded, err.Error())
+			continue
+		}
+		roster = append(roster, scheduler.RosterSeat{Handle: seat.Handle, Pool: SeatPool(seat)})
+	}
+	return roster, excluded
+}
+
+// PlanRoster is the squad to launch for a roster launch: each request's
+// seat by handle, its worktree ensured, its request id set, in the order of
+// the requests (the seatlaunch.Launcher's PlanRoster).
+func (s *Slots) PlanRoster(reqs []scheduler.SeatRequest) (seatlaunch.Squad, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inUse == nil {
+		s.inUse, s.byReq, s.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+	}
+	q := s.Squad
+	q.Seats = nil
+	for _, r := range reqs {
+		var found *seatlaunch.Seat
+		for i := range s.Squad.Seats {
+			if s.Squad.Seats[i].Handle == r.Handle {
+				found = &s.Squad.Seats[i]
+			}
+		}
+		if found == nil {
+			return seatlaunch.Squad{}, fmt.Errorf("the roster names %s, which is not in the squad's seat list", r.Handle)
+		}
+		if !scheduler.PoolServes(SeatPool(*found), r.Pool) {
+			return seatlaunch.Squad{}, fmt.Errorf("seat %s does not serve pool %s", r.Handle, r.Pool.Key())
+		}
+		seat, err := s.ensureWorktree(*found)
+		if err != nil {
+			return seatlaunch.Squad{}, err
+		}
+		seat.RequestID = r.ID
+		q.Seats = append(q.Seats, seat)
+	}
+	for _, seat := range q.Seats {
+		s.inUse[seat.Handle], s.byReq[seat.RequestID] = seat.RequestID, seat.Handle
+	}
+	return q, nil
+}
+
+// checkWorktree is ensureWorktree's refusal without creating anything.
+func (s *Slots) checkWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
+	root := cleanPath(s.Squad.ProjectRoot)
+	if seat.Worktree == "" || cleanPath(seat.Worktree) == root {
+		return seat, fmt.Errorf("seat %s has no worktree of its own (the repository root is never a seat worktree: the commit step moves the seat branch)", seat.Handle)
+	}
+	return seat, nil
+}
+
+// LaunchRoster sends the roster to the one launcher that runs every seat of
+// it in one apply (in production the AMQ launcher, for every runtime). A
+// roster whose runtimes go to different launchers cannot share one apply
+// and is refused.
+func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOutcome {
+	var inner scheduler.SeatLauncher
+	for _, r := range reqs {
+		got := l.ByRuntime[r.Pool.Runtime]
+		if got == nil {
+			return scheduler.RosterOutcome{Stage: "launch_error", Detail: fmt.Sprintf("no launcher for runtime %s (seat %s)", r.Pool.Runtime, r.Handle)}
+		}
+		if inner != nil && got != inner {
+			return scheduler.RosterOutcome{Stage: "launch_error", Detail: "the roster's runtimes go to different launchers, which cannot share one apply"}
+		}
+		inner = got
+	}
+	rl, ok := inner.(scheduler.RosterLauncher)
+	if !ok {
+		return scheduler.RosterOutcome{Stage: "launch_error", Detail: "the seat launcher cannot launch a roster"}
+	}
+	l.mu.Lock()
+	if l.reqRun == nil {
+		l.reqRun, l.seatRT = map[string]string{}, map[string]string{}
+	}
+	for _, r := range reqs {
+		l.reqRun[r.ID] = r.Pool.Runtime
+	}
+	l.mu.Unlock()
+	return rl.LaunchRoster(reqs)
+}
+
+var _ scheduler.RosterLauncher = (*Launcher)(nil)
+
+// adoptLive adopts the live seats a previous incarnation left (the launch
+// ledger's accepted proof: pid and raw start stamp match the live process,
+// the identity a launch's close uses). Without a roster each is closed, as
+// before. With one, a seat of the roster whose launch record names the
+// roster's pool is taken as up (seat_adopted); any other live seat is
+// closed, with the reason (seat_adopted_closing).
+func adoptLive(s *scheduler.Scheduler, root string, roster []scheduler.RosterSeat, now time.Time, log func(scheduler.Decision)) {
+	pools := map[string]task.Pool{}
+	for _, rs := range roster {
+		pools[rs.Handle] = rs.Pool
+	}
+	for _, ls := range LiveSeats(root) {
+		pool, in := pools[ls.Handle]
+		reason := "alive from a previous incarnation"
+		switch {
+		case len(roster) == 0:
+		case !in:
+			reason += "; not a seat of the roster"
+		case ls.Pool != pool:
+			reason += fmt.Sprintf("; its launch record's pool %s is not the roster's %s", ls.Pool.Key(), pool.Key())
+		default:
+			s.AdoptUp(ls.Handle, pool, now)
+			log(scheduler.Decision{Kind: "seat_adopted", Seat: ls.Handle, Pool: pool.Key(), Reason: reason + "; its accepted proof's pid and start stamp match the live process"})
+			continue
+		}
+		s.AdoptClosing(ls.Handle, ls.Pool, now)
+		log(scheduler.Decision{Kind: "seat_adopted_closing", Seat: ls.Handle, Reason: reason})
+	}
+}
+
+// relaunchDecision takes the lead's proved relaunch: the scheduler applies
+// it at its next tick (it drains, closes and relaunches over several ticks,
+// so the reply is the acceptance; the decisions log carries the outcome).
+func relaunchDecision(s *scheduler.Scheduler) func(string, RelaunchRequest) DecideReply {
+	return func(lead string, req RelaunchRequest) DecideReply {
+		s.RequestRelaunch(req.Reason)
+		return DecideReply{OK: true, Detail: "accepted: the seats finish what they hold, then every seat closes and the roster relaunches in one apply; the outcome is in the decisions log (roster_launched or roster_launch_failed)"}
+	}
+}

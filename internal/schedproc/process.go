@@ -171,10 +171,10 @@ func Run(ctx context.Context, o Options) error {
 	// dispatch; a seat of the previous incarnation that is still alive is
 	// closed through the launcher, its exit check after the confirmed close.
 	// AdoptClosing loads the exits ledger first (N3 (a)).
-	for _, ls := range LiveSeats(o.Root) {
-		s.AdoptClosing(ls.Handle, ls.Pool, o.Now())
-		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "seat_adopted_closing", Seat: ls.Handle, Reason: "alive from a previous incarnation"})
-	}
+	// In roster mode (3.0.1 t16) a live roster seat is adopted as up
+	// instead: closing it would leave a squad AMQ cannot refill without
+	// relaunching the roster.
+	adoptLive(s, o.Root, o.Config.Roster, o.Now(), func(d scheduler.Decision) { logLine(o.Log, o.Now(), d) })
 	if o.Started != nil {
 		o.Started(s)
 	}
@@ -194,6 +194,14 @@ func Run(ctx context.Context, o Options) error {
 		if o.OnTick != nil {
 			o.OnTick(ds)
 		}
+		var failed *scheduler.RosterLaunchError
+		if errors.As(err, &failed) {
+			// A roster launch that failed at prepare or apply ends the
+			// process with its stage, reason and detail (logged by the tick
+			// as roster_launch_failed); the caller prints it.
+			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "scheduler_stopped", Reason: failed.Error()})
+			return fmt.Errorf("scheduler: %w", err)
+		}
 		if err != nil {
 			// A tick error is logged and the next tick retries: the store is
 			// transactional, so a failed tick left nothing half done.
@@ -205,6 +213,9 @@ func Run(ctx context.Context, o Options) error {
 		if o.Decisions != nil && srv == nil && s.Ready() {
 			d := *o.Decisions
 			d.Root, d.Lead = o.Root, o.Config.Lead
+			if d.Relaunch == nil && len(o.Config.Roster) > 0 {
+				d.Relaunch = relaunchDecision(s)
+			}
 			opened, serr := ServeDecisions(d)
 			if serr != nil {
 				return fmt.Errorf("scheduler: the decision socket: %w", serr)
