@@ -265,3 +265,11 @@ jq -c 'select(.kind|test("roster_relaunch|seat_closed|roster_launch|task_reset")
 7. Outside the declared files: internal/cli/seat_fix1b_test.go (a fixture
    creates its seat worktree) and README.html (regenerated from README.md
    for `make ci`). compile.go is untouched.
+8. **A launch that needs a decision now stops the scheduler.** `lead --team`
+   starts `scheduler run` without `--trust` (internal/cli/lead_scheduler.go),
+   so when AMQ's prepare returns trust_confirmation the roster launch fails
+   at decisions_pending, the process exits with it, and the lead's
+   supervisor restarts it and gives up after five fast failures. Before,
+   each seat launch failed quietly and the task waited. Whether team mode
+   passes `--trust` (the owner's standing answer) is a lead decision; t17
+   widens the failure reporting.
