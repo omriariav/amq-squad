@@ -2895,14 +2895,14 @@ entries:
   status: new
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 251
+  current_lines: 250
   fate: shrink
-  target_lines: 251
+  target_lines: 250
   cluster: launch
   extract: ""
   reason: "minimal launch record; seat-exec writes it"
   status: shrunk
-  note: "retired in 2b-2; class 1 ledger reason: minimal launch record; seat-exec writes it. 3.0.1 t9: +1 line, the WakeRequired field seat-exec reads for its wake re-check (reviewer condition)"
+  note: "retired in 2b-2; class 1 ledger reason: minimal launch record; seat-exec writes it"
 - path: internal/launchintent/launchintent.go
   v2_lines: 538
   current_lines: 544
