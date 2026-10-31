@@ -235,15 +235,17 @@ amq-squad up
 ```
 
 `up` runs seven steps in order and refuses at the first that fails, by
-name: it installs the tagged pi build (`scripts/build-pi-runtime.sh` at a
-tag, `build/pi/amq-squad` or `--binary PATH`) next to the `amq-squad` on
-PATH under a temporary name and renames it over it (`--skip-install` keeps
-an installed binary that already reports a tag); runs that binary's doctor;
-creates the AMQ root and the session when absent; compiles squad.yaml;
-checks the recorded lead (a lead whose pid is alive and whose tmux pane
+name: it compiles squad.yaml (before anything is installed or created);
+installs the tagged pi build (`scripts/build-pi-runtime.sh` at a tag,
+`build/pi/amq-squad` or `--binary PATH`) next to the `amq-squad` on PATH
+under a temporary name and renames it over it (`--skip-install` keeps an
+installed binary that already reports a tag); creates the AMQ root and the
+session when absent; runs that binary's doctor in the root; checks the
+recorded lead (a lead whose pid is alive and whose tmux pane
 exists is never stopped: `lead_running`, with its pid, its pane and the
-attach command; a dead one, and a scheduler serving it, are stopped and
-recorded as decisions); starts the lead in its own tmux session,
+attach command; tmux that cannot be asked is `tmux_unavailable`, and both
+stop nothing; a dead one, and a scheduler serving it, are stopped by their
+recorded identity and recorded as decisions); starts the lead in its own tmux session,
 `squad-lead-<repo>-<sha5>`; and waits for the roster's outcome in the
 decisions log, then prints the roster and `tmux attach -t <session>`.
 `up --json` prints the steps and their outcomes. Each seat's launch budget

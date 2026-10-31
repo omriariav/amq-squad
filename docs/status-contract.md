@@ -74,9 +74,9 @@ launch budget:
 
 | `timing` field | meaning |
 | --- | --- |
-| `start` | the squad launch's start (`launch.json`'s `start`, from `AMQ_SQUAD_START`, which `amq-squad up` sets), null when none was recorded |
+| `start` | the start of the seat's own launch (its `marks.json`, beside its staged record: the squad launch's `AMQ_SQUAD_START`, which `amq-squad up` sets), null when its launch recorded none or its proof predates it (an adopted seat keeps its own launch's start) |
 | `seat_live` | the accepted proof's stamp (`proof.json`'s `at`): the pane runs the provider with its bootstrap delivered |
-| `first_message` | the seat's first AMQ message since this launch (the scheduler's `seat_first_message` decision, the message's own `created`), null before one |
+| `first_message` | the seat's first AMQ message since this launch (the message's own `created`, recorded in the seat's `marks.json` by the scheduler, which also logs `seat_first_message`), null before one |
 | `to_seat_live_ms`, `to_first_message_ms` | the start to each mark, null when either end is missing |
 | `ceiling_ms` | 10000: the ceiling binds the start to seat live; the first message has none |
 | `over_ceiling` | `to_seat_live_ms` is over the ceiling (the seat also carries `launch_budget_exceeded`) |
@@ -191,12 +191,16 @@ lead's presence is its seat row's `live`, found by `lead_handle`.
 
 ## Recorded limits
 
+- Every free-text field (seat message bodies, warnings, wake audit
+  reasons, task titles and evidence, attention subjects, decision reasons,
+  the train's refusals and alert details) passes `redact.Block` before it
+  is serialized: the document feeds the screen and the lead's model.
 - The status read takes no lock (brief 31-1): `lead.live` reads the pid and
   its start stamp, never the lead lock, and `scheduler.live` signals the
   recorded pid only.
-- The launch budget runs from one start per scheduler incarnation: a roster
-  relaunch (`scheduler relaunch`) keeps the start of the `up` that launched
-  the squad, so its marks are not a cold launch's.
+- A roster relaunch (`scheduler relaunch`) within one scheduler incarnation
+  records the same start (the `up` that launched the squad), so its marks
+  are not a cold launch's.
 
 - `live` from a launch record is the recorded `AgentPID` answering signal-0
   (`status.Collect`); the binary and the process birth time are not checked,

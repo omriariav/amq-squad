@@ -467,7 +467,7 @@ func TestStatusRedactsEveryFreeTextField(t *testing.T) {
 	in := Input{Now: now, Root: "/r",
 		Seats: []SeatInput{{Handle: "qa", HasSignal: true, LastMessage: canary("msg"), Warnings: []string{canary("warn")},
 			Launch: &SeatLaunch{Outcome: "live", Wake: &SeatWake{Mode: "disabled", AuditReason: canary("wake")}}}},
-		Tasks: []task.Task{{ID: "t1", Title: canary("title"), Class: "implement", State: task.StateCompleted, Evidence: canary("evidence"), CreatedAt: now, UpdatedAt: now}},
+		Tasks:     []task.Task{{ID: "t1", Title: canary("title"), Class: "implement", State: task.StateCompleted, Evidence: canary("evidence"), CreatedAt: now, UpdatedAt: now}},
 		Decisions: []Decision{{At: now, Kind: "exit_refused", Reason: canary("decision")}},
 		TrainRuns: []TrainRun{{Run: "r1", Refusal: canary("train"), PRs: []int{}, Merged: []int{}}},
 		Alerts:    []AlertInput{{ID: "a1", Kind: "ungated_tag", Subject: canary("alert"), At: now}},

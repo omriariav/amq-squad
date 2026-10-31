@@ -13,9 +13,9 @@ and item 7 of section 1; PR 1's note (31-1-launch-and-screen.md), section 5
 
 | Mark | Source | Written by |
 | --- | --- | --- |
-| start | `launch.json`'s `start` (`schedproc.LaunchRecord.Start`), from `AMQ_SQUAD_START` | `up` sets `AMQ_SQUAD_START` to its own start (`tmux new-session -e`); `lead --team` keeps it (PR 1's `leadStartEnv`), the scheduler records it |
+| start | the seat's own `marks.json` `start` (beside its staged record), the squad launch's start, from `AMQ_SQUAD_START` | `up` sets `AMQ_SQUAD_START` to its own start (`tmux new-session -e`); `lead --team` keeps it (PR 1's `leadStartEnv`); the scheduler records it in `launch.json` and hands it to each launch (`seatlaunch.Options.Start`), which writes it into each seat's marks |
 | seat live | the accepted proof's stamp, `proof.json`'s `at` | the launcher, when it accepts seat-exec's proof (internal/seatlaunch/proof_unix.go:406) |
-| first message | the seat's first sent AMQ message since its launch request, the message's own `created` | the scheduler's new `seat_first_message` decision |
+| first message | the seat's own `marks.json` `first_message`: its first sent AMQ message since its launch request, the message's own `created` | the scheduler, once per launch: `seatlaunch.RecordFirstMessage`, as it logs its new `seat_first_message` decision |
 
 - **seat live is read, not recorded again.** No new decision kind and no
   change to `seat_up`: the `seat_up` decision's stamp is the tick's, not
@@ -28,8 +28,16 @@ and item 7 of section 1; PR 1's note (31-1-launch-and-screen.md), section 5
   `scheduler.OutboxFirstMessage(root)`: the seat's
   `agents/<seat>/outbox/sent/*.md`, files older than the launch request
   skipped unread). It is logged once per launch, its reason the message's
-  `created` stamp (the decision's own `at` is the tick's). An adopted seat
-  (no launch of this incarnation) gets no mark.
+  `created` stamp (the decision's own `at` is the tick's), and the stamp is
+  recorded in the seat's `marks.json`, which status reads, so the mark
+  survives the decisions log scrolling past its tail read. An adopted seat
+  (no launch of this incarnation) gets no new mark.
+- **Each seat's marks are its own launch's** (Codex P2 6, 7). A seat
+  adopted by a restarted scheduler keeps the start of the launch that
+  started it, not the later scheduler's; a seat with no marks of its
+  current launch (launched before them, or by a scheduler started by hand),
+  or whose proof predates its recorded start, has null timing and no
+  ceiling check.
 - **The segments up to seat live** reuse baseline.py's definitions:
   `prepare` (the start to the staged record's `started_at`, compile),
   `mint` (to the proof ticket's `issued_at`), `apply` (to AMQ's apply
@@ -47,6 +55,12 @@ and item 7 of section 1; PR 1's note (31-1-launch-and-screen.md), section 5
 - Both marks, the segments, the ceiling and the slowest segment are in
   status (`seats[].launch.timing`), on the screen's seat line and in `up`'s
   roster print.
+- **Redaction** (Codex P2 10). The document feeds the screen and the
+  lead's model (`amq_status`), so every free-text field passes
+  `redact.Block` before it is serialized: seat message bodies (before they
+  are cut), warnings, AMQ's wake audit reasons, task titles and evidence,
+  attention subjects, decision reasons, the train's refusals and alert
+  details.
 
 ### 1.2 Status (internal/status, docs/status-contract.md)
 
@@ -82,47 +96,79 @@ locked.
 ### 1.3 `amq-squad up` (internal/cli/up.go)
 
 Seven steps, in order, each refusing by name and nothing after it running;
-`--json` prints each step's outcome.
+`--json` prints each step's name and outcome (the names carry no numbers).
+squad.yaml compiles before anything is installed or created, and the AMQ
+root and session exist before doctor runs (Codex P2 4, 5; section 5).
 
-1. **install**: the source is `--binary PATH`, else
+1. **compile**: `squadOfProject` (team.LoadSquad, Squad.LaunchSeats, the
+   roles) and `Normalize`, the wrapper the install target. A squad.yaml
+   that does not compile refuses `squad_invalid` and leaves nothing behind.
+2. **install**: the source is `--binary PATH`, else
    `<repo>/build/pi/amq-squad` (build-pi-runtime.sh's `OUT`). Its `version`
    must name a tag exactly (`vX.Y.Z[-pre]`, never `-N-g<sha>` or `-dirty`):
-   `pi_binary_untagged`. Its `pi verify --json` must name neither
-   `pi_not_embedded` (ErrNotEmbedded) nor `pi_runtime_rejected` (a
-   `*Reject`), read through `piruntime.RefusalCodeText` (an unpacked-yet
-   runtime is fine). Then it is copied to a temporary name beside the
-   `amq-squad` on PATH (or `--to PATH`) and renamed over it, never written
-   in place. `--skip-install` keeps the installed binary when it reports a
-   tag. Also `pi_binary_missing`, `install_target_unknown`, `install_failed`.
-2. **doctor**: the installed binary's `doctor --json --project <repo>`; a
-   failing row refuses with the row's kind (else `doctor_failed`) and its
-   name and detail. Deleted guards left no rows (PR 1).
-3. **session**: squad.yaml's session; `ensureSquadSession` runs `amq coop
-   init --root .agent-mail --agents <handles> --no-gitignore` in the
-   repository when the AMQ root has no `meta/config.json`, and `amq session
-   create <session> --root <base root>` when the session root is absent,
-   through the injected runner; a `session_created` decision. The same
-   function serves `scheduler run` (item 7).
-4. **compile**: `squadOfProject` (team.LoadSquad, Squad.LaunchSeats, the
-   roles) and `Normalize` with the installed binary as the wrapper.
-5. **lead**, under the one rule: the lead lock (`flock.TryExclusive` on
-   `lead.lock`, `lockHeld` in up.go) held and `lead.json`'s pane present
-   (`tmux display-message -p -t <pane>`) is refused `lead_running` with the
-   pid, the pane and `tmux attach -t <pane>`, and nothing is touched. A held
-   lock whose pane is gone is the recorded pid, checked by its start stamp,
-   stopped (SIGTERM, then SIGKILL, until the lock frees). A free lock with
-   the lead's tmux session still present is a dead lead's leftover, killed.
-   A scheduler still holding `run.lock` whose lead check (`LeadState` on
-   lead.json) reports gone, and whose pid runs `scheduler run`, is stopped
-   the same way. Each stop is an `up_stopped_lead` or
-   `up_stopped_scheduler` decision. A scheduler with no recorded lead, or
-   whose lead is not gone, refuses `scheduler_running` (ErrRunning).
-6. **tmux**: `tmux new-session -d -s squad-lead-<repo<=30>-<sha5> -c <repo>
-   -e AMQ_SQUAD_START=<up's start> -e AM_ME= ... <installed> lead --team`:
-   the session name never matches AMQ's `amq-*`; the argv[0] basename is
-   `amq-squad`, so the scheduler's lead-team parent check holds; the AM_*
-   pins are emptied so a stale tmux-server environment cannot disagree with
-   squad.yaml.
+   `pi_binary_untagged`. Its `pi path --json` (which unpacks the embedded
+   runtime when absent and re-hashes it, as the lead's first start would)
+   must exit 0 with its envelope naming the runtime: ErrNotEmbedded's text
+   refuses `pi_not_embedded`, any other non-zero exit or unparseable reply
+   `pi_runtime_rejected` (Codex P2 9; `pi verify` exits non-zero by design
+   for a runtime not unpacked yet, so its exit could not be the rule). Then
+   it is copied to an exclusive temporary name beside the `amq-squad` on
+   PATH (or `--to PATH`) and renamed over it, never written in place.
+   `--skip-install` keeps the installed binary when it reports a tag. Also
+   `pi_binary_missing`, `install_target_unknown`, `install_failed`.
+3. **session**: `ensureSquadSession` reads the AMQ root and the session root
+   with Lstat and refuses a symlinked one, `amq_root_symlinked` (Codex P2
+   8); it runs `amq coop init --root .agent-mail --agents <handles>
+   --no-gitignore` in the repository when the root has no
+   `meta/config.json`, and `amq session create <session> --root <base
+   root>` when the session root is absent, through the injected runner; a
+   `session_created` decision, whose failed append refuses
+   `decision_unrecorded`. The same function serves `scheduler run` (item 7).
+4. **doctor**: the installed binary's `doctor --json --project <repo>`, in
+   the root step 3 made; a failing row refuses with the row's kind (else
+   `doctor_failed`) and its name and detail. Deleted guards left no rows
+   (PR 1).
+5. **lead**, under the one rule, and only on what up can prove (Codex P1
+   1, 2, 3):
+   - One up per root: `up.lock` beside `lead.lock`, held from this step to
+     the roster's outcome; a second up refuses `up_running`.
+   - The lead lock is held across each decision and its stop: taken when
+     free; when held, the recorded lead is stopped first and the lock then
+     taken. `lead.json` is re-read before every signal.
+   - A held lead lock: no readable record is `lead_running` ("starting");
+     a record with no pane (a lead outside tmux) is `lead_running` and is
+     never stopped, since its pane cannot be gone. Otherwise tmux is asked,
+     `tmux list-panes -a -F '#{session_name}\t#{pane_id}'`: the pane listed
+     is `lead_running` with the pid, the pane and `tmux attach -t <pane>`;
+     tmux that cannot be asked (no tmux, no server, a wrong socket, an
+     unparseable reply) is `tmux_unavailable`, naming the probe failure;
+     an answer that lists neither the pane nor the lead's `squad-lead-*`
+     session is `lead_pane_unknown`. Those three stop nothing. Only an
+     answer that lists the lead's session and not its pane is "gone": the
+     recorded pid is stopped by its recorded start stamp (SIGTERM, then
+     SIGKILL only if the same identity still holds after the grace) and
+     its leftover session killed.
+   - A free lead lock with the lead's tmux session present is a dead
+     lead's leftover, killed only when `lead.json` is readable; else
+     `lead_record_unreadable`, nothing killed.
+   - A scheduler still holding `run.lock` whose lead check (`LeadState` on
+     lead.json) reports gone is stopped only as its recorded identity: the
+     pid, its raw start stamp (launch.json's new `process_start`) and this
+     project in its `scheduler run --project` argv, rechecked before each
+     signal; SIGKILL only if that identity still holds after SIGTERM's
+     grace. No readable lead record is `lead_record_unreadable`; a lead not
+     gone is `scheduler_running` (ErrRunning); another identity is
+     `scheduler_unknown`.
+   - Each stop is an `up_stopped_lead` or `up_stopped_scheduler` decision; a
+     decision that cannot be recorded refuses `decision_unrecorded` before
+     the lead starts.
+6. **tmux**: the lead lock is dropped (the new lead takes it; `up.lock` is
+   kept), then `tmux new-session -d -s squad-lead-<repo<=30>-<sha5> -c
+   <repo> -e AMQ_SQUAD_START=<up's start> -e AM_ME= ... <installed> lead
+   --team`: the session name never matches AMQ's `amq-*`; the argv[0]
+   basename is `amq-squad`, so the scheduler's lead-team parent check
+   holds; the AM_* pins are emptied so a stale tmux-server environment
+   cannot disagree with squad.yaml.
 7. **roster**: decisions.jsonl from its size before step 6 until
    `roster_launched`, `roster_adopted`, `roster_incomplete` (success) or
    `roster_launch_failed` (a refusal), at most `--wait` (120 s). A
@@ -135,6 +181,18 @@ Seven steps, in order, each refusing by name and nothing after it running;
    disagreements), `tmux_session_exists` (AMQ's "tmux session ... already
    exists"); else `lead_exited` or `roster_wait_timeout`. Then the roster
    from `status` and the attach command.
+
+**What a refusal leaves behind** (Codex P2 5):
+
+| Step refused | Left behind |
+| --- | --- |
+| compile | nothing |
+| install | nothing (a temporary file is removed; the installed binary is untouched) |
+| session | an installed tagged binary (idempotent, harmless); possibly an AMQ root from `amq coop init` when the session create failed (idempotent, harmless) |
+| doctor | the installed tagged binary, the AMQ root and session (idempotent, harmless) |
+| lead | the above; any stop already done is recorded as its decision |
+| tmux | the above; no lead |
+| roster | the lead running in its tmux session for the owner to attach to: the refusal names the session and the attach command (`roster_wait_timeout`, `roster_launch_failed`, a scheduler refusal by name) |
 
 ### 1.4 The screen (pi/extensions/lib/screen.ts)
 
@@ -193,14 +251,16 @@ function `up` uses) and logs `session_created`
 
 | Row | Test |
 | --- | --- |
-| 7 | cli `TestUpOnAProjectWithNoAMQRootCreatesItAndLaunches` |
-| 13 | cli `TestUpRunsItsSevenStepsInOrderAndInstallsByRename` (the order, the inode check, the session name, the start stamp), `TestUpStopsADeadLeadsSessionAndItsScheduler`, `TestUpStopsALeadWhosePaneIsGone`, `TestUpInstallRefusesAnUntaggedOrUnembeddedBuildByName` |
-| 14 | status `TestLaunchBudgetFromFixtureRecords`; scheduler `TestFirstMessageOfALaunchedSeatIsOneDecision`, `TestOutboxFirstMessageReadsTheSeatsSentMessages` |
+| 7 | cli `TestUpOnAProjectWithNoAMQRootCreatesItAndLaunches` (the real ordering: its fake doctor fails without an AMQ root, as AMQ's `amq env` does) |
+| 13 | cli `TestUpRunsItsSevenStepsInOrderAndInstallsByRename` (the order, the inode check, the session name, the start stamp), `TestUpStopsADeadLeadsSessionAndItsScheduler`, `TestUpStopsALeadWhosePaneIsGone`, `TestUpInstallRefusesAnUntaggedOrUnembeddedBuildByName` (with `pi path`'s non-zero exit and unparseable reply), `TestUpDoctorRefusesAFailingRowByName`, `TestUpCompilesSquadYAMLBeforeInstallingOrCreatingAnything` |
+| 14 | status `TestLaunchBudgetFromFixtureRecords`, `TestEachSeatsMarksAreItsOwnLaunchs` (an adopted seat, a seat without marks, a proof before its start, a first message past the decisions tail); scheduler `TestFirstMessageOfALaunchedSeatIsOneDecision`, `TestOutboxFirstMessageReadsTheSeatsSentMessages`; seatlaunch `TestLaunchRecordsAWakeAMQAdmittedDifferently` (marks.json's start), `TestRecordFirstMessageIsOncePerLaunch` |
 | 15 | status `TestStatusAdditionsAreInTheGoldenAndSchema1ReadersReadIt` (against `testdata/status-v1.pre31.golden.json`, the fixture before this PR), `TestGoldenDecodesStrictly`, `TestGoldenRoundTripAdditiveBothWays`, `TestStatusCarriesTheScreensInputs`; seatlaunch `TestLaunchRecordsAWakeAMQAdmittedDifferently` (wake.json); pi `the poll runs status --json only after .generation or scheduler.json changed` |
 | 16 | pi `the screen renders from a status fixture …`, `/squad toggles the widget …`, `a seat that is not the team lead gets no screen`; status `TestThePiScreensFixtureIsAStatusDocument` (the screen's fixture decodes strictly into this build's status) |
-| 18 | cli `TestUpAgainstALiveLeadRefusesLeadRunningAndTouchesNothing` |
+| 18 | cli `TestUpAgainstALiveLeadRefusesLeadRunningAndTouchesNothing`, `TestUpStopsALeadOnlyWhenTmuxSaysItsPaneIsGone` (tmux_unavailable for no server and an unparseable reply, lead_pane_unknown, lead_running: none stops anything), `TestUpKillsNoSessionWithoutTheLeadRecord`, `TestTwoUpsRacingOneProceedsAndNoLiveLeadDies`, `TestUpStopsASchedulerOnlyAsItsRecordedIdentity` (another project in its argv, a reused pid, an identity changed during SIGTERM's grace: no SIGKILL, a stop decision that cannot be recorded); cli `TestSchedulerRecordsTheLaunchStart` (launch.json's `process_start`) |
 | 19 | status `TestStalledSeatAndKeylessPiSeatAreWarningsNotRefusals`; pi `a seat stalled at a dialog and a keyless pi seat are screen lines …` |
 | 20 | cli `TestSchedulerRunOnAnAbsentSessionRootCreatesIt` |
+| symlinked roots | cli `TestUpRefusesASymlinkedAMQRootOrSession` |
+| redaction | status `TestStatusRedactsEveryFreeTextField` |
 | day 3: a file-lock wait names its holders | status `TestAFileLockWaitNamesItsHolders` (`wait_holders`); pi `a pending task waiting on a file lock names its holder tasks` |
 
 Every test fakes AMQ (the `squadRun` seam, the scheduler's launcher seam),
@@ -270,7 +330,9 @@ start and the scheduler's spawn. The checked-in squad.yaml's seats are cto
   name: internal/schedproc/decisions.go also appends a decision
   (`AppendDecision`, for `session_created` and `up`'s stops, written by
   processes that are not the scheduler), and internal/seatlaunch writes
-  `wake.json` (the `SeatState.Wake` exposure). internal/launch,
+  `wake.json` (the `SeatState.Wake` exposure) and `marks.json` (the
+  per-seat marks), and schedproc's launch record carries the scheduler's
+  `process_start`. internal/launch,
   internal/mergetrain, internal/piruntime (beyond refusal.go),
   internal/cli/pi_lead.go and lead_scheduler.go are unchanged: PR 1's seams
   were enough.
@@ -281,14 +343,20 @@ start and the scheduler's spawn. The checked-in squad.yaml's seats are cto
   of every tool). If the day-4 run shows the doctor eating the budget, the
   fix is a faster doctor (its host probes off the launch path), not a later
   mark.
-- **Doctor before the session.** The brief orders doctor (2) before the AMQ
-  root (3). On a repository with no AMQ root, doctor's `amq ops` row runs
-  `amq env` and `amq doctor --ops` there; whether those fail without a root
-  is not readable offline (the tests fake doctor). If they do, the day-4
-  run on a fresh clone refuses at step 2 naming the row, and steps 2 and 3
-  swap.
-- **A lead outside tmux** (no pane recorded) holding the lock is refused
-  `lead_running` and never stopped: its pane cannot be "gone".
+- **The brief's order put doctor before the AMQ root; it runs after it
+  now.** The brief ordered install, doctor, root and session, compile. On a
+  fresh clone doctor's `amq ops` row runs `amq env` and `amq doctor --ops`
+  in a repository with no AMQ root, and AMQ v0.116.2's `amq env` refuses a
+  repository without `.amqrc` or `.agent-mail` (env.go:428), so `up` would
+  have refused every fresh clone at doctor. The order is now compile,
+  install, session, doctor (Codex P2 4, 5): compile first, so a squad.yaml
+  that does not compile installs and creates nothing; the root and session
+  before doctor. Row 7's fake doctor fails without a root, so the row runs
+  the real ordering.
+- **A live lead with no recorded pane is refused and never stopped.** A
+  lead started outside tmux holds the lead lock with no pane in lead.json;
+  `up` refuses `lead_running` and stops nothing, because a pane that was
+  never recorded cannot be "gone".
 - **The tmux session of a lead started by hand** (outside `up`) is never
   killed by `up`: only the `squad-lead-…` session `up` names.
 - **`seat_live` has no decision** (1.1); `seat_first_message` is the one new
