@@ -193,11 +193,16 @@ type upRun struct {
 	installed           string // the amq-squad the lead runs
 	leadHandle          string // squad.yaml's lead handle
 	q                   seatlaunch.Squad
-	decisionsFrom       int64 // decisions.jsonl's size before the lead started
-	logFrom             int64 // scheduler.log's size before the lead started
+	upLock, leadLock    *flock.Exclusive // held by the lead step; the lead lock is dropped as the lead starts
+	decisionsFrom       int64            // decisions.jsonl's size before the lead started
+	logFrom             int64            // scheduler.log's size before the lead started
 }
 
 func (u *upRun) run() error {
+	defer func() {
+		u.leadLock.Close()
+		u.upLock.Close()
+	}()
 	for _, s := range []struct {
 		name string
 		fn   func() (string, error)
@@ -488,10 +493,44 @@ func lockHeld(path string) (bool, error) {
 	return false, nil
 }
 
-// paneExists asks tmux whether a pane id is live.
-func (u *upRun) paneExists(pane string) bool {
-	out, err := squadRun(u.ctx, u.report.Project, os.Environ(), "tmux", "display-message", "-p", "-t", pane, "#{pane_id}")
-	return err == nil && strings.TrimSpace(string(out)) == pane
+// paneState is what tmux says about the lead's recorded pane.
+type paneState int
+
+const (
+	paneListed      paneState = iota // tmux lists the pane: the lead's pane exists
+	paneGone                         // tmux lists the lead's session and not the pane
+	paneUnknown                      // tmux answered but lists neither: up cannot tell (another socket?)
+	tmuxUnavailable                  // tmux could not be asked: no tmux, no server, an error, an unparseable reply
+)
+
+var paneLineRE = regexp.MustCompile(`^[^\t]+\t%[0-9]+$`)
+
+// leadPane asks tmux for every pane of its server (list-panes -a) and
+// places the recorded pane. "Gone" is only an answer that lists the lead's
+// session (up's squad-lead-* session) and not the pane. A missing tmux, an
+// error or an unparseable reply is tmuxUnavailable; an answer that lists
+// neither is paneUnknown. Only paneGone lets up stop a lead.
+func (u *upRun) leadPane(pane, session string) (paneState, string) {
+	out, err := squadRun(u.ctx, u.report.Project, os.Environ(), "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}")
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		return tmuxUnavailable, fmt.Sprintf("tmux list-panes -a: %v: %s", err, firstNonEmptyStr(lastLine(text), "(no output)"))
+	}
+	sessionListed := false
+	for _, ln := range strings.Split(text, "\n") {
+		if !paneLineRE.MatchString(ln) {
+			return tmuxUnavailable, fmt.Sprintf("tmux list-panes -a: unparseable reply line %q", ln)
+		}
+		name, id, _ := strings.Cut(ln, "\t")
+		if id == pane {
+			return paneListed, ""
+		}
+		sessionListed = sessionListed || name == session
+	}
+	if sessionListed {
+		return paneGone, ""
+	}
+	return paneUnknown, fmt.Sprintf("tmux lists neither the lead's pane %s nor its session %s", pane, session)
 }
 
 // tmuxSessionExists asks tmux whether a session of exactly this name is live.
@@ -500,10 +539,15 @@ func (u *upRun) tmuxSessionExists(name string) bool {
 	return err == nil
 }
 
-// stopPID sends SIGTERM and waits for held (the lock the process holds) to
-// free, then SIGKILL and waits again.
-func stopPID(pid int, held func() bool) error {
+// stopProcess stops the recorded process at pid: same rechecks its identity
+// before each signal; SIGTERM, a grace for held (the lock it holds) to
+// free, then SIGKILL only when the same identity still holds. A changed
+// identity is never signalled.
+func stopProcess(pid int, same func() bool, held func() bool) error {
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		if !same() {
+			return fmt.Errorf("pid %d is no longer the recorded process; not sent %s", pid, sig)
+		}
 		if err := upSignal(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("signal %d to pid %d: %w", sig, pid, err)
 		}
@@ -516,74 +560,167 @@ func stopPID(pid int, held func() bool) error {
 	return fmt.Errorf("pid %d still holds its lock after SIGTERM and SIGKILL", pid)
 }
 
-// lead is step 5, under the one rule of brief 31-1 section 4.
+// upLockName serializes two ups on one root: held from the lead step to
+// the roster's outcome.
+const upLockName = "up.lock"
+
+// takeLock takes a flock and keeps it; nil when another process holds it.
+func takeLock(path string) (*flock.Exclusive, error) {
+	l, ok, err := flock.TryExclusive(path, true)
+	switch {
+	case errors.Is(err, flock.ErrUnsupported):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	case !ok:
+		return nil, nil
+	}
+	return l, nil
+}
+
+// schedulerArgvRuns reports whether a command line is amq-squad's
+// `scheduler run --project <project>` for exactly this project.
+func schedulerArgvRuns(args, project string) bool {
+	f := strings.Fields(args)
+	if len(f) == 0 || filepath.Base(f[0]) != "amq-squad" {
+		return false
+	}
+	for i := 1; i+1 < len(f); i++ {
+		if f[i] == "scheduler" && f[i+1] == "run" {
+			for j := i + 2; j+1 < len(f); j++ {
+				if f[j] == "--project" && f[j+1] == project {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// lead is step 5, under the one rule of brief 31-1 section 4. One up per
+// root at a time (up.lock, held to the roster's outcome). The lead lock is
+// held across each decision and its stop: taken when free, else taken once
+// the recorded lead is stopped. The record is re-read before every signal;
+// a stop that needs lead.json refuses lead_record_unreadable without it.
+// Every stop is a decision, and a decision that cannot be recorded refuses
+// before the next step.
 func (u *upRun) lead() (string, error) {
 	root := u.q.SessionRoot()
-	leadLock := filepath.Join(schedproc.Dir(root), schedproc.LeadLockName)
-	runLock := filepath.Join(schedproc.Dir(root), "run.lock")
+	dir := schedproc.Dir(root)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", refuse("lead_unknown", "%v", err)
+	}
+	ul, err := takeLock(filepath.Join(dir, upLockName))
+	switch {
+	case err != nil:
+		return "", refuse("up_unknown", "the up lock cannot be taken: %v", err)
+	case ul == nil:
+		return "", refuse("up_running", "another amq-squad up runs for %s; nothing was stopped", root)
+	}
+	u.upLock = ul
+	leadLockPath := filepath.Join(dir, schedproc.LeadLockName)
+	runLock := filepath.Join(dir, "run.lock")
 	name := upTmuxSessionName(u.report.Project)
+	stopped := func(kind, why string) error {
+		if err := schedproc.AppendDecision(root, upNow(), scheduler.Decision{Kind: kind, Reason: why}); err != nil {
+			return refuse("decision_unrecorded", "%s (%s) could not be recorded as a decision: %v", kind, why, err)
+		}
+		return nil
+	}
 	var did []string
-	held, err := lockHeld(leadLock)
-	if err != nil {
-		return "", refuse("lead_unknown", "the lead lock %s cannot be probed: %v", leadLock, err)
+	if u.leadLock, err = takeLock(leadLockPath); err != nil {
+		return "", refuse("lead_unknown", "the lead lock %s cannot be taken: %v", leadLockPath, err)
 	}
 	rec, recErr := schedproc.ReadLeadRecord(root)
-	if held {
+	if u.leadLock == nil {
+		// The lock is held: a lead lives (the flock is its pid's liveness).
 		switch {
 		case recErr != nil || rec.PID <= 0:
 			return "", refuse(schedproc.ReasonLeadRunning, "%v", &schedproc.LeadRunningError{Root: root, Starting: true})
 		case rec.Pane == "":
 			// A lead outside tmux has no pane to be gone: it is never stopped.
 			return "", refuse(schedproc.ReasonLeadRunning, "%v; it runs outside tmux, so up never stops it", &schedproc.LeadRunningError{Root: root, Record: rec})
-		case u.paneExists(rec.Pane):
-			return "", refuse(schedproc.ReasonLeadRunning, "%v", &schedproc.LeadRunningError{Root: root, Record: rec})
 		}
-		// The pid holds the lock (alive) and its pane is gone: stop it.
-		if stamp, ok := upStartToken(rec.PID); !ok || stamp != rec.Start {
+		switch st, why := u.leadPane(rec.Pane, name); st {
+		case paneListed:
+			return "", refuse(schedproc.ReasonLeadRunning, "%v", &schedproc.LeadRunningError{Root: root, Record: rec})
+		case tmuxUnavailable:
+			return "", refuse("tmux_unavailable", "up cannot ask tmux whether the lead's pane %s (pid %d) exists: %s; nothing was stopped", rec.Pane, rec.PID, why)
+		case paneUnknown:
+			return "", refuse("lead_pane_unknown", "up cannot tell whether the lead's pane %s (pid %d) is gone: %s; nothing was stopped", rec.Pane, rec.PID, why)
+		}
+		same := func() bool {
+			now, err := schedproc.ReadLeadRecord(root)
+			stamp, ok := upStartToken(rec.PID)
+			return err == nil && now.PID == rec.PID && now.Start == rec.Start && ok && stamp == rec.Start
+		}
+		if !same() {
 			return "", refuse("lead_unknown", "the lead lock is held but pid %d does not carry the recorded start stamp; up stops only the recorded lead", rec.PID)
 		}
-		if err := stopPID(rec.PID, func() bool { h, _ := lockHeld(leadLock); return h }); err != nil {
+		if err := stopProcess(rec.PID, same, func() bool { h, _ := lockHeld(leadLockPath); return h }); err != nil {
 			return "", refuse("lead_stop_failed", "%v", err)
 		}
+		if u.leadLock, err = takeLock(leadLockPath); err != nil || u.leadLock == nil {
+			return "", refuse("lead_stop_failed", "the lead lock was not free after pid %d stopped (%v)", rec.PID, err)
+		}
 		why := fmt.Sprintf("pid %d: its tmux pane %s is gone", rec.PID, rec.Pane)
-		_ = schedproc.AppendDecision(root, upNow(), scheduler.Decision{Kind: KindUpStoppedLead, Reason: why})
+		if u.tmuxSessionExists(name) {
+			// the lead's session outlived its pane: it goes with the lead
+			if out, err := squadRun(u.ctx, u.report.Project, os.Environ(), "tmux", "kill-session", "-t", "="+name); err != nil {
+				return "", refuse("lead_stop_failed", "tmux kill-session %s: %v: %s", name, err, strings.TrimSpace(string(out)))
+			}
+			why += "; its tmux session " + name + " killed"
+		}
+		if err := stopped(KindUpStoppedLead, why); err != nil {
+			return "", err
+		}
 		did = append(did, "stopped the lead ("+why+")")
 	} else if u.tmuxSessionExists(name) {
-		// The lead lock is free, so no lead lives; its tmux session is a
-		// dead lead's leftover.
+		// Under the lead lock no lead lives: the session is a dead lead's
+		// leftover, killed only when its record says whose.
+		if recErr != nil {
+			return "", refuse("lead_record_unreadable", "the tmux session %s is present and no lead holds the lead lock, but lead.json cannot be read (%v); nothing was killed", name, recErr)
+		}
 		if out, err := squadRun(u.ctx, u.report.Project, os.Environ(), "tmux", "kill-session", "-t", "="+name); err != nil {
 			return "", refuse("lead_stop_failed", "tmux kill-session %s: %v: %s", name, err, strings.TrimSpace(string(out)))
 		}
-		why := fmt.Sprintf("tmux session %s: its lead is dead (the lead lock is free)", name)
-		if recErr == nil {
-			why = fmt.Sprintf("tmux session %s: its lead pid %d is dead (the lead lock is free)", name, rec.PID)
+		why := fmt.Sprintf("tmux session %s: its lead pid %d is dead (the lead lock is free)", name, rec.PID)
+		if err := stopped(KindUpStoppedLead, why); err != nil {
+			return "", err
 		}
-		_ = schedproc.AppendDecision(root, upNow(), scheduler.Decision{Kind: KindUpStoppedLead, Reason: why})
 		did = append(did, "stopped "+why)
 	}
-	// A scheduler still holding run.lock now serves a lead that is gone:
-	// its lead_gone check passes, so it is stopped.
+	// A scheduler still holding run.lock serves a lead that is gone: its
+	// lead_gone check has passed, so it is stopped by its recorded identity:
+	// the pid, its recorded start stamp and this project in its argv.
 	if held, err := lockHeld(runLock); err != nil {
 		return "", refuse("scheduler_unknown", "the scheduler lock %s cannot be probed: %v", runLock, err)
 	} else if held {
-		lr, err := schedproc.ReadLaunchRecord(root)
-		if err != nil || lr.PID <= 0 {
-			return "", refuse("scheduler_running", "%v (its launch record is unreadable, so up does not stop it)", schedproc.ErrRunning)
-		}
 		if recErr != nil {
-			return "", refuse("scheduler_running", "%v (pid %d, started without a recorded lead, so up does not stop it)", schedproc.ErrRunning, lr.PID)
+			return "", refuse("lead_record_unreadable", "%v, and lead.json cannot be read (%v), so its lead check cannot pass; nothing was stopped", schedproc.ErrRunning, recErr)
+		}
+		lr, err := schedproc.ReadLaunchRecord(root)
+		if err != nil || lr.PID <= 0 || lr.ProcessStart == "" {
+			return "", refuse("scheduler_unknown", "%v, and its launch record names no pid with its start stamp (%v); nothing was stopped", schedproc.ErrRunning, err)
 		}
 		if st, why := schedproc.LeadState(rec.PID, rec.Start, upStartToken, upPIDAlive); st != schedproc.LeadIsGone {
 			return "", refuse("scheduler_running", "%v (pid %d): its lead check has not passed: %s", schedproc.ErrRunning, lr.PID, firstNonEmptyStr(why, "the lead is alive"))
 		}
-		if args, ok := upProcArgs(lr.PID); !ok || !strings.Contains(args, "scheduler run") {
-			return "", refuse("scheduler_unknown", "the scheduler lock is held but pid %d is not an amq-squad scheduler run", lr.PID)
+		same := func() bool {
+			stamp, ok := upStartToken(lr.PID)
+			args, aok := upProcArgs(lr.PID)
+			return upPIDAlive(lr.PID) && ok && stamp == lr.ProcessStart && aok && schedulerArgvRuns(args, u.report.Project)
 		}
-		if err := stopPID(lr.PID, func() bool { h, _ := lockHeld(runLock); return h }); err != nil {
+		if !same() {
+			return "", refuse("scheduler_unknown", "the scheduler lock is held but pid %d is not the recorded scheduler of %s (its start stamp and its scheduler run --project argv must match); nothing was stopped", lr.PID, u.report.Project)
+		}
+		if err := stopProcess(lr.PID, same, func() bool { h, _ := lockHeld(runLock); return h }); err != nil {
 			return "", refuse("scheduler_stop_failed", "%v", err)
 		}
 		why := fmt.Sprintf("pid %d: %s: its lead pid %d is gone", lr.PID, schedproc.RefusedLeadGone, rec.PID)
-		_ = schedproc.AppendDecision(root, upNow(), scheduler.Decision{Kind: KindUpStoppedScheduler, Reason: why})
+		if err := stopped(KindUpStoppedScheduler, why); err != nil {
+			return "", err
+		}
 		did = append(did, "stopped the scheduler ("+why+")")
 	}
 	if len(did) == 0 {
@@ -628,6 +765,11 @@ func (u *upRun) tmux() (string, error) {
 		// server's environment must not disagree with it
 		"-e", "AM_ME=", "-e", "AM_ROOT=", "-e", "AM_BASE_ROOT=", "-e", "AM_SESSION=",
 		u.installed, "lead", "--team"}
+	// The new lead takes the lead lock itself; up keeps up.lock until the
+	// roster's outcome, so no other up can take the lead's session for a
+	// dead lead's leftover in between.
+	u.leadLock.Close()
+	u.leadLock = nil
 	if out, err := squadRun(u.ctx, u.report.Project, os.Environ(), "tmux", args...); err != nil {
 		text := strings.TrimSpace(string(out))
 		return "", refuse(firstNonEmptyStr(namedRefusal(text), "tmux_failed"), "tmux new-session: %v: %s", err, text)

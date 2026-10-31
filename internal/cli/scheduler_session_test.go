@@ -26,7 +26,7 @@ func TestSchedulerRunOnAnAbsentSessionRootCreatesIt(t *testing.T) {
 	writeSquadProject(t, proj, fixtureSquadYAML, "implementer")
 	mustMkdir(t, filepath.Join(proj, "wt-impl-1"))
 	root := filepath.Join(proj, ".agent-mail", "s1")
-	f := &upFake{t: t, proj: proj, root: root, panes: map[string]bool{}, sessions: map[string]bool{}}
+	f := &upFake{t: t, proj: proj, root: root, panes: map[string]string{}, sessions: map[string]bool{}}
 	fake := &cliFakeLauncher{}
 	prev := []any{squadRun, schedulerAMQLauncher, schedulerSendRun, schedulerStarted, schedulerOnTick}
 	t.Cleanup(func() {
