@@ -69,6 +69,14 @@ CleanSeat, both in internal/seatcommit:
   moved like a linked worktree. The fetched base must be the object id
   ls-remote reported (`base_tip_moved` otherwise). The fetch's git runs
   with the push's environment through `seatcommit.HarnessEnv`.
+- Codex round on 14697996: a worktree HEAD at a commit the tip does not
+  hold, other than the resting branch's checked value, refuses with
+  `seat_head_detached_unmerged` before any move. An existing worktree's
+  `.git` must lead to its own git dir: a symlink, or a gitdir file naming
+  anything but `<common>/worktrees/<name>` of the project repository with a
+  back-pointer to this worktree, refuses with `seat_gitdir_foreign`. The
+  schedproc fixture sets a temp HOME and git's config variables for the
+  whole test process, so the code under test sees them.
 - The launch record carries the base: `launch.Record.Base` (json `base`),
   copied from `seatlaunch.Seat.Base`, which the seat file cannot set.
 
@@ -116,10 +124,12 @@ push. Those two rows are the ones that cover the HTTPS path.
 | TestSeatBaseConcurrentBranchMoveRefuses | a branch moved (existing worktree) or created (new worktree) mid-launch refuses; the concurrent value stays | no expected old value on either update-ref |
 | TestSeatBaseUnbornHeadRefuses | a worktree whose HEAD names nothing refuses with `seat_head_unreadable`; an uncommitted change survives | the unreadable HEAD falling through to a reset |
 | TestSeatBasePlainCloneWorktree | a plain clone as the seat worktree lands on the tip with HEAD on seat/c1 | a gitdir file required |
-| TestSeatBaseHTTPSFetchUsesThePinnedGh | an HTTPS URL's ls-remote and fetch run with the pinned gh as the only helper and GH_TOKEN; the environment is the push's list (GIT_SSH_VARIANT in, GIT_SSH_EXTRA out) | no FetchCredentials call; helper args not passed; no GH_TOKEN; a GIT_SSH* prefix |
+| TestSeatBaseHTTPSFetchUsesThePinnedGh | an HTTPS URL's ls-remote and fetch run with the pinned gh as the only helper and GH_TOKEN; the environment is the push's list (GIT_SSH_VARIANT in, GIT_SSH_EXTRA out) with the fixture's temp HOME | no FetchCredentials call; helper args not passed; no GH_TOKEN; a GIT_SSH* prefix; the fixture's HOME not set for the process |
 | TestSeatBaseHTTPSWithoutPinnedGhRefuses | no pinned gh refuses with `tool_unpinned`; no fetch runs | no FetchCredentials call; FetchCredentials returning nothing for HTTPS |
 | TestSeatBaseHTTPSPinMismatchRefuses | a pinned gh failing its sha256 refuses with `tool_pin_mismatch`; no fetch runs | no FetchCredentials call |
-| TestSeatBaseShadowRemoved | the throwaway directories are gone after a launch, a moving relaunch, a refusal in the move and one after the fetch | either directory left |
+| TestSeatBaseShadowRemoved | the throwaway directories (the launch's and AddWorktree's) are gone after a launch, a moving relaunch, a refusal in the move and one after the fetch | any of the three left |
+| TestSeatBaseDetachedLocalCommitRefuses | a HEAD detached at a local-only commit refuses with `seat_head_detached_unmerged`; the commit and its file survive | no HEAD containment check |
+| TestSeatBaseForeignGitdirRefuses | a .git symlink, a file naming another worktree's git dir, a forged git dir outside worktrees/ and another repository's worktree with a forged back-pointer each refuse with `seat_gitdir_foreign`; the checkouts they lead to are untouched | no symlink check; no back-pointer check; no worktrees/ check; no project repository check |
 | TestSeatBaseFetchedTipMustMatchLsRemote | a fetched base other than ls-remote's id refuses with `base_tip_moved`; no worktree | no comparison |
 
 Not on this branch: the row "CleanSeat after a lease resets to the tip". It
