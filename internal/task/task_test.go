@@ -268,6 +268,44 @@ func TestDispatchOrderAndPoolFilter(t *testing.T) {
 	}
 }
 
+// The task's rule: the pool changes only until the first attempt is
+// granted. A task never granted is re-pinned freely; after a grant the
+// re-pin is refused with the code, and a task back in pending after an
+// unclaimed expiry keeps its attempt count and is refused too.
+func TestSetRepinsOnlyBeforeTheFirstGrant(t *testing.T) {
+	s := newStore(t)
+	initial := &Pool{Runtime: "claude", Model: "haiku", Effort: "low"}
+	repinned := &Pool{Runtime: "codex", Model: "gpt-5.6-terra", Effort: "medium"}
+	other := &Pool{Runtime: "claude", Model: "sonnet", Effort: "medium"}
+	a := mustAdd(t, s, AddInput{Title: "a", Pool: initial})
+	got, err := s.Set(a.ID, nil, repinned, t0)
+	if err != nil || got.Pool == nil || *got.Pool != *repinned {
+		t.Fatalf("re-pin before the first grant: %+v %v", got, err)
+	}
+	refused := func(when string) {
+		t.Helper()
+		_, err := s.Set(a.ID, nil, other, t0)
+		if !errors.Is(err, ErrRePinAfterAttempt) || !strings.Contains(err.Error(), "task reset --pool") {
+			t.Fatalf("re-pin %s: %v", when, err)
+		}
+		if stored, err := s.Get(a.ID); err != nil || stored.Pool == nil || *stored.Pool != *repinned {
+			t.Fatalf("refused re-pin %s changed the task: %+v %v", when, stored, err)
+		}
+	}
+	// Granted, not claimed: the grant is the boundary, not the claim.
+	if _, err := s.Grant(a.ID, "h", nil, time.Minute, t0); err != nil {
+		t.Fatal(err)
+	}
+	refused("after the first grant")
+	// The unclaimed lease expires: the task is pending again, attempt 1 stands.
+	expired, err := s.ExpireDue(t0.Add(time.Hour))
+	if err != nil || len(expired) != 1 || expired[0].State != StatePending || expired[0].Attempt != 1 ||
+		expired[0].Attempts[0].Outcome != OutcomeUnclaimed {
+		t.Fatalf("unclaimed expiry: %+v %v", expired, err)
+	}
+	refused("after an unclaimed expiry")
+}
+
 func TestSetWaitWritesOnlyOnChange(t *testing.T) {
 	s := newStore(t)
 	a := mustAdd(t, s, AddInput{Title: "a"})

@@ -46,8 +46,9 @@ func TestPRFailureDefersAndTheRetryKeepsTheCheckedDiff(t *testing.T) {
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// pending\n")
 	tk := f.reported("cmd/")
 	gh, _, calls := fakeGh(t, f)
-	broken := filepath.Join(f.dir, "gh-broken")
-	write(t, broken, "#!/bin/sh\necho 'gh: HTTP 502' >&2\nexit 1\n")
+	// gh answers the binding check before the commit (no open PR), then fails.
+	broken, once := filepath.Join(f.dir, "gh-broken"), filepath.Join(f.dir, "gh-once")
+	write(t, broken, "#!/bin/sh\nif [ ! -e "+once+" ]; then touch "+once+"; echo '[]'; exit 0; fi\necho 'gh: HTTP 502' >&2\nexit 1\n")
 	os.Chmod(broken, 0o755)
 	o := f.opts(tk)
 	o.OpenPR, o.Gh = true, broken

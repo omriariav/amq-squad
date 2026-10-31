@@ -99,6 +99,9 @@ test("argv: the relaunch and the widening are the CLI verbs; the widening takes 
 	assert.throws(() => toolArgv.taskWiden(cfg(), { id: "t3", reason: " " }, refused), /reason is required/);
 	assert.throws(() => refusedPaths({ ...refusedTask, state: "pending" }), /not blocked for files outside/);
 	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "size_cap" }), /not blocked for files outside/);
+	// 3.0.2: the refusal says what the lead can do for a seat's own block
+	// with a widen request (task reset --pool, until t20's typed block).
+	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "seat_request" }), /the lead returns the task with amq-squad task reset t3 --pool RUNTIME:MODEL:EFFORT/);
 	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: undefined }), /recorded no refused paths/);
 	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: [] }), /recorded no refused paths/);
 });

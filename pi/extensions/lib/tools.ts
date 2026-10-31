@@ -128,7 +128,7 @@ export const toolArgv = {
 // with ", " or " (" exactly. An empty or missing list is refused.
 export function refusedPaths(t: { id?: string; state?: string; block_reason?: string; refused_paths?: unknown }): string[] {
 	if (t.state !== "blocked" || t.block_reason !== "outside_declared_files") {
-		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen`);
+		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)`);
 	}
 	const list = t.refused_paths;
 	if (!Array.isArray(list) || !list.length || !list.every((x) => typeof x === "string" && x !== "")) {

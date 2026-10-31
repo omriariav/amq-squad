@@ -111,10 +111,18 @@ claude-hooks-test: build
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for claude-hooks-test" >&2; exit 1; }
 	@python3 scripts/test_claude_hooks.py ./amq-squad
 
+# MARKETPLACE_REF (empty by default) turns on the release check's marketplace
+# row: the plugin manifests at that ref must carry VERSION. By hand before the
+# tag: make release-check VERSION=vX.Y.Z MARKETPLACE_REF=origin/main. CI runs
+# release-check on the version-bump PR into v3 without it (main cannot carry
+# the new version yet); the enforced pre-tag check is release prepare's
+# containment of --commit in --branch (default main).
+MARKETPLACE_REF ?=
+
 release-check:
 	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v2.8.1" >&2; exit 1)
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-check" >&2; exit 1; }
-	@python3 scripts/check-release-version.py "$(VERSION)"
+	@python3 scripts/check-release-version.py "$(VERSION)" $(if $(MARKETPLACE_REF),--marketplace-ref "$(MARKETPLACE_REF)")
 	@python3 scripts/check-current-skill-routing.py
 
 go-files-scope-test:

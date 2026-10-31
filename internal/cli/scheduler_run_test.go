@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -208,8 +209,9 @@ func waitDecision(t *testing.T, ticks <-chan []scheduler.Decision, kind string) 
 // a bare origin, the owner's merge grant of o/r unless noGrant) through the
 // fake launcher and a fake gh that logs its calls: the seat is dispatched
 // t1, reports done, and the scheduler's commit step runs. It returns the
-// task after the step, the start line, the fake gh's calls and the seat's
-// head.
+// task after the step, the start line, the fake gh's calls, and the branch
+// the seat's worktree had checked out while it held the lease with the
+// harness commit anchored for t1 (space-separated).
 func bindRun(t *testing.T, noGrant bool, extra ...string) (task.Task, string, string, string) {
 	t.Helper()
 	home, _ := filepath.EvalSymlinks(t.TempDir())
@@ -288,6 +290,7 @@ func bindRun(t *testing.T, noGrant bool, extra ...string) (task.Task, string, st
 		done <- err
 	}()
 	waitDecision(t, ticks, "dispatched")
+	leased := gitT(t, wt, "symbolic-ref", "HEAD")
 	mustWrite(t, filepath.Join(wt, "cmd", "root.go"), "package cmd\n// bound\n")
 	harnessPass(t, store, "t1", time.Now())
 	if _, err := store.Done("t1", "s1", "ok", "", time.Now()); err != nil {
@@ -304,19 +307,26 @@ func bindRun(t *testing.T, noGrant bool, extra ...string) (task.Task, string, st
 		t.Fatal(err)
 	}
 	calls, _ := os.ReadFile(ghLog)
-	return got, stdout, string(calls), gitT(t, wt, "rev-parse", "HEAD")
+	anchored, _ := exec.Command("git", "-C", wt, "rev-parse", "--verify", "-q", "refs/amq-squad/commits/s1/t1").Output()
+	return got, stdout, string(calls), leased + " " + strings.TrimSpace(string(anchored))
 }
 
 // 3.0.1 t14: under a merge grant the scheduler's commit step opens (or
-// finds) the pushed seat branch's draft PR and binds it to the task with no
+// finds) the pushed task branch's draft PR and binds it to the task with no
 // flag passed: the task completes with pr_number and pr_head, the train's
-// input (task_unbound otherwise).
+// input (task_unbound otherwise). 3.0.2 t23: the doorbell put the seat's
+// worktree on the task's own branch for the lease, and the step pushed and
+// bound that branch.
 func TestSchedulerCommitStepBindsByDefaultUnderAMergeGrant(t *testing.T) {
-	got, out, calls, head := bindRun(t, false)
-	if got.State != task.StateCompleted || got.PRNumber != 7 || got.PRHead != head || got.PRRepository != "o/r" {
+	got, out, calls, seat := bindRun(t, false)
+	leased, head, _ := strings.Cut(seat, " ")
+	if got.State != task.StateCompleted || got.PRNumber != 7 || got.PRHead != head || len(head) != 40 || got.PRRepository != "o/r" {
 		t.Fatalf("binding: state %s pr %d head %q repo %q (want completed, 7, %s, o/r)\n%s", got.State, got.PRNumber, got.PRHead, got.PRRepository, head, out)
 	}
-	if !strings.Contains(calls, "pr list --head seat/s1") || !strings.Contains(calls, "pr create") {
+	if leased != "refs/heads/seat/s1-t1" {
+		t.Fatalf("the leased worktree had %s checked out, not the task's branch", leased)
+	}
+	if !strings.Contains(calls, "pr list --head seat/s1-t1") || !strings.Contains(calls, "pr create --draft --head seat/s1-t1") {
 		t.Fatalf("gh calls:\n%s", calls)
 	}
 	if !strings.Contains(out, "PR binding on (merge grant o/r)") {

@@ -322,7 +322,7 @@ func TestVerifierOrderInsideTheCommitStep(t *testing.T) {
 		t.Fatal("the verifier ran before the diff check refused")
 	}
 	g := newFixture(t)
-	ref = filepath.Join(g.origin, "refs", "heads", g.branch)
+	ref = filepath.Join(g.origin, "refs", "heads", TaskBranch(g.handle, "t1"))
 	g.verifying(g.script("v", "if [ -e "+ref+" ]; then echo pushed-before-the-verifier; else echo not-pushed-yet; fi\n"))
 	write(t, filepath.Join(g.wt, "cmd", "root.go"), "package cmd\n\n// z\n")
 	res := g.run(g.reportedBare("cmd/**"))

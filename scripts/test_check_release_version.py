@@ -3,14 +3,27 @@
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import importlib.util
+import io
+import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "check-release-version.py")
+# No real HOME and no owner git config for anything these tests run (git,
+# make, the script's own git): a temp HOME, GIT_CONFIG_GLOBAL=/dev/null and
+# GIT_CONFIG_NOSYSTEM=1 for the whole process.
+_TEST_HOME = tempfile.mkdtemp(prefix="check-release-home-")
+atexit.register(shutil.rmtree, _TEST_HOME, True)
+os.environ.update({"HOME": _TEST_HOME, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("check_release_version", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -181,6 +194,126 @@ class RequireReleaseNotesTest(unittest.TestCase):
                     "'# amq-squad v2.21.0' != '# amq-squad v2.22.0'"
                 ],
             )
+
+
+GIT_ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "owner", "GIT_AUTHOR_EMAIL": "o@example.com",
+    "GIT_COMMITTER_NAME": "owner", "GIT_COMMITTER_EMAIL": "o@example.com",
+    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
+def git(root: str, *args: str) -> None:
+    subprocess.run(["git", "-C", root, *args], check=True, capture_output=True, env=GIT_ENV)
+
+
+class RequireMarketplaceRefTest(unittest.TestCase):
+    """The marketplace installs from main: the release check fails closed
+    when main's plugin manifests do not carry the released version (3.0.2,
+    the owner's A of 2026-10-30)."""
+
+    def repo(self, root: str, claude: str, codex: str) -> None:
+        git(root, "init", "-q", "-b", "main")
+        for rel, version in zip(CHECK_RELEASE_VERSION.MARKETPLACE_MANIFESTS, (claude, codex)):
+            os.makedirs(os.path.join(root, os.path.dirname(rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"name": "amq-squad", "version": version}) + "\n")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "manifests")
+        # The local view of the remote's main, as a fetch leaves it.
+        git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+    def test_main_carrying_the_version_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "3.0.2")
+            failures: list[str] = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
+            self.assertEqual(failures, [])
+
+    def test_main_on_another_version_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "2.31.0")
+            failures: list[str] = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
+            self.assertEqual(len(failures), 1)
+            self.assertIn("origin/main:plugins/codex/.codex-plugin/plugin.json: the marketplace serves version '2.31.0', not '3.0.2'", failures[0])
+
+            failures = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.3", failures, "origin/main")
+            self.assertEqual(len(failures), 2)
+
+    def test_the_tests_run_without_the_real_home_or_git_config(self) -> None:
+        self.assertEqual(os.environ["HOME"], _TEST_HOME)
+        self.assertEqual(os.environ["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(os.environ["GIT_CONFIG_NOSYSTEM"], "1")
+
+    def test_the_row_reads_no_global_or_system_git_config(self) -> None:
+        # The ref is read with the owner's config set aside: a malformed
+        # global and system config in the caller's environment still pass.
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "3.0.2")
+            bad = os.path.join(root, "broken-gitconfig")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write("[core\nthis is not git config\n")
+            failures: list[str] = []
+            with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": bad, "GIT_CONFIG_SYSTEM": bad, "GIT_CONFIG_NOSYSTEM": "0"}):
+                CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
+            self.assertEqual(failures, [])
+
+    def test_a_missing_ref_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "3.0.2")
+            git(root, "update-ref", "-d", "refs/remotes/origin/main")
+            failures: list[str] = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
+            self.assertEqual(len(failures), 2)
+            self.assertTrue(all("the marketplace's ref is unreadable" in f for f in failures), failures)
+
+    def run_main(self, *args: str) -> list[tuple[str, str]]:
+        """Run main() on this repository with args, recording the row's calls
+        (the row is replaced by a recorder; main's result is not asserted)."""
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(SCRIPT)))
+        calls: list[tuple[str, str]] = []
+        real, argv, cwd = CHECK_RELEASE_VERSION.require_marketplace_ref, sys.argv, os.getcwd()
+        CHECK_RELEASE_VERSION.require_marketplace_ref = lambda root, version, failures, ref: calls.append((version, ref))
+        sys.argv = [SCRIPT, *args]
+        try:
+            os.chdir(repo)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                CHECK_RELEASE_VERSION.main()
+        finally:
+            os.chdir(cwd)
+            sys.argv = argv
+            CHECK_RELEASE_VERSION.require_marketplace_ref = real
+        return calls
+
+    def test_the_row_does_not_run_without_the_flag(self) -> None:
+        # CI runs the check on the version-bump PR into v3, when main cannot
+        # carry the new version yet: without --marketplace-ref the row is off.
+        self.assertFalse(hasattr(CHECK_RELEASE_VERSION, "MARKETPLACE_REF"))
+        self.assertEqual(self.run_main("v3.0.2"), [])
+
+    def make_n(self, *extra: str) -> str:
+        """`make -n release-check` in this repository (prints, runs nothing)."""
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(SCRIPT)))
+        env = {k: v for k, v in os.environ.items() if k not in ("MARKETPLACE_REF", "MAKEFLAGS")}
+        return subprocess.run(
+            ["make", "-n", "-C", repo, "release-check", "VERSION=v3.0.1", *extra],
+            check=True, capture_output=True, text=True, env=env,
+        ).stdout
+
+    def test_the_makefile_passes_the_flag_only_with_marketplace_ref(self) -> None:
+        # CI's make release-check sets no MARKETPLACE_REF: no flag, no row.
+        without = [ln for ln in self.make_n().splitlines() if "check-release-version.py" in ln]
+        self.assertEqual(len(without), 1, without)
+        self.assertNotIn("--marketplace-ref", without[0])
+        with_ref = [ln for ln in self.make_n("MARKETPLACE_REF=origin/main").splitlines() if "check-release-version.py" in ln]
+        self.assertEqual(len(with_ref), 1, with_ref)
+        self.assertIn('--marketplace-ref "origin/main"', with_ref[0])
+
+    def test_the_flag_runs_the_row_with_its_ref(self) -> None:
+        self.assertEqual(self.run_main("v3.0.2", "--marketplace-ref", "origin/main"), [("3.0.2", "origin/main")])
 
 
 if __name__ == "__main__":

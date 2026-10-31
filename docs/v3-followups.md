@@ -52,9 +52,33 @@ closes.
   fine-grained PAT, or a GitHub App installation token; 3.0 uses the owner's
   gh CLI login through the pinned gh copy. Owner decision 2026-10-25. Plan
   R33 and 16.4.
+- A typed release-body digest field on operatorauth.ReleaseSpec
+  (internal/operatorauth/release.go): 3.0.2 records the --notes-file
+  digest in the one note field (Note.Summary, "release body sha256:<hex>",
+  written by prepare only, exactly one parsed at publish). Move it to its
+  own field when the spec shape changes anyway (reviewer ruling,
+  2026-10-31).
+- One helper for the push's authentication: the commit step's
+  pushCredentials (internal/seatcommit/commit.go) calls
+  seatcommit.FetchCredentials (internal/seatcommit/fetchcred.go), which the
+  launch's base fetch uses since 3.0.2, so the push and the fetch cannot
+  drift. 3.0.2-t22.
+- The create-to-bind window of the commit step's PR: GitHub creates the
+  draft PR and the process dies before BindPR persists the binding; the
+  next attempt sees an open PR bound to no task on the task's branch and
+  refuses pr_bound_elsewhere instead of binding it again. The fix (the
+  reviewer's shape): an open PR whose branch equals the task's own branch
+  name (compared whole, never parsed) and whose head equals the commit the
+  ledger records as pushed for that task is this task's PR, so the next
+  attempt binds it again instead of refusing pr_bound_elsewhere. 3.0.2-t24.
 
 ## 3.0.x
 
+- 3.0.2 leaves this open: `release publish` must still repeat prepare's
+  `--notes` and `--notes-file`; when the notes file changed, the CLI's
+  spec-change refusal (ErrSpecChangeRequiresSuccessor) fires before
+  release_body_mismatch and does not name the field. The fix: publish takes
+  the prepared spec from the series store and refuses only a body mismatch.
 - Upstream ask 20 (AMQ): join a fresh participant into a present binding.
   AMQ v0.116.2 refuses a fresh seat launched into a session whose binding
   is present (`binding_present_without_resumable_conversation`,
@@ -274,6 +298,9 @@ closes.
   marker, a fence against a brief's or an agent's mistake, not against a
   seat that unsets its environment. The real fence: a seat-owned
   `AMQ_SQUAD_HOME` with a read-only registry mirror. 3.0.1-t15.
+- 3.0.2: `release prepare` checks only the shape of `--commit` (internal/releaseflow/releaseflow.go:116): a well-formed SHA that names nothing raises two owner gates (v3.0.1's void series). Resolve the commit before any gate: `git cat-file -e` locally and containment in the named branch on the remote, as TagCommit resolves the tag at :46; refuse with a named reason.
+- 3.0.x: `remote attach` does not start the amq-remote endpoint (`amq-remote up`, the enrollment script's step D) and does not notice it gone; moving the attach between sessions on 2026-10-30 left the owner's gate answers undelivered until the endpoint was restarted by hand. The attach checks for a live endpoint (pid file and socket) at start and each interval and refuses or says so; it never stops one.
+- 3.0.x: `release publish` must repeat the prepare's `--notes` exactly (the notes are part of the release spec); the refusal "release spec changed" does not say which field moved. Publish takes the prepared spec from the series store and refuses only a mismatch.
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 
