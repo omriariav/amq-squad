@@ -31,6 +31,10 @@ type SeatInput struct {
 	// Warnings are the seat warnings that replace the deleted launch
 	// refusals (brief 31-1), one "<code>: <detail>" line each.
 	Warnings []string
+	// Worktree, Branch and Launch come from the seat's staged launch record
+	// (brief 31-1); Launch is nil without one.
+	Worktree, Branch string
+	Launch           *SeatLaunch
 }
 
 // GateInput is one gate record (verified by the caller against its answer).
@@ -77,6 +81,12 @@ type Input struct {
 	SeatMarkers  []task.SeatMarkerProblem
 	Capabilities []string
 	Warnings     []string
+	// brief 31-1: the lead record, the scheduler process (its launch
+	// record), the decisions log's tail and the merge train's last runs.
+	Lead          *Lead
+	SchedulerProc Scheduler
+	Decisions     []Decision
+	TrainRuns     []TrainRun
 }
 
 // BaseCapabilities are the features every schema 1 producer fills.
@@ -99,7 +109,14 @@ func Build(in Input) Status {
 		Warnings: append([]string{}, in.Warnings...),
 		Actions:  Actions{NewTask: NewTaskAction(in.Root)},
 		Scheduler: Scheduler{MaxSeats: in.Scheduler.MaxSeats, LiveSeats: in.Scheduler.LiveSeats,
-			UsageLimitSince: in.Scheduler.UsageLimitSince, UsageLimitUntil: in.Scheduler.UsageLimitUntil},
+			UsageLimitSince: in.Scheduler.UsageLimitSince, UsageLimitUntil: in.Scheduler.UsageLimitUntil,
+			PID: in.SchedulerProc.PID, StartedAt: in.SchedulerProc.StartedAt, LaunchStart: in.SchedulerProc.LaunchStart, Live: in.SchedulerProc.Live},
+		Lead:      in.Lead,
+		Decisions: append([]Decision{}, in.Decisions[max(len(in.Decisions)-DecisionsTail, 0):]...),
+		Train:     Train{Runs: append([]TrainRun{}, in.TrainRuns...), Alerts: []TrainAlert{}},
+	}
+	for _, a := range in.Alerts {
+		s.Train.Alerts = append(s.Train.Alerts, TrainAlert{ID: a.ID, Kind: a.Kind, Detail: a.Subject, GateID: a.GateID, At: a.At})
 	}
 	openGateBy := map[string]GateInput{}
 	openGates := map[string]bool{}
@@ -248,6 +265,7 @@ func classifyTask(t task.Task, now time.Time) Task {
 		ID: t.ID, Title: t.Title, Class: t.Class, TaskState: t.State, Attempt: t.Attempt, WaitReason: t.WaitReason,
 		BlockReason: t.BlockReason, DependsOn: append([]string{}, t.DependsOn...), ProjectPath: t.ProjectPath,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		Evidence: t.Evidence, PRRepository: t.PRRepository, PRNumber: t.PRNumber, PRHead: t.PRHead,
 	}
 	if t.Pool != nil {
 		row.Pool = &Pool{Runtime: t.Pool.Runtime, Model: t.Pool.Model, Effort: t.Pool.Effort}
@@ -294,7 +312,7 @@ func classifySeat(in SeatInput, tasks []task.Task, gates map[string]GateInput, a
 		Handle: in.Handle, Role: in.Role, Runtime: in.Runtime, Model: in.Model, Effort: in.Effort, ProjectPath: in.ProjectPath,
 		LastActivityAt: in.LastActivity, LastMessageAt: in.LastMessageAt, LastMessage: truncate(in.LastMessage, lastMessageLimit),
 		PromptState: firstNonEmpty(in.PromptState, "unknown"), TokensIn: in.TokensIn, TokensOut: in.TokensOut,
-		Warnings: in.Warnings,
+		Warnings: in.Warnings, Worktree: in.Worktree, Branch: in.Branch, Launch: in.Launch,
 	}
 	held := task.HeldBy(in.Handle, tasks)
 	// live is set before the state: a gate or a block overrides liveness in

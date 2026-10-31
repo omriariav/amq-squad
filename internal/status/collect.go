@@ -36,6 +36,10 @@ type CollectOptions struct {
 	Now                                         time.Time
 	Gates                                       []GateInput
 	PIDAlive                                    func(int) bool // default procinfo.Alive
+	// StartToken reads a pid's raw start stamp (default
+	// procinfo.StartToken): the lead record's pid is live only with its
+	// recorded stamp.
+	StartToken func(int) (string, bool)
 }
 
 // Freshness windows for the seat liveness inputs.
@@ -53,6 +57,9 @@ func Collect(o CollectOptions) Input {
 	}
 	if o.PIDAlive == nil {
 		o.PIDAlive = procinfo.Alive
+	}
+	if o.StartToken == nil {
+		o.StartToken = procinfo.StartToken
 	}
 	in := Input{Root: o.Root, Session: o.Session, ProjectPath: o.ProjectPath, ProducerVersion: o.ProducerVersion, Now: o.Now, Gates: o.Gates}
 	warn := func(format string, args ...any) { in.Warnings = append(in.Warnings, fmt.Sprintf(format, args...)) }
@@ -96,6 +103,11 @@ func Collect(o CollectOptions) Input {
 		in.NeedsYou = append(in.NeedsYou, ThreadInput{ID: th.ID, Seat: seat, Subject: th.Subject, Since: th.LastEventAt})
 	}
 	in.Alerts = collectAlerts(o.Root, warn)
+	// brief 31-1: the lead and the scheduler process, the decisions tail,
+	// the merge train's runs, and each seat's launch budget
+	collectProcesses(o, &in, warn)
+	lc := launchContext{start: in.SchedulerProc.LaunchStart, first: collectDecisions(o, &in, warn)}
+	collectTrain(o, &in, warn)
 	entries, err := os.ReadDir(filepath.Join(o.Root, "agents"))
 	if err != nil && !os.IsNotExist(err) {
 		warn("agents: %v", err)
@@ -105,7 +117,7 @@ func Collect(o CollectOptions) Input {
 		if !e.IsDir() || e.Name() == o.OperatorHandle || e.Name() == scheduler.SenderHandle || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		seat, tokens := collectSeat(o, e.Name(), lastFrom[e.Name()], warn)
+		seat, tokens := collectSeat(o, e.Name(), lastFrom[e.Name()], warn, lc)
 		tokenSource = tokenSource || tokens
 		in.Seats = append(in.Seats, seat)
 	}
@@ -116,18 +128,23 @@ func Collect(o CollectOptions) Input {
 	return in
 }
 
-func collectSeat(o CollectOptions, handle string, last state.Message, warn func(string, ...any)) (SeatInput, bool) {
+func collectSeat(o CollectOptions, handle string, last state.Message, warn func(string, ...any), lc launchContext) (SeatInput, bool) {
 	dir := filepath.Join(o.Root, "agents", handle)
 	seat := SeatInput{Handle: handle, PromptState: "unknown"}
 	// The seat's role, runtime, model and effort join from its launch record
 	// (2b-2): the published one, else the core's staged one (before seat-exec
 	// publishes). Only the published record is a liveness signal.
+	seat.Warnings = seatWarnings(o.Root, handle)
 	if raw, err := os.ReadFile(filepath.Join(launch.StagedDir(o.Root, handle), launch.FileName)); err == nil {
 		if staged, err := launch.Decode(raw); err == nil {
 			joinLaunchRecord(&seat, staged)
+			// brief 31-1: the seat's worktree, branch and last launch, and
+			// the warnings of its launch
+			seat.Worktree, seat.Branch = staged.Worktree, staged.Branch
+			seat.Launch = seatLaunch(o.Root, handle, staged, lc)
+			seat.Warnings = append(seat.Warnings, launchWarnings(o.Root, handle, staged, seat.Launch, o.Now)...)
 		}
 	}
-	seat.Warnings = seatWarnings(o.Root, handle)
 	rec, err := launch.Read(dir)
 	switch {
 	case err == nil:

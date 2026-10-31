@@ -266,6 +266,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		srv.close()
 		return res, err
 	}
+	writeWakes(c, launchID, wakes)
 	// The commit step's diff base is the core's observation of each seat
 	// worktree before the seat runs (internal/seatcommit ledger). A worktree
 	// that is not a git checkout records nothing; its commit step refuses

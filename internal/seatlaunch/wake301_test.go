@@ -190,6 +190,11 @@ func TestLaunchRecordsAWakeAMQAdmittedDifferently(t *testing.T) {
 					t.Fatalf("dev wake facts %+v", st.Wake)
 				}
 			}
+			// Brief 31-1's second PR: the admitted wake is recorded beside
+			// the staged record with the launch id, where status reads it.
+			if w, err := ReadSeatWake(q.SessionRoot(), "dev"); err != nil || w.LaunchID != res.LaunchID || !tc.want(w.Wake) {
+				t.Fatalf("recorded wake %+v (%v), launch %s", w, err, res.LaunchID)
+			}
 		})
 	}
 }

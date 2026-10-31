@@ -8,6 +8,7 @@ package seatlaunch
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -187,6 +188,42 @@ type SeatWakeFacts struct {
 	Injector    string `json:"injector,omitempty"` // raw | paste | auto | none | claude-native
 	AuditReason string `json:"audit_reason,omitempty"`
 	Source      string `json:"source"` // always "amq_prepare_preview"
+}
+
+// WakeFileName is a seat's admitted wake beside its staged record
+// (launch.StagedDir): AMQ's Prepare echo of the seat's wake, written at each
+// launch with its launch id, so status shows the wake a seat runs with
+// (brief 31-1: SeatState.Wake reaches only Launch's caller).
+const WakeFileName = "wake.json"
+
+// SeatWakeRecord is the content of WakeFileName: Wake is nil when AMQ's
+// preview carried no execution options for the seat.
+type SeatWakeRecord struct {
+	LaunchID string         `json:"launch_id"`
+	Wake     *SeatWakeFacts `json:"wake"`
+}
+
+// writeWakes records each staged seat's admitted wake (best effort: a seat
+// whose record cannot be written shows no wake in status, nothing else).
+func writeWakes(c Compiled, launchID string, wakes map[string]*SeatWakeFacts) {
+	for _, rec := range c.Records {
+		b, err := json.Marshal(SeatWakeRecord{LaunchID: launchID, Wake: wakes[rec.Handle]})
+		if err != nil {
+			continue
+		}
+		_ = writeAtomic(filepath.Join(launch.StagedDir(rec.Root, rec.Handle), WakeFileName), append(b, '\n'))
+	}
+}
+
+// ReadSeatWake reads a seat's admitted wake record (os.ErrNotExist before
+// its first launch).
+func ReadSeatWake(root, handle string) (SeatWakeRecord, error) {
+	var r SeatWakeRecord
+	b, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), WakeFileName))
+	if err != nil {
+		return r, err
+	}
+	return r, json.Unmarshal(b, &r)
 }
 
 // admittedWakes reads each participant's admitted wake from the Prepare
@@ -483,13 +520,11 @@ func overrideAllowed(overrides []launchapi.ConfigOverrideCapabilityV1, key, valu
 }
 
 // Stage writes each seat's record and role.md into launch.StagedDir under
-// the session root (0700 directories, 0600 files). The session root must
-// exist: AMQ never creates an unknown session.
+// the session root (0700 directories, 0600 files). The session is created
+// before a launch (brief 31-1: `amq-squad up`, and scheduler run on an
+// absent session root), so Stage no longer refuses one that is missing.
 func Stage(c Compiled) error {
 	for i, rec := range c.Records {
-		if st, err := os.Stat(rec.Root); err != nil || !st.IsDir() {
-			return fmt.Errorf("session root %s does not exist; create the session first (amq session create %s --root %s --me <operator>)", rec.Root, rec.Session, rec.BaseRoot)
-		}
 		dir := launch.StagedDir(rec.Root, rec.Handle)
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
