@@ -202,9 +202,22 @@ type Finding struct {
 	Name string // the credential name, or the token's prefix
 }
 
+// workHook, when set (only by tests), is told the units of work the
+// algorithm does: the bytes of a line a scan reads, and each match, merge
+// entry or line it handles. Nil in production: the cost is one nil check.
+var workHook func(n int)
+
+func work(n int) {
+	if workHook != nil {
+		workHook(n)
+	}
+}
+
 // spans returns the byte ranges of every credential-shaped value in a line.
 func spans(line string) (out [][2]int, found []Finding) {
+	work(len(line))
 	for _, m := range assignRE.FindAllStringSubmatchIndex(line, -1) {
+		work(1)
 		if m[2] > 0 && isAlnum(line[m[2]-1]) {
 			continue // the tail of a longer word
 		}
@@ -404,6 +417,7 @@ func jsonValueAt(line string, i int) bool {
 }
 
 func mergeSpans(sp [][2]int) [][2]int {
+	work(len(sp))
 	sort.Slice(sp, func(i, j int) bool { return sp[i][0] < sp[j][0] })
 	out := [][2]int{sp[0]}
 	for _, s := range sp[1:] {
@@ -445,6 +459,7 @@ var (
 // indentless list item at the key's own column.
 func yamlBlocks(text string) string {
 	lines := strings.Split(text, "\n")
+	work(len(text))
 	changed := false
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimRight(lines[i], "\r")
@@ -569,7 +584,9 @@ func redactLineContent(line string) string {
 func Block(text string) string {
 	type span struct{ a, b int }
 	var sp []span
+	work(len(text))
 	for _, m := range jsonBlockRE.FindAllStringSubmatchIndex(text, -1) {
+		work(1)
 		name, val := text[m[2]:m[3]], text[m[4]:m[5]]
 		if strings.EqualFold(name, "key") {
 			continue
