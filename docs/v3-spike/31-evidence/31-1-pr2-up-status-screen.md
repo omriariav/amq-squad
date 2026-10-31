@@ -1,7 +1,7 @@
 # Brief 31-1, PR 2: `amq-squad up`, the status additions, the launch budget, the screen
 
-Branch `v3-31-1b`, stacked on PR 1 (`v3-31-1` at `ad97f0ab`, PR #828, not
-yet merged into v3). Authority: docs/v3.1-plan.md section 7 and
+Branch `v3-31-1b`, from PR 1's head (`v3-31-1` at `ad97f0ab`, PR #828,
+merged into v3 as `e5660330` while this PR was built; nothing to rebase). Authority: docs/v3.1-plan.md section 7 and
 docs/v3-spike/briefs/brief-31-1-launch-and-screen.md sections 3, 5, 6, 7
 and item 7 of section 1; PR 1's note (31-1-launch-and-screen.md), section 5
 "Seams for PR 2". This PR is the brief's second half: rows 7, 13, 14, 15,
