@@ -31,7 +31,7 @@ func branchGh(t *testing.T, f *fixture) (gh, dir, calls string) {
 	}
 	script := "#!/bin/sh\necho \"$*\" >> " + calls + "\ncase \"$2\" in\n" +
 		"list) f=" + dir + "/$(echo \"$4\" | tr / _)\n" +
-		"  if [ -f \"$f\" ]; then cat \"$f\"; elif [ -f \"$f.n\" ]; then head=$(" + gitBin(t) + " --git-dir=" + f.origin + " rev-parse refs/heads/$4)\n" +
+		"  if [ -f \"$f\" ]; then cat \"$f\"; elif [ -f \"$f.n\" ]; then head=$(" + f.ghGit() + " --git-dir=" + f.origin + " rev-parse refs/heads/$4)\n" +
 		"    printf '[{\"number\":%s,\"state\":\"OPEN\",\"headRefOid\":\"%s\",\"baseRefName\":\"main\",\"isCrossRepository\":false}]' $(cat \"$f.n\") \"$head\"\n" +
 		"  else echo '[]'; fi ;;\n" +
 		"create) n=$(( $(cat " + dir + "/next 2>/dev/null || echo 0) + 1 )); echo $n > " + dir + "/next\n" +
@@ -662,5 +662,32 @@ func TestAnotherTasksLeaseRefusesBeforeTheQuarantine(t *testing.T) {
 	}
 	if out, _ := runGit(t, f.wt, "for-each-ref", "refs/amq-squad/evidence/"); strings.TrimSpace(out) != "" {
 		t.Fatalf("an evidence ref was anchored: %s", out)
+	}
+}
+
+// Codex re-check on 7c1a8098, P3: a git a row runs itself (originBranch,
+// originRef, runGit, the fake gh's head lookup) reads no global or system
+// config and uses the fixture's temp HOME. The process HOME here holds a
+// ~/.gitconfig that no git can parse: any helper that read it would fail.
+// Fails when a helper runs git with the inherited environment.
+func TestRowGitsReadNoRealHome(t *testing.T) {
+	poisoned := t.TempDir()
+	write(t, filepath.Join(poisoned, ".gitconfig"), "[[[ not a git config\n")
+	t.Setenv("HOME", poisoned)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(poisoned, ".config"))
+	for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	f := newFixture(t)
+	gh, _, _ := branchGh(t, f)
+	tk := f.leased("cmd/")
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// no real home\n")
+	res := Run(f.prOpts(f.done(tk.ID), gh))
+	if !res.OK || res.PRNumber != 1 || f.originRef(res.Branch) != res.Commit || f.originBranch() != res.Commit {
+		t.Fatalf("with an unreadable process ~/.gitconfig: %+v (origin %q)", res, f.originBranch())
+	}
+	if out, err := runGit(t, f.origin, "rev-parse", "refs/heads/"+res.Branch); err != nil || strings.TrimSpace(out) != res.Commit {
+		t.Fatalf("runGit read the process HOME: %q %v", out, err)
 	}
 }

@@ -186,7 +186,19 @@ func (f *fixture) reported(files ...string) task.Task {
 }
 
 func (f *fixture) opts(tk task.Task) Options {
-	return Options{Root: f.root, Handle: f.handle, Task: tk, Grants: f.grants, Home: f.home, Git: gitBin(f.t), Gates: f.gates, Clear: f.trust(), Now: func() time.Time { return f.now }}
+	return Options{Root: f.root, Handle: f.handle, Task: tk, Grants: f.grants, Home: f.home, Git: gitBin(f.t), Gates: f.gates, Clear: f.trust(), Now: func() time.Time { return f.now },
+		Env: append(os.Environ(), "HOME="+f.home)}
+}
+
+// testGitEnv is the environment of a git a row runs itself: the harness's
+// (no global or system config, GIT_CONFIG_GLOBAL=/dev/null and
+// GIT_CONFIG_NOSYSTEM=1) with the fixture's temp HOME, never the real one.
+func (f *fixture) testGitEnv() []string { return append(harnessEnv(os.Environ()), "HOME="+f.home) }
+
+// ghGit is the git command line a fake gh script runs, with the same
+// environment: the fixture's temp HOME and no global or system config.
+func (f *fixture) ghGit() string {
+	return "env HOME=" + f.home + " GIT_CONFIG_GLOBAL=" + os.DevNull + " GIT_CONFIG_NOSYSTEM=1 " + gitBin(f.t)
 }
 
 func (f *fixture) run(tk task.Task) Result {
@@ -199,7 +211,7 @@ func (f *fixture) run(tk task.Task) Result {
 // line, "" when none: a row that wants nothing pushed sees any push.
 func (f *fixture) originBranch() string {
 	cmd := exec.Command(gitBin(f.t), "for-each-ref", "--format=%(objectname)", "refs/heads/seat/")
-	cmd.Dir = f.origin
+	cmd.Dir, cmd.Env = f.origin, f.testGitEnv()
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))
 }
@@ -207,7 +219,7 @@ func (f *fixture) originBranch() string {
 // originRef is one branch's tip on the origin, "" when absent.
 func (f *fixture) originRef(branch string) string {
 	cmd := exec.Command(gitBin(f.t), "rev-parse", "--verify", "-q", "refs/heads/"+branch)
-	cmd.Dir = f.origin
+	cmd.Dir, cmd.Env = f.origin, f.testGitEnv()
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))
 }

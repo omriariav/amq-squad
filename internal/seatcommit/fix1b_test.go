@@ -39,7 +39,7 @@ func TestPushGoesToTheGrantsURLNeverTheSeatsConfig(t *testing.T) {
 
 func runGit(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
-	g := git{bin: gitBin(t), dir: dir, env: harnessEnv(os.Environ())}
+	g := git{bin: gitBin(t), dir: dir, env: append(harnessEnv(os.Environ()), "HOME="+t.TempDir())}
 	out, err := g.run(nil, nil, args...)
 	return string(out), err
 }

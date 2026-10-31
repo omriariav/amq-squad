@@ -541,7 +541,7 @@ func fakeGh(t *testing.T, f *fixture) (gh, state, calls string) {
 	gh, state, calls = filepath.Join(f.dir, "gh"), filepath.Join(f.dir, "gh-state.json"), filepath.Join(f.dir, "gh-calls")
 	script := "#!/bin/sh\necho \"$*\" >> " + calls + "\ncase \"$2\" in\n" +
 		"list) if [ -f " + state + " ]; then cat " + state + "; else echo '[]'; fi ;;\n" +
-		"create) head=$(" + gitBin(t) + " --git-dir=" + f.origin + " rev-parse refs/heads/$5)\n" +
+		"create) head=$(" + f.ghGit() + " --git-dir=" + f.origin + " rev-parse refs/heads/$5)\n" +
 		"  printf '[{\"number\":42,\"state\":\"OPEN\",\"headRefOid\":\"%s\",\"baseRefName\":\"main\",\"isCrossRepository\":false}]' \"$head\" > " + state + "\n" +
 		"  echo https://github.com/o/r/pull/42 ;;\nesac\n"
 	write(t, gh, script)
