@@ -94,7 +94,6 @@ func TestSeatBaseRelaunchAtTheTip(t *testing.T) {
 	if p := gitRun(t, wt, "rev-parse", "HEAD^"); p != tip {
 		t.Fatalf("the next commit's parent is %s, not the tip %s", p, tip)
 	}
-	got.ClaudePins = map[string]registry.Pin{"c1": {Path: "/opt/pins/claude", SHA256: strings.Repeat("a", 64)}}
 	c, err := seatlaunch.Compile(got, "", func(n string) (string, error) { return "/usr/bin/" + n, nil }, time.Unix(1, 0))
 	if err != nil {
 		t.Fatal(err)

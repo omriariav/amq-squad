@@ -11,11 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -85,10 +82,11 @@ func TestSquadYAMLCannotSetThePushURL(t *testing.T) {
 	}
 }
 
-// D2, the launch: a local push target without the owner's ack is refused
-// (push_target_unacknowledged), and so is an https target without the
-// pinned gh; with the ack the launch records it.
-func TestLaunchRefusesAnUnacknowledgedPushTarget(t *testing.T) {
+// D2, after brief 31-1 (row 10): the launch records whatever target the
+// grant gives (RecordWorktreeBase refuses none), and the commit step, where
+// the push happens, refuses an unacknowledged local target and an https
+// push without the pinned gh (CheckTarget, as before).
+func TestTheCommitStepRefusesAnUnacknowledgedPushTarget(t *testing.T) {
 	f := newFixture(t)
 	for _, tc := range []struct {
 		t    Target
@@ -99,10 +97,25 @@ func TestLaunchRefusesAnUnacknowledgedPushTarget(t *testing.T) {
 		{Target{Repository: fixtureRepo, BaseBranch: "main", PushURL: "https://github.com/o/r.git"}, registry.PinMissing},
 		{Target{Repository: fixtureRepo, BaseBranch: "main", PushURL: f.origin, LocalPushAck: true}, ""},
 	} {
-		_, err := RecordWorktreeBase(gitBin(t), f.root, f.handle, f.wt, f.branch, tc.t, f.now)
+		if _, err := RecordWorktreeBase(gitBin(t), f.root, f.handle, f.wt, f.branch, tc.t, f.now); err != nil {
+			t.Errorf("the launch refused target %+v: %v", tc.t, err)
+		}
+		err := CheckTarget(tc.t)
 		if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
 			t.Errorf("target %+v: %v (want %q)", tc.t, err, tc.want)
 		}
+	}
+	// Through the step: the grant's https push target recorded with no gh
+	// pin refuses the push, nothing pushed.
+	g := newFixture(t)
+	g.grants.Merge = []grants.Merge{{Repository: fixtureRepo, BaseBranch: "main", PushURL: "https://github.com/o/r.git"}}
+	if _, err := RecordWorktreeBase(gitBin(t), g.root, g.handle, g.wt, g.branch, TargetFor(g.grants), g.now); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(g.wt, "cmd", "root.go"), "package cmd\n// pushed over https\n")
+	res := g.run(g.reported("cmd/"))
+	if res.OK || res.ReasonCode != ReasonPushTargetUnacknowledged || !strings.Contains(res.Detail, registry.PinMissing) || res.Pushed {
+		t.Fatalf("an https push with no gh pin: %+v", res)
 	}
 }
 
@@ -225,40 +238,6 @@ func TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper(t *testing.T) {
 	defer mu.Unlock()
 	if authed == 0 {
 		t.Fatal("the push never authenticated with the pinned gh's token")
-	}
-}
-
-// P1-10: the hook reports the digest on every context call, so a removed
-// hook is itself the drift signal: a Claude seat that ran (an accepted
-// proof in the core's launch ledger) with no report since its launch is
-// quarantined at its exit (claude_hooks_silent); one report clears it.
-func TestClaudeSeatWithNoHookReportIsQuarantinedAtExit(t *testing.T) {
-	f := newFixture(t)
-	dir := claudeseat.Dir(f.root, f.handle, "launch-1")
-	w, err := claudeseat.Write(dir, "dontAsk", f.wt, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := launch.Record{Handle: f.handle, Root: f.root, Session: "sess", Runtime: "claude", Worktree: f.wt, Branch: f.branch, LaunchID: "launch-1", ClaudeConfig: w.Digest}
-	if err := launch.WriteFile(filepath.Join(launch.StagedDir(f.root, f.handle), launch.FileName), rec); err != nil {
-		t.Fatal(err)
-	}
-	if err := launch.WriteProof(f.root, launch.ProofEntry{Handle: f.handle, PID: 4242, Start: "s", At: f.now}); err != nil {
-		t.Fatal(err)
-	}
-	o := f.opts(task.Task{ID: "t1"})
-	if r := ExitCheck(o, "gone"); !r.Quarantine || r.ReasonCode != claudeseat.HooksSilent {
-		t.Fatalf("a silent seat: %+v", r)
-	}
-	g := newFixture(t)
-	dir = claudeseat.Dir(g.root, g.handle, "launch-1")
-	w, _ = claudeseat.Write(dir, "dontAsk", g.wt, g.now)
-	rec.Root, rec.Worktree, rec.ClaudeConfig = g.root, g.wt, w.Digest
-	launch.WriteFile(filepath.Join(launch.StagedDir(g.root, g.handle), launch.FileName), rec)
-	launch.WriteProof(g.root, launch.ProofEntry{Handle: g.handle, PID: 4242, Start: "s", At: g.now})
-	claudeseat.RecordReport(g.root, g.handle, claudeseat.Report{At: g.now.Add(time.Second), Digest: w.Digest, OK: true})
-	if r := ExitCheck(g.opts(task.Task{ID: "t1"}), "gone"); !r.OK {
-		t.Fatalf("a seat whose hook reported: %+v", r)
 	}
 }
 

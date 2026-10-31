@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
@@ -37,20 +38,20 @@ var leadBuiltinRules string
 const leadUsage = `amq-squad lead - start the lead on the built-in pi
 
 Usage:
-  amq-squad lead [--team [--scheduler-seats FILE [--trust] [--lead HANDLE]]] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
+  amq-squad lead [--team] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
 
 Without an AMQ identity (AM_ME, AM_ROOT) the lead runs in solo mode for this
 directory: its state lives under ~/.amq-squad/solo/<dir>-<digest>/ and nothing
 is written inside the repository. --team starts the team-lead role, which
 decomposes and dispatches through the task store and never edits code.
---scheduler-seats FILE (team mode) starts the squad's scheduler process
-(amq-squad scheduler run --seats FILE --lead <this seat>) beside the lead,
-restarts it if it exits (not after a refused roster launch) and stops it
-when the lead ends. --trust passes the owner's standing answer to AMQ's
-trust confirmation through to scheduler run --trust for this session.
-The pi lead uses that seats file's AMQ session root, so its task tools see
-the scheduler's store. --lead names their shared handle (default AM_ME,
-else "lead").
+In a repository with a squad.yaml, --team is the squad's lead: it takes the
+root's lead lock (a second lead on the same root is refused lead_running,
+naming the first's pid and tmux pane), starts the squad's scheduler process
+(amq-squad scheduler run --project <repo>) beside the lead, restarts it if
+it crashes (not after a refusal) and stops it when the lead ends. The
+handle, the session and the seats come from squad.yaml (its lead: key); the
+pi lead uses that session's AMQ root, so its task tools see the scheduler's
+store.
 --model restricts the lead to these models (default ollama/qwen3.6:27b, the
 locally verified entry); pass pi arguments after "--".
 
@@ -71,9 +72,6 @@ func runLead(args []string) error {
 	fs.SetOutput(io.Discard)
 	var f piRunFlags
 	team := fs.Bool("team", false, "team-lead role: decompose and dispatch, never edit")
-	schedSeats := fs.String("scheduler-seats", "", "team mode: start and supervise the squad's scheduler process over this typed seat list")
-	trust := fs.Bool("trust", false, "team mode: pass the owner's standing trust of this squad's launch subjects to scheduler run")
-	leadHandle := fs.String("lead", "", "team mode: lead handle shared by the pi tools and scheduler (default AM_ME, else lead)")
 	fs.Var(&f.models, "model", "PROVIDER/ID the lead may use (repeatable)")
 	fs.StringVar(&f.thinking, "thinking", "", "pi thinking level")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the launch as JSON and do not exec")
@@ -101,27 +99,44 @@ func runLead(args []string) error {
 	piArgs := fs.Args()
 	var teamIdentity piruntime.TeamIdentity
 	var teamProject string
-	if *schedSeats != "" {
-		// Ruling 15: the team mode starts and supervises the scheduler.
-		if !*team {
-			return usageErrorf("lead: --scheduler-seats needs --team")
-		}
-	} else if *trust {
-		return usageErrorf("lead: --trust needs --team --scheduler-seats")
-	}
-	if *schedSeats != "" {
-		var err error
-		teamIdentity, teamProject, err = resolveTeamLeadIdentity(*schedSeats, *leadHandle)
+	if *team {
+		cwd, err := os.Getwd()
 		if err != nil {
+			return err
+		}
+		teamProject = projectTop(cwd)
+	}
+	if *team && squadPresent(teamProject) {
+		// Ruling 15 and brief 31-1: in a repository with a squad.yaml the
+		// team mode takes the root's lead lock, then starts and supervises
+		// the scheduler over that squad.yaml.
+		var err error
+		if teamIdentity, err = resolveTeamLeadIdentity(teamProject); err != nil {
 			return fmt.Errorf("lead: resolve the team identity: %w", err)
 		}
-		sup, err := startLeadScheduler(*schedSeats, teamIdentity.Handle, leadPools(f.models, f.thinking), *trust)
+		lock, err := takeLeadLock(teamIdentity.Root)
+		if err != nil {
+			return fmt.Errorf("lead: %w", err)
+		}
+		defer lock.Release()
+		if os.Getenv(leadStartEnv) == "" {
+			// the start of this launch, for the launch budget (brief 31-1)
+			os.Setenv(leadStartEnv, time.Now().UTC().Format(time.RFC3339Nano))
+		}
+		sup, err := startLeadScheduler(teamProject, teamIdentity.Root, leadPools(f.models, f.thinking))
 		if err != nil {
 			return fmt.Errorf("lead: start the scheduler process: %w", err)
 		}
 		defer sup.stop()
-	} else if *leadHandle != "" {
-		return usageErrorf("lead: --lead needs --team --scheduler-seats FILE")
+		// A lead that exits non-zero ends through piExit (os.Exit), which
+		// skips the deferred stop: the scheduler stops first (brief 31-1).
+		prevExit := piExit
+		piExit = func(code int) {
+			sup.stop()
+			lock.Release()
+			prevExit(code)
+		}
+		defer func() { piExit = prevExit }()
 	}
 	if teamIdentity.Handle != "" {
 		overlay := teamIdentity.Overlay()

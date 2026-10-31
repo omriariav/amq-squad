@@ -13,21 +13,20 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-// Phase 5 re-pass of 4-2, P2-3: guard and evidence ingest run the same
-// config-dir check and digest report as context: every call reports the
-// digest it saw, a changed dir quarantines the seat, and guard denies.
-func TestGuardAndIngestRunTheSharedConfigDirCheck(t *testing.T) {
+// Phase 5 re-pass of 4-2, P2-3, after brief 31-1 (row 1): guard and
+// evidence ingest each record a hook report, as context does; a changed
+// config dir is no quarantine and guard does not deny for it.
+func TestGuardAndIngestRecordAHookReport(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	wt, _ := filepath.EvalSymlinks(t.TempDir())
 	os.MkdirAll(filepath.Join(root, "agents", "s1"), 0o700)
 	dir := claudeseat.Dir(root, "s1", "launch-1")
-	w, err := claudeseat.Write(dir, "dontAsk", wt, time.Now())
-	if err != nil {
+	if _, err := claudeseat.Write(dir, "dontAsk", wt, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	staged := launch.StagedDir(root, "s1")
 	os.MkdirAll(staged, 0o700)
-	rec := launch.Record{Handle: "s1", Root: root, Session: "s", Runtime: "claude", Worktree: wt, Branch: "seat/s1", LaunchID: "launch-1", ClaudeConfig: w.Digest, PermissionMode: "dontAsk"}
+	rec := launch.Record{Handle: "s1", Root: root, Session: "s", Runtime: "claude", Worktree: wt, Branch: "seat/s1", LaunchID: "launch-1", PermissionMode: "dontAsk"}
 	if err := launch.WriteFile(filepath.Join(staged, launch.FileName), rec); err != nil {
 		t.Fatal(err)
 	}
@@ -55,24 +54,23 @@ func TestGuardAndIngestRunTheSharedConfigDirCheck(t *testing.T) {
 			t.Fatalf("ingest: %v", err)
 		}
 	}
-	if v := guard(); v.ReasonCode == claudeseat.ConfigChanged {
+	if v := guard(); v.Verdict == "deny" {
 		t.Fatalf("an unchanged dir denied: %+v", v)
 	}
 	ingest()
 	if n, _ := claudeseat.ReportsSince(root, "s1", since); n != 2 {
-		t.Fatalf("guard and ingest reported %d digests, want 2", n)
+		t.Fatalf("guard and ingest made %d reports, want 2", n)
 	}
 	mustWrite(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":["Bash(*)"]}}`)
-	if v := guard(); v.Verdict != "deny" || v.ReasonCode != claudeseat.ConfigChanged {
-		t.Fatalf("a changed dir: %+v", v)
+	if v := guard(); v.Verdict == "deny" {
+		t.Fatalf("a changed dir denied: %+v", v)
 	}
-	qs, _ := task.Quarantined(task.DirFor(root))
-	if len(qs) != 1 || qs[0].Handle != "s1" || qs[0].Reason != claudeseat.ConfigChanged {
-		t.Fatalf("store quarantine after guard: %+v", qs)
+	if _, err := os.Stat(filepath.Join(task.DirFor(root), "quarantine")); !os.IsNotExist(err) {
+		t.Fatalf("a quarantine was written: %v", err)
 	}
 	ingest()
 	if n, _ := claudeseat.ReportsSince(root, "s1", since); n != 4 {
-		t.Fatalf("%d digest reports, want 4", n)
+		t.Fatalf("%d reports, want 4", n)
 	}
 }
 

@@ -43,15 +43,12 @@ type Record struct {
 	Branch         string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
 	Base           string   `json:"base,omitempty"`   // the base branch's tip the launch put the worktree and branch on (3.0.2)
 	Worktree       string   `json:"worktree,omitempty"`
-	AMQPath        string   `json:"amq_path,omitempty"`             // the real amq (R51)
-	EnvNeeds       []string `json:"env_needs,omitempty"`            // names the runtime declares it needs
-	CredNeeds      []string `json:"credential_needs,omitempty"`     // credential names the registry entry declares
-	Resume         bool     `json:"resume,omitempty"`               // the launch asked AMQ to resume
-	PermissionMode string   `json:"permission_mode,omitempty"`      // Claude's, checked with the hook plugin as one unit (R36)
-	ClaudeConfig   string   `json:"claude_config_sha256,omitempty"` // digest of the seat's CLAUDE_CONFIG_DIR managed files
-	ClaudePin      string   `json:"claude_pin_sha256,omitempty"`    // sha256 of the pinned claude the launch probed; seat-exec refuses pin_changed_since_probe when the registry's pin differs
-	AllowRules     string   `json:"claude_allow_rules,omitempty"`   // "permit": worktree allow rules do not refuse the seat
-	Credential     string   `json:"credential_source,omitempty"`    // where a seat credential comes from, never its value
+	AMQPath        string   `json:"amq_path,omitempty"`          // the real amq (R51)
+	EnvNeeds       []string `json:"env_needs,omitempty"`         // names the runtime declares it needs
+	CredNeeds      []string `json:"credential_needs,omitempty"`  // credential names the registry entry declares
+	Resume         bool     `json:"resume,omitempty"`            // the launch asked AMQ to resume
+	PermissionMode string   `json:"permission_mode,omitempty"`   // Claude's, checked with the hook plugin as one unit (R36)
+	Credential     string   `json:"credential_source,omitempty"` // where a seat credential comes from, never its value
 	PiAgentDir     string   `json:"pi_agent_dir,omitempty"`
 	// PiShim is the pi shim the launch wrote and AMQ planned; seat-exec
 	// compares argv[0] with it, never with a path from its environment.
@@ -67,7 +64,7 @@ type Record struct {
 	Binary           string     `json:"binary"`
 	Argv             []string   `json:"argv,omitempty"`
 	SharedWorkstream bool       `json:"shared_workstream,omitempty"`
-	WakeRequired     bool       `json:"wake_required,omitempty"` // the launch compiled a required AMQ wake; seat-exec re-checks it (3.0.1)
+	WakeRequired     bool       `json:"wake_required,omitempty"` // the launch compiled a required AMQ wake (3.0.1); a fact, never re-checked
 	Conversation     string     `json:"conversation,omitempty"`
 	Role             string     `json:"role,omitempty"`
 	Launcher         string     `json:"launcher,omitempty"`

@@ -641,26 +641,11 @@ func (s *Scheduler) applyCommit(holder string, t task.Task, res CommitResult, no
 			return nil
 		}
 	}
-	if res.Quarantine {
-		// No new lease for the seat until the owner clears it, and the seat
-		// closes (retried each tick while the close fails). Written before the
-		// refusal: the store keeps the first quarantine, so a retried
-		// application records it once.
-		if err := s.Store.Quarantine(task.Quarantine{Handle: holder, Reason: res.ReasonCode, Detail: res.Detail, TaskID: t.ID, At: now}); err != nil {
-			return err
-		}
-	}
 	refused, err := s.Store.RefuseCommitPaths(t.ID, res.ReasonCode, res.Detail, res.Route, res.RefusedPaths, now)
 	if err != nil {
 		return err
 	}
 	log(Decision{Kind: "commit_refused", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
-	if res.Quarantine {
-		log(Decision{Kind: "seat_quarantined", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
-		if st := s.seats[holder]; st != nil && st.closing == "" {
-			st.closing = "quarantined"
-		}
-	}
 	// The store record first, then the lead's message (a hint).
 	if s.Lead != nil {
 		if err := s.Lead.CommitRefused(refused); err != nil {
@@ -688,18 +673,6 @@ func (s *Scheduler) router() Router {
 }
 
 func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log func(Decision)) error {
-	// A quarantined seat is never dispatched to and is closed (2b-2: the
-	// store refuses it any lease until the owner clears it).
-	qs, err := task.Quarantined(s.Store.Dir)
-	if err != nil {
-		return err
-	}
-	for _, q := range qs {
-		if st := s.seats[q.Handle]; st != nil && st.closing == "" {
-			st.closing = "quarantined"
-			log(Decision{Kind: "seat_quarantined", Seat: q.Handle, Reason: q.Reason})
-		}
-	}
 	// A request that never joined is released only after the launcher
 	// confirms it is cancelled or terminated; until then it keeps its place
 	// under the seat cap, so a late join can never exceed the cap.
@@ -915,7 +888,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 		st := s.seats[h]
 		if st.closing != "" {
 			// Retry the close that failed (or the first close of a
-			// quarantined seat); the seat counts until it works.
+			// seat refused at its exit); the seat counts until it works.
 			if st.awaitGone {
 				continue // closed; counted until its SeatGone confirms it
 			}

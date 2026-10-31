@@ -239,7 +239,7 @@ Usage:
 Auto mode (plan 3.5, R40): checks the owner's fleet grant (max_squads,
 cost_per_day_usd, permitted_repositories), then writes squad.yaml through
 the digest flow (team propose and apply), provisions the roster through the
-seat launch (amq-squad launch, the installed amq on PATH) and registers the
+seat launch (the AMQ launch API, the installed amq on PATH) and registers the
 squad in fleet.yaml. A root the launch API cannot provision (no .amqrc,
 upstream ask 2) and manual mode give a proposal for the owner, never a
 launch. Outcomes: started, refused, proposed. This verb is one start, not a

@@ -81,7 +81,7 @@ func TestKeptTreesAreAnchoredUntilTheirRetention(t *testing.T) {
 	}
 	f.store.RefuseCommit(tk.ID, res.ReasonCode, res.Detail, res.Route, f.now)
 	f.store.Reset(tk.ID, nil, f.now)
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil || !d {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || !d {
 		t.Fatalf("clean: %v %v", d, err)
 	}
 	l, err := ReadLedger(f.root, f.handle)

@@ -7,8 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,18 +14,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
-	"github.com/omriariav/amq-squad/v3/internal/flock"
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
-	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // Tests of the 2b-2 milestone B fix commit 1 (the first pass on e2a59176
@@ -185,199 +180,44 @@ func writeOwnerKeys(t *testing.T, home string) {
 	}
 }
 
-// ownerProcess sets the seams of the owner proof: this process is pid 100,
-// its chain 100 -> 90 -> 80 -> 1 (stamps "s<pid>"), and seatPanes the seat
-// panes' shells; chainBroken makes the hop at 90 unreadable.
-func ownerProcess(t *testing.T, seatPanesBy map[int]string, chainBroken bool) {
+// writeSquadProject writes a squad.yaml and its custom roles into proj
+// (brief 31-1: squad.yaml is the one source of scheduler run).
+func writeSquadProject(t *testing.T, proj, squadYAML string, roles ...string) {
 	t.Helper()
-	prevPanes, prevReach, prevSelf, prevStart, prevTTY, prevDev := seatPanes, chainReaches, selfPID, selfStart, openOwnerTTY, ttyDevice
-	t.Cleanup(func() {
-		seatPanes, chainReaches, selfPID, selfStart, openOwnerTTY, ttyDevice = prevPanes, prevReach, prevSelf, prevStart, prevTTY, prevDev
-	})
-	seatPanes = func() ([]panechain.Pane, error) {
-		var out []panechain.Pane
-		for pid, agent := range seatPanesBy {
-			out = append(out, panechain.Pane{Shell: pid, Start: fmt.Sprintf("s%d", pid), Agent: agent, TTY: fmt.Sprintf("/dev/pane%d", pid)})
-		}
-		return out, nil
-	}
-	// The owner's terminal: device 7, the confirmation "s1"; a pane's tty is
-	// device 1000+pid.
-	openOwnerTTY = func() (ownerTTY, error) { return &fakeTTY{dev: 7, in: strings.NewReader("s1\n")}, nil }
-	ttyDevice = func(path string) (uint64, error) {
-		var pid int
-		fmt.Sscanf(path, "/dev/pane%d", &pid)
-		return uint64(1000 + pid), nil
-	}
-	selfPID = func() int { return 100 }
-	selfStart = func(pid int) (string, bool) { return fmt.Sprintf("s%d", pid), true }
-	chainReaches = func(pid int, _ string, panes []panechain.Pane) (*panechain.Pane, bool) {
-		for p := pid; p > 1; p = map[int]int{100: 90, 90: 80, 80: 1}[p] {
-			for i := range panes {
-				if panes[i].Shell == p {
-					return &panes[i], true
-				}
-			}
-			if chainBroken && p == 90 {
-				return nil, false
-			}
-		}
-		return nil, true
-	}
-	for _, name := range seatMarkers {
-		t.Setenv(name, "")
+	mustWrite(t, team.SquadPath(proj), squadYAML)
+	for _, r := range roles {
+		mustWrite(t, team.CustomRolePath(proj, r), "# Role: "+r+"\n\nYou are the "+r+" of this squad.\n")
 	}
 }
 
-// quarantinedSeat sets up a seat whose global config change quarantined it
-// at its done report (the tree kept on the ledger), and returns the store.
-func quarantinedSeat(t *testing.T) (string, task.Store, task.Task) {
-	t.Helper()
-	home, _ := filepath.EvalSymlinks(t.TempDir())
-	t.Setenv("HOME", home)
-	writeOwnerKeys(t, home)
-	mustWrite(t, filepath.Join(home, ".claude", "settings.json"), `{"a":1}`)
-	mustWrite(t, filepath.Join(home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
-	root, _ := filepath.EvalSymlinks(t.TempDir())
-	repo, wt := seatRepo(t, root)
-	s, _ := task.Open(root)
-	tk, _ := s.Add(task.AddInput{Title: "x", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
-	s.Claim(tk.ID, "s1", nil, time.Hour, time.Now())
-	mustWrite(t, filepath.Join(wt, "cmd", "root.go"), "package cmd\n// w\n")
-	s.Done(tk.ID, "s1", "ok", "", time.Now())
-	mustWrite(t, filepath.Join(home, ".claude", "settings.json"), `{"a":1,"hooks":{"PreToolUse":[]}}`)
-	if _, _, err := captureOutput(t, func() error { return runSeatCommit([]string{"--seat", "s1", "--root", root}, os.Stdout) }); ExitCode(err) != ExitCommitRefused {
-		t.Fatalf("seat commit: %v", err)
-	}
-	return root, s, tk
-}
+// fixtureSquadYAML is the scheduler fixtures' squad.yaml: the lead "lead"
+// (a pi seat, outside the roster) and one Claude seat in wt-impl-1.
+const fixtureSquadYAML = `schema: 1
+session: s1
+lead: lead
+seats:
+  - handle: lead
+    role: lead
+    runtime: pi
+  - handle: impl-1
+    role: implementer
+    runtime: claude
+    model: sonnet
+    effort: medium
+    worktree: wt-impl-1
+`
 
-// R1 (seat_commit.go:100) and the reviewer's pre-clearance: seat clear let
-// seat B clear seat A's quarantine. It runs only from the owner's terminal:
-// it takes no --me, refuses when AM_ME or a seat or lead marker is set or
-// when the process descends from a seat pane, and writes a clear record
-// signed with the core's issuer key, the only clear the commit step accepts.
-func TestSeatClearRunsOnlyFromTheOwnersTerminal(t *testing.T) {
-	root, s, tk := quarantinedSeat(t)
-	clear := func(args ...string) error {
-		_, _, err := captureOutput(t, func() error {
-			return runSeatClear(append([]string{"--seat", "s1", "--root", root}, args...), os.Stdout)
-		})
-		return err
-	}
-	ownerProcess(t, map[int]string{80: "lead"}, false)
-	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "seat lead's pane") {
-		t.Fatalf("a process under the lead's pane cleared: %v", err)
-	}
-	ownerProcess(t, nil, false)
-	for _, marker := range []string{"AM_ME", "AMQ_SQUAD_SEAT", "AMQ_SQUAD_LEAD"} {
-		t.Setenv(marker, "s2")
-		if err := clear(); !errors.Is(err, errNotOwner) {
-			t.Fatalf("seat clear ran with %s set: %v", marker, err)
-		}
-		t.Setenv(marker, "")
-	}
-	if err := clear("--me", "user"); err == nil || !strings.Contains(err.Error(), "takes no --me") {
-		t.Fatalf("seat clear took --me: %v", err)
-	}
-	ownerProcess(t, map[int]string{70: "lead"}, true)
-	if err := clear(); !errors.Is(err, errOwnerUnknown) {
-		t.Fatalf("an unreadable process chain passed: %v", err)
-	}
-	if got, _ := s.Get(tk.ID); got.State != task.StateBlocked {
-		t.Fatalf("a refused clear changed the task: %+v", got)
-	}
-	// The owner's terminal: not under any seat pane.
-	ownerProcess(t, map[int]string{70: "lead"}, false)
-	if err := clear(); err != nil {
-		t.Fatalf("the owner's clear: %v", err)
-	}
-	l, _ := seatcommit.ReadLedger(root, "s1")
-	if l.Quarantine == nil || l.Quarantine.Clear == nil || !l.Quarantine.Clear.Verified("s1", l.Quarantine, ownerTrust{}) {
-		t.Fatalf("no signed clear record: %+v", l.Quarantine)
-	}
-	if out, _, err := captureOutput(t, func() error { return runSeatCommit([]string{"--seat", "s1", "--root", root}, os.Stdout) }); err != nil {
-		t.Fatalf("seat commit after the owner's clear: %v\n%s", err, out)
-	}
-}
-
-// A clear written into the ledger without the owner's signature (a seat
-// editing the core's file) never lifts the quarantine.
-func TestUnsignedClearKeepsTheSeatQuarantined(t *testing.T) {
-	root, s, tk := quarantinedSeat(t)
-	// The config change is undone, so only the forged clear stands between
-	// the kept tree and the push.
-	home, _ := os.UserHomeDir()
-	mustWrite(t, filepath.Join(home, ".claude", "settings.json"), `{"a":1}`)
-	p := filepath.Join(seatcommit.LedgerDir(root), "s1.json")
-	raw, _ := os.ReadFile(p)
-	var l map[string]any
-	json.Unmarshal(raw, &l)
-	q := l["quarantine"].(map[string]any)
-	q["cleared_at"], q["cleared_by"] = time.Now().UTC().Format(time.RFC3339Nano), "owner"
-	raw, _ = json.Marshal(l)
-	os.WriteFile(p, raw, 0o600)
-	s.ClearQuarantine("s1")
-	s.Rearm(tk.ID, time.Hour, time.Now())
-	_, _, err := captureOutput(t, func() error { return runSeatCommit([]string{"--seat", "s1", "--root", root}, os.Stdout) })
-	// The hand edit no longer reaches the clear's signature check: the sealed
-	// ledger's tag fails first (phase 5 re-pass ruling), a block for the owner.
-	if got, _ := s.Get(tk.ID); ExitCode(err) != ExitCommitRefused || got.BlockReason != seatcommit.ReasonLedgerTampered || got.BlockRoute != "owner" {
-		t.Fatalf("an unsigned clear was accepted: %v %+v", err, got)
-	}
-}
-
-// P1 (seatexec_unix.go:209): the hook's context call during the run checks
-// the seat's Claude config dir against the launch digest in the core's
-// staged record; a change is claude_config_changed and quarantines the seat.
-func TestContextCallQuarantinesAChangedClaudeConfigDir(t *testing.T) {
-	root, _ := filepath.EvalSymlinks(t.TempDir())
-	wt, _ := filepath.EvalSymlinks(t.TempDir())
-	dir := claudeseat.Dir(root, "s1", "launch-1")
-	w, err := claudeseat.Write(dir, "dontAsk", wt, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	staged := launch.StagedDir(root, "s1")
-	os.MkdirAll(staged, 0o700)
-	rec := launch.Record{Handle: "s1", Root: root, Session: "s", Runtime: "claude", Worktree: wt, Branch: "seat/s1", LaunchID: "launch-1", ClaudeConfig: w.Digest, PermissionMode: "dontAsk"}
-	if err := launch.WriteFile(filepath.Join(staged, launch.FileName), rec); err != nil {
-		t.Fatal(err)
-	}
-	id := hookIdentity{Handle: "s1", Root: root, AgentDir: filepath.Join(root, "agents", "s1")}
-	if d := buildHookContext(id, "", time.Now()); d.ConfigChanged != nil {
-		t.Fatalf("an unchanged dir reported: %+v", d.ConfigChanged)
-	}
-	mustWrite(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":["Bash(*)"]}}`)
-	d := buildHookContext(id, "", time.Now())
-	if d.ConfigChanged == nil || d.ConfigChanged.Code != claudeseat.ConfigChanged || !d.ConfigChanged.Quarantined {
-		t.Fatalf("the change was not reported and quarantined: %+v", d.ConfigChanged)
-	}
-	qs, _ := task.Quarantined(task.DirFor(root))
-	if len(qs) != 1 || qs[0].Handle != "s1" || qs[0].Reason != claudeseat.ConfigChanged {
-		t.Fatalf("store quarantine: %+v", qs)
-	}
-	s, _ := task.Open(root)
-	tk, _ := s.Add(task.AddInput{Title: "y", Class: "implement"}, time.Now())
-	if _, err := s.Grant(tk.ID, "s1", nil, time.Minute, time.Now()); !errors.Is(err, task.ErrQuarantined) {
-		t.Fatalf("the seat got a lease: %v", err)
-	}
-}
-
-// schedulerFixture is a squad for runSchedulerRun with a fake launcher.
-func schedulerFixture(t *testing.T) (home, root, seatsFile string) {
+// schedulerFixture is a squad for runSchedulerRun with a fake launcher; it
+// returns the repository whose squad.yaml is the squad.
+func schedulerFixture(t *testing.T) (home, root, proj string) {
 	t.Helper()
 	home, _ = filepath.EvalSymlinks(t.TempDir())
 	t.Setenv("HOME", home)
 	writeTestRegistry(t, home)
-	proj, _ := filepath.EvalSymlinks(t.TempDir())
+	proj, _ = filepath.EvalSymlinks(t.TempDir())
 	root = filepath.Join(proj, ".agent-mail", "s1")
 	os.MkdirAll(filepath.Join(root, "agents"), 0o700)
-	mustWrite(t, filepath.Join(proj, "roles", "impl.md"), "# Role: implementer\n")
-	raw, _ := json.Marshal(map[string]any{"project_root": proj, "session": "s1", "seats": []map[string]any{
-		{"handle": "impl-1", "runtime": "claude", "model": "sonnet", "effort": "medium", "role": "implementer", "role_file": filepath.Join(proj, "roles", "impl.md"), "worktree": filepath.Join(proj, "wt-impl-1")}}})
-	seatsFile = filepath.Join(proj, "seats.json")
-	mustWrite(t, seatsFile, string(raw))
+	writeSquadProject(t, proj, fixtureSquadYAML, "implementer")
 	// The roster launches at start (3.0.1 t16), so the seat's worktree must
 	// exist as the slots expect it.
 	os.MkdirAll(filepath.Join(proj, "wt-impl-1"), 0o755)
@@ -387,58 +227,7 @@ func schedulerFixture(t *testing.T) (home, root, seatsFile string) {
 		return &cliFakeLauncher{sl: sl}
 	}
 	schedulerSendRun = func(context.Context, string, []string, []string) ([]byte, error) { return nil, nil }
-	return home, root, seatsFile
-}
-
-// P1 (scheduler_run.go:139 before process.go:81): the preflight baseline
-// was refreshed before the duplicate-process check, so a rejected second
-// scheduler erased the evidence of a config change. Admission comes first,
-// and an admitted process fills a missing copy but never refreshes one: the
-// baseline persists across restarts.
-func TestRejectedSchedulerNeverTouchesThePreflightBaseline(t *testing.T) {
-	home, root, seatsFile := schedulerFixture(t)
-	copyPath := filepath.Join(seatexec.PreflightDir(home), "claude-settings.json")
-	mustWrite(t, copyPath, `{"baseline":true}`)
-	mustWrite(t, filepath.Join(home, ".claude", "settings.json"), `{"changed":true}`)
-	os.MkdirAll(schedproc.Dir(root), 0o700)
-	lock, ok, err := flock.TryExclusive(filepath.Join(schedproc.Dir(root), "run.lock"), true)
-	if err != nil || !ok {
-		t.Fatalf("hold the lock: %v %v", ok, err)
-	}
-	_, _, err = captureOutput(t, func() error {
-		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead"}, os.Stdout)
-	})
-	lock.Close()
-	if !errors.Is(err, schedproc.ErrRunning) {
-		t.Fatalf("the duplicate ran: %v", err)
-	}
-	if raw, _ := os.ReadFile(copyPath); string(raw) != `{"baseline":true}` {
-		t.Fatalf("a rejected scheduler refreshed the baseline to %s", raw)
-	}
-	// An admitted restart keeps it too.
-	ctx, cancel := context.WithCancel(context.Background())
-	started := make(chan struct{})
-	prev := schedulerStarted
-	schedulerStarted = func(*scheduler.Scheduler) { close(started) }
-	t.Cleanup(func() { schedulerStarted = prev })
-	done := make(chan error, 1)
-	go func() {
-		_, _, err := captureOutput(t, func() error {
-			return runSchedulerRun(ctx, []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
-		})
-		done <- err
-	}()
-	<-started
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if raw, _ := os.ReadFile(copyPath); string(raw) != `{"baseline":true}` {
-		t.Fatalf("a restart refreshed the baseline to %s", raw)
-	}
-	if rec, err := schedproc.ReadLaunchRecord(root); err != nil || rec.Lead != "lead" {
-		t.Fatalf("the admitted process's launch record: %+v %v", rec, err)
-	}
+	return home, root, proj
 }
 
 // The reviewer's pre-clearance through the verb: the PR gh answers for the
@@ -496,57 +285,6 @@ func (f *fakeTTY) Write(b []byte) (int, error) { return f.out.Write(b) }
 func (f *fakeTTY) Close() error                { return nil }
 func (f *fakeTTY) Device() (uint64, error)     { return f.dev, nil }
 
-// R5 (seat_owner.go:43, :82): a double-forked process reparented to PID 1
-// has no pane ancestor, and an inaccessible tmux server read as no panes.
-// seat clear requires a controlling terminal that is not any seat pane's
-// pty and the seat handle typed on it; an unreadable tmux server or tty is
-// owner_proof_unknown.
-func TestSeatClearNeedsTheOwnersOwnTerminal(t *testing.T) {
-	root, s, tk := quarantinedSeat(t)
-	clear := func() error {
-		_, _, err := captureOutput(t, func() error { return runSeatClear([]string{"--seat", "s1", "--root", root}, os.Stdout) })
-		return err
-	}
-	// Reparented to init: no pane ancestor and no real pty on stdin.
-	ownerProcess(t, map[int]string{80: "lead"}, false)
-	chainReaches = func(int, string, []panechain.Pane) (*panechain.Pane, bool) { return nil, true }
-	openOwnerTTY = func() (ownerTTY, error) { return nil, errNoPTY }
-	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "not a real pty") {
-		t.Fatalf("a reparented process cleared: %v", err)
-	}
-	// A terminal that cannot be opened is owner_proof_unknown (R9).
-	openOwnerTTY = func() (ownerTTY, error) { return nil, errors.New("device not configured") }
-	if err := clear(); !errors.Is(err, errOwnerUnknown) {
-		t.Fatalf("an unopenable terminal: %v", err)
-	}
-	// Its terminal is the lead's pane.
-	ownerProcess(t, map[int]string{80: "lead"}, false)
-	chainReaches = func(int, string, []panechain.Pane) (*panechain.Pane, bool) { return nil, true }
-	openOwnerTTY = func() (ownerTTY, error) { return &fakeTTY{dev: 1080, in: strings.NewReader("s1\n")}, nil }
-	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "seat lead's pane") {
-		t.Fatalf("a process on the lead's pty cleared: %v", err)
-	}
-	// An unreadable tmux server.
-	ownerProcess(t, nil, false)
-	seatPanes = func() ([]panechain.Pane, error) { return nil, panechain.ErrUnknown }
-	if err := clear(); !errors.Is(err, errOwnerUnknown) {
-		t.Fatalf("an unreadable tmux server passed: %v", err)
-	}
-	// The wrong confirmation.
-	ownerProcess(t, nil, false)
-	openOwnerTTY = func() (ownerTTY, error) { return &fakeTTY{dev: 7, in: strings.NewReader("yes\n")}, nil }
-	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "confirmation") {
-		t.Fatalf("a wrong confirmation cleared: %v", err)
-	}
-	if got, _ := s.Get(tk.ID); got.State != task.StateBlocked {
-		t.Fatalf("a refused clear changed the task: %+v", got)
-	}
-	ownerProcess(t, map[int]string{70: "lead"}, false)
-	if err := clear(); err != nil {
-		t.Fatalf("the owner's clear: %v", err)
-	}
-}
-
 // D2, the local_push_ack row: a bare-path push target parses only with the
 // owner's ack (the launch refuses it otherwise, seatcommit's rows), and with
 // the ack doctor warns "push target has no server enforcement" (the merge
@@ -572,38 +310,6 @@ func TestDoctorWarnsOfALocalPushTargetAndTheGhPin(t *testing.T) {
 		if c.Name == "gh pin" && c.Status != doctorFail {
 			t.Fatalf("an https push without a pinned gh: %+v", c)
 		}
-	}
-}
-
-// R9 (seat_owner_unix.go:25, :85, :100): /dev/tty's device is, on Linux,
-// the alias every controlling terminal shares, and a reparented child keeps
-// the seat's terminal. The owner's terminal is stdin's real pty, compared by
-// device with every pane pty; a stdin that is not a pty is refused (as in
-// go test, whose stdin is not a terminal); the confirmation waits at most
-// the timeout.
-func TestOwnerTerminalIsTheRealPtyOfStdin(t *testing.T) {
-	if _, err := openControllingTTY(); !errors.Is(err, errNoPTY) {
-		if err == nil {
-			t.Skip("stdin is a terminal here")
-		}
-		t.Fatalf("a non-pty stdin: %v", err)
-	}
-	root, _, _ := quarantinedSeat(t)
-	ownerProcess(t, nil, false)
-	blocked, _ := io.Pipe()
-	openOwnerTTY = func() (ownerTTY, error) { return &pipeTTY{r: blocked}, nil }
-	prev := confirmTimeout
-	confirmTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { confirmTimeout = prev })
-	done := make(chan error, 1)
-	go func() { done <- runSeatClear([]string{"--seat", "s1", "--root", root}, io.Discard) }()
-	select {
-	case err := <-done:
-		if !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "no confirmation within") {
-			t.Fatalf("an unanswered confirmation: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the confirmation waited past its timeout")
 	}
 }
 

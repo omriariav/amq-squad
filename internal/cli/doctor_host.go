@@ -118,9 +118,6 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	out = append(out, h.serviceChecks(ctx, det)...)
 	out = append(out, h.codexChecks(det, projectDir)...)
 	out = append(out, profileCheck(h.Home))
-	for _, c := range hostcheck.OwnerConfigs(h.Home) {
-		out = append(out, ownerConfigCheck(hostcheck.DiffOwnerConfig(c)))
-	}
 	out = append(out, grantsCheck(h.Home, projectDir))
 	out = append(out, routingCheck(h.Home, projectDir))
 	out = append(out, claudeAllowRulesCheck(projectDir))
@@ -445,21 +442,6 @@ func profileCheck(home string) doctorCheck {
 		parts = append(parts, fmt.Sprintf("%s (%s:%d)", e.Name, e.File, e.Line))
 	}
 	return hostCheck("shell profile", doctorWarn, "exported key names reach provider tool shells, past the seat-exec scrub: %s", strings.Join(parts, ", "))
-}
-
-func ownerConfigCheck(d hostcheck.ConfigDiff) doctorCheck {
-	name := "owner config/" + d.Config.Name
-	switch d.State {
-	case "same":
-		return hostCheck(name, doctorOK, "%s matches the preflight copy", d.Config.Live)
-	case "no_preflight":
-		return hostCheck(name, doctorOK, "no preflight copy yet (seat-exec writes %s at launch)", d.Config.Preflight)
-	case "no_live":
-		return hostCheck(name, doctorWarn, "%s is gone since the preflight copy", d.Config.Live)
-	case "changed":
-		return hostCheck(name, doctorWarn, "%s changed since the preflight copy: %s", d.Config.Live, strings.Join(d.Lines, " | "))
-	}
-	return hostCheck(name, doctorWarn, "%s or its preflight copy is unreadable", d.Config.Live)
 }
 
 // grantsCheck reports the resolved standing grant through 3-1's loader: the

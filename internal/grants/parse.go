@@ -119,7 +119,9 @@ func ParseOwner(text, source string) (Grants, error) {
 		case "fleet":
 			g.Fleet, err = parseFleet(e)
 		case "clear":
-			g.Clear, err = parseClear(e)
+			// clear.signature, the signed seat clear's mode, was deleted
+			// with the quarantine (brief 31-1); an owner file written before
+			// 3.1 that still carries the block loads, and it has no effect.
 		case "verifiers":
 			g.Verifiers, g.VerifierArgv, err = parseVerifiers(e)
 		case "verifier_goproxy":
@@ -318,31 +320,6 @@ func parseFleet(e yamlsub.Entry) (Fleet, error) {
 		}
 	}
 	return f, nil
-}
-
-// parseClear reads `clear:`, whose only key is signature (required |
-// pty_only).
-func parseClear(e yamlsub.Entry) (Clear, error) {
-	var c Clear
-	if e.Value != "" {
-		return c, e.Errf("want a map")
-	}
-	sub, err := yamlsub.Sub(e.Key, e.Block)
-	if err != nil {
-		return c, err
-	}
-	for _, s := range sub {
-		switch s.Key {
-		case "clear.signature":
-			c.Signature, err = s.OneOf(ClearRequired, ClearPtyOnly)
-		default:
-			err = s.Errf("unknown key")
-		}
-		if err != nil {
-			return c, err
-		}
-	}
-	return c, nil
 }
 
 func parseRepositoryPaths(e yamlsub.Entry) ([]RepositoryPath, error) {

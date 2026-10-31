@@ -177,6 +177,12 @@ type Seat struct {
 	PromptState    string     `json:"prompt_state"` // running | idle | unknown
 	TokensIn       *int64     `json:"tokens_in"`
 	TokensOut      *int64     `json:"tokens_out"`
+	// Warnings are the seat's warnings (brief 31-1), absent when none: a
+	// Claude seat that ran with no hook report (claude_hooks_silent), its
+	// worktree's Claude allow rules (claude_allow_rules_present), a
+	// CLAUDE.md that imports a file outside its worktree
+	// (claude_external_includes_pending). Each was a launch refusal before.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Task is one task row, joined to its lease holder.

@@ -4,34 +4,12 @@ package seatexec
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
 )
-
-// Milestone B first pass, P1 (seatexec_unix.go:128 and :209): the Claude
-// config dir was checked before the identity proof and the recheck covered
-// role and rules only, so a change during the proof reached the provider.
-// The recheck immediately before exec now covers the config dir too.
-func TestClaudeConfigDirIsRecheckedImmediatelyBeforeExec(t *testing.T) {
-	f := newFixture(t, "claude")
-	f.stage()
-	dir := claudeseat.Dir(f.root, "cto", "launch-1")
-	err := f.run(Options{BeforeRecheck: func() {
-		// After the first check and the proof: an allow rule lands in the
-		// seat's settings.json.
-		write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":["Bash(*)"]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
-	}})
-	if refusalCode(err) != claudeseat.PermissionMismatch || f.execPath != "" {
-		t.Fatalf("want %s and no exec, got %v (exec %q)", claudeseat.PermissionMismatch, err, f.execPath)
-	}
-	if !strings.Contains(err.Error(), "changed before exec") {
-		t.Fatalf("the refusal does not name the recheck: %v", err)
-	}
-}
 
 // Milestone B first pass, P2 (seatexec_unix.go:184, :341): the provider
 // environment, with the seat token and the provider keys the runtime
@@ -76,20 +54,5 @@ func TestClaudeTokenCanaryNeverReachesTheAMQChild(t *testing.T) {
 	}
 	if _, err := os.Stat(claudeseat.TokenPath(f.home)); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// P1-10 (claudeseat.go:234): the recheck preceded the proof and the record
-// writes, and hashed by path. The config dir is hashed through descriptors
-// once more as the very last step before exec, after the proof.
-func TestClaudeConfigDirIsHashedLastBeforeExec(t *testing.T) {
-	f := newFixture(t, "claude")
-	f.stage()
-	dir := claudeseat.Dir(f.root, "cto", "launch-1")
-	err := f.run(Options{BeforeFinalCheck: func() {
-		write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":["Bash(*)"]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
-	}})
-	if refusalCode(err) != claudeseat.PermissionMismatch || f.execPath != "" {
-		t.Fatalf("a change after the proof reached exec: %v (exec %q)", err, f.execPath)
 	}
 }

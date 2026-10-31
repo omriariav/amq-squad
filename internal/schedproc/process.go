@@ -49,10 +49,9 @@ type Options struct {
 	// Liveness checks each live roster seat's process every tick (3.0.1
 	// t17; the verb passes the launch ledger's, Liveness); nil: none.
 	Liveness scheduler.SeatLiveness
-	// Admitted runs once the process holds the squad's lock, before anything
-	// else (the preflight baseline: a rejected duplicate process never
-	// touches it, P1 of the milestone B first pass). An error stops the run.
-	Admitted func() error
+	// Start is the start of the squad's launch, recorded in the launch
+	// record (brief 31-1); zero records none.
+	Start time.Time
 	// Decisions, when set, serves the lead's decisions over the scheduler's
 	// own socket (R4); Root and Lead are filled in by Run.
 	Decisions *DecideOptions
@@ -109,6 +108,10 @@ func Run(ctx context.Context, o Options) error {
 	// (the fourth pass): until then the record names none, and a decision
 	// is refused scheduler_starting.
 	rec := LaunchRecord{Lead: o.Config.Lead, Root: o.Root, Session: o.Session, ProjectRoot: o.ProjectRoot, PID: os.Getpid(), StartedAt: time.Now().UTC()}
+	if !o.Start.IsZero() {
+		start := o.Start.UTC()
+		rec.Start = &start
+	}
 	var srv *DecisionServer
 	defer func() {
 		if srv != nil {
@@ -117,11 +120,6 @@ func Run(ctx context.Context, o Options) error {
 	}()
 	if err := WriteLaunchRecord(o.Root, rec); err != nil {
 		return err
-	}
-	if o.Admitted != nil {
-		if err := o.Admitted(); err != nil {
-			return err
-		}
 	}
 	store, err := task.Open(o.Root)
 	if err != nil {

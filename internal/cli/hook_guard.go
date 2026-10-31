@@ -109,15 +109,8 @@ func runGuardVerdict(args []string) error {
 	if *decision != "" {
 		return runGuardDecision(*decision, strings.TrimSpace(*h.me))
 	}
-	id, change, err := h.seatIdentity(hookNow())
+	id, err := h.seatIdentity(hookNow())
 	if err != nil {
-		return err
-	}
-	if change != nil {
-		// The seat's Claude config dir is not what its launch wrote: the seat
-		// is quarantined and no call of it is allowed (P2-3).
-		b, _ := json.Marshal(guardVerdict{Verdict: "deny", ReasonCode: change.Code, Reason: change.Detail + "; the seat is quarantined until the owner clears it (amq-squad seat clear)"})
-		_, err = os.Stdout.Write(append(b, '\n'))
 		return err
 	}
 	call := guardCall{Tool: *tool, Args: map[string]string{}, CWD: *cwd}
@@ -208,8 +201,7 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	// A seat never answers a dialog, and a seat's question to anyone is AMQ
 	// mail to the lead (3.0.1). AskUserQuestion and ExitPlanMode open a
 	// dialog in the seat's pane that an AMQ wake doorbell's Enter could
-	// answer unattended, so both are denied in a seat; the deny is one of the
-	// conditions of a Claude seat's wake (seatexec.ClaudeDialogGuardWired).
+	// answer unattended, so both are denied in a seat.
 	if slices.Contains(seatexec.SeatDeniedDialogTools, call.Tool) {
 		return out("deny", "seat_dialog", call.Tool+" opens a dialog, and a seat never answers one: send the question to the lead as AMQ mail")
 	}

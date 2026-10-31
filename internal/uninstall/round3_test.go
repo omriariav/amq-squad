@@ -33,7 +33,7 @@ func TestAnEditedLedgerNamingAnotherSquadsSeatDeletesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(stranger, "work.txt"), "w\n", 0o644)
-	if ok, err := seatcommit.CleanSeat(f.root, "stranger", "git", nil, nil, time.Now()); err != nil || !ok {
+	if ok, err := seatcommit.CleanSeat(f.root, "stranger", "git", nil, time.Now()); err != nil || !ok {
 		t.Fatalf("clean seat: %v %v", ok, err)
 	}
 	sl, err := seatcommit.ReadLedger(f.root, "stranger")

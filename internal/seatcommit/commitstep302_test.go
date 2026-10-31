@@ -47,7 +47,7 @@ func branchGh(t *testing.T, f *fixture) (gh, dir, calls string) {
 // doorbell, before the seat works.
 func (f *fixture) leased(files ...string) task.Task {
 	f.t.Helper()
-	if _, err := CleanSeat(f.root, f.handle, gitBin(f.t), nil, f.trust(), f.now); err != nil {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(f.t), nil, f.now); err != nil {
 		f.t.Fatal(err)
 	}
 	tk, err := f.store.Add(task.AddInput{Title: "the task", Class: "implement", DeclaredFiles: files, ProjectPath: f.main}, f.now)
@@ -215,7 +215,7 @@ func TestLaterAttemptAppendsToItsOwnBranchAndPR(t *testing.T) {
 	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil {
 		t.Fatal(err)
 	}
 	again, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now)
@@ -252,7 +252,7 @@ func TestTaskBranchIsALabelTheRecordDecides(t *testing.T) {
 	gh, _, _ := branchGh(t, f)
 	sh(t, f.wt, "checkout", "-q", "-b", "seat/qa-2-t9")
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// the seat's own\n")
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease its commit ledger records") {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease its commit ledger records") {
 		t.Fatalf("a branch the ledger does not record was taken for a task branch: %v", err)
 	}
 	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); !strings.Contains(string(raw), "the seat's own") || sh(t, f.wt, "symbolic-ref", "HEAD") != "refs/heads/seat/qa-2-t9" {
@@ -279,7 +279,7 @@ func TestTaskBranchIsALabelTheRecordDecides(t *testing.T) {
 	}
 	sh(t, f.wt, "checkout", "-q", res.Branch)
 	f.now = f.now.Add(task.SeatReservationTTL + time.Minute)
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease") {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease") {
 		t.Fatalf("a branch with no lease behind it was taken for the lease's: %v", err)
 	}
 }
@@ -323,7 +323,7 @@ func TestLeaseBoundaryResetsToTheLaunchRecordsBase(t *testing.T) {
 		}
 	}
 	launched := sh(t, f.main, "rev-parse", "main~1")
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil {
 		t.Fatal(err)
 	}
 	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != launched {
@@ -442,7 +442,7 @@ func TestRecordedCommitWithNoNewEditsIsPushedAndBound(t *testing.T) {
 	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil {
 		t.Fatal(err)
 	}
 	again, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now)
@@ -456,50 +456,6 @@ func TestRecordedCommitWithNoNewEditsIsPushedAndBound(t *testing.T) {
 	got, _ := f.store.Get(tk.ID)
 	if !res.OK || !res.Pushed || res.Commit != recorded || res.PRNumber != 1 || f.originRef(res.Branch) != recorded || got.PRNumber != 1 || got.PRHead != recorded {
 		t.Fatalf("the recorded commit with no new edits: %+v (origin %q, binding #%d at %s)", res, f.originRef(res.Branch), got.PRNumber, got.PRHead)
-	}
-}
-
-// Codex pass on 2477f10f, finding 3: the owner's verified clear of a
-// quarantine is lifted onto the ledger only once the binding check passed.
-// A cleared seat whose task branch carries another task's bound PR is
-// refused with the ledger byte for byte unchanged (the cleared quarantine
-// still pending lift); with the PR gone, the same step lifts the clear and
-// commits. Fails when the clear is written before the binding check.
-func TestQuarantineClearIsLiftedOnlyAfterTheBindingCheck(t *testing.T) {
-	f := newFixture(t)
-	gh, prs, _ := branchGh(t, f)
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
-	tk := f.reported("cmd/")
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
-	if res := f.run(tk); res.ReasonCode != ReasonGlobalConfig {
-		t.Fatalf("quarantine: %+v", res)
-	}
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
-	if _, err := ClearQuarantine(f.root, f.handle, f.signer, f.now); err != nil {
-		t.Fatal(err)
-	}
-	other, _ := f.store.Add(task.AddInput{Title: "t12", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
-	f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
-	harnessPass(t, f.store, other.ID, f.now)
-	f.store.Done(other.ID, "s9", "ok", "", f.now)
-	if _, err := f.store.CompleteBound(other.ID, fixtureRepo, 815, strings.Repeat("c", 40), f.now); err != nil {
-		t.Fatal(err)
-	}
-	stale := filepath.Join(prs, strings.ReplaceAll(TaskBranch(f.handle, tk.ID), "/", "_"))
-	write(t, stale, `[{"number":815,"state":"OPEN","headRefOid":"`+strings.Repeat("c", 40)+`","baseRefName":"main","isCrossRepository":false}]`)
-	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
-	res := Run(f.prOpts(tk, gh))
-	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
-	if res.ReasonCode != ReasonPRBoundElsewhere || string(before) != string(after) || f.originBranch() != "" {
-		t.Fatalf("a refused step changed the ledger or pushed: %+v (ledger changed %v)", res, string(before) != string(after))
-	}
-	os.Remove(stale)
-	res = Run(f.prOpts(tk, gh))
-	l, _ := ReadLedger(f.root, f.handle)
-	if !res.OK || !res.Pushed || l.Quarantine != nil || len(l.Cleared) != 1 {
-		t.Fatalf("after the PR is gone: %+v (quarantine %+v, cleared %d)", res, l.Quarantine, len(l.Cleared))
 	}
 }
 
@@ -525,7 +481,7 @@ func (f *fixture) recordedThenRetried(gh string, body string) (task.Task, string
 	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
 		f.t.Fatal(err)
 	}
-	if _, err := CleanSeat(f.root, f.handle, gitBin(f.t), nil, f.trust(), f.now); err != nil {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(f.t), nil, f.now); err != nil {
 		f.t.Fatal(err)
 	}
 	again, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now)
@@ -597,71 +553,6 @@ func TestAFullPagePRListDefers(t *testing.T) {
 	if !res.Deferred || res.ReasonCode != ReasonPRPending || !strings.Contains(res.Detail, "its limit") || res.Commit != "" || f.originBranch() != "" ||
 		string(before) != string(after) || !strings.Contains(string(raw), "--limit 100") {
 		t.Fatalf("a full page: %+v\n%s", res, raw)
-	}
-}
-
-// Codex pass on c09a8887, finding 3: no ledger write of any kind before the
-// binding check passes, the quarantine's evidence included. The owner's
-// config changed during the run and the task's branch carries another
-// task's bound PR: the step still quarantines the seat (the owner's reason,
-// Quarantine set for the task store) but writes nothing to the ledger and
-// anchors no evidence ref. Fails when the quarantine writes before the
-// binding check.
-func TestQuarantineWritesNothingBeforeTheBindingCheck(t *testing.T) {
-	f := newFixture(t)
-	gh, prs, _ := branchGh(t, f)
-	other, _ := f.store.Add(task.AddInput{Title: "t12", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
-	f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
-	harnessPass(t, f.store, other.ID, f.now)
-	f.store.Done(other.ID, "s9", "ok", "", f.now)
-	if _, err := f.store.CompleteBound(other.ID, fixtureRepo, 815, strings.Repeat("c", 40), f.now); err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
-	tk := f.leased("cmd/")
-	write(t, filepath.Join(prs, strings.ReplaceAll(TaskBranch(f.handle, tk.ID), "/", "_")), `[{"number":815,"state":"OPEN","headRefOid":"`+strings.Repeat("c", 40)+`","baseRefName":"main","isCrossRepository":false}]`)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
-	tk = f.done(tk.ID)
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
-	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
-	res := Run(f.prOpts(tk, gh))
-	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
-	if res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || res.Route != task.RouteOwner || !strings.Contains(res.Detail, ReasonPRBoundElsewhere) ||
-		string(before) != string(after) || f.originBranch() != "" {
-		t.Fatalf("the quarantine path: %+v (ledger changed %v)", res, string(before) != string(after))
-	}
-	if out, _ := runGit(t, f.wt, "for-each-ref", "refs/amq-squad/evidence/"); strings.TrimSpace(out) != "" {
-		t.Fatalf("an evidence ref was anchored: %s", out)
-	}
-}
-
-// Codex re-check on 7c1a8098: a ledger lease held by another task is its
-// own refusal by name (lease_task_mismatch, to the lead), before any
-// quarantine: the owner's config changed during the run, yet nothing is
-// written to the ledger, no evidence ref is anchored and the step does not
-// quarantine. Fails when such a lease lets the quarantine write unchecked.
-func TestAnotherTasksLeaseRefusesBeforeTheQuarantine(t *testing.T) {
-	f := newFixture(t)
-	l, _ := ReadLedger(f.root, f.handle)
-	l.Lease = &LedgerLease{Task: "t99", Branch: TaskBranch(f.handle, "t99"), Base: f.base, Start: f.base, At: f.now}
-	if err := writeLedger(f.root, l); err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
-	tk := f.reported("cmd/")
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
-	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
-	res := f.run(tk)
-	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
-	if res.ReasonCode != ReasonLeaseTaskMismatch || res.Route != task.RouteLead || res.Quarantine || !strings.Contains(res.Detail, "t99") ||
-		string(before) != string(after) || f.originBranch() != "" {
-		t.Fatalf("another task's lease: %+v (ledger changed %v)", res, string(before) != string(after))
-	}
-	if out, _ := runGit(t, f.wt, "for-each-ref", "refs/amq-squad/evidence/"); strings.TrimSpace(out) != "" {
-		t.Fatalf("an evidence ref was anchored: %s", out)
 	}
 }
 

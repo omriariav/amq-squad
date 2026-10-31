@@ -1,19 +1,13 @@
-// Package panechain answers whether a process descends from an AMQ seat
-// pane: the pane lookup of amendment 28's proof (a read-only `tmux
-// list-panes -a` of the panes AMQ labelled @amq_pane_agent; R6: amq-squad
-// never creates, moves or closes a pane) and the parent-chain walk with the
-// start stamp re-read at every hop (procinfo.ParentPID, procinfo.StartToken),
-// so a hop replaced mid-walk breaks the chain. The owner proof of seat clear
-// and the scheduler's acceptance of the lead's decisions use it.
+// Package panechain answers whether a process descends from a pane's shell:
+// the parent-chain walk with the start stamp re-read at every hop
+// (procinfo.ParentPID, procinfo.StartToken), so a hop replaced mid-walk
+// breaks the chain. The scheduler's acceptance of the lead's decisions uses
+// it (R4).
 package panechain
 
 import (
-	"context"
-	"errors"
-	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
@@ -27,62 +21,11 @@ type Pane struct {
 	TTY   string
 }
 
-// ErrUnknown is a pane listing that could not be read (a tmux server that
-// exists but does not answer, a pane whose shell stamp is unreadable): the
-// answer is unknown, never "no panes".
-var ErrUnknown = errors.New("the seat panes cannot be read")
-
-// tmuxTimeout bounds the pane query (the third pass: a hung server is
-// unknown, never a wait).
-var tmuxTimeout = 2 * time.Second
-
 // Seams for tests.
 var (
-	listPanes    = tmuxListPanes
 	parentOf     = procinfo.ParentPID
 	startTokenOf = procinfo.StartToken
 )
-
-// List returns every pane AMQ labelled with a seat handle. No tmux, or no
-// tmux server running, is no pane; any other failure is ErrUnknown.
-func List() ([]Pane, error) { return listPanes() }
-
-func tmuxListPanes() ([]Pane, error) {
-	tmux, err := exec.LookPath("tmux")
-	if err != nil {
-		return nil, nil
-	}
-	// A tmux server that does not answer within tmuxTimeout is unknown.
-	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, tmux, "list-panes", "-a", "-F", "#{pane_pid} #{pane_tty} #{@amq_pane_agent}")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() == nil && strings.Contains(stderr.String(), "no server running") {
-			return nil, nil
-		}
-		return nil, ErrUnknown
-	}
-	var panes []Pane
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) != 3 {
-			continue // an unlabelled pane
-		}
-		pid, err := strconv.Atoi(f[0])
-		if err != nil || pid <= 1 {
-			return nil, ErrUnknown
-		}
-		start, ok := startTokenOf(pid)
-		if !ok {
-			return nil, ErrUnknown
-		}
-		panes = append(panes, Pane{Shell: pid, Start: start, Agent: f[2], TTY: f[1]})
-	}
-	return panes, nil
-}
 
 // maxHops bounds the walk.
 const maxHops = 64

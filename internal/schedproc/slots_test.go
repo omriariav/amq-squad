@@ -102,7 +102,7 @@ func TestSlotsPlanWorktreesAndRelease(t *testing.T) {
 // counts deferrals in the step's exits entry, v3-5-verifier P2-4), reruns a
 // deferred step at the next call, and passes the quarantine of a
 // global_config_changed refusal through.
-func TestCommitterDeferralsAndQuarantine(t *testing.T) {
+func TestCommitterDeferrals(t *testing.T) {
 	results := []seatcommit.Result{{Deferred: true, ReasonCode: seatcommit.ReasonVerifierInterrupted, Detail: "push"}, {Deferred: true, Detail: "push"}}
 	c := &Committer{Step: func(context.Context, string, task.Task) seatcommit.Result {
 		r := results[0]
@@ -118,12 +118,6 @@ func TestCommitterDeferralsAndQuarantine(t *testing.T) {
 	}
 	if scheduler.ReasonVerifierInterrupted != seatcommit.ReasonVerifierInterrupted || scheduler.ReasonCommitFailed != seatcommit.ReasonCommitFailed {
 		t.Fatal("the scheduler's limit codes are not seatcommit's")
-	}
-	q := &Committer{Step: func(context.Context, string, task.Task) seatcommit.Result {
-		return seatcommit.Result{ReasonCode: seatcommit.ReasonGlobalConfig, Route: task.RouteOwner, Quarantine: true, Detail: "x"}
-	}}
-	if r := q.Commit("s1", tk); !r.Quarantine || r.Route != task.RouteOwner {
-		t.Fatalf("quarantine: %+v", r)
 	}
 }
 

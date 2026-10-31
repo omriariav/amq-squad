@@ -29,7 +29,7 @@ func TestCleanSeatHoldsNoStoreLockAcrossGit(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := CleanSeat(f.root, f.handle, stand, nil, f.trust(), f.now)
+		_, err := CleanSeat(f.root, f.handle, stand, nil, f.now)
 		done <- err
 	}()
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {

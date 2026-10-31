@@ -12,7 +12,7 @@ import (
 
 // Tests of the 2b-2 milestone B fix commit 1 (the first pass on e2a59176).
 
-// exitRecorder is an ExitChecker that quarantines the seats in bad.
+// exitRecorder is an ExitChecker that refuses the seats in bad.
 type exitRecorder struct {
 	calls []string
 	bad   map[string]bool
@@ -21,7 +21,7 @@ type exitRecorder struct {
 func (e *exitRecorder) CheckExit(handle, taskID, why string) ExitResult {
 	e.calls = append(e.calls, handle+"/"+taskID+"/"+why)
 	if e.bad[handle] {
-		return ExitResult{Quarantine: true, ReasonCode: "global_config_changed", Detail: "settings.json changed"}
+		return ExitResult{Refused: true, ReasonCode: "ledger_tampered", Detail: "an evidence ref moved"}
 	}
 	return ExitResult{OK: true}
 }
@@ -36,8 +36,8 @@ func called(calls []string, want string) bool {
 }
 
 // R3 (scheduler.go:233 and :307): the exit check ran only on a done report,
-// so a seat that changed the owner's config and then failed, went away or
-// ran past its lease skipped the quarantine. It runs on every terminal path:
+// so a seat that failed, went away or ran past its lease skipped it. It runs
+// on every terminal path:
 // a failed attempt, a gone seat, an expired lease.
 func TestExitCheckRunsOnEveryTerminalPath(t *testing.T) {
 	h := newHarness(t, Config{LeaseDuration: 10 * time.Minute, IdleTimeout: time.Hour})
@@ -51,11 +51,8 @@ func TestExitCheckRunsOnEveryTerminalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := h.tick()
-	if !called(ex.calls, "seat-a/t1/failed") || !has(d, "seat_quarantined", "t1", "seat-a") {
+	if !called(ex.calls, "seat-a/t1/failed") || !has(d, "exit_refused", "t1", "seat-a") {
 		t.Fatalf("failed exit: calls %v, decisions %+v", ex.calls, d)
-	}
-	if qs, _ := task.Quarantined(h.store.Dir); len(qs) != 1 || qs[0].Handle != "seat-a" {
-		t.Fatalf("not quarantined in the store: %+v", qs)
 	}
 	// A gone seat.
 	h.up("seat-b", sonnet)
@@ -175,7 +172,7 @@ func TestEverySeatGoneRunsTheExitCheck(t *testing.T) {
 	h.s.Exits = ex
 	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "stranger"})
 	d := h.tick()
-	if !called(ex.calls, "stranger//gone") || !has(d, "seat_quarantined", "", "stranger") {
+	if !called(ex.calls, "stranger//gone") || !has(d, "exit_refused", "", "stranger") {
 		t.Fatalf("an unknown seat's gone: calls %v, decisions %+v", ex.calls, d)
 	}
 }
@@ -195,7 +192,7 @@ func (e *deferringExits) CheckExit(handle, taskID, why string) ExitResult {
 }
 
 // N3 (exits.go:93): a deferred exit check was requeued without reserving the
-// seat, so CleanSeat and a dispatch went ahead before the quarantine
+// seat, so CleanSeat and a dispatch went ahead before the check's
 // decision. While a seat's check is queued or deferred the seat gets no
 // preparation and no lease.
 func TestDeferredExitCheckKeepsTheSeatReserved(t *testing.T) {

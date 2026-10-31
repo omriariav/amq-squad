@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -78,7 +76,7 @@ func TestSeatFilterDriversNeverRunInTheHarness(t *testing.T) {
 	f.store.Claim(tk2.ID, f.handle, nil, time.Hour, f.now)
 	f.store.Fail(tk2.ID, f.handle, "red", f.now)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// leftover\n")
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil || !d {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || !d {
 		t.Fatalf("clean: %v %v", d, err)
 	}
 	if raw, err := os.ReadFile(marker); err == nil {
@@ -153,51 +151,6 @@ func TestAddWorktreeRunsNoSeatHookOrFilter(t *testing.T) {
 	}
 }
 
-// R3 (scheduler.go:233): the exit check ran only on a done report. ExitCheck
-// is the same check at a failed, gone or expired exit: a global config
-// change quarantines the seat with its tree kept on the ledger.
-func TestExitCheckQuarantinesAtAnyExit(t *testing.T) {
-	f := newFixture(t)
-	orig := `{"a":1}`
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), orig)
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), orig)
-	o := f.opts(task.Task{ID: "t1"})
-	if r := ExitCheck(o, "failed"); !r.OK || r.Quarantine {
-		t.Fatalf("no change: %+v", r)
-	}
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// left\n")
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
-	r := ExitCheck(o, "gone")
-	if !r.Quarantine || r.ReasonCode != ReasonGlobalConfig || !strings.Contains(r.Detail, "(gone)") {
-		t.Fatalf("a config change at a gone exit: %+v", r)
-	}
-	l, _ := ReadLedger(f.root, f.handle)
-	if l.Quarantine == nil || l.Quarantine.Tree == "" || l.Quarantine.Task != "t1" {
-		t.Fatalf("the tree was not kept: %+v", l.Quarantine)
-	}
-}
-
-// P1 at the exit: a Claude seat whose config dir no longer has its launch
-// digest is claude_config_changed, quarantined like a global config change.
-func TestClaudeConfigDriftAtTheExitQuarantines(t *testing.T) {
-	f := newFixture(t)
-	dir := claudeseat.Dir(f.root, f.handle, "launch-1")
-	w, err := claudeseat.Write(dir, "dontAsk", f.wt, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := launch.Record{Handle: f.handle, Root: f.root, Session: "sess", Runtime: "claude", Worktree: f.wt, Branch: f.branch, LaunchID: "launch-1", ClaudeConfig: w.Digest}
-	if err := launch.WriteFile(filepath.Join(launch.StagedDir(f.root, f.handle), launch.FileName), rec); err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// c\n")
-	tk := f.reported("cmd/")
-	write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"allow":["Bash(*)"]}}`)
-	if res := f.run(tk); res.ReasonCode != ReasonClaudeConfig || !res.Quarantine || res.Route != task.RouteOwner {
-		t.Fatalf("a changed config dir at the done report: %+v", res)
-	}
-}
-
 // R3 (commit.go:329-370): CleanSeat checked the holder without a
 // reservation, so a claim between the check and reset --hard raced. The
 // whole reset runs under the task store's lock: a claim waits until the
@@ -223,7 +176,7 @@ func TestCleanSeatHoldsTheStoreLockForTheWholeReset(t *testing.T) {
 		hookEnded = time.Now()
 	}
 	t.Cleanup(func() { beforeReset = nil })
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil || !d {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || !d {
 		t.Fatalf("clean: %v %v", d, err)
 	}
 	select {

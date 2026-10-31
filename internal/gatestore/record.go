@@ -264,7 +264,7 @@ func ParseAnswer(content string) (Answer, error) {
 
 func validTypedClass(c string) bool {
 	switch c {
-	case gatetarget.ClassRelease, gatetarget.ClassSend, gatetarget.ClassCredential, gatetarget.ClassGrow, gatetarget.ClassClear:
+	case gatetarget.ClassRelease, gatetarget.ClassSend, gatetarget.ClassCredential, gatetarget.ClassGrow:
 		return true
 	}
 	return false

@@ -87,9 +87,6 @@ func gateCore(ctx context.Context, sel contextResolution, withTransport bool) (*
 // transport is attached.
 func storeGateRaise(sel contextResolution, gate, action, target string, window time.Duration, jsonOut bool, out io.Writer) error {
 	id := strings.TrimPrefix(gate, "gate/")
-	if operatorauth.Reserved(action) {
-		return usageErrorf("gate raise: %s: %s is raised only by the owner's seat clear, after the pty proof", operatorauth.ReasonActionReserved, action)
-	}
 	if err := gatetarget.Validate(action, target); err != nil {
 		return usageErrorf("gate raise: %v", err)
 	}

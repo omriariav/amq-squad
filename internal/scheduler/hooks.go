@@ -122,10 +122,6 @@ type CommitResult struct {
 	// Running is a step still running off the tick (Detail names its state:
 	// running, waiting for a verifier slot); the next tick asks again.
 	Running bool
-	// Quarantine: the refusal quarantines the seat (global_config_changed):
-	// the store refuses it any new lease until the owner clears it, and the
-	// scheduler closes it.
-	Quarantine bool
 	// PRNumber and PRHead: the PR the commit step opened (0 when none) and
 	// the head it pushed; the scheduler binds them to the task (3-2).
 	PRRepository string

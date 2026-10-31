@@ -14,8 +14,8 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-// R3 of the 2b-2 milestone B first pass: the exit check (amendment 28's
-// config diff and the quarantine) runs on every terminal path of a seat, not
+// R3 of the 2b-2 milestone B first pass: the exit check (the sealed
+// ledger's evidence refs) runs on every terminal path of a seat, not
 // only on a done report (the committer runs it there): a failed attempt, a
 // seat that is gone, a lease that expired. And an expired claimed attempt is
 // closed through the launcher, its termination confirmed, before the seat is
@@ -23,9 +23,12 @@ import (
 
 // ExitResult is the exit check's answer.
 type ExitResult struct {
-	OK         bool // nothing changed
-	Deferred   bool // the check could not run; the scheduler retries it next tick
-	Quarantine bool // the seat is quarantined (no new lease) and closed
+	OK       bool // nothing changed
+	Deferred bool // the check could not run; the scheduler retries it next tick
+	// Refused is a refusal at the exit (ledger_tampered): the seat is closed
+	// and the lead is told; the commit step refuses the same way at the
+	// seat's next done report, so nothing of it is committed.
+	Refused    bool
 	ReasonCode string
 	Detail     string
 }
@@ -37,10 +40,10 @@ type ExitChecker interface {
 	CheckExit(handle, taskID, why string) ExitResult
 }
 
-// SeatQuarantineNotifier is a LeadNotifier that also tells the lead about a
-// quarantine at a seat exit (a hint; the store record is the truth).
-type SeatQuarantineNotifier interface {
-	SeatQuarantined(handle, taskID, reason, detail string) error
+// SeatExitRefusedNotifier is a LeadNotifier that also tells the lead about
+// a refusal at a seat exit (a hint; the decisions log is the record).
+type SeatExitRefusedNotifier interface {
+	SeatExitRefused(handle, taskID, reason, detail string) error
 }
 
 // AsyncCloser is a SeatLauncher whose nil CloseSeat does not confirm the
@@ -338,7 +341,7 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 			s.releaseDecided()
 		}
 	}()
-	for i, it := range queue {
+	for _, it := range queue {
 		if it.Why == whyCommit {
 			s.exitQueue = append(s.exitQueue, it) // a running commit step, not a check
 			continue
@@ -363,17 +366,13 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 			s.exitQueue = append(s.exitQueue, it)
 			log(Decision{Kind: "exit_check_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: r.Detail})
 			continue
-		case r.Quarantine:
-			if err := s.Store.Quarantine(task.Quarantine{Handle: it.Handle, Reason: r.ReasonCode, Detail: r.Detail, TaskID: it.TaskID, At: now}); err != nil {
-				s.exitQueue = append(s.exitQueue, queue[i:]...)
-				return err
-			}
-			log(Decision{Kind: "seat_quarantined", TaskID: it.TaskID, Seat: it.Handle, Reason: r.ReasonCode + " at " + it.Why})
+		case r.Refused:
+			log(Decision{Kind: "exit_refused", TaskID: it.TaskID, Seat: it.Handle, Reason: r.ReasonCode + " at " + it.Why})
 			if st := s.seats[it.Handle]; st != nil && st.closing == "" {
-				st.closing = "quarantined"
+				st.closing = "exit_refused"
 			}
-			if n, ok := s.Lead.(SeatQuarantineNotifier); ok && s.Lead != nil {
-				if err := n.SeatQuarantined(it.Handle, it.TaskID, r.ReasonCode, r.Detail); err != nil {
+			if n, ok := s.Lead.(SeatExitRefusedNotifier); ok && s.Lead != nil {
+				if err := n.SeatExitRefused(it.Handle, it.TaskID, r.ReasonCode, r.Detail); err != nil {
 					log(Decision{Kind: "lead_notice_failed", TaskID: it.TaskID, Reason: err.Error()})
 				}
 			}
