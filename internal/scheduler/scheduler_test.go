@@ -2,13 +2,13 @@ package scheduler
 
 import (
 	"errors"
-	"strings"
 	"fmt"
 	"math/rand"
 	"os"
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
