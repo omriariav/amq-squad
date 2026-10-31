@@ -286,9 +286,9 @@ amq-squad gate status --project . --session issue-96 --json
   while the repository has a merge grant. The binding check runs before the
   commit: a task branch that carries an open PR bound to another task is
   refused (`pr_bound_elsewhere`) with nothing committed or pushed. Each task
-  commits on its own branch, `seat/<handle>/<task>`, from the base branch's
-  tip when it was dispatched, with its own draft PR; between tasks the seat's
-  worktree rests on `seat/<handle>` at the base tip.
+  commits on its own branch, `seat/<handle>-<task id>`, from the base the
+  launch recorded when it was dispatched, with its own draft PR; between
+  tasks the seat's worktree rests on `seat/<handle>` at that base.
 - **The roster.** The scheduler launches every seat of the seat list that has
   a worktree of its own in one AMQ launch at start; a seat with no lease is
   parked and gets the next task of its pool. `max_seats` caps the leases held

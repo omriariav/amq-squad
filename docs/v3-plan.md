@@ -465,13 +465,15 @@ t14] The binding check runs before the commit and the push: an open PR
 on the task's branch that the store binds to another task refuses
 `pr_bound_elsewhere` with nothing committed or pushed and the ledger
 unchanged. [2.7, 3.0.2 task t24] Each task commits on its own branch,
-`seat/<handle>/<task>`, from the base branch's tip recorded on the
-commit ledger at its dispatch, never from the seat's previous task (a
-later attempt appends to its own branch and PR); the worktree moves onto
-that branch when the lease is granted and back to the base tip after the
-commit. [2.7, 3.0.2 task t23] Between leases CleanSeat resets the seat
-to the base tip and keeps the discarded diff on the ledger. [2.7,
-milestone B result]
+`seat/<handle>-<task id>` (a label: the ledger's per-task record, never
+the name, says which task a branch carries), from the base tip the
+launch recorded on the launch record, written per task on the commit
+ledger at its dispatch, never from the seat's previous task (a later
+attempt appends to its own branch and PR); the worktree moves onto that
+branch when the lease is granted and back to the base after the commit.
+[2.7, 3.0.2 task t23] Between leases, never during a held lease,
+CleanSeat resets the seat to that base and keeps the discarded diff on
+the ledger. [2.7, milestone B result; 3.0.2 amendment 2b]
 
 pi seats start through the launch API like Claude and Codex seats, with
 the upstream mint-mode adapter in 4.1 (issue #1153, PR #1188). The caveats

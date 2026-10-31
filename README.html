@@ -581,10 +581,10 @@ grant. The binding check runs before the commit: a task branch that
 carries an open PR bound to another task is refused
 (<code>pr_bound_elsewhere</code>) with nothing committed or pushed. Each
 task commits on its own branch,
-<code>seat/&lt;handle&gt;/&lt;task&gt;</code>, from the base branch's
-tip when it was dispatched, with its own draft PR; between tasks the
-seat's worktree rests on <code>seat/&lt;handle&gt;</code> at the base
-tip.</li>
+<code>seat/&lt;handle&gt;-&lt;task id&gt;</code>, from the base the
+launch recorded when it was dispatched, with its own draft PR; between
+tasks the seat's worktree rests on <code>seat/&lt;handle&gt;</code> at
+that base.</li>
 <li><strong>The roster.</strong> The scheduler launches every seat of
 the seat list that has a worktree of its own in one AMQ launch at start;
 a seat with no lease is parked and gets the next task of its pool.
