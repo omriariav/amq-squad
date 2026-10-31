@@ -100,6 +100,7 @@ func runLead(args []string) error {
 	// every lead launch, here and under an AMQ launch.
 	piArgs := fs.Args()
 	var teamIdentity piruntime.TeamIdentity
+	var teamProject string
 	if *schedSeats != "" {
 		// Ruling 15: the team mode starts and supervises the scheduler.
 		if !*team {
@@ -110,7 +111,7 @@ func runLead(args []string) error {
 	}
 	if *schedSeats != "" {
 		var err error
-		teamIdentity, err = resolveTeamLeadIdentity(*schedSeats, *leadHandle)
+		teamIdentity, teamProject, err = resolveTeamLeadIdentity(*schedSeats, *leadHandle)
 		if err != nil {
 			return fmt.Errorf("lead: resolve the team identity: %w", err)
 		}
@@ -147,6 +148,8 @@ func runLead(args []string) error {
 				overlay[name] = value
 			}
 		}
+		// The repo tools read the squad's repository, not this directory.
+		overlay["AMQ_SQUAD_PROJECT"] = teamProject
 		return piLaunch(piLaunchSpec{Seat: teamIdentity.Handle, Flags: f, PiArgs: piArgs, Overlay: overlay})
 	}
 	if me, root := os.Getenv("AM_ME"), os.Getenv("AM_ROOT"); me != "" && root != "" {
