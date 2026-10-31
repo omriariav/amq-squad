@@ -151,6 +151,26 @@ only). .github/workflows/ci.yml is unchanged.
 - P2, the CLI rebuilding the spec at publish: stays the 3.0.x follow-up
   line in docs/v3-followups.md; no code.
 
+## Codex round on 92df5fd6
+
+- P2, gh's status (ea737f56): read only from gh's own "(HTTP nnn)" suffix,
+  anchored at the end of the last non-empty stderr line; without it the
+  failure stays an error. Rows through the fake gh: "HTTP 404 (HTTP 503)"
+  and a transport error quoting "HTTP 404" stay errors; "(HTTP 404)" is
+  absent.
+- Revert gap, TagCommit (b02342ae): TestGHTagCommitClassifiesOnTheHTTPStatusOnly
+  through the fake gh (200, 404, transport, tag v1.404.0).
+- Revert gap, recovery of a published release (7daf9e50):
+  TestRecoveredPublishedReleaseWithAnotherBodyIsRefused (lost publish
+  response, body edited after publication: refused, not deleted, alerted).
+- P2, the Python check's git (4ce20c37): the script's git show runs with
+  GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1; the test module
+  sets a temp HOME and the same two variables for the whole process. Rows:
+  the module environment; a malformed global and system config still pass.
+- P2, the CLI row (latest commit): TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote
+  runs runRelease prepare and publish on the gate CLI fixture with a fake gh
+  and a real local commit.
+
 ## The skill example and the follow-ups file
 
 The orchestrator skill's release example (plugins/skills-src/orchestrator/
