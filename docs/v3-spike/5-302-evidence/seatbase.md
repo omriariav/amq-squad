@@ -43,6 +43,15 @@ CleanSeat, both in internal/seatcommit:
   directory on the repository's object store, so the shared repository's
   config, remotes and url rewrites are never read. Without a push URL in
   the grant, the local base branch is the tip.
+- An HTTPS push URL fetches with the commit step's push authentication
+  (ruling 2026-10-31): `seatcommit.FetchCredentials`
+  (internal/seatcommit/fetchcred.go) gives the pinned gh the launch
+  recorded, re-hashed now, as the only credential helper on ls-remote and
+  fetch, with GH_TOKEN and GITHUB_TOKEN the one pass-through, so a private
+  repository launches. An HTTPS URL with no pinned gh refuses with
+  `tool_unpinned` (registry.PinMissing) and never fetches anonymously. SSH
+  and local URLs are unchanged. pushCredentials is left as it is; making it
+  call the shared helper is a 3.1 follow-up.
 - The resting branch `seat/<handle>` is reset to the tip locally. An
   existing worktree moves to the tip by a two-tree read-tree from its HEAD
   in the shadow, and its HEAD names the resting branch again. A local
@@ -78,7 +87,8 @@ lease still resets a relaunched seat to its old ledger parent.
 ## Rows
 
 internal/schedproc/seatbase_test.go, each run against a fake remote (a bare
-repository in the temp dir) as the grant's push URL:
+repository in the temp dir) as the grant's push URL, or for HTTPS a fake git
+that records argv:
 
 | row | proves | fails when reverted |
 |---|---|---|
@@ -86,6 +96,8 @@ repository in the temp dir) as the grant's push URL:
 | TestSeatBaseLocalBranchWithoutPushURL | without a push URL, a new worktree on a stale seat branch starts at the local base tip | no branch reset before the worktree is added |
 | TestSeatBaseRemoteSeatBranchAheadRefuses | a remote seat branch with an unmerged commit refuses by name and moves nothing; once merged, the launch proceeds at the tip | no unmerged check |
 | TestSeatBaseConflictingLocalChangeRefuses | a local change the move would overwrite refuses the launch and is kept | a plain reset in place of the two-tree merge |
+| TestSeatBaseHTTPSFetchUsesThePinnedGh | an HTTPS push URL's ls-remote and fetch run with `-c credential.helper= -c credential.helper=!'<pinned gh>' auth git-credential` and GH_TOKEN (a fake git recording argv) | no FetchCredentials call; helper args not passed; no GH_TOKEN pass-through |
+| TestSeatBaseHTTPSWithoutPinnedGhRefuses | an HTTPS push URL with no pinned gh refuses with `tool_unpinned`, and no fetch runs | no FetchCredentials call; FetchCredentials returning nothing for HTTPS |
 
 Not on this branch: the row "CleanSeat after a lease resets to the tip". It
 needs the seatcommit change above and belongs with t23 and t24.

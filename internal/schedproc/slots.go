@@ -161,12 +161,20 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 		}
 		return tip, nil
 	}
+	// An HTTPS push URL fetches with the push's authentication: the pinned
+	// gh as the only credential helper (seatcommit.FetchCredentials).
+	cred, credEnv, why := seatcommit.FetchCredentials(s.Target, os.Environ())
+	if why != "" {
+		return "", fmt.Errorf("seat %s base: %s", seat.Handle, why)
+	}
 	sh, err := newBaseShadow(g, common)
 	if err != nil {
 		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
 	defer os.RemoveAll(sh.dir)
-	out, err := g.run(sh.dir, sh.env, "ls-remote", "--", url, "refs/heads/"+base, "refs/heads/"+seat.Branch)
+	fg := baseGit{bin: g.bin, pre: cred} // ls-remote and fetch only
+	fenv := append(append([]string(nil), sh.env...), credEnv...)
+	out, err := fg.run(sh.dir, fenv, "ls-remote", "--", url, "refs/heads/"+base, "refs/heads/"+seat.Branch)
 	if err != nil {
 		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
@@ -183,7 +191,7 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 	if refs["refs/heads/"+seat.Branch] {
 		specs = append(specs, "+refs/heads/"+seat.Branch+":refs/seat")
 	}
-	if _, err := g.run(sh.dir, sh.env, append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", url}, specs...)...); err != nil {
+	if _, err := fg.run(sh.dir, fenv, append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", url}, specs...)...); err != nil {
 		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
 	tip, err := g.run(sh.dir, sh.env, "rev-parse", "--verify", "refs/base^{commit}")
@@ -241,10 +249,13 @@ func (g baseGit) moveWorktree(common string, seat seatlaunch.Seat, tip string) e
 // (seatcommit's): no global or system config, hooks, attribute files,
 // fsmonitor or replace objects; no credential, GIT_* redirection or prompt
 // from the caller's environment.
-type baseGit struct{ bin string }
+type baseGit struct {
+	bin string
+	pre []string // the fetch's credential settings (FetchCredentials)
+}
 
 func (g baseGit) run(dir string, extra []string, args ...string) (string, error) {
-	argv := append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"}, args...)
+	argv := append(append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"}, g.pre...), args...)
 	cmd := exec.Command(g.bin, argv...)
 	cmd.Dir = dir
 	var env []string

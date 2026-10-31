@@ -2,6 +2,7 @@ package schedproc
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,5 +173,77 @@ func TestSeatBaseConflictingLocalChangeRefuses(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(filepath.Join(wt, "a.txt")); string(raw) != "seat's leftover\n" {
 		t.Fatalf("the local change was lost: %q", raw)
+	}
+}
+
+// fakeFetchGit is a git that records the argv of ls-remote and fetch (with
+// whether GH_TOKEN reached it, never its value) and answers them for tip,
+// passing every other call to the real git: an HTTPS push URL without the
+// network.
+func fakeFetchGit(t *testing.T, dir, tip string) (bin, log string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not on PATH")
+	}
+	bin, log = filepath.Join(dir, "fake-git"), filepath.Join(dir, "fetch.log")
+	script := "#!/bin/sh\ncase \" $* \" in\n" +
+		"*\" ls-remote \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set}\" >> '" + log + "'; printf '%s\\trefs/heads/main\\n' " + tip + "; exit 0;;\n" +
+		"*\" fetch \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set}\" >> '" + log + "'; exec '" + real + "' update-ref refs/base " + tip + ";;\n" +
+		"esac\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, log
+}
+
+// 3.0.2 t22 (ruling 2026-10-31): an HTTPS push URL fetches the base tip with
+// the commit step's push authentication: the pinned gh the launch recorded
+// as the only credential helper on ls-remote and fetch, GH_TOKEN passed
+// through, so a private repository launches.
+func TestSeatBaseHTTPSFetchUsesThePinnedGh(t *testing.T) {
+	q := squadFixture(t)
+	dir := filepath.Dir(q.ProjectRoot)
+	tip := gitRun(t, q.ProjectRoot, "rev-parse", "HEAD")
+	bin, log := fakeFetchGit(t, dir, tip)
+	gh := filepath.Join(dir, "gh-pinned")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := registry.FileSHA256(gh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_TOKEN", "fetch-canary-value")
+	s := &Slots{Squad: q, Git: bin, Target: seatcommit.Target{PushURL: "https://github.com/o/r", BaseBranch: "main", GhPath: gh, GhSHA256: sum}}
+	got, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil || got.Seats[0].Base != tip {
+		t.Fatalf("an HTTPS launch: %+v %v", got.Seats, err)
+	}
+	raw, _ := os.ReadFile(log)
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	helper := "credential.helper=!'" + gh + "' auth git-credential"
+	if len(lines) != 2 {
+		t.Fatalf("want ls-remote and fetch, got %d calls", len(lines))
+	}
+	for i, l := range lines {
+		if !strings.Contains(l, "-c credential.helper= -c "+helper) || !strings.Contains(l, "gh_token=set") || !strings.Contains(l, "https://github.com/o/r") {
+			t.Fatalf("call %d ran without the pinned gh as the only helper or without GH_TOKEN", i)
+		}
+	}
+}
+
+// An HTTPS push URL with no pinned gh on the launch's record refuses with the
+// pin-missing reason and never fetches anonymously.
+func TestSeatBaseHTTPSWithoutPinnedGhRefuses(t *testing.T) {
+	q := squadFixture(t)
+	dir := filepath.Dir(q.ProjectRoot)
+	bin, log := fakeFetchGit(t, dir, gitRun(t, q.ProjectRoot, "rev-parse", "HEAD"))
+	s := &Slots{Squad: q, Git: bin, Target: seatcommit.Target{PushURL: "https://github.com/o/r", BaseBranch: "main"}}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), registry.PinMissing) {
+		t.Fatalf("no pinned gh: %v", err)
+	}
+	if raw, err := os.ReadFile(log); err == nil && len(raw) > 0 {
+		t.Fatalf("an anonymous fetch ran:\n%s", raw)
 	}
 }
