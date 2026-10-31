@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -99,6 +100,10 @@ func TestSeatBaseRelaunchAtTheTip(t *testing.T) {
 	}
 	if c.Records[0].Base != tip {
 		t.Fatalf("the launch record's base is %q, not the tip %s", c.Records[0].Base, tip)
+	}
+	raw, err := launch.Marshal(c.Records[0])
+	if err != nil || !strings.Contains(string(raw), `"base": "`+tip+`"`) {
+		t.Fatalf("the launch record's JSON carries no \"base\" key with the tip: %v\n%s", err, raw)
 	}
 }
 
@@ -371,4 +376,69 @@ func TestSeatBasePlainCloneWorktree(t *testing.T) {
 	if raw, err := os.ReadFile(filepath.Join(wt, "v3.txt")); err != nil || string(raw) != "v3\n" {
 		t.Fatalf("the tip's file: %q %v", raw, err)
 	}
+}
+
+// Codex rule 6: a pinned gh whose sha256 does not match refuses with the pin
+// mismatch reason before any network call.
+func TestSeatBaseHTTPSPinMismatchRefuses(t *testing.T) {
+	q := squadFixture(t)
+	dir := filepath.Dir(q.ProjectRoot)
+	bin, log := fakeFetchGit(t, dir, gitRun(t, q.ProjectRoot, "rev-parse", "HEAD"))
+	gh := filepath.Join(dir, "gh-pinned")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Slots{Squad: q, Git: bin, Target: seatcommit.Target{PushURL: "https://github.com/o/r", BaseBranch: "main", GhPath: gh, GhSHA256: strings.Repeat("0", 64)}}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), registry.PinMismatch) {
+		t.Fatalf("a pinned gh that fails its hash: %v", err)
+	}
+	if raw, err := os.ReadFile(log); err == nil && len(raw) > 0 {
+		t.Fatalf("a fetch ran with a gh that fails its pin:\n%s", raw)
+	}
+}
+
+// Codex rule 6: the throwaway git directories are removed after a launch
+// (the fetch's and the move's) and after a refused one (after the fetch, and
+// in the move).
+func TestSeatBaseShadowRemoved(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	left := func(when string) {
+		t.Helper()
+		if m, _ := filepath.Glob(filepath.Join(tmp, "amq-squad-base-*")); len(m) != 0 {
+			t.Fatalf("%s: throwaway git directories left: %d", when, len(m))
+		}
+	}
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	first, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	left("a first launch")
+	wt := first.Seats[0].Worktree
+	s.ReleaseRequest("r1")
+	commitFile(t, other, "v3.txt", "v3\n", "v3 moves")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool}); err != nil {
+		t.Fatal(err)
+	}
+	left("a relaunch that moved the worktree")
+	s.ReleaseRequest("r2")
+	commitFile(t, other, "a.txt", "upstream\n", "a changes upstream")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	if err := os.WriteFile(filepath.Join(wt, "a.txt"), []byte("leftover\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r3", Pool: seatBasePool}); err == nil {
+		t.Fatal("a conflicting move launched")
+	}
+	left("a launch refused in the move")
+	gitRun(t, wt, "checkout", "-q", "--", "a.txt")
+	pr := commitFile(t, wt, "pr.txt", "pr\n", "an open PR's commit")
+	gitRun(t, wt, "push", "-q", remote, "seat/c1")
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r4", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), pr[:7]) {
+		t.Fatalf("an unmerged remote seat branch: %v", err)
+	}
+	left("a launch refused after the fetch")
 }
