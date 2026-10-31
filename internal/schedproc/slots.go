@@ -150,6 +150,18 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 			return seat, fmt.Errorf("%s: seat %s: the local branch %s holds commits the %s tip %s does not (%s); the harness never discards a local commit: push, merge or delete it, then launch again", ReasonSeatBranchUnpushed, seat.Handle, seat.Branch, firstNonEmpty(s.BaseBranch, "main"), short(tip), strings.Join(strings.Fields(ahead), ", "))
 		}
 	}
+	// HEAD's commit is either the resting branch's value checked above or
+	// one the tip holds: a detached HEAD at a local commit would lose its
+	// files in the move and its last reference at the HEAD switch.
+	if statErr == nil && head != tip && head != cur {
+		ahead, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+head)
+		if err != nil {
+			return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
+		}
+		if ahead != "" {
+			return seat, fmt.Errorf("%s: seat %s: the worktree's HEAD is at %s, with commits the %s tip %s does not hold (%s); the harness never discards a local commit: push, merge or branch it, then launch again", ReasonSeatHeadDetachedUnmerged, seat.Handle, short(head), firstNonEmpty(s.BaseBranch, "main"), short(tip), strings.Join(strings.Fields(ahead), ", "))
+		}
+	}
 	if statErr == nil {
 		if err := g.moveWorktree(gd, common, seat, head, tip, cur); err != nil {
 			return seat, fmt.Errorf("seat %s worktree to the base tip %s: %v", seat.Handle, short(tip), err)
@@ -181,6 +193,12 @@ const ReasonBaseTipMoved = "base_tip_moved"
 // worktree's HEAD names no commit (unborn or unreadable): the move to the tip
 // is never a reset over files nothing accounts for.
 const ReasonSeatHeadUnreadable = "seat_head_unreadable"
+
+// ReasonSeatHeadDetachedUnmerged refuses a seat's launch when its worktree's
+// HEAD is at a commit the base tip does not hold and that is not the resting
+// branch's checked value (a detached HEAD's local commit): the harness never
+// discards a local commit.
+const ReasonSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
 
 // ReasonSeatBranchUnpushed refuses a seat's launch when its local resting
 // branch holds commits the base tip does not: the harness never discards a

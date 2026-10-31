@@ -468,3 +468,30 @@ func TestSeatBaseFetchedTipMustMatchLsRemote(t *testing.T) {
 		t.Fatalf("a refused launch created the worktree: %v", err)
 	}
 }
+
+// Codex round 3, P1: a worktree whose HEAD is detached at a local-only commit
+// refuses by name before any move; the commit and its files survive.
+func TestSeatBaseDetachedLocalCommitRefuses(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	first, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := first.Seats[0].Worktree
+	s.ReleaseRequest("r1")
+	gitRun(t, wt, "checkout", "-q", "--detach")
+	local := commitFile(t, wt, "detached.txt", "local\n", "a detached local commit")
+	commitFile(t, other, "v3.txt", "v3\n", "v3 moves")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	_, err = s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool})
+	if err == nil || !strings.Contains(err.Error(), ReasonSeatHeadDetachedUnmerged) || !strings.Contains(err.Error(), local[:7]) {
+		t.Fatalf("a detached local commit: %v", err)
+	}
+	if h := gitRun(t, wt, "rev-parse", "HEAD"); h != local {
+		t.Fatalf("HEAD moved to %s", h)
+	}
+	if raw, err := os.ReadFile(filepath.Join(wt, "detached.txt")); err != nil || string(raw) != "local\n" {
+		t.Fatalf("the commit's file: %q %v", raw, err)
+	}
+}
