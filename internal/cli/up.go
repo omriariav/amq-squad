@@ -245,20 +245,38 @@ func isTag(v string) bool { return tagPattern.MatchString(v) && !strings.HasSuff
 
 // checkPiBuild refuses a binary that is not a tagged pi build: its version
 // must name a tag (R54: a build of the working tree never runs a squad),
-// and its pi verify must name no pi_not_embedded or pi_runtime_rejected (an
-// unpacked-yet runtime is fine: the first lead unpacks it).
+// and its `pi path --json` (which unpacks the embedded runtime when absent
+// and re-hashes it, as the lead's first start would) must exit 0 with its
+// JSON envelope. ErrNotEmbedded's text refuses pi_not_embedded; any other
+// non-zero exit or unparseable reply refuses pi_runtime_rejected. (`pi
+// verify` is not used: it exits non-zero by design for a runtime not
+// unpacked yet, the state of every fresh tagged build.)
 func (u *upRun) checkPiBuild(bin string) (string, error) {
 	out, err := squadRun(u.ctx, u.report.Project, os.Environ(), bin, "version")
 	v := parseAmqSquadVersion(string(out))
 	if err != nil || !isTag(v) {
 		return "", refuse("pi_binary_untagged", "%s reports version %q; up installs only a build of scripts/build-pi-runtime.sh at a tag (R54)", bin, v)
 	}
-	out, _ = squadRun(u.ctx, u.report.Project, os.Environ(), bin, "pi", "verify", "--json")
-	switch code := piruntime.RefusalCodeText(string(out)); code {
-	case piruntime.ReasonNotEmbedded:
+	out, err = squadRun(u.ctx, u.report.Project, os.Environ(), bin, "pi", "path", "--json")
+	if code := piruntime.RefusalCodeText(string(out)); code == piruntime.ReasonNotEmbedded {
 		return "", refuse(code, "%s carries no pi runtime: build it with scripts/build-pi-runtime.sh at a tag", bin)
-	case piruntime.ReasonRejected:
-		return "", refuse(code, "%s: %s", bin, strings.TrimSpace(lastLine(string(out))))
+	}
+	var env struct {
+		Kind string `json:"kind"`
+		Data struct {
+			Runtime string `json:"runtime"`
+		} `json:"data"`
+	}
+	raw := out
+	if i := bytes.IndexByte(out, '{'); i > 0 {
+		raw = out[i:]
+	}
+	derr := json.NewDecoder(bytes.NewReader(raw)).Decode(&env)
+	switch {
+	case err != nil:
+		return "", refuse(piruntime.ReasonRejected, "%s pi path: %v: %s", bin, err, firstNonEmptyStr(lastLine(string(out)), "(no output)"))
+	case derr != nil || env.Kind != "pi_path" || env.Data.Runtime == "":
+		return "", refuse(piruntime.ReasonRejected, "%s pi path printed no runtime: %s", bin, firstNonEmptyStr(lastLine(string(out)), "(no output)"))
 	}
 	return v, nil
 }

@@ -56,8 +56,8 @@ func (f *upFake) run(_ context.Context, dir string, _ []string, name string, arg
 	switch {
 	case base == "amq-squad" && len(args) > 0 && args[0] == "version":
 		return []byte("amq-squad " + f.version + "\n"), nil
-	case base == "amq-squad" && len(args) > 1 && args[0] == "pi" && args[1] == "verify":
-		return []byte(`{"schema_version":1,"kind":"pi_verify","data":{"ok":false,"error":"runtime x is not unpacked yet"}}` + "\nerror: runtime x is not unpacked yet\n"), fail
+	case base == "amq-squad" && len(args) > 1 && args[0] == "pi" && args[1] == "path":
+		return []byte(`{"schema_version":1,"kind":"pi_path","data":{"runtime":"/h/.amq-squad/runtime/pi-1.3.0-x","pi_argv":["node"]}}`), nil
 	case base == "amq-squad" && len(args) > 0 && args[0] == "doctor":
 		// AMQ v0.116.2's amq env refuses a repository with no .agent-mail
 		// (env.go:428), so doctor's amq ops row fails there.
@@ -292,7 +292,7 @@ func TestUpRunsItsSevenStepsInOrderAndInstallsByRename(t *testing.T) {
 	if got := stepNames(r); got != "compile:ok install:ok session:ok doctor:ok lead:ok tmux:ok roster:ok" {
 		t.Fatalf("steps %s", got)
 	}
-	order := []string{"amq-squad version", "amq-squad pi verify", "amq coop init", "amq session create", "amq-squad doctor --json", "tmux has-session", "tmux new-session"}
+	order := []string{"amq-squad version", "amq-squad pi path", "amq coop init", "amq session create", "amq-squad doctor --json", "tmux has-session", "tmux new-session"}
 	last := -1
 	for _, c := range order {
 		i := f.callIndex(c)
@@ -471,6 +471,10 @@ func TestUpInstallRefusesAnUntaggedOrUnembeddedBuildByName(t *testing.T) {
 		{"dev", "", "pi_binary_untagged"},
 		{"v3.1.0", "error: this amq-squad build carries no pi runtime (build with scripts/build-pi-runtime.sh, tag amqpi)", "pi_not_embedded"},
 		{"v3.1.0", "error: pi runtime /h/.amq-squad/runtime/x rejected (run `amq-squad doctor --fix` or remove it explicitly to repair): changed", "pi_runtime_rejected"},
+		// Codex P2 (9): a non-zero exit, and an exit 0 with no runtime in its
+		// reply, refuse pi_runtime_rejected
+		{"v3.1.0", "error: open /h/.amq-squad/runtime: permission denied", "pi_runtime_rejected"},
+		{"v3.1.0", "exit0:not json at all", "pi_runtime_rejected"},
 	} {
 		f, target := upWorld(t)
 		f.version = tc.version
@@ -478,6 +482,9 @@ func TestUpInstallRefusesAnUntaggedOrUnembeddedBuildByName(t *testing.T) {
 			inner := f.run
 			squadRun = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
 				if len(args) > 1 && args[0] == "pi" {
+					if text, ok := strings.CutPrefix(tc.verify, "exit0:"); ok {
+						return []byte(text), nil
+					}
 					return []byte(tc.verify), fmt.Errorf("exit status 1")
 				}
 				return inner(ctx, dir, env, name, args...)
