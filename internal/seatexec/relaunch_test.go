@@ -24,7 +24,7 @@ func TestASecondExecOnAUsedConfigDirNeverExecs(t *testing.T) {
 		runtime string // what Claude Code wrote after the first exec ("" for none)
 		code    string
 	}{
-		"Claude Code's own state in the dir": {`{"hasCompletedOnboarding":true,"userID":"u","numStartups":1,"projects":{"WT":{"hasTrustDialogAccepted":true,"lastSessionId":"s"},"/repo":{"allowedTools":[],"mcpServers":{},"hasTrustDialogAccepted":false}}}`, ClaudeConfigUnexpected},
+		"Claude Code's own state in the dir": {`{"hasCompletedOnboarding":true,"userID":"u","numStartups":1,"projects":{"WT":{"hasTrustDialogAccepted":true,"lastSessionId":"s"},"/repo":{"allowedTools":[],"mcpServers":{},"hasTrustDialogAccepted":false}}}`, "proof_ticket_consumed"},
 		"the seed only, token consumed":      {"", "proof_ticket_consumed"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -38,9 +38,6 @@ func TestASecondExecOnAUsedConfigDirNeverExecs(t *testing.T) {
 				body := []byte(tc.runtime)
 				body = []byte(strings.ReplaceAll(string(body), "WT", f.wt))
 				write(t, filepath.Join(dir, ".claude.json"), string(body), 0o600)
-				if d, _ := claudeseat.Digest(dir); d != f.rec.ClaudeConfig {
-					t.Fatal("Claude Code's own state moved the digest")
-				}
 			}
 			f.rec.Proof.Token = launch.TokenConsumed // what the launcher marks on the accepted proof
 			f.stage()

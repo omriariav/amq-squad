@@ -129,23 +129,35 @@ required version key (`schema: 1`); a file without it is refused.
 | `merge_size_cap_lines` | integer, at least 1 | the owner's | narrow |
 | `merge_size_cap_files` | integer, at least 1 | the owner's | narrow |
 | `verifier_classes` | list of verifier classes | the owner's | add |
-| `defaults.runtime` | `claude`, `codex` or `pi` | none | plain |
+| `defaults.runtime` | `claude`, `codex`, `cursor-agent`, `grok` or `pi` | none | plain |
 | `defaults.model` | token | none | plain |
 | `defaults.effort` | token | none | plain |
 | `defaults.tools` | `minimal`, `coding`, `browser`, `data` or `full` | `full` | plain |
 | `seats[].handle` | `[a-z0-9][a-z0-9_-]*`, unique, not the operator's `user` | none, required | plain |
 | `seats[].role` | catalog or staged custom role id | the handle | plain |
-| `seats[].runtime` | `claude`, `codex` or `pi` | `defaults.runtime` | plain |
-| `seats[].model` | token; a pi seat takes none | `defaults.model` | plain |
-| `seats[].effort` | token; a pi seat takes none | `defaults.effort` | plain |
-| `seats[].worktree` | repo-relative or absolute path | the repository root | plain |
+| `seats[].runtime` | `claude`, `codex`, `cursor-agent`, `grok` or `pi` | `defaults.runtime` | plain |
+| `seats[].model` | token; a pi seat's is PROVIDER/ID | `defaults.model` (not for pi) | plain |
+| `seats[].effort` | token; a cursor-agent seat takes none | `defaults.effort` (not for pi or cursor-agent) | plain |
+| `seats[].worktree` | repo-relative or absolute path, never the repository root | `.worktrees/<handle>` | plain |
 | `seats[].tools` | `minimal`, `coding`, `browser`, `data` or `full` | `defaults.tools` | plain |
 | `seats[].actor_mode` | `implementation` or `review` | derived from the lead and lead mode | plain |
 
-A seat's fields are the typed seat list of the 2b-2 launch compiler. Model
-and effort travel as provider arguments for Claude and Codex seats only;
-pi admits none (plan 4.3, amendment 23), so a pi seat with a model or effort
-is a parse error. The argument forms are the ones AMQ advertises
+squad.yaml is the one source of a launch (brief 31-1): `amq-squad lead
+--team` in the repository and `scheduler run --project` read it, with no
+seats file beside it. The lead's handle is `lead` (required for a launch),
+the AMQ session is `session` (required for a launch), and every seat but the
+lead is in the roster. A seat's worktree is derived per handle under
+`<repo>/.worktrees/<handle>` unless the seat names one; a worktree that
+names the repository root is a parse error (the commit step moves a seat's
+branch). The runtimes are the providers AMQ v0.116.2's launch adapters serve.
+
+A seat's fields are the typed seat list of the launch compiler. Model and
+effort travel as provider arguments: `--model` and the effort for Claude,
+Codex and grok, `--model` alone for cursor-agent (its adapter maps no
+effort, so a cursor-agent seat with an effort is a parse error). pi admits
+no provider argument (plan 4.3, amendment 23): a pi seat's model is a
+PROVIDER/ID that seat-exec hands the embedded runtime's launcher. A roster
+seat's own pool needs no registry entry. The argument forms are the ones AMQ advertises
 (`ProviderCapabilitiesV1.AllowedArgumentForms`, amendment 20 (b)); amq-squad
 keeps no list of its own, and a form AMQ does not list is refused before the
 launch. Quota and concurrency pools are registry entries (plan 5), not
@@ -167,8 +179,6 @@ per key.
 | `merge.local_push_ack` | grants.yaml: the owner's acknowledgement of a local push target |
 | `push_url` | grants.yaml: the push target (merge.push_url) |
 | `local_push_ack` | grants.yaml: merge.local_push_ack |
-| `clear` | grants.yaml: how a seat quarantine's clear is signed |
-| `clear.signature` | grants.yaml: the clear signature mode |
 | `verifiers` | grants.yaml: the verifier command per class |
 | `verifier_goproxy` | grants.yaml: the verifier's GOPROXY |
 | `verifier_timeout` | grants.yaml: the verifier's wall time |
@@ -296,5 +306,5 @@ seats:
     tools: coding
   - handle: scout
     role: researcher
-    runtime: pi                # pi takes no model or effort (plan 4.3)
+    runtime: pi                # a pi model, when named, is PROVIDER/ID
 ```

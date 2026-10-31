@@ -108,6 +108,12 @@ type Options struct {
 	// LeadPools are the pools of the lead's own seat: it occupies a
 	// concurrency pool it shares (a lead on the Ollama GPU), once.
 	LeadPools []task.Pool
+	// RosterPools are the pools of the roster's seats (brief 31-1): each is
+	// admitted without a registry entry, and one the table places on no
+	// tier is admitted at the class's own tier (a pin to it, or a candidate
+	// after the tier's chain). The registry stays optional cap and cost
+	// metadata for them.
+	RosterPools []task.Pool
 }
 
 // Decision is the router's choice for one attempt of one task.
@@ -259,6 +265,9 @@ func (r *Router) verifierConfigured(class string) bool { return r.o.Grants.Verif
 // pinTier resolves a lead pin to the lowest tier the class may run on whose
 // chain lists the pinned entry; "" and the reason when there is none.
 func (r *Router) pinTier(class, tableTier string, escalated bool, pin task.Pool) (string, string) {
+	if r.rosterOffTable(pin) {
+		return tableTier, ""
+	}
 	allowed := r.classTiers(class, tableTier, escalated)
 	for _, tier := range allowed {
 		if slices.Contains(r.o.Table.Tiers[tier].Chain, pin) {
@@ -509,6 +518,9 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 			d.Policy, d.Propensity, recorded = first.Policy, first.Propensity, first.UsedTier
 		}
 		base = entryTier(tbl, r.classTiers(t.Class, spec.Tier, false), recorded, entry)
+		if base == "" && r.rosterOffTable(entry) {
+			base = spec.Tier
+		}
 		if base == "" {
 			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: fmt.Sprintf("routing: the first attempt of %s ran on %s, which is on no tier class %s may run on", t.ID, entry.Key(), t.Class)}
 		}
@@ -535,7 +547,12 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 	for i := 0; i < failures; i++ {
 		tier = up(tier)
 	}
-	chain := tbl.Tiers[tier].Chain
+	chain := slices.Clone(tbl.Tiers[tier].Chain)
+	for _, p := range r.o.RosterPools {
+		if r.rosterOffTable(p) && !slices.Contains(chain, p) {
+			chain = append(chain, p) // a roster seat's own pool the table does not place
+		}
+	}
 	if pin != nil && failures == 0 {
 		chain = []task.Pool{*pin} // the pinned entry, still checked
 	}
@@ -614,14 +631,22 @@ func (r *Router) check(e task.Pool, n int, f Features, impl, required string, us
 	if !r.o.Grants.RuntimePermitted(e.Runtime) {
 		return SkipRuntimeNotPermitted
 	}
-	if !inReg {
-		return SkipNotInRegistry
-	}
-	if !reg.Verified {
-		return SkipUnverified
-	}
-	if reg.Probation && n == 1 {
-		return SkipProbation
+	if slices.Contains(r.o.RosterPools, e) {
+		// a roster seat's own pool needs no registry entry and no
+		// verification (brief 31-1); an entry, when present, still caps it
+		if !inReg {
+			return ""
+		}
+	} else {
+		if !inReg {
+			return SkipNotInRegistry
+		}
+		if !reg.Verified {
+			return SkipUnverified
+		}
+		if reg.Probation && n == 1 {
+			return SkipProbation
+		}
 	}
 	if reg.ConcurrencyCap > 0 && r.inUse(reg, list) >= reg.ConcurrencyCap {
 		return SkipConcurrencyCap
@@ -741,6 +766,12 @@ func skipsText(skips []Skip) string {
 }
 
 // tierOf is the lowest tier whose chain lists the pool, "" when none does.
+// rosterOffTable reports whether the pool is a roster seat's own pool that
+// the table places on no tier (brief 31-1).
+func (r *Router) rosterOffTable(p task.Pool) bool {
+	return slices.Contains(r.o.RosterPools, p) && tierOf(r.o.Table, p) == ""
+}
+
 func tierOf(t Table, pl task.Pool) string {
 	for _, tier := range Tiers {
 		if slices.Contains(t.Tiers[tier].Chain, pl) {

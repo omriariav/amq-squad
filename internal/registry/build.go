@@ -120,11 +120,9 @@ func Build(det Detection, prev Registry, opts BuildOptions) Registry {
 					}
 				}
 				if !verdict.Usable {
+					// only a recorded probe refuses an id (brief 31-1)
 					e.Verified = false
 					e.State, e.Reason = StateRefused, verdict.Reason
-					if !verdict.Known {
-						e.State = StateUnprobed
-					}
 				}
 			}
 			r.Entries = append(r.Entries, e)

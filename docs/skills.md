@@ -114,12 +114,11 @@ and a launch.
 5. **Brief.** `amq-squad brief --goal "..." --session issue-96` drafts it through
    the configured drafter (or prints the in-session prompt and stages nothing);
    `--seed-from file:<path>`, `issue:<n>` or `gh:owner/repo#<n>` seeds it.
-6. **Launch.** One AMQ launch request starts the seats, each behind `seat-exec`:
-   `amq-squad launch --seats <file>` (a typed seat list, `--dry-run` first), the pi
-   lead in team mode with the scheduler beside it (`amq-squad lead --team
-   --scheduler-seats <file>`), or the mayor inside the fleet grant
-   (`amq-squad operator start-squad`). A required action such as AMQ's trust
-   confirmation stops the launch with exit 10; it is never answered for the owner.
+6. **Launch.** One AMQ launch request starts the seats, each behind `seat-exec`,
+   from squad.yaml (the one source): the pi lead in team mode with the scheduler
+   beside it (`amq-squad lead --team` in the repository), or the mayor inside the
+   fleet grant (`amq-squad operator start-squad`). Every launch carries the
+   owner's standing answer to AMQ's trust confirmation.
 
 Once the seats are up, use `amq-squad:cli` for direct inspection and route the
 lead seat to `amq-squad:orchestrator`.
@@ -245,9 +244,9 @@ Shipping GitHub issue #96 with a squad, start to finish.
    amq-squad brief --seed-from issue:96 --project . --session issue-96
    ```
 
-2. **Launch** — the seats start through one AMQ launch request
-   (`amq-squad launch --seats seats.json --dry-run`, then without `--dry-run`); a
-   trust confirmation stops the launch for the owner's decision.
+2. **Launch** — `amq-squad lead --team` in the repository starts the lead and
+   its scheduler, which launches every seat of squad.yaml but the lead in one
+   AMQ launch request.
 
 3. **Lead the work** — the `cto` seat, the squad's lead, loads
    `/amq-squad:orchestrator`, adds the tasks, reads status, and lets the

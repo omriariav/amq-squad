@@ -1,7 +1,6 @@
 package seatcommit
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +14,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
-	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
 // The commit ledger is the core's record of a seat branch: the base commit
@@ -39,20 +37,15 @@ type Ledger struct {
 	Head     string         `json:"head,omitempty"` // a 3.0.1 seat branch's last harness commit (3.0.2: each commit is on its task's branch, Commits[].Branch)
 	Commits  []LedgerCommit `json:"commits"`
 	At       time.Time      `json:"at"`
-	// Quarantine is the evidence of a global_config_changed block: the
-	// seat's tree as it stood (never committed or pushed), its diff digest
-	// and the config diff. Nothing of the seat's work is committed until the
-	// owner clears it, and then only that same tree.
-	Quarantine *LedgerQuarantine `json:"quarantine,omitempty"`
-	// Cleared are the quarantines the owner cleared and the commit step then
-	// lifted, each with its ClearRecord: the sealed ledger is the one place a
-	// ClearRecord lives, so "this owner answer was used" means a ClearRecord
-	// with its event id is on this ledger (ClearEventUsed).
-	Cleared []LedgerQuarantine `json:"cleared,omitempty"`
-	// Seeded marks an entry created by a clear of a quarantine that lived in
-	// the task store alone: it has no worktree, branch or base. RecordBase
-	// continues it, keeping the clear history; until then it is "no diff yet".
-	Seeded bool `json:"seeded,omitempty"`
+	// Quarantine, Cleared and Seeded are the records of the quarantine that
+	// brief 31-1 deleted (a config-drift block, the owner's signed clears, an
+	// entry seeded by a clear). Nothing writes or honors them any more; they
+	// stay in the struct only because the seal is computed over it, so a
+	// ledger sealed before 3.1 still verifies, and the evidence ref of a
+	// legacy quarantine is still checked and expired like any other.
+	Quarantine *LedgerQuarantine  `json:"quarantine,omitempty"`
+	Cleared    []LedgerQuarantine `json:"cleared,omitempty"`
+	Seeded     bool               `json:"seeded,omitempty"`
 	// Discarded are the trees CleanSeat took off the worktree before a new
 	// lease (a refused, failed or expired attempt's leftovers), kept as
 	// evidence.
@@ -127,7 +120,7 @@ var pushKindOf = grants.PushKind
 // commit time (D2).
 const ReasonPushTargetUnacknowledged = "push_target_unacknowledged"
 
-// CheckTarget is the launch's check of a target (D2): the push URL is an
+// CheckTarget is the commit step's check of a target (D2): the push URL is an
 // absolute URL of the admitted schemes (grants.PushKind), and a local one
 // carries the owner's ack. An empty push URL is no push (push_url_missing).
 func CheckTarget(t Target) error {
@@ -150,8 +143,11 @@ func CheckTarget(t Target) error {
 }
 
 // LaunchTarget is the launch's reading of the grant with the gh pin (the
-// registry's pins, re-hashed now): required for an https push, recorded
-// for the PR calls when pinned. The verified gh is copied, from its hashed
+// registry's pins, re-hashed now): recorded for the push and the PR calls
+// when pinned. It never checks the target (brief 31-1: CheckTarget runs in
+// the commit step, where the push happens); its error is only a gh pin
+// that is present and does not verify, and the target it returns then
+// carries no gh. The verified gh is copied, from its hashed
 // descriptor, into toolsDir (ToolsDir of the session root, core-written,
 // 0700) and the copy re-hashed; the target names the copy (the fourth
 // pass: git execs the helper by pathname, never the registry path).
@@ -176,7 +172,7 @@ func LaunchTarget(g grants.Resolved, home, toolsDir string) (Target, error) {
 			t.GhPath, t.GhSHA256, t.GhPinPath = c.Path, c.Digest, pin.Path
 		}
 	}
-	return t, CheckTarget(t)
+	return t, nil
 }
 
 // TargetFor is the launch's reading of the owner's grant: the one merge
@@ -223,51 +219,31 @@ type EvidenceRef struct {
 	RetainUntil *time.Time `json:"retain_until,omitempty"`
 }
 
-// LedgerQuarantine is one quarantine of a seat's branch.
+// LedgerQuarantine is the record shape of a legacy quarantine (deleted by
+// brief 31-1; kept so a sealed ledger written before 3.1 still verifies).
 type LedgerQuarantine struct {
-	Task       string                  `json:"task"`
-	Reason     string                  `json:"reason,omitempty"` // global_config_changed | claude_config_changed
-	Parent     string                  `json:"parent,omitempty"`
-	Tree       string                  `json:"tree,omitempty"`
-	DiffDigest string                  `json:"diff_digest,omitempty"`
-	Snapshot   string                  `json:"snapshot_error,omitempty"` // why no tree was kept
-	Config     []seatexec.ConfigChange `json:"config_changes"`
-	// Launch is the launch id (seat incarnation) the condition was seen in.
-	Launch    string     `json:"launch,omitempty"`
-	At        time.Time  `json:"at"`
-	ClearedAt *time.Time `json:"cleared_at,omitempty"`
-	ClearedBy string     `json:"cleared_by,omitempty"`
+	Task       string               `json:"task"`
+	Reason     string               `json:"reason,omitempty"`
+	Parent     string               `json:"parent,omitempty"`
+	Tree       string               `json:"tree,omitempty"`
+	DiffDigest string               `json:"diff_digest,omitempty"`
+	Snapshot   string               `json:"snapshot_error,omitempty"`
+	Config     []legacyConfigChange `json:"config_changes"`
+	Launch     string               `json:"launch,omitempty"`
+	At         time.Time            `json:"at"`
+	ClearedAt  *time.Time           `json:"cleared_at,omitempty"`
+	ClearedBy  string               `json:"cleared_by,omitempty"`
 	EvidenceRef
-	// Clear is the owner's signed clear record (R1 of the milestone B first
-	// pass): a clear counts only when its signature verifies against a
-	// trusted key of the owner's trust store.
-	Clear *ClearRecord `json:"clear,omitempty"`
+	Clear *legacyClearRecord `json:"clear,omitempty"`
 }
 
-// ClearSigner signs the owner's clear (the core's Ed25519 issuer key,
-// operatorauth.LoadEd25519Signer); ClearVerifier verifies it (the owner's
-// trust store, operatorauth.AuthorizationTrustStore).
-type (
-	ClearSigner interface {
-		KeyID() string
-		Sign([]byte) ([]byte, error)
-	}
-	ClearVerifier interface {
-		Verify(keyID string, payload, signature []byte) error
-	}
-)
+// legacyConfigChange is the shape of a legacy quarantine's config diff entry.
+type legacyConfigChange struct {
+	File, Preflight, Detail string
+}
 
-// ErrAlreadyCleared: the quarantine was cleared (by another caller) before
-// this one took the ledger lock; the returned ledger carries that record.
-var ErrAlreadyCleared = errors.New("already_cleared")
-
-// ClearSchema versions ClearRecord.
-const ClearSchema = 1
-
-// ClearRecord is the owner's signed clear of one quarantine: it names the
-// seat, the task, the kept tree and diff digest and the quarantine's time,
-// so a signature cannot be moved to another quarantine.
-type ClearRecord struct {
+// legacyClearRecord is the shape of a legacy owner's signed clear.
+type legacyClearRecord struct {
 	Schema        int       `json:"schema"`
 	Seat          string    `json:"seat"`
 	Task          string    `json:"task"`
@@ -276,111 +252,12 @@ type ClearRecord struct {
 	QuarantinedAt time.Time `json:"quarantined_at"`
 	ClearedAt     time.Time `json:"cleared_at"`
 	KeyID         string    `json:"key_id"`
-	// GateID, EventID and ConfigDigest are the Buzz-signed clear's proof
-	// (phase 5): the quarantine_clear gate, the id of the owner's answer
-	// event, and the digest of the config diff the request named. They are
-	// inside the signed bytes; a clear without them is the pty-only clear.
-	GateID       string `json:"gate_id,omitempty"`
-	EventID      string `json:"event_id,omitempty"`
-	ConfigDigest string `json:"config_digest,omitempty"`
-	// Launch and Condition name the incarnation and the condition cleared:
-	// on that launch the exit check does not raise that condition again; a
-	// new lease is a new launch and detection runs fresh (F4).
-	Launch    string `json:"launch,omitempty"`
-	Condition string `json:"condition,omitempty"`
-	Signature string `json:"signature,omitempty"` // base64 Ed25519 over Payload()
-}
-
-// Payload is the signed bytes: the record without its signature.
-func (c ClearRecord) Payload() []byte {
-	c.Signature = ""
-	raw, _ := json.Marshal(c)
-	return append([]byte("amq-squad seat clear\n"), raw...)
-}
-
-// Verified reports whether the clear is the owner's signed record for this
-// seat's quarantine q.
-func (c *ClearRecord) Verified(seat string, q *LedgerQuarantine, v ClearVerifier) bool {
-	if c == nil || v == nil || q == nil || q.ClearedAt == nil || c.Schema != ClearSchema || c.Seat != seat || c.Task != q.Task ||
-		c.Tree != q.Tree || c.DiffDigest != q.DiffDigest || !c.QuarantinedAt.Equal(q.At) || !c.ClearedAt.Equal(*q.ClearedAt) {
-		return false
-	}
-	sig, err := base64.StdEncoding.DecodeString(c.Signature)
-	return err == nil && v.Verify(c.KeyID, c.Payload(), sig) == nil
-}
-
-// ClearQuarantine records the owner's signed clear on the seat's ledger;
-// the next commit step for that task commits the kept tree only. Without a
-// signer nothing is cleared.
-func ClearQuarantine(root, handle string, signer ClearSigner, now time.Time) (Ledger, error) {
-	return ClearQuarantineWith(root, handle, signer, now, nil)
-}
-
-// ClearGate is the owner's answer a Buzz-signed clear carries into its record.
-type ClearGate struct {
-	GateID, EventID, ConfigDigest string
-}
-
-// ClearQuarantineWith is ClearQuarantine whose record also carries the
-// answer's proof: authorize runs under the ledger lock on the quarantine
-// being cleared and returns the proof, or refuses, in which case nothing is
-// written. A nil authorize is the pty-only clear.
-func ClearQuarantineWith(root, handle string, signer ClearSigner, now time.Time, authorize func(q *LedgerQuarantine) (ClearGate, error)) (Ledger, error) {
-	return ClearQuarantineSeeded(root, handle, signer, now, nil, authorize)
-}
-
-// ClearQuarantineSeeded is ClearQuarantineWith for a seat whose quarantine
-// lives in the task store alone (hooks_silent, or a ledger with no
-// quarantine): seed is that quarantine, recorded on the handle's ledger
-// (created when there is none) so the signed clear record has a place.
-func ClearQuarantineSeeded(root, handle string, signer ClearSigner, now time.Time, seed *LedgerQuarantine, authorize func(q *LedgerQuarantine) (ClearGate, error)) (Ledger, error) {
-	var out Ledger
-	if signer == nil {
-		return out, fmt.Errorf("seat clear needs the owner's signing key")
-	}
-	err := withLedgerLock(root, handle, func() error {
-		l, err := ReadLedger(root, handle)
-		if err != nil && !(seed != nil && os.IsNotExist(err)) {
-			return err
-		}
-		if err != nil {
-			l = Ledger{Schema: LedgerSchema, Handle: handle, At: now.UTC(), Commits: []LedgerCommit{}, Seeded: true}
-		}
-		if seed != nil && l.Quarantine == nil {
-			sq := *seed
-			l.Quarantine = &sq
-		}
-		if l.Quarantine != nil && l.Quarantine.ClearedAt != nil {
-			// another caller's record is already on the ledger; this caller
-			// authorized nothing, so it is not a success
-			out = l
-			return ErrAlreadyCleared
-		}
-		if l.Quarantine == nil {
-			out = l
-			return nil
-		}
-		q := l.Quarantine
-		at := now.UTC()
-		c := ClearRecord{Schema: ClearSchema, Seat: handle, Task: q.Task, Tree: q.Tree, DiffDigest: q.DiffDigest, QuarantinedAt: q.At, ClearedAt: at, KeyID: signer.KeyID(),
-			Launch: q.Launch, Condition: q.Reason}
-		if authorize != nil {
-			g, err := authorize(q)
-			if err != nil {
-				return err
-			}
-			c.GateID, c.EventID, c.ConfigDigest = g.GateID, g.EventID, g.ConfigDigest
-		}
-		sig, err := signer.Sign(c.Payload())
-		if err != nil {
-			return fmt.Errorf("sign the clear: %w", err)
-		}
-		c.Signature = base64.StdEncoding.EncodeToString(sig)
-		q.ClearedAt, q.ClearedBy, q.Clear = &at, "owner ("+c.KeyID+")", &c
-		out = l
-		return writeLedger(root, l)
-	})
-	return out, err
+	GateID        string    `json:"gate_id,omitempty"`
+	EventID       string    `json:"event_id,omitempty"`
+	ConfigDigest  string    `json:"config_digest,omitempty"`
+	Launch        string    `json:"launch,omitempty"`
+	Condition     string    `json:"condition,omitempty"`
+	Signature     string    `json:"signature,omitempty"`
 }
 
 // LedgerLease is one lease's start on the seat (3.0.2 t23): the task's
@@ -612,8 +489,8 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 			return err
 		}
 		if err == nil && l.Seeded && l.Worktree == "" {
-			// a seed (a clear of a task-store quarantine) is continued, not
-			// replaced: the base lands in it and the clear history stays
+			// a legacy seed (a clear of a task-store quarantine, before 3.1)
+			// is continued, not replaced: the base lands in it
 			l.Worktree, l.Branch, l.Base, l.Seeded = worktree, branch, strings.TrimSpace(base), false
 			if target != nil {
 				l.Target = *target
@@ -660,9 +537,6 @@ func RecordTarget(root, handle string, target Target) (Ledger, error) {
 // is not a git checkout records nothing and returns an error the caller may
 // ignore: the commit step then refuses with base_unrecorded.
 func RecordWorktreeBase(gitBin, root, handle, worktree, branch string, target Target, now time.Time) (Ledger, error) {
-	if err := CheckTarget(target); err != nil {
-		return Ledger{}, err
-	}
 	if gitBin == "" {
 		gitBin = "git"
 	}
@@ -678,27 +552,4 @@ func RecordWorktreeBase(gitBin, root, handle, worktree, branch string, target Ta
 		return Ledger{}, err
 	}
 	return recordBase(root, handle, worktree, branch, head, &target, now)
-}
-
-// ClearEventUsed says whether a ClearRecord with this owner answer's event id
-// is on the seat's sealed ledger (the pending quarantine's or a lifted one's).
-// A ledger that cannot be read is an error, never "unused".
-func ClearEventUsed(root, handle, eventID string) (bool, error) {
-	l, err := ReadLedger(root, handle)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	qs := l.Cleared
-	if l.Quarantine != nil {
-		qs = append(append([]LedgerQuarantine{}, qs...), *l.Quarantine)
-	}
-	for _, q := range qs {
-		if q.Clear != nil && q.Clear.EventID != "" && q.Clear.EventID == eventID {
-			return true, nil
-		}
-	}
-	return false, nil
 }

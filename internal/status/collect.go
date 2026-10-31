@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/activity"
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
@@ -126,6 +127,7 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 			joinLaunchRecord(&seat, staged)
 		}
 	}
+	seat.Warnings = seatWarnings(o.Root, handle)
 	rec, err := launch.Read(dir)
 	switch {
 	case err == nil:
@@ -177,6 +179,39 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 		}
 	}
 	return seat, led.tokens
+}
+
+// seatWarnings are a Claude seat's warnings from its core-staged launch
+// record (brief 31-1: what used to refuse the seat is a line here): a seat
+// that ran (its accepted proof in the launch ledger) with no hook report
+// since, its worktree's Claude allow rules, and a CLAUDE.md that imports a
+// file outside the worktree. Lock-free reads only.
+func seatWarnings(root, handle string) []string {
+	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return nil
+	}
+	rec, err := launch.Decode(raw)
+	if err != nil || rec.Runtime != "claude" {
+		return nil
+	}
+	var out []string
+	if proof, err := launch.ReadProof(root, handle); err == nil && proof.PID > 0 && proof.LaunchID == rec.LaunchID {
+		if n, err := claudeseat.ReportsSince(root, handle, proof.At); err == nil && n == 0 {
+			out = append(out, claudeseat.HooksSilent+": no hook report since the seat's launch at "+proof.At.UTC().Format(time.RFC3339))
+		}
+	}
+	worktree := firstNonEmpty(rec.Worktree, rec.CWD)
+	if worktree == "" {
+		return out
+	}
+	if rules := claudeseat.WorktreeAllowRules(worktree); len(rules) > 0 {
+		out = append(out, claudeseat.AllowRulesPresent+": "+strings.Join(rules, "; "))
+	}
+	if ext := claudeseat.ExternalIncludes(worktree); len(ext) > 0 {
+		out = append(out, claudeseat.ExternalIncludesPending+": "+strings.Join(ext, "; "))
+	}
+	return out
 }
 
 // joinLaunchRecord fills the seat row's identity fields from a launch record;

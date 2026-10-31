@@ -18,20 +18,15 @@ func SeatPool(seat seatlaunch.Seat) task.Pool {
 	return task.Pool{Runtime: seat.Runtime, Model: seat.Model, Effort: seat.Effort}
 }
 
-// Roster is the squad's roster: every seat of the seat list that can start.
-// The lead's own seat is left out (the roster's tmux session holds seats
-// only: a lead inside it keeps the binding present, and every relaunch is
-// refused), as is a seat whose worktree is missing or is the repository root
-// (the commit step moves the seat branch, so it was never started); each is
-// named in excluded with the reason.
+// Roster is the squad's roster: every seat of the seat list but the lead's
+// own (the roster's tmux session holds seats only: a lead inside it keeps
+// the binding present, and every relaunch is refused), which is named in
+// excluded with the reason. squad.yaml derives every seat's worktree (brief
+// 31-1), so no seat is left out for its worktree.
 func (s *Slots) Roster(lead string) (roster []scheduler.RosterSeat, excluded []string) {
 	for _, seat := range s.Squad.Seats {
 		if lead != "" && seat.Handle == lead {
-			excluded = append(excluded, fmt.Sprintf("seat %s is the lead (--lead); the lead runs outside the roster's tmux session", seat.Handle))
-			continue
-		}
-		if _, err := s.checkWorktree(seat); err != nil {
-			excluded = append(excluded, err.Error())
+			excluded = append(excluded, fmt.Sprintf("seat %s is the lead (squad.yaml's lead); the lead runs outside the roster's tmux session", seat.Handle))
 			continue
 		}
 		roster = append(roster, scheduler.RosterSeat{Handle: seat.Handle, Pool: SeatPool(seat), Worktree: cleanPath(seat.Worktree)})
@@ -46,7 +41,7 @@ func (s *Slots) PlanRoster(reqs []scheduler.SeatRequest) (seatlaunch.Squad, erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.inUse == nil {
-		s.inUse, s.byReq, s.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+		s.inUse, s.byReq = map[string]string{}, map[string]string{}
 	}
 	q := s.Squad
 	q.Seats = nil

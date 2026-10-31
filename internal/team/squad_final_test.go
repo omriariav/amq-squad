@@ -137,7 +137,7 @@ func TestSquadYamlSchemaTwoIsRefusedAndNamed(t *testing.T) {
 // with the key named, one case per key, flat and (for the map keys) nested.
 func TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed(t *testing.T) {
 	// the brief's set, written out: the code's list may grow, never shrink
-	required := []string{"merge", "merge.push_url", "merge.local_push_ack", "push_url", "local_push_ack", "clear", "clear.signature",
+	required := []string{"merge", "merge.push_url", "merge.local_push_ack", "push_url", "local_push_ack",
 		"verifiers", "verifier_goproxy", "verifier_timeout", "verifier_output_limit", "verifier_parallelism", "default_branch", "fleet",
 		"max_squads", "permitted_repositories", "pins", "registry", "unprotected_paths", "remove_protected_paths"}
 	keys := NeverSettableKeys()
@@ -167,7 +167,6 @@ func TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed(t *testing.T) {
 	nested := map[string]string{
 		"merge.push_url":       "merge:\n  - repository: o/r\n    push_url: git@github.com:o/r.git\n    local_push_ack: true\n",
 		"merge.local_push_ack": "merge:\n  - repository: o/r\n    local_push_ack: true\n",
-		"clear.signature":      "clear:\n  signature: pty_only\n",
 		"verifiers":            "verifiers:\n  implement: go test ./...\n",
 		"fleet":                "fleet:\n  max_squads: 4\n",
 	}
@@ -183,7 +182,7 @@ func TestSquadYamlNeverSettableKeysAreRefusedWithTheKeyNamed(t *testing.T) {
 // A4, the doc side: a key nested under a never-settable one is also never
 // settable (a dotted or flat spelling of it).
 func TestNeverSettableCoversTheKeysUnderOne(t *testing.T) {
-	for _, key := range []string{"merge.base_branch", "verifiers.implement", "clear.signature", "registry.pins"} {
+	for _, key := range []string{"merge.base_branch", "verifiers.implement", "registry.pins"} {
 		if !IsNeverSettable(key) {
 			t.Errorf("%s is not never-settable", key)
 		}

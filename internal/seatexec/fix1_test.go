@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
@@ -14,8 +13,7 @@ import (
 
 // Fix 1 item 5 (amendment 28): for a Codex seat the sandbox enforces the
 // global-config denial, so a Codex argv without the workspace-write sandbox
-// (or with a bypass) is refused. Acceptance 10 is this refusal plus the
-// post-exit preflight diff below (milestone B runs it at every seat exit).
+// (or with a bypass) is refused.
 func TestSeatExecRefusesCodexWithoutTheSandbox(t *testing.T) {
 	for _, argv := range [][]string{
 		{"--model", "m"},
@@ -34,29 +32,6 @@ func TestSeatExecRefusesCodexWithoutTheSandbox(t *testing.T) {
 	f.stage()
 	if err := f.run(Options{Argv: append([]string{filepath.Join(f.bin, "codex"), "--sandbox", "workspace-write", "--ask-for-approval", "on-request"}, CodexSandboxPins(false)...)}); err != nil {
 		t.Fatalf("workspace-write: %v", err)
-	}
-}
-
-func TestPreflightDiffCatchesAGlobalConfigWrite(t *testing.T) {
-	f := newFixture(t, "claude")
-	f.stage()
-	if err := f.run(Options{}); err != nil {
-		t.Fatal(err)
-	}
-	if changes, err := PreflightDiff(f.home); err != nil || len(changes) != 0 {
-		t.Fatalf("untouched config: %+v %v", changes, err)
-	}
-	// What a Claude seat without its hook could do: rewrite the owner's file.
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"hooks":{}}`, 0o600)
-	changes, err := PreflightDiff(f.home)
-	if err != nil || len(changes) != 1 || !strings.HasSuffix(changes[0].File, filepath.Join(".claude", "settings.json")) {
-		t.Fatalf("a seat write went unseen: %+v %v", changes, err)
-	}
-	// A config file created after the preflight copy is a change too.
-	os.MkdirAll(filepath.Join(f.home, ".codex"), 0o700)
-	write(t, filepath.Join(f.home, ".codex", "config.toml"), "x = 1\n", 0o600)
-	if changes, _ := PreflightDiff(f.home); len(changes) != 2 {
-		t.Fatalf("a new codex config went unseen: %+v", changes)
 	}
 }
 
@@ -123,34 +98,5 @@ func TestIdentityProofNeverDrains(t *testing.T) {
 	}
 	if strings.Join(f.drainArgs[1:], " ") != "env --me cto --json" {
 		t.Fatalf("the proof ran %v", f.drainArgs)
-	}
-}
-
-// Fix 1 item 9: concurrent preflight writers each use their own temp file.
-func TestPreflightCopyConcurrentWriters(t *testing.T) {
-	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, ".claude"), 0o700)
-	write(t, filepath.Join(home, ".claude", "settings.json"), strings.Repeat("x", 1<<16), 0o600)
-	var wg sync.WaitGroup
-	errs := make(chan error, 64)
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 10; j++ {
-				if err := WritePreflight(home, true); err != nil {
-					errs <- err
-					return
-				}
-			}
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatalf("concurrent preflight write: %v", err)
-	}
-	if b, _ := os.ReadFile(filepath.Join(PreflightDir(home), "claude-settings.json")); len(b) != 1<<16 {
-		t.Fatalf("copy has %d bytes", len(b))
 	}
 }

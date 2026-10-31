@@ -192,9 +192,9 @@ the owner answers it. See `amq-squad:wizard` for the squad.yaml keys.
 | The owner never saw a blocker | It surfaced only in a seat pane or worker thread | Raise the typed gate and confirm it appears in `gate status` and `status` |
 | A seat's done task never reaches review | The commit step refused a path | Read the block's reason code; widen with `task widen` or send the seat back |
 | `task widen: takes no --me` | The scheduler proves the lead from the process | Drop `--me`; run it from your own seat |
-| `task widen: no running scheduler` | The scheduler is not running for this root | It runs beside the lead (`lead --team --scheduler-seats FILE`) |
+| `task widen: no running scheduler` | The scheduler is not running for this root | It runs beside the lead (`lead --team` in the repository) |
 | `merge-train` refuses a PR with `task_unbound` | No task was bound to that PR | Run the commit step with `--open-pr` for that task |
-| A seat is quarantined after a run | Its global agent config changed (`global_config_changed`) | Only the owner clears it, with `seat clear` from the owner's own terminal |
+| A seat carries a warning in status (`claude_hooks_silent`, `claude_allow_rules_present`) | A Claude seat's hook made no report, or its worktree carries allow rules | A warning, not a stop: tell the owner if it matters to the task |
 
 ## Recovery
 

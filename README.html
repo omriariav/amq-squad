@@ -455,31 +455,19 @@ only. Seats never probe: inside a seat <code>doctor --probe</code> and
 <code>doctor --write-registry</code> refuse
 (<code>seat_owner_state_refused</code>), and the owner runs
 <code>amq-squad doctor --probe</code> from their own terminal.</p>
-<p><strong>4. The pins.</strong> Seats never run a tool from
-<code>PATH</code>. The registry's <code>pins:</code> list names each
-harness tool by absolute path and sha256, and every launch re-hashes it
-(<code>tool_unpinned</code> or <code>tool_pin_mismatch</code> refuse the
-launch):</p>
-<ul>
-<li><strong>claude:</strong> a hard link named <code>claude</code> to
-the versioned Claude Code binary on the same filesystem (a symlink is
-refused), for example
-<code>ln ~/.local/share/claude/versions/&lt;version&gt; ~/.amq-squad/bin/claude</code>,
-then its path and <code>shasum -a 256</code> in the pin. Re-pin after
-every Claude Code update. Without it a launch with a Claude seat is
-refused.</li>
-<li><strong>gh:</strong> the same for gh, needed for an HTTPS push
-target. doctor's <code>gh pin</code> row prints the exact entry to
-add.</li>
-</ul>
+<p><strong>4. The gh pin.</strong> A seat's provider (claude, codex,
+grok, cursor-agent) resolves on <code>PATH</code>; nothing is pinned or
+probed before a seat starts. The one pin is gh, needed for an HTTPS push
+target: the registry's <code>pins:</code> list names it by absolute path
+and sha256, and the commit step re-hashes it before the push
+(<code>tool_unpinned</code> or <code>tool_pin_mismatch</code> refuse
+that push, never the launch). doctor's <code>gh pin</code> row prints
+the exact entry to add.</p>
 <div class="sourceCode" id="cb4"><pre
 class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">pins</span><span class="kw">:</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> claude</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">path</span><span class="kw">:</span><span class="at"> /Users/you/.amq-squad/bin/claude</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">sha256</span><span class="kw">:</span><span class="at"> &lt;64 hex&gt;</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> gh</span></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">path</span><span class="kw">:</span><span class="at"> /opt/homebrew/bin/gh</span></span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">sha256</span><span class="kw">:</span><span class="at"> &lt;64 hex&gt;</span></span></code></pre></div>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> gh</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">path</span><span class="kw">:</span><span class="at"> /opt/homebrew/bin/gh</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">sha256</span><span class="kw">:</span><span class="at"> &lt;64 hex&gt;</span></span></code></pre></div>
 <p><strong>5. The token file.</strong> Claude seats authenticate with a
 long-lived token, not your login: run <code>claude setup-token</code>
 and save the token it prints, alone, to
@@ -530,28 +518,30 @@ per-seat flag is refused). A custom role is staged first with
 <code>.amq-squad/briefs/&lt;session&gt;.md</code>:</p>
 <div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> brief <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--dry-run</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> brief <span class="at">--seed-from</span> file:./prompt.md <span class="at">--session</span> issue-96</span></code></pre></div>
-<p><strong>10. Launch.</strong> Three entry points, each one AMQ launch
-request with every seat behind <code>seat-exec</code>:</p>
+<p><strong>10. Launch.</strong> squad.yaml is the one source: each
+seat's handle, role, runtime (the binary), model and effort, the session
+and the lead's handle (<code>lead:</code>). A seat's worktree is derived
+per handle under <code>&lt;repo&gt;/.worktrees/&lt;handle&gt;</code>,
+never the repository root. Two entry points, each one AMQ launch request
+with every seat behind <code>seat-exec</code>:</p>
 <ul>
-<li><p><code>amq-squad launch --seats seats.json</code>: the typed seat
-list (JSON; the format is in <code>amq-squad launch --help</code>). A
-required action such as AMQ's trust confirmation stops the launch with
-exit 10 and is never answered for you.</p></li>
-<li><p>the pi lead in team mode with the scheduler beside it; the lead
-never edits code, it dispatches through the task store, and the
-scheduler launches the squad's roster at start:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--scheduler-seats</span> seats.json <span class="at">--dry-run</span></span></code></pre></div>
+<li><p>the pi lead in team mode with the scheduler beside it, run in the
+repository; the lead never edits code, it dispatches through the task
+store, and the scheduler launches every seat but the lead at start:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--dry-run</span></span></code></pre></div>
 <p>(drop <code>--dry-run</code> to start it; a pi-runtime build only).
-The lead takes the seats file's AMQ identity (its session root, the
-<code>--lead</code> handle); an <code>AM_ME</code>/<code>AM_ROOT</code>
-already in the environment must match it or it refuses.</p></li>
+The lead takes squad.yaml's AMQ identity (its session root, its
+<code>lead:</code> handle); an <code>AM_ME</code>/<code>AM_ROOT</code>
+already in the environment must match it or it refuses. One lead per
+root: a second <code>lead --team</code> on the same root is refused
+<code>lead_running</code>, naming the first lead's pid and tmux pane.
+Every launch carries the owner's standing answer to AMQ's trust
+confirmation.</p></li>
 <li><p>the mayor inside the owner's fleet grant:
 <code>operator start-squad</code> writes the squad.yaml through the same
 digest flow and launches it; in manual mode it returns a proposal
 instead.</p></li>
 </ul>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> launch <span class="at">--seats</span> seats.json <span class="at">--dry-run</span></span></code></pre></div>
 <p>In a directory with no AMQ identity, <code>amq-squad lead</code> (or
 a bare <code>amq-squad</code> on a terminal) starts the pi lead in solo
 mode: its state lives under <code>~/.amq-squad/solo/</code>, nothing is
@@ -560,11 +550,11 @@ written in the repository.</p>
 <p>The lead's loop is one status read, one bounded action, then park;
 AMQ wake delivers the next message. <code>amq-squad:orchestrator</code>
 is the lead's playbook.</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Fix the parser&quot;</span> <span class="at">--class</span> implement <span class="at">--files</span> internal/parse/ <span class="at">--pool</span> claude:sonnet:medium <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task list <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Fix the parser&quot;</span> <span class="at">--class</span> implement <span class="at">--files</span> internal/parse/ <span class="at">--pool</span> claude:sonnet:medium <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task list <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span></code></pre></div>
 <ul>
 <li><strong>Status</strong> is the versioned contract of <a
 href="docs/status-contract.md">docs/status-contract.md</a>: four buckets
@@ -591,9 +581,9 @@ tip fetched when it is granted, with its own draft PR; between tasks the
 seat's worktree rests on <code>seat/&lt;handle&gt;</code> at the
 launch's base.</li>
 <li><strong>The roster.</strong> The scheduler launches every seat of
-the seat list that has a worktree of its own in one AMQ launch at start;
-a seat with no lease is parked and gets the next task of its pool. At
-every launch, the roster's included, a seat's worktree and its
+squad.yaml but the lead in one AMQ launch at start; a seat with no lease
+is parked and gets the next task of its pool. At every launch, the
+roster's included, a seat's worktree and its
 <code>seat/&lt;handle&gt;</code> branch start from the base branch's tip
 fetched from the grant's push URL, the launch record carries that base,
 and a seat branch holding commits the tip does not, remote and unmerged
@@ -609,10 +599,8 @@ the scheduler run outside the roster's tmux session (the lead's own seat
 is never in the roster). A restarted scheduler adopts the live seats. A
 roster launch that AMQ refuses stops the scheduler with the stage, AMQ's
 reason and the detail in its decisions log, and the lead's supervisor
-does not restart it;
-<code>amq-squad lead --team --scheduler-seats seats.json --trust</code>
-is the owner's standing answer to AMQ's trust confirmation for that
-session. A seat launch that fails or never resolves is a
+does not restart it, nor a scheduler refused because another holds the
+squad's lock. A seat launch that fails or never resolves is a
 <code>seat_launch_failed</code> decision with its stage, AMQ's reason
 code and the redacted detail; status shows that reason on the seat's row
 in place of <code>seat_starting</code>, and a second failure of the pool
@@ -629,18 +617,23 @@ owner's gh, outside any seat. Seats never merge.</li>
 <code>tag</code> and <code>github_release</code> gates;
 <code>release publish</code> runs each only with its verified owner
 answer.</li>
-<li><strong>Quarantine.</strong> A seat that changed the owner's global
-agent config is quarantined; only the owner clears it, with
-<code>seat clear</code> from the owner's own terminal.</li>
+<li><strong>Seat warnings.</strong> What used to stop a seat at launch
+is a warning on its status row: a Claude seat whose hook made no report
+since its launch (<code>claude_hooks_silent</code>), its worktree's
+Claude allow rules (<code>claude_allow_rules_present</code>), a
+CLAUDE.md importing a file outside its worktree
+(<code>claude_external_includes_pending</code>). The seat starts;
+nothing is quarantined. seat-exec still denies a seat's write to the
+owner's global agent config.</li>
 </ul>
 <p>Check whether an action is approved, and the evidence of a merge or a
 release:</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--gate</span> rel-v3 <span class="at">--action</span> tag <span class="at">--target</span> <span class="st">&quot;git tag v3.0.0&quot;</span> <span class="at">--json</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;merge evidence failed&quot;) where no merge-train run is recorded, by design</span></span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--repository</span> you/app <span class="at">--pr</span> 12 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span>
-<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;release evidence failed&quot;) where no release flow is recorded, by design</span></span>
-<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--tag</span> v3.0.0 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--gate</span> rel-v3 <span class="at">--action</span> tag <span class="at">--target</span> <span class="st">&quot;git tag v3.0.0&quot;</span> <span class="at">--json</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;merge evidence failed&quot;) where no merge-train run is recorded, by design</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--repository</span> you/app <span class="at">--pr</span> 12 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;release evidence failed&quot;) where no release flow is recorded, by design</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--tag</span> v3.0.0 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span></code></pre></div>
 <p><code>verify action</code> exits 0 approved, 10 pending, 11 denied,
 12 no gate, 13 unbound.</p>
 <h2 id="the-owners-buzz-face">The owner's Buzz face</h2>
@@ -669,9 +662,9 @@ the core of the squad that raised it fetches and verifies the signed
 event itself. An answer outside the thread is refused with one
 re-ask.</li>
 </ul>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 until fleet.yaml names the operator session (or --lead names a launched lead)</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> remote status</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 until fleet.yaml names the operator session (or --lead names a launched lead)</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> remote status</span></code></pre></div>
 <h2 id="command-map">Command map</h2>
 <p><code>amq-squad --help</code> and each verb's <code>--help</code> are
 the reference. The verbs:</p>
@@ -693,15 +686,15 @@ the reference. The verbs:</p>
 </tr>
 <tr>
 <td>Launch</td>
-<td><code>launch</code>, <code>lead</code>,
-<code>scheduler run/relaunch</code>, <code>seat-exec</code> (AMQ runs
-it), <code>pi run/verify/path</code></td>
+<td><code>lead</code>, <code>scheduler run/relaunch</code>,
+<code>seat-exec</code> (AMQ runs it),
+<code>pi run/verify/path</code></td>
 </tr>
 <tr>
 <td>Work</td>
 <td><code>task add/list/show/claim/renew/done/fail/block/release/reset/set/cancel/widen/reconcile</code>,
 <code>dispatch</code>, <code>seat commit</code>,
-<code>seat clear</code>, <code>worktree</code></td>
+<code>worktree</code></td>
 </tr>
 <tr>
 <td>Hook verbs</td>
@@ -750,25 +743,20 @@ seats have no hooks.</li>
 <li><strong>One owner DM at a time.</strong> The mailbox adapter answers
 a second DM <code>busy</code> while one is open; wait for each result
 row.</li>
-<li><strong>No seats-file compiler.</strong> <code>launch --seats</code>
-and <code>lead --scheduler-seats</code> take a hand-written typed seat
-list; only the mayor's <code>operator start-squad</code> compiles
-squad.yaml into the launch itself.</li>
 <li><strong>The pi runtime is darwin arm64 only</strong> and is not in a
 <code>go install</code> build.</li>
 <li><strong>Open acceptance rows at the tag</strong> (plan 16.4): the
 Claude live rows wait on the owner's token file, the first real
 merge-train run on a harness-bound PR, the pi launch through
-<code>amq launch</code> on the installed AMQ, amq-noc 1.0, and the
-signed <code>seat clear</code> live row.</li>
+<code>amq launch</code> on the installed AMQ, and amq-noc 1.0.</li>
 <li>No v2 verb survives: <code>init</code>, <code>start</code>,
 <code>plan</code>, <code>resume</code>, <code>down</code>,
 <code>wizard</code>, <code>goal</code>, <code>team init/sync</code> and
 the pane drivers are gone, with no aliases.</li>
 </ul>
 <h2 id="uninstall">Uninstall</h2>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> uninstall <span class="at">--project</span> . <span class="at">--session</span> issue-96</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> uninstall <span class="at">--project</span> . <span class="at">--session</span> issue-96</span></code></pre></div>
 <p>A dry run by default: it prints every path it would remove.
 <code>--write</code> removes the session state, the per-seat config
 dirs, the pinned tool copies and the worktrees it created; the owner
@@ -782,9 +770,9 @@ The converter is a dry run unless <code>--write</code> is given, never
 writes <code>grants.yaml</code> or <code>registry.yaml</code> (it writes
 <code>grants.yaml.proposed</code> beside them), and prints every v2
 field it did not map:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (migrate_input_invalid) where no v2 profile exists, by design</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> migrate .amq-squad/team.json</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (migrate_input_invalid) where no v2 profile exists, by design</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> migrate .amq-squad/team.json</span></code></pre></div>
 <h2 id="where-the-plan-and-evidence-live">Where the plan and evidence
 live</h2>
 <table>

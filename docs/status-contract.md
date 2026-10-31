@@ -49,7 +49,12 @@ or bucket: an open gate or a block overrides liveness in `state`, never here),
 empty), `project_path`, `last_activity_at`, `last_message_at`,
 `last_message` (at most 200 characters), `prompt_state` (`running`, `idle`,
 `unknown`), `tokens_in`, `tokens_out` (null when the runtime gives no
-number).
+number), `warnings` (absent when none: one `<code>: <detail>` line per
+seat warning, brief 31-1: `claude_hooks_silent`, a Claude seat that ran
+with no hook report since its launch; `claude_allow_rules_present`, its
+worktree's Claude allow rules; `claude_external_includes_pending`, a
+CLAUDE.md it loads that imports a file outside its worktree; each was a
+launch refusal before 3.1 and is a line, never a refusal, now).
 
 Task row: `id`, `title`, `class`, `task_state` (the store state), `state`,
 `reason_code`, `bucket`, `bucket_marker`, `pool` (`{runtime, model,

@@ -3,7 +3,6 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,60 +60,25 @@ type hookContextData struct {
 	// Worktree is the seat's own working tree from its launch record (2b-2
 	// milestone B): the seat works only there; a task's project_path names
 	// the repository, not the seat's tree.
-	Worktree string `json:"worktree,omitempty"`
-	// ConfigChanged is set when a Claude seat's config dir no longer has the
-	// launch's digest (claude_config_changed): the seat is quarantined.
-	ConfigChanged *hookConfigChange `json:"config_changed,omitempty"`
-	Warnings      []string          `json:"warnings,omitempty"`
+	Worktree string   `json:"worktree,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
-// hookConfigChange is the context call's report of claude_config_changed.
-type hookConfigChange struct {
-	Code        string `json:"code"`
-	Detail      string `json:"detail"`
-	Quarantined bool   `json:"quarantined"`
-}
-
-// checkClaudeConfig is the run-time half of the config dir check (milestone
-// B first pass P1): seat-exec checked the dir immediately before exec; each
-// context call during the run compares it with the digest in the core's
-// staged launch record (never the seat's published copy) and, on a change,
-// quarantines the seat (no new lease; its tree waits for the owner). The
-// quarantine write takes the store's try-lock: a hook never blocks, and the
-// exit check of the commit step catches the change if the store was busy.
-func checkClaudeConfig(id hookIdentity, now time.Time) *hookConfigChange {
+// recordHookReport is the hook's evidence of its own run (P1-10): every
+// hook call of a Claude seat appends a report, so a seat that ran with no
+// report since its launch shows as a silent hook in status (a warning since
+// brief 31-1, never a quarantine). It reads only the core's staged launch
+// record (never the seat's published copy) and never blocks.
+func recordHookReport(id hookIdentity, now time.Time) {
 	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(id.Root, id.Handle), launch.FileName))
 	if err != nil {
-		return nil
+		return
 	}
 	staged, err := launch.Decode(raw)
 	if err != nil || staged.Runtime != "claude" || staged.Handle != id.Handle {
-		return nil
+		return
 	}
-	changed, detail := claudeseat.ConfigDrift(id.Root, staged.Handle, staged.LaunchID, staged.ClaudeConfig)
-	// P1-10: every call reports the digest it saw; a seat that ran with no
-	// report is quarantined at its exit (a removed hook is the signal).
-	if staged.ClaudeConfig != "" {
-		digest, _ := claudeseat.Digest(claudeseat.Dir(id.Root, staged.Handle, staged.LaunchID))
-		_ = claudeseat.RecordReport(id.Root, staged.Handle, claudeseat.Report{At: now.UTC(), Digest: digest, OK: !changed})
-	}
-	if !changed {
-		return nil
-	}
-	c := &hookConfigChange{Code: claudeseat.ConfigChanged, Detail: detail}
-	store, err := taskstore.Open(id.Root)
-	if err != nil {
-		return c
-	}
-	q := taskstore.Quarantine{Handle: id.Handle, Reason: claudeseat.ConfigChanged, Detail: detail, At: now.UTC()}
-	for i := 0; i < 10; i++ {
-		if err = store.QuarantineNoWait(q); !errors.Is(err, taskstore.ErrBusy) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	c.Quarantined = err == nil
-	return c
+	_ = claudeseat.RecordReport(id.Root, staged.Handle, claudeseat.Report{At: now.UTC()})
 }
 
 func runContext(args []string) error {
@@ -182,10 +146,7 @@ func buildHookContext(id hookIdentity, project string, now time.Time) hookContex
 		}
 	}
 	d.Worktree = firstOf(rec.Worktree, rec.CWD)
-	if c := checkClaudeConfig(id, now); c != nil {
-		d.ConfigChanged = c
-		d.Warnings = append(d.Warnings, c.Code+": "+c.Detail+"; the seat is quarantined until the owner clears it (amq-squad seat clear)")
-	}
+	recordHookReport(id, now)
 	project = firstOf(project, rec.TeamHome)
 	rolePath := role.ExistingPath(id.AgentDir)
 	if text, sum, err := readHookFile(rolePath); err == nil {

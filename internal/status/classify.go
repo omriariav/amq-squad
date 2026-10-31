@@ -28,6 +28,9 @@ type SeatInput struct {
 	PromptState                                       string
 	TokensIn                                          *int64
 	TokensOut                                         *int64
+	// Warnings are the seat warnings that replace the deleted launch
+	// refusals (brief 31-1), one "<code>: <detail>" line each.
+	Warnings []string
 }
 
 // GateInput is one gate record (verified by the caller against its answer).
@@ -291,6 +294,7 @@ func classifySeat(in SeatInput, tasks []task.Task, gates map[string]GateInput, a
 		Handle: in.Handle, Role: in.Role, Runtime: in.Runtime, Model: in.Model, Effort: in.Effort, ProjectPath: in.ProjectPath,
 		LastActivityAt: in.LastActivity, LastMessageAt: in.LastMessageAt, LastMessage: truncate(in.LastMessage, lastMessageLimit),
 		PromptState: firstNonEmpty(in.PromptState, "unknown"), TokensIn: in.TokensIn, TokensOut: in.TokensOut,
+		Warnings: in.Warnings,
 	}
 	held := task.HeldBy(in.Handle, tasks)
 	// live is set before the state: a gate or a block overrides liveness in

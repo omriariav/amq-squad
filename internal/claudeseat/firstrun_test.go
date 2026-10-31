@@ -56,9 +56,6 @@ func TestWriteBearsTheFirstRunFacts(t *testing.T) {
 		}
 		return nil
 	})
-	if code, detail := Check(dir, os.Getuid(), w.Digest, "dontAsk"); code != "" {
-		t.Fatalf("check: %s %s", code, detail)
-	}
 }
 
 // A worktree reached through a symlink is trusted under both keys, the path
@@ -84,92 +81,6 @@ func TestWriteTrustsTheResolvedWorktreeToo(t *testing.T) {
 	raw, _ := os.ReadFile(filepath.Join(dir, ".claude.json"))
 	if json.Unmarshal(raw, &cfg) != nil || !cfg.Projects[link].Trusted || !cfg.Projects[real].Trusted || len(w.Seeded) != 3 {
 		t.Fatalf("trust keys %s, seeded %v", raw, w.Seeded)
-	}
-	// The resolved key's fact is in the digest too.
-	delete(cfg.Projects, real)
-	out, _ := json.Marshal(map[string]any{"hasCompletedOnboarding": true, "projects": cfg.Projects})
-	os.WriteFile(filepath.Join(dir, ".claude.json"), out, 0o600)
-	if d, _ := Digest(dir); d == w.Digest {
-		t.Fatal("dropping the resolved worktree's trust kept the digest")
-	}
-}
-
-// The digest covers each first-run fact (the same digest the mode is in):
-// dropping onboarding, the trust, the theme or the plugin changes it, and so
-// does removing .claude.json; Claude Code's own keys in .claude.json do not.
-func TestDigestCoversTheFirstRunFacts(t *testing.T) {
-	for name, mutate := range map[string]func(dir string){
-		"onboarding false": func(dir string) {
-			editJSON(t, filepath.Join(dir, ".claude.json"), func(m map[string]any) { m["hasCompletedOnboarding"] = false })
-		},
-		"trust dropped": func(dir string) {
-			editJSON(t, filepath.Join(dir, ".claude.json"), func(m map[string]any) { delete(m, "projects") })
-		},
-		".claude.json removed": func(dir string) { os.Remove(filepath.Join(dir, ".claude.json")) },
-		"theme dropped": func(dir string) {
-			editJSON(t, filepath.Join(dir, "settings.json"), func(m map[string]any) { delete(m, "theme") })
-		},
-		"plugin disabled": func(dir string) {
-			editJSON(t, filepath.Join(dir, "settings.json"), func(m map[string]any) { m["enabledPlugins"] = map[string]bool{} })
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			dir := Dir(t.TempDir(), "c1", "l")
-			w, err := Write(dir, "dontAsk", "/wt/c1", t0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			editJSON(t, filepath.Join(dir, ".claude.json"), func(m map[string]any) { m["numStartups"] = 7; m["firstStartTime"] = "x" })
-			if d, _ := Digest(dir); d != w.Digest {
-				t.Fatal("Claude Code's own .claude.json keys moved the digest")
-			}
-			mutate(dir)
-			if d, _ := Digest(dir); d == w.Digest {
-				t.Fatalf("%s kept the digest", name)
-			}
-		})
-	}
-}
-
-// Check refuses a config dir that lacks any of the three facts with a named
-// reason, even when the launch recorded the incomplete dir's digest (a
-// writer that left a fact out).
-func TestCheckNamesTheMissingFirstRunFact(t *testing.T) {
-	for name, tc := range map[string]struct {
-		code   string
-		mutate func(dir string)
-	}{
-		"onboarding false": {OnboardingMissing, func(dir string) {
-			editJSON(t, filepath.Join(dir, ".claude.json"), func(m map[string]any) { delete(m, "hasCompletedOnboarding") })
-		}},
-		"no theme": {OnboardingMissing, func(dir string) {
-			editJSON(t, filepath.Join(dir, "settings.json"), func(m map[string]any) { delete(m, "theme") })
-		}},
-		"no .claude.json": {OnboardingMissing, func(dir string) { os.Remove(filepath.Join(dir, ".claude.json")) }},
-		"worktree not trusted": {TrustMissing, func(dir string) {
-			editJSON(t, filepath.Join(dir, ".claude.json"), func(m map[string]any) {
-				m["projects"] = map[string]any{"/elsewhere": map[string]bool{"hasTrustDialogAccepted": true}}
-			})
-		}},
-		"no worktree recorded": {TrustMissing, func(dir string) { os.Remove(filepath.Join(dir, WorktreeFile)) }},
-		"plugin not enabled": {HooksMissing, func(dir string) {
-			editJSON(t, filepath.Join(dir, "settings.json"), func(m map[string]any) { delete(m, "enabledPlugins") })
-		}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			dir := Dir(t.TempDir(), "c1", "l")
-			if _, err := Write(dir, "dontAsk", "/wt/c1", t0); err != nil {
-				t.Fatal(err)
-			}
-			tc.mutate(dir)
-			digest, err := Digest(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if code, detail := Check(dir, os.Getuid(), digest, "dontAsk"); code != tc.code {
-				t.Fatalf("want %s, got %q %s", tc.code, code, detail)
-			}
-		})
 	}
 }
 

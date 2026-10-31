@@ -13,17 +13,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
-	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
-	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
@@ -66,29 +63,10 @@ type Options struct {
 	PaneShell    func(handle string) (pid int, start string, ok bool)
 	CloseProcess func(pid int, start string) error
 	ProofClock   func() time.Time // the token window's clock (default time.Now, monotonic)
-	// KeepPreflight fills only missing preflight copies instead of
-	// refreshing them (the scheduler process, which refreshes once at start).
-	KeepPreflight bool
-	// Standing maps a required action kind to the owner's standing choice
-	// for it (the scheduler process: `scheduler run --trust` is the owner's
-	// standing trust of this squad's launch subjects). An explicit Decisions
-	// entry wins; a standing choice the action does not allow is not used.
-	Standing map[string]string
-	// PermitWorktreeAllowRules relaxes seat-exec's claude_allow_rules_present
-	// refusal (the one named switch of the 2026-10-24 ruling, for when the
-	// live probes show a launch can override worktree allow rules).
-	PermitWorktreeAllowRules bool
 	// Target is the launch's record of the owner's grant for the commit
 	// step's push (repository, base branch, push URL); nil reads the grant
 	// of the squad's project root.
 	Target *seatcommit.Target
-	// ProbeMode asks the pinned Claude Code for the effective permission
-	// mode of a Claude seat's config dir (default: the registry's claude
-	// pin through claudeseat.ProbeMode); a test seam.
-	ProbeMode func(ctx context.Context, pin registry.Pin, dir, mode string) (claudeseat.Probe, error)
-	// PinFor is the registry's claude pin for a Claude seat (default: the
-	// registry under Home, read once per launch); a test seam.
-	PinFor func(s Seat) (registry.Pin, error)
 	// PiShim writes the pi launch shim for the wrapper and returns its path
 	// (default: the embedded runtime must load, then piruntime.EnsureShim
 	// under Home); a test seam.
@@ -106,15 +84,6 @@ type Options struct {
 	// calls it only for a squad with a Codex seat, on the Codex home the
 	// seats read ($CODEX_HOME of Env, else Home/.codex).
 	CodexDialogHook func(codexDir string) seatexec.CodexDialogHook
-	// CodexTrust reads the Codex config's trust entries (default
-	// hostcheck.ReadCodexTrust, read only); a test seam, called only for a
-	// squad with a Codex seat.
-	CodexTrust func(configPath string) (hostcheck.CodexTrust, error)
-	// ClaudeWakeConditions reads a Claude seat's wake conditions from the
-	// config dir claudeseat.Write produces for it (default: a scratch copy,
-	// removed after the read; the seat's own dir is written only after
-	// Prepare); a test seam.
-	ClaudeWakeConditions func(permissionMode, worktree string) SeatWakeConditions
 }
 
 // SeatState is one seat's state after the launch.
@@ -175,30 +144,11 @@ func (o Options) withDefaults() Options {
 	if o.Poll == 0 {
 		o.Poll = 100 * time.Millisecond
 	}
-	if o.ProbeMode == nil {
-		o.ProbeMode = probePinned
-	}
 	if o.PiShim == nil {
 		o.PiShim = defaultPiShim
 	}
 	if o.CodexDialogHook == nil {
 		o.CodexDialogHook = seatexec.ReadCodexDialogHook
-	}
-	if o.CodexTrust == nil {
-		o.CodexTrust = hostcheck.ReadCodexTrust
-	}
-	if o.ClaudeWakeConditions == nil {
-		o.ClaudeWakeConditions = scratchClaudeWakeConditions
-	}
-	if o.PinFor == nil {
-		home := o.Home
-		var once sync.Once
-		var pin registry.Pin
-		var perr error
-		o.PinFor = func(Seat) (registry.Pin, error) {
-			once.Do(func() { pin, perr = registryClaudePin(home) })
-			return pin, perr
-		}
 	}
 	return o
 }
@@ -216,22 +166,6 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("rules file: %w", err)
 	}
-	// A Claude seat's executable is the registry's claude pin (the narrow
-	// pass's HIGH): Compile names it and refuses another provider, the probe
-	// runs it, and seat-exec re-hashes it before exec.
-	for _, s := range q.Seats {
-		if s.Runtime != "claude" {
-			continue
-		}
-		pin, err := o.PinFor(s)
-		if err != nil {
-			return res, fmt.Errorf("seat %s: %w", s.Handle, err)
-		}
-		if q.ClaudePins == nil {
-			q.ClaudePins = map[string]registry.Pin{}
-		}
-		q.ClaudePins[s.Handle] = pin
-	}
 	// pi seats run the embedded runtime: the launch names the pi launch
 	// shim as their executable (the file AMQ's pi adapter probes).
 	for _, s := range q.Seats {
@@ -242,9 +176,11 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 			break
 		}
 	}
-	// Each seat's wake conditions (3.0.1), read before Compile: the launch
-	// checks the owner's host steps instead of assuming them.
-	q.WakeConditions = readWakeConditions(q, o)
+	// A Codex seat's wake needs AMQ's Codex dialog hook (Q3 of brief 31-1):
+	// read once, only for a squad with a Codex seat.
+	if slices.ContainsFunc(q.Seats, func(s Seat) bool { return s.Runtime == "codex" }) {
+		q.CodexHookMissing = codexHookWhy(o.CodexDialogHook(seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))))
+	}
 	c, err := Compile(q, rulesSHA, o.LookPath, o.Now())
 	if err != nil {
 		return res, err
@@ -278,11 +214,10 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := CheckArgumentForms(q, prepared.Preview.Capabilities); err != nil {
 		return res, err
 	}
-	wakes, err := admittedWakes(c.Request, prepared.Preview)
-	if err != nil {
-		return res, err
-	}
-	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, o.Standing))
+	// AMQ's admitted wake per seat, a fact on the seat's state (brief 31-1:
+	// recorded, never refused).
+	wakes := admittedWakes(prepared.Preview)
+	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, StandingAnswers))
 	if err != nil {
 		return res, err
 	}
@@ -304,52 +239,21 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		res.NextActions = nextActions(q, missing, prepared.SubjectDigest)
 		return res, nil
 	}
-	// The scheduler refreshes the preflight copies once at its start; a
-	// refresh per seat launch would absorb a change a running seat made
-	// before that seat's exit diff (amendment 28).
-	if err := seatexec.WritePreflight(o.Home, !o.KeepPreflight); err != nil {
-		return res, err
-	}
 	// Each Claude seat gets its own CLAUDE_CONFIG_DIR for this launch: the
-	// hooks plugin and the permission mode as one unit, no owner rules. The
-	// effective permission mode is probed on the pinned Claude Code before
-	// any ticket is minted and before Apply (the fix round's probe ruling):
-	// a setting that forces another mode would turn dontAsk into prompts.
-	// Seats whose settings are identical are probed once.
-	probed := map[string]claudeseat.Probe{}
+	// hooks plugin, the permission mode and the first-run screens seeded,
+	// no owner rules. Nothing about it is probed or checked before the seat
+	// starts (brief 31-1).
 	writtenAt := o.Now() // one time for every seat's config dir, so equal seats are equal
-	for i, rec := range c.Records {
+	for _, rec := range c.Records {
 		if rec.Runtime != "claude" {
 			continue
 		}
-		w, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, writtenAt)
-		if err != nil {
+		if _, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, writtenAt); err != nil {
 			return res, fmt.Errorf("seat %s: the Claude config dir: %w", rec.Handle, err)
-		}
-		c.Records[i].ClaudeConfig = w.Digest
-		pin := q.ClaudePins[rec.Handle]
-		c.Records[i].ClaudePin = pin.SHA256 // what seat-exec compares the registry's pin with before exec
-		kind, err := claudeseat.ProbeKind(w.Dir, rec.PermissionMode, pin.SHA256)
-		if err != nil {
-			return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
-		}
-		probe, done := probed[kind]
-		if !done {
-			if probe, err = o.ProbeMode(ctx, pin, w.Dir, rec.PermissionMode); err != nil {
-				return res, fmt.Errorf("seat %s: %s: %v", rec.Handle, claudeseat.ModeUnverified, err)
-			}
-			probed[kind] = probe
-		}
-		if probe.Mode != rec.PermissionMode {
-			return res, fmt.Errorf("seat %s: %s: the pinned Claude Code %s runs the seat's settings in permission mode %q, not the launch's %q", rec.Handle, claudeseat.ModeUnverified, probe.Version, probe.Mode, rec.PermissionMode)
-		}
-		if o.PermitWorktreeAllowRules {
-			c.Records[i].AllowRules = "permit"
 		}
 	}
 	// The proof socket and the seats' one-time tokens (item 4): a seat
-	// counts up only from its proof over this socket. Minted only now, after
-	// every probe, so a slow probe never eats a ticket's 60 s window.
+	// counts up only from its proof over this socket.
 	srv, err := startProofServer(q, launchID, o)
 	if err != nil {
 		return res, fmt.Errorf("proof socket: %w", err)
@@ -368,21 +272,14 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	// with base_unrecorded.
 	// With it the launch records the owner's grant for the push (R2 of the
 	// milestone B first pass): the repository, base branch, push URL and
-	// local ack, and the pinned gh (D2). A target the launch refuses
-	// (push_target_unacknowledged, an unpinned gh for an https push) stops
-	// the launch before any seat applies.
+	// local ack, and the pinned gh when there is one (D2). The launch never
+	// refuses a target (brief 31-1): the commit step checks it where the push
+	// happens (push_target_unacknowledged, an unpinned gh for an https push).
 	target := seatcommit.Target{}
 	if o.Target != nil {
 		target = *o.Target
 	} else if g, err := grants.Load(q.ProjectRoot); err == nil {
-		if target, err = seatcommit.LaunchTarget(g, o.Home, seatcommit.ToolsDir(q.SessionRoot())); err != nil {
-			srv.close()
-			return res, err
-		}
-	}
-	if err := seatcommit.CheckTarget(target); err != nil {
-		srv.close()
-		return res, err
+		target, _ = seatcommit.LaunchTarget(g, o.Home, seatcommit.ToolsDir(q.SessionRoot()))
 	}
 	for _, rec := range c.Records {
 		if rec.Branch != "" {
@@ -411,30 +308,6 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		res.Seats[i].Wake = wakes[res.Seats[i].Handle]
 	}
 	return res, nil
-}
-
-// registryClaudePin is the claude pin of the registry under home.
-func registryClaudePin(home string) (registry.Pin, error) {
-	reg, err := registry.Read(registry.Path(home))
-	if err != nil {
-		return registry.Pin{}, fmt.Errorf("%s: the registry: %v", registry.PinMissing, err)
-	}
-	pin, ok := reg.PinFor("claude")
-	if !ok {
-		return registry.Pin{}, fmt.Errorf("%s: the registry pins no claude (registry.yaml pins: name claude, its real path and sha256)", registry.PinMissing)
-	}
-	return pin, nil
-}
-
-// probePinned runs the mode probe on the seat's pinned claude (opened
-// through the pin and re-hashed, never PATH).
-func probePinned(ctx context.Context, pin registry.Pin, dir, mode string) (claudeseat.Probe, error) {
-	tool, code, detail := registry.OpenPinned("claude", pin.Path, pin.SHA256)
-	if tool == nil {
-		return claudeseat.Probe{}, fmt.Errorf("%s: %s", code, detail)
-	}
-	defer tool.Close()
-	return claudeseat.ProbeMode(ctx, tool.Command, dir, mode)
 }
 
 // LaunchEnv is the environment of the amq launch subprocess: the caller's
@@ -603,6 +476,12 @@ func ResolveDecisions(actions []launchapi.RequiredActionV1, supplied map[string]
 	}
 	return decisions, missing, nil
 }
+
+// StandingAnswers are the owner's standing choices every launch carries
+// (brief 31-1: the trust confirmation's trust_exact_subject is always on;
+// `--trust` is gone). An explicit --decision wins; a standing choice an
+// action does not allow is not used.
+var StandingAnswers = map[string]string{"trust_confirmation": "trust_exact_subject"}
 
 // withStanding adds the owner's standing choice for each required action
 // that has no explicit answer, when the action allows that choice.

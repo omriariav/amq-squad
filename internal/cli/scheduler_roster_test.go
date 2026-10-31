@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // t16 through the verb: `scheduler run` launches the roster, every seat of
@@ -29,20 +29,13 @@ func TestSchedulerRunLaunchesTheRosterAtStart(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(proj, "roles", "impl.md"), "# Role: implementer\n\nYou implement tasks.\n")
-	seat := func(handle, runtime, model, wt string) map[string]any {
-		return map[string]any{"handle": handle, "runtime": runtime, "model": model, "effort": "medium", "role": "implementer", "role_file": filepath.Join(proj, "roles", "impl.md"), "worktree": wt}
-	}
-	raw, _ := json.Marshal(map[string]any{"project_root": proj, "session": "s1", "seats": []map[string]any{
-		seat("impl-1", "claude", "sonnet", filepath.Join(proj, "wt-impl-1")),
-		seat("rev-1", "codex", "gpt-5.4", filepath.Join(proj, "wt-rev-1")),
-		seat("root-1", "claude", "opus", proj),
-		seat("lead", "claude", "opus", filepath.Join(proj, "wt-lead")),
-	}})
-	seatsFile := filepath.Join(proj, "seats.json")
-	mustWrite(t, seatsFile, string(raw))
-	for _, wt := range []string{"wt-impl-1", "wt-rev-1"} {
-		if err := os.MkdirAll(filepath.Join(proj, wt), 0o755); err != nil {
+	// squad.yaml names no worktree: each seat's is derived per handle.
+	writeSquadProject(t, proj, "schema: 1\nsession: s1\nlead: lead\nseats:\n"+
+		"  - handle: impl-1\n    role: implementer\n    runtime: claude\n    model: sonnet\n    effort: medium\n"+
+		"  - handle: rev-1\n    role: implementer\n    runtime: codex\n    model: gpt-5.4\n    effort: medium\n"+
+		"  - handle: lead\n    role: lead\n    runtime: claude\n    model: opus\n    effort: medium\n", "implementer")
+	for _, h := range []string{"impl-1", "rev-1"} {
+		if err := os.MkdirAll(filepath.Join(proj, team.SeatWorktreesDir, h), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,7 +60,7 @@ func TestSchedulerRunLaunchesTheRosterAtStart(t *testing.T) {
 	var stdout string
 	go func() {
 		out, _, err := captureOutput(t, func() error {
-			return runSchedulerRun(ctx, []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+			return runSchedulerRun(ctx, []string{"--project", proj, "--tick", "20ms"}, os.Stdout)
 		})
 		stdout = out
 		done <- err
@@ -82,7 +75,12 @@ func TestSchedulerRunLaunchesTheRosterAtStart(t *testing.T) {
 	if len(fake.reqs) != 2 || fake.reqs[0].Handle != "impl-1" || fake.reqs[1].Handle != "rev-1" {
 		t.Fatalf("the roster launch: %+v", fake.reqs)
 	}
-	if !strings.Contains(stdout, "not in the roster: seat root-1 has no worktree of its own") || !strings.Contains(stdout, "not in the roster: seat lead is the lead") || !strings.Contains(stdout, "roster of 2 seats") {
+	for _, seat := range fake.sl.Squad.Seats {
+		if want := filepath.Join(proj, team.SeatWorktreesDir, seat.Handle); seat.Worktree != want || seat.Worktree == proj {
+			t.Fatalf("seat %s worktree %s, want %s", seat.Handle, seat.Worktree, want)
+		}
+	}
+	if !strings.Contains(stdout, "not in the roster: seat lead is the lead") || !strings.Contains(stdout, "roster of 2 seats") || !strings.Contains(stdout, "lead lead") {
 		t.Fatalf("stdout:\n%s", stdout)
 	}
 }
@@ -160,24 +158,24 @@ type refusingRoster struct {
 
 func (f *refusingRoster) LaunchRoster([]scheduler.SeatRequest) scheduler.RosterOutcome { return f.out }
 
-// t16 ruling 4: without --trust, a roster launch whose Prepare asks for the
-// trust confirmation is refused at start, once: scheduler run exits with
-// the refusal code (which the lead's supervisor does not restart) and a
-// reason that names the flag. A launch error that is not AMQ's refusal
-// keeps the crash path.
-func TestSchedulerRunRefusesAtStartNamingTrust(t *testing.T) {
-	_, _, seatsFile := schedulerFixture(t)
+// t16 ruling 4, after brief 31-1: a roster launch AMQ refuses at start is
+// refused once: scheduler run exits with the refusal code (which the lead's
+// supervisor does not restart) and AMQ's reason; it names no --trust flag,
+// which is gone. A launch error that is not AMQ's refusal keeps the crash
+// path.
+func TestSchedulerRunRefusesAtStartOnce(t *testing.T) {
+	_, _, proj := schedulerFixture(t)
 	f := &refusingRoster{out: scheduler.RosterOutcome{Stage: "decisions_pending", ReasonCode: "trust_confirmation", Detail: "answer trust_confirmation"}}
 	schedulerAMQLauncher = func(sl *schedproc.Slots, _ string, _ seatlaunch.Options) scheduler.SeatLauncher { f.sl = sl; return f }
 	_, _, err := captureOutput(t, func() error {
-		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+		return runSchedulerRun(context.Background(), []string{"--project", proj, "--tick", "20ms"}, os.Stdout)
 	})
-	if ExitCode(err) != ExitSchedulerRefused || !strings.Contains(err.Error(), "amq-squad lead --team --scheduler-seats FILE --trust") || !strings.Contains(err.Error(), "trust_confirmation") {
+	if ExitCode(err) != ExitSchedulerRefused || strings.Contains(err.Error(), "--trust") || !strings.Contains(err.Error(), "trust_confirmation") {
 		t.Fatalf("the refusal: %v (exit %d)", err, ExitCode(err))
 	}
 	f.out = scheduler.RosterOutcome{Stage: "launch_error", Detail: "the probe failed"}
 	_, _, err = captureOutput(t, func() error {
-		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+		return runSchedulerRun(context.Background(), []string{"--project", proj, "--tick", "20ms"}, os.Stdout)
 	})
 	if err == nil || ExitCode(err) == ExitSchedulerRefused {
 		t.Fatalf("a launch error took the refusal exit: %v", err)

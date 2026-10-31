@@ -26,6 +26,12 @@ type LaunchRecord struct {
 	ProjectRoot string    `json:"project_root,omitempty"`
 	PID         int       `json:"pid"`
 	StartedAt   time.Time `json:"started_at"`
+	// Start is the start of the squad's launch (brief 31-1, the launch
+	// budget's first mark): when the owner's command began (`amq-squad up`,
+	// else `lead --team`), from the AMQ_SQUAD_START it hands the scheduler.
+	// Nil when the scheduler was started by hand. StartedAt is this
+	// process's own admission, later.
+	Start *time.Time `json:"start,omitempty"`
 	// DecisionSocket is where the lead's decisions reach this process (R4).
 	DecisionSocket string `json:"decision_socket,omitempty"`
 }

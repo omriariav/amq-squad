@@ -141,16 +141,7 @@ func prepare(o Options) (execPlan, error) {
 	if err := ValidateNeeds(rec.EnvNeeds, rec.CredNeeds); err != nil {
 		return plan, err
 	}
-	if rec.Runtime == "claude" {
-		// A Claude seat runs the registry's claude pin, the bytes the launch
-		// probed (the narrow pass's HIGH): argv[0] must be the pinned path
-		// and hash to the pin; checked again immediately before exec.
-		if base := filepath.Base(o.Argv[0]); base != rec.Runtime {
-			err = refusef("runtime_mismatch", "provider %q is not the recorded runtime %q", base, rec.Runtime)
-		} else {
-			plan.provider, err = pinnedProvider(o.Home, o.Argv[0], rec.ClaudePin)
-		}
-	} else if rec.Runtime == "pi" {
+	if rec.Runtime == "pi" {
 		// A pi seat runs the verified embedded runtime, never a pi from PATH
 		// (R2): argv[0] must be this binary's pi launch shim, the executable
 		// AMQ's pi adapter probed and planned (brief 5-amq-A).
@@ -190,25 +181,11 @@ func prepare(o Options) (execPlan, error) {
 		if err := CheckClaudeHooks(o.Argv[1:]); err != nil {
 			return plan, err
 		}
-		// The seat's own CLAUDE_CONFIG_DIR, written by the core for this
-		// launch: the hook plugin and the permission mode as one unit.
-		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
-		if code, detail := claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
-			return plan, refusef(code, "%s", detail)
-		}
-		// The launch admitted an AMQ wake for this seat from a scratch copy
-		// of its config dir (3.0.1); the real dir must carry the guard deny
-		// of AskUserQuestion and ExitPlanMode too, or a doorbell could
-		// answer a dialog.
-		if rec.WakeRequired {
-			if ok, why := ClaudeDialogGuardWired(dir); !ok {
-				return plan, refusef(ClaudeDialogGuardMissing, "the launch admitted an AMQ wake for this seat, but its config dir does not run the guard deny of %s: %s", strings.Join(SeatDeniedDialogTools, " and "), why)
-			}
-		}
-		// The worktree's settings files still merge into the seat's config.
-		if rules := claudeseat.WorktreeAllowRules(firstNonEmpty(rec.Worktree, rec.CWD)); len(rules) > 0 && rec.AllowRules != "permit" {
-			return plan, refusef(claudeseat.AllowRulesPresent, "the worktree's Claude settings carry permission allow rules, which would run a call unguarded when a hook fails open: %s", strings.Join(rules, "; "))
-		}
+		// The seat's own CLAUDE_CONFIG_DIR, seeded by the core for this
+		// launch (claudeseat.Write), is not checked here: brief 31-1 deleted
+		// the config-dir refusals. A dir the seat or the owner changed, an
+		// allow rule in the worktree, or a dialog the seat stalls at is a
+		// status warning and a screen line, never a refusal.
 		tok, why := claudeseat.ReadToken(o.Home)
 		if why != "" {
 			return plan, refusef(claudeseat.TokenInsecure, "%s", why)
@@ -238,9 +215,6 @@ func prepare(o Options) (execPlan, error) {
 			return plan, err
 		}
 	}
-	if err := writePreflight(o.Home); err != nil {
-		return plan, err
-	}
 	// The Claude token comes only from the owner's token file and only for a
 	// Claude seat: a parent value is dropped whatever the runtime declares.
 	plan.env, _ = SeatEnv(dropVar(o.Env, claudeseat.TokenVar), rec.EnvNeeds, rec.CredNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home, o.Self, plan.token))
@@ -255,83 +229,13 @@ func prepare(o Options) (execPlan, error) {
 	if o.BeforeRecheck != nil {
 		o.BeforeRecheck()
 	}
-	if err := recheck(rec, staged, pub, rules != nil, o.UID); err != nil {
+	if err := recheck(rec, staged, pub, rules != nil); err != nil {
 		return plan, err
 	}
 	if err := sendProof(o, rec, plan.started); err != nil {
 		return plan, err
 	}
-	// P1-10: the config dir is hashed through descriptors once more as the
-	// very last step before exec (after the proof's round trip).
-	if o.BeforeFinalCheck != nil {
-		o.BeforeFinalCheck()
-	}
-	if rec.Runtime == "claude" {
-		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
-		if code, detail := claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
-			return plan, refusef(code, "the seat's Claude config dir changed before exec: %s", detail)
-		}
-		// The pin re-opened and re-hashed as the last step: a file replaced
-		// after the launch's probe is refused (the window to execve is the
-		// same-UID limit, as for the pinned gh).
-		if _, err := pinnedProvider(o.Home, o.Argv[0], rec.ClaudePin); err != nil {
-			return plan, err
-		}
-	}
 	return plan, nil
-}
-
-// ToolUnpinned refuses a Claude seat whose argv[0] is not the registry's
-// claude pin, or whose pinned file does not hash to the pin.
-const ToolUnpinned = "tool_unpinned"
-
-// PinChangedSinceProbe refuses a Claude seat whose registry claude pin is no
-// longer the digest the launch probed (phase 5 release prep).
-const PinChangedSinceProbe = "pin_changed_since_probe"
-
-// ClaudePinMismatch refuses a Claude seat whose pinned claude, at the pin's
-// path, does not hash to the registry pin (3.0.1 t6, reviewer addition):
-// the seat's config checks are facts about the pinned 2.1.314 binary.
-const ClaudePinMismatch = "claude_pin_mismatch"
-
-// pinnedProvider is a Claude seat's executable: argv[0] must be the path the
-// registry pins for claude, opened through the anchored walk and hashed to
-// the pin's sha256 (registry.OpenPinned).
-//
-// probed is the digest of the claude pin the launch probed, from the staged
-// record: a registry whose claude pin differs now (re-pinned between the
-// launch and this exec, to another file or another digest) is refused
-// pin_changed_since_probe before the pin's own file is checked, because the
-// probe's verdict about the permission mode belongs to the probed bytes.
-func pinnedProvider(home, argv0, probed string) (string, error) {
-	reg, err := registry.Read(registry.Path(home))
-	if err != nil {
-		return "", refusef(ToolUnpinned, "the registry: %v", err)
-	}
-	pin, ok := reg.PinFor("claude")
-	if !ok {
-		return "", refusef(ToolUnpinned, "the registry pins no claude")
-	}
-	if probed == "" || pin.SHA256 != probed {
-		return "", refusef(PinChangedSinceProbe, "the registry's claude pin is not the one the launch probed (the staged record carries digest %q, the pin is %q)", probed, pin.SHA256)
-	}
-	if filepath.Clean(argv0) != pin.Path {
-		return "", refusef(ToolUnpinned, "the provider %s is not the pinned claude %s", argv0, pin.Path)
-	}
-	// The bytes about to run are the pin's (registry.OpenPinned, the check
-	// doctor's pin rows run). claudeseat's bookkeeping sets and permission-
-	// reader walk are facts about the pinned binary, so a binary that
-	// hashes otherwise (an upgrade in place) fails closed here, before any
-	// config check, until the owner re-pins and the sets are re-walked.
-	tool, code, detail := registry.OpenPinned("claude", pin.Path, pin.SHA256)
-	if tool == nil {
-		if code == registry.PinMismatch {
-			return "", refusef(ClaudePinMismatch, "%s", detail)
-		}
-		return "", refusef(ToolUnpinned, "%s: %s", code, detail)
-	}
-	tool.Close()
-	return pin.Path, nil
 }
 
 // sendProof is the last step before exec (item 4, lead ruling): seat-exec
@@ -383,15 +287,7 @@ func readRules(rec launch.Record) ([]byte, error) {
 // the published role snapshot, the rules source and its snapshot must all
 // still match the digests recorded at launch (the identity proof can take
 // seconds, and a file changed in that window must not reach the provider).
-// A Claude seat's config dir is checked again too: its digest, mode and
-// owner, the plugin and the permission mode (milestone B first pass P1).
-func recheck(rec launch.Record, staged, pub *anchor, hasRules bool, uid int) error {
-	if rec.Runtime == "claude" {
-		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
-		if code, detail := claudeseat.Check(dir, uid, rec.ClaudeConfig, rec.PermissionMode); code != "" {
-			return refusef(code, "the seat's Claude config dir changed before exec: %s", detail)
-		}
-	}
+func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
 	for _, f := range []struct {
 		dir  *anchor
 		name string

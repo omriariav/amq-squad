@@ -5,6 +5,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,21 +88,31 @@ func waitPid(t *testing.T, path string, not int) int {
 	return 0
 }
 
-// t16 ruling 4: `lead --team --trust` passes --trust through to scheduler
-// run (the owner's standing answer for this session); without it the
-// scheduler runs without one, and --trust outside team mode is refused.
-func TestLeadTeamPassesTrustToTheScheduler(t *testing.T) {
-	with := leadSchedulerCommand("/bin/amq-squad", "/p/seats.json", "lead-1", nil, true)(context.Background())
-	without := leadSchedulerCommand("/bin/amq-squad", "/p/seats.json", "lead-1", nil, false)(context.Background())
-	if got := strings.Join(with.Args[1:], " "); got != "scheduler run --seats /p/seats.json --lead lead-1 --trust" {
-		t.Fatalf("with --trust: %s", got)
-	}
-	if got := strings.Join(without.Args[1:], " "); strings.Contains(got, "--trust") {
-		t.Fatalf("without --trust: %s", got)
-	}
+// Brief 31-1, rows 6 and 8: --trust, --scheduler-seats and --lead are
+// unknown flags on `lead`, and --trust, --seats and --lead on `scheduler
+// run` (every launch carries the standing trust answer; squad.yaml is the
+// one source of the seats and the lead's handle). The lead's scheduler
+// child is `scheduler run --project <repo>` and nothing else.
+func TestDeletedLaunchFlagsAreUnknown(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if _, _, err := captureOutput(t, func() error { return runLead([]string{"--trust"}) }); err == nil || !strings.Contains(err.Error(), "--trust needs --team --scheduler-seats") {
-		t.Fatalf("--trust alone: %v", err)
+	for _, flag := range []string{"--trust", "--scheduler-seats", "--lead"} {
+		args := []string{"--team", flag}
+		if flag != "--trust" {
+			args = append(args, "x")
+		}
+		if _, _, err := captureOutput(t, func() error { return runLead(args) }); err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -"+strings.TrimPrefix(flag, "--")) {
+			t.Fatalf("lead %s: %v", flag, err)
+		}
+	}
+	for _, args := range [][]string{{"--project", "/p", "--trust"}, {"--seats", "/p/seats.json"}, {"--project", "/p", "--lead", "cto"}} {
+		err := runSchedulerRun(context.Background(), args, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Fatalf("scheduler run %v: %v", args, err)
+		}
+	}
+	cmd := leadSchedulerCommand("/bin/amq-squad", "/p", nil)(context.Background())
+	if got := strings.Join(cmd.Args[1:], " "); got != "scheduler run --project /p" {
+		t.Fatalf("the lead's scheduler child: %s", got)
 	}
 }
 
@@ -128,13 +139,13 @@ func TestSupervisorDoesNotRestartARefusal(t *testing.T) {
 // turns the commit step's PR binding off (it binds by default under a
 // merge grant).
 func TestLeadSchedulerLeavesPRBindingOn(t *testing.T) {
-	cmd := leadSchedulerCommand("/bin/amq-squad", "seats.json", "lead", []string{"pi:m:high"}, false)(context.Background())
+	cmd := leadSchedulerCommand("/bin/amq-squad", "/p", []string{"pi:m:high"})(context.Background())
 	for _, a := range cmd.Args {
 		if a == "--no-open-pr" || strings.HasPrefix(a, "--open-pr=") || strings.HasPrefix(a, "--no-open-pr=") {
 			t.Fatalf("the lead's scheduler command passes %s: %q", a, cmd.Args)
 		}
 	}
-	if !slicesContains(cmd.Args, "--lead") {
+	if !slicesContains(cmd.Args, "--project") {
 		t.Fatalf("args: %q", cmd.Args)
 	}
 }

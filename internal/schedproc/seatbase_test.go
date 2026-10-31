@@ -94,7 +94,6 @@ func TestSeatBaseRelaunchAtTheTip(t *testing.T) {
 	if p := gitRun(t, wt, "rev-parse", "HEAD^"); p != tip {
 		t.Fatalf("the next commit's parent is %s, not the tip %s", p, tip)
 	}
-	got.ClaudePins = map[string]registry.Pin{"c1": {Path: "/opt/pins/claude", SHA256: strings.Repeat("a", 64)}}
 	c, err := seatlaunch.Compile(got, "", func(n string) (string, error) { return "/usr/bin/" + n, nil }, time.Unix(1, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -252,18 +251,49 @@ func TestSeatBaseHTTPSFetchUsesThePinnedGh(t *testing.T) {
 	}
 }
 
-// An HTTPS push URL with no pinned gh on the launch's record refuses with the
-// pin-missing reason and never fetches anonymously.
-func TestSeatBaseHTTPSWithoutPinnedGhRefuses(t *testing.T) {
+// Brief 31-1, row 10 (the scheduler's launch path): an HTTPS push URL with no
+// gh pinned on the launch's record fetches the base tip anonymously (every
+// credential helper off, no gh), so a public repository's roster launches;
+// the commit step's push still needs the pin.
+func TestSeatBaseHTTPSWithoutPinnedGhFetchesAnonymously(t *testing.T) {
 	q := squadFixture(t)
 	dir := filepath.Dir(q.ProjectRoot)
 	bin, log := fakeFetchGit(t, dir, gitRun(t, q.ProjectRoot, "rev-parse", "HEAD"))
 	s := &Slots{Squad: q, Git: bin, Target: seatcommit.Target{PushURL: "https://github.com/o/r", BaseBranch: "main"}}
-	if _, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), registry.PinMissing) {
-		t.Fatalf("no pinned gh: %v", err)
+	got, err := s.PlanRoster([]scheduler.SeatRequest{{ID: "r1", Handle: "c1", Pool: seatBasePool}})
+	if err != nil || len(got.Seats) != 1 {
+		t.Fatalf("a public repository with no gh pin: %v", err)
 	}
-	if raw, err := os.ReadFile(log); err == nil && len(raw) > 0 {
-		t.Fatalf("an anonymous fetch ran:\n%s", raw)
+	raw, _ := os.ReadFile(log)
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want the ls-remote and the fetch, got:\n%s", raw)
+	}
+	for _, l := range lines {
+		if !strings.Contains(l, "-c credential.helper= ") || strings.Contains(l, "auth git-credential") {
+			t.Fatalf("the fetch was not anonymous: %s", l)
+		}
+	}
+}
+
+// Brief 31-1: a private repository refuses the anonymous fetch; the launch
+// refuses by name, base_fetch_unauthenticated, and says how to fix it.
+func TestSeatBaseAnonymousFetchFailureIsUnauthenticated(t *testing.T) {
+	q := squadFixture(t)
+	dir := filepath.Dir(q.ProjectRoot)
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not on PATH")
+	}
+	bin := filepath.Join(dir, "private-git")
+	script := "#!/bin/sh\ncase \" $* \" in\n*\" ls-remote \"*) echo 'fatal: Authentication failed for https://github.com/o/r/' >&2; exit 128;;\nesac\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Slots{Squad: q, Git: bin, Target: seatcommit.Target{PushURL: "https://github.com/o/r", BaseBranch: "main"}}
+	_, err = s.PlanRoster([]scheduler.SeatRequest{{ID: "r1", Handle: "c1", Pool: seatBasePool}})
+	if err == nil || !strings.HasPrefix(err.Error(), ReasonBaseFetchUnauthenticated+": ") || !strings.Contains(err.Error(), "pin gh (registry pins) for a private HTTPS repository, or use SSH") || !strings.Contains(err.Error(), "an owner who already pinned gh sees no change") {
+		t.Fatalf("a private repository with no gh pin: %v", err)
 	}
 }
 

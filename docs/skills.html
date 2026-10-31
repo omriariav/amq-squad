@@ -510,15 +510,12 @@ stages nothing); <code>--seed-from file:&lt;path&gt;</code>,
 <code>issue:&lt;n&gt;</code> or <code>gh:owner/repo#&lt;n&gt;</code>
 seeds it.</li>
 <li><strong>Launch.</strong> One AMQ launch request starts the seats,
-each behind <code>seat-exec</code>:
-<code>amq-squad launch --seats &lt;file&gt;</code> (a typed seat list,
-<code>--dry-run</code> first), the pi lead in team mode with the
-scheduler beside it
-(<code>amq-squad lead --team --scheduler-seats &lt;file&gt;</code>), or
-the mayor inside the fleet grant
-(<code>amq-squad operator start-squad</code>). A required action such as
-AMQ's trust confirmation stops the launch with exit 10; it is never
-answered for the owner.</li>
+each behind <code>seat-exec</code>, from squad.yaml (the one source):
+the pi lead in team mode with the scheduler beside it
+(<code>amq-squad lead --team</code> in the repository), or the mayor
+inside the fleet grant (<code>amq-squad operator start-squad</code>).
+Every launch carries the owner's standing answer to AMQ's trust
+confirmation.</li>
 </ol>
 <p>Once the seats are up, use <code>amq-squad:cli</code> for direct
 inspection and route the lead seat to
@@ -692,10 +689,9 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#c
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--runtime</span> fullstack=codex <span class="at">--worktree</span> fullstack=../app-96 <span class="dt">\</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--actor-mode</span> qa=review <span class="at">--lead</span> cto <span class="at">--session</span> issue-96</span>
 <span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> brief <span class="at">--seed-from</span> issue:96 <span class="at">--project</span> . <span class="at">--session</span> issue-96</span></code></pre></div></li>
-<li><p><strong>Launch</strong> — the seats start through one AMQ launch
-request (<code>amq-squad launch --seats seats.json --dry-run</code>,
-then without <code>--dry-run</code>); a trust confirmation stops the
-launch for the owner's decision.</p></li>
+<li><p><strong>Launch</strong> — <code>amq-squad lead --team</code> in
+the repository starts the lead and its scheduler, which launches every
+seat of squad.yaml but the lead in one AMQ launch request.</p></li>
 <li><p><strong>Lead the work</strong> — the <code>cto</code> seat, the
 squad's lead, loads <code>/amq-squad:orchestrator</code>, adds the
 tasks, reads status, and lets the scheduler dispatch:</p>

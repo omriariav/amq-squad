@@ -9,49 +9,30 @@ import (
 	"time"
 )
 
-// Amendment 17 (b): AMQ Prepare accepts any Codex model id, and the refusal
-// shows only on the first turn. The registry checks the id against the
-// codex-cli version that will run before a seat launches.
-
-// codexModelLists are the model ids a codex-cli version's own /model picker
-// lists, where observed. 0.147.0: S4 closure run, 2026-10-21 (S4 report).
-// 0.166.0: probed over the catalog ids, 2026-10-30, not the picker (the row
-// cannot name an id the catalog lacks); see
-// docs/v3-spike/5-catalog-evidence/probe-codex-0.166.0.txt.
-var codexModelLists = map[string][]string{
-	"0.147.0": {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
-	"0.166.0": {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna"},
-}
+// Amendment 17 (b) as brief 31-1 left it: AMQ Prepare accepts any Codex
+// model id, and a refusal shows only on the first turn. The registry no
+// longer gates an id on a list of what a codex-cli version's picker showed
+// (codexModelLists is gone): an id is refused only by a recorded probe
+// verdict (doctor --probe), and a roster seat's own pool needs no registry
+// entry at all (the router admits it).
 
 // CodexVerdict is the result of one model id check.
 type CodexVerdict struct {
 	Model   string
 	Version string // the codex-cli version checked against
 	Usable  bool
-	Known   bool   // false: no list and no probe for this version; the id is unchecked
+	Known   bool   // false: no probe for this version; the id is unchecked
 	Reason  string // why the id is refused or unchecked
 }
 
-// CheckCodexModel checks a model id against the codex-cli version's model
-// list, then against a probe verdict recorded for that version.
+// CheckCodexModel is a probe verdict recorded for the codex-cli version;
+// without one the id is usable and unchecked.
 func CheckCodexModel(version, model string, probed map[string]CodexVerdict) CodexVerdict {
-	v := CodexVerdict{Model: model, Version: version}
 	if p, ok := probed[model]; ok && p.Version == version && p.Known {
 		return p
 	}
-	if list, ok := codexModelLists[version]; ok {
-		v.Known = true
-		for _, m := range list {
-			if m == model {
-				v.Usable = true
-				return v
-			}
-		}
-		v.Reason = fmt.Sprintf("codex-cli %s does not list model %s (its picker lists %s); a newer codex may be needed", version, model, strings.Join(list, ", "))
-		return v
-	}
-	v.Reason = fmt.Sprintf("model %s is not checked against codex-cli %s; run 'amq-squad doctor --probe'", model, version)
-	return v
+	return CodexVerdict{Model: model, Version: version, Usable: true,
+		Reason: fmt.Sprintf("model %s is not probed against codex-cli %s ('amq-squad doctor --probe' checks it)", model, version)}
 }
 
 var (

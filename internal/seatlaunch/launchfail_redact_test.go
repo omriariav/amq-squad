@@ -168,25 +168,17 @@ func TestApplyFailureDetailGoesThroughTheChokepoint(t *testing.T) {
 	if err != nil || res.Stage != "apply_failed" {
 		t.Fatalf("launch %s %v", res.Stage, err)
 	}
-	var out strings.Builder
-	Report(&out, res)
-	if strings.Contains(res.FailureDetail, value) || strings.Contains(res.Apply.FailureDetail, value) || strings.Contains(out.String(), value) || !strings.Contains(out.String(), "failure_detail") {
-		t.Fatalf("the result %q / %q; the report:\n%s", res.FailureDetail, res.Apply.FailureDetail, out.String())
+	if strings.Contains(res.FailureDetail, value) || strings.Contains(res.Apply.FailureDetail, value) || res.FailureDetail == "" {
+		t.Fatalf("the result %q / %q", res.FailureDetail, res.Apply.FailureDetail)
 	}
 }
 
-// The report goes through the chokepoint itself, before oneLine flattens
-// the detail into one line (where the key is no longer at a line's start):
-// a Result whose FailureDetails hold AMQ's raw text prints neither value.
-// Reverted (oneLine on the raw detail), both values print.
-func TestReportRedactsBeforeItFlattens(t *testing.T) {
+// The chokepoint redacts AMQ's multi-line text and is idempotent (the
+// operator report it fed was deleted with the launch verb, brief 31-1).
+func TestAMQDetailRedactsAndIsIdempotent(t *testing.T) {
 	stderr, value := multilineCanary(t, "report")
-	for _, r := range []Result{{Apply: &launchapi.ApplyResultV1{Outcome: "action_required", FailureDetail: stderr}}, {FailureDetail: stderr}} {
-		var out strings.Builder
-		Report(&out, r)
-		if strings.Contains(out.String(), value) || !strings.Contains(out.String(), redact.Placeholder) {
-			t.Fatalf("the report:\n%s", out.String())
-		}
+	if once := amqDetail(stderr); strings.Contains(once, value) || !strings.Contains(once, redact.Placeholder) {
+		t.Fatalf("the chokepoint: %q", once)
 	}
 	if once := amqDetail(stderr); amqDetail(once) != once {
 		t.Fatalf("the chokepoint is not idempotent: %q then %q", once, amqDetail(once))

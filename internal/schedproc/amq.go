@@ -117,21 +117,22 @@ func (l LeadNotice) CommitRefused(t task.Task) error {
 	return l.send(l.Lead, "status", "commit refused: "+t.ID+" "+t.BlockReason, body)
 }
 
-// SeatQuarantined tells the lead that a seat exit off the done path
-// quarantined the seat (R3); the owner clears it.
-func (l LeadNotice) SeatQuarantined(handle, taskID, reason, detail string) error {
+// SeatExitRefused tells the lead that the exit check refused a seat off
+// the done path (R3: ledger_tampered); the seat is closed and the owner
+// inspects the commits ledger.
+func (l LeadNotice) SeatExitRefused(handle, taskID, reason, detail string) error {
 	if l.Lead == "" {
 		return nil
 	}
-	body := fmt.Sprintf("Seat %s is quarantined (%s) at its exit from task %s: %s. It gets no new lease until the owner clears it (amq-squad seat clear --seat %s, from the owner's terminal).",
-		handle, reason, orNone(taskID), detail, handle)
-	return l.send(l.Lead, "status", "seat quarantined: "+handle+" "+reason, body)
+	body := fmt.Sprintf("Seat %s was refused (%s) at its exit from task %s: %s. The seat is closed; nothing of it is committed until the owner inspects the commits ledger.",
+		handle, reason, orNone(taskID), detail)
+	return l.send(l.Lead, "status", "seat refused at exit: "+handle+" "+reason, body)
 }
 
 var (
-	_ scheduler.Doorbell               = Doorbell{}
-	_ scheduler.LeadNotifier           = LeadNotice{}
-	_ scheduler.SeatQuarantineNotifier = LeadNotice{}
+	_ scheduler.Doorbell                = Doorbell{}
+	_ scheduler.LeadNotifier            = LeadNotice{}
+	_ scheduler.SeatExitRefusedNotifier = LeadNotice{}
 )
 
 func orNone(s string) string {

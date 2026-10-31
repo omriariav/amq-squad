@@ -54,122 +54,6 @@ func TestClaudeSeatRunsWithItsOwnConfigDir(t *testing.T) {
 	}
 }
 
-// seat-exec refuses a Claude seat whose config dir is missing, not 0700, or
-// not what the launch wrote (claude_permission_mismatch), whose plugin does
-// not run the guard or is not enabled (claude_hooks_missing), or that lacks
-// a first-run fact (3.0.1 t6): onboarding or the theme
-// (claude_onboarding_missing), or the worktree's trust (claude_trust_missing),
-// or whose .claude.json trusts another project or carries a permission
-// input (claude_config_unexpected).
-// The first-run rows re-record the digest: a launch that wrote the
-// incomplete dir is refused by name, not only by digest.
-func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
-	cases := map[string]struct {
-		code    string
-		breakIt func(f *fixture, dir string)
-	}{
-		"missing":  {ClaudePermissionMismatch, func(f *fixture, dir string) { os.RemoveAll(dir) }},
-		"not 0700": {ClaudePermissionMismatch, func(f *fixture, dir string) { os.Chmod(dir, 0o755) }},
-		"an allow rule added after the launch": {ClaudePermissionMismatch, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":["Bash(*)"]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
-		}},
-		"no digest in the record": {ClaudePermissionMismatch, func(f *fixture, dir string) { f.rec.ClaudeConfig = "none"; f.stage() }},
-		"hooks.json without the guard, digest re-recorded": {ClaudeHooksMissing, func(f *fixture, dir string) {
-			matches, _ := filepath.Glob(filepath.Join(dir, "plugins", "cache", "amq-squad", "amq-squad", "*", "hooks", "hooks.json"))
-			for _, m := range matches {
-				write(t, m, `{"hooks":{"PostToolUse":[{"hooks":[{"command":"sh amq-squad-hook.sh post-tool"}]}]}}`, 0o600)
-			}
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"onboarding not complete, digest re-recorded": {ClaudeOnboardingMissing, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, ".claude.json"), `{"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"no theme, digest re-recorded": {ClaudeOnboardingMissing, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":[]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"worktree not trusted, digest re-recorded": {ClaudeTrustMissing, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true}`, 0o600)
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"plugin not enabled, digest re-recorded": {ClaudeHooksMissing, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":[]},"theme":"dark"}`, 0o600)
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"another entry trusted, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true},"/repo":{"hasTrustDialogAccepted":true}}}`, 0o600)
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"canonical repository root entry, digest re-recorded": {ClaudeTrustRootRefused, func(f *fixture, dir string) {
-			// f.wt becomes a linked worktree of <base>/repo after the launch;
-			// seat-exec finds the root at check time too.
-			repo := filepath.Join(f.base, "repo")
-			admin := filepath.Join(repo, ".git", "worktrees", "wt1")
-			os.MkdirAll(admin, 0o700)
-			write(t, filepath.Join(admin, "commondir"), "../..\n", 0o600)
-			write(t, filepath.Join(admin, "gitdir"), filepath.Join(f.wt, ".git")+"\n", 0o600)
-			write(t, filepath.Join(f.wt, ".git"), "gitdir: "+admin+"\n", 0o600)
-			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true},"`+repo+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"allowedTools, digest re-recorded": {ClaudeConfigUnexpected, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"allowedTools":["Bash(*)"],"projects":{"`+f.wt+`":{"hasTrustDialogAccepted":true}}}`, 0o600)
-			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
-			f.stage()
-		}},
-		"a CLAUDE.md importing a file outside the worktree": {ClaudeExternalIncludesPending, func(f *fixture, dir string) {
-			outside := filepath.Join(f.base, "shared-rules.md")
-			write(t, outside, "shared\n", 0o600)
-			write(t, filepath.Join(f.wt, "CLAUDE.md"), "@"+outside+"\n", 0o600)
-		}},
-		"trust dropped after the launch": {ClaudePermissionMismatch, func(f *fixture, dir string) {
-			write(t, filepath.Join(dir, ".claude.json"), `{"hasCompletedOnboarding":true,"numStartups":1}`, 0o600)
-		}},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t, "claude")
-			f.stage()
-			tc.breakIt(f, claudeseat.Dir(f.root, "cto", "launch-1"))
-			err := f.run(Options{})
-			if refusalCode(err) != tc.code || f.execPath != "" {
-				t.Fatalf("want %s and no exec, got %v (exec %q)", tc.code, err, f.execPath)
-			}
-		})
-	}
-}
-
-// The worktree's .claude/settings.json and settings.local.json still merge
-// into a seat's config: allow rules there refuse the seat
-// (claude_allow_rules_present) unless the launch's one switch permits them.
-func TestClaudeSeatRefusesWorktreeAllowRules(t *testing.T) {
-	for _, name := range []string{"settings.json", "settings.local.json"} {
-		f := newFixture(t, "claude")
-		if err := os.MkdirAll(filepath.Join(f.wt, ".claude"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		write(t, filepath.Join(f.wt, ".claude", name), `{"permissions":{"allow":["Bash(git:*)"]}}`, 0o600)
-		// staged after: the launch digests the worktree's settings files
-		f.stage()
-		if err := f.run(Options{}); refusalCode(err) != ClaudeAllowRulesPresent || !strings.Contains(err.Error(), "Bash(git:*)") {
-			t.Fatalf("%s: %v", name, err)
-		}
-		f.rec.AllowRules = "permit"
-		f.stage()
-		if err := f.run(Options{}); err != nil {
-			t.Fatalf("%s with the switch: %v", name, err)
-		}
-	}
-}
-
 // The permission mode the launch set is recorded in the launch record and
 // checked with the hook as one unit: a record without it, an argv with
 // another mode, a second mode, a permission bypass or a --settings file is
@@ -181,8 +65,8 @@ func TestClaudePermissionModeIsRecordedAndChecked(t *testing.T) {
 		t.Fatal(err)
 	}
 	pub, err := os.ReadFile(filepath.Join(ok.root, "agents", "cto", "extensions", "io.github.omriariav.amq-squad", "launch.json"))
-	if err != nil || !strings.Contains(string(pub), `"permission_mode": "dontAsk"`) || !strings.Contains(string(pub), `"claude_config_sha256": "sha256:`) {
-		t.Fatalf("published record lacks the permission mode or the config digest: %s %v", pub, err)
+	if err != nil || !strings.Contains(string(pub), `"permission_mode": "dontAsk"`) {
+		t.Fatalf("published record lacks the permission mode: %s %v", pub, err)
 	}
 	claude := func(f *fixture) string { return filepath.Join(f.bin, "claude") }
 	for name, tc := range map[string]struct {

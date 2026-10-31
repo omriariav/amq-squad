@@ -321,7 +321,7 @@ func snapshotOnce(dir string) ([]Task, error) {
 type tasks struct {
 	list    []Task
 	changed map[string]bool
-	dir     string // the store directory (seat quarantine lookups under the lock)
+	dir     string // the store directory (seat lookups under the lock)
 }
 
 func (a *tasks) get(id string) *Task {

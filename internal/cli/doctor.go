@@ -190,8 +190,7 @@ versions against the versions the AMQ launch API verified and their login
 state, RAM and GPU, the registry entries, the full re-hash of the embedded pi
 runtime, sleep and the amq-remote login service, project roots codex-cli does
 not trust, the Codex notify fan-out line, exported key names in the shell
-profile, the owner's global agent config against the preflight copy, and the
-grants file mode. A missing optional tool is one status line, not a failure.
+profile, and the grants file mode. A missing optional tool is one status line, not a failure.
 Without --write-registry, --probe or --fix (pi runtime repair) doctor writes nothing. Exits non-zero if
 any check is "fail".
 
@@ -235,7 +234,7 @@ Examples:
 	d.Host.UsageScan = *usageScan
 	d.Fix = *fixFlag
 	syncRegistryRuntimePin()
-	d.ReleaseDrift = withClearChecks(doctorReleaseDriftFor(os.Getenv, os.Getenv("AM_ROOT")), os.Getenv("AM_ROOT"))
+	d.ReleaseDrift = doctorReleaseDriftFor(os.Getenv, os.Getenv("AM_ROOT"))
 	return doctorExecute(d)
 }
 

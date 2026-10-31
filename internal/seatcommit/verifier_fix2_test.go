@@ -32,7 +32,7 @@ func TestTickPathLedgerUsersNeverWait(t *testing.T) {
 	done := make(chan out, 2)
 	go func() { done <- out{res: ExitCheck(f.opts(tk), "gone")} }()
 	go func() {
-		_, err := CleanSeat(f.root, f.handle, g, nil, f.trust(), f.now)
+		_, err := CleanSeat(f.root, f.handle, g, nil, f.now)
 		done <- out{err: err}
 	}()
 	for i := 0; i < 2; i++ {

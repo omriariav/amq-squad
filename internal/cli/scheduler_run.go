@@ -18,26 +18,28 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/routing"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
-	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
 )
 
 const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 
 Usage:
-  amq-squad scheduler run --seats FILE --lead HANDLE [--lead-pool r:m:e]... [--tick 2s] [--trust] [--max-seats N] [--base-branch B] [--no-open-pr]
+  amq-squad scheduler run --project DIR [--lead-pool r:m:e]... [--tick 2s] [--max-seats N] [--base-branch B] [--no-open-pr]
   amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
 over the squad's task store and wires its hooks: the roster, every seat of
-the typed seat list FILE (the launch --seats format) with a worktree of its
-own, starts at once through the AMQ launch API in one apply (pi seats too,
+DIR's squad.yaml but its lead, each in a worktree of its own (derived per
+handle unless squad.yaml names one, never the repository root), starts at
+once through the AMQ launch API in one apply (pi seats too,
 through AMQ's pi adapter since v0.116); a seat that holds no lease is parked
 and gets the next task of its pool; --max-seats and the grant's max_seats cap
 the leases held at once, not the seats up. A seat that is gone is replaced
@@ -53,15 +55,13 @@ ended attempt's outcome row is written; a done report runs the harness commit
 step (seat commit); a refusal is recorded, then the lead is told by AMQ
 message; the usage-limit detector stops new seats after the first event in
 the window. One process per squad: a second one is refused before it
-touches anything. The preflight copies of the owner's global agent config
-(the baseline of the exit check) are filled at admission when missing and
-never refreshed by the scheduler: the baseline persists across restarts,
-and only the owner's seat clear refreshes it. The exit check runs on every
-terminal path of a seat (done, failed, gone, expired); a seat whose claimed
+touches anything. The exit check (the sealed ledger's evidence) runs on
+every terminal path of a seat (done, failed, gone, expired); a seat whose claimed
 lease expired is closed through the launcher before it is cleaned or
 dispatched to again. The lead's widening arrives as the lead's AMQ message
 (task widen): the scheduler applies it only from the lead of its launch
-record.
+record. squad.yaml names the session and the lead, whose handle the
+refusals go to and who alone widens.
 
 --lead-pool names the pool of the lead's own seat (repeatable; the lead's
 team mode passes its models, and only a process the lead's team mode started
@@ -77,9 +77,9 @@ merge grant; without one there is no PR to open, and binding is off.
 --open-pr is a no-op kept for compatibility. The start line prints the
 effective choice.
 
---trust is the owner's standing answer trust_exact_subject to AMQ's
-trust_confirmation for this squad's launches; without it a launch that needs
-it fails and is reported. --max-seats only narrows the grant.
+Every launch carries the owner's standing answer trust_exact_subject to
+AMQ's trust_confirmation (there is no flag for it). --max-seats only
+narrows the grant.
 
 scheduler relaunch is the lead's decision to relaunch the roster, sent over
 the scheduler's decision socket (proved like task widen): the seats finish
@@ -117,10 +117,8 @@ var (
 func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("scheduler run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	seats := fs.String("seats", "", "the squad's typed seat list (JSON)")
-	lead := fs.String("lead", "", "the lead's handle (refusals go to it; only it widens)")
+	project := fs.String("project", "", "the repository whose squad.yaml is the squad")
 	tick := fs.Duration("tick", schedproc.DefaultTick, "tick interval")
-	trust := fs.Bool("trust", false, "the owner's standing trust of this squad's launch subjects")
 	maxSeats := fs.Int("max-seats", 0, "narrow the grant's seat cap")
 	baseBranch := fs.String("base-branch", "", "branch new seat worktrees start from (default: the grant's, else main)")
 	fs.Bool("open-pr", false, "no-op, kept for compatibility: the commit step binds each pushed seat branch's draft PR by default under a merge grant")
@@ -144,13 +142,14 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		}
 		leadPools = append(leadPools, p)
 	}
-	if *seats == "" || *lead == "" || fs.NArg() > 0 {
-		return usageErrorf("scheduler run: --seats FILE and --lead HANDLE are required")
+	if *project == "" || fs.NArg() > 0 {
+		return usageErrorf("scheduler run: --project DIR is required")
 	}
-	q, err := readLaunchSeats(*seats)
+	q, leadHandle, err := squadOfProject(*project)
 	if err != nil {
-		return err
+		return fmt.Errorf("scheduler run: %w", err)
 	}
+	lead := &leadHandle
 	if q.Wrapper, err = os.Executable(); err == nil {
 		q.Wrapper, err = filepath.EvalSymlinks(q.Wrapper)
 	}
@@ -184,9 +183,11 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	home, _ := os.UserHomeDir()
 	// The launch's record of the owner's grant for every seat's push (R2).
-	target, err := seatcommit.LaunchTarget(g, home, seatcommit.ToolsDir(root))
-	if err != nil {
-		return fmt.Errorf("scheduler run: the push target: %w", err)
+	// It never refuses the start (brief 31-1): the commit step checks the
+	// target where the push happens.
+	target, terr := seatcommit.LaunchTarget(g, home, seatcommit.ToolsDir(root))
+	if terr != nil {
+		fmt.Fprintf(out, "scheduler run: the push target: %v; the commit step refuses a push that needs it\n", terr)
 	}
 	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target}
 	// The roster (3.0.1 t16): every seat that can start launches in one
@@ -196,12 +197,9 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintf(out, "scheduler run: not in the roster: %s\n", why)
 	}
 	if len(roster) == 0 {
-		return fmt.Errorf("scheduler run: the seat list %s has no seat that can start", *seats)
+		return fmt.Errorf("scheduler run: %s has no seat but the lead", team.SquadPath(q.ProjectRoot))
 	}
-	opts := seatlaunch.Options{KeepPreflight: true, Wait: 90 * time.Second, Target: &target}
-	if *trust {
-		opts.Standing = map[string]string{"trust_confirmation": "trust_exact_subject"}
-	}
+	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target}
 	var amqLauncher scheduler.SeatLauncher
 	var real *seatlaunch.Launcher
 	if schedulerAMQLauncher != nil {
@@ -210,7 +208,12 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		real = &seatlaunch.Launcher{Plan: slots.Plan, PlanRoster: slots.PlanRoster, Options: opts, Root: root}
 		amqLauncher = real
 	}
-	byRuntime := map[string]scheduler.SeatLauncher{"claude": amqLauncher, "codex": amqLauncher, "pi": amqLauncher}
+	// Every runtime goes to the AMQ launcher (brief 31-1): which runtimes
+	// exist is AMQ's adapters' to say, at Prepare.
+	byRuntime := map[string]scheduler.SeatLauncher{}
+	for _, s := range q.Seats {
+		byRuntime[s.Runtime] = amqLauncher
+	}
 	sender := schedproc.Sender{AMQ: q.AMQPath, Root: root, BaseRoot: q.BaseRoot, Session: q.Session, Run: schedulerSendRun}
 	store, err := openTaskStore(root) // the completion gate reads the grant (phase 5 re-pass)
 	if err != nil {
@@ -227,7 +230,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	var sched *scheduler.Scheduler
 	router, err := routing.Open(routing.StartOptions{Home: home, RepoRoot: q.ProjectRoot, Root: root, Registry: reg, Grants: g.Grants,
 		Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) },
-		Seats: schedulerSeatView(&sched), LeadPools: leadPools})
+		Seats: schedulerSeatView(&sched), LeadPools: leadPools, RosterPools: rosterPools(roster)})
 	if err != nil {
 		return fmt.Errorf("scheduler run: the router: %w", err)
 	}
@@ -238,7 +241,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	committer := &schedproc.Committer{Root: root, Step: func(ctx context.Context, handle string, t task.Task) seatcommit.Result {
 		return commitStep(ctx, sel, handle, t, false, openPR)
 	}, ExitStep: func(handle, taskID, why string) seatcommit.Result {
-		return seatcommit.ExitCheck(seatcommit.Options{Root: root, Handle: handle, Task: task.Task{ID: taskID}, Now: taskNow, Clear: ownerTrust{Root: root}}, why)
+		return seatcommit.ExitCheck(seatcommit.Options{Root: root, Handle: handle, Task: task.Task{ID: taskID}, Now: taskNow}, why)
 	}}
 	limits := schedulerLimits
 	if limits == nil {
@@ -256,15 +259,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Root:        root,
 		Session:     q.Session,
 		ProjectRoot: q.ProjectRoot,
-		// P1 of the milestone B first pass: the baseline after admission, so a
-		// rejected duplicate process never touches it; filled when missing,
-		// never refreshed (it persists across restarts).
-		Admitted: func() error {
-			if err := seatexec.WritePreflight(home, false); err != nil {
-				return fmt.Errorf("scheduler run: the preflight copies: %w", err)
-			}
-			return nil
-		},
+		Start:       launchStart(),
 		// R4: the lead's decisions over the scheduler's own socket.
 		Decisions: decisions,
 		LeadState: leadGone,
@@ -280,7 +275,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Router:    router, // the process calls its Flush each tick
 		Verifiers: store.Verifiers,
 		Committer: committer,
-		Preparer:  &schedproc.CleanSeats{Root: root, Clear: ownerTrust{Root: root}},
+		Preparer:  &schedproc.CleanSeats{Root: root},
 		Limits:    limits,
 		Config:    scheduler.Config{MaxSeats: seatCap, Lead: *lead, Roster: roster},
 		Tick:      *tick,
@@ -299,7 +294,9 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		real.Wait()
 	}
 	if errors.Is(err, schedproc.ErrRunning) {
-		return fmt.Errorf("scheduler run: %w (session root %s)", err, root)
+		// Another scheduler holds the squad's lock: a refusal, attempted
+		// once (brief 31-1), never a crash the lead's supervisor restarts.
+		return &codedExitError{code: ExitSchedulerRefused, msg: fmt.Sprintf("scheduler run: %v (session root %s)", err, root)}
 	}
 	var refused *scheduler.RosterLaunchError
 	if errors.As(err, &refused) && refused.Stage != "launch_error" {
@@ -311,13 +308,62 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	return err
 }
 
-// rosterRefusal is the printed reason of a refused roster launch; a trust
-// confirmation names the flag that answers it.
+// rosterRefusal is the printed reason of a refused roster launch.
 func rosterRefusal(e *scheduler.RosterLaunchError) string {
-	if e.Stage == "decisions_pending" && strings.Contains(e.ReasonCode, "trust_confirmation") {
-		return "scheduler run: the roster launch was refused at start: AMQ asks for the owner's trust confirmation of this squad's launch subject (trust_confirmation); start the lead with `amq-squad lead --team --scheduler-seats FILE --trust` (or `amq-squad scheduler run --trust`): a flag the owner types is the standing answer for this session"
-	}
 	return "scheduler run: the roster launch was refused at start: " + e.Error()
+}
+
+// rosterPools are the roster seats' pools: the router admits each without
+// a registry entry or a table chain (brief 31-1).
+func rosterPools(roster []scheduler.RosterSeat) []task.Pool {
+	var out []task.Pool
+	for _, rs := range roster {
+		out = append(out, rs.Pool)
+	}
+	return out
+}
+
+// launchStart is the start of this squad's launch from AMQ_SQUAD_START
+// (brief 31-1), zero when it is unset or malformed.
+func launchStart() time.Time {
+	t, err := time.Parse(time.RFC3339Nano, os.Getenv(leadStartEnv))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// squadOfProject is the squad of a repository's squad.yaml (brief 31-1: the
+// one source): its seats as the typed seat list (team.Squad.LaunchSeats,
+// each role's text through roleText), its session, the repository's team
+// rules when present, and its lead's handle.
+func squadOfProject(project string) (seatlaunch.Squad, string, error) {
+	dir, err := filepath.Abs(project)
+	if err != nil {
+		return seatlaunch.Squad{}, "", err
+	}
+	s, err := team.LoadSquad(dir)
+	if err != nil {
+		return seatlaunch.Squad{}, "", err
+	}
+	src := team.SquadPath(dir)
+	if strings.TrimSpace(s.Lead) == "" {
+		return seatlaunch.Squad{}, "", fmt.Errorf("%s names no lead (lead: <seat handle>)", src)
+	}
+	if s.Session == "" {
+		return seatlaunch.Squad{}, "", fmt.Errorf("%s names no session (session: <name>)", src)
+	}
+	seats, err := s.LaunchSeats(dir, func(id string) (string, error) { return roleText(dir, id) })
+	if err != nil {
+		return seatlaunch.Squad{}, "", err
+	}
+	q := seatlaunch.Squad{ProjectRoot: dir, Session: s.Session, Seats: seats}
+	if p := rules.Path(dir); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			q.RulesPath = p
+		}
+	}
+	return q, s.Lead, nil
 }
 
 // schedulerSeatView is the router's seat view in scheduler run: the
