@@ -538,8 +538,10 @@ exit 10 and is never answered for you.</p></li>
 never edits code, it dispatches through the task store, and the
 scheduler launches the squad's roster at start:</p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--scheduler-seats</span> seats.json <span class="at">--dry-run</span></span></code></pre></div>
-<p>(drop <code>--dry-run</code> to start it; a pi-runtime build
-only).</p></li>
+<p>(drop <code>--dry-run</code> to start it; a pi-runtime build only).
+The lead takes the seats file's AMQ identity (its session root, the
+<code>--lead</code> handle); an <code>AM_ME</code>/<code>AM_ROOT</code>
+already in the environment must match it or it refuses.</p></li>
 <li><p>the mayor inside the owner's fleet grant:
 <code>operator start-squad</code> writes the squad.yaml through the same
 digest flow and launches it; in manual mode it returns a proposal
