@@ -626,16 +626,15 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	if q := l.Quarantine; q != nil && (q.ClearedAt == nil || !q.Clear.Verified(handle, q, clear)) {
 		return false, fmt.Errorf("seat %s is quarantined; its tree is evidence and is not cleaned", handle)
 	}
-	// The worktree is on the resting branch, or on a task branch the ledger
-	// records for the seat (the lease's, or a commit's): the record decides,
-	// never the branch name.
+	// The worktree is on the resting branch, or on the task branch of the
+	// lease the ledger records: the lease record decides, never the name.
 	rp, err := worktreePaths(rec.Worktree)
 	if err != nil {
 		return false, fmt.Errorf("the seat worktree %s is not a git checkout root: %v", rec.Worktree, err)
 	}
 	onTask := rp.HeadRef != "refs/heads/"+rec.Branch
 	if onTask && !l.knownBranch(rp.HeadRef) {
-		return false, fmt.Errorf("the seat worktree has %q checked out, not the seat branch %s or a task branch its commit ledger records", rp.HeadRef, rec.Branch)
+		return false, fmt.Errorf("the seat worktree has %q checked out, not the seat branch %s or the task branch of the lease its commit ledger records", rp.HeadRef, rec.Branch)
 	}
 	henv := harnessEnv(env)
 	sh, err := newShadow(gitBin, henv, rp)

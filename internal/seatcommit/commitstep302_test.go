@@ -248,7 +248,7 @@ func TestTaskBranchIsALabelTheRecordDecides(t *testing.T) {
 	gh, _, _ := branchGh(t, f)
 	sh(t, f.wt, "checkout", "-q", "-b", "seat/qa-2-t9")
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// the seat's own\n")
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || !strings.Contains(err.Error(), "task branch its commit ledger records") {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease its commit ledger records") {
 		t.Fatalf("a branch the ledger does not record was taken for a task branch: %v", err)
 	}
 	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); !strings.Contains(string(raw), "the seat's own") || sh(t, f.wt, "symbolic-ref", "HEAD") != "refs/heads/seat/qa-2-t9" {
@@ -267,6 +267,16 @@ func TestTaskBranchIsALabelTheRecordDecides(t *testing.T) {
 	l, _ := ReadLedger(f.root, f.handle)
 	if !res.OK || res.Branch != "seat/qa-2-"+tk.ID || len(l.Commits) != 1 || l.Commits[0].Task != tk.ID || l.Commits[0].Branch != res.Branch || f.originRef(res.Branch) != res.Commit {
 		t.Fatalf("the qa-2 task: %+v\nledger %+v", res, l.Commits)
+	}
+	// After the step the lease is over: t1's branch, though a commit names it,
+	// is no lease of the seat, and CleanSeat refuses a worktree on it.
+	if _, err := f.store.CompleteBound(tk.ID, fixtureRepo, res.PRNumber, res.Commit, f.now); err != nil {
+		t.Fatal(err)
+	}
+	sh(t, f.wt, "checkout", "-q", res.Branch)
+	f.now = f.now.Add(task.SeatReservationTTL + time.Minute)
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease") {
+		t.Fatalf("a branch with no lease behind it was taken for the lease's: %v", err)
 	}
 }
 
@@ -321,5 +331,26 @@ func TestLeaseBoundaryResetsToTheLaunchRecordsBase(t *testing.T) {
 	l, _ := ReadLedger(f.root, f.handle)
 	if !res.OK || res.Parent != launched || len(l.Commits) != 1 || l.Commits[0].Base != launched || l.Rest != launched {
 		t.Fatalf("the task's base: %+v\nledger rest %s commits %+v", res, l.Rest, l.Commits)
+	}
+}
+
+// The task branch seat/<handle>-<task id> sits beside the seat branch: a
+// remote that still carries seat/s1 (the 3.0.1 seat branch, v31's
+// origin/seat/dev under PR #815) takes seat/s1-t1 beside it, and seat/s1
+// is left as it was. Fails when the task branch goes under seat/<handle>/.
+func TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote(t *testing.T) {
+	f := newFixture(t)
+	other := filepath.Join(f.dir, "other")
+	sh(t, f.dir, "clone", "-q", f.origin, other)
+	write(t, filepath.Join(other, "x.txt"), "the 3.0.1 seat branch\n")
+	sh(t, other, "checkout", "-q", "-b", f.branch)
+	sh(t, other, "add", "-A")
+	sh(t, other, "commit", "-q", "-m", "a 3.0.1 seat commit")
+	sh(t, other, "push", "-q", "origin", f.branch)
+	old := f.originRef(f.branch)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// beside\n")
+	res := f.run(f.reported("cmd/"))
+	if !res.OK || !res.Pushed || res.Branch != "seat/s1-t1" || f.originRef(res.Branch) != res.Commit || f.originRef(f.branch) != old {
+		t.Fatalf("the task branch beside seat/s1: %+v (seat/s1 %s, was %s)", res, f.originRef(f.branch), old)
 	}
 }
