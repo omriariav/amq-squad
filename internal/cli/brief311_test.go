@@ -158,3 +158,48 @@ func TestAnOldClearSignatureKeyIsIgnoredWithADoctorWarning(t *testing.T) {
 		t.Fatalf("grants row: %+v", c)
 	}
 }
+
+// The reviewer's change on brief 31-1: a gate record of a kind the catalog no
+// longer carries (the owner's signed scribe clear of 2026-10-31 is a
+// quarantine_clear record in the live store) is listed as legacy and
+// skipped with one line naming the kind and the gate id, never a refusal:
+// by `gate status`, by `gate status --gate <id>`, and by status (a warning
+// line; it is no gate row).
+func TestALegacyGateRecordIsListedAndSkipped(t *testing.T) {
+	f := newGateCLIFixture(t)
+	if _, _, err := captureOutput(t, func() error {
+		return runGate([]string{"raise", "--project", f.project, "--session", "s", "--me", "cto", "--gate", "rel-r", "--action", "tag", "--target", "git tag v3.1.0", "--json"})
+	}); err != nil {
+		t.Fatalf("gate raise: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(f.root, "extensions", "amq-squad", "gates", "rel-r.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	const legacyID = "clear-0a227ca8d88dc97c65c540a4d0fa18a7"
+	rec["gate_id"], rec["class"], rec["typed_class"] = legacyID, "quarantine_clear", "clear"
+	rec["target"] = "clear scribe nonce=00 incarnation=t2@1 config=sha256:" + strings.Repeat("0", 64)
+	legacy, _ := json.MarshalIndent(rec, "", "  ")
+	mustWrite(t, filepath.Join(f.root, "extensions", "amq-squad", "gates", legacyID+".json"), string(legacy))
+	line := "gate " + legacyID + " is a legacy quarantine_clear gate (a kind this build no longer carries); skipped"
+	out, errOut, err := captureOutput(t, func() error {
+		return runGate([]string{"status", "--project", f.project, "--session", "s", "--json"})
+	})
+	if err != nil || !strings.Contains(out, `"rel-r"`) || strings.Contains(out, legacyID) || !strings.Contains(errOut, line) {
+		t.Fatalf("gate status: %v\n%s\n%s", err, out, errOut)
+	}
+	_, errOut, err = captureOutput(t, func() error {
+		return runGate([]string{"status", "--project", f.project, "--session", "s", "--gate", legacyID})
+	})
+	if err != nil || !strings.Contains(errOut, line) {
+		t.Fatalf("gate status --gate: %v\n%s", err, errOut)
+	}
+	doc := buildStatusContract(f.root, "", "3.1-test", time.Now())
+	if js, _ := json.Marshal(doc); strings.Contains(string(js), `"id":"`+legacyID+`"`) || !strings.Contains(string(js), line) {
+		t.Fatalf("status:\n%s", js)
+	}
+}

@@ -332,6 +332,12 @@ func runGateStatus(args []string) error {
 	now := hookNow()
 	for _, id := range ids {
 		rec, err := store.Load(id)
+		if kind, legacy := store.Legacy(id); err != nil && legacy {
+			// a kind the catalog no longer carries (brief 31-1): listed and
+			// skipped, never a refusal, with --gate too
+			fmt.Fprintln(os.Stderr, "gate status: "+gatestore.LegacyLine(id, kind))
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("gate status: %w", err)
 		}
