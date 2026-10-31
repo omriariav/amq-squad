@@ -464,7 +464,10 @@ func settle(o Options, sh *shadow, rec launch.Record, res Result) Result {
 		return res
 	}
 	repo := seatRepo(o.Git, harnessEnv(o.Env), sh.rp)
-	rest := restTarget(o.Root, o.Handle, repo, l)
+	rest, note := restTarget(o.Root, o.Handle, l)
+	if note != "" {
+		res.Notes = append(res.Notes, note)
+	}
 	if err := toRest(o.Git, harnessEnv(o.Env), sh, repo, rec.Branch, res.Tree, rest); err != nil {
 		res.Notes = append(res.Notes, "the worktree stays on the task's tree until the next lease boundary: "+err.Error())
 		return res
@@ -654,7 +657,7 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	repo := seatRepo(gitBin, henv, rp)
 	// The next lease starts at the base (3.0.2 t23, amendment 2b): the tip
 	// the launch recorded on the launch record, never the ledger's first base.
-	rest := restTarget(root, handle, repo, l)
+	rest, _ := restTarget(root, handle, l)
 	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
 	if l.Lease == nil && !onTask && tree == parentTree && head == parent && parent == rest {
 		return false, nil
@@ -725,11 +728,16 @@ func toRest(gitBin string, henv []string, sh *shadow, repo git, restBranch, tree
 
 // restTarget is the commit a seat's worktree rests on and its next lease
 // starts from (amendment 2b, one base): the base tip the launch recorded on
-// the staged launch record (t22's "base"); without one (a record from
-// before 3.0.2), the seat repository's base branch; else the ledger's
-// resting commit.
-func restTarget(root, handle string, repo git, l Ledger) string {
-	return firstNonEmpty(launchBase(root, handle), baseTip(repo, l), l.rest())
+// the staged launch record (t22's "base"). A record without one (a launch
+// before 3.0.2) keeps the ledger's resting commit, with the note saying so;
+// never a local branch of the shared repository, which can be ahead of or
+// behind the remote.
+func restTarget(root, handle string, l Ledger) (rest, note string) {
+	if b := launchBase(root, handle); b != "" {
+		return b, ""
+	}
+	rest = l.rest()
+	return rest, "launch_base_missing: the seat's launch record carries no base (a launch before 3.0.2); the worktree rests on the ledger's resting commit " + rest + ", never a local branch; the next launch records the base"
 }
 
 // launchBase is the "base" of the seat's staged launch record (3.0.2 t22:
@@ -752,18 +760,6 @@ func launchBase(root, handle string) string {
 
 // bindHead is a full lowercase commit id (SHA-1 or SHA-256).
 var bindHead = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
-
-// baseTip is the base branch's tip in the seat repository (refs/heads/<the
-// launch's base branch>, the ref the launch's AddWorktree starts a seat
-// branch from), "" when it cannot be read: the fallback of a launch record
-// that carries no base.
-func baseTip(repo git, l Ledger) string {
-	tip, err := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+firstNonEmpty(l.BaseBranch, "main")+"^{commit}")
-	if err != nil || len(tip) < 40 {
-		return ""
-	}
-	return tip
-}
 
 // setHead points the worktree's HEAD at a branch (git's symbolic-ref in the
 // worktree's own git dir, with the harness's hardened git).

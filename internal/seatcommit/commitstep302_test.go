@@ -155,10 +155,12 @@ func TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs(t *testing.T) {
 	if _, err := f.store.CompleteBound(t1.ID, fixtureRepo, first.PRNumber, first.Commit, f.now); err != nil {
 		t.Fatal(err)
 	}
-	// The base moves (another PR merged) before the next dispatch.
+	// The base moves (another PR merged) and a launch records it before the
+	// next dispatch.
 	write(t, filepath.Join(f.main, "README.md"), "readme, merged since\n")
 	sh(t, f.main, "commit", "-q", "-am", "merged on main")
 	tip := sh(t, f.main, "rev-parse", "main")
+	f.setLaunchBase(tip)
 	t2 := f.leased("internal/client/")
 	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != tip {
 		t.Fatalf("the second lease starts at %s, not the base tip %s", got, tip)
@@ -352,5 +354,26 @@ func TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote(t *testing.T) {
 	res := f.run(f.reported("cmd/"))
 	if !res.OK || !res.Pushed || res.Branch != "seat/s1-t1" || f.originRef(res.Branch) != res.Commit || f.originRef(f.branch) != old {
 		t.Fatalf("the task branch beside seat/s1: %+v (seat/s1 %s, was %s)", res, f.originRef(f.branch), old)
+	}
+}
+
+// A launch record without "base" (a launch before 3.0.2): the worktree
+// keeps the ledger's resting commit, and the step notes it; it never
+// follows a local branch of the shared repository (the owner's local main
+// moved ahead here, unpushed). Fails when the fallback reads the local base
+// branch.
+func TestRecordWithoutBaseKeepsTheRestingCommit(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.main, "README.md"), "an unpushed local commit\n")
+	sh(t, f.main, "commit", "-q", "-am", "local only")
+	tk := f.leased("cmd/")
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != f.base {
+		t.Fatalf("the lease starts at %s, not the resting commit %s", got, f.base)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// no launch base\n")
+	res := f.run(f.done(tk.ID))
+	l, _ := ReadLedger(f.root, f.handle)
+	if !res.OK || res.Parent != f.base || l.Rest != f.base || sh(t, f.wt, "rev-parse", "HEAD") != f.base || !strings.Contains(strings.Join(res.Notes, "\n"), "launch_base_missing") {
+		t.Fatalf("no launch base: %+v (rest %s)", res, l.Rest)
 	}
 }
