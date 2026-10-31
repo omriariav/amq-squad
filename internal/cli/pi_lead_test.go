@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -214,13 +216,18 @@ func TestLeadTeamRootIsTheSchedulersRoot(t *testing.T) {
 // scheduler starts and before pi runs.
 func TestSecondLeadOnTheSameRootIsRefused(t *testing.T) {
 	call, starts, _, root := teamLeadFixture(t)
-	first, err := schedproc.AcquireLeadLock(root, schedproc.LeadRecord{PID: 4242, Start: "darwin-tv:1.0", Pane: "%7"})
+	pid := os.Getpid()
+	stamp, ok := procinfo.StartToken(pid)
+	if !ok {
+		t.Skip("no start stamp on this platform")
+	}
+	first, err := schedproc.AcquireLeadLock(root, schedproc.LeadRecord{PID: pid, Start: stamp, Pane: "%7"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Release()
 	_, _, err = captureOutput(t, func() error { return runLead([]string{"--team"}) })
-	if err == nil || !strings.Contains(err.Error(), schedproc.ReasonLeadRunning) || !strings.Contains(err.Error(), "pid 4242") || !strings.Contains(err.Error(), "tmux pane %7") {
+	if err == nil || !strings.Contains(err.Error(), schedproc.ReasonLeadRunning) || !strings.Contains(err.Error(), fmt.Sprintf("pid %d", pid)) || !strings.Contains(err.Error(), "tmux pane %7") {
 		t.Fatalf("a second lead: %v", err)
 	}
 	if len(*starts) != 0 || call.path != "" {
