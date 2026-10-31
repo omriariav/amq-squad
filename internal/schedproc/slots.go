@@ -205,6 +205,11 @@ const ReasonSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
 // local commit; the lead decides.
 const ReasonSeatBranchUnpushed = "seat_branch_unpushed"
 
+// ReasonBaseFetchUnauthenticated refuses a launch whose anonymous fetch of
+// the base tip failed: an HTTPS push URL with no gh pinned (brief 31-1), a
+// private repository most likely.
+const ReasonBaseFetchUnauthenticated = "base_fetch_unauthenticated"
+
 // baseTip is the base branch's tip: fetched from the push URL the launch
 // recorded from the grant (into a shadow git directory, so the shared
 // repository's config, remotes and url rewrites are never read), or the
@@ -221,10 +226,18 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 		return tip, nil
 	}
 	// An HTTPS push URL fetches with the push's authentication: the pinned
-	// gh as the only credential helper (seatcommit.FetchCredentials).
-	cred, credEnv, why := seatcommit.FetchCredentials(s.Target, os.Environ())
+	// gh as the only credential helper (seatcommit.FetchCredentials), or,
+	// with no gh pinned, anonymously (brief 31-1), where a failure is
+	// base_fetch_unauthenticated.
+	cred, credEnv, anonymous, why := seatcommit.FetchCredentials(s.Target, os.Environ())
 	if why != "" {
 		return "", fmt.Errorf("seat %s base: %s", seat.Handle, why)
+	}
+	fetchFailed := func(err error) error {
+		if anonymous {
+			return fmt.Errorf("%s: seat %s: the anonymous fetch of %s failed (%v); pin gh (registry pins) for a private HTTPS repository, or use SSH; the gh pin is read from the registry as before, so an owner who already pinned gh sees no change", ReasonBaseFetchUnauthenticated, seat.Handle, url, err)
+		}
+		return fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
 	sh, err := newBaseShadow(g, common)
 	if err != nil {
@@ -235,7 +248,7 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 	fenv := append(append([]string(nil), sh.env...), credEnv...)
 	out, err := fg.run(sh.dir, fenv, "ls-remote", "--", url, "refs/heads/"+base, "refs/heads/"+seat.Branch)
 	if err != nil {
-		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+		return "", fetchFailed(err)
 	}
 	refs := map[string]string{} // ref -> the object id ls-remote reported
 	for _, line := range strings.Split(out, "\n") {
@@ -251,7 +264,7 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 		specs = append(specs, "+refs/heads/"+seat.Branch+":refs/seat")
 	}
 	if _, err := fg.run(sh.dir, fenv, append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", url}, specs...)...); err != nil {
-		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+		return "", fetchFailed(err)
 	}
 	tip, err := g.run(sh.dir, sh.env, "rev-parse", "--verify", "refs/base^{commit}")
 	if err != nil {
