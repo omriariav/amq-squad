@@ -1,6 +1,7 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -481,11 +482,27 @@ func (s Store) Reset(id string, pool *Pool, now time.Time) (Task, error) {
 	})
 }
 
-// Set changes the priority or the pool of a task that is not terminal.
+// ReasonRePinAfterAttempt is the refusal of a pool change on a task whose
+// first attempt was granted.
+const ReasonRePinAfterAttempt = "repin_after_attempt"
+
+// ErrRePinAfterAttempt wraps every refusal of ReasonRePinAfterAttempt, so a
+// caller matches the code, not the message.
+var ErrRePinAfterAttempt = errors.New(ReasonRePinAfterAttempt)
+
+// Set changes the priority of a task that is not terminal, and its pool
+// until the first attempt is granted. The grant is the routing record, so a
+// pool changed after it would disagree with that immutable history. A task
+// never granted is re-pinned freely; a task back in pending after an
+// unclaimed expiry keeps its attempt count and is refused. Reset is the way
+// to a new pool after a grant.
 func (s Store) Set(id string, priority *int, pool *Pool, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		if Terminal(t.State) {
 			return fmt.Errorf("task %s is %s", t.ID, t.State)
+		}
+		if pool != nil && t.Attempt > 0 {
+			return fmt.Errorf("%w: task %s was granted attempt %d; the pool cannot change after the first attempt is granted, and a task back in pending after an unclaimed expiry keeps its attempt count; release its lease if it has one and block it if it is not blocked, then use task reset --pool", ErrRePinAfterAttempt, t.ID, t.Attempt)
 		}
 		if priority != nil {
 			t.Priority = *priority

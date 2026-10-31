@@ -43,7 +43,8 @@ The model in five lines:
 Everything: [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) lists
 the release by phase. 3.0.1 is the first fix release, from the first squad run
 on this repository: [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md).
-In short:
+3.0.2 is the second, from the second day of that run and the 3.0.1 release:
+[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). In short:
 
 - `squad.yaml` schema 1 replaces the v2 profile, through `team propose` and
   `team apply` ([docs/squad-yaml.md](docs/squad-yaml.md)).
@@ -62,7 +63,7 @@ In short:
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.1
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.2
 amq-squad version
 ```
 
@@ -245,7 +246,9 @@ behind `seat-exec`:
   amq-squad lead --team --scheduler-seats seats.json --dry-run
   ```
 
-  (drop `--dry-run` to start it; a pi-runtime build only).
+  (drop `--dry-run` to start it; a pi-runtime build only). The lead takes
+  the seats file's AMQ identity (its session root, the `--lead` handle); an
+  `AM_ME`/`AM_ROOT` already in the environment must match it or it refuses.
 - the mayor inside the owner's fleet grant: `operator start-squad` writes the
   squad.yaml through the same digest flow and launches it; in manual mode it
   returns a proposal instead.
@@ -278,15 +281,25 @@ amq-squad gate status --project . --session issue-96 --json
 - **The commit step.** On a seat's done report the scheduler runs
   `seat commit`: every changed path against the task's declared files, the
   protected paths and the size cap, then a commit under the harness identity
-  and a fast-forward push of the seat branch. A path outside the set comes back
+  and a fast-forward push of the task's branch. A path outside the set comes back
   to the lead, whose decision is `task widen ID --files ... --reason ...`
   (no `--me`: the scheduler proves the lead from the process). Binding is
   the default under a merge grant: the step opens the pushed branch's draft
   PR and binds it to the task with no flag, and `--no-open-pr` is refused
-  while the repository has a merge grant.
+  while the repository has a merge grant. The binding check runs before the
+  commit: a task branch that carries an open PR bound to another task is
+  refused (`pr_bound_elsewhere`) with nothing committed or pushed. Each task
+  commits on its own branch, `seat/<handle>-<task id>`, from the remote base
+  tip fetched when it is granted, with its own draft PR; between tasks the
+  seat's worktree rests on `seat/<handle>` at the launch's base.
 - **The roster.** The scheduler launches every seat of the seat list that has
   a worktree of its own in one AMQ launch at start; a seat with no lease is
-  parked and gets the next task of its pool. `max_seats` caps the leases held
+  parked and gets the next task of its pool. At every launch, the roster's
+  included, a seat's worktree and its `seat/<handle>` branch start from the
+  base branch's tip fetched from the grant's push URL, the launch record
+  carries that base, and a seat branch holding commits the tip does not,
+  remote and unmerged or local and unpushed, refuses the launch by name
+  (`seat_branch_unmerged`, `seat_branch_unpushed`) for the lead. `max_seats` caps the leases held
   at once, not the seats up. AMQ refuses a fresh seat into a session whose
   binding is present, so a gone seat is not replaced on its own: its pool's
   next task blocks for the lead (`seat_replacement_needs_relaunch`), and the
@@ -429,7 +442,7 @@ amq-squad migrate .amq-squad/team.json
 | The 3.0 plan, its rulings, phases and recorded limits | [docs/v3-plan.md](docs/v3-plan.md) |
 | The phase briefs and their rulings | [docs/v3-phase2-briefs.md](docs/v3-phase2-briefs.md) |
 | Execution logs and evidence per brief | [docs/v3-spike/](docs/v3-spike/) |
-| Release notes | [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
+| Release notes | [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
 | squad.yaml schema 1 | [docs/squad-yaml.md](docs/squad-yaml.md) |
 | Status contract, schema 1 | [docs/status-contract.md](docs/status-contract.md) |
 | Claude Code seat hooks | [docs/claude-hooks.md](docs/claude-hooks.md) |

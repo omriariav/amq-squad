@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -25,9 +27,51 @@ func (g *GH) run(ctx context.Context, args ...string) (string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(3, len(args))], " "), err, strings.TrimSpace(stderr.String()))
+		e := &ghError{err: fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(3, len(args))], " "), err, strings.TrimSpace(stderr.String()))}
+		e.status = ghStatus(stderr.String())
+		return "", e
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// ghError is a failed gh call with the HTTP status gh appended to its error
+// line ("gh: Not Found (HTTP 404)"); status is 0 for a failure without that
+// suffix (a transport error, a crash), which stays an error. The status is read from gh's own token only,
+// never from the error text, which names the endpoint and so the SHA or id
+// (Codex P2: a SHA containing "404" made a timeout look like a missing
+// commit).
+type ghError struct {
+	err    error
+	status int
+}
+
+func (e *ghError) Error() string { return e.err.Error() }
+func (e *ghError) Unwrap() error { return e.err }
+
+// httpStatusRe is gh's own status form only: the "(HTTP nnn)" suffix at the
+// end of its error line (Codex P2, round 3: "HTTP 404" elsewhere in the text,
+// as in "upstream reported HTTP 404 (HTTP 503)" or a transport error that
+// quotes a body, is not the status).
+var httpStatusRe = regexp.MustCompile(`\(HTTP ([1-5][0-9][0-9])\)$`)
+
+// ghStatus reads the status from the last non-empty line of gh's stderr,
+// anchored at its end; 0 when that line carries no such suffix.
+func ghStatus(stderr string) int {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	if m := httpStatusRe.FindStringSubmatch(strings.TrimSpace(lines[len(lines)-1])); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return 0
+}
+
+// httpStatus is the HTTP status of a failed gh call, 0 when it has none.
+func httpStatus(err error) int {
+	var e *ghError
+	if errors.As(err, &e) {
+		return e.status
+	}
+	return 0
 }
 
 func (g *GH) Tag(ctx context.Context, repository, tag, commit string) error {
@@ -35,7 +79,7 @@ func (g *GH) Tag(ctx context.Context, repository, tag, commit string) error {
 	return err
 }
 
-const draftJQ = `{id, tag: .tag_name, target_commitish, draft, html_url}`
+const draftJQ = `{id, tag: .tag_name, target_commitish, draft, html_url, body}`
 
 // FindDrafts lists the releases (every page) whose body carries the nonce.
 func (g *GH) FindDrafts(ctx context.Context, repository, nonce string) ([]Draft, error) {
@@ -81,7 +125,7 @@ func (g *GH) CreateDraft(ctx context.Context, repository, tag, commit, notes str
 func (g *GH) ReadDraft(ctx context.Context, repository string, id int64) (Draft, bool, error) {
 	out, err := g.run(ctx, "api", "repos/"+repository+"/releases/"+strconv.FormatInt(id, 10), "--jq", draftJQ)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if httpStatus(err) == 404 {
 			return Draft{}, false, nil
 		}
 		return Draft{}, false, err
@@ -203,7 +247,7 @@ func TagRuleCovers(include, exclude []string, tag string) (covered bool, why str
 func (g *GH) TagCommit(ctx context.Context, repository, tag string) (string, error) {
 	out, err := g.run(ctx, "api", "repos/"+repository+"/git/ref/tags/"+tag, "--jq", `.object.type + " " + .object.sha`)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if httpStatus(err) == 404 {
 			return "", nil
 		}
 		return "", err
@@ -213,4 +257,30 @@ func (g *GH) TagCommit(ctx context.Context, repository, tag string) (string, err
 		return g.run(ctx, "api", "repos/"+repository+"/git/tags/"+sha, "--jq", ".object.sha")
 	}
 	return sha, nil
+}
+
+// CommitExists asks the remote for the commit; a 404 or 422 (no commit for
+// that SHA) is false.
+func (g *GH) CommitExists(ctx context.Context, repository, commit string) (bool, error) {
+	if _, err := g.run(ctx, "api", "repos/"+repository+"/commits/"+commit, "--jq", ".sha"); err != nil {
+		if st := httpStatus(err); st == 404 || st == 422 {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// BranchContains resolves the commit against the remote branch: the compare
+// of branch...commit is identical or behind when the branch contains it; a
+// commit or branch the remote does not know is false.
+func (g *GH) BranchContains(ctx context.Context, repository, branch, commit string) (bool, error) {
+	out, err := g.run(ctx, "api", "repos/"+repository+"/compare/"+branch+"..."+commit, "--jq", ".status")
+	if err != nil {
+		if httpStatus(err) == 404 {
+			return false, nil
+		}
+		return false, err
+	}
+	return out == "identical" || out == "behind", nil
 }

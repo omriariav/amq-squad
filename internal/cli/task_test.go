@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +112,39 @@ func TestTaskCLIRefusals(t *testing.T) {
 	t.Setenv("AM_ROOT", "")
 	if _, err := taskCLI(t, "list"); err == nil || !strings.Contains(err.Error(), "no store root") {
 		t.Errorf("list without a root: %v", err)
+	}
+}
+
+// task set re-pins a task until its first attempt is granted; after the
+// grant it prints the refusal code and ends with the way forward, which works.
+func TestTaskCLISetRepinBoundary(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	if _, err := taskCLI(t, "add", "--title", "x", "--class", "script", "--pool", "claude:haiku:low", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "set", "t1", "--pool", "codex:gpt-5.6-terra:medium", "--me", "lead"); err != nil {
+		t.Fatalf("re-pin before the first grant: %v", err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := taskCLI(t, "set", "t1", "--pool", "claude:sonnet:medium", "--me", "lead")
+	if !errors.Is(err, task.ErrRePinAfterAttempt) || !strings.Contains(err.Error(), task.ReasonRePinAfterAttempt) ||
+		!strings.HasSuffix(err.Error(), "use task reset --pool") {
+		t.Fatalf("re-pin after the first grant: %v", err)
+	}
+	if _, err := taskCLI(t, "release", "t1", "--reason", "re-pin", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "block", "t1", "--reason", "re-pin", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "reset", "t1", "--pool", "claude:sonnet:medium", "--me", "lead"); err != nil {
+		t.Fatalf("the hint's reset: %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -419,6 +420,67 @@ func TestLeadPin(t *testing.T) {
 	s.Pool = pl("claude:sonnet:medium")
 	if _, route := g.router().Decide(s, nil); route.Pool != nil || route.Wait != task.WaitPrivacyClass {
 		t.Fatalf("pinned vendor on a local path: %+v", route)
+	}
+}
+
+// A re-pin before the first grant is honoured by the next route of the same
+// rooted router, across the decision it already recorded for attempt 1: the
+// route re-reads the pin, and the recorded decision follows it (a restart
+// reads the new entry). Once the attempt is granted, the store refuses the
+// re-pin and the granted pool stands.
+func TestPendingRepinReevaluatesTheNextRoute(t *testing.T) {
+	root := t.TempDir()
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	open := func() *Router {
+		r, err := New(Options{Table: f.tbl, Registry: f.reg, Grants: f.g, Root: root, Now: func() time.Time { return t0 },
+			Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	get := func() task.Task {
+		tk, err := store.Get("t1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tk
+	}
+	recorded := func(r *Router) string {
+		if d := r.decisions[key("t1", 1)]; d != nil && d.Entry != nil {
+			return d.Entry.Key()
+		}
+		return ""
+	}
+	if _, err := store.Add(task.AddInput{Title: "t1", Class: "implement", Pool: pl("claude:haiku:low")}, t0); err != nil {
+		t.Fatal(err)
+	}
+	r := open()
+	if route := r.Route(get()); route.Pool == nil || route.Pool.Key() != "claude:haiku:low" || recorded(r) != "claude:haiku:low" {
+		t.Fatalf("first pin: %+v, recorded %q", route, recorded(r))
+	}
+	if _, err := store.Set("t1", nil, pl("codex:gpt-5.6-terra:medium"), t0); err != nil {
+		t.Fatalf("re-pin before the first grant: %v", err)
+	}
+	route := r.Route(get())
+	if route.Pool == nil || route.Pool.Key() != "codex:gpt-5.6-terra:medium" || r.decisions[key("t1", 1)].Policy != PolicyLeadPin {
+		t.Fatalf("re-pinned pending task: %+v", route)
+	}
+	if got := recorded(open()); got != "codex:gpt-5.6-terra:medium" {
+		t.Fatalf("the recorded decision after a restart: %q", got)
+	}
+	if _, err := store.Grant("t1", "s", route.Pool, time.Hour, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Set("t1", nil, pl("claude:sonnet:medium"), t0); !errors.Is(err, task.ErrRePinAfterAttempt) {
+		t.Fatalf("re-pin after the first grant: %v", err)
+	}
+	if tk := get(); tk.Pool == nil || tk.Pool.Key() != "codex:gpt-5.6-terra:medium" {
+		t.Fatalf("the granted pool: %+v", tk.Pool)
 	}
 }
 

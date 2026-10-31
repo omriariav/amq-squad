@@ -1,7 +1,7 @@
 ---
 name: "orchestrator"
 description: "Live amq-squad 3.0 lead protocol after the squad is launched. Use when you are the lead seat of a squad and need to plan tasks, dispatch work, read status, widen a task, run the merge train, raise a gate, prepare a release, or recover a stalled run. Triggers include \"watch the squad\", \"what should I do next\", \"dispatch this task\", \"the run is stuck\", \"who is blocked\". NOT for preparing or launching a squad (use amq-squad:wizard) or for one-off status and inspection commands (use amq-squad:cli)."
-version: "3.0.1"  # x-release-please-version
+version: "3.0.2"  # x-release-please-version
 ---
 # amq-squad:orchestrator
 
@@ -153,11 +153,12 @@ result is a blocker, not a warning to mention later.
 `release prepare` records the release and raises two typed gates through the core,
 `tag` and `github_release`; the owner answers each in its gate thread. `release
 publish`, run under the owner's gh outside any seat, runs the tag and then the
-release, each only with its verified answer:
+release, each only with its verified answer. `--notes-file` is the release notes
+document, the GitHub release body; publish takes the same file:
 
 ```sh
 # skill-invocation-check:skip — raises typed gates, which post to the owner's Buzz DM
-amq-squad release prepare --repository OWNER/REPO --tag TAG --commit SHA --project P --session S --json
+amq-squad release prepare --repository OWNER/REPO --tag TAG --commit SHA --notes-file docs/TAG-release-notes.md --project P --session S --json
 ```
 
 ## Authority boundary

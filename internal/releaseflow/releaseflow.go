@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -45,6 +46,11 @@ type Executor interface {
 	Tag(ctx context.Context, repository, tag, commit string) error
 	// TagCommit resolves a remote tag to its commit ("" when it does not exist).
 	TagCommit(ctx context.Context, repository, tag string) (string, error)
+	// CommitExists reports whether the remote has the commit at all.
+	CommitExists(ctx context.Context, repository, commit string) (bool, error)
+	// BranchContains reports whether the remote branch contains the commit
+	// (false when either is unknown to the remote).
+	BranchContains(ctx context.Context, repository, branch, commit string) (bool, error)
 	// TagProtected reports whether a tag rule restricts update and deletion
 	// of this tag, and why not.
 	TagProtected(ctx context.Context, repository, tag string) (bool, string, error)
@@ -70,6 +76,7 @@ type Draft struct {
 	TargetCommitish string `json:"target_commitish"`
 	Draft           bool   `json:"draft"`
 	URL             string `json:"html_url,omitempty"`
+	Body            string `json:"body,omitempty"`
 }
 
 // intent is the creation intent written before the draft's POST (5 re-pass,
@@ -87,6 +94,11 @@ func NonceMarker(nonce string) string { return "<!-- amq-squad-release-nonce: " 
 // ErrDraftEdited: the draft was changed between creation and publication.
 var ErrDraftEdited = errors.New("draft_edited")
 
+// ErrDraftBodyChanged: the draft's body on the remote is not the prepared
+// notes file's content with the creation nonce (3.0.2): edited after creation,
+// or a recovered or adopted draft whose body differs.
+var ErrDraftBodyChanged = errors.New("release_draft_body_changed")
+
 // ErrProtectionUnmet: the repository has no tag rule restricting update and
 // deletion of the release's tag, so no release runs (protection_unmet).
 var ErrProtectionUnmet = errors.New("protection_unmet")
@@ -102,19 +114,88 @@ type Flow struct {
 	Lead     string
 	Squad    string // this squad's identity, set on the gates it raises and read back (mergetrain.Squad)
 	Now      func() time.Time
+	// Body is the GitHub release body: the release notes file's content
+	// (3.0.2). Its digest is in the spec recorded at prepare (Spec), and
+	// publish refuses a body that is not that file's content.
+	Body string
+	// RepoDir is the local repository the commit must resolve in, and Branch
+	// the remote branch that must contain it, before any gate is raised.
+	RepoDir string
+	Branch  string
+}
+
+// The named refusals of 3.0.2.
+var (
+	// ErrBodyMismatch: the release body at publish is not the content of the
+	// notes file whose digest was recorded at prepare.
+	ErrBodyMismatch = errors.New("release_body_mismatch")
+	// ErrNoteCarriesDigest: --notes already contains the digest label; the
+	// digest line is written by prepare only.
+	ErrNoteCarriesDigest = errors.New("note_carries_digest")
+	// ErrBodyDigestMissing: the prepared note carries no well-formed digest.
+	ErrBodyDigestMissing = errors.New("release_body_digest_missing")
+	// ErrBodyDigestAmbiguous: the prepared note carries more than one digest.
+	ErrBodyDigestAmbiguous = errors.New("release_body_digest_ambiguous")
+	// ErrCommitUnknown: --commit names no commit in the local repository.
+	ErrCommitUnknown = errors.New("commit_unknown")
+	// ErrCommitUnknownRemote: the remote does not have the commit at all
+	// (the lead pushes it), distinct from a commit the branch lacks (the lead
+	// merges it).
+	ErrCommitUnknownRemote = errors.New("commit_unknown_remote")
+	// ErrCommitNotOnBranch: the remote branch does not contain the commit.
+	ErrCommitNotOnBranch = errors.New("commit_not_on_branch")
+)
+
+// bodyDigestLabel joins the release body's digest to the gate note (the
+// spec's one note field): the owner's gate question shows the note and the
+// digest of the body the release will carry.
+const bodyDigestLabel = "release body sha256:"
+
+// BodyDigest is the hex SHA-256 of a release body.
+func BodyDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+// recordedBodyDigest reads the one body digest Spec joined to the note: zero
+// (or a malformed one) is release_body_digest_missing, two or more is
+// release_body_digest_ambiguous.
+func recordedBodyDigest(summary string) (string, error) {
+	switch n := strings.Count(summary, bodyDigestLabel); {
+	case n == 0:
+		return "", fmt.Errorf("%w: the prepared note %q carries no %q", ErrBodyDigestMissing, summary, bodyDigestLabel)
+	case n > 1:
+		return "", fmt.Errorf("%w: the prepared note carries %d digests", ErrBodyDigestAmbiguous, n)
+	}
+	d := summary[strings.Index(summary, bodyDigestLabel)+len(bodyDigestLabel):]
+	if len(d) != 64 || strings.Trim(d, "0123456789abcdef") != "" {
+		return "", fmt.Errorf("%w: the prepared note's digest %q is not 64 lowercase hex at the end", ErrBodyDigestMissing, d)
+	}
+	return d, nil
 }
 
 var (
-	tagRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
-	shaRe  = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	repoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	tagRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
+	shaRe    = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	repoRe   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	branchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$`)
 )
 
-// Spec builds the compound release spec for a tag at a commit.
-func Spec(scope compoundrelease.Scope, lead, owner, repository, tag, commit, notes string) (operatorauth.ReleaseSpec, error) {
+// Spec builds the compound release spec for a tag at a commit. notes is the
+// gate note, shown to the owner in the gate question only; body is the
+// release body (the notes file's content), recorded in the spec by its
+// digest, joined to the note.
+func Spec(scope compoundrelease.Scope, lead, owner, repository, tag, commit, notes, body string) (operatorauth.ReleaseSpec, error) {
 	if !tagRe.MatchString(tag) || !shaRe.MatchString(commit) || !repoRe.MatchString(repository) {
 		return operatorauth.ReleaseSpec{}, errors.New("release needs a tag, a full lowercase commit SHA and owner/name")
 	}
+	if strings.TrimSpace(body) == "" {
+		return operatorauth.ReleaseSpec{}, errors.New("release needs a release body: --notes-file names the release notes document")
+	}
+	if strings.Contains(notes, bodyDigestLabel) {
+		return operatorauth.ReleaseSpec{}, fmt.Errorf("%w: --notes contains %q; prepare writes the digest line", ErrNoteCarriesDigest, bodyDigestLabel)
+	}
+	notes = strings.TrimSpace(strings.TrimSpace(notes) + " " + bodyDigestLabel + BodyDigest(body))
 	profile := squadnamespace.NormalizeProfile(scope.Profile)
 	return operatorauth.ReleaseSpec{
 		SchemaVersion: operatorauth.ReleaseSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion,
@@ -162,9 +243,53 @@ func (f *Flow) ChildGate(child operatorauth.ReleaseChildPlan) (string, error) {
 	return check(rec)
 }
 
+// CheckCommit proves the tag's commit names an object before any gate is
+// raised (3.0.2): it resolves to a commit in the local repository (git
+// cat-file -e), and the named remote branch contains it, resolved on the
+// remote as TagCommit resolves the tag. A shape-valid SHA naming nothing is
+// commit_unknown; a commit the remote does not have is commit_unknown_remote
+// (push it); a commit the branch does not carry is commit_not_on_branch
+// (merge it).
+func (f *Flow) CheckCommit(ctx context.Context, repository, commit string) error {
+	if !shaRe.MatchString(commit) {
+		return fmt.Errorf("%w: %q is not a full lowercase commit SHA", ErrCommitUnknown, commit)
+	}
+	if !branchRe.MatchString(f.Branch) || strings.Contains(f.Branch, "..") {
+		return fmt.Errorf("%w: no valid branch is named (%q)", ErrCommitNotOnBranch, f.Branch)
+	}
+	// The owner's global and system git config are not read (as the
+	// package's other local git runs: GIT_CONFIG_GLOBAL=/dev/null,
+	// GIT_CONFIG_NOSYSTEM=1).
+	catFile := exec.CommandContext(ctx, "git", "-C", f.RepoDir, "cat-file", "-e", commit+"^{commit}")
+	catFile.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := catFile.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s names no commit in the repository at %s: %v %s", ErrCommitUnknown, commit, f.RepoDir, err, strings.TrimSpace(string(out)))
+	}
+	if ok, err := f.Exec.CommitExists(ctx, repository, commit); err != nil {
+		return fmt.Errorf("resolve %s on %s: %w", commit, repository, err)
+	} else if !ok {
+		return fmt.Errorf("%w: %s has no commit %s; push it first", ErrCommitUnknownRemote, repository, commit)
+	}
+	ok, err := f.Exec.BranchContains(ctx, repository, f.Branch, commit)
+	if err != nil {
+		return fmt.Errorf("resolve %s on branch %s of %s: %w", commit, f.Branch, repository, err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: branch %s on %s does not contain %s; merge it first", ErrCommitNotOnBranch, f.Branch, repository, commit)
+	}
+	return nil
+}
+
 // Prepare writes the release (or finds it, for the same spec) and raises both
-// child gates; the result is the active manifest naming the two gates.
+// child gates; the result is the active manifest naming the two gates. The
+// tag's commit is checked first (CheckCommit): nothing is written and no gate
+// is raised for a commit that names nothing or that the branch lacks.
 func (f *Flow) Prepare(spec operatorauth.ReleaseSpec) (compoundrelease.Snapshot, error) {
+	if fl := strings.Fields(spec.TagTarget); len(fl) != 6 || fl[0] != "git" || fl[1] != "tag" || fl[4] != "on" {
+		return compoundrelease.Snapshot{}, fmt.Errorf("release tag target %q is not the flow's", spec.TagTarget)
+	} else if err := f.CheckCommit(context.Background(), fl[5], fl[3]); err != nil {
+		return compoundrelease.Snapshot{}, err
+	}
 	snap, err := f.Release.Create(spec)
 	if err != nil {
 		return snap, err
@@ -202,6 +327,14 @@ func (f *Flow) Publish(ctx context.Context, root string) (steps []Step, err erro
 	}
 	if snap.Active == nil {
 		return nil, fmt.Errorf("release is %s, not active: prepare it first", snap.Pointer.State)
+	}
+	// The body is the prepared notes file's content, or nothing runs.
+	want, err := recordedBodyDigest(snap.Prepared.Spec.Note.Summary)
+	if err != nil {
+		return nil, err
+	}
+	if BodyDigest(f.Body) != want {
+		return nil, fmt.Errorf("%w: the release body's sha256 is %s, the release was prepared with %s", ErrBodyMismatch, BodyDigest(f.Body), want)
 	}
 	dir := filepath.Join(root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -280,7 +413,7 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 				err = fmt.Errorf("tag %s does not exist on %s", tag, repo)
 				break
 			}
-			st.Result, err = f.release(ctx, root, dir, repo, tag, approved, snap.Prepared.Spec.Note.Summary)
+			st.Result, err = f.release(ctx, root, dir, repo, tag, approved, f.Body)
 			if errors.Is(err, ErrTagMoved) || errors.Is(err, ErrDraftEdited) {
 				return append(steps, refused(st, err.Error())), fmt.Errorf("%s: %w", child.Role, err)
 			}
@@ -319,12 +452,20 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		return a.ID == b.ID && a.Tag == b.Tag && a.TargetCommitish == b.TargetCommitish && a.Draft && b.Draft
 	}
 	intentPath := filepath.Join(dir, "draft-intent.json")
+	// The creation intent first (5 re-pass, P2-4), read before any recovery:
+	// its nonce is in the draft's body, and the body the draft must carry is
+	// the notes file's content with that nonce (3.0.2).
+	in, err := readIntent(intentPath, tag, approved)
+	if err != nil {
+		return "", err
+	}
+	wantBody := strings.TrimSpace(notes + "\n\n" + NonceMarker(in.Nonce))
 	discard := func(d Draft, cause error, why, remote string) (string, error) {
 		if !d.Draft {
 			// A published release is never deleted (5 re-pass, P1-1): it is
 			// reported for the owner.
 			alertErr := f.alert(root, repo, "draft_edited", tag, approved, fmt.Sprintf("published release %d for %s on %s does not match the approved one (%s); it was not deleted", d.ID, tag, repo, why))
-			return "", errors.Join(fmt.Errorf("%w: published release %d: %s", ErrDraftEdited, d.ID, why), note("release_mismatch", d, why+"; not deleted"), alertErr)
+			return "", errors.Join(fmt.Errorf("%w (%w): published release %d: %s", ErrDraftEdited, cause, d.ID, why), note("release_mismatch", d, why+"; not deleted"), alertErr)
 		}
 		derr := f.Exec.DeleteRelease(ctx, repo, d.ID)
 		result := "deleted"
@@ -357,13 +498,15 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		case !found:
 			_ = os.Remove(record)
 			_ = note("draft_gone", prev, "the recorded draft no longer exists; a new draft is created")
-		case !got.Draft && got.ID == prev.ID && got.Tag == want.Tag && got.TargetCommitish == want.TargetCommitish:
+		case !got.Draft && got.ID == prev.ID && got.Tag == want.Tag && got.TargetCommitish == want.TargetCommitish && got.Body == wantBody:
 			// The publish request succeeded and its response was lost (5
 			// re-pass, P1-1): GitHub keeps the published release at its id.
 			// The same id, tag and commit is completion, never a deletion.
 			_ = os.Remove(record)
 			_ = os.Remove(intentPath)
 			return got.URL, note("draft_published", got, "recovered: the release was already published at its id ("+got.URL+")")
+		case got.Body != wantBody:
+			return discard(got, ErrDraftBodyChanged, fmt.Sprintf("the recorded draft's body has sha256 %s, not the prepared notes file's", BodyDigest(got.Body)), "")
 		case !same(got, prev) || got.Tag != want.Tag || got.TargetCommitish != want.TargetCommitish:
 			return discard(got, ErrDraftEdited, fmt.Sprintf("the recorded draft now names %s at %s", got.Tag, got.TargetCommitish), "")
 		default:
@@ -372,13 +515,9 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		}
 	}
 	if d.ID == 0 {
-		// The creation intent first (5 re-pass, P2-4): a draft whose POST
-		// succeeded but whose response or record was lost carries the nonce
-		// in its body, and is adopted here, never created twice.
-		in, err := readIntent(intentPath, tag, approved)
-		if err != nil {
-			return "", err
-		}
+		// A draft whose POST succeeded but whose response or record was lost
+		// carries the intent's nonce in its body, and is adopted here, never
+		// created twice.
 		matches, err := f.Exec.FindDrafts(ctx, repo, in.Nonce)
 		if err != nil {
 			return "", fmt.Errorf("find drafts of intent %s: %w", in.Nonce, err)
@@ -396,7 +535,7 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		}
 		if created.ID != 0 {
 			_ = note("draft_adopted", created, "the draft of intent "+in.Nonce+" was created by a run whose response or record was lost")
-		} else if created, err = f.Exec.CreateDraft(ctx, repo, tag, approved, strings.TrimSpace(notes+"\n\n"+NonceMarker(in.Nonce))); err != nil {
+		} else if created, err = f.Exec.CreateDraft(ctx, repo, tag, approved, wantBody); err != nil {
 			return "", err
 		}
 		if err := writeOnce(record, created); err != nil {
@@ -415,6 +554,9 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		}
 		if !found || !same(got, want) || !same(created, want) {
 			return discard(got, ErrDraftEdited, fmt.Sprintf("read back as %s at %s (found %v)", got.Tag, got.TargetCommitish, found), "")
+		}
+		if got.Body != wantBody {
+			return discard(got, ErrDraftBodyChanged, fmt.Sprintf("read back with a body of sha256 %s, not the prepared notes file's", BodyDigest(got.Body)), "")
 		}
 		d = got
 	}
@@ -435,6 +577,9 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 	}
 	if !found || !same(again, d) {
 		return discard(again, ErrDraftEdited, fmt.Sprintf("before publication it names %s at %s (found %v)", again.Tag, again.TargetCommitish, found), "")
+	}
+	if again.Body != wantBody {
+		return discard(again, ErrDraftBodyChanged, fmt.Sprintf("before publication its body has sha256 %s, not the prepared notes file's", BodyDigest(again.Body)), "")
 	}
 	if commit, err = f.Exec.TagCommit(ctx, repo, tag); err != nil {
 		return "", fmt.Errorf("resolve tag %s: %w", tag, err)

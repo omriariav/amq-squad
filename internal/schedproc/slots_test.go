@@ -2,6 +2,8 @@ package schedproc
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +20,9 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@x.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x.invalid")
+	// Isolated from the owner's git: a temp HOME, no global or system config.
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@x.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x.invalid")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -30,6 +34,16 @@ func squadFixture(t *testing.T) seatlaunch.Squad {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH")
+	}
+	// Every git under test, the code's own included, runs off the owner's
+	// git: a temp HOME, no global or system config, no ambient redirection.
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} {
+		t.Setenv(k, "") // restored at cleanup
+		os.Unsetenv(k)
 	}
 	base, _ := filepath.EvalSymlinks(t.TempDir())
 	repo := filepath.Join(base, "repo")
@@ -127,6 +141,23 @@ func TestDoorbellAndLeadNoticeSend(t *testing.T) {
 		return nil, nil
 	}}
 	tk := task.Task{ID: "t3", Title: "fix", Class: "implement", DeclaredFiles: []string{"a.go"}, BlockReason: "outside_declared_files", BlockRoute: task.RouteLead, BlockDetail: "b.go"}
+	// 3.0.2 t23: the doorbell puts the worktree on the task's branch before
+	// the seat is rung; a failure there rings nothing and comes back as the
+	// scheduler's LeaseUnpreparedError.
+	var started []string
+	start := func(h string, st task.Task) error {
+		started = append(started, h+" "+st.ID+" before "+fmt.Sprint(len(got))+" sends")
+		return errors.New("busy ledger")
+	}
+	err := (Doorbell{Sender: s, Start: start}).Ring("s1", tk)
+	var unprepared *scheduler.LeaseUnpreparedError
+	if !errors.As(err, &unprepared) || !strings.Contains(err.Error(), "busy ledger") || len(started) != 1 || started[0] != "s1 t3 before 0 sends" || len(got) != 0 {
+		t.Fatalf("start: %v %q, sends %d", err, started, len(got))
+	}
+	if err := (Doorbell{Sender: s, Start: func(string, task.Task) error { return nil }}).Ring("s1", tk); err != nil || len(got) != 1 {
+		t.Fatalf("a prepared seat is rung: %v, sends %d", err, len(got))
+	}
+	got = nil
 	if err := (Doorbell{Sender: s}).Ring("s1", tk); err != nil {
 		t.Fatal(err)
 	}
