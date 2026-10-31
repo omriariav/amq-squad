@@ -36,7 +36,7 @@ type Ledger struct {
 	Worktree string         `json:"worktree"`
 	Branch   string         `json:"branch"`
 	Base     string         `json:"base"`           // the worktree HEAD at the seat's first launch
-	Head     string         `json:"head,omitempty"` // the last harness commit, "" before the first
+	Head     string         `json:"head,omitempty"` // a 3.0.1 seat branch's last harness commit (3.0.2: each commit is on its task's branch, Commits[].Branch)
 	Commits  []LedgerCommit `json:"commits"`
 	At       time.Time      `json:"at"`
 	// Quarantine is the evidence of a global_config_changed block: the
@@ -67,6 +67,14 @@ type Ledger struct {
 	// repository (whose remote.origin.pushurl the seat can rewrite), and
 	// refuses when they differ from the grant at commit time.
 	Target
+	// Rest is the commit the seat's worktree rests on between leases: the
+	// base branch's tip CleanSeat read at the last lease boundary (one branch
+	// per task, 3.0.2 t23). "" before the first boundary (Head, then Base).
+	Rest string `json:"rest,omitempty"`
+	// Lease is the current lease's start (StartTask): the task, its own
+	// branch, the base tip recorded at its dispatch and the commit the
+	// worktree was put on. CleanSeat clears it at the next lease boundary.
+	Lease *LedgerLease `json:"lease,omitempty"`
 	// Seal is the ledger's link in its chain (the ruling of the phase 5
 	// re-pass): an HMAC tag keyed by the session seed over the ledger
 	// without its seal, its seq and the previous version's tag; the signed
@@ -375,6 +383,18 @@ func ClearQuarantineSeeded(root, handle string, signer ClearSigner, now time.Tim
 	return out, err
 }
 
+// LedgerLease is one lease's start on the seat (3.0.2 t23): the task's
+// branch, the base branch's tip when the task was dispatched (the parent of
+// the task's first commit), and the commit the worktree started on (the
+// base, or the task's own earlier commit on a later attempt).
+type LedgerLease struct {
+	Task   string    `json:"task"`
+	Branch string    `json:"branch"`
+	Base   string    `json:"base"`
+	Start  string    `json:"start"`
+	At     time.Time `json:"at"`
+}
+
 // LedgerCommit is one harness commit.
 type LedgerCommit struct {
 	Task   string    `json:"task"`
@@ -383,6 +403,11 @@ type LedgerCommit struct {
 	Tree   string    `json:"tree"`
 	At     time.Time `json:"at"`
 	Pushed bool      `json:"pushed"`
+	// Branch is the task's own branch the commit was pushed to (one branch
+	// per task, 3.0.2 t23); Base is the base tip recorded at the task's
+	// dispatch. Both are "" on a 3.0.1 commit of the seat branch.
+	Branch string `json:"branch,omitempty"`
+	Base   string `json:"base,omitempty"`
 	// The diff the step checked before it committed (P2-6 of the phase 5
 	// re-pass): a retry after a deferred push or PR reuses it, never a diff
 	// recomputed against the new ledger parent (the commit itself, so empty).
@@ -397,12 +422,72 @@ func LedgerDir(root string) string { return filepath.Join(root, "extensions", "a
 
 func ledgerPath(root, handle string) string { return filepath.Join(LedgerDir(root), handle+".json") }
 
-// Parent is the commit the seat's next diff is taken against.
+// Parent is the commit the seat's worktree diff is taken against: the
+// current lease's start, else the resting commit.
 func (l Ledger) Parent() string {
-	if l.Head != "" {
-		return l.Head
+	if l.Lease != nil && l.Lease.Start != "" {
+		return l.Lease.Start
 	}
-	return l.Base
+	return l.rest()
+}
+
+// rest is the commit the worktree rests on between leases: the base tip of
+// the last lease boundary; a 3.0.1 ledger's last harness commit (Head) or
+// launch base until its first boundary.
+func (l Ledger) rest() string { return firstNonEmpty(l.Rest, l.Head, l.Base) }
+
+// TaskBranch is a task's own branch on a seat (3.0.2 t23):
+// seat/<handle>-<task id>, beside the resting branch seat/<handle> (a ref
+// cannot be both seat/<handle> and a directory of task branches). It is a
+// label only: nothing parses it back into a handle and a task (a handle may
+// itself carry a hyphen); the ledger's per-task record (Lease, Commits) is
+// the only source of which task a branch carries.
+func TaskBranch(handle, taskID string) string { return "seat/" + handle + "-" + taskID }
+
+// knownBranch reports whether a ref is the task branch of the lease the
+// ledger records (Lease.Task, Lease.Branch): the lease record is the only
+// source of whether, and on which task, the worktree is; never the name.
+func (l Ledger) knownBranch(ref string) bool {
+	return l.Lease != nil && l.Lease.Branch != "" && ref == "refs/heads/"+l.Lease.Branch
+}
+
+// taskCommitAt is the index of the task's last commit on its branch, -1
+// when none.
+func (l Ledger) taskCommitAt(taskID, branch string) int {
+	for i := len(l.Commits) - 1; i >= 0; i-- {
+		if c := l.Commits[i]; c.Task == taskID && c.Branch == branch {
+			return i
+		}
+	}
+	return -1
+}
+
+// recordedAt is the index of the ledger's commit of this exact diff (parent
+// and tree), -1 when none: a re-run after a deferred push or PR finds it,
+// and CleanSeat knows a committed worktree from a discarded one.
+func (l Ledger) recordedAt(parent, tree string) int {
+	for i := len(l.Commits) - 1; i >= 0; i-- {
+		if c := l.Commits[i]; c.Parent == parent && c.Tree == tree {
+			return i
+		}
+	}
+	return -1
+}
+
+// taskStart is the branch and parent of a task's commit: the lease's start
+// when StartTask moved the worktree onto the task's branch; without one, the
+// task's branch from the resting commit (the seat worked there). why is set
+// when the lease the ledger records is another task's.
+func (l Ledger) taskStart(handle, taskID string) (branch, parent, base, why string) {
+	branch = TaskBranch(handle, taskID)
+	if ls := l.Lease; ls != nil {
+		if ls.Task != taskID {
+			return branch, "", "", fmt.Sprintf("the seat's worktree started task %s's lease, not task %s's", ls.Task, taskID)
+		}
+		return ls.Branch, ls.Start, ls.Base, ""
+	}
+	parent = l.rest()
+	return branch, parent, parent, ""
 }
 
 // ReadLedger loads a seat's ledger; os.ErrNotExist when there is none.

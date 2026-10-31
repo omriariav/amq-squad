@@ -793,7 +793,19 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			log(Decision{Kind: "dispatched", TaskID: t.ID, Seat: handle, Pool: r.Pool.Key()})
 			if s.Doorbell != nil {
 				if err := s.Doorbell.Ring(handle, got); err != nil {
-					log(Decision{Kind: "doorbell_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+					var unprepared *LeaseUnpreparedError
+					if !errors.As(err, &unprepared) {
+						log(Decision{Kind: "doorbell_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+						continue
+					}
+					// 3.0.2 t23: the seat was not rung; the lease goes back
+					// and the task blocks for the lead, in one transaction.
+					blocked, berr := s.Store.Block(t.ID, handle, ReasonTaskBranchUnprepared, unprepared.Err.Error(), task.RouteLead, now)
+					if berr != nil {
+						return berr
+					}
+					list = replace(list, blocked)
+					log(Decision{Kind: "blocked", TaskID: t.ID, Seat: handle, Reason: ReasonTaskBranchUnprepared})
 				}
 			}
 			continue

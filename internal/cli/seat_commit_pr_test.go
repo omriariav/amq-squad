@@ -32,7 +32,12 @@ func TestSeatCommitOpenPRBindsTheTask(t *testing.T) {
 		t.Fatalf("seat commit: %v\n%s", err, out)
 	}
 	got, _ := s.Get(tk.ID)
-	head := gitT(t, wt, "rev-parse", "HEAD")
+	// The task's own branch carries the commit (3.0.2 t23); the worktree is
+	// back on the resting seat branch, and the commit stays anchored.
+	head := gitT(t, wt, "rev-parse", "refs/amq-squad/commits/s1/"+tk.ID)
+	if rest := gitT(t, wt, "symbolic-ref", "HEAD"); rest != "refs/heads/seat/s1" || head == gitT(t, wt, "rev-parse", "HEAD") {
+		t.Fatalf("after the step the worktree is on %s", rest)
+	}
 	if got.State != task.StateCompleted || got.PRNumber != 7 || got.PRHead != head {
 		t.Fatalf("binding: pr %d head %q (want 7, %s), state %s", got.PRNumber, got.PRHead, head, got.State)
 	}

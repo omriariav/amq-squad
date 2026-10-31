@@ -461,8 +461,19 @@ never a body trailer, is the PR's provenance. [2.7, briefs ruling 19;
 amendment 28] Binding is the default under a merge grant: the
 scheduler's commit step opens and binds with no flag, and `scheduler run
 --no-open-pr` is refused while the repository has one. [2.7, 3.0.1 task
-t14] Between leases CleanSeat resets the seat and keeps the
-discarded diff on the ledger. [2.7, milestone B result]
+t14] The binding check runs before the commit and the push: an open PR
+on the task's branch that the store binds to another task refuses
+`pr_bound_elsewhere` with nothing committed or pushed and the ledger
+unchanged. [2.7, 3.0.2 task t24] Each task commits on its own branch,
+`seat/<handle>-<task id>` (a label: the ledger's per-task record, never
+the name, says which task a branch carries), from the remote base tip
+fetched at the grant, written per task on the commit ledger, never from the seat's previous task (a later
+attempt appends to its own branch and PR); the worktree moves onto that
+branch when the lease is granted and back to the base after the commit;
+a seat that cannot be put on its task's branch is not rung, and the task
+blocks for the lead as `task_branch_unprepared`. [2.7, 3.0.2 task t23] Between leases, never during a held lease,
+CleanSeat resets the seat to the launch's base (`launch.Record.Base`) and
+keeps the discarded diff on the ledger. [2.7, milestone B result; 3.0.2 amendment 2b]
 
 pi seats start through the launch API like Claude and Codex seats, with
 the upstream mint-mode adapter in 4.1 (issue #1153, PR #1188). The caveats
@@ -548,7 +559,16 @@ seat of the typed seat list with a worktree of its own, in one AMQ
 prepare and one apply at start (one binding, every seat fresh); a seat
 that holds no lease is parked and gets the next task of its pool, and
 the seat cap and the registry's concurrency pools bound the leases held
-at once (max_seats caps live leases, not live panes). A restarted
+at once (max_seats caps live leases, not live panes). At every launch,
+the roster launch included, a seat's worktree and its resting branch
+`seat/<handle>` start from the base branch's tip, fetched from the grant's
+push URL (the local base branch without one), never from the commit
+ledger's first base or the branch's old head; the launch record carries
+that base, and a seat branch holding commits the tip does not, remote and
+unmerged or local and unpushed, refuses the launch by name
+(`seat_branch_unmerged`, `seat_branch_unpushed`), never a force-push or a
+discarded commit [3.0.2
+t22; docs/v3-spike/5-302-evidence/seatbase.md]. A restarted
 scheduler adopts the live roster seats it re-proves from the launch
 ledger and closes the rest. The roster's tmux session holds seats only: the
 lead's seat is left out of the roster, and the team-mode lead and its
