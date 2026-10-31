@@ -131,3 +131,23 @@ func TestTaskCLIReconcileListsExpiredLeases(t *testing.T) {
 		t.Fatalf("reconcile (%v):\n%s", err, out)
 	}
 }
+
+// 3.0.2: the re-pin refusal after the first claim names the lead's way out
+// (task reset --pool).
+func TestTaskCLISetRepinRefusalNamesReset(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	if _, err := taskCLI(t, "add", "--title", "x", "--class", "script", "--pool", "claude:haiku:low", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := taskCLI(t, "set", "t1", "--pool", "claude:sonnet:medium", "--me", "lead")
+	if err == nil || !strings.HasSuffix(err.Error(), "use task reset --pool") {
+		t.Fatalf("re-pin after the first claim: %v", err)
+	}
+}
