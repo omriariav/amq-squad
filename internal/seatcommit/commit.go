@@ -1322,11 +1322,13 @@ func ghRunner(o Options, l Ledger, dir string) (run func(args ...string) (string
 	}, ""
 }
 
-// branchPR reads the open PRs of the task's branch. Provenance is the task
-// binding in the store only (R7): an open PR is this task's only when the
-// store binds its number to this task, it is from this repository and onto
-// the grant's base; any other open PR is named in why (the commit step never
-// reuses it); no PR body is ever read. err is a gh failure.
+// branchPR reads the open PRs of the task's branch, every one of them: a
+// push updates every open PR on its head, so one disqualifying PR refuses
+// even beside this task's own. Provenance is the task binding in the store
+// only (R7): an open PR is this task's only when the store binds its number
+// to this task, it is from this repository and onto the grant's base; any
+// other open PR is named in why (the commit step never reuses it); no PR
+// body is ever read. err is a gh failure.
 func branchPR(o Options, run func(args ...string) (string, error), l Ledger, branch string) (pr *ghPR, why string, err error) {
 	out, err := run("pr", "list", "--head", branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
 	if err != nil {
@@ -1337,6 +1339,7 @@ func branchPR(o Options, run func(args ...string) (string, error), l Ledger, bra
 		return nil, "", errors.New("gh pr list gave no PR list: " + firstLine(out))
 	}
 	base := l.base(o.Grants)
+	var mine *ghPR
 	for i, p := range prs {
 		b := ""
 		if o.PRBoundTo != nil {
@@ -1357,9 +1360,9 @@ func branchPR(o Options, run func(args ...string) (string, error), l Ledger, bra
 		if why != "" {
 			return &prs[i], fmt.Sprintf("the open PR #%d on %s %s", p.Number, branch, why), nil
 		}
-		return &prs[i], "", nil
+		mine = &prs[i]
 	}
-	return nil, "", nil
+	return mine, "", nil
 }
 
 // prCheck is the binding check before the commit and the push (3.0.2 t24,

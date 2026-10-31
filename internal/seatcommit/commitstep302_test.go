@@ -377,3 +377,39 @@ func TestRecordWithoutBaseKeepsTheRestingCommit(t *testing.T) {
 		t.Fatalf("no launch base: %+v (rest %s)", res, l.Rest)
 	}
 }
+
+// Codex pass on 2477f10f, finding 2: every open PR on the task's branch is
+// examined, not only the first. With this task's own PR first and a second
+// open PR on the same head bound to another task, the binding check refuses
+// pr_bound_elsewhere naming the second before anything is written (a push
+// would update both PRs, the day-2 contamination). Fails when the check
+// stops at the first acceptable PR.
+func TestEveryOpenPROnTheBranchIsExamined(t *testing.T) {
+	f := newFixture(t)
+	gh, prs, calls := branchGh(t, f)
+	other, _ := f.store.Add(task.AddInput{Title: "t12", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
+	f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
+	harnessPass(t, f.store, other.ID, f.now)
+	f.store.Done(other.ID, "s9", "ok", "", f.now)
+	if _, err := f.store.CompleteBound(other.ID, fixtureRepo, 815, strings.Repeat("c", 40), f.now); err != nil {
+		t.Fatal(err)
+	}
+	tk := f.leased("cmd/")
+	if _, err := f.store.BindPR(tk.ID, fixtureRepo, 1, strings.Repeat("d", 40), f.now); err != nil {
+		t.Fatal(err)
+	}
+	branch := TaskBranch(f.handle, tk.ID)
+	write(t, filepath.Join(prs, strings.ReplaceAll(branch, "/", "_")), `[`+
+		`{"number":1,"state":"OPEN","headRefOid":"`+strings.Repeat("d", 40)+`","baseRefName":"main","isCrossRepository":false},`+
+		`{"number":815,"state":"OPEN","headRefOid":"`+strings.Repeat("d", 40)+`","baseRefName":"main","isCrossRepository":false}]`)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// beside #815\n")
+	tk = f.done(tk.ID)
+	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	res := Run(f.prOpts(tk, gh))
+	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	raw, _ := os.ReadFile(calls)
+	if res.ReasonCode != ReasonPRBoundElsewhere || !strings.Contains(res.Detail, "#815") || res.Commit != "" || res.Pushed ||
+		f.originBranch() != "" || string(before) != string(after) || strings.Contains(string(raw), "pr create") {
+		t.Fatalf("want %s naming #815 before anything is written, got %+v (origin %q)", ReasonPRBoundElsewhere, res, f.originBranch())
+	}
+}
