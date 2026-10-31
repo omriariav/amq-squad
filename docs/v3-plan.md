@@ -461,8 +461,17 @@ never a body trailer, is the PR's provenance. [2.7, briefs ruling 19;
 amendment 28] Binding is the default under a merge grant: the
 scheduler's commit step opens and binds with no flag, and `scheduler run
 --no-open-pr` is refused while the repository has one. [2.7, 3.0.1 task
-t14] Between leases CleanSeat resets the seat and keeps the
-discarded diff on the ledger. [2.7, milestone B result]
+t14] The binding check runs before the commit and the push: an open PR
+on the task's branch that the store binds to another task refuses
+`pr_bound_elsewhere` with nothing committed or pushed and the ledger
+unchanged. [2.7, 3.0.2 task t24] Each task commits on its own branch,
+`seat/<handle>/<task>`, from the base branch's tip recorded on the
+commit ledger at its dispatch, never from the seat's previous task (a
+later attempt appends to its own branch and PR); the worktree moves onto
+that branch when the lease is granted and back to the base tip after the
+commit. [2.7, 3.0.2 task t23] Between leases CleanSeat resets the seat
+to the base tip and keeps the discarded diff on the ledger. [2.7,
+milestone B result]
 
 pi seats start through the launch API like Claude and Codex seats, with
 the upstream mint-mode adapter in 4.1 (issue #1153, PR #1188). The caveats
