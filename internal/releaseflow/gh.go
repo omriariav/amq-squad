@@ -28,17 +28,15 @@ func (g *GH) run(ctx context.Context, args ...string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		e := &ghError{err: fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(3, len(args))], " "), err, strings.TrimSpace(stderr.String()))}
-		if m := httpStatusRe.FindStringSubmatch(stderr.String()); m != nil {
-			e.status, _ = strconv.Atoi(m[1])
-		}
+		e.status = ghStatus(stderr.String())
 		return "", e
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ghError is a failed gh call with the HTTP status gh printed on stderr
-// ("gh: Not Found (HTTP 404)"); status is 0 for a failure without one (a
-// transport error, a crash). The status is read from gh's own token only,
+// ghError is a failed gh call with the HTTP status gh appended to its error
+// line ("gh: Not Found (HTTP 404)"); status is 0 for a failure without that
+// suffix (a transport error, a crash), which stays an error. The status is read from gh's own token only,
 // never from the error text, which names the endpoint and so the SHA or id
 // (Codex P2: a SHA containing "404" made a timeout look like a missing
 // commit).
@@ -50,7 +48,22 @@ type ghError struct {
 func (e *ghError) Error() string { return e.err.Error() }
 func (e *ghError) Unwrap() error { return e.err }
 
-var httpStatusRe = regexp.MustCompile(`\bHTTP ([1-5][0-9][0-9])\b`)
+// httpStatusRe is gh's own status form only: the "(HTTP nnn)" suffix at the
+// end of its error line (Codex P2, round 3: "HTTP 404" elsewhere in the text,
+// as in "upstream reported HTTP 404 (HTTP 503)" or a transport error that
+// quotes a body, is not the status).
+var httpStatusRe = regexp.MustCompile(`\(HTTP ([1-5][0-9][0-9])\)$`)
+
+// ghStatus reads the status from the last non-empty line of gh's stderr,
+// anchored at its end; 0 when that line carries no such suffix.
+func ghStatus(stderr string) int {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	if m := httpStatusRe.FindStringSubmatch(strings.TrimSpace(lines[len(lines)-1])); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return 0
+}
 
 // httpStatus is the HTTP status of a failed gh call, 0 when it has none.
 func httpStatus(err error) int {

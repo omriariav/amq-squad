@@ -21,6 +21,8 @@ case "$FAKE_GH_MODE" in
 404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
 422) echo "gh: No commit found for SHA: ${ep##*/} (HTTP 422)" >&2; exit 1 ;;
 transport) echo "Get \"https://api.github.com/$ep\": dial tcp 140.82.121.6:443: i/o timeout" >&2; exit 1 ;;
+upstream) echo "gh: upstream reported HTTP 404 (HTTP 503)" >&2; exit 1 ;;
+transport404) echo "Get \"https://api.github.com/$ep\": proxy answered HTTP 404 Not Found" >&2; exit 1 ;;
 esac
 case "$ep" in
 */commits/*) echo "${ep##*/}" ;;
@@ -59,6 +61,8 @@ func TestGHAdapterClassifiesOnTheHTTPStatusOnly(t *testing.T) {
 			{"404", "", false, false, false},
 			{"422", "", false, false, false},
 			{"transport", "", false, false, true},
+			{"upstream", "", false, false, true},     // "HTTP 404 (HTTP 503)": the status is 503
+			{"transport404", "", false, false, true}, // "HTTP 404" in the text, no gh suffix
 		} {
 			fakeGH(t, c.mode, c.compare)
 			ok, err := g.CommitExists(ctx, "owner/fixture", sha)
@@ -92,3 +96,4 @@ func TestGHAdapterClassifiesOnTheHTTPStatusOnly(t *testing.T) {
 		}
 	}
 }
+
