@@ -192,13 +192,19 @@ temp HOME for the whole test, through `squadFixture` and `t.Setenv`.
 
 ## Revert checks
 
-26 mutations, each applied alone to the code at the head of this branch.
+28 mutations, each applied alone to the code at the head of this branch.
 For each one, the named rows were run and the file was restored. Every
 mutation compiled, and every result is a real test failure (`--- FAIL`),
-not a build error.
+not a build error. The fake gh's explicit environment has no mutation of
+its own. The commit step's gh environment already carries
+`GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, and that
+environment reaches the script, so removing the prefix alone changes
+nothing a row can observe.
 
 | Mutation | Row | Result |
 |---|---|---|
+| another task's lease lets the quarantine write unchecked | TestAnotherTasksLeaseRefusesBeforeTheQuarantine | FAIL |
+| the rows' git helpers inherit the process environment | TestRowGitsReadNoRealHome | FAIL |
 | a recorded commit's retry skips the checks (the old lease-mode copy) | TestRecordedCommitRetryIsCheckedAgainstTheGrantNow/a_cap | FAIL |
 | the recorded digest is not compared | TestRecordedCommitRetryIsCheckedAgainstTheGrantNow/a_recorded | FAIL |
 | a full page of open PRs passes | TestAFullPagePRListDefers | FAIL |
