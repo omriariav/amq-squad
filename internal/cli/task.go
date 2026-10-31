@@ -417,9 +417,6 @@ func runTaskTransition(verb string, args []string) error {
 		if prio == nil && pool == nil {
 			return usageErrorf("task set needs --priority or --pool")
 		}
-		if cur, gerr := s.Get(id); pool != nil && gerr == nil && cur.Attempt > 0 {
-			return fmt.Errorf("task set: task %s has started attempt %d; pool cannot be changed after the first claim; use task reset --pool", id, cur.Attempt)
-		}
 		t, err = s.Set(id, prio, pool, now)
 	case "cancel":
 		t, err = s.Cancel(id, me, *reason, now)
