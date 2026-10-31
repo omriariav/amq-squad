@@ -599,3 +599,39 @@ func TestAFullPagePRListDefers(t *testing.T) {
 		t.Fatalf("a full page: %+v\n%s", res, raw)
 	}
 }
+
+// Codex pass on c09a8887, finding 3: no ledger write of any kind before the
+// binding check passes, the quarantine's evidence included. The owner's
+// config changed during the run and the task's branch carries another
+// task's bound PR: the step still quarantines the seat (the owner's reason,
+// Quarantine set for the task store) but writes nothing to the ledger and
+// anchors no evidence ref. Fails when the quarantine writes before the
+// binding check.
+func TestQuarantineWritesNothingBeforeTheBindingCheck(t *testing.T) {
+	f := newFixture(t)
+	gh, prs, _ := branchGh(t, f)
+	other, _ := f.store.Add(task.AddInput{Title: "t12", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
+	f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
+	harnessPass(t, f.store, other.ID, f.now)
+	f.store.Done(other.ID, "s9", "ok", "", f.now)
+	if _, err := f.store.CompleteBound(other.ID, fixtureRepo, 815, strings.Repeat("c", 40), f.now); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
+	tk := f.leased("cmd/")
+	write(t, filepath.Join(prs, strings.ReplaceAll(TaskBranch(f.handle, tk.ID), "/", "_")), `[{"number":815,"state":"OPEN","headRefOid":"`+strings.Repeat("c", 40)+`","baseRefName":"main","isCrossRepository":false}]`)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
+	tk = f.done(tk.ID)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
+	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	res := Run(f.prOpts(tk, gh))
+	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	if res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || res.Route != task.RouteOwner || !strings.Contains(res.Detail, ReasonPRBoundElsewhere) ||
+		string(before) != string(after) || f.originBranch() != "" {
+		t.Fatalf("the quarantine path: %+v (ledger changed %v)", res, string(before) != string(after))
+	}
+	if out, _ := runGit(t, f.wt, "for-each-ref", "refs/amq-squad/evidence/"); strings.TrimSpace(out) != "" {
+		t.Fatalf("an evidence ref was anchored: %s", out)
+	}
+}

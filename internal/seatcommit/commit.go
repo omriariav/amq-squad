@@ -142,6 +142,14 @@ func (r Result) defer_(detail string) Result {
 // lock for the whole step, so the scheduler's run and a lead's manual run
 // never interleave. It writes no task state: the caller records the result
 // (task.CompleteBound, task.RefuseCommit).
+//
+// The ledger contract (3.0.2 t24): a step refused or deferred by the path
+// checks or the binding check leaves the ledger byte-for-byte unchanged. No
+// ledger write of any kind comes before the binding check passes: a
+// quarantine records its evidence only after it (and still quarantines the
+// seat, with nothing written, when it does not pass). After the binding
+// check, a verified quarantine clear may be lifted onto the ledger before
+// the verifier runs.
 func Run(o Options) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
 	// A dry run also takes a task blocked by a refusal (the widening check).
@@ -293,6 +301,14 @@ func run(o Options, res Result) Result {
 			return res.defer_("exit check: " + err.Error())
 		}
 		if code != "" {
+			// The quarantine's evidence is a ledger write: it is made only
+			// once the binding check passed. A binding check that does not
+			// pass still quarantines the seat (the task store, the caller),
+			// with nothing written to the ledger.
+			if why := quarantineGate(o); why != "" {
+				res.Config, res.Quarantine = changes, true
+				return res.refuse(code, task.RouteOwner, fmt.Sprintf("the owner's agent config changed during the seat's run (%d changes); the seat is quarantined until the owner clears it (amq-squad seat clear --seat %s); the binding check did not pass (%s), so no tree is kept on the commit ledger", len(changes), o.Handle, why))
+			}
 			return quarantine(o, res, code, changes, "")
 		}
 	}
@@ -435,7 +451,7 @@ func run(o Options, res Result) Result {
 	// 3.0.2 t24: the binding check runs before the commit and the push. A
 	// task branch that carries an open PR this task does not hold refuses
 	// here, with nothing committed or pushed.
-	if r, stop := prCheck(o, sh, ledger, res); stop {
+	if r, stop := prCheck(o, sh.dir, ledger, res); stop {
 		return r
 	}
 	if lift != nil {
@@ -1390,13 +1406,33 @@ func branchPR(o Options, run func(args ...string) (string, error), l Ledger, bra
 	return mine, "", nil
 }
 
+// quarantineGate is the binding check of a step that would quarantine the
+// seat (prCheck on the task's branch, run before the quarantine's ledger
+// write): the refusal or deferral's reason code and detail, "" when it
+// passes or there is no binding to check (no ledger, no lease of this task).
+func quarantineGate(o Options) string {
+	l, err := ReadLedger(o.Root, o.Handle)
+	if err != nil {
+		return ""
+	}
+	branch, _, _, why := l.taskStart(o.Handle, o.Task.ID)
+	if why != "" {
+		return ""
+	}
+	r, stop := prCheck(o, os.TempDir(), l, Result{Task: o.Task.ID, Seat: o.Handle, Branch: branch})
+	if !stop {
+		return ""
+	}
+	return r.ReasonCode + ": " + r.Detail
+}
+
 // prCheck is the binding check before the commit and the push (3.0.2 t24,
 // the v31 finding: t20's commit was pushed onto seat/dev, which carried PR
 // #815 bound to t12, and only then refused). With --open-pr, the task's
 // branch is read through gh before anything is written: an open PR this
 // task does not hold refuses pr_bound_elsewhere, and a gh failure defers;
 // either way nothing is committed or pushed and the seat's diff waits.
-func prCheck(o Options, sh *shadow, l Ledger, res Result) (Result, bool) {
+func prCheck(o Options, dir string, l Ledger, res Result) (Result, bool) {
 	if !o.OpenPR || l.Repository == "" {
 		return res, false // openPR names a missing repository after the push
 	}
@@ -1405,7 +1441,7 @@ func prCheck(o Options, sh *shadow, l Ledger, res Result) (Result, bool) {
 		r.ReasonCode = ReasonPRPending
 		return r, true
 	}
-	run, why := ghRunner(o, l, sh.dir)
+	run, why := ghRunner(o, l, dir)
 	if why != "" {
 		return pending(why)
 	}
