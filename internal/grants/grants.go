@@ -204,6 +204,10 @@ type Grants struct {
 	// VerifierGoproxy is the verifier's GOPROXY (verifier_goproxy); "" is
 	// Go's own default.
 	VerifierGoproxy string `json:"verifier_goproxy,omitempty"`
+	// DeletedKeys are owner-file keys this build no longer reads, accepted
+	// and ignored (brief 31-1: clear.signature, deleted with seat clear);
+	// doctor's grants row names each as a warning. Never refused.
+	DeletedKeys []string `json:"-"`
 }
 
 // VerifierArgs is the class's verifier argv: the grant's list, else its

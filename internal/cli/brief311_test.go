@@ -2,14 +2,19 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // Brief 31-1, row 11 (the scheduler's half): a scheduler whose squad's
@@ -85,5 +90,71 @@ func TestTheCheckedInSquadYAMLLaunchesWithDerivedWorktrees(t *testing.T) {
 		if want := filepath.Join(proj, ".worktrees", rs.Handle); rs.Worktree != want || rs.Worktree == proj {
 			t.Fatalf("seat %s worktree %s, want %s", rs.Handle, rs.Worktree, want)
 		}
+	}
+}
+
+// Reviewer hold (1) of brief 31-1: the tool-time deny of a Claude seat's
+// write to the owner's global agent config stays (hook_guard.go's
+// protected-path deny over grants.Implicit's ~/.claude/settings*.json). The
+// write is denied, no quarantine is recorded, and the seat goes on: its next
+// call is allowed.
+func TestClaudeSeatWriteToTheOwnersConfigIsDeniedWithoutQuarantine(t *testing.T) {
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	wt, _ := filepath.EvalSymlinks(t.TempDir())
+	os.MkdirAll(filepath.Join(root, "agents", "s1"), 0o700)
+	if _, err := claudeseat.Write(claudeseat.Dir(root, "s1", "launch-1"), "dontAsk", wt, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(launch.StagedDir(root, "s1"), 0o700)
+	rec := launch.Record{Handle: "s1", Root: root, Session: "s", Runtime: "claude", Worktree: wt, Branch: "seat/s1", LaunchID: "launch-1", PermissionMode: "dontAsk"}
+	if err := launch.WriteFile(filepath.Join(launch.StagedDir(root, "s1"), launch.FileName), rec); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_ME", "s1")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_SESSION", "")
+	guard := func(args ...string) guardVerdict {
+		t.Helper()
+		out, _, err := captureOutput(t, func() error { return runGuard(append([]string{"--me", "s1", "--cwd", wt}, args...)) })
+		var v guardVerdict
+		if err != nil || json.Unmarshal([]byte(out), &v) != nil {
+			t.Fatalf("guard: %v %q", err, out)
+		}
+		return v
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if v := guard("--tool", "Write", "--arg", "file_path="+settings, "--arg", "content={}"); v.Verdict != "deny" || v.ReasonCode != "protected_path" {
+		t.Fatalf("a write to the owner's %s: %+v", settings, v)
+	}
+	if v := guard("--tool", "Bash", "--arg", "command=echo x > "+settings); v.Verdict != "deny" || v.ReasonCode != "protected_path" {
+		t.Fatalf("a shell write to the owner's config: %+v", v)
+	}
+	if _, err := os.Stat(filepath.Join(task.DirFor(root), "quarantine")); !os.IsNotExist(err) {
+		t.Fatalf("a quarantine was written: %v", err)
+	}
+	if v := guard("--tool", "Bash", "--arg", "command=go test ./..."); v.Verdict == "deny" {
+		t.Fatalf("the seat's next call: %+v", v)
+	}
+}
+
+// The lead's condition (2) on the quarantine's deletion: an owner grants
+// file written before 3.1 that still carries clear.signature is accepted
+// and ignored, never refused; doctor's grants row warns with the key named.
+func TestAnOldClearSignatureKeyIsIgnoredWithADoctorWarning(t *testing.T) {
+	home := t.TempDir()
+	h := hostWith(t, home, "amq")
+	path := filepath.Join(home, ".amq-squad", "grants.yaml")
+	hostWrite(t, path, "schema: 1\nmax_seats: 8\nclear:\n  signature: required\n")
+	os.Chmod(filepath.Dir(path), 0o700)
+	os.Chmod(path, 0o600)
+	data, err := runHostDoctor(t, h, t.TempDir())
+	if err != nil {
+		t.Fatalf("doctor failed on the old key: %v", err)
+	}
+	c := findCheck(data.Checks, "grants")
+	if c.Status != doctorWarn || !strings.Contains(c.Detail, "clear.signature") || !strings.Contains(c.Detail, "seat cap 8") {
+		t.Fatalf("grants row: %+v", c)
 	}
 }

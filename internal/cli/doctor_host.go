@@ -515,6 +515,10 @@ func grantsCheck(home, projectDir string) doctorCheck {
 		c.Status = doctorWarn
 		c.Detail += "; squad.yaml tried to widen: " + strings.Join(r.Ignored, ", ")
 	}
+	if len(r.DeletedKeys) > 0 {
+		c.Status = doctorWarn
+		c.Detail += "; the owner file carries " + strings.Join(r.DeletedKeys, ", ") + ", which 3.1 no longer reads (deleted with seat clear); it is ignored, remove it"
+	}
 	return c
 }
 

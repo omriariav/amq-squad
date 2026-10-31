@@ -118,7 +118,8 @@ func TestDeclaredSetDigestIsCanonical(t *testing.T) {
 
 // Phase 5 re-pass of 2b-2 B, the ruling: the commits ledger is sealed under
 // the session seed with a signed head; a hand edit, an older copy put back,
-// or a deleted head is ledger_tampered, a block routed to the owner.
+// a deleted head or a deleted ledger is ledger_tampered, a block routed to
+// the owner.
 func TestSealedCommitsLedgerDetectsASameUIDEdit(t *testing.T) {
 	cases := []struct {
 		what   string
@@ -139,6 +140,11 @@ func TestSealedCommitsLedgerDetectsASameUIDEdit(t *testing.T) {
 		}},
 		{"a deleted head", func(f *fixture, p string, orig []byte) {
 			os.Remove(sealchain.HeadPath(f.root, ledgerHeadName(f.handle)))
+		}},
+		// the ledger file itself deleted under its sealed head (moved here
+		// from seat clear's TestDeletedLedgerIsTamperedNotUnused, brief 31-1)
+		{"a deleted ledger", func(f *fixture, p string, orig []byte) {
+			os.Remove(p)
 		}},
 	}
 	for i, c := range cases {

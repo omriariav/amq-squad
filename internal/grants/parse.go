@@ -121,7 +121,9 @@ func ParseOwner(text, source string) (Grants, error) {
 		case "clear":
 			// clear.signature, the signed seat clear's mode, was deleted
 			// with the quarantine (brief 31-1); an owner file written before
-			// 3.1 that still carries the block loads, and it has no effect.
+			// 3.1 that still carries the block loads, the key has no effect,
+			// and doctor's grants row warns with its name.
+			g.DeletedKeys = append(g.DeletedKeys, "clear.signature")
 		case "verifiers":
 			g.Verifiers, g.VerifierArgv, err = parseVerifiers(e)
 		case "verifier_goproxy":
