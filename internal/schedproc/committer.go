@@ -16,7 +16,7 @@ const DefaultInline = 2 * time.Second
 
 // Committer runs `amq-squad seat commit` for the scheduler (briefs ruling
 // 4): Step is the same function the verb runs (the CLI passes it), and the
-// scheduler records the result (Complete or RefuseCommit, the quarantine).
+// scheduler records the result (Complete or RefuseCommit).
 //
 // The step runs off the scheduler's tick (v3-5-verifier, the liveness
 // ruling): Commit starts it in its own goroutine, one per task, and answers

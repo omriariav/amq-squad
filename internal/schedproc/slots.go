@@ -33,10 +33,9 @@ type Slots struct {
 	// commit step: repository, base branch and push URL (R2).
 	Target seatcommit.Target
 
-	mu     sync.Mutex
-	inUse  map[string]string // handle -> request id
-	byReq  map[string]string // request id -> handle
-	closed map[string]bool   // handles quarantined or otherwise not to be reused
+	mu    sync.Mutex
+	inUse map[string]string // handle -> request id
+	byReq map[string]string // request id -> handle
 }
 
 func poolMatches(p task.Pool, seat seatlaunch.Seat) bool {
@@ -55,10 +54,10 @@ func (s *Slots) Plan(req scheduler.SeatRequest) (seatlaunch.Squad, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.inUse == nil {
-		s.inUse, s.byReq, s.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+		s.inUse, s.byReq = map[string]string{}, map[string]string{}
 	}
 	for _, seat := range s.Squad.Seats {
-		if !poolMatches(req.Pool, seat) || s.inUse[seat.Handle] != "" || s.closed[seat.Handle] {
+		if !poolMatches(req.Pool, seat) || s.inUse[seat.Handle] != "" {
 			continue
 		}
 		seat, err := s.ensureWorktree(seat)
@@ -571,14 +570,6 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 		// launcher that is a scheduler.AsyncCloser and says so) only at
 		// the seat's seat_gone (P1-6).
 		l.Slots.Release(handle)
-		if reason == "quarantined" {
-			l.Slots.mu.Lock()
-			if l.Slots.closed == nil {
-				l.Slots.closed = map[string]bool{}
-			}
-			l.Slots.closed[handle] = true
-			l.Slots.mu.Unlock()
-		}
 	}
 	return err
 }
@@ -603,7 +594,7 @@ func (l *Launcher) Reserve(handle string) {
 	l.Slots.mu.Lock()
 	defer l.Slots.mu.Unlock()
 	if l.Slots.inUse == nil {
-		l.Slots.inUse, l.Slots.byReq, l.Slots.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+		l.Slots.inUse, l.Slots.byReq = map[string]string{}, map[string]string{}
 	}
 	if l.Slots.inUse[handle] == "" {
 		l.Slots.inUse[handle] = "reserved"

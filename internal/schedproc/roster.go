@@ -41,7 +41,7 @@ func (s *Slots) PlanRoster(reqs []scheduler.SeatRequest) (seatlaunch.Squad, erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.inUse == nil {
-		s.inUse, s.byReq, s.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+		s.inUse, s.byReq = map[string]string{}, map[string]string{}
 	}
 	q := s.Squad
 	q.Seats = nil
