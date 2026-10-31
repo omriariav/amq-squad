@@ -177,3 +177,285 @@ marker). scripts/build-pi-runtime.sh:92 stages amq-squad's own
   the lead's process (R4 by construction for brief 31-2's keys), as a widget
   fed by `status --json` on the `.generation`/`updated_at` poll; no separate
   `amq-squad screen` process is needed.
+
+## 2. What PR 1 changed
+
+### 2.1 The deletions (section 1), each with its removed tests
+
+1. **The hook probe as a quarantine reason.** `exitChanges`' silent-hook
+   branch and `claudeseat.HooksSilent` as a quarantine code are gone; the
+   hook still records a report on every context, guard and ingest call
+   (`recordHookReport`, internal/cli/hook_context.go), and status turns a
+   Claude seat that ran with no report since its launch into the seat
+   warning `claude_hooks_silent` (internal/status/collect.go,
+   `seatWarnings`). Removed: seatcommit fix2_test.go
+   `TestClaudeSeatWithNoHookReportIsQuarantinedAtExit`; clearflow_test.go
+   `TestClearedHooksSilenceIsNotRaisedAgainOnTheSameIncarnation`.
+2. **The config-drift preflight baseline and the quarantine.** Gone:
+   `seatexec.WritePreflight`, `PreflightDiff`, `ConfigChange`,
+   `PreflightDir`, `PreflightFiles`; seat-exec's preflight write; the
+   launch's refresh and `Options.KeepPreflight`; the scheduler's `Admitted`
+   hook (its only use was the baseline); `exitChanges`,
+   `global_config_changed`, `claude_config_changed`, `quarantine_tree_changed`,
+   `quarantine_unverified`; `claudeseat.ConfigDrift`; the verifier's second
+   config diff; the hook's run-time drift deny and its task-store
+   quarantine; the task store's quarantine (internal/task/quarantine.go,
+   its Grant and Claim check) and `Store.Rearm`; the scheduler's quarantine
+   closing and `CommitResult.Quarantine`; the ledger's quarantine handling,
+   `ClearRecord`, `ClearVerifier`, `ClearSigner`, `ClearQuarantine*` and
+   `ClearEventUsed`; `CleanSeat`'s clear argument; `seat clear` with its
+   gate (`seat_clear_gate.go`), the owner-terminal proof (`seat_owner*.go`,
+   whose only verb it was) and its doctor rows; the `quarantine_clear` gate
+   kind (operatorauth catalog, gatetarget class, gatestore requests,
+   gateverify clear) and `operatorauth.Reserved`; the `clear.signature`
+   grant key and `Grants.ClearMode`; `hostcheck`'s config diff and redaction
+   with doctor's `owner config/*` rows; `panechain.List`. seat-exec's deny of
+   a write to the owner's global agent config is untouched.
+   Kept as data only: the ledger's `Quarantine`, `Cleared` and `Seeded`
+   fields and the record shapes under them, because the ledger's seal is
+   computed over the struct and a ledger sealed before 3.1 must still
+   verify; nothing writes or honours them. An owner grants file that still
+   carries a `clear:` block loads (the block is ignored).
+   The one quarantine producer that was not a config reason, a
+   `ledger_tampered` refusal at a seat's exit, now closes the seat with the
+   decision `exit_refused` and a lead notice (`SeatExitRefused`); the commit
+   step refuses ledger_tampered at that seat's next done report, and
+   `CleanSeat` cannot read its ledger, so nothing of it commits.
+   Removed tests: seatcommit clearflow_test.go (renamed
+   widen_refusal_test.go) `TestEveryConsumerOfAClearVerifiesIt`,
+   `TestSeedEntryIsContinuedByRecordBaseAndKeepsTheClear`,
+   `TestClearRecordOnTheLedgerIsTheOnlyUseMark`,
+   `TestConcurrentClearsWriteOneRecordAndOneIsAlreadyCleared`, `switchTrust`,
+   and the seeded half of `TestWidenRefusesWhatTheDryRunRefuses`;
+   commitstep302_test.go `TestQuarantineClearIsLiftedOnlyAfterTheBindingCheck`,
+   `TestQuarantineWritesNothingBeforeTheBindingCheck`,
+   `TestAnotherTasksLeaseRefusesBeforeTheQuarantine`; commit_test.go
+   `TestGlobalConfigChangeFailsTheTask`,
+   `TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing`,
+   `TestPreflightDiffIgnoresOnlyCodexSelfRewrite`; fix1b_test.go
+   `TestExitCheckQuarantinesAtAnyExit`,
+   `TestClaudeConfigDriftAtTheExitQuarantines`; verifier_test.go
+   `TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict`; the clear
+   signer and trust fixtures. task quarantine_test.go (whole file).
+   scheduler milestoneb_test.go `TestQuarantineClosesTheSeatAndDispatchesElsewhere`
+   (fix1b_test.go's two exit-path rows now assert `exit_refused`). schedproc
+   the quarantine half of `TestCommitterDeferralsAndQuarantine` (now
+   `TestCommitterDeferrals`), `TestAdmissionComesBeforeTheBaselineAndTheLaunchRecord`
+   (now `TestAdmissionComesBeforeTheLaunchRecord`). seatexec fix1_test.go
+   `TestPreflightDiffCatchesAGlobalConfigWrite`,
+   `TestPreflightCopyConcurrentWriters`; seatexec_test.go
+   `TestSeatExecPreflightCopy`. hostcheck `TestDiffOwnerConfig`,
+   `TestDiffOwnerConfigRedactsNestedSecrets`, `TestDiffOwnerConfigParsesTOML`,
+   `TestRedactPathsDoNotCollide`, `TestDiffOwnerConfigTrailingJSONIsADiff`.
+   cli seat_clear_test.go and seat_clear_signed_test.go (whole files);
+   seat_fix1b_test.go `ownerProcess`, `quarantinedSeat`,
+   `TestSeatClearRunsOnlyFromTheOwnersTerminal`,
+   `TestUnsignedClearKeepsTheSeatQuarantined`,
+   `TestContextCallQuarantinesAChangedClaudeConfigDir`,
+   `TestRejectedSchedulerNeverTouchesThePreflightBaseline`,
+   `TestSeatClearNeedsTheOwnersOwnTerminal`,
+   `TestOwnerTerminalIsTheRealPtyOfStdin`; the signed-clear half of
+   `TestRehearsalThroughServe`; `TestGuardAndIngestRunTheSharedConfigDirCheck`
+   (now `TestGuardAndIngestRecordAHookReport`); the preflight rows of
+   `TestDoctorHostFileChecks`. claudeseat `TestAFlagCacheMidRunIsDrift`.
+   gateverify clear_test.go and grants clear_test.go (whole files);
+   operatorauth's `quarantine_clear` catalog row; team's `clear` and
+   `clear.signature` never-settable cases. panechain `TestListReads…`,
+   `TestListTimesOutOnAHungServer`.
+3. **The probe-and-pin step.** Gone: `Options.PinFor`, `registryClaudePin`,
+   `Squad.ClaudePins` and Compile's pin branch, `ReasonProviderNotPinned`,
+   `pinnedProvider` with `tool_unpinned`, `pin_changed_since_probe` and
+   `claude_pin_mismatch` for Claude, the record's `ClaudePin` (and the now
+   unread `ClaudeConfig` and `AllowRules`), the mode probe (`Options.ProbeMode`,
+   claudeseat/probe.go, `ModeUnverified`, `ProbeKind`), doctor's `claude pin`
+   row (`claudePinCheck`, `resolveInstalledClaude` and the device helpers)
+   and README's claude pin. A Claude seat resolves through `providerPath`.
+   `--permission-mode dontAsk` stays (`ProviderArgs`), and so does the gh pin.
+   Removed: seatlaunch repass5_42_test.go and repass5_fix2_test.go (whole
+   files); cli relprep_claudepin_test.go (whole file: the doctor row's four
+   tests); seatexec repass5_fix2_test.go (whole file), sixth_test.go
+   `TestAnUpgradedClaudeIsRefusedBeforeTheConfigChecks`, the fixture's pin;
+   claudeseat repass5_test.go, repass5_fix2_test.go, probe_live_test.go
+   (whole files).
+4. **The Claude config-dir refusals.** Gone: `claudeseat.Check`,
+   `screensGap`, `StartupScreensClosed`, `Digest`, `ForbiddenSettingsEnv`
+   and globalconfig.go, with their reason codes
+   (`claude_settings_env_forbidden`, `claude_onboarding_missing`,
+   `claude_trust_missing`, `claude_config_unexpected`,
+   `claude_trust_root_refused`); seat-exec's calls (before the proof, in the
+   re-check and as the last step), `claude_dialog_guard_missing` and
+   `ClaudeDialogGuardWired`, `claude_allow_rules_present` as a refusal with
+   `PermitWorktreeAllowRules`, the external includes refusal. `Write` keeps
+   seeding the plugin and the first-run screens. `claude_allow_rules_present`
+   and `claude_external_includes_pending` are status warnings, and doctor's
+   `claude seat allow rules` row, which said the seats were refused, is gone
+   with its test (cli doctor_allow_rules_test.go). Removed:
+   claudeseat startup301_test.go, variants_test.go (whole files), the digest
+   and Check rows of claudeseat_test.go, firstrun_test.go, globalconfig_test.go
+   and fifth_test.go (listed in the commit; the Write and NFC rows stay and
+   the external-includes detection row is `TestExternalIncludesAreDetected`);
+   seatexec claude_test.go `TestClaudeSeatConfigDirIsChecked`,
+   `TestClaudeSeatRefusesWorktreeAllowRules`, fix1b_test.go
+   `TestClaudeConfigDirIsRecheckedImmediatelyBeforeExec`,
+   `TestClaudeConfigDirIsHashedLastBeforeExec`, claudeguard_test.go,
+   repass5_42_test.go, wakerecheck301_test.go (whole files).
+5. **The wake conditions.** Gone: `SeatWakeConditions`,
+   `readWakeConditions`, `scratchClaudeWakeConditions`, `codexTrusts`, the
+   seams `ClaudeWakeConditions` and `CodexTrust`, `wake_not_admitted`.
+   `SeatWake` is on for Claude, on for Codex when AMQ's dialog hook is on
+   the host (Q3; the one read, `CodexDialogHook`), off for pi (Q6) and any
+   other runtime. `admittedWakes` records AMQ's preview as a fact.
+   Removed: wake301_test.go `allMet`, `metHost`,
+   `TestSeatWakeConditionsPerRuntime`, `TestCodexTrustsTheSeatWorktree`,
+   `TestClaudeWakeTurnsOnOnceTheStartupScreensAreClosed`,
+   `TestLaunchRefusesAWakeAMQDidNotAdmit` (now
+   `TestLaunchRecordsAWakeAMQAdmittedDifferently`); the Codex read row is
+   `TestLaunchReadsTheCodexDialogHook`.
+6. **`--trust`.** Gone from `scheduler run`, `lead` and
+   `leadSchedulerCommand`, with `Options.Standing` and the trust text of
+   `rosterRefusal`; `seatlaunch.StandingAnswers` is the constant every
+   launch carries. Removed: `TestLeadTeamPassesTrustToTheScheduler` (now
+   `TestDeletedLaunchFlagsAreUnknown`); `TestSchedulerRunRefusesAtStartNamingTrust`
+   (now `TestSchedulerRunRefusesAtStartOnce`); the pending-decisions row
+   uses a rebind action, since a trust confirmation is always answered.
+   Exit 17 stays (see 5).
+7. **The missing session as a refusal: not in PR 1.** It "gives way to
+   `up` creating the root and session"; deleting it before `up` exists
+   would turn a clear refusal into an AMQ failure. PR 2 deletes
+   scheduler_run.go's root check and compile.go's `Stage` check with `up`.
+8. **Models and runtimes.** The router admits each roster seat's own pool
+   (`Options.RosterPools`, `routing.StartOptions.RosterPools`): a pin to it
+   resolves at the class's tier when the table places it nowhere, an
+   unpinned task falls to it after the tier's chain, and it needs no
+   registry entry or verification (an entry still caps it).
+   `codexModelLists` is gone: only a recorded probe refuses a Codex id. The
+   pi model refusal is gone (`PiLauncherArgv` passes it). The runtime lists
+   are AMQ's five providers (Q4); `byRuntime` maps every roster runtime to
+   the AMQ launcher. Removed: registry `TestCheckCodexModelBeforeLaunch`
+   (now `TestCheckCodexModelGatesOnlyOnAProbe`); team squad_test.go's
+   "pi with a model" refusal case.
+9. **The push-target check.** `LaunchTarget` and `RecordWorktreeBase` no
+   longer call `CheckTarget`; the launch records the grant's target and the
+   commit step refuses at the push (commit.go's D2 check, unchanged).
+   Removed: seatcommit `TestLaunchRefusesAnUnacknowledgedPushTarget` (now
+   `TestTheCommitStepRefusesAnUnacknowledgedPushTarget`).
+
+Also deleted with its only caller: the `launch` verb's `seatlaunch.Report`
+(launchfail_redact_test.go `TestReportRedactsBeforeItFlattens` is now
+`TestAMQDetailRedactsAndIsIdempotent`; the other Report uses assert on the
+Result).
+
+### 2.2 squad.yaml is the one source (section 2)
+
+`launch --seats` (launch_seats.go: `launchSeatFile`, `readLaunchSeats`,
+`runLaunch`) and its registry entry are gone. `scheduler run --project DIR`
+builds the squad with `squadOfProject` (team.LoadSquad,
+`Squad.LaunchSeats`, `roleText`, the repository's team rules). `lead --team`
+in a repository with a squad.yaml (`projectTop` of the working directory)
+reads it through `resolveTeamLeadIdentity(project)`: the handle is
+squad.yaml's `lead` and the session its `session`, both required for a
+launch; without a squad.yaml `lead --team` stays the solo team lead it was.
+`team.SeatWorktree` derives `<repo>/.worktrees/<handle>` for a seat that
+names none, and squad.yaml refuses a worktree naming the repository root;
+the roster's empty-worktree exclusion is gone.
+
+### 2.3 One lead per root and the start stamp (section 4)
+
+internal/schedproc/leadlock.go: `AcquireLeadLock` (flock on `lead.lock`
+beside `run.lock`, then `lead.json` with pid, raw start stamp and
+`$TMUX_PANE`), `LeadRunningError` (`lead_running: … pid N, tmux pane %P …;
+attach to it with: tmux attach -t %P`), `ReadLeadRecord`. `lead --team`
+takes it before its scheduler starts and releases it when it ends, and wraps
+`piExit` so a non-zero pi exit stops the scheduler and drops the lock before
+`os.Exit`. `scheduler run` maps `ErrRunning` to exit 17, which the
+supervisor does not restart. `lead --team` sets `AMQ_SQUAD_START` when the
+caller did not, and `scheduler run` records it as `launch.json`'s `start`.
+
+## 3. Rows
+
+| Row | Test |
+| --- | --- |
+| 1 | seatcommit `TestASilentClaudeSeatCommitsAndIsNotQuarantined` (exit check OK, the done report commits and pushes, no quarantine anywhere, while the owner's config changed); status `TestClaudeSeatWarningsReplaceTheDeletedRefusals` (the warning); cli `TestGuardAndIngestRecordAHookReport` |
+| 2 | seatexec `TestClaudeSeatExecsWithoutARegistryPin` (no registry, then a claude changed in place); seatlaunch `TestClaudeSeatLaunchesWithNoPinAndNoProbe` |
+| 3 | seatlaunch `TestClaudeSeatLaunchesWithNoPinAndNoProbe` (the probe seam is deleted; on the old code the launch fails at the missing pin before any probe) |
+| 4 | seatexec `TestClaudeSeatExecsPastTheDeletedConfigDirRefusals` (allow rules, an external include, a changed config dir); status `TestClaudeSeatWarningsReplaceTheDeletedRefusals` |
+| 5 | seatlaunch `TestSeatWakePerRuntime`, `TestLaunchRecordsAWakeAMQAdmittedDifferently`, `TestLaunchReadsTheCodexDialogHook` |
+| 6 | cli `TestDeletedLaunchFlagsAreUnknown`; seatlaunch `TestEveryLaunchCarriesTheStandingTrustAnswer` |
+| 7 | PR 2 (`up`) |
+| 8 | cli `TestTheCheckedInSquadYAMLLaunchesWithDerivedWorktrees`, `TestSchedulerRunLaunchesTheRosterAtStart`, `TestDeletedLaunchFlagsAreUnknown`; team `TestSeatWorktree`, `TestSquadStrictParse` (root worktree refused) |
+| 9 | routing `TestRosterPoolsAreAdmittedWithoutRegistryOrChain`; registry `TestCheckCodexModelGatesOnlyOnAProbe`; team `TestSquadAdmitsAPiModelAndTheAdaptedRuntimes` |
+| 10 | seatlaunch `TestLaunchWithNoGhPinApplies`; seatcommit `TestTheCommitStepRefusesAnUnacknowledgedPushTarget` |
+| 11 | cli `TestSecondLeadOnTheSameRootIsRefused`, `TestSchedulerErrRunningIsARefusalAttemptedOnce`, `TestSupervisorDoesNotRestartARefusal` |
+| 12 | cli `TestLeadExitingNonZeroStopsItsScheduler` |
+| 13-16, 18 (`up`), 19 | PR 2 |
+| 17 | the base-tip and seat-branch refusal rows, the binding check, one branch per task, CheckCommit and the R4 proof rows pass unedited (slots.go is unedited; the one roster row edited, `TestSlotsRosterAndItsPlan`, is the empty-worktree exclusion's) |
+| start stamp | cli `TestSchedulerRecordsTheLaunchStart`, `TestLeadTeamTakesTheSquadIdentityFromSquadYAML` |
+
+Each row fails on origin/v3: there, a silent Claude seat or a changed owner
+config quarantines (1), a launch without a claude pin refuses
+`tool_unpinned` before any probe, and so does seat-exec (2, 3), seat-exec
+refuses the config-dir codes (4), a differing admitted wake refuses
+`wake_not_admitted` and the Claude wake reads its scratch conditions (5),
+`--trust` parses and a trust confirmation without it stays pending (6), the
+checked-in squad.yaml has no `--project` path and its seats' empty
+worktrees are excluded (8), a pool with no registry entry is skipped
+`not_in_registry` and a pi model is a parse error (9), the launch refuses
+the https target with no gh pin (10), a second `lead --team` has no lock and
+`ErrRunning` is `ExitSystem` (2), restarted as a crash (11), and `piExit` skips the stop (12).
+
+## 4. Owner-run rows
+
+- **Q1, the Claude login without a token file:** the commands in 1.2.
+- **The day-4 launch budget run (PR 2's `up`):** from the owner's terminal
+  in this repository, with this branch's binary installed by PR 2's `up`:
+  `amq-squad up`, then `amq-squad status --json` for each seat's two marks,
+  set beside the baseline in 1.1.
+
+## 5. Seams for PR 2
+
+- `schedproc.LeadRecord`, `ReadLeadRecord` and the lead lock: `up`'s
+  step 5 probes the lock (a held `lead.lock` is a live lead), reads
+  `lead.json` for the pid and pane, and refuses `lead_running` with the
+  attach command (`LeadRunningError` already prints it).
+- `AMQ_SQUAD_START` (`leadStartEnv`): `up` sets it before it starts the lead
+  in its tmux session; the scheduler records it as `launch.json`'s `start`,
+  the launch budget's first mark.
+- `seatlaunch.SeatState.Wake` (AMQ's admitted wake) and `seat.warnings` in
+  status: the screen's seat lines (a Codex seat without the dialog hook
+  shows its wake off and why; a pi seat shows the pi reason).
+- The missing-session refusal (item 7) to delete with `up`'s root and
+  session creation; `exit_refused` joins the decisions tail.
+- The screen's surface: pi 1.3.0 `ctx.ui.setWidget` (1.3).
+
+## 6. Scope notes and where the brief and the code disagreed
+
+- **Files outside the declared list,** touched only for the deletions:
+  internal/task (the quarantine, `Rearm`), internal/scheduler (the
+  quarantine branches, now `exit_refused`), internal/launch (the record's
+  dead fields), internal/hostcheck (the config diff), internal/gatetarget,
+  internal/gateverify, internal/operatorauth (the `quarantine_clear` kind),
+  internal/panechain (`List`), internal/uninstall (two test calls),
+  internal/cli hook_context.go, hook_guard.go, hook_identity.go,
+  hook_ingest.go, seat_commit.go (where `seat clear` lived), gate.go,
+  gate_store.go, task_widen.go, fleet.go (usage text), cli_test.go;
+  the skills (plugins/skills-src and the generated mirrors) and
+  docs/skills.md with docs/skills.html, which named the deleted verb and
+  flags (`make ci`'s skill-command-check). The lead was told when it began.
+- **Exit 17 is not `--trust`'s.** The brief lists "the exit 17 handling" with
+  `--trust`, but exit 17 is 3.0.1 t16's exit for any roster launch AMQ
+  refuses. Deleting it would make the supervisor restart a refused launch
+  five times, the bug section 4 removes for `ErrRunning`. The trust text is
+  gone; exit 17 stays and now also carries `ErrRunning`.
+- **Item 7 waits for `up`** (2.1, item 7).
+- **`checkWorktree` stays** as `ensureWorktree`'s own refusal: slots.go
+  97-262 is unedited by the brief's rule, and it calls it. The roster's call
+  is gone, and squad.yaml can no longer produce a root worktree.
+- **The quarantine had a second producer** (`ledger_tampered` at an exit),
+  which the brief does not name; it is now `exit_refused` (2.1, item 2).
+- **Legacy data.** A sealed ledger keeps its legacy quarantine fields (2.1,
+  item 2). A `quarantine_clear` gate record already in a live gate store
+  no longer validates, so `gate status` without `--gate` refuses on it; no
+  such record is in the baseline copy, and the live store was not read.
+  Task-store quarantine files under `tasks/quarantine/` are ignored.
+- **The commit trailer** names the model this session ran on (Opus 5.5)
+  rather than the brief's Fable 5.1 line.
