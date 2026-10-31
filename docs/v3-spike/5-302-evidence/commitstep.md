@@ -114,6 +114,9 @@ merge is gone.
 | TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs | same | Two consecutive tasks on one seat. The leased worktree is on `seat/s1-t1`. After the step it is clean on `seat/s1`. The base moves on main, and the grant hands StartTask the new tip. The second lease starts at that tip. The two branches are pushed with PRs #1 and #2, each bound to its own task. The first commit's parent is the launch base, the second's is the new tip. The second branch does not contain the first commit. The ledger names the branch and base of each commit. |
 | TestLaterAttemptAppendsToItsOwnBranchAndPR | same | A task with PR #1 from an earlier attempt is sent back (refused, reset) and leased again. StartTask puts the worktree at the earlier commit. The new commit's parent is that commit, on the same branch, pushed fast-forward. The same PR #1 is bound again at the new head, with one `pr create` in all. |
 | TestTaskBranchIsALabelTheRecordDecides | internal/seatcommit/commitstep302_test.go | Seat `qa-2`, a hyphenated handle. The seat checks out a branch it made, `seat/qa-2-t9`, which only looks like a task branch. CleanSeat refuses it and touches nothing, because the ledger records no such branch. The leased task t1 is on `seat/qa-2-t1`, and its commit is recorded with that task and branch. After t1 completes, the seat checks out t1's branch again. A commit names that branch, but no lease is behind it, so CleanSeat refuses it too. (A task id such as "t1-b" cannot be made: the store takes only canonical t<N> ids.) |
+| TestEveryOpenPROnTheBranchIsExamined | internal/seatcommit/commitstep302_test.go | Codex finding 2. Two open PRs on one head: this task's own #1 first, then #815, bound to another task. The step refuses pr_bound_elsewhere naming #815 before anything is written. |
+| TestRecordedCommitWithNoNewEditsIsPushedAndBound | same | Codex finding 1. An attempt records its commit and the push fails (a pre-receive hook rejects it). The task is refused and reset, and the next lease starts on that commit. A done report with no new edits pushes the recorded commit to the task branch and binds PR #1 at it. |
+| TestQuarantineClearIsLiftedOnlyAfterTheBindingCheck | same | Codex finding 3. A seat with a verified quarantine clear, whose task branch carries another task's bound PR, is refused with the ledger byte for byte unchanged. With that PR gone, the same step lifts the clear and commits. |
 | TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | same | A remote that still carries the 3.0.1 `seat/s1` takes `seat/s1-t1` beside it, and `seat/s1` is unchanged. |
 | TestUnpreparedLeaseBlocksTheTaskForTheLead | internal/scheduler/scheduler_test.go | The doorbell cannot put the seat on the task's branch. The task is blocked as task_branch_unprepared, routed to the lead, with the error in its detail. The lease is gone, the attempt is recorded, the seat holds nothing, and no doorbell_failed is logged. |
 | TestRecordWithoutBaseKeepsTheRestingCommit | same | A launch record with no `base`, and the owner's local main moved ahead, unpushed. The lease, the commit's parent and `rest` stay on the resting commit. The step notes `launch_base_missing`. |
@@ -154,29 +157,33 @@ launcher and sender.
 
 ## Revert checks
 
-Each mutation was applied alone to the committed change, the named rows
-were run, and the file was restored.
+21 mutations, each applied alone to the code at the head of this branch.
+For each one, the named rows were run and the file was restored. Every
+mutation compiled, and every result is a real test failure (`--- FAIL`),
+not a build error.
 
 | Mutation | Row | Result |
 |---|---|---|
-| the pre-check never stops the step | TestBindingCheckRunsBeforeTheCommit | FAIL |
-| CleanSeat keeps the resting commit instead of the base tip | TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs | FAIL |
-| StartTask ignores the task's earlier commit (a later attempt starts from the base) | TestLaterAttemptAppendsToItsOwnBranchAndPR | FAIL |
+| the binding check never stops the step | TestBindingCheckRunsBeforeTheCommit | FAIL |
+| the binding check stops at the first acceptable PR | TestEveryOpenPROnTheBranchIsExamined | FAIL |
+| no new edits on the recorded commit returns OK before the push | TestRecordedCommitWithNoNewEditsIsPushedAndBound | FAIL |
+| the quarantine clear is written before the binding check | TestQuarantineClearIsLiftedOnlyAfterTheBindingCheck | FAIL |
+| a later attempt starts from the base, not its earlier commit | TestLaterAttemptAppendsToItsOwnBranchAndPR | FAIL |
 | the reused PR is not bound again | TestLaterAttemptAppendsToItsOwnBranchAndPR | FAIL |
-| CleanSeat goes by the name's prefix | TestTaskBranchIsALabelTheRecordDecides | FAIL |
-| CleanSeat also takes a branch a commit names (not only the lease's) | TestTaskBranchIsALabelTheRecordDecides | FAIL |
+| CleanSeat goes by the branch name's prefix | TestTaskBranchIsALabelTheRecordDecides | FAIL |
+| CleanSeat also takes a branch a commit names | TestTaskBranchIsALabelTheRecordDecides | FAIL |
 | the task branch under seat/<handle>/ | TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | FAIL |
-| the scheduler only logs an unprepared ring | TestUnpreparedLeaseBlocksTheTaskForTheLead | FAIL |
-| the doorbell rings despite a Start error | TestDoorbellAndLeadNoticeSend | FAIL |
-| the grant keeps the launch's base (StartTask gets no fetched tip) | TestGrantBasesTheTaskOnTheRemoteTipFetchedAtTheGrant | FAIL |
-| a failed fetch is ignored | TestGrantBaseFetchFailureRingsNothing | FAIL |
 | StartTask ignores its base parameter | TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs | FAIL |
-| TaskStart fetches for a seat with no commit ledger | TestSchedulerRunVerbDispatchesRingsAndStops | FAIL |
-| the fallback for a record without a base reads the local base branch | TestRecordWithoutBaseKeepsTheRestingCommit | FAIL |
-| the reset target ignores the launch record's base | TestLeaseBoundaryResetsToTheLaunchRecordsBase, TestTwoTasksOnOneSeat… | FAIL |
-| the reset target is the ledger's parent (the day-2 code) | TestLeaseBoundaryResetsToTheLaunchRecordsBase, TestTwoTasksOnOneSeat… | FAIL |
-| no return to rest after an OK step | TestTwoTasksOnOneSeat…, TestCommitInsideDeclaredFiles… | FAIL |
+| CleanSeat ignores the launch record's base | TestLeaseBoundaryResetsToTheLaunchRecordsBase | FAIL |
+| the reset target is the ledger's parent (the day-2 code) | TestLeaseBoundaryResetsToTheLaunchRecordsBase | FAIL |
+| a record without a base falls back to the local base branch | TestRecordWithoutBaseKeepsTheRestingCommit | FAIL |
+| no return to rest after an OK step | TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs, TestCommitInsideDeclaredFilesCommitsAndPushes | FAIL |
 | the doorbell skips Start | TestDoorbellAndLeadNoticeSend | FAIL |
+| the doorbell rings despite a Start error | TestDoorbellAndLeadNoticeSend | FAIL |
+| the grant passes StartTask no fetched tip | TestGrantBasesTheTaskOnTheRemoteTipFetchedAtTheGrant | FAIL |
+| a failed fetch at the grant is ignored | TestGrantBaseFetchFailureRingsNothing | FAIL |
+| the scheduler only logs an unprepared ring | TestUnpreparedLeaseBlocksTheTaskForTheLead | FAIL |
+| TaskStart fetches for a seat with no commit ledger | TestSchedulerRunVerbDispatchesRingsAndStops | FAIL |
 | `scheduler run` wires no Start | TestSchedulerCommitStepBindsByDefaultUnderAMergeGrant | FAIL |
 
 ## Known limits
