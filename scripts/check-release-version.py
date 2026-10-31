@@ -7,6 +7,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 
 
@@ -49,6 +50,47 @@ def read_amq_floor(root: str) -> str:
             f"'const doctorMinAMQVersion = \"x.y.z\"', found {len(matches)}"
         )
     return matches[0]
+
+
+# The plugin marketplaces (.claude-plugin/marketplace.json and
+# .agents/plugins/marketplace.json) install from this repository's default
+# branch, main, so a release whose version main does not carry is not what an
+# installer gets (3.0's release check missed it: the marketplace served v2.31
+# while the release said 3.0). The owner's A of 2026-10-30: v3 is merged to
+# main before every tag from 3.0.1 on. This row fails closed when the
+# marketplace's resolved ref, the local view of main, does not carry the
+# released version in both plugin manifests; a missing ref or an unreadable
+# manifest fails too.
+MARKETPLACE_REF = "origin/main"
+MARKETPLACE_MANIFESTS = (
+    "plugins/claude/.claude-plugin/plugin.json",
+    "plugins/codex/.codex-plugin/plugin.json",
+)
+
+
+def require_marketplace_ref(
+    root: str, version: str, failures: list[str], ref: str = MARKETPLACE_REF
+) -> None:
+    """Fail unless every plugin manifest at ref says version."""
+    for manifest_rel in MARKETPLACE_MANIFESTS:
+        try:
+            raw = subprocess.run(
+                ["git", "-C", root, "show", f"{ref}:{manifest_rel}"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            at_ref = str(json.loads(raw).get("version", "")).strip()
+        except (OSError, subprocess.CalledProcessError, ValueError, AttributeError) as err:
+            detail = getattr(err, "stderr", "") or str(err)
+            failures.append(
+                f"{ref}:{manifest_rel}: the marketplace's ref is unreadable "
+                f"({detail.strip()}); merge v3 to main and fetch before the tag"
+            )
+            continue
+        if at_ref != version:
+            failures.append(
+                f"{ref}:{manifest_rel}: the marketplace serves version "
+                f"{at_ref!r}, not {version!r}; merge v3 to main before the tag"
+            )
 
 
 def amq_compatibility_policy(floor: str) -> str:
@@ -136,6 +178,7 @@ def main() -> int:
     policy = amq_compatibility_policy(amq_floor)
 
     require_release_notes(root, tag, failures)
+    require_marketplace_ref(root, version, failures)
 
     mirrors = {
         "claude": "plugins/claude/.claude-plugin/plugin.json",

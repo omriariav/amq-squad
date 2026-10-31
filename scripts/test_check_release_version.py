@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -181,6 +183,72 @@ class RequireReleaseNotesTest(unittest.TestCase):
                     "'# amq-squad v2.21.0' != '# amq-squad v2.22.0'"
                 ],
             )
+
+
+GIT_ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "owner", "GIT_AUTHOR_EMAIL": "o@example.com",
+    "GIT_COMMITTER_NAME": "owner", "GIT_COMMITTER_EMAIL": "o@example.com",
+    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
+def git(root: str, *args: str) -> None:
+    subprocess.run(["git", "-C", root, *args], check=True, capture_output=True, env=GIT_ENV)
+
+
+class RequireMarketplaceRefTest(unittest.TestCase):
+    """The marketplace installs from main: the release check fails closed
+    when main's plugin manifests do not carry the released version (3.0.2,
+    the owner's A of 2026-10-30)."""
+
+    def repo(self, root: str, claude: str, codex: str) -> None:
+        git(root, "init", "-q", "-b", "main")
+        for rel, version in zip(CHECK_RELEASE_VERSION.MARKETPLACE_MANIFESTS, (claude, codex)):
+            os.makedirs(os.path.join(root, os.path.dirname(rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"name": "amq-squad", "version": version}) + "\n")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "manifests")
+        # The local view of the remote's main, as a fetch leaves it.
+        git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+    def test_the_default_ref_is_the_remote_main(self) -> None:
+        self.assertEqual(CHECK_RELEASE_VERSION.MARKETPLACE_REF, "origin/main")
+
+    def test_main_carrying_the_version_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "3.0.2")
+            failures: list[str] = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures)
+            self.assertEqual(failures, [])
+
+    def test_main_on_another_version_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "2.31.0")
+            failures: list[str] = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures)
+            self.assertEqual(len(failures), 1)
+            self.assertIn("origin/main:plugins/codex/.codex-plugin/plugin.json: the marketplace serves version '2.31.0', not '3.0.2'", failures[0])
+
+            failures = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.3", failures)
+            self.assertEqual(len(failures), 2)
+
+    def test_a_missing_ref_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "3.0.2")
+            git(root, "update-ref", "-d", "refs/remotes/origin/main")
+            failures: list[str] = []
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures)
+            self.assertEqual(len(failures), 2)
+            self.assertTrue(all("the marketplace's ref is unreadable" in f for f in failures), failures)
+
+    def test_the_release_check_runs_the_row(self) -> None:
+        # main() wires the row in: the version check calls it with the
+        # default ref, not only the unit above.
+        source = open(SCRIPT, encoding="utf-8").read()
+        self.assertIn("    require_marketplace_ref(root, version, failures)\n", source.split("def main()", 1)[1])
 
 
 if __name__ == "__main__":
