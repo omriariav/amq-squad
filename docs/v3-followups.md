@@ -60,10 +60,11 @@ closes.
 - The create-to-bind window of the commit step's PR: GitHub creates the
   draft PR and the process dies before BindPR persists the binding; the
   next attempt sees an open PR bound to no task on the task's branch and
-  refuses pr_bound_elsewhere instead of binding it again. The fix: record
-  the PR number on the commit ledger before the bind call, or recognise this
-  task's own unbound PR by its head and a nonce the step put in it.
-  3.0.2-t24.
+  refuses pr_bound_elsewhere instead of binding it again. The fix (the
+  reviewer's shape): an open PR whose branch equals the task's own branch
+  name (compared whole, never parsed) and whose head equals the commit the
+  ledger records as pushed for that task is this task's PR, so the next
+  attempt binds it again instead of refusing pr_bound_elsewhere. 3.0.2-t24.
 
 ## 3.0.x
 
