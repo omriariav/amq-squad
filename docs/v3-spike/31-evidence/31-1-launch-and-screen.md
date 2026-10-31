@@ -220,8 +220,12 @@ marker). scripts/build-pi-runtime.sh:92 stages amq-squad's own
    kind (operatorauth catalog, gatetarget class, gatestore requests,
    gateverify clear) and `operatorauth.Reserved`; the `clear.signature`
    grant key and `Grants.ClearMode`; `hostcheck`'s config diff and redaction
-   with doctor's `owner config/*` rows; `panechain.List`. seat-exec's deny of
-   a write to the owner's global agent config is untouched.
+   with doctor's `owner config/*` rows; `panechain.List`. The deny of a
+   seat's write to the owner's global agent config is untouched: the guard's
+   `protected_path` over the default list at internal/grants/grants.go:309-313
+   (`~/.claude/settings*.json`, `~/.claude/plugins/`, `~/.codex/config.toml`),
+   with its existing rows at internal/cli/hook_verbs_test.go:570-571 and this
+   PR's row in section 7.
    Kept as data only: the ledger's `Quarantine`, `Cleared` and `Seeded`
    fields and the record shapes under them, because the ledger's seal is
    computed over the struct and a ledger sealed before 3.1 must still
@@ -347,7 +351,18 @@ marker). scripts/build-pi-runtime.sh:92 stages amq-squad's own
    "pi with a model" refusal case.
 9. **The push-target check.** `LaunchTarget` and `RecordWorktreeBase` no
    longer call `CheckTarget`; the launch records the grant's target and the
-   commit step refuses at the push (commit.go's D2 check, unchanged).
+   commit step refuses at the push (commit.go's D2 check, unchanged). The
+   scheduler's base-tip fetch (internal/schedproc/slots.go `baseTip`, through
+   `seatcommit.FetchCredentials`) no longer needs the gh pin either (Codex
+   P2): with no gh on the launch's record it fetches anonymously, every
+   credential helper off, in the harness environment
+   (`GIT_TERMINAL_PROMPT=0`); a public repository launches, and a failed
+   anonymous fetch refuses by name, `base_fetch_unauthenticated`, "pin gh
+   (registry pins) for a private HTTPS repository, or use SSH". The gh pin is
+   read from the registry as before, so an owner who already pinned gh sees
+   no change. This edits `baseTip` inside slots.go 97-262, the range the
+   brief keeps unedited for the six base-tip and seat-branch refusals; none
+   of the six is touched, only the credential step before the fetch.
    Removed: seatcommit `TestLaunchRefusesAnUnacknowledgedPushTarget` (now
    `TestTheCommitStepRefusesAnUnacknowledgedPushTarget`).
 
@@ -375,7 +390,14 @@ the roster's empty-worktree exclusion is gone.
 internal/schedproc/leadlock.go: `AcquireLeadLock` (flock on `lead.lock`
 beside `run.lock`, then `lead.json` with pid, raw start stamp and
 `$TMUX_PANE`), `LeadRunningError` (`lead_running: … pid N, tmux pane %P …;
-attach to it with: tmux attach -t %P`), `ReadLeadRecord`. `lead --team`
+attach to it with: tmux attach -t %P`), `ReadLeadRecord`. The flock is
+released when the lead's process ends, however it ends, so the flock is the
+pid's liveness: there is no stale-lock case. The record is written only
+after the lock is taken (never before: two starts could both publish), so a
+start that finds the lock held waits briefly for a fresh record (pid alive
+with its recorded start stamp) and names that lead, else refuses
+`lead_running: … is starting, pid unknown` (Codex P2). Whether the recorded
+pane still exists is `up`'s check in PR 2. `lead --team`
 takes it before its scheduler starts and releases it when it ends, and wraps
 `piExit` so a non-zero pi exit stops the scheduler and drops the lock before
 `os.Exit`. `scheduler run` maps `ErrRunning` to exit 17, which the
@@ -388,15 +410,16 @@ caller did not, and `scheduler run` records it as `launch.json`'s `start`.
 | --- | --- |
 | 1 | seatcommit `TestASilentClaudeSeatCommitsAndIsNotQuarantined` (exit check OK, the done report commits and pushes, no quarantine anywhere, while the owner's config changed); status `TestClaudeSeatWarningsReplaceTheDeletedRefusals` (the warning); cli `TestGuardAndIngestRecordAHookReport` |
 | 2 | seatexec `TestClaudeSeatExecsWithoutARegistryPin` (no registry, then a claude changed in place); seatlaunch `TestClaudeSeatLaunchesWithNoPinAndNoProbe` |
-| 3 | seatlaunch `TestClaudeSeatLaunchesWithNoPinAndNoProbe` (the probe seam is deleted; on the old code the launch fails at the missing pin before any probe) |
+| 3 | seatlaunch `TestClaudeSeatLaunchRunsNoModeProbe` (a valid registry pin of a claude script that marks when it runs; the launch applies and the mark is absent) |
 | 4 | seatexec `TestClaudeSeatExecsPastTheDeletedConfigDirRefusals` (allow rules, an external include, a changed config dir); status `TestClaudeSeatWarningsReplaceTheDeletedRefusals` |
 | 5 | seatlaunch `TestSeatWakePerRuntime`, `TestLaunchRecordsAWakeAMQAdmittedDifferently`, `TestLaunchReadsTheCodexDialogHook` |
 | 6 | cli `TestDeletedLaunchFlagsAreUnknown`; seatlaunch `TestEveryLaunchCarriesTheStandingTrustAnswer` |
 | 7 | PR 2 (`up`) |
 | 8 | cli `TestTheCheckedInSquadYAMLLaunchesWithDerivedWorktrees`, `TestSchedulerRunLaunchesTheRosterAtStart`, `TestDeletedLaunchFlagsAreUnknown`; team `TestSeatWorktree`, `TestSquadStrictParse` (root worktree refused) |
 | 9 | routing `TestRosterPoolsAreAdmittedWithoutRegistryOrChain`; registry `TestCheckCodexModelGatesOnlyOnAProbe`; team `TestSquadAdmitsAPiModelAndTheAdaptedRuntimes` |
-| 10 | seatlaunch `TestLaunchWithNoGhPinApplies`; seatcommit `TestTheCommitStepRefusesAnUnacknowledgedPushTarget` |
-| 11 | cli `TestSecondLeadOnTheSameRootIsRefused`, `TestSchedulerErrRunningIsARefusalAttemptedOnce`, `TestSupervisorDoesNotRestartARefusal` |
+| 10 | seatlaunch `TestLaunchWithNoGhPinApplies`; schedproc `TestSeatBaseHTTPSWithoutPinnedGhFetchesAnonymously`, `TestSeatBaseAnonymousFetchFailureIsUnauthenticated` (through `PlanRoster`, the scheduler's launch path); seatcommit `TestTheCommitStepRefusesAnUnacknowledgedPushTarget` |
+| 11 | cli `TestSecondLeadOnTheSameRootIsRefused`, `TestSchedulerErrRunningIsARefusalAttemptedOnce`, `TestSupervisorDoesNotRestartARefusal`; schedproc `TestTwoSimultaneousLeadStartsOneWinsTheOtherNamesIt`, `TestALeadStillStartingIsRefusedAsStarting` |
+| a legacy gate record is listed and skipped | cli `TestALegacyGateRecordIsListedAndSkipped` |
 | 12 | cli `TestLeadExitingNonZeroStopsItsScheduler` |
 | 13-16, 18 (`up`), 19 | PR 2 |
 | 17 | the base-tip and seat-branch refusal rows, the binding check, one branch per task, CheckCommit and the R4 proof rows pass unedited (slots.go is unedited; the one roster row edited, `TestSlotsRosterAndItsPlan`, is the empty-worktree exclusion's) |
@@ -477,9 +500,22 @@ the https target with no gh pin (10), a second `lead --team` has no lock and
   which the brief does not name; it is now `exit_refused` (2.1, item 2).
 - **Legacy data.** A sealed ledger keeps its legacy quarantine fields (2.1,
   item 2). A `quarantine_clear` gate record already in a live gate store
-  no longer validates, so `gate status` without `--gate` refuses on it; no
-  such record is in the baseline copy, and the live store was not read.
+  is legacy (the reviewer's change): `gatestore.Legacy` names it, `gate
+  status` and `gate status --gate <id>` skip it with one line naming the kind
+  and the gate id, status shows that line as a warning and no gate row, and
+  the hook's gate list skips it; never a refusal. The live v31 store holds
+  one (the owner's signed scribe clear of 2026-10-31); this PR never read it.
   Task-store quarantine files under `tasks/quarantine/` are ignored.
+- **The tests and the real AMQ.** Every test this PR adds or edits fakes
+  AMQ (`seatlaunch.Options.RunAMQ`, the scheduler's launcher seam), tmux and
+  the network, and none touches the real HOME. The suite's exception, an
+  inherited gap not this PR's, is the opt-in tests that select the installed
+  AMQ: internal/cli/real_amq_*_test.go and the other `AMQ_SQUAD_REAL_AMQ`
+  rows run only when that variable names an amq, and the seatlaunch live
+  tests only with `AMQ_SQUAD_LIVE=1`; both skip otherwise.
+- **Dead remnants (Codex P3).** `Slots.closed` and the `"quarantined"` close
+  reason went; the guard's protection of the deleted preflight directory went
+  in 8b7c7e8c.
 - **The commit trailer** names the model this session ran on (Opus 5.5)
   rather than the brief's Fable 5.1 line.
 

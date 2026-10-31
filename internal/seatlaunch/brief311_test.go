@@ -67,3 +67,45 @@ func TestLaunchWithNoGhPinApplies(t *testing.T) {
 	}
 	res.proof.close()
 }
+
+// Brief 31-1, row 3 on its own: a launch with a Claude seat runs no mode
+// probe. The claude the launch resolves is a script that leaves a mark when
+// it runs, and the launch's HOME carries a valid registry pin of it, so the
+// old pin step passes and the old probe would exec it (`claude -p … stream
+// json`). The launch applies and the mark is absent: nothing executed claude.
+func TestClaudeSeatLaunchRunsNoModeProbe(t *testing.T) {
+	q := testSquad(t)
+	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}}
+	o := launchOpts(t, f, nil)
+	o.Wait = 50 * time.Millisecond
+	bin := filepath.Join(t.TempDir(), "bin")
+	mark := filepath.Join(t.TempDir(), "claude-ran")
+	claude := filepath.Join(bin, "claude")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claude, []byte("#!/bin/sh\ntouch '"+mark+"'\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := registry.FileSHA256(claude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Write(registry.Path(o.Home), registry.Registry{Schema: 1, Pins: []registry.Pin{{Name: "claude", Path: claude, SHA256: sum}}}); err != nil {
+		t.Fatal(err)
+	}
+	o.LookPath = func(name string) (string, error) {
+		if name == "claude" {
+			return claude, nil
+		}
+		return lookPath(name)
+	}
+	res, err := Launch(context.Background(), q, o)
+	if err != nil || res.Stage != "applied" {
+		t.Fatalf("launch: %s %v", res.Stage, err)
+	}
+	res.proof.close()
+	if _, err := os.Stat(mark); !os.IsNotExist(err) {
+		t.Fatalf("the launch executed claude (a mode probe): %v", err)
+	}
+}
