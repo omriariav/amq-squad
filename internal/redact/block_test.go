@@ -19,6 +19,12 @@ func longLine(n int) string { return strings.Repeat("password"+"=x ", n/11) }
 // allocates (runtime.MemStats.TotalAlloc). The 1 MiB line holds 16x the
 // 64 KiB line's values, so each measure must grow by no more than 24x; a
 // quadratic Block grows by about 256x.
+// Real counts (2026-10-31): 226384 units for 64 KiB, 3622368 for 1 MiB, 16.0x
+// against the 24x limit; bytes 21.0x against 40x. Mutations that fail it:
+// a per-match string copy (236.6x bytes only; work stays 16.0x), a prefix
+// rescan reported to the hook (255.8x work only; bytes 20.9x), and an
+// insertion sort that finds its place from the head (253.2x work only; bytes
+// 21.0x), so the two measures catch different shapes.
 // Limit of the row: a quadratic loop that neither calls the work hook nor
 // allocates (a strings.Index rescan, say) slips through; the shapes it
 // catches are a quadratic copy and a regex rescan.
