@@ -52,9 +52,20 @@ closes.
   fine-grained PAT, or a GitHub App installation token; 3.0 uses the owner's
   gh CLI login through the pinned gh copy. Owner decision 2026-10-25. Plan
   R33 and 16.4.
+- A typed release-body digest field on operatorauth.ReleaseSpec
+  (internal/operatorauth/release.go): 3.0.2 records the --notes-file
+  digest in the one note field (Note.Summary, "release body sha256:<hex>",
+  written by prepare only, exactly one parsed at publish). Move it to its
+  own field when the spec shape changes anyway (reviewer ruling,
+  2026-10-31).
 
 ## 3.0.x
 
+- 3.0.2 leaves this open: `release publish` must still repeat prepare's
+  `--notes` and `--notes-file`; when the notes file changed, the CLI's
+  spec-change refusal (ErrSpecChangeRequiresSuccessor) fires before
+  release_body_mismatch and does not name the field. The fix: publish takes
+  the prepared spec from the series store and refuses only a body mismatch.
 - Upstream ask 20 (AMQ): join a fresh participant into a present binding.
   AMQ v0.116.2 refuses a fresh seat launched into a session whose binding
   is present (`binding_present_without_resumable_conversation`,

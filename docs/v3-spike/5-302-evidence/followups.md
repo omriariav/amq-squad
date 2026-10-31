@@ -24,20 +24,29 @@ release body and was fixed by hand. Now:
   approved. operatorauth is outside the declared files, so no new spec
   field was added; this is the smallest diff that records the digest in
   the spec.
-- `Flow.Publish` refuses, before anything runs (not even the tag), a body
-  whose digest is not the recorded one: `release_body_mismatch`. A release
-  prepared without a recorded digest is refused the same way (fail closed).
+- The digest line is written by prepare only (reviewer condition 2): Spec
+  refuses a `--notes` that already contains "release body sha256:"
+  (`note_carries_digest`). `Flow.Publish` parses exactly one digest from
+  the prepared note: none or a malformed one is
+  `release_body_digest_missing`, two or more is
+  `release_body_digest_ambiguous`. Then it refuses a body whose digest is
+  not the recorded one: `release_body_mismatch`. Each refusal comes before
+  anything runs, not even the tag. A typed digest field on the spec is a
+  3.1 follow-up (docs/v3-followups.md, 3.1).
   At the CLI, a changed notes file also changes the spec, so the existing
   `store.Create(spec)` check in publish refuses first
   (`ErrSpecChangeRequiresSuccessor`); the flow's own refusal is the named
   one behind it.
 - Before any gate is raised, `Flow.Prepare` runs `CheckCommit`: the commit
   must resolve locally (`git -C <project> cat-file -e <sha>^{commit}`,
-  else `commit_unknown`) and the remote branch must contain it, resolved on
-  the remote through the executor as TagCommit resolves the tag (new
-  `Executor.BranchContains`; GH reads `repos/R/compare/<branch>...<sha>`,
-  identical or behind is contained, 404 is not), else
-  `commit_not_on_branch`. The branch is the new `--branch` flag, default
+  else `commit_unknown`); the remote must have it (new
+  `Executor.CommitExists`; GH reads `repos/R/commits/<sha>`, 404 or 422 is
+  absent), else `commit_unknown_remote` (the lead pushes it); and the
+  remote branch must contain it, resolved on the remote through the
+  executor as TagCommit resolves the tag (new `Executor.BranchContains`; GH
+  reads `repos/R/compare/<branch>...<sha>`, identical or behind is
+  contained, 404 is not), else `commit_not_on_branch` (the lead merges
+  it). The remote-absent reason is the reviewer's condition (1). The branch is the new `--branch` flag, default
   main (the brief names "the named branch"; main is where every tag is cut
   from 3.0.1 on).
 
@@ -49,6 +58,13 @@ Rows (internal/releaseflow/releaseflow_test.go, internal/cli/release_flow_notes_
 | TestPublishRefusesABodyThatIsNotThePreparedFile | the digest check in Publish | FAIL |
 | TestPrepareRefusesACommitThatNamesNothingBeforeAnyGate | the CheckCommit call in Prepare | FAIL |
 | TestReleaseRequiresTheNotesFile | the --notes-file requirement | FAIL |
+| TestPrepareRefusesACommitThatNamesNothingBeforeAnyGate, local-only commit | the remote-existence check | FAIL |
+| TestCommitCheckReachesTheRemoteOnlyThroughTheExecutor | the compare run through GH instead of the executor | FAIL |
+| TestTheDigestLineIsPreparesOnly | the note refusal; zero digests named; two digests named | FAIL, each |
+
+TestCommitCheckReachesTheRemoteOnlyThroughTheExecutor records the fake
+remote's calls (exists, then contains main) and puts a recording `gh` first
+on PATH; the stub is never run.
 
 ## 2. The widen tool's message and the re-pin refusal hint
 
@@ -105,20 +121,24 @@ The Makefile is outside the brief's declared files; it was changed on the
 lead's explicit correction (release-check and the MARKETPLACE_REF variable
 only). .github/workflows/ci.yml is unchanged.
 
-## Not changed, outside the declared files
-
-The 3.0.x follow-up added on origin/v3 by PR #814 (publish takes the
-prepared spec from the series store and does not repeat prepare's flags)
-is not addressed: publish still repeats `--notes`, and now `--notes-file`.
-A changed notes file is refused first by the CLI's existing spec check
-(ErrSpecChangeRequiresSuccessor, which does not name the field); the
-flow's `release_body_mismatch` is behind it.
+## The skill example and the follow-ups file
 
 The orchestrator skill's release example (plugins/skills-src/orchestrator/
-SKILL.md:160 and its claude and codex mirrors) runs `release prepare`
-without `--notes-file`, which is now required. `make skill-command-check
-skill-invocation-check` still passes (they check names, not required
-flags), but the example needs `--notes-file PATH` added by a skills change.
+SKILL.md, "Releasing") now carries `--notes-file` and says publish takes
+the same file; the Claude and Codex mirrors were regenerated with `make
+skills-generate` and `make skills-check` is green. PyYAML is not installed
+on this host and there is no network, so the generator ran from a throwaway
+venv under the job's tmp directory with PyYAML 6.0.3 installed from the
+local pip wheel cache (`pip install --no-index`).
+
+docs/v3-followups.md gains two lines: under 3.1, a typed digest field on
+operatorauth.ReleaseSpec when the spec shape changes anyway; under 3.0.x,
+publish still repeats `--notes` and `--notes-file`, the spec-change refusal
+fires before `release_body_mismatch` and does not name the field, and the
+fix is publish taking the prepared spec from the series store. PR #814 put
+a similar 3.0.x line at the end of that section on origin/v3; these lines
+sit at the section heads so the merge stays clean, and one of the two
+publish lines can go at merge.
 
 ## Verification
 
@@ -127,6 +147,7 @@ go build ./... && go vet ./internal/releaseflow ./internal/cli && go test -count
 ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow
 ok  	github.com/omriariav/amq-squad/v3/internal/cli
 make release-validator-test   (16 tests OK, 4 tests OK)
+make skills-check; make skill-command-check skill-invocation-check skill-routing-check   (green)
 make release-check VERSION=v3.0.1                            release metadata matches v3.0.1
 make release-check VERSION=v3.0.1 MARKETPLACE_REF=origin/main  release metadata matches v3.0.1
 cd pi && npm test             (39 pass, 0 fail); npm run lint: lint ok
