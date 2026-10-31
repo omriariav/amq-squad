@@ -553,8 +553,10 @@ the roster launch included, a seat's worktree and its resting branch
 `seat/<handle>` start from the base branch's tip, fetched from the grant's
 push URL (the local base branch without one), never from the commit
 ledger's first base or the branch's old head; the launch record carries
-that base, and a remote seat branch ahead of the tip and unmerged refuses
-the launch by name (`seat_branch_unmerged`), never a force-push [3.0.2
+that base, and a seat branch holding commits the tip does not, remote and
+unmerged or local and unpushed, refuses the launch by name
+(`seat_branch_unmerged`, `seat_branch_unpushed`), never a force-push or a
+discarded commit [3.0.2
 t22; docs/v3-spike/5-302-evidence/seatbase.md]. A restarted
 scheduler adopts the live roster seats it re-proves from the launch
 ledger and closes the rest. The roster's tmux session holds seats only: the

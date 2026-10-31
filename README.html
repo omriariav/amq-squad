@@ -584,19 +584,20 @@ a seat with no lease is parked and gets the next task of its pool. At
 every launch, the roster's included, a seat's worktree and its
 <code>seat/&lt;handle&gt;</code> branch start from the base branch's tip
 fetched from the grant's push URL, the launch record carries that base,
-and a remote seat branch ahead of the tip and unmerged refuses the
-launch by name (<code>seat_branch_unmerged</code>) for the lead.
-<code>max_seats</code> caps the leases held at once, not the seats up.
-AMQ refuses a fresh seat into a session whose binding is present, so a
-gone seat is not replaced on its own: its pool's next task blocks for
-the lead (<code>seat_replacement_needs_relaunch</code>), and the lead's
-<code>amq-squad scheduler relaunch</code> lets the other seats finish,
-closes them and launches the roster again. The lead and the scheduler
-run outside the roster's tmux session (the lead's own seat is never in
-the roster). A restarted scheduler adopts the live seats. A roster
-launch that AMQ refuses stops the scheduler with the stage, AMQ's reason
-and the detail in its decisions log, and the lead's supervisor does not
-restart it;
+and a seat branch holding commits the tip does not, remote and unmerged
+or local and unpushed, refuses the launch by name
+(<code>seat_branch_unmerged</code>, <code>seat_branch_unpushed</code>)
+for the lead. <code>max_seats</code> caps the leases held at once, not
+the seats up. AMQ refuses a fresh seat into a session whose binding is
+present, so a gone seat is not replaced on its own: its pool's next task
+blocks for the lead (<code>seat_replacement_needs_relaunch</code>), and
+the lead's <code>amq-squad scheduler relaunch</code> lets the other
+seats finish, closes them and launches the roster again. The lead and
+the scheduler run outside the roster's tmux session (the lead's own seat
+is never in the roster). A restarted scheduler adopts the live seats. A
+roster launch that AMQ refuses stops the scheduler with the stage, AMQ's
+reason and the detail in its decisions log, and the lead's supervisor
+does not restart it;
 <code>amq-squad lead --team --scheduler-seats seats.json --trust</code>
 is the owner's standing answer to AMQ's trust confirmation for that
 session. A seat launch that fails or never resolves is a

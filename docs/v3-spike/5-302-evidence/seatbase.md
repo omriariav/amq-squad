@@ -60,6 +60,15 @@ CleanSeat, both in internal/seatcommit:
 - A remote seat branch ahead of the tip and unmerged refuses the launch
   with `seat_branch_unmerged`, naming the branch and up to 11 commits. The
   harness never force-pushes.
+- Codex round on fe52c154: a local resting branch holding commits the tip
+  does not refuses with `seat_branch_unpushed` (the harness never discards
+  a local commit), and both update-refs of the branch pass the expected old
+  value, so a concurrent move refuses. An existing worktree whose HEAD
+  names no commit refuses with `seat_head_unreadable`; the move is only the
+  two-tree read-tree, never a reset. A plain clone (a `.git` directory) is
+  moved like a linked worktree. The fetched base must be the object id
+  ls-remote reported (`base_tip_moved` otherwise). The fetch's git runs
+  with the push's environment through `seatcommit.HarnessEnv`.
 - The launch record carries the base: `launch.Record.Base` (json `base`),
   copied from `seatlaunch.Seat.Base`, which the seat file cannot set.
 
@@ -67,7 +76,10 @@ On the real repository, origin `seat/dev` carries c338d3fe and 6b9808a5
 and origin `seat/reviewer` carries e9e6c53b, none of them on the tip, so
 `seat_branch_unmerged` fires on the first 3.0.2 launch until the owner
 deletes those remote branches; that refusal is expected and is the row's
-live evidence.
+live evidence. The local branches hold the same commits (seat/dev at
+6b9808a5 with c338d3fe, seat/reviewer at e9e6c53b), so after the remote
+ones go, `seat_branch_unpushed` fires until the local branches are deleted
+too.
 
 ## One base, and the seam for the commit step (t23, t24)
 
@@ -96,12 +108,19 @@ push. Those two rows are the ones that cover the HTTPS path.
 
 | row | proves | fails when reverted |
 |---|---|---|
-| TestSeatBaseRelaunchAtTheTip | a relaunched seat with an old base and its own commit, left on another branch, gets the worktree, `seat/c1` and HEAD at the fetched tip through the roster launch; the next commit's parent is the tip; the compiled launch record's base is the tip | existing worktree left alone; local base in place of the fetch; record without the base; no HEAD switch |
+| TestSeatBaseRelaunchAtTheTip | a relaunched seat with an old base and its own commit (pushed and merged), left on another branch, lands at the fetched tip through the roster launch; the next commit's parent is the tip; the marshalled launch record carries `"base"` with the tip | existing worktree left alone; local base in place of the fetch; record without the base; JSON tag changed; no HEAD switch |
 | TestSeatBaseLocalBranchWithoutPushURL | without a push URL, a new worktree on a stale seat branch starts at the local base tip | no branch reset before the worktree is added |
-| TestSeatBaseRemoteSeatBranchAheadRefuses | a remote seat branch with an unmerged commit refuses by name and moves nothing; once merged, the launch proceeds at the tip | no unmerged check |
-| TestSeatBaseConflictingLocalChangeRefuses | a local change the move would overwrite refuses the launch and is kept | a plain reset in place of the two-tree merge |
-| TestSeatBaseHTTPSFetchUsesThePinnedGh | an HTTPS push URL's ls-remote and fetch run with `-c credential.helper= -c credential.helper=!'<pinned gh>' auth git-credential` and GH_TOKEN (a fake git recording argv) | no FetchCredentials call; helper args not passed; no GH_TOKEN pass-through |
-| TestSeatBaseHTTPSWithoutPinnedGhRefuses | an HTTPS push URL with no pinned gh refuses with `tool_unpinned`, and no fetch runs | no FetchCredentials call; FetchCredentials returning nothing for HTTPS |
+| TestSeatBaseRemoteSeatBranchAheadRefuses | an unmerged remote seat branch refuses by name and moves nothing; once merged, the launch proceeds | no unmerged check |
+| TestSeatBaseConflictingLocalChangeRefuses | a local change the move would overwrite refuses and is kept | a reset in place of the two-tree merge |
+| TestSeatBaseLocalUnpushedCommitRefuses | a local-only commit on seat/c1, remote seat branch absent, refuses with `seat_branch_unpushed`; the commit and its file survive | no unpushed check |
+| TestSeatBaseConcurrentBranchMoveRefuses | a branch moved (existing worktree) or created (new worktree) mid-launch refuses; the concurrent value stays | no expected old value on either update-ref |
+| TestSeatBaseUnbornHeadRefuses | a worktree whose HEAD names nothing refuses with `seat_head_unreadable`; an uncommitted change survives | the unreadable HEAD falling through to a reset |
+| TestSeatBasePlainCloneWorktree | a plain clone as the seat worktree lands on the tip with HEAD on seat/c1 | a gitdir file required |
+| TestSeatBaseHTTPSFetchUsesThePinnedGh | an HTTPS URL's ls-remote and fetch run with the pinned gh as the only helper and GH_TOKEN; the environment is the push's list (GIT_SSH_VARIANT in, GIT_SSH_EXTRA out) | no FetchCredentials call; helper args not passed; no GH_TOKEN; a GIT_SSH* prefix |
+| TestSeatBaseHTTPSWithoutPinnedGhRefuses | no pinned gh refuses with `tool_unpinned`; no fetch runs | no FetchCredentials call; FetchCredentials returning nothing for HTTPS |
+| TestSeatBaseHTTPSPinMismatchRefuses | a pinned gh failing its sha256 refuses with `tool_pin_mismatch`; no fetch runs | no FetchCredentials call |
+| TestSeatBaseShadowRemoved | the throwaway directories are gone after a launch, a moving relaunch, a refusal in the move and one after the fetch | either directory left |
+| TestSeatBaseFetchedTipMustMatchLsRemote | a fetched base other than ls-remote's id refuses with `base_tip_moved`; no worktree | no comparison |
 
 Not on this branch: the row "CleanSeat after a lease resets to the tip". It
 needs the seatcommit change above and belongs with t23 and t24.

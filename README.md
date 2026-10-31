@@ -289,8 +289,9 @@ amq-squad gate status --project . --session issue-96 --json
   parked and gets the next task of its pool. At every launch, the roster's
   included, a seat's worktree and its `seat/<handle>` branch start from the
   base branch's tip fetched from the grant's push URL, the launch record
-  carries that base, and a remote seat branch ahead of the tip and unmerged
-  refuses the launch by name (`seat_branch_unmerged`) for the lead. `max_seats` caps the leases held
+  carries that base, and a seat branch holding commits the tip does not,
+  remote and unmerged or local and unpushed, refuses the launch by name
+  (`seat_branch_unmerged`, `seat_branch_unpushed`) for the lead. `max_seats` caps the leases held
   at once, not the seats up. AMQ refuses a fresh seat into a session whose
   binding is present, so a gone seat is not replaced on its own: its pool's
   next task blocks for the lead (`seat_replacement_needs_relaunch`), and the
