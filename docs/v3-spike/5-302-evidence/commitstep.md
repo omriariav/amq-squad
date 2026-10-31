@@ -18,8 +18,8 @@ the amendments 2b and 2c of 2026-10-31. Branch `v3-302-commitstep` from
 
 ### Day-2 evidence
 
-The lead read these from the live commit ledger of seat dev (session v31)
-and from the PR page, read-only. This branch read neither.
+Collected by the lead, read-only, from the live commit ledger of seat dev
+(session v31) and from the PR page. This branch read neither.
 
 Commit ledger, seat dev (`branch` is null: the 3.0.1 ledger has no
 per-commit branch; both commits went to seat/dev):
@@ -66,9 +66,10 @@ head moved past t12's bound head.
    dispatch. Its source is the base tip the launch recorded on the launch
    record (t22's `base` on the staged record). seatcommit reads that key
    from the record's JSON, so it needs no `launch.Record` field of its own.
-   Only a record from before 3.0.2, which has no `base`, falls back to the
-   seat repository's local base branch, and then to the ledger's resting
-   commit. CleanSeat, between leases and never during a held lease, resets
+   A record from before 3.0.2, which has no `base`, keeps the ledger's
+   resting commit, and the step notes `launch_base_missing`. The base is
+   never a local branch of the shared repository, which can be ahead of or
+   behind the remote. CleanSeat, between leases and never during a held lease, resets
    the worktree to that base and records it as the ledger's `rest`.
    `StartTask` runs from the scheduler's doorbell right after the grant. It
    first records the lease's start on the ledger (`lease`: task, branch,
@@ -110,11 +111,12 @@ boundary returns it, because the ledger records that branch.
 |---|---|---|
 | TestBindingCheckRunsBeforeTheCommit (bound elsewhere) | internal/seatcommit/commitstep302_test.go | The v31 shape. The task branch carries open PR #815, which the store binds to another task at head c…c. The step refuses pr_bound_elsewhere naming #815 and "nothing is committed or pushed". There is no commit, no push to the origin, no anchor, no `pr create`, the ledger bytes are unchanged, and the other task's binding is unchanged. |
 | TestBindingCheckRunsBeforeTheCommit (gh fails) | same | gh fails at the check: a pr_pending deferral, with the same nothing-written assertions. |
-| TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs | same | Two consecutive tasks on one seat. The leased worktree is on `seat/s1-t1`. After the step it is clean on `seat/s1`. The base moves on main. The second lease starts at the new tip. The two branches are pushed with PRs #1 and #2, each bound to its own task. The first commit's parent is the launch base, the second's is the new tip. The second branch does not contain the first commit. The ledger names the branch and base of each commit. |
+| TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs | same | Two consecutive tasks on one seat. The leased worktree is on `seat/s1-t1`. After the step it is clean on `seat/s1`. The base moves on main and a launch records it on the launch record. The second lease starts at that base. The two branches are pushed with PRs #1 and #2, each bound to its own task. The first commit's parent is the launch base, the second's is the new tip. The second branch does not contain the first commit. The ledger names the branch and base of each commit. |
 | TestLaterAttemptAppendsToItsOwnBranchAndPR | same | A task with PR #1 from an earlier attempt is sent back (refused, reset) and leased again. StartTask puts the worktree at the earlier commit. The new commit's parent is that commit, on the same branch, pushed fast-forward. The same PR #1 is bound again at the new head, with one `pr create` in all. |
 | TestTaskBranchIsALabelTheRecordDecides | internal/seatcommit/commitstep302_test.go | Seat `qa-2`, a hyphenated handle. The seat checks out a branch it made, `seat/qa-2-t9`, which only looks like a task branch. CleanSeat refuses it and touches nothing, because the ledger records no such branch. The leased task t1 is on `seat/qa-2-t1`, and its commit is recorded with that task and branch. After t1 completes, the seat checks out t1's branch again. A commit names that branch, but no lease is behind it, so CleanSeat refuses it too. (A task id such as "t1-b" cannot be made: the store takes only canonical t<N> ids.) |
 | TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | same | A remote that still carries the 3.0.1 `seat/s1` takes `seat/s1-t1` beside it, and `seat/s1` is unchanged. |
 | TestUnpreparedLeaseBlocksTheTaskForTheLead | internal/scheduler/scheduler_test.go | The doorbell cannot put the seat on the task's branch. The task is blocked as task_branch_unprepared, routed to the lead, with the error in its detail. The lease is gone, the attempt is recorded, the seat holds nothing, and no doorbell_failed is logged. |
+| TestRecordWithoutBaseKeepsTheRestingCommit | same | A launch record with no `base`, and the owner's local main moved ahead, unpushed. The lease, the commit's parent and `rest` stay on the resting commit. The step notes `launch_base_missing`. |
 | TestLeaseBoundaryResetsToTheLaunchRecordsBase | same | The day-2 shape. The ledger keeps its first base, the launch record carries a newer base, and the local main moved further after the launch. The lease boundary resets to the launch record's base. The task's commit takes it as parent and base, and the ledger's `rest` is that base. |
 | TestDoorbellAndLeadNoticeSend | internal/schedproc/slots_test.go | The doorbell runs Start before the AMQ send. A Start error rings nothing and comes back as a LeaseUnpreparedError. A prepared seat is rung. |
 | TestSchedulerCommitStepBindsByDefaultUnderAMergeGrant | internal/cli/scheduler_run_test.go | Through `scheduler run`, the worktree after dispatch is on `refs/heads/seat/s1-t1`. gh sees `pr list --head seat/s1-t1` and `pr create --draft --head seat/s1-t1`. t1 completes bound at the anchored commit. |
@@ -164,7 +166,8 @@ were run, and the file was restored.
 | the task branch under seat/<handle>/ | TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | FAIL |
 | the scheduler only logs an unprepared ring | TestUnpreparedLeaseBlocksTheTaskForTheLead | FAIL |
 | the doorbell rings despite a Start error | TestDoorbellAndLeadNoticeSend | FAIL |
-| the reset target is the local base branch, not the launch record's base | TestLeaseBoundaryResetsToTheLaunchRecordsBase | FAIL |
+| the fallback for a record without a base reads the local base branch | TestRecordWithoutBaseKeepsTheRestingCommit | FAIL |
+| the reset target ignores the launch record's base | TestLeaseBoundaryResetsToTheLaunchRecordsBase, TestTwoTasksOnOneSeat… | FAIL |
 | the reset target is the ledger's parent (the day-2 code) | TestLeaseBoundaryResetsToTheLaunchRecordsBase, TestTwoTasksOnOneSeat… | FAIL |
 | no return to rest after an OK step | TestTwoTasksOnOneSeat…, TestCommitInsideDeclaredFiles… | FAIL |
 | the doorbell skips Start | TestDoorbellAndLeadNoticeSend | FAIL |
@@ -172,10 +175,8 @@ were run, and the file was restored.
 
 ## Known limits
 
-- **Records from before 3.0.2.** A launch record without `base` falls
-  back to the seat repository's local base branch. A same-UID seat can
-  move that ref. t22's launch-time base, fetched from the grant's push
-  URL, closes this for every 3.0.2 launch.
+- **Records from before 3.0.2.** A launch record without `base` keeps the
+  ledger's resting commit until the next launch records a base.
 - **The base advances only at a launch.** CleanSeat resets to the base the
   last launch recorded. A seat that stays up across many tasks keeps that
   base until the next launch. That is the one-base rule as ruled.
