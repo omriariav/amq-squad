@@ -142,21 +142,25 @@ func resolveTeamLeadIdentity(seats, explicitLead string) (piruntime.TeamIdentity
 		return piruntime.TeamIdentity{}, "", fmt.Errorf("--lead %q disagrees with AM_ME=%q", explicitLead, inherited)
 	}
 	handle := firstNonEmptyStr(explicitLead, inherited, "lead")
-	baseRoot := strings.TrimSpace(q.BaseRoot)
+	// scheduler run takes its root from seatlaunch.Squad.Normalize and
+	// SessionRoot; these are Normalize's exact steps (the project root
+	// trimmed and cleaned, the base root and session never trimmed), so both
+	// processes pin the same root. Normalize itself also checks the wrapper,
+	// the amq path and every seat, which the lead does not have.
+	project := filepath.Clean(strings.TrimSpace(q.ProjectRoot))
+	baseRoot := q.BaseRoot
 	if baseRoot == "" {
-		baseRoot = filepath.Join(strings.TrimSpace(q.ProjectRoot), ".agent-mail")
+		baseRoot = filepath.Join(project, ".agent-mail")
 	}
-	// scheduler run normalizes the seats file before calling SessionRoot;
-	// apply the same path normalization so both processes pin the same root.
 	identity, err := piruntime.NewTeamIdentity(handle, filepath.Clean(baseRoot), q.Session)
 	if err != nil {
 		return piruntime.TeamIdentity{}, "", err
 	}
-	if inherited != "" && strings.TrimSpace(os.Getenv("AM_ROOT")) != "" {
+	if inherited != "" && os.Getenv("AM_ROOT") != "" {
 		for _, c := range []struct{ name, want string }{
 			{"AM_ROOT", identity.Root}, {"AM_BASE_ROOT", identity.BaseRoot}, {"AM_SESSION", identity.Session},
 		} {
-			got := strings.TrimSpace(os.Getenv(c.name))
+			got := os.Getenv(c.name)
 			if got == "" {
 				continue
 			}
@@ -168,7 +172,7 @@ func resolveTeamLeadIdentity(seats, explicitLead string) (piruntime.TeamIdentity
 			}
 		}
 	}
-	return identity, filepath.Clean(strings.TrimSpace(q.ProjectRoot)), nil
+	return identity, project, nil
 }
 
 // leadSchedulerCommand is the child the lead's team mode runs: `scheduler

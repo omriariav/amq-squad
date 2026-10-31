@@ -56,6 +56,7 @@ carries both.
 | TestLeadTeamTakesTheSquadIdentityFromTheSeatsFile | internal/cli/pi_lead_test.go | No environment identity, cwd another checkout, `--lead cto --trust`: the scheduler starts once with lead `cto`, the seats path and trust; pi gets AM_ME `cto`, AM_ROOT `<proj>/.agent-mail/v31`, AM_BASE_ROOT, AM_SESSION `v31`, AMQ_SQUAD_PROJECT `<proj>`, and the team role. |
 | TestLeadTeamRefusesAnEnvironmentIdentityThatDisagrees | internal/cli/pi_lead_test.go | AM_ME `cto` and AM_ROOT set; AM_ROOT, AM_BASE_ROOT or AM_SESSION disagreeing each refuses naming the environment's value and the seats file's value; `--lead rev` against AM_ME `cto` refuses. No scheduler start and no pi exec after a refusal. |
 | TestLeadTeamKeepsAnAgreeingEnvironmentIdentity | internal/cli/pi_lead_test.go | AM_ME `cto` and an agreeing AM_ROOT (trailing separator, compared cleaned): the scheduler starts with `cto`, pi keeps the identity, AM_BASE_ROOT and AM_SESSION are filled from the seats file, AMQ_SQUAD_PROJECT is project_root. |
+| TestLeadTeamRootIsTheSchedulersNormalizedRoot | internal/cli/pi_lead_test.go | Codex P2: a seats file whose base_root ends in a space. The pi lead's AM_ROOT and AM_BASE_ROOT equal what `seatlaunch.Squad.Normalize` and `SessionRoot` produce for the scheduler (`.../mail /v31`), and an environment identity equal to that root is accepted. The lead follows Normalize's steps (project root trimmed and cleaned, base root and session cleaned only) and `NewTeamIdentity` no longer trims the base root or session. |
 | TestLeadTeamTaskToolsSeeTheSquadStore | internal/cli/pi_lead_test.go | The manager path: a temp store at the seats file's session root with one task; after runLead, `task list --json` (amq_task_list's argv) and `task show ID --json`, run with the pi lead's AM_* environment, return that task. |
 
 The seat's internal/piruntime/team_identity_test.go rows stay (the
@@ -70,6 +71,7 @@ scheduler is the `startLeadScheduler` seam.
 | The environment-identity agreement check removed (correction 1) | TestLeadTeamRefusesAnEnvironmentIdentityThatDisagrees (root, base root, session) |
 | The AMQ_SQUAD_PROJECT line removed (correction 2) | TestLeadTeamTakesTheSquadIdentityFromTheSeatsFile (cwd's other-checkout), TestLeadTeamKeepsAnAgreeingEnvironmentIdentity (empty) |
 | The identity overlay branch skipped (the seat's change) | TestLeadTeamTakesTheSquadIdentityFromTheSeatsFile, TestLeadTeamKeepsAnAgreeingEnvironmentIdentity, TestLeadTeamTaskToolsSeeTheSquadStore |
+| The base root trimmed again in the lead, in `NewTeamIdentity`, or in the environment check (Codex P2) | TestLeadTeamRootIsTheSchedulersNormalizedRoot (the first two: both cases; the third: the environment case) |
 | The scheduler handle back to `firstOf(AM_ME, "lead")` (correction 3) | TestLeadTeamTakesTheSquadIdentityFromTheSeatsFile |
 
 ## Gates

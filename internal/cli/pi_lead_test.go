@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -163,5 +164,54 @@ func TestLeadTeamTaskToolsSeeTheSquadStore(t *testing.T) {
 		if err != nil || !strings.Contains(out, added.ID) || !strings.Contains(out, "squad task") {
 			t.Fatalf("task %v through the lead's identity: %v\n%s", args, err, out)
 		}
+	}
+}
+
+// The lead's root is the scheduler's: a seats file whose base_root carries a
+// trailing space gives the pi lead the AM_ROOT that scheduler run's own
+// normalization (seatlaunch.Squad.Normalize, SessionRoot) produces, and an
+// environment identity equal to that root is accepted, not refused.
+func TestLeadTeamRootIsTheSchedulersNormalizedRoot(t *testing.T) {
+	for _, withEnv := range []bool{false, true} {
+		t.Run(map[bool]string{false: "seats file fills it", true: "environment agrees"}[withEnv], func(t *testing.T) {
+			call, starts, seats, project, _ := teamLeadFixture(t)
+			base := filepath.Join(filepath.Dir(seats), "mail") + " "
+			raw, _ := json.Marshal(map[string]any{"project_root": project, "base_root": base, "session": "v31", "seats": []any{}})
+			if err := os.WriteFile(seats, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			q, err := readLaunchSeats(seats)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q.Wrapper, q.AMQPath = "/bin/amq-squad", "/bin/amq"
+			q.Seats = []seatlaunch.Seat{{Handle: "dev", Runtime: "pi", Worktree: "/w", Role: "You are dev."}}
+			sched, err := q.Normalize()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := sched.SessionRoot()
+			if !strings.HasSuffix(want, "mail /v31") {
+				t.Fatalf("the scheduler's root %q lost the base root's trailing space; the row proves nothing", want)
+			}
+			if withEnv {
+				t.Setenv("AM_ME", "cto")
+				t.Setenv("AM_ROOT", want)
+				t.Setenv("AM_BASE_ROOT", sched.BaseRoot)
+				t.Setenv("AM_SESSION", sched.Session)
+			}
+			if _, _, err := captureOutput(t, func() error { return runLead([]string{"--team", "--scheduler-seats", seats}) }); err != nil {
+				t.Fatal(err)
+			}
+			if len(*starts) != 1 {
+				t.Fatalf("scheduler starts %+v", *starts)
+			}
+			if got := call.getenv("AM_ROOT"); got != want {
+				t.Fatalf("pi lead AM_ROOT %q, want the scheduler's %q", got, want)
+			}
+			if got := call.getenv("AM_BASE_ROOT"); got != sched.BaseRoot {
+				t.Fatalf("pi lead AM_BASE_ROOT %q, want the scheduler's %q", got, sched.BaseRoot)
+			}
+		})
 	}
 }

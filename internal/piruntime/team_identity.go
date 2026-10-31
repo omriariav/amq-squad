@@ -21,9 +21,11 @@ type TeamIdentity struct {
 
 // NewTeamIdentity builds the complete AMQ pin from a compiled seats file's
 // base root and session. It refuses partial or relative identities instead of
-// letting the pi lead fall back to its unrelated solo task store.
+// letting the pi lead fall back to its unrelated solo task store. The base
+// root and session are taken as given (never trimmed), as the scheduler's
+// normalization takes them, so the lead's root is the scheduler's.
 func NewTeamIdentity(handle, baseRoot, session string) (TeamIdentity, error) {
-	handle, baseRoot, session = strings.TrimSpace(handle), strings.TrimSpace(baseRoot), strings.TrimSpace(session)
+	handle = strings.TrimSpace(handle)
 	if !amqHandleRE.MatchString(handle) {
 		return TeamIdentity{}, fmt.Errorf("lead handle %q is not a valid AMQ handle", handle)
 	}
