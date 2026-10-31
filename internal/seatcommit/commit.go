@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -464,7 +463,7 @@ func settle(o Options, sh *shadow, rec launch.Record, res Result) Result {
 		return res
 	}
 	repo := seatRepo(o.Git, harnessEnv(o.Env), sh.rp)
-	rest, note := restTarget(o.Root, o.Handle, l)
+	rest, note := restTarget(rec, l)
 	if note != "" {
 		res.Notes = append(res.Notes, note)
 	}
@@ -657,7 +656,7 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	repo := seatRepo(gitBin, henv, rp)
 	// The next lease starts at the base (3.0.2 t23, amendment 2b): the tip
 	// the launch recorded on the launch record, never the ledger's first base.
-	rest, _ := restTarget(root, handle, l)
+	rest, _ := restTarget(rec, l)
 	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
 	if l.Lease == nil && !onTask && tree == parentTree && head == parent && parent == rest {
 		return false, nil
@@ -726,40 +725,20 @@ func toRest(gitBin string, henv []string, sh *shadow, repo git, restBranch, tree
 	return nil
 }
 
-// restTarget is the commit a seat's worktree rests on and its next lease
-// starts from (amendment 2b, one base): the base tip the launch recorded on
-// the staged launch record (t22's "base"). A record without one (a launch
-// before 3.0.2) keeps the ledger's resting commit, with the note saying so;
-// never a local branch of the shared repository, which can be ahead of or
-// behind the remote.
-func restTarget(root, handle string, l Ledger) (rest, note string) {
-	if b := launchBase(root, handle); b != "" {
+// restTarget is the commit a seat's worktree rests on between leases
+// (amendment 2b, one base): the base tip the launch fetched and recorded on
+// the launch record (launch.Record.Base, 3.0.2 t22); each grant then cuts
+// the task's branch from a fresh fetch (StartTask's base). A record without
+// one (a launch before 3.0.2) keeps the ledger's resting commit, with the
+// note saying so; never a local branch of the shared repository, which can
+// be ahead of or behind the remote.
+func restTarget(rec launch.Record, l Ledger) (rest, note string) {
+	if b := strings.TrimSpace(rec.Base); b != "" {
 		return b, ""
 	}
 	rest = l.rest()
 	return rest, "launch_base_missing: the seat's launch record carries no base (a launch before 3.0.2); the worktree rests on the ledger's resting commit " + rest + ", never a local branch; the next launch records the base"
 }
-
-// launchBase is the "base" of the seat's staged launch record (3.0.2 t22:
-// the full SHA of the base tip the launch put the worktree and seat/<handle>
-// on), "" when the record has none. It is read from the record's JSON here
-// so this package needs no launch.Record field of its own.
-func launchBase(root, handle string) string {
-	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
-	if err != nil {
-		return ""
-	}
-	var r struct {
-		Base string `json:"base"`
-	}
-	if json.Unmarshal(raw, &r) != nil || !bindHead.MatchString(r.Base) {
-		return ""
-	}
-	return r.Base
-}
-
-// bindHead is a full lowercase commit id (SHA-1 or SHA-256).
-var bindHead = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // setHead points the worktree's HEAD at a branch (git's symbolic-ref in the
 // worktree's own git dir, with the harness's hardened git).
@@ -771,13 +750,15 @@ func setHead(gitBin string, env []string, rp repoPaths, branch string) error {
 
 // StartTask puts a seat's worktree on its task's own branch when the lease
 // is granted (3.0.2 t23: the scheduler's doorbell runs it right after the
-// grant, before the seat is rung): seat/<handle>-<task id> at the base tip
-// the lease boundary's CleanSeat recorded, or, for a task with an earlier
-// commit on its branch (a later attempt), at that commit, so the attempt's
-// commit follows the branch and its open PR. The lease's start is recorded
-// on the ledger first; the commit step diffs against it. A seat with no
-// commit ledger is left as it is (its commit step refuses base_unrecorded).
-func StartTask(root, handle, gitBin string, env []string, t task.Task, now time.Time) error {
+// grant, before the seat is rung): seat/<handle>-<task id> cut from base,
+// the remote base tip the doorbell fetched at this grant, recorded as the
+// task's base on the ledger (base "" keeps the resting commit); or, for a
+// task with an earlier commit on its branch (a later attempt), at that
+// commit with the branch's own base, so the attempt's commit follows the
+// branch and its open PR. The lease's start is recorded on the ledger
+// first; the commit step diffs against it. A seat with no commit ledger is
+// left as it is (its commit step refuses base_unrecorded).
+func StartTask(root, handle, gitBin string, env []string, t task.Task, base string, now time.Time) error {
 	if gitBin == "" {
 		var err error
 		if gitBin, err = exec.LookPath("git"); err != nil {
@@ -810,7 +791,8 @@ func StartTask(root, handle, gitBin string, env []string, t task.Task, now time.
 		henv := harnessEnv(env)
 		repo := seatRepo(gitBin, henv, rp)
 		rest := l.rest()
-		start, base := rest, rest
+		start := firstNonEmpty(strings.TrimSpace(base), rest)
+		base = start
 		if i := l.taskCommitAt(t.ID, branch); i >= 0 {
 			c := l.Commits[i]
 			start, base = c.Commit, firstNonEmpty(c.Base, c.Parent)

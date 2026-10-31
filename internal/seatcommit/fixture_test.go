@@ -28,6 +28,9 @@ type fixture struct {
 	grants                            grants.Resolved
 	gates                             GateChecker
 	signer                            testSigner
+	// grantBase is the base tip the doorbell's fetch hands StartTask at the
+	// next grant ("" keeps the resting commit).
+	grantBase string
 }
 
 // testSigner and testTrust are the owner's issuer key and trust store of the

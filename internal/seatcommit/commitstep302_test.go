@@ -55,7 +55,7 @@ func (f *fixture) leased(files ...string) task.Task {
 	if tk, err = f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now); err != nil {
 		f.t.Fatal(err)
 	}
-	if err := StartTask(f.root, f.handle, gitBin(f.t), nil, tk, f.now); err != nil {
+	if err := StartTask(f.root, f.handle, gitBin(f.t), nil, tk, f.grantBase, f.now); err != nil {
 		f.t.Fatal(err)
 	}
 	return tk
@@ -155,12 +155,12 @@ func TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs(t *testing.T) {
 	if _, err := f.store.CompleteBound(t1.ID, fixtureRepo, first.PRNumber, first.Commit, f.now); err != nil {
 		t.Fatal(err)
 	}
-	// The base moves (another PR merged) and a launch records it before the
-	// next dispatch.
+	// The base moves (another PR merged) before the next grant, whose fetch
+	// hands StartTask the new tip.
 	write(t, filepath.Join(f.main, "README.md"), "readme, merged since\n")
 	sh(t, f.main, "commit", "-q", "-am", "merged on main")
 	tip := sh(t, f.main, "rev-parse", "main")
-	f.setLaunchBase(tip)
+	f.grantBase = tip
 	t2 := f.leased("internal/client/")
 	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != tip {
 		t.Fatalf("the second lease starts at %s, not the base tip %s", got, tip)
@@ -220,7 +220,7 @@ func TestLaterAttemptAppendsToItsOwnBranchAndPR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := StartTask(f.root, f.handle, gitBin(t), nil, again, f.now); err != nil {
+	if err := StartTask(f.root, f.handle, gitBin(t), nil, again, f.grantBase, f.now); err != nil {
 		t.Fatal(err)
 	}
 	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); string(raw) != "package cmd\n// attempt one\n" || sh(t, f.wt, "rev-parse", "HEAD") != first.Commit {

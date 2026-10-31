@@ -273,11 +273,9 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		// (3.0.1 t17): a seat whose process ended is gone within one tick.
 		Liveness: &schedproc.Liveness{Root: root, ReadBound: schedproc.ProofReadBound(*tick, len(roster))},
 		Launcher: &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
-		// 3.0.2 t23: each task on its own branch from the base tip; the
-		// doorbell moves the seat's worktree there right after the grant.
-		Doorbell: schedproc.Doorbell{Sender: sender, Start: func(handle string, t task.Task) error {
-			return seatcommit.StartTask(root, handle, "", nil, t, taskNow())
-		}},
+		// 3.0.2 t23: each task on its own branch from the base tip fetched at
+		// the grant; the doorbell moves the seat's worktree there first.
+		Doorbell:  schedproc.Doorbell{Sender: sender, Start: slots.TaskStart(root, taskNow)},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
 		Router:    router, // the process calls its Flush each tick
 		Verifiers: store.Verifiers,
