@@ -66,12 +66,9 @@ func runRelease(args []string) error {
 	if os.Getenv("AMQ_SQUAD_SEAT") != "" {
 		return fmt.Errorf("release: a seat process holds no release path (R33); the owner's harness runs the release")
 	}
-	if *notesFile == "" {
-		return usageErrorf("release %s requires --notes-file (the release body)", verb)
-	}
-	body, err := os.ReadFile(*notesFile)
+	body, err := releaseBody(verb, *notesFile)
 	if err != nil {
-		return usageErrorf("release %s: --notes-file: %v", verb, err)
+		return err
 	}
 	ctx := context.Background()
 	core, err := gateCore(ctx, sel, verb == "prepare")
@@ -91,7 +88,7 @@ func runRelease(args []string) error {
 		esc.Send = core.QuestionSender(ctx)
 	}
 	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: esc.Raise, Lead: firstOf(sel.Handle, "lead"), Squad: mergetrain.SquadOf(sel.Root),
-		Exec: &releaseflow.GH{Bin: *ghBin}, Body: string(body), RepoDir: sel.ProjectDir, Branch: *branch,
+		Exec: &releaseflow.GH{Bin: *ghBin}, RepoDir: sel.ProjectDir, Branch: *branch,
 		Accepted: func(rec gatestore.Record) error {
 			trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())
 			if err != nil {
@@ -99,7 +96,7 @@ func runRelease(args []string) error {
 			}
 			return gateverify.Verifier{Trust: trust, Pin: core.Pin, Namespace: core.Namespace}.Accepted(core.Store, rec)
 		}}
-	spec, err := releaseflow.Spec(scope, flow.Lead, "owner", *repo, *tag, *commit, *notes, string(body))
+	spec, err := releaseSpecWithBody(flow, scope, *repo, *tag, *commit, *notes, body)
 	if err != nil {
 		return usageErrorf("release %s: %v", verb, err)
 	}
@@ -156,4 +153,23 @@ type releasePrepareData struct {
 	State         string        `json:"state"`
 	Gates         []releaseGate `json:"gates"`
 	QuestionError string        `json:"question_error,omitempty"`
+}
+
+// releaseBody reads --notes-file: its content is the GitHub release body.
+func releaseBody(verb, path string) (string, error) {
+	if path == "" {
+		return "", usageErrorf("release %s requires --notes-file (the release body)", verb)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", usageErrorf("release %s: --notes-file: %v", verb, err)
+	}
+	return string(b), nil
+}
+
+// releaseSpecWithBody binds the notes file's content as the flow's release
+// body and, by its digest, into the release spec prepare records.
+func releaseSpecWithBody(flow *releaseflow.Flow, scope compoundrelease.Scope, repo, tag, commit, notes, body string) (operatorauth.ReleaseSpec, error) {
+	flow.Body = body
+	return releaseflow.Spec(scope, flow.Lead, "owner", repo, tag, commit, notes, body)
 }

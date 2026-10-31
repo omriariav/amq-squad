@@ -267,6 +267,24 @@ class RequireMarketplaceRefTest(unittest.TestCase):
         self.assertFalse(hasattr(CHECK_RELEASE_VERSION, "MARKETPLACE_REF"))
         self.assertEqual(self.run_main("v3.0.2"), [])
 
+    def make_n(self, *extra: str) -> str:
+        """`make -n release-check` in this repository (prints, runs nothing)."""
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(SCRIPT)))
+        env = {k: v for k, v in os.environ.items() if k not in ("MARKETPLACE_REF", "MAKEFLAGS")}
+        return subprocess.run(
+            ["make", "-n", "-C", repo, "release-check", "VERSION=v3.0.1", *extra],
+            check=True, capture_output=True, text=True, env=env,
+        ).stdout
+
+    def test_the_makefile_passes_the_flag_only_with_marketplace_ref(self) -> None:
+        # CI's make release-check sets no MARKETPLACE_REF: no flag, no row.
+        without = [ln for ln in self.make_n().splitlines() if "check-release-version.py" in ln]
+        self.assertEqual(len(without), 1, without)
+        self.assertNotIn("--marketplace-ref", without[0])
+        with_ref = [ln for ln in self.make_n("MARKETPLACE_REF=origin/main").splitlines() if "check-release-version.py" in ln]
+        self.assertEqual(len(with_ref), 1, with_ref)
+        self.assertIn('--marketplace-ref "origin/main"', with_ref[0])
+
     def test_the_flag_runs_the_row_with_its_ref(self) -> None:
         self.assertEqual(self.run_main("v3.0.2", "--marketplace-ref", "origin/main"), [("3.0.2", "origin/main")])
 
