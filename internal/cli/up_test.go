@@ -52,6 +52,11 @@ func (f *upFake) run(_ context.Context, dir string, _ []string, name string, arg
 	case base == "amq-squad" && len(args) > 1 && args[0] == "pi" && args[1] == "verify":
 		return []byte(`{"schema_version":1,"kind":"pi_verify","data":{"ok":false,"error":"runtime x is not unpacked yet"}}` + "\nerror: runtime x is not unpacked yet\n"), fail
 	case base == "amq-squad" && len(args) > 0 && args[0] == "doctor":
+		// AMQ v0.116.2's amq env refuses a repository with no .agent-mail
+		// (env.go:428), so doctor's amq ops row fails there.
+		if _, err := os.Stat(filepath.Join(f.proj, ".agent-mail")); err != nil {
+			return []byte(`{"schema_version":1,"kind":"doctor","data":{"team_home":"x","checks":[{"name":"amq ops","status":"fail","detail":"amq env failed: no AMQ root"}]}}` + "\nerror: doctor: 1 check(s) failed\n"), fail
+		}
 		return []byte(`{"schema_version":1,"kind":"doctor","data":{"team_home":"x","checks":[{"name":"amq version","status":"ok"},{"name":"codex trust","status":"warn"}]}}`), nil
 	case base == "amq" && args[0] == "coop" && args[1] == "init":
 		r := args[slices.Index(args, "--root")+1]
@@ -253,10 +258,10 @@ func TestUpRunsItsSevenStepsInOrderAndInstallsByRename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("up: %v\n%+v", err, r.Steps)
 	}
-	if got := stepNames(r); got != "install:ok doctor:ok session:ok compile:ok lead:ok tmux:ok roster:ok" {
+	if got := stepNames(r); got != "compile:ok install:ok session:ok doctor:ok lead:ok tmux:ok roster:ok" {
 		t.Fatalf("steps %s", got)
 	}
-	order := []string{"amq-squad version", "amq-squad pi verify", "amq-squad doctor --json", "amq coop init", "amq session create", "tmux has-session", "tmux new-session"}
+	order := []string{"amq-squad version", "amq-squad pi verify", "amq coop init", "amq session create", "amq-squad doctor --json", "tmux has-session", "tmux new-session"}
 	last := -1
 	for _, c := range order {
 		i := f.callIndex(c)
@@ -297,7 +302,7 @@ func TestUpRunsItsSevenStepsInOrderAndInstallsByRename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second up: %v %+v", err, r.Steps)
 	}
-	if got := stepNames(r); got != "install:skipped doctor:ok session:skipped compile:ok lead:ok tmux:ok roster:ok" || f.callIndex("amq coop init") >= 0 || f.callIndex("tmux kill-session -t ="+name) < 0 {
+	if got := stepNames(r); got != "compile:ok install:skipped session:skipped doctor:ok lead:ok tmux:ok roster:ok" || f.callIndex("amq coop init") >= 0 || f.callIndex("tmux kill-session -t ="+name) < 0 {
 		t.Fatalf("second run steps %s; calls %q", got, f.calls)
 	}
 }
@@ -446,7 +451,7 @@ func TestUpInstallRefusesAnUntaggedOrUnembeddedBuildByName(t *testing.T) {
 		}
 		before, _ := os.ReadFile(target)
 		r, err := runUpJSON(t, f.proj)
-		if err == nil || len(r.Steps) != 1 || r.Steps[0].Refusal != tc.want {
+		if err == nil || len(r.Steps) != 2 || r.Steps[1].Name != "install" || r.Steps[1].Refusal != tc.want {
 			t.Errorf("%s / %q: %v %+v", tc.version, tc.verify, err, r.Steps)
 		}
 		if after, _ := os.ReadFile(target); string(after) != string(before) {
@@ -468,10 +473,30 @@ func TestUpDoctorRefusesAFailingRowByName(t *testing.T) {
 		return inner(ctx, dir, env, name, args...)
 	}
 	r, err := runUpJSON(t, f.proj)
-	if err == nil || stepNames(r) != "install:ok doctor:refused" || r.Steps[1].Refusal != "doctor_failed" || !strings.Contains(r.Steps[1].Detail, `"amq version"`) {
+	if err == nil || stepNames(r) != "compile:ok install:ok session:ok doctor:refused" || r.Steps[3].Refusal != "doctor_failed" || !strings.Contains(r.Steps[3].Detail, `"amq version"`) {
 		t.Fatalf("%v %+v", err, r.Steps)
 	}
-	if f.callIndex("amq coop init") >= 0 || f.callIndex("tmux") >= 0 {
+	if f.callIndex("tmux") >= 0 {
 		t.Fatalf("a step ran after the refusal: %q", f.calls)
+	}
+}
+
+// Codex P2 (5) on #829: squad.yaml compiles before anything is installed or
+// created. A squad.yaml that does not compile refuses at the first step:
+// the installed binary is untouched, no amq, tmux or binary was run, and
+// no AMQ root exists.
+func TestUpCompilesSquadYAMLBeforeInstallingOrCreatingAnything(t *testing.T) {
+	f, target := upWorld(t)
+	before, _ := os.Stat(target)
+	mustWrite(t, filepath.Join(f.proj, "squad.yaml"), strings.Replace(fixtureSquadYAML, "session: s1\n", "", 1))
+	r, err := runUpJSON(t, f.proj)
+	if err == nil || stepNames(r) != "compile:refused" || r.Steps[0].Refusal != "squad_invalid" {
+		t.Fatalf("%v %+v", err, r.Steps)
+	}
+	if after, _ := os.Stat(target); !os.SameFile(before, after) || len(f.calls) != 0 {
+		t.Fatalf("something ran before the compile refused: calls %q", f.calls)
+	}
+	if _, err := os.Stat(filepath.Join(f.proj, ".agent-mail")); err == nil {
+		t.Fatal("an AMQ root was created before the compile refused")
 	}
 }

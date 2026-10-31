@@ -28,14 +28,14 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // `amq-squad up` (brief 31-1, section 3; plan 7.4): a squad.yaml line to
 // every seat live with no owner step between. Seven steps, in order, each
-// refusing by name: (1) install the tagged pi binary onto PATH by temp name
-// and rename; (2) the doctor checks of that binary; (3) the AMQ root and
-// session; (4) squad.yaml compiled; (5) the recorded lead under the one
+// refusing by name: (1) squad.yaml compiled, before anything is created;
+// (2) install the tagged pi binary onto PATH by temp name and rename; (3)
+// the AMQ root and session; (4) the doctor checks of that binary, in the
+// root; (5) the recorded lead under the one
 // rule (a lead whose pid is alive and whose pane exists is never stopped);
 // (6) the lead in its own tmux session; (7) the roster's outcome from
 // decisions.jsonl, then the roster from status and the attach command.
@@ -46,17 +46,18 @@ Usage:
   amq-squad up [--project DIR] [--binary PATH | --skip-install] [--to PATH] [--wait 120s] [--json]
 
 Seven steps, in order; each refuses by name and nothing after it runs:
-  1. install: the tagged pi build (scripts/build-pi-runtime.sh at a tag;
+  1. compile: squad.yaml through the seats' roles and the squad's checks,
+     before anything is installed or created.
+  2. install: the tagged pi build (scripts/build-pi-runtime.sh at a tag;
      default <repo>/build/pi/amq-squad, or --binary PATH) is copied next to
      the amq-squad on PATH (or --to PATH) under a temporary name and renamed
      over it, never written over it in place. Refused: pi_binary_missing,
      pi_binary_untagged, pi_not_embedded, pi_runtime_rejected,
      install_target_unknown. --skip-install keeps the installed binary when
      it already reports a tag.
-  2. doctor: the installed binary's doctor; a failing row refuses by name.
   3. session: the AMQ root and the squad's session (amq coop init, amq
      session create) when absent.
-  4. compile: squad.yaml through the seats' roles and the squad's checks.
+  4. doctor: the installed binary's doctor; a failing row refuses by name.
   5. lead: a recorded lead whose pid is alive and whose tmux pane exists is
      never stopped (refused lead_running, with the pid, the pane and the
      attach command). A lead whose pid is dead or whose pane is gone, and a
@@ -190,7 +191,7 @@ type upRun struct {
 	skipInstall         bool
 	wait                time.Duration
 	installed           string // the amq-squad the lead runs
-	squad               team.Squad
+	leadHandle          string // squad.yaml's lead handle
 	q                   seatlaunch.Squad
 	decisionsFrom       int64 // decisions.jsonl's size before the lead started
 	logFrom             int64 // scheduler.log's size before the lead started
@@ -201,10 +202,13 @@ func (u *upRun) run() error {
 		name string
 		fn   func() (string, error)
 	}{
-		{"install", u.install},
-		{"doctor", u.doctor},
-		{"session", u.session},
+		// compile first: a squad.yaml that does not compile installs and
+		// creates nothing; the session before doctor, whose amq ops row runs
+		// amq env and amq doctor --ops in the AMQ root
 		{"compile", u.compile},
+		{"install", u.install},
+		{"session", u.session},
+		{"doctor", u.doctor},
 		{"lead", u.lead},
 		{"tmux", u.tmux},
 		{"roster", u.roster},
@@ -373,34 +377,25 @@ func (u *upRun) doctor() (string, error) {
 
 // session is step 3.
 func (u *upRun) session() (string, error) {
-	s, err := team.LoadSquad(u.report.Project)
-	if err != nil {
-		return "", refuse("squad_invalid", "%v", err)
-	}
-	if s.Session == "" || strings.TrimSpace(s.Lead) == "" {
-		return "", refuse("squad_invalid", "%s names no session or no lead (session: <name>, lead: <seat handle>)", team.SquadPath(u.report.Project))
-	}
-	u.squad = s
-	amq, err := upLookPath("amq")
-	if err != nil {
-		return "", refuse("amq_missing", "the installed amq is required on PATH (R51): %v", err)
-	}
-	q := seatlaunch.Squad{ProjectRoot: u.report.Project, Session: s.Session}
-	q.BaseRoot = filepath.Join(q.ProjectRoot, ".agent-mail")
-	q.Operator = "user"
-	handles := []string{s.Lead}
-	for _, seat := range s.Seats {
+	q := u.q
+	handles := []string{u.leadHandle}
+	for _, seat := range q.Seats {
 		handles = append(handles, seat.Handle)
 	}
-	done, err := ensureSquadSession(u.ctx, amq, q, handles)
-	if err != nil {
+	done, err := ensureSquadSession(u.ctx, q.AMQPath, q, handles)
+	var named *upRefusal
+	switch {
+	case errors.As(err, &named):
+		return "", named
+	case err != nil:
 		return "", refuse("session_create_failed", "%v", err)
 	}
-	u.report.Root, u.report.Session, u.report.Lead = q.SessionRoot(), s.Session, s.Lead
 	if len(done) == 0 {
 		return "skipped: the session root " + q.SessionRoot() + " exists", nil
 	}
-	_ = schedproc.AppendDecision(q.SessionRoot(), upNow(), scheduler.Decision{Kind: KindSessionCreated, Reason: "up: " + strings.Join(done, "; ")})
+	if err := schedproc.AppendDecision(q.SessionRoot(), upNow(), scheduler.Decision{Kind: KindSessionCreated, Reason: "up: " + strings.Join(done, "; ")}); err != nil {
+		return "", refuse("decision_unrecorded", "the session was created (%s) but its decision could not be recorded: %v", strings.Join(done, "; "), err)
+	}
 	return strings.Join(done, "; "), nil
 }
 
@@ -445,21 +440,34 @@ func ensureSquadSession(ctx context.Context, amq string, q seatlaunch.Squad, han
 	return done, nil
 }
 
-// compile is step 4: squad.yaml as scheduler run reads it.
+// compile is the first step: squad.yaml as scheduler run reads it, before
+// anything is installed or created. The wrapper is the binary the install
+// step will put in place (its target), else this one.
 func (u *upRun) compile() (string, error) {
-	q, _, err := squadOfProject(u.report.Project)
+	q, lead, err := squadOfProject(u.report.Project)
 	if err != nil {
 		return "", refuse("squad_invalid", "%v", err)
 	}
-	q.Wrapper = u.installed
+	q.Wrapper = u.to
+	if q.Wrapper == "" {
+		if p, err := upLookPath("amq-squad"); err == nil {
+			q.Wrapper = p
+		} else if self, err := os.Executable(); err == nil {
+			q.Wrapper = self
+		}
+	}
+	if q.Wrapper, err = filepath.Abs(q.Wrapper); err != nil {
+		return "", refuse("squad_invalid", "%v", err)
+	}
 	if q.AMQPath, err = upLookPath("amq"); err != nil {
-		return "", refuse("amq_missing", "%v", err)
+		return "", refuse("amq_missing", "the installed amq is required on PATH (R51): %v", err)
 	}
 	if q, err = q.Normalize(); err != nil {
 		return "", refuse("squad_invalid", "%v", err)
 	}
-	u.q = q
-	return fmt.Sprintf("%d seats, lead %s, session %s", len(q.Seats), u.squad.Lead, q.Session), nil
+	u.q, u.leadHandle = q, lead
+	u.report.Root, u.report.Session, u.report.Lead = q.SessionRoot(), q.Session, lead
+	return fmt.Sprintf("%d seats, lead %s, session %s", len(q.Seats), lead, q.Session), nil
 }
 
 // lockHeld probes a flock without keeping it: held is true when another
