@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -463,8 +464,8 @@ func settle(o Options, sh *shadow, rec launch.Record, res Result) Result {
 		return res
 	}
 	repo := seatRepo(o.Git, harnessEnv(o.Env), sh.rp)
-	rest := firstNonEmpty(baseTip(repo, l), l.rest())
-	if err := toRest(o.Git, harnessEnv(o.Env), sh, repo, rec.Branch, o.Handle, res.Tree, rest); err != nil {
+	rest := restTarget(o.Root, o.Handle, repo, l)
+	if err := toRest(o.Git, harnessEnv(o.Env), sh, repo, rec.Branch, res.Tree, rest); err != nil {
 		res.Notes = append(res.Notes, "the worktree stays on the task's tree until the next lease boundary: "+err.Error())
 		return res
 	}
@@ -625,15 +626,16 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	if q := l.Quarantine; q != nil && (q.ClearedAt == nil || !q.Clear.Verified(handle, q, clear)) {
 		return false, fmt.Errorf("seat %s is quarantined; its tree is evidence and is not cleaned", handle)
 	}
-	// The worktree is on the resting branch, or on a task's branch (the last
-	// lease's, or one a StartTask that did not finish left checked out).
+	// The worktree is on the resting branch, or on a task branch the ledger
+	// records for the seat (the lease's, or a commit's): the record decides,
+	// never the branch name.
 	rp, err := worktreePaths(rec.Worktree)
 	if err != nil {
 		return false, fmt.Errorf("the seat worktree %s is not a git checkout root: %v", rec.Worktree, err)
 	}
-	onTask := strings.HasPrefix(rp.HeadRef, "refs/heads/"+TaskBranch(handle, ""))
-	if !onTask && rp.HeadRef != "refs/heads/"+rec.Branch {
-		return false, fmt.Errorf("the seat worktree has %q checked out, not the seat branch %s or a task branch of the seat", rp.HeadRef, rec.Branch)
+	onTask := rp.HeadRef != "refs/heads/"+rec.Branch
+	if onTask && !l.knownBranch(rp.HeadRef) {
+		return false, fmt.Errorf("the seat worktree has %q checked out, not the seat branch %s or a task branch its commit ledger records", rp.HeadRef, rec.Branch)
 	}
 	henv := harnessEnv(env)
 	sh, err := newShadow(gitBin, henv, rp)
@@ -651,9 +653,9 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 		return false, err
 	}
 	repo := seatRepo(gitBin, henv, rp)
-	// The base branch's tip now is where the next lease starts (3.0.2 t23);
-	// the resting commit stays when the base branch cannot be read.
-	rest := firstNonEmpty(baseTip(repo, l), l.rest())
+	// The next lease starts at the base (3.0.2 t23, amendment 2b): the tip
+	// the launch recorded on the launch record, never the ledger's first base.
+	rest := restTarget(root, handle, repo, l)
 	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
 	if l.Lease == nil && !onTask && tree == parentTree && head == parent && parent == rest {
 		return false, nil
@@ -677,7 +679,7 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	if beforeReset != nil {
 		beforeReset()
 	}
-	if err := toRest(gitBin, henv, sh, repo, rec.Branch, handle, tree, rest); err != nil {
+	if err := toRest(gitBin, henv, sh, repo, rec.Branch, tree, rest); err != nil {
 		return false, err
 	}
 	if l.Rest != rest || l.Lease != nil {
@@ -692,12 +694,11 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 // toRest checks the worktree out at the resting commit: an index of the
 // worktree as it is (tree, its snapshot), reset to rest with the files
 // updated in the harness's shadow, then the untracked, non-ignored files
-// removed and the seat's own index at rest. Then HEAD returns from a task
-// branch to the seat's resting branch, the task branch's local ref goes (it
-// was pushed and its commit is anchored; a ref under seat/<handle>/ and
-// seat/<handle> itself cannot both exist), and the resting branch moves to
-// rest. The caller records Rest and clears the lease's start.
-func toRest(gitBin string, henv []string, sh *shadow, repo git, restBranch, handle, tree, rest string) error {
+// removed and the seat's own index at rest. Then HEAD returns from the task
+// branch (the caller checked the ledger records it) to the seat's resting
+// branch, which moves to rest. The caller records Rest and clears the
+// lease's start.
+func toRest(gitBin string, henv []string, sh *shadow, repo git, restBranch, tree, rest string) error {
 	idx := sh.tempIndex()
 	os.Remove(idx)
 	defer os.Remove(idx)
@@ -714,22 +715,49 @@ func toRest(gitBin string, henv []string, sh *shadow, repo git, restBranch, hand
 	if _, err := sh.index(sh.rp.Index).run(nil, nil, "read-tree", rest); err != nil {
 		return err
 	}
-	if head := sh.rp.HeadRef; strings.HasPrefix(head, "refs/heads/"+TaskBranch(handle, "")) {
-		if err := setHead(gitBin, henv, sh.rp, restBranch); err != nil {
-			return err
-		}
-		if _, err := repo.run(nil, nil, "update-ref", "-d", head); err != nil {
-			return err
-		}
+	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad rest seat", "refs/heads/"+restBranch, rest); err != nil {
+		return err
 	}
-	_, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad rest seat "+handle, "refs/heads/"+restBranch, rest)
-	return err
+	if sh.rp.HeadRef != "refs/heads/"+restBranch {
+		return setHead(gitBin, henv, sh.rp, restBranch)
+	}
+	return nil
 }
+
+// restTarget is the commit a seat's worktree rests on and its next lease
+// starts from (amendment 2b, one base): the base tip the launch recorded on
+// the staged launch record (t22's "base"); without one (a record from
+// before 3.0.2), the seat repository's base branch; else the ledger's
+// resting commit.
+func restTarget(root, handle string, repo git, l Ledger) string {
+	return firstNonEmpty(launchBase(root, handle), baseTip(repo, l), l.rest())
+}
+
+// launchBase is the "base" of the seat's staged launch record (3.0.2 t22:
+// the full SHA of the base tip the launch put the worktree and seat/<handle>
+// on), "" when the record has none. It is read from the record's JSON here
+// so this package needs no launch.Record field of its own.
+func launchBase(root, handle string) string {
+	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return ""
+	}
+	var r struct {
+		Base string `json:"base"`
+	}
+	if json.Unmarshal(raw, &r) != nil || !bindHead.MatchString(r.Base) {
+		return ""
+	}
+	return r.Base
+}
+
+// bindHead is a full lowercase commit id (SHA-1 or SHA-256).
+var bindHead = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // baseTip is the base branch's tip in the seat repository (refs/heads/<the
 // launch's base branch>, the ref the launch's AddWorktree starts a seat
-// branch from), "" when it cannot be read. The launch-time base is t22's
-// (internal/seatlaunch, ensureWorktree); this is the lease boundary's.
+// branch from), "" when it cannot be read: the fallback of a launch record
+// that carries no base.
 func baseTip(repo git, l Ledger) string {
 	tip, err := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+firstNonEmpty(l.BaseBranch, "main")+"^{commit}")
 	if err != nil || len(tip) < 40 {
@@ -748,12 +776,12 @@ func setHead(gitBin string, env []string, rp repoPaths, branch string) error {
 
 // StartTask puts a seat's worktree on its task's own branch when the lease
 // is granted (3.0.2 t23: the scheduler's doorbell runs it right after the
-// grant, before the seat is rung): seat/<handle>/<task> at the base tip the
-// lease boundary's CleanSeat recorded, or, for a task with an earlier commit
-// on its branch (a later attempt), at that commit, so the attempt's commit
-// follows the branch and its open PR. The lease's start is recorded on the
-// ledger last; the commit step diffs against it. A seat with no commit
-// ledger is left as it is (its commit step refuses base_unrecorded).
+// grant, before the seat is rung): seat/<handle>-<task id> at the base tip
+// the lease boundary's CleanSeat recorded, or, for a task with an earlier
+// commit on its branch (a later attempt), at that commit, so the attempt's
+// commit follows the branch and its open PR. The lease's start is recorded
+// on the ledger first; the commit step diffs against it. A seat with no
+// commit ledger is left as it is (its commit step refuses base_unrecorded).
 func StartTask(root, handle, gitBin string, env []string, t task.Task, now time.Time) error {
 	if gitBin == "" {
 		var err error
@@ -772,29 +800,36 @@ func StartTask(root, handle, gitBin string, env []string, t task.Task, now time.
 		if err != nil {
 			return err
 		}
-		if l.Lease != nil {
-			if l.Lease.Task == t.ID {
-				return nil // started
-			}
+		if l.Lease != nil && l.Lease.Task != t.ID {
 			return fmt.Errorf("seat %s still carries task %s's lease start; a lease boundary (CleanSeat) clears it", handle, l.Lease.Task)
 		}
 		rec, err := stagedRecord(root, handle)
 		if err != nil {
 			return err
 		}
-		rp, _, why := checkWorktree(rec, "", rec.Branch)
+		branch := TaskBranch(handle, t.ID)
+		rp, _, why := checkWorktree(rec, "", rec.Branch, branch)
 		if why != "" {
 			return fmt.Errorf("%s", why)
 		}
 		henv := harnessEnv(env)
 		repo := seatRepo(gitBin, henv, rp)
-		branch := TaskBranch(handle, t.ID)
 		rest := l.rest()
 		start, base := rest, rest
 		if i := l.taskCommitAt(t.ID, branch); i >= 0 {
 			c := l.Commits[i]
 			start, base = c.Commit, firstNonEmpty(c.Base, c.Parent)
 		}
+		// The lease's start is recorded first, so the branch the worktree is
+		// moved to below is always one the ledger records (CleanSeat trusts
+		// the record, never the name).
+		if l.Lease == nil {
+			l.Lease = &LedgerLease{Task: t.ID, Branch: branch, Base: base, Start: start, At: now.UTC()}
+			if err := writeLedger(root, l); err != nil {
+				return err
+			}
+		}
+		start = l.Lease.Start
 		if start != rest {
 			if _, err := repo.line("rev-parse", "--verify", "-q", start+"^{commit}"); err != nil {
 				return fmt.Errorf("task %s's earlier commit %s is not in the seat repository: %v", t.ID, start, err)
@@ -818,19 +853,10 @@ func StartTask(root, handle, gitBin string, env []string, t task.Task, now time.
 				return err
 			}
 		}
-		if err := setHead(gitBin, henv, rp, branch); err != nil {
-			return err
-		}
-		if strings.HasPrefix(branch, rec.Branch+"/") {
-			if _, err := repo.run(nil, nil, "update-ref", "-d", "refs/heads/"+rec.Branch); err != nil {
-				return err
-			}
-		}
 		if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad start task "+t.ID, "refs/heads/"+branch, start); err != nil {
 			return err
 		}
-		l.Lease = &LedgerLease{Task: t.ID, Branch: branch, Base: base, Start: start, At: now.UTC()}
-		return writeLedger(root, l)
+		return setHead(gitBin, henv, rp, branch)
 	})
 }
 
@@ -1217,11 +1243,6 @@ func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Res
 		text := string(out) + err.Error()
 		if strings.Contains(text, "[rejected]") || strings.Contains(text, "non-fast-forward") || strings.Contains(text, "fetch first") {
 			return res.refuse(ReasonPushRejected, task.RouteLead, "the remote refused a fast-forward push of "+res.Branch+" (no force push): "+firstLine(text))
-		}
-		if strings.Contains(text, "refname conflict") || strings.Contains(text, "exists; cannot create") {
-			// One branch per task (3.0.2 t23): a remote that still carries the
-			// 3.0.1 seat branch cannot take a task branch under it.
-			return res.refuse(ReasonPushRejected, task.RouteLead, "the remote cannot create "+res.Branch+" beside an existing branch of that name's prefix (the 3.0.1 seat branch "+l.Branch+"?): delete it on the remote once its PR is merged or closed: "+firstLine(text))
 		}
 		return res.defer_("push: " + firstLine(text))
 	}

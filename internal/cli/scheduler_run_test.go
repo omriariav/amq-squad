@@ -323,10 +323,10 @@ func TestSchedulerCommitStepBindsByDefaultUnderAMergeGrant(t *testing.T) {
 	if got.State != task.StateCompleted || got.PRNumber != 7 || got.PRHead != head || len(head) != 40 || got.PRRepository != "o/r" {
 		t.Fatalf("binding: state %s pr %d head %q repo %q (want completed, 7, %s, o/r)\n%s", got.State, got.PRNumber, got.PRHead, got.PRRepository, head, out)
 	}
-	if leased != "refs/heads/seat/s1/t1" {
+	if leased != "refs/heads/seat/s1-t1" {
 		t.Fatalf("the leased worktree had %s checked out, not the task's branch", leased)
 	}
-	if !strings.Contains(calls, "pr list --head seat/s1/t1") || !strings.Contains(calls, "pr create --draft --head seat/s1/t1") {
+	if !strings.Contains(calls, "pr list --head seat/s1-t1") || !strings.Contains(calls, "pr create --draft --head seat/s1-t1") {
 		t.Fatalf("gh calls:\n%s", calls)
 	}
 	if !strings.Contains(out, "PR binding on (merge grant o/r)") {

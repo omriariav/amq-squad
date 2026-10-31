@@ -436,8 +436,27 @@ func (l Ledger) Parent() string {
 // launch base until its first boundary.
 func (l Ledger) rest() string { return firstNonEmpty(l.Rest, l.Head, l.Base) }
 
-// TaskBranch is a task's own branch on a seat (3.0.2 t23).
-func TaskBranch(handle, taskID string) string { return "seat/" + handle + "/" + taskID }
+// TaskBranch is a task's own branch on a seat (3.0.2 t23):
+// seat/<handle>-<task id>, beside the resting branch seat/<handle> (a ref
+// cannot be both seat/<handle> and a directory of task branches). It is a
+// label only: nothing parses it back into a handle and a task (a handle may
+// itself carry a hyphen); the ledger's per-task record (Lease, Commits) is
+// the only source of which task a branch carries.
+func TaskBranch(handle, taskID string) string { return "seat/" + handle + "-" + taskID }
+
+// knownBranch reports whether a ref is a task branch the ledger records for
+// this seat (the lease's, or a commit's), from the record, never the name.
+func (l Ledger) knownBranch(ref string) bool {
+	if l.Lease != nil && ref == "refs/heads/"+l.Lease.Branch {
+		return true
+	}
+	for _, c := range l.Commits {
+		if c.Branch != "" && ref == "refs/heads/"+c.Branch {
+			return true
+		}
+	}
+	return false
+}
 
 // taskCommitAt is the index of the task's last commit on its branch, -1
 // when none.

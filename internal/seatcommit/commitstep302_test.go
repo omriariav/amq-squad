@@ -1,12 +1,14 @@
 package seatcommit
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -144,7 +146,7 @@ func TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs(t *testing.T) {
 	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// one\n")
 	first := Run(f.prOpts(f.done(t1.ID), gh))
-	if !first.OK || first.Branch != "seat/s1/"+t1.ID || first.Parent != f.base || first.PRNumber != 1 {
+	if !first.OK || first.Branch != "seat/s1-"+t1.ID || first.Parent != f.base || first.PRNumber != 1 {
 		t.Fatalf("first task: %+v", first)
 	}
 	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+f.branch || sh(t, f.wt, "status", "--porcelain", "--untracked-files=all") != "" {
@@ -163,7 +165,7 @@ func TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs(t *testing.T) {
 	}
 	write(t, filepath.Join(f.wt, "internal", "client", "factory_test.go"), "package client\n// two\n")
 	second := Run(f.prOpts(f.done(t2.ID), gh))
-	if !second.OK || second.Branch != "seat/s1/"+t2.ID || second.Parent != tip || second.PRNumber != 2 || len(second.Changes) != 1 {
+	if !second.OK || second.Branch != "seat/s1-"+t2.ID || second.Parent != tip || second.PRNumber != 2 || len(second.Changes) != 1 {
 		t.Fatalf("second task: %+v", second)
 	}
 	if got := sh(t, f.origin, "log", "-1", "--format=%P", second.Commit); got != tip {
@@ -231,5 +233,93 @@ func TestLaterAttemptAppendsToItsOwnBranchAndPR(t *testing.T) {
 	raw, _ := os.ReadFile(calls)
 	if f.originRef(first.Branch) != second.Commit || got.PRNumber != 1 || got.PRHead != second.Commit || strings.Count(string(raw), "pr create") != 1 {
 		t.Fatalf("origin %s, binding #%d at %s\n%s", f.originRef(first.Branch), got.PRNumber, got.PRHead, raw)
+	}
+}
+
+// The reviewer's rule on seat/<handle>-<task id>: the name is a label only,
+// never parsed (a handle may carry a hyphen); the ledger's per-task record
+// says which task a branch carries. On seat "qa-2" a branch the seat made
+// that only looks like a task branch ("seat/qa-2-t9") is no task branch to
+// CleanSeat, which refuses and touches nothing; the branch the ledger
+// records for t1 is the task's, and the commit is recorded with it. Fails
+// when CleanSeat goes by the name's prefix.
+func TestTaskBranchIsALabelTheRecordDecides(t *testing.T) {
+	f := newFixtureFor(t, "qa-2")
+	gh, _, _ := branchGh(t, f)
+	sh(t, f.wt, "checkout", "-q", "-b", "seat/qa-2-t9")
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// the seat's own\n")
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || !strings.Contains(err.Error(), "task branch its commit ledger records") {
+		t.Fatalf("a branch the ledger does not record was taken for a task branch: %v", err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); !strings.Contains(string(raw), "the seat's own") || sh(t, f.wt, "symbolic-ref", "HEAD") != "refs/heads/seat/qa-2-t9" {
+		t.Fatal("CleanSeat touched a worktree on a branch the ledger does not record")
+	}
+	// The refused clean keeps the seat unclean; the next one takes the
+	// marker over after its TTL.
+	sh(t, f.wt, "checkout", "-q", "-f", f.branch)
+	f.now = f.now.Add(task.SeatReservationTTL + time.Minute)
+	tk := f.leased("cmd/")
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/seat/qa-2-"+tk.ID {
+		t.Fatalf("the leased worktree is on %s", got)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// qa-2\n")
+	res := Run(f.prOpts(f.done(tk.ID), gh))
+	l, _ := ReadLedger(f.root, f.handle)
+	if !res.OK || res.Branch != "seat/qa-2-"+tk.ID || len(l.Commits) != 1 || l.Commits[0].Task != tk.ID || l.Commits[0].Branch != res.Branch || f.originRef(res.Branch) != res.Commit {
+		t.Fatalf("the qa-2 task: %+v\nledger %+v", res, l.Commits)
+	}
+}
+
+// setLaunchBase writes the launch's base tip into the seat's staged launch
+// record (3.0.2 t22's "base"), as a relaunch does.
+func (f *fixture) setLaunchBase(base string) {
+	f.t.Helper()
+	p := filepath.Join(launch.StagedDir(f.root, f.handle), launch.FileName)
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		f.t.Fatal(err)
+	}
+	m["base"] = base
+	if raw, err = json.Marshal(m); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// Amendment 2b, one base (the day-2 finding: a relaunch kept the ledger of
+// the same worktree and branch, and CleanSeat reset the worktree to that
+// ledger's old parent, undoing the launch's move to the tip): the lease
+// boundary resets to the base the launch recorded on the launch record,
+// never the ledger's first base (and not a local base branch that moved
+// since), and the task's commit takes it as its base and parent. Fails when
+// CleanSeat takes the ledger's parent or the local base branch.
+func TestLeaseBoundaryResetsToTheLaunchRecordsBase(t *testing.T) {
+	f := newFixture(t)
+	for _, msg := range []string{"merged before the relaunch", "merged after it"} {
+		write(t, filepath.Join(f.main, "README.md"), msg+"\n")
+		sh(t, f.main, "commit", "-q", "-am", msg)
+		if msg == "merged before the relaunch" {
+			f.setLaunchBase(sh(t, f.main, "rev-parse", "main"))
+		}
+	}
+	launched := sh(t, f.main, "rev-parse", "main~1")
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil {
+		t.Fatal(err)
+	}
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != launched {
+		t.Fatalf("the lease boundary reset to %s, not the launch's base %s (ledger base %s)", got, launched, f.base)
+	}
+	tk := f.leased("cmd/")
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// on the launch base\n")
+	res := f.run(f.done(tk.ID))
+	l, _ := ReadLedger(f.root, f.handle)
+	if !res.OK || res.Parent != launched || len(l.Commits) != 1 || l.Commits[0].Base != launched || l.Rest != launched {
+		t.Fatalf("the task's base: %+v\nledger rest %s commits %+v", res, l.Rest, l.Commits)
 	}
 }

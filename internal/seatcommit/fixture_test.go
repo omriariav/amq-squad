@@ -91,15 +91,18 @@ func write(t *testing.T, path, body string) {
 
 const claudeMD = "# Project\n\nfree text\n\n" + rules.BeginMarker + "\nmanaged rules\n" + rules.EndMarker + "\n"
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureFor(t, "s1") }
+
+// newFixtureFor is the fixture for a seat handle (one with a hyphen, say).
+func newFixtureFor(t *testing.T, handle string) *fixture {
 	t.Helper()
 	gitBin(t)
 	dir := t.TempDir()
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	f := &fixture{t: t, dir: dir, origin: filepath.Join(dir, "origin.git"), main: filepath.Join(dir, "repo"), wt: filepath.Join(dir, "wt", "s1"),
-		root: filepath.Join(dir, "amq", "sess"), home: filepath.Join(dir, "home"), handle: "s1", branch: "seat/s1", now: t0}
+	f := &fixture{t: t, dir: dir, origin: filepath.Join(dir, "origin.git"), main: filepath.Join(dir, "repo"), wt: filepath.Join(dir, "wt", handle),
+		root: filepath.Join(dir, "amq", "sess"), home: filepath.Join(dir, "home"), handle: handle, branch: "seat/" + handle, now: t0}
 	for _, d := range []string{f.main, f.root, f.home} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
@@ -188,11 +191,11 @@ func (f *fixture) run(tk task.Task) Result {
 	return Run(f.opts(tk))
 }
 
-// originBranch is the tip of every seat branch on the origin (the seat
-// branch and each task branch under it, 3.0.2 t23), one per line, "" when
-// none: a row that wants nothing pushed sees any push of the seat.
+// originBranch is the tip of every seat branch on the origin (every branch
+// under seat/: the seat branch and each task branch, 3.0.2 t23), one per
+// line, "" when none: a row that wants nothing pushed sees any push.
 func (f *fixture) originBranch() string {
-	cmd := exec.Command(gitBin(f.t), "for-each-ref", "--format=%(objectname)", "refs/heads/"+f.branch, "refs/heads/"+f.branch+"/")
+	cmd := exec.Command(gitBin(f.t), "for-each-ref", "--format=%(objectname)", "refs/heads/seat/")
 	cmd.Dir = f.origin
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))

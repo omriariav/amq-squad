@@ -24,7 +24,7 @@ func TestCommitInsideDeclaredFilesCommitsAndPushes(t *testing.T) {
 		t.Fatalf("want a pushed harness commit, got %+v", res)
 	}
 	// One branch per task (3.0.2 t23): the task's own branch, from the base.
-	if got := f.originRef(TaskBranch(f.handle, tk.ID)); got != res.Commit || res.Branch != "seat/s1/"+tk.ID {
+	if got := f.originRef(TaskBranch(f.handle, tk.ID)); got != res.Commit || res.Branch != "seat/s1-"+tk.ID {
 		t.Fatalf("origin %s = %q, want %s", res.Branch, got, res.Commit)
 	}
 	if got := sh(t, f.wt, "log", "-1", "--format=%an <%ae>|%cn|%P", res.Commit); got != "amq-squad harness <harness@amq-squad.invalid>|amq-squad harness|"+f.base {
@@ -432,28 +432,22 @@ func TestDeletionsAreChecked(t *testing.T) {
 	}
 }
 
-// A non-fast-forward push is refused, never forced. So is a push the remote
-// cannot take because it carries the 3.0.1 seat branch (seat/<handle>), which
-// a task branch under it cannot sit beside (3.0.2 t23): refused with the
-// branch to delete, never deferred tick after tick.
+// A non-fast-forward push is refused, never forced (the task's branch,
+// 3.0.2 t23).
 func TestPushRejectedIsNeverForced(t *testing.T) {
-	for name, branch := range map[string]string{"non-fast-forward": "seat/s1/t1", "the 3.0.1 seat branch": "seat/s1"} {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t)
-			other := filepath.Join(f.dir, "other")
-			sh(t, f.dir, "clone", "-q", f.origin, other)
-			write(t, filepath.Join(other, "x.txt"), "x\n")
-			sh(t, other, "checkout", "-q", "-b", branch)
-			sh(t, other, "add", "-A")
-			sh(t, other, "commit", "-q", "-m", "diverged")
-			sh(t, other, "push", "-q", "origin", branch)
-			before := f.originBranch()
-			write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// p\n")
-			res := f.run(f.reported("cmd/"))
-			if res.ReasonCode != ReasonPushRejected || f.originBranch() != before {
-				t.Fatalf("want %s and the remote untouched, got %+v", ReasonPushRejected, res)
-			}
-		})
+	f := newFixture(t)
+	other := filepath.Join(f.dir, "other")
+	sh(t, f.dir, "clone", "-q", f.origin, other)
+	write(t, filepath.Join(other, "x.txt"), "x\n")
+	sh(t, other, "checkout", "-q", "-b", TaskBranch(f.handle, "t1"))
+	sh(t, other, "add", "-A")
+	sh(t, other, "commit", "-q", "-m", "diverged")
+	sh(t, other, "push", "-q", "origin", TaskBranch(f.handle, "t1"))
+	before := f.originBranch()
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// p\n")
+	res := f.run(f.reported("cmd/"))
+	if res.ReasonCode != ReasonPushRejected || f.originBranch() != before {
+		t.Fatalf("want %s and the remote untouched, got %+v", ReasonPushRejected, res)
 	}
 }
 
@@ -595,7 +589,7 @@ func TestCommitStepOpensAndBindsThePR(t *testing.T) {
 	}
 	again := Run(o)
 	raw, _ := os.ReadFile(calls)
-	if again.PRNumber != 42 || strings.Count(string(raw), "pr create") != 1 || !strings.Contains(string(raw), "pr create --draft --head seat/s1/"+tk.ID+" --base main") || !strings.Contains(string(raw), "--repo "+fixtureRepo) {
+	if again.PRNumber != 42 || strings.Count(string(raw), "pr create") != 1 || !strings.Contains(string(raw), "pr create --draft --head seat/s1-"+tk.ID+" --base main") || !strings.Contains(string(raw), "--repo "+fixtureRepo) {
 		t.Fatalf("re-run: %+v\n%s", again, raw)
 	}
 }
