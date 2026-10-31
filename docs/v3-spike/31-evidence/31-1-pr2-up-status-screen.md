@@ -208,21 +208,36 @@ network, the real HOME, the real tmux server or the real AMQ.
 
 ## 4. The owner-run row: the day-4 launch budget
 
-From the owner's terminal, in this repository (its squad.yaml), with the
-pi build of the 3.1 tag (R54: never a build of the working tree; the build
-is made in a checkout of the tag and handed to `up` by `--binary`):
+From the owner's terminal. First the build at the tag (R54: never a build
+of the working tree); the binary is `~/scratch-v31/build/pi/amq-squad`:
 
 ```sh
-git -C ~/code/amq-squad worktree add /tmp/amq-squad-v3.1.0 v3.1.0
-(cd /tmp/amq-squad-v3.1.0 && scripts/build-pi-runtime.sh all)
+git worktree add ~/scratch-v31 v3.1.0 && cd ~/scratch-v31 && scripts/build-pi-runtime.sh all
+```
+
+Then `up` from the repository, on its squad.yaml (it installs that build
+over the `amq-squad` on PATH by temp name and rename):
+
+```sh
 cd ~/code/amq-squad
-amq-squad up --binary /tmp/amq-squad-v3.1.0/build/pi/amq-squad --json | tee /tmp/up-day4.json
+amq-squad up --binary ~/scratch-v31/build/pi/amq-squad
+```
+
+**Where the per-seat numbers appear.** `up` prints each seat's line when
+the roster's outcome is in (`seat <handle> <runtime>/<model> <state>
+<outcome> seat live <s>, first message <s>`); the screen below the lead's
+editor shows them on each seat line (`live <s>`, `first-msg <s>`, `OVER`
+past the ceiling, the warning naming the slowest segment); and status
+carries them per seat in `launch.timing`:
+
+```sh
 amq-squad status --json | jq '[.seats[] | {handle, runtime, model, outcome: .launch.outcome, to_seat_live_ms: .launch.timing.to_seat_live_ms, to_first_message_ms: .launch.timing.to_first_message_ms, slowest: .launch.timing.slowest_segment, segments: .launch.timing.segments, warnings}]'
 ```
 
-(`up` installs that build over the `amq-squad` on PATH by temp name and
-rename; on a re-run with the same build, `amq-squad up --skip-install`.) Set the numbers beside PR 1's baseline (from the
-scheduler's start, 2026-10-31, launch `0de97c89…`):
+The first message lands after seat live (the first turn), so read status
+again a minute or two after `up` returns. Compare with PR 1's baseline
+(31-1-launch-and-screen.md 1.1, from the scheduler's start, 2026-10-31,
+launch `0de97c89…`):
 
 | Seat | Runtime and model | Baseline to seat live | Day 4 to seat live | Day 4 to first message | Slowest segment |
 | --- | --- | --- | --- | --- | --- |
@@ -246,12 +261,13 @@ start and the scheduler's spawn. The checked-in squad.yaml's seats are cto
   internal/mergetrain, internal/piruntime (beyond refusal.go),
   internal/cli/pi_lead.go and lead_scheduler.go are unchanged: PR 1's seams
   were enough.
-- **The start includes doctor.** `up`'s start is its own process start, so
-  the 10 s ceiling includes the installed binary's doctor (its host rows run
-  `--version` and login probes of every tool). If the day-4 run shows
-  `prepare` over the ceiling from doctor alone, the owner may move the
-  stamp to the start of step 5 or 6 (one line in up.go); the brief names
-  `up` as the start, so this PR keeps it there.
+- **The ceiling counts from `up`'s own start, and stays there** (the
+  reviewer's ruling). The owner's wait runs from his command, and the
+  install and the doctor are part of it, so the 10 s ceiling includes the
+  installed binary's doctor (its host rows run `--version` and login probes
+  of every tool). If the day-4 run shows the doctor eating the budget, the
+  fix is a faster doctor (its host probes off the launch path), not a later
+  mark.
 - **Doctor before the session.** The brief orders doctor (2) before the AMQ
   root (3). On a repository with no AMQ root, doctor's `amq ops` row runs
   `amq env` and `amq doctor --ops` there; whether those fail without a root
