@@ -45,6 +45,24 @@ type Doorbell interface {
 	Ring(handle string, t task.Task) error
 }
 
+// ReasonTaskBranchUnprepared blocks a task whose seat could not be put on
+// the task's own branch at the grant (3.0.2 t23): the seat is not rung, the
+// lease is released and the lead decides.
+const ReasonTaskBranchUnprepared = "task_branch_unprepared"
+
+// LeaseUnpreparedError is a doorbell's refusal to ring: the seat's worktree
+// could not be put on the task's branch, so the seat would work on the
+// resting branch (the day-2 defect). The scheduler blocks the task for the
+// lead with ReasonTaskBranchUnprepared and the error as its detail; any
+// other doorbell error is a lost hint and is only logged.
+type LeaseUnpreparedError struct{ Err error }
+
+func (e *LeaseUnpreparedError) Error() string {
+	return ReasonTaskBranchUnprepared + ": " + e.Err.Error()
+}
+
+func (e *LeaseUnpreparedError) Unwrap() error { return e.Err }
+
 // Route is the router's answer for a pending task: the pool to dispatch to,
 // or a wait reason, or a block (no retry left).
 type Route struct {

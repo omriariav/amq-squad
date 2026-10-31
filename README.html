@@ -570,14 +570,21 @@ and gates, with argv actions. amq-noc renders it for the fleet;
 <li><strong>The commit step.</strong> On a seat's done report the
 scheduler runs <code>seat commit</code>: every changed path against the
 task's declared files, the protected paths and the size cap, then a
-commit under the harness identity and a fast-forward push of the seat
+commit under the harness identity and a fast-forward push of the task's
 branch. A path outside the set comes back to the lead, whose decision is
 <code>task widen ID --files ... --reason ...</code> (no
 <code>--me</code>: the scheduler proves the lead from the process).
 Binding is the default under a merge grant: the step opens the pushed
 branch's draft PR and binds it to the task with no flag, and
 <code>--no-open-pr</code> is refused while the repository has a merge
-grant.</li>
+grant. The binding check runs before the commit: a task branch that
+carries an open PR bound to another task is refused
+(<code>pr_bound_elsewhere</code>) with nothing committed or pushed. Each
+task commits on its own branch,
+<code>seat/&lt;handle&gt;-&lt;task id&gt;</code>, from the remote base
+tip fetched when it is granted, with its own draft PR; between tasks the
+seat's worktree rests on <code>seat/&lt;handle&gt;</code> at the
+launch's base.</li>
 <li><strong>The roster.</strong> The scheduler launches every seat of
 the seat list that has a worktree of its own in one AMQ launch at start;
 a seat with no lease is parked and gets the next task of its pool. At

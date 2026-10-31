@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -530,5 +531,39 @@ func TestSourceErrorsSurface(t *testing.T) {
 	h.s.Limits = UsageLimitFunc(func(time.Time) ([]UsageLimitEvent, error) { return nil, errors.New("boom") })
 	if _, err := h.s.Tick(); err == nil {
 		t.Fatal("a failing usage-limit source was ignored")
+	}
+}
+
+// unpreparedBell is a doorbell whose seat could not be put on the task's
+// branch (3.0.2 t23): it rings nothing and says so.
+type unpreparedBell struct{ asked []string }
+
+func (b *unpreparedBell) Ring(h string, t task.Task) error {
+	b.asked = append(b.asked, h+":"+t.ID)
+	return &LeaseUnpreparedError{Err: errors.New("the base fetch failed")}
+}
+
+// 3.0.2 t23, the lead's ruling: when the doorbell cannot put the seat on the
+// task's branch, the seat is not rung, the lease is released and the task
+// blocks for the lead as task_branch_unprepared with the error; a seat never
+// works on the resting branch. Any other doorbell error stays a logged hint.
+// Fails when the scheduler only logs the unprepared ring.
+func TestUnpreparedLeaseBlocksTheTaskForTheLead(t *testing.T) {
+	h := newHarness(t, Config{LeaseDuration: 10 * time.Minute, IdleTimeout: time.Hour})
+	bell := &unpreparedBell{}
+	h.s.Doorbell = bell
+	h.add("work", &sonnet)
+	h.up("seat-a", sonnet)
+	d := h.tick()
+	got := h.get("t1")
+	if !has(d, "blocked", "t1", "seat-a") || has(d, "doorbell_failed", "t1", "") || len(bell.asked) != 1 {
+		t.Fatalf("decisions %+v, asked %v", d, bell.asked)
+	}
+	if got.State != task.StateBlocked || got.BlockReason != ReasonTaskBranchUnprepared || got.BlockRoute != task.RouteLead ||
+		!strings.Contains(got.BlockDetail, "the base fetch failed") || got.Lease != nil || len(got.Attempts) != 1 || got.Attempts[0].Holder != "seat-a" {
+		t.Fatalf("the task after an unprepared ring: %+v", got)
+	}
+	if snap, _ := task.Snapshot(h.store.Dir); task.HeldBy("seat-a", snap) != nil {
+		t.Fatal("the seat still holds a lease")
 	}
 }

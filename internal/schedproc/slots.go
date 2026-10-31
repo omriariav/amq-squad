@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -269,6 +270,46 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 		}
 	}
 	return tip, nil
+}
+
+// GrantBase is the base tip a task granted to the seat starts from (3.0.2
+// t23, the reviewer's ruling: the base refreshes at the grant): the launch's
+// fetch (baseTip) again, from the push URL the launch recorded, in the
+// seat worktree's repository, whose object store keeps the fetched commit.
+func (s *Slots) GrantBase(handle string) (string, error) {
+	for _, seat := range s.Squad.Seats {
+		if seat.Handle != handle {
+			continue
+		}
+		if seat.Branch == "" {
+			seat.Branch = "seat/" + seat.Handle
+		}
+		common, err := commonDir(seat.Worktree)
+		if err != nil {
+			return "", fmt.Errorf("seat %s base: %v", handle, err)
+		}
+		return s.baseTip(baseGit{bin: firstNonEmpty(s.Git, "git")}, common, seat)
+	}
+	return "", fmt.Errorf("seat %s is not in the squad's seat list", handle)
+}
+
+// TaskStart is the doorbell's Start (3.0.2 t23): the grant's base fetch
+// (GrantBase), then the task's branch cut from that tip and recorded as the
+// task's base (seatcommit.StartTask). Any error, a failed fetch included,
+// rings nothing and blocks the task for the lead (task_branch_unprepared).
+// A seat with no commit ledger (no recorded base, no git worktree) is left
+// as it is, as CleanSeats leaves it: its commit step refuses base_unrecorded.
+func (s *Slots) TaskStart(root string, now func() time.Time) func(handle string, t task.Task) error {
+	return func(handle string, t task.Task) error {
+		if _, err := seatcommit.ReadLedger(root, handle); os.IsNotExist(err) {
+			return nil
+		}
+		tip, err := s.GrantBase(handle)
+		if err != nil {
+			return err
+		}
+		return seatcommit.StartTask(root, handle, s.Git, nil, t, tip, now())
+	}
 }
 
 // moveWorktree puts an existing seat worktree (git dir gd, HEAD at head) on

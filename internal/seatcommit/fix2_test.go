@@ -215,7 +215,7 @@ func TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper(t *testing.T) {
 	if !res.OK || !res.Pushed {
 		t.Fatalf("the https push: %+v", res)
 	}
-	if got, _ := exec.Command(gitBin(t), "--git-dir="+remote, "rev-parse", "refs/heads/"+f.branch).Output(); strings.TrimSpace(string(got)) != res.Commit {
+	if got, _ := exec.Command(gitBin(t), "--git-dir="+remote, "rev-parse", "refs/heads/"+res.Branch).Output(); strings.TrimSpace(string(got)) != res.Commit || res.Branch != "seat/s1-t1" {
 		t.Fatalf("the remote has %q, want %s", got, res.Commit)
 	}
 	if _, err := os.Stat(marker); err == nil {

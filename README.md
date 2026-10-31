@@ -278,12 +278,17 @@ amq-squad gate status --project . --session issue-96 --json
 - **The commit step.** On a seat's done report the scheduler runs
   `seat commit`: every changed path against the task's declared files, the
   protected paths and the size cap, then a commit under the harness identity
-  and a fast-forward push of the seat branch. A path outside the set comes back
+  and a fast-forward push of the task's branch. A path outside the set comes back
   to the lead, whose decision is `task widen ID --files ... --reason ...`
   (no `--me`: the scheduler proves the lead from the process). Binding is
   the default under a merge grant: the step opens the pushed branch's draft
   PR and binds it to the task with no flag, and `--no-open-pr` is refused
-  while the repository has a merge grant.
+  while the repository has a merge grant. The binding check runs before the
+  commit: a task branch that carries an open PR bound to another task is
+  refused (`pr_bound_elsewhere`) with nothing committed or pushed. Each task
+  commits on its own branch, `seat/<handle>-<task id>`, from the remote base
+  tip fetched when it is granted, with its own draft PR; between tasks the
+  seat's worktree rests on `seat/<handle>` at the launch's base.
 - **The roster.** The scheduler launches every seat of the seat list that has
   a worktree of its own in one AMQ launch at start; a seat with no lease is
   parked and gets the next task of its pool. At every launch, the roster's
