@@ -57,20 +57,25 @@ def read_amq_floor(root: str) -> str:
 # branch, main, so a release whose version main does not carry is not what an
 # installer gets (3.0's release check missed it: the marketplace served v2.31
 # while the release said 3.0). The owner's A of 2026-10-30: v3 is merged to
-# main before every tag from 3.0.1 on. This row fails closed when the
-# marketplace's resolved ref, the local view of main, does not carry the
-# released version in both plugin manifests; a missing ref or an unreadable
-# manifest fails too.
-MARKETPLACE_REF = "origin/main"
+# main before every tag from 3.0.1 on.
+#
+# This row is opt-in: it runs only with --marketplace-ref REF (no default),
+# and fails closed when the plugin manifests at REF do not carry the released
+# version; a missing ref or an unreadable manifest fails too. CI runs this
+# script on the version-bump PR into v3 (.github/workflows/ci.yml, "Run
+# release metadata check"), when main cannot carry the new version yet (the
+# v3-to-main PR comes after), so the row is not run there. By hand, before
+# the tag: `make release-check VERSION=vX.Y.Z MARKETPLACE_REF=origin/main`.
+# The enforced pre-tag check is `amq-squad release prepare`'s containment of
+# --commit in --branch (default main), before any gate is raised: the tag's
+# commit on main implies main carries the version.
 MARKETPLACE_MANIFESTS = (
     "plugins/claude/.claude-plugin/plugin.json",
     "plugins/codex/.codex-plugin/plugin.json",
 )
 
 
-def require_marketplace_ref(
-    root: str, version: str, failures: list[str], ref: str = MARKETPLACE_REF
-) -> None:
+def require_marketplace_ref(root: str, version: str, failures: list[str], ref: str) -> None:
     """Fail unless every plugin manifest at ref says version."""
     for manifest_rel in MARKETPLACE_MANIFESTS:
         try:
@@ -157,10 +162,16 @@ def main() -> int:
             sys.stderr.write(f"FAIL  {err}\n")
             return 1
         return 0
-    if len(sys.argv) != 2:
-        sys.stderr.write("usage: check-release-version.py VERSION | --print-amq-floor\n")
+    args = sys.argv[1:]
+    marketplace_ref = None
+    if len(args) == 3 and args[1] == "--marketplace-ref" and args[2].strip():
+        marketplace_ref = args[2].strip()
+    elif len(args) != 1:
+        sys.stderr.write(
+            "usage: check-release-version.py VERSION [--marketplace-ref REF] | --print-amq-floor\n"
+        )
         return 2
-    m = VERSION_RE.match(sys.argv[1].strip())
+    m = VERSION_RE.match(args[0].strip())
     if not m:
         sys.stderr.write("VERSION must look like v2.8.1 or 2.8.1\n")
         return 2
@@ -178,7 +189,8 @@ def main() -> int:
     policy = amq_compatibility_policy(amq_floor)
 
     require_release_notes(root, tag, failures)
-    require_marketplace_ref(root, version, failures)
+    if marketplace_ref is not None:
+        require_marketplace_ref(root, version, failures, marketplace_ref)
 
     mirrors = {
         "claude": "plugins/claude/.claude-plugin/plugin.json",

@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -213,26 +215,23 @@ class RequireMarketplaceRefTest(unittest.TestCase):
         # The local view of the remote's main, as a fetch leaves it.
         git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
 
-    def test_the_default_ref_is_the_remote_main(self) -> None:
-        self.assertEqual(CHECK_RELEASE_VERSION.MARKETPLACE_REF, "origin/main")
-
     def test_main_carrying_the_version_passes(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             self.repo(root, "3.0.2", "3.0.2")
             failures: list[str] = []
-            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures)
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
             self.assertEqual(failures, [])
 
     def test_main_on_another_version_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             self.repo(root, "3.0.2", "2.31.0")
             failures: list[str] = []
-            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures)
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
             self.assertEqual(len(failures), 1)
             self.assertIn("origin/main:plugins/codex/.codex-plugin/plugin.json: the marketplace serves version '2.31.0', not '3.0.2'", failures[0])
 
             failures = []
-            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.3", failures)
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.3", failures, "origin/main")
             self.assertEqual(len(failures), 2)
 
     def test_a_missing_ref_fails_closed(self) -> None:
@@ -240,15 +239,36 @@ class RequireMarketplaceRefTest(unittest.TestCase):
             self.repo(root, "3.0.2", "3.0.2")
             git(root, "update-ref", "-d", "refs/remotes/origin/main")
             failures: list[str] = []
-            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures)
+            CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
             self.assertEqual(len(failures), 2)
             self.assertTrue(all("the marketplace's ref is unreadable" in f for f in failures), failures)
 
-    def test_the_release_check_runs_the_row(self) -> None:
-        # main() wires the row in: the version check calls it with the
-        # default ref, not only the unit above.
-        source = open(SCRIPT, encoding="utf-8").read()
-        self.assertIn("    require_marketplace_ref(root, version, failures)\n", source.split("def main()", 1)[1])
+    def run_main(self, *args: str) -> list[tuple[str, str]]:
+        """Run main() on this repository with args, recording the row's calls
+        (the row is replaced by a recorder; main's result is not asserted)."""
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(SCRIPT)))
+        calls: list[tuple[str, str]] = []
+        real, argv, cwd = CHECK_RELEASE_VERSION.require_marketplace_ref, sys.argv, os.getcwd()
+        CHECK_RELEASE_VERSION.require_marketplace_ref = lambda root, version, failures, ref: calls.append((version, ref))
+        sys.argv = [SCRIPT, *args]
+        try:
+            os.chdir(repo)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                CHECK_RELEASE_VERSION.main()
+        finally:
+            os.chdir(cwd)
+            sys.argv = argv
+            CHECK_RELEASE_VERSION.require_marketplace_ref = real
+        return calls
+
+    def test_the_row_does_not_run_without_the_flag(self) -> None:
+        # CI runs the check on the version-bump PR into v3, when main cannot
+        # carry the new version yet: without --marketplace-ref the row is off.
+        self.assertFalse(hasattr(CHECK_RELEASE_VERSION, "MARKETPLACE_REF"))
+        self.assertEqual(self.run_main("v3.0.2"), [])
+
+    def test_the_flag_runs_the_row_with_its_ref(self) -> None:
+        self.assertEqual(self.run_main("v3.0.2", "--marketplace-ref", "origin/main"), [("3.0.2", "origin/main")])
 
 
 if __name__ == "__main__":

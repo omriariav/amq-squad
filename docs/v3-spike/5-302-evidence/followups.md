@@ -58,39 +58,61 @@ Rows (internal/releaseflow/releaseflow_test.go, internal/cli/release_flow_notes_
   `amq-squad task reset <id> --pool RUNTIME:MODEL:EFFORT`, until the typed
   block for a widen request exists (t20). Row: pi/test/tools.test.ts, in
   the argv widening test; FAIL when reverted.
-- internal/cli/task.go: origin/v3 has no re-pin refusal yet (t12fix adds
-  one in internal/task/lease.go, outside these declared files). `task set
-  --pool` on a task whose attempt has started is refused in the CLI with
-  "task set: task <id> has started attempt <n>; pool cannot be changed
-  after the first claim; use task reset --pool". The wording matches
-  t12fix's store refusal plus the hint, and the CLI check runs first, so
-  with t12fix merged the user sees one line. At merge, keep one: either
-  this pre-check, or t12fix's store message with the hint appended.
-  Row: TestTaskCLISetRepinRefusalNamesReset (end of task_test.go, a name
-  distinct from t12fix's TestTaskCLISetRepinBoundary); FAIL when reverted.
+- internal/cli/task.go: unchanged. The first commit (7f2193d4) added a
+  CLI pre-check refusing `task set --pool` after the first claim, ending
+  with "use task reset --pool"; it was removed in e31e47ad on the lead's
+  correction. The re-pin rule lives in the task store, at the first granted
+  attempt, and PR #817 (t12fix, reviewer-accepted) carries it with the
+  hint; a second check at the CLI with a different boundary is what the
+  reviewer ruled out. internal/cli/task.go and task_test.go equal origin/v3.
 
 ## 3. The release-check row for the marketplace
 
 scripts/check-release-version.py gains `require_marketplace_ref`: both
-plugin manifests at `origin/main` (the local view of main, which the
-marketplaces install from) must say the version being released; a missing
-ref or an unreadable manifest fails too. The comment records the owner's A
-of 2026-10-30 (v3 is merged to main before every tag from 3.0.1 on). Rows
-in scripts/test_check_release_version.py (RequireMarketplaceRefTest): main
-on the version passes; main on another version fails; a missing ref fails;
-main() runs the row. Reverting the version compare or the call in main()
-fails a row. On this worktree `check-release-version.py v3.0.1` passes:
-origin/main already carries 3.0.1.
+plugin manifests at a named ref must say the version being released; a
+missing ref or an unreadable manifest fails too. The comment records the
+owner's A of 2026-10-30 (v3 is merged to main before every tag from 3.0.1
+on).
 
-Open for the lead: CI's "Run release metadata check" step runs this script
-on a release pull request. A version-bump PR into v3 runs it while main
-does not carry the version yet, so that step now fails until v3 is merged
-to main. That matches the ruling's order only if the bump reaches main
-first. Changing the CI step (for example, running this row only at tag
-time) touches .github/workflows/ci.yml, outside the declared files, so it
-was not changed.
+The row is opt-in (the lead's correction): it runs only with
+`--marketplace-ref REF`, which has no default. CI runs `make release-check
+VERSION=...` on the version-bump PR into v3 (.github/workflows/ci.yml,
+step "Run release metadata check"), when main cannot carry the new version
+yet because the v3-to-main PR comes after; without the flag the row does
+not run there. The Makefile's release-check passes the flag only when the
+make variable MARKETPLACE_REF is set (empty by default), so the by-hand
+pre-tag check is:
+
+```
+make release-check VERSION=v3.0.2 MARKETPLACE_REF=origin/main
+```
+
+The enforced pre-tag check is `amq-squad release prepare`'s containment of
+`--commit` in `--branch` (default main), before any gate is raised: a tag
+commit on main implies main carries the version. For the real 3.0.1 case,
+the tag commit 2f88eca1 is an ancestor of main at 16a05669 (their trees are
+equal), so prepare's check would have accepted it.
+
+Rows in scripts/test_check_release_version.py (RequireMarketplaceRefTest):
+main on the version passes; main on another version fails; a missing ref
+fails; without the flag the row does not run; with the flag it runs with
+that ref. Reverting the version compare, making the row always run, or
+never running it each fails a row. On this worktree: `check-release-version.py
+v3.0.1 --marketplace-ref origin/main` passes (origin/main carries 3.0.1);
+`v3.0.2 --marketplace-ref origin/main` fails on both manifests.
+
+The Makefile is outside the brief's declared files; it was changed on the
+lead's explicit correction (release-check and the MARKETPLACE_REF variable
+only). .github/workflows/ci.yml is unchanged.
 
 ## Not changed, outside the declared files
+
+The 3.0.x follow-up added on origin/v3 by PR #814 (publish takes the
+prepared spec from the series store and does not repeat prepare's flags)
+is not addressed: publish still repeats `--notes`, and now `--notes-file`.
+A changed notes file is refused first by the CLI's existing spec check
+(ErrSpecChangeRequiresSuccessor, which does not name the field); the
+flow's `release_body_mismatch` is behind it.
 
 The orchestrator skill's release example (plugins/skills-src/orchestrator/
 SKILL.md:160 and its claude and codex mirrors) runs `release prepare`
@@ -105,5 +127,7 @@ go build ./... && go vet ./internal/releaseflow ./internal/cli && go test -count
 ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow
 ok  	github.com/omriariav/amq-squad/v3/internal/cli
 make release-validator-test   (16 tests OK, 4 tests OK)
+make release-check VERSION=v3.0.1                            release metadata matches v3.0.1
+make release-check VERSION=v3.0.1 MARKETPLACE_REF=origin/main  release metadata matches v3.0.1
 cd pi && npm test             (39 pass, 0 fail); npm run lint: lint ok
 ```
