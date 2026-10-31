@@ -323,8 +323,8 @@ func callExpression(v string) bool {
 // yamlComment is the index of a comment's # in a bare one-line value (a #
 // after a space or a tab), -1 when none.
 func yamlComment(v string) int {
-	work(len(v))
 	for i := 1; i < len(v); i++ {
+		work(1)
 		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
 			return i - 1
 		}
@@ -553,12 +553,12 @@ func closingLine(lines []string, j int, q byte) int {
 func closingFrom(lines []string, j, start int, q byte) int {
 	for k := j; k < len(lines); k++ {
 		l := lines[k]
-		work(len(l))
 		from := 0
 		if k == j {
 			from = start
 		}
 		for p := from; p < len(l); p++ {
+			work(1)
 			c := l[p]
 			switch {
 			case q == '"' && c == '\\':

@@ -19,19 +19,39 @@ func longLine(n int) string { return strings.Repeat("password"+"=x ", n/11) }
 // allocates (runtime.MemStats.TotalAlloc). The 1 MiB line holds 16x the
 // 64 KiB line's values, so each measure must grow by no more than 24x; a
 // quadratic Block grows by about 256x.
-// Real counts (2026-10-31): 226384 units for 64 KiB, 3622368 for 1 MiB, 16.0x
-// against the 24x limit; bytes 21.0x against 40x. Mutations that fail it:
-// a per-match string copy (236.6x bytes only; work stays 16.0x), a prefix
-// rescan reported to the hook (255.8x work only; bytes 20.9x), and an
-// insertion sort that finds its place from the head (253.2x work only; bytes
-// 21.0x), so the two measures catch different shapes.
+// Real counts (2026-10-31), 64 KiB to 1 MiB: assign line 16.0x work, 20.9x
+// bytes; mixed line (YAML flow, JSON, provider token) 16.5x, 21.7x; mixed
+// block (YAML blocks, a quoted scalar across lines, JSON) 16.0x, 16.4x. The
+// limits are 24x and 40x. Mutations that fail it: a per-match string copy
+// (236.6x bytes only; work stays 16.0x), a prefix rescan reported to the hook
+// (255.8x work only; bytes 20.9x), and an insertion sort that finds its place
+// from the head (253.2x work only; bytes 21.0x), so the two measures catch
+// different shapes.
 // Limit of the row: a quadratic loop that neither calls the work hook nor
 // allocates (a strings.Index rescan, say) slips through; the shapes it
 // catches are a quadratic copy and a regex rescan.
 func TestBlockIsLinearOnALongLine(t *testing.T) {
 	const limit = 24
 	const allocLimit = 40 // builder and slice growth leave bytes a little over linear
-	small, big := longLine(1<<16), longLine(1<<20)
+	// Canaries are built at run time and match no RealCredentialShapes.
+	c1, c2, c3, c4, c5 := "Ab9"+"xY7q1", "Ab9"+"xY7q2", "Ab9"+"xY7q3", "Ab9"+"xY7q4", "Ab9"+"xY7q5"
+	fixtures := []struct {
+		name     string
+		build    func(n int) string
+		canaries []string
+	}{
+		{"assign", longLine, []string{"=x "}},
+		// One long line: YAML flow, JSON and provider-token paths.
+		{"mixed line", func(n int) string {
+			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz "
+			return strings.Repeat(unit, n/len(unit))
+		}, []string{c1, c2, c3}},
+		// Many lines: YAML blocks, a quoted scalar across lines, JSON.
+		{"mixed block", func(n int) string {
+			unit := "password:\n  '" + c4 + "\n  " + c5 + "'\nnext: kept\n{\"password\":\n \"" + c2 + "\"}\npassword:\n  " + c1 + "\n"
+			return strings.Repeat(unit, n/len(unit))
+		}, []string{c4, c5, c2, c1}},
+	}
 	measure := func(line string) (units int, alloc uint64, out string) {
 		workHook = func(n int) { units += n }
 		defer func() { workHook = nil }()
@@ -42,25 +62,30 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 		runtime.ReadMemStats(&after)
 		return units, after.TotalAlloc - before.TotalAlloc, out
 	}
-	measure(small) // warm-up: one-time allocations stay out of the sizes
-	su, sa, sout := measure(small)
-	bu, ba, bout := measure(big)
-	for _, o := range []string{sout, bout} {
-		if strings.Contains(o, "=x ") {
-			t.Fatal("a value of the long line was not redacted")
+	for _, f := range fixtures {
+		small, big := f.build(1<<16), f.build(1<<20)
+		measure(small) // warm-up: one-time allocations stay out of the sizes
+		su, sa, sout := measure(small)
+		bu, ba, bout := measure(big)
+		for _, o := range []string{sout, bout} {
+			for _, c := range f.canaries {
+				if strings.Contains(o, c) {
+					t.Fatalf("%s: a value of the long input was not redacted (%q survived)", f.name, c)
+				}
+			}
 		}
-	}
-	if su == 0 || sa == 0 {
-		t.Fatalf("nothing measured (units %d, bytes %d): the hook or the counter is dead", su, sa)
-	}
-	uRatio, aRatio := float64(bu)/float64(su), float64(ba)/float64(sa)
-	t.Logf("64 KiB, %d values: %d units, %d bytes; 1 MiB, %d values: %d units, %d bytes; ratios %.1fx units, %.1fx bytes (limits %dx units, %dx bytes)",
-		strings.Count(small, "="), su, sa, strings.Count(big, "="), bu, ba, uRatio, aRatio, limit, allocLimit)
-	if uRatio > limit {
-		t.Fatalf("16x the input did %.1fx the work (over %dx): Block is not linear in a line", uRatio, limit)
-	}
-	if aRatio > allocLimit {
-		t.Fatalf("16x the input allocated %.1fx the bytes (over %dx): Block is not linear in a line", aRatio, allocLimit)
+		if su == 0 || sa == 0 {
+			t.Fatalf("%s: nothing measured (units %d, bytes %d): the hook or the counter is dead", f.name, su, sa)
+		}
+		uRatio, aRatio := float64(bu)/float64(su), float64(ba)/float64(sa)
+		t.Logf("%s: 64 KiB %d units, %d bytes; 1 MiB %d units, %d bytes; ratios %.1fx units, %.1fx bytes (limits %dx units, %dx bytes)",
+			f.name, su, sa, bu, ba, uRatio, aRatio, limit, allocLimit)
+		if uRatio > limit {
+			t.Fatalf("%s: 16x the input did %.1fx the work (over %dx): Block is not linear in a line", f.name, uRatio, limit)
+		}
+		if aRatio > allocLimit {
+			t.Fatalf("%s: 16x the input allocated %.1fx the bytes (over %dx): Block is not linear in a line", f.name, aRatio, allocLimit)
+		}
 	}
 }
 
