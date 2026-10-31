@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -499,4 +500,73 @@ func TestQuarantineClearIsLiftedOnlyAfterTheBindingCheck(t *testing.T) {
 	if !res.OK || !res.Pushed || l.Quarantine != nil || len(l.Cleared) != 1 {
 		t.Fatalf("after the PR is gone: %+v (quarantine %+v, cleared %d)", res, l.Quarantine, len(l.Cleared))
 	}
+}
+
+// recordedThenRetried is an attempt whose commit is recorded and whose push
+// failed (the remote's pre-receive hook), the task refused and reset, and
+// the next lease started on that commit with the seat's done report filed
+// and no new edits. It returns the task and the recorded commit.
+func (f *fixture) recordedThenRetried(gh string, body string) (task.Task, string) {
+	f.t.Helper()
+	hook := filepath.Join(f.origin, "hooks", "pre-receive")
+	write(f.t, hook, "#!/bin/sh\necho 'the remote is down' >&2\nexit 1\n")
+	os.Chmod(hook, 0o755)
+	tk := f.leased("cmd/")
+	write(f.t, filepath.Join(f.wt, "cmd", "root.go"), body)
+	if first := Run(f.prOpts(f.done(tk.ID), gh)); first.Pushed || first.Commit == "" {
+		f.t.Fatalf("the failed push: %+v", first)
+	}
+	l, _ := ReadLedger(f.root, f.handle)
+	os.Remove(hook)
+	if _, err := f.store.RefuseCommit(tk.ID, ReasonPushRejected, "the remote is down", task.RouteLead, f.now); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := CleanSeat(f.root, f.handle, gitBin(f.t), nil, f.trust(), f.now); err != nil {
+		f.t.Fatal(err)
+	}
+	again, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := StartTask(f.root, f.handle, gitBin(f.t), nil, again, "", f.now); err != nil {
+		f.t.Fatal(err)
+	}
+	return f.done(tk.ID), l.Commits[0].Commit
+}
+
+// Codex pass on c09a8887, finding 1: the recorded commit a retry pushes is
+// checked like a fresh diff against the grant in force now, and its digest
+// is recomputed and compared with the recorded one. A size cap tightened
+// between the attempts refuses the retry (size_cap_exceeded); a recorded
+// digest that is not the commit's diff refuses (recorded_diff_mismatch).
+// Nothing is pushed either way. Fails when the retry copies the recorded
+// diff and digest unchecked.
+func TestRecordedCommitRetryIsCheckedAgainstTheGrantNow(t *testing.T) {
+	t.Run("a cap tightened since", func(t *testing.T) {
+		f := newFixture(t)
+		gh, _, _ := branchGh(t, f)
+		tk, _ := f.recordedThenRetried(gh, "package cmd\n// one\n// two\n// three\n")
+		f.grants.Merge = []grants.Merge{f.merge(2, 0)}
+		res := Run(f.prOpts(tk, gh))
+		if res.ReasonCode != ReasonSizeCap || res.Pushed || f.originBranch() != "" {
+			t.Fatalf("want %s with nothing pushed, got %+v", ReasonSizeCap, res)
+		}
+	})
+	t.Run("a recorded digest that is not the diff", func(t *testing.T) {
+		f := newFixture(t)
+		gh, _, _ := branchGh(t, f)
+		tk, _ := f.recordedThenRetried(gh, "package cmd\n// recorded\n")
+		l, _ := ReadLedger(f.root, f.handle)
+		l.Commits[0].DiffDigest = "sha256:" + strings.Repeat("0", 64)
+		if err := writeLedger(f.root, l); err != nil {
+			t.Fatal(err)
+		}
+		res := Run(f.prOpts(tk, gh))
+		if res.ReasonCode != ReasonRecordedDiffMismatch || res.Route != task.RouteOwner || res.Pushed || f.originBranch() != "" {
+			t.Fatalf("want %s with nothing pushed, got %+v", ReasonRecordedDiffMismatch, res)
+		}
+	})
 }

@@ -345,10 +345,14 @@ func run(o Options, res Result) Result {
 	if err != nil {
 		return res.defer_("snapshot of the worktree: " + err.Error())
 	}
-	// A re-run after the step returned the worktree to rest (3.0.2 t23): the
-	// worktree is the resting commit and the task's commit is on its branch;
-	// the checks, the verifier and the push run on that commit's diff.
-	if i := ledger.taskCommitAt(o.Task.ID, branch); i >= 0 && ledger.Lease == nil {
+	// The task's recorded commit with nothing new on it (3.0.2 t23): a re-run
+	// after the step returned the worktree to rest, or a later attempt that
+	// StartTask started on that commit and that made no edits. The step then
+	// works on that commit's own diff, through every check below against the
+	// grant in force now, its digest recomputed and compared with the
+	// recorded one (Codex passes on 2477f10f and c09a8887), and on to the
+	// push and the binding; "nothing to commit" is never an early OK there.
+	if i := ledger.taskCommitAt(o.Task.ID, branch); i >= 0 && (ledger.Lease == nil || ledger.Commits[i].Commit == parent) {
 		if pt, err := g.line("rev-parse", parent+"^{tree}"); err == nil && pt == tree {
 			parent, tree = ledger.Commits[i].Parent, ledger.Commits[i].Tree
 			res.Parent = parent
@@ -1165,20 +1169,14 @@ func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Res
 	last, earlier := l.recordedAt(res.Parent, res.Tree), l.taskCommitAt(o.Task.ID, res.Branch)
 	switch {
 	case last >= 0 && l.Commits[last].Task == o.Task.ID && l.Commits[last].Branch == res.Branch:
-		res.Commit = l.Commits[last].Commit // this task's commit exists; finish its push
+		// This task's commit exists; finish its push and binding. Its diff
+		// was checked above as a fresh one; the digest recomputed from it
+		// must be the one recorded with the commit.
+		if c := l.Commits[last]; c.DiffDigest != "" && c.DiffDigest != res.DiffDigest {
+			return res.refuse(ReasonRecordedDiffMismatch, task.RouteOwner, fmt.Sprintf("the commit ledger records diff %s for the harness commit %s, and its diff is %s; nothing is pushed until the owner inspects the commits ledger", c.DiffDigest, c.Commit, res.DiffDigest))
+		}
+		res.Commit = l.Commits[last].Commit
 		res.Notes = append(res.Notes, "the harness commit "+res.Commit+" was already recorded")
-	case earlier >= 0 && l.Commits[earlier].Commit == res.Parent && res.Tree == parentTree:
-		// A later attempt with no edits on the task's recorded commit
-		// (StartTask put the worktree there): nothing new to commit, but
-		// "nothing to commit" is OK only once that commit is pushed and bound;
-		// it goes on to the push and the PR as if it had just been made
-		// (Codex pass on 2477f10f, finding 1).
-		last = earlier
-		c := l.Commits[last]
-		res.Commit, res.Parent, res.Tree = c.Commit, c.Parent, c.Tree
-		res.DeclaredDigest, res.DiffDigest, res.Lines = c.DeclaredDigest, c.DiffDigest, c.Lines
-		res.Changes, res.Files = append([]Change{}, c.Changes...), len(c.Changes)
-		res.Notes = append(res.Notes, "no new edits on the task's recorded commit "+c.Commit+": it is pushed and bound")
 	case earlier >= 0 && l.Commits[earlier].Commit != res.Parent && res.Tree != parentTree:
 		// A later attempt appends to the task's branch only from its last
 		// commit (StartTask puts the worktree there); a diff from anywhere
