@@ -1,7 +1,7 @@
 ---
 name: "cli"
 description: "Direct amq-squad 3.0 operations and diagnostics against an existing squad. Use when you need to inspect state, claim or complete a task, read the evidence ledger, check a guard verdict, read the AMQ context, raise or check a gate, check the host, or verify merge and release evidence. Triggers include \"what is the status\", \"claim this task\", \"show my evidence\", \"is this tool call allowed\", \"where does this route\", \"is this safe to merge\". NOT for preparing or launching a squad (use amq-squad:wizard) and NOT for the live lead loop (use amq-squad:orchestrator)."
-version: "3.0.1"  # x-release-please-version
+version: "3.0.2"  # x-release-please-version
 ---
 # amq-squad:cli
 
