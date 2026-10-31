@@ -43,7 +43,8 @@ func commitFile(t *testing.T, dir, name, body, msg string) string {
 var seatBasePool = task.Pool{Runtime: "claude", Model: "sonnet", Effort: "medium"}
 
 // 3.0.2 t22: a relaunched seat whose branch and worktree sit on an old base
-// (its first launch's base plus its own commit, the ledger's chain) gets
+// (its first launch's base plus its own commit, the ledger's chain; the
+// commit pushed and merged, so the remote seat branch is behind) gets
 // its worktree and resting branch at the base branch's tip fetched from the
 // grant's push URL (the local main is left behind), on the roster launch
 // too, from another branch its worktree was left on; its next commit's
@@ -58,8 +59,10 @@ func TestSeatBaseRelaunchAtTheTip(t *testing.T) {
 	}
 	wt := first.Seats[0].Worktree
 	seatCommit := commitFile(t, wt, "t5.txt", "t5\n", "the seat's t5 commit")
+	gitRun(t, wt, "push", "-q", remote, "seat/c1") // pushed and merged, as a harness commit is
 	gitRun(t, wt, "checkout", "-q", "-b", "task-t5") // left on another branch
 	s.ReleaseRequest("r1")
+	gitRun(t, other, "pull", "-q", "--no-rebase", "--no-edit", "origin", "seat/c1")
 	tip := commitFile(t, other, "v3.txt", "two days of v3\n", "v3 moves")
 	gitRun(t, other, "push", "-q", "origin", "main")
 
@@ -81,9 +84,6 @@ func TestSeatBaseRelaunchAtTheTip(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(filepath.Join(wt, "v3.txt")); err != nil || string(raw) != "two days of v3\n" {
 		t.Fatalf("the tip's file in the worktree: %q %v", raw, err)
-	}
-	if _, err := os.Stat(filepath.Join(wt, "t5.txt")); !os.IsNotExist(err) {
-		t.Fatalf("the old seat commit's file is still in the worktree: %v", err)
 	}
 	if st := gitRun(t, wt, "status", "--porcelain"); st != "" {
 		t.Fatalf("the moved worktree is not clean:\n%s", st)
@@ -250,5 +250,73 @@ func TestSeatBaseHTTPSWithoutPinnedGhRefuses(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(log); err == nil && len(raw) > 0 {
 		t.Fatalf("an anonymous fetch ran:\n%s", raw)
+	}
+}
+
+// Codex P1-1: a local commit on the resting branch that the tip does not
+// hold (no remote seat branch) refuses the launch by name; the commit and
+// its files survive.
+func TestSeatBaseLocalUnpushedCommitRefuses(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	first, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := first.Seats[0].Worktree
+	local := commitFile(t, wt, "local.txt", "unpushed\n", "a local-only commit")
+	s.ReleaseRequest("r1")
+	commitFile(t, other, "v3.txt", "v3\n", "v3 moves")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	_, err = s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool})
+	if err == nil || !strings.Contains(err.Error(), ReasonSeatBranchUnpushed) || !strings.Contains(err.Error(), "seat/c1") || !strings.Contains(err.Error(), local[:7]) {
+		t.Fatalf("a local-only commit: %v", err)
+	}
+	if b := gitRun(t, q.ProjectRoot, "rev-parse", "refs/heads/seat/c1"); b != local {
+		t.Fatalf("seat/c1 moved to %s", b)
+	}
+	if raw, err := os.ReadFile(filepath.Join(wt, "local.txt")); err != nil || string(raw) != "unpushed\n" {
+		t.Fatalf("the commit's file: %q %v", raw, err)
+	}
+}
+
+// Codex P1-1: every update-ref of the resting branch passes the expected old
+// value, so a branch moved between the read and the update refuses instead of
+// being overwritten, on a new worktree and on an existing one.
+func TestSeatBaseConcurrentBranchMoveRefuses(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not on PATH")
+	}
+	dir := filepath.Dir(q.ProjectRoot)
+	moved := commitFile(t, q.ProjectRoot, "side.txt", "side\n", "a commit the racer moves the branch to")
+	racer := filepath.Join(dir, "racing-git")
+	script := "#!/bin/sh\ncase \" $* \" in\n" +
+		"*\"launch base c1\"*) '" + real + "' update-ref refs/heads/seat/c1 " + moved + ";;\n" +
+		"*\"launch base p1\"*) '" + real + "' update-ref refs/heads/seat/p1 " + moved + ";;\n" +
+		"esac\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(racer, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool}); err != nil {
+		t.Fatal(err)
+	}
+	s.ReleaseRequest("r1")
+	commitFile(t, other, "v3.txt", "v3\n", "v3 moves")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	s.Git = racer
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), "update-ref") {
+		t.Fatalf("an existing worktree's branch moved mid-launch: %v", err)
+	}
+	if b := gitRun(t, q.ProjectRoot, "rev-parse", "refs/heads/seat/c1"); b != moved {
+		t.Fatalf("the concurrent move was overwritten: seat/c1 at %s", b)
+	}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r3", Pool: task.Pool{Runtime: "pi"}}); err == nil || !strings.Contains(err.Error(), "update-ref") {
+		t.Fatalf("a new worktree's branch created mid-launch: %v", err)
+	}
+	if b := gitRun(t, q.ProjectRoot, "rev-parse", "refs/heads/seat/p1"); b != moved {
+		t.Fatalf("the concurrent create was overwritten: seat/p1 at %s", b)
 	}
 }

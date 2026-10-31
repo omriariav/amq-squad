@@ -122,14 +122,31 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 		return seat, err
 	}
 	seat.Base = tip
+	// The resting branch as it stands: a local commit the tip does not hold
+	// refuses (ReasonSeatBranchUnpushed), and every update-ref of the branch
+	// passes this value as the expected old one, so a concurrent move
+	// refuses rather than being overwritten.
+	cur, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-parse", "--verify", "-q", "refs/heads/"+seat.Branch+"^{commit}")
+	if err != nil {
+		cur = ""
+	}
+	if cur != "" && cur != tip {
+		ahead, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+cur)
+		if err != nil {
+			return seat, fmt.Errorf("seat %s branch: %v", seat.Handle, err)
+		}
+		if ahead != "" {
+			return seat, fmt.Errorf("%s: seat %s: the local branch %s holds commits the %s tip %s does not (%s); the harness never discards a local commit: push, merge or delete it, then launch again", ReasonSeatBranchUnpushed, seat.Handle, seat.Branch, firstNonEmpty(s.BaseBranch, "main"), short(tip), strings.Join(strings.Fields(ahead), ", "))
+		}
+	}
 	if statErr == nil {
-		if err := g.moveWorktree(common, seat, tip); err != nil {
+		if err := g.moveWorktree(common, seat, tip, cur); err != nil {
 			return seat, fmt.Errorf("seat %s worktree to the base tip %s: %v", seat.Handle, short(tip), err)
 		}
 		return seat, nil
 	}
 	// A local reset of the resting branch, never a push.
-	if _, err := g.run(root, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip); err != nil {
+	if _, err := g.run(root, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
 		return seat, fmt.Errorf("seat %s branch: %v", seat.Handle, err)
 	}
 	// The hardened git (R2): no hook, filter or attribute of the shared
@@ -144,6 +161,11 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 // its resting branch holds commits the base tip does not: the harness never
 // force-pushes it; the lead decides.
 const ReasonSeatBranchUnmerged = "seat_branch_unmerged"
+
+// ReasonSeatBranchUnpushed refuses a seat's launch when its local resting
+// branch holds commits the base tip does not: the harness never discards a
+// local commit; the lead decides.
+const ReasonSeatBranchUnpushed = "seat_branch_unpushed"
 
 // baseTip is the base branch's tip: fetched from the push URL the launch
 // recorded from the grant (into a shadow git directory, so the shared
@@ -213,7 +235,7 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 // read-tree from its HEAD in the shadow (a local change the move would
 // overwrite refuses, nothing is lost; CleanSeat keeps any other leftover as
 // evidence), then the resting branch moves to the tip and HEAD names it.
-func (g baseGit) moveWorktree(common string, seat seatlaunch.Seat, tip string) error {
+func (g baseGit) moveWorktree(common string, seat seatlaunch.Seat, tip, cur string) error {
 	gd, err := worktreeGitDir(seat.Worktree)
 	if err != nil {
 		return err
@@ -237,7 +259,7 @@ func (g baseGit) moveWorktree(common string, seat seatlaunch.Seat, tip string) e
 			return err
 		}
 	}
-	if _, err := g.run(seat.Worktree, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip); err != nil {
+	if _, err := g.run(seat.Worktree, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
 		return err
 	}
 	_, err = g.run(seat.Worktree, wenv, "symbolic-ref", "HEAD", "refs/heads/"+seat.Branch)
