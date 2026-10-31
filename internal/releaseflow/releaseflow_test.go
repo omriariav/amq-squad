@@ -881,3 +881,31 @@ func TestADraftWhoseRemoteBodyChangedIsNeverPublished(t *testing.T) {
 		t.Fatalf("adoption: %v published %d deleted %d reads %d", err, h.exec.published(), h.exec.deleted, h.exec.reads-before)
 	}
 }
+
+// 3.0.2 (Codex revert gap, round 3): the recorded draft was published (the
+// publish response was lost) and its body differs on the remote. Recovery
+// is not completion: it refuses with release_draft_body_changed, never
+// deletes the published release, and raises the owner alert.
+func TestRecoveredPublishedReleaseWithAnotherBodyIsRefused(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.exec.losePublish = 1
+	if _, err := f.flow.Publish(context.Background(), f.root); err == nil {
+		t.Fatal("a lost publish response was reported as success")
+	}
+	for id := range f.exec.bodies {
+		f.exec.bodies[id] = "edited after publication\n\n" + f.exec.bodies[id]
+	}
+	if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrDraftBodyChanged) || f.exec.deleted != 0 || f.exec.published() != 1 {
+		t.Fatalf("recovery of a published release with another body: %v deleted %d published %d", err, f.exec.deleted, f.exec.published())
+	}
+	if alerts := mergetrain.ReadAlerts(f.root); !slices.ContainsFunc(alerts, func(a mergetrain.Alert) bool { return a.Kind == "draft_edited" }) {
+		t.Fatalf("no owner alert: %+v", alerts)
+	}
+}
