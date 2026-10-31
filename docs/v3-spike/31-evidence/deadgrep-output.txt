@@ -1,0 +1,72 @@
+internal/claudeseat/globalconfig.go: bookkeepingGlobal, bookkeepingProject, configFacts, firstRunGaps, inputKind, kindApprovals, kindBool, kindCount, kindNames, kindObject, kindSecret, kindStrings, malformedInputs, permissionGlobal, permissionInputs, permissionPathBookkeeping, permissionProject, readGlobalConfig, recordedRootKeys, recordedTrustKeys, setOf, stringList, summarize, trustedRoot, unexpectedConfig, warningsSeenKey
+  callers: none
+internal/claudeseat/owner_other.go: killProbe, ownerUID, probeGroup
+  callers: none
+internal/claudeseat/owner_unix.go: killProbe, ownerUID, probeGroup
+  callers: none
+internal/claudeseat/probe.go: ModeUnverified, Probe, ProbeKind, ProbeMode, ProbeTimeout, copyConfig, orUnknown, readInit
+  callers: none
+internal/claudeseat/probe_live_test.go: TestModeProbeOnTheInstalledClaude
+  callers: none
+internal/claudeseat/repass5_fix2_test.go: TestProbeChildIsASessionLeaderWithNoTTY, TestProbeDeadlineHoldsAgainstAnEscapedDescendant, TestProbeKindTracksThePinAndThePlugin, fakeClaude, probeSeatDir
+  callers: none
+internal/claudeseat/repass5_test.go: TestProbeIsIsolated, TestSlowProbeIsModeUnverified
+  callers: none
+internal/claudeseat/startup301_test.go: TestStartupScreensClosed, TestStartupScreensClosedDependsOnlyOnTheSeed
+  callers: none
+internal/claudeseat/variants_test.go: TestKeyVariantsAreNotTheLaunchsKeys
+  callers: none
+internal/cli/doctor_allow_rules_test.go: TestDoctorWarnsOnRepositoryClaudeAllowRules
+  callers: none
+internal/cli/doctor_device_other.go: statDevice
+  callers: none
+internal/cli/doctor_device_unix.go: statDevice
+  callers: none
+internal/cli/launch_seats.go: launchSeatFile, launchUsage, readLaunchSeats, runLaunch
+  callers: none
+internal/cli/relprep_claudepin_test.go: TestDoctorClaudePinQuotesTheCommandAndNamesADeviceMismatch, TestDoctorClaudePinRefusesAnUnresolvableInstalledChain, TestDoctorClaudePinResolvesLikeTheKernel, TestDoctorWarnsWhenThePinnedClaudeIsBehindTheInstalledClaude
+  callers: none
+internal/cli/seat_clear_gate.go: checkClearRecord, clearConfigDigest, clearEnrolled, clearIdentity, clearIncarnation, clearModeInForce, doctorClearChecks, errClearUnsigned, gatedClear, quarantineIdentity, raiseClear, requestClear, withClearChecks
+  callers: none
+internal/cli/seat_clear_signed_test.go: TestDeletedLedgerIsTamperedNotUnused, TestDoctorNamesTheClearModeAndAWaitingClear, TestEveryConsumerRefusesAClearWhoseAnswerIsGone, TestGenericGateRaiseRefusesTheReservedClearAction, TestPtyOnlyGrantWithAnEnrolmentIsGrantsInvalid, TestSeatClearWithoutTheOwnersSignatureIsClearUnsigned, TestSignedClearRecordCarriesGateAndEventAndVerifies, TestSignedClearRequestHalfKeepsTheOwnerProof, TestTaskStoreOnlyQuarantineClearsThroughTheSignedPathAndLeavesARecord, clearGateOf, ownerApproves, signedClear, signedClearSeat
+  callers: none
+internal/cli/seat_clear_test.go: TestSeatCommitQuarantineAndOwnerClear
+  callers: none
+internal/cli/seat_owner_other.go: deviceOf, errNoPTY, openControllingTTY
+  callers: none
+internal/cli/seat_owner_tty_darwin.go: getTermios, setTermios
+  callers: none
+internal/cli/seat_owner_tty_linux.go: getTermios, setTermios
+  callers: none
+internal/cli/seat_owner_unix.go: deviceOf, errNoPTY, openControllingTTY, stdinTTY
+  callers: none
+internal/gatestore/clear.go: ClearRequest, ClearRequestSchema
+  callers: none
+internal/gateverify/clear.go: ClearProof, RejectClearHandle, RejectClearUnsigned, clearGate, namespaceOf
+  callers: none
+internal/gateverify/clear_test.go: TestClearAnswerForAnotherHandleIsRefused, TestClearAnswerWithAnOldNonceIsRefusedAsReplayed, TestClearCompletesOnlyOnTheOwnersVerifiedAnswer, TestClearTargetRoundTrip, clearCfg, clearInc, never
+  callers: never in internal/gateverify/answer.go; never in internal/gateverify/core_test.go; never in internal/gateverify/growth.go; never in internal/gateverify/core.go; never in internal/gateverify/repass5_test.go; never in internal/gateverify/relay.go; never in internal/gateverify/history.go; never in internal/gateverify/review_test.go
+internal/grants/clear_test.go: TestClearSignatureModes
+  callers: none
+internal/hostcheck/configdiff.go: ConfigDiff, DiffOwnerConfig, OwnerConfig, OwnerConfigs, PreflightDir, RedactLine, diffLines, splitLines, tokenRE
+  callers: none
+internal/hostcheck/redact.go: Redacted, appendPath, changedSecrets, inlineKVRE, keyPart, redactConfig, redactInline, redactValue, redacted, renderPath, secretKey, takeCodexBookkeeping, withheld, withheldFile
+  callers: none
+internal/seatcommit/clearflow_test.go: TestClearRecordOnTheLedgerIsTheOnlyUseMark, TestClearedHooksSilenceIsNotRaisedAgainOnTheSameIncarnation, TestConcurrentClearsWriteOneRecordAndOneIsAlreadyCleared, TestEveryConsumerOfAClearVerifiesIt, TestOnlyTheDiffPolicyRefusalIsTurnedIntoCrossings, TestSeedEntryIsContinuedByRecordBaseAndKeepsTheClear, TestWidenRefusesWhatTheDryRunRefuses, failingSigner, switchTrust
+  callers: TestOnlyTheDiffPolicyRefusalIsTurnedIntoCrossings in internal/seatcommit/widen_refusal_test.go; TestWidenRefusesWhatTheDryRunRefuses in internal/seatcommit/widen_refusal_test.go
+internal/seatexec/claudeguard_test.go: TestClaudeDialogGuardWired, installedHooks
+  callers: none
+internal/seatexec/repass5_42_test.go: TestWorktreeSettingsEnvAndDigest
+  callers: none
+internal/seatexec/repass5_fix2_test.go: TestClaudeSeatExecsOnlyThePinnedBytes, TestSeatRefusedWhenPinChangedSinceProbe
+  callers: none
+internal/seatexec/wakerecheck301_test.go: TestClaudeWakeRecheckOnTheRealConfigDir
+  callers: none
+internal/seatlaunch/repass5_42_test.go: TestLaunchRefusesAClaudeSeatWhoseModeIsForced, TestProbeRunsBeforeTicketsAndOncePerSeatKind, TestProbeRunsThePinnedClaudeNeverPath, probeAsLaunched, testClaudePin, testPin
+  callers: none
+internal/seatlaunch/repass5_fix2_test.go: TestClaudeProviderMustBeThePin, TestTwoPinsAreProbedTwice
+  callers: none
+internal/task/quarantine.go: ErrQuarantined, Quarantine, Quarantined, ReasonSeatQuarantined, quarantineDir, quarantined, readQuarantine, validHandle
+  callers: none
+internal/task/quarantine_test.go: TestQuarantinedSeatGetsNoLease
+  callers: none

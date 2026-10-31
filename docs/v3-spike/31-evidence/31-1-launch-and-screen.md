@@ -62,9 +62,11 @@ owner-run row.** Today seat-exec reads `~/.amq-squad/claude-token` only
 token on one line), refuses `claude_token_insecure` when it is missing or
 insecure (internal/seatexec/seatexec_unix.go, the Claude branch of
 `prepare`), and sets `CLAUDE_CODE_OAUTH_TOKEN` from it for Claude seats only
-(`overlay`). The only measurement on record is token.go's comment: a fresh
-`CLAUDE_CONFIG_DIR` finds no login because the macOS Keychain item is keyed
-by the config dir ("Not logged in" on Claude Code 2.1.310). Until the
+(`overlay`). The only measurement on record is token.go's comment and the 2b-2 run it
+cites: a fresh `CLAUDE_CONFIG_DIR` finds no login because the macOS Keychain
+item is keyed by the config dir (Claude Code 2.1.310: "Not logged in · Please
+run /login", exit 1, `apiKeySource: none`; docs/v3-spike/2b2b-execution.md
+:522). Until the
 owner-run check below runs on the installed Claude Code, the token refusal
 stays as it is (this PR does not touch it).
 
@@ -166,6 +168,15 @@ marker). scripts/build-pi-runtime.sh:92 stages amq-squad's own
   scheduler before `os.Exit`.
 - **The start stamp.** `lead --team` sets `AMQ_SQUAD_START` (when `up` has
   not) and the scheduler records it in its `launch.json` as `start`.
+- **An old quarantine record is not honoured** (the lead's condition 1). The
+  task store no longer reads `tasks/quarantine/`, at Grant, Claim or
+  dispatch, so a live store's existing record (the scribe's
+  `claude_hooks_silent` of 2026-10-31) stops nothing: the scribe starts on
+  the next launch with nothing to clear. The file stays on disk, inert.
+- **An old `clear.signature` key is accepted and ignored** (the lead's
+  condition 2). The owner's grants.yaml may still carry `clear:` /
+  `signature:`; it loads, the key has no effect, and doctor's `grants` row
+  warns with the key named (`Grants.DeletedKeys`). It is never refused.
 - **Decisions log kinds added:** `exit_refused` (a refusal at a seat's exit,
   replacing `seat_quarantined` there). `seat_live` and `seat_first_message`
   are PR 2's.
@@ -390,6 +401,10 @@ caller did not, and `scheduler run` records it as `launch.json`'s `start`.
 | 13-16, 18 (`up`), 19 | PR 2 |
 | 17 | the base-tip and seat-branch refusal rows, the binding check, one branch per task, CheckCommit and the R4 proof rows pass unedited (slots.go is unedited; the one roster row edited, `TestSlotsRosterAndItsPlan`, is the empty-worktree exclusion's) |
 | start stamp | cli `TestSchedulerRecordsTheLaunchStart`, `TestLeadTeamTakesTheSquadIdentityFromSquadYAML` |
+| condition 1: an old quarantine record grants and launches the seat | scheduler `TestAnOldQuarantineRecordNoLongerStopsTheSeat` |
+| condition 2: an old `clear.signature` is ignored with a doctor warning | cli `TestAnOldClearSignatureKeyIsIgnoredWithADoctorWarning` |
+| hold 1: a Claude seat's write to the owner's config is denied at tool time, no quarantine, the seat goes on | cli `TestClaudeSeatWriteToTheOwnersConfigIsDeniedWithoutQuarantine` |
+| a deleted ledger is ledger_tampered (kept; moved from a deleted file) | seatcommit `TestSealedCommitsLedgerDetectsASameUIDEdit`, case "a deleted ledger" |
 
 Each row fails on origin/v3: there, a silent Claude seat or a changed owner
 config quarantines (1), a launch without a claude pin refuses
@@ -425,22 +440,30 @@ the https target with no gh pin (10), a second `lead --team` has no lock and
   shows its wake off and why; a pi seat shows the pi reason).
 - The missing-session refusal (item 7) to delete with `up`'s root and
   session creation; `exit_refused` joins the decisions tail.
-- The screen's surface: pi 1.3.0 `ctx.ui.setWidget` (1.3).
+- The screen's home is the pi extension, inside the lead's process (R4 by
+  construction for brief 31-2's keys). pi 1.3.0's persistent extension UI
+  (pi/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/
+  types.d.ts): `setStatus` (:84), `setWidget` above or below the editor
+  (:101-104, placement :47-52), `setFooter` (:111), `setHeader`, `setTitle`,
+  `custom` overlays (:121), `onTerminalInput` (:82), and on the extension
+  API `registerShortcut` and `registerCommand`.
 
 ## 6. Scope notes and where the brief and the code disagreed
 
 - **Files outside the declared list,** touched only for the deletions:
   internal/task (the quarantine, `Rearm`), internal/scheduler (the
-  quarantine branches, now `exit_refused`), internal/launch (the record's
+  quarantine branches, now `exit_refused`, and the old-record row in
+  brief311_test.go), internal/launch (the record's
   dead fields), internal/hostcheck (the config diff), internal/gatetarget,
   internal/gateverify, internal/operatorauth (the `quarantine_clear` kind),
   internal/panechain (`List`), internal/uninstall (two test calls),
-  internal/cli hook_context.go, hook_guard.go, hook_identity.go,
+  internal/cli hook_context.go, hook_guard.go, hook_guard_env.go, hook_identity.go,
   hook_ingest.go, seat_commit.go (where `seat clear` lived), gate.go,
   gate_store.go, task_widen.go, fleet.go (usage text), cli_test.go;
   the skills (plugins/skills-src and the generated mirrors) and
   docs/skills.md with docs/skills.html, which named the deleted verb and
-  flags (`make ci`'s skill-command-check). The lead was told when it began.
+  flags (`make ci`'s skill-command-check). The lead approved the
+  quarantine's widening on the conditions in section 7.
 - **Exit 17 is not `--trust`'s.** The brief lists "the exit 17 handling" with
   `--trust`, but exit 17 is 3.0.1 t16's exit for any roster launch AMQ
   refuses. Deleting it would make the supervisor restart a refused launch
@@ -459,3 +482,99 @@ the https target with no gh pin (10), a second `lead --team` has no lock and
   Task-store quarantine files under `tasks/quarantine/` are ignored.
 - **The commit trailer** names the model this session ran on (Opus 5.5)
   rather than the brief's Fable 5.1 line.
+
+## 7. The lead's conditions and the reviewer's holds
+
+**Hold 1, the tool-time deny of a write to the owner's global agent
+config, stays.** After this PR a Claude seat's write to `~/.claude/settings*.json`
+(or `~/.codex/config.toml`, `~/.claude/plugins/`) is denied by the guard
+hook at tool time: internal/grants/grants.go:311 and :313 keep those paths
+in `grants.Implicit`; internal/cli/hook_guard_env.go:150 builds the
+protected entries from it (`e.grants.ProtectedEntries()`); and
+internal/cli/hook_guard.go:280-281 returns `deny`, `protected_path` for any
+write under one. What went from hook_guard.go is only the deny of every
+call after a config-dir drift, with the quarantine it wrote
+(`checkClaudeConfig`). The guard's protection of `~/.amq-squad/preflight/`
+went with the preflight copies. Row:
+`TestClaudeSeatWriteToTheOwnersConfigIsDeniedWithoutQuarantine` (a Write and
+a shell redirect to the owner's settings.json are denied `protected_path`, no
+quarantine is written, the seat's next call is allowed). A Codex seat's
+write is the sandbox's to stop, as before.
+
+**Hold 2, the gate files stay.** internal/cli/gate.go, gate_store.go and
+internal/gatetarget are not deleted; each lost only its `quarantine_clear`
+lines (gate.go and gate_store.go the `operatorauth.Reserved` refusal;
+gatetarget the `clear` class, its action and `QuarantineClear`). Their
+callers are the typed gates:
+
+```
+$ grep -rn 'gatetarget\.\(Class\|Digest\|Validate\|Actions\)(' --include='*.go' internal | grep -v _test | grep -v '^internal/gatetarget/'
+internal/gatestore/record.go:148, :173, :174, :210, :212, :214
+internal/cli/gate_store.go:30, :90, :374, :445
+internal/cli/hook_guard.go:224, :234
+internal/mergetrain/escalate.go:60
+internal/mergetrain/drift.go:148
+internal/mergetrain/train.go:412
+internal/gateverify/growth.go:46, :93
+$ grep -rn 'runGate\b\|storeGateRaise(\|typedGateAction(' --include='*.go' internal/cli | grep -v _test | grep -v ':func '
+internal/cli/operator.go:126, :218
+internal/cli/gate.go:127, :172
+internal/cli/gate_store.go:444
+internal/cli/verify_authorization.go:234
+internal/cli/verify_action.go:224, :685
+internal/cli/command_registry.go:73
+```
+
+operatorauth lost only the `quarantine_clear` kind (and `Reserved`, whose
+one action it was); gateverify lost only clear.go (and its test).
+internal/gatestore/clear.go, the clear-request store, went too: its only
+callers were in seat_clear_gate.go (below).
+
+**Hold 3, every deleted file and the grep that shows it dead.** The
+command, from the repository root on this branch:
+
+```sh
+python3 -I docs/v3-spike/31-evidence/deadgrep.py origin/v3
+```
+
+It lists each `.go` file deleted since origin/v3 with its top-level names
+and searches the branch's Go files for each (an exported name as
+`<pkg>.<Name>` anywhere and as a word in its package; an unexported name as
+a word in its package). Its full output is `deadgrep-output.txt` beside this
+note. Every file prints `callers: none` except
+internal/seatcommit/clearflow_test.go, whose two hits are its two kept tests,
+moved to widen_refusal_test.go (`TestOnlyTheDiffPolicyRefusalIsTurnedIntoCrossings`,
+`TestWidenRefusesWhatTheDryRunRefuses`); the script exits 1 for those two
+hits alone. The deleted files: internal/claudeseat globalconfig.go,
+owner_other.go, owner_unix.go, probe.go, probe_live_test.go,
+repass5_fix2_test.go, repass5_test.go, startup301_test.go, variants_test.go;
+internal/cli doctor_allow_rules_test.go, doctor_device_other.go,
+doctor_device_unix.go, launch_seats.go, relprep_claudepin_test.go,
+seat_clear_gate.go, seat_clear_signed_test.go, seat_clear_test.go,
+seat_owner_other.go, seat_owner_tty_darwin.go, seat_owner_tty_linux.go,
+seat_owner_unix.go; internal/gatestore/clear.go; internal/gateverify
+clear.go, clear_test.go; internal/grants/clear_test.go; internal/hostcheck
+configdiff.go, redact.go; internal/seatcommit/clearflow_test.go (renamed);
+internal/seatexec claudeguard_test.go, repass5_42_test.go,
+repass5_fix2_test.go, wakerecheck301_test.go; internal/seatlaunch
+repass5_42_test.go, repass5_fix2_test.go; internal/task quarantine.go,
+quarantine_test.go. seat_clear_signed_test.go also held
+`TestDeletedLedgerIsTamperedNotUnused`, whose kept half (a ledger deleted
+under its sealed head is ledger_tampered) is now a case of seatcommit
+`TestSealedCommitsLedgerDetectsASameUIDEdit`.
+
+## 8. Lines for the 3.1 release notes
+
+- A seat is no longer quarantined. A Claude seat whose hook made no report,
+  whose worktree carries Claude allow rules, or whose CLAUDE.md imports a file
+  outside its worktree starts, with a warning on its status row; a change to
+  the owner's global agent config during a run is no longer a quarantine
+  (a seat's write to it is still denied at tool time). `seat clear`, the
+  `quarantine_clear` gate and the `clear.signature` grant key are gone.
+- An existing quarantine record in a squad's task store is ignored: the seat
+  it named (the scribe's `claude_hooks_silent`) starts on the next launch,
+  with nothing to clear. An owner grants file that still carries
+  `clear.signature` loads; doctor warns with the key named.
+- squad.yaml is the one source of a launch: `amq-squad lead --team` in the
+  repository; `launch --seats`, `--scheduler-seats`, `--lead`, `--trust` and
+  the claude pin are gone. One lead per root (`lead_running`).
