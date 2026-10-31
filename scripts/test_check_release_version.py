@@ -3,18 +3,27 @@
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "check-release-version.py")
+# No real HOME and no owner git config for anything these tests run (git,
+# make, the script's own git): a temp HOME, GIT_CONFIG_GLOBAL=/dev/null and
+# GIT_CONFIG_NOSYSTEM=1 for the whole process.
+_TEST_HOME = tempfile.mkdtemp(prefix="check-release-home-")
+atexit.register(shutil.rmtree, _TEST_HOME, True)
+os.environ.update({"HOME": _TEST_HOME, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("check_release_version", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -233,6 +242,24 @@ class RequireMarketplaceRefTest(unittest.TestCase):
             failures = []
             CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.3", failures, "origin/main")
             self.assertEqual(len(failures), 2)
+
+    def test_the_tests_run_without_the_real_home_or_git_config(self) -> None:
+        self.assertEqual(os.environ["HOME"], _TEST_HOME)
+        self.assertEqual(os.environ["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(os.environ["GIT_CONFIG_NOSYSTEM"], "1")
+
+    def test_the_row_reads_no_global_or_system_git_config(self) -> None:
+        # The ref is read with the owner's config set aside: a malformed
+        # global and system config in the caller's environment still pass.
+        with tempfile.TemporaryDirectory() as root:
+            self.repo(root, "3.0.2", "3.0.2")
+            bad = os.path.join(root, "broken-gitconfig")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write("[core\nthis is not git config\n")
+            failures: list[str] = []
+            with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": bad, "GIT_CONFIG_SYSTEM": bad, "GIT_CONFIG_NOSYSTEM": "0"}):
+                CHECK_RELEASE_VERSION.require_marketplace_ref(root, "3.0.2", failures, "origin/main")
+            self.assertEqual(failures, [])
 
     def test_a_missing_ref_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as root:

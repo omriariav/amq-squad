@@ -79,9 +79,12 @@ def require_marketplace_ref(root: str, version: str, failures: list[str], ref: s
     """Fail unless every plugin manifest at ref says version."""
     for manifest_rel in MARKETPLACE_MANIFESTS:
         try:
+            # Reading a ref needs no config: the owner's global and system
+            # git config are not read.
             raw = subprocess.run(
                 ["git", "-C", root, "show", f"{ref}:{manifest_rel}"],
                 capture_output=True, text=True, check=True,
+                env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
             ).stdout
             at_ref = str(json.loads(raw).get("version", "")).strip()
         except (OSError, subprocess.CalledProcessError, ValueError, AttributeError) as err:
