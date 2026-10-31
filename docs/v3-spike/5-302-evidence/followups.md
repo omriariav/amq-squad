@@ -121,6 +121,36 @@ The Makefile is outside the brief's declared files; it was changed on the
 lead's explicit correction (release-check and the MARKETPLACE_REF variable
 only). .github/workflows/ci.yml is unchanged.
 
+## Codex round on a8a61d6b
+
+- P1, the draft's remote body (44a532c7). The read-back now carries the
+  draft's body (GH reads it in the same api call), and the flow refuses a
+  body that is not the prepared notes file's content with the creation
+  nonce: `release_draft_body_changed`, at the recovery read, at the
+  read-back after creation or adoption, and at the re-read before
+  publication. A published release whose body differs is never deleted;
+  its error wraps the reason. Row: TestADraftWhoseRemoteBodyChangedIsNeverPublished
+  (edited at the read-back, before publication, on a recovered draft, on
+  an adopted draft; each case asserts the read that refused it).
+- P2, gh status classification (83fe9d45). `GH.run` returns a typed error
+  with the HTTP status gh printed ("HTTP 404"); CommitExists,
+  BranchContains, ReadDraft and TagCommit classify on it, never on the
+  error text, which names the endpoint and so the SHA or id. A transport
+  failure stays an error. Row: TestGHAdapterClassifiesOnTheHTTPStatusOnly,
+  the real adapter methods through a fake gh on PATH (200, 404, 422,
+  transport; SHAs containing "404" and "422"; release id 1404; the fake
+  honours the --jq projection, so the body is proved to come from gh).
+- P2, HOME and git config (5789c4c2). A TestMain gives the package's tests
+  a temp HOME, GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1;
+  CheckCommit's cat-file runs with the same two variables. Rows:
+  TestTheTestsRunWithoutTheRealHome; TestCheckCommitReadsNoGlobalOrSystemGitConfig
+  (global and system config pointed at a broken file).
+- Revert gaps (2e1461df). A `make -n release-check` row shows the flag
+  only with MARKETPLACE_REF; TestReleaseNotesFileIsTheFlowsBody proves the
+  file's content is the flow's body and its digest the spec's.
+- P2, the CLI rebuilding the spec at publish: stays the 3.0.x follow-up
+  line in docs/v3-followups.md; no code.
+
 ## The skill example and the follow-ups file
 
 The orchestrator skill's release example (plugins/skills-src/orchestrator/
