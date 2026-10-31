@@ -89,7 +89,11 @@ effort}` or null), `lease_holder`, `lease_expires_at`, `lease_claimed`,
 `attempt`, `wait_reason`, `block_reason`, `depends_on`, `project_path`,
 `created_at`, `updated_at`; and (brief 31-1) `evidence`, `pr_repository`,
 `pr_number`, `pr_head` (the PR the commit step, or the train's rebase,
-bound to it; empty and 0 when none).
+bound to it; empty and 0 when none); `wait_holders`, for a pending task
+whose `wait_reason` is `file_lock`, the ids of the tasks holding the lock by
+the task store's rule (in progress or blocked, declared files overlapping),
+`[]` otherwise; empty under `file_lock` means no task holds it any more (a
+stale wait).
 
 Attention item: `id` (stable across runs for the same condition), `kind`,
 `severity` (`high`, `medium`, `low`), `subject`, `since`, `seat`, `task_id`,

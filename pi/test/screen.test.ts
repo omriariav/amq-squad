@@ -123,7 +123,7 @@ test("/squad toggles the widget; collapsed, one footer line with the counts", as
 	await cmd.handler("", ctx);
 	assert.equal(ctx.widgets[SCREEN_KEY].lines, undefined, "collapsed, the widget stays");
 	assert.equal(ctx.statuses[SCREEN_KEY], countsLine(fixture));
-	assert.match(ctx.statuses[SCREEN_KEY], /^squad v31: 3 seats, 2 tasks; 1 needs you, 1 working, 2 ready, 1 inactive; 1 gates open/);
+	assert.match(ctx.statuses[SCREEN_KEY], /^squad v31: 3 seats, 3 tasks; 1 needs you, 1 working, 2 ready, 1 inactive; 1 gates open/);
 	await cmd.handler("", ctx);
 	assert.ok(ctx.widgets[SCREEN_KEY].lines?.[0].includes("lead cto"));
 	assert.equal(ctx.statuses[SCREEN_KEY], undefined);
@@ -142,4 +142,14 @@ test("a seat that is not the team lead gets no screen", async () => {
 	amqSquad(lead as any);
 	assert.equal(lead.commands.has("squad"), true);
 	for (const k of Object.keys(process.env)) if (k.startsWith("AMQ_SQUAD_") || k.startsWith("AM_")) delete process.env[k];
+});
+
+// Day 3 (t26 sat four hours on a file lock nobody saw): a pending task
+// waiting on a file lock shows the tasks holding it beside its state, and
+// a file lock no task holds any more shows as stale.
+test("a pending task waiting on a file lock names its holder tasks", () => {
+	const tasks = block(renderScreen(fixture, now), "tasks");
+	assert.ok(tasks.includes("  t26  pending  -  PR -  waiting on t20, t23"), tasks.join("\n"));
+	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [] } : t)) };
+	assert.ok(block(renderScreen(stale, now), "tasks").includes("  t26  pending  -  PR -  waiting on a file lock no task holds (stale)"));
 });

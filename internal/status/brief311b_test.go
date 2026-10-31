@@ -369,3 +369,33 @@ func TestThePiScreensFixtureIsAStatusDocument(t *testing.T) {
 		t.Fatalf("the screen's fixture is not additive against the golden fixture: %v", err)
 	}
 }
+
+// Day 3: a pending task waiting on a file lock carries the tasks holding it
+// (wait_holders), by the task store's lock rule: in progress or blocked,
+// declared files overlapping. A cancelled task holds nothing; any other
+// task row carries [].
+func TestAFileLockWaitNamesItsHolders(t *testing.T) {
+	now := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	mk := func(id, state string, files ...string) task.Task {
+		return task.Task{ID: id, State: state, DeclaredFiles: files, CreatedAt: now, UpdatedAt: now}
+	}
+	waiting := mk("t26", task.StatePending, "internal/cli/", "pi/")
+	waiting.WaitReason = task.WaitFileLock
+	in := Input{Now: now, Tasks: []task.Task{
+		waiting,
+		mk("t23", task.StateBlocked, "pi/extensions/"),
+		mk("t20", task.StateInProgress, "internal/cli/up.go"),
+		mk("t19", task.StateCancelled, "internal/cli/"),
+		mk("t18", task.StateInProgress, "docs/"),
+	}}
+	st := Build(in)
+	for _, r := range st.Tasks {
+		want := "[]"
+		if r.ID == "t26" {
+			want = `["t20","t23"]`
+		}
+		if got, _ := json.Marshal(r.WaitHolders); string(got) != want {
+			t.Errorf("%s wait_holders %s, want %s", r.ID, got, want)
+		}
+	}
+}

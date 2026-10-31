@@ -147,6 +147,7 @@ func Build(in Input) Status {
 	task.DispatchOrder(tasks)
 	for _, t := range tasks {
 		row := classifyTask(t, in.Now)
+		row.WaitHolders = lockHolders(t, in.Tasks)
 		row.Bucket, row.BucketMarker = BucketFor(row.State, t.State == task.StateBlocked && t.BlockRoute == task.RouteOwner, true)
 		s.Tasks = append(s.Tasks, row)
 		if a := taskAttention(t, row, in.Root); a != nil {
@@ -265,7 +266,7 @@ func classifyTask(t task.Task, now time.Time) Task {
 		ID: t.ID, Title: t.Title, Class: t.Class, TaskState: t.State, Attempt: t.Attempt, WaitReason: t.WaitReason,
 		BlockReason: t.BlockReason, DependsOn: append([]string{}, t.DependsOn...), ProjectPath: t.ProjectPath,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
-		Evidence: t.Evidence, PRRepository: t.PRRepository, PRNumber: t.PRNumber, PRHead: t.PRHead,
+		Evidence: t.Evidence, PRRepository: t.PRRepository, PRNumber: t.PRNumber, PRHead: t.PRHead, WaitHolders: []string{},
 	}
 	if t.Pool != nil {
 		row.Pool = &Pool{Runtime: t.Pool.Runtime, Model: t.Pool.Model, Effort: t.Pool.Effort}
@@ -303,6 +304,23 @@ func classifyTask(t task.Task, now time.Time) Task {
 		row.State, row.ReasonCode = StateUnknown, "state_unknown"
 	}
 	return row
+}
+
+// lockHolders are the tasks that hold a pending task's file lock, by the
+// task store's rule (task.Blocker): in progress or blocked, with declared
+// files overlapping its own. [] unless the task waits on a file lock.
+func lockHolders(t task.Task, all []task.Task) []string {
+	out := []string{}
+	if t.State != task.StatePending || t.WaitReason != task.WaitFileLock {
+		return out
+	}
+	for _, o := range all {
+		if o.ID != t.ID && (o.State == task.StateInProgress || o.State == task.StateBlocked) && task.FilesOverlap(t.DeclaredFiles, o.DeclaredFiles) {
+			out = append(out, o.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // classifySeat gives a seat row its state; routed is true when its blocker

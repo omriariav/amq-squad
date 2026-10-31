@@ -33,7 +33,7 @@ type SeatRow = {
 	warnings?: string[];
 	launch: { outcome: string; reason_code: string; timing: Timing } | null;
 };
-type TaskRow = { id: string; task_state: string; lease_holder: string; block_reason: string; pr_number: number; updated_at: string };
+type TaskRow = { id: string; task_state: string; lease_holder: string; block_reason: string; wait_reason: string; wait_holders?: string[]; pr_number: number; updated_at: string };
 type GateRow = { id: string; action_class: string; target_digest: string; state: string };
 type Attention = { kind: string; subject: string; gate_id: string; since: string };
 type DecisionRow = { at: string; kind: string; seat: string; task_id: string; reason: string; reason_code: string };
@@ -115,7 +115,12 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date()): string[]
 	out.push(`tasks (${st.tasks.length})`);
 	for (const t of st.tasks) {
 		const pr = t.pr_number ? `PR #${t.pr_number}` : "PR -";
-		const why = t.task_state === "blocked" && t.block_reason ? `  ${t.block_reason}` : "";
+		let why = t.task_state === "blocked" && t.block_reason ? `  ${t.block_reason}` : "";
+		if (t.task_state === "pending" && t.wait_reason === "file_lock") {
+			// the tasks holding its file lock; none left means a stale wait
+			const holders = t.wait_holders ?? [];
+			why = holders.length ? `  waiting on ${holders.join(", ")}` : "  waiting on a file lock no task holds (stale)";
+		}
 		out.push(`  ${t.id}  ${t.task_state}  ${t.lease_holder || "-"}  ${pr}${why}`);
 	}
 	let taskRefusal = newestDecision(st, TASK_REFUSALS, "task");

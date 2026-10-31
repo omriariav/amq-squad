@@ -206,7 +206,8 @@
       "evidence": "",
       "pr_repository": "",
       "pr_number": 0,
-      "pr_head": ""
+      "pr_head": "",
+      "wait_holders": []
     },
     {
       "id": "t2",
@@ -231,7 +232,8 @@
       "evidence": "go test ./... ok",
       "pr_repository": "owner/app",
       "pr_number": 42,
-      "pr_head": "4f1c2a9"
+      "pr_head": "4f1c2a9",
+      "wait_holders": []
     }
   ],
   "attention": [

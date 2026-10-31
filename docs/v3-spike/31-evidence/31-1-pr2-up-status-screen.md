@@ -201,6 +201,7 @@ function `up` uses) and logs `session_created`
 | 18 | cli `TestUpAgainstALiveLeadRefusesLeadRunningAndTouchesNothing` |
 | 19 | status `TestStalledSeatAndKeylessPiSeatAreWarningsNotRefusals`; pi `a seat stalled at a dialog and a keyless pi seat are screen lines …` |
 | 20 | cli `TestSchedulerRunOnAnAbsentSessionRootCreatesIt` |
+| day 3: a file-lock wait names its holders | status `TestAFileLockWaitNamesItsHolders` (`wait_holders`); pi `a pending task waiting on a file lock names its holder tasks` |
 
 Every test fakes AMQ (the `squadRun` seam, the scheduler's launcher seam),
 tmux (the same seam) and process signals (`upSignal`); none reaches the
@@ -251,6 +252,18 @@ start and the scheduler's spawn. The checked-in squad.yaml's seats are cto
 (the lead), senior-dev, qa and scribe; the rows follow the roster that runs.
 
 ## 5. Scope notes and where the brief and the code disagreed
+
+- **Day 3, two findings from the squad's record.** t26 sat four hours
+  pending on a file lock (wait reason `file_lock`) held, by the record, by
+  t20 and t23, already cancelled, and nothing showed it. Status now carries
+  each file-lock wait's holders (`wait_holders`, by the store's lock rule)
+  and the screen's task line reads "waiting on t20, t23"; a lock no task
+  holds any more reads "waiting on a file lock no task holds (stale)". By
+  the store's rule a cancelled task holds no lock, so if t20 and t23 were
+  cancelled, t26's wait reason was stale, and that is the line it shows.
+  And t26's `pin_unresolved` block tonight ("the entry is only on tiers the
+  class may not run on") is the first real failure on record behind #828's
+  roster-pool admission.
 
 - **Declared files.** Everything is inside the brief's list. Two small
   additions inside listed directories that the list's parentheses did not

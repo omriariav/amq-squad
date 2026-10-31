@@ -342,6 +342,12 @@ type Task struct {
 	PRRepository string `json:"pr_repository"`
 	PRNumber     int    `json:"pr_number"`
 	PRHead       string `json:"pr_head"`
+	// WaitHolders are, for a pending task waiting on a file lock
+	// (wait_reason file_lock), the tasks holding it: the in-progress or
+	// blocked tasks whose declared files overlap its own (the task store's
+	// lock rule), [] otherwise. Empty under file_lock means no task holds
+	// the lock any more: the wait reason is stale.
+	WaitHolders []string `json:"wait_holders"`
 }
 
 // Attention is one item of the attention queue: a stable id, what kind of
