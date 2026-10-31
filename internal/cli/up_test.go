@@ -718,3 +718,25 @@ func TestUpStopsASchedulerOnlyAsItsRecordedIdentity(t *testing.T) {
 		}
 	})
 }
+
+// Codex P2 (8) on #829: a symlinked AMQ root or session root is refused by
+// name (Lstat, never followed), and nothing is created through it.
+func TestUpRefusesASymlinkedAMQRootOrSession(t *testing.T) {
+	for _, which := range []string{".agent-mail", filepath.Join(".agent-mail", "s1")} {
+		f, _ := upWorld(t)
+		elsewhere := t.TempDir()
+		link := filepath.Join(f.proj, which)
+		mustMkdir(t, filepath.Dir(link))
+		if err := os.Symlink(elsewhere, link); err != nil {
+			t.Fatal(err)
+		}
+		r, err := runUpJSON(t, f.proj)
+		step := r.Steps[len(r.Steps)-1]
+		if err == nil || step.Name != "session" || step.Refusal != "amq_root_symlinked" || f.callIndex("amq ") >= 0 {
+			t.Fatalf("%s: %v %+v calls %q", which, err, step, f.calls)
+		}
+		if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+			t.Fatalf("%s: something was created through the link: %v", which, entries)
+		}
+	}
+}

@@ -416,11 +416,18 @@ const KindSessionCreated = "session_created"
 // its creation).
 func ensureSquadSession(ctx context.Context, amq string, q seatlaunch.Squad, handles []string) ([]string, error) {
 	var done []string
-	if st, err := os.Stat(q.SessionRoot()); err == nil && st.IsDir() {
+	// A symlinked AMQ root or session root is refused by name (Lstat: never
+	// followed), before anything is created or read through it.
+	for _, p := range []string{q.BaseRoot, q.SessionRoot()} {
+		if st, err := os.Lstat(p); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return nil, refuse("amq_root_symlinked", "%s is a symbolic link; up and scheduler run use only a real directory as the AMQ root or the session root", p)
+		}
+	}
+	if st, err := os.Lstat(q.SessionRoot()); err == nil && st.IsDir() {
 		return nil, nil // the session exists: nothing to create
 	}
 	env := amqChildEnv()
-	if _, err := os.Stat(filepath.Join(q.BaseRoot, "meta", "config.json")); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(q.BaseRoot, "meta", "config.json")); errors.Is(err, os.ErrNotExist) {
 		root := q.BaseRoot
 		if rel, err := filepath.Rel(q.ProjectRoot, q.BaseRoot); err == nil && filepath.IsLocal(rel) {
 			root = rel // the repository's .amqrc names it relative, as amq coop init does
@@ -432,14 +439,14 @@ func ensureSquadSession(ctx context.Context, amq string, q seatlaunch.Squad, han
 		}
 		done = append(done, "amq "+strings.Join(args[:2], " ")+" --root "+root)
 	}
-	if st, err := os.Stat(q.SessionRoot()); err != nil || !st.IsDir() { // amq coop init made only its default session
+	if st, err := os.Lstat(q.SessionRoot()); err != nil || !st.IsDir() { // amq coop init made only its default session
 		args := []string{"session", "create", q.Session, "--root", q.BaseRoot}
 		if out, err := squadRun(ctx, q.ProjectRoot, env, amq, args...); err != nil {
 			return done, fmt.Errorf("amq %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(lastLine(string(out))))
 		}
 		done = append(done, "amq "+strings.Join(args, " "))
 	}
-	if st, err := os.Stat(q.SessionRoot()); err != nil || !st.IsDir() {
+	if st, err := os.Lstat(q.SessionRoot()); err != nil || !st.IsDir() {
 		return done, fmt.Errorf("the session root %s is still absent after %s", q.SessionRoot(), strings.Join(done, "; "))
 	}
 	return done, nil

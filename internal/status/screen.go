@@ -21,7 +21,6 @@ import (
 // the deleted refusals. Every read is lock-free: the records are written by
 // rename or appended, and status never takes or probes a lock.
 
-
 // collectProcesses reads the lead record and the scheduler's launch record.
 func collectProcesses(o CollectOptions, in *Input, warn func(string, ...any)) {
 	if rec, err := schedproc.ReadLeadRecord(o.Root); err == nil {
