@@ -52,6 +52,11 @@ closes.
   fine-grained PAT, or a GitHub App installation token; 3.0 uses the owner's
   gh CLI login through the pinned gh copy. Owner decision 2026-10-25. Plan
   R33 and 16.4.
+- One helper for the push's authentication: the commit step's
+  pushCredentials (internal/seatcommit/commit.go) calls
+  seatcommit.FetchCredentials (internal/seatcommit/fetchcred.go), which the
+  launch's base fetch uses since 3.0.2, so the push and the fetch cannot
+  drift. 3.0.2-t22.
 
 ## 3.0.x
 

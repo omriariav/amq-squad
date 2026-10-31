@@ -1,10 +1,13 @@
 package schedproc
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
@@ -17,8 +20,8 @@ import (
 // (the `launch --seats` file; squad.yaml compiles to it). A request for a
 // pool takes the first free seat whose runtime matches, and for Claude and
 // Codex its model and effort (a pi seat's model, when the list names one).
-// The seat gets its own worktree on its own branch (created from the base
-// branch when missing, git hooks off); a seat whose worktree is the
+// The seat gets its own worktree on its own branch, both put on the base
+// branch's tip at every launch (git hooks off); a seat whose worktree is the
 // repository root is never started, because the commit step moves its
 // branch.
 type Slots struct {
@@ -98,16 +101,358 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	if seat.Branch == "" {
 		seat.Branch = "seat/" + seat.Handle
 	}
-	if _, err := os.Stat(seat.Worktree); err == nil {
+	_, statErr := os.Stat(seat.Worktree)
+	if _, err := os.Lstat(filepath.Join(seat.Worktree, ".git")); statErr == nil && err != nil {
+		return seat, nil // not a checkout: no base; its commit step refuses base_unrecorded
+	}
+	// The launch-time base (3.0.2 t22): at every launch the seat's worktree
+	// and its resting branch start from the base branch's tip, never from
+	// the commit ledger's first base or the branch's previous head.
+	g := baseGit{bin: firstNonEmpty(s.Git, "git")}
+	var common, gd, head string
+	var err error
+	if statErr == nil {
+		// An existing worktree's repository is its own, through its own git
+		// dir only (seatGitDir); its HEAD must name a commit: the move is a
+		// two-tree read-tree from it, never a reset over files it cannot
+		// account for.
+		projectCommon, _ := commonDir(root) // "" when the project root is no checkout
+		if gd, err = seatGitDir(seat.Worktree, projectCommon); err != nil {
+			return seat, fmt.Errorf("seat %s: %v", seat.Handle, err)
+		}
+		common = commonOf(gd)
+		if head, err = g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "rev-parse", "--verify", "-q", "HEAD^{commit}"); err != nil || head == "" {
+			return seat, fmt.Errorf("%s: seat %s: the worktree %s has a HEAD that names no commit; the launch never resets over it: check out a commit or remove the worktree, then launch again", ReasonSeatHeadUnreadable, seat.Handle, seat.Worktree)
+		}
+	} else if common, err = commonDir(root); err != nil {
+		return seat, fmt.Errorf("seat %s base: %v", seat.Handle, err)
+	}
+	tip, err := s.baseTip(g, common, seat)
+	if err != nil {
+		return seat, err
+	}
+	seat.Base = tip
+	// The resting branch as it stands: a local commit the tip does not hold
+	// refuses (ReasonSeatBranchUnpushed), and every update-ref of the branch
+	// passes this value as the expected old one, so a concurrent move
+	// refuses rather than being overwritten.
+	cur, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-parse", "--verify", "-q", "refs/heads/"+seat.Branch+"^{commit}")
+	if err != nil {
+		cur = ""
+	}
+	if cur != "" && cur != tip {
+		ahead, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+cur)
+		if err != nil {
+			return seat, fmt.Errorf("seat %s branch: %v", seat.Handle, err)
+		}
+		if ahead != "" {
+			return seat, fmt.Errorf("%s: seat %s: the local branch %s holds commits the %s tip %s does not (%s); the harness never discards a local commit: push, merge or delete it, then launch again", ReasonSeatBranchUnpushed, seat.Handle, seat.Branch, firstNonEmpty(s.BaseBranch, "main"), short(tip), strings.Join(strings.Fields(ahead), ", "))
+		}
+	}
+	// HEAD's commit is either the resting branch's value checked above or
+	// one the tip holds: a detached HEAD at a local commit would lose its
+	// files in the move and its last reference at the HEAD switch.
+	if statErr == nil && head != tip && head != cur {
+		ahead, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+head)
+		if err != nil {
+			return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
+		}
+		if ahead != "" {
+			return seat, fmt.Errorf("%s: seat %s: the worktree's HEAD is at %s, with commits the %s tip %s does not hold (%s); the harness never discards a local commit: push, merge or branch it, then launch again", ReasonSeatHeadDetachedUnmerged, seat.Handle, short(head), firstNonEmpty(s.BaseBranch, "main"), short(tip), strings.Join(strings.Fields(ahead), ", "))
+		}
+	}
+	if statErr == nil {
+		if err := g.moveWorktree(gd, common, seat, head, tip, cur); err != nil {
+			return seat, fmt.Errorf("seat %s worktree to the base tip %s: %v", seat.Handle, short(tip), err)
+		}
 		return seat, nil
 	}
-	base := firstNonEmpty(s.BaseBranch, "main")
+	// A local reset of the resting branch, never a push.
+	if _, err := g.run(root, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
+		return seat, fmt.Errorf("seat %s branch: %v", seat.Handle, err)
+	}
 	// The hardened git (R2): no hook, filter or attribute of the shared
 	// repository config runs, and no credential reaches git.
-	if err := seatcommit.AddWorktree(s.Git, root, seat.Worktree, seat.Branch, base, nil); err != nil {
+	if err := seatcommit.AddWorktree(s.Git, root, seat.Worktree, seat.Branch, tip, nil); err != nil {
 		return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
 	}
 	return seat, nil
+}
+
+// ReasonSeatBranchUnmerged refuses a seat's launch when the remote copy of
+// its resting branch holds commits the base tip does not: the harness never
+// force-pushes it; the lead decides.
+const ReasonSeatBranchUnmerged = "seat_branch_unmerged"
+
+// ReasonBaseTipMoved refuses a launch whose fetched base tip is not the
+// object id ls-remote reported for the base branch a moment before.
+const ReasonBaseTipMoved = "base_tip_moved"
+
+// ReasonSeatHeadUnreadable refuses a seat's launch when its existing
+// worktree's HEAD names no commit (unborn or unreadable): the move to the tip
+// is never a reset over files nothing accounts for.
+const ReasonSeatHeadUnreadable = "seat_head_unreadable"
+
+// ReasonSeatHeadDetachedUnmerged refuses a seat's launch when its worktree's
+// HEAD is at a commit the base tip does not hold and that is not the resting
+// branch's checked value (a detached HEAD's local commit): the harness never
+// discards a local commit.
+const ReasonSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
+
+// ReasonSeatBranchUnpushed refuses a seat's launch when its local resting
+// branch holds commits the base tip does not: the harness never discards a
+// local commit; the lead decides.
+const ReasonSeatBranchUnpushed = "seat_branch_unpushed"
+
+// baseTip is the base branch's tip: fetched from the push URL the launch
+// recorded from the grant (into a shadow git directory, so the shared
+// repository's config, remotes and url rewrites are never read), or the
+// local base branch when the grant names no push URL. A remote seat branch
+// ahead of the tip and unmerged refuses with ReasonSeatBranchUnmerged.
+func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string, error) {
+	base := firstNonEmpty(s.BaseBranch, "main")
+	url := s.Target.PushURL
+	if url == "" {
+		tip, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-parse", "--verify", "refs/heads/"+base+"^{commit}")
+		if err != nil {
+			return "", fmt.Errorf("seat %s base: the local base branch %s: %v", seat.Handle, base, err)
+		}
+		return tip, nil
+	}
+	// An HTTPS push URL fetches with the push's authentication: the pinned
+	// gh as the only credential helper (seatcommit.FetchCredentials).
+	cred, credEnv, why := seatcommit.FetchCredentials(s.Target, os.Environ())
+	if why != "" {
+		return "", fmt.Errorf("seat %s base: %s", seat.Handle, why)
+	}
+	sh, err := newBaseShadow(g, common)
+	if err != nil {
+		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+	}
+	defer os.RemoveAll(sh.dir)
+	fg := baseGit{bin: g.bin, pre: cred} // ls-remote and fetch only
+	fenv := append(append([]string(nil), sh.env...), credEnv...)
+	out, err := fg.run(sh.dir, fenv, "ls-remote", "--", url, "refs/heads/"+base, "refs/heads/"+seat.Branch)
+	if err != nil {
+		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+	}
+	refs := map[string]string{} // ref -> the object id ls-remote reported
+	for _, line := range strings.Split(out, "\n") {
+		if oid, ref, ok := strings.Cut(line, "\t"); ok {
+			refs[ref] = oid
+		}
+	}
+	if refs["refs/heads/"+base] == "" {
+		return "", fmt.Errorf("seat %s base: the push URL has no branch %s", seat.Handle, base)
+	}
+	specs := []string{"+refs/heads/" + base + ":refs/base"}
+	if refs["refs/heads/"+seat.Branch] != "" {
+		specs = append(specs, "+refs/heads/"+seat.Branch+":refs/seat")
+	}
+	if _, err := fg.run(sh.dir, fenv, append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", url}, specs...)...); err != nil {
+		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+	}
+	tip, err := g.run(sh.dir, sh.env, "rev-parse", "--verify", "refs/base^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+	}
+	if want := refs["refs/heads/"+base]; tip != want {
+		return "", fmt.Errorf("%s: seat %s: the push URL's %s was %s at ls-remote and %s at the fetch; launch again", ReasonBaseTipMoved, seat.Handle, base, short(want), short(tip))
+	}
+	if len(specs) == 2 {
+		ahead, err := g.run(sh.dir, sh.env, "rev-list", "--abbrev-commit", "--max-count=11", "refs/base..refs/seat")
+		if err != nil {
+			return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+		}
+		if ahead != "" {
+			return "", fmt.Errorf("%s: seat %s: the remote branch %s holds commits the %s tip %s does not (%s); the harness never force-pushes it: merge, close or delete it, then launch again", ReasonSeatBranchUnmerged, seat.Handle, seat.Branch, base, short(tip), strings.Join(strings.Fields(ahead), ", "))
+		}
+	}
+	return tip, nil
+}
+
+// moveWorktree puts an existing seat worktree (git dir gd, HEAD at head) on
+// the tip: a two-tree read-tree from head in the shadow (a local change the
+// move would overwrite refuses, nothing is lost; CleanSeat keeps any other
+// leftover as evidence), then the resting branch moves from cur to the tip
+// and HEAD names it.
+func (g baseGit) moveWorktree(gd, common string, seat seatlaunch.Seat, head, tip, cur string) error {
+	if head != tip {
+		sh, err := newBaseShadow(g, common)
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(sh.dir)
+		if _, err := g.run(seat.Worktree, append(sh.env, "GIT_WORK_TREE="+seat.Worktree, "GIT_INDEX_FILE="+filepath.Join(gd, "index")), "read-tree", "-m", "-u", head, tip); err != nil {
+			return err
+		}
+	}
+	if _, err := g.run(seat.Worktree, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
+		return err
+	}
+	_, err := g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "symbolic-ref", "HEAD", "refs/heads/"+seat.Branch)
+	return err
+}
+
+// baseGit is the launch-time base's git with the harness's R2 settings
+// (seatcommit's): no global or system config, hooks, attribute files,
+// fsmonitor or replace objects; the push's environment.
+type baseGit struct {
+	bin string
+	pre []string // the fetch's credential settings (FetchCredentials)
+}
+
+func (g baseGit) run(dir string, extra []string, args ...string) (string, error) {
+	argv := append(append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"}, g.pre...), args...)
+	cmd := exec.Command(g.bin, argv...)
+	cmd.Dir = dir
+	// The push's environment (seatcommit.HarnessEnv: its keptGitVars list,
+	// GIT_SSH, GIT_SSH_COMMAND, GIT_SSH_VARIANT and GIT_ASKPASS, in git.go).
+	cmd.Env = append(seatcommit.HarnessEnv(os.Environ()), extra...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// baseShadow is a git directory of the harness's own (git's default config)
+// on the repository's object store.
+type baseShadow struct {
+	dir string
+	env []string
+}
+
+func newBaseShadow(g baseGit, common string) (baseShadow, error) {
+	dir, err := os.MkdirTemp("", "amq-squad-base-*")
+	if err != nil {
+		return baseShadow{}, err
+	}
+	if _, err := g.run(dir, nil, "init", "-q", "--template=", dir); err != nil {
+		os.RemoveAll(dir)
+		return baseShadow{}, err
+	}
+	return baseShadow{dir: dir, env: []string{"GIT_DIR=" + filepath.Join(dir, ".git"), "GIT_OBJECT_DIRECTORY=" + filepath.Join(common, "objects")}}, nil
+}
+
+// commonDir is a checkout's common git directory, read from its .git.
+func commonDir(root string) (string, error) {
+	gd, err := gitDirOf(root)
+	if err != nil {
+		return "", err
+	}
+	return commonOf(gd), nil
+}
+
+// commonOf is a git dir's common directory: the one its commondir file
+// names, else the git dir itself.
+func commonOf(gd string) string {
+	c, err := os.ReadFile(filepath.Join(gd, "commondir"))
+	if err != nil {
+		return gd
+	}
+	if c := strings.TrimSpace(string(c)); !filepath.IsAbs(c) {
+		return filepath.Clean(filepath.Join(gd, c))
+	}
+	return filepath.Clean(strings.TrimSpace(string(c)))
+}
+
+// ReasonSeatGitdirForeign refuses a seat's launch when its worktree's .git
+// leads to a git dir that is not its own: a symbolic link, or a gitdir file
+// naming anything but <common>/worktrees/<name> of the project repository
+// whose gitdir file points back at this worktree.
+const ReasonSeatGitdirForeign = "seat_gitdir_foreign"
+
+// seatGitDir is an existing seat worktree's own git dir, symlinks evaluated:
+// a .git directory (a plain clone) as is; a .git file only when it names a
+// directory directly under <common>/worktrees, common being the project
+// repository's when the project root is a checkout, whose gitdir file names
+// this worktree's .git. Anything else refuses with ReasonSeatGitdirForeign:
+// a redirected .git would move another checkout's HEAD and refs.
+func seatGitDir(wt, projectCommon string) (string, error) {
+	dotgit := filepath.Join(wt, ".git")
+	foreign := func(why string, args ...any) (string, error) {
+		return "", fmt.Errorf("%s: the worktree %s: %s", ReasonSeatGitdirForeign, wt, fmt.Sprintf(why, args...))
+	}
+	st, err := os.Lstat(dotgit)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%s is not a git checkout: %v", wt, err)
+	case st.Mode()&os.ModeSymlink != 0:
+		return foreign("its .git is a symbolic link")
+	case st.IsDir():
+		return dotgit, nil
+	}
+	named, err := worktreeGitDir(wt)
+	if err != nil {
+		return foreign("%v", err)
+	}
+	gd, err := filepath.EvalSymlinks(named)
+	if err != nil {
+		return foreign("its .git names %s: %v", named, err)
+	}
+	common, err := filepath.EvalSymlinks(commonOf(gd))
+	if err != nil || filepath.Dir(gd) != filepath.Join(common, "worktrees") {
+		return foreign("its .git names %s, not a directory under a repository's worktrees/", gd)
+	}
+	if projectCommon != "" {
+		if pc, err := filepath.EvalSymlinks(projectCommon); err != nil || pc != common {
+			return foreign("its .git names %s, a worktree of %s, not of the project repository %s", gd, common, projectCommon)
+		}
+	}
+	back, err := os.ReadFile(filepath.Join(gd, "gitdir"))
+	if err != nil {
+		return foreign("%s has no gitdir file: %v", gd, err)
+	}
+	b := strings.TrimSpace(string(back))
+	if !filepath.IsAbs(b) {
+		b = filepath.Join(gd, b)
+	}
+	rb, err1 := filepath.EvalSymlinks(b)
+	rd, err2 := filepath.EvalSymlinks(dotgit)
+	if err1 != nil || err2 != nil || rb != rd {
+		return foreign("%s belongs to %s, not to this worktree", gd, b)
+	}
+	return gd, nil
+}
+
+// gitDirOf is a checkout's git directory: its .git directory (a plain
+// clone), or the one a linked worktree's .git file names.
+func gitDirOf(wt string) (string, error) {
+	dotgit := filepath.Join(wt, ".git")
+	st, err := os.Lstat(dotgit)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a git checkout: %v", wt, err)
+	}
+	if st.IsDir() {
+		return dotgit, nil
+	}
+	return worktreeGitDir(wt)
+}
+
+// worktreeGitDir is a linked worktree's git directory from its .git file.
+func worktreeGitDir(wt string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(wt, ".git"))
+	if err != nil {
+		return "", fmt.Errorf("%s is not a linked worktree: %v", wt, err)
+	}
+	gd, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir: ")
+	if !ok || gd == "" {
+		return "", fmt.Errorf("%s/.git is not a gitdir file", wt)
+	}
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(wt, gd)
+	}
+	return filepath.Clean(gd), nil
+}
+
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // Launcher sends each request to the launcher of its runtime (the AMQ launch
