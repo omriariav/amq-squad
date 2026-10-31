@@ -245,7 +245,9 @@ behind `seat-exec`:
   amq-squad lead --team --scheduler-seats seats.json --dry-run
   ```
 
-  (drop `--dry-run` to start it; a pi-runtime build only).
+  (drop `--dry-run` to start it; a pi-runtime build only). The lead takes
+  the seats file's AMQ identity (its session root, the `--lead` handle); an
+  `AM_ME`/`AM_ROOT` already in the environment must match it or it refuses.
 - the mayor inside the owner's fleet grant: `operator start-squad` writes the
   squad.yaml through the same digest flow and launches it; in manual mode it
   returns a proposal instead.
