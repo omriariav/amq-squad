@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "producer": "amq-squad",
+  "producer_version": "3.1.0",
+  "generated_at": "2026-11-01T09:05:00Z",
+  "root": "/Users/owner/code/app/.agent-mail/v31",
+  "session": "v31",
+  "project_path": "/Users/owner/code/app",
+  "lead_handle": null,
+  "capabilities": ["tasks"],
+  "buckets": [],
+  "counts": { "all": 5, "needs_you": 1, "working": 1, "ready": 2, "inactive": 1 },
+  "seats": [
+    {
+      "handle": "qa", "role": "qa", "runtime": "codex", "model": "gpt-5.6-sol", "effort": "high",
+      "state": "online", "live": true, "reason_code": "idle", "bucket": "ready", "bucket_marker": "", "task_id": "",
+      "project_path": "/Users/owner/code/app", "last_activity_at": null, "last_message_at": null, "last_message": "",
+      "prompt_state": "idle", "tokens_in": null, "tokens_out": null,
+      "worktree": "/Users/owner/code/app/.worktrees/qa", "branch": "squad/qa",
+      "launch": { "launch_id": "L1", "outcome": "live", "reason_code": "", "wake": { "mode": "disabled", "require_wake": false, "injector": "", "audit_reason": "amq-squad: no AMQ wake for this Codex seat: AMQ's Codex dialog hook is not on the host" },
+        "timing": { "start": "2026-11-01T09:00:00Z", "seat_live": "2026-11-01T09:00:12.400Z", "first_message": "2026-11-01T09:00:57.449Z",
+          "to_seat_live_ms": 12400, "to_first_message_ms": 57449, "ceiling_ms": 10000, "over_ceiling": true, "slowest_segment": "seat_exec",
+          "segments": [ { "name": "prepare", "ms": 3201 }, { "name": "mint", "ms": 602 }, { "name": "apply", "ms": 538 }, { "name": "seat_exec", "ms": 8059 } ] } },
+      "warnings": [
+        "launch_budget_exceeded: 12.400 s from the start to seat live, over the 10s ceiling; slowest segment seat_exec 8.059 s",
+        "wake_off: amq-squad: no AMQ wake for this Codex seat: AMQ's Codex dialog hook is not on the host; the seat idles after each turn until it is rung by hand"
+      ]
+    },
+    {
+      "handle": "scribe", "role": "scribe", "runtime": "claude", "model": "sonnet", "effort": "medium",
+      "state": "online", "live": true, "reason_code": "lease_claimed", "bucket": "working", "bucket_marker": "", "task_id": "t2",
+      "project_path": "/Users/owner/code/app", "last_activity_at": null, "last_message_at": null, "last_message": "",
+      "prompt_state": "running", "tokens_in": null, "tokens_out": null,
+      "worktree": "/Users/owner/code/app/.worktrees/scribe", "branch": "squad/scribe",
+      "launch": { "launch_id": "L1", "outcome": "live", "reason_code": "", "wake": { "mode": "enabled", "require_wake": true, "injector": "raw", "audit_reason": "" },
+        "timing": { "start": "2026-11-01T09:00:00Z", "seat_live": "2026-11-01T09:00:04.666Z", "first_message": null,
+          "to_seat_live_ms": 4666, "to_first_message_ms": null, "ceiling_ms": 10000, "over_ceiling": false, "slowest_segment": "prepare",
+          "segments": [ { "name": "prepare", "ms": 3201 }, { "name": "mint", "ms": 602 }, { "name": "apply", "ms": 538 }, { "name": "seat_exec", "ms": 325 } ] } },
+      "warnings": [
+        "seat_stalled_at_dialog: a harness dialog has been open since 2026-11-01T09:02:00Z (3m0s); the seat waits at it and AMQ holds its doorbell"
+      ]
+    },
+    {
+      "handle": "pi-dev", "role": "senior-dev", "runtime": "pi", "model": "anthropic/claude-sonnet-5", "effort": "medium",
+      "state": "online", "live": true, "reason_code": "idle", "bucket": "ready", "bucket_marker": "", "task_id": "",
+      "project_path": "/Users/owner/code/app", "last_activity_at": null, "last_message_at": null, "last_message": "",
+      "prompt_state": "unknown", "tokens_in": null, "tokens_out": null,
+      "worktree": "/Users/owner/code/app/.worktrees/pi-dev", "branch": "squad/pi-dev",
+      "launch": { "launch_id": "L1", "outcome": "live", "reason_code": "", "wake": null,
+        "timing": { "start": "2026-11-01T09:00:00Z", "seat_live": "2026-11-01T09:00:04.485Z", "first_message": null,
+          "to_seat_live_ms": 4485, "to_first_message_ms": null, "ceiling_ms": 10000, "over_ceiling": false, "slowest_segment": "prepare",
+          "segments": [ { "name": "prepare", "ms": 3201 }, { "name": "mint", "ms": 602 }, { "name": "apply", "ms": 538 }, { "name": "seat_exec", "ms": 144 } ] } },
+      "warnings": [
+        "pi_provider_key_missing: model anthropic/claude-sonnet-5 needs one of ANTHROPIC_API_KEY, ANTHROPIC_OAUTH_TOKEN, ANTHROPIC_AUTH_TOKEN, and none is in the seat's env needs or its pi login; the seat goes live, then stalls at its first turn"
+      ]
+    }
+  ],
+  "tasks": [
+    { "id": "t1", "title": "Fix the parser", "class": "implement", "task_state": "blocked", "state": "blocked", "reason_code": "outside_declared_files",
+      "bucket": "working", "bucket_marker": "", "pool": null, "lease_holder": "", "lease_expires_at": null, "lease_claimed": false, "attempt": 1,
+      "wait_reason": "", "block_reason": "outside_declared_files", "depends_on": [], "project_path": "/Users/owner/code/app",
+      "created_at": "2026-11-01T09:01:00Z", "updated_at": "2026-11-01T09:04:00Z", "evidence": "", "pr_repository": "", "pr_number": 0, "pr_head": "" },
+    { "id": "t2", "title": "Write the notes", "class": "summarize", "task_state": "in_progress", "state": "online", "reason_code": "lease_claimed",
+      "bucket": "working", "bucket_marker": "", "pool": null, "lease_holder": "scribe", "lease_expires_at": null, "lease_claimed": true, "attempt": 1,
+      "wait_reason": "", "block_reason": "", "depends_on": [], "project_path": "/Users/owner/code/app",
+      "created_at": "2026-11-01T09:01:30Z", "updated_at": "2026-11-01T09:03:00Z", "evidence": "", "pr_repository": "owner/app", "pr_number": 812, "pr_head": "4f1c2a9e0b5d6c7f8a9b0c1d2e3f4a5b6c7d8e9f" }
+  ],
+  "attention": [
+    { "id": "gate:g1", "kind": "gate", "severity": "high", "subject": "gate g1: tag 8502aa", "since": "2026-11-01T08:59:00Z", "seat": "qa", "task_id": "", "gate_id": "g1", "bucket": "needs_you", "action": null }
+  ],
+  "gates": [
+    { "id": "g1", "action_class": "tag", "target_digest": "sha256:8502aa0011223344", "state": "open", "raised_by": "qa" },
+    { "id": "g0", "action_class": "merge", "target_digest": "sha256:aa", "state": "accepted", "raised_by": "qa" }
+  ],
+  "actions": { "new_task": { "id": "task.new", "label": "new task", "argv": ["amq-squad"], "inputs": [] } },
+  "scheduler": { "max_seats": 3, "live_seats": 3, "usage_limit_since": null, "usage_limit_until": null, "pid": 4321, "started_at": "2026-11-01T09:00:01.100Z", "launch_start": "2026-11-01T09:00:00Z", "live": true },
+  "warnings": [],
+  "lead": { "handle": "cto", "pid": 4300, "start": "1761987600.1", "pane": "%3", "recorded_at": "2026-11-01T09:00:00.500Z", "live": true, "attach": "tmux attach -t %3" },
+  "decisions": [
+    { "at": "2026-11-01T09:00:01.120Z", "kind": "scheduler_started", "seat": "", "task_id": "", "reason": "incarnation 7f3a", "reason_code": "", "stage": "" },
+    { "at": "2026-11-01T09:00:12.500Z", "kind": "roster_launched", "seat": "", "task_id": "", "reason": "launch L1: 3 seats in one apply", "reason_code": "", "stage": "" },
+    { "at": "2026-11-01T09:02:30Z", "kind": "exit_refused", "seat": "old-dev", "task_id": "t0", "reason": "ledger_tampered at gone", "reason_code": "", "stage": "" },
+    { "at": "2026-11-01T09:04:00Z", "kind": "commit_refused", "seat": "qa", "task_id": "t1", "reason": "outside_declared_files: src/x.go", "reason_code": "", "stage": "" }
+  ],
+  "train": {
+    "runs": [
+      { "run": "r2", "started_at": "2026-11-01T08:50:00Z", "last_at": "2026-11-01T08:52:00Z", "last_kind": "refusal", "repository": "owner/app", "base": "main", "prs": [811, 812], "merged": [811], "refusal": "refusal PR #812 checks: a required check failed", "done": false, "dry_run": false },
+      { "run": "r1", "started_at": "2026-11-01T08:00:00Z", "last_at": "2026-11-01T08:03:00Z", "last_kind": "merge", "repository": "owner/app", "base": "main", "prs": [810], "merged": [810], "refusal": "", "done": true, "dry_run": false }
+    ],
+    "alerts": [ { "id": "a1", "kind": "ungated_tag", "detail": "tag v1.2.0 has no accepted gate", "gate_id": "", "at": "2026-11-01T08:40:00Z" } ]
+  }
+}

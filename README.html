@@ -522,18 +522,52 @@ per-seat flag is refused). A custom role is staged first with
 seat's handle, role, runtime (the binary), model and effort, the session
 and the lead's handle (<code>lead:</code>). A seat's worktree is derived
 per handle under <code>&lt;repo&gt;/.worktrees/&lt;handle&gt;</code>,
-never the repository root. Two entry points, each one AMQ launch request
-with every seat behind <code>seat-exec</code>:</p>
+never the repository root. The first run is one command, in the
+repository:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up</span></code></pre></div>
+<p><code>up</code> runs seven steps in order and refuses at the first
+that fails, by name: it installs the tagged pi build
+(<code>scripts/build-pi-runtime.sh</code> at a tag,
+<code>build/pi/amq-squad</code> or <code>--binary PATH</code>) next to
+the <code>amq-squad</code> on PATH under a temporary name and renames it
+over it (<code>--skip-install</code> keeps an installed binary that
+already reports a tag); runs that binary's doctor; creates the AMQ root
+and the session when absent; compiles squad.yaml; checks the recorded
+lead (a lead whose pid is alive and whose tmux pane exists is never
+stopped: <code>lead_running</code>, with its pid, its pane and the
+attach command; a dead one, and a scheduler serving it, are stopped and
+recorded as decisions); starts the lead in its own tmux session,
+<code>squad-lead-&lt;repo&gt;-&lt;sha5&gt;</code>; and waits for the
+roster's outcome in the decisions log, then prints the roster and
+<code>tmux attach -t &lt;session&gt;</code>. <code>up --json</code>
+prints the steps and their outcomes. Each seat's launch budget is in
+status: the start (<code>up</code>'s own) to seat live, its accepted
+proof, within a 10 s ceiling, and to its first AMQ message, with no
+ceiling; a seat over the ceiling carries a warning naming its slowest
+segment.</p>
+<p>In the lead's pi, the squad screen sits below the editor: the lead
+handle and the root, then seats (runtime and model, state, launch
+outcome and budget, warnings), tasks (state, seat, PR, block reason),
+the merge train (the current and last runs, alerts) and open gates, each
+block closed by its newest refusal. It refreshes when the task store or
+the scheduler state changes; <code>/squad</code> collapses it to one
+footer line of counts. It is read-only.</p>
+<p>Two entry points, each one AMQ launch request with every seat behind
+<code>seat-exec</code>:</p>
 <ul>
 <li><p>the pi lead in team mode with the scheduler beside it, run in the
-repository; the lead never edits code, it dispatches through the task
-store, and the scheduler launches every seat but the lead at start:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--dry-run</span></span></code></pre></div>
+repository (what <code>up</code> starts in its tmux session); the lead
+never edits code, it dispatches through the task store, and the
+scheduler launches every seat but the lead at start:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--dry-run</span></span></code></pre></div>
 <p>(drop <code>--dry-run</code> to start it; a pi-runtime build only).
-The lead takes squad.yaml's AMQ identity (its session root, its
-<code>lead:</code> handle); an <code>AM_ME</code>/<code>AM_ROOT</code>
-already in the environment must match it or it refuses. One lead per
-root: a second <code>lead --team</code> on the same root is refused
+<code>scheduler run</code> creates an absent AMQ root and session the
+way <code>up</code> does. The lead takes squad.yaml's AMQ identity (its
+session root, its <code>lead:</code> handle); an
+<code>AM_ME</code>/<code>AM_ROOT</code> already in the environment must
+match it or it refuses. One lead per root: a second
+<code>lead --team</code> on the same root is refused
 <code>lead_running</code>, naming the first lead's pid and tmux pane.
 Every launch carries the owner's standing answer to AMQ's trust
 confirmation.</p></li>
@@ -550,16 +584,19 @@ written in the repository.</p>
 <p>The lead's loop is one status read, one bounded action, then park;
 AMQ wake delivers the next message. <code>amq-squad:orchestrator</code>
 is the lead's playbook.</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Fix the parser&quot;</span> <span class="at">--class</span> implement <span class="at">--files</span> internal/parse/ <span class="at">--pool</span> claude:sonnet:medium <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task list <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Fix the parser&quot;</span> <span class="at">--class</span> implement <span class="at">--files</span> internal/parse/ <span class="at">--pool</span> claude:sonnet:medium <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task list <span class="at">--project</span> . <span class="at">--session</span> issue-96</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate status <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--json</span></span></code></pre></div>
 <ul>
 <li><strong>Status</strong> is the versioned contract of <a
 href="docs/status-contract.md">docs/status-contract.md</a>: four buckets
-(Needs you, Working, Ready, Inactive), seats, tasks, the attention queue
-and gates, with argv actions. amq-noc renders it for the fleet;
+(Needs you, Working, Ready, Inactive), seats (with each seat's worktree,
+branch, launch outcome, launch budget and admitted wake), tasks (with
+evidence and PR), the attention queue and gates, with argv actions; the
+lead and the scheduler (pid, start), the decisions log's tail and the
+merge train's runs. amq-noc renders it for the fleet;
 <code>amq-squad status --fleet --json</code> reads every squad of
 <code>~/.amq-squad/fleet.yaml</code>.</li>
 <li><strong>The commit step.</strong> On a seat's done report the
@@ -624,16 +661,21 @@ Claude allow rules (<code>claude_allow_rules_present</code>), a
 CLAUDE.md importing a file outside its worktree
 (<code>claude_external_includes_pending</code>). The seat starts;
 nothing is quarantined. seat-exec still denies a seat's write to the
-owner's global agent config.</li>
+owner's global agent config. So are a seat over the launch ceiling
+(<code>launch_budget_exceeded</code>), a seat whose wake is off with
+AMQ's reason (<code>wake_off</code>: a Codex seat without AMQ's dialog
+hook, a pi seat), a seat at an open harness dialog
+(<code>seat_stalled_at_dialog</code>) and a pi seat with no key for its
+provider (<code>pi_provider_key_missing</code>).</li>
 </ul>
 <p>Check whether an action is approved, and the evidence of a merge or a
 release:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--gate</span> rel-v3 <span class="at">--action</span> tag <span class="at">--target</span> <span class="st">&quot;git tag v3.0.0&quot;</span> <span class="at">--json</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;merge evidence failed&quot;) where no merge-train run is recorded, by design</span></span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--repository</span> you/app <span class="at">--pr</span> 12 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;release evidence failed&quot;) where no release flow is recorded, by design</span></span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--tag</span> v3.0.0 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--gate</span> rel-v3 <span class="at">--action</span> tag <span class="at">--target</span> <span class="st">&quot;git tag v3.0.0&quot;</span> <span class="at">--json</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;merge evidence failed&quot;) where no merge-train run is recorded, by design</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--repository</span> you/app <span class="at">--pr</span> 12 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (&quot;release evidence failed&quot;) where no release flow is recorded, by design</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--tag</span> v3.0.0 <span class="at">--root</span> /path/to/app/.agent-mail/issue-96 <span class="at">--json</span></span></code></pre></div>
 <p><code>verify action</code> exits 0 approved, 10 pending, 11 denied,
 12 no gate, 13 unbound.</p>
 <h2 id="the-owners-buzz-face">The owner's Buzz face</h2>
@@ -662,9 +704,9 @@ the core of the squad that raised it fetches and verifies the signed
 event itself. An answer outside the thread is refused with one
 re-ask.</li>
 </ul>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 until fleet.yaml names the operator session (or --lead names a launched lead)</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> remote status</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 until fleet.yaml names the operator session (or --lead names a launched lead)</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> remote status</span></code></pre></div>
 <h2 id="command-map">Command map</h2>
 <p><code>amq-squad --help</code> and each verb's <code>--help</code> are
 the reference. The verbs:</p>
@@ -755,8 +797,8 @@ merge-train run on a harness-bound PR, the pi launch through
 the pane drivers are gone, with no aliases.</li>
 </ul>
 <h2 id="uninstall">Uninstall</h2>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> uninstall <span class="at">--project</span> . <span class="at">--session</span> issue-96</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> uninstall <span class="at">--project</span> . <span class="at">--session</span> issue-96</span></code></pre></div>
 <p>A dry run by default: it prints every path it would remove.
 <code>--write</code> removes the session state, the per-seat config
 dirs, the pinned tool copies and the worktrees it created; the owner
@@ -770,9 +812,9 @@ The converter is a dry run unless <code>--write</code> is given, never
 writes <code>grants.yaml</code> or <code>registry.yaml</code> (it writes
 <code>grants.yaml.proposed</code> beside them), and prints every v2
 field it did not map:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (migrate_input_invalid) where no v2 profile exists, by design</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> migrate .amq-squad/team.json</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># skill-invocation-check:skip — exits 1 (migrate_input_invalid) where no v2 profile exists, by design</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> migrate .amq-squad/team.json</span></code></pre></div>
 <h2 id="where-the-plan-and-evidence-live">Where the plan and evidence
 live</h2>
 <table>
