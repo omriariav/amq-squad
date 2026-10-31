@@ -23,8 +23,9 @@ func TestCommitInsideDeclaredFilesCommitsAndPushes(t *testing.T) {
 	if !res.OK || res.Commit == "" || !res.Pushed {
 		t.Fatalf("want a pushed harness commit, got %+v", res)
 	}
-	if got := f.originBranch(); got != res.Commit {
-		t.Fatalf("origin %s = %q, want %s", f.branch, got, res.Commit)
+	// One branch per task (3.0.2 t23): the task's own branch, from the base.
+	if got := f.originRef(TaskBranch(f.handle, tk.ID)); got != res.Commit || res.Branch != "seat/s1/"+tk.ID {
+		t.Fatalf("origin %s = %q, want %s", res.Branch, got, res.Commit)
 	}
 	if got := sh(t, f.wt, "log", "-1", "--format=%an <%ae>|%cn|%P", res.Commit); got != "amq-squad harness <harness@amq-squad.invalid>|amq-squad harness|"+f.base {
 		t.Fatalf("commit identity and parent = %q", got)
@@ -35,14 +36,19 @@ func TestCommitInsideDeclaredFilesCommitsAndPushes(t *testing.T) {
 			t.Fatalf("commit message lacks %q:\n%s", want, msg)
 		}
 	}
-	if got := sh(t, f.wt, "rev-parse", "refs/heads/"+f.branch); got != res.Commit {
-		t.Fatalf("the seat branch is at %s, want %s", got, res.Commit)
+	// After the commit the worktree rests on the seat branch at the base tip;
+	// the commit stays anchored in the seat repository.
+	if got := sh(t, f.wt, "rev-parse", "refs/heads/"+f.branch); got != f.base {
+		t.Fatalf("the resting seat branch is at %s, want the base %s", got, f.base)
+	}
+	if got := sh(t, f.wt, "rev-parse", commitRefName(f.handle, tk.ID)); got != res.Commit {
+		t.Fatalf("the commit's anchor is at %s, want %s", got, res.Commit)
 	}
 	if st := sh(t, f.wt, "status", "--porcelain", "--untracked-files=all"); st != "" {
 		t.Fatalf("worktree not clean after the harness commit: %q", st)
 	}
 	l, _ := ReadLedger(f.root, f.handle)
-	if l.Head != res.Commit || len(l.Commits) != 1 || !l.Commits[0].Pushed {
+	if len(l.Commits) != 1 || !l.Commits[0].Pushed || l.Commits[0].Branch != res.Branch || l.Commits[0].Base != f.base || l.Rest != f.base || l.Lease != nil {
 		t.Fatalf("ledger = %+v", l)
 	}
 	if res.Files != 2 || res.Lines != 3 {
@@ -426,21 +432,28 @@ func TestDeletionsAreChecked(t *testing.T) {
 	}
 }
 
-// A non-fast-forward push is refused, never forced.
+// A non-fast-forward push is refused, never forced. So is a push the remote
+// cannot take because it carries the 3.0.1 seat branch (seat/<handle>), which
+// a task branch under it cannot sit beside (3.0.2 t23): refused with the
+// branch to delete, never deferred tick after tick.
 func TestPushRejectedIsNeverForced(t *testing.T) {
-	f := newFixture(t)
-	other := filepath.Join(f.dir, "other")
-	sh(t, f.dir, "clone", "-q", f.origin, other)
-	write(t, filepath.Join(other, "x.txt"), "x\n")
-	sh(t, other, "checkout", "-q", "-b", f.branch)
-	sh(t, other, "add", "-A")
-	sh(t, other, "commit", "-q", "-m", "diverged")
-	sh(t, other, "push", "-q", "origin", f.branch)
-	before := f.originBranch()
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// p\n")
-	res := f.run(f.reported("cmd/"))
-	if res.ReasonCode != ReasonPushRejected || f.originBranch() != before {
-		t.Fatalf("want %s and the remote untouched, got %+v", ReasonPushRejected, res)
+	for name, branch := range map[string]string{"non-fast-forward": "seat/s1/t1", "the 3.0.1 seat branch": "seat/s1"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			other := filepath.Join(f.dir, "other")
+			sh(t, f.dir, "clone", "-q", f.origin, other)
+			write(t, filepath.Join(other, "x.txt"), "x\n")
+			sh(t, other, "checkout", "-q", "-b", branch)
+			sh(t, other, "add", "-A")
+			sh(t, other, "commit", "-q", "-m", "diverged")
+			sh(t, other, "push", "-q", "origin", branch)
+			before := f.originBranch()
+			write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// p\n")
+			res := f.run(f.reported("cmd/"))
+			if res.ReasonCode != ReasonPushRejected || f.originBranch() != before {
+				t.Fatalf("want %s and the remote untouched, got %+v", ReasonPushRejected, res)
+			}
+		})
 	}
 }
 
@@ -457,22 +470,6 @@ func TestRerunAfterCommitIsIdempotent(t *testing.T) {
 	}
 	if l, _ := ReadLedger(f.root, f.handle); len(l.Commits) != 1 {
 		t.Fatalf("ledger has %d commits", len(l.Commits))
-	}
-}
-
-// A second task on the same seat diffs against the first task's harness
-// commit, so the first task's files are not charged to the second.
-func TestSecondTaskDiffsFromTheLastHarnessCommit(t *testing.T) {
-	f := newFixture(t)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// one\n")
-	first := f.run(f.reported("cmd/"))
-	if _, err := f.store.Complete("t1", f.now); err != nil || !first.OK {
-		t.Fatal(err, first)
-	}
-	write(t, filepath.Join(f.wt, "internal", "client", "factory_test.go"), "package client\n// two\n")
-	res := f.run(f.reported("internal/client/"))
-	if !res.OK || res.Parent != first.Commit {
-		t.Fatalf("second task: %+v", res)
 	}
 }
 
@@ -542,15 +539,15 @@ func TestCleanSeatNeverRunsMidTask(t *testing.T) {
 }
 
 // fakeGh is a gh stand-in: `pr list` prints the state file (an open-PR
-// list, "[]" when absent); `pr create` writes PR #42 at the origin's seat
-// branch head into it and prints its URL. Every call is appended to the
+// list, "[]" when absent); `pr create` writes PR #42 at the origin's head of
+// the branch it names (--head) into it and prints its URL. Every call is appended to the
 // calls file.
 func fakeGh(t *testing.T, f *fixture) (gh, state, calls string) {
 	t.Helper()
 	gh, state, calls = filepath.Join(f.dir, "gh"), filepath.Join(f.dir, "gh-state.json"), filepath.Join(f.dir, "gh-calls")
 	script := "#!/bin/sh\necho \"$*\" >> " + calls + "\ncase \"$2\" in\n" +
 		"list) if [ -f " + state + " ]; then cat " + state + "; else echo '[]'; fi ;;\n" +
-		"create) head=$(" + gitBin(t) + " --git-dir=" + f.origin + " rev-parse refs/heads/" + f.branch + ")\n" +
+		"create) head=$(" + gitBin(t) + " --git-dir=" + f.origin + " rev-parse refs/heads/$5)\n" +
 		"  printf '[{\"number\":42,\"state\":\"OPEN\",\"headRefOid\":\"%s\",\"baseRefName\":\"main\",\"isCrossRepository\":false}]' \"$head\" > " + state + "\n" +
 		"  echo https://github.com/o/r/pull/42 ;;\nesac\n"
 	write(t, gh, script)
@@ -598,7 +595,7 @@ func TestCommitStepOpensAndBindsThePR(t *testing.T) {
 	}
 	again := Run(o)
 	raw, _ := os.ReadFile(calls)
-	if again.PRNumber != 42 || strings.Count(string(raw), "pr create") != 1 || !strings.Contains(string(raw), "pr create --draft --head seat/s1 --base main") || !strings.Contains(string(raw), "--repo "+fixtureRepo) {
+	if again.PRNumber != 42 || strings.Count(string(raw), "pr create") != 1 || !strings.Contains(string(raw), "pr create --draft --head seat/s1/"+tk.ID+" --base main") || !strings.Contains(string(raw), "--repo "+fixtureRepo) {
 		t.Fatalf("re-run: %+v\n%s", again, raw)
 	}
 }

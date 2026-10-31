@@ -2,6 +2,7 @@ package schedproc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -73,10 +74,28 @@ func scrubAMQ(env []string) []string {
 	return out
 }
 
-// Doorbell rings a seat with an AMQ message naming its new lease.
-type Doorbell struct{ Sender }
+// Doorbell rings a seat with an AMQ message naming its new lease. Start,
+// when set, runs first: it puts the seat's worktree on the task's own branch
+// (seatcommit.StartTask, 3.0.2 t23) before the seat is told. The seat is
+// rung either way; Start's error is returned with the send's (the scheduler
+// logs it as doorbell_failed), and the commit step then works from where
+// the worktree is.
+type Doorbell struct {
+	Sender
+	Start func(handle string, t task.Task) error
+}
 
 func (d Doorbell) Ring(handle string, t task.Task) error {
+	var serr error
+	if d.Start != nil {
+		if serr = d.Start(handle, t); serr != nil {
+			serr = fmt.Errorf("the task's branch for seat %s: %w", handle, serr)
+		}
+	}
+	return errors.Join(serr, d.ring(handle, t))
+}
+
+func (d Doorbell) ring(handle string, t task.Task) error {
 	body := fmt.Sprintf("The scheduler leased you task %s (%s, class %s). Claim it with: amq-squad task claim %s --me %s. Declared files: %s.",
 		t.ID, t.Title, t.Class, t.ID, handle, orNone(strings.Join(t.DeclaredFiles, ", ")))
 	return d.send(handle, "todo", "task "+t.ID+": "+t.Title, body)

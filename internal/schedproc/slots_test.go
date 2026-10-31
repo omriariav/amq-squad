@@ -2,6 +2,8 @@ package schedproc
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +129,17 @@ func TestDoorbellAndLeadNoticeSend(t *testing.T) {
 		return nil, nil
 	}}
 	tk := task.Task{ID: "t3", Title: "fix", Class: "implement", DeclaredFiles: []string{"a.go"}, BlockReason: "outside_declared_files", BlockRoute: task.RouteLead, BlockDetail: "b.go"}
+	// 3.0.2 t23: the doorbell puts the worktree on the task's branch before
+	// the seat is rung; a failure there still rings and is reported.
+	var started []string
+	start := func(h string, st task.Task) error {
+		started = append(started, h+" "+st.ID+" before "+fmt.Sprint(len(got))+" sends")
+		return errors.New("busy ledger")
+	}
+	if err := (Doorbell{Sender: s, Start: start}).Ring("s1", tk); err == nil || !strings.Contains(err.Error(), "busy ledger") || len(started) != 1 || started[0] != "s1 t3 before 0 sends" || len(got) != 1 {
+		t.Fatalf("start: %v %q, sends %d", err, started, len(got))
+	}
+	got = nil
 	if err := (Doorbell{Sender: s}).Ring("s1", tk); err != nil {
 		t.Fatal(err)
 	}

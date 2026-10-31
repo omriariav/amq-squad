@@ -31,7 +31,7 @@ func TestPushGoesToTheGrantsURLNeverTheSeatsConfig(t *testing.T) {
 	if !res.OK || !res.Pushed || f.originBranch() != res.Commit {
 		t.Fatalf("the grant's origin did not get the push: %+v (origin %q)", res, f.originBranch())
 	}
-	cmd := []string{"--git-dir=" + evil, "rev-parse", "--verify", "-q", "refs/heads/" + f.branch}
+	cmd := []string{"--git-dir=" + evil, "for-each-ref", "refs/heads/"}
 	if out, err := runGit(t, f.dir, cmd...); err == nil && strings.TrimSpace(out) != "" {
 		t.Fatalf("the seat's pushurl got the branch %s", out)
 	}

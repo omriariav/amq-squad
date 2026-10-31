@@ -188,9 +188,19 @@ func (f *fixture) run(tk task.Task) Result {
 	return Run(f.opts(tk))
 }
 
-// originBranch is the origin's seat branch tip, "" when absent.
+// originBranch is the tip of every seat branch on the origin (the seat
+// branch and each task branch under it, 3.0.2 t23), one per line, "" when
+// none: a row that wants nothing pushed sees any push of the seat.
 func (f *fixture) originBranch() string {
-	cmd := exec.Command(gitBin(f.t), "rev-parse", "--verify", "-q", "refs/heads/"+f.branch)
+	cmd := exec.Command(gitBin(f.t), "for-each-ref", "--format=%(objectname)", "refs/heads/"+f.branch, "refs/heads/"+f.branch+"/")
+	cmd.Dir = f.origin
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
+}
+
+// originRef is one branch's tip on the origin, "" when absent.
+func (f *fixture) originRef(branch string) string {
+	cmd := exec.Command(gitBin(f.t), "rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	cmd.Dir = f.origin
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))
