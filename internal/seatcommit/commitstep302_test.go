@@ -456,3 +456,47 @@ func TestRecordedCommitWithNoNewEditsIsPushedAndBound(t *testing.T) {
 		t.Fatalf("the recorded commit with no new edits: %+v (origin %q, binding #%d at %s)", res, f.originRef(res.Branch), got.PRNumber, got.PRHead)
 	}
 }
+
+// Codex pass on 2477f10f, finding 3: the owner's verified clear of a
+// quarantine is lifted onto the ledger only once the binding check passed.
+// A cleared seat whose task branch carries another task's bound PR is
+// refused with the ledger byte for byte unchanged (the cleared quarantine
+// still pending lift); with the PR gone, the same step lifts the clear and
+// commits. Fails when the clear is written before the binding check.
+func TestQuarantineClearIsLiftedOnlyAfterTheBindingCheck(t *testing.T) {
+	f := newFixture(t)
+	gh, prs, _ := branchGh(t, f)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
+	tk := f.reported("cmd/")
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
+	if res := f.run(tk); res.ReasonCode != ReasonGlobalConfig {
+		t.Fatalf("quarantine: %+v", res)
+	}
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	if _, err := ClearQuarantine(f.root, f.handle, f.signer, f.now); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := f.store.Add(task.AddInput{Title: "t12", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
+	f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
+	harnessPass(t, f.store, other.ID, f.now)
+	f.store.Done(other.ID, "s9", "ok", "", f.now)
+	if _, err := f.store.CompleteBound(other.ID, fixtureRepo, 815, strings.Repeat("c", 40), f.now); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(prs, strings.ReplaceAll(TaskBranch(f.handle, tk.ID), "/", "_"))
+	write(t, stale, `[{"number":815,"state":"OPEN","headRefOid":"`+strings.Repeat("c", 40)+`","baseRefName":"main","isCrossRepository":false}]`)
+	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	res := Run(f.prOpts(tk, gh))
+	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	if res.ReasonCode != ReasonPRBoundElsewhere || string(before) != string(after) || f.originBranch() != "" {
+		t.Fatalf("a refused step changed the ledger or pushed: %+v (ledger changed %v)", res, string(before) != string(after))
+	}
+	os.Remove(stale)
+	res = Run(f.prOpts(tk, gh))
+	l, _ := ReadLedger(f.root, f.handle)
+	if !res.OK || !res.Pushed || l.Quarantine != nil || len(l.Cleared) != 1 {
+		t.Fatalf("after the PR is gone: %+v (quarantine %+v, cleared %d)", res, l.Quarantine, len(l.Cleared))
+	}
+}

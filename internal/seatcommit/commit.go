@@ -355,6 +355,10 @@ func run(o Options, res Result) Result {
 		}
 	}
 	res.Tree = tree
+	// lift is a verified clear the step lifts: written to the ledger only once
+	// the binding check passed, so a refused or deferred step leaves the
+	// ledger unchanged (Codex pass on 2477f10f, finding 3).
+	var lift *LedgerQuarantine
 	if q := ledger.Quarantine; q != nil {
 		switch {
 		case q.ClearedAt == nil && o.DryRun:
@@ -372,12 +376,7 @@ func run(o Options, res Result) Result {
 			return res.refuse(ReasonQuarantineTree, task.RouteOwner, fmt.Sprintf("the seat's tree changed after the quarantine: the owner cleared %s, the worktree is now %s", q.Tree, tree))
 		}
 		if !o.DryRun && q.ClearedAt != nil {
-			ledger.Cleared = append(ledger.Cleared, *q)
-			ledger.Quarantine = nil
-			if err := writeLedger(o.Root, ledger); err != nil {
-				return res.defer_("commit ledger: " + err.Error())
-			}
-			res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+q.Task)
+			lift = q
 		}
 	}
 	raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
@@ -434,6 +433,14 @@ func run(o Options, res Result) Result {
 	// here, with nothing committed or pushed.
 	if r, stop := prCheck(o, sh, ledger, res); stop {
 		return r
+	}
+	if lift != nil {
+		ledger.Cleared = append(ledger.Cleared, *lift)
+		ledger.Quarantine = nil
+		if err := writeLedger(o.Root, ledger); err != nil {
+			return res.defer_("commit ledger: " + err.Error())
+		}
+		res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+lift.Task)
 	}
 	// v3-5-verifier rule 7: the class's verifier on the snapshot tree, the
 	// owner-config diff again, the verdict; only a pass reaches the push.
