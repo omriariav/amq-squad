@@ -18,23 +18,27 @@ the amendments 2b and 2c of 2026-10-31. Branch `v3-302-commitstep` from
 
 ### Day-2 evidence
 
-The facts above are the brief's. The brief forbids this branch from
-reading the live session (`.agent-mail/`) or calling GitHub, so the raw
-lines are not quoted here. The lead fills this slot with the output of
-these read-only commands:
+The lead read these from the live commit ledger of seat dev (session v31)
+and from the PR page, read-only. This branch read neither.
+
+Commit ledger, seat dev (`branch` is null: the 3.0.1 ledger has no
+per-commit branch; both commits went to seat/dev):
 
 ```
-# the commit ledger lines of t12 and t20 (seat dev, session v31)
-jq -c '.commits[] | select(.task == "t12" or .task == "t20") | {task, commit, parent, pushed}' \
-  .agent-mail/v31/extensions/amq-squad/commits/dev.json
-# PR #815's two commits
-gh pr view 815 --repo omriariav/amq-squad --json headRefName,headRefOid,commits \
-  --jq '{headRefName, headRefOid, commits: [.commits[] | {oid, messageHeadline}]}'
+t12  commit c338d3fe654fe802e257d8d3eb5e1c1aa13a42c0  parent a203f18310ae81a493762fb07a972034d063cbcb  pushed true  branch null
+t20  commit 6b9808a586bbb70060ab33482b334622ab1462db  parent c338d3fe654fe802e257d8d3eb5e1c1aa13a42c0  pushed true  branch null
 ```
 
-Expected shape: t12's ledger commit c338d3fe… pushed on seat/dev; t20's
-6b9808a5… with parent c338d3fe… and pushed true; PR #815 on seat/dev with
-both commits and head 6b9808a5….
+PR #815 (head branch seat/dev, bound to t12 at c338d3fe), its two commits:
+
+```
+c338d3fe  t12: 3.0.x: a task re-pin before the first claim is honoured; after a…
+6b9808a5  t20: 3.0.2: a seat's own block with a widen request has no caller: th…
+```
+
+t20's commit has t12's commit as its parent and sits on the same seat
+branch. It was pushed before the binding check refused it, so PR #815's
+head moved past t12's bound head.
 
 ## The change
 
@@ -55,8 +59,9 @@ both commits and head 6b9808a5….
    name is a label only. Nothing parses it back into a handle and a task,
    because a handle can itself contain a hyphen. The ledger's per-task
    record (`lease`, and each commit's `branch`) is the only source of
-   which task a branch carries. CleanSeat accepts a worktree on a task
-   branch only when the ledger records that branch.
+   which task a branch carries. CleanSeat accepts a worktree off the
+   resting branch only on the branch of the lease the ledger records
+   (`Lease.Branch`), not on a branch a commit merely names.
 3. **One base (amendment 2b).** The base is a per-task fact recorded at
    dispatch. Its source is the base tip the launch recorded on the launch
    record (t22's `base` on the staged record). seatcommit reads that key
@@ -73,10 +78,17 @@ both commits and head 6b9808a5….
    this side of the seam: `recordBase` keeps the ledger of the same
    worktree and branch across a relaunch, and CleanSeat used to reset to
    that ledger's old parent, undoing the launch's move to the tip.
-4. **The PR per task.** The step pushes the task branch and opens and
+4. **An unprepared lease is not rung.** If the doorbell's `StartTask`
+   fails, the seat is not rung. The doorbell returns a
+   `scheduler.LeaseUnpreparedError`, and the scheduler blocks the task for
+   the lead as `task_branch_unprepared`, with the error as the detail. The
+   holder's block ends the attempt and releases the lease in one store
+   transaction. No seat works on the resting branch. Any other doorbell
+   error stays a logged hint.
+5. **The PR per task.** The step pushes the task branch and opens and
    binds its own draft PR. A later attempt appends to the same branch and
    binds the same PR again at the new head (amendment 2c).
-5. **Back to a clean base.** After an OK step the worktree returns to
+6. **Back to a clean base.** After an OK step the worktree returns to
    `seat/<handle>` at the base. CleanSeat does the same at every lease
    boundary. Each commit is also anchored under
    `refs/amq-squad/commits/<seat>/<task>`, so a later attempt can start
@@ -100,9 +112,11 @@ boundary returns it, because the ledger records that branch.
 | TestBindingCheckRunsBeforeTheCommit (gh fails) | same | gh fails at the check: a pr_pending deferral, with the same nothing-written assertions. |
 | TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs | same | Two consecutive tasks on one seat. The leased worktree is on `seat/s1-t1`. After the step it is clean on `seat/s1`. The base moves on main. The second lease starts at the new tip. The two branches are pushed with PRs #1 and #2, each bound to its own task. The first commit's parent is the launch base, the second's is the new tip. The second branch does not contain the first commit. The ledger names the branch and base of each commit. |
 | TestLaterAttemptAppendsToItsOwnBranchAndPR | same | A task with PR #1 from an earlier attempt is sent back (refused, reset) and leased again. StartTask puts the worktree at the earlier commit. The new commit's parent is that commit, on the same branch, pushed fast-forward. The same PR #1 is bound again at the new head, with one `pr create` in all. |
-| TestTaskBranchIsALabelTheRecordDecides | internal/seatcommit/commitstep302_test.go | Seat `qa-2`, a hyphenated handle. The seat checks out a branch it made, `seat/qa-2-t9`, which only looks like a task branch. CleanSeat refuses it and touches nothing, because the ledger records no such branch. The leased task t1 is on `seat/qa-2-t1`, and its commit is recorded with that task and branch. |
+| TestTaskBranchIsALabelTheRecordDecides | internal/seatcommit/commitstep302_test.go | Seat `qa-2`, a hyphenated handle. The seat checks out a branch it made, `seat/qa-2-t9`, which only looks like a task branch. CleanSeat refuses it and touches nothing, because the ledger records no such branch. The leased task t1 is on `seat/qa-2-t1`, and its commit is recorded with that task and branch. After t1 completes, the seat checks out t1's branch again. A commit names that branch, but no lease is behind it, so CleanSeat refuses it too. (A task id such as "t1-b" cannot be made: the store takes only canonical t<N> ids.) |
+| TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | same | A remote that still carries the 3.0.1 `seat/s1` takes `seat/s1-t1` beside it, and `seat/s1` is unchanged. |
+| TestUnpreparedLeaseBlocksTheTaskForTheLead | internal/scheduler/scheduler_test.go | The doorbell cannot put the seat on the task's branch. The task is blocked as task_branch_unprepared, routed to the lead, with the error in its detail. The lease is gone, the attempt is recorded, the seat holds nothing, and no doorbell_failed is logged. |
 | TestLeaseBoundaryResetsToTheLaunchRecordsBase | same | The day-2 shape. The ledger keeps its first base, the launch record carries a newer base, and the local main moved further after the launch. The lease boundary resets to the launch record's base. The task's commit takes it as parent and base, and the ledger's `rest` is that base. |
-| TestDoorbellAndLeadNoticeSend | internal/schedproc/slots_test.go | The doorbell runs Start before the AMQ send. A Start error still rings the seat and is returned. |
+| TestDoorbellAndLeadNoticeSend | internal/schedproc/slots_test.go | The doorbell runs Start before the AMQ send. A Start error rings nothing and comes back as a LeaseUnpreparedError. A prepared seat is rung. |
 | TestSchedulerCommitStepBindsByDefaultUnderAMergeGrant | internal/cli/scheduler_run_test.go | Through `scheduler run`, the worktree after dispatch is on `refs/heads/seat/s1-t1`. gh sees `pr list --head seat/s1-t1` and `pr create --draft --head seat/s1-t1`. t1 completes bound at the anchored commit. |
 
 Updated rows, for the same reasons: the old branch name, and the worktree
@@ -146,6 +160,10 @@ were run, and the file was restored.
 | StartTask ignores the task's earlier commit (a later attempt starts from the base) | TestLaterAttemptAppendsToItsOwnBranchAndPR | FAIL |
 | the reused PR is not bound again | TestLaterAttemptAppendsToItsOwnBranchAndPR | FAIL |
 | CleanSeat goes by the name's prefix | TestTaskBranchIsALabelTheRecordDecides | FAIL |
+| CleanSeat also takes a branch a commit names (not only the lease's) | TestTaskBranchIsALabelTheRecordDecides | FAIL |
+| the task branch under seat/<handle>/ | TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | FAIL |
+| the scheduler only logs an unprepared ring | TestUnpreparedLeaseBlocksTheTaskForTheLead | FAIL |
+| the doorbell rings despite a Start error | TestDoorbellAndLeadNoticeSend | FAIL |
 | the reset target is the local base branch, not the launch record's base | TestLeaseBoundaryResetsToTheLaunchRecordsBase | FAIL |
 | the reset target is the ledger's parent (the day-2 code) | TestLeaseBoundaryResetsToTheLaunchRecordsBase, TestTwoTasksOnOneSeat… | FAIL |
 | no return to rest after an OK step | TestTwoTasksOnOneSeat…, TestCommitInsideDeclaredFiles… | FAIL |
@@ -164,8 +182,9 @@ were run, and the file was restored.
 - **A later attempt on another seat.** It gets a new branch
   `seat/<other>/<task>` and a new PR. The store's binding then moves to
   the new PR, and the old PR is left open.
-- **A later attempt with no StartTask.** A manual claim, or a doorbell
-  whose Start failed, leaves the worktree off the task's branch. The step
+- **A later attempt with no StartTask.** A manual claim (a doorbell whose
+  Start failed now blocks the task instead) leaves the worktree off the
+  task's branch. The step
   refuses it (worktree reason) instead of committing a diff that does not
   follow the branch. A first attempt in that state commits from the
   resting commit as usual.
