@@ -130,14 +130,20 @@ func TestDoorbellAndLeadNoticeSend(t *testing.T) {
 	}}
 	tk := task.Task{ID: "t3", Title: "fix", Class: "implement", DeclaredFiles: []string{"a.go"}, BlockReason: "outside_declared_files", BlockRoute: task.RouteLead, BlockDetail: "b.go"}
 	// 3.0.2 t23: the doorbell puts the worktree on the task's branch before
-	// the seat is rung; a failure there still rings and is reported.
+	// the seat is rung; a failure there rings nothing and comes back as the
+	// scheduler's LeaseUnpreparedError.
 	var started []string
 	start := func(h string, st task.Task) error {
 		started = append(started, h+" "+st.ID+" before "+fmt.Sprint(len(got))+" sends")
 		return errors.New("busy ledger")
 	}
-	if err := (Doorbell{Sender: s, Start: start}).Ring("s1", tk); err == nil || !strings.Contains(err.Error(), "busy ledger") || len(started) != 1 || started[0] != "s1 t3 before 0 sends" || len(got) != 1 {
+	err := (Doorbell{Sender: s, Start: start}).Ring("s1", tk)
+	var unprepared *scheduler.LeaseUnpreparedError
+	if !errors.As(err, &unprepared) || !strings.Contains(err.Error(), "busy ledger") || len(started) != 1 || started[0] != "s1 t3 before 0 sends" || len(got) != 0 {
 		t.Fatalf("start: %v %q, sends %d", err, started, len(got))
+	}
+	if err := (Doorbell{Sender: s, Start: func(string, task.Task) error { return nil }}).Ring("s1", tk); err != nil || len(got) != 1 {
+		t.Fatalf("a prepared seat is rung: %v, sends %d", err, len(got))
 	}
 	got = nil
 	if err := (Doorbell{Sender: s}).Ring("s1", tk); err != nil {
