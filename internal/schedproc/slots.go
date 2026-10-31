@@ -109,24 +109,23 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	// and its resting branch start from the base branch's tip, never from
 	// the commit ledger's first base or the branch's previous head.
 	g := baseGit{bin: firstNonEmpty(s.Git, "git")}
-	repo := root // an existing worktree's repository is its own
+	var common, gd, head string
+	var err error
 	if statErr == nil {
-		repo = seat.Worktree
-	}
-	common, err := commonDir(repo)
-	if err != nil {
-		return seat, fmt.Errorf("seat %s base: %v", seat.Handle, err)
-	}
-	// An existing worktree's HEAD must name a commit: the move is a two-tree
-	// read-tree from it, never a reset over files it cannot account for.
-	var gd, head string
-	if statErr == nil {
-		if gd, err = gitDirOf(seat.Worktree); err != nil {
-			return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
+		// An existing worktree's repository is its own, through its own git
+		// dir only (seatGitDir); its HEAD must name a commit: the move is a
+		// two-tree read-tree from it, never a reset over files it cannot
+		// account for.
+		projectCommon, _ := commonDir(root) // "" when the project root is no checkout
+		if gd, err = seatGitDir(seat.Worktree, projectCommon); err != nil {
+			return seat, fmt.Errorf("seat %s: %v", seat.Handle, err)
 		}
+		common = commonOf(gd)
 		if head, err = g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "rev-parse", "--verify", "-q", "HEAD^{commit}"); err != nil || head == "" {
 			return seat, fmt.Errorf("%s: seat %s: the worktree %s has a HEAD that names no commit; the launch never resets over it: check out a commit or remove the worktree, then launch again", ReasonSeatHeadUnreadable, seat.Handle, seat.Worktree)
 		}
+	} else if common, err = commonDir(root); err != nil {
+		return seat, fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
 	tip, err := s.baseTip(g, common, seat)
 	if err != nil {
@@ -344,14 +343,79 @@ func commonDir(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return commonOf(gd), nil
+}
+
+// commonOf is a git dir's common directory: the one its commondir file
+// names, else the git dir itself.
+func commonOf(gd string) string {
 	c, err := os.ReadFile(filepath.Join(gd, "commondir"))
 	if err != nil {
-		return gd, nil
+		return gd
 	}
 	if c := strings.TrimSpace(string(c)); !filepath.IsAbs(c) {
-		return filepath.Clean(filepath.Join(gd, c)), nil
+		return filepath.Clean(filepath.Join(gd, c))
 	}
-	return filepath.Clean(strings.TrimSpace(string(c))), nil
+	return filepath.Clean(strings.TrimSpace(string(c)))
+}
+
+// ReasonSeatGitdirForeign refuses a seat's launch when its worktree's .git
+// leads to a git dir that is not its own: a symbolic link, or a gitdir file
+// naming anything but <common>/worktrees/<name> of the project repository
+// whose gitdir file points back at this worktree.
+const ReasonSeatGitdirForeign = "seat_gitdir_foreign"
+
+// seatGitDir is an existing seat worktree's own git dir, symlinks evaluated:
+// a .git directory (a plain clone) as is; a .git file only when it names a
+// directory directly under <common>/worktrees, common being the project
+// repository's when the project root is a checkout, whose gitdir file names
+// this worktree's .git. Anything else refuses with ReasonSeatGitdirForeign:
+// a redirected .git would move another checkout's HEAD and refs.
+func seatGitDir(wt, projectCommon string) (string, error) {
+	dotgit := filepath.Join(wt, ".git")
+	foreign := func(why string, args ...any) (string, error) {
+		return "", fmt.Errorf("%s: the worktree %s: %s", ReasonSeatGitdirForeign, wt, fmt.Sprintf(why, args...))
+	}
+	st, err := os.Lstat(dotgit)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%s is not a git checkout: %v", wt, err)
+	case st.Mode()&os.ModeSymlink != 0:
+		return foreign("its .git is a symbolic link")
+	case st.IsDir():
+		return dotgit, nil
+	}
+	named, err := worktreeGitDir(wt)
+	if err != nil {
+		return foreign("%v", err)
+	}
+	gd, err := filepath.EvalSymlinks(named)
+	if err != nil {
+		return foreign("its .git names %s: %v", named, err)
+	}
+	common, err := filepath.EvalSymlinks(commonOf(gd))
+	if err != nil || filepath.Dir(gd) != filepath.Join(common, "worktrees") {
+		return foreign("its .git names %s, not a directory under a repository's worktrees/", gd)
+	}
+	if projectCommon != "" {
+		if pc, err := filepath.EvalSymlinks(projectCommon); err != nil || pc != common {
+			return foreign("its .git names %s, a worktree of %s, not of the project repository %s", gd, common, projectCommon)
+		}
+	}
+	back, err := os.ReadFile(filepath.Join(gd, "gitdir"))
+	if err != nil {
+		return foreign("%s has no gitdir file: %v", gd, err)
+	}
+	b := strings.TrimSpace(string(back))
+	if !filepath.IsAbs(b) {
+		b = filepath.Join(gd, b)
+	}
+	rb, err1 := filepath.EvalSymlinks(b)
+	rd, err2 := filepath.EvalSymlinks(dotgit)
+	if err1 != nil || err2 != nil || rb != rd {
+		return foreign("%s belongs to %s, not to this worktree", gd, b)
+	}
+	return gd, nil
 }
 
 // gitDirOf is a checkout's git directory: its .git directory (a plain

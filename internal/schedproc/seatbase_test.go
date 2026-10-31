@@ -1,6 +1,7 @@
 package schedproc
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -497,5 +498,87 @@ func TestSeatBaseDetachedLocalCommitRefuses(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(filepath.Join(wt, "detached.txt")); err != nil || string(raw) != "local\n" {
 		t.Fatalf("the commit's file: %q %v", raw, err)
+	}
+}
+
+// Codex round 3, P2: a seat worktree whose .git leads to a git dir that is
+// not its own refuses by name, and the checkout it leads to is untouched: a
+// .git symlink to another worktree's .git, a .git file naming another
+// worktree's git dir, a forged git dir outside worktrees/, and a worktree of
+// another repository with a forged gitdir back-pointer.
+func TestSeatBaseForeignGitdirRefuses(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	base := filepath.Dir(q.ProjectRoot)
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	c1, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, err := s.Plan(scheduler.SeatRequest{ID: "r2", Pool: task.Pool{Runtime: "pi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ReleaseRequest("r1")
+	s.ReleaseRequest("r2")
+	wt, pwt := c1.Seats[0].Worktree, p1.Seats[0].Worktree
+	commitFile(t, other, "v3.txt", "v3\n", "v3 moves")
+	gitRun(t, other, "push", "-q", "origin", "main")
+
+	r2 := filepath.Join(base, "r2")
+	os.MkdirAll(r2, 0o755)
+	gitRun(t, r2, "init", "-q", "-b", "main")
+	commitFile(t, r2, "x.txt", "x\n", "another repository")
+	w2 := filepath.Join(base, "w2")
+	gitRun(t, r2, "worktree", "add", "-q", "-b", "w2", w2)
+	w2gd := filepath.Join(r2, ".git", "worktrees", "w2")
+	if err := os.WriteFile(filepath.Join(w2gd, "gitdir"), []byte(filepath.Join(wt, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(base, "fakegd")
+	os.MkdirAll(fake, 0o755)
+	for name, body := range map[string]string{"commondir": filepath.Join(q.ProjectRoot, ".git"), "gitdir": filepath.Join(wt, ".git"), "HEAD": "ref: refs/heads/seat/c1"} {
+		if err := os.WriteFile(filepath.Join(fake, name), []byte(body+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() string {
+		return gitRun(t, q.ProjectRoot, "for-each-ref") + gitRun(t, q.ProjectRoot, "rev-parse", "HEAD") +
+			gitRun(t, pwt, "rev-parse", "HEAD") + gitRun(t, pwt, "symbolic-ref", "HEAD") +
+			gitRun(t, r2, "for-each-ref") + gitRun(t, w2, "symbolic-ref", "HEAD")
+	}
+	before := state()
+	dotgit := filepath.Join(wt, ".git")
+	orig, err := os.ReadFile(dotgit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgit, _ := os.ReadFile(filepath.Join(pwt, ".git"))
+	cases := []struct {
+		name string
+		set  func() error
+	}{
+		{"a .git symlink to another worktree's .git", func() error { return os.Symlink(filepath.Join(pwt, ".git"), dotgit) }},
+		{"a .git file naming another worktree's git dir", func() error { return os.WriteFile(dotgit, pgit, 0o644) }},
+		{"a forged git dir outside worktrees/", func() error { return os.WriteFile(dotgit, []byte("gitdir: "+fake+"\n"), 0o644) }},
+		{"another repository's worktree with a forged back-pointer", func() error { return os.WriteFile(dotgit, []byte("gitdir: "+w2gd+"\n"), 0o644) }},
+	}
+	for i, c := range cases {
+		os.Remove(dotgit)
+		if err := c.set(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Plan(scheduler.SeatRequest{ID: fmt.Sprintf("x%d", i), Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), ReasonSeatGitdirForeign) {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+	}
+	if after := state(); after != before {
+		t.Fatalf("a refused launch touched another checkout:\nbefore %s\nafter  %s", before, after)
+	}
+	os.Remove(dotgit)
+	if err := os.WriteFile(dotgit, orig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "ok", Pool: seatBasePool}); err != nil {
+		t.Fatalf("its own .git again: %v", err)
 	}
 }
