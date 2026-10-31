@@ -59,14 +59,21 @@ reviewer: origin/seat/dev holds c338d3fe and origin/seat/reviewer holds
 e9e6c53b, both unmerged. The lead decides, by merging, closing or deleting
 them.
 
-## The seam for the commit step (t23, t24)
+## One base, and the seam for the commit step (t23, t24)
 
-The ledger's per-launch base and CleanSeat's reset target are in
-internal/seatcommit, which the commit-step branch owns (its amendment 2b).
-`launch.Record.Base` is in the staged record that
-`seatcommit.stagedRecord` already reads, so `recordBase` and `cleanSeat`
-can take the launch's base from it. Until that lands, CleanSeat at the
-first lease still resets a relaunched seat to its old ledger parent.
+Reviewer amendment 2026-10-31: the base is a per-task fact recorded at
+dispatch, the base branch's tip when the task is dispatched. The launch and
+the roster launch put the worktree on that tip, and CleanSeat between
+leases resets to the tip, never during a held lease.
+
+This branch does the launch half. The launch-time base is recorded on the
+launch record only, as `launch.Record.Base` (json `base`), in the staged
+record that `seatcommit.stagedRecord` already reads. No commit-ledger field
+is added here. The ledger's per-task base and CleanSeat's reset target are
+in internal/seatcommit, which the commit-step branch owns. CleanSeat
+already runs only between leases: it reserves the seat under the task
+store's lock. Until the commit-step change lands, CleanSeat at the first
+lease still resets a relaunched seat to its old ledger parent.
 
 ## Rows
 
@@ -80,5 +87,5 @@ repository in the temp dir) as the grant's push URL:
 | TestSeatBaseRemoteSeatBranchAheadRefuses | a remote seat branch with an unmerged commit refuses by name and moves nothing; once merged, the launch proceeds at the tip | no unmerged check |
 | TestSeatBaseConflictingLocalChangeRefuses | a local change the move would overwrite refuses the launch and is kept | a plain reset in place of the two-tree merge |
 
-Not on this branch: the row "CleanSeat after a lease resets to the launch's
-base". It needs the seatcommit change above and belongs with t23 and t24.
+Not on this branch: the row "CleanSeat after a lease resets to the tip". It
+needs the seatcommit change above and belongs with t23 and t24.
