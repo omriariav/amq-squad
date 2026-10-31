@@ -228,6 +228,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 		}
 	}
 	for _, m := range yamlLineRE.FindAllStringSubmatchIndex(line, -1) {
+		work(1)
 		open, name, closeQ := line[m[2]:m[3]], line[m[4]:m[5]], line[m[6]:m[7]]
 		if open != closeQ {
 			continue
@@ -250,6 +251,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 		}
 	}
 	for _, m := range jsonRE.FindAllStringSubmatchIndex(line, -1) {
+		work(1)
 		name, val := line[m[2]:m[3]], line[m[4]:m[5]]
 		if strings.EqualFold(name, "key") {
 			continue // a map entry's key, not a credential's name
@@ -264,6 +266,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 		}
 	}
 	for _, m := range ProviderToken.FindAllStringIndex(line, -1) {
+		work(1)
 		if m[0] > 0 && isWord(line[m[0]-1]) && line[m[0]-1] != '_' && line[m[0]-1] != '-' {
 			continue // inside a longer word (task-..., disk-...)
 		}
@@ -273,7 +276,9 @@ func spans(line string) (out [][2]int, found []Finding) {
 		}
 	}
 	for _, re := range RealCredentialShapes {
+		work(1)
 		for _, m := range re.FindAllStringIndex(line, -1) {
+			work(1)
 			out = append(out, [2]int{m[0], m[1]})
 			found = append(found, Finding{Rule: "real-shape", Name: line[m[0]:min(m[0]+4, m[1])]})
 		}
@@ -318,6 +323,7 @@ func callExpression(v string) bool {
 // yamlComment is the index of a comment's # in a bare one-line value (a #
 // after a space or a tab), -1 when none.
 func yamlComment(v string) int {
+	work(len(v))
 	for i := 1; i < len(v); i++ {
 		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
 			return i - 1
@@ -379,6 +385,7 @@ func Line(line string) string {
 	out.Grow(len(line))
 	at := 0
 	for _, s := range merged {
+		work(1)
 		rep := Placeholder
 		if s[1]-s[0] >= 2 && line[s[0]] == '"' && line[s[1]-1] == '"' || jsonValueAt(line, s[0]) {
 			rep = `"` + Placeholder + `"` // a JSON value stays a JSON string
@@ -411,6 +418,7 @@ func Capped(text string, limit int) (out string, cut bool) {
 func jsonValueAt(line string, i int) bool {
 	j := i - 1
 	for j >= 0 && (line[j] == ' ' || line[j] == '\t') {
+		work(1)
 		j--
 	}
 	return j > 0 && line[j] == ':' && strings.TrimRight(line[:j], " \t") != "" && strings.HasSuffix(strings.TrimRight(line[:j], " \t"), `"`)
@@ -418,9 +426,10 @@ func jsonValueAt(line string, i int) bool {
 
 func mergeSpans(sp [][2]int) [][2]int {
 	work(len(sp))
-	sort.Slice(sp, func(i, j int) bool { return sp[i][0] < sp[j][0] })
+	sort.Slice(sp, func(i, j int) bool { work(1); return sp[i][0] < sp[j][0] })
 	out := [][2]int{sp[0]}
 	for _, s := range sp[1:] {
+		work(1)
 		last := &out[len(out)-1]
 		if s[0] < last[1] {
 			last[1] = max(last[1], s[1])
@@ -462,6 +471,7 @@ func yamlBlocks(text string) string {
 	work(len(text))
 	changed := false
 	for i := 0; i < len(lines); i++ {
+		work(1)
 		line := strings.TrimRight(lines[i], "\r")
 		mi := yamlKeyRE.FindStringSubmatchIndex(line)
 		if mi == nil || !CredentialName(line[mi[6]:mi[7]]) {
@@ -478,6 +488,7 @@ func yamlBlocks(text string) string {
 			if end := closingFrom(lines, i, at+1, q); end > i {
 				lines[i] = lines[i][:at] + Placeholder
 				for k := i + 1; k <= end; k++ {
+					work(1)
 					lines[k] = redactLineContent(lines[k])
 				}
 				changed, i = true, end
@@ -493,12 +504,14 @@ func yamlBlocks(text string) string {
 			if q := quoteOpen(lines[j]); q != 0 {
 				end := closingLine(lines, j, q)
 				for k := j; k <= end; k++ {
+					work(1)
 					lines[k] = redactLineContent(lines[k])
 				}
 				changed, j = true, end+1
 			}
 		}
 		for ; j < len(lines); j++ {
+			work(1)
 			l := strings.TrimRight(lines[j], "\r")
 			if strings.TrimSpace(l) == "" {
 				continue
@@ -540,6 +553,7 @@ func closingLine(lines []string, j int, q byte) int {
 func closingFrom(lines []string, j, start int, q byte) int {
 	for k := j; k < len(lines); k++ {
 		l := lines[k]
+		work(len(l))
 		from := 0
 		if k == j {
 			from = start
@@ -599,10 +613,11 @@ func Block(text string) string {
 			sp = append(sp, span{m[4], m[5]})
 		}
 	}
-	sort.Slice(sp, func(i, j int) bool { return sp[i].a < sp[j].a })
+	sort.Slice(sp, func(i, j int) bool { work(1); return sp[i].a < sp[j].a })
 	var out strings.Builder
 	at := 0
 	for _, s := range sp {
+		work(1)
 		if s.a < at {
 			continue // inside a span already replaced
 		}
@@ -622,6 +637,7 @@ func Block(text string) string {
 func Text(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, l := range lines {
+		work(1)
 		lines[i] = Line(l)
 	}
 	return strings.Join(lines, "\n")
