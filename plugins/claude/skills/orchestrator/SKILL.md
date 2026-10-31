@@ -157,11 +157,12 @@ result is a blocker, not a warning to mention later.
 `release prepare` records the release and raises two typed gates through the core,
 `tag` and `github_release`; the owner answers each in its gate thread. `release
 publish`, run under the owner's gh outside any seat, runs the tag and then the
-release, each only with its verified answer:
+release, each only with its verified answer. `--notes-file` is the release notes
+document, the GitHub release body; publish takes the same file:
 
 ```sh
 # skill-invocation-check:skip — raises typed gates, which post to the owner's Buzz DM
-amq-squad release prepare --repository OWNER/REPO --tag TAG --commit SHA --project P --session S --json
+amq-squad release prepare --repository OWNER/REPO --tag TAG --commit SHA --notes-file docs/TAG-release-notes.md --project P --session S --json
 ```
 
 ## Authority boundary

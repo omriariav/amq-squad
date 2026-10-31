@@ -52,6 +52,7 @@ type repoExec struct {
 	losePublish int // the n-th PublishDraft publishes and loses its response
 	creates     int
 	publishes   int
+	remoteCalls []string // CommitExists and BranchContains, as the fake remote answered them
 }
 
 func (e *repoExec) Tag(_ context.Context, repository, tag, commit string) error {
@@ -81,6 +82,7 @@ func (e *repoExec) CreateDraft(_ context.Context, repository, tag, commit, notes
 		e.bodies = map[int64]string{}
 	}
 	e.bodies[d.ID] = notes
+	d.Body = notes
 	if e.onDraft != nil {
 		e.onDraft()
 	}
@@ -94,6 +96,7 @@ func (e *repoExec) FindDrafts(_ context.Context, _ string, nonce string) ([]Draf
 	var out []Draft
 	for id, d := range e.drafts {
 		if strings.Contains(e.bodies[id], NonceMarker(nonce)) {
+			d.Body = e.bodies[id]
 			out = append(out, d)
 		}
 	}
@@ -110,6 +113,9 @@ func (e *repoExec) ReadDraft(_ context.Context, _ string, id int64) (Draft, bool
 		return Draft{}, false, errors.New("HTTP 502")
 	}
 	d, ok := e.drafts[id]
+	if ok {
+		d.Body = e.bodies[id] // the remote's body, as a test may have edited it
+	}
 	return d, ok, nil
 }
 
@@ -146,6 +152,19 @@ func (e *repoExec) DeleteRelease(_ context.Context, _ string, id int64) error {
 	return nil
 }
 
+// CommitExists asks the bare repository for the object, as the remote does.
+func (e *repoExec) CommitExists(_ context.Context, _, commit string) (bool, error) {
+	e.remoteCalls = append(e.remoteCalls, "exists "+commit)
+	return exec.Command("git", "-C", e.bare, "cat-file", "-e", commit+"^{commit}").Run() == nil, nil
+}
+
+// BranchContains resolves the commit against the bare repository's branch,
+// as the remote does: an object the remote lacks is not contained.
+func (e *repoExec) BranchContains(_ context.Context, _, branch, commit string) (bool, error) {
+	e.remoteCalls = append(e.remoteCalls, "contains "+branch+" "+commit)
+	return exec.Command("git", "-C", e.bare, "merge-base", "--is-ancestor", commit, "refs/heads/"+branch).Run() == nil, nil
+}
+
 func (e *repoExec) TagCommit(_ context.Context, repository, tag string) (string, error) {
 	out, err := exec.Command("git", "-C", e.bare, "rev-parse", "--verify", "-q", "refs/tags/"+tag+"^{commit}").Output()
 	if err != nil {
@@ -161,7 +180,12 @@ type fixture struct {
 	spec     operatorauth.ReleaseSpec
 	approved map[string]bool
 	commit   string
+	work     string
+	scope    compoundrelease.Scope
 }
+
+// fixtureBody is the release notes file's content the fixture releases with.
+const fixtureBody = "# v1.2.0\n\nThe first release.\n"
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
@@ -194,8 +218,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	id := gatestore.Identity{OwnerPubKey: strings.Repeat("a", 64), IssuerKeyID: "ed25519-sha256:" + strings.Repeat("b", 64)}
-	f := &fixture{exec: &repoExec{t: t, bare: bare}, root: root, approved: map[string]bool{}, commit: commit}
-	f.flow = &Flow{Release: store, Gates: gates, Exec: f.exec, Lead: "lead",
+	f := &fixture{exec: &repoExec{t: t, bare: bare}, root: root, approved: map[string]bool{}, commit: commit, work: work, scope: scope}
+	f.flow = &Flow{Release: store, Gates: gates, Exec: f.exec, Lead: "lead", Body: fixtureBody, RepoDir: work, Branch: "main",
 		Raise: func(s gatestore.Spec) (gatestore.Record, error) {
 			rec, err := gatestore.Render(s, time.Now(), id)
 			if err != nil {
@@ -209,7 +233,7 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return nil
 		}}
-	f.spec, err = Spec(scope, "lead", "owner", "owner/fixture", "v1.2.0", commit, "first release")
+	f.spec, err = Spec(scope, "lead", "owner", "owner/fixture", "v1.2.0", commit, "first release", fixtureBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,5 +669,243 @@ func TestRepassPublishedMismatchIsNeverDeleted(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// 3.0.2 (v3.0.1's gate note became its public body): the release body is the
+// notes file's content, and the gate note with the body's digest is only in
+// the gate question.
+func TestReleaseBodyIsTheNotesFile(t *testing.T) {
+	f := newFixture(t)
+	if want := "first release " + bodyDigestLabel + BodyDigest(fixtureBody); f.spec.Note.Summary != want {
+		t.Fatalf("gate note %q, want %q", f.spec.Note.Summary, want)
+	}
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	if _, err := f.flow.Publish(context.Background(), f.root); err != nil || len(f.exec.releases) != 1 {
+		t.Fatalf("publish: %v %v", err, f.exec.releases)
+	}
+	body := f.exec.bodies[1]
+	if !strings.HasPrefix(body, fixtureBody+"\n\n<!-- amq-squad-release-nonce: ") || strings.Contains(body, "first release ") {
+		t.Fatalf("release body %q is not the notes file's content", body)
+	}
+	if _, err := Spec(f.scope, "lead", "owner", "owner/fixture", "v1.2.0", f.commit, "first release", " \n"); err == nil {
+		t.Fatal("a release without a body was specified")
+	}
+}
+
+// 3.0.2: publish refuses a body that is not the prepared file's content, and
+// nothing runs, not even the tag.
+func TestPublishRefusesABodyThatIsNotThePreparedFile(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.flow.Body = fixtureBody + "edited after prepare\n"
+	if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrBodyMismatch) || f.exec.tags != 0 || len(f.exec.releases) != 0 || f.exec.nextID != 0 {
+		t.Fatalf("a changed body was published: %v tags %d releases %v", err, f.exec.tags, f.exec.releases)
+	}
+	f.flow.Body = fixtureBody
+	if _, err := f.flow.Publish(context.Background(), f.root); err != nil || len(f.exec.releases) != 1 {
+		t.Fatalf("the prepared body: %v %v", err, f.exec.releases)
+	}
+}
+
+// 3.0.2: --commit must name an object before any gate is raised. A
+// well-formed SHA naming nothing is commit_unknown; a local commit the remote
+// does not have is commit_unknown_remote (push it); a commit the remote has
+// on another branch only is commit_not_on_branch (merge it). None writes the
+// release or raises a gate.
+func TestPrepareRefusesACommitThatNamesNothingBeforeAnyGate(t *testing.T) {
+	f := newFixture(t)
+	tree := run(t, f.work, "rev-parse", "HEAD^{tree}")
+	localOnly := run(t, f.work, "commit-tree", "-m", "local only", tree)
+	side := run(t, f.work, "commit-tree", "-p", f.commit, "-m", "side branch", tree)
+	run(t, f.work, "push", "-q", "origin", side+":refs/heads/side")
+	for _, c := range []struct {
+		commit string
+		want   error
+	}{
+		{strings.Repeat("ab", 20), ErrCommitUnknown},
+		{localOnly, ErrCommitUnknownRemote},
+		{side, ErrCommitNotOnBranch},
+	} {
+		spec, err := Spec(f.scope, "lead", "owner", "owner/fixture", "v1.2.0", c.commit, "first release", fixtureBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.flow.Prepare(spec); !errors.Is(err, c.want) {
+			t.Fatalf("prepare at %s: %v, want %v", c.commit, err, c.want)
+		}
+		if ids, _ := f.flow.Gates.IDs(); len(ids) != 0 {
+			t.Fatalf("a gate was raised for %s: %v", c.commit, ids)
+		}
+		if _, err := f.flow.Release.ReadCurrent(); err == nil {
+			t.Fatalf("the release was written for %s", c.commit)
+		}
+	}
+	if _, err := f.flow.Prepare(f.spec); err != nil {
+		t.Fatalf("the branch's commit: %v", err)
+	}
+}
+
+// 3.0.2 (reviewer): the commit check reaches the remote only through the
+// executor. In tests that is the fake (the bare repository); a gh on PATH
+// records any call, and none is made.
+func TestCommitCheckReachesTheRemoteOnlyThroughTheExecutor(t *testing.T) {
+	f := newFixture(t)
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "gh-called")
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\necho \"$@\" >> "+marker+"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := f.flow.Prepare(f.spec); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"exists " + f.commit, "contains main " + f.commit}; !slices.Equal(f.exec.remoteCalls, want) {
+		t.Fatalf("remote calls %v, want %v through the fake executor", f.exec.remoteCalls, want)
+	}
+	if b, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("gh was run: %s", b)
+	}
+}
+
+// 3.0.2 (reviewer): the digest line is written by prepare only. A --notes
+// that already carries the label is refused; publish parses exactly one
+// digest and refuses zero or two, each by name, before anything runs.
+func TestTheDigestLineIsPreparesOnly(t *testing.T) {
+	f := newFixture(t)
+	if _, err := Spec(f.scope, "lead", "owner", "owner/fixture", "v1.2.0", f.commit, "see "+bodyDigestLabel+BodyDigest("other"), fixtureBody); !errors.Is(err, ErrNoteCarriesDigest) {
+		t.Fatalf("a note carrying a digest: %v", err)
+	}
+	digest := bodyDigestLabel + BodyDigest(fixtureBody)
+	for _, c := range []struct {
+		summary string
+		want    error
+	}{
+		{"first release", ErrBodyDigestMissing},
+		{"first release " + bodyDigestLabel + "not-hex", ErrBodyDigestMissing},
+		{"first release " + digest + " " + digest, ErrBodyDigestAmbiguous},
+	} {
+		g := newFixture(t)
+		g.spec.Note.Summary = c.summary // a spec Spec did not write
+		snap, err := g.flow.Prepare(g.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ch := range snap.Active.Children {
+			g.approved[ch.QuestionMessageID] = true
+		}
+		if _, err := g.flow.Publish(context.Background(), g.root); !errors.Is(err, c.want) || g.exec.tags != 0 || g.exec.nextID != 0 {
+			t.Fatalf("note %q: %v (tags %d drafts %d), want %v", c.summary, err, g.exec.tags, g.exec.nextID, c.want)
+		}
+	}
+}
+
+// 3.0.2 (Codex P1): the draft's body on the remote is compared at every
+// read-back, not only the local body at publish. A body edited after
+// creation, right before the publish, on a recorded draft a later run
+// recovers, or on a draft a later run adopts is release_draft_body_changed:
+// deleted, nothing published. Each is refused at its own read (the read
+// count), so a later check does not stand in for a missing earlier one.
+func TestADraftWhoseRemoteBodyChangedIsNeverPublished(t *testing.T) {
+	edit := func(e *repoExec) {
+		for id := range e.bodies {
+			e.bodies[id] = "edited on the remote\n\n" + e.bodies[id]
+		}
+	}
+	for _, at := range []int{1, 2} { // the read-back after creation, the re-read before publish
+		f := newFixture(t)
+		snap, err := f.flow.Prepare(f.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range snap.Active.Children {
+			f.approved[c.QuestionMessageID] = true
+		}
+		f.exec.onRead = func(n int) {
+			if n == at {
+				edit(f.exec)
+			}
+		}
+		if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrDraftBodyChanged) || f.exec.published() != 0 || f.exec.deleted != 1 || f.exec.reads != at {
+			t.Fatalf("read %d: %v published %d deleted %d reads %d", at, err, f.exec.published(), f.exec.deleted, f.exec.reads)
+		}
+	}
+	// Recovery: the first run's read-back fails, so the draft stays recorded;
+	// its body is edited before the next run.
+	g := newFixture(t)
+	snap, err := g.flow.Prepare(g.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		g.approved[c.QuestionMessageID] = true
+	}
+	g.exec.failRead = map[int]bool{1: true}
+	if _, err := g.flow.Publish(context.Background(), g.root); err == nil {
+		t.Fatal("the read-back error published")
+	}
+	edit(g.exec)
+	before := g.exec.reads
+	if _, err := g.flow.Publish(context.Background(), g.root); !errors.Is(err, ErrDraftBodyChanged) || g.exec.published() != 0 || g.exec.deleted != 1 || g.exec.reads-before != 1 {
+		t.Fatalf("recovery: %v published %d deleted %d reads %d", err, g.exec.published(), g.exec.deleted, g.exec.reads-before)
+	}
+	// Adoption: the creation response is lost, so the next run adopts the
+	// draft by its nonce; its body was edited in between.
+	h := newFixture(t)
+	snap, err = h.flow.Prepare(h.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		h.approved[c.QuestionMessageID] = true
+	}
+	h.exec.loseCreate = 1
+	if _, err := h.flow.Publish(context.Background(), h.root); err == nil {
+		t.Fatal("a lost creation response was reported as success")
+	}
+	edit(h.exec)
+	before = h.exec.reads
+	if _, err := h.flow.Publish(context.Background(), h.root); !errors.Is(err, ErrDraftBodyChanged) || h.exec.published() != 0 || h.exec.deleted != 1 || h.exec.reads-before != 1 {
+		t.Fatalf("adoption: %v published %d deleted %d reads %d", err, h.exec.published(), h.exec.deleted, h.exec.reads-before)
+	}
+}
+
+// 3.0.2 (Codex revert gap, round 3): the recorded draft was published (the
+// publish response was lost) and its body differs on the remote. Recovery
+// is not completion: it refuses with release_draft_body_changed, never
+// deletes the published release, and raises the owner alert.
+func TestRecoveredPublishedReleaseWithAnotherBodyIsRefused(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.exec.losePublish = 1
+	if _, err := f.flow.Publish(context.Background(), f.root); err == nil {
+		t.Fatal("a lost publish response was reported as success")
+	}
+	for id := range f.exec.bodies {
+		f.exec.bodies[id] = "edited after publication\n\n" + f.exec.bodies[id]
+	}
+	if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrDraftBodyChanged) || f.exec.deleted != 0 || f.exec.published() != 1 {
+		t.Fatalf("recovery of a published release with another body: %v deleted %d published %d", err, f.exec.deleted, f.exec.published())
+	}
+	if alerts := mergetrain.ReadAlerts(f.root); !slices.ContainsFunc(alerts, func(a mergetrain.Alert) bool { return a.Kind == "draft_edited" }) {
+		t.Fatalf("no owner alert: %+v", alerts)
 	}
 }
