@@ -413,3 +413,46 @@ func TestEveryOpenPROnTheBranchIsExamined(t *testing.T) {
 		t.Fatalf("want %s naming #815 before anything is written, got %+v (origin %q)", ReasonPRBoundElsewhere, res, f.originBranch())
 	}
 }
+
+// Codex pass on 2477f10f, finding 1: an attempt records its commit, the push
+// fails, the task is blocked and reset; the next lease starts on that commit
+// and the seat reports done with no new edits. "Nothing to commit" is not
+// OK there: the step pushes the recorded commit to the task's branch and
+// binds its PR. Fails when the empty diff returns OK before the push.
+func TestRecordedCommitWithNoNewEditsIsPushedAndBound(t *testing.T) {
+	f := newFixture(t)
+	gh, _, _ := branchGh(t, f)
+	hook := filepath.Join(f.origin, "hooks", "pre-receive")
+	write(t, hook, "#!/bin/sh\necho 'the remote is down' >&2\nexit 1\n")
+	os.Chmod(hook, 0o755)
+	tk := f.leased("cmd/")
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// recorded, not pushed\n")
+	first := Run(f.prOpts(f.done(tk.ID), gh))
+	l, _ := ReadLedger(f.root, f.handle)
+	if first.OK || first.Pushed || len(l.Commits) != 1 || l.Commits[0].Pushed || f.originBranch() != "" {
+		t.Fatalf("the failed push: %+v", first)
+	}
+	recorded := l.Commits[0].Commit
+	os.Remove(hook)
+	if _, err := f.store.RefuseCommit(tk.ID, ReasonPushRejected, "the remote is down", task.RouteLead, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil {
+		t.Fatal(err)
+	}
+	again, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StartTask(f.root, f.handle, gitBin(t), nil, again, "", f.now); err != nil {
+		t.Fatal(err)
+	}
+	res := Run(f.prOpts(f.done(tk.ID), gh)) // no new edits
+	got, _ := f.store.Get(tk.ID)
+	if !res.OK || !res.Pushed || res.Commit != recorded || res.PRNumber != 1 || f.originRef(res.Branch) != recorded || got.PRNumber != 1 || got.PRHead != recorded {
+		t.Fatalf("the recorded commit with no new edits: %+v (origin %q, binding #%d at %s)", res, f.originRef(res.Branch), got.PRNumber, got.PRHead)
+	}
+}

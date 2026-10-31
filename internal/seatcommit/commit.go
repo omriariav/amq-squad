@@ -1160,6 +1160,18 @@ func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Res
 	case last >= 0 && l.Commits[last].Task == o.Task.ID && l.Commits[last].Branch == res.Branch:
 		res.Commit = l.Commits[last].Commit // this task's commit exists; finish its push
 		res.Notes = append(res.Notes, "the harness commit "+res.Commit+" was already recorded")
+	case earlier >= 0 && l.Commits[earlier].Commit == res.Parent && res.Tree == parentTree:
+		// A later attempt with no edits on the task's recorded commit
+		// (StartTask put the worktree there): nothing new to commit, but
+		// "nothing to commit" is OK only once that commit is pushed and bound;
+		// it goes on to the push and the PR as if it had just been made
+		// (Codex pass on 2477f10f, finding 1).
+		last = earlier
+		c := l.Commits[last]
+		res.Commit, res.Parent, res.Tree = c.Commit, c.Parent, c.Tree
+		res.DeclaredDigest, res.DiffDigest, res.Lines = c.DeclaredDigest, c.DiffDigest, c.Lines
+		res.Changes, res.Files = append([]Change{}, c.Changes...), len(c.Changes)
+		res.Notes = append(res.Notes, "no new edits on the task's recorded commit "+c.Commit+": it is pushed and bound")
 	case earlier >= 0 && l.Commits[earlier].Commit != res.Parent && res.Tree != parentTree:
 		// A later attempt appends to the task's branch only from its last
 		// commit (StartTask puts the worktree there); a diff from anywhere
