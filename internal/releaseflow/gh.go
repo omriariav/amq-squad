@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -25,9 +27,38 @@ func (g *GH) run(ctx context.Context, args ...string) (string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(3, len(args))], " "), err, strings.TrimSpace(stderr.String()))
+		e := &ghError{err: fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(3, len(args))], " "), err, strings.TrimSpace(stderr.String()))}
+		if m := httpStatusRe.FindStringSubmatch(stderr.String()); m != nil {
+			e.status, _ = strconv.Atoi(m[1])
+		}
+		return "", e
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// ghError is a failed gh call with the HTTP status gh printed on stderr
+// ("gh: Not Found (HTTP 404)"); status is 0 for a failure without one (a
+// transport error, a crash). The status is read from gh's own token only,
+// never from the error text, which names the endpoint and so the SHA or id
+// (Codex P2: a SHA containing "404" made a timeout look like a missing
+// commit).
+type ghError struct {
+	err    error
+	status int
+}
+
+func (e *ghError) Error() string { return e.err.Error() }
+func (e *ghError) Unwrap() error { return e.err }
+
+var httpStatusRe = regexp.MustCompile(`\bHTTP ([1-5][0-9][0-9])\b`)
+
+// httpStatus is the HTTP status of a failed gh call, 0 when it has none.
+func httpStatus(err error) int {
+	var e *ghError
+	if errors.As(err, &e) {
+		return e.status
+	}
+	return 0
 }
 
 func (g *GH) Tag(ctx context.Context, repository, tag, commit string) error {
@@ -81,7 +112,7 @@ func (g *GH) CreateDraft(ctx context.Context, repository, tag, commit, notes str
 func (g *GH) ReadDraft(ctx context.Context, repository string, id int64) (Draft, bool, error) {
 	out, err := g.run(ctx, "api", "repos/"+repository+"/releases/"+strconv.FormatInt(id, 10), "--jq", draftJQ)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if httpStatus(err) == 404 {
 			return Draft{}, false, nil
 		}
 		return Draft{}, false, err
@@ -203,7 +234,7 @@ func TagRuleCovers(include, exclude []string, tag string) (covered bool, why str
 func (g *GH) TagCommit(ctx context.Context, repository, tag string) (string, error) {
 	out, err := g.run(ctx, "api", "repos/"+repository+"/git/ref/tags/"+tag, "--jq", `.object.type + " " + .object.sha`)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if httpStatus(err) == 404 {
 			return "", nil
 		}
 		return "", err
@@ -219,7 +250,7 @@ func (g *GH) TagCommit(ctx context.Context, repository, tag string) (string, err
 // that SHA) is false.
 func (g *GH) CommitExists(ctx context.Context, repository, commit string) (bool, error) {
 	if _, err := g.run(ctx, "api", "repos/"+repository+"/commits/"+commit, "--jq", ".sha"); err != nil {
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "422") {
+		if st := httpStatus(err); st == 404 || st == 422 {
 			return false, nil
 		}
 		return false, err
@@ -233,7 +264,7 @@ func (g *GH) CommitExists(ctx context.Context, repository, commit string) (bool,
 func (g *GH) BranchContains(ctx context.Context, repository, branch, commit string) (bool, error) {
 	out, err := g.run(ctx, "api", "repos/"+repository+"/compare/"+branch+"..."+commit, "--jq", ".status")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if httpStatus(err) == 404 {
 			return false, nil
 		}
 		return false, err
