@@ -173,6 +173,10 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 // force-pushes it; the lead decides.
 const ReasonSeatBranchUnmerged = "seat_branch_unmerged"
 
+// ReasonBaseTipMoved refuses a launch whose fetched base tip is not the
+// object id ls-remote reported for the base branch a moment before.
+const ReasonBaseTipMoved = "base_tip_moved"
+
 // ReasonSeatHeadUnreadable refuses a seat's launch when its existing
 // worktree's HEAD names no commit (unborn or unreadable): the move to the tip
 // is never a reset over files nothing accounts for.
@@ -215,17 +219,17 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 	if err != nil {
 		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
-	refs := map[string]bool{}
+	refs := map[string]string{} // ref -> the object id ls-remote reported
 	for _, line := range strings.Split(out, "\n") {
-		if _, ref, ok := strings.Cut(line, "\t"); ok {
-			refs[ref] = true
+		if oid, ref, ok := strings.Cut(line, "\t"); ok {
+			refs[ref] = oid
 		}
 	}
-	if !refs["refs/heads/"+base] {
+	if refs["refs/heads/"+base] == "" {
 		return "", fmt.Errorf("seat %s base: the push URL has no branch %s", seat.Handle, base)
 	}
 	specs := []string{"+refs/heads/" + base + ":refs/base"}
-	if refs["refs/heads/"+seat.Branch] {
+	if refs["refs/heads/"+seat.Branch] != "" {
 		specs = append(specs, "+refs/heads/"+seat.Branch+":refs/seat")
 	}
 	if _, err := fg.run(sh.dir, fenv, append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", url}, specs...)...); err != nil {
@@ -234,6 +238,9 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 	tip, err := g.run(sh.dir, sh.env, "rev-parse", "--verify", "refs/base^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
+	}
+	if want := refs["refs/heads/"+base]; tip != want {
+		return "", fmt.Errorf("%s: seat %s: the push URL's %s was %s at ls-remote and %s at the fetch; launch again", ReasonBaseTipMoved, seat.Handle, base, short(want), short(tip))
 	}
 	if len(specs) == 2 {
 		ahead, err := g.run(sh.dir, sh.env, "rev-list", "--abbrev-commit", "--max-count=11", "refs/base..refs/seat")

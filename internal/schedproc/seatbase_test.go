@@ -185,8 +185,12 @@ func TestSeatBaseConflictingLocalChangeRefuses(t *testing.T) {
 // whether GH_TOKEN reached it, never its value) and answers them for tip,
 // passing every other call to the real git: an HTTPS push URL without the
 // network.
-func fakeFetchGit(t *testing.T, dir, tip string) (bin, log string) {
+func fakeFetchGit(t *testing.T, dir, tip string, fetched ...string) (bin, log string) {
 	t.Helper()
+	fetchTip := tip // what the fetch writes; another id fakes a move between the calls
+	if len(fetched) > 0 {
+		fetchTip = fetched[0]
+	}
 	real, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not on PATH")
@@ -194,7 +198,7 @@ func fakeFetchGit(t *testing.T, dir, tip string) (bin, log string) {
 	bin, log = filepath.Join(dir, "fake-git"), filepath.Join(dir, "fetch.log")
 	script := "#!/bin/sh\ncase \" $* \" in\n" +
 		"*\" ls-remote \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set} ssh_variant=${GIT_SSH_VARIANT:+set} ssh_extra=${GIT_SSH_EXTRA:+set}\" >> '" + log + "'; printf '%s\\trefs/heads/main\\n' " + tip + "; exit 0;;\n" +
-		"*\" fetch \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set}\" >> '" + log + "'; exec '" + real + "' update-ref refs/base " + tip + ";;\n" +
+		"*\" fetch \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set}\" >> '" + log + "'; exec '" + real + "' update-ref refs/base " + fetchTip + ";;\n" +
 		"esac\nexec '" + real + "' \"$@\"\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -441,4 +445,26 @@ func TestSeatBaseShadowRemoved(t *testing.T) {
 		t.Fatalf("an unmerged remote seat branch: %v", err)
 	}
 	left("a launch refused after the fetch")
+}
+
+// Codex rule 9: the fetched base must be the object id ls-remote reported
+// for the base branch; a move between the two calls refuses the launch.
+func TestSeatBaseFetchedTipMustMatchLsRemote(t *testing.T) {
+	q := squadFixture(t)
+	dir := filepath.Dir(q.ProjectRoot)
+	reported := gitRun(t, q.ProjectRoot, "rev-parse", "HEAD")
+	moved := commitFile(t, q.ProjectRoot, "b.txt", "b\n", "the branch moves between the calls")
+	bin, _ := fakeFetchGit(t, dir, reported, moved)
+	gh := filepath.Join(dir, "gh-pinned")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sum, _ := registry.FileSHA256(gh)
+	s := &Slots{Squad: q, Git: bin, Target: seatcommit.Target{PushURL: "https://github.com/o/r", BaseBranch: "main", GhPath: gh, GhSHA256: sum}}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), ReasonBaseTipMoved) {
+		t.Fatalf("a base that moved between ls-remote and fetch: %v", err)
+	}
+	if _, err := os.Stat(q.Seats[0].Worktree); !os.IsNotExist(err) {
+		t.Fatalf("a refused launch created the worktree: %v", err)
+	}
 }
