@@ -215,6 +215,18 @@ func (g *GH) TagCommit(ctx context.Context, repository, tag string) (string, err
 	return sha, nil
 }
 
+// CommitExists asks the remote for the commit; a 404 or 422 (no commit for
+// that SHA) is false.
+func (g *GH) CommitExists(ctx context.Context, repository, commit string) (bool, error) {
+	if _, err := g.run(ctx, "api", "repos/"+repository+"/commits/"+commit, "--jq", ".sha"); err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "422") {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // BranchContains resolves the commit against the remote branch: the compare
 // of branch...commit is identical or behind when the branch contains it; a
 // commit or branch the remote does not know is false.

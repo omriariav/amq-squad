@@ -52,6 +52,7 @@ type repoExec struct {
 	losePublish int // the n-th PublishDraft publishes and loses its response
 	creates     int
 	publishes   int
+	remoteCalls []string // CommitExists and BranchContains, as the fake remote answered them
 }
 
 func (e *repoExec) Tag(_ context.Context, repository, tag, commit string) error {
@@ -146,9 +147,16 @@ func (e *repoExec) DeleteRelease(_ context.Context, _ string, id int64) error {
 	return nil
 }
 
+// CommitExists asks the bare repository for the object, as the remote does.
+func (e *repoExec) CommitExists(_ context.Context, _, commit string) (bool, error) {
+	e.remoteCalls = append(e.remoteCalls, "exists "+commit)
+	return exec.Command("git", "-C", e.bare, "cat-file", "-e", commit+"^{commit}").Run() == nil, nil
+}
+
 // BranchContains resolves the commit against the bare repository's branch,
 // as the remote does: an object the remote lacks is not contained.
 func (e *repoExec) BranchContains(_ context.Context, _, branch, commit string) (bool, error) {
+	e.remoteCalls = append(e.remoteCalls, "contains "+branch+" "+commit)
 	return exec.Command("git", "-C", e.bare, "merge-base", "--is-ancestor", commit, "refs/heads/"+branch).Run() == nil, nil
 }
 
@@ -708,18 +716,23 @@ func TestPublishRefusesABodyThatIsNotThePreparedFile(t *testing.T) {
 }
 
 // 3.0.2: --commit must name an object before any gate is raised. A
-// well-formed SHA naming nothing is commit_unknown; a local commit the
-// remote branch lacks is commit_not_on_branch. Neither writes the release or
-// raises a gate.
+// well-formed SHA naming nothing is commit_unknown; a local commit the remote
+// does not have is commit_unknown_remote (push it); a commit the remote has
+// on another branch only is commit_not_on_branch (merge it). None writes the
+// release or raises a gate.
 func TestPrepareRefusesACommitThatNamesNothingBeforeAnyGate(t *testing.T) {
 	f := newFixture(t)
-	other := run(t, f.work, "commit-tree", "-m", "local only", run(t, f.work, "rev-parse", "HEAD^{tree}"))
+	tree := run(t, f.work, "rev-parse", "HEAD^{tree}")
+	localOnly := run(t, f.work, "commit-tree", "-m", "local only", tree)
+	side := run(t, f.work, "commit-tree", "-p", f.commit, "-m", "side branch", tree)
+	run(t, f.work, "push", "-q", "origin", side+":refs/heads/side")
 	for _, c := range []struct {
 		commit string
 		want   error
 	}{
 		{strings.Repeat("ab", 20), ErrCommitUnknown},
-		{other, ErrCommitNotOnBranch},
+		{localOnly, ErrCommitUnknownRemote},
+		{side, ErrCommitNotOnBranch},
 	} {
 		spec, err := Spec(f.scope, "lead", "owner", "owner/fixture", "v1.2.0", c.commit, "first release", fixtureBody)
 		if err != nil {
@@ -737,5 +750,27 @@ func TestPrepareRefusesACommitThatNamesNothingBeforeAnyGate(t *testing.T) {
 	}
 	if _, err := f.flow.Prepare(f.spec); err != nil {
 		t.Fatalf("the branch's commit: %v", err)
+	}
+}
+
+// 3.0.2 (reviewer): the commit check reaches the remote only through the
+// executor. In tests that is the fake (the bare repository); a gh on PATH
+// records any call, and none is made.
+func TestCommitCheckReachesTheRemoteOnlyThroughTheExecutor(t *testing.T) {
+	f := newFixture(t)
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "gh-called")
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\necho \"$@\" >> "+marker+"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := f.flow.Prepare(f.spec); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"exists " + f.commit, "contains main " + f.commit}; !slices.Equal(f.exec.remoteCalls, want) {
+		t.Fatalf("remote calls %v, want %v through the fake executor", f.exec.remoteCalls, want)
+	}
+	if b, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("gh was run: %s", b)
 	}
 }

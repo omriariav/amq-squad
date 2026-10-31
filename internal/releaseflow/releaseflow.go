@@ -46,6 +46,8 @@ type Executor interface {
 	Tag(ctx context.Context, repository, tag, commit string) error
 	// TagCommit resolves a remote tag to its commit ("" when it does not exist).
 	TagCommit(ctx context.Context, repository, tag string) (string, error)
+	// CommitExists reports whether the remote has the commit at all.
+	CommitExists(ctx context.Context, repository, commit string) (bool, error)
 	// BranchContains reports whether the remote branch contains the commit
 	// (false when either is unknown to the remote).
 	BranchContains(ctx context.Context, repository, branch, commit string) (bool, error)
@@ -123,6 +125,10 @@ var (
 	ErrBodyMismatch = errors.New("release_body_mismatch")
 	// ErrCommitUnknown: --commit names no commit in the local repository.
 	ErrCommitUnknown = errors.New("commit_unknown")
+	// ErrCommitUnknownRemote: the remote does not have the commit at all
+	// (the lead pushes it), distinct from a commit the branch lacks (the lead
+	// merges it).
+	ErrCommitUnknownRemote = errors.New("commit_unknown_remote")
 	// ErrCommitNotOnBranch: the remote branch does not contain the commit.
 	ErrCommitNotOnBranch = errors.New("commit_not_on_branch")
 )
@@ -221,7 +227,9 @@ func (f *Flow) ChildGate(child operatorauth.ReleaseChildPlan) (string, error) {
 // raised (3.0.2): it resolves to a commit in the local repository (git
 // cat-file -e), and the named remote branch contains it, resolved on the
 // remote as TagCommit resolves the tag. A shape-valid SHA naming nothing is
-// commit_unknown; a commit the branch does not carry is commit_not_on_branch.
+// commit_unknown; a commit the remote does not have is commit_unknown_remote
+// (push it); a commit the branch does not carry is commit_not_on_branch
+// (merge it).
 func (f *Flow) CheckCommit(ctx context.Context, repository, commit string) error {
 	if !shaRe.MatchString(commit) {
 		return fmt.Errorf("%w: %q is not a full lowercase commit SHA", ErrCommitUnknown, commit)
@@ -232,12 +240,17 @@ func (f *Flow) CheckCommit(ctx context.Context, repository, commit string) error
 	if out, err := exec.CommandContext(ctx, "git", "-C", f.RepoDir, "cat-file", "-e", commit+"^{commit}").CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s names no commit in the repository at %s: %v %s", ErrCommitUnknown, commit, f.RepoDir, err, strings.TrimSpace(string(out)))
 	}
+	if ok, err := f.Exec.CommitExists(ctx, repository, commit); err != nil {
+		return fmt.Errorf("resolve %s on %s: %w", commit, repository, err)
+	} else if !ok {
+		return fmt.Errorf("%w: %s has no commit %s; push it first", ErrCommitUnknownRemote, repository, commit)
+	}
 	ok, err := f.Exec.BranchContains(ctx, repository, f.Branch, commit)
 	if err != nil {
 		return fmt.Errorf("resolve %s on branch %s of %s: %w", commit, f.Branch, repository, err)
 	}
 	if !ok {
-		return fmt.Errorf("%w: branch %s on %s does not contain %s", ErrCommitNotOnBranch, f.Branch, repository, commit)
+		return fmt.Errorf("%w: branch %s on %s does not contain %s; merge it first", ErrCommitNotOnBranch, f.Branch, repository, commit)
 	}
 	return nil
 }
