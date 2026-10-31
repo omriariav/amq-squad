@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 )
@@ -36,7 +37,7 @@ var leadBuiltinRules string
 const leadUsage = `amq-squad lead - start the lead on the built-in pi
 
 Usage:
-  amq-squad lead [--team [--scheduler-seats FILE [--trust]]] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
+  amq-squad lead [--team [--scheduler-seats FILE [--trust] [--lead HANDLE]]] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
 
 Without an AMQ identity (AM_ME, AM_ROOT) the lead runs in solo mode for this
 directory: its state lives under ~/.amq-squad/solo/<dir>-<digest>/ and nothing
@@ -47,6 +48,9 @@ decomposes and dispatches through the task store and never edits code.
 restarts it if it exits (not after a refused roster launch) and stops it
 when the lead ends. --trust passes the owner's standing answer to AMQ's
 trust confirmation through to scheduler run --trust for this session.
+The pi lead uses that seats file's AMQ session root, so its task tools see
+the scheduler's store. --lead names their shared handle (default AM_ME,
+else "lead").
 --model restricts the lead to these models (default ollama/qwen3.6:27b, the
 locally verified entry); pass pi arguments after "--".
 
@@ -69,6 +73,7 @@ func runLead(args []string) error {
 	team := fs.Bool("team", false, "team-lead role: decompose and dispatch, never edit")
 	schedSeats := fs.String("scheduler-seats", "", "team mode: start and supervise the squad's scheduler process over this typed seat list")
 	trust := fs.Bool("trust", false, "team mode: pass the owner's standing trust of this squad's launch subjects to scheduler run")
+	leadHandle := fs.String("lead", "", "team mode: lead handle shared by the pi tools and scheduler (default AM_ME, else lead)")
 	fs.Var(&f.models, "model", "PROVIDER/ID the lead may use (repeatable)")
 	fs.StringVar(&f.thinking, "thinking", "", "pi thinking level")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the launch as JSON and do not exec")
@@ -94,6 +99,8 @@ func runLead(args []string) error {
 	// The team lead's tool set (amendment 26) is applied by piLaunch for
 	// every lead launch, here and under an AMQ launch.
 	piArgs := fs.Args()
+	var teamIdentity piruntime.TeamIdentity
+	var teamProject string
 	if *schedSeats != "" {
 		// Ruling 15: the team mode starts and supervises the scheduler.
 		if !*team {
@@ -103,11 +110,47 @@ func runLead(args []string) error {
 		return usageErrorf("lead: --trust needs --team --scheduler-seats")
 	}
 	if *schedSeats != "" {
-		sup, err := startLeadScheduler(*schedSeats, firstOf(os.Getenv("AM_ME"), "lead"), leadPools(f.models, f.thinking), *trust)
+		var err error
+		teamIdentity, teamProject, err = resolveTeamLeadIdentity(*schedSeats, *leadHandle)
+		if err != nil {
+			return fmt.Errorf("lead: resolve the team identity: %w", err)
+		}
+		sup, err := startLeadScheduler(*schedSeats, teamIdentity.Handle, leadPools(f.models, f.thinking), *trust)
 		if err != nil {
 			return fmt.Errorf("lead: start the scheduler process: %w", err)
 		}
 		defer sup.stop()
+	} else if *leadHandle != "" {
+		return usageErrorf("lead: --lead needs --team --scheduler-seats FILE")
+	}
+	if teamIdentity.Handle != "" {
+		overlay := teamIdentity.Overlay()
+		// Preserve the pre-fix owner-terminal path's built-in team role,
+		// rules and project pointer. Under an existing AMQ launch those are
+		// already delivered by seat-exec and remain in the parent environment.
+		if os.Getenv("AM_ME") == "" || os.Getenv("AM_ROOT") == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			support, err := prepareSoloLead(home, cwd, leadTeamRole)
+			if err != nil {
+				return err
+			}
+			for name, value := range support {
+				overlay[name] = value
+			}
+			for name, value := range teamIdentity.Overlay() {
+				overlay[name] = value
+			}
+		}
+		// The repo tools read the squad's repository, not this directory.
+		overlay["AMQ_SQUAD_PROJECT"] = teamProject
+		return piLaunch(piLaunchSpec{Seat: teamIdentity.Handle, Flags: f, PiArgs: piArgs, Overlay: overlay})
 	}
 	if me, root := os.Getenv("AM_ME"), os.Getenv("AM_ROOT"); me != "" && root != "" {
 		return piLaunch(piLaunchSpec{Seat: me, Flags: f, PiArgs: piArgs})

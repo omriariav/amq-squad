@@ -28,6 +28,9 @@ type fixture struct {
 	grants                            grants.Resolved
 	gates                             GateChecker
 	signer                            testSigner
+	// grantBase is the base tip the doorbell's fetch hands StartTask at the
+	// next grant ("" keeps the resting commit).
+	grantBase string
 }
 
 // testSigner and testTrust are the owner's issuer key and trust store of the
@@ -91,15 +94,18 @@ func write(t *testing.T, path, body string) {
 
 const claudeMD = "# Project\n\nfree text\n\n" + rules.BeginMarker + "\nmanaged rules\n" + rules.EndMarker + "\n"
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureFor(t, "s1") }
+
+// newFixtureFor is the fixture for a seat handle (one with a hyphen, say).
+func newFixtureFor(t *testing.T, handle string) *fixture {
 	t.Helper()
 	gitBin(t)
 	dir := t.TempDir()
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	f := &fixture{t: t, dir: dir, origin: filepath.Join(dir, "origin.git"), main: filepath.Join(dir, "repo"), wt: filepath.Join(dir, "wt", "s1"),
-		root: filepath.Join(dir, "amq", "sess"), home: filepath.Join(dir, "home"), handle: "s1", branch: "seat/s1", now: t0}
+	f := &fixture{t: t, dir: dir, origin: filepath.Join(dir, "origin.git"), main: filepath.Join(dir, "repo"), wt: filepath.Join(dir, "wt", handle),
+		root: filepath.Join(dir, "amq", "sess"), home: filepath.Join(dir, "home"), handle: handle, branch: "seat/" + handle, now: t0}
 	for _, d := range []string{f.main, f.root, f.home} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
@@ -180,7 +186,19 @@ func (f *fixture) reported(files ...string) task.Task {
 }
 
 func (f *fixture) opts(tk task.Task) Options {
-	return Options{Root: f.root, Handle: f.handle, Task: tk, Grants: f.grants, Home: f.home, Git: gitBin(f.t), Gates: f.gates, Clear: f.trust(), Now: func() time.Time { return f.now }}
+	return Options{Root: f.root, Handle: f.handle, Task: tk, Grants: f.grants, Home: f.home, Git: gitBin(f.t), Gates: f.gates, Clear: f.trust(), Now: func() time.Time { return f.now },
+		Env: append(os.Environ(), "HOME="+f.home)}
+}
+
+// testGitEnv is the environment of a git a row runs itself: the harness's
+// (no global or system config, GIT_CONFIG_GLOBAL=/dev/null and
+// GIT_CONFIG_NOSYSTEM=1) with the fixture's temp HOME, never the real one.
+func (f *fixture) testGitEnv() []string { return append(harnessEnv(os.Environ()), "HOME="+f.home) }
+
+// ghGit is the git command line a fake gh script runs, with the same
+// environment: the fixture's temp HOME and no global or system config.
+func (f *fixture) ghGit() string {
+	return "env HOME=" + f.home + " GIT_CONFIG_GLOBAL=" + os.DevNull + " GIT_CONFIG_NOSYSTEM=1 " + gitBin(f.t)
 }
 
 func (f *fixture) run(tk task.Task) Result {
@@ -188,10 +206,20 @@ func (f *fixture) run(tk task.Task) Result {
 	return Run(f.opts(tk))
 }
 
-// originBranch is the origin's seat branch tip, "" when absent.
+// originBranch is the tip of every seat branch on the origin (every branch
+// under seat/: the seat branch and each task branch, 3.0.2 t23), one per
+// line, "" when none: a row that wants nothing pushed sees any push.
 func (f *fixture) originBranch() string {
-	cmd := exec.Command(gitBin(f.t), "rev-parse", "--verify", "-q", "refs/heads/"+f.branch)
-	cmd.Dir = f.origin
+	cmd := exec.Command(gitBin(f.t), "for-each-ref", "--format=%(objectname)", "refs/heads/seat/")
+	cmd.Dir, cmd.Env = f.origin, f.testGitEnv()
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
+}
+
+// originRef is one branch's tip on the origin, "" when absent.
+func (f *fixture) originRef(branch string) string {
+	cmd := exec.Command(gitBin(f.t), "rev-parse", "--verify", "-q", "refs/heads/"+branch)
+	cmd.Dir, cmd.Env = f.origin, f.testGitEnv()
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))
 }

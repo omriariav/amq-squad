@@ -142,6 +142,14 @@ func (r Result) defer_(detail string) Result {
 // lock for the whole step, so the scheduler's run and a lead's manual run
 // never interleave. It writes no task state: the caller records the result
 // (task.CompleteBound, task.RefuseCommit).
+//
+// The ledger contract (3.0.2 t24): a step refused or deferred by the path
+// checks or the binding check leaves the ledger byte-for-byte unchanged. No
+// ledger write of any kind comes before the binding check passes: a
+// quarantine records its evidence only after it (and still quarantines the
+// seat, with nothing written, when it does not pass). After the binding
+// check, a verified quarantine clear may be lifted onto the ledger before
+// the verifier runs.
 func Run(o Options) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
 	// A dry run also takes a task blocked by a refusal (the widening check).
@@ -293,6 +301,21 @@ func run(o Options, res Result) Result {
 			return res.defer_("exit check: " + err.Error())
 		}
 		if code != "" {
+			// A lease of another task on the ledger is its own refusal, before
+			// any quarantine: nothing is written (Codex re-check on 7c1a8098).
+			if l, err := ReadLedger(o.Root, o.Handle); err == nil {
+				if _, _, _, why := l.taskStart(o.Handle, o.Task.ID); why != "" {
+					return res.refuse(ReasonLeaseTaskMismatch, task.RouteLead, why+"; nothing is written and the seat is not quarantined by this step")
+				}
+			}
+			// The quarantine's evidence is a ledger write: it is made only
+			// once the binding check passed. A binding check that does not
+			// pass still quarantines the seat (the task store, the caller),
+			// with nothing written to the ledger.
+			if why := quarantineGate(o); why != "" {
+				res.Config, res.Quarantine = changes, true
+				return res.refuse(code, task.RouteOwner, fmt.Sprintf("the owner's agent config changed during the seat's run (%d changes); the seat is quarantined until the owner clears it (amq-squad seat clear --seat %s); the binding check did not pass (%s), so no tree is kept on the commit ledger", len(changes), o.Handle, why))
+			}
 			return quarantine(o, res, code, changes, "")
 		}
 	}
@@ -322,8 +345,15 @@ func run(o Options, res Result) Result {
 	if ledger.Worktree != rec.Worktree || ledger.Branch != rec.Branch {
 		return res.refuse(ReasonWorktree, task.RouteLead, fmt.Sprintf("the commit ledger records %s on %s, the launch record %s on %s", ledger.Worktree, ledger.Branch, rec.Worktree, rec.Branch))
 	}
+	// One branch per task (3.0.2 t23): the task's own branch and the commit
+	// its worktree started on, never the seat's previous task.
+	branch, parent, base, why := ledger.taskStart(o.Handle, o.Task.ID)
+	if why != "" {
+		return res.refuse(ReasonLeaseTaskMismatch, task.RouteLead, why)
+	}
+	res.Branch = branch
 	env := harnessEnv(o.Env)
-	rp, repoRoot, why := checkWorktree(rec, o.Task.ProjectPath)
+	rp, repoRoot, why := checkWorktree(rec, o.Task.ProjectPath, rec.Branch, branch)
 	if why != "" {
 		return res.refuse(ReasonWorktree, task.RouteLead, why)
 	}
@@ -333,13 +363,29 @@ func run(o Options, res Result) Result {
 	}
 	defer sh.close()
 	g := sh.g
-	parent := ledger.Parent()
 	res.Parent = parent
 	tree, err := snapshot(sh, parent)
 	if err != nil {
 		return res.defer_("snapshot of the worktree: " + err.Error())
 	}
+	// The task's recorded commit with nothing new on it (3.0.2 t23): a re-run
+	// after the step returned the worktree to rest, or a later attempt that
+	// StartTask started on that commit and that made no edits. The step then
+	// works on that commit's own diff, through every check below against the
+	// grant in force now, its digest recomputed and compared with the
+	// recorded one (Codex passes on 2477f10f and c09a8887), and on to the
+	// push and the binding; "nothing to commit" is never an early OK there.
+	if i := ledger.taskCommitAt(o.Task.ID, branch); i >= 0 && (ledger.Lease == nil || ledger.Commits[i].Commit == parent) {
+		if pt, err := g.line("rev-parse", parent+"^{tree}"); err == nil && pt == tree {
+			parent, tree = ledger.Commits[i].Parent, ledger.Commits[i].Tree
+			res.Parent = parent
+		}
+	}
 	res.Tree = tree
+	// lift is a verified clear the step lifts: written to the ledger only once
+	// the binding check passed, so a refused or deferred step leaves the
+	// ledger unchanged (Codex pass on 2477f10f, finding 3).
+	var lift *LedgerQuarantine
 	if q := ledger.Quarantine; q != nil {
 		switch {
 		case q.ClearedAt == nil && o.DryRun:
@@ -357,12 +403,7 @@ func run(o Options, res Result) Result {
 			return res.refuse(ReasonQuarantineTree, task.RouteOwner, fmt.Sprintf("the seat's tree changed after the quarantine: the owner cleared %s, the worktree is now %s", q.Tree, tree))
 		}
 		if !o.DryRun && q.ClearedAt != nil {
-			ledger.Cleared = append(ledger.Cleared, *q)
-			ledger.Quarantine = nil
-			if err := writeLedger(o.Root, ledger); err != nil {
-				return res.defer_("commit ledger: " + err.Error())
-			}
-			res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+q.Task)
+			lift = q
 		}
 	}
 	raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
@@ -414,6 +455,20 @@ func run(o Options, res Result) Result {
 	if err := CheckTarget(ledger.Target); err != nil {
 		return res.refuse(ReasonPushTargetUnacknowledged, task.RouteOwner, err.Error())
 	}
+	// 3.0.2 t24: the binding check runs before the commit and the push. A
+	// task branch that carries an open PR this task does not hold refuses
+	// here, with nothing committed or pushed.
+	if r, stop := prCheck(o, sh.dir, ledger, res); stop {
+		return r
+	}
+	if lift != nil {
+		ledger.Cleared = append(ledger.Cleared, *lift)
+		ledger.Quarantine = nil
+		if err := writeLedger(o.Root, ledger); err != nil {
+			return res.defer_("commit ledger: " + err.Error())
+		}
+		res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+lift.Task)
+	}
 	// v3-5-verifier rule 7: the class's verifier on the snapshot tree, the
 	// owner-config diff again, the verdict; only a pass reaches the push.
 	res, done := verify(o, sh, res)
@@ -423,7 +478,38 @@ func run(o Options, res Result) Result {
 	if o.cancelled() {
 		return res.defer_(ReasonStepCancelled + ": the task was cancelled while the step ran; nothing is pushed")
 	}
-	return commitAndPush(o, sh, ledger, rec, res)
+	out := commitAndPush(o, sh, ledger, base, res)
+	if out.OK {
+		out = settle(o, sh, rec, out)
+	}
+	return out
+}
+
+// settle returns the worktree to a clean base after the done report is
+// committed (3.0.2 t23): the base branch's tip, on the seat's resting
+// branch, recorded as the ledger's Rest, the lease's start cleared. A
+// failure is a note: the work is committed, and the next lease boundary's
+// CleanSeat returns the worktree.
+func settle(o Options, sh *shadow, rec launch.Record, res Result) Result {
+	l, err := ReadLedger(o.Root, o.Handle)
+	if err != nil {
+		res.Notes = append(res.Notes, "the worktree stays on the task's tree until the next lease boundary: "+err.Error())
+		return res
+	}
+	repo := seatRepo(o.Git, harnessEnv(o.Env), sh.rp)
+	rest, note := restTarget(rec, l)
+	if note != "" {
+		res.Notes = append(res.Notes, note)
+	}
+	if err := toRest(o.Git, harnessEnv(o.Env), sh, repo, rec.Branch, res.Tree, rest); err != nil {
+		res.Notes = append(res.Notes, "the worktree stays on the task's tree until the next lease boundary: "+err.Error())
+		return res
+	}
+	l.Rest, l.Lease = rest, nil
+	if err := writeLedger(o.Root, l); err != nil {
+		res.Notes = append(res.Notes, "commit ledger: "+err.Error())
+	}
+	return res
 }
 
 // base is the branch the seat's work goes to: the launch's record of the
@@ -505,20 +591,23 @@ func quarantine(o Options, res Result, code string, changes []seatexec.ConfigCha
 	return res.refuse(code, task.RouteOwner, detail)
 }
 
-// CleanSeat returns a seat's worktree to its ledger parent before the seat
-// gets a new lease (2b-2 milestone B, the R19 live finding: after a refused
-// task was reset, the seat's next lease inherited the refused diff and every
+// CleanSeat returns a seat's worktree to a clean base before the seat gets
+// a new lease (2b-2 milestone B, the R19 live finding: after a refused task
+// was reset, the seat's next lease inherited the refused diff and every
 // later commit of that seat was refused for it, a loop). A diff left on the
-// worktree is the leftover of an attempt that did not commit (refused and
-// reset, failed, expired): it is snapshotted and recorded on the ledger as
-// evidence (tree and diff digest), then the worktree is checked out at the
-// parent in the harness's shadow (no filter or hook of the seat's
-// repository runs), untracked, non-ignored files are removed and the seat
-// branch is moved to the parent. It does nothing for a clean worktree. Seat
-// commits on the branch are dropped too: the parent is the core's record,
-// never the seat's history. The whole reset runs under the task store's
-// lock with the seat free (R3): no claim can land between the check and the
-// reset.
+// worktree against the ledger parent that the ledger did not commit is the
+// leftover of an attempt that did not commit (refused and reset, failed,
+// expired): it is snapshotted and recorded on the ledger as evidence (tree
+// and diff digest). Then the worktree is checked out at the base branch's
+// tip (3.0.2 t23: every task starts from the base, never from the seat's
+// previous task) in the harness's shadow (no filter or hook of the seat's
+// repository runs), untracked, non-ignored files are removed, HEAD returns
+// from the last task's branch to the seat's resting branch and that branch
+// is moved to the tip, recorded as the ledger's Rest. It does nothing for a
+// clean worktree already resting on the tip. Seat commits on the branch are
+// dropped too: the ledger is the core's record, never the seat's history.
+// The whole reset runs under the task store's lock with the seat free (R3):
+// no claim can land between the check and the reset.
 func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, now time.Time) (discarded bool, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
@@ -573,9 +662,15 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	if q := l.Quarantine; q != nil && (q.ClearedAt == nil || !q.Clear.Verified(handle, q, clear)) {
 		return false, fmt.Errorf("seat %s is quarantined; its tree is evidence and is not cleaned", handle)
 	}
-	rp, _, why := checkWorktree(rec, "")
-	if why != "" {
-		return false, fmt.Errorf("%s", why)
+	// The worktree is on the resting branch, or on the task branch of the
+	// lease the ledger records: the lease record decides, never the name.
+	rp, err := worktreePaths(rec.Worktree)
+	if err != nil {
+		return false, fmt.Errorf("the seat worktree %s is not a git checkout root: %v", rec.Worktree, err)
+	}
+	onTask := rp.HeadRef != "refs/heads/"+rec.Branch
+	if onTask && !l.knownBranch(rp.HeadRef) {
+		return false, fmt.Errorf("the seat worktree has %q checked out, not the seat branch %s or the task branch of the lease its commit ledger records", rp.HeadRef, rec.Branch)
 	}
 	henv := harnessEnv(env)
 	sh, err := newShadow(gitBin, henv, rp)
@@ -593,47 +688,187 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 		return false, err
 	}
 	repo := seatRepo(gitBin, henv, rp)
+	// The next lease starts at the base (3.0.2 t23, amendment 2b): the tip
+	// the launch recorded on the launch record, never the ledger's first base.
+	rest, _ := restTarget(rec, l)
 	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
-	if tree == parentTree && head == parent {
+	if l.Lease == nil && !onTask && tree == parentTree && head == parent && parent == rest {
 		return false, nil
 	}
-	raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
-	taskID, last := lastAttempt(list, handle)
-	expireEvidence(repo, &l, now)
-	ref, err := anchorEvidence(repo, &l, taskID, tree, now)
-	if err != nil {
-		return false, fmt.Errorf("anchor the discarded tree: %w", err)
-	}
-	l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
-	if err := writeLedger(root, l); err != nil {
-		return false, err
+	// A diff the ledger committed (the lease's task) is not a discard; any
+	// other diff is the leftover of an attempt that did not commit.
+	discarded := tree != parentTree && l.recordedAt(parent, tree) < 0
+	if discarded {
+		raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
+		taskID, last := lastAttempt(list, handle)
+		expireEvidence(repo, &l, now)
+		ref, err := anchorEvidence(repo, &l, taskID, tree, now)
+		if err != nil {
+			return false, fmt.Errorf("anchor the discarded tree: %w", err)
+		}
+		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
+		if err := writeLedger(root, l); err != nil {
+			return false, err
+		}
 	}
 	if beforeReset != nil {
 		beforeReset()
 	}
-	// The checkout: an index of the worktree as it is (the snapshot), reset
-	// to the parent with the files updated, then the untracked files
-	// removed; then the seat's own index and branch follow the parent.
+	if err := toRest(gitBin, henv, sh, repo, rec.Branch, tree, rest); err != nil {
+		return false, err
+	}
+	if l.Rest != rest || l.Lease != nil {
+		l.Rest, l.Lease = rest, nil
+		if err := writeLedger(root, l); err != nil {
+			return false, err
+		}
+	}
+	return discarded, nil
+}
+
+// toRest checks the worktree out at the resting commit: an index of the
+// worktree as it is (tree, its snapshot), reset to rest with the files
+// updated in the harness's shadow, then the untracked, non-ignored files
+// removed and the seat's own index at rest. Then HEAD returns from the task
+// branch (the caller checked the ledger records it) to the seat's resting
+// branch, which moves to rest. The caller records Rest and clears the
+// lease's start.
+func toRest(gitBin string, henv []string, sh *shadow, repo git, restBranch, tree, rest string) error {
 	idx := sh.tempIndex()
 	os.Remove(idx)
 	defer os.Remove(idx)
 	ig := sh.index(idx)
 	if _, err := ig.run(nil, nil, "read-tree", tree); err != nil {
-		return false, err
+		return err
 	}
-	if _, err := ig.run(nil, nil, "read-tree", "-u", "--reset", parent); err != nil {
-		return false, err
+	if _, err := ig.run(nil, nil, "read-tree", "-u", "--reset", rest); err != nil {
+		return err
 	}
 	if _, err := ig.run(nil, nil, "clean", "-fdq"); err != nil {
-		return false, err
+		return err
 	}
-	if _, err := sh.index(rp.Index).run(nil, nil, "read-tree", parent); err != nil {
-		return false, err
+	if _, err := sh.index(sh.rp.Index).run(nil, nil, "read-tree", rest); err != nil {
+		return err
 	}
-	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad clean seat "+handle, "refs/heads/"+rec.Branch, parent); err != nil {
-		return false, err
+	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad rest seat", "refs/heads/"+restBranch, rest); err != nil {
+		return err
 	}
-	return true, nil
+	if sh.rp.HeadRef != "refs/heads/"+restBranch {
+		return setHead(gitBin, henv, sh.rp, restBranch)
+	}
+	return nil
+}
+
+// restTarget is the commit a seat's worktree rests on between leases
+// (amendment 2b, one base): the base tip the launch fetched and recorded on
+// the launch record (launch.Record.Base, 3.0.2 t22); each grant then cuts
+// the task's branch from a fresh fetch (StartTask's base). A record without
+// one (a launch before 3.0.2) keeps the ledger's resting commit, with the
+// note saying so; never a local branch of the shared repository, which can
+// be ahead of or behind the remote.
+func restTarget(rec launch.Record, l Ledger) (rest, note string) {
+	if b := strings.TrimSpace(rec.Base); b != "" {
+		return b, ""
+	}
+	rest = l.rest()
+	return rest, "launch_base_missing: the seat's launch record carries no base (a launch before 3.0.2); the worktree rests on the ledger's resting commit " + rest + ", never a local branch; the next launch records the base"
+}
+
+// setHead points the worktree's HEAD at a branch (git's symbolic-ref in the
+// worktree's own git dir, with the harness's hardened git).
+func setHead(gitBin string, env []string, rp repoPaths, branch string) error {
+	g := git{bin: gitBin, dir: rp.GitDir, env: env}.with("GIT_DIR=" + rp.GitDir)
+	_, err := g.run(nil, nil, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	return err
+}
+
+// StartTask puts a seat's worktree on its task's own branch when the lease
+// is granted (3.0.2 t23: the scheduler's doorbell runs it right after the
+// grant, before the seat is rung): seat/<handle>-<task id> cut from base,
+// the remote base tip the doorbell fetched at this grant, recorded as the
+// task's base on the ledger (base "" keeps the resting commit); or, for a
+// task with an earlier commit on its branch (a later attempt), at that
+// commit with the branch's own base, so the attempt's commit follows the
+// branch and its open PR. The lease's start is recorded on the ledger
+// first; the commit step diffs against it. A seat with no commit ledger is
+// left as it is (its commit step refuses base_unrecorded).
+func StartTask(root, handle, gitBin string, env []string, t task.Task, base string, now time.Time) error {
+	if gitBin == "" {
+		var err error
+		if gitBin, err = exec.LookPath("git"); err != nil {
+			return err
+		}
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	return withLedgerTryLock(root, handle, func() error {
+		l, err := ReadLedger(root, handle)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if l.Lease != nil && l.Lease.Task != t.ID {
+			return fmt.Errorf("seat %s still carries task %s's lease start; a lease boundary (CleanSeat) clears it", handle, l.Lease.Task)
+		}
+		rec, err := stagedRecord(root, handle)
+		if err != nil {
+			return err
+		}
+		branch := TaskBranch(handle, t.ID)
+		rp, _, why := checkWorktree(rec, "", rec.Branch, branch)
+		if why != "" {
+			return fmt.Errorf("%s", why)
+		}
+		henv := harnessEnv(env)
+		repo := seatRepo(gitBin, henv, rp)
+		rest := l.rest()
+		start := firstNonEmpty(strings.TrimSpace(base), rest)
+		base = start
+		if i := l.taskCommitAt(t.ID, branch); i >= 0 {
+			c := l.Commits[i]
+			start, base = c.Commit, firstNonEmpty(c.Base, c.Parent)
+		}
+		// The lease's start is recorded first, so the branch the worktree is
+		// moved to below is always one the ledger records (CleanSeat trusts
+		// the record, never the name).
+		if l.Lease == nil {
+			l.Lease = &LedgerLease{Task: t.ID, Branch: branch, Base: base, Start: start, At: now.UTC()}
+			if err := writeLedger(root, l); err != nil {
+				return err
+			}
+		}
+		start = l.Lease.Start
+		if start != rest {
+			if _, err := repo.line("rev-parse", "--verify", "-q", start+"^{commit}"); err != nil {
+				return fmt.Errorf("task %s's earlier commit %s is not in the seat repository: %v", t.ID, start, err)
+			}
+			sh, err := newShadow(gitBin, henv, rp)
+			if err != nil {
+				return err
+			}
+			defer sh.close()
+			idx := sh.tempIndex()
+			os.Remove(idx)
+			defer os.Remove(idx)
+			ig := sh.index(idx)
+			if _, err := ig.run(nil, nil, "read-tree", rest); err != nil {
+				return err
+			}
+			if _, err := ig.run(nil, nil, "read-tree", "-u", "--reset", start); err != nil {
+				return err
+			}
+			if _, err := sh.index(rp.Index).run(nil, nil, "read-tree", start); err != nil {
+				return err
+			}
+		}
+		if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad start task "+t.ID, "refs/heads/"+branch, start); err != nil {
+			return err
+		}
+		return setHead(gitBin, henv, rp, branch)
+	})
 }
 
 // EvidenceRetention is how long a kept tree's evidence ref stays after it is
@@ -643,21 +878,30 @@ const EvidenceRetention = 30 * 24 * time.Hour
 // evidenceRefName is refs/amq-squad/evidence/<task>/<n>; a task id
 // character a ref name cannot carry becomes "_".
 func evidenceRefName(seat, taskID string, n int) string {
-	clean := func(v string) string {
-		v = strings.Map(func(r rune) rune {
-			if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-				return r
-			}
-			return '_'
-		}, v)
-		if v == "" {
-			return "none"
-		}
-		return v
-	}
 	// The seat is part of the name (the fix round's item 22): two seats on
 	// one repository never share a ref, whatever their counters say.
-	return "refs/amq-squad/evidence/" + clean(seat) + "/" + clean(taskID) + "/" + strconv.Itoa(n)
+	return "refs/amq-squad/evidence/" + refPart(seat) + "/" + refPart(taskID) + "/" + strconv.Itoa(n)
+}
+
+// commitRefName is refs/amq-squad/commits/<seat>/<task>: the anchor of a
+// task's last harness commit in the seat repository (3.0.2 t23).
+func commitRefName(seat, taskID string) string {
+	return "refs/amq-squad/commits/" + refPart(seat) + "/" + refPart(taskID)
+}
+
+// refPart is a ref name component: a character a ref name cannot carry
+// becomes "_".
+func refPart(v string) string {
+	v = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, v)
+	if v == "" {
+		return "none"
+	}
+	return v
 }
 
 // anchorEvidence points a new evidence ref at a kept tree in the seat
@@ -788,17 +1032,22 @@ func stagedRecord(root, handle string) (launch.Record, error) {
 }
 
 // checkWorktree confirms, from git's own files (never the seat repository's
-// config), that the worktree is a checkout root with the record's branch
-// checked out, and of the task's repository when one is named. It returns
+// config), that the worktree is a checkout root with the branch the ledger
+// expects checked out (the seat's resting branch, or the task's branch of
+// the lease), and of the task's repository when one is named. It returns
 // the worktree's git paths and the repository root (the task's project
 // path, else the worktree).
-func checkWorktree(rec launch.Record, project string) (repoPaths, string, string) {
+func checkWorktree(rec launch.Record, project string, branches ...string) (repoPaths, string, string) {
 	rp, err := worktreePaths(rec.Worktree)
 	if err != nil {
 		return rp, "", "the seat worktree " + rec.Worktree + " is not a git checkout root: " + err.Error()
 	}
-	if rp.HeadRef != "refs/heads/"+rec.Branch {
-		return rp, "", fmt.Sprintf("the seat worktree has %q checked out, not the seat branch %s", rp.HeadRef, rec.Branch)
+	ok := false
+	for _, b := range branches {
+		ok = ok || rp.HeadRef == "refs/heads/"+b
+	}
+	if !ok {
+		return rp, "", fmt.Sprintf("the seat worktree has %q checked out, not the branch %s", rp.HeadRef, strings.Join(branches, " or "))
 	}
 	if project == "" {
 		return rp, rec.Worktree, ""
@@ -927,28 +1176,36 @@ func describe(vs []Violation) string {
 	return strings.Join(parts, "; ")
 }
 
-// commitAndPush writes the harness commit (parent: the ledger's last harness
-// commit or the base; the seat's own commits, if any, are not in its
-// history), moves the seat branch to it, records it in the ledger, and
-// pushes it as a fast-forward to the URL the launch recorded from the grant.
-// A re-run after a crash finds the recorded commit and only pushes.
-func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Result {
+// commitAndPush writes the harness commit (parent: the commit the task's
+// worktree started on; the seat's own commits, if any, are not in its
+// history), records it in the ledger with the task's branch, anchors it in
+// the seat repository, moves the task branch to it when the worktree is on
+// it, and pushes it to the task's branch as a fast-forward to the URL the
+// launch recorded from the grant. A re-run after a crash finds the recorded
+// commit and only pushes.
+func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Result {
 	g := sh.g
-	last := len(l.Commits) - 1
 	parentTree, err := g.line("rev-parse", res.Parent+"^{tree}")
 	if err != nil {
 		return res.defer_(err.Error())
 	}
+	last, earlier := l.recordedAt(res.Parent, res.Tree), l.taskCommitAt(o.Task.ID, res.Branch)
 	switch {
-	case res.Tree == parentTree && last >= 0 && l.Commits[last].Commit == res.Parent && l.Commits[last].Task == o.Task.ID:
-		res.Commit = res.Parent // this task's commit exists; finish its push
-		res.Notes = append(res.Notes, "the harness commit "+res.Parent+" was already recorded")
-		// The diff checked when the commit was made, not the empty one
-		// against the commit itself (P2-6).
-		if c := l.Commits[last]; c.DiffDigest != "" {
-			res.Parent, res.DeclaredDigest, res.DiffDigest, res.Lines = c.Parent, c.DeclaredDigest, c.DiffDigest, c.Lines
-			res.Changes, res.Files = append([]Change{}, c.Changes...), len(c.Changes)
+	case last >= 0 && l.Commits[last].Task == o.Task.ID && l.Commits[last].Branch == res.Branch:
+		// This task's commit exists; finish its push and binding. Its diff
+		// was checked above as a fresh one; the digest recomputed from it
+		// must be the one recorded with the commit.
+		if c := l.Commits[last]; c.DiffDigest != "" && c.DiffDigest != res.DiffDigest {
+			return res.refuse(ReasonRecordedDiffMismatch, task.RouteOwner, fmt.Sprintf("the commit ledger records diff %s for the harness commit %s, and its diff is %s; nothing is pushed until the owner inspects the commits ledger", c.DiffDigest, c.Commit, res.DiffDigest))
 		}
+		res.Commit = l.Commits[last].Commit
+		res.Notes = append(res.Notes, "the harness commit "+res.Commit+" was already recorded")
+	case earlier >= 0 && l.Commits[earlier].Commit != res.Parent && res.Tree != parentTree:
+		// A later attempt appends to the task's branch only from its last
+		// commit (StartTask puts the worktree there); a diff from anywhere
+		// else would not follow the branch or its PR.
+		return res.refuse(ReasonWorktree, task.RouteLead, fmt.Sprintf("task %s's branch %s carries its earlier commit %s, and the lease did not start the worktree there (the seat worked from %s); nothing is committed or pushed",
+			o.Task.ID, res.Branch, l.Commits[earlier].Commit, res.Parent))
 	case res.Tree == parentTree:
 		res.Notes = append(res.Notes, "empty diff: nothing to commit")
 		res.OK = true
@@ -962,25 +1219,32 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 			return res.defer_(err.Error())
 		}
 		res.Commit = strings.TrimSpace(string(out))
-		l.Head = res.Commit
 		l.Commits = append(l.Commits, LedgerCommit{Task: o.Task.ID, Commit: res.Commit, Parent: res.Parent, Tree: res.Tree, At: o.Now().UTC(),
-			DeclaredDigest: res.DeclaredDigest, DiffDigest: res.DiffDigest, Lines: res.Lines, Changes: res.Changes})
+			DeclaredDigest: res.DeclaredDigest, DiffDigest: res.DiffDigest, Lines: res.Lines, Changes: res.Changes, Branch: res.Branch, Base: base})
 		last = len(l.Commits) - 1
 		if err := writeLedger(o.Root, l); err != nil {
 			return res.defer_("commit ledger: " + err.Error())
 		}
 	}
 	repo := seatRepo(o.Git, harnessEnv(o.Env), sh.rp)
-	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad seat commit "+o.Task.ID, "refs/heads/"+rec.Branch, res.Commit); err != nil {
+	// The anchor keeps the commit in the seat repository after the task
+	// branch's local ref goes at the next lease boundary (a later attempt
+	// starts from it).
+	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad seat commit "+o.Task.ID, commitRefName(o.Handle, o.Task.ID), res.Commit); err != nil {
 		return res.defer_(err.Error())
 	}
-	// The seat's index follows the new branch tip; the files are untouched.
-	if _, err := sh.index(sh.rp.Index).run(nil, nil, "read-tree", res.Commit); err != nil {
-		return res.defer_(err.Error())
+	if sh.rp.HeadRef == "refs/heads/"+res.Branch {
+		if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad seat commit "+o.Task.ID, "refs/heads/"+res.Branch, res.Commit); err != nil {
+			return res.defer_(err.Error())
+		}
+		// The seat's index follows the new branch tip; the files are untouched.
+		if _, err := sh.index(sh.rp.Index).run(nil, nil, "read-tree", res.Commit); err != nil {
+			return res.defer_(err.Error())
+		}
 	}
 	if l.Commits[last].Pushed {
 		res.Pushed, res.OK, res.PRHead = true, true, res.Commit
-		return openPR(o, sh, l, rec, res)
+		return openPR(o, sh, l, res)
 	}
 	if l.PushURL == "" {
 		res.Notes = append(res.Notes, PushURLMissing+": the launch recorded no push URL from the grant (merge.push_url): committed, not pushed")
@@ -991,11 +1255,11 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 	if why != "" {
 		return res.refuse(registry.PinMismatch, task.RouteOwner, why)
 	}
-	out, err := g.run(nil, pushEnv, append(pushArgs, "push", "--porcelain", "--no-verify", l.PushURL, res.Commit+":refs/heads/"+rec.Branch)...)
+	out, err := g.run(nil, pushEnv, append(pushArgs, "push", "--porcelain", "--no-verify", l.PushURL, res.Commit+":refs/heads/"+res.Branch)...)
 	if err != nil {
 		text := string(out) + err.Error()
 		if strings.Contains(text, "[rejected]") || strings.Contains(text, "non-fast-forward") || strings.Contains(text, "fetch first") {
-			return res.refuse(ReasonPushRejected, task.RouteLead, "the remote refused a fast-forward push of "+rec.Branch+" (no force push): "+firstLine(text))
+			return res.refuse(ReasonPushRejected, task.RouteLead, "the remote refused a fast-forward push of "+res.Branch+" (no force push): "+firstLine(text))
 		}
 		return res.defer_("push: " + firstLine(text))
 	}
@@ -1004,7 +1268,7 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 		return res.defer_("commit ledger: " + err.Error())
 	}
 	res.Pushed, res.OK, res.PRHead = true, true, res.Commit
-	return openPR(o, sh, l, rec, res)
+	return openPR(o, sh, l, res)
 }
 
 // ReasonPRPending defers a pushed step whose PR binding is not made yet
@@ -1066,18 +1330,149 @@ type ghPR struct {
 	IsCrossRepository bool   `json:"isCrossRepository"`
 }
 
-// openPR finds or opens the draft PR of the pushed seat branch with the
+// ghRunner is the commit step's gh: every invocation re-verifies the pin
+// and runs the hashed descriptor (/dev/fd/3 on Linux) or the verified path
+// (darwin), outside the seat's worktree, with --repo from the launch's
+// record of the grant. why is set when the pin does not verify.
+func ghRunner(o Options, l Ledger, dir string) (run func(args ...string) (string, error), why string) {
+	if o.Gh == "" {
+		tool, why := pinnedGh(l)
+		if why != "" {
+			return nil, why
+		}
+		tool.Close()
+	}
+	return func(args ...string) (string, error) {
+		args = append(args, "--repo", l.Repository)
+		var cmd *exec.Cmd
+		if o.Gh != "" {
+			cmd = exec.Command(o.Gh, args...) // a test seam
+		} else {
+			tool, why := pinnedGh(l)
+			if why != "" {
+				return why, errors.New(why)
+			}
+			defer tool.Close()
+			cmd = tool.Command(args...)
+		}
+		cmd.Dir = dir
+		cmd.Env = append(ghEnv(o.Env), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}, ""
+}
+
+// prListLimit is the --limit of the commit step's `gh pr list` (gh's
+// default is 30); an answer that reaches it defers the step (pr_pending).
+const prListLimit = 100
+
+// branchPR reads the open PRs of the task's branch, every one of them: a
+// push updates every open PR on its head, so one disqualifying PR refuses
+// even beside this task's own. Provenance is the task binding in the store
+// only (R7): an open PR is this task's only when the store binds its number
+// to this task, it is from this repository and onto the grant's base; any
+// other open PR is named in why (the commit step never reuses it); no PR
+// body is ever read. err is a gh failure.
+func branchPR(o Options, run func(args ...string) (string, error), l Ledger, branch string) (pr *ghPR, why string, err error) {
+	out, err := run("pr", "list", "--head", branch, "--state", "open", "--limit", strconv.Itoa(prListLimit), "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
+	if err != nil {
+		return nil, "", errors.New("gh pr list failed: " + firstLine(out))
+	}
+	var prs []ghPR
+	if err := json.Unmarshal([]byte(out), &prs); err != nil {
+		return nil, "", errors.New("gh pr list gave no PR list: " + firstLine(out))
+	}
+	if len(prs) >= prListLimit {
+		// A full page cannot prove every open PR on the head was examined.
+		return nil, "", fmt.Errorf("gh pr list returned %d open PRs on %s, its limit: the step cannot prove it examined every one", len(prs), branch)
+	}
+	base := l.base(o.Grants)
+	var mine *ghPR
+	for i, p := range prs {
+		b := ""
+		if o.PRBoundTo != nil {
+			b = o.PRBoundTo(l.Repository, p.Number)
+		}
+		switch {
+		case !strings.EqualFold(p.State, "OPEN"):
+			continue
+		case b == "":
+			why = "is bound to no task in the store"
+		case b != o.Task.ID:
+			why = "is bound to task " + b + " in the store"
+		case p.IsCrossRepository:
+			why = "is from another repository"
+		case p.BaseRefName != base:
+			why = "targets " + p.BaseRefName + ", not the grant's base " + base
+		}
+		if why != "" {
+			return &prs[i], fmt.Sprintf("the open PR #%d on %s %s", p.Number, branch, why), nil
+		}
+		mine = &prs[i]
+	}
+	return mine, "", nil
+}
+
+// quarantineGate is the binding check of a step that would quarantine the
+// seat (prCheck on the task's branch, run before the quarantine's ledger
+// write): the refusal or deferral's reason code and detail, "" when it
+// passes or there is no binding to check (no ledger). The caller refuses a
+// lease of another task (lease_task_mismatch) before it gets here.
+func quarantineGate(o Options) string {
+	l, err := ReadLedger(o.Root, o.Handle)
+	if err != nil {
+		return ""
+	}
+	branch, _, _, why := l.taskStart(o.Handle, o.Task.ID)
+	if why != "" {
+		return ReasonLeaseTaskMismatch + ": " + why
+	}
+	r, stop := prCheck(o, os.TempDir(), l, Result{Task: o.Task.ID, Seat: o.Handle, Branch: branch})
+	if !stop {
+		return ""
+	}
+	return r.ReasonCode + ": " + r.Detail
+}
+
+// prCheck is the binding check before the commit and the push (3.0.2 t24,
+// the v31 finding: t20's commit was pushed onto seat/dev, which carried PR
+// #815 bound to t12, and only then refused). With --open-pr, the task's
+// branch is read through gh before anything is written: an open PR this
+// task does not hold refuses pr_bound_elsewhere, and a gh failure defers;
+// either way nothing is committed or pushed and the seat's diff waits.
+func prCheck(o Options, dir string, l Ledger, res Result) (Result, bool) {
+	if !o.OpenPR || l.Repository == "" {
+		return res, false // openPR names a missing repository after the push
+	}
+	pending := func(why string) (Result, bool) {
+		r := res.defer_(ReasonPRPending + ": " + why + " (the binding check runs before the commit: nothing is committed or pushed; retried next tick)")
+		r.ReasonCode = ReasonPRPending
+		return r, true
+	}
+	run, why := ghRunner(o, l, dir)
+	if why != "" {
+		return pending(why)
+	}
+	_, why, err := branchPR(o, run, l, res.Branch)
+	if err != nil {
+		return pending(err.Error())
+	}
+	if why != "" {
+		return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, why+"; the commit step never reuses it: nothing is committed or pushed"), true
+	}
+	return res, false
+}
+
+// openPR finds or opens the draft PR of the pushed task branch with the
 // pinned gh (D2), as the harness, when o.OpenPR is set, and returns its
 // number in the result (the binding pr_number/pr_head that 3-2's merge
-// train reads). gh runs outside the seat's worktree with --repo from the
-// launch's record of the grant. Provenance is the task binding in the store
-// only (R7): an open PR on the branch is reused only when the store binds
-// its number to this task, it is from this repository, onto the grant's
-// base, and at the pushed head; any other open PR refuses with
-// pr_bound_elsewhere; no PR body is ever read. A PR the step opens is bound
-// to the task at once (BindPR), so a re-run after a crash finds it bound. A
-// head still behind the push is a deferral (the forge has not caught up).
-func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Result {
+// train reads). The open PR this task holds (branchPR) is reused and bound
+// again at the pushed head (a later attempt appends to its branch and PR);
+// any other open PR refuses with pr_bound_elsewhere. A PR the step opens is
+// bound to the task at once (BindPR), so a re-run after a crash finds it
+// bound. A head still behind the push is a deferral (the forge has not
+// caught up).
+func openPR(o Options, sh *shadow, l Ledger, res Result) Result {
 	if !o.OpenPR {
 		return res
 	}
@@ -1093,72 +1488,32 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 	if l.Repository == "" {
 		return pending("the launch recorded no repository from the grant (one merge grant names it)")
 	}
-	if o.Gh == "" {
-		if tool, why := pinnedGh(l); why != "" {
-			return pending(why)
-		} else {
-			tool.Close()
-		}
+	run, why := ghRunner(o, l, sh.dir)
+	if why != "" {
+		return pending(why)
 	}
-	// Every gh invocation re-verifies the pin and runs the hashed
-	// descriptor (/dev/fd/3 on Linux) or the verified path (darwin).
-	run := func(args ...string) (string, error) {
-		args = append(args, "--repo", l.Repository)
-		var cmd *exec.Cmd
-		if o.Gh != "" {
-			cmd = exec.Command(o.Gh, args...) // a test seam
-		} else {
-			tool, why := pinnedGh(l)
-			if why != "" {
-				return why, errors.New(why)
-			}
-			defer tool.Close()
-			cmd = tool.Command(args...)
+	bind := func(n int) error {
+		if o.BindPR == nil {
+			return nil
 		}
-		cmd.Dir = sh.dir
-		cmd.Env = append(ghEnv(o.Env), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
-		out, err := cmd.CombinedOutput()
-		return strings.TrimSpace(string(out)), err
+		return o.BindPR(l.Repository, n, res.Commit)
 	}
-	bound := func(n int) string {
-		if o.PRBoundTo == nil {
-			return ""
-		}
-		return o.PRBoundTo(l.Repository, n)
-	}
-	base := l.base(o.Grants)
-	out, err := run("pr", "list", "--head", rec.Branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
-	if err != nil {
-		return pending("gh pr list failed: " + firstLine(out))
-	}
-	var prs []ghPR
-	if err := json.Unmarshal([]byte(out), &prs); err != nil {
-		return pending("gh pr list gave no PR list: " + firstLine(out))
-	}
-	for _, p := range prs {
-		why := ""
-		switch b := bound(p.Number); {
-		case !strings.EqualFold(p.State, "OPEN"):
-			continue
-		case b == "":
-			why = "is bound to no task in the store"
-		case b != o.Task.ID:
-			why = "is bound to task " + b + " in the store"
-		case p.IsCrossRepository:
-			why = "is from another repository"
-		case p.BaseRefName != base:
-			why = "targets " + p.BaseRefName + ", not the grant's base " + base
-		}
-		if why != "" {
-			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the open PR #%d on %s %s; the commit step never reuses it (pushed %s, no PR bound)", p.Number, rec.Branch, why, res.Commit))
-		}
-		if p.HeadRefOid != res.Commit {
-			return res.defer_(fmt.Sprintf("the open PR #%d is at %s, not yet the pushed head %s", p.Number, p.HeadRefOid, res.Commit))
+	p, why, err := branchPR(o, run, l, res.Branch)
+	switch {
+	case err != nil:
+		return pending(err.Error())
+	case why != "":
+		return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, why+"; the commit step never reuses it (pushed "+res.Commit+", no PR bound)")
+	case p != nil && p.HeadRefOid != res.Commit:
+		return res.defer_(fmt.Sprintf("the open PR #%d is at %s, not yet the pushed head %s", p.Number, p.HeadRefOid, res.Commit))
+	case p != nil:
+		if err := bind(p.Number); err != nil {
+			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the open PR #%d could not be bound again to %s at %s: %v", p.Number, o.Task.ID, res.Commit, err))
 		}
 		res.PRRepository, res.PRNumber = l.Repository, p.Number
 		return res
 	}
-	out, err = run("pr", "create", "--draft", "--head", rec.Branch, "--base", base, "--title", o.Task.ID+": "+strings.Join(strings.Fields(o.Task.Title), " "),
+	out, err := run("pr", "create", "--draft", "--head", res.Branch, "--base", l.base(o.Grants), "--title", o.Task.ID+": "+strings.Join(strings.Fields(o.Task.Title), " "),
 		"--body", Message(o.Task, o.Handle, res.DeclaredDigest, res.DiffDigest))
 	if err != nil {
 		return pending("gh pr create failed: " + firstLine(out))
@@ -1170,13 +1525,13 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 	if err != nil || n <= 0 {
 		return pending("gh gave no PR number: " + firstLine(out))
 	}
-	if t := bound(n); t != "" && t != o.Task.ID {
-		return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("gh answered PR #%d, which the store binds to task %s", n, t))
-	}
-	if o.BindPR != nil {
-		if err := o.BindPR(l.Repository, n, res.Commit); err != nil {
-			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the new PR #%d could not be bound to %s: %v", n, o.Task.ID, err))
+	if o.PRBoundTo != nil {
+		if t := o.PRBoundTo(l.Repository, n); t != "" && t != o.Task.ID {
+			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("gh answered PR #%d, which the store binds to task %s", n, t))
 		}
+	}
+	if err := bind(n); err != nil {
+		return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the new PR #%d could not be bound to %s: %v", n, o.Task.ID, err))
 	}
 	res.PRRepository, res.PRNumber = l.Repository, n
 	return res

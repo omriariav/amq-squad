@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
@@ -121,6 +122,59 @@ func leadPools(models []string, thinking string) []string {
 // refused at start (3.0.1 t16): the lead's supervisor does not restart it.
 const ExitSchedulerRefused = 17
 
+// resolveTeamLeadIdentity reads the same typed seats file the supervised
+// scheduler receives and turns its session coordinates into the pi lead's
+// complete AMQ identity, and returns the seats file's project root (the
+// repository the lead's repo tools read). An explicit --lead and inherited
+// AM_ME may not name different actors: the scheduler and the tools must agree
+// on one handle. The rule (3.0.2 t19 fix): an identity the environment
+// carries (AM_ME and AM_ROOT, the proved identity under an AMQ launch) must
+// agree with the seats file's root and session, else the lead refuses at
+// start naming both; without one, the seats file fills it.
+func resolveTeamLeadIdentity(seats, explicitLead string) (piruntime.TeamIdentity, string, error) {
+	q, err := readLaunchSeats(seats)
+	if err != nil {
+		return piruntime.TeamIdentity{}, "", err
+	}
+	inherited := strings.TrimSpace(os.Getenv("AM_ME"))
+	explicitLead = strings.TrimSpace(explicitLead)
+	if explicitLead != "" && inherited != "" && explicitLead != inherited {
+		return piruntime.TeamIdentity{}, "", fmt.Errorf("--lead %q disagrees with AM_ME=%q", explicitLead, inherited)
+	}
+	handle := firstNonEmptyStr(explicitLead, inherited, "lead")
+	// scheduler run takes its root from seatlaunch.Squad.Normalize and
+	// SessionRoot; these are Normalize's exact steps (the project root
+	// trimmed and cleaned, the base root and session never trimmed), so both
+	// processes pin the same root. Normalize itself also checks the wrapper,
+	// the amq path and every seat, which the lead does not have.
+	project := filepath.Clean(strings.TrimSpace(q.ProjectRoot))
+	baseRoot := q.BaseRoot
+	if baseRoot == "" {
+		baseRoot = filepath.Join(project, ".agent-mail")
+	}
+	identity, err := piruntime.NewTeamIdentity(handle, filepath.Clean(baseRoot), q.Session)
+	if err != nil {
+		return piruntime.TeamIdentity{}, "", err
+	}
+	if inherited != "" && os.Getenv("AM_ROOT") != "" {
+		for _, c := range []struct{ name, want string }{
+			{"AM_ROOT", identity.Root}, {"AM_BASE_ROOT", identity.BaseRoot}, {"AM_SESSION", identity.Session},
+		} {
+			got := os.Getenv(c.name)
+			if got == "" {
+				continue
+			}
+			if c.name != "AM_SESSION" {
+				got = filepath.Clean(got)
+			}
+			if got != c.want {
+				return piruntime.TeamIdentity{}, "", fmt.Errorf("the environment's %s=%q disagrees with the seats file %s (%q)", c.name, got, seats, c.want)
+			}
+		}
+	}
+	return identity, project, nil
+}
+
 // leadSchedulerCommand is the child the lead's team mode runs: `scheduler
 // run` with the lead's handle, one --lead-pool per lead pool, and --trust
 // when the owner passed it to `lead --team` (a flag the owner typed is his
@@ -153,7 +207,7 @@ var startedByLeadTeam = func() bool {
 // startLeadScheduler supervises `amq-squad scheduler run` for the lead;
 // leadPools are the lead's own pools, which the router's concurrency caps
 // count (a pi lead on the Ollama GPU).
-func startLeadScheduler(seats, lead string, leadPools []string, trust bool) (*supervisor, error) {
+var startLeadScheduler = func(seats, lead string, leadPools []string, trust bool) (*supervisor, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
