@@ -51,7 +51,7 @@ func OperatorSeat(o CollectOptions) *Seat {
 	if o.PIDAlive == nil {
 		o.PIDAlive = procinfo.Alive
 	}
-	in, _ := collectSeat(o, o.OperatorHandle, state.Message{}, func(string, ...any) {}, launchContext{})
+	in, _ := collectSeat(o, o.OperatorHandle, state.Message{}, func(string, ...any) {})
 	if !in.HasSignal {
 		return nil
 	}

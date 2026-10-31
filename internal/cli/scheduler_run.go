@@ -210,7 +210,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if len(roster) == 0 {
 		return fmt.Errorf("scheduler run: %s has no seat but the lead", team.SquadPath(q.ProjectRoot))
 	}
-	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target}
+	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target, Start: launchStart()}
 	var amqLauncher scheduler.SeatLauncher
 	var real *seatlaunch.Launcher
 	if schedulerAMQLauncher != nil {
@@ -291,7 +291,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Config: scheduler.Config{MaxSeats: seatCap, Lead: *lead, Roster: roster,
 			// the launch budget's second mark (brief 31-1): each launched
 			// seat's first AMQ message, from its outbox
-			FirstMessage: scheduler.OutboxFirstMessage(root)},
+			FirstMessage: firstMessageMark(root)},
 		Tick: *tick,
 		Started: func(s *scheduler.Scheduler) {
 			sched = s // before the first tick: the router's seat view
@@ -335,6 +335,22 @@ func rosterPools(roster []scheduler.RosterSeat) []task.Pool {
 		out = append(out, rs.Pool)
 	}
 	return out
+}
+
+// firstMessageMark finds a launched seat's first AMQ message in its outbox
+// and records it in the seat's marks (seatlaunch.RecordFirstMessage), where
+// status reads it; the scheduler logs seat_first_message once it is found.
+func firstMessageMark(root string) func(string, time.Time) (time.Time, bool) {
+	find := scheduler.OutboxFirstMessage(root)
+	return func(handle string, since time.Time) (time.Time, bool) {
+		at, ok := find(handle, since)
+		if ok {
+			if err := seatlaunch.RecordFirstMessage(root, handle, at); err != nil {
+				return time.Time{}, false // asked again next tick
+			}
+		}
+		return at, ok
+	}
 }
 
 // launchStart is the start of this squad's launch from AMQ_SQUAD_START

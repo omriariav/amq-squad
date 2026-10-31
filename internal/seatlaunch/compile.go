@@ -226,6 +226,81 @@ func ReadSeatWake(root, handle string) (SeatWakeRecord, error) {
 	return r, json.Unmarshal(b, &r)
 }
 
+// MarksFileName holds a seat's launch budget marks beside its staged record
+// (brief 31-1): the squad launch's start, written with each launch, and
+// the seat's first AMQ message, written once by the scheduler. Status reads
+// a seat's marks from here, its own launch's, never a later scheduler's
+// start or a decisions log that scrolls.
+const MarksFileName = "marks.json"
+
+// SeatMarks is the content of MarksFileName.
+type SeatMarks struct {
+	LaunchID     string     `json:"launch_id"`
+	Start        *time.Time `json:"start"`
+	FirstMessage *time.Time `json:"first_message"`
+}
+
+func marksPath(root, handle string) string {
+	return filepath.Join(launch.StagedDir(root, handle), MarksFileName)
+}
+
+// writeMarks records each staged seat's launch start (best effort, like
+// the wake record).
+func writeMarks(c Compiled, launchID string, start time.Time) {
+	for _, rec := range c.Records {
+		m := SeatMarks{LaunchID: launchID}
+		if !start.IsZero() {
+			t := start.UTC()
+			m.Start = &t
+		}
+		if b, err := json.Marshal(m); err == nil {
+			_ = writeAtomic(marksPath(rec.Root, rec.Handle), append(b, '\n'))
+		}
+	}
+}
+
+// ReadSeatMarks reads a seat's marks (os.ErrNotExist before a launch that
+// wrote them).
+func ReadSeatMarks(root, handle string) (SeatMarks, error) {
+	var m SeatMarks
+	b, err := os.ReadFile(marksPath(root, handle))
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal(b, &m)
+}
+
+// RecordFirstMessage writes a seat's first AMQ message into its marks, once,
+// for the launch its staged record names (a mark of another launch, or one
+// already set, is left as it is).
+func RecordFirstMessage(root, handle string, at time.Time) error {
+	staged, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return err
+	}
+	rec, err := launch.Decode(staged)
+	if err != nil {
+		return err
+	}
+	m, err := ReadSeatMarks(root, handle)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if m.LaunchID != rec.LaunchID {
+		m = SeatMarks{LaunchID: rec.LaunchID}
+	}
+	if m.FirstMessage != nil {
+		return nil
+	}
+	t := at.UTC()
+	m.FirstMessage = &t
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(marksPath(root, handle), append(b, '\n'))
+}
+
 // admittedWakes reads each participant's admitted wake from the Prepare
 // preview, as a fact: a seat the preview lists without execution options,
 // or whose admitted wake differs from the compiled one, is recorded as AMQ

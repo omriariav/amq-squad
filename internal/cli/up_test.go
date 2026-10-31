@@ -39,12 +39,12 @@ type upFake struct {
 	// lead); its record and pane are written either way.
 	leadHolds bool
 	leadLocks []*flock.Exclusive
-	signals  []string
-	onSignal func(pid int, sig syscall.Signal)
-	newEnv   []string // the -e values of tmux new-session
-	newCmd   []string
-	version  string
-	outcome  string // the decision the lead's scheduler logs once new-session runs
+	signals   []string
+	onSignal  func(pid int, sig syscall.Signal)
+	newEnv    []string // the -e values of tmux new-session
+	newCmd    []string
+	version   string
+	outcome   string // the decision the lead's scheduler logs once new-session runs
 }
 
 func (f *upFake) run(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
@@ -667,7 +667,9 @@ func schedWorld(t *testing.T) (*upFake, *flock.Exclusive) {
 	t.Cleanup(func() { run.Close() })
 	upPIDAlive = func(pid int) bool { return pid == 999992 }
 	upStartToken = func(pid int) (string, bool) { return "sched-start", pid == 999992 }
-	upProcArgs = func(pid int) (string, bool) { return "/usr/local/bin/amq-squad scheduler run --project " + f.proj, pid == 999992 }
+	upProcArgs = func(pid int) (string, bool) {
+		return "/usr/local/bin/amq-squad scheduler run --project " + f.proj, pid == 999992
+	}
 	return f, run
 }
 

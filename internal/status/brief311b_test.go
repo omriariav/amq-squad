@@ -95,6 +95,11 @@ func budgetSeat(t *testing.T, root, handle, runtime, model string, start time.Ti
 	if err := os.WriteFile(filepath.Join(launch.StagedDir(root, handle), seatlaunch.WakeFileName), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// the seat's own launch start, as the launch writes it
+	marks, _ := json.Marshal(seatlaunch.SeatMarks{LaunchID: "launch-1", Start: &start})
+	if err := os.WriteFile(filepath.Join(launch.StagedDir(root, handle), seatlaunch.MarksFileName), marks, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seatByHandle(t *testing.T, st Status, h string) Seat {
@@ -140,14 +145,10 @@ func TestLaunchBudgetFromFixtureRecords(t *testing.T) {
 	budgetSeat(t, root, "reviewer", "codex", "gpt-5.6-sol", start, 3201*ms, 602*ms, 538*ms, 78*ms, nil)
 	// a slow seat: 12.4 s to seat live, the seat-exec segment the slowest
 	budgetSeat(t, root, "slow", "claude", "sonnet", start, 3201*ms, 602*ms, 538*ms, 8059*ms, nil)
-	first := start.Add(57449 * ms)
-	for _, d := range []scheduler.Decision{
-		{Kind: scheduler.KindSeatFirstMessage, Seat: "reviewer", Reason: start.Add(-time.Hour).Format(time.RFC3339Nano)}, // a previous launch's
-		{Kind: scheduler.KindSeatFirstMessage, Seat: "reviewer", Reason: first.Format(time.RFC3339Nano)},
-	} {
-		if err := schedproc.AppendDecision(root, first, d); err != nil {
-			t.Fatal(err)
-		}
+	// the reviewer's first message, recorded in its marks by the scheduler
+	// (the decisions log carries no seat_first_message: it scrolled out)
+	if err := seatlaunch.RecordFirstMessage(root, "reviewer", start.Add(57449*ms)); err != nil {
+		t.Fatal(err)
 	}
 	st := Build(Collect(CollectOptions{Root: root, Now: start.Add(time.Minute), PIDAlive: func(int) bool { return false }}))
 	want := map[string]struct {
@@ -188,9 +189,10 @@ func TestLaunchBudgetFromFixtureRecords(t *testing.T) {
 	if st.Scheduler.LaunchStart == nil || !st.Scheduler.LaunchStart.Equal(start) || st.Scheduler.PID != 77 {
 		t.Fatalf("scheduler %+v", st.Scheduler)
 	}
-	// Without a start stamp (a scheduler started by hand) the marks are null
-	// and nothing is over the ceiling.
-	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "cto", Root: root, PID: 77, StartedAt: start}); err != nil {
+	// Without a start of its own launch (a scheduler started by hand) the
+	// seat's marks are null and nothing is over the ceiling.
+	noStart, _ := json.Marshal(seatlaunch.SeatMarks{LaunchID: "launch-1"})
+	if err := os.WriteFile(filepath.Join(launch.StagedDir(root, "slow"), seatlaunch.MarksFileName), noStart, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	st = Build(Collect(CollectOptions{Root: root, Now: start.Add(time.Minute), PIDAlive: func(int) bool { return false }}))
@@ -396,6 +398,49 @@ func TestAFileLockWaitNamesItsHolders(t *testing.T) {
 		}
 		if got, _ := json.Marshal(r.WaitHolders); string(got) != want {
 			t.Errorf("%s wait_holders %s, want %s", r.ID, got, want)
+		}
+	}
+}
+
+// Codex P2 (6) and (7) on #829: each seat's marks are its own launch's.
+// A seat adopted by a later scheduler incarnation keeps the start of the
+// launch that started it (not the later scheduler's), a seat whose proof
+// predates its recorded start, or that has no marks of its launch, has
+// null timing and no ceiling check, and the first message comes from the
+// seat's marks, so it survives the decisions log scrolling.
+func TestEachSeatsMarksAreItsOwnLaunchs(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	root := filepath.Join(base, "root")
+	first := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	later := first.Add(2 * time.Hour) // a restarted scheduler's start
+	if err := os.MkdirAll(schedproc.Dir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "cto", Root: root, PID: 77, StartedAt: later, Start: &later}); err != nil {
+		t.Fatal(err)
+	}
+	s := time.Second
+	budgetSeat(t, root, "adopted", "codex", "gpt", first, s, s, s, s, nil) // live at first+4s, adopted at the restart
+	if err := seatlaunch.RecordFirstMessage(root, "adopted", first.Add(50*s)); err != nil {
+		t.Fatal(err)
+	}
+	budgetSeat(t, root, "old", "codex", "gpt", first, s, s, s, s, nil)
+	_ = os.Remove(filepath.Join(launch.StagedDir(root, "old"), seatlaunch.MarksFileName)) // launched before the marks
+	budgetSeat(t, root, "skewed", "codex", "gpt", first, s, s, s, s, nil)
+	skew, _ := json.Marshal(seatlaunch.SeatMarks{LaunchID: "launch-1", Start: &later}) // a start after its proof
+	_ = os.WriteFile(filepath.Join(launch.StagedDir(root, "skewed"), seatlaunch.MarksFileName), skew, 0o600)
+	for i := range 20000 { // the decisions log scrolls far past its tail read
+		_ = schedproc.AppendDecision(root, later, scheduler.Decision{Kind: "lease_renewed", Seat: "adopted", TaskID: fmt.Sprintf("t%d-%s", i, strings.Repeat("x", 40))})
+	}
+	st := Build(Collect(CollectOptions{Root: root, Now: later.Add(time.Minute), PIDAlive: func(int) bool { return false }}))
+	a := seatByHandle(t, st, "adopted").Launch.Timing
+	if deref64(a.ToSeatLiveMS) != 4000 || deref64(a.ToFirstMessageMS) != 50000 || a.Start == nil || !a.Start.Equal(first) {
+		t.Errorf("adopted seat timing %+v (live %d, first %d)", a, deref64(a.ToSeatLiveMS), deref64(a.ToFirstMessageMS))
+	}
+	for _, h := range []string{"old", "skewed"} {
+		s := seatByHandle(t, st, h)
+		if tm := s.Launch.Timing; tm.Start != nil || tm.ToSeatLiveMS != nil || tm.OverCeiling || hasWarning(s, WarnLaunchBudget) != "" {
+			t.Errorf("%s: timing %+v warnings %q", h, tm, s.Warnings)
 		}
 	}
 }

@@ -106,7 +106,7 @@ func Collect(o CollectOptions) Input {
 	// brief 31-1: the lead and the scheduler process, the decisions tail,
 	// the merge train's runs, and each seat's launch budget
 	collectProcesses(o, &in, warn)
-	lc := launchContext{start: in.SchedulerProc.LaunchStart, first: collectDecisions(o, &in, warn)}
+	collectDecisions(o, &in, warn)
 	collectTrain(o, &in, warn)
 	entries, err := os.ReadDir(filepath.Join(o.Root, "agents"))
 	if err != nil && !os.IsNotExist(err) {
@@ -117,7 +117,7 @@ func Collect(o CollectOptions) Input {
 		if !e.IsDir() || e.Name() == o.OperatorHandle || e.Name() == scheduler.SenderHandle || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		seat, tokens := collectSeat(o, e.Name(), lastFrom[e.Name()], warn, lc)
+		seat, tokens := collectSeat(o, e.Name(), lastFrom[e.Name()], warn)
 		tokenSource = tokenSource || tokens
 		in.Seats = append(in.Seats, seat)
 	}
@@ -128,7 +128,7 @@ func Collect(o CollectOptions) Input {
 	return in
 }
 
-func collectSeat(o CollectOptions, handle string, last state.Message, warn func(string, ...any), lc launchContext) (SeatInput, bool) {
+func collectSeat(o CollectOptions, handle string, last state.Message, warn func(string, ...any)) (SeatInput, bool) {
 	dir := filepath.Join(o.Root, "agents", handle)
 	seat := SeatInput{Handle: handle, PromptState: "unknown"}
 	// The seat's role, runtime, model and effort join from its launch record
@@ -141,7 +141,7 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 			// brief 31-1: the seat's worktree, branch and last launch, and
 			// the warnings of its launch
 			seat.Worktree, seat.Branch = staged.Worktree, staged.Branch
-			seat.Launch = seatLaunch(o.Root, handle, staged, lc)
+			seat.Launch = seatLaunch(o.Root, handle, staged)
 			seat.Warnings = append(seat.Warnings, launchWarnings(o.Root, handle, staged, seat.Launch, o.Now)...)
 		}
 	}

@@ -12,7 +12,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
-	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 )
 
@@ -22,12 +21,6 @@ import (
 // the deleted refusals. Every read is lock-free: the records are written by
 // rename or appended, and status never takes or probes a lock.
 
-// launchContext is what every seat's launch reads: the squad launch's start
-// and each seat's first-message stamps from the decisions log.
-type launchContext struct {
-	start *time.Time
-	first map[string][]time.Time
-}
 
 // collectProcesses reads the lead record and the scheduler's launch record.
 func collectProcesses(o CollectOptions, in *Input, warn func(string, ...any)) {
@@ -55,23 +48,15 @@ func collectProcesses(o CollectOptions, in *Input, warn func(string, ...any)) {
 	}
 }
 
-// collectDecisions reads the decisions log's tail and each seat's
-// seat_first_message stamps.
-func collectDecisions(o CollectOptions, in *Input, warn func(string, ...any)) map[string][]time.Time {
+// collectDecisions reads the decisions log's tail.
+func collectDecisions(o CollectOptions, in *Input, warn func(string, ...any)) {
 	lines, err := schedproc.ReadDecisionsTail(o.Root)
 	if err != nil {
 		warn("decisions log: %v", err)
 	}
-	first := map[string][]time.Time{}
 	for _, d := range lines {
 		in.Decisions = append(in.Decisions, Decision{At: d.At, Kind: d.Kind, Seat: d.Seat, TaskID: d.TaskID, Reason: d.Reason, ReasonCode: d.ReasonCode, Stage: d.Stage})
-		if d.Kind == scheduler.KindSeatFirstMessage {
-			if at, err := time.Parse(time.RFC3339Nano, d.Reason); err == nil {
-				first[d.Seat] = append(first[d.Seat], at)
-			}
-		}
 	}
-	return first
 }
 
 // collectTrain groups the merge train's audit log by run: the last two,
@@ -124,8 +109,12 @@ func collectTrain(o CollectOptions, in *Input, warn func(string, ...any)) {
 // seatLaunch is a seat's last launch from its records: the staged record
 // (compile's started_at, the proof ticket's issued_at, AMQ's apply), its
 // published record (seat-exec's outcome), the accepted proof (seat live),
-// the admitted wake, and the launch budget against LaunchCeiling.
-func seatLaunch(root, handle string, staged launch.Record, lc launchContext) *SeatLaunch {
+// the admitted wake, and the launch budget against LaunchCeiling from the
+// seat's own marks (its launch's start and its first message). A seat
+// without marks of this launch (launched before them, or by a scheduler
+// started by hand), or whose proof predates its start, has null marks and
+// no ceiling check.
+func seatLaunch(root, handle string, staged launch.Record) *SeatLaunch {
 	sl := &SeatLaunch{LaunchID: staged.LaunchID, Outcome: "staged"}
 	if staged.Apply != nil {
 		sl.Outcome = "applied"
@@ -147,23 +136,15 @@ func seatLaunch(root, handle string, staged launch.Record, lc launchContext) *Se
 	if w, err := seatlaunch.ReadSeatWake(root, handle); err == nil && w.LaunchID == staged.LaunchID && w.Wake != nil {
 		sl.Wake = &SeatWake{Mode: w.Wake.Mode, RequireWake: w.Wake.RequireWake, Injector: w.Wake.Injector, AuditReason: w.Wake.AuditReason}
 	}
-	sl.Timing = launchTiming(staged, lc.start, live, firstAfter(lc.first[handle], staged.StartedAt))
-	return sl
-}
-
-// firstAfter is the earliest stamp at or after since.
-func firstAfter(stamps []time.Time, since time.Time) *time.Time {
-	var out *time.Time
-	for _, t := range stamps {
-		if t.Before(since) {
-			continue
-		}
-		if out == nil || t.Before(*out) {
-			t := t.UTC()
-			out = &t
-		}
+	var start, first *time.Time
+	if m, err := seatlaunch.ReadSeatMarks(root, handle); err == nil && staged.LaunchID != "" && m.LaunchID == staged.LaunchID {
+		start, first = m.Start, m.FirstMessage
 	}
-	return out
+	if start != nil && live != nil && live.Before(*start) {
+		start = nil // a proof older than the start is not this start's launch (an adopted seat)
+	}
+	sl.Timing = launchTiming(staged, start, live, first)
+	return sl
 }
 
 // launchTiming computes the two marks and the segments up to seat live.
