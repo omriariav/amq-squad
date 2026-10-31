@@ -189,6 +189,10 @@ func TestVerifierModuleCacheTwoRunsOneFetch(t *testing.T) {
 	if err := os.RemoveAll(proxy); err != nil {
 		t.Fatal(err)
 	}
+	// The second task starts from the base (3.0.2 t23): it brings its own
+	// module files, and the cache it shares with the first run serves them.
+	write(t, filepath.Join(f.wt, "go.mod"), "module example.com/seat\n\ngo 1.22\n\nrequire example.com/dep v1.0.0\n")
+	write(t, filepath.Join(f.wt, "go.sum"), goSum)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n\n// second run\n")
 	res = f.run(f.reportedBare("go.mod", "go.sum", "cmd/**"))
 	if !res.OK {

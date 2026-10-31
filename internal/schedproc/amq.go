@@ -73,10 +73,27 @@ func scrubAMQ(env []string) []string {
 	return out
 }
 
-// Doorbell rings a seat with an AMQ message naming its new lease.
-type Doorbell struct{ Sender }
+// Doorbell rings a seat with an AMQ message naming its new lease. Start,
+// when set, runs first: it puts the seat's worktree on the task's own branch
+// (seatcommit.StartTask, 3.0.2 t23) before the seat is told. A Start error
+// rings nothing: Ring returns it as a scheduler.LeaseUnpreparedError, and
+// the scheduler releases the lease and blocks the task for the lead
+// (task_branch_unprepared), so no seat works on the resting branch.
+type Doorbell struct {
+	Sender
+	Start func(handle string, t task.Task) error
+}
 
 func (d Doorbell) Ring(handle string, t task.Task) error {
+	if d.Start != nil {
+		if err := d.Start(handle, t); err != nil {
+			return &scheduler.LeaseUnpreparedError{Err: fmt.Errorf("seat %s could not be put on task %s's branch: %w", handle, t.ID, err)}
+		}
+	}
+	return d.ring(handle, t)
+}
+
+func (d Doorbell) ring(handle string, t task.Task) error {
 	body := fmt.Sprintf("The scheduler leased you task %s (%s, class %s). Claim it with: amq-squad task claim %s --me %s. Declared files: %s.",
 		t.ID, t.Title, t.Class, t.ID, handle, orNone(strings.Join(t.DeclaredFiles, ", ")))
 	return d.send(handle, "todo", "task "+t.ID+": "+t.Title, body)

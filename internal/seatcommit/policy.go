@@ -52,6 +52,13 @@ const (
 	// task's harness PR (another task's, another repository's, another base);
 	// it is never reused (P2, the reviewer's pre-clearance).
 	ReasonPRBoundElsewhere = "pr_bound_elsewhere"
+	// ReasonRecordedDiffMismatch refuses a recorded harness commit whose diff,
+	// recomputed, is not the digest the commit ledger recorded with it.
+	ReasonRecordedDiffMismatch = "recorded_diff_mismatch"
+	// ReasonLeaseTaskMismatch refuses a step whose commit ledger records the
+	// seat's current lease for another task: nothing is written, the seat is
+	// not quarantined, and the lead decides.
+	ReasonLeaseTaskMismatch = "lease_task_mismatch"
 )
 
 // Growth-gate limits named in a GrowTask target.
