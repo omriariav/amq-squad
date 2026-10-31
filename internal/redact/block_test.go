@@ -19,6 +19,9 @@ func longLine(n int) string { return strings.Repeat("password"+"=x ", n/11) }
 // allocates (runtime.MemStats.TotalAlloc). The 1 MiB line holds 16x the
 // 64 KiB line's values, so each measure must grow by no more than 24x; a
 // quadratic Block grows by about 256x.
+// Limit of the row: a quadratic loop that neither calls the work hook nor
+// allocates (a strings.Index rescan, say) slips through; the shapes it
+// catches are a quadratic copy and a regex rescan.
 func TestBlockIsLinearOnALongLine(t *testing.T) {
 	const limit = 24
 	const allocLimit = 40 // builder and slice growth leave bytes a little over linear
