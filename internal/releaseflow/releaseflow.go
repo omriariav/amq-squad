@@ -76,6 +76,7 @@ type Draft struct {
 	TargetCommitish string `json:"target_commitish"`
 	Draft           bool   `json:"draft"`
 	URL             string `json:"html_url,omitempty"`
+	Body            string `json:"body,omitempty"`
 }
 
 // intent is the creation intent written before the draft's POST (5 re-pass,
@@ -92,6 +93,11 @@ func NonceMarker(nonce string) string { return "<!-- amq-squad-release-nonce: " 
 
 // ErrDraftEdited: the draft was changed between creation and publication.
 var ErrDraftEdited = errors.New("draft_edited")
+
+// ErrDraftBodyChanged: the draft's body on the remote is not the prepared
+// notes file's content with the creation nonce (3.0.2): edited after creation,
+// or a recovered or adopted draft whose body differs.
+var ErrDraftBodyChanged = errors.New("release_draft_body_changed")
 
 // ErrProtectionUnmet: the repository has no tag rule restricting update and
 // deletion of the release's tag, so no release runs (protection_unmet).
@@ -441,12 +447,20 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		return a.ID == b.ID && a.Tag == b.Tag && a.TargetCommitish == b.TargetCommitish && a.Draft && b.Draft
 	}
 	intentPath := filepath.Join(dir, "draft-intent.json")
+	// The creation intent first (5 re-pass, P2-4), read before any recovery:
+	// its nonce is in the draft's body, and the body the draft must carry is
+	// the notes file's content with that nonce (3.0.2).
+	in, err := readIntent(intentPath, tag, approved)
+	if err != nil {
+		return "", err
+	}
+	wantBody := strings.TrimSpace(notes + "\n\n" + NonceMarker(in.Nonce))
 	discard := func(d Draft, cause error, why, remote string) (string, error) {
 		if !d.Draft {
 			// A published release is never deleted (5 re-pass, P1-1): it is
 			// reported for the owner.
 			alertErr := f.alert(root, repo, "draft_edited", tag, approved, fmt.Sprintf("published release %d for %s on %s does not match the approved one (%s); it was not deleted", d.ID, tag, repo, why))
-			return "", errors.Join(fmt.Errorf("%w: published release %d: %s", ErrDraftEdited, d.ID, why), note("release_mismatch", d, why+"; not deleted"), alertErr)
+			return "", errors.Join(fmt.Errorf("%w (%w): published release %d: %s", ErrDraftEdited, cause, d.ID, why), note("release_mismatch", d, why+"; not deleted"), alertErr)
 		}
 		derr := f.Exec.DeleteRelease(ctx, repo, d.ID)
 		result := "deleted"
@@ -479,13 +493,15 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		case !found:
 			_ = os.Remove(record)
 			_ = note("draft_gone", prev, "the recorded draft no longer exists; a new draft is created")
-		case !got.Draft && got.ID == prev.ID && got.Tag == want.Tag && got.TargetCommitish == want.TargetCommitish:
+		case !got.Draft && got.ID == prev.ID && got.Tag == want.Tag && got.TargetCommitish == want.TargetCommitish && got.Body == wantBody:
 			// The publish request succeeded and its response was lost (5
 			// re-pass, P1-1): GitHub keeps the published release at its id.
 			// The same id, tag and commit is completion, never a deletion.
 			_ = os.Remove(record)
 			_ = os.Remove(intentPath)
 			return got.URL, note("draft_published", got, "recovered: the release was already published at its id ("+got.URL+")")
+		case got.Body != wantBody:
+			return discard(got, ErrDraftBodyChanged, fmt.Sprintf("the recorded draft's body has sha256 %s, not the prepared notes file's", BodyDigest(got.Body)), "")
 		case !same(got, prev) || got.Tag != want.Tag || got.TargetCommitish != want.TargetCommitish:
 			return discard(got, ErrDraftEdited, fmt.Sprintf("the recorded draft now names %s at %s", got.Tag, got.TargetCommitish), "")
 		default:
@@ -494,13 +510,9 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		}
 	}
 	if d.ID == 0 {
-		// The creation intent first (5 re-pass, P2-4): a draft whose POST
-		// succeeded but whose response or record was lost carries the nonce
-		// in its body, and is adopted here, never created twice.
-		in, err := readIntent(intentPath, tag, approved)
-		if err != nil {
-			return "", err
-		}
+		// A draft whose POST succeeded but whose response or record was lost
+		// carries the intent's nonce in its body, and is adopted here, never
+		// created twice.
 		matches, err := f.Exec.FindDrafts(ctx, repo, in.Nonce)
 		if err != nil {
 			return "", fmt.Errorf("find drafts of intent %s: %w", in.Nonce, err)
@@ -518,7 +530,7 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		}
 		if created.ID != 0 {
 			_ = note("draft_adopted", created, "the draft of intent "+in.Nonce+" was created by a run whose response or record was lost")
-		} else if created, err = f.Exec.CreateDraft(ctx, repo, tag, approved, strings.TrimSpace(notes+"\n\n"+NonceMarker(in.Nonce))); err != nil {
+		} else if created, err = f.Exec.CreateDraft(ctx, repo, tag, approved, wantBody); err != nil {
 			return "", err
 		}
 		if err := writeOnce(record, created); err != nil {
@@ -537,6 +549,9 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 		}
 		if !found || !same(got, want) || !same(created, want) {
 			return discard(got, ErrDraftEdited, fmt.Sprintf("read back as %s at %s (found %v)", got.Tag, got.TargetCommitish, found), "")
+		}
+		if got.Body != wantBody {
+			return discard(got, ErrDraftBodyChanged, fmt.Sprintf("read back with a body of sha256 %s, not the prepared notes file's", BodyDigest(got.Body)), "")
 		}
 		d = got
 	}
@@ -557,6 +572,9 @@ func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, note
 	}
 	if !found || !same(again, d) {
 		return discard(again, ErrDraftEdited, fmt.Sprintf("before publication it names %s at %s (found %v)", again.Tag, again.TargetCommitish, found), "")
+	}
+	if again.Body != wantBody {
+		return discard(again, ErrDraftBodyChanged, fmt.Sprintf("before publication its body has sha256 %s, not the prepared notes file's", BodyDigest(again.Body)), "")
 	}
 	if commit, err = f.Exec.TagCommit(ctx, repo, tag); err != nil {
 		return "", fmt.Errorf("resolve tag %s: %w", tag, err)

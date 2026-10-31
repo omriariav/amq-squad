@@ -35,7 +35,7 @@ func (g *GH) Tag(ctx context.Context, repository, tag, commit string) error {
 	return err
 }
 
-const draftJQ = `{id, tag: .tag_name, target_commitish, draft, html_url}`
+const draftJQ = `{id, tag: .tag_name, target_commitish, draft, html_url, body}`
 
 // FindDrafts lists the releases (every page) whose body carries the nonce.
 func (g *GH) FindDrafts(ctx context.Context, repository, nonce string) ([]Draft, error) {

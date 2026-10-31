@@ -82,6 +82,7 @@ func (e *repoExec) CreateDraft(_ context.Context, repository, tag, commit, notes
 		e.bodies = map[int64]string{}
 	}
 	e.bodies[d.ID] = notes
+	d.Body = notes
 	if e.onDraft != nil {
 		e.onDraft()
 	}
@@ -95,6 +96,7 @@ func (e *repoExec) FindDrafts(_ context.Context, _ string, nonce string) ([]Draf
 	var out []Draft
 	for id, d := range e.drafts {
 		if strings.Contains(e.bodies[id], NonceMarker(nonce)) {
+			d.Body = e.bodies[id]
 			out = append(out, d)
 		}
 	}
@@ -111,6 +113,9 @@ func (e *repoExec) ReadDraft(_ context.Context, _ string, id int64) (Draft, bool
 		return Draft{}, false, errors.New("HTTP 502")
 	}
 	d, ok := e.drafts[id]
+	if ok {
+		d.Body = e.bodies[id] // the remote's body, as a test may have edited it
+	}
 	return d, ok, nil
 }
 
@@ -804,5 +809,75 @@ func TestTheDigestLineIsPreparesOnly(t *testing.T) {
 		if _, err := g.flow.Publish(context.Background(), g.root); !errors.Is(err, c.want) || g.exec.tags != 0 || g.exec.nextID != 0 {
 			t.Fatalf("note %q: %v (tags %d drafts %d), want %v", c.summary, err, g.exec.tags, g.exec.nextID, c.want)
 		}
+	}
+}
+
+// 3.0.2 (Codex P1): the draft's body on the remote is compared at every
+// read-back, not only the local body at publish. A body edited after
+// creation, right before the publish, on a recorded draft a later run
+// recovers, or on a draft a later run adopts is release_draft_body_changed:
+// deleted, nothing published. Each is refused at its own read (the read
+// count), so a later check does not stand in for a missing earlier one.
+func TestADraftWhoseRemoteBodyChangedIsNeverPublished(t *testing.T) {
+	edit := func(e *repoExec) {
+		for id := range e.bodies {
+			e.bodies[id] = "edited on the remote\n\n" + e.bodies[id]
+		}
+	}
+	for _, at := range []int{1, 2} { // the read-back after creation, the re-read before publish
+		f := newFixture(t)
+		snap, err := f.flow.Prepare(f.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range snap.Active.Children {
+			f.approved[c.QuestionMessageID] = true
+		}
+		f.exec.onRead = func(n int) {
+			if n == at {
+				edit(f.exec)
+			}
+		}
+		if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrDraftBodyChanged) || f.exec.published() != 0 || f.exec.deleted != 1 || f.exec.reads != at {
+			t.Fatalf("read %d: %v published %d deleted %d reads %d", at, err, f.exec.published(), f.exec.deleted, f.exec.reads)
+		}
+	}
+	// Recovery: the first run's read-back fails, so the draft stays recorded;
+	// its body is edited before the next run.
+	g := newFixture(t)
+	snap, err := g.flow.Prepare(g.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		g.approved[c.QuestionMessageID] = true
+	}
+	g.exec.failRead = map[int]bool{1: true}
+	if _, err := g.flow.Publish(context.Background(), g.root); err == nil {
+		t.Fatal("the read-back error published")
+	}
+	edit(g.exec)
+	before := g.exec.reads
+	if _, err := g.flow.Publish(context.Background(), g.root); !errors.Is(err, ErrDraftBodyChanged) || g.exec.published() != 0 || g.exec.deleted != 1 || g.exec.reads-before != 1 {
+		t.Fatalf("recovery: %v published %d deleted %d reads %d", err, g.exec.published(), g.exec.deleted, g.exec.reads-before)
+	}
+	// Adoption: the creation response is lost, so the next run adopts the
+	// draft by its nonce; its body was edited in between.
+	h := newFixture(t)
+	snap, err = h.flow.Prepare(h.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		h.approved[c.QuestionMessageID] = true
+	}
+	h.exec.loseCreate = 1
+	if _, err := h.flow.Publish(context.Background(), h.root); err == nil {
+		t.Fatal("a lost creation response was reported as success")
+	}
+	edit(h.exec)
+	before = h.exec.reads
+	if _, err := h.flow.Publish(context.Background(), h.root); !errors.Is(err, ErrDraftBodyChanged) || h.exec.published() != 0 || h.exec.deleted != 1 || h.exec.reads-before != 1 {
+		t.Fatalf("adoption: %v published %d deleted %d reads %d", err, h.exec.published(), h.exec.deleted, h.exec.reads-before)
 	}
 }
