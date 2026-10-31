@@ -59,7 +59,7 @@ func TestSeatBaseRelaunchAtTheTip(t *testing.T) {
 	}
 	wt := first.Seats[0].Worktree
 	seatCommit := commitFile(t, wt, "t5.txt", "t5\n", "the seat's t5 commit")
-	gitRun(t, wt, "push", "-q", remote, "seat/c1") // pushed and merged, as a harness commit is
+	gitRun(t, wt, "push", "-q", remote, "seat/c1")   // pushed and merged, as a harness commit is
 	gitRun(t, wt, "checkout", "-q", "-b", "task-t5") // left on another branch
 	s.ReleaseRequest("r1")
 	gitRun(t, other, "pull", "-q", "--no-rebase", "--no-edit", "origin", "seat/c1")
@@ -318,5 +318,30 @@ func TestSeatBaseConcurrentBranchMoveRefuses(t *testing.T) {
 	}
 	if b := gitRun(t, q.ProjectRoot, "rev-parse", "refs/heads/seat/p1"); b != moved {
 		t.Fatalf("the concurrent create was overwritten: seat/p1 at %s", b)
+	}
+}
+
+// Codex P1-2: an existing worktree whose HEAD names nothing (unborn) refuses
+// the launch by name; an uncommitted file is never reset over.
+func TestSeatBaseUnbornHeadRefuses(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	first, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := first.Seats[0].Worktree
+	s.ReleaseRequest("r1")
+	commitFile(t, other, "v3.txt", "v3\n", "v3 moves")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	gitRun(t, wt, "symbolic-ref", "HEAD", "refs/heads/nothing")
+	if err := os.WriteFile(filepath.Join(wt, "a.txt"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), ReasonSeatHeadUnreadable) {
+		t.Fatalf("an unborn HEAD: %v", err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(wt, "a.txt")); string(raw) != "uncommitted\n" {
+		t.Fatalf("the uncommitted file was reset over: %q", raw)
 	}
 }

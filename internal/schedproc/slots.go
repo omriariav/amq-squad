@@ -117,6 +117,17 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	if err != nil {
 		return seat, fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
+	// An existing worktree's HEAD must name a commit: the move is a two-tree
+	// read-tree from it, never a reset over files it cannot account for.
+	var gd, head string
+	if statErr == nil {
+		if gd, err = worktreeGitDir(seat.Worktree); err != nil {
+			return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
+		}
+		if head, err = g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "rev-parse", "--verify", "-q", "HEAD^{commit}"); err != nil || head == "" {
+			return seat, fmt.Errorf("%s: seat %s: the worktree %s has a HEAD that names no commit; the launch never resets over it: check out a commit or remove the worktree, then launch again", ReasonSeatHeadUnreadable, seat.Handle, seat.Worktree)
+		}
+	}
 	tip, err := s.baseTip(g, common, seat)
 	if err != nil {
 		return seat, err
@@ -140,7 +151,7 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 		}
 	}
 	if statErr == nil {
-		if err := g.moveWorktree(common, seat, tip, cur); err != nil {
+		if err := g.moveWorktree(gd, common, seat, head, tip, cur); err != nil {
 			return seat, fmt.Errorf("seat %s worktree to the base tip %s: %v", seat.Handle, short(tip), err)
 		}
 		return seat, nil
@@ -161,6 +172,11 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 // its resting branch holds commits the base tip does not: the harness never
 // force-pushes it; the lead decides.
 const ReasonSeatBranchUnmerged = "seat_branch_unmerged"
+
+// ReasonSeatHeadUnreadable refuses a seat's launch when its existing
+// worktree's HEAD names no commit (unborn or unreadable): the move to the tip
+// is never a reset over files nothing accounts for.
+const ReasonSeatHeadUnreadable = "seat_head_unreadable"
 
 // ReasonSeatBranchUnpushed refuses a seat's launch when its local resting
 // branch holds commits the base tip does not: the harness never discards a
@@ -231,38 +247,26 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 	return tip, nil
 }
 
-// moveWorktree puts an existing seat worktree on the tip: a two-tree
-// read-tree from its HEAD in the shadow (a local change the move would
-// overwrite refuses, nothing is lost; CleanSeat keeps any other leftover as
-// evidence), then the resting branch moves to the tip and HEAD names it.
-func (g baseGit) moveWorktree(common string, seat seatlaunch.Seat, tip, cur string) error {
-	gd, err := worktreeGitDir(seat.Worktree)
-	if err != nil {
-		return err
-	}
-	wenv := []string{"GIT_DIR=" + gd}
-	old, err := g.run(seat.Worktree, wenv, "rev-parse", "--verify", "-q", "HEAD^{commit}")
-	if err != nil {
-		old = ""
-	}
-	if old != tip {
+// moveWorktree puts an existing seat worktree (git dir gd, HEAD at head) on
+// the tip: a two-tree read-tree from head in the shadow (a local change the
+// move would overwrite refuses, nothing is lost; CleanSeat keeps any other
+// leftover as evidence), then the resting branch moves from cur to the tip
+// and HEAD names it.
+func (g baseGit) moveWorktree(gd, common string, seat seatlaunch.Seat, head, tip, cur string) error {
+	if head != tip {
 		sh, err := newBaseShadow(g, common)
 		if err != nil {
 			return err
 		}
 		defer os.RemoveAll(sh.dir)
-		args := []string{"read-tree", "-u", "--reset", tip}
-		if old != "" {
-			args = []string{"read-tree", "-m", "-u", old, tip}
-		}
-		if _, err := g.run(seat.Worktree, append(sh.env, "GIT_WORK_TREE="+seat.Worktree, "GIT_INDEX_FILE="+filepath.Join(gd, "index")), args...); err != nil {
+		if _, err := g.run(seat.Worktree, append(sh.env, "GIT_WORK_TREE="+seat.Worktree, "GIT_INDEX_FILE="+filepath.Join(gd, "index")), "read-tree", "-m", "-u", head, tip); err != nil {
 			return err
 		}
 	}
 	if _, err := g.run(seat.Worktree, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
 		return err
 	}
-	_, err = g.run(seat.Worktree, wenv, "symbolic-ref", "HEAD", "refs/heads/"+seat.Branch)
+	_, err := g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "symbolic-ref", "HEAD", "refs/heads/"+seat.Branch)
 	return err
 }
 
