@@ -580,7 +580,12 @@ branch's draft PR and binds it to the task with no flag, and
 grant.</li>
 <li><strong>The roster.</strong> The scheduler launches every seat of
 the seat list that has a worktree of its own in one AMQ launch at start;
-a seat with no lease is parked and gets the next task of its pool.
+a seat with no lease is parked and gets the next task of its pool. At
+every launch, the roster's included, a seat's worktree and its
+<code>seat/&lt;handle&gt;</code> branch start from the base branch's tip
+fetched from the grant's push URL, the launch record carries that base,
+and a remote seat branch ahead of the tip and unmerged refuses the
+launch by name (<code>seat_branch_unmerged</code>) for the lead.
 <code>max_seats</code> caps the leases held at once, not the seats up.
 AMQ refuses a fresh seat into a session whose binding is present, so a
 gone seat is not replaced on its own: its pool's next task blocks for

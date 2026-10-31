@@ -548,7 +548,14 @@ seat of the typed seat list with a worktree of its own, in one AMQ
 prepare and one apply at start (one binding, every seat fresh); a seat
 that holds no lease is parked and gets the next task of its pool, and
 the seat cap and the registry's concurrency pools bound the leases held
-at once (max_seats caps live leases, not live panes). A restarted
+at once (max_seats caps live leases, not live panes). At every launch,
+the roster launch included, a seat's worktree and its resting branch
+`seat/<handle>` start from the base branch's tip, fetched from the grant's
+push URL (the local base branch without one), never from the commit
+ledger's first base or the branch's old head; the launch record carries
+that base, and a remote seat branch ahead of the tip and unmerged refuses
+the launch by name (`seat_branch_unmerged`), never a force-push [3.0.2
+t22; docs/v3-spike/5-302-evidence/seatbase.md]. A restarted
 scheduler adopts the live roster seats it re-proves from the launch
 ledger and closes the rest. The roster's tmux session holds seats only: the
 lead's seat is left out of the roster, and the team-mode lead and its
