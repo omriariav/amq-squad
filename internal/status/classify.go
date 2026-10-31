@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -234,6 +235,7 @@ func Build(in Input) Status {
 			s.LeadHandle = &h
 		}
 	}
+	redactDocument(&s)
 	sortAttention(s.Attention)
 	for _, t := range s.Tasks {
 		s.Counts.add(t.Bucket)
@@ -306,6 +308,58 @@ func classifyTask(t task.Task, now time.Time) Task {
 	return row
 }
 
+// The status document is read by the screen and by the lead's model
+// (amq_status), so every free-text field passes redact.Block before it is
+// serialized (Codex P2 10 on #829): message bodies, warnings, task titles
+// and evidence, attention subjects, decision reasons, the train's refusals
+// and alert details, AMQ's wake audit reasons.
+
+func redactAll(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = redact.Block(v)
+	}
+	return out
+}
+
+func redactLaunch(l *SeatLaunch) *SeatLaunch {
+	if l == nil {
+		return nil
+	}
+	c := *l
+	if l.Wake != nil {
+		w := *l.Wake
+		w.AuditReason = redact.Block(w.AuditReason)
+		c.Wake = &w
+	}
+	return &c
+}
+
+// redactDocument redacts the document's free text that Build assembled
+// (seat rows are redacted in classifySeat).
+func redactDocument(s *Status) {
+	s.Warnings = redactAll(s.Warnings)
+	for i := range s.Tasks {
+		s.Tasks[i].Title = redact.Block(s.Tasks[i].Title)
+		s.Tasks[i].Evidence = redact.Block(s.Tasks[i].Evidence)
+	}
+	for i := range s.Attention {
+		s.Attention[i].Subject = redact.Block(s.Attention[i].Subject)
+	}
+	for i := range s.Decisions {
+		s.Decisions[i].Reason = redact.Block(s.Decisions[i].Reason)
+	}
+	for i := range s.Train.Runs {
+		s.Train.Runs[i].Refusal = redact.Block(s.Train.Runs[i].Refusal)
+	}
+	for i := range s.Train.Alerts {
+		s.Train.Alerts[i].Detail = redact.Block(s.Train.Alerts[i].Detail)
+	}
+}
+
 // lockHolders are the tasks that hold a pending task's file lock, by the
 // task store's rule (task.Blocker): in progress or blocked, with declared
 // files overlapping its own. [] unless the task waits on a file lock.
@@ -328,9 +382,11 @@ func lockHolders(t task.Task, all []task.Task) []string {
 func classifySeat(in SeatInput, tasks []task.Task, gates map[string]GateInput, asked map[string]ThreadInput, now time.Time) (Seat, bool) {
 	row := Seat{
 		Handle: in.Handle, Role: in.Role, Runtime: in.Runtime, Model: in.Model, Effort: in.Effort, ProjectPath: in.ProjectPath,
-		LastActivityAt: in.LastActivity, LastMessageAt: in.LastMessageAt, LastMessage: truncate(in.LastMessage, lastMessageLimit),
+		// redacted before it is cut, so a cut never hides a credential from
+		// the redaction (Codex P2 10 on #829)
+		LastActivityAt: in.LastActivity, LastMessageAt: in.LastMessageAt, LastMessage: truncate(redact.Block(in.LastMessage), lastMessageLimit),
 		PromptState: firstNonEmpty(in.PromptState, "unknown"), TokensIn: in.TokensIn, TokensOut: in.TokensOut,
-		Warnings: in.Warnings, Worktree: in.Worktree, Branch: in.Branch, Launch: in.Launch,
+		Warnings: redactAll(in.Warnings), Worktree: in.Worktree, Branch: in.Branch, Launch: redactLaunch(in.Launch),
 	}
 	held := task.HeldBy(in.Handle, tasks)
 	// live is set before the state: a gate or a block overrides liveness in

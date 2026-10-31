@@ -11,6 +11,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -442,5 +443,47 @@ func TestEachSeatsMarksAreItsOwnLaunchs(t *testing.T) {
 		if tm := s.Launch.Timing; tm.Start != nil || tm.ToSeatLiveMS != nil || tm.OverCeiling || hasWarning(s, WarnLaunchBudget) != "" {
 			t.Errorf("%s: timing %+v warnings %q", h, tm, s.Warnings)
 		}
+	}
+}
+
+// Codex P2 (10) on #829: the document feeds the screen and the lead's
+// model, so every free-text field is redacted before it is serialized. A
+// run-time canary (a credential-named value, matching no real credential
+// shape) in each field never survives into the JSON.
+func TestStatusRedactsEveryFreeTextField(t *testing.T) {
+	now := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	var canaries []string
+	canary := func(tag string) string {
+		v := "t31c" + tag + "v" + "0042"
+		text := "note api" + "_key=" + v + " end"
+		for _, re := range redact.RealCredentialShapes {
+			if re.MatchString(text) {
+				t.Fatalf("the canary matches a real credential shape: %s", re)
+			}
+		}
+		canaries = append(canaries, v)
+		return text
+	}
+	in := Input{Now: now, Root: "/r",
+		Seats: []SeatInput{{Handle: "qa", HasSignal: true, LastMessage: canary("msg"), Warnings: []string{canary("warn")},
+			Launch: &SeatLaunch{Outcome: "live", Wake: &SeatWake{Mode: "disabled", AuditReason: canary("wake")}}}},
+		Tasks: []task.Task{{ID: "t1", Title: canary("title"), Class: "implement", State: task.StateCompleted, Evidence: canary("evidence"), CreatedAt: now, UpdatedAt: now}},
+		Decisions: []Decision{{At: now, Kind: "exit_refused", Reason: canary("decision")}},
+		TrainRuns: []TrainRun{{Run: "r1", Refusal: canary("train"), PRs: []int{}, Merged: []int{}}},
+		Alerts:    []AlertInput{{ID: "a1", Kind: "ungated_tag", Subject: canary("alert"), At: now}},
+		NeedsYou:  []ThreadInput{{ID: "th1", Seat: "qa", Subject: canary("thread"), Since: now}},
+		Warnings:  []string{canary("docwarn")},
+	}
+	raw, err := json.Marshal(Build(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range canaries {
+		if strings.Contains(string(raw), c) {
+			t.Errorf("canary %s survived into status --json", c)
+		}
+	}
+	if !strings.Contains(string(raw), "end") {
+		t.Fatal("the fields are gone, not redacted")
 	}
 }
