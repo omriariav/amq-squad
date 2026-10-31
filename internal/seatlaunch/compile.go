@@ -52,6 +52,10 @@ type Seat struct {
 	// record and the seat environment (AMQ_SQUAD_REQUEST_ID) and comes back
 	// in the seat's SeatUp event.
 	RequestID string `json:"request_id,omitempty"`
+	// Base is the base branch's tip the scheduler put the worktree and
+	// branch on at this launch (3.0.2 t22); the launch record carries it.
+	// Never from the seat file.
+	Base string `json:"-"`
 
 	// roleInFirstMessage is the role-delivery matrix's control arm only
 	// (plan 13, amendment 15): the role text rides in initial_input instead
@@ -567,7 +571,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		out.Records = append(out.Records, launch.Record{
 			Handle: s.Handle, Root: q.SessionRoot(), BaseRoot: q.BaseRoot, Session: q.Session,
 			Runtime: s.Runtime, Model: s.Model, Effort: s.Effort, RoleSHA256: digest(role),
-			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
+			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Base: s.Base, Worktree: s.Worktree,
 			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID, PermissionMode: permissionMode(s.Runtime), Credential: credentialSource(s.Runtime),
 			CWD: s.Worktree, Binary: s.Runtime, Role: s.RoleName, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
 			PiShim: piShimFor(s, q), WakeRequired: requireWake,
