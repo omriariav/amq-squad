@@ -63,10 +63,11 @@ CleanSeat, both in internal/seatcommit:
 - The launch record carries the base: `launch.Record.Base` (json `base`),
   copied from `seatlaunch.Seat.Base`, which the seat file cannot set.
 
-Under this change the day-2 relaunch would have refused for dev and
-reviewer: origin/seat/dev holds c338d3fe and origin/seat/reviewer holds
-e9e6c53b, both unmerged. The lead decides, by merging, closing or deleting
-them.
+On the real repository, origin `seat/dev` carries c338d3fe and 6b9808a5
+and origin `seat/reviewer` carries e9e6c53b, none of them on the tip, so
+`seat_branch_unmerged` fires on the first 3.0.2 launch until the owner
+deletes those remote branches; that refusal is expected and is the row's
+live evidence.
 
 ## One base, and the seam for the commit step (t23, t24)
 
@@ -86,9 +87,12 @@ lease still resets a relaunched seat to its old ledger parent.
 
 ## Rows
 
-internal/schedproc/seatbase_test.go, each run against a fake remote (a bare
-repository in the temp dir) as the grant's push URL, or for HTTPS a fake git
-that records argv:
+internal/schedproc/seatbase_test.go. No row reaches the network: the first
+four use a local bare repository in the temp dir as the push URL (a local
+path, never a real URL); the two HTTPS rows run the real URL shape only
+through a fake git that records the argv of ls-remote and fetch and answers
+them itself, with a fake pinned gh, as the commit step's push rows fake the
+push. Those two rows are the ones that cover the HTTPS path.
 
 | row | proves | fails when reverted |
 |---|---|---|
