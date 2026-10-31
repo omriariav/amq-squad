@@ -27,6 +27,7 @@ esac
 case "$ep" in
 */commits/*) echo "${ep##*/}" ;;
 */compare/*) echo "$FAKE_GH_COMPARE" ;;
+*/git/ref/tags/*) echo "commit $FAKE_GH_TAG_SHA" ;;
 */releases/*) # as gh's --jq projection: the body only when the expression asks for it
   case "$4" in
   *body*) printf '%s\n' '{"id":1404,"tag":"v1.2.0","target_commitish":"abc","draft":true,"body":"the notes\n\n<!-- amq-squad-release-nonce: 00 -->"}' ;;
@@ -97,3 +98,27 @@ func TestGHAdapterClassifiesOnTheHTTPStatusOnly(t *testing.T) {
 	}
 }
 
+// 3.0.2 (Codex revert gap, round 3): TagCommit through the fake gh. A tag
+// name containing "404" and a transport error stay apart: 404 is "no tag",
+// a transport failure (with or without "HTTP 404" in its text) is an error.
+func TestGHTagCommitClassifiesOnTheHTTPStatusOnly(t *testing.T) {
+	ctx := context.Background()
+	sha := strings.Repeat("ab", 20)
+	for _, c := range []struct {
+		mode, want string
+		isErr      bool
+	}{
+		{"ok", sha, false},
+		{"404", "", false},
+		{"transport", "", true},
+		{"transport404", "", true},
+		{"upstream", "", true},
+	} {
+		fakeGH(t, c.mode, "")
+		t.Setenv("FAKE_GH_TAG_SHA", sha)
+		got, err := (&GH{}).TagCommit(ctx, "owner/fixture", "v1.404.0")
+		if (err != nil) != c.isErr || got != c.want {
+			t.Fatalf("TagCommit %s: %q %v", c.mode, got, err)
+		}
+	}
+}
