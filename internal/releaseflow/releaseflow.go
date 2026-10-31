@@ -257,7 +257,12 @@ func (f *Flow) CheckCommit(ctx context.Context, repository, commit string) error
 	if !branchRe.MatchString(f.Branch) || strings.Contains(f.Branch, "..") {
 		return fmt.Errorf("%w: no valid branch is named (%q)", ErrCommitNotOnBranch, f.Branch)
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", f.RepoDir, "cat-file", "-e", commit+"^{commit}").CombinedOutput(); err != nil {
+	// The owner's global and system git config are not read (as the
+	// package's other local git runs: GIT_CONFIG_GLOBAL=/dev/null,
+	// GIT_CONFIG_NOSYSTEM=1).
+	catFile := exec.CommandContext(ctx, "git", "-C", f.RepoDir, "cat-file", "-e", commit+"^{commit}")
+	catFile.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := catFile.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s names no commit in the repository at %s: %v %s", ErrCommitUnknown, commit, f.RepoDir, err, strings.TrimSpace(string(out)))
 	}
 	if ok, err := f.Exec.CommitExists(ctx, repository, commit); err != nil {
