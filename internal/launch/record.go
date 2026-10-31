@@ -41,6 +41,7 @@ type Record struct {
 	RulesPath      string   `json:"rules_path,omitempty"`
 	RulesSHA256    string   `json:"rules_sha256,omitempty"`
 	Branch         string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
+	Base           string   `json:"base,omitempty"`   // the base branch's tip the launch put the worktree and branch on (3.0.2)
 	Worktree       string   `json:"worktree,omitempty"`
 	AMQPath        string   `json:"amq_path,omitempty"`             // the real amq (R51)
 	EnvNeeds       []string `json:"env_needs,omitempty"`            // names the runtime declares it needs
@@ -126,9 +127,8 @@ func Path(agentDir string) string { return filepath.Join(ExtensionDir(agentDir),
 
 func LegacyPath(agentDir string) string { return filepath.Join(agentDir, FileName) }
 
-// StagedDir is where the core stages a seat's record and role before the
-// launch: <session root>/extensions/amq-squad/launch/<handle>. guard
-// protects <root>/extensions/amq-squad/, so a seat cannot rewrite it.
+// StagedDir is where the core stages a seat's record and role before the launch:
+// <root>/extensions/amq-squad/launch/<handle>, which guard protects from the seat.
 func StagedDir(root, handle string) string {
 	return filepath.Join(root, "extensions", "amq-squad", "launch", handle)
 }
