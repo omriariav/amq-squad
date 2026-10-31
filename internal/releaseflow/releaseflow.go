@@ -123,6 +123,13 @@ var (
 	// ErrBodyMismatch: the release body at publish is not the content of the
 	// notes file whose digest was recorded at prepare.
 	ErrBodyMismatch = errors.New("release_body_mismatch")
+	// ErrNoteCarriesDigest: --notes already contains the digest label; the
+	// digest line is written by prepare only.
+	ErrNoteCarriesDigest = errors.New("note_carries_digest")
+	// ErrBodyDigestMissing: the prepared note carries no well-formed digest.
+	ErrBodyDigestMissing = errors.New("release_body_digest_missing")
+	// ErrBodyDigestAmbiguous: the prepared note carries more than one digest.
+	ErrBodyDigestAmbiguous = errors.New("release_body_digest_ambiguous")
 	// ErrCommitUnknown: --commit names no commit in the local repository.
 	ErrCommitUnknown = errors.New("commit_unknown")
 	// ErrCommitUnknownRemote: the remote does not have the commit at all
@@ -144,17 +151,21 @@ func BodyDigest(body string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// recordedBodyDigest reads the body digest Spec joined to the note.
-func recordedBodyDigest(summary string) string {
-	i := strings.LastIndex(summary, bodyDigestLabel)
-	if i < 0 {
-		return ""
+// recordedBodyDigest reads the one body digest Spec joined to the note: zero
+// (or a malformed one) is release_body_digest_missing, two or more is
+// release_body_digest_ambiguous.
+func recordedBodyDigest(summary string) (string, error) {
+	switch n := strings.Count(summary, bodyDigestLabel); {
+	case n == 0:
+		return "", fmt.Errorf("%w: the prepared note %q carries no %q", ErrBodyDigestMissing, summary, bodyDigestLabel)
+	case n > 1:
+		return "", fmt.Errorf("%w: the prepared note carries %d digests", ErrBodyDigestAmbiguous, n)
 	}
-	d := summary[i+len(bodyDigestLabel):]
+	d := summary[strings.Index(summary, bodyDigestLabel)+len(bodyDigestLabel):]
 	if len(d) != 64 || strings.Trim(d, "0123456789abcdef") != "" {
-		return ""
+		return "", fmt.Errorf("%w: the prepared note's digest %q is not 64 lowercase hex at the end", ErrBodyDigestMissing, d)
 	}
-	return d
+	return d, nil
 }
 
 var (
@@ -174,6 +185,9 @@ func Spec(scope compoundrelease.Scope, lead, owner, repository, tag, commit, not
 	}
 	if strings.TrimSpace(body) == "" {
 		return operatorauth.ReleaseSpec{}, errors.New("release needs a release body: --notes-file names the release notes document")
+	}
+	if strings.Contains(notes, bodyDigestLabel) {
+		return operatorauth.ReleaseSpec{}, fmt.Errorf("%w: --notes contains %q; prepare writes the digest line", ErrNoteCarriesDigest, bodyDigestLabel)
 	}
 	notes = strings.TrimSpace(strings.TrimSpace(notes) + " " + bodyDigestLabel + BodyDigest(body))
 	profile := squadnamespace.NormalizeProfile(scope.Profile)
@@ -304,8 +318,12 @@ func (f *Flow) Publish(ctx context.Context, root string) (steps []Step, err erro
 		return nil, fmt.Errorf("release is %s, not active: prepare it first", snap.Pointer.State)
 	}
 	// The body is the prepared notes file's content, or nothing runs.
-	if want := recordedBodyDigest(snap.Prepared.Spec.Note.Summary); want == "" || BodyDigest(f.Body) != want {
-		return nil, fmt.Errorf("%w: the release body's sha256 is %s, the release was prepared with %q", ErrBodyMismatch, BodyDigest(f.Body), want)
+	want, err := recordedBodyDigest(snap.Prepared.Spec.Note.Summary)
+	if err != nil {
+		return nil, err
+	}
+	if BodyDigest(f.Body) != want {
+		return nil, fmt.Errorf("%w: the release body's sha256 is %s, the release was prepared with %s", ErrBodyMismatch, BodyDigest(f.Body), want)
 	}
 	dir := filepath.Join(root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

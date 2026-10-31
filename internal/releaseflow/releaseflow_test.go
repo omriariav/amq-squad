@@ -774,3 +774,35 @@ func TestCommitCheckReachesTheRemoteOnlyThroughTheExecutor(t *testing.T) {
 		t.Fatalf("gh was run: %s", b)
 	}
 }
+
+// 3.0.2 (reviewer): the digest line is written by prepare only. A --notes
+// that already carries the label is refused; publish parses exactly one
+// digest and refuses zero or two, each by name, before anything runs.
+func TestTheDigestLineIsPreparesOnly(t *testing.T) {
+	f := newFixture(t)
+	if _, err := Spec(f.scope, "lead", "owner", "owner/fixture", "v1.2.0", f.commit, "see "+bodyDigestLabel+BodyDigest("other"), fixtureBody); !errors.Is(err, ErrNoteCarriesDigest) {
+		t.Fatalf("a note carrying a digest: %v", err)
+	}
+	digest := bodyDigestLabel + BodyDigest(fixtureBody)
+	for _, c := range []struct {
+		summary string
+		want    error
+	}{
+		{"first release", ErrBodyDigestMissing},
+		{"first release " + bodyDigestLabel + "not-hex", ErrBodyDigestMissing},
+		{"first release " + digest + " " + digest, ErrBodyDigestAmbiguous},
+	} {
+		g := newFixture(t)
+		g.spec.Note.Summary = c.summary // a spec Spec did not write
+		snap, err := g.flow.Prepare(g.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ch := range snap.Active.Children {
+			g.approved[ch.QuestionMessageID] = true
+		}
+		if _, err := g.flow.Publish(context.Background(), g.root); !errors.Is(err, c.want) || g.exec.tags != 0 || g.exec.nextID != 0 {
+			t.Fatalf("note %q: %v (tags %d drafts %d), want %v", c.summary, err, g.exec.tags, g.exec.nextID, c.want)
+		}
+	}
+}
