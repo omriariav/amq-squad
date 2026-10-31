@@ -407,16 +407,18 @@ func TestSeatBaseHTTPSPinMismatchRefuses(t *testing.T) {
 }
 
 // Codex rule 6: the throwaway git directories are removed after a launch
-// (the fetch's and the move's) and after a refused one (after the fetch, and
-// in the move).
+// (the fetch's, the move's and AddWorktree's) and after a refused one (after
+// the fetch, and in the move).
 func TestSeatBaseShadowRemoved(t *testing.T) {
 	q, remote, other := seatBaseFixture(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 	left := func(when string) {
 		t.Helper()
-		if m, _ := filepath.Glob(filepath.Join(tmp, "amq-squad-base-*")); len(m) != 0 {
-			t.Fatalf("%s: throwaway git directories left: %d", when, len(m))
+		for _, pat := range []string{"amq-squad-base-*", "amq-squad-shadow-*"} { // the launch's and AddWorktree's
+			if m, _ := filepath.Glob(filepath.Join(tmp, pat)); len(m) != 0 {
+				t.Fatalf("%s: throwaway git directories left (%s): %d", when, pat, len(m))
+			}
 		}
 	}
 	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
