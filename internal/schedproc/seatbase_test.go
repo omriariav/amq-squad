@@ -345,3 +345,30 @@ func TestSeatBaseUnbornHeadRefuses(t *testing.T) {
 		t.Fatalf("the uncommitted file was reset over: %q", raw)
 	}
 }
+
+// Codex P2-4: a seat worktree that is a plain clone (its .git a directory)
+// moves to the tip the same way: its own repository, its resting branch.
+func TestSeatBasePlainCloneWorktree(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	wt := q.Seats[0].Worktree
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, filepath.Dir(wt), "clone", "-q", remote, wt)
+	tip := commitFile(t, other, "v3.txt", "v3\n", "v3 moves")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	got, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil || got.Seats[0].Base != tip {
+		t.Fatalf("a plain clone: %+v %v", got.Seats, err)
+	}
+	if h := gitRun(t, wt, "rev-parse", "HEAD"); h != tip {
+		t.Fatalf("the clone is at %s, not the tip", h)
+	}
+	if b := gitRun(t, wt, "symbolic-ref", "HEAD"); b != "refs/heads/seat/c1" {
+		t.Fatalf("the clone's HEAD names %s", b)
+	}
+	if raw, err := os.ReadFile(filepath.Join(wt, "v3.txt")); err != nil || string(raw) != "v3\n" {
+		t.Fatalf("the tip's file: %q %v", raw, err)
+	}
+}

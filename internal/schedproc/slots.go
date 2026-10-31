@@ -121,7 +121,7 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	// read-tree from it, never a reset over files it cannot account for.
 	var gd, head string
 	if statErr == nil {
-		if gd, err = worktreeGitDir(seat.Worktree); err != nil {
+		if gd, err = gitDirOf(seat.Worktree); err != nil {
 			return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
 		}
 		if head, err = g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "rev-parse", "--verify", "-q", "HEAD^{commit}"); err != nil || head == "" {
@@ -315,15 +315,7 @@ func newBaseShadow(g baseGit, common string) (baseShadow, error) {
 
 // commonDir is a checkout's common git directory, read from its .git.
 func commonDir(root string) (string, error) {
-	dotgit := filepath.Join(root, ".git")
-	st, err := os.Lstat(dotgit)
-	if err != nil {
-		return "", fmt.Errorf("%s is not a git checkout: %v", root, err)
-	}
-	if st.IsDir() {
-		return dotgit, nil
-	}
-	gd, err := worktreeGitDir(root)
+	gd, err := gitDirOf(root)
 	if err != nil {
 		return "", err
 	}
@@ -335,6 +327,20 @@ func commonDir(root string) (string, error) {
 		return filepath.Clean(filepath.Join(gd, c)), nil
 	}
 	return filepath.Clean(strings.TrimSpace(string(c))), nil
+}
+
+// gitDirOf is a checkout's git directory: its .git directory (a plain
+// clone), or the one a linked worktree's .git file names.
+func gitDirOf(wt string) (string, error) {
+	dotgit := filepath.Join(wt, ".git")
+	st, err := os.Lstat(dotgit)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a git checkout: %v", wt, err)
+	}
+	if st.IsDir() {
+		return dotgit, nil
+	}
+	return worktreeGitDir(wt)
 }
 
 // worktreeGitDir is a linked worktree's git directory from its .git file.
