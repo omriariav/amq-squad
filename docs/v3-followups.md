@@ -57,6 +57,13 @@ closes.
   seatcommit.FetchCredentials (internal/seatcommit/fetchcred.go), which the
   launch's base fetch uses since 3.0.2, so the push and the fetch cannot
   drift. 3.0.2-t22.
+- The create-to-bind window of the commit step's PR: GitHub creates the
+  draft PR and the process dies before BindPR persists the binding; the
+  next attempt sees an open PR bound to no task on the task's branch and
+  refuses pr_bound_elsewhere instead of binding it again. The fix: record
+  the PR number on the commit ledger before the bind call, or recognise this
+  task's own unbound PR by its head and a nonce the step put in it.
+  3.0.2-t24.
 
 ## 3.0.x
 

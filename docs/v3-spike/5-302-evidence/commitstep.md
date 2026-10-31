@@ -135,6 +135,8 @@ merge is gone.
 | TestRecordedCommitRetryIsCheckedAgainstTheGrantNow | internal/seatcommit/commitstep302_test.go | Codex finding 1 on c09a8887. A recorded commit whose push failed is retried with no new edits. A size cap tightened between the attempts refuses the retry with size_cap_exceeded. A recorded digest that is not the commit's diff refuses with recorded_diff_mismatch. Nothing is pushed either way. |
 | TestAFullPagePRListDefers | same | Codex finding 2 on c09a8887. The fake gh returns exactly 100 open PRs. The step defers as pr_pending with nothing written, and the call carries `--limit 100`. |
 | TestQuarantineWritesNothingBeforeTheBindingCheck | same | Codex finding 3 on c09a8887. The owner's config changes during the run, and the task branch carries another task's bound PR. The seat is quarantined (global_config_changed, routed to the owner), the detail names pr_bound_elsewhere, the ledger is byte for byte unchanged, and no evidence ref is anchored. |
+| TestAnotherTasksLeaseRefusesBeforeTheQuarantine | internal/seatcommit/commitstep302_test.go | Codex re-check on 7c1a8098. The owner's config changed, and the ledger holds a lease of another task (t99). The step refuses lease_task_mismatch to the lead, does not quarantine, leaves the ledger byte for byte unchanged and anchors no evidence ref. |
+| TestRowGitsReadNoRealHome | same | Codex re-check on 7c1a8098, P3. The process HOME has a `~/.gitconfig` no git can parse. A full lease, commit, push and binding still pass, and so do the helpers `originRef`, `originBranch` and `runGit`. |
 | TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | same | A remote that still carries the 3.0.1 `seat/s1` takes `seat/s1-t1` beside it, and `seat/s1` is unchanged. |
 | TestUnpreparedLeaseBlocksTheTaskForTheLead | internal/scheduler/scheduler_test.go | The doorbell cannot put the seat on the task's branch. The task is blocked as task_branch_unprepared, routed to the lead, with the error in its detail. The lease is gone, the attempt is recorded, the seat holds nothing, and no doorbell_failed is logged. |
 | TestRecordWithoutBaseKeepsTheRestingCommit | same | A launch record with no `base`, and the owner's local main moved ahead, unpushed. The lease, the commit's parent and `rest` stay on the resting commit. The step notes `launch_base_missing`. |
@@ -168,10 +170,25 @@ TestSecondTaskDiffsFromTheLastHarnessCommit is removed. It asserted the
 3.0.1 rule (the second task's parent is the first task's commit), which
 t23 reverses. TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs replaces it.
 
-No row reaches the network or the real HOME. The origin is a bare local
-repository with local_push_ack, gh is a shell script through the `Gh` and
-`seatCommitGh` seams, and the scheduler-run rows use the existing fake
-launcher and sender.
+No row reaches the network. The origin is a bare local repository with
+local_push_ack, gh is a shell script through the `Gh` and `seatCommitGh`
+seams, and the scheduler-run rows use the existing fake launcher and
+sender.
+
+No git in these rows reads a global or system git config. The harness's
+own git calls carry `GIT_CONFIG_GLOBAL=/dev/null` and
+`GIT_CONFIG_NOSYSTEM=1`. The gits the seatcommit rows run themselves add
+the fixture's temp HOME to that: `sh`, `originBranch`, `originRef`,
+`runGit`, and the fake gh's head lookup. So does the commit step's own
+environment in the fixture (`Options.Env`), and its `Home` is the
+fixture's temp home. TestRowGitsReadNoRealHome proves it: with a process
+HOME whose `~/.gitconfig` no git can parse, a full lease, commit, push and
+binding pass.
+
+Calls of CleanSeat and StartTask that pass no environment inherit the
+process HOME. Their git still reads no global or system config, because
+they carry the same harness variables. The schedproc and cli rows set a
+temp HOME for the whole test, through `squadFixture` and `t.Setenv`.
 
 ## Revert checks
 
