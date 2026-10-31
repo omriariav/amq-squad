@@ -301,6 +301,13 @@ func run(o Options, res Result) Result {
 			return res.defer_("exit check: " + err.Error())
 		}
 		if code != "" {
+			// A lease of another task on the ledger is its own refusal, before
+			// any quarantine: nothing is written (Codex re-check on 7c1a8098).
+			if l, err := ReadLedger(o.Root, o.Handle); err == nil {
+				if _, _, _, why := l.taskStart(o.Handle, o.Task.ID); why != "" {
+					return res.refuse(ReasonLeaseTaskMismatch, task.RouteLead, why+"; nothing is written and the seat is not quarantined by this step")
+				}
+			}
 			// The quarantine's evidence is a ledger write: it is made only
 			// once the binding check passed. A binding check that does not
 			// pass still quarantines the seat (the task store, the caller),
@@ -342,7 +349,7 @@ func run(o Options, res Result) Result {
 	// its worktree started on, never the seat's previous task.
 	branch, parent, base, why := ledger.taskStart(o.Handle, o.Task.ID)
 	if why != "" {
-		return res.refuse(ReasonWorktree, task.RouteLead, why)
+		return res.refuse(ReasonLeaseTaskMismatch, task.RouteLead, why)
 	}
 	res.Branch = branch
 	env := harnessEnv(o.Env)
@@ -1409,7 +1416,8 @@ func branchPR(o Options, run func(args ...string) (string, error), l Ledger, bra
 // quarantineGate is the binding check of a step that would quarantine the
 // seat (prCheck on the task's branch, run before the quarantine's ledger
 // write): the refusal or deferral's reason code and detail, "" when it
-// passes or there is no binding to check (no ledger, no lease of this task).
+// passes or there is no binding to check (no ledger). The caller refuses a
+// lease of another task (lease_task_mismatch) before it gets here.
 func quarantineGate(o Options) string {
 	l, err := ReadLedger(o.Root, o.Handle)
 	if err != nil {
@@ -1417,7 +1425,7 @@ func quarantineGate(o Options) string {
 	}
 	branch, _, _, why := l.taskStart(o.Handle, o.Task.ID)
 	if why != "" {
-		return ""
+		return ReasonLeaseTaskMismatch + ": " + why
 	}
 	r, stop := prCheck(o, os.TempDir(), l, Result{Task: o.Task.ID, Seat: o.Handle, Branch: branch})
 	if !stop {

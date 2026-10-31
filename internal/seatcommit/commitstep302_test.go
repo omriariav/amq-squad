@@ -635,3 +635,32 @@ func TestQuarantineWritesNothingBeforeTheBindingCheck(t *testing.T) {
 		t.Fatalf("an evidence ref was anchored: %s", out)
 	}
 }
+
+// Codex re-check on 7c1a8098: a ledger lease held by another task is its
+// own refusal by name (lease_task_mismatch, to the lead), before any
+// quarantine: the owner's config changed during the run, yet nothing is
+// written to the ledger, no evidence ref is anchored and the step does not
+// quarantine. Fails when such a lease lets the quarantine write unchecked.
+func TestAnotherTasksLeaseRefusesBeforeTheQuarantine(t *testing.T) {
+	f := newFixture(t)
+	l, _ := ReadLedger(f.root, f.handle)
+	l.Lease = &LedgerLease{Task: "t99", Branch: TaskBranch(f.handle, "t99"), Base: f.base, Start: f.base, At: f.now}
+	if err := writeLedger(f.root, l); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
+	tk := f.reported("cmd/")
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
+	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	res := f.run(tk)
+	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	if res.ReasonCode != ReasonLeaseTaskMismatch || res.Route != task.RouteLead || res.Quarantine || !strings.Contains(res.Detail, "t99") ||
+		string(before) != string(after) || f.originBranch() != "" {
+		t.Fatalf("another task's lease: %+v (ledger changed %v)", res, string(before) != string(after))
+	}
+	if out, _ := runGit(t, f.wt, "for-each-ref", "refs/amq-squad/evidence/"); strings.TrimSpace(out) != "" {
+		t.Fatalf("an evidence ref was anchored: %s", out)
+	}
+}
