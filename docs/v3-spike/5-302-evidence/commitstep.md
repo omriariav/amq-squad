@@ -52,6 +52,21 @@ head moved past t12's bound head.
    committed, pushed, anchored or written to the ledger, and the seat's
    diff waits, as with outside_declared_files. The check after the push
    stays as the guard against a PR opened between the two.
+
+   The ledger contract: a step refused or deferred by the path checks or
+   the binding check leaves the ledger byte-for-byte unchanged. No ledger
+   write of any kind comes before the binding check passes. A quarantine
+   (the owner's config changed during the run) records its evidence only
+   after the binding check. When the binding check does not pass, the seat
+   is still quarantined in the task store, with nothing written to the
+   ledger. After the binding check, a verified quarantine clear may be
+   lifted onto the ledger before the verifier runs. The binding check reads
+   every open PR on the head with `gh pr list --limit 100`; an answer that
+   reaches the limit defers the step as pr_pending, because the step cannot
+   prove it examined every PR. A retry of a recorded commit is checked like
+   a fresh diff against the grant in force now. Its digest is recomputed
+   and compared with the recorded one, and a mismatch refuses
+   `recorded_diff_mismatch` to the owner.
 2. **One branch per task (t23).** Each task commits on
    `seat/<handle>-<task id>` (for example `seat/dev-t12`), beside the
    resting branch `seat/<handle>`. Git cannot hold `seat/<handle>` and a
@@ -117,6 +132,9 @@ merge is gone.
 | TestEveryOpenPROnTheBranchIsExamined | internal/seatcommit/commitstep302_test.go | Codex finding 2. Two open PRs on one head: this task's own #1 first, then #815, bound to another task. The step refuses pr_bound_elsewhere naming #815 before anything is written. |
 | TestRecordedCommitWithNoNewEditsIsPushedAndBound | same | Codex finding 1. An attempt records its commit and the push fails (a pre-receive hook rejects it). The task is refused and reset, and the next lease starts on that commit. A done report with no new edits pushes the recorded commit to the task branch and binds PR #1 at it. |
 | TestQuarantineClearIsLiftedOnlyAfterTheBindingCheck | same | Codex finding 3. A seat with a verified quarantine clear, whose task branch carries another task's bound PR, is refused with the ledger byte for byte unchanged. With that PR gone, the same step lifts the clear and commits. |
+| TestRecordedCommitRetryIsCheckedAgainstTheGrantNow | internal/seatcommit/commitstep302_test.go | Codex finding 1 on c09a8887. A recorded commit whose push failed is retried with no new edits. A size cap tightened between the attempts refuses the retry with size_cap_exceeded. A recorded digest that is not the commit's diff refuses with recorded_diff_mismatch. Nothing is pushed either way. |
+| TestAFullPagePRListDefers | same | Codex finding 2 on c09a8887. The fake gh returns exactly 100 open PRs. The step defers as pr_pending with nothing written, and the call carries `--limit 100`. |
+| TestQuarantineWritesNothingBeforeTheBindingCheck | same | Codex finding 3 on c09a8887. The owner's config changes during the run, and the task branch carries another task's bound PR. The seat is quarantined (global_config_changed, routed to the owner), the detail names pr_bound_elsewhere, the ledger is byte for byte unchanged, and no evidence ref is anchored. |
 | TestTaskBranchCoexistsWithTheSeatBranchOnTheRemote | same | A remote that still carries the 3.0.1 `seat/s1` takes `seat/s1-t1` beside it, and `seat/s1` is unchanged. |
 | TestUnpreparedLeaseBlocksTheTaskForTheLead | internal/scheduler/scheduler_test.go | The doorbell cannot put the seat on the task's branch. The task is blocked as task_branch_unprepared, routed to the lead, with the error in its detail. The lease is gone, the attempt is recorded, the seat holds nothing, and no doorbell_failed is logged. |
 | TestRecordWithoutBaseKeepsTheRestingCommit | same | A launch record with no `base`, and the owner's local main moved ahead, unpushed. The lease, the commit's parent and `rest` stay on the resting commit. The step notes `launch_base_missing`. |
@@ -157,13 +175,18 @@ launcher and sender.
 
 ## Revert checks
 
-21 mutations, each applied alone to the code at the head of this branch.
+26 mutations, each applied alone to the code at the head of this branch.
 For each one, the named rows were run and the file was restored. Every
 mutation compiled, and every result is a real test failure (`--- FAIL`),
 not a build error.
 
 | Mutation | Row | Result |
 |---|---|---|
+| a recorded commit's retry skips the checks (the old lease-mode copy) | TestRecordedCommitRetryIsCheckedAgainstTheGrantNow/a_cap | FAIL |
+| the recorded digest is not compared | TestRecordedCommitRetryIsCheckedAgainstTheGrantNow/a_recorded | FAIL |
+| a full page of open PRs passes | TestAFullPagePRListDefers | FAIL |
+| gh pr list without --limit | TestAFullPagePRListDefers | FAIL |
+| the quarantine writes before the binding check | TestQuarantineWritesNothingBeforeTheBindingCheck | FAIL |
 | the binding check never stops the step | TestBindingCheckRunsBeforeTheCommit | FAIL |
 | the binding check stops at the first acceptable PR | TestEveryOpenPROnTheBranchIsExamined | FAIL |
 | no new edits on the recorded commit returns OK before the push | TestRecordedCommitWithNoNewEditsIsPushedAndBound | FAIL |
