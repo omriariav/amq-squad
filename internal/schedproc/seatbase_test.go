@@ -197,7 +197,7 @@ func fakeFetchGit(t *testing.T, dir, tip string, fetched ...string) (bin, log st
 	}
 	bin, log = filepath.Join(dir, "fake-git"), filepath.Join(dir, "fetch.log")
 	script := "#!/bin/sh\ncase \" $* \" in\n" +
-		"*\" ls-remote \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set} ssh_variant=${GIT_SSH_VARIANT:+set} ssh_extra=${GIT_SSH_EXTRA:+set}\" >> '" + log + "'; printf '%s\\trefs/heads/main\\n' " + tip + "; exit 0;;\n" +
+		"*\" ls-remote \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set} ssh_variant=${GIT_SSH_VARIANT:+set} ssh_extra=${GIT_SSH_EXTRA:+set} home=$HOME\" >> '" + log + "'; printf '%s\\trefs/heads/main\\n' " + tip + "; exit 0;;\n" +
 		"*\" fetch \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set}\" >> '" + log + "'; exec '" + real + "' update-ref refs/base " + fetchTip + ";;\n" +
 		"esac\nexec '" + real + "' \"$@\"\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -211,6 +211,7 @@ func fakeFetchGit(t *testing.T, dir, tip string, fetched ...string) (bin, log st
 // as the only credential helper on ls-remote and fetch, GH_TOKEN passed
 // through, so a private repository launches.
 func TestSeatBaseHTTPSFetchUsesThePinnedGh(t *testing.T) {
+	realHome := os.Getenv("HOME")
 	q := squadFixture(t)
 	dir := filepath.Dir(q.ProjectRoot)
 	tip := gitRun(t, q.ProjectRoot, "rev-parse", "HEAD")
@@ -236,6 +237,9 @@ func TestSeatBaseHTTPSFetchUsesThePinnedGh(t *testing.T) {
 	helper := "credential.helper=!'" + gh + "' auth git-credential"
 	if len(lines) != 2 {
 		t.Fatalf("want ls-remote and fetch, got %d calls", len(lines))
+	}
+	if home := os.Getenv("HOME"); home == realHome || !strings.HasSuffix(lines[0], " home="+home) {
+		t.Fatal("the production git did not run with the fixture's temp HOME")
 	}
 	if !strings.Contains(lines[0], "ssh_variant=set") || strings.Contains(lines[0], "ssh_extra=set") {
 		t.Fatalf("the fetch's environment is not the push's list: %s", lines[0][strings.Index(lines[0], "ssh_variant"):])

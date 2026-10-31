@@ -33,6 +33,16 @@ func squadFixture(t *testing.T) seatlaunch.Squad {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH")
 	}
+	// Every git under test, the code's own included, runs off the owner's
+	// git: a temp HOME, no global or system config, no ambient redirection.
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} {
+		t.Setenv(k, "") // restored at cleanup
+		os.Unsetenv(k)
+	}
 	base, _ := filepath.EvalSymlinks(t.TempDir())
 	repo := filepath.Join(base, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
