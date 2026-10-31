@@ -188,7 +188,7 @@ func fakeFetchGit(t *testing.T, dir, tip string) (bin, log string) {
 	}
 	bin, log = filepath.Join(dir, "fake-git"), filepath.Join(dir, "fetch.log")
 	script := "#!/bin/sh\ncase \" $* \" in\n" +
-		"*\" ls-remote \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set}\" >> '" + log + "'; printf '%s\\trefs/heads/main\\n' " + tip + "; exit 0;;\n" +
+		"*\" ls-remote \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set} ssh_variant=${GIT_SSH_VARIANT:+set} ssh_extra=${GIT_SSH_EXTRA:+set}\" >> '" + log + "'; printf '%s\\trefs/heads/main\\n' " + tip + "; exit 0;;\n" +
 		"*\" fetch \"*) echo \"argv: $* gh_token=${GH_TOKEN:+set}\" >> '" + log + "'; exec '" + real + "' update-ref refs/base " + tip + ";;\n" +
 		"esac\nexec '" + real + "' \"$@\"\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -215,6 +215,8 @@ func TestSeatBaseHTTPSFetchUsesThePinnedGh(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GH_TOKEN", "fetch-canary-value")
+	t.Setenv("GIT_SSH_VARIANT", "ssh") // on the push's list
+	t.Setenv("GIT_SSH_EXTRA", "x")     // a GIT_SSH* name not on it
 	s := &Slots{Squad: q, Git: bin, Target: seatcommit.Target{PushURL: "https://github.com/o/r", BaseBranch: "main", GhPath: gh, GhSHA256: sum}}
 	got, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
 	if err != nil || got.Seats[0].Base != tip {
@@ -225,6 +227,9 @@ func TestSeatBaseHTTPSFetchUsesThePinnedGh(t *testing.T) {
 	helper := "credential.helper=!'" + gh + "' auth git-credential"
 	if len(lines) != 2 {
 		t.Fatalf("want ls-remote and fetch, got %d calls", len(lines))
+	}
+	if !strings.Contains(lines[0], "ssh_variant=set") || strings.Contains(lines[0], "ssh_extra=set") {
+		t.Fatalf("the fetch's environment is not the push's list: %s", lines[0][strings.Index(lines[0], "ssh_variant"):])
 	}
 	for i, l := range lines {
 		if !strings.Contains(l, "-c credential.helper= -c "+helper) || !strings.Contains(l, "gh_token=set") || !strings.Contains(l, "https://github.com/o/r") {

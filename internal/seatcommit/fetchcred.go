@@ -36,3 +36,10 @@ func FetchCredentials(t Target, env []string) (args, outEnv []string, why string
 	}
 	return args, outEnv, ""
 }
+
+// HarnessEnv is the environment of every harness git call, the push's
+// (harnessEnv: the caller's environment minus credential names and GIT_*
+// redirection except keptGitVars, git.go, plus the R2 set), for a harness
+// git outside this package such as the launch's base fetch: one list, so the
+// two cannot drift.
+func HarnessEnv(parent []string) []string { return harnessEnv(parent) }

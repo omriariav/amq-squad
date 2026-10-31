@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -247,8 +246,7 @@ func (g baseGit) moveWorktree(common string, seat seatlaunch.Seat, tip string) e
 
 // baseGit is the launch-time base's git with the harness's R2 settings
 // (seatcommit's): no global or system config, hooks, attribute files,
-// fsmonitor or replace objects; no credential, GIT_* redirection or prompt
-// from the caller's environment.
+// fsmonitor or replace objects; the push's environment.
 type baseGit struct {
 	bin string
 	pre []string // the fetch's credential settings (FetchCredentials)
@@ -258,15 +256,9 @@ func (g baseGit) run(dir string, extra []string, args ...string) (string, error)
 	argv := append(append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"}, g.pre...), args...)
 	cmd := exec.Command(g.bin, argv...)
 	cmd.Dir = dir
-	var env []string
-	for _, kv := range redact.StripEnv(os.Environ()) {
-		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, "GIT_") && !strings.HasPrefix(name, "GIT_SSH") && name != "GIT_ASKPASS" || name == "LC_ALL" || name == "LANG" {
-			continue
-		}
-		env = append(env, kv)
-	}
-	cmd.Env = append(append(env, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1", "GIT_ATTR_NOSYSTEM=1"), extra...)
+	// The push's environment (seatcommit.HarnessEnv: its keptGitVars list,
+	// GIT_SSH, GIT_SSH_COMMAND, GIT_SSH_VARIANT and GIT_ASKPASS, in git.go).
+	cmd.Env = append(seatcommit.HarnessEnv(os.Environ()), extra...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
