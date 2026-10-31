@@ -150,23 +150,15 @@ probe: inside a seat `doctor --probe` and `doctor --write-registry` refuse
 (`seat_owner_state_refused`), and the owner runs `amq-squad doctor --probe`
 from their own terminal.
 
-**4. The pins.** Seats never run a tool from `PATH`. The registry's `pins:`
-list names each harness tool by absolute path and sha256, and every launch
-re-hashes it (`tool_unpinned` or `tool_pin_mismatch` refuse the launch):
-
-- **claude:** a hard link named `claude` to the versioned Claude Code binary
-  on the same filesystem (a symlink is refused), for example
-  `ln ~/.local/share/claude/versions/<version> ~/.amq-squad/bin/claude`, then
-  its path and `shasum -a 256` in the pin. Re-pin after every Claude Code
-  update. Without it a launch with a Claude seat is refused.
-- **gh:** the same for gh, needed for an HTTPS push target. doctor's `gh pin`
-  row prints the exact entry to add.
+**4. The gh pin.** A seat's provider (claude, codex, grok, cursor-agent)
+resolves on `PATH`; nothing is pinned or probed before a seat starts. The one
+pin is gh, needed for an HTTPS push target: the registry's `pins:` list names
+it by absolute path and sha256, and the commit step re-hashes it before the
+push (`tool_unpinned` or `tool_pin_mismatch` refuse that push, never the
+launch). doctor's `gh pin` row prints the exact entry to add.
 
 ```yaml
 pins:
-  - name: claude
-    path: /Users/you/.amq-squad/bin/claude
-    sha256: <64 hex>
   - name: gh
     path: /opt/homebrew/bin/gh
     sha256: <64 hex>
@@ -232,30 +224,29 @@ amq-squad brief --goal "fix issue 96" --session issue-96 --dry-run
 amq-squad brief --seed-from file:./prompt.md --session issue-96
 ```
 
-**10. Launch.** Three entry points, each one AMQ launch request with every seat
-behind `seat-exec`:
+**10. Launch.** squad.yaml is the one source: each seat's handle, role,
+runtime (the binary), model and effort, the session and the lead's handle
+(`lead:`). A seat's worktree is derived per handle under
+`<repo>/.worktrees/<handle>`, never the repository root. Two entry points,
+each one AMQ launch request with every seat behind `seat-exec`:
 
-- `amq-squad launch --seats seats.json`: the typed seat list (JSON; the format
-  is in `amq-squad launch --help`). A required action such as AMQ's trust
-  confirmation stops the launch with exit 10 and is never answered for you.
-- the pi lead in team mode with the scheduler beside it; the lead never edits
-  code, it dispatches through the task store, and the scheduler launches the
-  squad's roster at start:
+- the pi lead in team mode with the scheduler beside it, run in the
+  repository; the lead never edits code, it dispatches through the task
+  store, and the scheduler launches every seat but the lead at start:
 
   ```sh
-  amq-squad lead --team --scheduler-seats seats.json --dry-run
+  amq-squad lead --team --dry-run
   ```
 
   (drop `--dry-run` to start it; a pi-runtime build only). The lead takes
-  the seats file's AMQ identity (its session root, the `--lead` handle); an
+  squad.yaml's AMQ identity (its session root, its `lead:` handle); an
   `AM_ME`/`AM_ROOT` already in the environment must match it or it refuses.
+  One lead per root: a second `lead --team` on the same root is refused
+  `lead_running`, naming the first lead's pid and tmux pane. Every launch
+  carries the owner's standing answer to AMQ's trust confirmation.
 - the mayor inside the owner's fleet grant: `operator start-squad` writes the
   squad.yaml through the same digest flow and launches it; in manual mode it
   returns a proposal instead.
-
-```sh
-amq-squad launch --seats seats.json --dry-run
-```
 
 In a directory with no AMQ identity, `amq-squad lead` (or a bare `amq-squad`
 on a terminal) starts the pi lead in solo mode: its state lives under
@@ -292,8 +283,8 @@ amq-squad gate status --project . --session issue-96 --json
   commits on its own branch, `seat/<handle>-<task id>`, from the remote base
   tip fetched when it is granted, with its own draft PR; between tasks the
   seat's worktree rests on `seat/<handle>` at the launch's base.
-- **The roster.** The scheduler launches every seat of the seat list that has
-  a worktree of its own in one AMQ launch at start; a seat with no lease is
+- **The roster.** The scheduler launches every seat of squad.yaml but the
+  lead in one AMQ launch at start; a seat with no lease is
   parked and gets the next task of its pool. At every launch, the roster's
   included, a seat's worktree and its `seat/<handle>` branch start from the
   base branch's tip fetched from the grant's push URL, the launch record
@@ -308,9 +299,8 @@ amq-squad gate status --project . --session issue-96 --json
   the roster's tmux session (the lead's own seat is never in the roster). A
   restarted scheduler adopts the live seats. A roster launch that AMQ refuses stops the scheduler with the stage,
   AMQ's reason and the detail in its decisions log, and the lead's
-  supervisor does not restart it; `amq-squad lead --team --scheduler-seats
-  seats.json --trust` is the owner's standing answer to AMQ's trust
-  confirmation for that session. A seat launch that fails or never resolves
+  supervisor does not restart it, nor a scheduler refused because another
+  holds the squad's lock. A seat launch that fails or never resolves
   is a `seat_launch_failed` decision with its stage, AMQ's reason code and the
   redacted detail; status shows that reason on the seat's row in place of
   `seat_starting`, and a second failure of the pool with the same reason
@@ -323,9 +313,13 @@ amq-squad gate status --project . --session issue-96 --json
   outside any seat. Seats never merge.
 - **Release.** `release prepare` raises the `tag` and `github_release` gates;
   `release publish` runs each only with its verified owner answer.
-- **Quarantine.** A seat that changed the owner's global agent config is
-  quarantined; only the owner clears it, with `seat clear` from the owner's own
-  terminal.
+- **Seat warnings.** What used to stop a seat at launch is a warning on its
+  status row: a Claude seat whose hook made no report since its launch
+  (`claude_hooks_silent`), its worktree's Claude allow rules
+  (`claude_allow_rules_present`), a CLAUDE.md importing a file outside its
+  worktree (`claude_external_includes_pending`). The seat starts; nothing is
+  quarantined. seat-exec still denies a seat's write to the owner's global
+  agent config.
 
 Check whether an action is approved, and the evidence of a merge or a release:
 
@@ -372,8 +366,8 @@ amq-squad remote status
 | Area | Verbs |
 | --- | --- |
 | Host and setup | `doctor`, `trust`, `roles`, `role draft`, `team propose/apply/show/check/draft-rules`, `brief`, `migrate`, `uninstall`, `version` |
-| Launch | `launch`, `lead`, `scheduler run/relaunch`, `seat-exec` (AMQ runs it), `pi run/verify/path` |
-| Work | `task add/list/show/claim/renew/done/fail/block/release/reset/set/cancel/widen/reconcile`, `dispatch`, `seat commit`, `seat clear`, `worktree` |
+| Launch | `lead`, `scheduler run/relaunch`, `seat-exec` (AMQ runs it), `pi run/verify/path` |
+| Work | `task add/list/show/claim/renew/done/fail/block/release/reset/set/cancel/widen/reconcile`, `dispatch`, `seat commit`, `worktree` |
 | Hook verbs | `context`, `guard`, `evidence ingest`, `evidence list` |
 | Gates and landing | `gate raise/answer/status/post/close`, `verify action/authorization/merge/release/release-plan/rebind`, `merge-train`, `release prepare/publish` |
 | Fleet and owner | `status`, `status --fleet`, `fleet list/add/remove/operator`, `operator inbox/answer/start-squad`, `remote bind/attach/status`, `routing report --week`, `amq env/route` |
@@ -400,14 +394,10 @@ These are the recorded limits of 3.0. The full list, with its reasoning, is in
   merge train. Codex, Grok Build and Cursor seats have no hooks.
 - **One owner DM at a time.** The mailbox adapter answers a second DM `busy`
   while one is open; wait for each result row.
-- **No seats-file compiler.** `launch --seats` and `lead --scheduler-seats`
-  take a hand-written typed seat list; only the mayor's `operator start-squad`
-  compiles squad.yaml into the launch itself.
 - **The pi runtime is darwin arm64 only** and is not in a `go install` build.
 - **Open acceptance rows at the tag** (plan 16.4): the Claude live rows wait on
   the owner's token file, the first real merge-train run on a harness-bound PR,
-  the pi launch through `amq launch` on the installed AMQ, amq-noc 1.0, and the
-  signed `seat clear` live row.
+  the pi launch through `amq launch` on the installed AMQ, and amq-noc 1.0.
 - No v2 verb survives: `init`, `start`, `plan`, `resume`, `down`, `wizard`,
   `goal`, `team init/sync` and the pane drivers are gone, with no aliases.
 

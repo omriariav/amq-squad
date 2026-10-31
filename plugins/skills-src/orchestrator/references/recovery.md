@@ -41,9 +41,7 @@ block clears only through a reset after the router observed it.
 ## 4. Escalate to the owner
 
 A blocker that needs an owner decision is a gate or a block routed to the owner
-(`task block ... --route owner`), not a retry. A seat quarantined for a global agent
-config change stays quarantined until the owner runs `seat clear` from the owner's
-own terminal; the lead never clears it.
+(`task block ... --route owner`), not a retry.
 
 ## 5. Last resort, recorded
 
