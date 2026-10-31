@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -569,4 +570,32 @@ func TestRecordedCommitRetryIsCheckedAgainstTheGrantNow(t *testing.T) {
 			t.Fatalf("want %s with nothing pushed, got %+v", ReasonRecordedDiffMismatch, res)
 		}
 	})
+}
+
+// Codex pass on c09a8887, finding 2: `gh pr list` is asked with an explicit
+// --limit 100, and an answer that reaches the limit cannot prove every open
+// PR on the head was examined: the step defers pr_pending with nothing
+// written. Fails when the list goes without --limit or a full page passes.
+func TestAFullPagePRListDefers(t *testing.T) {
+	f := newFixture(t)
+	gh, prs, calls := branchGh(t, f)
+	tk := f.leased("cmd/")
+	if _, err := f.store.BindPR(tk.ID, fixtureRepo, 1, strings.Repeat("d", 40), f.now); err != nil {
+		t.Fatal(err)
+	}
+	var page []string
+	for n := 1; n <= 100; n++ {
+		page = append(page, `{"number":`+strconv.Itoa(n)+`,"state":"OPEN","headRefOid":"`+strings.Repeat("d", 40)+`","baseRefName":"main","isCrossRepository":false}`)
+	}
+	write(t, filepath.Join(prs, strings.ReplaceAll(TaskBranch(f.handle, tk.ID), "/", "_")), "["+strings.Join(page, ",")+"]")
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// a full page\n")
+	tk = f.done(tk.ID)
+	before, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	res := Run(f.prOpts(tk, gh))
+	after, _ := os.ReadFile(ledgerPath(f.root, f.handle))
+	raw, _ := os.ReadFile(calls)
+	if !res.Deferred || res.ReasonCode != ReasonPRPending || !strings.Contains(res.Detail, "its limit") || res.Commit != "" || f.originBranch() != "" ||
+		string(before) != string(after) || !strings.Contains(string(raw), "--limit 100") {
+		t.Fatalf("a full page: %+v\n%s", res, raw)
+	}
 }

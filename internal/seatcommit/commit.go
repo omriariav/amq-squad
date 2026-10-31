@@ -1339,6 +1339,10 @@ func ghRunner(o Options, l Ledger, dir string) (run func(args ...string) (string
 	}, ""
 }
 
+// prListLimit is the --limit of the commit step's `gh pr list` (gh's
+// default is 30); an answer that reaches it defers the step (pr_pending).
+const prListLimit = 100
+
 // branchPR reads the open PRs of the task's branch, every one of them: a
 // push updates every open PR on its head, so one disqualifying PR refuses
 // even beside this task's own. Provenance is the task binding in the store
@@ -1347,13 +1351,17 @@ func ghRunner(o Options, l Ledger, dir string) (run func(args ...string) (string
 // other open PR is named in why (the commit step never reuses it); no PR
 // body is ever read. err is a gh failure.
 func branchPR(o Options, run func(args ...string) (string, error), l Ledger, branch string) (pr *ghPR, why string, err error) {
-	out, err := run("pr", "list", "--head", branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
+	out, err := run("pr", "list", "--head", branch, "--state", "open", "--limit", strconv.Itoa(prListLimit), "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
 	if err != nil {
 		return nil, "", errors.New("gh pr list failed: " + firstLine(out))
 	}
 	var prs []ghPR
 	if err := json.Unmarshal([]byte(out), &prs); err != nil {
 		return nil, "", errors.New("gh pr list gave no PR list: " + firstLine(out))
+	}
+	if len(prs) >= prListLimit {
+		// A full page cannot prove every open PR on the head was examined.
+		return nil, "", fmt.Errorf("gh pr list returned %d open PRs on %s, its limit: the step cannot prove it examined every one", len(prs), branch)
 	}
 	base := l.base(o.Grants)
 	var mine *ghPR
