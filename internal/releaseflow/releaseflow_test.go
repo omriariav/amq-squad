@@ -146,6 +146,12 @@ func (e *repoExec) DeleteRelease(_ context.Context, _ string, id int64) error {
 	return nil
 }
 
+// BranchContains resolves the commit against the bare repository's branch,
+// as the remote does: an object the remote lacks is not contained.
+func (e *repoExec) BranchContains(_ context.Context, _, branch, commit string) (bool, error) {
+	return exec.Command("git", "-C", e.bare, "merge-base", "--is-ancestor", commit, "refs/heads/"+branch).Run() == nil, nil
+}
+
 func (e *repoExec) TagCommit(_ context.Context, repository, tag string) (string, error) {
 	out, err := exec.Command("git", "-C", e.bare, "rev-parse", "--verify", "-q", "refs/tags/"+tag+"^{commit}").Output()
 	if err != nil {
@@ -161,7 +167,12 @@ type fixture struct {
 	spec     operatorauth.ReleaseSpec
 	approved map[string]bool
 	commit   string
+	work     string
+	scope    compoundrelease.Scope
 }
+
+// fixtureBody is the release notes file's content the fixture releases with.
+const fixtureBody = "# v1.2.0\n\nThe first release.\n"
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
@@ -194,8 +205,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	id := gatestore.Identity{OwnerPubKey: strings.Repeat("a", 64), IssuerKeyID: "ed25519-sha256:" + strings.Repeat("b", 64)}
-	f := &fixture{exec: &repoExec{t: t, bare: bare}, root: root, approved: map[string]bool{}, commit: commit}
-	f.flow = &Flow{Release: store, Gates: gates, Exec: f.exec, Lead: "lead",
+	f := &fixture{exec: &repoExec{t: t, bare: bare}, root: root, approved: map[string]bool{}, commit: commit, work: work, scope: scope}
+	f.flow = &Flow{Release: store, Gates: gates, Exec: f.exec, Lead: "lead", Body: fixtureBody, RepoDir: work, Branch: "main",
 		Raise: func(s gatestore.Spec) (gatestore.Record, error) {
 			rec, err := gatestore.Render(s, time.Now(), id)
 			if err != nil {
@@ -209,7 +220,7 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return nil
 		}}
-	f.spec, err = Spec(scope, "lead", "owner", "owner/fixture", "v1.2.0", commit, "first release")
+	f.spec, err = Spec(scope, "lead", "owner", "owner/fixture", "v1.2.0", commit, "first release", fixtureBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,5 +656,86 @@ func TestRepassPublishedMismatchIsNeverDeleted(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// 3.0.2 (v3.0.1's gate note became its public body): the release body is the
+// notes file's content, and the gate note with the body's digest is only in
+// the gate question.
+func TestReleaseBodyIsTheNotesFile(t *testing.T) {
+	f := newFixture(t)
+	if want := "first release " + bodyDigestLabel + BodyDigest(fixtureBody); f.spec.Note.Summary != want {
+		t.Fatalf("gate note %q, want %q", f.spec.Note.Summary, want)
+	}
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	if _, err := f.flow.Publish(context.Background(), f.root); err != nil || len(f.exec.releases) != 1 {
+		t.Fatalf("publish: %v %v", err, f.exec.releases)
+	}
+	body := f.exec.bodies[1]
+	if !strings.HasPrefix(body, fixtureBody+"\n\n<!-- amq-squad-release-nonce: ") || strings.Contains(body, "first release ") {
+		t.Fatalf("release body %q is not the notes file's content", body)
+	}
+	if _, err := Spec(f.scope, "lead", "owner", "owner/fixture", "v1.2.0", f.commit, "first release", " \n"); err == nil {
+		t.Fatal("a release without a body was specified")
+	}
+}
+
+// 3.0.2: publish refuses a body that is not the prepared file's content, and
+// nothing runs, not even the tag.
+func TestPublishRefusesABodyThatIsNotThePreparedFile(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.flow.Body = fixtureBody + "edited after prepare\n"
+	if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrBodyMismatch) || f.exec.tags != 0 || len(f.exec.releases) != 0 || f.exec.nextID != 0 {
+		t.Fatalf("a changed body was published: %v tags %d releases %v", err, f.exec.tags, f.exec.releases)
+	}
+	f.flow.Body = fixtureBody
+	if _, err := f.flow.Publish(context.Background(), f.root); err != nil || len(f.exec.releases) != 1 {
+		t.Fatalf("the prepared body: %v %v", err, f.exec.releases)
+	}
+}
+
+// 3.0.2: --commit must name an object before any gate is raised. A
+// well-formed SHA naming nothing is commit_unknown; a local commit the
+// remote branch lacks is commit_not_on_branch. Neither writes the release or
+// raises a gate.
+func TestPrepareRefusesACommitThatNamesNothingBeforeAnyGate(t *testing.T) {
+	f := newFixture(t)
+	other := run(t, f.work, "commit-tree", "-m", "local only", run(t, f.work, "rev-parse", "HEAD^{tree}"))
+	for _, c := range []struct {
+		commit string
+		want   error
+	}{
+		{strings.Repeat("ab", 20), ErrCommitUnknown},
+		{other, ErrCommitNotOnBranch},
+	} {
+		spec, err := Spec(f.scope, "lead", "owner", "owner/fixture", "v1.2.0", c.commit, "first release", fixtureBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.flow.Prepare(spec); !errors.Is(err, c.want) {
+			t.Fatalf("prepare at %s: %v, want %v", c.commit, err, c.want)
+		}
+		if ids, _ := f.flow.Gates.IDs(); len(ids) != 0 {
+			t.Fatalf("a gate was raised for %s: %v", c.commit, ids)
+		}
+		if _, err := f.flow.Release.ReadCurrent(); err == nil {
+			t.Fatalf("the release was written for %s", c.commit)
+		}
+	}
+	if _, err := f.flow.Prepare(f.spec); err != nil {
+		t.Fatalf("the branch's commit: %v", err)
 	}
 }

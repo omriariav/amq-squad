@@ -17,8 +17,8 @@ import (
 const releaseUsage = `amq-squad release - the release gate flow (tag and release stop for the owner)
 
 Usage:
-  amq-squad release prepare --repository OWNER/NAME --tag TAG --commit SHA [--notes TEXT] [context flags] [--json]
-  amq-squad release publish --repository OWNER/NAME --tag TAG --commit SHA [--notes TEXT] [context flags] [--json]
+  amq-squad release prepare --repository OWNER/NAME --tag TAG --commit SHA --notes-file PATH [--notes TEXT] [--branch BRANCH] [context flags] [--json]
+  amq-squad release publish --repository OWNER/NAME --tag TAG --commit SHA --notes-file PATH [--notes TEXT] [--branch BRANCH] [context flags] [--json]
 
 prepare writes the release into the compoundrelease store and raises two
 typed gates through the core, tag ("git tag TAG SHA on OWNER/NAME") and
@@ -27,6 +27,14 @@ in the gate thread. publish runs, under the owner's gh outside any seat, the
 tag and then the release, each only with its gate's verified owner answer; a
 child without one is refused and nothing after it runs. A child that ran is
 never run again.
+
+--notes-file names the release notes document: its content is the GitHub
+release body, and its digest is recorded in the release at prepare; publish
+refuses a file whose content is not the prepared one (release_body_mismatch).
+--notes is the gate note, shown to the owner in the gate question only.
+Before any gate is raised, prepare resolves --commit in this repository
+(commit_unknown) and requires the remote --branch (default main) to contain
+it (commit_not_on_branch).
 
 Exit codes: 0 done, 1 refused or error.
 `
@@ -47,7 +55,9 @@ func runRelease(args []string) error {
 	repo := g.fs.String("repository", "", "owner/name")
 	tag := g.fs.String("tag", "", "the tag")
 	commit := g.fs.String("commit", "", "the full commit SHA the tag names")
-	notes := g.fs.String("notes", "", "the release notes (one line)")
+	notes := g.fs.String("notes", "", "the gate note shown to the owner in the gate question (one line)")
+	notesFile := g.fs.String("notes-file", "", "the release notes document: its content is the GitHub release body")
+	branch := g.fs.String("branch", "main", "the remote branch that must contain --commit")
 	ghBin := g.fs.String("gh", "gh", "gh executable (the owner's identity)")
 	sel, err := g.resolve(args[1:])
 	if err != nil {
@@ -55,6 +65,13 @@ func runRelease(args []string) error {
 	}
 	if os.Getenv("AMQ_SQUAD_SEAT") != "" {
 		return fmt.Errorf("release: a seat process holds no release path (R33); the owner's harness runs the release")
+	}
+	if *notesFile == "" {
+		return usageErrorf("release %s requires --notes-file (the release body)", verb)
+	}
+	body, err := os.ReadFile(*notesFile)
+	if err != nil {
+		return usageErrorf("release %s: --notes-file: %v", verb, err)
 	}
 	ctx := context.Background()
 	core, err := gateCore(ctx, sel, verb == "prepare")
@@ -74,7 +91,7 @@ func runRelease(args []string) error {
 		esc.Send = core.QuestionSender(ctx)
 	}
 	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: esc.Raise, Lead: firstOf(sel.Handle, "lead"), Squad: mergetrain.SquadOf(sel.Root),
-		Exec: &releaseflow.GH{Bin: *ghBin},
+		Exec: &releaseflow.GH{Bin: *ghBin}, Body: string(body), RepoDir: sel.ProjectDir, Branch: *branch,
 		Accepted: func(rec gatestore.Record) error {
 			trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())
 			if err != nil {
@@ -82,7 +99,7 @@ func runRelease(args []string) error {
 			}
 			return gateverify.Verifier{Trust: trust, Pin: core.Pin, Namespace: core.Namespace}.Accepted(core.Store, rec)
 		}}
-	spec, err := releaseflow.Spec(scope, flow.Lead, "owner", *repo, *tag, *commit, *notes)
+	spec, err := releaseflow.Spec(scope, flow.Lead, "owner", *repo, *tag, *commit, *notes, string(body))
 	if err != nil {
 		return usageErrorf("release %s: %v", verb, err)
 	}

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -45,6 +46,9 @@ type Executor interface {
 	Tag(ctx context.Context, repository, tag, commit string) error
 	// TagCommit resolves a remote tag to its commit ("" when it does not exist).
 	TagCommit(ctx context.Context, repository, tag string) (string, error)
+	// BranchContains reports whether the remote branch contains the commit
+	// (false when either is unknown to the remote).
+	BranchContains(ctx context.Context, repository, branch, commit string) (bool, error)
 	// TagProtected reports whether a tag rule restricts update and deletion
 	// of this tag, and why not.
 	TagProtected(ctx context.Context, repository, tag string) (bool, string, error)
@@ -102,19 +106,70 @@ type Flow struct {
 	Lead     string
 	Squad    string // this squad's identity, set on the gates it raises and read back (mergetrain.Squad)
 	Now      func() time.Time
+	// Body is the GitHub release body: the release notes file's content
+	// (3.0.2). Its digest is in the spec recorded at prepare (Spec), and
+	// publish refuses a body that is not that file's content.
+	Body string
+	// RepoDir is the local repository the commit must resolve in, and Branch
+	// the remote branch that must contain it, before any gate is raised.
+	RepoDir string
+	Branch  string
+}
+
+// The named refusals of 3.0.2.
+var (
+	// ErrBodyMismatch: the release body at publish is not the content of the
+	// notes file whose digest was recorded at prepare.
+	ErrBodyMismatch = errors.New("release_body_mismatch")
+	// ErrCommitUnknown: --commit names no commit in the local repository.
+	ErrCommitUnknown = errors.New("commit_unknown")
+	// ErrCommitNotOnBranch: the remote branch does not contain the commit.
+	ErrCommitNotOnBranch = errors.New("commit_not_on_branch")
+)
+
+// bodyDigestLabel joins the release body's digest to the gate note (the
+// spec's one note field): the owner's gate question shows the note and the
+// digest of the body the release will carry.
+const bodyDigestLabel = "release body sha256:"
+
+// BodyDigest is the hex SHA-256 of a release body.
+func BodyDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+// recordedBodyDigest reads the body digest Spec joined to the note.
+func recordedBodyDigest(summary string) string {
+	i := strings.LastIndex(summary, bodyDigestLabel)
+	if i < 0 {
+		return ""
+	}
+	d := summary[i+len(bodyDigestLabel):]
+	if len(d) != 64 || strings.Trim(d, "0123456789abcdef") != "" {
+		return ""
+	}
+	return d
 }
 
 var (
-	tagRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
-	shaRe  = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	repoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	tagRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
+	shaRe    = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	repoRe   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	branchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$`)
 )
 
-// Spec builds the compound release spec for a tag at a commit.
-func Spec(scope compoundrelease.Scope, lead, owner, repository, tag, commit, notes string) (operatorauth.ReleaseSpec, error) {
+// Spec builds the compound release spec for a tag at a commit. notes is the
+// gate note, shown to the owner in the gate question only; body is the
+// release body (the notes file's content), recorded in the spec by its
+// digest, joined to the note.
+func Spec(scope compoundrelease.Scope, lead, owner, repository, tag, commit, notes, body string) (operatorauth.ReleaseSpec, error) {
 	if !tagRe.MatchString(tag) || !shaRe.MatchString(commit) || !repoRe.MatchString(repository) {
 		return operatorauth.ReleaseSpec{}, errors.New("release needs a tag, a full lowercase commit SHA and owner/name")
 	}
+	if strings.TrimSpace(body) == "" {
+		return operatorauth.ReleaseSpec{}, errors.New("release needs a release body: --notes-file names the release notes document")
+	}
+	notes = strings.TrimSpace(strings.TrimSpace(notes) + " " + bodyDigestLabel + BodyDigest(body))
 	profile := squadnamespace.NormalizeProfile(scope.Profile)
 	return operatorauth.ReleaseSpec{
 		SchemaVersion: operatorauth.ReleaseSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion,
@@ -162,9 +217,41 @@ func (f *Flow) ChildGate(child operatorauth.ReleaseChildPlan) (string, error) {
 	return check(rec)
 }
 
+// CheckCommit proves the tag's commit names an object before any gate is
+// raised (3.0.2): it resolves to a commit in the local repository (git
+// cat-file -e), and the named remote branch contains it, resolved on the
+// remote as TagCommit resolves the tag. A shape-valid SHA naming nothing is
+// commit_unknown; a commit the branch does not carry is commit_not_on_branch.
+func (f *Flow) CheckCommit(ctx context.Context, repository, commit string) error {
+	if !shaRe.MatchString(commit) {
+		return fmt.Errorf("%w: %q is not a full lowercase commit SHA", ErrCommitUnknown, commit)
+	}
+	if !branchRe.MatchString(f.Branch) || strings.Contains(f.Branch, "..") {
+		return fmt.Errorf("%w: no valid branch is named (%q)", ErrCommitNotOnBranch, f.Branch)
+	}
+	if out, err := exec.CommandContext(ctx, "git", "-C", f.RepoDir, "cat-file", "-e", commit+"^{commit}").CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s names no commit in the repository at %s: %v %s", ErrCommitUnknown, commit, f.RepoDir, err, strings.TrimSpace(string(out)))
+	}
+	ok, err := f.Exec.BranchContains(ctx, repository, f.Branch, commit)
+	if err != nil {
+		return fmt.Errorf("resolve %s on branch %s of %s: %w", commit, f.Branch, repository, err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: branch %s on %s does not contain %s", ErrCommitNotOnBranch, f.Branch, repository, commit)
+	}
+	return nil
+}
+
 // Prepare writes the release (or finds it, for the same spec) and raises both
-// child gates; the result is the active manifest naming the two gates.
+// child gates; the result is the active manifest naming the two gates. The
+// tag's commit is checked first (CheckCommit): nothing is written and no gate
+// is raised for a commit that names nothing or that the branch lacks.
 func (f *Flow) Prepare(spec operatorauth.ReleaseSpec) (compoundrelease.Snapshot, error) {
+	if fl := strings.Fields(spec.TagTarget); len(fl) != 6 || fl[0] != "git" || fl[1] != "tag" || fl[4] != "on" {
+		return compoundrelease.Snapshot{}, fmt.Errorf("release tag target %q is not the flow's", spec.TagTarget)
+	} else if err := f.CheckCommit(context.Background(), fl[5], fl[3]); err != nil {
+		return compoundrelease.Snapshot{}, err
+	}
 	snap, err := f.Release.Create(spec)
 	if err != nil {
 		return snap, err
@@ -202,6 +289,10 @@ func (f *Flow) Publish(ctx context.Context, root string) (steps []Step, err erro
 	}
 	if snap.Active == nil {
 		return nil, fmt.Errorf("release is %s, not active: prepare it first", snap.Pointer.State)
+	}
+	// The body is the prepared notes file's content, or nothing runs.
+	if want := recordedBodyDigest(snap.Prepared.Spec.Note.Summary); want == "" || BodyDigest(f.Body) != want {
+		return nil, fmt.Errorf("%w: the release body's sha256 is %s, the release was prepared with %q", ErrBodyMismatch, BodyDigest(f.Body), want)
 	}
 	dir := filepath.Join(root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -280,7 +371,7 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 				err = fmt.Errorf("tag %s does not exist on %s", tag, repo)
 				break
 			}
-			st.Result, err = f.release(ctx, root, dir, repo, tag, approved, snap.Prepared.Spec.Note.Summary)
+			st.Result, err = f.release(ctx, root, dir, repo, tag, approved, f.Body)
 			if errors.Is(err, ErrTagMoved) || errors.Is(err, ErrDraftEdited) {
 				return append(steps, refused(st, err.Error())), fmt.Errorf("%s: %w", child.Role, err)
 			}

@@ -214,3 +214,17 @@ func (g *GH) TagCommit(ctx context.Context, repository, tag string) (string, err
 	}
 	return sha, nil
 }
+
+// BranchContains resolves the commit against the remote branch: the compare
+// of branch...commit is identical or behind when the branch contains it; a
+// commit or branch the remote does not know is false.
+func (g *GH) BranchContains(ctx context.Context, repository, branch, commit string) (bool, error) {
+	out, err := g.run(ctx, "api", "repos/"+repository+"/compare/"+branch+"..."+commit, "--jq", ".status")
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return false, nil
+		}
+		return false, err
+	}
+	return out == "identical" || out == "behind", nil
+}
