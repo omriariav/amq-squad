@@ -196,7 +196,9 @@ run("default-ignorable code points not stripped", [(R,'unicode.In(r, unicode.Mn,
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 run("σ and ς not lookalikes of c (the lunate sigma passes)", [(R,"'ϲ': 'c', 'σ': 'c', 'ς': 'c', ","'ϲ': 'c', ")],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
-run("no Armenian lookalikes", [(R,"\t'ս': 'u', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',\n","")],
+run("no Armenian lookalikes", [(R,"\t'ս': 's', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',\n","")],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
+run("an entry dropped from the explicit default-ignorable list", [(R,'0x115F: true, ','')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)

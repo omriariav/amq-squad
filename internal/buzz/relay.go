@@ -665,7 +665,7 @@ func (g gateView) gateShaped(line string) bool {
 func normalizeLine(s string) string {
 	strip := func(s string) string {
 		return strings.Map(func(r rune) rune {
-			if unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) {
+			if ignorable[r] || unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) {
 				return -1
 			}
 			return r
@@ -689,6 +689,22 @@ func normalizeLine(s string) string {
 	}, s)
 }
 
+// ignorable is the explicit list of default-ignorable code points stripped
+// whatever the property tables of the Go release say: the soft hyphen, the
+// combining grapheme joiner, the Hangul fillers, the zero-width and bidi
+// controls, the word joiner and the invisible operators, the variation
+// selectors and the byte order mark.
+var ignorable = func() map[rune]bool {
+	m := map[rune]bool{0x00AD: true, 0x034F: true, 0x061C: true, 0x115F: true, 0x1160: true, 0x17B4: true, 0x17B5: true,
+		0x3164: true, 0xFEFF: true, 0xFFA0: true}
+	for _, rg := range [][2]rune{{0x180B, 0x180F}, {0x200B, 0x200F}, {0x202A, 0x202E}, {0x2060, 0x206F}, {0xFE00, 0xFE0F}, {0xE0100, 0xE01EF}} {
+		for r := rg[0]; r <= rg[1]; r++ {
+			m[r] = true
+		}
+	}
+	return m
+}()
+
 // confusables folds the letters of other scripts that read as Latin letters
 // to those letters: a hand list for the letters of the answer words and gate
 // ids, not the full Unicode confusables data (scripts outside the table are
@@ -701,8 +717,9 @@ var confusables = map[rune]rune{
 	// Greek (σ and ς too: the lunate sigma ϲ becomes them under NFKC and folding)
 	'α': 'a', 'ϲ': 'c', 'σ': 'c', 'ς': 'c', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'χ': 'x', 'γ': 'y', 'ι': 'i',
 	'κ': 'k', 'η': 'n', 'τ': 't', 'ν': 'v', 'υ': 'u', 'μ': 'u',
-	// Armenian (by glyph, as in Unicode's confusables data: ս reads as u)
-	'ս': 'u', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',
+	// Armenian (ս is u-shaped, but it maps to s: no answer word has a u and
+	// a refusal costs one line, so yeս is refused as yes is)
+	'ս': 's', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',
 }
 
 var (

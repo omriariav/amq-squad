@@ -787,6 +787,7 @@ func TestAFailedPartPostsNextTickWithoutRepeatingTheFirst(t *testing.T) {
 func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 	pf := newPhoneFixture(t)
 	rec, _, _ := raiseRel(t, pf.core, "rel-norm")
+	raiseRel(t, pf.core, "rel-c") // rel-ϲ (the lunate sigma) names it
 	g, err := pf.h.gateView(time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -797,10 +798,10 @@ func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 			"yes\ufe0f", "уes", "YЕS", "аpprove", "dеny rel-x", "nο",
 			// Codex pass 3: an accent (composed and decomposed), the Hangul
 			// fillers, the soft hyphen, the grapheme joiner, Armenian
-			"yés", "ye\u0301s", "yes\u115f", "yes\u3164", "y\u00ades", "ye\u034fs", "yes\uffa0", "nօ", "dеnу\u1160"},
+			"yés", "ye\u0301s", "yes\u115f", "yes\u3164", "y\u00ades", "ye\u034fs", "yes\uffa0", "nօ", "dеnу\u1160", "yeս"},
 		"an open gate's id": {"I raised rel-\u200bnorm for you", "see REL-NORM\u200c now", "ｒｅｌ－ｎｏｒｍ waits",
 			"rel-norm\ufe0f waits", "rel\ufe0f-norm waits", "rеl-nоrm waits",
-			"rél-norm waits", "rel-nօrm waits", "rel-norm\u1160 waits"},
+			"rél-norm waits", "rel-nօrm waits", "rel-norm\u1160 waits", "rel-\u03f2 waits"},
 		"an open gate's question": {strings.Replace(digest, "sha256:", "sha\u200b256:", 1), strings.ToUpper(digest[:9]) + digest[9:], "\u2066" + digest + "\u2069",
 			strings.Replace(digest, "digest", "digest\ufe0f", 1), strings.Replace(digest, "digest", "dіgеst", 1),
 			// the lunate sigma (NFKC and folding make it σ) in the class line
@@ -814,6 +815,13 @@ func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 				}
 			}
 		})
+	}
+	// the explicit default-ignorable list pins the code points the lead
+	// named, whatever a later Go release's property tables say
+	for _, r := range []rune{0x00AD, 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x200B, 0x200D, 0x2060, 0xFE0F, 0xFEFF} {
+		if !ignorable[r] {
+			t.Errorf("%U is not in the explicit list", r)
+		}
 	}
 	// end to end: the zero-width yes is refused and nothing posts
 	_, rid := pf.ask(t, "where are we?", "")
