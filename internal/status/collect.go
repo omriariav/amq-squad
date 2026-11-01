@@ -16,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/state"
@@ -143,6 +144,13 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 			seat.Worktree, seat.Branch = staged.Worktree, staged.Branch
 			seat.Launch = seatLaunch(o.Root, handle, staged)
 			seat.Warnings = append(seat.Warnings, launchWarnings(o.Root, handle, staged, seat.Launch, o.Now)...)
+			// brief 31-2: a warning the owner cleared for this launch moves
+			// to the acknowledged list
+			clears, err := schedproc.ReadClears(o.Root)
+			if err != nil {
+				warn("clears: %v", err)
+			}
+			seat.Warnings, seat.AcknowledgedWarnings = splitCleared(seat.Warnings, clears[handle], staged.LaunchID)
 		}
 	}
 	rec, err := launch.Read(dir)
@@ -504,4 +512,18 @@ func pushURLMissing(root string) []string {
 		}
 	}
 	return out
+}
+
+// splitCleared moves each warning the owner cleared for this launch out of
+// the warnings (brief 31-2): a clear names the warning's code and the
+// launch, so a later launch's same condition stays a warning.
+func splitCleared(warnings []string, clears []schedproc.ClearLine, launchID string) (kept, acknowledged []string) {
+	for _, w := range warnings {
+		if schedproc.Cleared(clears, schedproc.WarningCode(w), launchID) {
+			acknowledged = append(acknowledged, w)
+		} else {
+			kept = append(kept, w)
+		}
+	}
+	return kept, acknowledged
 }

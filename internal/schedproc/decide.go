@@ -269,7 +269,7 @@ func (s *DecisionServer) serve() {
 				var kind struct {
 					Kind string `json:"kind"`
 				}
-				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind) {
+				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind) {
 					// The fourth pass: the ledger is read again and the
 					// sender proved again after the request is read; a lead
 					// record replaced meanwhile refuses it.
@@ -291,6 +291,10 @@ func (s *DecisionServer) serve() {
 // apply runs a proved decision of a known kind.
 func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
 	switch kind {
+	case ClearRequestKind:
+		// brief 31-2: the owner's clear of a warning line, recorded here; it
+		// changes no seat's state, so it needs no hook of the scheduler's.
+		return applyClear(s.o.Root, s.o.Lead, line)
 	case RelaunchRequestKind:
 		var req RelaunchRequest
 		if json.Unmarshal(line, &req) != nil {
