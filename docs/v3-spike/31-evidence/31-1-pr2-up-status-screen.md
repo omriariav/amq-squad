@@ -321,9 +321,25 @@ launch `0de97c89…`):
 
 | Seat | Runtime and model | Baseline to seat live | Day 4 to seat live | Day 4 to first message | Slowest segment |
 | --- | --- | --- | --- | --- | --- |
-| dev | codex gpt-5.6-terra | 4.485 s | | | |
-| reviewer | codex gpt-5.6-sol | 4.419 s | | | |
-| scribe | claude sonnet | 4.666 s | | | |
+| dev | codex gpt-5.6-terra | 4.485 s | 4.198 s | none yet (idle roster) | prepare 3.621 s |
+| reviewer | codex gpt-5.6-sol | 4.419 s | 4.236 s | none yet (idle roster) | prepare 3.621 s |
+| scribe | claude sonnet | 4.666 s | not in the roster that ran | | |
+
+The day-4 run, 2026-11-01, on v3.1.0-rc.1 (the tag build at
+`~/scratch-v31rc1/build/pi/amq-squad`, installed over PATH by `up`), from the
+repository with the owner's squad.yaml naming cto, dev (codex gpt-5.6-terra)
+and reviewer (codex gpt-5.6-sol): the lead ran it on the owner's behalf, the
+owner approving each step. Launch `c811afa66d2ff8067d7870bcc0b089d1`, start
+`2026-11-01T18:29:31.965Z` (up's own start), dev live at 18:29:36.163Z and
+reviewer at 18:29:36.201Z; segments for both: prepare 3621 ms, mint 74 ms,
+apply 424 ms, seat_exec 77 ms (dev) and 116 ms (reviewer); ceiling 10 s, not
+exceeded. No first message within four minutes: the roster was idle (t27
+blocked on the size cap, nothing else pending), so the mark waits for a
+dispatch. Two facts from the run for the notes: a quit lead leaves its seats
+alive, and the next `up` adopts them (`roster_adopted`: "every roster seat is
+live from the previous incarnation; no launch"), so a launch-budget run needs
+the seats stopped first; and the first `up` of the day did exactly that and
+measured nothing until the seats' tmux session was killed and `up` ran again.
 
 The baseline ran from `scheduler_started`; day 4 runs from `up`'s own start,
 so its `prepare` adds `up`'s install, doctor and session steps, the lead's
