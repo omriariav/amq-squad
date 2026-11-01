@@ -375,3 +375,42 @@ func TestTheOwnersSignedYesOverBuzzConfirmsTheProposal(t *testing.T) {
 		t.Fatalf("reply %q", res)
 	}
 }
+
+// Row 1f's second layer after Codex on #834: the guard refuses the same
+// forms for a solo lead's shell call (session solo, a root under
+// ~/.amq-squad/solo/) as the extension does, reading the extension's own
+// table; a seat's call is not read by this rule; ordinary quoted commands
+// run.
+func TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "pi", "test", "solo-shell-forms.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forms struct{ Refused, Runs []string }
+	if err := json.Unmarshal(raw, &forms); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range forms.Refused {
+		if soloLeadShellRefusal(line) == "" {
+			t.Errorf("runs: %s", line)
+		}
+	}
+	for _, line := range forms.Runs {
+		if why := soloLeadShellRefusal(line); why != "" {
+			t.Errorf("refused (%s): %s", why, line)
+		}
+	}
+	proj, root := soloProject(t)
+	solo := hookIdentity{Handle: "lead", Root: root, Session: "solo"}
+	call := guardCall{Tool: "bash", Args: map[string]string{"command": forms.Refused[0]}, CWD: proj}
+	if v := evaluateGuard(solo, call, time.Now()); v.Verdict != "deny" || v.ReasonCode != "owner_only" {
+		t.Fatalf("solo lead t\"\"mux = %+v", v)
+	}
+	seat := hookIdentity{Handle: "impl-1", Root: filepath.Join(proj, ".agent-mail", "s1"), Session: "s1"}
+	if v := evaluateGuard(seat, call, time.Now()); v.ReasonCode == "owner_only" {
+		t.Fatalf("a seat's call read by the solo rule: %+v", v)
+	}
+	if v := evaluateGuard(solo, guardCall{Tool: "bash", Args: map[string]string{"command": `git log --format="%h %s" -3`}, CWD: proj}, time.Now()); v.ReasonCode == "owner_only" {
+		t.Fatalf("an ordinary quoted command refused: %+v", v)
+	}
+}

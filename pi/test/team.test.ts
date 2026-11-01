@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "../extensions/lib/hooks.ts";
 import { confirmPath, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal } from "../extensions/lib/team.ts";
+import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx, tmpdir } from "./fakepi.ts";
 
@@ -218,4 +219,20 @@ test("the solo lead's shell refuses tmux and the owner's verbs by argv[0] and by
 		Object.assign(process.env, saved);
 	}
 	assert.equal(digestPrefix(DIGEST), PREFIX);
+});
+
+// Row 1f after Codex on #834: shell quoting does not hide tmux or the
+// owner's verbs. The line is dequoted (quote characters, backslashes, $'')
+// and lowercased before the split; tmux inside any token, amq-squad with a
+// team verb, an expansion or substitution joined to letters (tm${x}ux,
+// tm$(true)ux, backticks), and eval, exec -a or env -S with t, m, u, x in
+// order are refused; ordinary commands with quotes run. The forms are the
+// table the guard's second layer reads too (pi/test/solo-shell-forms.json).
+test("the solo lead's shell sees through quoting, expansions and eval", () => {
+	const forms = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "solo-shell-forms.json"), "utf8")) as { refused: string[]; runs: string[] };
+	for (const line of forms.refused) assert.match(soloShellRefusal("bash", { command: line }) ?? "", /^owner_only: /, line);
+	for (const line of forms.runs) assert.equal(soloShellRefusal("bash", { command: line }), undefined, line);
+	assert.match(soloShellRefusal("exec_command", { cmd: ["sh", "-c", 't""mux ls'] }) ?? "", /^owner_only: /, "an argv sh -c line");
+	assert.match(soloShellRefusal("exec_command", { cmd: ["/usr/bin/TMUX", "ls"] }) ?? "", /^owner_only: /, "an argv TMUX");
+	assert.equal(soloShellRefusal("exec_command", { cmd: ["echo", "hello world"] }), undefined);
 });

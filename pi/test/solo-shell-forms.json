@@ -1,0 +1,34 @@
+{
+  "comment": "Brief 31-3, 3b (ii) after Codex on #834: command strings the solo lead's shell refuses and ones it runs. Read by pi/test/team.test.ts (the extension) and internal/cli/team_confirm_test.go (the guard's second layer), so the two layers read the same forms.",
+  "refused": [
+    "t\"\"mux send-keys -t %7 \"/squad confirm 0123456789abcdef\" Enter",
+    "t\\mux ls",
+    "$'tmux' ls",
+    "\"tm\"'ux' ls",
+    "TMUX ls",
+    "/opt/homebrew/bin/t''mux list-panes",
+    "ls; /opt/homebrew/bin/tmux list-panes",
+    "echo x | tmux load-buffer -",
+    "tm${x}ux send-keys -t %7 x Enter",
+    "tm$(true)ux send-keys -t %7 x Enter",
+    "`echo tm`ux send-keys",
+    "eval \"$(printf 't%smux' '') send-keys -t %7 x Enter\"",
+    "exec -a ls ./t_m_u_x send-keys",
+    "env -S \"t_m_u_x send-keys -t %7 x Enter\"",
+    "a''mq-squad te''am confirm sha256:x@absent",
+    "amq\\-squad team apply --digest sha256:x@absent",
+    "sh -c 'amq-squad team confirm sha256:x@absent'",
+    "(cd /tmp && amq-squad team apply --digest sha256:x@absent)"
+  ],
+  "runs": [
+    "echo \"hello world\"",
+    "git log --format=\"%h %s\" -3",
+    "ls -la",
+    "go test ./...",
+    "amq-squad status --json",
+    "amq-squad task list --json",
+    "cd $HOME/code && make build",
+    "grep -rn \"func main\" .",
+    "echo the team will apply soon"
+  ]
+}

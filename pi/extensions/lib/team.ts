@@ -58,33 +58,58 @@ export function writeConfirmRecord(root: string, digest: string, now: Date, pane
 
 const SHELL_TOOLS = new Set(["bash", "Bash", "shell", "exec_command"]);
 const OWNER_WORDS = new Set(["team", "confirm", "apply"]);
+// argv[0]s that run their arguments as a command line: their argv is read
+// as a shell form too.
+const LINE_RUNNERS = new Set(["sh", "bash", "zsh", "dash", "ksh", "env", "eval", "exec", "xargs", "nohup", "sudo"]);
 
 function base(word: string): string {
 	return word.split("/").pop() ?? word;
 }
 
+// dequote drops what the shell removes before it runs a word: quote
+// characters, backslashes and the $'...' prefix, so t""mux, t\mux,
+// $'tmux' and "tm"'ux' all read tmux. Lowercased: macOS's default file
+// system finds TMUX as tmux.
+export function dequote(line: string): string {
+	return line.replace(/\$'/g, "").replace(/["'\\]/g, "").toLowerCase();
+}
+
+// lineRefusal is the shell form's rule over the dequoted line, the same as
+// the guard's second layer (internal/cli/hook_guard.go soloLeadShellRefusal).
+export function lineRefusal(line: string): string | undefined {
+	const d = dequote(line);
+	const tokens = d.split(/[\s;&|()<>{}]+/).filter(Boolean);
+	if (tokens.some((t) => t.includes("tmux"))) return "tmux";
+	if (d.includes("amq-squad") && /team|confirm|apply/.test(d)) return "amq-squad team";
+	// a parameter expansion or a command substitution joined to letters
+	// (tm${x}ux, tm$(true)ux) and backticks build a word the split cannot read
+	if (/[a-z0-9_]\$[{(a-z_]/.test(d) || /\$\{[^}]*\}[a-z0-9_]/.test(d) || /\$\([^)]*\)[a-z0-9_]/.test(d) || d.includes("`")) return "an expansion joined to letters";
+	const runs = tokens.includes("eval") || (tokens.includes("exec") && tokens.includes("-a")) || (tokens.includes("env") && (tokens.includes("-s") || tokens.some((t) => t.startsWith("--split-string"))));
+	if (runs && tokens.some((t) => /t.*m.*u.*x/.test(t))) return "tmux";
+	return undefined;
+}
+
 // soloShellRefusal is 3b (ii): the reason the solo lead's shell refuses a
 // call, undefined when it runs. In an argv form (an array the tool runs
-// without a shell) argv[0]'s base name decides; in a shell form (a command
-// string) every token does, so tmux or amq-squad anywhere in the line is
-// seen, behind a pipe, a subshell, sh -c or a path.
+// without a shell) argv[0]'s base name decides, and an argv[0] that runs a
+// command line (sh -c, env, eval, exec) has its words read as a shell form;
+// in a shell form (a command string) the dequoted line decides (lineRefusal).
 export function soloShellRefusal(toolName: string, input: unknown): string | undefined {
 	if (!SHELL_TOOLS.has(toolName) || !input || typeof input !== "object") return undefined;
 	const o = input as Record<string, unknown>;
 	const argv = [o.argv, o.args, o.cmd, o.command].find((v) => Array.isArray(v)) as unknown[] | undefined;
 	if (argv) {
-		const words = argv.map(String);
+		const words = argv.map((w) => String(w).toLowerCase());
 		const cmd = base(words[0] ?? "");
-		if (cmd === "tmux") return refusalText("tmux");
-		if (cmd === "amq-squad" && words.slice(1).some((w) => OWNER_WORDS.has(w))) return refusalText("amq-squad " + words.slice(1, 3).join(" "));
-		return undefined;
+		if (cmd.includes("tmux")) return refusalText("tmux");
+		if (cmd.includes("amq-squad") && words.slice(1).some((w) => OWNER_WORDS.has(w))) return refusalText("amq-squad " + words.slice(1, 3).join(" "));
+		const inner = LINE_RUNNERS.has(cmd) ? lineRefusal(words.slice(1).join(" ")) : undefined;
+		return inner ? refusalText(inner) : undefined;
 	}
 	const line = [o.command, o.cmd].find((v) => typeof v === "string") as string | undefined;
 	if (line === undefined) return undefined;
-	const tokens = line.split(/[\s;&|()<>`$'"{}\\]+/).filter(Boolean);
-	if (tokens.some((t) => base(t) === "tmux")) return refusalText("tmux");
-	if (tokens.some((t) => base(t) === "amq-squad") && tokens.some((t) => OWNER_WORDS.has(t))) return refusalText("amq-squad team");
-	return undefined;
+	const why = lineRefusal(line);
+	return why ? refusalText(why) : undefined;
 }
 
 function refusalText(what: string): string {

@@ -206,6 +206,14 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	if slices.Contains(seatexec.SeatDeniedDialogTools, call.Tool) {
 		return out("deny", "seat_dialog", call.Tool+" opens a dialog, and a seat never answers one: send the question to the lead as AMQ mail")
 	}
+	// 3b (ii), the second layer (brief 31-3, Codex on #834): the solo lead's
+	// shell refuses tmux and the owner's verbs, read from the dequoted line
+	// as the extension reads it (pi/extensions/lib/team.ts lineRefusal)
+	if soloLeadIdentity(id) && slices.Contains([]string{"Bash", "bash", "shell", "exec_command"}, call.Tool) {
+		if why := soloLeadShellRefusal(call.Args["command"] + call.Args["cmd"]); why != "" {
+			return out("deny", "owner_only", "the solo lead's shell does not run "+why+" (R55): a tmux command can type into the lead's own pane, and amq-squad team confirm and apply are the owner's")
+		}
+	}
 	actions := classifyGuardCall(env, call)
 	for i := range actions { // a write to a credential path is the credential gate
 		for _, w := range actions[i].writes {
@@ -292,6 +300,58 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		}
 	}
 	return out("allow", "allowed", "")
+}
+
+// soloLeadIdentity reports whether the guarded caller is a solo lead: the
+// session solo and an AMQ root under ~/.amq-squad/solo/ (prepareSoloLead).
+func soloLeadIdentity(id hookIdentity) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || id.Session != "solo" {
+		return false
+	}
+	return strings.HasPrefix(filepath.Clean(id.Root)+"/", filepath.Join(home, ".amq-squad", "solo")+"/")
+}
+
+var (
+	soloSplitRE     = regexp.MustCompile(`[\s;&|()<>{}]+`)
+	soloOwnerWordRE = regexp.MustCompile(`team|confirm|apply`)
+	soloJoinedRE    = []*regexp.Regexp{regexp.MustCompile(`[a-z0-9_]\$[{(a-z_]`), regexp.MustCompile(`\$\{[^}]*\}[a-z0-9_]`), regexp.MustCompile(`\$\([^)]*\)[a-z0-9_]`)}
+	soloInOrderRE   = regexp.MustCompile(`t.*m.*u.*x`)
+)
+
+// soloLeadShellRefusal is the extension's lineRefusal in Go: over the
+// dequoted, lowercased line (quote characters, backslashes and $' dropped),
+// tmux inside any token; amq-squad with a team verb; an expansion or a
+// command substitution joined to letters, or backticks; eval, exec -a or
+// env -S with a token holding t, m, u, x in order. "" when it runs.
+func soloLeadShellRefusal(line string) string {
+	d := strings.ToLower(strings.NewReplacer(`$'`, "", `"`, "", `'`, "", `\`, "").Replace(line))
+	var tokens []string
+	for _, t := range soloSplitRE.Split(d, -1) {
+		if t != "" {
+			tokens = append(tokens, t)
+		}
+	}
+	if slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, "tmux") }) {
+		return "tmux"
+	}
+	if strings.Contains(d, "amq-squad") && soloOwnerWordRE.MatchString(d) {
+		return "amq-squad team"
+	}
+	for _, re := range soloJoinedRE {
+		if re.MatchString(d) {
+			return "an expansion joined to letters"
+		}
+	}
+	if strings.Contains(d, "`") {
+		return "an expansion joined to letters"
+	}
+	runs := slices.Contains(tokens, "eval") || slices.Contains(tokens, "exec") && slices.Contains(tokens, "-a") ||
+		slices.Contains(tokens, "env") && (slices.Contains(tokens, "-s") || slices.ContainsFunc(tokens, func(t string) bool { return strings.HasPrefix(t, "--split-string") }))
+	if runs && slices.ContainsFunc(tokens, soloInOrderRE.MatchString) {
+		return "tmux"
+	}
+	return ""
 }
 
 // confirmRecordPath reports whether a write lands under a confirmation
