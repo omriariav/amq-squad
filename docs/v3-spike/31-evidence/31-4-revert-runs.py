@@ -137,7 +137,7 @@ run("records not validated (load and write)", [(S,'\tif err := r.Validate(reques
 run("record fields not checked (status)", [(S,'\tif len(bad) > 0 {\n\t\treturn fmt.Errorf','\tif len(bad) > 0 && false {\n\t\treturn fmt.Errorf')],
     G+"./internal/status/ -run TestARelayRecordIsCheckedFieldByField")
 run("the checks on the body, not the assembled parts (Codex P1-2)", [(R,'\t\tif line, bad := g.refuse(p); bad {\n\t\t\treturn nil, line, true\n\t\t}\n\t\tparts[i] = redact.Block(p)\n\t\tif line, bad := g.refuse(parts[i]); bad {\n\t\t\treturn nil, line, true\n\t\t}','\t\tparts[i] = redact.Block(p)'),
-    (R,'\tparts := splitPost(requestID, thread, body)\n','\tif line, bad := g.refuse(body); bad {\n\t\treturn nil, line, true\n\t}\n\tparts := splitPost(requestID, thread, body)\n')],
+    (R,'\tparts := splitPost(requestID, thread, redact.Block(body))\n','\tif line, bad := g.refuse(body); bad {\n\t\treturn nil, line, true\n\t}\n\tparts := splitPost(requestID, thread, redact.Block(body))\n')],
     B+"TestASplitNeverStartsAPartWithAnAnswerForm")
 run("the publish before the intent (Codex P1-3)", [(R,'if err := save(); err != nil {\n\t\t\treturn r, fmt.Errorf("the intent for','if err := error(nil); err != nil {\n\t\t\treturn r, fmt.Errorf("the intent for')],
     B+"'TestAFailingRecordStorePostsNothing|TestACrashBetweenPublishAndEventWriteIsANamedState'")
@@ -149,7 +149,7 @@ run("no normalization (Codex P2-4)", [(R,'func normalizeLine(s string) string {\
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 run("the DM marked handled although its record failed (Codex P2-6)", [(I,'\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\treturn','\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\t_ = h.seen.put(id, "-", now)\n\t\treturn')],
     B+"TestTheRecordComesBeforeTheQuestion")
-run("a failed delivery keeps its record (Codex P2-6)", [(I,'\t\tundo()\n','\t\t_ = undo\n')],
+run("a failed delivery keeps its record (Codex P2-6)", [(I,'if uerr := undo(); uerr != nil {','if uerr := error(nil); uerr != nil && undo != nil {')],
     B+"TestTheRecordComesBeforeTheQuestion")
 run("the helper without AMQ_NO_UPDATE_CHECK (Codex P2-7)", [('internal/buzz/helpers_test.go',', "AMQ_NO_UPDATE_CHECK": "1"}','}')],
     B+"TestTestsExecAMQOnlyThroughTheHelper")
@@ -157,7 +157,28 @@ run("a test execs amq directly (Codex P2-7)", [('internal/buzz/zz_revert_amq_tes
     B+"TestTestsExecAMQOnlyThroughTheHelper")
 run("the owner's next turn does not clear an unconfirmed post", [(R,'\t\t\trec.Refusals[i].ClearedAt = timePtr(now)\n','\t\t\t_ = timePtr\n')],
     B+"TestACrashBetweenPublishAndEventWriteIsANamedState")
-run("status shows a cleared unconfirmed post", [('internal/status/relay.go','\t\t\tif f.ClearedAt == nil {','\t\t\tif true {')],
-    B+"TestACrashBetweenPublishAndEventWriteIsANamedState")
+# The Codex re-check and the plan reviewer's by-file read
+run("an ambiguous post failure gives its try back (unbounded retries)", [(R,'\t\t\tif errors.Is(err, ErrNotSent) {','\t\t\tif true {')],
+    B+"TestAFailedPostKeepsItsTryUnlessNothingWasSent")
+run("a failure before the send consumes a try", [(R,'\t\t\tif errors.Is(err, ErrNotSent) {','\t\t\tif false {')],
+    B+"TestAFailedPostKeepsItsTryUnlessNothingWasSent")
+run("no minimum question-line length", [(R,'utf8.RuneCountInString(q) >= MinQuestionLine && ','')],
+    B+"TestAShortQuestionLineDoesNotRefuseOrdinaryReplies")
+run("redaction only after the split (Codex re-check #2)", [(R,'\tparts := splitPost(requestID, thread, redact.Block(body))\n','\tparts := splitPost(requestID, thread, body)\n')],
+    B+"TestACanaryAcrossTheSplitBoundaryIsRedacted")
+run("marks (Mn, Me) not stripped (Codex re-check #3)", [(R,'case unicode.In(r, unicode.Cf, unicode.Mn, unicode.Me):','case unicode.In(r, unicode.Cf):')],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
+run("no confusables fold (Codex re-check #3)", [(R,'if l, ok := confusables[r]; ok {','if l, ok := confusables[r]; ok && false {')],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
+run("status shows every historical refusal (Codex re-check #7)", [('internal/status/relay.go','if f.ClearedAt == nil && !f.At.Before(since) {','if f.ClearedAt == nil {')],
+    G+"./internal/status/ -run TestStatusShowsThePhoneRequests")
+run("an undelivered turn is kept (Codex re-check #5)", [(R,'if r, did, err := recoverUndelivered(dir, rec, now); did {','if r, did, err := recoverUndelivered(dir, rec, now); did && false {')],
+    B+"TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed")
+run("a failed rollback ignored (Codex re-check #5)", [(I,'hd.Error = joinErr(hd.Error, RelayRollbackFailed+": "+uerr.Error())','_ = uerr')],
+    B+"TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed")
+run("the DM marked handled before the real lead is recorded (Codex re-check #4)", [(I,'\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\treturn\n\t}\n\tif err := h.seen.put(id, "-", now); err != nil {','\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\t_ = h.seen.put(id, "-", now)\n\t\treturn\n\t}\n\tif err := h.seen.put(id, "-", now); err != nil {')],
+    B+"TestTheRealLeadIsRecordedBeforeTheDMIsHandled")
+run("a computed exec without its not-amq line (Codex re-check #6)", [('internal/buzz/phone_test.go',' // exec: not amq (the go tool)','')],
+    B+"TestTestsExecAMQOnlyThroughTheHelper")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)
