@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "../extensions/lib/hooks.ts";
-import { confirmPath, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, writeConfirmRecord } from "../extensions/lib/team.ts";
+import { digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
+import * as net from "node:net";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx, tmpdir } from "./fakepi.ts";
@@ -51,7 +52,27 @@ const proposed = envelope("team_propose", {
 	doors: `confirm it at one of the three doors: (1) type /squad confirm ${PREFIX} in the lead's pane; ...`,
 });
 
-function rig(reply: (args: string[], o: RunOptions) => RunResult) {
+// fakeLead is a stand-in for the solo lead's start socket: it records every
+// line it receives and answers with answer(line).
+async function fakeLead(answer: (req: any) => any): Promise<{ socket: string; got: any[]; close: () => void }> {
+	const socket = path.join(tmpdir(), "lead.sock");
+	const got: any[] = [];
+	const server = net.createServer((c) => {
+		let buf = "";
+		c.on("data", (d) => {
+			buf += d.toString("utf8");
+			const i = buf.indexOf("\n");
+			if (i < 0) return;
+			const req = JSON.parse(buf.slice(0, i));
+			got.push(req);
+			c.end(JSON.stringify(answer(req)) + "\n");
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(socket, resolve));
+	return { socket, got, close: () => server.close() };
+}
+
+function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "") {
 	const root = tmpdir();
 	const calls: { args: string[]; stdin?: string; timeoutMs: number }[] = [];
 	const runner = async (bin: string, args: string[], o: RunOptions): Promise<RunResult> => {
@@ -60,7 +81,7 @@ function rig(reply: (args: string[], o: RunOptions) => RunResult) {
 		return reply(args, o);
 	};
 	const pi = new FakePi();
-	const team = installSoloTeam(pi as any, cfg(root), runner, () => new Date("2026-11-01T10:00:00Z"));
+	const team = installSoloTeam(pi as any, cfg(root), runner, () => new Date("2026-11-01T10:00:00Z"), socket);
 	const ctx = fakeCtx({ hasUI: true });
 	const notes: string[] = [];
 	ctx.ui.notify = (m: string) => {
@@ -74,14 +95,7 @@ function rig(reply: (args: string[], o: RunOptions) => RunResult) {
 		await cmd.handler(args, ctx);
 		return ctx.widgets[PLAN_KEY]?.lines ?? [];
 	};
-	const record = () => {
-		try {
-			return JSON.parse(fs.readFileSync(confirmPath(root, DIGEST), "utf8"));
-		} catch {
-			return undefined;
-		}
-	};
-	return { root, pi, team, ctx, calls, notes, typed, squad, record };
+	return { root, pi, team, ctx, calls, notes, typed, squad };
 }
 
 async function propose(r: ReturnType<typeof rig>): Promise<string> {
@@ -119,45 +133,52 @@ test("amq_team_apply without a confirmation carries the lead's refusal naming th
 	await assert.rejects(r.pi.tools.get("amq_team_apply").execute("c", { digest: "sha256:x" }, undefined), /digest is the/);
 });
 
-// Row 1c: the TUI door. /squad confirm with the printed prefix writes the
-// record from the extension's own process, its proof the pane and the pid;
-// a prefix that is not the printed one, or no printed plan, writes nothing.
-test("/squad confirm with the printed prefix writes the record with the pane and the pid", async () => {
-	const r = rig(() => res(0, proposed));
-	assert.match((await r.squad(`confirm ${PREFIX}`)).join("\n"), /^$|no_proposal/);
-	assert.equal(r.record(), undefined, "a confirm with no plan wrote a record");
-	await propose(r);
-	const wrong = await r.squad("confirm fedcba9876543210");
-	assert.match(wrong.join("\n"), /key confirm refused: prefix_mismatch/);
-	assert.equal(r.record(), undefined, "a wrong prefix wrote a record");
-	process.env.TMUX_PANE = "%7";
+// Row 1c: the TUI door. /squad confirm with the printed prefix sends the
+// digest and the pane to the lead over its start socket (the lead accepts it
+// only from its own pi and witnesses it); the plan block shows the lead's
+// answer; a prefix that is not the printed one, or no printed plan, sends
+// nothing; a refusal from the lead shows by its name. No file is written.
+test("/squad confirm with the printed prefix asks the lead to witness it", async () => {
+	let answer: any = { outcome: "witnessed", digest: DIGEST, detail: "witnessed by the lead" };
+	const lead = await fakeLead(() => answer);
 	try {
-		const ok = await r.squad(`confirm ${PREFIX}`);
-		assert.match(ok.join("\n"), /confirmed at 2026-11-01T10:00:00.000Z \(door tui\)/);
+		const r = rig(() => res(0, proposed), lead.socket);
+		await r.squad(`confirm ${PREFIX}`);
+		assert.equal(lead.got.length, 0, "a confirm with no plan reached the lead");
+		await propose(r);
+		const wrong = await r.squad("confirm fedcba9876543210");
+		assert.match(wrong.join("\n"), /key confirm refused: prefix_mismatch/);
+		assert.equal(lead.got.length, 0, "a wrong prefix reached the lead");
+		process.env.TMUX_PANE = "%7";
+		try {
+			const ok = await r.squad(`confirm ${PREFIX}`);
+			assert.match(ok.join("\n"), /confirmed at 2026-11-01T10:00:00.000Z \(door tui, witnessed by the lead\)/);
+		} finally {
+			delete process.env.TMUX_PANE;
+		}
+		assert.deepEqual(lead.got, [{ kind: TUI_KIND, digest: DIGEST, pane: "%7" }]);
+		assert.equal(r.calls.length, 1, "the confirm ran no verb");
+		assert.deepEqual(fs.readdirSync(r.root), [], "the confirm wrote a file");
+		answer = { outcome: "refused", refusal: "peer_not_lead_pi", detail: "pid 9 is not the pi process this lead spawned" };
+		r.typed.push(PREFIX);
+		const refused = await r.squad("confirm");
+		assert.match(refused.join("\n"), /key confirm refused: peer_not_lead_pi: /);
 	} finally {
-		delete process.env.TMUX_PANE;
+		lead.close();
 	}
-	const rec = r.record();
-	assert.deepEqual(rec, { schema: 1, digest: DIGEST, door: "tui", at: "2026-11-01T10:00:00.000Z", by: "pane %7", proof: { pane: "%7", pid: process.pid } });
-	assert.equal(fs.statSync(confirmPath(r.root, DIGEST)).mode & 0o777, 0o600);
-	assert.equal(r.calls.length, 1, "the confirm ran no verb: the extension wrote the record itself");
-	// typed at the dialog instead of on the command line
-	fs.rmSync(confirmPath(r.root, DIGEST));
-	r.typed.push(PREFIX);
-	await r.squad("confirm");
-	assert.equal(r.record()?.door, "tui");
 });
 
 // Row 1c: a model message containing the same text invokes nothing. The
 // whole extension runs as the solo lead; the text reaches it as the
 // model's prompt, its reply and a tool input, and no record is written:
 // only pi's command path (the owner's typed line) reaches /squad.
-test("a model message containing /squad confirm writes nothing; the confirm is a command, never a tool", async () => {
+test("a model message containing /squad confirm reaches no lead; the confirm is a command, never a tool", async () => {
 	const { default: amqSquad } = await import("../extensions/amq-squad.ts");
 	const root = tmpdir();
 	const saved = { ...process.env };
 	for (const k of Object.keys(process.env)) if (k.startsWith("AMQ_SQUAD_") || k.startsWith("AM_")) delete process.env[k];
-	Object.assign(process.env, { AM_ME: "lead", AM_ROOT: root, AM_SESSION: "solo", AMQ_SQUAD_BIN: "/bin/false", AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: PROJECT });
+	const lead = await fakeLead(() => ({ outcome: "witnessed" }));
+	Object.assign(process.env, { AM_ME: "lead", AM_ROOT: root, AM_SESSION: "solo", AMQ_SQUAD_BIN: "/bin/false", AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: PROJECT, AMQ_SQUAD_LEAD_START_SOCKET: lead.socket });
 	try {
 		const pi = new FakePi();
 		amqSquad(pi as any);
@@ -167,12 +188,14 @@ test("a model message containing /squad confirm writes nothing; the confirm is a
 		await pi.emit("before_agent_start", { prompt: text, systemPromptOptions: { sections: {} } }, ctx);
 		await pi.emit("message_end", { message: { role: "assistant", content: [{ type: "text", text }] } }, ctx);
 		await pi.emit("tool_call", { toolName: "amq_send", input: { to: "lead", body: text }, toolCallId: "t1" }, ctx);
-		assert.equal(fs.existsSync(path.join(root, "extensions", "amq-squad", "confirm")), false, "a model message wrote a confirmation");
+		assert.equal(lead.got.length, 0, "a model message reached the lead");
+		assert.equal(fs.existsSync(path.join(root, "extensions", "amq-squad", "confirm")), false, "a model message wrote a file");
 		assert.ok(pi.commands.has("squad"), "the TUI door is the /squad command");
 		const tools = [...pi.tools.keys()];
 		assert.ok(tools.includes("amq_team_propose") && tools.includes("amq_team_apply"), `solo tools ${tools}`);
 		assert.ok(!tools.some((t) => /confirm/.test(t)), `a confirm tool: ${tools}`);
 	} finally {
+		lead.close();
 		for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
 		Object.assign(process.env, saved);
 	}
@@ -235,28 +258,4 @@ test("the solo lead's shell sees through quoting, expansions and eval", () => {
 	assert.match(soloShellRefusal("exec_command", { cmd: ["sh", "-c", 't""mux ls'] }) ?? "", /^owner_only: /, "an argv sh -c line");
 	assert.match(soloShellRefusal("exec_command", { cmd: ["/usr/bin/TMUX", "ls"] }) ?? "", /^owner_only: /, "an argv TMUX");
 	assert.equal(soloShellRefusal("exec_command", { cmd: ["echo", "hello world"] }), undefined);
-});
-
-// C after Codex on #834: the TUI door's write is an exclusive create of a
-// random temp name with its mode set, then a rename. A temp name planted as
-// a symlink or a file refuses (EEXIST) and is never followed; a planted
-// record's own mode never survives the write.
-test("the TUI door's write refuses a planted temp file or symlink and sets its mode", () => {
-	const root = tmpdir();
-	const target = confirmPath(root, DIGEST);
-	fs.mkdirSync(path.dirname(target), { recursive: true });
-	fs.writeFileSync(target, "{}", { mode: 0o644 });
-	const victim = path.join(root, "victim");
-	fs.writeFileSync(victim, "untouched");
-	const fixed = () => "0000000000000000";
-	fs.symlinkSync(victim, `${target}.tmp-0000000000000000`);
-	assert.throws(() => writeConfirmRecord(root, DIGEST, new Date(), "%7", 4242, fixed), /EEXIST/);
-	assert.equal(fs.readFileSync(victim, "utf8"), "untouched", "the symlink was followed");
-	fs.rmSync(`${target}.tmp-0000000000000000`);
-	fs.writeFileSync(`${target}.tmp-0000000000000000`, "planted", { mode: 0o666 });
-	assert.throws(() => writeConfirmRecord(root, DIGEST, new Date(), "%7", 4242, fixed), /EEXIST/);
-	assert.equal(fs.readFileSync(`${target}.tmp-0000000000000000`, "utf8"), "planted");
-	writeConfirmRecord(root, DIGEST, new Date(), "%7", 4242);
-	assert.equal(fs.statSync(target).mode & 0o777, 0o600);
-	assert.equal(JSON.parse(fs.readFileSync(target, "utf8")).proof.pid, 4242);
 });

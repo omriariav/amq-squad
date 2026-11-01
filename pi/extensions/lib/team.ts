@@ -6,20 +6,18 @@
 //   - /squad confirm <prefix>: R55's TUI door. pi hands a slash command to
 //     the extension, never to the model, so only the owner's typed line in
 //     the lead's pane reaches it; the extension matches the typed prefix
-//     against the digest it printed and writes the confirmation record from
-//     its own process (proof: the pane and the pid). It is a command, never
-//     a tool;
+//     against the digest it printed and sends the digest and its pane to
+//     the lead over the start socket. The lead accepts it only from the pi
+//     process it spawned (its pid and start stamp) and witnesses it in its
+//     own memory; no file is written. It is a command, never a tool;
 //   - amq_team_apply: `amq-squad team apply --digest D`, which the lead's
-//     process answers over its start socket: the confirmation checked, the
-//     mayor's checks, up's shared steps, the roster line;
+//     process answers over its start socket: a confirmation it witnessed,
+//     the mayor's checks, up's shared steps, the roster line;
 //   - the solo lead's shell refuses tmux and amq-squad team (confirm, apply)
-//     by argv[0]'s base name in an argv form and by token in a shell form
-//     (3b (ii)): the shell in the lead's pane must not type into its own
-//     pane, nor run the owner's verbs.
+//     over the dequoted line (3b (ii)): the shell in the lead's pane must not
+//     type into its own pane, nor run the owner's verbs.
 // The switch to the team lead's tools on the owner's yes (R53) is PR 2.
-import * as crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as net from "node:net";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
@@ -39,30 +37,44 @@ export function digestPrefix(digest: string): string {
 	return m ? m[1].slice(0, 16) : "";
 }
 
-// confirmPath is the record's path under the solo lead's root.
-export function confirmPath(root: string, digest: string): string {
-	const m = DIGEST.exec(digest);
-	if (!m) throw new Error(`not a team propose digest: ${digest}`);
-	return path.join(root, "extensions", "amq-squad", "confirm", `${m[1]}.json`);
-}
+// TUI_KIND is the TUI door's message on the lead's start socket.
+export const TUI_KIND = "amq-squad.confirm-tui.v1";
 
-// writeConfirmRecord writes the TUI door's record by temp name and rename.
-export function writeConfirmRecord(root: string, digest: string, now: Date, pane: string, pid: number, rand: () => string = () => crypto.randomBytes(8).toString("hex")): string {
-	const p = confirmPath(root, digest);
-	fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
-	const rec = { schema: 1, digest, door: "tui", at: now.toISOString(), by: `pane ${pane || "-"}`, proof: { pane, pid } };
-	// an exclusive create of a random name: a planted file or symlink at the
-	// temp name refuses (EEXIST) instead of being followed or keeping its mode
-	const tmp = `${p}.tmp-${rand()}`;
-	const fd = fs.openSync(tmp, "wx", 0o600);
-	try {
-		fs.fchmodSync(fd, 0o600);
-		fs.writeFileSync(fd, JSON.stringify(rec, null, 2) + "\n");
-	} finally {
-		fs.closeSync(fd);
-	}
-	fs.renameSync(tmp, p);
-	return p;
+export type LeadReply = { outcome: string; refusal?: string; detail?: string; digest?: string };
+
+// askLead sends one request over the solo lead's start socket and reads its
+// one-line reply. The lead proves the peer itself (for the TUI door: the pi
+// process it spawned); this process asserts nothing it could forge.
+export function askLead(socket: string, req: Record<string, unknown>, timeoutMs = 10000): Promise<LeadReply> {
+	return new Promise((resolve, reject) => {
+		if (!socket) {
+			reject(new Error("no_lead: the lead's start socket is not set (AMQ_SQUAD_LEAD_START_SOCKET)"));
+			return;
+		}
+		let buf = "";
+		const c = net.createConnection(socket);
+		const timer = setTimeout(() => {
+			c.destroy();
+			reject(new Error("no_lead: the lead did not answer"));
+		}, timeoutMs);
+		c.on("connect", () => c.write(JSON.stringify(req) + "\n"));
+		c.on("data", (d: Buffer) => {
+			buf += d.toString("utf8");
+			const i = buf.indexOf("\n");
+			if (i < 0) return;
+			clearTimeout(timer);
+			c.end();
+			try {
+				resolve(JSON.parse(buf.slice(0, i)) as LeadReply);
+			} catch (err) {
+				reject(err);
+			}
+		});
+		c.on("error", (err) => {
+			clearTimeout(timer);
+			reject(new Error(`no_lead: ${err.message}`));
+		});
+	});
 }
 
 const SHELL_TOOLS = new Set(["bash", "Bash", "shell", "exec_command"]);
@@ -139,12 +151,14 @@ export class SoloTeam {
 	runner: Runner;
 	now: () => Date;
 	proposal: Proposal | undefined;
-	confirmed: { at: Date; path: string } | undefined;
+	confirmed: { at: Date } | undefined;
+	socket: string;
 	line = "";
 	ctx: ExtensionContext | undefined;
 
-	constructor(cfg: Config, runner: Runner = run, now: () => Date = () => new Date()) {
+	constructor(cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket: string = process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "") {
 		this.cfg = cfg;
+		this.socket = socket;
 		this.runner = runner;
 		this.now = now;
 	}
@@ -159,7 +173,7 @@ export class SoloTeam {
 		const p = this.proposal;
 		if (!p) return [];
 		const out = ["amq-squad: proposed team", ...p.plan.map((l) => "  " + l), `  digest ${p.digest}`, `  prefix ${p.prefix}`];
-		if (this.confirmed) out.push(`  confirmed at ${this.confirmed.at.toISOString()} (door tui); the lead applies it with amq_team_apply`);
+		if (this.confirmed) out.push(`  confirmed at ${this.confirmed.at.toISOString()} (door tui, witnessed by the lead); the lead applies it with amq_team_apply`);
 		else out.push(`  confirm: /squad confirm ${p.prefix}  (or amq-squad team confirm ${p.digest} in your shell, or the signed Buzz DM "yes ${p.prefix}")`);
 		if (this.line) out.push(`  ${this.line}`);
 		return out;
@@ -203,25 +217,33 @@ export class SoloTeam {
 	}
 
 	// confirm is the TUI door: the owner's typed prefix against the printed
-	// digest; a match writes the record from this process.
+	// digest; a match goes to the lead over its start socket, which accepts
+	// it only from the pi process it spawned and witnesses it. No file is
+	// written.
 	async confirm(typed: string, ctx: ExtensionContext): Promise<{ refused: boolean; line: string }> {
 		const p = this.proposal;
 		if (!p) return { refused: true, line: "no_proposal: the lead has printed no plan to confirm" };
 		let prefix = typed.trim();
 		if (!prefix && ctx.hasUI) prefix = ((await ctx.ui.input(`confirm the team: type the prefix ${p.prefix}`)) ?? "").trim();
-		if (!prefix) return { refused: false, line: "cancelled, nothing written" };
-		if (prefix.toLowerCase() !== p.prefix) return { refused: true, line: `prefix_mismatch: ${JSON.stringify(prefix)} is not the printed prefix ${p.prefix}; nothing written` };
+		if (!prefix) return { refused: false, line: "cancelled, nothing sent" };
+		if (prefix.toLowerCase() !== p.prefix) return { refused: true, line: `prefix_mismatch: ${JSON.stringify(prefix)} is not the printed prefix ${p.prefix}; nothing sent` };
+		let r: LeadReply;
+		try {
+			r = await askLead(this.socket, { kind: TUI_KIND, digest: p.digest, pane: process.env.TMUX_PANE ?? "" });
+		} catch (err) {
+			return { refused: true, line: String((err as Error).message ?? err) };
+		}
+		if (r.outcome !== "witnessed") return { refused: true, line: `${r.refusal ?? "refused"}: ${r.detail ?? ""}` };
 		const at = this.now();
-		const where = writeConfirmRecord(this.cfg.root, p.digest, at, process.env.TMUX_PANE ?? "", process.pid);
-		this.confirmed = { at, path: where };
-		return { refused: false, line: `confirmed ${p.prefix} at ${at.toISOString()}; it stands for 30 minutes` };
+		this.confirmed = { at };
+		return { refused: false, line: `confirmed ${p.prefix} at ${at.toISOString()}, witnessed by the lead; it stands for 30 minutes` };
 	}
 }
 
 // installSoloTeam gives the solo lead the two tools, the plan block and
 // the /squad command (confirm).
-export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date()): SoloTeam {
-	const team = new SoloTeam(cfg, runner, now);
+export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string): SoloTeam {
+	const team = new SoloTeam(cfg, runner, now, socket);
 	pi.on("session_start", (_e, ctx) => {
 		team.ctx = ctx;
 		team.render();
