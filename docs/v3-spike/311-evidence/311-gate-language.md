@@ -53,9 +53,13 @@ way whatever merges.
    for the verifier (the gate id, the squad, the class and action, the
    target line, the full digest, whose first 16 hex are the typed form's
    prefix). Each target shape of internal/gatetarget's table has its
-   sentence frame, the class in words from one fixed list (`ClassWords`: a
-   tag, a GitHub release, a package release, an outside message, a
-   credential change, growth past the grant, a task widen, a merge). A field
+   sentence frame, the class in words from one fixed list (`ClassWords`: tag,
+   GitHub release, package release, message outside the squad, credential,
+   growth past the grant, widen, merge). No word above the rule is a code
+   token (a double underscore, a path separator, a dot inside other than a
+   version or an email address): an external send names its service from
+   the tool's family and the destination as the tool names it; a credential
+   change says what changes; a repository is named without its owner. A field
    value shown above the rule has any hex run of 8 or more cut to 7 and an
    ellipsis; a title is quoted on its own line and cut at 80 characters with
    an ellipsis.
@@ -67,8 +71,8 @@ way whatever merges.
    --json ...,title,...`) and base, the widen's task title. The train's
    refused rules are in the target already: "The train refused it: its
    checks are not green and it changes files outside its task." A widen's
-   refusal is its target's limit: "The grant refused the widen at
-   docs/** and 1 more." With no recorded fact (a seat's gated command, the
+   refusal is its target's limit: "The grant refused its widen onto 2
+   protected paths." With no recorded fact (a seat's gated command, the
    squad's growth by seats) the line names the raiser: "Asked by lead-a."
    The record's text stays the rendering of its own fields (facts included),
    so a record whose facts were edited no longer validates. `SafeFacts`
@@ -159,7 +163,7 @@ deny rel-tag-0 release f6a51dd34f46edeb
 After (3.1.1):
 
 ```text
-Create a tag for v3.1.0-rc.1 in omriariav/amq-squad?
+Create a tag for v3.1.0-rc.1 in amq-squad?
 The prepare found its commit on v3.
 Yes creates the tag. No does nothing.
 
@@ -189,7 +193,7 @@ deny rel-github-release-0 release 0ab60a1e35035211
 After (3.1.1):
 
 ```text
-Publish a GitHub release for v3.1.0-rc.1 in omriariav/amq-squad?
+Publish a GitHub release for v3.1.0-rc.1 in amq-squad?
 The prepare found its commit on v3.
 Yes creates the release. No does nothing.
 
@@ -249,7 +253,7 @@ deny rel-package-publish-1 release 72435ede734eb86d
 After (3.1.1):
 
 ```text
-Publish a package release of @scope/pkg with npm?
+Publish a package release with npm?
 Asked by lead-a.
 Yes lets it run. No stops it.
 
@@ -279,7 +283,7 @@ deny rel-external-send-0 send 51270c5c6a6a4fcb
 After (3.1.1):
 
 ```text
-Send an outside message with mcp__slack__send_message to C1?
+Send a message outside the squad, on Slack, to channel C1?
 Asked by lead-a.
 Yes lets it run. No stops it.
 
@@ -309,9 +313,9 @@ deny rel-credential-change-1 credential b7176979a6478f79
 After (3.1.1):
 
 ```text
-Make a credential change to git setting credential.helper?
+Change which program git uses for credentials?
 Asked by lead-a.
-Yes lets it run. No stops it.
+Yes makes the credential change. No stops it.
 
 ----------
 amq-squad gate rel-credential-change-1
@@ -369,9 +373,9 @@ deny rel-spawn-2 grow f4c6e08997f26138
 After (3.1.1):
 
 ```text
-Allow a task widen of t3 onto protected paths?
+Let task t3 change protected files?
 "Ship the plain gate questions"
-The grant refused the widen at docs/** and 1 more.
+The grant refused its widen onto 2 protected paths.
 Yes widens the task. No leaves it as it is.
 
 ----------
@@ -387,26 +391,26 @@ digest: sha256:f4c6e08997f261386b97f3002ac460431b6b4fb089d3974dbd9f4441fdd84661
 Before (3.1.0):
 
 ```text
-amq-squad gate rel-spawn-3
+amq-squad gate rel-spawn-4
 squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
 class: grow (spawn)
 target: grow /r/s1 task=t4 size_cap={"lines":900,"files":30}
 digest: sha256:c7a5a83b0176851ec47439fd028df0db176f327d95b036dc14e67519900dc484
 Reply in this thread with one line:
-approve rel-spawn-3 grow c7a5a83b0176851e
-deny rel-spawn-3 grow c7a5a83b0176851e
+approve rel-spawn-4 grow c7a5a83b0176851e
+deny rel-spawn-4 grow c7a5a83b0176851e
 ```
 
 After (3.1.1):
 
 ```text
-Allow a task widen of t4 past the size cap?
+Let task t4 grow past the size cap?
 "Refactor the relay"
 The grant refused 900 lines in 30 files.
 Yes widens the task. No leaves it as it is.
 
 ----------
-amq-squad gate rel-spawn-3
+amq-squad gate rel-spawn-4
 squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
 class: grow (spawn)
 target: grow /r/s1 task=t4 size_cap={"lines":900,"files":30}
@@ -418,14 +422,14 @@ digest: sha256:c7a5a83b0176851ec47439fd028df0db176f327d95b036dc14e67519900dc484
 Before (3.1.0):
 
 ```text
-amq-squad gate rel-spawn-4
+amq-squad gate rel-spawn-5
 squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
 class: grow (spawn)
 target: grow merge omriariav/amq-squad#834 head=4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d rules=ci_green,task_scope
 digest: sha256:8fa1bec46f1304e5aa33eaf72008d00463ab012f1b3dcc9a1014440c34e61545
 Reply in this thread with one line:
-approve rel-spawn-4 grow 8fa1bec46f1304e5
-deny rel-spawn-4 grow 8fa1bec46f1304e5
+approve rel-spawn-5 grow 8fa1bec46f1304e5
+deny rel-spawn-5 grow 8fa1bec46f1304e5
 ```
 
 After (3.1.1):
@@ -437,18 +441,51 @@ The train refused it: its checks are not green and it changes files outside its 
 Yes lets the train merge it. No leaves it open.
 
 ----------
-amq-squad gate rel-spawn-4
+amq-squad gate rel-spawn-5
 squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
 class: grow (spawn)
 target: grow merge omriariav/amq-squad#834 head=4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d rules=ci_green,task_scope
 digest: sha256:8fa1bec46f1304e5aa33eaf72008d00463ab012f1b3dcc9a1014440c34e61545
 ```
 
+### 3.1 The plan reviewer's round on draft PR #838
+
+Three texts of the first round put a token where the plain words go. Above
+the rule now (the tool, the setting, the path and the globs are in the
+target line below it):
+
+| Class | First round | Now |
+| --- | --- | --- |
+| external send | Send an outside message with mcp__slack__send_message to C1? | Send a message outside the squad, on Slack, to channel C1? |
+| credential change | Make a credential change to git setting credential.helper? | Change which program git uses for credentials? |
+| widen's growth gate | Allow a task widen of t3 onto protected paths? (second line: The grant refused the widen at docs/** and 1 more.) | Let task t3 change protected files? (second line: The grant refused its widen onto 2 protected paths.) |
+
+The other forms of the same classes:
+
+- external_send, `mcp__slack__send_message U024BE7LH`: "Send a message outside the squad, on Slack, to user U024BE7LH?\nAsked by lead-a.\nYes lets it run. No stops it."
+- external_send, `mcp__gmail__send_email owner@example.com`: "Send a message outside the squad, on Gmail, to owner@example.com?\nAsked by lead-a.\nYes lets it run. No stops it."
+- external_send, `gws gmail send`: "Send a message outside the squad, on Google Workspace, as a gmail send?\nAsked by lead-a.\nYes lets it run. No stops it."
+- external_send, `mail owner@example.com`: "Send a message outside the squad, by mail, to owner@example.com?\nAsked by lead-a.\nYes lets it run. No stops it."
+- credential_change, `gh auth login`: "Log gh in?\nAsked by lead-a.\nYes makes the credential change. No stops it."
+- credential_change, `write /home/u/.ssh/config`: "Write a credentials file for SSH?\nAsked by lead-a.\nYes makes the credential change. No stops it."
+- credential_change, `write /home/u/.netrc`: "Write a credentials file?\nAsked by lead-a.\nYes makes the credential change. No stops it."
+- credential_change, `git config user.signingkey`: "Change the key git signs commits with?\nAsked by lead-a.\nYes makes the credential change. No stops it."
+- spawn, `grow /r/s1 task=t5 protected_paths=[".claude/settings.json"]`: "Let task t5 change protected files?\n\"tune settings\"\nThe grant refused its widen onto 1 protected path.\nYes widens the task. No leaves it as it is."
+
+The row's new token check (no word with a double underscore, a path
+separator or a dot inside, other than a version, an email address or a
+sentence end) also moved four first-round texts the reviewer did not name:
+a repository is named without its owner ("in amq-squad", not "in
+omriariav/amq-squad"); a package release names its tool only (a scoped
+spec or a file path stays below); a credential command shows its words up
+to the first token ("Make a credential change with security
+add-generic-password?"); the generic fallbacks do the same.
+
 ## 4. Rows
 
 | Brief row | Test |
 | --- | --- |
-| 1. Each class's question composes as three plain lines above a rule and the identifiers below; the plain-language check passes on all of them and fails on the old text | gatestore `TestEveryClassTheCatalogRaisesAsksInPlainWords` (the classes read from `operatorauth.ActionCapabilities()`: every human-only action the gate store raises needs samples, one per target shape; a human-only action it does not raise, destructive_filesystem, must stay unrenderable; the check: three plain lines, a question mark ending the first, `Yes` and `No` starting the third's sentences, no sentence over 20 words, the class in words from `ClassWords`, no hex run of 8 or more, no gate id and no identifier above the rule, the gate id, target and digest below; `legacyText` fails it), `TestRenderAndValidate`; at the raisers: mergetrain `TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead` (in process and through the gh subprocess), cli `TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote` (prepare's two questions), `TestSeatCommitAndWidenThroughTheGrowthGate` (the widen's) |
+| 1. Each class's question composes as three plain lines above a rule and the identifiers below; the plain-language check passes on all of them and fails on the old text | gatestore `TestEveryClassTheCatalogRaisesAsksInPlainWords` (the classes read from `operatorauth.ActionCapabilities()`: every human-only action the gate store raises needs samples, one per target shape; a human-only action it does not raise, destructive_filesystem, must stay unrenderable; the check: no code token above the rule (a word with a double underscore, a path separator, or a dot inside other than a version, an email address or a sentence end; the check is the row's own), three plain lines, a question mark ending the first, `Yes` and `No` starting the third's sentences, no sentence over 20 words, the class in words from `ClassWords`, no hex run of 8 or more, no gate id and no identifier above the rule, the gate id, target and digest below; `legacyText` fails it), `TestTheRowFailsTheReviewersThreeTexts` (the review's three first-round texts fail; a version, an email address and a sentence end pass), `TestRenderAndValidate`; at the raisers: mergetrain `TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead` (in process and through the gh subprocess), cli `TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote` (prepare's two questions), `TestSeatCommitAndWidenThroughTheGrowthGate` (the widen's) |
 | 2. A bare yes replied in the thread, signed by the pinned key, is accepted for its gate; a bare no refuses; `Yes.` and `yes` are the same; a bare yes outside the thread gets the plain re-ask; a bare yes in another gate's thread is refused for this gate | gateverify `TestABareYesOrNoInTheThreadIsTheAnswer` (yes, Yes., YES!, approve; no, No., deny; the answer file verifies with `VerifyAnswerFile`; a seat's bare yes `wrong_pubkey`; "yes please" `bad_tuple`), `TestABareYesOutsideTheThreadGetsThePlainReask` (the re-ask's text, in the thread; the yes replied to it is the answer; two open gates: refused, no re-ask), `TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes` (`Verify` refuses B's thread for A `wrong_gate_thread`; the core decides B, A stays open; a yes naming both threads binds neither); gatestore `TestParseBare`; buzz `TestABareYesIsAGateAnswerAtTheHandler`, `TestABareYesGoesToTheSquadWhoseThreadItNames` |
 | 3. The tuple form still verifies (unchanged rows), and no composed text contains "with one line" or a tuple | gatestore `TestNoQuestionAsksForATuple`; gateverify `TestNoReaskAsksForATuple` (the re-ask and the history re-ask; the tuple in the thread still approves) and every tuple row of core_test.go unchanged; cli `TestTheDoorsTextAsksForNoPrefix`; pi "brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, never yes <prefix>" |
 | 4. The screen's gates block and the answer key show the question's text above the rule verbatim | pi "brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim"; cli `TestSeatCommitAndWidenThroughTheGrowthGate` (status's `gates[].question` is `gatestore.Plain` of the record's text); status `TestGoldenRoundTripAdditiveBothWays`, `TestFleetGoldenIsTheSquadGoldenWrapped`, `TestThePiScreensFixtureIsAStatusDocument` (the field in the goldens and the screen's fixture) |
@@ -493,20 +530,32 @@ REVERT a 3.1.0 record no longer validates (only the new text): fails (the row ca
    --- FAIL: TestTheOldTextStillValidatesAndFactsAreSafe (0.00s)
 REVERT SafeFacts keeps a branch that does not validate: fails (the row catches it)
    --- FAIL: TestTheOldTextStillValidatesAndFactsAreSafe (0.00s)
+REVERT the external send names its tool and channel id above the rule: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT the credential change names its git setting above the rule: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT a credentials write names its path above the rule: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT the widen names its protected globs above the rule: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT a repository named owner/name above the rule: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT a generic question names the whole target: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
 REVERT Verify refuses the bare form: fails (the row catches it)
-   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.06s)
+   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.05s)
 REVERT the core binds a bare answer to no gate: fails (the row catches it)
    --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.06s)
 REVERT a bare yes outside the thread is not re-asked in the one open gate: fails (the row catches it)
    --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.06s)
 REVERT a bare answer bound to every gate (not the thread it names): fails (the row catches it)
-   --- FAIL: TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes (0.08s)
+   --- FAIL: TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes (0.09s)
 REVERT the re-ask asks for the tuple (the 3.0 text): fails (the row catches it)
    --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.08s)
    --- FAIL: TestNoReaskAsksForATuple (0.11s)
    --- FAIL: TestThreadReask (0.07s)
 REVERT the history re-ask asks for the tuple: fails (the row catches it)
-   --- FAIL: TestNoReaskAsksForATuple (0.11s)
+   --- FAIL: TestNoReaskAsksForATuple (0.12s)
 REVERT the doors text asks for yes <prefix>: fails (the row catches it)
    --- FAIL: TestTheDoorsTextAsksForNoPrefix (0.00s)
 REVERT the plan block asks for yes <prefix>: fails (the row catches it)
@@ -518,11 +567,11 @@ REVERT a bare yes goes to the primary squad whatever its thread: fails (the row 
 REVERT the handler's team door ignores a bare yes to the plan: fails (the row catches it)
    --- FAIL: TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam (0.07s)
 REVERT a post the relay never posted taken as the plan post: fails (the row catches it)
-   --- FAIL: TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam (0.14s)
+   --- FAIL: TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam (0.15s)
 REVERT a yes to a post naming no proposal refused, not continued: fails (the row catches it)
    --- FAIL: TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam (0.12s)
 REVERT the lead takes a plan post another key signed: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.06s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.05s)
 REVERT the lead takes a yes that replies elsewhere: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.08s)
 REVERT the lead takes an altered plan post: fails (the row catches it)
@@ -532,17 +581,17 @@ REVERT the lead takes a bare no as the confirmation: fails (the row catches it)
 REVERT the attachment refuses a post naming no proposal instead of not_a_plan: fails (the row catches it)
    --- FAIL: TestTheAttachmentRoutesABareYesByThePostsProposal (0.05s)
 REVERT the attachment hands the lead the yes without the post: fails (the row catches it)
-   --- FAIL: TestTheAttachmentRoutesABareYesByThePostsProposal (0.05s)
+   --- FAIL: TestTheAttachmentRoutesABareYesByThePostsProposal (0.06s)
 REVERT the release prepare raises without the branch it checked: fails (the row catches it)
-   --- FAIL: TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote (0.64s)
+   --- FAIL: TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote (0.56s)
 REVERT the merge gate without the PR's title and base: fails (the row catches it)
-   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.50s)
+   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.56s)
 REVERT gh pr view does not ask for the title: fails (the row catches it)
-   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.49s)
+   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.54s)
 REVERT the widen's growth gate without the task's title: fails (the row catches it)
    --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.46s)
 REVERT status gates without the question: fails (the row catches it)
-   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.45s)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.43s)
 REVERT status gates carry the whole text, not the lines above the rule: fails (the row catches it)
    --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.44s)
 REVERT the gates block shows the identifiers only: fails (the row catches it)
@@ -552,7 +601,7 @@ REVERT the answer key shows the identifiers only: fails (the row catches it)
 REVERT the answer key finds no rule in the text: fails (the row catches it)
    not ok 1 - brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim
 
-39 of 39 reverts fail their rows
+45 of 45 reverts fail their rows
 ```
 
 ## 6. The gates
@@ -590,7 +639,7 @@ v3.1.0 tag, with this branch merged and installed:
    v3.1.1-rc.1 --commit <the v3 tip SHA> --branch v3 --notes-file
    <notes.md> --project . --session <session> --json`.
 3. On the phone, read the two questions. Each shows three plain lines
-   ("Create a tag for v3.1.1-rc.1 in omriariav/amq-squad?" / "The prepare
+   ("Create a tag for v3.1.1-rc.1 in amq-squad?" / "The prepare
    found its commit on v3." / "Yes creates the tag. No does nothing.";
    the GitHub release's likewise), a rule, and the identifiers. Record the
    text as the phone shows it; no hex run of 8 or more and no gate id above
@@ -650,6 +699,13 @@ v3.1.0 tag, with this branch merged and installed:
   named. docs/v3-spike/briefs/: the brief copied, as the lead asked.
 - **"Never merge."** The brief forbids it; the lead's message allows `git
   merge origin/v3` when the tip moves. It moved once (#836) and was merged.
+
+- **Residuals of the token rule.** A branch or tag name with a slash
+  (`release/3.1`) would show above the rule; the samples and this
+  repository's branches have none. An email address is a destination as the
+  tool names it and stays above the rule. A quoted PR or task title is the
+  author's text and is exempt from the token check, as from the sentence
+  count.
 
 ## 9. For the 3.1.1 release notes
 
