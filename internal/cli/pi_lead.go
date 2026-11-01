@@ -218,6 +218,16 @@ func runLead(args []string) error {
 		}
 		solo[leadStartSocketEnv] = sock
 		defer starter.close()
+		// the per-spawn nonce, handed to pi over fd 3 (runProcess); the
+		// environment names only the descriptor
+		nonce, err := newLeadNonce()
+		if err != nil {
+			return fmt.Errorf("lead: the nonce for its pi: %w", err)
+		}
+		starter.setNonce(nonce)
+		piSpawnNonce = nonce
+		defer func() { piSpawnNonce = "" }()
+		solo[leadNonceFDEnv] = "3"
 		// the TUI door's one accepted peer: the pi this process spawns
 		piStartedHook = func(pid int) {
 			stamp, _ := procinfo.StartToken(pid)
@@ -233,6 +243,10 @@ func runLead(args []string) error {
 	}
 	return piLaunch(piLaunchSpec{Seat: "lead", Flags: f, PiArgs: piArgs, Overlay: solo})
 }
+
+// piSpawnNonce is the nonce runProcess hands the pi it spawns over fd 3
+// (the solo lead's, set while it runs).
+var piSpawnNonce string
 
 // piStartedHook runs with the pid of the pi process runProcess started
 // (the solo lead records it with its start stamp).

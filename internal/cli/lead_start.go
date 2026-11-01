@@ -3,6 +3,10 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -67,6 +72,9 @@ type leadStartRequest struct {
 	Project string `json:"project,omitempty"`
 	Pane    string `json:"pane,omitempty"`  // the TUI door's pane
 	Event   []byte `json:"event,omitempty"` // the Buzz door's raw event bytes, as the attachment fetched them
+	// Challenge is the lead's pi's fresh challenge (Codex's re-check on
+	// #837, item 1): the lead answers it with Proof
+	Challenge string `json:"challenge,omitempty"`
 }
 
 // The confirmation kinds on the same socket (the three doors).
@@ -90,6 +98,11 @@ type leadStartReply struct {
 	// reply of a start that succeeded and of a phase query after it (R53,
 	// brief 31-3 PR 2): the lead's pi switches on this reply, never on a file
 	Team *leadTeam `json:"team,omitempty"`
+	// Proof is HMAC-SHA256 under the nonce this lead gave its pi at the
+	// spawn, over the request's challenge and this reply (leadProof): what
+	// tells the lead's pi that the lead, not another server on the socket
+	// path, answered
+	Proof string `json:"proof,omitempty"`
 }
 
 // Seams of the start for tests: the grant the mayor loads, the fleet
@@ -127,6 +140,7 @@ type leadStarter struct {
 	team      *leadTeam // set when this lead's start succeeded (R53)
 	piPID     int
 	piStamp   string
+	nonce     string // the per-spawn nonce handed to pi over fd 3 (leadNonce)
 	witnessed map[string]confirmRecord
 	seen      map[string]bool // Buzz event ids witnessed (once-only)
 }
@@ -253,9 +267,63 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	default:
 		reply.Refusal, reply.Detail = "request_malformed", "an unknown request kind"
 	}
+	s.wmu.Lock()
+	nonce := s.nonce
+	s.wmu.Unlock()
+	if nonce != "" && challengeRE.MatchString(req.Challenge) {
+		reply.Proof = leadProof(nonce, req.Challenge, reply)
+	}
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	b, _ := json.Marshal(reply)
 	conn.Write(append(b, '\n'))
+}
+
+// The lead's proof to its pi (Codex's re-check on #837, item 1). At the
+// spawn the lead hands pi a random nonce over an inherited pipe (fd 3;
+// the environment names only the descriptor's number), never through the
+// environment (readable by any process of the uid) or a file; pi reads it
+// at load and closes the descriptor, so no child of pi holds it. Every
+// request pi sends carries a fresh challenge, and the lead answers with
+// HMAC-SHA256 keyed by the nonce over the tag, the challenge, the outcome,
+// the digest and the team identity's fields. The nonce never crosses the
+// socket, so a server on the socket path that is not this lead cannot
+// answer with a proof; pi refuses an unproved reply lead_unproved and
+// stays solo. A reply to a lead of an earlier spawn carries that spawn's
+// nonce, which this pi does not hold.
+const (
+	leadProofTag   = "amq-squad.lead-proof.v1"
+	leadNonceFDEnv = "AMQ_SQUAD_LEAD_NONCE_FD"
+)
+
+// challengeRE is a challenge pi sends: 32 to 128 lowercase hex digits.
+var challengeRE = regexp.MustCompile(`^[0-9a-f]{32,128}$`)
+
+// leadProof is the proof of reply r to challenge under nonce (the same
+// message as pi/extensions/lib/team.ts leadProof).
+func leadProof(nonce, challenge string, r leadStartReply) string {
+	var t leadTeam
+	if r.Team != nil {
+		t = *r.Team
+	}
+	mac := hmac.New(sha256.New, []byte(nonce))
+	mac.Write([]byte(strings.Join([]string{leadProofTag, challenge, r.Outcome, r.Digest, t.Root, t.BaseRoot, t.Session, t.Handle, t.Digest}, "\n")))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// newLeadNonce is a fresh per-spawn nonce: 32 random bytes, hex.
+func newLeadNonce() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// setNonce records the nonce this lead handed its pi.
+func (s *leadStarter) setNonce(n string) {
+	s.wmu.Lock()
+	s.nonce = n
+	s.wmu.Unlock()
 }
 
 // refusedBy is a refusal whose error text starts with its name.
@@ -670,7 +738,7 @@ func (l *leadLauncher) Close(context.Context, fleet.LaunchRequest) error {
 
 // applyThroughLead is `team apply --digest D` under the solo lead: the
 // request over the lead's socket, the reply printed.
-func applyThroughLead(sock, project, digest string, jsonOut bool) error {
+func applyThroughLead(sock, project, digest, challenge string, jsonOut bool) error {
 	root := os.Getenv("AM_ROOT")
 	c, err := seatlaunch.DialPrivate(root, sock, leadStartSocketName)
 	if err != nil {
@@ -678,7 +746,9 @@ func applyThroughLead(sock, project, digest string, jsonOut bool) error {
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(leadStartWait))
-	b, _ := json.Marshal(leadStartRequest{Kind: leadStartKind, Digest: digest, Project: project})
+	// the lead's pi's challenge rides through (the lead's proof answers it;
+	// this process never holds the nonce)
+	b, _ := json.Marshal(leadStartRequest{Kind: leadStartKind, Digest: digest, Project: project, Challenge: challenge})
 	if _, err := c.Write(append(b, '\n')); err != nil {
 		return err
 	}

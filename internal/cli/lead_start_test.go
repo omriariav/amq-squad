@@ -320,14 +320,28 @@ func TestTheSoloLeadServesTheStartSocketToItsPi(t *testing.T) {
 	// pi's spawn as runProcess reports it
 	fakeRun := piRun
 	t.Cleanup(func() { piRun = fakeRun })
+	var spawnNonce string
+	var spawnEnv []string
 	piRun = func(path string, argv, env []string) (int, error) {
 		if piStartedHook != nil {
 			piStartedHook(os.Getpid())
 		}
+		spawnNonce, spawnEnv = piSpawnNonce, env
 		return fakeRun(path, argv, env)
 	}
 	if _, _, err := captureOutput(t, func() error { return runLead(nil) }); err != nil {
 		t.Fatal(err)
+	}
+	// Codex's re-check on #837, item 1: the spawn hands pi a fresh nonce
+	// (the lead keeps it to prove its replies); the environment names only
+	// the descriptor, never the nonce
+	if len(spawnNonce) != 64 || served == nil || served.nonce != spawnNonce || call.getenv(leadNonceFDEnv) != "3" {
+		t.Fatalf("the spawn's nonce: %d chars, starter holds it %v, fd env %q", len(spawnNonce), served != nil && served.nonce == spawnNonce, call.getenv(leadNonceFDEnv))
+	}
+	for _, kv := range spawnEnv {
+		if strings.Contains(kv, spawnNonce) {
+			t.Fatalf("the nonce is in pi's environment: %s", strings.SplitN(kv, "=", 2)[0])
+		}
 	}
 	if served == nil || served.piPID != os.Getpid() || served.piStamp == "" {
 		t.Fatalf("the solo lead did not record its pi: %+v", served)
@@ -825,5 +839,73 @@ func TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts(t *testing.T) {
 	}
 	if s.lock != nil {
 		t.Fatal("the refused start holds the lead lock")
+	}
+}
+
+// Codex's re-check on #837, item 1: the lead proves its replies to its pi.
+// A request with a challenge is answered with HMAC-SHA256 under the nonce
+// the lead gave its pi, over the challenge and the reply (the fixed vector
+// is the one pi/test/phase.test.ts checks, so both sides compute one
+// message); a request without a challenge, or a lead holding no nonce, gets
+// no proof; the challenge rides through team apply to the lead.
+func TestTheLeadAnswersItsPisChallengeWithItsProof(t *testing.T) {
+	vector := leadProof("test-nonce-not-a-secret", strings.Repeat("0123456789abcdef", 2), leadStartReply{Outcome: "team",
+		Team: &leadTeam{Root: "/r/.agent-mail/s1", BaseRoot: "/r/.agent-mail", Session: "s1", Handle: "cto", Digest: "sha256:" + strings.Repeat("ab", 32) + "@absent"}})
+	if vector != "a6ebbbb901bdeb3f1b0901ac425a6b27c590085b4ae53deb2324447af4018632" {
+		t.Fatalf("the proof's fixed vector = %s", vector)
+	}
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	if _, err := s.serve(); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(challenge string) leadStartReply {
+		t.Helper()
+		c, err := dialLead(s.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		r, err := askLead(c, leadStartRequest{Kind: phaseKind, Challenge: challenge})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	ch := strings.Repeat("5a", 16)
+	if r := ask(ch); r.Proof != "" {
+		t.Fatalf("a lead holding no nonce proved a reply: %+v", r)
+	}
+	nonce, err := newLeadNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.setNonce(nonce)
+	r := ask(ch)
+	if want := leadProof(nonce, ch, r); r.Proof != want || r.Outcome != "solo" {
+		t.Fatalf("the phase reply's proof = %q, want %q (%+v)", r.Proof, want, r)
+	}
+	if r := ask(""); r.Proof != "" {
+		t.Fatalf("a request with no challenge got a proof: %+v", r)
+	}
+	if r := ask("not-hex"); r.Proof != "" {
+		t.Fatalf("a malformed challenge got a proof: %+v", r)
+	}
+	// through team apply: the CLI never holds the nonce; it passes the
+	// challenge, and the lead's reply (here a refusal: nothing witnessed)
+	// carries the proof the lead's pi checks
+	s.unwitness(digest)
+	t.Setenv("AM_ROOT", s.root)
+	t.Setenv(leadStartSocketEnv, s.sock.Path)
+	out, _, _ := captureOutput(t, func() error {
+		return runTeam([]string{"apply", "--digest", digest, "--project", f.proj, "--json", "--challenge", ch})
+	})
+	var env struct {
+		Data leadStartReply `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("apply json: %v\n%s", err, out)
+	}
+	if want := leadProof(nonce, ch, env.Data); env.Data.Proof == "" || env.Data.Proof != want {
+		t.Fatalf("the apply's reply proof = %q, want %q", env.Data.Proof, want)
 	}
 }

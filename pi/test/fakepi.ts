@@ -1,5 +1,6 @@
 // A minimal stand-in for pi's ExtensionAPI and ExtensionContext: it records
 // handlers and registered tools and lets a test emit events.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -163,4 +164,13 @@ export function script(dir: string, name: string, body: string): string {
 	const p = path.join(dir, name);
 	fs.writeFileSync(p, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
 	return p;
+}
+
+// testProof is the lead's proof as the stand-in leads compute it, written
+// apart from the extension's (pi/extensions/lib/team.ts leadProof) so the
+// two must agree; the fixed vector in phase.test.ts ties both to Go's.
+export function testProof(nonce: string, challenge: string, r: { outcome?: string; digest?: string; team?: Record<string, string | undefined> }): string {
+	const t = r.team ?? {};
+	const msg = ["amq-squad.lead-proof.v1", challenge, r.outcome ?? "", r.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""].join("\n");
+	return crypto.createHmac("sha256", nonce).update(msg).digest("hex");
 }

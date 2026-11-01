@@ -17,6 +17,7 @@
 //     over the dequoted line (3b (ii)): the shell in the lead's pane must not
 //     type into its own pane, nor run the owner's verbs.
 // The switch to the team lead's tools on the owner's yes (R53) is PR 2.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -100,6 +101,77 @@ export function askLead(socket: string, req: Record<string, unknown>, timeoutMs 
 			reject(new Error(`no_lead: ${err.message}`));
 		});
 	});
+}
+
+// The lead's proof (Codex's re-check on #837, item 1). At the spawn the
+// lead hands pi a random nonce over an inherited pipe (fd 3; the
+// environment names only the descriptor's number), never through the
+// environment or a file; pi reads it when the extension loads and closes
+// the descriptor, so no child of pi holds it. Every request pi sends over
+// the start socket carries a fresh challenge, and the lead answers with
+// HMAC-SHA256 keyed by the nonce over the tag, the challenge, the outcome,
+// the digest and the team identity's fields (internal/cli/lead_start.go
+// leadProof). The nonce never crosses the socket, so a server on the
+// socket path that is not the lead cannot prove a reply; an unproved reply
+// is refused lead_unproved and pi stays solo.
+export const LEAD_NONCE_FD_ENV = "AMQ_SQUAD_LEAD_NONCE_FD";
+export const LEAD_PROOF_TAG = "amq-squad.lead-proof.v1";
+
+// readLeadNonce reads the nonce from the descriptor the environment names
+// and closes it; "" when there is none (a pi not spawned by the lead).
+export function readLeadNonce(env: NodeJS.ProcessEnv = process.env): string {
+	const fd = Number(env[LEAD_NONCE_FD_ENV]);
+	delete env[LEAD_NONCE_FD_ENV];
+	if (!Number.isInteger(fd) || fd < 3) return "";
+	try {
+		return fs.readFileSync(fd, "utf8").trim();
+	} catch {
+		return "";
+	} finally {
+		try {
+			fs.closeSync(fd);
+		} catch {
+			// already closed
+		}
+	}
+}
+
+// leadProof is the lead's proof of reply r to challenge under nonce.
+export function leadProof(nonce: string, challenge: string, r: { outcome?: string; digest?: string; team?: Partial<TeamIdentity> }): string {
+	const t = r.team ?? {};
+	const msg = [LEAD_PROOF_TAG, challenge, r.outcome ?? "", r.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""].join("\n");
+	return crypto.createHmac("sha256", nonce).update(msg).digest("hex");
+}
+
+// proved checks a reply's proof against this pi's nonce.
+export function proved(nonce: string, challenge: string, r: { outcome?: string; digest?: string; team?: Partial<TeamIdentity>; proof?: unknown }): boolean {
+	if (!nonce || typeof r.proof !== "string" || !/^[0-9a-f]{64}$/.test(r.proof)) return false;
+	return crypto.timingSafeEqual(Buffer.from(r.proof, "hex"), Buffer.from(leadProof(nonce, challenge, r), "hex"));
+}
+
+// newChallenge is a fresh challenge for one request.
+export function newChallenge(): string {
+	return crypto.randomBytes(16).toString("hex");
+}
+
+// unprovedReply is the refusal of a reply that carries no proof from the
+// lead that spawned this pi.
+export function unprovedReply(nonce: string): LeadReply {
+	return {
+		outcome: "refused",
+		refusal: "lead_unproved",
+		detail: nonce
+			? "the reply on the start socket carries no proof from the lead that spawned this pi (another server answered, or a lead of an earlier spawn); nothing is taken from it"
+			: "this pi holds no nonce from a lead (it was not spawned by amq-squad lead), so no reply on the start socket is taken",
+	};
+}
+
+// askLeadProved is askLead with a fresh challenge whose reply must carry
+// the lead's proof; an unproved reply is lead_unproved.
+export async function askLeadProved(socket: string, req: Record<string, unknown>, nonce: string, timeoutMs = 10000): Promise<LeadReply & { team?: TeamIdentity }> {
+	const challenge = newChallenge();
+	const r = (await askLead(socket, { ...req, challenge }, timeoutMs)) as LeadReply & { team?: TeamIdentity; proof?: unknown };
+	return proved(nonce, challenge, r) ? r : unprovedReply(nonce);
 }
 
 const SHELL_TOOLS = new Set(["bash", "Bash", "shell", "exec_command"]);
@@ -221,8 +293,11 @@ export class SoloTeam {
 	teamTools: string[];
 	soloRoot: string;
 	pi: ExtensionAPI | undefined;
+	// nonce is what the lead that spawned this pi handed it over fd 3; every
+	// reply this pi acts on must carry the lead's proof under it
+	nonce: string;
 
-	constructor(cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket: string = process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools: string[] = [], pi?: ExtensionAPI) {
+	constructor(cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket: string = process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools: string[] = [], pi?: ExtensionAPI, nonce = "") {
 		this.cfg = cfg;
 		this.socket = socket;
 		this.runner = runner;
@@ -230,6 +305,7 @@ export class SoloTeam {
 		this.teamTools = teamTools;
 		this.soloRoot = cfg.root;
 		this.pi = pi;
+		this.nonce = nonce;
 	}
 
 	// markerInfo reads the lead's phase marker as information only (the
@@ -253,7 +329,7 @@ export class SoloTeam {
 	async askPhase(): Promise<TeamIdentity | undefined> {
 		if (!this.socket) return undefined;
 		try {
-			const r = (await askLead(this.socket, { kind: PHASE_KIND })) as LeadReply & { team?: TeamIdentity };
+			const r = await askLeadProved(this.socket, { kind: PHASE_KIND }, this.nonce);
 			return r.outcome === "team" ? r.team : undefined;
 		} catch {
 			return undefined;
@@ -318,8 +394,11 @@ export class SoloTeam {
 
 	async apply(digest: string, signal?: AbortSignal): Promise<string> {
 		if (!DIGEST.test(digest)) throw new Error("digest is the sha256:...@... token amq_team_propose printed");
-		const r = await this.runner(this.cfg.bin, ["team", "apply", "--digest", digest, "--project", this.project(), "--json"], { timeoutMs: APPLY_TIMEOUT_MS, signal });
-		const d = envelopeData<StartReply>(r.stdout);
+		// the challenge rides through the verb to the lead; the reply must
+		// carry the lead's proof under this pi's nonce before it is acted on
+		const challenge = newChallenge();
+		const r = await this.runner(this.cfg.bin, ["team", "apply", "--digest", digest, "--project", this.project(), "--json", "--challenge", challenge], { timeoutMs: APPLY_TIMEOUT_MS, signal });
+		const d = envelopeData<StartReply & { proof?: unknown }>(r.stdout);
 		if (!d) throw new Error(`team apply refused (${describe(r, APPLY_TIMEOUT_MS)})`);
 		const lines = (d.steps ?? []).map((s) => `${s.name} ${s.outcome}${s.refusal ? " " + s.refusal : ""}${s.detail ? ": " + s.detail : ""}`);
 		if (d.outcome !== "started") {
@@ -327,10 +406,17 @@ export class SoloTeam {
 			throw new Error([`${d.refusal ?? "refused"}: ${d.detail ?? ""}`, ...lines, ...owner].join("\n"));
 		}
 		this.line = `team started: ${d.detail ?? ""}`;
-		// the lead's reply carries the team identity: the switch rides it
-		if (d.team) this.switchToTeam(d.team);
+		// the lead's reply carries the team identity: the switch rides it,
+		// only when the lead proved it
+		const ok = proved(this.nonce, challenge, d);
+		if (d.team && ok) this.switchToTeam(d.team);
 		this.render();
-		const phase = this.phase === "team" ? "team phase: your tools are now the team lead's (dispatch through the task store; no shell, no edit)" : "the lead's reply carried no team identity; the tools stay as they are";
+		const phase =
+			this.phase === "team"
+				? "team phase: your tools are now the team lead's (dispatch through the task store; no shell, no edit)"
+				: !ok
+					? `${unprovedReply(this.nonce).refusal}: ${unprovedReply(this.nonce).detail}; the tools stay as they are`
+					: "the lead's reply carried no team identity; the tools stay as they are";
 		return [...lines, ...(d.roster ?? []), `team started: ${d.detail ?? ""}`, phase].join("\n");
 	}
 
@@ -347,7 +433,7 @@ export class SoloTeam {
 		if (prefix.toLowerCase() !== p.prefix) return { refused: true, line: `prefix_mismatch: ${JSON.stringify(prefix)} is not the printed prefix ${p.prefix}; nothing sent` };
 		let r: LeadReply;
 		try {
-			r = await askLead(this.socket, { kind: TUI_KIND, digest: p.digest, pane: process.env.TMUX_PANE ?? "" });
+			r = await askLeadProved(this.socket, { kind: TUI_KIND, digest: p.digest, pane: process.env.TMUX_PANE ?? "" }, this.nonce);
 		} catch (err) {
 			return { refused: true, line: String((err as Error).message ?? err) };
 		}
@@ -360,8 +446,10 @@ export class SoloTeam {
 
 // installSoloTeam gives the solo lead the two tools, the plan block and
 // the /squad command (confirm).
-export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string, teamTools: string[] = []): SoloTeam {
-	const team = new SoloTeam(cfg, runner, now, socket ?? process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools, pi);
+export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string, teamTools: string[] = [], nonce?: string): SoloTeam {
+	// the lead's nonce, read from fd 3 and the descriptor closed as the
+	// extension loads, before any tool runs
+	const team = new SoloTeam(cfg, runner, now, socket ?? process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools, pi, nonce ?? readLeadNonce());
 	pi.on("session_start", async (_e, ctx) => {
 		team.ctx = ctx;
 		// a session started again in the same lead process after the yes:

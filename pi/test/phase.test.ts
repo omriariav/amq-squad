@@ -6,7 +6,34 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FakePi, fakeCtx, script, tmpdir } from "./fakepi.ts";
+import { FakePi, fakeCtx, script, testProof, tmpdir } from "./fakepi.ts";
+
+// NONCE stands for the nonce the lead hands its pi over fd 3 at the spawn
+// (built at run time; no credential shape); STALE is an earlier spawn's
+const NONCE = "test-" + "nonce-" + "not-a-secret";
+const STALE = "test-" + "nonce-" + "of-an-earlier-spawn";
+
+// APPLY_JS is the fake team apply: the reply file, proved like the lead
+// does under $FAKE_APPLY_NONCE (else $FAKE_NONCE) over the --challenge the
+// extension passed (an implementation apart from the extension's)
+const APPLY_JS = `import fs from "node:fs";
+import crypto from "node:crypto";
+const args = process.argv.slice(2);
+const i = args.indexOf("--challenge");
+const challenge = i >= 0 ? args[i + 1] : "";
+const env = JSON.parse(fs.readFileSync(process.env.FAKE_APPLY, "utf8"));
+const d = env.data;
+const nonce = process.env.FAKE_APPLY_NONCE ?? process.env.FAKE_NONCE ?? "";
+if (nonce && challenge) {
+	const t = d.team ?? {};
+	const msg = ["amq-squad.lead-proof.v1", challenge, d.outcome ?? "", d.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""].join("\\n");
+	d.proof = crypto.createHmac("sha256", nonce).update(msg).digest("hex");
+}
+process.stdout.write(JSON.stringify(env));
+`;
+
+// nonceFds are the descriptors withEnv opened for the extension's nonce
+const nonceFds: number[] = [];
 
 const DIGEST = "sha256:" + "0123456789abcdef".repeat(4) + "@absent";
 const BUILTINS = ["read", "bash", "edit", "write"];
@@ -42,7 +69,7 @@ function fakeBin(dir: string): string {
 case "$1" in
   context) case " $* " in *" --host "*) cat "$FAKE_CONTEXT" ;; *) echo '{"data":{"seat":{"handle":"cto"}}}' ;; esac ;;
   status) [ -n "$FAKE_STATUS_FAIL" ] && exit 1; cat "$FAKE_STATUS" ;;
-  team) case "$2" in propose) cat "$FAKE_PROPOSE" ;; apply) cat "$FAKE_APPLY" ;; esac ;;
+  team) case "$2" in propose) cat "$FAKE_PROPOSE" ;; apply) node "$FAKE_APPLY_JS" "$@" ;; esac ;;
   guard) echo '{"verdict":"allow"}' ;;
   *) echo '{}' ;;
 esac`,
@@ -56,6 +83,15 @@ async function withEnv(env: Record<string, string>, fn: (pi: FakePi) => Promise<
 	const saved = { ...process.env };
 	for (const k of Object.keys(process.env)) if (k.startsWith("AMQ_SQUAD_") || k.startsWith("AM_") || k.startsWith("FAKE_")) delete process.env[k];
 	Object.assign(process.env, env);
+	// the lead's nonce reaches the extension as a descriptor, as over the
+	// spawn's pipe (here a file opened for it; the extension closes it)
+	if (env.FAKE_NONCE) {
+		const f = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "nonce-")), "nonce");
+		fs.writeFileSync(f, env.FAKE_NONCE + "\n");
+		const fd = fs.openSync(f, "r");
+		nonceFds.push(fd);
+		process.env.AMQ_SQUAD_LEAD_NONCE_FD = String(fd);
+	}
 	try {
 		const pi = new FakePi(BUILTINS);
 		amqSquad(pi as any);
@@ -71,7 +107,8 @@ function soloWorld() {
 	const soloRoot = path.join(dir, "solo-root");
 	const squadRoot = path.join(dir, "repo", ".agent-mail", "s1");
 	fs.mkdirSync(path.join(soloRoot, "extensions", "amq-squad"), { recursive: true });
-	const files = { FAKE_PROPOSE: path.join(dir, "propose.json"), FAKE_APPLY: path.join(dir, "apply.json"), FAKE_STATUS: path.join(dir, "status.json"), FAKE_CONTEXT: path.join(dir, "context.json") };
+	const files = { FAKE_PROPOSE: path.join(dir, "propose.json"), FAKE_APPLY: path.join(dir, "apply.json"), FAKE_STATUS: path.join(dir, "status.json"), FAKE_CONTEXT: path.join(dir, "context.json"), FAKE_APPLY_JS: path.join(dir, "apply.mjs") };
+	fs.writeFileSync(files.FAKE_APPLY_JS, APPLY_JS);
 	fs.writeFileSync(files.FAKE_PROPOSE, envelope("team_propose", { project_dir: "/repo", plan: ["goal: x"], digest: DIGEST, prefix: "0123456789abcdef", doors: "doors" }));
 	const team = { root: squadRoot, base_root: path.dirname(squadRoot), session: "s1", handle: "cto", digest: DIGEST };
 	const applyReply = (withTeam: boolean) =>
@@ -86,7 +123,7 @@ function soloWorld() {
 			path.join(soloRoot, "extensions", "amq-squad", "phase.json"),
 			JSON.stringify({ schema: 1, phase: "team", project: "/repo", root: squadRoot, base_root: path.dirname(squadRoot), session: "s1", handle: "cto", digest: DIGEST, at: "2026-11-01T09:00:00.123Z", pid: process.ppid, start: "darwin-tv:1.1" }),
 		);
-	const env: Record<string, string> = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", ...files };
+	const env: Record<string, string> = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", FAKE_NONCE: NONCE, ...files };
 	return { dir, soloRoot, squadRoot, team, applyReply, marker, env };
 }
 
@@ -146,8 +183,9 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 });
 
 // fakeLead is a stand-in for the lead's start socket answering a phase
-// query with answer.
-async function fakeLead(dir: string, answer: unknown): Promise<{ socket: string; got: any[]; close: () => void }> {
+// query with answer, proved under nonce when one is given (the lead that
+// spawned this pi holds NONCE; a server that is not the lead holds none).
+async function fakeLead(dir: string, answer: Record<string, unknown>, nonce = ""): Promise<{ socket: string; got: any[]; close: () => void }> {
 	const net = await import("node:net");
 	const socket = path.join(dir, "lead.sock");
 	const got: any[] = [];
@@ -157,8 +195,9 @@ async function fakeLead(dir: string, answer: unknown): Promise<{ socket: string;
 			buf += d.toString("utf8");
 			const i = buf.indexOf("\n");
 			if (i < 0) return;
-			got.push(JSON.parse(buf.slice(0, i)));
-			c.end(JSON.stringify(answer) + "\n");
+			const req = JSON.parse(buf.slice(0, i));
+			got.push(req);
+			c.end(JSON.stringify(nonce ? { ...answer, proof: testProof(nonce, req.challenge ?? "", answer as any) } : answer) + "\n");
 		});
 	});
 	await new Promise<void>((resolve) => server.listen(socket, resolve));
@@ -199,17 +238,20 @@ test("R53: a planted marker switches nothing; the switch rides the lead's answer
 	});
 	// each fake lead closes in a finally: a failed assertion leaves no
 	// listening socket to keep the test process alive
-	const solo = await fakeLead(w.dir, { outcome: "solo" });
+	const solo = await fakeLead(w.dir, { outcome: "solo" }, NONCE);
 	try {
 		await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: solo.socket }, async (pi) => {
 			await pi.emit("session_start", {}, fakeCtx());
-			assert.deepEqual(solo.got, [{ kind: "amq-squad.phase.v1" }]);
+			assert.equal(solo.got.length, 1);
+			assert.equal(solo.got[0].kind, "amq-squad.phase.v1");
+			assert.match(solo.got[0].challenge, /^[0-9a-f]{32}$/, "the phase query's challenge");
+			assert.ok(!JSON.stringify(solo.got[0]).includes(NONCE), "the nonce crossed the socket");
 			assert.ok(pi.getActiveTools().includes("bash"), "a solo answer switched");
 		});
 	} finally {
 		solo.close();
 	}
-	const team = await fakeLead(w.dir, { outcome: "team", team: w.team });
+	const team = await fakeLead(w.dir, { outcome: "team", team: w.team }, NONCE);
 	try {
 		await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: team.socket }, async (pi) => {
 			await pi.emit("session_start", {}, fakeCtx());
@@ -259,7 +301,7 @@ test("R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run afte
 	// a propose admitted while solo, the switch landing between the
 	// preparing and the running (here a session start the lead answers
 	// team): its execute refuses phase_team
-	const lead = await fakeLead(w.dir, { outcome: "team", team: w.team });
+	const lead = await fakeLead(w.dir, { outcome: "team", team: w.team }, NONCE);
 	try {
 		await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: lead.socket }, async (pi) => {
 			const ctx = fakeCtx();
@@ -276,6 +318,62 @@ test("R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run afte
 	} finally {
 		lead.close();
 	}
+});
+
+// Codex's re-check on #837, item 1: only the lead that spawned this pi is
+// believed. The nonce comes over a descriptor the extension closes at load
+// (and the environment's pointer to it is gone); a server on the socket
+// path that is not the lead (it holds no nonce) answers team and pi stays
+// solo; a lead of an earlier spawn (its nonce is not this pi's) answers
+// team and pi stays solo; the lead that spawned it switches it. The same
+// proof guards the start's reply amq_team_apply acts on. The fixed vector
+// is the one Go's row checks.
+test("R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply", async () => {
+	const { leadProof } = await import("../extensions/lib/team.ts");
+	const vectorReply = { outcome: "team", team: { root: "/r/.agent-mail/s1", base_root: "/r/.agent-mail", session: "s1", handle: "cto", digest: "sha256:" + "ab".repeat(32) + "@absent" } };
+	const vector = "a6ebbbb901bdeb3f1b0901ac425a6b27c590085b4ae53deb2324447af4018632";
+	assert.equal(leadProof("test-nonce-not-a-secret", "0123456789abcdef".repeat(2), vectorReply), vector);
+	assert.equal(testProof("test-nonce-not-a-secret", "0123456789abcdef".repeat(2), vectorReply), vector);
+	const w = soloWorld();
+	for (const [why, nonce] of [
+		["a server that is not the lead", ""],
+		["a lead of an earlier spawn", STALE],
+	] as const) {
+		const fake = await fakeLead(w.dir, { outcome: "team", team: w.team }, nonce);
+		try {
+			await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: fake.socket }, async (pi) => {
+				const fd = nonceFds.at(-1)!;
+				assert.equal(process.env.AMQ_SQUAD_LEAD_NONCE_FD, undefined, "the descriptor's name stayed in the environment");
+				assert.throws(() => fs.fstatSync(fd), /EBADF/, "the nonce's descriptor stayed open");
+				await pi.emit("session_start", {}, fakeCtx());
+				assert.equal(fake.got.length, 1, why);
+				assert.ok(pi.getActiveTools().includes("bash"), `${why} switched the lead`);
+				assert.equal(process.env.AM_ROOT, w.soloRoot, why);
+			});
+		} finally {
+			fake.close();
+		}
+	}
+	// the start's reply, proved by an earlier spawn's lead, or not at all
+	for (const [why, applyNonce] of [
+		["a start reply proved under an earlier spawn's nonce", STALE],
+		["a start reply with no proof", ""],
+	] as const) {
+		await withEnv({ ...w.env, FAKE_APPLY_NONCE: applyNonce }, async (pi) => {
+			await pi.emit("session_start", {}, fakeCtx());
+			const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], fakeCtx());
+			assert.equal(applied.outcome, "ran", applied.reason);
+			assert.match(applied.text ?? "", /lead_unproved: the reply on the start socket carries no proof from the lead that spawned this pi/, why);
+			assert.ok(pi.getActiveTools().includes("bash"), `${why} switched the lead`);
+			assert.equal(process.env.AM_ROOT, w.soloRoot, why);
+		});
+	}
+	// a pi with no nonce (not spawned by the lead) believes no reply
+	await withEnv({ ...w.env, FAKE_NONCE: "", FAKE_APPLY_NONCE: NONCE }, async (pi) => {
+		const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], fakeCtx());
+		assert.match(applied.text ?? "", /lead_unproved: this pi holds no nonce from a lead/);
+		assert.ok(pi.getActiveTools().includes("bash"));
+	});
 });
 
 // Row 5 for the lead up starts (lead --team): team phase from its first

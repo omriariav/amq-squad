@@ -13,7 +13,11 @@ import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefu
 import * as net from "node:net";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
-import { FakePi, fakeCtx, tmpdir } from "./fakepi.ts";
+import { FakePi, fakeCtx, testProof, tmpdir } from "./fakepi.ts";
+
+// NONCE stands for the nonce the lead hands its pi at the spawn (built at
+// run time; no credential shape)
+const NONCE = "test-" + "nonce-" + "not-a-secret";
 
 const BIN = "/opt/amq-squad";
 const DIGEST = "sha256:" + "0123456789abcdef".repeat(4) + "@absent";
@@ -67,7 +71,9 @@ async function fakeLead(answer: (req: any) => any): Promise<{ socket: string; go
 			const req = JSON.parse(buf.slice(0, i));
 			// the session start's phase query (R53, PR 2) is not a confirm
 			(req.kind === "amq-squad.phase.v1" ? phase : got).push(req);
-			c.end(JSON.stringify(answer(req)) + "\n");
+			// the lead proves its reply under the nonce it gave its pi
+			const a = answer(req);
+			c.end(JSON.stringify({ ...a, proof: testProof(NONCE, req.challenge ?? "", a) }) + "\n");
 		});
 	});
 	await new Promise<void>((resolve) => server.listen(socket, resolve));
@@ -83,7 +89,7 @@ function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "") {
 		return reply(args, o);
 	};
 	const pi = new FakePi();
-	const team = installSoloTeam(pi as any, cfg(root), runner, () => new Date("2026-11-01T10:00:00Z"), socket);
+	const team = installSoloTeam(pi as any, cfg(root), runner, () => new Date("2026-11-01T10:00:00Z"), socket, [], NONCE);
 	const ctx = fakeCtx({ hasUI: true });
 	const notes: string[] = [];
 	ctx.ui.notify = (m: string) => {
@@ -125,7 +131,8 @@ test("amq_team_propose prints the plan and digest; amq_team_apply returns the ro
 	assert.match(lines, /confirm: \/squad confirm 0123456789abcdef/);
 	assert.doesNotMatch(lines, /team confirm/, "the plan block names the dropped shell door");
 	const applied = await r.pi.tools.get("amq_team_apply").execute("c2", { digest: DIGEST }, undefined);
-	assert.deepEqual(r.calls[1].args, ["team", "apply", "--digest", DIGEST, "--project", PROJECT, "--json"]);
+	assert.deepEqual(r.calls[1].args.slice(0, -1), ["team", "apply", "--digest", DIGEST, "--project", PROJECT, "--json", "--challenge"]);
+	assert.match(r.calls[1].args.at(-1) ?? "", /^[0-9a-f]{32}$/, "the apply's challenge");
 	assert.ok(r.calls[1].timeoutMs > 60000, "the apply waits for the roster");
 	assert.match(applied.content[0].text, /seat impl-1 claude\/sonnet live\nteam started: roster_launched/);
 });
@@ -159,7 +166,10 @@ test("/squad confirm with the printed prefix asks the lead to witness it", async
 		} finally {
 			delete process.env.TMUX_PANE;
 		}
-		assert.deepEqual(lead.got, [{ kind: TUI_KIND, digest: DIGEST, pane: "%7" }]);
+		assert.equal(lead.got.length, 1);
+		const { challenge, ...sent } = lead.got[0];
+		assert.deepEqual(sent, { kind: TUI_KIND, digest: DIGEST, pane: "%7" });
+		assert.match(challenge, /^[0-9a-f]{32}$/, "the confirm's challenge");
 		assert.equal(r.calls.length, 1, "the confirm ran no verb");
 		assert.deepEqual(fs.readdirSync(r.root), [], "the confirm wrote a file");
 		answer = { outcome: "refused", refusal: "peer_not_lead_pi", detail: "pid 9 is not the pi process this lead spawned" };
