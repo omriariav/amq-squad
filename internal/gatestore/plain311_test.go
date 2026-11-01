@@ -171,6 +171,26 @@ func TestResolvedPathLinkIsOnlyBelowTheGateRule(t *testing.T) {
 	}
 }
 
+func TestResolvedPathLinksAreTruncatedWithACount(t *testing.T) {
+	links := make([]PathLink, pathLinkMaxPairs+2)
+	for i := range links {
+		links[i] = PathLink{Path: fmt.Sprintf("real/file-%02d.go", i), Alias: fmt.Sprintf("alias-%02d", i)}
+	}
+	links[1] = PathLink{Path: strings.Repeat("p", pathLinkMaxBytes), Alias: "too-long"}
+	facts := SafeFactsWithLinks("task", "", links)
+	if facts == nil || len(facts.Links) != pathLinkMaxPairs || facts.LinksMore != 2 {
+		t.Fatalf("truncated facts = %+v", facts)
+	}
+	target := gatetarget.GrowTask("/r/s1", "t5", "protected_paths", `["real/file.go"]`)
+	rec, err := Render(Spec{GateID: "widen-t5-many", Action: "spawn", Target: target, RaisedBy: "lead-a", Facts: facts}, testNow, testIdent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Text, "and 2 more") || rec.Validate() != nil {
+		t.Fatalf("truncated resolved links were not recorded with their count:\n%s", rec.Text)
+	}
+}
+
 var (
 	versionWord = regexp.MustCompile(`^v?[0-9]+(\.[0-9]+)+([-+][0-9A-Za-z.-]+)?$`)
 	emailWord   = regexp.MustCompile(`^[^@\s/]+@[^@\s/]+\.[^@\s/]+$`)

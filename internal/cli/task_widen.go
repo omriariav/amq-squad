@@ -191,15 +191,22 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	if err != nil {
 		return data, err
 	}
-	exact, err := validateBlockedWiden(t, req.Files)
+	// Use the same canonical spellings WidenGated will persist before
+	// deciding whether an entry is an exact-looking literal. Otherwise a
+	// spelling such as ./link is widened as "link" by the store but misses
+	// link resolution, including the replacement of the alias by its target.
+	added, err := task.CleanDeclaredFiles(req.Files)
+	if err != nil {
+		return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+	}
+	exact, err := validateBlockedWiden(t, added)
 	if err != nil {
 		return data, err
 	}
 	g, gerr := grants.Load(t.ProjectPath)
 	if len(exact) == 0 {
-		exact = literalWidenFiles(req.Files)
+		exact = literalWidenFiles(added)
 	}
-	added := append([]string(nil), req.Files...)
 	var protected, resolutions []string
 	var links []gatestore.PathLink
 	if gerr == nil && len(exact) > 0 {
