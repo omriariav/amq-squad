@@ -17,7 +17,7 @@ import (
 // The team verbs of 3.0 (brief 2b-5): the lead proposes squad.yaml and the
 // files it implies as one digest (R8), the owner (manual) or the grant (auto)
 // approves, and apply writes them. show and check read squad.yaml back.
-var teamSubcommandHints = []string{"propose", "apply", "confirm", "show", "check", "draft-rules"}
+var teamSubcommandHints = []string{"propose", "apply", "show", "check", "draft-rules"}
 
 // removedTeamVerbs maps each v2 team verb to what replaces it.
 var removedTeamVerbs = map[string]string{
@@ -38,8 +38,6 @@ func runTeam(args []string) error {
 		return runTeamPropose(args[1:], false)
 	case "apply":
 		return runTeamPropose(args[1:], true)
-	case "confirm":
-		return runTeamConfirm(args[1:])
 	case "show", "check":
 		return runTeamShow(args[0], args[1:])
 	case "draft-rules":
@@ -66,16 +64,12 @@ Usage:
                                          checked against the owner grant, printed with the
                                          plan and its digest; the proposal is recorded for
                                          the doors, nothing else is written
-  amq-squad team confirm DIGEST [--project DIR]
-                                         The owner's yes from the owner's own shell (refused
-                                         from a lead or a seat): the confirmation apply needs
   amq-squad team apply --digest D [--project DIR]
-                                         Apply a recorded proposal: refused without a
-                                         confirmation younger than 30 minutes (/squad confirm
-                                         in the lead's pane, team confirm, or the signed Buzz
-                                         DM "yes <prefix>"); under the solo lead the team
-                                         starts in the lead's process (up's steps, the
-                                         mayor's checks); from the owner's shell it writes
+                                         Apply a recorded proposal: under the solo lead the
+                                         team starts in the lead's process on a confirmation
+                                         it witnessed (/squad confirm in its pane, or the
+                                         signed Buzz DM "yes <prefix>"); from a shell it runs
+                                         only while no lead holds the repository, writes
                                          squad.yaml and the owner starts the team (up)
   amq-squad team propose --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT
   amq-squad team apply --digest D --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT
@@ -183,12 +177,13 @@ func runTeamPropose(args []string, apply bool) error {
 		return err
 	}
 	if apply && plan != nil {
-		// R55: the apply of the lead's plan is the owner's confirmation by
-		// the act, so the kernel must show this process is the owner's own
-		// shell (the 3.0 flag form, which the owner types with the digest
-		// of the files in front of them, and the screen's add key, which the
-		// owner confirms at the key, stay as they were)
-		if _, err := ownerAncestry(confirmSelf(), 0); err != nil {
+		// R55: the apply of the lead's plan from a shell is the owner's
+		// confirmation by the act, so it runs only while no lead (and no
+		// model) holds the repository (the 3.0 flag form, which the owner
+		// types with the digest of the files in front of them, and the
+		// screen's add key, which the owner confirms at the key, stay as
+		// they were)
+		if err := noLeadHolds(p.ProjectDir, plan.Session, *o.digest); err != nil {
 			return err
 		}
 	}
@@ -241,7 +236,7 @@ func printLeadProposal(p team.Plan, lp team.LeadPlan, jsonOut bool) error {
 		return err
 	}
 	prefix := team.DigestPrefix(p.Digest)
-	doors := doorsText(p.Digest, p.ProjectDir)
+	doors := doorsText(p.Digest)
 	if jsonOut {
 		return printJSONEnvelope("team_propose", map[string]any{
 			"project_dir": p.ProjectDir, "plan": lines, "digest": p.Digest, "prefix": prefix, "seats": p.Seats, "files": p.Files,
@@ -264,12 +259,11 @@ func printLeadProposal(p team.Plan, lp team.LeadPlan, jsonOut bool) error {
 // runTeamApplyConfirmed is `team apply --digest D` of a recorded proposal
 // (brief 31-3, section 3). Under the solo lead (its start socket in the
 // environment) the lead's process starts the team on a confirmation it
-// witnessed. From the owner's own shell the apply is the confirmation by the
-// act (the digest is in front of the owner, who typed the apply): the
-// kernel must show this process is the owner's (no lead or seat ancestor, a
-// controlling terminal, the chain through its session leader); no file is
-// read for it. squad.yaml is then written through the digest flow, and the
-// owner starts the team with amq-squad up.
+// witnessed. From a shell the apply is the owner's confirmation by the act
+// (the digest is in front of the owner, who typed the apply), so it runs
+// only while no lead holds the repository: with no lead there is no model
+// under it (noLeadHolds); no file is read for it. squad.yaml is then written
+// through the digest flow, and the owner starts the team with amq-squad up.
 func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 	dir, err := teamProjectDir(project)
 	if err != nil {
@@ -281,15 +275,15 @@ func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 	if sock := os.Getenv(leadStartSocketEnv); sock != "" {
 		return applyThroughLead(sock, dir, strings.TrimSpace(digest), jsonOut)
 	}
-	if _, err := ownerAncestry(confirmSelf(), 0); err != nil {
-		return err
-	}
 	root, err := soloRootOf(dir)
 	if err != nil {
 		return err
 	}
 	prop, err := readProposal(root, digest)
 	if err != nil {
+		return err
+	}
+	if err := noLeadHolds(dir, proposalSession(prop.SquadYAML), strings.TrimSpace(digest)); err != nil {
 		return err
 	}
 	b, err := buildTeamProposalText(teamFlagsFor(dir), &prop.SquadYAML)
@@ -304,6 +298,17 @@ func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 	}
 	fmt.Printf("applied digest %s (%d seats); the lead proposes, the owner starts: amq-squad up --project %s\n", b.plan.Digest, b.plan.Seats, dir)
 	return nil
+}
+
+// proposalSession is the session a recorded proposal's squad.yaml names
+// ("" when it cannot be read; the plan is parsed strictly again after).
+func proposalSession(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if v, ok := strings.CutPrefix(line, "session: "); ok {
+			return strings.Trim(strings.TrimSpace(v), `"`)
+		}
+	}
+	return ""
 }
 
 // buildTeamProposal computes every planned write and the digest over them;

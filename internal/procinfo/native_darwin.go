@@ -39,26 +39,3 @@ func readArgvNative(pid int) ([]string, bool) {
 	}
 	return parseKernProcArgs2Argv(buf)
 }
-
-// readEnvironNative reads pid's initial environment via KERN_PROCARGS2.
-func readEnvironNative(pid int) ([]string, bool) {
-	buf, err := unix.SysctlRaw("kern.procargs2", pid)
-	if err != nil {
-		return nil, false
-	}
-	return parseKernProcArgs2Env(buf)
-}
-
-func readSessionNative(pid int) (int, bool) {
-	sid, err := unix.Getsid(pid)
-	return sid, err == nil
-}
-
-// readTTYNative reads kinfo_proc's e_tdev: NODEV (-1) is no terminal.
-func readTTYNative(pid int) (bool, bool) {
-	proc, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
-	if err != nil || proc == nil {
-		return false, false
-	}
-	return proc.Eproc.Tdev != -1, true
-}

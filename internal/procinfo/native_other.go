@@ -11,10 +11,3 @@ func readStartTimeNative(pid int) (time.Time, bool) { return time.Time{}, false 
 
 // No fork-free argv read on this platform: Argv reports false.
 func readArgvNative(pid int) ([]string, bool) { return nil, false }
-
-// No fork-free environment or session read on this platform.
-func readEnvironNative(pid int) ([]string, bool) { return nil, false }
-
-func readSessionNative(pid int) (int, bool) { return 0, false }
-
-func readTTYNative(pid int) (bool, bool) { return false, false }

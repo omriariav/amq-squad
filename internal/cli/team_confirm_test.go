@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -121,143 +120,49 @@ func mapsEqual(a, b map[string]string) bool {
 	return true
 }
 
-// fakeTree is a process tree the kernel reads see: pid -> parent, argv,
-// initial environment, start stamp (default st-<pid>), controlling terminal
-// and session leader.
-type fakeTree struct {
-	self, sid int
-	parent    map[int]int
-	argv      map[int][]string
-	env       map[int][]string
-	stamp     map[int]string
-	notty     map[int]bool
-	// reuseAt: the pid whose stamp reads "reused" at its read number n
-	reuseAt [2]int
-}
-
-func (f fakeTree) install(t *testing.T) {
-	t.Helper()
-	prev := []any{confirmSelf, confirmParent, confirmArgv, confirmEnviron, confirmSession, confirmHasTTY, confirmStamp}
-	t.Cleanup(func() {
-		confirmSelf = prev[0].(func() int)
-		confirmParent = prev[1].(func(int) (int, bool))
-		confirmArgv = prev[2].(func(int) ([]string, bool))
-		confirmEnviron = prev[3].(func(int) ([]string, bool))
-		confirmSession = prev[4].(func(int) (int, bool))
-		confirmHasTTY = prev[5].(func(int) (bool, bool))
-		confirmStamp = prev[6].(func(int) (string, bool))
-	})
-	confirmSelf = func() int { return f.self }
-	confirmParent = func(p int) (int, bool) { q, ok := f.parent[p]; return q, ok }
-	confirmArgv = func(p int) ([]string, bool) { a, ok := f.argv[p]; return a, ok }
-	confirmEnviron = func(p int) ([]string, bool) { e, ok := f.env[p]; return e, ok }
-	confirmSession = func(int) (int, bool) { return f.sid, true }
-	confirmHasTTY = func(p int) (bool, bool) { return !f.notty[p], true }
-	reads := map[int]int{}
-	confirmStamp = func(p int) (string, bool) {
-		reads[p]++
-		if f.reuseAt[0] == p && f.reuseAt[1] == reads[p] {
-			return "reused", true
-		}
-		if s, ok := f.stamp[p]; ok {
-			return s, true
-		}
-		return fmt.Sprintf("st-%d", p), true
-	}
-}
-
-// ownerShellTree: the command (500) <- zsh (400, the session leader) <-
-// login (300, another user's: unreadable) <- launchd.
-func ownerShellTree() fakeTree {
-	return fakeTree{self: 500, sid: 400,
-		parent: map[int]int{500: 400, 400: 300, 300: 1},
-		argv:   map[int][]string{500: {"amq-squad", "team"}, 400: {"-zsh"}},
-		env:    map[int][]string{400: {"HOME=/Users/owner", "AM_ME="}},
-		stamp:  map[int]string{}, notty: map[int]bool{}}
-}
-
-// The kernel trees a confirmation is refused from, by name (the lead's pid
-// is lead): an amq-squad lead (bare or `lead`), the lead's pi (AM_ME), the
-// lead's own pid, a seat (seat-exec, or a provider seat-exec exec'd, AM_ME
-// in its environment), no terminal, orphaned out of its shell, a parent
-// that cannot be read. With no lead (lead 0: the owner's apply) there is no
-// lead pid to refuse; the lead and its pi are still refused by argv and
-// AM_ME.
-func refusedTrees(lead int) map[string]struct {
-	mutate func(*fakeTree)
-	want   string
-} {
-	trees := map[string]struct {
-		mutate func(*fakeTree)
-		want   string
-	}{
-		"the solo lead (amq-squad lead)": {func(f *fakeTree) {
-			f.parent[500], f.parent[450] = 450, 400
-			f.argv[450] = []string{"/usr/local/bin/amq-squad", "lead"}
-		}, ReasonLeadDescendant},
-		"the bare solo lead": {func(f *fakeTree) { f.parent[500], f.parent[450] = 450, 400; f.argv[450] = []string{"amq-squad"} }, ReasonLeadDescendant},
-		"the lead's pi (AM_ME)": {func(f *fakeTree) {
-			f.parent[500], f.parent[460], f.parent[450] = 460, 450, 400
-			f.argv[460], f.env[460] = []string{"/bin/bash", "-c", "x"}, []string{"PATH=/bin"}
-			f.argv[450], f.env[450] = []string{"node", "/rt/pi/cli.js"}, []string{"AM_ME=lead", "AM_ROOT=/r"}
-		}, ReasonLeadDescendant},
-		"the lead's own pid": {func(f *fakeTree) {
-			f.parent[500], f.parent[lead] = lead, 400
-			f.argv[lead] = []string{"/opt/bin/renamed"}
-		}, ReasonLeadDescendant},
-		"a seat-exec seat": {func(f *fakeTree) {
-			f.parent[500], f.parent[450] = 450, 400
-			f.argv[450] = []string{"amq-squad", "seat-exec", "--seat", "impl-1"}
-		}, ReasonLeadDescendant},
-		"a Claude seat (AM_ME)": {func(f *fakeTree) {
-			f.parent[500], f.parent[450] = 450, 400
-			f.argv[450], f.env[450] = []string{"claude", "--model", "sonnet"}, []string{"AM_ME=impl-1"}
-		}, ReasonLeadDescendant},
-		"no terminal":         {func(f *fakeTree) { f.notty[500] = true }, ReasonNoTerminal},
-		"orphaned out of zsh": {func(f *fakeTree) { f.parent[500] = 1 }, ReasonAncestryUnknown},
-		"a parent unreadable": {func(f *fakeTree) { delete(f.parent, 400) }, ReasonAncestryUnknown},
-	}
-	if lead == 0 {
-		delete(trees, "the lead's own pid")
-	}
-	return trees
-}
-
-// Rows 1b, 1e and 5 of the witness design: with no lead (or from the
-// owner's own shell), team apply --digest D is the confirmation by the act,
-// so its own process must read as the owner's from the kernel: from a lead
-// or seat descendant, without a terminal or orphaned it refuses by the same
-// names, and a planted confirm/<digest>.json changes nothing (no file is
-// read for it); from the owner's shell it applies. The plan-file apply
-// (--from PLAN) is the same act.
-func TestTheOwnersApplyIsTheConfirmationByTheAct(t *testing.T) {
+// Rows 1b and 5 after the shell door fell (the plan reviewer's ruling): a
+// shell's team apply --digest D is the owner's confirmation by the act, so
+// it proceeds only while no lead holds the repository. With the solo lead
+// serving its start socket, or a team lead holding the session root's lead
+// lock, it refuses lead_running naming the two doors, from any shell; with
+// none it writes squad.yaml and prints the owner's start. The plan-file
+// apply (--from PLAN) is the same act. A planted confirm/<digest>.json
+// changes nothing.
+func TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot(t *testing.T) {
 	proj, root := soloProject(t)
 	t.Setenv(leadStartSocketEnv, "")
 	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
 	if _, err := writeConfirmLog(root, confirmRecord{Digest: digest, Door: DoorTUI, At: time.Now(), By: "planted", Proof: confirmProof{Pane: "%1", PID: 4242}}); err != nil {
 		t.Fatal(err)
 	}
-	before := snapshotTree(t, proj)
 	raw, _ := json.Marshal(soloTeamPlan())
 	planFile := filepath.Join(t.TempDir(), "plan.json")
 	mustWrite(t, planFile, string(raw))
-	for _, args := range [][]string{{"apply", "--digest", digest, "--project", proj}, {"apply", "--digest", digest, "--project", proj, "--from", planFile}} {
-		for name, c := range refusedTrees(0) {
-			f := ownerShellTree()
-			c.mutate(&f)
-			f.install(t)
-			if _, _, err := captureOutput(t, func() error { return runTeam(args) }); err == nil || !strings.HasPrefix(err.Error(), c.want+":") {
-				t.Fatalf("%v from %s = %v, want %s", args[3:], name, err, c.want)
+	forms := [][]string{{"apply", "--digest", digest, "--project", proj}, {"apply", "--digest", digest, "--project", proj, "--from", planFile}}
+	refused := func(why string) {
+		t.Helper()
+		for _, args := range forms {
+			_, _, err := captureOutput(t, func() error { return runTeam(args) })
+			if err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") || !strings.Contains(err.Error(), "/squad confirm "+team.DigestPrefix(digest)) || !strings.Contains(err.Error(), `Buzz DM "yes `) {
+				t.Fatalf("%s: %v = %v", why, args[5:], err)
 			}
 		}
+		if _, err := os.Stat(team.SquadPath(proj)); err == nil {
+			t.Fatalf("%s: a refused apply wrote squad.yaml", why)
+		}
 	}
-	if !mapsEqual(snapshotTree(t, proj), before) {
-		t.Fatal("a refused apply wrote inside the repository")
+	lead := newLeadStarter(root, proj, "test", nil)
+	if _, err := lead.serve(); err != nil {
+		t.Fatal(err)
 	}
-	ownerShellTree().install(t)
-	out, _, err := captureOutput(t, func() error { return runTeam([]string{"apply", "--digest", digest, "--project", proj}) })
-	if err != nil || !strings.Contains(out, "the owner starts") {
-		t.Fatalf("the owner's apply: %v\n%s", err, out)
+	refused("the solo lead serving")
+	lead.close()
+	held := holdLock(t, filepath.Join(schedproc.Dir(filepath.Join(proj, ".agent-mail", "s1")), schedproc.LeadLockName))
+	refused("a team lead holding the root")
+	held.Close()
+	out, _, err := captureOutput(t, func() error { return runTeam(forms[0]) })
+	if err != nil || !strings.Contains(out, "the owner starts: amq-squad up --project "+proj) {
+		t.Fatalf("no lead: %v\n%s", err, out)
 	}
 	if raw, err := os.ReadFile(team.SquadPath(proj)); err != nil || string(raw) != team.RenderPlan(soloTeamPlan()) {
 		t.Fatalf("squad.yaml %q %v", raw, err)
@@ -276,53 +181,27 @@ func soloLead(t *testing.T, root, proj string) *leadStarter {
 	return s
 }
 
-// Row 1e of the witness design: the shell door. team confirm D asks the
-// lead over its socket and the lead reads the peer from the kernel: a peer
-// descending from the lead (its pid, an amq-squad lead, the lead's pi) or
-// a seat is refused lead_descendant, one without a terminal no_terminal,
-// one orphaned ancestry_unknown; the owner's shell is witnessed, with the
-// chain the lead read (pids and start stamps). The claimant asserts
-// nothing. With no lead serving, team confirm refuses no_lead.
-func TestTheShellDoorIsWitnessedByTheLeadFromTheKernel(t *testing.T) {
+// Row 1e after the shell door fell: `amq-squad team confirm` is an unknown
+// verb, and the lead's socket refuses the confirm-shell kind by its name.
+func TestTheShellDoorIsGone(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return runTeam([]string{"confirm", "sha256:" + strings.Repeat("ab", 32) + "@absent"}) })
+	if err == nil || !strings.Contains(err.Error(), "unknown 'team' subcommand") {
+		t.Fatalf("team confirm = %v", err)
+	}
 	proj, root := soloProject(t)
 	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
-	confirm := func() error {
-		_, _, err := captureOutput(t, func() error { return runTeam([]string{"confirm", digest, "--project", proj}) })
-		return err
-	}
-	if err := confirm(); err == nil || !strings.HasPrefix(err.Error(), ReasonNoLead+":") {
-		t.Fatalf("no lead: %v", err)
-	}
 	s := soloLead(t, root, proj)
-	prev := leadStartPeer
-	t.Cleanup(func() { leadStartPeer = prev })
-	leadStartPeer = func(*net.UnixConn) (int, bool) { return 500, true }
-	for name, c := range refusedTrees(s.self) {
-		f := ownerShellTree()
-		c.mutate(&f)
-		f.install(t)
-		if err := confirm(); err == nil || !strings.HasPrefix(err.Error(), c.want+":") {
-			t.Fatalf("%s: confirm = %v, want %s", name, err, c.want)
-		}
-		if _, err := s.witnessFor(digest); err == nil {
-			t.Fatalf("%s: witnessed", name)
-		}
+	c, err := dialLead(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// the peer's pid reused after the walk: its second read, the final
-	// re-read of the chain, is caller_unproved
-	reused := ownerShellTree()
-	reused.reuseAt = [2]int{500, 2}
-	reused.install(t)
-	if err := confirm(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
-		t.Fatalf("a pid reused after the walk = %v", err)
+	defer c.Close()
+	r, err := askLead(c, leadStartRequest{Kind: confirmShellKind, Digest: digest, Project: proj})
+	if err != nil || r.Refusal != ReasonShellDoorRemoved {
+		t.Fatalf("confirm-shell = %+v %v", r, err)
 	}
-	ownerShellTree().install(t)
-	if err := confirm(); err != nil {
-		t.Fatalf("the owner's shell: %v", err)
-	}
-	rec, err := s.witnessFor(digest)
-	if err != nil || rec.Door != DoorShell || len(rec.Proof.PIDChain) != 3 || rec.Proof.PIDChain[1] != (confirmHop{PID: 400, Stamp: "st-400", Name: "-zsh"}) || rec.Proof.PIDChain[0].PID != 500 {
-		t.Fatalf("witnessed %+v %v", rec, err)
+	if _, err := s.witnessFor(digest); err == nil {
+		t.Fatal("witnessed through the dropped shell door")
 	}
 }
 

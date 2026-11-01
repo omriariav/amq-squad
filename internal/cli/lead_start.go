@@ -70,7 +70,7 @@ type leadStartRequest struct {
 // The confirmation kinds on the same socket (the three doors).
 const (
 	confirmTUIKind   = "amq-squad.confirm-tui.v1"
-	confirmShellKind = "amq-squad.confirm-shell.v1"
+	confirmShellKind = "amq-squad.confirm-shell.v1" // dropped: refused by name
 	confirmBuzzKind  = "amq-squad.confirm-buzz.v1"
 )
 
@@ -208,7 +208,9 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	case req.Kind == confirmTUIKind:
 		reply = s.witnessTUI(pid, req)
 	case req.Kind == confirmShellKind:
-		reply = s.witnessShell(pid, req)
+		// the shell door was dropped (no kernel read tells the owner's shell
+		// from a tree the model built); its kind is refused by name
+		reply.Refusal, reply.Detail = ReasonShellDoorRemoved, "the shell door was dropped: under one uid, no kernel read tells the owner's shell from a tree the model built; confirm at the lead's pane (/squad confirm) or over Buzz (yes <prefix>)"
 	case req.Kind == confirmBuzzKind:
 		reply = s.witnessBuzz(req)
 	default:
@@ -228,11 +230,16 @@ func refusedBy(err error) leadStartReply {
 // witness keeps a confirmation the lead witnessed and logs it.
 func (s *leadStarter) witness(rec confirmRecord) leadStartReply {
 	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	return s.witnessLocked(rec)
+}
+
+// witnessLocked is witness with wmu held.
+func (s *leadStarter) witnessLocked(rec confirmRecord) leadStartReply {
 	if s.witnessed == nil {
 		s.witnessed = map[string]confirmRecord{}
 	}
 	s.witnessed[rec.Digest] = rec
-	s.wmu.Unlock()
 	detail := "witnessed by the lead (pid " + fmt.Sprint(s.self) + "); it stands for " + ConfirmTTL.String()
 	if _, err := writeConfirmLog(s.root, rec); err != nil {
 		detail += "; the log line was not written: " + err.Error()
@@ -248,9 +255,9 @@ func (s *leadStarter) witnessFor(digest string) (confirmRecord, error) {
 	s.wmu.Unlock()
 	switch {
 	case !ok:
-		return rec, fmt.Errorf("%s: this lead witnessed no confirmation of %s (a lead restart forgets them); %s", ReasonConfirmMissing, digest, doorsText(digest, s.project))
+		return rec, fmt.Errorf("%s: this lead witnessed no confirmation of %s (a lead restart forgets them); %s", ReasonConfirmMissing, digest, doorsText(digest))
 	case confirmNow().Sub(rec.At) > ConfirmTTL:
-		return rec, fmt.Errorf("%s: the confirmation of %s was witnessed at %s, older than %s; %s", ReasonConfirmStale, digest, rec.At.UTC().Format(time.RFC3339), ConfirmTTL, doorsText(digest, s.project))
+		return rec, fmt.Errorf("%s: the confirmation of %s was witnessed at %s, older than %s; %s", ReasonConfirmStale, digest, rec.At.UTC().Format(time.RFC3339), ConfirmTTL, doorsText(digest))
 	}
 	return rec, nil
 }
@@ -274,21 +281,6 @@ func (s *leadStarter) witnessTUI(pid int, req leadStartRequest) leadStartReply {
 	}
 	return s.witness(confirmRecord{Digest: strings.TrimSpace(req.Digest), Door: DoorTUI, At: confirmNow().UTC(), By: "the lead's pi, pane " + firstNonEmptyStr(req.Pane, "-"),
 		Proof: confirmProof{PID: pid, Stamp: piStamp, Pane: req.Pane}})
-}
-
-// witnessShell is the shell door: the lead reads the peer from the kernel
-// (ownerAncestry with the lead's own pid as the one it must not descend
-// from) and records the chain it read.
-func (s *leadStarter) witnessShell(pid int, req leadStartRequest) leadStartReply {
-	if _, err := digestHex(req.Digest); err != nil {
-		return refusedBy(err)
-	}
-	chain, err := ownerAncestry(pid, s.self)
-	if err != nil {
-		return refusedBy(err)
-	}
-	return s.witness(confirmRecord{Digest: strings.TrimSpace(req.Digest), Door: DoorShell, At: confirmNow().UTC(), By: fmt.Sprintf("the owner's shell (pid %d, read by the lead)", pid),
-		Proof: confirmProof{PIDChain: chain}})
 }
 
 // witnessBuzz is the Buzz door: the attachment fetched the owner's event on

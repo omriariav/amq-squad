@@ -432,7 +432,7 @@ func TestTheStartSocketProvesItsCallerWithStartStamps(t *testing.T) {
 
 // Rows 1a and 6 of the witness design: the start accepts only a
 // confirmation this lead witnessed, of the exact digest, younger than 30
-// minutes. Without one it refuses naming the three doors; a planted or
+// minutes. Without one it refuses naming the two doors; a planted or
 // edited log entry (confirm/<digest>.json, the lead's log) changes nothing;
 // a witness older than 30 minutes is confirmation_stale naming the doors;
 // nothing is written or started.
@@ -447,7 +447,7 @@ func TestTheStartAcceptsOnlyAWitnessedFreshConfirmation(t *testing.T) {
 		if r.Refusal != name {
 			t.Fatalf("start = %+v, want %s", r, name)
 		}
-		for _, door := range []string{"/squad confirm " + team.DigestPrefix(digest), "amq-squad team confirm " + digest, `Buzz DM "yes ` + team.DigestPrefix(digest)} {
+		for _, door := range []string{"two doors", "/squad confirm " + team.DigestPrefix(digest), `Buzz DM "yes ` + team.DigestPrefix(digest)} {
 			if !strings.Contains(r.Detail, door) {
 				t.Fatalf("%s does not name the door %q: %s", name, door, r.Detail)
 			}
@@ -458,7 +458,7 @@ func TestTheStartAcceptsOnlyAWitnessedFreshConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	doors(start(), ReasonConfirmMissing)
-	s.witness(confirmRecord{Digest: digest, Door: DoorShell, At: time.Now().Add(-31 * time.Minute), By: "x", Proof: confirmProof{PIDChain: []confirmHop{{PID: 500}}}})
+	s.witness(confirmRecord{Digest: digest, Door: DoorTUI, At: time.Now().Add(-31 * time.Minute), By: "x", Proof: confirmProof{PID: 4242, Stamp: "st-pi"}})
 	doors(start(), ReasonConfirmStale)
 	before := sharedSnapshot()
 	// a fresh witness of another digest is no confirmation of this one
