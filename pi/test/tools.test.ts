@@ -4,7 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { refusedPaths, registerTools, toolArgv } from "../extensions/lib/tools.ts";
+import { fileURLToPath } from "node:url";
+import { refusedPaths, registerTools, TEAM_LEAD_TOOLS, toolArgv } from "../extensions/lib/tools.ts";
 import { allowed, refOf } from "../extensions/lib/models.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import { FakePi, script, tmpdir } from "./fakepi.ts";
@@ -133,11 +134,28 @@ test("the lead's widen tool reads the recorded refusal and never widens by a fab
 // Brief 31-4, row 7: the two-way phone adds no lead tool. The lead replies
 // on the cockpit thread with amq_reply as before (a progress reply is
 // `kind: status`); the relay is the core's. The lead's tool list is the
-// exact thirteen.
-test("the lead's tool list is unchanged by the two-way phone: the exact thirteen", () => {
-	const names = registerTools(new FakePi() as any, cfg({ lead: true }));
-	assert.deepEqual(names, [
-		"amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_claim", "amq_task_done",
-		"amq_task_add", "amq_repo_read", "amq_repo_list", "amq_status", "amq_scheduler_relaunch", "amq_task_widen", "amq_task_reset",
-	]);
+// exact eleven (brief 3.1.1-2 item 4): claim and done are registered
+// inactive for a lead and active for a seat.
+test("the lead's tool list is unchanged by the two-way phone: the exact eleven", () => {
+	const lead = new FakePi();
+	registerTools(lead as any, cfg({ lead: true }));
+	assert.deepEqual(lead.getActiveTools().sort(), [...TEAM_LEAD_TOOLS].sort());
+	assert.equal(TEAM_LEAD_TOOLS.length, 11);
+	for (const verb of ["amq_task_claim", "amq_task_done"]) {
+		assert.ok(lead.tools.has(verb) && !lead.getActiveTools().includes(verb), `${verb} is active for a lead`);
+	}
+	const seat = new FakePi();
+	registerTools(seat as any, cfg());
+	for (const verb of ["amq_task_claim", "amq_task_done"]) assert.ok(seat.getActiveTools().includes(verb), `${verb} is inactive for a seat`);
+});
+
+// Brief 3.1.1-2 item 4: one lead tool list, one source. The extension's
+// team list is Go's TeamLeadTools, the --tools pi enforces for the lead
+// (internal/cli/pi.go), name for name and in order.
+test("the extension's team lead list is Go's TeamLeadTools", () => {
+	const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "internal", "piruntime", "launch.go"), "utf8");
+	const m = /var TeamLeadTools = \[\]string\{([^}]*)\}/.exec(src);
+	assert.ok(m, "TeamLeadTools is not in internal/piruntime/launch.go");
+	const goList = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+	assert.deepEqual([...TEAM_LEAD_TOOLS], goList);
 });

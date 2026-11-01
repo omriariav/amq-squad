@@ -137,12 +137,35 @@ export function refusedPaths(t: { id?: string; state?: string; block_reason?: st
 	return list as string[];
 }
 
+// TEAM_LEAD_TOOLS is the team lead's whole tool list, one source: Go's
+// piruntime.TeamLeadTools (internal/piruntime/launch.go), the eleven pi
+// enforces for lead --team as --tools (R19 under amendment 26). The solo
+// lead's tools switch to exactly these at the owner's yes. amq_task_claim
+// and amq_task_done are a seat's verbs: a lead holding them could take a
+// lease itself, so they are never a lead's (brief 3.1.1-2 item 4). A row
+// equates this list with Go's.
+export const TEAM_LEAD_TOOLS: readonly string[] = [
+	"amq_send",
+	"amq_drain",
+	"amq_reply",
+	"amq_task_list",
+	"amq_task_add",
+	"amq_task_reset",
+	"amq_task_widen",
+	"amq_scheduler_relaunch",
+	"amq_repo_read",
+	"amq_repo_list",
+	"amq_status",
+];
+
 export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = run): string[] {
 	const names: string[] = [];
 	const reg = (def: Parameters<ExtensionAPI["registerTool"]>[0]) => {
 		pi.registerTool(def);
 		names.push(def.name);
 	};
+	// a seat's verbs: active for a seat, registered inactive for a lead
+	const seatReg = (def: Parameters<ExtensionAPI["registerTool"]>[0]) => reg(cfg.lead || cfg.solo ? { ...def, defaultActive: false } : def);
 	reg({
 		name: "amq_send",
 		label: "AMQ send",
@@ -192,7 +215,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskList(cfg, p), undefined, cfg, signal);
 		},
 	});
-	reg({
+	seatReg({
 		name: "amq_task_claim",
 		label: "Task claim",
 		description: "Claim the task the scheduler leased to you (or a given id). Claim before you start work.",
@@ -201,7 +224,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskClaim(cfg, p), undefined, cfg, signal);
 		},
 	});
-	reg({
+	seatReg({
 		name: "amq_task_done",
 		label: "Task done",
 		description: "Report your task done with evidence (the command you ran and its result). The harness commits the declared files.",
