@@ -1,7 +1,7 @@
 ---
 name: "wizard"
 description: "Goal-first squad setup and launch for amq-squad 3.0 through the squad.yaml digest flow. Use when creating a squad for a repository, writing the workstream brief, previewing the files a squad needs, approving that exact digest, or launching the seats. Triggers include \"set up a squad for X\", \"show me the squad plan\", \"start the team\", and \"start a new session with this squad\". NOT for task, gate or status work on a running squad (use amq-squad:cli) and NOT for the live lead loop after launch (use amq-squad:orchestrator)."
-version: "3.1.0-rc.1"  # x-release-please-version
+version: "3.1.0"  # x-release-please-version
 allowed-tools: "Bash, Read, Write, Edit, MultiEdit, Glob, Grep, WebFetch"
 argument-hint: "[goal | roles | propose | apply | brief | launch]"
 user-invocable: true
