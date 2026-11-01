@@ -785,6 +785,32 @@ func TestTheRecordComesBeforeTheQuestion(t *testing.T) {
 	}
 }
 
+// Codex P2-7: every amq a buzz test runs goes through amqCmd (a scratch
+// HOME and XDG directories, AMQ_NO_UPDATE_CHECK=1); no test file execs amq
+// another way.
+func TestTestsExecAMQOnlyThroughTheHelper(t *testing.T) {
+	direct := regexp.MustCompile(`exec\.Command(Context)?\((ctx, |[a-zA-Z]+Ctx, |context\.Background\(\), )?"amq"`)
+	files, _ := filepath.Glob("*_test.go")
+	for _, f := range files {
+		raw, _ := os.ReadFile(f)
+		for i, line := range strings.Split(string(raw), "\n") {
+			if direct.MatchString(line) && !(f == "helpers_test.go" && strings.Contains(line, "exec.CommandContext(ctx, \"amq\", args...)")) {
+				t.Errorf("%s:%d execs amq outside amqCmd: %s", f, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+	env := amqEnv(t, nil)
+	got := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	real, _ := os.UserHomeDir()
+	if got["AMQ_NO_UPDATE_CHECK"] != "1" || got["HOME"] == "" || got["HOME"] == real || !strings.HasPrefix(got["XDG_CACHE_HOME"], got["HOME"]) || !strings.HasPrefix(got["XDG_CONFIG_HOME"], got["HOME"]) {
+		t.Fatalf("the helper's environment: HOME %q, XDG cache %q, update check %q", got["HOME"], got["XDG_CACHE_HOME"], got["AMQ_NO_UPDATE_CHECK"])
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.
@@ -833,17 +859,17 @@ func TestAMQThreadsThroughTheCLI(t *testing.T) {
 	if _, err := exec.LookPath("amq"); err != nil {
 		t.Skip("amq not installed")
 	}
+	amqProcess(t)
+	ctx := context.Background()
 	root := filepath.Join(realTempDir(t), "root")
-	if out, err := exec.Command("amq", "init", "--root", root, "--agents", "buzz,cto").CombinedOutput(); err != nil {
+	if out, err := amqCmd(ctx, t, nil, "init", "--root", root, "--agents", "buzz,cto").CombinedOutput(); err != nil {
 		t.Fatalf("amq init: %v\n%s", err, out)
 	}
-	ctx := context.Background()
 	id, err := AMQMailer{}.Send(ctx, Mail{Root: root, From: CarrierHandle, To: "cto", Body: "is the build green?", Labels: []string{"buzz"}, Thread: "cockpit/q-0123456789ab"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reply := exec.Command("amq", "reply", "--root", root, "--me", "cto", "--id", id, "--labels", LabelProgress, "--body", "-", "--json")
-	reply.Env = append(os.Environ(), "AMQ_NO_UPDATE_CHECK=1")
+	reply := amqCmd(ctx, t, nil, "reply", "--root", root, "--me", "cto", "--id", id, "--labels", LabelProgress, "--body", "-", "--json")
 	reply.Stdin = strings.NewReader("building")
 	if out, err := reply.CombinedOutput(); err != nil {
 		t.Fatalf("amq reply: %v\n%s", err, out)

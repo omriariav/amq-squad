@@ -267,8 +267,8 @@ func TestOwnerScriptDryRun(t *testing.T) {
 
 	// the squad: one lead (lead-a) the agent attaches to, lead-b routable
 	squad := filepath.Join(realTempDir(t), "root")
-	initCmd := exec.CommandContext(ctx, "amq", "init", "--root", squad, "--agents", "buzz,lead-a,lead-b")
-	initCmd.Env = env // the scratch HOME and AMQ_NO_UPDATE_CHECK=1: amq starts its update notifier before init
+	// the scratch HOME and AMQ_NO_UPDATE_CHECK=1: amq starts its update notifier before init
+	initCmd := amqCmd(ctx, t, env, "init", "--root", squad, "--agents", "buzz,lead-a,lead-b")
 	initTree := guardTree(initCmd)
 	if out, err := initCmd.CombinedOutput(); ctx.Err() != nil {
 		initTree.reap(t, "amq init")

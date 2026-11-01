@@ -54,8 +54,12 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	var runs []run
 	sh := func(name string, argv ...string) run {
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+		cmd.Env = env
+		if argv[0] == "amq" {
+			cmd = amqCmd(ctx, t, env, argv[1:]...)
+		}
 		tree := guardTree(cmd)
-		cmd.Env, cmd.Dir = env, home
+		cmd.Dir = home
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e
 		err := cmd.Run()
