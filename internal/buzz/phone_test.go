@@ -750,6 +750,41 @@ func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 	}
 }
 
+// Codex P2-6: the request's record is written before the question goes to
+// the lead and before the DM is marked handled. A record that cannot be
+// written is refused by name, posts nothing to the lead and leaves the DM
+// unhandled, so serve's redelivery is accepted; a delivery that fails takes
+// the record back.
+func TestTheRecordComesBeforeTheQuestion(t *testing.T) {
+	pf := newPhoneFixture(t)
+	relayRecordWrite = func() error { return errors.New("disk full") }
+	t.Cleanup(func() { relayRecordWrite = nil })
+	ev, msg := pf.dm(t, "is the build green?", "")
+	pf.step(t)
+	if res, _ := pf.serve.result(msg); res != "refused - "+RelayRecordFailed || len(pf.mail.sent) != 0 {
+		t.Fatalf("a failed record: %q, sent %d", res, len(pf.mail.sent))
+	}
+	relayRecordWrite = nil
+	again := pf.serve.deliver(ev, pf.core.Pin.Channel, "is the build green?")
+	pf.step(t)
+	if res, _ := pf.serve.result(again); !strings.HasPrefix(res, "accepted "+RequestID(ev)+" ") || len(pf.mail.sent) != 1 {
+		t.Fatalf("the redelivery: %q, sent %d", res, len(pf.mail.sent))
+	}
+	if rec := pf.record(t, RequestID(ev)); len(rec.Turns) != 1 || rec.Turns[0].MessageID != "msg-1" {
+		t.Fatalf("the record: %+v", rec.Turns)
+	}
+	// a delivery that fails leaves no record behind
+	pf.mail.err = errors.New("amq down")
+	ev2, msg2 := pf.dm(t, "and the train?", "")
+	pf.step(t)
+	if res, _ := pf.serve.result(msg2); res != "refused - not_delivered" {
+		t.Fatalf("a failed delivery: %q", res)
+	}
+	if _, err := os.Stat(relayRecordPath(status.RelayDir(pf.h.Target.Root), RequestID(ev2))); !os.IsNotExist(err) {
+		t.Fatalf("a failed delivery left its record: %v", err)
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

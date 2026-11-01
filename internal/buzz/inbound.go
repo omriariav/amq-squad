@@ -367,8 +367,17 @@ func (h *Handler) route(ctx context.Context, hd *Handled, e nostr.Event, content
 		rid, via = cont.RequestID, &Route{Lead: cont.Route}
 	}
 	hd.RequestID = rid
+	// the record first (Codex P2-6): no record, no question to the lead,
+	// and the DM stays unhandled so serve's redelivery works
+	rec, undo, err := h.openTurn(e, rid, cont, now)
+	if err != nil {
+		hd.Kind, hd.Error = "error", "relay record: "+err.Error()
+		h.final(ctx, hd, "refused - "+RelayRecordFailed)
+		return
+	}
 	d, err := DeliverOn(ctx, h.Mail, h.Target, id, content, CockpitThread(rid), via)
 	if err != nil {
+		undo()
 		// the detail (paths, AMQ errors) stays on this machine; the reply is
 		// clear text on the relay
 		hd.Kind, hd.Error = "error", err.Error()
@@ -379,7 +388,7 @@ func (h *Handler) route(ctx context.Context, hd *Handled, e nostr.Event, content
 	if err := h.seen.put(id, "-", now); err != nil {
 		hd.Error = "once-only record: " + err.Error()
 	}
-	if err := h.recordTurn(e, rid, cont, d, now); err != nil {
+	if err := h.finishTurn(rec, cont == nil, d, now); err != nil {
 		hd.Error = joinErr(hd.Error, "relay record: "+err.Error())
 	}
 	dest := d.Mailbox

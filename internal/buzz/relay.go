@@ -778,16 +778,20 @@ func (h *Handler) continuation(e nostr.Event) *status.RelayRecord {
 	return nil
 }
 
-// recordTurn writes the request's record after its question (a new
-// request) or a continuation reached the lead.
-func (h *Handler) recordTurn(e nostr.Event, requestID string, cont *status.RelayRecord, d Delivery, now time.Time) error {
+// RelayRecordFailed is the receipt's code when the request's record
+// cannot be written: the question is not posted to the lead and the DM is
+// not marked handled, so serve's redelivery works.
+const RelayRecordFailed = "relay_record_failed"
+
+// openTurn writes the request's record with the owner's new turn before
+// the question goes to the lead (Codex P2-6): a fresh request's record, or
+// a continuation's with one more turn. undo takes the turn back when the
+// delivery fails.
+func (h *Handler) openTurn(e nostr.Event, requestID string, cont *status.RelayRecord, now time.Time) (*status.RelayRecord, func(), error) {
 	dir := status.RelayDir(h.Target.Root)
 	rec := cont
 	if rec == nil {
 		rec = &status.RelayRecord{RequestID: requestID, Thread: CockpitThread(requestID), Lead: h.Target.Handle, RootEvent: e.ID, PostTo: e.ID}
-		if d.LeadID != "" {
-			rec.Lead, rec.Route = d.LeadHandle, d.Lead
-		}
 		// the owner's DM in a gate thread: the relay posts top level, never
 		// into the gate question's thread
 		if g, err := h.gateView(now); err != nil {
@@ -800,9 +804,31 @@ func (h *Handler) recordTurn(e nostr.Event, requestID string, cont *status.Relay
 			}
 		}
 	}
-	rec.Turns = append(rec.Turns, status.RelayTurn{Event: e.ID, MessageID: firstNonEmpty(d.LeadID, d.MailboxID), At: now.UTC()})
+	wasClosed := rec.Closed
+	rec.Turns = append(rec.Turns, status.RelayTurn{Event: e.ID, At: now.UTC()})
 	rec.Closed = false
-	return writeRelayRecord(dir, rec, now)
+	if err := writeRelayRecord(dir, rec, now); err != nil {
+		return nil, nil, err
+	}
+	undo := func() {
+		if cont == nil {
+			_ = os.Remove(relayRecordPath(dir, requestID))
+			return
+		}
+		rec.Turns, rec.Closed = rec.Turns[:len(rec.Turns)-1], wasClosed
+		_ = writeRelayRecord(dir, rec, now)
+	}
+	return rec, undo, nil
+}
+
+// finishTurn records where the turn went: the AMQ message, and for a fresh
+// request the lead it was forwarded to.
+func (h *Handler) finishTurn(rec *status.RelayRecord, fresh bool, d Delivery, now time.Time) error {
+	if fresh && d.LeadID != "" {
+		rec.Lead, rec.Route = d.LeadHandle, d.Lead
+	}
+	rec.Turns[len(rec.Turns)-1].MessageID = firstNonEmpty(d.LeadID, d.MailboxID)
+	return writeRelayRecord(status.RelayDir(h.Target.Root), rec, now)
 }
 
 func firstNonEmpty(a, b string) string {
