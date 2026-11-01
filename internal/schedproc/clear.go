@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 )
 
@@ -41,7 +41,27 @@ const (
 	// clear names (it relaunched since the screen showed the line, or it has
 	// no launch record): the line the owner saw is not the seat's line now.
 	RefusedClearStale = "clear_launch_stale"
+	// RefusedClearNotAWarning: the code is not a seat warning (a refusal
+	// code, or anything else): a refusal is never cleared.
+	RefusedClearNotAWarning = "clear_not_a_warning"
+	// RefusedClearNotShowing: the warning is a seat warning, but status does
+	// not show it for that seat on that launch now: nothing is cleared
+	// ahead of the condition.
+	RefusedClearNotShowing = "clear_not_showing"
 )
+
+// ClearableWarnings are the seat warning codes status shows (brief 31-1),
+// the only codes a clear can name; status's warnings are these and a status
+// row keeps the two lists equal.
+var ClearableWarnings = []string{
+	"claude_hooks_silent", "claude_allow_rules_present", "claude_external_includes_pending",
+	"launch_budget_exceeded", "wake_off", "seat_stalled_at_dialog", "pi_provider_key_missing",
+}
+
+// CurrentWarnings is the seat's current launch id and the warnings status
+// shows for it now, before any clear (status.CurrentSeatWarnings; schedproc
+// cannot import status, which imports it).
+type CurrentWarnings func(root, seat string) (launchID string, warnings []string, err error)
 
 // ClearRequest is the lead's clear: the seat, the warning's code (the text
 // before its first colon on the screen) and the seat's launch id.
@@ -80,28 +100,42 @@ func SendClear(root, path string, req ClearRequest) (DecideReply, error) {
 var clearNow = time.Now
 
 // applyClear decodes a proved clear and records it.
-func applyClear(root, lead string, line []byte) DecideReply {
+func applyClear(root, lead string, line []byte, current CurrentWarnings) DecideReply {
 	var req ClearRequest
 	if json.Unmarshal(line, &req) != nil {
 		return DecideReply{Code: RefusedClearMalformed, Detail: "a clear that does not decode"}
 	}
-	return RecordClear(root, lead, req)
+	return RecordClear(root, lead, req, current)
 }
 
 // RecordClear is the clear's apply step, run by the decision socket after
-// it proved the sender: the request's shape, then the seat's current launch
-// (its staged record's launch id) must be the one named.
-func RecordClear(root, lead string, req ClearRequest) DecideReply {
+// it proved the sender: the request's shape; the code must be a seat
+// warning (clear_not_a_warning); the seat's current launch must be the one
+// named (clear_launch_stale); and status must show that warning for the
+// seat on that launch now (clear_not_showing). current is required.
+func RecordClear(root, lead string, req ClearRequest, current CurrentWarnings) DecideReply {
 	if !clearSeatRe.MatchString(req.Seat) || !clearWarningRe.MatchString(req.Warning) || !clearLaunchRe.MatchString(req.LaunchID) {
 		return DecideReply{Code: RefusedClearMalformed, Detail: "a clear names a seat handle, a warning code and the seat's launch id"}
 	}
-	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, req.Seat), launch.FileName))
-	if err != nil {
-		return DecideReply{Code: RefusedClearStale, Detail: fmt.Sprintf("seat %s has no launch record: %v", req.Seat, err)}
+	if !slices.Contains(ClearableWarnings, req.Warning) {
+		return DecideReply{Code: RefusedClearNotAWarning, Detail: fmt.Sprintf("%s is not a seat warning (%s); a refusal is never cleared", req.Warning, strings.Join(ClearableWarnings, ", "))}
 	}
-	staged, err := launch.Decode(raw)
-	if err != nil || staged.LaunchID != req.LaunchID {
-		return DecideReply{Code: RefusedClearStale, Detail: fmt.Sprintf("seat %s's current launch is %s, not %s: the line was of an earlier launch", req.Seat, staged.LaunchID, req.LaunchID)}
+	if current == nil {
+		return DecideReply{Code: RefusedClearNotShowing, Detail: "this scheduler cannot read the seat's warnings; nothing is cleared"}
+	}
+	launchID, warnings, err := current(root, req.Seat)
+	if err != nil {
+		return DecideReply{Code: RefusedClearStale, Detail: err.Error()}
+	}
+	if launchID != req.LaunchID {
+		return DecideReply{Code: RefusedClearStale, Detail: fmt.Sprintf("seat %s's current launch is %s, not %s: the line was of an earlier launch", req.Seat, launchID, req.LaunchID)}
+	}
+	showing := false
+	for _, w := range warnings {
+		showing = showing || WarningCode(w) == req.Warning
+	}
+	if !showing {
+		return DecideReply{Code: RefusedClearNotShowing, Detail: fmt.Sprintf("seat %s shows no %s on launch %s now; a clear acknowledges a line on the screen, never one ahead of it", req.Seat, req.Warning, req.LaunchID)}
 	}
 	at := clearNow().UTC()
 	rec := ClearLine{At: at, Seat: req.Seat, Warning: req.Warning, LaunchID: req.LaunchID, Lead: lead}

@@ -23,6 +23,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
@@ -95,9 +96,14 @@ colon) on the seat's current launch, sent over the same socket and proved
 the same way. It is recorded as a warning_cleared decision and in the
 scheduler directory's clears.jsonl; status then lists that warning under
 the seat's acknowledged_warnings for that launch only. A clear is never a
-gate and never changes a seat's state. Refusals: clear_launch_stale (the
-seat's current launch is not the one named), clear_malformed, and the
-socket's not_lead and origin_unknown.
+gate and never changes a seat's state, and it is accepted only for a seat
+warning that status shows for that seat on that launch now. Refusals:
+clear_not_a_warning (the code is not a seat warning: a refusal is never
+cleared), clear_not_showing (status does not show that warning for the
+seat now), clear_launch_stale (the seat's current launch is not the one
+named), clear_malformed; and the socket's: not_lead (the sender does not
+descend from the lead), origin_unknown (the sender's origin cannot be read
+or proved).
 `
 
 func runScheduler(args []string) error {
@@ -474,7 +480,7 @@ var schedulerLeadParent = func() (int, string, bool) {
 func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
 	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
 		return widenDecision(sel, projectRoot, lead, req)
-	}}
+	}, Warnings: status.CurrentSeatWarnings} // brief 31-2: a clear names a warning status shows
 	if schedulerDecideSeams != nil {
 		schedulerDecideSeams(d)
 	}

@@ -69,14 +69,24 @@ func TestClearKeyIsProvedFromTheLeadsDescendant(t *testing.T) {
 	if err := launch.WriteFile(filepath.Join(launch.StagedDir(root, "scribe"), launch.FileName), launch.Record{Handle: "scribe", Root: root, Session: "s", Runtime: "claude", LaunchID: "launch-1"}); err != nil {
 		t.Fatal(err)
 	}
+	// the warning the clear names is on the screen: scribe is at a dialog
+	if err := os.MkdirAll(filepath.Join(root, "agents", "scribe"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "agents", "scribe", ".wake.dialog"), []byte(`{"harness":"claude"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	me := os.Getpid()
 	start, ok := procinfo.StartToken(me)
 	if !ok {
 		t.Skip("no start stamp for this process")
 	}
 	serve := func(lead func(string, string) (panechain.Pane, error)) *schedproc.DecisionServer {
-		s, err := schedproc.ServeDecisions(schedproc.DecideOptions{Root: root, Lead: "cto", LeadPane: lead,
-			Apply: func(string, schedproc.WidenRequest) schedproc.DecideReply { return schedproc.DecideReply{OK: true} }})
+		// the socket as scheduler run wires it (decisionOptions): the clear
+		// reads the seat's warnings through status
+		d := decisionOptions(storeSelection{}, root)
+		d.Root, d.Lead, d.LeadPane = root, "cto", lead
+		s, err := schedproc.ServeDecisions(*d)
 		if err != nil {
 			t.Fatal(err)
 		}

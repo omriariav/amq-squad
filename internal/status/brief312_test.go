@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 )
@@ -39,7 +40,7 @@ func TestAClearedWarningLeavesTheScreenForItsLaunchOnly(t *testing.T) {
 	if hasWarning(scribe0, WarnStalledAtDialog) == "" || hasWarning(scribe0, WarnLaunchBudget) == "" {
 		t.Fatalf("fixture: scribe's warnings %q", scribe0.Warnings)
 	}
-	if r := schedproc.RecordClear(root, "cto", schedproc.ClearRequest{Seat: "scribe", Warning: WarnStalledAtDialog, LaunchID: "launch-1"}); !r.OK {
+	if r := schedproc.RecordClear(root, "cto", schedproc.ClearRequest{Seat: "scribe", Warning: WarnStalledAtDialog, LaunchID: "launch-1"}, CurrentSeatWarnings); !r.OK {
 		t.Fatalf("clear: %+v", r)
 	}
 	after := collect()
@@ -68,7 +69,46 @@ func TestAClearedWarningLeavesTheScreenForItsLaunchOnly(t *testing.T) {
 	if hasWarning(next, WarnStalledAtDialog) == "" || len(next.AcknowledgedWarnings) != 0 {
 		t.Errorf("a later launch's same condition: warnings %q, acknowledged %q", next.Warnings, next.AcknowledgedWarnings)
 	}
-	if r := schedproc.RecordClear(root, "cto", schedproc.ClearRequest{Seat: "scribe", Warning: WarnStalledAtDialog, LaunchID: "launch-1"}); r.OK || r.Code != schedproc.RefusedClearStale {
+	if r := schedproc.RecordClear(root, "cto", schedproc.ClearRequest{Seat: "scribe", Warning: WarnStalledAtDialog, LaunchID: "launch-1"}, CurrentSeatWarnings); r.OK || r.Code != schedproc.RefusedClearStale {
 		t.Errorf("a clear of the earlier launch: %+v", r)
+	}
+}
+
+// Codex's P2 on #831 (status's half): the scheduler reads the seat's
+// warnings through CurrentSeatWarnings, the computation status shows, so a
+// warning that is not on the screen cannot be cleared ahead of it: a clear
+// of seat_stalled_at_dialog before any dialog is refused
+// clear_not_showing, and when the dialog then opens on the same launch the
+// line is a warning, not hidden. Reverted (the code unchecked), the
+// pre-clear is recorded and the later dialog never shows.
+func TestAWarningCannotBeClearedBeforeItShows(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	root := filepath.Join(base, "root")
+	now := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	sec := time.Second
+	budgetSeat(t, root, "scribe", "claude", "sonnet", now.Add(-time.Minute), sec, sec, sec, sec, nil)
+	if r := schedproc.RecordClear(root, "cto", schedproc.ClearRequest{Seat: "scribe", Warning: WarnStalledAtDialog, LaunchID: "launch-1"}, CurrentSeatWarnings); r.OK || r.Code != schedproc.RefusedClearNotShowing {
+		t.Fatalf("a clear ahead of the dialog: %+v", r)
+	}
+	if err := os.WriteFile(filepath.Join(root, "agents", "scribe", ".wake.dialog"), []byte(`{"harness":"claude"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scribe := seatByHandle(t, Build(Collect(CollectOptions{Root: root, Now: now, PIDAlive: func(int) bool { return true }})), "scribe")
+	if hasWarning(scribe, WarnStalledAtDialog) == "" || len(scribe.AcknowledgedWarnings) != 0 {
+		t.Fatalf("the dialog that opened later: warnings %q, acknowledged %q", scribe.Warnings, scribe.AcknowledgedWarnings)
+	}
+}
+
+// The clearable codes are exactly the seat warnings status shows: a new
+// seat warning is clearable only once it is added to
+// schedproc.ClearableWarnings, and no refusal code is in that list.
+func TestTheClearableCodesAreStatusSeatWarnings(t *testing.T) {
+	shown := []string{claudeseat.HooksSilent, claudeseat.AllowRulesPresent, claudeseat.ExternalIncludesPending,
+		WarnLaunchBudget, WarnWakeOff, WarnStalledAtDialog, WarnPiProviderNoKey}
+	slices.Sort(shown)
+	clearable := slices.Clone(schedproc.ClearableWarnings)
+	slices.Sort(clearable)
+	if !slices.Equal(shown, clearable) {
+		t.Fatalf("status's seat warnings %q, clearable %q", shown, clearable)
 	}
 }

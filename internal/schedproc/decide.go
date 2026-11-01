@@ -93,6 +93,10 @@ type DecideOptions struct {
 	// Relaunch takes the lead's relaunch of the roster (3.0.1 t16); nil
 	// refuses it (relaunch_unsupported: the scheduler runs no roster).
 	Relaunch func(lead string, req RelaunchRequest) DecideReply
+	// Warnings reads a seat's current launch and the warnings status shows
+	// for it (status.CurrentSeatWarnings), for the clear (brief 31-2); nil
+	// refuses every clear.
+	Warnings CurrentWarnings
 	// Seams for tests: the lead's recorded pane, the chain walk, a pid's
 	// start stamp and the kernel peer of a connection.
 	LeadPane   func(root, lead string) (panechain.Pane, error)
@@ -294,7 +298,7 @@ func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
 	case ClearRequestKind:
 		// brief 31-2: the owner's clear of a warning line, recorded here; it
 		// changes no seat's state, so it needs no hook of the scheduler's.
-		return applyClear(s.o.Root, s.o.Lead, line)
+		return applyClear(s.o.Root, s.o.Lead, line, s.o.Warnings)
 	case RelaunchRequestKind:
 		var req RelaunchRequest
 		if json.Unmarshal(line, &req) != nil {

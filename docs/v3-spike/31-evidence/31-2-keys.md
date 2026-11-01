@@ -128,11 +128,26 @@ block is the typed widen block's first live case.
 internal/schedproc/clear.go. The clear is a fourth request kind on the
 scheduler's decision socket (`amq-squad.clear.v1`, beside the widening and
 the relaunch), proved before it is read and again after, like the others.
-Its apply step is in schedproc itself (`RecordClear`), so `scheduler run`
-needs no new hook: the request names a seat, a warning code (the text
-before the colon on the screen) and the seat's launch id; the seat's staged
-launch record must carry that launch id (else `clear_launch_stale`: the
-seat relaunched since the screen showed the line); the clear is appended
+Its apply step is in schedproc itself (`RecordClear`). The request names a
+seat, a warning code (the text before the colon on the screen) and the
+seat's launch id. It is accepted only for a warning on the screen now
+(Codex P2 on #831):
+
+- the code must be a seat warning, one of `schedproc.ClearableWarnings`
+  (status's seven seat warning codes; a status row keeps the two lists
+  equal); a refusal code, or anything else, is `clear_not_a_warning`;
+- the seat's current launch must be the one named, else
+  `clear_launch_stale` (the seat relaunched since the screen showed it);
+- status must show that warning for that seat on that launch now, else
+  `clear_not_showing`, so nothing is cleared ahead of its condition (a
+  `seat_stalled_at_dialog` cleared before any dialog would otherwise hide
+  the dialog when it opened). The scheduler reads the seat's warnings
+  through `status.CurrentSeatWarnings`, the same computation status shows
+  (`seatLaunchState` in internal/status/collect.go), handed to the socket
+  by `scheduler run` (`DecideOptions.Warnings`, in `decisionOptions`;
+  schedproc cannot import status). Without it every clear is refused.
+
+Then the clear is appended
 to `<root>/extensions/amq-squad/scheduler/clears.jsonl` and logged as a
 `warning_cleared` decision. Status reads clears.jsonl whole (one line per
 owner acknowledgement) and lists a seat's cleared warnings under
@@ -175,13 +190,14 @@ target and prefix for each of the five typed actions (pi/test/keys.test.ts,
 | 4 | not built: section 5 |
 | 5 | PR 2 (the widen key waits for t26) |
 | 6 | pi `reset: task reset, --pool for a picked pool, and a refusal by name` (`repin_after_attempt` and `reset refused` shown as the verb printed them) |
-| 7 | pi `clear: the acknowledgement names the warning and the launch; the line leaves the screen; the seat's state does not`; status `TestAClearedWarningLeavesTheScreenForItsLaunchOnly` (acknowledged, state, reason code, bucket, live and outcome unchanged, another seat untouched, the next launch's same condition a warning again, a clear of the earlier launch refused); schedproc `TestRecordClearRefusesWhatIsNotAWarningOnALaunch` |
+| 7 | pi `clear: the acknowledgement names the warning and the launch; the line leaves the screen; the seat's state does not`; status `TestAClearedWarningLeavesTheScreenForItsLaunchOnly` (acknowledged, state, reason code, bucket, live and outcome unchanged, another seat untouched, the next launch's same condition a warning again, a clear of the earlier launch refused); Codex P2 1: schedproc `TestRecordClearAcceptsOnlyAWarningShowingOnTheCurrentLaunch` (`clear_not_a_warning` for refusal codes, `clear_not_showing`, stale, malformed), status `TestAWarningCannotBeClearedBeforeItShows`, `TestTheClearableCodesAreStatusSeatWarnings`; cli `TestClearKeyIsProvedFromTheLeadsDescendant` runs the socket as `decisionOptions` wires it |
 | 8 | Q7 no: pi `answer, Q7 no: an unposted question is posted over Buzz; a gate answered over Buzz is closed and refused`; the model cannot write an answer (row 2) |
 | 9 | Q7 no: pi `answer, Q7 no: every typed gate kind waits on Buzz and no terminal answer is written` (tag, github_release, external_send, credential_change, spawn) |
 
 Each row was checked to fail with its change reverted (the status split,
 the socket's clear kind, the reset's `--pool`, the gate line's "waiting on
-Buzz"); row 2 fails whenever a tool is added.
+Buzz"; for Codex P2 1, the "showing" check and the status wiring in
+`decisionOptions`); row 2 fails whenever a tool is added.
 
 No test reaches the network, the real HOME, tmux, AMQ, Buzz or a keychain:
 the pi rows run the stand-in pi with a scripted runner; the cli rows run
@@ -292,12 +308,14 @@ tmux attach -t "$(tmux list-sessions -F '#{session_name}' | grep '^squad-lead-' 
   `amq_task_reset` run; there is no R4 check on them to accept or refuse.
   The add and reset keys run them from the lead's process, as the tools
   do.
-- **A seat's shell is refused `not_lead`, not `origin_unknown`.** Row 1
-  names `origin_unknown` for the verb from a seat's shell. The socket
-  answers `not_lead` when the sender's parent chain is read and does not
-  reach the lead (a seat's pane shell is a sibling under tmux, not a
-  descendant), and `origin_unknown` only when the chain or the lead's
-  record cannot be read (decide.go `origin`). The row tests `not_lead`.
+- **A clear from outside the lead's descent is refused `not_lead`.** Row 1
+  of the brief names `origin_unknown` for the verb from a seat's shell.
+  The socket (decide.go `origin`) answers `not_lead` when the sender's
+  parent chain is read and does not reach the lead's recorded incarnation
+  (a seat's pane shell is a sibling under tmux, not a descendant), and
+  `origin_unknown` only for an origin it cannot read or prove (no kernel
+  peer, an unreadable start stamp or chain, no readable lead record). Row 1
+  tests `not_lead`.
 - **The answer key's "second answer from the screen is refused".** With
   no terminal door there is no second answer to refuse; the key reads the
   gate fresh and refuses a gate that is not open by its state.
