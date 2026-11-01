@@ -293,12 +293,14 @@ of the working tree); the binary is `~/scratch-v31/build/pi/amq-squad`:
 git worktree add ~/scratch-v31 v3.1.0 && cd ~/scratch-v31 && scripts/build-pi-runtime.sh all
 ```
 
-Then `up` from the repository, on its squad.yaml (it installs that build
-over the `amq-squad` on PATH by temp name and rename):
+Then `up` from the repository, on its squad.yaml, run from the tag build's
+own binary, since the `amq-squad` on PATH is 3.0.2 and has no `up` (it
+installs that build over the `amq-squad` on PATH by temp name and rename; the
+running binary is the source, so it is untouched):
 
 ```sh
 cd ~/code/amq-squad
-amq-squad up --binary ~/scratch-v31/build/pi/amq-squad
+~/scratch-v31/build/pi/amq-squad up --binary ~/scratch-v31/build/pi/amq-squad
 ```
 
 **Where the per-seat numbers appear.** `up` prints each seat's line when

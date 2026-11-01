@@ -11,7 +11,10 @@ import subprocess
 import sys
 
 
-VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+)$")
+# A release candidate is x.y.z-rc.N (3.1.0-rc.1); no other prerelease form.
+# Its notes live in the base version's file (docs/v3.1.0-release-notes.md),
+# whose heading names the candidate.
+VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)$")
 # Keep the opening-block and field shapes aligned with the Go skill
 # frontmatter readers in internal/cli: strict byte-zero fence, LF/CRLF, no
 # BOM or leading whitespace, and no fallback to searching the document body.
@@ -20,7 +23,11 @@ SKILL_FRONTMATTER_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 SKILL_FRONTMATTER_VERSION_RE = re.compile(
-    r'^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+)"?',
+    # The whole field value must be the version: after it only the closing
+    # quote, blanks, a trailing comment and the line end (CR tolerated), so a
+    # suffix such as -rc.1-beta.2 or +meta is not read as the prefix it starts
+    # with.
+    r'^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)"?[ \t]*(?:#[^\r\n]*)?\r?$',
     re.MULTILINE,
 )
 # The AMQ floor has one source: doctor's constant, the version below which
@@ -139,7 +146,8 @@ def skill_frontmatter_version(value: str) -> str | None:
 
 
 def require_release_notes(root: str, tag: str, failures: list[str]) -> None:
-    release_notes_rel = f"docs/{tag}-release-notes.md"
+    notes_tag = re.sub(r"-rc\.[0-9]+$", "", tag)
+    release_notes_rel = f"docs/{notes_tag}-release-notes.md"
     release_notes = os.path.join(root, release_notes_rel)
     if not os.path.isfile(release_notes):
         failures.append(f"{release_notes_rel}: missing canonical release notes")
