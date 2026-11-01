@@ -192,7 +192,7 @@ run("a reply naming the thread root does not map", [(R,' ||\n\t\t\t\t\tslices.Co
 # Codex pass 3 on the normalization
 run("NFKC before the mark strip (accents survive)", [(R,'s = strip(norm.NFKC.String(strip(norm.NFD.String(s))))','s = strip(norm.NFKC.String(s))')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
-run("default-ignorable code points not stripped", [(R,'unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point)','unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf)')],
+run("default-ignorable code points not stripped (the explicit list and the tables)", [(R,'if ignorable[r] || unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) {','if unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf) {')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 run("σ and ς not lookalikes of c (the lunate sigma passes)", [(R,"'ϲ': 'c', 'σ': 'c', 'ς': 'c', ","'ϲ': 'c', ")],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
