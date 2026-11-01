@@ -127,7 +127,7 @@ run("the lead takes a yes that replies elsewhere", [(LS,'\t\tcase !slices.Contai
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the lead takes an altered plan post", [(LS,'\t\tcase !p.CheckID():\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a bare no as the confirmation", [(LS,'bare && verb == "approve" && req.Post != nil {','bare && req.Post != nil {')],
+run("the lead takes a bare no as the confirmation", [(LS,'bare && verb == "approve" && req.Post != nil {','bare && verb != "" && req.Post != nil {')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the attachment refuses a post naming no proposal instead of not_a_plan", [(TC,'\t\treturn "", fmt.Errorf("%w: the post names no proposal younger than %s", gateverify.ErrNotAPlan, ConfirmTTL)\n','\t\treturn "", fmt.Errorf("%s: the post names no proposal younger than %s", ReasonNoProposal, ConfirmTTL)\n')],
     CL+"'TestTheAttachmentRoutesABareYesByThePostsProposal'")
