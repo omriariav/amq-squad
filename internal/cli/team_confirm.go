@@ -19,6 +19,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -201,28 +202,15 @@ func logEvent(root, id, digest string, at time.Time) error {
 
 // noLeadHolds is the shell apply's check (the plan reviewer's ruling: no
 // kernel read tells the owner's shell from a tree the model built, so the
-// fact that matters is whether a model runs at all). It fails closed: a
-// solo lead's discovery record that exists is lead_running when its socket
-// answers and lead_unreachable on any other outcome (unreadable, malformed,
-// a connect that fails); a team lead holding any session's lead lock under
-// the repository's .agent-mail is lead_running naming that session. "No
-// lead" is only no discovery record and no held lead lock at all.
+// fact that matters is whether a model runs at all): the solo lead's
+// discovery record by the lead lock's liveness rule (soloLeadProbe: a live
+// lead is lead_running, or lead_unreachable when its socket is silent; a
+// stale record is removed and is no lead), and a team lead holding any
+// session's lead lock under the repository's .agent-mail, lead_running
+// naming that session.
 func noLeadHolds(project, digest string) error {
-	root, err := soloRootOf(project)
-	if err != nil {
-		return err
-	}
-	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
-	switch _, err := os.Lstat(rec); {
-	case err == nil:
-		c, derr := dialLead(root)
-		if derr != nil {
-			return fmt.Errorf("%s: %s names a solo lead of %s whose socket cannot be reached (%v); if no lead runs, remove %s and apply again; %s", ReasonLeadUnreachable, rec, project, derr, rec, doorsText(digest))
-		}
-		c.Close()
-		return fmt.Errorf("%s: the solo lead of %s is running (its start socket answers), so the apply is the lead's to make on a confirmation it witnessed; %s", schedproc.ReasonLeadRunning, project, doorsText(digest))
-	case !errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("%s: %s cannot be read (%v); %s", ReasonLeadUnreachable, rec, err, doorsText(digest))
+	if err := soloLeadProbe(project); err != nil {
+		return fmt.Errorf("%w; %s", err, doorsText(digest))
 	}
 	locks, err := filepath.Glob(filepath.Join(project, ".agent-mail", "*", "extensions", "amq-squad", "scheduler", schedproc.LeadLockName))
 	if err != nil {
@@ -283,6 +271,12 @@ func takeApplyLock(project string) (func(), error) {
 // withNoLead runs a shell apply's write under the apply lock, after the
 // probe that no lead holds the repository.
 func withNoLead(project, digest string, write func() error) error {
+	// a shell apply run under a lead or its pi (a renamed binary in the
+	// model's shell, after rewriting the discovery record to read as stale)
+	// is refused by the process tree, as up is
+	if err := underSoloLead("team apply", true, true); err != nil {
+		return err
+	}
 	unlock, err := takeApplyLock(project)
 	if err != nil {
 		return err
@@ -374,6 +368,62 @@ type leadStartRecord struct {
 	Schema int    `json:"schema"`
 	Socket string `json:"socket"`
 	PID    int    `json:"pid"`
+	Start  string `json:"start"` // the lead's raw start stamp: the record's liveness
+}
+
+// KindDiscoveryStale is the decision of a stale discovery record removed.
+const KindDiscoveryStale = "discovery_stale"
+
+// discoveryAlive is the liveness read of a discovery record's pid (a test
+// seam).
+var discoveryAlive = procinfo.Alive
+
+// soloLeadProbe reads the repository's solo lead discovery record by the
+// lead lock's liveness rule (the plan reviewer: no file is ever the
+// owner's to delete by hand). A record whose pid is alive with its recorded
+// start stamp is lead_running when its socket answers and lead_unreachable
+// when it does not (the one case that needs a human); a record whose pid
+// cannot be told alive or dead is lead_unreachable too. A record that is
+// malformed, whose pid is dead, or whose pid carries another start stamp,
+// is stale: it is removed with a discovery_stale decision naming it, and the
+// probe answers no lead (nil).
+func soloLeadProbe(project string) error {
+	root, err := soloRootOf(project)
+	if err != nil {
+		return err
+	}
+	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
+	raw, err := os.ReadFile(rec)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("%s: %s cannot be read (%v)", ReasonLeadUnreachable, rec, err)
+	}
+	var r leadStartRecord
+	why := "it is malformed"
+	if json.Unmarshal(raw, &r) == nil && r.PID > 1 && r.Start != "" {
+		st, detail := schedproc.LeadState(r.PID, r.Start, confirmStamp, discoveryAlive)
+		switch st {
+		case schedproc.LeadAlive:
+			c, derr := dialLead(root)
+			if derr != nil {
+				return fmt.Errorf("%s: the solo lead of %s (pid %d, %s) is alive with its start stamp, but its socket does not answer (%v); look at pid %d", ReasonLeadUnreachable, project, r.PID, rec, derr, r.PID)
+			}
+			c.Close()
+			return fmt.Errorf("%s: the solo lead of %s is running (pid %d; its start socket answers)", schedproc.ReasonLeadRunning, project, r.PID)
+		case schedproc.LeadUnknown:
+			return fmt.Errorf("%s: %s names pid %d, whose state cannot be read (%s)", ReasonLeadUnreachable, rec, r.PID, detail)
+		}
+		why = detail
+	}
+	if err := os.Remove(rec); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s: the stale record %s cannot be removed: %v", ReasonLeadUnreachable, rec, err)
+	}
+	if err := schedproc.AppendDecision(root, confirmNow(), scheduler.Decision{Kind: KindDiscoveryStale, Reason: rec + ": " + why}); err != nil {
+		return fmt.Errorf("decision_unrecorded: the stale record %s was removed (%s) but its decision could not be recorded: %v", rec, why, err)
+	}
+	return nil
 }
 
 // dialLead connects to the solo lead of root: no_lead when none serves it.

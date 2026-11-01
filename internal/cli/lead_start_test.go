@@ -544,15 +544,21 @@ func TestTheTUIDoorIsWitnessedOnlyFromTheLeadsOwnPi(t *testing.T) {
 
 // fakeAncestors installs a parent chain for the under-a-lead check: this
 // process is 100, each pid's parent and argv as given, stamps stable.
-func fakeAncestors(t *testing.T, parent map[int]int, argv map[int][]string) {
+func fakeAncestors(t *testing.T, parent map[int]int, argv map[int][]string, env ...map[int][]string) {
 	t.Helper()
-	prev := []any{underLeadSelf, confirmParent, confirmStamp, ancestorArgv}
+	prev := []any{underLeadSelf, confirmParent, confirmStamp, ancestorArgv, ancestorEnviron}
 	t.Cleanup(func() {
 		underLeadSelf = prev[0].(func() int)
 		confirmParent = prev[1].(func(int) (int, bool))
 		confirmStamp = prev[2].(func(int) (string, bool))
 		ancestorArgv = prev[3].(func(int) ([]string, bool))
+		ancestorEnviron = prev[4].(func(int) ([]string, bool))
 	})
+	envs := map[int][]string{}
+	if len(env) > 0 {
+		envs = env[0]
+	}
+	ancestorEnviron = func(p int) ([]string, bool) { e, ok := envs[p]; return e, ok }
 	underLeadSelf = func() int { return 100 }
 	confirmParent = func(p int) (int, bool) { q, ok := parent[p]; return q, ok }
 	confirmStamp = func(p int) (string, bool) { return fmt.Sprintf("st-%d", p), true }
@@ -563,8 +569,11 @@ func fakeAncestors(t *testing.T, parent map[int]int, argv map[int][]string) {
 // check: `up` run as a descendant of a solo lead (whatever its own name:
 // /tmp/squadctl) refuses under_solo_lead naming the ancestor, as it does
 // under the lead's pi and with AM_ME in its environment; `up` from a plain
-// shell proceeds through its steps as before. lead --team under a lead
-// refuses the same. scheduler run, which lead --team starts, never refuses
+// shell proceeds through its steps as before. The pi that refuses carries
+// AMQ's identity (AM_ME, or the lead's start socket path, in its
+// environment): `up` under the owner's own pi editor proceeds. lead --team
+// under a lead refuses the same, and so does a shell apply under the
+// lead's pi. scheduler run, which lead --team starts, never refuses
 // for a lead ancestor (the plan reviewer's rule), and refuses under the
 // lead's pi as up does.
 func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
@@ -576,7 +585,7 @@ func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
 		"the bare solo lead": {"amq-squad"},
 		"the lead's pi":      {"/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/node", "/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/cli.js"},
 	} {
-		fakeAncestors(t, underLead, map[int][]string{90: bash, 80: lead})
+		fakeAncestors(t, underLead, map[int][]string{90: bash, 80: lead}, map[int][]string{80: {"AM_ME=lead"}})
 		if _, err := runUpJSON(t, f.proj); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": up runs under pid 80") {
 			t.Fatalf("up under %s = %v", name, err)
 		}
@@ -606,11 +615,53 @@ func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
 		t.Fatalf("the scheduler lead --team starts = %v", err)
 	}
 	pi := []string{"/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/node", "/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/cli.js"}
-	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 80, 80: 1}, map[int][]string{90: bash, 85: pi, 80: {"amq-squad", "lead"}})
+	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 80, 80: 1}, map[int][]string{90: bash, 85: pi, 80: {"amq-squad", "lead"}}, map[int][]string{85: {"PATH=/bin", leadStartSocketEnv + "=/r/lead-start.sock"}})
 	if err := runSchedulerRun(context.Background(), []string{"--project", f.proj}, io.Discard); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": scheduler run runs under pid 85") {
 		t.Fatalf("scheduler run under the lead's pi = %v", err)
 	}
 	if _, err := runUpJSON(t, f.proj); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": up runs under pid 85") {
 		t.Fatalf("up under the lead's pi = %v", err)
+	}
+	// the owner's own pi editor (pi's argv, no AMQ identity) does not refuse
+	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 1}, map[int][]string{90: {"-zsh"}, 85: pi}, map[int][]string{85: {"PATH=/bin", "HOME=/Users/o"}})
+	if r, err := runUpJSON(t, f.proj); err != nil && strings.Contains(err.Error(), ReasonUnderSoloLead) {
+		t.Fatalf("up under the owner's plain pi = %v %s", err, stepNames(r))
+	}
+	// a shell apply under the lead's pi is refused by the process tree too
+	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 1}, map[int][]string{90: bash, 85: pi}, map[int][]string{85: {"AM_ME=lead"}})
+	if err := withNoLead(f.proj, "sha256:"+strings.Repeat("ab", 32)+"@absent", func() error { t.Fatal("the write ran"); return nil }); err == nil || !strings.HasPrefix(err.Error(), ReasonUnderSoloLead+": team apply runs under pid 85") {
+		t.Fatalf("a shell apply under the lead's pi = %v", err)
+	}
+}
+
+// The plan reviewer's liveness rule in up: a live solo lead of the
+// repository (its record's pid alive with its stamp, its socket answering)
+// refuses up's lead step lead_running before anything is stopped or
+// started; a stale record (its pid carrying another start stamp) is removed
+// with a discovery_stale decision and up goes on.
+func TestUpReadsTheSoloLeadsDiscoveryRecordByItsLiveness(t *testing.T) {
+	f, _ := upWorld(t)
+	root, err := soloRootOf(f.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustMkdir(t, filepath.Join(root, "extensions", "amq-squad"))
+	lead := newLeadStarter(root, f.proj, "test", nil)
+	if _, err := lead.serve(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := runUpJSON(t, f.proj)
+	last := r.Steps[len(r.Steps)-1]
+	if err == nil || last.Name != "lead" || last.Refusal != schedproc.ReasonLeadRunning || f.callIndex("tmux new-session") >= 0 {
+		t.Fatalf("up beside a live solo lead: %v %+v", err, r.Steps)
+	}
+	lead.close()
+	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
+	mustWrite(t, rec, fmt.Sprintf(`{"schema":1,"socket":"/nowhere","pid":%d,"start":"another"}`, os.Getpid()))
+	if r, err := runUpJSON(t, f.proj); err != nil {
+		t.Fatalf("up beside a stale record: %v %s", err, stepNames(r))
+	}
+	if _, err := os.Stat(rec); err == nil {
+		t.Fatal("up left the stale record")
 	}
 }

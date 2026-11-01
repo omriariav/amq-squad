@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -430,13 +432,15 @@ func TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer(t *testing.T) {
 	}
 }
 
-// Codex's third pass on #834: the shell apply's probe fails closed and is
-// held through the write. A discovery record that is malformed, or whose
-// socket does not answer, refuses lead_unreachable naming the record; a team
-// lead holding any session's lead lock (not only the proposed session's)
-// refuses lead_running naming that session; a lead starting between the
-// probe and the write is refused apply_busy and the write goes on alone;
-// with no record and no held lock the apply proceeds.
+// Codex's third pass on #834 and the plan reviewer's liveness rule: the
+// discovery record is read as the lead lock is. A malformed record, one
+// whose pid carries another start stamp, and one whose pid is dead are
+// stale: removed with a discovery_stale decision naming them, and the apply
+// goes on as no lead; only a live pid with its stamp and a silent socket
+// refuses lead_unreachable. A team lead holding any session's lead lock
+// (not only the proposed session's) refuses lead_running naming that
+// session; a lead starting between the probe and the write is refused
+// apply_busy and the write goes on alone.
 func TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite(t *testing.T) {
 	proj, root := soloProject(t)
 	t.Setenv(leadStartSocketEnv, "")
@@ -446,13 +450,31 @@ func TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite(t *testing.T) {
 		return err
 	}
 	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
-	mustWrite(t, rec, "{")
-	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") || !strings.Contains(err.Error(), rec) {
-		t.Fatalf("a malformed record = %v", err)
+	stale := func(why, body string) {
+		t.Helper()
+		mustWrite(t, rec, body)
+		if err := noLeadHolds(proj, digest); err != nil {
+			t.Fatalf("%s: %v", why, err)
+		}
+		if _, err := os.Stat(rec); err == nil {
+			t.Fatalf("%s: the stale record was not removed", why)
+		}
+		found := false
+		for _, d := range decisionKinds(t, root) {
+			found = found || (d.Kind == KindDiscoveryStale && strings.Contains(d.Reason, rec))
+		}
+		if !found {
+			t.Fatalf("%s: no %s decision names the record", why, KindDiscoveryStale)
+		}
 	}
-	mustWrite(t, rec, `{"schema":1,"socket":"`+filepath.Join(root, "extensions", "amq-squad", "launch", leadStartSocketName)+`","pid":4242}`)
-	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") {
-		t.Fatalf("a record whose socket does not answer = %v", err)
+	self := os.Getpid()
+	stamp, _ := procinfo.StartToken(self)
+	socket := filepath.Join(root, "extensions", "amq-squad", "launch", leadStartSocketName)
+	stale("a malformed record", "{")
+	stale("a live pid carrying another start stamp", fmt.Sprintf(`{"schema":1,"socket":%q,"pid":%d,"start":"another"}`, socket, self))
+	mustWrite(t, rec, fmt.Sprintf(`{"schema":1,"socket":%q,"pid":%d,"start":%q}`, socket, self, stamp))
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") || !strings.Contains(err.Error(), "alive with its start stamp") {
+		t.Fatalf("a live lead whose socket does not answer = %v", err)
 	}
 	if err := os.Remove(rec); err != nil {
 		t.Fatal(err)
@@ -465,6 +487,11 @@ func TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite(t *testing.T) {
 	if _, err := os.Stat(team.SquadPath(proj)); err == nil {
 		t.Fatal("a refused apply wrote squad.yaml")
 	}
+	// a record whose pid is dead: removed, and this apply goes on as no lead
+	prevAlive := discoveryAlive
+	t.Cleanup(func() { discoveryAlive = prevAlive })
+	discoveryAlive = func(int) bool { return false }
+	mustWrite(t, rec, `{"schema":1,"socket":"/nowhere","pid":999999,"start":"darwin-tv:1.1"}`)
 	// a lead starting inside the probe-to-write window
 	s1 := filepath.Join(proj, ".agent-mail", "s1")
 	var leadErr error
@@ -486,6 +513,9 @@ func TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite(t *testing.T) {
 	}
 	if h, _ := lockHeld(filepath.Join(schedproc.Dir(s1), schedproc.LeadLockName)); h {
 		t.Fatal("a lead took the root while the apply wrote")
+	}
+	if _, err := os.Stat(rec); err == nil {
+		t.Fatal("the dead lead's record was not removed")
 	}
 	if raw, err := os.ReadFile(team.SquadPath(proj)); err != nil || string(raw) != team.RenderPlan(soloTeamPlan()) {
 		t.Fatalf("squad.yaml %q %v", raw, err)

@@ -145,7 +145,8 @@ func (s *leadStarter) serve() (string, error) {
 	s.sock = sock
 	// where the processes that are not the lead's descendants (team
 	// confirm, the Buzz attachment) find the socket; no authority
-	rec, _ := json.Marshal(leadStartRecord{Schema: 1, Socket: sock.Path, PID: s.self})
+	start, _ := confirmStamp(s.self)
+	rec, _ := json.Marshal(leadStartRecord{Schema: 1, Socket: sock.Path, PID: s.self, Start: start})
 	if err := atomicfile.Write(filepath.Join(s.root, "extensions", "amq-squad", leadStartRecordName), append(rec, '\n'), 0o600); err != nil {
 		sock.Close()
 		return "", err
@@ -678,11 +679,27 @@ func writeLeadStartText(out io.Writer, r leadStartReply) {
 // run) run under a lead, by whatever name the binary carries.
 const ReasonUnderSoloLead = "under_solo_lead"
 
-// Seams of the under-a-lead check: this process and an ancestor's argv.
+// Seams of the under-a-lead check: this process, an ancestor's argv and its
+// initial environment.
 var (
-	underLeadSelf = os.Getpid
-	ancestorArgv  = procinfo.Argv
+	underLeadSelf   = os.Getpid
+	ancestorArgv    = procinfo.Argv
+	ancestorEnviron = procinfo.Environ
 )
+
+// amqIdentityEnv reports whether an environment carries AMQ's identity: a
+// non-empty AM_ME, or the solo lead's start socket path (what the lead
+// gives its pi).
+func amqIdentityEnv(env []string) bool {
+	for _, kv := range env {
+		for _, name := range []string{"AM_ME=", leadStartSocketEnv + "="} {
+			if v, ok := strings.CutPrefix(kv, name); ok && strings.TrimSpace(v) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // leadArgv reports whether argv is an amq-squad lead: bare amq-squad, or
 // amq-squad lead with or without --team.
@@ -708,7 +725,9 @@ func piArgv(argv []string) bool {
 // /tmp/squadctl up` passes both string layers), by the plan reviewer's
 // rule. verb refuses under_solo_lead when its parent chain (read from the
 // kernel, each pid with its start stamp, re-read at the end) holds a pi
-// process (the solo lead's pi, under which the model's commands run), and,
+// process carrying AMQ's identity (AM_ME or the lead's start socket in its
+// environment: the solo lead's pi, under which the model's commands run;
+// the owner's own pi editor carries neither), and,
 // with leadRefuses, an amq-squad lead too, naming the ancestor; with
 // checkEnv, also when AM_ME is in its environment. up and lead --team pass
 // leadRefuses (neither is ever legitimately a lead's child: the confirmed
@@ -734,7 +753,9 @@ func underSoloLead(verb string, leadRefuses, checkEnv bool) error {
 		}
 		what := ""
 		switch {
-		case piArgv(argv):
+		case piArgv(argv) && func() bool { env, ok := ancestorEnviron(hop.PID); return ok && amqIdentityEnv(env) }():
+			// a pi carrying AMQ's identity: the owner's own pi editor is not
+			// the lead's pi
 			what = "the lead's pi"
 		case leadRefuses && leadArgv(argv):
 			what = "a lead"

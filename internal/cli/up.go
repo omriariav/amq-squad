@@ -767,6 +767,12 @@ func (u *upRun) lead() (string, error) {
 		return "", refuse("up_running", "another amq-squad up runs for %s; nothing was stopped", root)
 	}
 	u.upLock = ul
+	// the repository's solo lead, by its discovery record's liveness (a
+	// stale record is removed with its decision; a live one refuses)
+	if err := soloLeadProbe(u.report.Project); err != nil {
+		name, detail, _ := strings.Cut(err.Error(), ": ")
+		return "", refuse(name, "%s", detail)
+	}
 	leadLockPath := filepath.Join(dir, schedproc.LeadLockName)
 	runLock := filepath.Join(dir, "run.lock")
 	name := upTmuxSessionName(u.report.Project)
