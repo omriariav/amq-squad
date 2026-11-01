@@ -114,7 +114,7 @@ func runLead(args []string) error {
 		if teamIdentity, err = resolveTeamLeadIdentity(teamProject); err != nil {
 			return fmt.Errorf("lead: resolve the team identity: %w", err)
 		}
-		lock, err := takeLeadLock(teamIdentity.Root)
+		lock, err := UpLeadLock(teamIdentity.Root)
 		if err != nil {
 			return fmt.Errorf("lead: %w", err)
 		}
@@ -123,7 +123,7 @@ func runLead(args []string) error {
 			// the start of this launch, for the launch budget (brief 31-1)
 			os.Setenv(leadStartEnv, time.Now().UTC().Format(time.RFC3339Nano))
 		}
-		sup, err := startLeadScheduler(teamProject, teamIdentity.Root, leadPools(f.models, f.thinking))
+		sup, err := UpScheduler(teamProject, teamIdentity.Root, leadPools(f.models, f.thinking))
 		if err != nil {
 			return fmt.Errorf("lead: start the scheduler process: %w", err)
 		}
@@ -186,8 +186,34 @@ func runLead(args []string) error {
 	if err != nil {
 		return err
 	}
+	if !*team && !f.dryRun {
+		// The solo lead proposes a team from the conversation and, on the
+		// owner's confirmation, starts it in this process (brief 31-3): its
+		// pi gets the two team tools and the start socket.
+		solo["AMQ_SQUAD_SOLO_LEAD"] = "1"
+		starter := newLeadStarter(solo["AM_ROOT"], solo["AMQ_SQUAD_PROJECT"], leadVersion, leadPools(f.models, f.thinking))
+		sock, err := serveLeadStart(starter)
+		if err != nil {
+			return fmt.Errorf("lead: the start socket: %w", err)
+		}
+		solo[leadStartSocketEnv] = sock
+		defer starter.close()
+		prevExit := piExit
+		piExit = func(code int) {
+			starter.close()
+			prevExit(code)
+		}
+		defer func() { piExit = prevExit }()
+	}
 	return piLaunch(piLaunchSpec{Seat: "lead", Flags: f, PiArgs: piArgs, Overlay: solo})
 }
+
+// serveLeadStart binds the solo lead's start socket (a test seam).
+var serveLeadStart = func(s *leadStarter) (string, error) { return s.serve() }
+
+// leadVersion is this build's version for the start's roster read (set by
+// the command dispatcher).
+var leadVersion = ""
 
 var soloSlugRE = regexp.MustCompile(`[^a-z0-9-]+`)
 

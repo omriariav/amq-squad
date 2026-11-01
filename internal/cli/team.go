@@ -17,7 +17,7 @@ import (
 // The team verbs of 3.0 (brief 2b-5): the lead proposes squad.yaml and the
 // files it implies as one digest (R8), the owner (manual) or the grant (auto)
 // approves, and apply writes them. show and check read squad.yaml back.
-var teamSubcommandHints = []string{"propose", "apply", "show", "check", "draft-rules"}
+var teamSubcommandHints = []string{"propose", "apply", "confirm", "show", "check", "draft-rules"}
 
 // removedTeamVerbs maps each v2 team verb to what replaces it.
 var removedTeamVerbs = map[string]string{
@@ -38,6 +38,8 @@ func runTeam(args []string) error {
 		return runTeamPropose(args[1:], false)
 	case "apply":
 		return runTeamPropose(args[1:], true)
+	case "confirm":
+		return runTeamConfirm(args[1:])
 	case "show", "check":
 		return runTeamShow(args[0], args[1:])
 	case "draft-rules":
@@ -59,6 +61,22 @@ Usage:
                                          AGENTS.md); writes nothing
   amq-squad team apply --digest D [same options]
                                          Write those files when the digest still matches
+  amq-squad team propose --from PLAN.json  The lead's plan (goal, session, lead, seats,
+                                         files, tasks): squad.yaml rendered from it and
+                                         checked against the owner grant, printed with the
+                                         plan and its digest; the proposal is recorded for
+                                         the doors, nothing else is written
+  amq-squad team confirm DIGEST [--project DIR]
+                                         The owner's yes from the owner's own shell (refused
+                                         from a lead or a seat): the confirmation apply needs
+  amq-squad team apply --digest D [--project DIR]
+                                         Apply a recorded proposal: refused without a
+                                         confirmation younger than 30 minutes (/squad confirm
+                                         in the lead's pane, team confirm, or the signed Buzz
+                                         DM "yes <prefix>"); under the solo lead the team
+                                         starts in the lead's process (up's steps, the
+                                         mayor's checks); from the owner's shell it writes
+                                         squad.yaml and the owner starts the team (up)
   amq-squad team propose --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT
   amq-squad team apply --digest D --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT
                                          squad.yaml with one seat appended (the screen's
@@ -69,7 +87,8 @@ Usage:
                                          Draft the team-rules prose fragment (stdout)
 
 Options for propose and apply:
-  --from FILE            a squad.yaml draft to propose (else built from the flags below)
+  --from FILE            a squad.yaml draft, or the lead's plan as a JSON object, to
+                         propose (else built from the flags below)
   --roles a,b            seats, one per catalog or staged custom role (handle = role)
   --runtime r=claude     per-role runtime (claude, codex, pi; default the role's)
   --model r=m --effort r=e --worktree r=path --tools r=coding --actor-mode r=review
@@ -155,14 +174,34 @@ func runTeamPropose(args []string, apply bool) error {
 	if apply != (*o.digest != "") {
 		return usageErrorf("--digest is required by team apply and refused by team propose")
 	}
-	p, err := buildTeamProposal(o)
+	if apply && *o.addSeat == "" && *o.from == "" && *o.roles == "" {
+		// the apply of a proposal the lead recorded (brief 31-3)
+		return runTeamApplyConfirmed(*o.project, *o.digest, *o.json)
+	}
+	p, plan, err := buildTeamProposal(o)
 	if err != nil {
 		return err
+	}
+	if apply && plan != nil {
+		// R55: the apply of the lead's plan needs the owner's confirmation
+		// (the 3.0 flag form, which the owner types with the digest of the
+		// files in front of them, and the screen's add key, which the owner
+		// confirms at the key, stay as they were)
+		root, err := soloRootOf(p.ProjectDir)
+		if err != nil {
+			return err
+		}
+		if _, err := checkConfirmation(root, *o.digest, p.ProjectDir); err != nil {
+			return err
+		}
 	}
 	if apply {
 		if err := p.Apply(*o.digest); err != nil {
 			return err
 		}
+	}
+	if plan != nil && !apply {
+		return printLeadProposal(p, *plan, *o.json)
 	}
 	if *o.json {
 		return printJSONEnvelope(strings.ReplaceAll(name, " ", "_"), p)
@@ -180,49 +219,165 @@ func runTeamPropose(args []string, apply bool) error {
 	return nil
 }
 
+// teamFlagsFor is the propose and apply flags at their defaults for a
+// repository (the apply of a recorded proposal plans it as propose did).
+func teamFlagsFor(project string) teamProposeFlags {
+	e := func() *string { s := ""; return &s }
+	auto, no := "auto", false
+	return teamProposeFlags{project: &project, from: e(), roles: e(), runtime: e(), model: e(), effort: e(), worktree: e(), tools: e(), actorMode: e(),
+		lead: e(), leadMode: e(), executionMode: e(), session: e(), controlRoot: e(), targetRoot: e(), operator: e(),
+		template: &auto, rulesProse: e(), digest: e(), addSeat: e(), json: &no}
+}
+
+// printLeadProposal is `team propose --from PLAN`'s output: the plan, the
+// planned files, the digest and its 16-hex prefix, and the three doors. The
+// proposal is recorded beside the confirmation records (the Buzz door looks
+// its prefix up there; the apply plans its squad.yaml again from it).
+func printLeadProposal(p team.Plan, lp team.LeadPlan, jsonOut bool) error {
+	root, err := soloRootOf(p.ProjectDir)
+	if err != nil {
+		return err
+	}
+	lines := team.PlanLines(lp)
+	prop := teamProposal{Digest: p.Digest, Project: p.ProjectDir, SquadYAML: team.RenderPlan(lp), Plan: lines, At: confirmNow().UTC()}
+	if err := writeProposal(root, prop); err != nil {
+		return err
+	}
+	prefix := team.DigestPrefix(p.Digest)
+	doors := doorsText(p.Digest, p.ProjectDir)
+	if jsonOut {
+		return printJSONEnvelope("team_propose", map[string]any{
+			"project_dir": p.ProjectDir, "plan": lines, "digest": p.Digest, "prefix": prefix, "seats": p.Seats, "files": p.Files,
+			"squad_yaml": prop.SquadYAML, "doors": doors, "apply": []string{"amq-squad", "team", "apply", "--digest", p.Digest, "--project", p.ProjectDir},
+		})
+	}
+	fmt.Println("plan:")
+	for _, l := range lines {
+		fmt.Println("  " + termSafe(l))
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	for _, f := range p.Files {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", f.Action, f.Path, f.SHA256[:12])
+	}
+	_ = w.Flush()
+	fmt.Printf("digest %s (%d seats), prefix %s; nothing written but the proposal.\n%s.\nThen: amq-squad team apply --digest %s --project %s\n", p.Digest, p.Seats, prefix, doors, p.Digest, p.ProjectDir)
+	return nil
+}
+
+// runTeamApplyConfirmed is `team apply --digest D` of a recorded proposal
+// (brief 31-3, section 3). Under the solo lead (its start socket in the
+// environment) the lead's process checks the confirmation and starts the
+// team; from the owner's shell the confirmation is checked here, squad.yaml
+// is written through the digest flow, and the owner starts the team with
+// amq-squad up.
+func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
+	dir, err := teamProjectDir(project)
+	if err != nil {
+		return err
+	}
+	if _, err := digestHex(digest); err != nil {
+		return err
+	}
+	if sock := os.Getenv(leadStartSocketEnv); sock != "" {
+		return applyThroughLead(sock, dir, strings.TrimSpace(digest), jsonOut)
+	}
+	root, err := soloRootOf(dir)
+	if err != nil {
+		return err
+	}
+	if _, err := checkConfirmation(root, digest, dir); err != nil {
+		return err
+	}
+	prop, err := readProposal(root, digest)
+	if err != nil {
+		return err
+	}
+	b, err := buildTeamProposalText(teamFlagsFor(dir), &prop.SquadYAML)
+	if err != nil {
+		return err
+	}
+	if err := b.plan.Apply(strings.TrimSpace(digest)); err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSONEnvelope("team_apply", map[string]any{"plan": b.plan, "start": []string{"amq-squad", "up", "--project", dir}})
+	}
+	fmt.Printf("applied digest %s (%d seats); the lead proposes, the owner starts: amq-squad up --project %s\n", b.plan.Digest, b.plan.Seats, dir)
+	return nil
+}
+
 // buildTeamProposal computes every planned write and the digest over them;
 // it writes nothing.
-func buildTeamProposal(o teamProposeFlags) (team.Plan, error) {
+func buildTeamProposal(o teamProposeFlags) (team.Plan, *team.LeadPlan, error) {
+	p, err := buildTeamProposalText(o, nil)
+	return p.plan, p.lead, err
+}
+
+// teamProposalBuild is a proposal and, for a plan, the plan it came from.
+type teamProposalBuild struct {
+	plan team.Plan
+	lead *team.LeadPlan
+}
+
+// buildTeamProposalText is buildTeamProposal; text, when not nil, is the
+// squad.yaml to plan in place of the flags' (a recorded proposal's).
+func buildTeamProposalText(o teamProposeFlags, given *string) (teamProposalBuild, error) {
+	var out teamProposalBuild
+	wrap := func(p team.Plan, err error) (teamProposalBuild, error) {
+		out.plan = p
+		return out, err
+	}
 	projectDir := strings.TrimSpace(*o.project)
 	if projectDir == "" {
 		projectDir = "."
 	}
 	projectDir, err := filepath.Abs(projectDir)
 	if err != nil {
-		return team.Plan{}, err
+		return out, err
 	}
 	owner, err := grants.Load("")
 	if err != nil {
-		return team.Plan{}, err
+		return out, err
 	}
 	text := ""
 	keepRules := false
-	if *o.addSeat != "" {
+	if given != nil {
+		text = *given
+	} else if *o.addSeat != "" {
 		if *o.from != "" || *o.roles != "" {
-			return team.Plan{}, usageErrorf("--add-seat appends to the squad.yaml on disk; it is refused with --from or --roles")
+			return out, usageErrorf("--add-seat appends to the squad.yaml on disk; it is refused with --from or --roles")
 		}
 		if text, err = squadWithSeat(projectDir, *o.addSeat, owner.Grants); err != nil {
-			return team.Plan{}, err
+			return out, err
 		}
 		keepRules = true
 	} else if *o.from != "" {
 		raw, err := os.ReadFile(*o.from)
 		if err != nil {
-			return team.Plan{}, err
+			return out, err
 		}
 		text = string(raw)
+		if team.IsPlanText(text) {
+			// the lead's plan (brief 31-3): squad.yaml rendered from it,
+			// then checked exactly as a squad.yaml draft
+			lp, err := team.ParsePlan(text)
+			if err != nil {
+				return out, fmt.Errorf("--from %s: %w", *o.from, err)
+			}
+			out.lead, text = &lp, team.RenderPlan(lp)
+		}
 	} else if text, err = squadFromFlags(projectDir, o); err != nil {
-		return team.Plan{}, err
+		return out, err
 	}
 	s, err := team.ParseSquad(text, team.SquadPath(projectDir), owner.Grants)
 	if err != nil {
-		return team.Plan{}, err
+		return out, err
 	}
 	t := team.FromSquad(projectDir, s)
 	for _, m := range t.Members {
 		if catalog.Lookup(m.Role) == nil {
 			if _, err := os.Stat(team.CustomRolePath(projectDir, m.Role)); err != nil {
-				return team.Plan{}, fmt.Errorf("seat %s: role %q is neither a catalog role nor staged at %s (amq-squad role draft)", m.Handle, m.Role, team.CustomRolePath(projectDir, m.Role))
+				return out, fmt.Errorf("seat %s: role %q is neither a catalog role nor staged at %s (amq-squad role draft)", m.Handle, m.Role, team.CustomRolePath(projectDir, m.Role))
 			}
 		}
 	}
@@ -230,11 +385,11 @@ func buildTeamProposal(o teamProposeFlags) (team.Plan, error) {
 	if *o.rulesProse != "" {
 		raw, err := os.ReadFile(*o.rulesProse)
 		if err != nil {
-			return team.Plan{}, err
+			return out, err
 		}
 		parsed, err := validateTeamRulesDraft(string(raw), customTeamRulesRoles(t))
 		if err != nil {
-			return team.Plan{}, fmt.Errorf("--rules-prose: %w", err)
+			return out, fmt.Errorf("--rules-prose: %w", err)
 		}
 		prose = &parsed
 	}
@@ -244,9 +399,9 @@ func buildTeamProposal(o teamProposeFlags) (team.Plan, error) {
 		// approved (and their prose); team propose re-renders them on purpose
 		rulesText = string(raw)
 	} else if rulesText, err = renderTeamRulesWithTemplateDraft(t, *o.template, prose); err != nil {
-		return team.Plan{}, err
+		return out, err
 	}
-	return team.NewPlan(projectDir, text, t, rulesText)
+	return wrap(team.NewPlan(projectDir, text, t, rulesText))
 }
 
 // squadWithSeat is the squad.yaml on disk with one seat appended (brief

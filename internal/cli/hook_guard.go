@@ -170,6 +170,7 @@ type guardAction struct {
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
 	credRead       string // a read of the owner's GitHub or release credential (3-2)
 	harness        string // a harness-only verb (the commit step, the scheduler process): v3-5-verifier rule 2
+	ownerOnly      string // the owner's own verb: team confirm and team apply (R55, brief 31-3)
 	push           guardPush
 	writes         []string
 	blockSafe      bool // a Write/Edit known to keep the file's managed block
@@ -248,6 +249,14 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		if a.harness != "" {
 			return out("deny", "harness_only", a.harness+" is the harness's: the commit step runs the verifier and records the verdict, never a seat (v3-5-verifier rule 2)")
 		}
+		if a.ownerOnly != "" {
+			return out("deny", "owner_only", a.ownerOnly+" is the owner's: a team is confirmed from the owner's own shell, the lead's pane (/squad confirm) or the owner's signed Buzz DM, never by a seat or the lead's tools (R55)")
+		}
+		for _, w := range a.writes {
+			if confirmRecordPath(w, a.env.cwd) {
+				return out("deny", "owner_only", w+" is under the confirmation records (extensions/amq-squad/confirm): only a door writes them (R55)")
+			}
+		}
 	}
 	for _, a := range actions {
 		def := a.env.defaultBranch()
@@ -283,6 +292,13 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		}
 	}
 	return out("allow", "allowed", "")
+}
+
+// confirmRecordPath reports whether a write lands under a confirmation
+// record directory (<root>/extensions/amq-squad/confirm/).
+func confirmRecordPath(w, cwd string) bool {
+	const dir = "/extensions/amq-squad/" + confirmDirName + "/"
+	return strings.Contains(filepath.ToSlash(w)+"/", dir) || strings.Contains(filepath.ToSlash(canonicalGuardPath(w, cwd))+"/", dir)
 }
 
 // namesTokenFile returns the argument that names the owner's Claude token
@@ -430,6 +446,8 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 		a.credRead = strings.Join(append([]string{cmd}, pos[:min(2, len(pos))]...), " ")
 	case cmd == "amq-squad" && (sub[0] == "seat" && sub[1] == "commit" || sub[0] == "scheduler" && sub[1] == "run"):
 		a.harness = "amq-squad " + sub[0] + " " + sub[1]
+	case cmd == "amq-squad" && sub[0] == "team" && (sub[1] == "confirm" || sub[1] == "apply"):
+		a.ownerOnly = "amq-squad team " + sub[1]
 	case cmd == "git" && sub[0] == "merge" && !hasFlagPrefix(args, "--abort"):
 		a.merge = "git"
 	case cmd == "git" && sub[0] == "push":
