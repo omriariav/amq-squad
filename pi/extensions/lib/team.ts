@@ -409,23 +409,26 @@ export class SoloTeam {
 		const r = await this.runner(this.cfg.bin, ["team", "apply", "--digest", digest, "--project", this.project(), "--json", "--challenge", challenge], { timeoutMs: APPLY_TIMEOUT_MS, signal });
 		const d = envelopeData<StartReply & { proof?: unknown }>(r.stdout);
 		if (!d) throw new Error(`team apply refused (${describe(r, APPLY_TIMEOUT_MS)})`);
+		// the proof is checked before any field of the reply is read (Codex's
+		// pass 3 on #837): an unproved reply's only outcome is lead_unproved;
+		// none of its text (owner steps, a detail) is shown, no state is set
+		if (!proved(this.nonce, challenge, d)) {
+			const u = unprovedReply(this.nonce);
+			throw new Error(`${u.refusal}: ${u.detail}; the tools stay as they are`);
+		}
 		const lines = (d.steps ?? []).map((s) => `${s.name} ${s.outcome}${s.refusal ? " " + s.refusal : ""}${s.detail ? ": " + s.detail : ""}`);
 		if (d.outcome !== "started") {
 			const owner = (d.owner_steps ?? []).map((s) => "owner runs: " + s.join(" "));
 			throw new Error([`${d.refusal ?? "refused"}: ${d.detail ?? ""}`, ...lines, ...owner].join("\n"));
 		}
 		this.line = `team started: ${d.detail ?? ""}`;
-		// the lead's reply carries the team identity: the switch rides it,
-		// only when the lead proved it
-		const ok = proved(this.nonce, challenge, d);
-		if (d.team && ok) this.switchToTeam(d.team);
+		// the lead's proved reply carries the team identity: the switch rides it
+		if (d.team) this.switchToTeam(d.team);
 		this.render();
 		const phase =
 			this.phase === "team"
 				? "team phase: your tools are now the team lead's (dispatch through the task store; no shell, no edit)"
-				: !ok
-					? `${unprovedReply(this.nonce).refusal}: ${unprovedReply(this.nonce).detail}; the tools stay as they are`
-					: "the lead's reply carried no team identity; the tools stay as they are";
+				: "the lead's reply carried no team identity; the tools stay as they are";
 		return [...lines, ...(d.roster ?? []), `team started: ${d.detail ?? ""}`, phase].join("\n");
 	}
 

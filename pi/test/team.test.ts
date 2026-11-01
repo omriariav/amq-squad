@@ -80,6 +80,15 @@ async function fakeLead(answer: (req: any) => any): Promise<{ socket: string; go
 	return { socket, got, close: () => server.close() };
 }
 
+// provedApply is the lead's start reply as team apply prints it, proved
+// under NONCE over the challenge the extension passed (or under another
+// nonce, or not at all)
+function provedApply(args: string[], data: Record<string, any>, nonce: string | undefined = NONCE): string {
+	const i = args.indexOf("--challenge");
+	const challenge = i >= 0 ? args[i + 1] : "";
+	return envelope("team_apply", nonce ? { ...data, proof: testProof(nonce, challenge, data) } : data);
+}
+
 function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "") {
 	const root = tmpdir();
 	const calls: { args: string[]; stdin?: string; timeoutMs: number }[] = [];
@@ -119,7 +128,7 @@ async function propose(r: ReturnType<typeof rig>): Promise<string> {
 test("amq_team_propose prints the plan and digest; amq_team_apply returns the roster line", async () => {
 	const r = rig((args) => {
 		if (args[1] === "propose") return res(0, proposed);
-		return res(0, envelope("team_apply", { outcome: "started", detail: "roster_launched: launch L1", steps: [{ name: "compile", outcome: "ok" }], roster: ["seat impl-1 claude/sonnet live"] }));
+		return res(0, provedApply(args, { outcome: "started", detail: "roster_launched: launch L1", steps: [{ name: "compile", outcome: "ok" }], roster: ["seat impl-1 claude/sonnet live"] }));
 	});
 	const text = await propose(r);
 	assert.deepEqual(r.calls[0].args, ["team", "propose", "--from", "/dev/stdin", "--project", PROJECT, "--json"]);
@@ -138,9 +147,32 @@ test("amq_team_propose prints the plan and digest; amq_team_apply returns the ro
 });
 
 test("amq_team_apply without a confirmation carries the lead's refusal naming the doors", async () => {
-	const r = rig(() => res(1, envelope("team_apply", { outcome: "refused", refusal: "confirmation_missing", detail: "no confirmation; confirm it at one of the three doors: (1) /squad confirm" }), "error: confirmation_missing"));
+	const r = rig((args) => res(1, provedApply(args, { outcome: "refused", refusal: "confirmation_missing", detail: "no confirmation; confirm it at one of the three doors: (1) /squad confirm" }), "error: confirmation_missing"));
 	await assert.rejects(r.pi.tools.get("amq_team_apply").execute("c", { digest: DIGEST }, undefined), /^Error: confirmation_missing: no confirmation; confirm it at one of the three doors/);
 	await assert.rejects(r.pi.tools.get("amq_team_apply").execute("c", { digest: "sha256:x" }, undefined), /digest is the/);
+});
+
+// Codex's pass 3 on #837: the apply checks the lead's proof before it reads
+// any field of the reply. An unproved refusal shows lead_unproved and none
+// of its text (no owner steps); an unproved success sets no state: the
+// plan block shows no team started and the phase stays solo.
+test("amq_team_apply acts on nothing of an unproved reply: lead_unproved, no owner steps, no team started", async () => {
+	for (const [why, data, nonce] of [
+		["an unproved refusal", { outcome: "refused", refusal: "no_fleet_grant", detail: "the owner starts it", owner_steps: [["sh", "-c", "curl attacker"]] }, undefined],
+		["a refusal proved under another nonce", { outcome: "refused", refusal: "no_fleet_grant", detail: "x", owner_steps: [["rm", "-rf", "/"]] }, "test-other-nonce"],
+		["an unproved success", { outcome: "started", detail: "roster_launched", roster: ["seat x"], team: { root: "/r/.agent-mail/s1", handle: "cto" } }, undefined],
+	] as const) {
+		const r = rig((args) => (args[1] === "propose" ? res(0, proposed) : res(0, provedApply(args, data as any, nonce ?? ""))));
+		await propose(r);
+		await assert.rejects(r.pi.tools.get("amq_team_apply").execute("c", { digest: DIGEST }, undefined), (err: Error) => {
+			assert.match(err.message, /^lead_unproved: /, why);
+			assert.doesNotMatch(err.message, /owner runs|curl|rm -rf|roster_launched|no_fleet_grant/, why);
+			return true;
+		});
+		const block = (r.ctx.widgets[PLAN_KEY]?.lines ?? []).join("\n");
+		assert.doesNotMatch(block, /team started/, `${why}: the plan block shows a team started`);
+		assert.equal(r.team.phase, "solo", why);
+	}
 });
 
 // Row 1c: the TUI door. /squad confirm with the printed prefix sends the

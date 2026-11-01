@@ -369,8 +369,8 @@ test("R53: only the lead that spawned this pi is believed (lead_unproved), at a 
 		await withEnv({ ...w.env, FAKE_APPLY_NONCE: applyNonce }, async (pi) => {
 			await pi.emit("session_start", {}, fakeCtx());
 			const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], fakeCtx());
-			assert.equal(applied.outcome, "ran", applied.reason);
-			assert.match(applied.text ?? "", /lead_unproved: the reply on the start socket carries no proof from the lead that spawned this pi/, why);
+			assert.equal(applied.outcome, "error", why);
+			assert.match(applied.reason ?? "", /^lead_unproved: the reply on the start socket carries no proof from the lead that spawned this pi/, why);
 			assert.ok(pi.getActiveTools().includes("bash"), `${why} switched the lead`);
 			assert.equal(process.env.AM_ROOT, w.soloRoot, why);
 		});
@@ -378,7 +378,7 @@ test("R53: only the lead that spawned this pi is believed (lead_unproved), at a 
 	// a pi with no nonce (not spawned by the lead) believes no reply
 	await withEnv({ ...w.env, FAKE_NONCE: "", FAKE_APPLY_NONCE: NONCE }, async (pi) => {
 		const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], fakeCtx());
-		assert.match(applied.text ?? "", /lead_unproved: this pi holds no nonce from a lead/);
+		assert.match(applied.reason ?? "", /^lead_unproved: this pi holds no nonce from a lead/);
 		assert.ok(pi.getActiveTools().includes("bash"));
 	});
 });
