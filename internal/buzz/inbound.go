@@ -405,7 +405,9 @@ func (h *Handler) planPost(ctx context.Context, e nostr.Event, relay gateverify.
 		return nil
 	}
 	g, err := h.gateView(h.now())
-	if err != nil || slices.ContainsFunc(nostr.ThreadRefs(e), func(id string) bool { return g.threads[id] }) {
+	// every event the yes names, whatever the tag's marker (a "mention" of a
+	// gate question cannot hide)
+	if err != nil || slices.ContainsFunc(gateverify.EventRefs(e), func(id string) bool { return g.threads[id] }) {
 		return nil
 	}
 	planFor := ""

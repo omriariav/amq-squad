@@ -3,6 +3,8 @@ package gateverify
 import (
 	"regexp"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/nostr"
 )
 
 // The Buzz door of R55 (brief 31-3, section 2 (b)): the owner confirms a
@@ -30,6 +32,30 @@ func ParseTeamYes(content string) (string, bool) {
 		return "", false
 	}
 	return m[1], true
+}
+
+// EventRefs are every event id an event's tags name, whatever the marker:
+// each e tag (reply, root, mention, unmarked or any other), each E tag
+// (NIP-22's root) and each q tag (a quote), when its value is 64 hex. The
+// team door's conflict checks read these, not nostr.ThreadRefs, so a
+// reference marked "mention" cannot hide (Codex re-check on #838).
+func EventRefs(e nostr.Event) []string {
+	var out []string
+	for _, t := range e.Tags {
+		if len(t) >= 2 && (t[0] == "e" || t[0] == "E" || t[0] == "q") && nostr.IsHex64(t[1]) && !contains(out, t[1]) {
+			out = append(out, t[1])
+		}
+	}
+	return out
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // TeamPlanLabel prefixes the AMQ label the lead's process puts on the

@@ -359,7 +359,7 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	// Codex P1 on #838: a confirmation never rides in a gate's thread, and
 	// its references never conflict; the handler's gate-thread exclusion is
 	// the first layer, this the lead's own (the bytes may reach it straight)
-	refs := nostr.ThreadRefs(e)
+	refs := gateverify.EventRefs(e) // every e, E and q tag, whatever its marker
 	if anchors := s.gateAnchors(); slices.ContainsFunc(refs, func(r string) bool { return anchors[r] }) {
 		return refusedAs(ReasonConflictingThread, "event %s replies in a gate question's thread", e.ID[:12])
 	}
@@ -387,7 +387,7 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 			return refusedAs(gateverify.RejectBadSignature, "post %s", p.ID[:12])
 		case p.Kind != buzz.KindDM || !slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}):
 			return refusedAs(gateverify.RejectWrongChannel, "post %s is not a DM in the owner's channel", p.ID[:12])
-		case slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(nostr.ThreadRefs(p), r) }):
+		case slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(gateverify.EventRefs(p), r) }):
 			// one anchor: every reference is the plan post or the post's own
 			// thread (the owner's DM it replies to), nothing else
 			return refusedAs(ReasonConflictingThread, "event %s names %v besides the plan post %s and its thread", e.ID[:12], refs, p.ID[:12])

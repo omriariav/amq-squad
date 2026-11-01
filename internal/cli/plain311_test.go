@@ -85,6 +85,9 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 		{"the yes names the plan and another event", sign(f.owner, "yes", []string{"e", strings.Repeat("e5", 32), "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, ReasonConflictingThread},
 		{"the yes names a gate question and the plan", sign(f.owner, "yes", []string{"e", gq, "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, ReasonConflictingThread},
 		{"the yes names the plan in a gate question's thread (unmarked)", sign(f.owner, "yes", []string{"e", gq}, []string{"e", plan.ID}), plan, ReasonConflictingThread},
+		{"a gate question marked mention beside the plan (Codex re-check)", sign(f.owner, "yes", []string{"e", dm, "", "root"}, []string{"e", plan.ID, "", "reply"}, []string{"e", gq, "", "mention"}), plan, ReasonConflictingThread},
+		{"a gate question quoted (q tag) beside the plan", sign(f.owner, "yes", []string{"e", dm, "", "root"}, []string{"e", plan.ID, "", "reply"}, []string{"q", gq}), plan, ReasonConflictingThread},
+		{"another event marked mention beside the plan", sign(f.owner, "yes", []string{"e", dm, "", "root"}, []string{"e", plan.ID, "", "reply"}, []string{"e", strings.Repeat("e5", 32), "", "mention"}), plan, ReasonConflictingThread},
 		{"the yes replies to nothing", sign(f.owner, "yes"), plan, gateverify.RejectThread},
 		{"a post another key signed", sign(f.owner, "yes", []string{"e", forged.ID, "", "reply"}), forged, gateverify.RejectWrongPubkey},
 		{"a bare no", sign(f.owner, "no", []string{"e", plan.ID, "", "reply"}), plan, ReasonEventUnverified},
@@ -104,6 +107,9 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 	}
 	if r := s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: sign(f.owner, "yes "+digest[7:23], []string{"e", gq, "", "reply"}).Marshal()}); r.Refusal != ReasonConflictingThread {
 		t.Fatalf("a yes <prefix> in a gate question's thread: %+v", r)
+	}
+	if r := s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: sign(f.owner, "yes "+digest[7:23], []string{"e", gq, "", "mention"}).Marshal()}); r.Refusal != ReasonConflictingThread {
+		t.Fatalf("a yes <prefix> mentioning a gate question: %+v", r)
 	}
 	if _, err := s.witnessFor(digest); err == nil {
 		t.Fatal("witnessed before the owner's yes to the plan")

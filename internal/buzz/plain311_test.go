@@ -166,6 +166,20 @@ func TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam(t *testing.T) {
 		t.Fatalf("a yes rooted at the plan, replying elsewhere: %q", res)
 	}
 
+	// a yes to the plan that also names a gate question with a "mention"
+	// marker is no team confirmation at the handler's layer either
+	_, gq, _ := raiseRel(t, pf.core, "rel-mention")
+	m := nostr.Event{CreatedAt: time.Now().Unix(), Kind: KindDM, Content: "yes", Tags: [][]string{{"h", pf.core.Pin.Channel}, {"e", plan.ID, "", "reply"}, {"e", gq.EventID, "", "mention"}}}
+	if err := pf.owner.sk.Sign(&m); err != nil {
+		t.Fatal(err)
+	}
+	_ = pf.mem.Publish(context.Background(), m.Marshal())
+	msg = pf.serve.deliver(m.ID, pf.core.Pin.Channel, m.Content)
+	pf.step(t)
+	if res, _ := pf.serve.result(msg); len(calls) != 1 || res == "confirmed team" {
+		t.Fatalf("a yes to the plan mentioning a gate question: %q, calls %+v", res, calls)
+	}
+
 	// a body-signed post naming the digest that the relay never posted is no
 	// plan post
 	stray := nostr.Event{CreatedAt: time.Now().Unix(), Kind: KindDM, Tags: [][]string{{"h", pf.core.Pin.Channel}}, Content: "digest " + digest}

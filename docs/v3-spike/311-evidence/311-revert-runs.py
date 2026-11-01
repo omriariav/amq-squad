@@ -200,6 +200,12 @@ run("the solo shell runs an argv form with a team-plan label", [(TT,'\t\tif (wor
 run("the guard's second layer runs a team-plan label", [('internal/cli/hook_guard.go','\tif slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, gateverify.TeamPlanLabel) }) {\n\t\treturn "a team-plan label"\n\t}\n','\t_ = gateverify.TeamPlanLabel\n')],
     CL+"'TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer'")
 
+# Codex re-check on #838: a reference marked "mention" (or a q tag) cannot hide
+run("the lead reads only reply, root and unmarked references", [(LS,'\trefs := gateverify.EventRefs(e) // every e, E and q tag, whatever its marker\n','\trefs := nostr.ThreadRefs(e)\n')],
+    CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
+run("the handler's first layer reads only reply, root and unmarked references", [(IN,'if err != nil || slices.ContainsFunc(gateverify.EventRefs(e), func(id string) bool { return g.threads[id] }) {','if err != nil || slices.ContainsFunc(nostr.ThreadRefs(e), func(id string) bool { return g.threads[id] }) {')],
+    BZ+"'TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam'")
+
 # Rows 1 and 5 at the raisers: what the question's lines read
 run("the release prepare raises without the branch it checked", [(RF,'\t\t\tspec.Facts = gatestore.SafeFacts("", *branch)\n','\t\t\tspec.Facts = nil\n')],
     CL+"'TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote'")
