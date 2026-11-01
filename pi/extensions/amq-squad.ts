@@ -20,7 +20,7 @@ import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, g
 import { restrictModels } from "./lib/models.ts";
 import { HOST_MESSAGE, HostFacts } from "./lib/firstturn.ts";
 import { installScreen } from "./lib/screen.ts";
-import { installSoloTeam, soloShellRefusal, type SoloTeam } from "./lib/team.ts";
+import { installSoloTeam, readLeadNonce, soloShellRefusal, type SoloTeam } from "./lib/team.ts";
 import { registerTools } from "./lib/tools.ts";
 import { run } from "./lib/verbs.ts";
 
@@ -31,6 +31,11 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// The runtime self-check is not here: it is the one-purpose preload
 	// pi/preload/runtime-check.cjs, which node runs with --require before pi
 	// (review 2, item 2 (b)).
+	// The lead's nonce (Codex's re-check on #837, item 1; the plan
+	// reviewer's order): the descriptor is read and closed before the
+	// extension registers any handler, tool or command, so no tool call
+	// ever runs with it open; an inactive package and a seat close it too.
+	const leadNonce = readLeadNonce();
 	const cfg = configFromEnv(process.env);
 	if ("inactive" in cfg) {
 		let shown = false;
@@ -50,7 +55,7 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// of R55's doors, applies it (brief 31-3): two tools, the plan block and
 	// /squad confirm, the TUI door; on the yes its tools switch to the team
 	// lead's (R53), the ones registerTools registered.
-	else if (cfg.solo) solo = installSoloTeam(pi, cfg, run, undefined, undefined, teamTools);
+	else if (cfg.solo) solo = installSoloTeam(pi, cfg, run, undefined, undefined, teamTools, leadNonce);
 	restrictModels(pi, cfg.models, note);
 	const approveTools = new Set((process.env.AMQ_SQUAD_APPROVE_TOOLS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 	let cap = new RetryCap(DEFAULT_CAP);

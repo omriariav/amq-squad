@@ -447,8 +447,8 @@ export class SoloTeam {
 // installSoloTeam gives the solo lead the two tools, the plan block and
 // the /squad command (confirm).
 export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string, teamTools: string[] = [], nonce?: string): SoloTeam {
-	// the lead's nonce, read from fd 3 and the descriptor closed as the
-	// extension loads, before any tool runs
+	// the lead's nonce: the extension's entry read it from fd 3 and closed
+	// the descriptor before registering anything (pi/extensions/amq-squad.ts)
 	const team = new SoloTeam(cfg, runner, now, socket ?? process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools, pi, nonce ?? readLeadNonce());
 	pi.on("session_start", async (_e, ctx) => {
 		team.ctx = ctx;

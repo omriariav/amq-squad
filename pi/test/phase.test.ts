@@ -376,6 +376,62 @@ test("R53: only the lead that spawned this pi is believed (lead_unproved), at a 
 	});
 });
 
+// The plan reviewer's order for the nonce: the descriptor is read and
+// closed before the extension registers any handler, tool or command, so
+// no tool call can ever run with it open. A stand-in pi checks the
+// descriptor at its first registration of any kind.
+test("R53: the nonce's descriptor is closed before the extension's first registration", async () => {
+	const { default: amqSquad } = await import("../extensions/amq-squad.ts");
+	const w = soloWorld();
+	const saved = { ...process.env };
+	for (const k of Object.keys(process.env)) if (k.startsWith("AMQ_SQUAD_") || k.startsWith("AM_") || k.startsWith("FAKE_")) delete process.env[k];
+	Object.assign(process.env, w.env);
+	const f = path.join(w.dir, "nonce");
+	fs.writeFileSync(f, NONCE + "\n");
+	const fd = fs.openSync(f, "r");
+	process.env.AMQ_SQUAD_LEAD_NONCE_FD = String(fd);
+	const firsts: string[] = [];
+	const closedAt = (what: string) => {
+		if (firsts.length) return;
+		let open = true;
+		try {
+			fs.fstatSync(fd);
+		} catch {
+			open = false;
+		}
+		firsts.push(`${what}:${open ? "open" : "closed"}`);
+	};
+	class Watching extends FakePi {
+		on(name: string, h: any) {
+			closedAt(`on ${name}`);
+			return super.on(name, h);
+		}
+		registerTool(def: any) {
+			closedAt(`tool ${def.name}`);
+			super.registerTool(def);
+		}
+		registerCommand(name: string, def: any) {
+			closedAt(`command ${name}`);
+			super.registerCommand(name, def);
+		}
+	}
+	try {
+		const pi = new Watching(BUILTINS);
+		amqSquad(pi as any);
+		assert.equal(firsts.length, 1, "the extension registered nothing");
+		assert.match(firsts[0], /:closed$/, `the first registration found the nonce's descriptor open (${firsts[0]})`);
+		assert.ok(pi.tools.has("amq_team_apply"));
+	} finally {
+		try {
+			fs.closeSync(fd);
+		} catch {
+			// closed by the extension
+		}
+		for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+		Object.assign(process.env, saved);
+	}
+});
+
 // Row 5 for the lead up starts (lead --team): team phase from its first
 // turn with no marker: the thirteen team tools, active, and no solo tool.
 test("R53: lead --team is team phase from its first turn with exactly the thirteen", async () => {
