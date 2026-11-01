@@ -9,8 +9,10 @@ Branch v3-31-3b, from origin/v3 `95b12207`, with origin/v3 merged in at
 `6188663d`. On #837 the plan reviewer required two changes (the marker
 is never authority; the host line on the first turn and on change), and
 Codex's static pass at `6188663d` added five more (items 2, 3, 5, 6 and
-7; its items 1 and 4 are closed by the reviewer's first change). This note
-describes the branch after both.
+7; its items 1 and 4 are closed by the reviewer's first change). Codex's
+re-check at `22e9b93b` added four (the lead's proof to its pi, one budget
+for the host commands, the restart offer's working steps, the host key).
+This note describes the branch after all three rounds.
 
 ## 1. What pi 1.3.0 allows
 
@@ -59,6 +61,25 @@ marker is a record nobody reads for authority; a restart comes up solo.
   write, `amq_team_propose`, `amq_team_apply`) is gone from the declared
   list, and the `tool_call` hook refuses any of it `phase_team`. A reply
   without a team identity switches nothing.
+- **The lead proves the reply.** pi takes the start socket's path from its
+  environment, so a server the model runs on that path (the named socket
+  replaced, or a pi started by hand pointed at it) could answer `team`.
+  At the spawn the lead creates a random 32-byte nonce and hands it to pi
+  over an inherited pipe at fd 3 (`runProcess`, internal/cli/pi_exec_unix.go;
+  the environment names only the descriptor, `AMQ_SQUAD_LEAD_NONCE_FD=3`),
+  never through the environment, which any process of the uid can read,
+  and never through a file. pi reads it when the extension loads, closes
+  the descriptor so no child of pi holds it, and drops the variable. Every
+  request pi sends over the start socket (the phase query, the TUI
+  confirm) carries a fresh 16-byte challenge, and so does the start's
+  request, which `amq_team_apply` passes through `team apply
+  --challenge`. The lead answers with `proof`, HMAC-SHA256 keyed by the
+  nonce over the tag, the challenge, the outcome, the digest and the team
+  identity's fields (`leadProof`, the same message in Go and in
+  pi/extensions/lib/team.ts, tied by a fixed vector both rows check). pi
+  acts on a reply only when the proof checks; otherwise it is
+  `lead_unproved` and pi stays solo. A lead of an earlier spawn holds
+  another nonce, so its replies fail the check too.
 - **A session started again in the same lead** (pi's `/new`, a resume)
   asks the lead over the same socket (`amq-squad.phase.v1`). The lead
   answers only a caller its peer proof places under it (`callerChain`, as
@@ -97,10 +118,15 @@ marker is a record nobody reads for authority; a restart comes up solo.
   marker says team reads it as information only (`markerInfo`, the
   project must match) and stays the solo lead: no team role, no team
   tools, no lead lock, no scheduler. stderr, and the lead's first turn
-  (a message, once), say: "this session's team was started on <date>
-  with digest <D>; run `amq-squad up` to resume it, or confirm it again
-  at your pane (/squad confirm) or over Buzz". A marker for another
-  repository gives no offer.
+  (a message, once), say: "This repository's team was started on <date>
+  with digest <D> and this lead was restarted. To resume it: quit this
+  lead and run `amq-squad up`. To start it again from here: ask me to
+  propose the team again and confirm the new plan at your pane or over
+  Buzz. The old plan cannot be confirmed again: a restarted lead holds no
+  proposal, and a confirmation stands for 30 minutes." Both steps work as
+  written: `up` refuses `lead_running` while this solo lead lives, and a
+  restarted lead's `/squad confirm` has no proposal to confirm. A marker
+  for another repository gives no offer.
 - **What a planted marker could have gained.** Codex's answer on the
   round before this one: under the marker-driven design, the solo lead's
   model (it has write and bash, and can read its own parent's pid and the
@@ -145,21 +171,47 @@ out). A fact a verb does not give, or a verb that failed, reads `missing`,
 never a guess.
 
 It goes on the first turn, and again only when a fact in it changed;
-never every turn. Before each turn the handler stats a key: the lead's
-root, and under it `extensions/amq-squad/tasks/.generation` (the task
-store), `scheduler.json`, `scheduler/decisions.jsonl` (a roster decision),
-`gates` and `consumed` (the gate store), and in the repository `.git/HEAD`
-and `.git/logs/HEAD` (the branch and its tip). An unchanged key runs no
-verb and sends nothing. A changed key runs the two verbs; a line equal to
-the last one sent is not sent again.
+never every turn. Before each turn the handler builds a key
+(`HostFacts.key`) from files' mtimes and sizes:
+
+- under the lead's root: `tasks/.generation` (the task store),
+  `scheduler.json`, `scheduler/decisions.jsonl` (a roster decision), and
+  the lead's launch record `launch/<handle>/launch.json`;
+- every entry of the gate store's `gates/`, `answers/`, `denials/` and
+  `consumed/gates/` (a write inside a directory does not touch its
+  parent's mtime), and the number of gates whose `not_after` has passed
+  (a gate expires with time alone);
+- the repository's git directory and common directory, resolved once
+  through `git rev-parse --path-format=absolute --git-dir
+  --git-common-dir` (bounded at 3 seconds; a linked worktree's `.git` is a
+  pointer file, as in this checkout): `HEAD`, the ref HEAD names, the
+  packed refs and HEAD's log;
+- the AMQ executable `context --host` asks (`$AMQ_SQUAD_AMQ`, else `amq`
+  on PATH) and the amq-squad binary.
+
+An unchanged key runs no verb and sends nothing. A changed key runs the
+two verbs; a line equal to the last one sent is not sent again. What
+stays unkeyed: a squad.yaml edit (a seat's runtime or model) with no
+scheduler decision; the owner's authorization trust store, which decides
+whether an answer verifies; a task whose state changes with time alone (a
+lease that lapses with no write); a repository where `git rev-parse`
+fails (then no git file is keyed). Each waits for the next key change.
 
 Neither verb carried the branch, the tip or the AMQ version, so `context`
 gains `--host` (internal/cli/hook_context.go): the repository
 (`$AMQ_SQUAD_PROJECT`, else the repository of the working directory), its
 branch and tip from git, and the installed amq's `--version`, each empty
-when it cannot be read. Each command runs under a 3 second deadline in its
-own process group, which is killed with everything it started before the
-reap; its output is capped at 4 KiB. A timeout or a flood reads missing.
+when it cannot be read. The commands share one 3 second budget for the
+whole read: each runs under what remains of it, in its own process group,
+which is killed with everything it started before the reap when the
+budget runs out; a command after the budget is spent does not start. When
+the read ends, for any reason, every group it started is killed (a child
+that outlived its leader included; the sweep runs right after the last
+reap, while a surviving member still holds the group's id, so it reaches
+only those). Output is capped at 4 KiB. A timeout or a flood reads
+missing. The extension gives `context --host` 10 seconds
+(`CONTEXT_HOST_TIMEOUT_MS`), above Go's budget and the verb's own work, so
+Go always finishes its own cleanup before the extension would kill it.
 Every fact passes `redact.Block` before it leaves `context --host`, and
 the extension redacts each fact again before it is interpolated
 (`redactFact` in firstturn.ts: a value under a credential name, and the
@@ -192,10 +244,22 @@ field changed).
   the turn: either source alone covers a case the other may miss (the
   message's end arriving late; a sequential batch, whose later calls are
   prepared only after the apply runs).
+- The lead's proof is an HMAC, not an echo of the nonce: if pi sent the
+  nonce in its query, a server on the socket path would learn it from that
+  query and echo it back. With a challenge and an HMAC the nonce never
+  crosses the socket. The HMAC key is the nonce's hex text. The TUI
+  confirm's reply is proved too, so every reply pi acts on is.
+- What the proof does not cover: a model that starts its own pi with its
+  own descriptor and its own server controls that pi entirely, as it
+  could any program it runs, and the lead's pi is untouched by it; a
+  process that reads pi's memory (a debugger under the same uid) is out of
+  reach of any in-process secret; a child pi itself starts before the
+  extension loads would inherit fd 3 (pi's own processes, not the model's).
 - The extension's second redaction pass is a narrow mirror of the Go
   rules (credential-name assignments and the six real shapes), not a port
   of them; it redacts more rather than less. The host commands' bounds
-  are 3 seconds and 4 KiB.
+  are 3 seconds for the whole read and 4 KiB per command; the
+  extension's timeout for it is 10 seconds.
 
 ### 2.4 Not in this PR
 
@@ -212,11 +276,12 @@ field changed).
 | row | test |
 |---|---|
 | 2 | pi `phase.test.ts` "R53: the owner's yes switches the lead's tools to exactly the team lead's thirteen and refuses the solo set phase_team" (no marker file exists: the switch is on the start's reply; before the yes the solo tools answer and the team tools are not declared; after it the declared list is the thirteen, the identity is the squad's, a shell call, an edit, a second `amq_team_apply` and `amq_team_propose` refuse `phase_team`, and `amq_status` answers) |
-| 2a, a planted marker | pi "R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back" (a marker carrying the lead's own pid and stamp, with a reply that carries no team, switches nothing; a session start switches only on the lead's `team` answer; the offer is given once with its exact text); cli `TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile` (a planted marker: the lead answers `solo`; after its own start, `team` with the root and digest) |
+| 2a, a planted marker | pi "R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back" (a marker carrying the lead's own pid and stamp, with a reply that carries no team, switches nothing; a session start switches only on the lead's proved `team` answer; the offer is given once with its exact text, both working paths and why the old plan cannot be confirmed); cli `TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile` (a planted marker: the lead answers `solo`; after its own start, `team` with the root and digest) |
 | 2c, the record | cli `TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches` (phase.json a directory: started, the reply carries the identity, a `phase_record_failed` decision, the lead answers team); `TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts` (`team_identity`, no squad.yaml, no lock); pi "R53: the owner's yes switches ..." (phase.json a directory before the apply; the switch happens) |
 | 2d, apply alone | pi "R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run after the switch refuses phase_team" (apply batched with a shell call before it, after it, or with a read while the message's end goes unseen: `apply_not_alone` with the retry line, no apply verb run, the tools unchanged; alone it switches; the apply is a sequential tool; a propose prepared while solo and run after a switch refuses `phase_team`) |
-| 2b, the restart | cli `TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing` (a planted marker with this pid and the real stamp: the solo environment, no scheduler start, no lead lock, the offer on stderr; another repository's marker: no offer); `TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux` (the start's reply carries the team identity; the record is written; a second start refuses `lead_running`) |
-| 4 | pi "the team lead's first turn carries the host facts from status and context, not the model" (the first turn carries the line; the second with nothing changed carries none and runs no verb; after a task change the line comes again with the new facts; a key change with the same facts sends nothing; a missing fact reads missing; a canary in a branch name that reached the extension is redacted); cli `TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty` (a canary in a branch name leaves as `<redacted>`), `TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing` (a git that hangs with a child holding its output: context returns, branch and tip read missing, the child is dead; an amq printing past the cap: missing) |
+| 2e, the lead's proof | pi "R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply" (the descriptor is closed and its variable gone after load; a server that holds no nonce, and a lead of an earlier spawn, answer team and pi stays solo; a start reply proved under an earlier spawn's nonce, or not at all, switches nothing and says `lead_unproved`; a pi with no nonce believes no reply; the fixed vector); "R53: a planted marker switches nothing ..." (the phase query carries a challenge and not the nonce; the lead that spawned it switches it); cli `TestTheLeadAnswersItsPisChallengeWithItsProof` (the fixed vector; a proof only under a nonce and a well-formed challenge; the challenge rides through `team apply`), `TestRunProcessHandsTheNonceOverDescriptorThreeNotTheEnvironment`, `TestTheSoloLeadServesTheStartSocketToItsPi` (the spawn's nonce is the starter's, the environment names only fd 3) |
+| 2b, the restart | cli `TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing` (a planted marker with this pid and the real stamp: the solo environment, no scheduler start, no lead lock, the offer on stderr with both working paths; another repository's marker: no offer); `TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux` (the start's reply carries the team identity; the record is written; a second start refuses `lead_running`) |
+| 4 | pi "the team lead's first turn carries the host facts from status and context, not the model" (the first turn carries the line; the second with nothing changed carries none and runs no verb; after a task change the line comes again with the new facts; a key change with the same facts sends nothing; a missing fact reads missing; a canary in a branch name that reached the extension is redacted); cli `TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty` (a canary in a branch name leaves as `<redacted>`), `TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing` (a git that hangs with a child holding its output: the command returns with no fact, and its child is dead before the read's sweep runs), `TestContextHostRefusesAFloodingCommand`, `TestContextHostSharesOneBudgetAndLeavesNoProcessBehind` (a git that returns leaving a child, then a git that hangs: the read ends within one budget, and no process it started is left); pi "context --host's timeout is above Go's host budget"; pi "the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable" (a real linked worktree: a commit, and the branch moved from the main checkout, refresh; a file under answers/; a gate's not_after passing; the launch record; the AMQ executable; the amq-squad binary; nothing changed runs nothing) |
 | 5 | pi "R53: the owner's yes switches ..." (the declared list in team phase equals the thirteen exactly; no gate-answer or confirm tool), "R53: lead --team is team phase from its first turn with exactly the thirteen" |
 
 No test reaches the network, the real HOME, tmux, AMQ or Buzz: the Go rows
@@ -238,36 +303,36 @@ longer leaves a socket keeping node alive). The output, verbatim:
 
 ```
 REVERT context --host ignored: fails (the row catches it)
-   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.07s)
-   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (0.08s)
+   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
 REVERT the branch not read from git: fails (the row catches it)
-   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.03s)
+   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (4.01s)
 REVERT the host commands with no deadline: fails (the row catches it)
-   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (15.05s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (60.73s)
 REVERT the hanging command killed alone, not its group: fails (the row catches it)
-   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (6.82s)
+   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (7.01s)
 REVERT the host commands' output not capped: fails (the row catches it)
-   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (0.80s)
+   --- FAIL: TestContextHostRefusesAFloodingCommand (0.18s)
 REVERT a host fact leaving context --host unredacted: fails (the row catches it)
    --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
 REVERT the AMQ version not read: fails (the row catches it)
-   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.02s)
+   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.09s)
 REVERT the yes writing no phase marker (the record): fails (the row catches it)
-   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.07s)
+   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (1.10s)
 REVERT a failed record not logged phase_record_failed: fails (the row catches it)
-   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.15s)
+   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.65s)
 REVERT a failed record withholding the team identity from the reply: fails (the row catches it)
-   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.10s)
+   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.91s)
 REVERT the identity not resolved before the start (no team_identity refusal): fails (the row catches it)
-   --- FAIL: TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts (0.03s)
+   --- FAIL: TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts (0.34s)
 REVERT the start's reply without the team identity: fails (the row catches it)
-   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.08s)
+   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.92s)
 REVERT the phase query answering team before the start: fails (the row catches it)
-   --- FAIL: TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile (0.03s)
+   --- FAIL: TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile (0.38s)
 REVERT a restarted solo lead not saying the offer: fails (the row catches it)
-   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.19s)
 REVERT a marker for another repository read: fails (the row catches it)
-   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.10s)
 REVERT the team tools declared before the yes: fails (the row catches it)
    not ok 1 - R53: the owner's yes switches the lead's tools to exactly the team lead's thirteen and refuses the solo set phase_team
 REVERT the switch not changing the declared tools (no setActiveTools): fails (the row catches it)
@@ -281,6 +346,7 @@ REVERT the lead's identity not switched to the squad's: fails (the row catches i
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
 REVERT the switch riding the marker file, not the lead's reply: fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
+   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
 REVERT amq_team_apply's success not switching: fails (the row catches it)
    not ok 1 - R53: the owner's yes switches the lead's tools to exactly the team lead's thirteen and refuses the solo set phase_team
    not ok 3 - R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run after the switch refuses phase_team
@@ -307,24 +373,68 @@ REVERT the restart's offer not said: fails (the row catches it)
 REVERT the restart's offer said every turn: fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
 REVERT no host line: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT the verbs run every turn (no key): fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT an unchanged host line sent again: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT the task store not in the host key: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT context asked without --host: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT closed tasks shown as open: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT answered gates shown as open: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT a host fact interpolated unredacted in the extension: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT a missing fact left blank, not named missing: fails (the row catches it)
-   not ok 5 - the team lead's first turn carries the host facts from status and context, not the model
-40 runs, 40 caught, 0 missed
+   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+REVERT the lead proving no reply: fails (the row catches it)
+   --- FAIL: TestTheLeadAnswersItsPisChallengeWithItsProof (0.03s)
+REVERT the challenge not passed through team apply: fails (the row catches it)
+   --- FAIL: TestTheLeadAnswersItsPisChallengeWithItsProof (0.04s)
+REVERT no nonce handed to pi at the spawn: fails (the row catches it)
+   --- FAIL: TestRunProcessHandsTheNonceOverDescriptorThreeNotTheEnvironment (0.01s)
+REVERT the nonce put in pi's environment: fails (the row catches it)
+   --- FAIL: TestTheSoloLeadServesTheStartSocketToItsPi (0.02s)
+REVERT pi taking an unproved reply: fails (the row catches it)
+   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
+REVERT the apply switching on an unproved start reply: fails (the row catches it)
+   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
+REVERT the phase query's reply taken unproved: fails (the row catches it)
+   not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
+   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
+REVERT the nonce sent over the socket: fails (the row catches it)
+   not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
+REVERT the nonce's descriptor left open: fails (the row catches it)
+   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
+REVERT each host command given its own deadline: fails (the row catches it)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (8.40s)
+REVERT the started groups not swept when the read ends: fails (the row catches it)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (9.03s)
+REVERT the extension's context --host timeout at the hook timeout: fails (the row catches it)
+   not ok 7 - context --host's timeout is above Go's host budget
+REVERT the restart offer's old steps (Go): fails (the row catches it)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
+REVERT the restart offer's old steps (pi): fails (the row catches it)
+   not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
+REVERT the .git directory assumed (no git rev-parse): fails (the row catches it)
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+REVERT the ref HEAD names not keyed: fails (the row catches it)
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+REVERT answers/ not keyed: fails (the row catches it)
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+REVERT an expired gate not keyed: fails (the row catches it)
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+REVERT the launch record not keyed: fails (the row catches it)
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+REVERT the AMQ executable not keyed: fails (the row catches it)
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+REVERT the amq-squad binary not keyed: fails (the row catches it)
+   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+61 runs, 61 caught, 0 missed
 ```
 
 ## 5. The owner-run rows
@@ -353,22 +463,24 @@ shows `"phase": "team"`, the squad's root, session and lead handle, the
 digest.
 
 **B. A restart.** Quit the lead (Ctrl-C) and run `amq-squad lead` again in
-the repository. stderr reads `amq-squad lead: this session's team was
-started on <date> with digest <D>; run amq-squad up to resume it, or
-confirm it again ...`; the first turn shows the same offer once; the tools
-are the solo set; no scheduler runs:
+the repository. stderr reads `amq-squad lead: This repository's team was
+started on <date> with digest <D> and this lead was restarted. To resume
+it: quit this lead and run amq-squad up. ...`; the first turn shows the
+same offer once; the tools are the solo set; no scheduler runs:
 
 ```sh
 amq-squad status --project /Users/omri/code/amq-squad --json
 ```
 
-shows the scheduler not running. Then `amq-squad up` resumes the team.
+shows the scheduler not running. Quit this lead, then `amq-squad up`
+resumes the team.
 
 **C. The first turn.** In a team lead (switched, or started by
 `amq-squad up`), the first turn shows the host facts. Send a second
 message with nothing changed: no host line. Add a task (`amq_task_add`)
-and send another: the host line comes again with the task open. Compare
-with:
+and send another: the host line comes again with the task open. Commit
+in the checkout (a linked worktree here) and send another: the line comes
+again with the new tip. Compare with:
 
 ```sh
 amq-squad status --project /Users/omri/code/amq-squad --json
@@ -396,4 +508,5 @@ conversation: its tools switch to the team lead's (no shell, no edit; the
 apply runs alone, so nothing it admitted before is still running), its
 first turn carries the host facts read from status and context and they
 come again when they change, and a restart of `amq-squad lead` comes up
-solo and offers `amq-squad up` or a fresh yes.
+solo and offers the two ways back that work: quit it and run `amq-squad
+up`, or propose the team again and confirm it.

@@ -180,8 +180,10 @@ The first run is a conversation with the lead, in the repository:
    roster, the open tasks and the open gates. They come again only when
    one changes. Quit the lead and run `amq-squad lead` again in the
    repository and it comes up solo: it says when the team was started and
-   with which digest, and offers `amq-squad up` to resume it or a fresh
-   yes at the pane or over Buzz. It starts nothing on its own.
+   with which digest, and offers the two ways back. Quit it and run
+   `amq-squad up` to resume the team, or ask it to propose the team again
+   and confirm the new plan at the pane or over Buzz. It starts nothing
+   on its own.
 
 The solo lead's shell refuses `tmux` and every `amq-squad` verb but the
 read-only ones (status, context, doctor, version, task show, task list, team
