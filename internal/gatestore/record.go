@@ -91,6 +91,10 @@ type Record struct {
 	// target never share an event id. Additive; a record without it is
 	// unverifiable (gateverify refuses it).
 	Squad string `json:"squad,omitempty"`
+	// Facts are what the raiser read from its own records for the plain
+	// lines (brief 3.1.1-1): a title, a branch. Additive; absent on a record
+	// raised before 3.1.1 and on one whose raiser read none.
+	Facts *Facts `json:"facts,omitempty"`
 }
 
 // Spec is the core's input to Render.
@@ -101,6 +105,7 @@ type Spec struct {
 	RaisedBy string // the handle that raised the gate
 	Window   time.Duration
 	Squad    string // SquadID of the store's root; Store.Raise fills it
+	Facts    *Facts // what the raiser read for the plain lines; nil when none
 }
 
 // Identity is who may answer a gate and who may sign its envelope.
@@ -116,28 +121,17 @@ var (
 	handleRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
-// Text is the only renderer of the owner-facing gate text. It carries the
-// gate id, the class and action, the target string, the full digest and the
-// two answer lines, and says "reply in this thread" (amendment 19).
-func Text(id, typedClass, action, target, digest string) string {
-	return TextFor("", id, typedClass, action, target, digest)
-}
-
-// TextFor is Text with the squad identity line (when squad is set).
-func TextFor(squad, id, typedClass, action, target, digest string) string {
+// legacyText is the gate text before 3.1.1 (brief 3.1.1-1): the identifiers
+// and the two typed answer lines. A record raised by an earlier binary keeps
+// it and still validates (its text is the rendering of its own fields); no
+// record is raised with it any more.
+func legacyText(squad, id, typedClass, action, target, digest string) string {
 	prefix := strings.TrimPrefix(digest, "sha256:")[:PrefixLen]
-	head := []string{"amq-squad gate " + id}
-	if squad != "" {
-		head = append(head, "squad: "+squad)
-	}
-	return strings.Join(append(head,
-		"class: "+typedClass+" ("+action+")",
-		"target: "+target,
-		"digest: "+digest,
+	return strings.Join([]string{identifiers(squad, id, typedClass, action, target, digest),
 		"Reply in this thread with one line:",
 		fmt.Sprintf("approve %s %s %s", id, typedClass, prefix),
 		fmt.Sprintf("deny %s %s %s", id, typedClass, prefix),
-	), "\n")
+	}, "\n")
 }
 
 // Render builds the record at now; Store.Raise writes it.
@@ -170,17 +164,23 @@ func Render(s Spec, now time.Time, id Identity) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	facts := s.Facts.normalize()
+	if err := facts.validate(); err != nil {
+		return Record{}, err
+	}
 	digest := gatetarget.Digest(s.Action, s.Target)
 	class := gatetarget.Class(s.Action)
-	text := TextFor(s.Squad, s.GateID, class, s.Action, s.Target, digest)
 	now = now.UTC().Truncate(time.Second)
-	return Record{
+	rec := Record{
 		Schema: RecordSchema, GateID: s.GateID, Class: s.Action, GateKind: capability.GateKind, TypedClass: class,
-		Target: s.Target, Digest: digest, Text: text, TextSHA256: sha256Text([]byte(text)),
+		Target: s.Target, Digest: digest,
 		IssuedAt: now.Format(time.RFC3339), NotBefore: now.Add(-ClockSkew).Format(time.RFC3339),
 		NotAfter: now.Add(s.Window).Format(time.RFC3339), RaisedBy: s.RaisedBy,
-		OwnerPubKey: id.OwnerPubKey, IssuerKeyID: id.IssuerKeyID, Squad: s.Squad,
-	}, nil
+		OwnerPubKey: id.OwnerPubKey, IssuerKeyID: id.IssuerKeyID, Squad: s.Squad, Facts: facts,
+	}
+	rec.Text = TextOf(rec)
+	rec.TextSHA256 = sha256Text([]byte(rec.Text))
+	return rec, nil
 }
 
 func sha256Text(b []byte) string {
@@ -217,7 +217,9 @@ func (r Record) Validate() error {
 		return errors.New("gate record identities are malformed")
 	case r.Squad != "" && !squadIDRe.MatchString(r.Squad):
 		return errors.New("gate record squad identity is malformed")
-	case r.Text != TextFor(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest):
+	case r.Facts != nil && (r.Facts.normalize() == nil || r.Facts.validate() != nil):
+		return errors.New("gate record facts are malformed")
+	case r.Text != TextOf(r) && (r.Facts != nil || r.Text != legacyText(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest)):
 		return errors.New("gate record text is not the rendering of its own fields")
 	case r.TextSHA256 != sha256Text([]byte(r.Text)):
 		return errors.New("gate record text digest does not match its text")
@@ -226,7 +228,9 @@ func (r Record) Validate() error {
 	return err
 }
 
-// Answer is a parsed owner reply: "approve|deny <gate-id> <class> <prefix>".
+// Answer is a parsed owner reply: the typed form "approve|deny <gate-id>
+// <class> <prefix>", or a bare yes or no (ParseBare, BareAnswer) bound by its
+// thread.
 type Answer struct {
 	Verb         string `json:"verb"`
 	GateID       string `json:"gate_id"`
