@@ -69,10 +69,19 @@ func write(t *testing.T, path, body string) {
 
 const claudeMD = "# Project\n\nfree text\n\n" + rules.BeginMarker + "\nmanaged rules\n" + rules.EndMarker + "\n"
 
-func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureFor(t, "s1") }
+func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureForOptions(t, "s1", "") }
+
+func newFixtureWithBaseLink(t *testing.T, link, target string) *fixture {
+	t.Helper()
+	return newFixtureForOptions(t, "s1", link+"\x00"+target)
+}
 
 // newFixtureFor is the fixture for a seat handle (one with a hyphen, say).
 func newFixtureFor(t *testing.T, handle string) *fixture {
+	return newFixtureForOptions(t, handle, "")
+}
+
+func newFixtureForOptions(t *testing.T, handle, baseLink string) *fixture {
 	t.Helper()
 	gitBin(t)
 	dir := t.TempDir()
@@ -96,6 +105,12 @@ func newFixtureFor(t *testing.T, handle string) *fixture {
 	write(t, filepath.Join(f.main, "cmd", "root.go"), "package cmd\n")
 	write(t, filepath.Join(f.main, "internal", "client", "factory_test.go"), "package client\n")
 	write(t, filepath.Join(f.main, ".github", "workflows", "ci.yml"), "on: push\n")
+	if baseLink != "" {
+		link, target, _ := strings.Cut(baseLink, "\x00")
+		if err := os.Symlink(target, filepath.Join(f.main, filepath.FromSlash(link))); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+	}
 	sh(t, f.main, "add", "-A")
 	sh(t, f.main, "commit", "-q", "-m", "initial")
 	sh(t, f.main, "remote", "add", "origin", f.origin)

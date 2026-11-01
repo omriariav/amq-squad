@@ -448,7 +448,7 @@ func parseNumstat(out []byte) ([]numstat, error) {
 
 // rawEntry is one record of `diff-tree --raw -z --no-renames`.
 type rawEntry struct {
-	OldMode, NewMode, Status, Path string
+	OldMode, NewMode, OldOID, NewOID, Status, Path string
 }
 
 // parseRaw reads ":oldmode newmode oldsha newsha status\0path\0" records.
@@ -468,7 +468,7 @@ func parseRaw(out []byte) ([]rawEntry, error) {
 			return nil, fmt.Errorf("unexpected raw diff record %q", head)
 		}
 		i++
-		list = append(list, rawEntry{OldMode: meta[0], NewMode: meta[1], Status: meta[4], Path: fields[i]})
+		list = append(list, rawEntry{OldMode: meta[0], NewMode: meta[1], OldOID: meta[2], NewOID: meta[3], Status: meta[4], Path: fields[i]})
 	}
 	return list, nil
 }

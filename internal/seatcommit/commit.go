@@ -57,6 +57,9 @@ type Options struct {
 	// Declared replaces the task's declared_files (a proposed widening, dry
 	// run only).
 	Declared []string
+	// AfterSnapshot is a test seam: production leaves it nil. It proves that
+	// every later policy decision and commit uses tree, not the mutable worktree.
+	AfterSnapshot func(tree string)
 	// OpenPR opens (or finds) the seat branch's draft PR with gh after the
 	// push; Gh is the gh executable (default from PATH).
 	OpenPR bool
@@ -273,6 +276,9 @@ func run(o Options, res Result) Result {
 	if err != nil {
 		return res.defer_("snapshot of the worktree: " + err.Error())
 	}
+	if o.AfterSnapshot != nil {
+		o.AfterSnapshot(tree)
+	}
 	// The task's recorded commit with nothing new on it (3.0.2 t23): a re-run
 	// after the step returned the worktree to rest, or a later attempt that
 	// StartTask started on that commit and that made no edits. The step then
@@ -319,7 +325,10 @@ func run(o Options, res Result) Result {
 	// The repository and base branch the launch recorded from the grant,
 	// never the seat's remote (R2).
 	res.CapLines, res.CapFiles = o.Grants.SizeCap(ledger.Repository, ledger.base(o.Grants))
-	res.Violations = check(o, g, rec, repoRoot, parent, tree, entries, declared, &res)
+	res.Violations, err = check(o, g, rec, repoRoot, parent, tree, entries, declared, &res)
+	if err != nil {
+		return res.defer_("inspect the snapshot's symbolic links: " + err.Error())
+	}
 	if len(res.Violations) > 0 {
 		v := res.Violations[0]
 		return res.refuse(v.Reason, task.RouteLead, describe(res.Violations))
@@ -859,13 +868,17 @@ func checkWorktree(rec launch.Record, project string, branches ...string) (repoP
 // check runs every path check and returns the violations, most severe
 // first: protected paths, outside the declared set, nested repositories,
 // then the size cap.
-func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, entries []rawEntry, declared []string, res *Result) []Violation {
+func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, entries []rawEntry, declared []string, res *Result) ([]Violation, error) {
 	extra := []string{filepath.Join(o.Root, "extensions", "amq-squad") + "/", "~/.amq-squad/"}
 	if rec.RulesPath != "" {
 		extra = append(extra, rec.RulesPath)
 	}
 	ps := protectedFor(o.Grants.Grants, repoRoot, o.Home, extra...)
 	gated := gatedProtected(o.Task, o.Root, o.Gates)
+	linkTargets, err := treeLinkRefusals(gitTreeObjectSource{g: g}, tree, entries, ps)
+	if err != nil {
+		return nil, err
+	}
 	var protected, managed, outside, nested []string
 	for _, e := range entries {
 		p := e.Path
@@ -894,6 +907,9 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 		}
 	}
 	var out []Violation
+	if len(linkTargets) > 0 {
+		out = append(out, Violation{Reason: ReasonLinkTarget, Paths: linkTargets})
+	}
 	if len(protected) > 0 {
 		out = append(out, Violation{Reason: ReasonProtected, Paths: protected, Managed: managed})
 	}
@@ -919,7 +935,7 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 	if len(over) > 0 {
 		out = append(out, Violation{Reason: ReasonSizeCap, Detail: strings.Join(over, "; ")})
 	}
-	return out
+	return out, nil
 }
 
 // regularInSnapshot reports whether a changed entry stays a regular file:

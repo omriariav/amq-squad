@@ -27,6 +27,7 @@ import (
 // Reason codes of a refusal (task.RefuseCommit's reason code).
 const (
 	ReasonProtected      = "protected_path"         // a changed path is protected by the grant
+	ReasonLinkTarget     = "link_target_refused"    // a changed symlink's tree destination is refused
 	ReasonOutside        = "outside_declared_files" // a changed path is outside the task's declared files (S6 W5)
 	ReasonSizeCap        = "size_cap_exceeded"      // the diff is over the size cap
 	ReasonNested         = "nested_repository"      // a changed path is a gitlink or a nested repository
