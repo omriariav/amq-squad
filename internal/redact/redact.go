@@ -250,6 +250,7 @@ func spans(line string) (out [][2]int, found []Finding) {
 			found = append(found, Finding{Rule: "yaml", Name: name})
 		}
 	}
+	lead := -1
 	for _, m := range colonKeyRE.FindAllStringSubmatchIndex(line, -1) {
 		work(1)
 		open, name, closeQ := line[m[2]:m[3]], line[m[4]:m[5]], line[m[6]:m[7]]
@@ -261,7 +262,10 @@ func spans(line string) (out [][2]int, found []Finding) {
 		if len(inner) < minSecretLen || !yamlValue(val) || !letterAndDigit(inner) || pointerRE.MatchString(inner) {
 			continue // prose, a flag, a switch: not credential-shaped
 		}
-		if m[8] > m[7]+1 && strings.TrimLeft(line[:m[4]], " \t-\"'") == "" {
+		if lead < 0 {
+			lead = leadEnd(line) // once per line: each byte of the prefix is examined once
+		}
+		if m[8] > m[7]+1 && m[4] <= lead {
 			continue // a line-start key with a space after its colon: the yaml rule's
 		}
 		if CredentialName(name) && !countValue(name, val) && namedSecret(name, inner) {
@@ -305,12 +309,25 @@ func spans(line string) (out [][2]int, found []Finding) {
 	return out, found
 }
 
+// leadEnd is the index of the first byte of a line that is not indentation,
+// a list dash or a quote: a key starting at or before it opens the line.
+func leadEnd(line string) int {
+	i := 0
+	for i < len(line) && strings.IndexByte(" \t-\"'", line[i]) >= 0 {
+		i++
+	}
+	work(i + 1)
+	return i
+}
+
 // pointerRE is a Go pointer or address as %+v prints it (TokensIn:0xc0001a2b3c).
 var pointerRE = regexp.MustCompile(`^0x[0-9a-fA-F]+$`)
 
 // letterAndDigit reports a value with both an ASCII letter and a digit: the
 // shape that keeps a word (reverted) or a path (runtime_actions/x) out of the
 // colon rules, which have no blank after the colon or no line start to lean on.
+// The equals and YAML rules do not share this limit: a letters-only or
+// digits-only value is redacted there and kept here.
 func letterAndDigit(v string) bool {
 	var l, d bool
 	for i := 0; i < len(v); i++ {
@@ -497,9 +514,10 @@ var (
 	// space after its colon (API_KEY:Zq9xV7mP2wL4) and one after prose on the
 	// same line (error: see api_key: Zq9xV7mP2wL4 now), where the earlier
 	// match consumed the key. The key follows a blank, a quote, a comma, a
-	// semicolon, a parenthesis or a bracket; the value is one token. Groups
+	// semicolon, a parenthesis or a bracket; the value is one token of the
+	// equals rule's value class, whole or not at all. Groups
 	// 1 and 3 are the key's quotes, group 2 the name, group 4 the value.
-	colonKeyRE           = regexp.MustCompile(`(?:^|[ \t"',;(\[])(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)(['"]?):[ \t]*('(?:[^'\n]|'')*'|"(?:[^"\\\n]|\\.)*"|[^\s'"#,;(){}\[\]]+)`)
+	colonKeyRE           = regexp.MustCompile(`(?:^|[ \t"',;(\[])(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)(['"]?):[ \t]*('(?:[^'\n]|'')*'|"(?:[^"\\\n]|\\.)*"|[^\s"'\[\](){},;<>|&` + "`" + `]+)`)
 	yamlBlockIndicatorRE = regexp.MustCompile(`^[|>][-+0-9]*[ \t]*(#.*)?$`)
 )
 

@@ -47,6 +47,12 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz err: see api_key: " + c6 + " now API_KEY:" + c7 + " "
 			return strings.Repeat(unit, n/len(unit))
 		}, []string{c1, c2, c3, c6, c7}},
+		// Growing indentation, then repeated colon-form values: the line-start
+		// prefix is classified once, not per match.
+		{"indented colon forms", func(n int) string {
+			unit := " api_key: " + c6 + " API_KEY:" + c7 + " "
+			return strings.Repeat(" ", n/2) + "err: see" + strings.Repeat(unit, n/2/len(unit))
+		}, []string{c6, c7}},
 		// Many lines: YAML blocks, a quoted scalar across lines, JSON.
 		{"mixed block", func(n int) string {
 			unit := "password:\n  '" + c4 + "\n  " + c5 + "'\nnext: kept\n{\"password\":\n \"" + c2 + "\"}\npassword:\n  " + c1 + "\n"

@@ -56,3 +56,24 @@ func TestBlockKeepsProseNearAColonKey(t *testing.T) {
 		}
 	}
 }
+
+// A value is redacted whole or not at all, whatever punctuation it holds (the
+// equals rule's value class), in both colon forms.
+func TestBlockRedactsAPunctuatedColonValueWhole(t *testing.T) {
+	for _, p := range []string{"#", "!", "$", "%", "@", "="} {
+		value := "Ab9" + p + "xY7qR2"
+		long := "Ab9xY7qR2" + p + "tail9"
+		for _, in := range []string{
+			"api_key:" + value, "see api_key: " + value + " now", "see api_key:" + value + " now",
+			"api_key:" + long, "see api_key: " + long + " now",
+		} {
+			out := Block(in)
+			if strings.ContainsAny(out, "xY") || strings.Contains(out, "tail9") || strings.Contains(out, "qR2") {
+				t.Errorf("%q: part of the value survived: %q", in, out)
+			}
+		}
+	}
+	if out := Block("see api_key:Ab9#xY7qR2 now"); out != "see api_key:"+Placeholder+" now" {
+		t.Errorf("%q", out)
+	}
+}
