@@ -170,5 +170,37 @@ class ReleaseVersionFormsTest(unittest.TestCase):
         self.assertTrue(any("٣" in line for line in got), got)
 
 
+
+def release_check_recipe() -> str:
+    """The Makefile's release-check recipe lines."""
+    lines = open(os.path.join(HERE, "..", "Makefile"), encoding="utf-8").read().splitlines()
+    start = lines.index("release-check:")
+    recipe = []
+    for line in lines[start + 1 :]:
+        if not line.startswith("\t"):
+            break
+        recipe.append(line)
+    return "\n".join(recipe)
+
+
+class ReleaseCheckRunsCIValidatorsTest(unittest.TestCase):
+    def test_release_check_runs_every_script_ci_runs_and_its_test(self) -> None:
+        # each scripts/*.py CI's release path runs (the steps from "Detect
+        # release validation scope" to "Run release metadata check": today
+        # detect-release-ci.py, ahead of make release-check) is run by the
+        # local release check too, with its own test when it has one (#833)
+        ci = open(os.path.join(HERE, "..", ".github", "workflows", "ci.yml"), encoding="utf-8").read()
+        start, end = ci.index("Detect release validation scope"), ci.index("Run release metadata check")
+        scripts = sorted(set(re.findall(r"python3 scripts/([A-Za-z0-9_.-]+\.py)", ci[start:end])))
+        self.assertIn("detect-release-ci.py", scripts)
+        recipe = release_check_recipe()
+        for script in scripts:
+            self.assertIn(f"scripts/{script} ", recipe, f"make release-check does not run {script}")
+            test = "test_" + script.replace("-", "_")
+            if os.path.isfile(os.path.join(HERE, test)):
+                self.assertIn(f"scripts/{test}", recipe, f"make release-check does not run {test}")
+        self.assertIn("scripts/test_release_version_forms.py", recipe)
+
+
 if __name__ == "__main__":
     unittest.main()
