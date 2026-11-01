@@ -684,20 +684,17 @@ var (
 	ancestorArgv  = procinfo.Argv
 )
 
-// leadOrPiArgv reports whether argv is an amq-squad lead (bare amq-squad,
-// or amq-squad lead with or without --team) or the lead's pi (a process run
+// leadArgv reports whether argv is an amq-squad lead: bare amq-squad, or
+// amq-squad lead with or without --team.
+func leadArgv(argv []string) bool {
+	return len(argv) > 0 && filepath.Base(argv[0]) == "amq-squad" && (len(argv) == 1 || argv[1] == "lead")
+}
+
+// piArgv reports whether argv is the lead's pi: node (or its launcher) run
 // from the unpacked runtime under ~/.amq-squad/runtime/pi-*, by its
-// executable or script path).
-func leadOrPiArgv(argv []string) bool {
-	if len(argv) == 0 {
-		return false
-	}
-	if filepath.Base(argv[0]) == "amq-squad" && (len(argv) == 1 || argv[1] == "lead") {
-		return true
-	}
-	// pi is node (or its launcher) run from the runtime: its executable or
-	// its script path is under the runtime, never a later argument (a shell
-	// whose command text names the path is not pi)
+// executable or its script path, never a later argument (a shell whose
+// command text names the path is not pi).
+func piArgv(argv []string) bool {
 	for _, a := range argv[:min(2, len(argv))] {
 		if strings.Contains(a, "/.amq-squad/runtime/pi-") {
 			return true
@@ -708,15 +705,18 @@ func leadOrPiArgv(argv []string) bool {
 
 // underSoloLead is the in-binary refusal of the renamed-binary residual
 // (Codex's third pass on #834: `cp "$AMQ_SQUAD_BIN" /tmp/squadctl;
-// /tmp/squadctl up` passes both string layers). verb refuses
-// under_solo_lead when its parent chain (read from the kernel, each pid with
-// its start stamp, re-read at the end) holds an amq-squad lead or a pi
-// process, naming the ancestor; with checkEnv, also when AM_ME is in its
-// environment (the lead's pi and its commands carry it). skipParent passes
-// over the direct parent: the lead that supervises its own scheduler run.
-// An orphan (setsid, reparented to pid 1) has no such ancestor and evades
-// it; only the 3.2 sandbox closes that.
-func underSoloLead(verb string, skipParent, checkEnv bool) error {
+// /tmp/squadctl up` passes both string layers), by the plan reviewer's
+// rule. verb refuses under_solo_lead when its parent chain (read from the
+// kernel, each pid with its start stamp, re-read at the end) holds a pi
+// process (the solo lead's pi, under which the model's commands run), and,
+// with leadRefuses, an amq-squad lead too, naming the ancestor; with
+// checkEnv, also when AM_ME is in its environment. up and lead --team pass
+// leadRefuses (neither is ever legitimately a lead's child: the confirmed
+// start runs the shared functions in-process, not the up verb); scheduler
+// run does not (lead --team starts it). An orphan (setsid, reparented to
+// pid 1, env -u AM_ME) has no such ancestor and evades it; only the 3.2
+// sandbox closes that.
+func underSoloLead(verb string, leadRefuses, checkEnv bool) error {
 	if v := strings.TrimSpace(os.Getenv("AM_ME")); checkEnv && v != "" {
 		return fmt.Errorf("%s: %s runs with AM_ME=%q in its environment (a seat's, or the lead's pi and its commands); the owner starts a team from their own shell, a lead on the owner's confirmation", ReasonUnderSoloLead, verb, v)
 	}
@@ -724,12 +724,23 @@ func underSoloLead(verb string, skipParent, checkEnv bool) error {
 	if err != nil {
 		return fmt.Errorf("%s: %s cannot read its parent chain: %v", ReasonUnderSoloLead, verb, err)
 	}
-	for i, hop := range chain[1:] {
-		if (skipParent && i == 0) || hop.PID <= 1 {
+	for _, hop := range chain[1:] {
+		if hop.PID <= 1 {
 			continue
 		}
-		if argv, ok := ancestorArgv(hop.PID); ok && leadOrPiArgv(argv) {
-			return fmt.Errorf("%s: %s runs under pid %d (%s), a lead or its pi; the owner starts a team from their own shell, a lead on the owner's confirmation", ReasonUnderSoloLead, verb, hop.PID, strings.Join(argv[:min(2, len(argv))], " "))
+		argv, ok := ancestorArgv(hop.PID)
+		if !ok {
+			continue
+		}
+		what := ""
+		switch {
+		case piArgv(argv):
+			what = "the lead's pi"
+		case leadRefuses && leadArgv(argv):
+			what = "a lead"
+		}
+		if what != "" {
+			return fmt.Errorf("%s: %s runs under pid %d (%s), %s; the owner starts a team from their own shell, a lead on the owner's confirmation", ReasonUnderSoloLead, verb, hop.PID, strings.Join(argv[:min(2, len(argv))], " "), what)
 		}
 	}
 	return restamp(chain)

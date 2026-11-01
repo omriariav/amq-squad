@@ -563,9 +563,10 @@ func fakeAncestors(t *testing.T, parent map[int]int, argv map[int][]string) {
 // check: `up` run as a descendant of a solo lead (whatever its own name:
 // /tmp/squadctl) refuses under_solo_lead naming the ancestor, as it does
 // under the lead's pi and with AM_ME in its environment; `up` from a plain
-// shell proceeds through its steps as before. lead --team refuses the same;
-// scheduler run passes over its direct parent, the lead that supervises it,
-// and refuses a lead further up otherwise.
+// shell proceeds through its steps as before. lead --team under a lead
+// refuses the same. scheduler run, which lead --team starts, never refuses
+// for a lead ancestor (the plan reviewer's rule), and refuses under the
+// lead's pi as up does.
 func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
 	f, _ := upWorld(t)
 	underLead := map[int]int{100: 90, 90: 80, 80: 1}
@@ -597,15 +598,19 @@ func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
 	if _, _, err := captureOutput(t, func() error { return runLead([]string{"--team"}) }); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": lead --team runs under pid 80") || len(*starts) != 0 {
 		t.Fatalf("lead --team under a lead = %v (scheduler starts %d)", err, len(*starts))
 	}
-	if err := runSchedulerRun(context.Background(), []string{"--project", f.proj}, io.Discard); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": scheduler run runs under pid 80") {
-		t.Fatalf("scheduler run in the lead's shell = %v", err)
+	// scheduler run: a lead ancestor never refuses (lead --team starts it;
+	// this run goes on to the package's fake amq, which refuses the launch);
+	// the lead's pi does, as it does for up
+	fakeAncestors(t, map[int]int{100: 80, 80: 70, 70: 1}, map[int][]string{80: {"/usr/local/bin/amq-squad", "lead", "--team"}, 70: {"tmux", "new-session"}})
+	if err := runSchedulerRun(context.Background(), []string{"--project", f.proj, "--tick", "1ms"}, io.Discard); err != nil && strings.Contains(err.Error(), ReasonUnderSoloLead) {
+		t.Fatalf("the scheduler lead --team starts = %v", err)
 	}
-	fakeAncestors(t, map[int]int{100: 80, 80: 1}, map[int][]string{80: {"amq-squad", "lead"}})
-	if err := underSoloLead("scheduler run", true, false); err != nil {
-		t.Fatalf("the scheduler its lead supervises = %v", err)
+	pi := []string{"/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/node", "/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/cli.js"}
+	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 80, 80: 1}, map[int][]string{90: bash, 85: pi, 80: {"amq-squad", "lead"}})
+	if err := runSchedulerRun(context.Background(), []string{"--project", f.proj}, io.Discard); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": scheduler run runs under pid 85") {
+		t.Fatalf("scheduler run under the lead's pi = %v", err)
 	}
-	fakeAncestors(t, map[int]int{100: 90, 90: 80, 80: 1}, map[int][]string{90: bash, 80: {"amq-squad", "lead"}})
-	if err := underSoloLead("scheduler run", true, false); err == nil || !strings.Contains(err.Error(), "pid 80") {
-		t.Fatalf("a scheduler run in the lead's shell = %v", err)
+	if _, err := runUpJSON(t, f.proj); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": up runs under pid 85") {
+		t.Fatalf("up under the lead's pi = %v", err)
 	}
 }

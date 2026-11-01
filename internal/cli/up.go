@@ -177,7 +177,7 @@ func runUp(args []string, version string) error {
 	// #834; the string layers read names, this reads the process tree): a
 	// refused preflight step, before any of the seven
 	var runErr error
-	if err := underSoloLead("up", false, true); err != nil {
+	if err := underSoloLead("up", true, true); err != nil {
 		u.report.Steps = append(u.report.Steps, upStep{Name: "preflight", Outcome: "refused", Refusal: ReasonUnderSoloLead, Detail: strings.TrimPrefix(err.Error(), ReasonUnderSoloLead+": ")})
 		runErr = err
 	} else {

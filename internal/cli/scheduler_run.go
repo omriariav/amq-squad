@@ -165,10 +165,12 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	// a scheduler run under a lead is refused unless that lead is its
-	// direct parent (the lead supervising its own scheduler)
+	// a scheduler run under the lead's pi (a renamed binary in its shell)
+	// is refused; a lead ancestor is not (lead --team starts it), and AM_ME
+	// is read only when no lead is its direct parent (an AMQ-launched lead
+	// --team passes its own identity to the scheduler it supervises)
 	byLead := startedByLeadTeam()
-	if err := underSoloLead("scheduler run", byLead, !byLead); err != nil {
+	if err := underSoloLead("scheduler run", false, !byLead); err != nil {
 		return fmt.Errorf("scheduler run: %w", err)
 	}
 	if len(leadPoolFlags) > 0 && !byLead {
