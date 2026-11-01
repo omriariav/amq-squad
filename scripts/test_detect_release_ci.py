@@ -72,6 +72,30 @@ class DetectReleaseCITest(unittest.TestCase):
         )
         self.assertEqual(got, (True, "v2.29.2", "manifest_version_bump"))
 
+    def test_check_version_is_this_scripts_parse_of_version_and_manifests(self) -> None:
+        # brief 3.1.1-2 item 3: make release-check runs it, so a form this
+        # script refuses fails the local check as it fails CI (#833)
+        import json
+        import pathlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+
+            def manifests(version: str) -> None:
+                for rel in DETECT_RELEASE_CI.MANIFESTS:
+                    path = root / rel
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps({"version": version}), encoding="utf-8")
+
+            manifests("3.1.1-rc.1")
+            self.assertEqual(DETECT_RELEASE_CI.check_version(root, "v3.1.1-rc.1"), [])
+            self.assertEqual(DETECT_RELEASE_CI.check_version(root, "3.1.1-rc.1"), [])
+            self.assertEqual(len(DETECT_RELEASE_CI.check_version(root, "v3.1.1")), 2)
+            self.assertTrue(DETECT_RELEASE_CI.check_version(root, "v\u0663.1.1"))
+            manifests("3.1.1-beta.1")
+            self.assertTrue(DETECT_RELEASE_CI.check_version(root, "v3.1.1-beta.1"))
+
 
 if __name__ == "__main__":
     unittest.main()
