@@ -467,14 +467,14 @@ avivsinai/agent-message-queue:
 
 ## 10. Gate
 
-Run on 8f74010b after the Codex re-check, the plan reviewer's by-file read and
-the receipt anchor (later commits on the branch are this note only):
+Run on 8e42634a after Codex pass 3 and the receipt anchor (later commits on the
+branch are this note only):
 
 ```text
 go build ./... && go vet ./... && go test -count=1 ./...   exit 0: 56 packages ok, 0 FAIL
 cd pi && npm ci --offline --ignore-scripts && npm test    exit 0: tests 60; pass 60; fail 0
 PATH=<pyvenv>/bin:$PATH make ci                         exit 0
-revert runs                                               56 of 56 caught, none by a build error
+revert runs                                               60 of 60 caught, none by a build error
 ```
 
 ## 11. A line for the 3.1 release notes
