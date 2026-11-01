@@ -17,6 +17,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/fleet"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -143,16 +144,30 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	reply := leadStartReply{Outcome: "refused"}
 	pid, ok := leadStartPeer(conn)
+	var chain []stampedPID
+	var walkErr error
+	if ok {
+		chain, walkErr = callerChain(pid, s.self)
+	}
 	switch {
 	case !ok:
 		reply.Refusal, reply.Detail = "origin_unknown", "the kernel did not name the requesting process"
-	case !descendsFrom(pid, s.self):
-		reply.Refusal, reply.Detail = "origin_not_lead", fmt.Sprintf("pid %d does not descend from the lead's process %d", pid, s.self)
+	case walkErr != nil:
+		name, _, _ := strings.Cut(walkErr.Error(), ":")
+		reply.Refusal, reply.Detail = name, strings.TrimSpace(strings.TrimPrefix(walkErr.Error(), name+":"))
 	default:
 		var req leadStartRequest
 		line, err := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
 		if err != nil || json.Unmarshal(line, &req) != nil || req.Kind != leadStartKind {
 			reply.Refusal, reply.Detail = "request_malformed", "not a team start request"
+			break
+		}
+		if leadStartBeforeAct != nil {
+			leadStartBeforeAct()
+		}
+		// the caller is proved again just before the lead acts
+		if err := restamp(chain); err != nil {
+			reply.Refusal, reply.Detail = ReasonCallerUnproved, err.Error()
 			break
 		}
 		conn.SetDeadline(time.Time{}) // the start is the lead's own work
@@ -163,19 +178,73 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	conn.Write(append(b, '\n'))
 }
 
-// descendsFrom walks pid's parent chain (at most confirmMaxHops) to anc.
-func descendsFrom(pid, anc int) bool {
-	for i := 0; i <= confirmMaxHops && pid > 1; i++ {
-		if pid == anc {
-			return true
-		}
-		next, ok := confirmParent(pid)
-		if !ok {
-			return false
-		}
-		pid = next
+// leadStartBeforeAct runs between the request's read and the last proof of
+// the caller (a test hook: the window a pid can be reused in).
+var leadStartBeforeAct func()
+
+// ReasonCallerUnproved: a pid of the caller's chain changed its start stamp
+// while the lead read it (the process ended and the pid was reused).
+const ReasonCallerUnproved = "caller_unproved"
+
+// stampedPID is a pid with the start stamp read for it.
+type stampedPID struct {
+	PID   int    `json:"pid"`
+	Stamp string `json:"stamp"`
+}
+
+// confirmStamp reads a pid's raw start stamp (a test seam).
+var confirmStamp = procinfo.StartToken
+
+// callerChain proves pid descends from anc, the pattern of
+// panechain.Reaches: every pid's start stamp is read when the pid is first
+// read; at each hop the child's parent and stamp are read again after the
+// parent's stamp (a reparent or a reuse mid-hop breaks it); at the end every
+// stamp is read again. Any change is caller_unproved; a chain that ends at
+// pid 1 without anc is origin_not_lead. It returns the chain, anc included.
+func callerChain(pid, anc int) ([]stampedPID, error) {
+	first, ok := confirmStamp(pid)
+	if !ok {
+		return nil, fmt.Errorf("%s: the start stamp of pid %d cannot be read", ReasonCallerUnproved, pid)
 	}
-	return false
+	chain := []stampedPID{{pid, first}}
+	for p, i := pid, 0; ; i++ {
+		if p == anc {
+			return chain, restamp(chain)
+		}
+		if p <= 1 || i >= confirmMaxHops {
+			return nil, fmt.Errorf("origin_not_lead: pid %d does not descend from the lead's process %d", pid, anc)
+		}
+		parent, ok := confirmParent(p)
+		if !ok {
+			return nil, fmt.Errorf("%s: the parent of pid %d cannot be read", ReasonCallerUnproved, p)
+		}
+		stamp, ok := confirmStamp(parent)
+		if !ok && parent > 1 {
+			return nil, fmt.Errorf("%s: the start stamp of pid %d cannot be read", ReasonCallerUnproved, parent)
+		}
+		if again, ok := confirmParent(p); !ok || again != parent {
+			return nil, fmt.Errorf("%s: pid %d was reparented while the lead read it", ReasonCallerUnproved, p)
+		}
+		if err := restamp(chain[len(chain)-1:]); err != nil {
+			return nil, err
+		}
+		chain = append(chain, stampedPID{parent, stamp})
+		p = parent
+	}
+}
+
+// restamp reads every pid's start stamp again: caller_unproved when one
+// changed (its process ended and the pid was reused) or cannot be read.
+func restamp(chain []stampedPID) error {
+	for _, h := range chain {
+		if h.PID <= 1 {
+			continue
+		}
+		if now, ok := confirmStamp(h.PID); !ok || now != h.Stamp {
+			return fmt.Errorf("%s: pid %d no longer carries the start stamp %q the lead read for it", ReasonCallerUnproved, h.PID, h.Stamp)
+		}
+	}
+	return nil
 }
 
 // r40Fallback are the mayor's outcomes for a root outside the fleet grant

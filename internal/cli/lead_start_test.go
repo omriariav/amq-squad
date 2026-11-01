@@ -343,3 +343,59 @@ func TestASoloLeadIsALeadParentOfItsScheduler(t *testing.T) {
 		}
 	}
 }
+
+// B after Codex on #834: the start socket proves its caller with start
+// stamps (the pattern of panechain.Reaches). A chain whose stamps hold is
+// proved (the request then reaches the start, which refuses it for want of
+// a confirmation); a pid whose stamp changes during the walk, or between
+// the request's read and the lead's act, is caller_unproved and the start
+// never runs.
+func TestTheStartSocketProvesItsCallerWithStartStamps(t *testing.T) {
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	h, _ := digestHex(digest)
+	_ = os.Remove(confirmPath(s.root, h))
+	sock, err := s.serve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_ROOT", s.root)
+	t.Setenv(leadStartSocketEnv, sock)
+	self := os.Getpid()
+	stamps := map[int]string{700: "s700", 600: "s600", self: "self"}
+	reads := map[int]int{}
+	var flipAt func(pid, n int) bool
+	prev := []any{leadStartPeer, confirmParent, confirmStamp, leadStartBeforeAct}
+	t.Cleanup(func() {
+		leadStartPeer = prev[0].(func(*net.UnixConn) (int, bool))
+		confirmParent = prev[1].(func(int) (int, bool))
+		confirmStamp = prev[2].(func(int) (string, bool))
+		leadStartBeforeAct, _ = prev[3].(func())
+	})
+	leadStartPeer = func(*net.UnixConn) (int, bool) { return 700, true }
+	confirmParent = func(p int) (int, bool) { return map[int]int{700: 600, 600: self}[p], true }
+	confirmStamp = func(p int) (string, bool) {
+		reads[p]++
+		if flipAt != nil && flipAt(p, reads[p]) {
+			return "reused", true
+		}
+		st, ok := stamps[p]
+		return st, ok
+	}
+	apply := func() error {
+		_, _, err := captureOutput(t, func() error { return runTeam([]string{"apply", "--digest", digest, "--project", f.proj}) })
+		return err
+	}
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonConfirmMissing+":") {
+		t.Fatalf("a proved caller = %v, want the start's own refusal", err)
+	}
+	reads, flipAt = map[int]int{}, func(p, n int) bool { return p == 600 && n >= 2 }
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
+		t.Fatalf("a stamp changed during the walk = %v", err)
+	}
+	flipped := false
+	reads, flipAt = map[int]int{}, func(p, _ int) bool { return p == 700 && flipped }
+	leadStartBeforeAct = func() { flipped = true }
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
+		t.Fatalf("a stamp changed before the act = %v", err)
+	}
+}
