@@ -898,6 +898,42 @@ func TestAShortQuestionLineDoesNotRefuseOrdinaryReplies(t *testing.T) {
 	}
 }
 
+// Codex re-check #2: redaction runs over the whole body before the split.
+// A quoted assignment whose value the split would cut (neither half matches
+// the redactor alone) is absent from every part.
+func TestACanaryAcrossTheSplitBoundaryIsRedacted(t *testing.T) {
+	value := strings.Repeat("zebra ", 900) // 5,400 characters, no credential shape
+	canary := `GH_TOKEN="` + value + `"`
+	for _, re := range redact.RealCredentialShapes {
+		if re.MatchString(canary) {
+			t.Fatalf("the canary matches a real credential shape %s", re)
+		}
+	}
+	spans, leaks := 0, false
+	for _, p := range splitPost("q-0123456789ab", "t", "Here it is.\n\n"+canary) {
+		if strings.Contains(p, "zebra") {
+			spans++
+			leaks = leaks || strings.Contains(redact.Block(p), "zebra")
+		}
+	}
+	if spans < 2 || !leaks {
+		t.Fatal("the canary does not span the split, or every part alone is redacted; the row would not isolate the order")
+	}
+	pf := newPhoneFixture(t)
+	_, rid := pf.ask(t, "send the deploy env", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Here it is.\n\n"+canary+"\n\n"+strings.TrimSpace(strings.Repeat(strings.Repeat("log ", 400)+"\n\n", 3)), "")
+	got := pf.relay(t)
+	posts := pf.relayPosts()
+	if len(got) != 1 || got[0].Outcome != "posted" || len(posts) < 2 {
+		t.Fatalf("relayed %+v, %d posts", got, len(posts))
+	}
+	for _, p := range posts {
+		if strings.Contains(p.Content, "zebra") {
+			t.Fatalf("a part carries the value: %q", p.Content[:80])
+		}
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

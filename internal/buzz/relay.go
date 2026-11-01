@@ -463,13 +463,15 @@ func sha256Hex(s string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// assemble is the reply's post parts as they will be published: split
-// first, then every part, header and marks included, passes the three
-// refusal checks, redact.Block, and the checks again. One refused line in
-// any part refuses the whole reply (a split that would start or end a part
-// with an answer-form line is refused, never re-split around it).
+// assemble is the reply's post parts as they will be published, in five
+// steps: redact.Block over the whole body and the header (a value the split
+// would cut is redacted whole), the split, then per part the three refusal
+// checks, redact.Block, and the checks again. Every check runs on the bytes
+// that leave. One refused line in any part refuses the whole reply (a split
+// that would start or end a part with an answer-form line is refused, never
+// re-split around it).
 func (g gateView) assemble(requestID, thread, body string) ([]string, string, bool) {
-	parts := splitPost(requestID, thread, body)
+	parts := splitPost(requestID, thread, redact.Block(body))
 	for i, p := range parts {
 		if line, bad := g.refuse(p); bad {
 			return nil, line, true
@@ -487,7 +489,7 @@ func (g gateView) assemble(requestID, thread, body string) ([]string, string, bo
 // into parts marked (1/n), at most MaxParts; what does not fit is replaced
 // by one line naming the cockpit thread.
 func splitPost(requestID, thread, body string) []string {
-	head := "re " + requestID
+	head := redact.Block("re " + requestID)
 	if len(head)+1+len(body) <= DMLimit {
 		return []string{head + "\n" + body}
 	}
