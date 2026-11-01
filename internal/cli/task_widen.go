@@ -249,7 +249,7 @@ func validateBlockedWiden(t task.Task, requested []string) error {
 		return nil
 	}
 	if t.BlockReason != seatcommit.ReasonOutside && t.BlockReason != task.ReasonWidenRequested {
-		return &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set (state %s, reason %s); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)", t.ID, t.State, t.BlockReason, t.ID)}
+		return &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set or by a seat's widen request (state %s, reason %s); there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT", t.ID, t.State, t.BlockReason, t.ID)}
 	}
 	if len(t.RefusedPaths) == 0 {
 		return &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded no refused paths", t.ID)}
