@@ -176,20 +176,28 @@ test("R53: a planted marker switches nothing; the switch rides the lead's answer
 		assert.ok(pi.getActiveTools().includes("bash"), "the planted marker switched at the apply");
 		assert.equal(process.env.AM_ROOT, w.soloRoot);
 	});
+	// each fake lead closes in a finally: a failed assertion leaves no
+	// listening socket to keep the test process alive
 	const solo = await fakeLead(w.dir, { outcome: "solo" });
-	await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: solo.socket }, async (pi) => {
-		await pi.emit("session_start", {}, fakeCtx());
-		assert.deepEqual(solo.got, [{ kind: "amq-squad.phase.v1" }]);
-		assert.ok(pi.getActiveTools().includes("bash"), "a solo answer switched");
-	});
-	solo.close();
+	try {
+		await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: solo.socket }, async (pi) => {
+			await pi.emit("session_start", {}, fakeCtx());
+			assert.deepEqual(solo.got, [{ kind: "amq-squad.phase.v1" }]);
+			assert.ok(pi.getActiveTools().includes("bash"), "a solo answer switched");
+		});
+	} finally {
+		solo.close();
+	}
 	const team = await fakeLead(w.dir, { outcome: "team", team: w.team });
-	await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: team.socket }, async (pi) => {
-		await pi.emit("session_start", {}, fakeCtx());
-		assert.deepEqual(pi.getActiveTools().sort(), TEAM13);
-		assert.equal(process.env.AM_ROOT, w.squadRoot);
-	});
-	team.close();
+	try {
+		await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: team.socket }, async (pi) => {
+			await pi.emit("session_start", {}, fakeCtx());
+			assert.deepEqual(pi.getActiveTools().sort(), TEAM13);
+			assert.equal(process.env.AM_ROOT, w.squadRoot);
+		});
+	} finally {
+		team.close();
+	}
 });
 
 // Row 5 for the lead up starts (lead --team): team phase from its first

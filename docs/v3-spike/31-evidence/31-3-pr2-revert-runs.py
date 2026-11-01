@@ -25,16 +25,20 @@ def run(name, edits, cmd):
             assert a in s, (name,p,a[:70])
             files.add(p)
             open(p,'w').write(s.replace(a,b,1))
-        r=subprocess.run(cmd,shell=True,capture_output=True,text=True)
+        try:
+            r=subprocess.run(cmd,shell=True,capture_output=True,text=True,timeout=600)
+        except subprocess.TimeoutExpired as e:
+            # a row that hangs is a row that does not pass; say so
+            r=subprocess.CompletedProcess(cmd,124,(e.stdout or b'').decode() if isinstance(e.stdout,bytes) else (e.stdout or ''),'timed out after 600 s\n')
         out=r.stdout+r.stderr
-        lines=[l.rstrip() for l in out.splitlines() if l.strip().startswith(('--- FAIL','✖','not ok')) or 'build failed' in l]
+        lines=[l.rstrip() for l in out.splitlines() if l.strip().startswith(('--- FAIL','✖','not ok')) or 'build failed' in l or l.startswith('timed out')]
         RUNS[0]+=1
         RUNS[1]+=r.returncode!=0
-        print(f"REVERT {name}: {'fails (the row catches it)' if r.returncode!=0 else 'PASSES (the row misses it)'}")
+        print(f"REVERT {name}: {'fails (the row catches it)' if r.returncode!=0 else 'PASSES (the row misses it)'}", flush=True)
         seen=set()
         for l in lines:
             if l in seen: continue
-            seen.add(l); print('   '+l.strip())
+            seen.add(l); print('   '+l.strip(), flush=True)
     finally:
         # back to HEAD exactly, whatever happened above
         if files:
