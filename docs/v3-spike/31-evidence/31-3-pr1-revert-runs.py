@@ -247,7 +247,7 @@ run("the extension's allowlist not the table's (up added)",
  [('pi/extensions/lib/team.ts','export const AMQ_SQUAD_ALLOW = ["status",','export const AMQ_SQUAD_ALLOW = ["up", "status",')],
  P+"test/team.test.ts")
 run("any amq-squad verb allowed by the guard's second layer",
- [('internal/cli/hook_guard.go','	return slices.Contains(soloAmqSquadAllow, one) ||','	return true ||')],
+ [('internal/cli/hook_guard.go','	return slices.Contains(soloAmqSquadAllow, one) ||','\treturn one != "\\x00" ||')],
  C+"TestTheGuardRefusesTheSoloLeads")
 run("the team tools and /squad confirm given to the team lead too",
  [('pi/extensions/amq-squad.ts','\telse if (cfg.solo) installSoloTeam(pi, cfg);','\tif (cfg.lead || cfg.solo) installSoloTeam(pi, cfg);')],
