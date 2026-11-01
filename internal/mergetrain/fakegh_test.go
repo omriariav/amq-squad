@@ -27,6 +27,7 @@ import (
 
 type fakePR struct {
 	Head        string      `json:"head"` // branch
+	Title       string      `json:"title,omitempty"`
 	Base        string      `json:"base"`
 	Draft       bool        `json:"draft"`
 	State       string      `json:"state"`
@@ -149,10 +150,20 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		}
 		n, _ := strconv.Atoi(args[2])
 		mb, _ := gitOut(s.Bare, "merge-base", base, head)
-		view := map[string]any{"number": n, "state": p.State, "isDraft": p.Draft, "baseRefName": p.Base,
+		view := map[string]any{"number": n, "title": p.Title, "state": p.State, "isDraft": p.Draft, "baseRefName": p.Base,
 			"baseRefOid": mb, "headRefOid": head, "mergeable": mergeable, "mergeCommit": nil}
 		if p.MergeCommit != "" {
 			view["mergeCommit"] = map[string]string{"oid": p.MergeCommit}
+		}
+		// gh prints only the fields --json names (brief 3.1.1-1: the title
+		// reaches the train only when it asks for it)
+		if i := slices.Index(args, "--json"); i >= 0 && i+1 < len(args) {
+			asked := strings.Split(args[i+1], ",")
+			for k := range view {
+				if !slices.Contains(asked, k) {
+					delete(view, k)
+				}
+			}
 		}
 		out, _ := json.Marshal(view)
 		fmt.Fprintln(stdout, string(out))

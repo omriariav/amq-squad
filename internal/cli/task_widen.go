@@ -204,7 +204,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 				if c.Accepted {
 					continue
 				}
-				gid, err := raiseGrowthGate(sel, lead, t.ID, c.Target)
+				gid, err := raiseGrowthGate(sel, lead, t.ID, t.Title, c.Target)
 				data.GateIDs = append(data.GateIDs, gid)
 				raised = append(raised, gid+" "+c.Target)
 				if err != nil {

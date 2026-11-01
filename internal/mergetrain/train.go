@@ -160,6 +160,7 @@ type PlanPR struct {
 	Status      string   `json:"status"` // planned | refused | merged | stopped
 	Merged      string   `json:"merged,omitempty"`
 	base        string   // the PR's merge base, for RebaseForCI
+	title       string   // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
 }
 
 // ciAbsentOnly: the only refusal is CI with no run at the head.
@@ -383,7 +384,7 @@ func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, 
 			return PlanPR{}, fmt.Errorf("PR #%d head kept moving while it was checked (%s -> %s)", it.Number, short(pr.HeadSHA), short(again.HeadSHA))
 		}
 	}
-	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", base: pr.BaseSHA}
+	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", base: pr.BaseSHA, title: pr.Title}
 	p.Refusals = check(checkInput{repository: req.Repository, base: req.Base, item: it, pr: pr, runs: runs, grant: t.Grants,
 		required: ci, trainHeads: t.Audit.trainHeads(req.Repository, it.Number)})
 	return p, nil
@@ -410,7 +411,9 @@ func (t *Train) refuse(req Request, p *PlanPR, entry func(Entry) error) {
 		p.GateError = "no gate writer attached"
 	default:
 		id := "merge-" + strings.TrimPrefix(gatetarget.Digest("spawn", target), "sha256:")[:16]
-		rec, err := t.Escalate.Raise(gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: t.Lead})
+		// the question's plain lines read the PR's title and the base the
+		// train merges into, both as read here (brief 3.1.1-1)
+		rec, err := t.Escalate.Raise(gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: t.Lead, Facts: gatestore.SafeFacts(p.title, req.Base)})
 		switch {
 		case err == nil, errors.Is(err, fs.ErrExist):
 			p.GateID = id

@@ -86,12 +86,13 @@ func lines[T any](raw []byte) ([]T, error) {
 
 func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
 	n := strconv.Itoa(number)
-	raw, err := g.run(ctx, "pr", "view", n, "-R", repository, "--json", "number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable,mergeCommit")
+	raw, err := g.run(ctx, "pr", "view", n, "-R", repository, "--json", "number,title,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable,mergeCommit")
 	if err != nil {
 		return PRInfo{}, err
 	}
 	var v struct {
 		Number      int    `json:"number"`
+		Title       string `json:"title"`
 		State       string `json:"state"`
 		IsDraft     bool   `json:"isDraft"`
 		BaseRefName string `json:"baseRefName"`
@@ -105,7 +106,7 @@ func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, err
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return PRInfo{}, fmt.Errorf("decode PR #%d: %w", number, err)
 	}
-	pr := PRInfo{Number: v.Number, State: v.State, Draft: v.IsDraft, Repository: repository, BaseRef: v.BaseRefName,
+	pr := PRInfo{Number: v.Number, Title: v.Title, State: v.State, Draft: v.IsDraft, Repository: repository, BaseRef: v.BaseRefName,
 		BaseSHA: v.BaseRefOid, HeadSHA: v.HeadRefOid, Mergeable: v.Mergeable}
 	if v.MergeCommit != nil {
 		pr.MergeCommit = v.MergeCommit.Oid

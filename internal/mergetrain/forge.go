@@ -40,7 +40,8 @@ type ForcePush struct {
 // live files list.
 type PRInfo struct {
 	Number      int          `json:"number"`
-	State       string       `json:"state"` // OPEN, CLOSED, MERGED
+	Title       string       `json:"title,omitempty"` // the gate question's quoted title (brief 3.1.1-1)
+	State       string       `json:"state"`           // OPEN, CLOSED, MERGED
 	Draft       bool         `json:"draft"`
 	Repository  string       `json:"repository"` // the base repository, owner/name
 	BaseRef     string       `json:"base_ref"`
