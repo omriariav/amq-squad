@@ -86,7 +86,9 @@ def check(path):
 # frontmatter block only, and `\s` is NOT used after the key because it matches
 # newlines and would capture a version from the following line.
 FRONTMATTER_BLOCK = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?(?:\n|\Z)", re.S)
-VERSION_MARKER = re.compile(r"^version:[ \t]*\"?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)\"?", re.M)
+# The whole field value must be the version: only the closing quote, blanks,
+# a trailing comment and the line end may follow it.
+VERSION_MARKER = re.compile(r"^version:[ \t]*\"?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)\"?[ \t]*(?:#[^\r\n]*)?\r?$", re.M)
 VERSIONED_SKILLS = (
     "wizard", "cli", "orchestrator", "amq-squad",
     "amq-squad-orchestrator", "amq-team-setup", "amq-squad-role-creator",

@@ -23,7 +23,11 @@ SKILL_FRONTMATTER_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 SKILL_FRONTMATTER_VERSION_RE = re.compile(
-    r'^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)"?',
+    # The whole field value must be the version: after it only the closing
+    # quote, blanks, a trailing comment and the line end (CR tolerated), so a
+    # suffix such as -rc.1-beta.2 or +meta is not read as the prefix it starts
+    # with.
+    r'^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)"?[ \t]*(?:#[^\r\n]*)?\r?$',
     re.MULTILINE,
 )
 # The AMQ floor has one source: doctor's constant, the version below which

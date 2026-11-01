@@ -162,6 +162,9 @@ class RequireReleaseNotesTest(unittest.TestCase):
             CHECK_RELEASE_VERSION.VERSION_RE.match("v3.1.0-rc.1").group(1), "3.1.0-rc.1"
         )
         self.assertIsNone(CHECK_RELEASE_VERSION.VERSION_RE.match("v3.1.0-beta.1"))
+        for malformed in ("3.1.0-rc.1-beta.2", "3.1.0-rc.1+meta", "3.1.0-rc.1.2"):
+            body = f'---\nname: cli\nversion: "{malformed}"  # x-release-please-version\n---\n'
+            self.assertIsNone(CHECK_RELEASE_VERSION.skill_frontmatter_version(body), malformed)
         body = '---\nname: cli\nversion: "3.1.0-rc.1"  # x-release-please-version\n---\n'
         self.assertEqual(CHECK_RELEASE_VERSION.skill_frontmatter_version(body), "3.1.0-rc.1")
         with tempfile.TemporaryDirectory() as root:
