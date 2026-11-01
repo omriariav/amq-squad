@@ -3,11 +3,17 @@
 # that must catch it, prints whether they failed and the failing tests, and
 # restores the file from git. Run it from a clean checkout of the branch:
 #   python3 docs/v3-spike/31-evidence/31-2-pr2-revert-runs.py
-# It refuses a dirty tree (a restore from git would drop uncommitted work).
-import subprocess, os
+# It refuses a tree with any staged, unstaged or untracked change, since it
+# restores every file it touched to HEAD exactly (index and working tree),
+# and it restores them even when a run fails or is interrupted.
+import subprocess, os, sys
 os.chdir(subprocess.check_output(['git','rev-parse','--show-toplevel'],text=True).strip())
-assert subprocess.run(['git','diff','--quiet']).returncode==0, "tree not clean"
+def dirty():
+    return subprocess.run(['git','status','--porcelain','--untracked-files=all'],capture_output=True,text=True,check=True).stdout
+if dirty():
+    sys.exit("refused: the tree has staged, unstaged or untracked changes; the runs restore files to HEAD and would drop them:\n"+dirty())
 G='go test -count=1 '
+RUNS=[0,0]  # runs, runs caught
 def both(*cmds):
     # every command must fail for the revert to count; each one's exit is printed
     parts=[]
@@ -17,20 +23,28 @@ def both(*cmds):
     return " ; ".join(parts)+f" ; test {cond} && exit 1 || exit 0"
 def run(name, edits, cmd):
     files=set()
-    for (p,a,b) in edits:
-        s=open(p).read()
-        assert a in s, (name,p,a[:70])
-        open(p,'w').write(s.replace(a,b,1)); files.add(p)
-    r=subprocess.run(cmd,shell=True,capture_output=True,text=True)
-    out=r.stdout+r.stderr
-    lines=[l.rstrip() for l in out.splitlines() if l.strip().startswith(('--- FAIL','✖','not ok')) or 'build failed' in l]
-    print(f"REVERT {name}: {'fails (the row catches it)' if r.returncode!=0 else 'PASSES (the row misses it)'}")
-    seen=set()
-    for l in lines:
-        if l in seen: continue
-        seen.add(l); print('   '+l.strip())
-    subprocess.run(['git','checkout','--']+sorted(files))
-    assert subprocess.run(['git','diff','--quiet']).returncode==0
+    try:
+        for (p,a,b) in edits:
+            s=open(p).read()
+            assert a in s, (name,p,a[:70])
+            files.add(p)
+            open(p,'w').write(s.replace(a,b,1))
+        r=subprocess.run(cmd,shell=True,capture_output=True,text=True)
+        out=r.stdout+r.stderr
+        lines=[l.rstrip() for l in out.splitlines() if l.strip().startswith(('--- FAIL','✖','not ok')) or 'build failed' in l]
+        RUNS[0]+=1
+        RUNS[1]+=r.returncode!=0
+        print(f"REVERT {name}: {'fails (the row catches it)' if r.returncode!=0 else 'PASSES (the row misses it)'}")
+        seen=set()
+        for l in lines:
+            if l in seen: continue
+            seen.add(l); print('   '+l.strip())
+    finally:
+        # back to HEAD exactly, whatever happened above
+        if files:
+            subprocess.run(['git','checkout','HEAD','--']+sorted(files),check=True)
+    if dirty():
+        sys.exit("the tree is not clean after a restore:\n"+dirty())
 P="cd pi && node --test "
 run("router pools fixed at open (SetRosterPools a no-op)",
  [('internal/routing/router.go','\tr.o.RosterPools = slices.Clone(pools)\n','\t_ = pools\n')],
@@ -151,3 +165,13 @@ run("the socket's floor the scheduler's launch start, not the last relaunch",
 run("the verb's floor the launch record's start, not the last relaunch",
  [('internal/cli/scheduler_run.go','\t\t\tlastRelaunch = *st.LastRelaunchAt\n','\t\t\t_ = st.LastRelaunchAt\n')],
  G+"-run TestSchedulerRelaunchStartFloorIsTheLastRelaunch ./internal/cli/")
+run("the cap captured at acceptance, not read again at the drain's end",
+ [('internal/schedproc/roster.go','\t\tnext.Cap = func() (int, error) { return r.Cap(q) }\n','')],
+ G+"-run TestTheCapInstalledAtTheSwapIsTheGrantReadAtTheDrainsEnd ./internal/schedproc/")
+run("a cap that cannot be read at the swap ignored",
+ [('internal/scheduler/roster.go','\t\tc, err := r.Cap()\n\t\tif err != nil {','\t\tc, err := r.Cap()\n\t\tif err != nil && false {')],
+ G+"-run TestACapThatCannotBeReadAtTheSwapWritesNothing ./internal/scheduler/")
+run("drain_end stamped after the roster plan",
+ [('internal/seatlaunch/roster.go','\tdrainEnd := time.Now()\n\tq, err := l.PlanRoster(reqs)','\tq, err := l.PlanRoster(reqs)\n\tdrainEnd := time.Now()')],
+ G+"-run TestASlowFetchLandsInPrepareNotDrain ./internal/seatlaunch/")
+print(f"{RUNS[0]} runs, {RUNS[1]} caught, {RUNS[0]-RUNS[1]} missed")
