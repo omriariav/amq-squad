@@ -127,9 +127,56 @@ Linux seats are 3.1 work.
 
 ## First run
 
-Each step below is the owner's, at the owner's own terminal. amq-squad never
-writes the owner's Claude or Codex configuration and never answers a trust
-prompt for you.
+The first run is a conversation with the lead, in the repository:
+
+1. Start the lead: `amq-squad lead` (or a bare `amq-squad` on a terminal).
+   With no squad.yaml it is the solo lead; its state lives under
+   `~/.amq-squad/solo/` and nothing is written in the repository.
+2. Say what you want. The lead writes a plan (the goal, the seats with
+   their runtime, model and effort, the files, the first tasks) and
+   proposes it with its `amq_team_propose` tool. `team propose --from
+   PLAN.json` renders squad.yaml from it, checks it against your grant and
+   prints the plan with one digest and its 16-hex prefix. The plan block
+   below the editor shows them. Nothing is written but the proposal.
+3. Confirm it at one of the two doors. The lead's own process witnesses
+   the confirmation, checks the door's proof itself and holds it for 30
+   minutes in memory; no file is a confirmation, and a lead restart forgets
+   it, so you confirm again:
+   - type `/squad confirm <prefix>` in the lead's pane. pi hands the
+     command to the extension, never to the model, and the lead accepts it
+     only from its own pi;
+   - or send the signed Buzz DM `yes <prefix>`. The Buzz attachment hands
+     the lead the event as it fetched it, and the lead, which holds no key,
+     verifies the owner's signature itself.
+
+   There is no shell door: under one uid, no kernel read tells your shell
+   from one the lead's model built, so a confirmation from a shell would
+   need a key or another user.
+4. The lead applies it with its `amq_team_apply` tool. The lead's own
+   process writes squad.yaml through the digest flow and starts the team
+   through `up`'s steps: the session, the doctor, the lead lock, the
+   scheduler and the roster's outcome. The roster comes back in the
+   conversation. An apply with no confirmation, or a stale one, is refused
+   naming the two doors. The start runs the mayor's checks of your fleet
+   grant: the permitted repositories, the maximum squads and the cost cap,
+   which refuses while no meter can read it. A repository outside a fleet
+   grant in auto mode gets R40's fallback: the lead proposes, you start.
+   Run the two commands the refusal prints, `amq-squad team apply --digest
+   <digest> --project .` and then `amq-squad up`. From your own shell that
+   apply is itself the confirmation (the digest is in front of you), and it
+   runs only after the lead has quit: while any lead holds the repository
+   it refuses `lead_running`, or `lead_unreachable` when the lead's process
+   is alive but its socket does not answer. A record a dead lead left is
+   removed for you.
+
+The solo lead's shell refuses `tmux` and every `amq-squad` verb but the
+read-only ones (status, context, doctor, version, task show, task list, team
+propose), so it cannot type into its own pane or start a team. The limit of that refusal is written in
+[the execution note](docs/v3-spike/31-evidence/31-3-squad-verbs.md).
+
+Before the first run, set up the host. Each step below is the owner's, at
+the owner's own terminal. amq-squad never writes the owner's Claude or
+Codex configuration and never answers a trust prompt for you.
 
 **1. The AMQ root.** The repository needs an AMQ queue first: run `amq coop
 init` once inside it (AMQ's verb; it writes `.amqrc` and `.agent-mail/`).
@@ -200,7 +247,8 @@ Codex notify fan-out line:
 amq-squad trust .
 ```
 
-**8. The squad.** `team propose` prints every file the squad needs
+**8. The squad.** The lead proposes it from the conversation (above). By
+hand, `team propose` prints every file the squad needs
 (`squad.yaml`, `.amq-squad/team-rules.md`, the `CLAUDE.md` and `AGENTS.md`
 pointer stubs) with one digest, and writes nothing. `team apply` with that
 digest and the same options writes them; a changed option

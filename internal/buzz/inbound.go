@@ -104,7 +104,11 @@ type Handler struct {
 	SeenPath string
 	// VerifyTimeout overrides the 10 s cap (tests).
 	VerifyTimeout time.Duration
-	Now           func() time.Time
+	// Confirm writes R55's confirmation record for the owner's signed `yes
+	// <prefix>` (brief 31-3, the Buzz door); nil routes such a DM as any
+	// other message.
+	Confirm gateverify.TeamConfirmer
+	Now     func() time.Time
 
 	seen *seenSet
 }
@@ -235,6 +239,13 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 		h.final(ctx, &hd, "refused "+gateID+" "+code) // nothing is marked
 		return hd
 	}
+	// the team door (brief 31-3) first: a signed yes <prefix> is a team
+	// confirmation, never a phone request or a continuation (brief 31-4)
+	if prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil {
+		closeOnce()
+		h.teamYes(ctx, &hd, e, raw, prefix)
+		return hd
+	}
 	// a reply to a relayed post or to the request's receipt continues its
 	// request (brief 31-4): it reaches the lead as text, whatever its shape;
 	// the gate path keeps every other answer form, as today
@@ -342,6 +353,33 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 		}
 		h.final(ctx, hd, text)
 	}
+}
+
+// teamYes is the Buzz door of R55 on an owner-signed event: inside the
+// routing window, the confirmer hands the event's raw bytes (fetched on this
+// handler's own connection) to the lead, which verifies them itself and
+// witnesses the confirmation; the event is then handled once.
+// The reply names the outcome only, never the prefix (no reply carries an
+// answer's digest prefix).
+func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw []byte, prefix string) {
+	hd.Kind = "team_confirm"
+	now := h.now()
+	if e.CreatedAt < now.Add(-RouteWindow).Unix() || e.CreatedAt > now.Add(FutureSkew).Unix() {
+		hd.Error = fmt.Sprintf("created_at %d is outside the routing window", e.CreatedAt)
+		h.final(ctx, hd, "refused team "+gateverify.RejectWindow)
+		return
+	}
+	_, err := h.Confirm(prefix, raw)
+	if err != nil {
+		hd.Error = err.Error()
+		code, _, _ := strings.Cut(err.Error(), ":")
+		h.final(ctx, hd, "refused team "+code)
+		return
+	}
+	if err := h.seen.put(e.ID, "team", now); err != nil {
+		hd.Error = "once-only record: " + err.Error()
+	}
+	h.final(ctx, hd, "confirmed team")
 }
 
 // reaskLine points the owner at the gate thread by the id prefix of the

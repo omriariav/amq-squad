@@ -39,3 +39,12 @@ func readArgvNative(pid int) ([]string, bool) {
 	}
 	return parseKernProcArgs2Argv(buf)
 }
+
+// readEnvironNative reads pid's initial environment via KERN_PROCARGS2.
+func readEnvironNative(pid int) ([]string, bool) {
+	buf, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		return nil, false
+	}
+	return parseKernProcArgs2Env(buf)
+}

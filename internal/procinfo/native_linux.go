@@ -79,3 +79,12 @@ func readArgvNative(pid int) ([]string, bool) {
 	}
 	return parseProcCmdlineArgv(buf)
 }
+
+// readEnvironNative reads pid's initial environment from /proc/<pid>/environ.
+func readEnvironNative(pid int) ([]string, bool) {
+	buf, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
+	if err != nil {
+		return nil, false
+	}
+	return parseProcEnviron(buf)
+}

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -214,14 +213,23 @@ var takeLeadLock = func(root string) (*schedproc.LeadLock, error) {
 	return schedproc.AcquireLeadLock(root, schedproc.LeadRecord{PID: pid, Start: start, Pane: os.Getenv("TMUX_PANE")})
 }
 
-// startedByLeadTeam reports whether this process's parent is the lead's
-// team mode (`amq-squad lead --team`), the only starter allowed to pass
-// --lead-pool (narrow pass, R2 (b)).
+// startedByLeadTeam reports whether this process's parent is a lead: the
+// lead's team mode (`amq-squad lead --team`), or the solo lead (`amq-squad
+// lead`, or bare `amq-squad`), which starts the scheduler in its own process
+// on the owner's confirmation of a team it proposed (brief 31-3). It is the
+// only starter allowed to pass --lead-pool (narrow pass, R2 (b)), and its
+// incarnation proves the lead's decisions (schedproc.SupervisingLead). Only
+// a lead's direct child has it as parent: the lead starts its pi and its
+// scheduler, and its tools' commands run under pi.
 var startedByLeadTeam = func() bool {
-	return procinfo.Match(os.Getppid(), func(args string) bool {
-		f := strings.Fields(args)
-		return len(f) > 1 && filepath.Base(f[0]) == "amq-squad" && f[1] == "lead" && slices.Contains(f, "--team")
-	})
+	return procinfo.Match(os.Getppid(), leadParentArgs)
+}
+
+// leadParentArgs reports whether a command line is a lead's: amq-squad
+// lead (team or solo) or bare amq-squad (the solo lead).
+func leadParentArgs(args string) bool {
+	f := strings.Fields(args)
+	return len(f) == 1 && filepath.Base(f[0]) == "amq-squad" || len(f) > 1 && filepath.Base(f[0]) == "amq-squad" && f[1] == "lead"
 }
 
 // startLeadScheduler supervises `amq-squad scheduler run` for the lead;

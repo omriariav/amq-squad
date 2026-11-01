@@ -16,6 +16,8 @@ export type Config = {
 	holdTimeoutMs: number;
 	models: string[]; // provider/id the seat may use (registry entry)
 	lead: boolean; // AMQ_SQUAD_LEAD=1: the team lead (dispatch tools)
+	solo?: boolean; // AMQ_SQUAD_SOLO_LEAD=1: the solo lead (propose and apply a team, brief 31-3)
+	project?: string; // AMQ_SQUAD_PROJECT: the repository
 };
 
 const HANDLE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -41,6 +43,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv): Config | { inactive: stri
 		holdTimeoutMs: positive(env.AMQ_SQUAD_HOLD_TIMEOUT_MS, 30 * 60 * 1000),
 		models: (env.AMQ_SQUAD_MODELS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 		lead: env.AMQ_SQUAD_LEAD === "1",
+		solo: env.AMQ_SQUAD_SOLO_LEAD === "1",
+		project: env.AMQ_SQUAD_PROJECT ?? "",
 	};
 }
 
