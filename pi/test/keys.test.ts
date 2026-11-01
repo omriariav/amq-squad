@@ -120,6 +120,7 @@ test("the lead's model tool list carries no key verb and no gate-answer verb", a
 			"amq_send",
 			"amq_status",
 			"amq_task_add",
+			"amq_task_block",
 			"amq_task_claim",
 			"amq_task_done",
 			"amq_task_list",

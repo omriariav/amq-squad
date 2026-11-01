@@ -88,6 +88,13 @@ func (s Store) WidenGated(id, actor, reason string, paths, gates []string, dur t
 			at := now
 			t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.Attempt = StateInProgress, "", "", "", nil, t.Attempt+1
 			t.Lease = &Lease{Holder: t.Report.By, GrantedAt: now, ExpiresAt: now.Add(dur), ClaimedAt: &at, RenewedAt: &at}
+		} else if t.State == StateBlocked && t.BlockReason == ReasonWidenRequested {
+			// A seat's own widen request has no done report to retry. Return it
+			// to the pool after the lead adds the requested paths so the
+			// scheduler can dispatch a fresh attempt.
+			t.State, t.WaitReason = StatePending, ""
+			t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = "", "", "", nil
+			t.Lease, t.Report = nil, nil
 		}
 		return nil
 	})
