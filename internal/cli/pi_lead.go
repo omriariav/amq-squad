@@ -115,7 +115,7 @@ func runLead(args []string) error {
 		if teamIdentity, err = resolveTeamLeadIdentity(teamProject); err != nil {
 			return fmt.Errorf("lead: resolve the team identity: %w", err)
 		}
-		lock, err := UpLeadLock(teamIdentity.Root)
+		lock, err := UpLeadLock(teamProject, teamIdentity.Root)
 		if err != nil {
 			return fmt.Errorf("lead: %w", err)
 		}

@@ -429,3 +429,65 @@ func TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer(t *testing.T) {
 		t.Fatalf("an ordinary quoted command refused: %+v", v)
 	}
 }
+
+// Codex's third pass on #834: the shell apply's probe fails closed and is
+// held through the write. A discovery record that is malformed, or whose
+// socket does not answer, refuses lead_unreachable naming the record; a team
+// lead holding any session's lead lock (not only the proposed session's)
+// refuses lead_running naming that session; a lead starting between the
+// probe and the write is refused apply_busy and the write goes on alone;
+// with no record and no held lock the apply proceeds.
+func TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite(t *testing.T) {
+	proj, root := soloProject(t)
+	t.Setenv(leadStartSocketEnv, "")
+	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
+	apply := func() error {
+		_, _, err := captureOutput(t, func() error { return runTeam([]string{"apply", "--digest", digest, "--project", proj}) })
+		return err
+	}
+	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
+	mustWrite(t, rec, "{")
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") || !strings.Contains(err.Error(), rec) {
+		t.Fatalf("a malformed record = %v", err)
+	}
+	mustWrite(t, rec, `{"schema":1,"socket":"`+filepath.Join(root, "extensions", "amq-squad", "launch", leadStartSocketName)+`","pid":4242}`)
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") {
+		t.Fatalf("a record whose socket does not answer = %v", err)
+	}
+	if err := os.Remove(rec); err != nil {
+		t.Fatal(err)
+	}
+	held := holdLock(t, filepath.Join(schedproc.Dir(filepath.Join(proj, ".agent-mail", "s9")), schedproc.LeadLockName))
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") || !strings.Contains(err.Error(), "session s9") {
+		t.Fatalf("a team lead on another session = %v", err)
+	}
+	held.Close()
+	if _, err := os.Stat(team.SquadPath(proj)); err == nil {
+		t.Fatal("a refused apply wrote squad.yaml")
+	}
+	// a lead starting inside the probe-to-write window
+	s1 := filepath.Join(proj, ".agent-mail", "s1")
+	var leadErr error
+	prev := []any{applyAfterProbe, applyLockWait}
+	t.Cleanup(func() {
+		applyAfterProbe, _ = prev[0].(func())
+		applyLockWait = prev[1].(time.Duration)
+	})
+	applyAfterProbe = func() {
+		applyLockWait = 50 * time.Millisecond
+		_, leadErr = UpLeadLock(proj, s1)
+		applyLockWait = prev[1].(time.Duration)
+	}
+	if err := apply(); err != nil {
+		t.Fatalf("the apply with a lead starting in its window: %v", err)
+	}
+	if leadErr == nil || !strings.HasPrefix(leadErr.Error(), ReasonApplyBusy+":") {
+		t.Fatalf("the lead that started in the window = %v", leadErr)
+	}
+	if h, _ := lockHeld(filepath.Join(schedproc.Dir(s1), schedproc.LeadLockName)); h {
+		t.Fatal("a lead took the root while the apply wrote")
+	}
+	if raw, err := os.ReadFile(team.SquadPath(proj)); err != nil || string(raw) != team.RenderPlan(soloTeamPlan()) {
+		t.Fatalf("squad.yaml %q %v", raw, err)
+	}
+}

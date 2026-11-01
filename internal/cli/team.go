@@ -176,19 +176,20 @@ func runTeamPropose(args []string, apply bool) error {
 	if err != nil {
 		return err
 	}
-	if apply && plan != nil {
-		// R55: the apply of the lead's plan from a shell is the owner's
-		// confirmation by the act, so it runs only while no lead (and no
-		// model) holds the repository (the 3.0 flag form, which the owner
-		// types with the digest of the files in front of them, and the
-		// screen's add key, which the owner confirms at the key, stay as
-		// they were)
-		if err := noLeadHolds(p.ProjectDir, plan.Session, *o.digest); err != nil {
-			return err
-		}
-	}
 	if apply {
-		if err := p.Apply(*o.digest); err != nil {
+		write := func() error { return p.Apply(*o.digest) }
+		if plan != nil {
+			// R55: the apply of the lead's plan from a shell is the
+			// owner's confirmation by the act, so it runs only while no lead
+			// (and no model) holds the repository, held from the probe
+			// through the write (the 3.0 flag form, which the owner types
+			// with the digest of the files in front of them, and the screen's
+			// add key, which the owner confirms at the key, stay as they
+			// were)
+			if err := withNoLead(p.ProjectDir, *o.digest, write); err != nil {
+				return err
+			}
+		} else if err := write(); err != nil {
 			return err
 		}
 	}
@@ -283,14 +284,11 @@ func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 	if err != nil {
 		return err
 	}
-	if err := noLeadHolds(dir, proposalSession(prop.SquadYAML), strings.TrimSpace(digest)); err != nil {
-		return err
-	}
 	b, err := buildTeamProposalText(teamFlagsFor(dir), &prop.SquadYAML)
 	if err != nil {
 		return err
 	}
-	if err := b.plan.Apply(strings.TrimSpace(digest)); err != nil {
+	if err := withNoLead(dir, strings.TrimSpace(digest), func() error { return b.plan.Apply(strings.TrimSpace(digest)) }); err != nil {
 		return err
 	}
 	if jsonOut {
@@ -298,17 +296,6 @@ func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 	}
 	fmt.Printf("applied digest %s (%d seats); the lead proposes, the owner starts: amq-squad up --project %s\n", b.plan.Digest, b.plan.Seats, dir)
 	return nil
-}
-
-// proposalSession is the session a recorded proposal's squad.yaml names
-// ("" when it cannot be read; the plan is parsed strictly again after).
-func proposalSession(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		if v, ok := strings.CutPrefix(line, "session: "); ok {
-			return strings.Trim(strings.TrimSpace(v), `"`)
-		}
-	}
-	return ""
 }
 
 // buildTeamProposal computes every planned write and the digest over them;

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
@@ -69,6 +70,8 @@ const (
 	ReasonConfirmMissing   = "confirmation_missing"
 	ReasonConfirmStale     = "confirmation_stale"
 	ReasonShellDoorRemoved = "shell_door_removed"
+	ReasonLeadUnreachable  = "lead_unreachable"
+	ReasonApplyBusy        = "apply_busy"
 	ReasonNoProposal       = "no_proposal"
 	ReasonProposalAmbig    = "proposal_ambiguous"
 	ReasonDigestMalformed  = "digest_malformed"
@@ -198,31 +201,100 @@ func logEvent(root, id, digest string, at time.Time) error {
 
 // noLeadHolds is the shell apply's check (the plan reviewer's ruling: no
 // kernel read tells the owner's shell from a tree the model built, so the
-// fact that matters is whether a model runs at all): the apply proceeds only
-// when no lead holds the repository, neither the solo lead (its start socket
-// answers) nor a team lead (the session root's lead lock is held). With no
-// lead there is no model under it, and the act is the owner's confirmation.
-func noLeadHolds(project, session, digest string) error {
+// fact that matters is whether a model runs at all). It fails closed: a
+// solo lead's discovery record that exists is lead_running when its socket
+// answers and lead_unreachable on any other outcome (unreadable, malformed,
+// a connect that fails); a team lead holding any session's lead lock under
+// the repository's .agent-mail is lead_running naming that session. "No
+// lead" is only no discovery record and no held lead lock at all.
+func noLeadHolds(project, digest string) error {
 	root, err := soloRootOf(project)
 	if err != nil {
 		return err
 	}
-	if c, derr := dialLead(root); derr == nil {
+	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
+	switch _, err := os.Lstat(rec); {
+	case err == nil:
+		c, derr := dialLead(root)
+		if derr != nil {
+			return fmt.Errorf("%s: %s names a solo lead of %s whose socket cannot be reached (%v); if no lead runs, remove %s and apply again; %s", ReasonLeadUnreachable, rec, project, derr, rec, doorsText(digest))
+		}
 		c.Close()
 		return fmt.Errorf("%s: the solo lead of %s is running (its start socket answers), so the apply is the lead's to make on a confirmation it witnessed; %s", schedproc.ReasonLeadRunning, project, doorsText(digest))
+	case !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("%s: %s cannot be read (%v); %s", ReasonLeadUnreachable, rec, err, doorsText(digest))
 	}
-	if session == "" {
-		return nil
-	}
-	lock := filepath.Join(schedproc.Dir(filepath.Join(project, ".agent-mail", session)), schedproc.LeadLockName)
-	held, err := lockHeld(lock)
+	locks, err := filepath.Glob(filepath.Join(project, ".agent-mail", "*", "extensions", "amq-squad", "scheduler", schedproc.LeadLockName))
 	if err != nil {
 		return err
 	}
-	if held {
-		return fmt.Errorf("%s: a team lead holds %s; %s", schedproc.ReasonLeadRunning, lock, doorsText(digest))
+	sort.Strings(locks)
+	for _, lock := range locks {
+		held, err := lockHeld(lock)
+		if err != nil {
+			return err
+		}
+		if held {
+			session := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(lock)))))
+			return fmt.Errorf("%s: a team lead holds session %s (%s); %s", schedproc.ReasonLeadRunning, session, lock, doorsText(digest))
+		}
 	}
 	return nil
+}
+
+// applyLockWait is how long the apply lock is tried before a refusal (a
+// test seam).
+var applyLockWait = 3 * time.Second
+
+// applyAfterProbe runs between the shell apply's probe and its write (a test
+// hook: the window a lead could start in).
+var applyAfterProbe func()
+
+// takeApplyLock takes the repository's apply lock, under the solo root
+// (<root>/extensions/amq-squad/apply.lock): the shell apply holds it from
+// its probe through its write, and the lead lock step (UpLeadLock) takes it
+// around the lead lock, so no lead starts between the probe and the write.
+// Held past applyLockWait it is apply_busy.
+func takeApplyLock(project string) (func(), error) {
+	root, err := soloRootOf(project)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(root, "extensions", "amq-squad", "apply.lock")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	for deadline := time.Now().Add(applyLockWait); ; time.Sleep(20 * time.Millisecond) {
+		l, ok, err := flock.TryExclusive(path, true)
+		switch {
+		case errors.Is(err, flock.ErrUnsupported):
+			return nil, lockUnsupported(path)
+		case err != nil:
+			return nil, err
+		case ok:
+			return func() { _ = l.Close() }, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("%s: %s is held (a lead starting, or another apply); try again", ReasonApplyBusy, path)
+		}
+	}
+}
+
+// withNoLead runs a shell apply's write under the apply lock, after the
+// probe that no lead holds the repository.
+func withNoLead(project, digest string, write func() error) error {
+	unlock, err := takeApplyLock(project)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := noLeadHolds(project, digest); err != nil {
+		return err
+	}
+	if applyAfterProbe != nil {
+		applyAfterProbe()
+	}
+	return write()
 }
 
 // writeProposal records a proposal (the one write of `team propose --from

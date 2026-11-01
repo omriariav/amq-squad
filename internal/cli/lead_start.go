@@ -166,6 +166,10 @@ func (s *leadStarter) serve() (string, error) {
 func (s *leadStarter) close() {
 	if s.sock != nil {
 		s.sock.Close()
+		// the discovery record goes with the socket, so a shell apply after
+		// a clean exit finds no lead (one left by a crash is lead_unreachable
+		// until the owner removes it)
+		_ = os.Remove(filepath.Join(s.root, "extensions", "amq-squad", leadStartRecordName))
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -553,7 +557,7 @@ func (l *leadLauncher) Launch(ctx context.Context, _ fleet.LaunchRequest) error 
 		{"session", func() (string, error) { return UpSession(ctx, q, lead) }},
 		{"doctor", func() (string, error) { return UpDoctor(ctx, s.project, self) }},
 		{"lead", func() (string, error) {
-			lock, err := UpLeadLock(root)
+			lock, err := UpLeadLock(s.project, root)
 			if err != nil {
 				return "", refuse(schedproc.ReasonLeadRunning, "%v", err)
 			}

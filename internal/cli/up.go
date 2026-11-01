@@ -550,9 +550,17 @@ func countShared(step string) {
 
 // UpLeadLock is the lead lock step: the root's lead lock for this process
 // (one lead per root; a held lock is lead_running with the first lead's pid
-// and pane), held for the process's life.
-func UpLeadLock(root string) (*schedproc.LeadLock, error) {
+// and pane), held for the process's life. It is taken under the
+// repository's apply lock (takeApplyLock), which a shell apply holds from
+// its probe that no lead runs through its write, so no lead starts in
+// between.
+func UpLeadLock(project, root string) (*schedproc.LeadLock, error) {
 	countShared("lead_lock")
+	unlock, err := takeApplyLock(project)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	return takeLeadLock(root)
 }
 
