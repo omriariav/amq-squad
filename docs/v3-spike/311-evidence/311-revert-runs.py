@@ -193,7 +193,7 @@ run("the lead's process sends the plan reply without its label", [(TT,'"--id", r
 # Codex P1 on #838: the lead refuses conflicting thread references
 run("the lead takes a confirmation in a gate question's thread", [(LS,'if anchors := s.gateAnchors(); slices.ContainsFunc(refs,','if anchors := s.gateAnchors(); false && slices.ContainsFunc(refs,')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a yes naming more than the plan's thread", [(LS,'\t\tcase slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(nostr.ThreadRefs(p), r) }):\n','\t\tcase false:\n')],
+run("the lead takes a yes naming more than the plan's thread", [(LS,'\t\tcase slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(gateverify.EventRefs(p), r) }):\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 
 # Codex re-check on #838, the second layer: no shell sets a team-plan label
