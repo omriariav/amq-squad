@@ -798,7 +798,7 @@ func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 			"yes\ufe0f", "уes", "YЕS", "аpprove", "dеny rel-x", "nο",
 			// Codex pass 3: an accent (composed and decomposed), the Hangul
 			// fillers, the soft hyphen, the grapheme joiner, Armenian
-			"yés", "ye\u0301s", "yes\u115f", "yes\u3164", "y\u00ades", "ye\u034fs", "yes\uffa0", "nօ", "dеnу\u1160", "yeս"},
+			"yés", "ye\u0301s", "yes\u115f", "yes\u3164", "y\u00ades", "ye\u034fs", "yes\uffa0", "nօ", "dеnу\u1160"},
 		"an open gate's id": {"I raised rel-\u200bnorm for you", "see REL-NORM\u200c now", "ｒｅｌ－ｎｏｒｍ waits",
 			"rel-norm\ufe0f waits", "rel\ufe0f-norm waits", "rеl-nоrm waits",
 			"rél-norm waits", "rel-nօrm waits", "rel-norm\u1160 waits", "rel-\u03f2 waits"},
@@ -815,6 +815,11 @@ func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 				}
 			}
 		})
+	}
+	// ս reads as u (Unicode's confusables data agrees with the glyph): yeս
+	// reads "yeu" and is no answer form
+	if g.gateShaped("yeս") {
+		t.Error("yeս is refused; ս is a lookalike of u, not s")
 	}
 	// the explicit default-ignorable list pins the code points the lead
 	// named, whatever a later Go release's property tables say

@@ -717,9 +717,8 @@ var confusables = map[rune]rune{
 	// Greek (σ and ς too: the lunate sigma ϲ becomes them under NFKC and folding)
 	'α': 'a', 'ϲ': 'c', 'σ': 'c', 'ς': 'c', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'χ': 'x', 'γ': 'y', 'ι': 'i',
 	'κ': 'k', 'η': 'n', 'τ': 't', 'ν': 'v', 'υ': 'u', 'μ': 'u',
-	// Armenian (ս is u-shaped, but it maps to s: no answer word has a u and
-	// a refusal costs one line, so yeս is refused as yes is)
-	'ս': 's', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',
+	// Armenian (by glyph, as Unicode's confusables data maps them: ս is u)
+	'ս': 'u', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',
 }
 
 var (
