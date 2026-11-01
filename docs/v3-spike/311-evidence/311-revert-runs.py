@@ -95,7 +95,7 @@ run("the credential change names its git setting above the rule", [(PL,'\t\t\tre
     GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
 run("a credentials write names its path above the rule", [(PL,'\t\treturn "Write a credentials file?"\n','\t\treturn "Write a credentials file at " + strings.TrimPrefix(t, "write ") + "?"\n')],
     GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
-run("the widen names its protected globs above the rule", [(PL,'\t\t\t\twhat := "a protected path"\n','\t\t\t\twhat := globs[0]\n')],
+run("the widen names its protected globs above the rule", [(PL,'\t\t\t\twhat := "1 protected path"\n','\t\t\t\twhat := globs[0]\n')],
     GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
 run("a repository named owner/name above the rule", [(PL,'\treturn plain(name)\n}','\t_ = name\n\treturn plain(repo)\n}')],
     GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")

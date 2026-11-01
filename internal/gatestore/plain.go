@@ -242,7 +242,7 @@ func composeGrow(t string, w []string, f *Facts, q plainQ) plainQ {
 			q.ask = "Let task " + id + " change protected files?"
 			var globs []string
 			if json.Unmarshal([]byte(value), &globs) == nil && len(globs) > 0 {
-				what := "a protected path"
+				what := "1 protected path"
 				if len(globs) > 1 {
 					what = fmt.Sprintf("%d protected paths", len(globs))
 				}
