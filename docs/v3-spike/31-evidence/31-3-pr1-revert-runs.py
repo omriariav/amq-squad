@@ -92,14 +92,29 @@ run("the shell apply with no lead check",
  [('internal/cli/team.go','\tif err := withNoLead(dir, strings.TrimSpace(digest), func() error { return b.plan.Apply(strings.TrimSpace(digest)) }); err != nil {','\tif err := b.plan.Apply(strings.TrimSpace(digest)); err != nil {')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the shell apply ignoring a running solo lead",
- [('internal/cli/team_confirm.go','\t\tc.Close()\n\t\treturn fmt.Errorf("%s: the solo lead of %s is running','\t\tc.Close()\n\t\tif true {\n\t\t\tbreak\n\t\t}\n\t\treturn fmt.Errorf("%s: the solo lead of %s is running')],
+ [('internal/cli/team_confirm.go','\t\t\tc.Close()\n\t\t\treturn fmt.Errorf("%s: the solo lead of %s is running','\t\t\tc.Close()\n\t\t\tif true {\n\t\t\t\tbreak\n\t\t\t}\n\t\t\treturn fmt.Errorf("%s: the solo lead of %s is running')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the shell apply ignoring a team lead's lock",
  [('internal/cli/team_confirm.go','\tif held {','\tif false && held {')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
-run("the shell apply's probe failing open on an unreachable record",
- [('internal/cli/team_confirm.go','\t\tif derr != nil {\n\t\t\treturn fmt.Errorf("%s: %s names a solo lead','\t\tif derr != nil {\n\t\t\tbreak\n\t\t}\n\t\tif false {\n\t\t\treturn fmt.Errorf("%s: %s names a solo lead')],
+run("a stale discovery record refused instead of removed",
+ [('internal/cli/team_confirm.go','\tif err := os.Remove(rec); err != nil && !errors.Is(err, os.ErrNotExist) {','\tif true {\n\t\treturn fmt.Errorf("%s: %s is stale (%s)", ReasonLeadUnreachable, rec, why)\n\t}\n\tif err := os.Remove(rec); err != nil && !errors.Is(err, os.ErrNotExist) {')],
  C+"TestTheShellApplyProbeFailsClosed")
+run("the stale record's decision not named discovery_stale",
+ [('internal/cli/team_confirm.go','scheduler.Decision{Kind: KindDiscoveryStale,','scheduler.Decision{Kind: "stale",')],
+ C+"TestTheShellApplyProbeFailsClosed")
+run("a live lead's silent socket read as a stale record",
+ [('internal/cli/team_confirm.go','\t\tcase schedproc.LeadAlive:\n','\t\tcase schedproc.LeadAlive + 99:\n')],
+ C+"TestTheShellApplyProbeFailsClosed")
+run("the record's start stamp not compared",
+ [('internal/cli/team_confirm.go','schedproc.LeadState(r.PID, r.Start, confirmStamp, discoveryAlive)','schedproc.LeadState(r.PID, r.Start, func(int) (string, bool) { return r.Start, true }, discoveryAlive)')],
+ C+"TestTheShellApplyProbeFailsClosed")
+run("the discovery record written without the lead's stamp",
+ [('internal/cli/lead_start.go','PID: s.self, Start: start})','PID: s.self, Start: start[:0]})')],
+ C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("up not reading the solo lead's discovery record",
+ [('internal/cli/up.go','\tif err := soloLeadProbe(u.report.Project); err != nil {','\tif err := error(nil); err != nil {')],
+ C+"TestUpReadsTheSoloLeads")
 run("the shell apply probing only the proposed session's lock",
  [('internal/cli/team_confirm.go','filepath.Join(project, ".agent-mail", "*", "extensions"','filepath.Join(project, ".agent-mail", "s1", "extensions"')],
  C+"TestTheShellApplyProbeFailsClosed")
@@ -130,6 +145,18 @@ run("lead --team not refusing a lead ancestor",
 run("scheduler run without the under-a-lead check",
  [('internal/cli/scheduler_run.go','\tif err := underSoloLead("scheduler run", false, !byLead); err != nil {','\tif err := error(nil); err != nil {')],
  C+"TestUpRefusesUnderASoloLead")
+run("any pi refusing, not only one carrying AMQ's identity",
+ [('internal/cli/lead_start.go','\t\tcase piArgv(argv) && func() bool {','\t\tcase piArgv(argv) || func() bool {')],
+ C+"TestUpRefusesUnderASoloLead")
+run("the start socket path not read as AMQ's identity",
+ [('internal/cli/lead_start.go','[]string{"AM_ME=", leadStartSocketEnv + "="}','[]string{"AM_ME="}')],
+ C+"TestUpRefusesUnderASoloLead")
+run("the shell apply without the under-a-lead check",
+ [('internal/cli/team_confirm.go','\tif err := underSoloLead("team apply", true, true); err != nil {','\tif err := error(nil); err != nil {')],
+ C+"TestUpRefusesUnderASoloLead")
+run("the environment read stopping at argv",
+ [('internal/procinfo/environ.go','\tfor n := 0; n < argc; n++ {','\tfor n := 0; n < argc-1; n++ {')],
+ G+"-run TestEnviron ./internal/procinfo/")
 run("the lead's pi not recognized",
  [('internal/cli/lead_start.go','\t\tif strings.Contains(a, "/.amq-squad/runtime/pi-") {','\t\tif false && strings.Contains(a, "/.amq-squad/runtime/pi-") {')],
  C+"TestUpRefusesUnderASoloLead")
