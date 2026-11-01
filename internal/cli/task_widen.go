@@ -197,6 +197,10 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: req.Files, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
+	} else if typedWidenRequest(t) && len(t.Attempts) > 0 {
+		// A typed block ends the seat's attempt and clears its report, but its
+		// current diff remains the proof for the size-cap dry run.
+		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Attempts[len(t.Attempts)-1].Holder, Now: taskNow}
 	}
 	d := seatcommit.CheckWiden(wo)
 	data.Decision = d
@@ -248,7 +252,7 @@ func validateBlockedWiden(t task.Task, requested []string) error {
 	if t.Report != nil && (t.BlockReason == seatcommit.ReasonProtected || t.BlockReason == seatcommit.ReasonGrowthGate) {
 		return nil
 	}
-	if t.BlockReason != seatcommit.ReasonOutside && t.BlockReason != task.ReasonWidenRequested {
+	if t.BlockReason != seatcommit.ReasonOutside && !typedWidenRequest(t) {
 		return &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set (state %s, reason %s); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)", t.ID, t.State, t.BlockReason, t.ID)}
 	}
 	if len(t.RefusedPaths) == 0 {
@@ -272,4 +276,9 @@ func validateBlockedWiden(t task.Task, requested []string) error {
 		}
 	}
 	return nil
+}
+
+func typedWidenRequest(t task.Task) bool {
+	return t.Report == nil && len(t.RefusedPaths) > 0 &&
+		(t.BlockReason == task.ReasonWidenRequested || t.BlockReason == seatcommit.ReasonGrowthGate)
 }

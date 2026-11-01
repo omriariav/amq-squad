@@ -51,6 +51,7 @@ func (s Store) WidenGated(id, actor, reason string, paths, gates []string, dur t
 	}
 	actor = strings.TrimSpace(actor)
 	return s.mutate(id, now, func(t *Task, all *tasks) error {
+		typedRequest := t.State == StateBlocked && t.Report == nil && len(t.RefusedPaths) > 0
 		if Terminal(t.State) || len(added) == 0 || strings.TrimSpace(reason) == "" || actor == "" {
 			return fmt.Errorf("widen needs a non-terminal task, paths, an actor and a reason")
 		}
@@ -88,7 +89,7 @@ func (s Store) WidenGated(id, actor, reason string, paths, gates []string, dur t
 			at := now
 			t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.Attempt = StateInProgress, "", "", "", nil, t.Attempt+1
 			t.Lease = &Lease{Holder: t.Report.By, GrantedAt: now, ExpiresAt: now.Add(dur), ClaimedAt: &at, RenewedAt: &at}
-		} else if t.State == StateBlocked && t.BlockReason == ReasonWidenRequested {
+		} else if typedRequest {
 			// A seat's own widen request has no done report to retry. Return it
 			// to the pool after the lead adds the requested paths so the
 			// scheduler can dispatch a fresh attempt.
@@ -152,6 +153,16 @@ func (s Store) Escalate(id, reasonCode, detail string, now time.Time) (Task, err
 		if t.State != StateBlocked {
 			return fmt.Errorf("task %s is %s; only a blocked task escalates to the owner", t.ID, t.State)
 		}
-		return block(t, reasonCode, detail, RouteOwner)
+		// A typed widen request has no report. Its exact paths are the only
+		// durable binding for the owner's gate and the accepted retry.
+		paths := append([]string(nil), t.RefusedPaths...)
+		preserve := t.Report == nil && len(paths) > 0
+		if err := block(t, reasonCode, detail, RouteOwner); err != nil {
+			return err
+		}
+		if preserve {
+			t.RefusedPaths = paths
+		}
+		return nil
 	})
 }

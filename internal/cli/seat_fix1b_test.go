@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
@@ -170,9 +171,6 @@ func TestLeadWidenOnBlockedTaskUsesOnlyItsRecordedExactPaths(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Claim(tk.ID, "seat", nil, time.Minute, time.Now()); err != nil {
-			t.Fatal(err)
-		}
 		if _, err := s.BlockWithPaths(tk.ID, "seat", reason, "", task.RouteLead, paths, time.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -200,6 +198,89 @@ func TestLeadWidenOnBlockedTaskUsesOnlyItsRecordedExactPaths(t *testing.T) {
 	if _, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{"b.go"}, Reason: "missing record"}); err == nil || !strings.Contains(err.Error(), "widen_paths_missing") {
 		t.Fatalf("pathless block: %v", err)
 	}
+}
+
+func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
+	accept := func(t *testing.T, f gateCLIFixture, gateID string) {
+		t.Helper()
+		store, _ := gatestore.Open(f.root)
+		rec, err := store.Load(gateID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q, _ := store.Question(gateID)
+		if q == nil {
+			t.Fatal("no growth-gate question")
+		}
+		tuple := "approve " + rec.GateID + " grow " + strings.TrimPrefix(rec.Digest, "sha256:")[:16]
+		ev := f.answer(t, tuple, q.EventID)
+		if _, _, err := captureOutput(t, func() error {
+			return runGate([]string{"answer", "--from", "buzz", "--label", "nostr:" + ev, "--project", f.project, "--session", "s"})
+		}); err != nil {
+			t.Fatalf("gate answer: %v", err)
+		}
+	}
+
+	t.Run("protected retry", func(t *testing.T) {
+		f := newGateCLIFixture(t)
+		repo, wt := seatRepo(t, f.root)
+		s, _ := task.Open(f.root)
+		tk, _ := s.Add(task.AddInput{Title: "typed protected", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, ".claude", "settings.json"), "{\"changed\":true}\n")
+		if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{".claude/settings.json"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		sel := scopedSelection(t, []string{"--project", f.project, "--session", "s"})
+		literal, _ := task.LiteralGlob(".claude/settings.json")
+		req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{literal}, Reason: "needed"}
+		data, err := applyLeadWiden(sel, "lead", req)
+		if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || len(data.GateIDs) != 1 {
+			t.Fatalf("first widen = %+v, %v", data, err)
+		}
+		blocked, _ := s.Get(tk.ID)
+		if blocked.BlockReason != seatcommit.ReasonGrowthGate || strings.Join(blocked.RefusedPaths, ",") != ".claude/settings.json" {
+			t.Fatalf("typed request lost at escalation: %+v", blocked)
+		}
+		accept(t, f, data.GateIDs[0])
+		data, err = applyLeadWiden(sel, "lead", req)
+		if err != nil || data.Task == nil || data.Task.State != task.StatePending || len(data.Task.ScopeChanges) != 1 || len(data.Task.ScopeChanges[0].Gates) != 1 {
+			t.Fatalf("accepted retry = %+v, %v", data, err)
+		}
+	})
+
+	t.Run("size cap dry run", func(t *testing.T) {
+		f := newGateCLIFixture(t)
+		repo, wt := seatRepo(t, f.root)
+		grant := filepath.Join(f.home, ".amq-squad", "grants.yaml")
+		raw, err := os.ReadFile(grant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(grant, []byte(strings.Replace(string(raw), "size_cap_lines: 300", "size_cap_lines: 1", 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s, _ := task.Open(f.root)
+		tk, _ := s.Add(task.AddInput{Title: "typed size", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n1\n2\n3\n")
+		if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		sel := scopedSelection(t, []string{"--project", f.project, "--session", "s"})
+		literal, _ := task.LiteralGlob("extra.go")
+		data, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+		if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || data.Decision.DryRun == nil || data.Decision.DryRun.Lines <= 1 || len(data.GateIDs) != 1 {
+			t.Fatalf("size-cap widen = %+v, %v", data, err)
+		}
+		if len(data.Decision.Crossings) != 1 || data.Decision.Crossings[0].Limit != seatcommit.LimitSize {
+			t.Fatalf("size crossing = %+v", data.Decision.Crossings)
+		}
+	})
 }
 
 // writeOwnerKeys writes the core's issuer key and the owner's trust store
