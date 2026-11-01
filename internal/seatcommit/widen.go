@@ -111,7 +111,11 @@ func CheckWiden(o WidenOptions) WidenDecision {
 			return d
 		}
 		co := *o.Commit
-		co.Task, co.DryRun, co.Declared, co.Root = o.Task, true, proposed, o.Root
+		dryTask := o.Task
+		if dryTask.Report == nil && co.Handle != "" {
+			dryTask.Report = &task.Report{By: co.Handle}
+		}
+		co.Task, co.DryRun, co.Declared, co.Root = dryTask, true, proposed, o.Root
 		co.Grants, co.GrantsErr, co.Home, co.Gates = o.Grants, nil, o.Home, o.Gates
 		res := Run(co)
 		d.DryRun = &res
