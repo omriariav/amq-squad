@@ -95,7 +95,7 @@ run("the shell apply ignoring a running solo lead",
  [('internal/cli/team_confirm.go','\t\t\tc.Close()\n\t\t\treturn fmt.Errorf("%s: the solo lead of %s is running','\t\t\tc.Close()\n\t\t\tif true {\n\t\t\t\tbreak\n\t\t\t}\n\t\t\treturn fmt.Errorf("%s: the solo lead of %s is running')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the shell apply ignoring a team lead's lock",
- [('internal/cli/team_confirm.go','\tif held {','\tif false && held {')],
+ [('internal/cli/team_confirm.go','\t\tcase held:\n\t\t\treturn fmt.Errorf("%s: a team lead holds session','\t\tcase held && false:\n\t\t\treturn fmt.Errorf("%s: a team lead holds session')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("a stale discovery record refused instead of removed",
  [('internal/cli/team_confirm.go','\tif err := os.Remove(rec); err != nil && !errors.Is(err, os.ErrNotExist) {','\tif true {\n\t\treturn fmt.Errorf("%s: %s is stale (%s)", ReasonLeadUnreachable, rec, why)\n\t}\n\tif err := os.Remove(rec); err != nil && !errors.Is(err, os.ErrNotExist) {')],
@@ -116,7 +116,7 @@ run("up not reading the solo lead's discovery record",
  [('internal/cli/up.go','\tif err := soloLeadProbe(u.report.Project); err != nil {','\tif err := error(nil); err != nil {')],
  C+"TestUpReadsTheSoloLeads")
 run("the shell apply probing only the proposed session's lock",
- [('internal/cli/team_confirm.go','filepath.Join(project, ".agent-mail", "*", "extensions"','filepath.Join(project, ".agent-mail", "s1", "extensions"')],
+ [('internal/cli/team_confirm.go','\t\tif !e.IsDir() {\n\t\t\tcontinue\n\t\t}','\t\tif !e.IsDir() || e.Name() != "s1" {\n\t\t\tcontinue\n\t\t}')],
  C+"TestTheShellApplyProbeFailsClosed")
 run("the lead lock step not taking the apply lock",
  [('internal/cli/up.go','\tunlock, err := takeApplyLock(project)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tdefer unlock()\n\treturn takeLeadLock(root)','\t_ = project\n\treturn takeLeadLock(root)')],
@@ -157,9 +157,30 @@ run("the shell apply without the under-a-lead check",
 run("the environment read stopping at argv",
  [('internal/procinfo/environ.go','\tfor n := 0; n < argc; n++ {','\tfor n := 0; n < argc-1; n++ {')],
  G+"-run TestEnviron ./internal/procinfo/")
-run("the lead's pi not recognized",
- [('internal/cli/lead_start.go','\t\tif strings.Contains(a, "/.amq-squad/runtime/pi-") {','\t\tif false && strings.Contains(a, "/.amq-squad/runtime/pi-") {')],
+run("the lead's pi not recognized by its executable",
+ [('internal/cli/lead_start.go','\treturn dir != "" && filepath.IsAbs(exe) && strings.HasPrefix(exe, dir+string(filepath.Separator))','\treturn false && dir != "" && filepath.IsAbs(exe) && strings.HasPrefix(exe, dir+string(filepath.Separator))')],
  C+"TestUpRefusesUnderASoloLead")
+run("pi recognized by an argument substring",
+ [('internal/cli/lead_start.go','\texe := filepath.Clean(argv[0])\n','\tfor _, a := range argv {\n\t\tif strings.Contains(a, "/.amq-squad/runtime/pi-") {\n\t\t\treturn true\n\t\t}\n\t}\n\texe := filepath.Clean(argv[0])\n')],
+ C+"TestUpRefusesUnderASoloLead")
+run("solo startup not taking the apply lock",
+ [('internal/cli/lead_start.go','\tunlock, err := takeApplyLock(s.project)\n\tif err != nil {\n\t\treturn "", err\n\t}\n\tdefer unlock()\n\tsock, err := seatlaunch.ListenPrivate(','\tsock, err := seatlaunch.ListenPrivate(')],
+ C+"TestASoloLeadStartingInTheApplyWindow")
+run("the sessions found by a glob over the repository path (the old probe)",
+ [('internal/cli/team_confirm.go','\t// the session directories, enumerated literally (no glob: a repository\n\t// path may hold glob characters), every read error failing closed\n\tbase := filepath.Join(project, ".agent-mail")\n\tentries, err := os.ReadDir(base)\n\tswitch {\n\tcase errors.Is(err, os.ErrNotExist):\n\t\treturn nil\n\tcase err != nil:\n\t\treturn fmt.Errorf("%s: %s cannot be read (%v), so a team lead holding a session cannot be ruled out; %s", ReasonLeadUnreachable, base, err, doorsText(digest))\n\t}\n\tfor _, e := range entries {\n\t\tif !e.IsDir() {\n\t\t\tcontinue\n\t\t}\n\t\tlock := filepath.Join(schedproc.Dir(filepath.Join(base, e.Name())), schedproc.LeadLockName)\n\t\theld, err := lockHeld(lock)\n\t\tvar named *upRefusal\n\t\tswitch {\n\t\tcase errors.As(err, &named):\n\t\t\treturn named\n\t\tcase err != nil:\n\t\t\treturn fmt.Errorf("%s: %s cannot be probed (%v), so a team lead holding session %s cannot be ruled out; %s", ReasonLeadUnreachable, lock, err, e.Name(), doorsText(digest))\n\t\tcase held:\n\t\t\treturn fmt.Errorf("%s: a team lead holds session %s (%s); %s", schedproc.ReasonLeadRunning, e.Name(), lock, doorsText(digest))\n\t\t}\n\t}\n\treturn nil\n}\n','\tlocks, err := filepath.Glob(filepath.Join(project, ".agent-mail", "*", "extensions", "amq-squad", "scheduler", schedproc.LeadLockName))\n\tif err != nil {\n\t\treturn err\n\t}\n\tsort.Strings(locks)\n\tfor _, lock := range locks {\n\t\theld, err := lockHeld(lock)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\tif held {\n\t\t\tsession := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(lock)))))\n\t\t\treturn fmt.Errorf("%s: a team lead holds session %s (%s); %s", schedproc.ReasonLeadRunning, session, lock, doorsText(digest))\n\t\t}\n\t}\n\treturn nil\n}\n')],
+ C+"TestTheShellApplyEnumeratesSessionsLiterally")
+run("a session the probe cannot read taken as no lead",
+ [('internal/cli/team_confirm.go','\t\tcase err != nil:\n\t\t\treturn fmt.Errorf("%s: %s cannot be probed','\t\tcase err != nil && false:\n\t\t\treturn fmt.Errorf("%s: %s cannot be probed')],
+ C+"TestTheShellApplyEnumeratesSessionsLiterally")
+run("an unreadable .agent-mail taken as no lead",
+ [('internal/cli/team_confirm.go','\tcase err != nil:\n\t\treturn fmt.Errorf("%s: %s cannot be read (%v), so a team lead','\tcase err != nil && false:\n\t\treturn fmt.Errorf("%s: %s cannot be read (%v), so a team lead')],
+ C+"TestTheShellApplyEnumeratesSessionsLiterally")
+run("the discovery record read by following it, unbounded",
+ [('internal/cli/team_confirm.go','\tst, err := os.Lstat(path)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif !st.Mode().IsRegular() {\n\t\treturn nil, errDiscoveryNotRegular\n\t}\n','\tif true {\n\t\treturn os.ReadFile(path)\n\t}\n\tst, err := os.Lstat(path)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif !st.Mode().IsRegular() {\n\t\treturn nil, errDiscoveryNotRegular\n\t}\n')],
+ C+"TestADiscoveryRecordThatIsALinkOrAFIFO")
+run("a non-regular record refused instead of stale",
+ [('internal/cli/team_confirm.go','\tcase errors.Is(err, errDiscoveryNotRegular):\n','\tcase errors.Is(err, errDiscoveryNotRegular) && false:\n')],
+ C+"TestADiscoveryRecordThatIsALinkOrAFIFO")
 run("scheduler run refusing for a lead ancestor (the scheduler lead --team starts)",
  [('internal/cli/scheduler_run.go','underSoloLead("scheduler run", false, !byLead)','underSoloLead("scheduler run", true, !byLead)')],
  C+"TestUpRefusesUnderASoloLead")
