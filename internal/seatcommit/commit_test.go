@@ -78,6 +78,19 @@ func TestCommitOutsideDeclaredFilesIsRefused(t *testing.T) {
 	}
 }
 
+func TestCommitRefusesARetargetedLinkInsteadOfFollowingItsWidenedTarget(t *testing.T) {
+	f := newFixture(t)
+	if err := os.Symlink("cmd/root.go", filepath.Join(f.wt, "source-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	os.Remove(filepath.Join(f.wt, "source-link"))
+	os.Symlink("CLAUDE.md", filepath.Join(f.wt, "source-link"))
+	res := f.run(f.reported("cmd/root.go"))
+	if res.OK || res.ReasonCode != ReasonOutside || !strings.Contains(res.Detail, "source-link") {
+		t.Fatalf("retargeted link commit = %+v", res)
+	}
+}
+
 // Acceptance 7, row 3: the refusal reaches the lead through the store; a
 // lead widening inside the grant re-arms the commit, which then commits.
 func TestLeadWideningCommits(t *testing.T) {

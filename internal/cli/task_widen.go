@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -195,25 +196,36 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		return data, err
 	}
 	g, gerr := grants.Load(t.ProjectPath)
-	added := req.Files
+	if len(exact) == 0 {
+		exact = literalWidenFiles(req.Files)
+	}
+	added := append([]string(nil), req.Files...)
 	var protected, resolutions []string
+	var links []gatestore.PathLink
 	if gerr == nil && len(exact) > 0 {
 		resolved, err := seatcommit.ResolveExactFiles(g.Grants, sel.root, t.ProjectPath, "", exact)
 		if err != nil {
 			return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
 		}
-		added = nil
+		replacements := make(map[string]string, len(resolved))
 		for _, r := range resolved {
 			literal, err := task.LiteralGlob(r.Path)
 			if err != nil {
 				return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
 			}
-			added = append(added, literal)
+			alias, _ := task.LiteralGlob(r.Alias)
+			replacements[alias] = literal
 			if r.Protected {
 				protected = append(protected, literal)
 			}
 			if r.Alias != r.Path {
 				resolutions = append(resolutions, fmt.Sprintf("%q resolves to %q", r.Alias, r.Path))
+				links = append(links, gatestore.PathLink{Path: r.Path, Alias: r.Alias})
+			}
+		}
+		for i, p := range added {
+			if resolved, ok := replacements[p]; ok {
+				added[i] = resolved
 			}
 		}
 	}
@@ -243,7 +255,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 				if c.Accepted {
 					continue
 				}
-				gid, err := raiseGrowthGate(sel, lead, t.ID, t.Title, c.Target)
+				gid, err := raiseGrowthGate(sel, lead, t.ID, t.Title, c.Target, links)
 				data.GateIDs = append(data.GateIDs, gid)
 				raised = append(raised, gid+" "+c.Target)
 				if err != nil {
@@ -269,6 +281,41 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	}
 	data.Task = &after
 	return data, nil
+}
+
+// literalWidenFiles recovers exact names from LiteralGlob output while
+// leaving --files patterns alone. Re-encoding is the proof that a candidate
+// is one literal path rather than a broader glob.
+func literalWidenFiles(globs []string) []string {
+	var out []string
+	for _, g := range globs {
+		var b strings.Builder
+		literal := true
+		for i := 0; i < len(g); {
+			switch {
+			case strings.HasPrefix(g[i:], "[[]"):
+				b.WriteByte('[')
+				i += 3
+			case strings.HasPrefix(g[i:], "[*]"):
+				b.WriteByte('*')
+				i += 3
+			case strings.HasPrefix(g[i:], "[?]"):
+				b.WriteByte('?')
+				i += 3
+			case strings.ContainsRune("*?[", rune(g[i])):
+				literal = false
+				i = len(g)
+			default:
+				b.WriteByte(g[i])
+				i++
+			}
+		}
+		p := b.String()
+		if encoded, err := task.LiteralGlob(p); literal && err == nil && encoded == g {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // validateBlockedWiden limits a lead decision on a blocked task to the exact

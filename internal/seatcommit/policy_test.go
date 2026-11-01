@@ -15,6 +15,8 @@ func TestResolveExactFilesFollowsLinksAndRefusesUnsafeTargets(t *testing.T) {
 	write(t, filepath.Join(repo, "CLAUDE.md"), "managed\n")
 	nfd := "cafe\u0301.txt"
 	write(t, filepath.Join(repo, nfd), "unicode\n")
+	managedNFD := "cafe\u0301-managed.md"
+	write(t, filepath.Join(repo, managedNFD), "managed unicode\n")
 	if err := os.Symlink("chain-b", filepath.Join(repo, "chain-a")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
@@ -32,7 +34,7 @@ func TestResolveExactFilesFollowsLinksAndRefusesUnsafeTargets(t *testing.T) {
 	os.Mkdir(filepath.Join(repo, "directory"), 0o755)
 
 	g := grants.Defaults()
-	g.ProtectedPaths = append(g.ProtectedPaths, "caf\u00e9.txt")
+	g.ProtectedPaths = append(g.ProtectedPaths, "caf\u00e9.txt", grants.ManagedPrefix+"caf\u00e9-managed.md")
 	for _, tc := range []struct {
 		alias, want string
 		protected   bool
@@ -41,6 +43,7 @@ func TestResolveExactFilesFollowsLinksAndRefusesUnsafeTargets(t *testing.T) {
 		{"parent-link/target.txt", "real/target.txt", false},
 		{"managed-link", "CLAUDE.md", true},
 		{nfd, nfd, true},
+		{managedNFD, managedNFD, true},
 	} {
 		got, err := ResolveExactFiles(g, root, repo, t.TempDir(), []string{tc.alias})
 		if err != nil || len(got) != 1 || got[0].Path != tc.want || got[0].Protected != tc.protected {
@@ -60,5 +63,13 @@ func TestResolveExactFilesFollowsLinksAndRefusesUnsafeTargets(t *testing.T) {
 		if _, err := ResolveExactFiles(g, root, repo, t.TempDir(), []string{tc.alias}); err == nil || !strings.Contains(err.Error(), tc.alias) || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("unsafe %q: %v, want alias and %q", tc.alias, err, tc.want)
 		}
+	}
+	locked := filepath.Join(repo, "locked")
+	os.Mkdir(locked, 0o700)
+	write(t, filepath.Join(locked, "file.txt"), "x\n")
+	os.Chmod(locked, 0)
+	defer os.Chmod(locked, 0o700)
+	if _, err := ResolveExactFiles(g, root, repo, t.TempDir(), []string{"locked/file.txt"}); err == nil || !strings.Contains(err.Error(), "locked/file.txt") {
+		t.Errorf("unreadable path was not refused by name: %v", err)
 	}
 }
