@@ -64,7 +64,7 @@ func CleanExactFiles(in []string) ([]string, error) {
 		p := strings.TrimSpace(raw)
 		switch {
 		case p == "":
-			continue
+			return nil, fmt.Errorf("exact file %q is empty", raw)
 		case strings.Contains(p, "\\"):
 			return nil, fmt.Errorf("exact file %q carries a backslash", raw)
 		case strings.HasSuffix(p, "/") || p == ".":

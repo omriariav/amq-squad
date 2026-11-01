@@ -170,9 +170,35 @@ func TestTypedWidenResolvesASymlinkIntoAProtectedPath(t *testing.T) {
 	}
 	literal, _ := task.LiteralGlob("settings-link")
 	data, err := applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
-	want := seatcommit.ProtectedTarget(root, tk.ID, []string{literal})
-	if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || len(data.Decision.Crossings) != 1 || data.Decision.Crossings[0].Target != want {
+	resolved, _ := task.LiteralGlob(".claude/settings.json")
+	want := seatcommit.ProtectedTarget(root, tk.ID, []string{resolved})
+	if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || len(data.Decision.Crossings) != 1 || data.Decision.Crossings[0].Target != want || !strings.Contains(data.Decision.Detail, "settings-link") {
 		t.Fatalf("symlinked protected widen = %+v, %v; want target %q", data, err, want)
+	}
+
+	mustWrite(t, filepath.Join(project, "src", "real.go"), "package src\n")
+	if err := os.Symlink(filepath.Join("src", "real.go"), filepath.Join(project, "source-link")); err != nil {
+		t.Fatal(err)
+	}
+	tk, _ = s.Add(task.AddInput{Title: "ordinary alias", Class: "implement", ProjectPath: project}, time.Now())
+	_, _ = s.BlockWithPaths(tk.ID, "seat", task.ReasonWidenRequested, "", task.RouteLead, []string{"source-link"}, time.Now())
+	literal, _ = task.LiteralGlob("source-link")
+	data, err = applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+	if err != nil || data.Task == nil || strings.Join(data.Task.DeclaredFiles, ",") != "src/real.go" || len(data.Task.ScopeChanges) != 1 || !strings.Contains(data.Task.ScopeChanges[0].Reason, "source-link") {
+		t.Fatalf("ordinary alias widen = %+v, %v", data, err)
+	}
+
+	if err := os.Symlink("CLAUDE.md", filepath.Join(project, "managed-link")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(project, "CLAUDE.md"), "managed\n")
+	tk, _ = s.Add(task.AddInput{Title: "managed alias", Class: "implement", ProjectPath: project}, time.Now())
+	_, _ = s.BlockWithPaths(tk.ID, "seat", task.ReasonWidenRequested, "", task.RouteLead, []string{"managed-link"}, time.Now())
+	literal, _ = task.LiteralGlob("managed-link")
+	data, err = applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+	want = seatcommit.ProtectedTarget(root, tk.ID, []string{"CLAUDE.md"})
+	if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || data.Decision.Crossings[0].Target != want {
+		t.Fatalf("managed alias widen = %+v, %v; want target %q", data, err, want)
 	}
 }
 

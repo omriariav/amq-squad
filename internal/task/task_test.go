@@ -221,6 +221,20 @@ func TestLoadRefusesInvalidRefusedPathsByName(t *testing.T) {
 	}
 }
 
+func TestSnapshotRefusesInvalidRefusedPathsInJournal(t *testing.T) {
+	s := newStore(t)
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(journal{Schema: 1, ID: "bad", Tasks: []Task{{Schema: Schema, ID: "t1", RefusedPaths: []string{"../escape.go"}}}})
+	if err := os.WriteFile(filepath.Join(s.Dir, journalName), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Snapshot(s.Dir); err == nil || !strings.Contains(err.Error(), journalName) || !strings.Contains(err.Error(), "../escape.go") {
+		t.Fatalf("invalid journal refused_paths: %v", err)
+	}
+}
+
 func TestDependenciesGateTheLease(t *testing.T) {
 	s := newStore(t)
 	a := mustAdd(t, s, AddInput{Title: "a"})

@@ -10,7 +10,7 @@ func TestCleanExactFilesSeparatesFileNamesFromGlobsAndDirectories(t *testing.T) 
 	if err != nil || strings.Join(got, "|") != "src/[name].go|docs/a, b.md|src/*.go" {
 		t.Fatalf("exact files = %q, %v", got, err)
 	}
-	for _, bad := range []string{".", "src/", "../x.go", "/x.go", "a/../x.go", "a\\x.go"} {
+	for _, bad := range []string{"", "   ", ".", "src/", "../x.go", "/x.go", "a/../x.go", "a\\x.go"} {
 		if _, err := CleanExactFiles([]string{bad}); err == nil {
 			t.Errorf("exact file %q was accepted", bad)
 		}
