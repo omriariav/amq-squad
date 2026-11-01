@@ -712,6 +712,44 @@ func TestAFailedPartPostsNextTickWithoutRepeatingTheFirst(t *testing.T) {
 	}
 }
 
+// Codex P2-4: one normalization (NFKC, format characters removed, case
+// folded) is used by all three checks, so a zero-width space, a joiner, a
+// bidi control or a full-width letter defeats none of them.
+func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
+	pf := newPhoneFixture(t)
+	rec, _, _ := raiseRel(t, pf.core, "rel-norm")
+	g, err := pf.h.gateView(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "digest: " + rec.Digest
+	forms := map[string][]string{
+		"whole-line answer form":  {"yes\u200b", "\u200bNo\u2060.", "ｙｅｓ", "app\u200drove", "deny\u202e rel-x"},
+		"an open gate's id":       {"I raised rel-\u200bnorm for you", "see REL-NORM\u200c now", "ｒｅｌ－ｎｏｒｍ waits"},
+		"an open gate's question": {strings.Replace(digest, "sha256:", "sha\u200b256:", 1), strings.ToUpper(digest[:9]) + digest[9:], "\u2066" + digest + "\u2069"},
+	}
+	for name, lines := range forms {
+		t.Run(name, func(t *testing.T) {
+			for _, l := range lines {
+				if !g.gateShaped(l) {
+					t.Errorf("%q passes the check", l)
+				}
+			}
+		})
+	}
+	// end to end: the zero-width yes is refused and nothing posts
+	_, rid := pf.ask(t, "where are we?", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Status follows.\nyes\u200b", "")
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "refused" || len(pf.relayPosts()) != 0 {
+		t.Fatalf("the zero-width yes: %+v", got)
+	}
+	// and an ordinary sentence still posts
+	pf.threads.reply("lead-a", CockpitThread(rid), "No\u200b, the build is green", "")
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "posted" {
+		t.Fatalf("the sentence: %+v", got)
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

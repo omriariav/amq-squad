@@ -18,6 +18,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
@@ -545,7 +548,8 @@ func (h *Handler) gateView(now time.Time) (gateView, error) {
 			return g, err
 		}
 		for _, id := range ids {
-			g.known[id] = true
+			key := normalizeLine(id) // the ids compared, normalized as the lines are
+			g.known[key] = true
 			if q, err := c.Store.Question(id); err == nil && q != nil {
 				g.threads[q.EventID] = true
 			}
@@ -554,15 +558,15 @@ func (h *Handler) gateView(now time.Time) (gateView, error) {
 			}
 			rec, err := c.Store.Load(id)
 			if err != nil {
-				g.open[id] = true // fail closed on the id
+				g.open[key] = true // fail closed on the id
 				continue
 			}
 			if c.Store.State(rec, now) != gatestore.StateOpen {
 				continue
 			}
-			g.open[id] = true
+			g.open[key] = true
 			for _, l := range strings.Split(rec.Text, "\n") {
-				if l = strings.TrimSpace(l); l != "" {
+				if l = strings.TrimSpace(normalizeLine(l)); l != "" {
 					g.lines = append(g.lines, l)
 				}
 			}
@@ -587,7 +591,7 @@ func (g gateView) refuse(body string) (string, bool) {
 // id; a line carrying a line of an open gate's question. A sentence that
 // merely contains yes or no is not refused.
 func (g gateView) gateShaped(line string) bool {
-	t := strings.TrimSpace(line)
+	t := strings.TrimSpace(normalizeLine(line))
 	if t == "" {
 		return false
 	}
@@ -605,6 +609,25 @@ func (g gateView) gateShaped(line string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeLine is the one normalization of the three checks (Codex P2-4),
+// applied to the candidate line and to the gate ids and question lines it
+// is compared with: NFKC, then every format character (Unicode Cf: zero
+// width spaces, joiners, bidi controls) removed and every other control
+// made a space, then case folding.
+func normalizeLine(s string) string {
+	s = norm.NFKC.String(s)
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		case unicode.IsControl(r):
+			return ' '
+		}
+		return r
+	}, s)
+	return cases.Fold().String(s)
 }
 
 var (
