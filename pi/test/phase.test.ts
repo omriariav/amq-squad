@@ -535,6 +535,13 @@ test("the host line refreshes on a linked worktree's HEAD, a gate decision, an e
 		await refreshes("nothing changed", false);
 		git(wt, "commit", "-q", "--allow-empty", "-m", "two");
 		await refreshes("a commit in the linked worktree", true);
+		// the branch moved from the main checkout: only the ref in the
+		// common directory changes (the worktree's HEAD and its log do not)
+		const moved = execFileSync("git", ["-C", repo, "commit-tree", "wtb^{tree}", "-p", "wtb", "-m", "three"], { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" } })
+			.toString()
+			.trim();
+		git(repo, "update-ref", "refs/heads/wtb", moved);
+		await refreshes("the worktree's branch moved from the main checkout", true);
 		fs.writeFileSync(path.join(ext, "answers", "g1.json"), JSON.stringify({ gate_id: "g1", decision: "approved" }));
 		await refreshes("a gate decision under answers/", true);
 		now = new Date("2026-11-01T09:02:00Z");
