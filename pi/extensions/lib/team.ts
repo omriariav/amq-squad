@@ -178,6 +178,29 @@ export class SoloTeam {
 	socket: string;
 	line = "";
 	ctx: ExtensionContext | undefined;
+	// batch is this turn's assistant batch (Codex on #837, item 3): every
+	// tool call of the assistant message (from its end) and every call the
+	// tool_call hooks prepared since the turn began, by id. pi prepares a
+	// batch's calls before running any, so amq_team_apply runs only alone.
+	batch = new Map<string, string>();
+
+	// phaseRefusal is the execute-time recheck of a solo tool (Codex on
+	// #837, item 3): a call admitted while solo whose execute runs after
+	// the switch refuses phase_team, as the hook would have.
+	phaseRefusal(tool: string): string | undefined {
+		if (this.phase !== "team") return undefined;
+		return `phase_team: ${tool} is not a team lead's tool; after the owner's yes the lead dispatches through the task store (${this.teamTools.join(", ")})`;
+	}
+
+	// notAlone refuses amq_team_apply batched with any other call: the
+	// model must call it alone, so nothing it admitted while solo is in
+	// flight when the tools switch.
+	notAlone(id: string): string | undefined {
+		const others = [...this.batch].filter(([k]) => k !== id).map(([, name]) => name);
+		if (!others.length) return undefined;
+		return `apply_not_alone: amq_team_apply runs alone, and this batch also carried ${others.join(", ")}; nothing was started. Call amq_team_apply again on your next turn with nothing else in the batch.`;
+	}
+
 	// R53 (brief 31-3 PR 2): the phase, the team lead's tool list the switch
 	// activates, and the solo root the lead writes its phase marker in
 	phase: "solo" | "team" = "solo";
@@ -333,6 +356,20 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 		if (t) team.switchToTeam(t);
 		team.render();
 	});
+	// this turn's batch: the assistant message's calls, and every call the
+	// hooks prepare (this handler runs before the extension's guard)
+	pi.on("turn_start", () => {
+		team.batch.clear();
+	});
+	pi.on("message_end", (e: any) => {
+		if (e?.message?.role !== "assistant" || !Array.isArray(e.message.content)) return undefined;
+		for (const c of e.message.content) if (c?.type === "toolCall" && typeof c.id === "string") team.batch.set(c.id, String(c.name));
+		return undefined;
+	});
+	pi.on("tool_call", (e) => {
+		team.batch.set(e.toolCallId, e.toolName);
+		return undefined;
+	});
 	// a solo lead restarted in a marked repository says, once, on its first
 	// turn, the team it started and the two ways back; it starts nothing
 	let offered = false;
@@ -368,6 +405,8 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 			tasks: Type.Optional(Type.Array(Type.Object({ title: Type.String(), class: Type.Optional(Type.String()), files: Type.Optional(Type.Array(Type.String())) }))),
 		}),
 		async execute(_id, p, signal) {
+			const refused = team.phaseRefusal("amq_team_propose");
+			if (refused) throw new Error(refused);
 			return { content: [{ type: "text", text: await team.propose(p, signal) }], details: undefined };
 		},
 	});
@@ -376,10 +415,15 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 		label: "Apply the team",
 		description:
 			"Apply a team the owner confirmed: give the digest amq_team_propose printed. It is refused until the owner confirms (at the lead's pane, the owner's shell or Buzz). " +
-			"On success squad.yaml is written, the team starts and the roster is returned.",
+			"On success squad.yaml is written, the team starts and the roster is returned. Call it alone, with no other tool call in the same turn.",
 		promptSnippet: "amq_team_apply: start the confirmed team (digest in, roster out)",
 		parameters: Type.Object({ digest: Type.String() }),
-		async execute(_id, p, signal) {
+		// pi runs a batch holding a sequential tool one call at a time
+		// (prepare, run, then the next), so nothing runs beside the apply
+		executionMode: "sequential",
+		async execute(id, p, signal) {
+			const refused = team.phaseRefusal("amq_team_apply") ?? team.notAlone(id);
+			if (refused) throw new Error(refused);
 			return { content: [{ type: "text", text: await team.apply(p.digest, signal) }], details: undefined };
 		},
 	});

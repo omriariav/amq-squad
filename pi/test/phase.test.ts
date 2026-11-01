@@ -213,6 +213,63 @@ test("R53: a planted marker switches nothing; the switch rides the lead's answer
 	}
 });
 
+// R53 against pi's batch (Codex on #837, item 3): pi prepares a batch's
+// calls, hooks included, before running any, so a shell call admitted while
+// solo could run after the switch. amq_team_apply runs only alone: batched
+// with any other call (before it or after it, and even when the assistant
+// message's end was not seen) it refuses apply_not_alone, tells the model
+// to call it alone on its next turn, and starts nothing; alone it
+// switches. It is a sequential tool, so pi runs nothing beside it. A solo
+// tool admitted while solo whose execute runs after the switch refuses
+// phase_team at run time.
+test("R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run after the switch refuses phase_team", async () => {
+	const w = soloWorld();
+	const log = path.join(w.dir, "verbs.log");
+	const teamRuns = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter((l) => l === "team").length : 0);
+	await withEnv({ ...w.env, FAKE_LOG: log }, async (pi) => {
+		const ctx = fakeCtx();
+		await pi.emit("session_start", {}, ctx);
+		assert.equal(pi.tools.get("amq_team_apply").executionMode, "sequential");
+		for (const [why, calls, opts] of [
+			["bash before the apply", [{ toolName: "bash", input: { command: "ls" } }, { toolName: "amq_team_apply", input: { digest: DIGEST } }], {}],
+			["bash after the apply", [{ toolName: "amq_team_apply", input: { digest: DIGEST } }, { toolName: "bash", input: { command: "ls" } }], {}],
+			["the message's end unseen", [{ toolName: "read", input: { path: "a" } }, { toolName: "amq_team_apply", input: { digest: DIGEST } }], { noMessageEnd: true }],
+		] as const) {
+			const out = await pi.batch(calls as any, ctx, opts as any);
+			const apply = out.find((r) => r.toolName === "amq_team_apply")!;
+			assert.equal(apply.outcome, "error", why);
+			assert.match(apply.reason ?? "", /^apply_not_alone: /, why);
+			assert.match(apply.reason ?? "", /Call amq_team_apply again on your next turn with nothing else in the batch\./, why);
+			assert.equal(teamRuns(), 0, `${why}: the apply ran`);
+			assert.ok(pi.getActiveTools().includes("bash"), `${why}: the tools switched`);
+			assert.equal(process.env.AM_ROOT, w.soloRoot, why);
+		}
+		const [alone] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], ctx);
+		assert.equal(alone.outcome, "ran", alone.reason);
+		assert.deepEqual(pi.getActiveTools().sort(), TEAM13);
+	});
+	// a propose admitted while solo, the switch landing between the
+	// preparing and the running (here a session start the lead answers
+	// team): its execute refuses phase_team
+	const lead = await fakeLead(w.dir, { outcome: "team", team: w.team });
+	try {
+		await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: lead.socket }, async (pi) => {
+			const ctx = fakeCtx();
+			const [late] = await pi.batch([{ toolName: "amq_team_propose", input: { goal: "x", session: "s1", lead: "cto", seats: [{ handle: "cto", runtime: "pi" }] } }], ctx, {
+				between: async () => {
+					await pi.emit("session_start", {}, ctx);
+				},
+			});
+			assert.equal(lead.got.length, 1, "no phase query in the gap");
+			assert.equal(late.outcome, "error");
+			assert.match(late.reason ?? "", /^phase_team: amq_team_propose/);
+			assert.ok(!pi.ran.includes("amq_team_propose"));
+		});
+	} finally {
+		lead.close();
+	}
+});
+
 // Row 5 for the lead up starts (lead --team): team phase from its first
 // turn with no marker: the thirteen team tools, active, and no solo tool.
 test("R53: lead --team is team phase from its first turn with exactly the thirteen", async () => {
