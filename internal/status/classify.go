@@ -310,9 +310,10 @@ func classifyTask(t task.Task, now time.Time) Task {
 
 // The status document is read by the screen and by the lead's model
 // (amq_status), so every free-text field passes redact.Block before it is
-// serialized (Codex P2 10 on #829): message bodies, warnings, task titles
-// and evidence, attention subjects, decision reasons, the train's refusals
-// and alert details, AMQ's wake audit reasons.
+// serialized (Codex P2 10 on #829): message bodies, warnings, task titles,
+// evidence, block reasons and the reason codes that copy them, attention
+// subjects, decision reasons, the train's refusals and alert details, AMQ's
+// wake audit reasons.
 
 func redactAll(in []string) []string {
 	if in == nil {
@@ -343,11 +344,18 @@ func redactLaunch(l *SeatLaunch) *SeatLaunch {
 func redactDocument(s *Status) {
 	s.Warnings = redactAll(s.Warnings)
 	for i := range s.Tasks {
-		s.Tasks[i].Title = redact.Block(s.Tasks[i].Title)
-		s.Tasks[i].Evidence = redact.Block(s.Tasks[i].Evidence)
+		t := &s.Tasks[i]
+		// the store keeps a block reason verbatim (task.Store.Block), and
+		// the row's reason code and wait reason copy it
+		t.Title, t.Evidence = redact.Block(t.Title), redact.Block(t.Evidence)
+		t.BlockReason, t.ReasonCode, t.WaitReason = redact.Block(t.BlockReason), redact.Block(t.ReasonCode), redact.Block(t.WaitReason)
+	}
+	for i := range s.Seats {
+		s.Seats[i].ReasonCode = redact.Block(s.Seats[i].ReasonCode) // a held task's block reason
 	}
 	for i := range s.Attention {
-		s.Attention[i].Subject = redact.Block(s.Attention[i].Subject)
+		// the id embeds a wait reason (task:<id>:wait:<reason>)
+		s.Attention[i].ID, s.Attention[i].Subject = redact.Block(s.Attention[i].ID), redact.Block(s.Attention[i].Subject)
 	}
 	for i := range s.Decisions {
 		s.Decisions[i].Reason = redact.Block(s.Decisions[i].Reason)

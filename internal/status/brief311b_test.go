@@ -467,13 +467,26 @@ func TestStatusRedactsEveryFreeTextField(t *testing.T) {
 	in := Input{Now: now, Root: "/r",
 		Seats: []SeatInput{{Handle: "qa", HasSignal: true, LastMessage: canary("msg"), Warnings: []string{canary("warn")},
 			Launch: &SeatLaunch{Outcome: "live", Wake: &SeatWake{Mode: "disabled", AuditReason: canary("wake")}}}},
-		Tasks:     []task.Task{{ID: "t1", Title: canary("title"), Class: "implement", State: task.StateCompleted, Evidence: canary("evidence"), CreatedAt: now, UpdatedAt: now}},
+		Tasks: []task.Task{
+			{ID: "t1", Title: canary("title"), Class: "implement", State: task.StateCompleted, Evidence: canary("evidence"), CreatedAt: now, UpdatedAt: now},
+			// a block reason the store kept verbatim; the task row's and the
+			// holding seat's reason codes copy it (Codex re-check P1 2)
+			{ID: "t2", Title: "x", Class: "implement", State: task.StateBlocked, BlockReason: canary("block"), CreatedAt: now, UpdatedAt: now,
+				Report: &task.Report{By: "qa"}},
+			{ID: "t3", Title: "y", Class: "implement", State: task.StatePending, WaitReason: canary("wait"), CreatedAt: now, UpdatedAt: now},
+		},
 		Decisions: []Decision{{At: now, Kind: "exit_refused", Reason: canary("decision")}},
 		TrainRuns: []TrainRun{{Run: "r1", Refusal: canary("train"), PRs: []int{}, Merged: []int{}}},
 		Alerts:    []AlertInput{{ID: "a1", Kind: "ungated_tag", Subject: canary("alert"), At: now}},
 		NeedsYou:  []ThreadInput{{ID: "th1", Seat: "qa", Subject: canary("thread"), Since: now}},
 		Warnings:  []string{canary("docwarn")},
 	}
+	// a message body whose multi-line credential crosses the 200-byte cut:
+	// redacted before the cut (and before the cut's whitespace folding)
+	cut := "t31c" + "cut" + "v" + "0042"
+	in.Seats = append(in.Seats, SeatInput{Handle: "scribe", HasSignal: true,
+		LastMessage: strings.Repeat("x", 183) + "\napi" + "_key:\n  \"" + cut + "\"\n"})
+	canaries = append(canaries, cut[:6])
 	raw, err := json.Marshal(Build(in))
 	if err != nil {
 		t.Fatal(err)
