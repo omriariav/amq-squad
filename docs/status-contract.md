@@ -210,8 +210,10 @@ lead's presence is its seat row's `live`, found by `lead_handle`.
   recorded pid only.
 - A roster relaunch (`scheduler relaunch`) within one scheduler incarnation
   records the same start (the `up` that launched the squad) for every seat
-  that was in the roster, so its marks are not a cold launch's; only a seat
-  the relaunch's reload added records the key press (`--start`) instead.
+  that was in the roster, so its marks are not a cold launch's; a seat a
+  relaunch's reload added records its key press (`--start`) instead, at that
+  relaunch and every later one while it stays in the roster (`drain_end`
+  only at the first).
 
 - `live` from a launch record is the recorded `AgentPID` answering signal-0
   (`status.Collect`); the binary and the process birth time are not checked,

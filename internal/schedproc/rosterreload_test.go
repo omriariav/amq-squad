@@ -116,7 +116,7 @@ func TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat(t *testing.T) {
 	slots := &Slots{Squad: reloadSquad()}
 	pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
 	added := reloadSquad(seatlaunch.Seat{Handle: "n1", Runtime: "claude", Model: "opus", Effort: "high", Worktree: "/w/n1"})
-	keyPress := time.Now().Add(-3 * time.Second).UTC() // in range: at most StartSkew ahead
+	keyPress := time.Now().Add(-3 * time.Second).UTC()                              // in range: at most StartSkew ahead
 	capOf := func(q seatlaunch.Squad) (int, error) { return len(q.Seats) - 1, nil } // one lease per roster seat
 	reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Cap: capOf, Slots: slots, Pools: pools, Lead: "lead"},
 		keyPress.Format(time.RFC3339Nano), func(l *rosterLauncher, ds []scheduler.Decision) bool { return l.launched() == 2 })

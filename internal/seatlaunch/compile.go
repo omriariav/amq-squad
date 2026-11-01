@@ -257,7 +257,12 @@ func writeMarks(c Compiled, launchID string, start time.Time, seatStart map[stri
 		at := start
 		if own, ok := seatStart[rec.Handle]; ok && !own.IsZero() {
 			at = own // the key press of the add key (brief 31-2 PR 2)
-			if !drainEnd.IsZero() && !drainEnd.Before(own) {
+			// the drain is the press's own relaunch only: a later relaunch
+			// carries the same press again (the seat keeps its start), and
+			// the time before that launch is not a drain
+			prev, perr := ReadSeatMarks(rec.Root, rec.Handle)
+			again := perr == nil && prev.Start != nil && prev.Start.Equal(own)
+			if !again && !drainEnd.IsZero() && !drainEnd.Before(own) {
 				d := drainEnd.UTC()
 				m.DrainEnd = &d
 			}

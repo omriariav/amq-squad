@@ -215,7 +215,12 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 	if r.MaxSeats > 0 {
 		s.Config.MaxSeats = r.MaxSeats
 	}
-	s.seatStart = nil
+	// Each added seat keeps its key press for every later relaunch, until
+	// it leaves the roster (Codex P2 2 on 31-2 PR 2): its marks never fall
+	// back to the squad's start.
+	for _, h := range removed {
+		delete(s.seatStart, h)
+	}
 	if !start.IsZero() {
 		for _, h := range added {
 			if s.seatStart == nil {
@@ -328,7 +333,6 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 		reqs = append(reqs, req)
 		s.requests = append(s.requests, request{req: req, at: now})
 	}
-	s.seatStart = nil // the key press is the added seats' first launch only
 	out := rl.LaunchRoster(reqs)
 	if out.Stage != RosterApplied {
 		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}

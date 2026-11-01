@@ -60,3 +60,38 @@ func TestTheAddedSeatsMarksStartIsTheKeyPress(t *testing.T) {
 		t.Fatalf("the launcher's own options kept a request's start: %+v", f.l.Options.SeatStart)
 	}
 }
+
+// Codex P2 2 on 31-2 PR 2, the launch's half: a seat keeps its own start
+// across relaunches. cto was added at T1: its first launch writes T1 and a
+// drain end. A later roster launch whose requests carry T1 for cto (kept
+// by the scheduler, TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster) and
+// T2 for dev, added since, writes cto's marks with T1 again and no drain
+// end (that launch's wait is not cto's drain), and dev's with T2 and its
+// drain end. Reverted (the scheduler dropping cto's start), cto's marks
+// fall back to the squad's start.
+func TestAnAddedSeatKeepsItsStartAcrossRelaunches(t *testing.T) {
+	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed",
+		Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"}, {Handle: "dev", Runnable: true, Resource: "tmux:v1:pane:%8"}}}, true)
+	f.l.Options.Start = time.Now().Add(-2 * time.Hour).UTC()
+	t1 := time.Now().Add(-time.Hour).UTC()
+	t2 := time.Now().Add(-11 * time.Second).UTC()
+	if out := f.l.LaunchRoster([]scheduler.SeatRequest{{ID: "r1", Handle: "cto", Pool: poolA, Start: t1}, {ID: "r2", Handle: "dev", Pool: poolDev}}); out.Stage != scheduler.RosterApplied {
+		t.Fatalf("the first launch: %+v", out)
+	}
+	root := f.q.SessionRoot()
+	if cto, _ := ReadSeatMarks(root, "cto"); cto.Start == nil || !cto.Start.Equal(t1) || cto.DrainEnd == nil {
+		t.Fatalf("cto after its own relaunch: %+v", cto)
+	}
+	out := f.l.LaunchRoster([]scheduler.SeatRequest{{ID: "r3", Handle: "cto", Pool: poolA, Start: t1}, {ID: "r4", Handle: "dev", Pool: poolDev, Start: t2}})
+	if out.Stage != scheduler.RosterApplied {
+		t.Fatalf("the second launch: %+v", out)
+	}
+	cto, _ := ReadSeatMarks(root, "cto")
+	dev, _ := ReadSeatMarks(root, "dev")
+	if cto.Start == nil || !cto.Start.Equal(t1) || cto.DrainEnd != nil || cto.LaunchID != out.LaunchID {
+		t.Fatalf("cto after a later relaunch: %+v (want T1 %s, no drain end)", cto, t1)
+	}
+	if dev.Start == nil || !dev.Start.Equal(t2) || dev.DrainEnd == nil || dev.LaunchID != out.LaunchID {
+		t.Fatalf("dev, added since: %+v (want T2 %s and a drain end)", dev, t2)
+	}
+}

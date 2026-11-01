@@ -31,8 +31,6 @@ func rosterHandles(r []RosterSeat) string {
 //     key press as its start; s-a, whose line changed (sonnet to opus),
 //     launches on its new pool with no start of its own; s-b is not
 //     launched again (rows A, C, 4);
-//   - the key press is the added seat's first launch only: a later relaunch
-//     carries no start.
 //
 // Reverted to a swap at the request (change 2), Swap runs while s-b holds
 // its lease; without the start (change 4), s-c's request carries none.
@@ -83,10 +81,48 @@ func TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress(t *t
 	if len(got) != 2 || got[0].Handle != "s-a" || got[0].Pool != opus || !got[0].Start.IsZero() || got[1].Handle != "s-c" || !got[1].Start.Equal(keyPress) {
 		t.Fatalf("the relaunch's requests: %+v", got)
 	}
+}
+
+// Codex P2 2 on 31-2 PR 2: each added seat keeps its key press on the
+// scheduler until it leaves the roster. s-c added at T1, then s-d at T2:
+// the second relaunch carries T1 for s-c and T2 for s-d, and so does a
+// plain relaunch after it (seatlaunch writes each as the seat's marks.json
+// start, TestAnAddedSeatKeepsItsStartAcrossRelaunches); a reload that
+// removes s-c drops its start, s-d keeps T2. Reverted (the starts cleared
+// after each launch), the later relaunches carry none.
+func TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster(t *testing.T) {
+	h, fr := newRosterHarness(t, Config{MaxSeats: 4, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute}, rosterAB...)
+	h.tick()
+	t1, t2 := t0.Add(-time.Hour), t0.Add(-time.Minute)
+	withC := append(slices.Clone(rosterAB), RosterSeat{Handle: "s-c", Pool: opus})
+	h.s.RequestRelaunchReload("add s-c", t1, &RosterReload{Roster: withC})
+	h.tick()
+	withD := append(slices.Clone(withC), RosterSeat{Handle: "s-d", Pool: opus})
+	h.s.RequestRelaunchReload("add s-d", t2, &RosterReload{Roster: withD})
+	h.tick()
 	h.s.RequestRelaunch("again")
 	h.tick()
-	if len(fr.launches) != 3 || !fr.launches[2][1].Start.IsZero() {
-		t.Fatalf("a later relaunch carried the key press: %+v", fr.launches)
+	starts := func(reqs []SeatRequest) map[string]time.Time {
+		out := map[string]time.Time{}
+		for _, r := range reqs {
+			out[r.Handle] = r.Start
+		}
+		return out
+	}
+	if len(fr.launches) != 4 {
+		t.Fatalf("launches %d", len(fr.launches))
+	}
+	for i := 2; i <= 3; i++ {
+		got := starts(fr.launches[i])
+		if !got["s-c"].Equal(t1) || !got["s-d"].Equal(t2) || !got["s-a"].IsZero() || !got["s-b"].IsZero() {
+			t.Fatalf("launch %d starts %v", i, got)
+		}
+	}
+	h.s.RequestRelaunchReload("drop s-c", t0, &RosterReload{Roster: append(slices.Clone(rosterAB), RosterSeat{Handle: "s-d", Pool: opus})})
+	h.tick()
+	got := starts(fr.launches[4])
+	if _, in := got["s-c"]; in || !got["s-d"].Equal(t2) || len(h.s.seatStart) != 1 {
+		t.Fatalf("after s-c left: %v; kept %v", got, h.s.seatStart)
 	}
 }
 
