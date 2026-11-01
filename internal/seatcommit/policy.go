@@ -209,6 +209,39 @@ func (ps protectedSet) overlaps(globs []string) []string {
 	return out
 }
 
+// ExactProtectedAliases resolves exact repository-relative file names through
+// the repository and returns literal globs for aliases whose targets are
+// protected. The lead's widen check can add those aliases to the protected
+// set without widening the task onto the symlink target itself.
+func ExactProtectedAliases(g grants.Grants, root, repoRoot, home string, files []string) ([]string, error) {
+	exact, err := task.CleanExactFiles(files)
+	if err != nil {
+		return nil, err
+	}
+	if home == "" {
+		home = homeDir()
+	}
+	ps := protectedFor(g, repoRoot, home, filepath.Join(root, "extensions", "amq-squad")+"/", "~/.amq-squad/")
+	realRoot := evalOr(repoRoot)
+	var out []string
+	for _, p := range exact {
+		real := evalOr(filepath.Join(repoRoot, filepath.FromSlash(p)))
+		rel, ok := inside(realRoot, real)
+		if !ok {
+			return nil, fmt.Errorf("exact file %q resolves outside the repository", p)
+		}
+		if _, hit := ps.match(rel); !hit {
+			continue
+		}
+		literal, err := task.LiteralGlob(p)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, literal)
+	}
+	return out, nil
+}
+
 // ManagedShape is every amq-squad managed block of a text, in order, with
 // the marker sequence: each begin marker opens a block that runs to the next
 // end marker (or the end of the text), and every stray marker is kept in

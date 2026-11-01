@@ -49,6 +49,63 @@ func CleanDeclaredFiles(in []string) ([]string, error) {
 	return out, nil
 }
 
+// CleanExactFiles validates and normalizes repository-relative file names.
+// Unlike CleanDeclaredFiles, these are not globs: *, ? and [ are ordinary
+// file-name characters, and a trailing slash or "." is never a file.
+// Callers store the returned canonical, deduplicated names in first-seen
+// order; typed requests sort that set before persistence.
+func CleanExactFiles(in []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, raw := range in {
+		if strings.ContainsFunc(raw, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+			return nil, fmt.Errorf("exact file %q carries a newline or a control character", raw)
+		}
+		p := strings.TrimSpace(raw)
+		switch {
+		case p == "":
+			continue
+		case strings.Contains(p, "\\"):
+			return nil, fmt.Errorf("exact file %q carries a backslash", raw)
+		case strings.HasSuffix(p, "/") || p == ".":
+			return nil, fmt.Errorf("exact file %q is a directory, not a file", raw)
+		}
+		for _, seg := range strings.Split(p, "/") {
+			if seg == ".." {
+				return nil, fmt.Errorf("exact file %q traverses outside its directory", raw)
+			}
+		}
+		p = strings.TrimPrefix(path.Clean(p), "./")
+		if strings.HasPrefix(p, "/") || p == ".." || strings.HasPrefix(p, "../") {
+			return nil, fmt.Errorf("exact file %q must be relative to the repository root", raw)
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// validateExactFileRecord refuses a task record whose refused_paths are not
+// already in CleanExactFiles' canonical representation. Mutations may
+// normalize user input; persisted records never gain authority by doing so.
+func validateExactFileRecord(in []string) error {
+	clean, err := CleanExactFiles(in)
+	if err != nil {
+		return err
+	}
+	if len(clean) != len(in) {
+		return fmt.Errorf("refused_paths is not a canonical exact-file set")
+	}
+	for i := range clean {
+		if clean[i] != in[i] {
+			return fmt.Errorf("refused_paths entry %q is not canonical; want %q", in[i], clean[i])
+		}
+	}
+	return nil
+}
+
 // FilesOverlap reports whether any glob of a may match a path that a glob of
 // b may match. It is conservative: it may report a false overlap, never a
 // missed one.
