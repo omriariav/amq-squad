@@ -11,6 +11,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 )
 
 // Brief 3.1.1-1, rows 1, 3 and 5: every gate question the code composes, for
@@ -449,5 +450,29 @@ func TestParseBare(t *testing.T) {
 		if got, ok := ParseBare(in); ok {
 			t.Errorf("ParseBare(%q) = %q", in, got)
 		}
+	}
+}
+
+// Codex on #838 (P1): a credential-shaped value in a title (the canary
+// matches no real credential shape) is redacted at composition: absent from
+// the question, its plain lines and the stored text, which still validates.
+func TestACanaryInATitleIsRedactedAtComposition(t *testing.T) {
+	const secret = "zebra311titlevalue"
+	canary := "GH_TOKEN=" + secret
+	for _, re := range redact.RealCredentialShapes {
+		if re.MatchString(canary) {
+			t.Fatalf("the canary matches a real credential shape %s", re)
+		}
+	}
+	rec, err := Render(Spec{GateID: "m-c", Action: "spawn", Target: gatetarget.MergeBeyond("omriariav/amq-squad", 7, "4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d", []string{"ci_green"}),
+		RaisedBy: "lead-a", Facts: &Facts{Title: "Fix " + canary, Branch: "v3"}}, testNow, testIdent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec.Text, secret) || strings.Contains(strings.Join(PlainLines(rec), "\n"), secret) || !strings.Contains(Plain(rec.Text), redact.Placeholder) {
+		t.Fatalf("the canary reached the question:\n%s", rec.Text)
+	}
+	if err := rec.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

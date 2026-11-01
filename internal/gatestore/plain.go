@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 )
 
 // The gate question in plain words (brief 3.1.1-1, the owner's ruling of
@@ -49,11 +50,14 @@ var branchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 
 // normalize is nil for empty facts, so a record holds facts only when it
 // has one.
+// The title is stored redacted (redact.Block): the record, `gate status`
+// and every reader see only the redacted text.
 func (f *Facts) normalize() *Facts {
 	if f == nil || (f.Title == "" && f.Branch == "") {
 		return nil
 	}
 	c := *f
+	c.Title = redact.Block(c.Title)
 	return &c
 }
 
@@ -65,6 +69,9 @@ func (f *Facts) validate() error {
 		return errors.New("gate facts are empty (omit them)")
 	}
 	if f.Title != "" {
+		if f.Title != redact.Block(f.Title) {
+			return errors.New("gate facts title is not redacted")
+		}
 		if err := operatorauth.ValidateCanonicalSingleLineField("title", f.Title, true); err != nil {
 			return err
 		}
@@ -82,7 +89,7 @@ func (f *Facts) validate() error {
 // left out (runs of blanks in a title made one space): what a raiser read
 // never stops its gate. nil when none is left.
 func SafeFacts(title, branch string) *Facts {
-	f := Facts{Title: strings.Join(strings.Fields(title), " "), Branch: branch}
+	f := Facts{Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch: branch}
 	if (&Facts{Title: f.Title}).validate() != nil {
 		f.Title = ""
 	}
@@ -98,9 +105,12 @@ func SafeFacts(title, branch string) *Facts {
 var ClassWords = []string{"tag", "GitHub release", "package release", "message outside the squad", "credential", "growth past the grant", "widen", "merge"}
 
 // TextOf is the only renderer of the owner-facing gate text: the plain lines,
-// a blank line, the rule, and the identifiers.
+// a blank line, the rule, and the identifiers. The whole text passes
+// redact.Block (Codex P1 on #838): a credential-shaped value in a title or a
+// target never reaches the question, its record, status or either display.
+// It is a function of the record's fields, so Validate's re-render agrees.
 func TextOf(r Record) string {
-	return strings.Join(append(PlainLines(r), "", Rule, identifiers(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest)), "\n")
+	return redact.Block(strings.Join(append(PlainLines(r), "", Rule, identifiers(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest)), "\n"))
 }
 
 // identifiers are the lines below the rule: the gate id, the squad, the
@@ -133,7 +143,11 @@ func PlainLines(r Record) []string {
 	if q.title != "" {
 		lines = append(lines, q.title)
 	}
-	return append(lines, q.why, q.answer)
+	lines = append(lines, q.why, q.answer)
+	for i, l := range lines {
+		lines[i] = redact.Block(l)
+	}
+	return lines
 }
 
 type plainQ struct{ ask, title, why, answer string }
@@ -462,7 +476,7 @@ func plain(s string) string {
 // double underscore, a path separator, a dot inside) replaced by an
 // ellipsis, cut at TitleMax characters with an ellipsis, in double quotes.
 func quote(s string) string {
-	words := strings.Fields(plain(s))
+	words := strings.Fields(plain(redact.Block(s)))
 	for i, w := range words {
 		if IsToken(w) {
 			words[i] = "…"

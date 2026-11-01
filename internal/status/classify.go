@@ -374,6 +374,12 @@ func redactDocument(s *Status) {
 	for i := range s.Train.Alerts {
 		s.Train.Alerts[i].Detail = redact.Block(s.Train.Alerts[i].Detail)
 	}
+	for i := range s.Gates {
+		// the question's plain lines are free text (a title the raiser read):
+		// redacted at composition, and again here for a record status reads
+		// without validating (brief 3.1.1-1, Codex P1 on #838)
+		s.Gates[i].Question = redact.Block(s.Gates[i].Question)
+	}
 	for i := range s.Requests {
 		// ids and names only (brief 31-4); a hand-edited record carries no
 		// text into the document either

@@ -108,6 +108,22 @@ run("the sanitizer reads lowercase hex only", [(PL,'var hexRunRe = regexp.MustCo
 run("a token in a title reaches the quoted line", [(PL,'\t\tif IsToken(w) {\n\t\t\twords[i] = "…"','\t\tif false && IsToken(w) {\n\t\t\twords[i] = "…"')],
     GS+"'TestATitleCarriesNoHashOrTokenAboveTheRule'")
 
+# Codex on #838 (P1): the question is redacted at composition and in status
+run("the question, its lines and its title not redacted at composition", [
+    (PL,'\treturn redact.Block(strings.Join(append(PlainLines(r), "", Rule,','\treturn (strings.Join(append(PlainLines(r), "", Rule,'),
+    (PL,'\t\tlines[i] = redact.Block(l)\n','\t\tlines[i] = l\n'),
+    (PL,'\twords := strings.Fields(plain(redact.Block(s)))\n','\twords := strings.Fields(plain(s))\n'),
+    (PL,'\tc.Title = redact.Block(c.Title)\n','\t_ = redact.Block\n'),
+    (PL,'\t\tif f.Title != redact.Block(f.Title) {\n','\t\tif false {\n'),
+    (PL,'Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch','Title: strings.Join(strings.Fields(title), " "), Branch')],
+    GS+"'TestACanaryInATitleIsRedactedAtComposition' && "+CL+"'TestACanaryInATitleReachesNoQuestionStatusOrKey'")
+run("the stored title not redacted (the question is)", [(PL,'\tc.Title = redact.Block(c.Title)\n','\t_ = redact.Block\n'),
+    (PL,'\t\tif f.Title != redact.Block(f.Title) {\n','\t\tif false {\n'),
+    (PL,'Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch','Title: strings.Join(strings.Fields(title), " "), Branch')],
+    CL+"'TestACanaryInATitleReachesNoQuestionStatusOrKey'")
+run("status does not redact gates[].question", [(CF,'\t\ts.Gates[i].Question = redact.Block(s.Gates[i].Question)\n','')],
+    CL+"'TestACanaryInATitleReachesNoQuestionStatusOrKey'")
+
 # Row 2: the bare yes or no, bound by the thread
 run("Verify refuses the bare form", [(VE,'\t\tverb, ok := gatestore.ParseBare(e.Content)\n\t\tif !ok {\n\t\t\treturn Outcome{}, reject(RejectBadTuple','\t\tverb, ok := "", false\n\t\tif !ok {\n\t\t\treturn Outcome{}, reject(RejectBadTuple')],
     GV+"'TestABareYesOrNoInTheThreadIsTheAnswer'")

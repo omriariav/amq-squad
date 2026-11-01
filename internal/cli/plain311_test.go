@@ -2,14 +2,17 @@ package cli
 
 import (
 	"errors"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -121,5 +124,61 @@ func TestTheDoorsTextAsksForNoPrefix(t *testing.T) {
 	}
 	if !strings.Contains(text, "reply yes to the lead's Buzz post that relays this plan") {
 		t.Fatalf("the doors text does not say how to confirm on the phone: %s", text)
+	}
+}
+
+// Codex on #838 (P1): a canary in a PR title is absent from the question,
+// from status's gates[].question and from `gate status` (the answer key's
+// source; the screen shows status's field verbatim, the key the record's
+// text, pi's row "the gates block and the answer key show the question
+// above the rule verbatim"). A record status reads without validating (a
+// hand-written file) is redacted by status too.
+func TestACanaryInATitleReachesNoQuestionStatusOrKey(t *testing.T) {
+	f := newGateCLIFixture(t)
+	const secret = "zebra311statusvalue"
+	canary := "GH_TOKEN=" + secret
+	for _, re := range redact.RealCredentialShapes {
+		if re.MatchString(canary) {
+			t.Fatalf("the canary matches a real credential shape %s", re)
+		}
+	}
+	store, err := gatestore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident := gatestore.Identity{OwnerPubKey: f.owner.PublicHex(), IssuerKeyID: "ed25519-sha256:" + strings.Repeat("b2", 32)}
+	rec, err := gatestore.Render(gatestore.Spec{GateID: "merge-canary", Action: "spawn", Target: gatetarget.MergeBeyond("owner/fixture", 7, strings.Repeat("a", 40), []string{"ci_green"}),
+		RaisedBy: "lead", Squad: store.Squad(), Facts: gatestore.SafeFacts("Fix "+canary, "main")}, time.Now(), ident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(rec); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec.Text, secret) {
+		t.Fatalf("the question carries the canary:\n%s", rec.Text)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runGateStatus([]string{"--project", f.project, "--session", "s", "--me", "cto", "--json"})
+	})
+	if err != nil || strings.Contains(out, secret) || !strings.Contains(out, "merge-canary") {
+		t.Fatalf("gate status: %v\n%s", err, out)
+	}
+	// a record status reads without validating it
+	hand := `{"gate_id":"hand-1","class":"tag","digest":"sha256:` + strings.Repeat("c", 64) + `","raised_by":"lead","not_after":"2999-01-01T00:00:00Z",` +
+		`"text":"Create a tag named v1?\n` + canary + `\nYes lets it run. No stops it.\n\n----------\namq-squad gate hand-1"}`
+	mustWrite(t, filepath.Join(store.Dir("gates"), "hand-1.json"), hand)
+	st := buildStatusContract(f.root, f.project, "test", time.Now())
+	seen := 0
+	for _, g := range st.Gates {
+		if strings.Contains(g.Question, secret) {
+			t.Fatalf("status gate %s carries the canary: %q", g.ID, g.Question)
+		}
+		if strings.Contains(g.Question, redact.Placeholder) {
+			seen++
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("status gates = %+v, want both questions redacted", st.Gates)
 	}
 }
