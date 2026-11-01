@@ -75,6 +75,7 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 	// seat the relaunch's reload added) overrides the launch's for that
 	// seat's marks; every other seat keeps the launch's start.
 	opts.SeatStart = maps.Clone(l.Options.SeatStart)
+	opts.DrainEnd = time.Now() // the drain is over: the scheduler launches now
 	for _, r := range reqs {
 		if !r.Start.IsZero() {
 			if opts.SeatStart == nil {

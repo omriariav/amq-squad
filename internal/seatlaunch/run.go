@@ -56,6 +56,10 @@ type Options struct {
 	// 2): a seat a relaunch's reload added records the add key's press as
 	// its marks.json start. LaunchRoster fills it from the requests.
 	SeatStart map[string]time.Time
+	// DrainEnd is when the relaunch's drain ended and this roster launch
+	// began (LaunchRoster sets it); recorded with each SeatStart seat's
+	// marks as the end of its "drain" segment.
+	DrainEnd  time.Time
 	Decisions map[string]string // ACTION_ID -> CHOICE, explicit operator answers
 	DryRun    bool              // Prepare only
 	Wait      time.Duration     // how long to wait for the seats to come up
@@ -274,7 +278,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		return res, err
 	}
 	writeWakes(c, launchID, wakes)
-	writeMarks(c, launchID, o.Start, o.SeatStart)
+	writeMarks(c, launchID, o.Start, o.SeatStart, o.DrainEnd)
 	// The commit step's diff base is the core's observation of each seat
 	// worktree before the seat runs (internal/seatcommit ledger). A worktree
 	// that is not a git checkout records nothing; its commit step refuses

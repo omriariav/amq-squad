@@ -94,9 +94,16 @@ lock, and both writes happen while no seat is live (after the drain).
 
 ### 2.3 The reload only adds (plan reviewer point 1)
 
-The reload stops no seat. The relaunch already drains every seat (each
-finishes what it holds, then closes with the reason `roster_relaunch`), and
-the reload changes nothing about that. Because the swap waits for the
+The rule's honest form until AMQ's ask 20: the add key today is a roster
+relaunch, so every live seat drains and comes back. "The reload only adds"
+means two things now: a seat removed from squad.yaml is not launched again,
+and no seat is killed outside the drain the owner confirmed. When ask 20
+lands, the hot add (a fresh seat joined into the present binding) makes the
+first clause literal, and the live seats stay up.
+
+The reload stops no seat of its own. The relaunch already drains every seat
+(each finishes what it holds, then closes with the reason
+`roster_relaunch`), and the reload changes nothing about that. Because the swap waits for the
 drain's end, a seat removed from squad.yaml while live keeps its lease, its
 slot and its line in the slots' squad through the drain, and leaves at that
 close. It is not launched again, since the new roster does not name it. A
@@ -122,6 +129,21 @@ The key press is the confirmation's moment, not the moment `/squad add` was
 typed: the owner's typing of five fields is not launch time. The drain
 before the swap is: a relaunch waits for every seat to finish what it
 holds, and that wait counts against the added seat's budget.
+
+### 2.4a The drain as a named segment (plan reviewer, line 1)
+
+On a busy squad the drain is the slowest part of the added seat's budget,
+and the number must say so rather than blame seat_exec or prepare.
+`LaunchRoster` records when the drain ended and the launch began
+(`Options.DrainEnd`), and `writeMarks` writes it as `drain_end` in the
+marks of each seat whose start is its own (the key press). Status
+(`launchTiming`, internal/status/screen.go) then lists five segments for
+that seat: `drain` (the key press to the drain's end), `prepare` (the
+drain's end to the staged record), `mint`, `apply`, `seat_exec`. The
+over-ceiling warning names the slowest, `slowest segment drain 30.000 s`
+on a busy squad. A seat without `drain_end` keeps the four segments.
+internal/status is outside this brief's declared files; the lead's gate
+on 5d20b5ff asked for the segment, which lives there.
 
 ### 2.5 The router's pools per call (change 5)
 
@@ -216,6 +238,7 @@ Each row fails with its change reverted (section 4).
 | C | scheduler `TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress` (s-b, removed from squad.yaml, keeps its lease and is not closed while it holds it; nothing swaps; once it finishes it closes with `roster_relaunch`, never another reason, and is not launched again; s-a's changed line, sonnet to opus, launches on its new pool in the relaunch's apply) |
 | D | seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the key press 11 s before seat live and the relaunch's decision 2 s before: the mark is the press, so the seat is over the 10 s ceiling counted from the press though under it from the decision) |
 | E | pi `the lead's model tool list carries no key verb and no gate-answer verb` (PR 1's row, unchanged: the exact thirteen tools) |
+| Drain | status `TestARelaunchedSeatsBudgetNamesTheDrain` (a key press, 30 s of drain, then the launch: segments drain, prepare, mint, apply, seat_exec; drain 30000 ms, prepare 200 ms; the slowest is drain and the warning says `slowest segment drain 30.000 s`; a seat without a drain end keeps four segments); seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the added seat's `drain_end` lies between the key press and seat live; the existing seat has none) |
 | Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it launches, `roster_over_cap` is logged and its task waits `seat_cap`); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns` (under `--max-seats 2`: every added seat launches, `roster_over_cap`, two leases and the third `seat_cap`, the state's 3 live seats over max_seats 2); pi `over the lease cap: a warning line in the seats block, never a refusal`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
 
 No test reaches the network, the real HOME, tmux, AMQ or Buzz: the cli
@@ -285,7 +308,24 @@ grep -E '"kind":"(roster_relaunch_requested|roster_reloaded|roster_launched)"' .
 
 Expect `start` and the `marks.json` start equal to the key line's STAMP
 (UTC), `ceiling_ms` 10000, and `to_seat_live_ms` measured from it;
-`over_ceiling` is the verdict. The decisions show the request, then
+`over_ceiling` is the verdict. Add `segments: .launch.timing.segments` to
+the jq to read the five segments; on an idle squad `drain` is near zero.
+
+**The idle run** is the one held to the ceiling: press the key with no
+task leased (`amq-squad task list --json | jq '[.data.tasks[] |
+select(.lease != null)] | length'` prints 0).
+
+**The busy run** is recorded with no pass or fail: its drain number is the
+evidence for AMQ's ask 20 upstream (a hot add would not drain). Add a
+second seat the same way (handle `qa-3`, the same role, runtime, model and
+effort) while at least one seat holds a task, then record:
+
+```sh
+amq-squad status --json | jq '.seats[] | select(.handle=="qa-3") | {handle, start: .launch.timing.start, to_seat_live_ms: .launch.timing.to_seat_live_ms, drain_ms: (.launch.timing.segments[] | select(.name=="drain") | .ms), slowest: .launch.timing.slowest_segment}'
+```
+
+Write down `drain_ms` and `to_seat_live_ms` beside the number of seats
+that held a task at the press. The decisions show the request, then
 `roster_reloaded` naming qa-2 with the key press, then `roster_launched`.
 The relaunch drains first: a seat busy on a task when the key is pressed
 adds its remaining work to qa-2's budget, so run this row with the squad

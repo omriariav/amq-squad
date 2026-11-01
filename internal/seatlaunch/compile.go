@@ -238,6 +238,11 @@ type SeatMarks struct {
 	LaunchID     string     `json:"launch_id"`
 	Start        *time.Time `json:"start"`
 	FirstMessage *time.Time `json:"first_message"`
+	// DrainEnd is when the relaunch that launched this seat finished its
+	// drain and began the launch (brief 31-2 PR 2), set only for a seat
+	// whose start is its own (the add key's press): status names the
+	// segment from the start to it "drain".
+	DrainEnd *time.Time `json:"drain_end,omitempty"`
 }
 
 func marksPath(root, handle string) string {
@@ -246,12 +251,16 @@ func marksPath(root, handle string) string {
 
 // writeMarks records each staged seat's launch start (best effort, like
 // the wake record).
-func writeMarks(c Compiled, launchID string, start time.Time, seatStart map[string]time.Time) {
+func writeMarks(c Compiled, launchID string, start time.Time, seatStart map[string]time.Time, drainEnd time.Time) {
 	for _, rec := range c.Records {
 		m := SeatMarks{LaunchID: launchID}
 		at := start
 		if own, ok := seatStart[rec.Handle]; ok && !own.IsZero() {
 			at = own // the key press of the add key (brief 31-2 PR 2)
+			if !drainEnd.IsZero() && !drainEnd.Before(own) {
+				d := drainEnd.UTC()
+				m.DrainEnd = &d
+			}
 		}
 		if !at.IsZero() {
 			t := at.UTC()

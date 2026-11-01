@@ -50,6 +50,12 @@ func TestTheAddedSeatsMarksStartIsTheKeyPress(t *testing.T) {
 	if live := proof.At.Sub(*dev.Start); live <= ceiling || proof.At.Sub(decision) >= ceiling {
 		t.Fatalf("dev live %s after the key press, %s after the decision: the budget must count from the press", live, proof.At.Sub(decision))
 	}
+	// the drain's end (the roster launch's start) is dev's, after the key
+	// press and before seat live; cto, with the squad's start, has none
+	// (status names the segment from the press to it "drain")
+	if dev.DrainEnd == nil || dev.DrainEnd.Before(keyPress) || dev.DrainEnd.After(proof.At) || cto.DrainEnd != nil {
+		t.Fatalf("drain ends: dev %v, cto %v", dev.DrainEnd, cto.DrainEnd)
+	}
 	if f.l.Options.SeatStart != nil {
 		t.Fatalf("the launcher's own options kept a request's start: %+v", f.l.Options.SeatStart)
 	}

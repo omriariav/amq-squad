@@ -89,7 +89,7 @@ launch budget:
 | `ceiling_ms` | 10000: the ceiling binds the start to seat live; the first message has none |
 | `over_ceiling` | `to_seat_live_ms` is over the ceiling (the seat also carries `launch_budget_exceeded`) |
 | `slowest_segment` | the longest of the segments |
-| `segments[]` | `name` and `ms` (null when a record bounding it is missing), in order: `prepare` (the start to the staged record's `started_at`), `mint` (to the proof ticket's `issued_at`), `apply` (to AMQ's apply outcome), `seat_exec` (to the accepted proof) |
+| `segments[]` | `name` and `ms` (null when a record bounding it is missing), in order: `drain`, only for a seat a relaunch launched from the add key (its own start, the key press, to the end of the relaunch's drain, `drain_end` in its `marks.json`), `prepare` (the start, or the drain's end, to the staged record's `started_at`), `mint` (to the proof ticket's `issued_at`), `apply` (to AMQ's apply outcome), `seat_exec` (to the accepted proof) |
 
 Task row: `id`, `title`, `class`, `task_state` (the store state), `state`,
 `reason_code`, `bucket`, `bucket_marker`, `pool` (`{runtime, model,

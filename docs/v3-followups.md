@@ -17,6 +17,14 @@ Buzz; a Grok bot face does not exist). Each 3.1 brief names which seam it
 closes.
 
 
+- The team rules and a seat added live (31-2 PR 2, the plan reviewer's
+  line of 2026-11-01): `team apply --add-seat` keeps
+  `.amq-squad/team-rules.md` as the owner approved it, so the rules do not
+  carry a seat added live until the next `team propose`. The rules should
+  list the seats from squad.yaml when they are read, not by hand at render
+  time. The same root as day 3's row that the rules named the lead `cto` as
+  a literal.
+
 - A documents squad (owner, 2026-10-30: "why is git strict if the role is
   non-coding? I can also trigger a team in a PM folder"): in 3.0 a team
   needs a git repository because the worktrees isolate seats and the commit
