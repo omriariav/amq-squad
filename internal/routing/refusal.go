@@ -2,12 +2,14 @@ package routing
 
 import (
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // RefusalWorkFailure classifies every reason code the commit step can end
-// an attempt with (brief 3.1.1-2 item 1): true when the code says the work
+// an attempt with, and the block reasons that ask for a decision (brief
+// 3.1.1-2 item 1): true when the code says the work
 // failed (its verifier failed it), false when the grant, the declared set,
 // a binding or the seat branch's data refused the diff. Only a work failure
 // moves the retry one tier up and counts toward MaxAttempts; any other
@@ -48,6 +50,11 @@ var RefusalWorkFailure = map[string]bool{
 	// outcome, classified so the table names every code seatcommit emits.
 	"widen_invalid":      false,
 	"widen_check_failed": false,
+	// Blocks that ask for a decision rather than report a failure: a seat's
+	// typed widen request (#844; the lead widens and the task returns to
+	// pending) and the harness's unprepared task branch.
+	task.ReasonWidenRequested:            false,
+	scheduler.ReasonTaskBranchUnprepared: false,
 	// The work failed: its verifier said fail, ran past its bound, or the
 	// done report carried no verdict of a gated class.
 	task.BlockVerdictFailed:          true,

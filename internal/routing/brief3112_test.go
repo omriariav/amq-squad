@@ -334,3 +334,28 @@ func TestSizeCapRefusalRetriesOnTheSameSeat(t *testing.T) {
 		t.Fatalf("attempt 2 %+v", got)
 	}
 }
+
+// The plan reviewer's addition 3: a seat's typed widen request (#844) is a
+// block that asks the lead for a decision, not a failure of the work: after
+// the lead's widen the task retries on the same tier and entry. Reverted
+// (every block a failed attempt), the retry moved a tier up, t27's bug in
+// another form.
+func TestWidenRequestedBlockIsNotAFailedAttempt(t *testing.T) {
+	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	first := f.decide(newTask("t28", "implement", "a.go"))
+	tk := newTask("t28", "implement", "a.go")
+	tk.Attempt = 1
+	tk.Attempts = []task.Attempt{{N: 1, Holder: "s", Pool: first.Entry, GrantedAt: t0, EndedAt: t0.Add(time.Minute), Outcome: task.OutcomeBlocked, Detail: task.ReasonWidenRequested}}
+	d := f.decide(tk)
+	if d.UsedTier != first.UsedTier || d.Entry == nil || d.Entry.Key() != first.Entry.Key() {
+		t.Fatalf("after a widen_requested block: %+v, want tier %s entry %s", d, first.UsedTier, first.Entry.Key())
+	}
+	if RefusalWorkFailure[task.ReasonWidenRequested] {
+		t.Fatal("widen_requested is classified a work failure")
+	}
+	// a seat's own block with any other reason still counts
+	tk.Attempts[0].Detail = "tests_red"
+	if d := f.decide(tk); d.UsedTier != up(first.UsedTier) {
+		t.Fatalf("a seat's own block: %+v", d)
+	}
+}
