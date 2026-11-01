@@ -362,7 +362,12 @@ counter over `up`, over `lead --team` and over the start.
   a sandbox that denies exec of the amq-squad binary and tmux and any
   write under the AMQ root (seatbelt on macOS; the Codex seat already runs
   under its sandbox), which turns the string layer's evasion list into a
-  kernel refusal; it sits beside the 3.2 signed door.
+  kernel refusal; it sits beside the 3.2 signed door. Beside it, from
+  PR 2 (31-3-pr2-r53-first-turn.md, 2.1): the lead proves its replies to
+  its pi with a nonce it hands pi over fd 3, and under one uid a debugger
+  attached to the lead's pi could read that nonce from pi's memory. That
+  is the same uid's reach this paragraph names, not a new class; it closes
+  with the same sandbox (or a different uid).
 
 ### 2.8 docs
 

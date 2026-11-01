@@ -199,6 +199,9 @@ run("the phase query's reply taken unproved",
 run("the nonce sent over the socket",
  [('pi/extensions/lib/team.ts','await askLead(socket, { ...req, challenge }, timeoutMs)','await askLead(socket, { ...req, challenge, nonce }, timeoutMs)')],
  P+"test/phase.test.ts")
+run("the nonce read after the extension registers (in installSoloTeam)",
+ [('pi/extensions/amq-squad.ts','\tconst leadNonce = readLeadNonce();\n','\tconst leadNonce: string | undefined = undefined;\n')],
+ P+"test/phase.test.ts")
 run("the nonce's descriptor left open",
  [('pi/extensions/lib/team.ts','\t\t\tfs.closeSync(fd);\n','\t\t\tvoid fd;\n')],
  P+"test/phase.test.ts")
