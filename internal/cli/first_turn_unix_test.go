@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -128,5 +129,57 @@ func TestContextHostRefusesAFloodingCommand(t *testing.T) {
 	defer c.sweep()
 	if out, err := contextHostRun(c, bin, amq, "--version"); err == nil || out != "" {
 		t.Fatalf("a flooding amq = %q, %v", out, err)
+	}
+}
+
+// Codex's pass 3 on #837: the sweep never signals a group whose leader was
+// reaped with no member left, even when its id is taken again (a stand-in
+// says the id has a member once more); a group with a survivor is kept and
+// killed.
+func TestTheHostSweepSignalsNoReapedGroupsReusedID(t *testing.T) {
+	var killed []int
+	prevKill, prevAlive := hostGroupKill, hostGroupAlive
+	t.Cleanup(func() { hostGroupKill, hostGroupAlive = prevKill, prevAlive })
+	hostGroupKill = func(cmd *exec.Cmd) {
+		killed = append(killed, cmd.Process.Pid)
+		prevKill(cmd)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c := &hostCall{ctx: ctx}
+	if _, err := contextHostRun(c, t.TempDir(), "/bin/sh", "-c", "echo done"); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.cmds) != 0 {
+		t.Fatalf("a group with no member left was kept for the sweep (%d)", len(c.cmds))
+	}
+	// the reaped leader's id taken again: a stand-in reports a member
+	hostGroupAlive = func(*exec.Cmd) bool { return true }
+	c.sweep()
+	if len(killed) != 0 {
+		t.Fatalf("the sweep signalled a reaped group's reused id %v", killed)
+	}
+	hostGroupAlive = prevAlive
+	// a leader that leaves a child behind: kept, and the child killed
+	pidfile := filepath.Join(t.TempDir(), "child.pid")
+	if _, err := contextHostRun(c, t.TempDir(), "/bin/sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $! > "+pidfile); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.cmds) != 1 {
+		t.Fatalf("a group with a survivor was not kept (%d)", len(c.cmds))
+	}
+	c.sweep()
+	raw, _ := os.ReadFile(pidfile)
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+	deadline := time.Now().Add(5 * time.Second)
+	for pid > 1 && syscall.Kill(pid, 0) == nil {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatalf("the survivor %d outlived the sweep", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(killed) != 1 {
+		t.Fatalf("the sweep signalled %v, want the one kept group", killed)
 	}
 }

@@ -87,7 +87,8 @@ type hookHost struct {
 // under what remains of this one budget, each in its own process group,
 // which is killed with everything it started when the budget runs out; the
 // fact then reads missing. When the read ends, for any reason, every group
-// it started is killed (a child that outlived its leader included). The
+// it started that still had a member when its leader was reaped is killed
+// (a child that outlived its leader). The
 // extension's timeout for context --host is above this budget
 // (pi/extensions/lib/hooks.ts CONTEXT_HOST_TIMEOUT_MS), so this process
 // always finishes its own cleanup. A test seam.
@@ -97,20 +98,31 @@ var contextHostDeadline = 3 * time.Second
 // fact (the group is killed and the fact reads missing).
 const contextHostOutputCap = 4 << 10
 
-// hostCall is one host-fact read: its shared deadline and every command it
-// started.
+// hostCall is one host-fact read: its shared deadline and the commands
+// whose group still had a member when their leader was reaped.
 type hostCall struct {
 	ctx  context.Context
 	cmds []*exec.Cmd
 }
 
-// sweep kills the process group of every command the read started. It runs
-// right after the last reap, so a group's id is still held by any member
-// that outlived its leader (the only processes it can reach).
+// The group seams (tests stand in a reused id): whether a group has a
+// member, and its kill.
+var (
+	hostGroupAlive = guardGroupAlive
+	hostGroupKill  = killGuardGroup
+)
+
+// sweep kills the groups the read kept (Codex's pass 3 on #837): a group
+// whose leader was reaped with no member left was never kept, so its id,
+// free for reuse, is never signalled; a kept group is signalled only while
+// it still has a member, and while one lives no process can take its id.
 func (c *hostCall) sweep() {
 	for _, cmd := range c.cmds {
-		killGuardGroup(cmd)
+		if hostGroupAlive(cmd) {
+			hostGroupKill(cmd)
+		}
 	}
+	c.cmds = nil
 }
 
 // contextHostRun runs one command for the host facts under the read's
@@ -134,8 +146,11 @@ var contextHostRun = func(c *hostCall, dir, name string, args ...string) (string
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
-	c.cmds = append(c.cmds, cmd)
 	err := cmd.Wait()
+	// kept for the sweep only when a member outlived the leader's reap
+	if hostGroupAlive(cmd) {
+		c.cmds = append(c.cmds, cmd)
+	}
 	switch {
 	case out.hit:
 		return "", fmt.Errorf("%s printed more than %d bytes", name, contextHostOutputCap)
