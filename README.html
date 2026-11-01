@@ -450,15 +450,20 @@ proposes it with its <code>amq_team_propose</code> tool.
 checks it against your grant and prints the plan with one digest and its
 16-hex prefix. The plan block below the editor shows them. Nothing is
 written but the proposal.</li>
-<li>Confirm it at one of the three doors. Each writes a confirmation
-that stands for 30 minutes; the lead's tools do not write it:
+<li>Confirm it at one of the three doors. The lead's own process
+witnesses the confirmation, checks the door's proof itself and holds it
+for 30 minutes in memory; no file is a confirmation, and a lead restart
+forgets it, so you confirm again:
 <ul>
 <li>type <code>/squad confirm &lt;prefix&gt;</code> in the lead's pane.
-pi hands the command to the extension, never to the model;</li>
+pi hands the command to the extension, never to the model, and the lead
+accepts it only from its own pi;</li>
 <li>or run <code>amq-squad team confirm &lt;digest&gt;</code> from your
-own shell. It refuses <code>lead_descendant</code> when a lead or a seat
-is its ancestor;</li>
-<li>or send the signed Buzz DM <code>yes &lt;prefix&gt;</code>.</li>
+own shell while the lead runs. The lead reads that process from the
+kernel and refuses <code>lead_descendant</code> when a lead or a seat is
+its ancestor;</li>
+<li>or send the signed Buzz DM <code>yes &lt;prefix&gt;</code>. The lead
+fetches the event and verifies the owner's signature itself.</li>
 </ul></li>
 <li>The lead applies it with its <code>amq_team_apply</code> tool. The
 lead's own process writes squad.yaml through the digest flow and starts
@@ -471,7 +476,8 @@ cost cap, which refuses while no meter can read it. A repository outside
 a fleet grant in auto mode gets R40's fallback: the lead proposes, you
 start. Run the two commands the refusal prints,
 <code>amq-squad team apply --digest &lt;digest&gt; --project .</code>
-and then <code>amq-squad up</code>.</li>
+and then <code>amq-squad up</code>. From your own shell that apply is
+itself the confirmation: the digest is in front of you.</li>
 </ol>
 <p>The solo lead's shell refuses <code>tmux</code> and
 <code>amq-squad team</code>, so it cannot type into its own pane or run

@@ -97,18 +97,19 @@ seats:
 That text is then parsed against the owner grant like any squad.yaml draft,
 and planned with the team rules and the pointer stubs into one digest. The
 goal, the files and the tasks are printed with the plan and are not
-squad.yaml keys. The one write is the proposal, beside the confirmation
-records under the solo lead's AMQ root
-(`~/.amq-squad/solo/<dir>-<digest>/root/extensions/amq-squad/confirm/proposed/`).
-`team apply --digest D` of that proposal needs the owner's confirmation
-(R55): a record for D, younger than 30 minutes, written at one of three
-doors: `/squad confirm <prefix>` in the lead's pane, `amq-squad team confirm
-D` from the owner's shell, or the owner's signed Buzz DM `yes <prefix>`
-(the prefix is the first 16 hex of the content digest). Under the solo lead
-the apply starts the team in the lead's process; from the owner's shell it
-writes the files and the owner starts the team with `amq-squad up`. The
-flag form below (`--roles`, or a squad.yaml `--from`) stays the owner's
-manual flow.
+squad.yaml keys. The one write is the proposal, under the solo lead's AMQ
+root (`~/.amq-squad/solo/<dir>-<digest>/root/extensions/amq-squad/confirm/proposed/`);
+it is an index, never a confirmation. Under the solo lead, `team apply
+--digest D` of that proposal starts the team only on the owner's
+confirmation (R55) of D that the lead's own process witnessed within the
+last 30 minutes, at one of three doors: `/squad confirm <prefix>` in the
+lead's pane, `amq-squad team confirm D` from the owner's shell, or the
+owner's signed Buzz DM `yes <prefix>` (the prefix is the first 16 hex of
+the content digest). No file is a confirmation, and a lead restart forgets
+them. From the owner's own shell, with no lead, the apply is the
+confirmation by the act: it writes the files and the owner starts the team
+with `amq-squad up`. The flag form below (`--roles`, or a squad.yaml
+`--from`) stays the owner's manual flow.
 
 ## Changing it
 

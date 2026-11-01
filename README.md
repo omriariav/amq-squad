@@ -138,13 +138,18 @@ The first run is a conversation with the lead, in the repository:
    PLAN.json` renders squad.yaml from it, checks it against your grant and
    prints the plan with one digest and its 16-hex prefix. The plan block
    below the editor shows them. Nothing is written but the proposal.
-3. Confirm it at one of the three doors. Each writes a confirmation that
-   stands for 30 minutes; the lead's tools do not write it:
+3. Confirm it at one of the three doors. The lead's own process witnesses
+   the confirmation, checks the door's proof itself and holds it for 30
+   minutes in memory; no file is a confirmation, and a lead restart forgets
+   it, so you confirm again:
    - type `/squad confirm <prefix>` in the lead's pane. pi hands the
-     command to the extension, never to the model;
-   - or run `amq-squad team confirm <digest>` from your own shell. It
-     refuses `lead_descendant` when a lead or a seat is its ancestor;
-   - or send the signed Buzz DM `yes <prefix>`.
+     command to the extension, never to the model, and the lead accepts it
+     only from its own pi;
+   - or run `amq-squad team confirm <digest>` from your own shell while the
+     lead runs. The lead reads that process from the kernel and refuses
+     `lead_descendant` when a lead or a seat is its ancestor;
+   - or send the signed Buzz DM `yes <prefix>`. The lead fetches the event
+     and verifies the owner's signature itself.
 4. The lead applies it with its `amq_team_apply` tool. The lead's own
    process writes squad.yaml through the digest flow and starts the team
    through `up`'s steps: the session, the doctor, the lead lock, the
@@ -155,7 +160,8 @@ The first run is a conversation with the lead, in the repository:
    which refuses while no meter can read it. A repository outside a fleet
    grant in auto mode gets R40's fallback: the lead proposes, you start.
    Run the two commands the refusal prints, `amq-squad team apply --digest
-   <digest> --project .` and then `amq-squad up`.
+   <digest> --project .` and then `amq-squad up`. From your own shell that
+   apply is itself the confirmation: the digest is in front of you.
 
 The solo lead's shell refuses `tmux` and `amq-squad team`, so it cannot type
 into its own pane or run your verbs. The limit of that refusal is written in
