@@ -669,14 +669,14 @@ REVERT the answer key finds no rule in the text: fails (the row catches it)
 
 ## 6. The gates
 
-Run on `5dc8338d` (after Codex's round on #838; the tree of this note's commit but for this section).
+Run on `f1f6a0d3` (after Codex's re-check on #838; the tree of this note's commit but for this section).
 
 ```text
 $ go build ./... && go vet ./... && go test -count=1 ./...
 go exit 0: 56 packages ok, none failing
 $ cd pi && npm ci --offline --ignore-scripts && npm test
-ℹ tests 69
-ℹ pass 69
+ℹ tests 70
+ℹ pass 70
 ℹ fail 0
 $ PATH=<pyvenv>/bin:$PATH make ci
 make ci exit 0
@@ -684,8 +684,8 @@ Ran 19 tests in 12.850s
 
 OK
 context injection: last run 16.8 ms
-PERF pre-tool allow in a seat: p50 20.9 ms, p95 22.0 ms
-PERF outside a seat: 60 runs, p50 5.9 ms, p95 6.4 ms, max 6.7 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 22.3 ms, p95 23.5 ms
+PERF outside a seat: 60 runs, p50 6.0 ms, p95 6.5 ms, max 6.9 ms (budget p95 < 20 ms: met)
 ```
 
 ## 7. The owner-run row: a release gate read on the phone, answered with a bare yes
