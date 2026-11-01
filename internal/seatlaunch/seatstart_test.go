@@ -15,8 +15,9 @@ import (
 // Brief 31-2 PR 2, change 4 (rows 4 and D, the launch's half): a roster
 // launch whose request for dev carries its own start (the add key's
 // press, which comes before the relaunch's decision stamp) writes that
-// press as dev's marks.json start, while cto, a seat that was already in
-// the roster, keeps the launch's start. The launch budget for dev then
+// press as dev's marks.json start, while cto, whose request carries no
+// start of its own (as at the launch at scheduler run), keeps the launch's
+// start. The launch budget for dev then
 // counts from the key press: dev went live more than the 10 s ceiling
 // after the press, though less than 10 s after the relaunch's decision, so
 // status (screen.go's launchTiming over marks.json and the proof) shows it
@@ -61,27 +62,25 @@ func TestTheAddedSeatsMarksStartIsTheKeyPress(t *testing.T) {
 	}
 }
 
-// The plan reviewer before the merge (the key press), the launch's half:
-// the press is the start of the launch it caused only, and stays on the
-// seat as added_at. cto added at T1: its own launch writes start T1,
-// added_at T1 and a drain end. The launch dev's press (T2) caused writes
-// dev's start T2, added_at T2 and a drain end, and cto's start as that
-// launch's (Options.Start), added_at T1 kept, no drain end. A plain launch
-// after it gives both seats that launch's start, added_at T1 and T2 kept,
-// no drain end. Reverted (added_at not carried), cto's and dev's added_at
-// are gone after the next launch.
+// The plan reviewer's settled reading, the launch's half: every relaunch
+// stamps every seat it launches with its own start, and drain_end is
+// written for each of them; the add key's press is the added seat's start
+// for its own relaunch and its added_at from then on. cto added at T1 by a
+// relaunch decided at R1: cto starts at T1 with added_at T1, dev at R1;
+// both carry a drain end. A relaunch decided at R2 that adds dev at T2 gives cto start R2 (added_at T1 kept) and dev start T2 with
+// added_at T2. A plain relaunch at R3 gives both seats R3, added_at T1 and
+// T2 kept, and a drain end each. Reverted (added_at not carried, or the
+// relaunch's stamp not written), the marks lose the press or keep the
+// squad's start.
 func TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart(t *testing.T) {
 	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed",
 		Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"}, {Handle: "dev", Runnable: true, Resource: "tmux:v1:pane:%8"}}}, true)
-	launchStart := time.Now().Add(-2 * time.Hour).UTC()
-	f.l.Options.Start = launchStart
-	t1 := time.Now().Add(-time.Hour).UTC()
-	t2 := time.Now().Add(-11 * time.Second).UTC()
+	f.l.Options.Start = time.Now().Add(-2 * time.Hour).UTC() // AMQ_SQUAD_START: the start of the launch at scheduler run only
+	t1, r1 := time.Now().Add(-time.Hour).UTC(), time.Now().Add(-time.Hour+time.Second).UTC()
+	t2, r2 := time.Now().Add(-11*time.Second).UTC(), time.Now().Add(-10*time.Second).UTC()
+	r3 := time.Now().Add(-time.Second).UTC()
 	root := f.q.SessionRoot()
-	type want struct {
-		start, added time.Time
-		drain        bool
-	}
+	type want struct{ start, added time.Time }
 	check := func(label string, reqs []scheduler.SeatRequest, w map[string]want) {
 		t.Helper()
 		out := f.l.LaunchRoster(reqs)
@@ -91,15 +90,15 @@ func TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart(t *testing.T) {
 		for h, x := range w {
 			m, err := ReadSeatMarks(root, h)
 			addedOK := (x.added.IsZero() && m.AddedAt == nil) || (m.AddedAt != nil && m.AddedAt.Equal(x.added))
-			if err != nil || m.LaunchID != out.LaunchID || m.Start == nil || !m.Start.Equal(x.start) || !addedOK || (m.DrainEnd != nil) != x.drain {
-				t.Fatalf("%s: %s's marks %+v (%v); want start %s, added_at %s, drain end %v", label, h, m, err, x.start, x.added, x.drain)
+			if err != nil || m.LaunchID != out.LaunchID || m.Start == nil || !m.Start.Equal(x.start) || !addedOK || m.DrainEnd == nil {
+				t.Fatalf("%s: %s's marks %+v (%v); want start %s, added_at %s and a drain end", label, h, m, err, x.start, x.added)
 			}
 		}
 	}
-	check("cto's own launch", []scheduler.SeatRequest{{ID: "r1", Handle: "cto", Pool: poolA, Start: t1}, {ID: "r2", Handle: "dev", Pool: poolDev}},
-		map[string]want{"cto": {t1, t1, true}, "dev": {launchStart, time.Time{}, false}})
-	check("dev's own launch", []scheduler.SeatRequest{{ID: "r3", Handle: "cto", Pool: poolA}, {ID: "r4", Handle: "dev", Pool: poolDev, Start: t2}},
-		map[string]want{"cto": {launchStart, t1, false}, "dev": {t2, t2, true}})
-	check("a plain launch", []scheduler.SeatRequest{{ID: "r5", Handle: "cto", Pool: poolA}, {ID: "r6", Handle: "dev", Pool: poolDev}},
-		map[string]want{"cto": {launchStart, t1, false}, "dev": {launchStart, t2, false}})
+	check("cto's relaunch", []scheduler.SeatRequest{{ID: "r1", Handle: "cto", Pool: poolA, Start: t1, AddedAt: t1}, {ID: "r2", Handle: "dev", Pool: poolDev, Start: r1}},
+		map[string]want{"cto": {t1, t1}, "dev": {r1, time.Time{}}})
+	check("dev's relaunch", []scheduler.SeatRequest{{ID: "r3", Handle: "cto", Pool: poolA, Start: r2}, {ID: "r4", Handle: "dev", Pool: poolDev, Start: t2, AddedAt: t2}},
+		map[string]want{"cto": {r2, t1}, "dev": {t2, t2}})
+	check("a plain relaunch", []scheduler.SeatRequest{{ID: "r5", Handle: "cto", Pool: poolA, Start: r3}, {ID: "r6", Handle: "dev", Pool: poolDev, Start: r3}},
+		map[string]want{"cto": {r3, t1}, "dev": {r3, t2}})
 }

@@ -85,14 +85,14 @@ launch budget:
 
 | `timing` field | meaning |
 | --- | --- |
-| `start` | the start of the seat's own launch (its `marks.json`, beside its staged record: the squad launch's `AMQ_SQUAD_START`, which `amq-squad up` sets; for a seat a relaunch's reload added, the add key's press, `scheduler relaunch --start`), null when its launch recorded none or its proof predates it (an adopted seat keeps its own launch's start) |
+| `start` | the start of the seat's own launch (its `marks.json`, beside its staged record: for the launch at `scheduler run`, the squad launch's `AMQ_SQUAD_START`, which `amq-squad up` sets; for a relaunch, the relaunch decision's time, or the add key's press for a seat the relaunch's reload added, `scheduler relaunch --start`), null when its launch recorded none or its proof predates it (an adopted seat keeps its own launch's start) |
 | `seat_live` | the accepted proof's stamp (`proof.json`'s `at`): the pane runs the provider with its bootstrap delivered |
 | `first_message` | the seat's first AMQ message since this launch (the message's own `created`, recorded in the seat's `marks.json` by the scheduler, which also logs `seat_first_message`), null before one |
 | `to_seat_live_ms`, `to_first_message_ms` | the start to each mark, null when either end is missing |
 | `ceiling_ms` | 10000: the ceiling binds the start to seat live; the first message has none |
 | `over_ceiling` | `to_seat_live_ms` is over the ceiling (the seat also carries `launch_budget_exceeded`) |
 | `slowest_segment` | the longest of the segments |
-| `segments[]` | `name` and `ms` (null when a record bounding it is missing), in order: `drain`, only for a seat a relaunch launched from the add key (its own start, the key press, to the end of the relaunch's drain, `drain_end` in its `marks.json`), `prepare` (the start, or the drain's end, to the staged record's `started_at`), `mint` (to the proof ticket's `issued_at`), `apply` (to AMQ's apply outcome), `seat_exec` (to the accepted proof) |
+| `segments[]` | `name` and `ms` (null when a record bounding it is missing), in order: `drain`, for every seat a relaunch launched (its start, the relaunch's stamp or the key press, to the end of the relaunch's drain, `drain_end` in its `marks.json`), `prepare` (the start, or the drain's end, to the staged record's `started_at`), `mint` (to the proof ticket's `issued_at`), `apply` (to AMQ's apply outcome), `seat_exec` (to the accepted proof) |
 
 Task row: `id`, `title`, `class`, `task_state` (the store state), `state`,
 `reason_code`, `bucket`, `bucket_marker`, `pool` (`{runtime, model,
@@ -211,11 +211,12 @@ lead's presence is its seat row's `live`, found by `lead_handle`.
 - The status read takes no lock (brief 31-1): `lead.live` reads the pid and
   its start stamp, never the lead lock, and `scheduler.live` signals the
   recorded pid only.
-- A roster relaunch (`scheduler relaunch`) within one scheduler incarnation
-  records the same start (the `up` that launched the squad) for every seat
-  that was in the roster, so its marks are not a cold launch's; a seat a
-  relaunch's reload added records its key press (`--start`) as the start of
-  that relaunch only, and as `launch.added_at` from then on.
+- A roster relaunch (`scheduler relaunch`) records its own start, the
+  relaunch decision's time, for every seat it launches, and a `drain_end`;
+  a seat its reload added records the key press (`--start`) as the start of
+  that relaunch, and as `launch.added_at` from then on. A relaunched seat's
+  budget includes the drain (its `drain` segment), so it is not a cold
+  launch's.
 
 - `live` from a launch record is the recorded `AgentPID` answering signal-0
   (`status.Collect`); the binary and the process birth time are not checked,

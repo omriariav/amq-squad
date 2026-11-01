@@ -20,11 +20,15 @@ type SeatRequest struct {
 	// Handle names the roster seat of a roster launch's request (3.0.1 t16);
 	// empty on an on-demand request, where the slots pick the seat.
 	Handle string `json:"handle,omitempty"`
-	// Start is this request's own launch start (brief 31-2 PR 2): the key
-	// press of the add key for a seat a relaunch's reload added, written as
-	// the seat's marks.json start in place of the launch's; zero keeps the
-	// launch's start (seatlaunch.Options.Start).
+	// Start is this request's own launch start (brief 31-2 PR 2), written as
+	// the seat's marks.json start in place of seatlaunch.Options.Start: a
+	// relaunch stamps every seat it launches with the relaunch decision's
+	// time, and a seat its reload added with the add key's press. Zero (the
+	// launch at scheduler run) keeps Options.Start, AMQ_SQUAD_START.
 	Start time.Time `json:"start,omitzero"`
+	// AddedAt is the add key's press for a seat the relaunch's reload added
+	// (its marks' added_at); zero for every other seat.
+	AddedAt time.Time `json:"added_at,omitzero"`
 }
 
 // SeatLauncher starts and stops seats (2b-2). RequestSeat is asynchronous:

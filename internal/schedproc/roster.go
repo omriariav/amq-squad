@@ -167,26 +167,38 @@ const RefusedSquadInvalid = "squad_invalid"
 // RefusedRelaunchMalformed: the relaunch's start is not an RFC3339 stamp.
 const RefusedRelaunchMalformed = "relaunch_malformed"
 
-// RefusedStartOutOfRange: the relaunch's start (the key press) is in the
-// future beyond StartSkew, or older than the scheduler's own launch start;
-// nothing drains (Codex P2 1 on 31-2 PR 2).
+// RefusedStartOutOfRange: the relaunch's start (the key press) is more than
+// StartSkew after the relaunch decision, or older than the start of the
+// launch running now (the last relaunch's, else the scheduler's launch
+// start); nothing drains (Codex P2 1 on 31-2 PR 2, measured against the
+// relaunch since the plan reviewer's settled reading).
 const RefusedStartOutOfRange = "start_out_of_range"
 
 // StartSkew is how far in the future a relaunch's start may lie (clocks of
 // the lead's process and the scheduler's are the same host's).
 const StartSkew = 5 * time.Second
 
-// CheckRelaunchStart bounds a relaunch's start: not after now plus
-// StartSkew, and not before the scheduler's launch start (zero: no lower
-// bound, a scheduler started by hand). "" is in range.
-func CheckRelaunchStart(start, launchStart, now time.Time) string {
+// CheckRelaunchStart bounds a relaunch's start: not after now (the
+// relaunch decision) plus StartSkew, and not before running, the start of
+// the launch running now (zero: no lower bound, a scheduler started by
+// hand). "" is in range.
+func CheckRelaunchStart(start, running, now time.Time) string {
 	switch {
 	case start.After(now.Add(StartSkew)):
-		return fmt.Sprintf("the relaunch's start %s is %s in the future (at most %s)", start.UTC().Format(time.RFC3339Nano), start.Sub(now).Round(time.Millisecond), StartSkew)
-	case !launchStart.IsZero() && start.Before(launchStart):
-		return fmt.Sprintf("the relaunch's start %s is before the scheduler's launch start %s", start.UTC().Format(time.RFC3339Nano), launchStart.UTC().Format(time.RFC3339Nano))
+		return fmt.Sprintf("the relaunch's start %s is %s after the relaunch decision (at most %s)", start.UTC().Format(time.RFC3339Nano), start.Sub(now).Round(time.Millisecond), StartSkew)
+	case !running.IsZero() && start.Before(running):
+		return fmt.Sprintf("the relaunch's start %s is before the start of the launch running now, %s", start.UTC().Format(time.RFC3339Nano), running.UTC().Format(time.RFC3339Nano))
 	}
 	return ""
+}
+
+// RunningLaunchStart is the start of the launch running now: the last
+// relaunch's own start when one ran, else the scheduler's launch start.
+func RunningLaunchStart(launchStart, lastRelaunch time.Time) time.Time {
+	if lastRelaunch.After(launchStart) {
+		return lastRelaunch
+	}
+	return launchStart
 }
 
 // RosterPools is the router's side of a reload: its roster pools, replaced
@@ -295,17 +307,19 @@ func faultAt(step string) error {
 // goes with it.
 func relaunchDecision(s *scheduler.Scheduler, reload *Reload, launchStart time.Time) func(string, RelaunchRequest) DecideReply {
 	return func(lead string, req RelaunchRequest) DecideReply {
+		// the relaunch decision's time: the relaunch's own start (the plan
+		// reviewer's settled reading on 31-2 PR 2)
+		now := time.Now()
+		if s.Now != nil {
+			now = s.Now()
+		}
 		var start time.Time
 		if req.Start != "" {
 			t, err := time.Parse(time.RFC3339Nano, req.Start)
 			if err != nil {
 				return DecideReply{Code: RefusedRelaunchMalformed, Detail: fmt.Sprintf("the relaunch's start %q is not an RFC3339 stamp; nothing drains", req.Start)}
 			}
-			now := time.Now()
-			if s.Now != nil {
-				now = s.Now()
-			}
-			if why := CheckRelaunchStart(t, launchStart, now); why != "" {
+			if why := CheckRelaunchStart(t, RunningLaunchStart(launchStart, s.LastRelaunchAt()), now); why != "" {
 				return DecideReply{Code: RefusedStartOutOfRange, Detail: why + "; nothing drains"}
 			}
 			start = t
@@ -318,7 +332,7 @@ func relaunchDecision(s *scheduler.Scheduler, reload *Reload, launchStart time.T
 			}
 			next = got
 		}
-		s.RequestRelaunchReload(req.Reason, start, next)
+		s.RequestRelaunchAt(req.Reason, start, now, next)
 		return DecideReply{OK: true, Detail: "accepted: the seats finish what they hold, then every seat closes and the roster relaunches in one apply; the outcome is in the decisions log (roster_launched or roster_launch_failed)"}
 	}
 }

@@ -52,11 +52,19 @@ could not start by a roster relaunch:
 `RelaunchRequest` gains `Start` (RFC3339Nano). `scheduler relaunch --start
 STAMP` passes it (internal/cli/scheduler_run.go); a malformed stamp is a
 usage error at the verb and `relaunch_malformed` at the socket. The stamp
-is bounded (Codex P2 1 on 5d20b5ff; `schedproc.CheckRelaunchStart`): more
-than 5 s in the future (`StartSkew`), or before the scheduler's own launch
-start (the launch record's `start`; no lower bound for a scheduler started
+is bounded (Codex P2 1 on 5d20b5ff; `schedproc.CheckRelaunchStart`),
+measured against the relaunch (the plan reviewer's settled reading): more
+than 5 s after the relaunch decision (`StartSkew`), or before the start of
+the launch running now (`RunningLaunchStart`: the last relaunch's own
+start, else the scheduler's launch start; no floor for a scheduler started
 by hand), it is refused `start_out_of_range` by name, at the verb with
-nothing sent and again at the socket before anything drains.
+nothing sent (the verb reads the last relaunch's start from the
+scheduler's state, `last_relaunch_at`) and again at the socket before
+anything drains. The ruling's words were "not before the relaunch
+decision"; read literally that refuses every key press, which always comes
+a moment before the relaunch it asks for, so the floor is the running
+launch's start (a press older than it is stale) and the 5 s skew is the
+ceiling.
 
 The reload seam is `schedproc.Reload` (internal/schedproc/roster.go):
 `Compile` reads squad.yaml again exactly as `scheduler run` does at its
@@ -123,37 +131,42 @@ launch in the same apply, never by a kill. A swap at the request would
 have broken both: the removed seat's close looks its runtime up in the
 slots' squad, and a squad without it closes nothing.
 
-### 2.4 The start mark (plan reviewer point 3)
+### 2.4 The start mark (plan reviewer point 3, and the settled reading)
 
-`SeatRequest` gains `Start`. `swapReload` records the key press for each
-seat the reload added (in the new roster, not in the old), and
-`launchRoster` puts it on that seat's request, for the launch the press
-caused only. From its next relaunch on the added seat is an existing seat,
-and each launch's start is that launch's: the press is never a later
-launch's start, which would make start-to-live grow with the clock (the
-plan reviewer before the merge; Codex P2 2 on 5d20b5ff had asked to carry
-it, and the reviewer's ruling replaced that commit's rows). The press stays
-on the seat as `added_at`, the record of why it exists: `writeMarks`
-writes it at the press's launch and carries it from the previous marks
-into every later launch's, so it survives relaunches and a scheduler
-restart. Status shows it as the seat's `launch.added_at`. `drain_end` is
-written for the press's launch and no other.
+Each launch's start is that launch's, so the launch budget binds every
+launch from its own mark (the plan reviewer's settled reading before the
+merge):
 
-"That launch's start", for a relaunch, is `seatlaunch.Options.Start`: the
-squad's `AMQ_SQUAD_START`, the same for every relaunch of one scheduler
-incarnation (status-contract's recorded limit). A per-relaunch stamp for
-every seat would be a further change to the relaunch, not made here. `seatlaunch.Launcher.LaunchRoster` copies each
-request's start into `Options.SeatStart` (a per-launch map, cloned so the
-launcher's own options never keep it), and `writeMarks` writes it as that
-seat's `marks.json` start in place of `Options.Start`. Every seat that was
-already in the roster keeps the squad's start. Status's launch budget
-(`launchTiming`, internal/status/screen.go) reads `marks.json` as it is, so
-the 10 s ceiling binds the added seat from the key press.
+- **The launch at `scheduler run`** keeps `seatlaunch.Options.Start`, the
+  squad's `AMQ_SQUAD_START`, for every seat. That is the only launch it
+  marks.
+- **A relaunch stamps its own start**, the relaunch decision's time
+  (`relaunchDecision` hands `s.Now()` to `RequestRelaunchAt`; a relaunch
+  asked without one is stamped at the tick that takes it). `launchRoster`
+  puts it on every seat's request (`SeatRequest.Start`), and
+  `LaunchRoster` copies it into `Options.SeatStart` (a per-launch map,
+  cloned so the launcher's own options never keep it), which `writeMarks`
+  writes as each seat's `marks.json` start. A plain relaunch an hour after
+  `up` therefore shows no `launch_budget_exceeded` for that hour. The first
+  cut kept the squad's start for relaunched seats; that gap is what the
+  reading closed.
+- **A seat the relaunch's reload added** starts from the add key's press
+  instead, which the request also carries as `SeatRequest.AddedAt`.
+  `writeMarks` writes it as the seat's `added_at`, the record of why it
+  exists, and carries `added_at` from the previous marks into every later
+  launch's, so it survives relaunches and a scheduler restart. Status shows
+  it as `launch.added_at`. It is never a later launch's start: from its
+  next relaunch on the added seat is an existing seat and takes that
+  relaunch's stamp (Codex P2 2 on 5d20b5ff had asked to carry the press;
+  the reviewer's ruling replaced that commit's rows).
+- **The scheduler keeps the last relaunch's start** (`LastRelaunchAt`, and
+  `last_relaunch_at` in its state) as the floor of the next key press.
 
 The key press is the confirmation's moment, not the moment `/squad add` was
 typed: the owner's typing of five fields is not launch time. The drain
 before the swap is: a relaunch waits for every seat to finish what it
-holds, and that wait counts against the added seat's budget.
+holds, and that wait counts against every relaunched seat's budget, named
+`drain` (2.4a).
 
 ### 2.4a The drain as a named segment (plan reviewer, line 1)
 
@@ -161,12 +174,15 @@ On a busy squad the drain is the slowest part of the added seat's budget,
 and the number must say so rather than blame seat_exec or prepare.
 `LaunchRoster` records when the drain ended and the launch began
 (`Options.DrainEnd`), and `writeMarks` writes it as `drain_end` in the
-marks of each seat whose start is its own (the key press). Status
-(`launchTiming`, internal/status/screen.go) then lists five segments for
-that seat: `drain` (the key press to the drain's end), `prepare` (the
-drain's end to the staged record), `mint`, `apply`, `seat_exec`. The
+marks of every seat a relaunch launched (each has its own start, the
+relaunch's stamp or the key press), since the drain is inside every one of
+their windows. Status (`launchTiming`, internal/status/screen.go) then
+lists five segments for such a seat: `drain` (its start to the drain's
+end), `prepare` (the drain's end to the staged record), `mint`, `apply`,
+`seat_exec`. The
 over-ceiling warning names the slowest, `slowest segment drain 30.000 s`
-on a busy squad. A seat without `drain_end` keeps the four segments.
+on a busy squad. A seat of the launch at `scheduler run` has no
+`drain_end` and keeps the four segments.
 internal/status is outside this brief's declared files; the lead's gate
 on 5d20b5ff asked for the segment, which lives there.
 
@@ -269,14 +285,14 @@ Each row fails with its change reverted (section 4).
 
 | Row | Test |
 | --- | --- |
-| 4 (add, seat) | pi `add, seat: team apply with the digest, one confirmation, one relaunch carrying the key press` (the exact propose, apply and relaunch argv; one confirmation; `--start` is the confirmation's moment); pi `add, seat: squad_invalid and the relaunch's refusal by name; a declined confirmation writes nothing`; pi `add, seat: a cancel at any dialog runs no verb`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (propose writes nothing, apply writes the seat under the digest, the rules unchanged, a stale digest, a malformed spec, a repeated handle and `--roles` refused, a colon model kept); the start: scheduler `TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress`, schedproc `TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat`, seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the new seat's `marks.json` start is the key press; the existing seat keeps the squad's start) |
+| 4 (add, seat) | pi `add, seat: team apply with the digest, one confirmation, one relaunch carrying the key press` (the exact propose, apply and relaunch argv; one confirmation; `--start` is the confirmation's moment); pi `add, seat: squad_invalid and the relaunch's refusal by name; a declined confirmation writes nothing`; pi `add, seat: a cancel at any dialog runs no verb`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (propose writes nothing, apply writes the seat under the digest, the rules unchanged, a stale digest, a malformed spec, a repeated handle and `--roles` refused, a colon model kept); the start: scheduler `TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress`, schedproc `TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat`, seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the new seat's `marks.json` start is the key press; a seat whose request carries no start of its own keeps the launch's) |
 | A | cli `TestARelaunchAfterASquadYAMLEditLaunchesTheNewSeatAndAdmitsItsPool` (through `scheduler run` and `scheduler relaunch --start`: a task pinned to the new seat's pool is refused `pin_unresolved` before; squad.yaml gains rev-1; the real `PlanRoster` finds it; its request carries the key press and impl-1's none; a task pinned to its pool dispatches to rev-1 after); routing `TestARosterSeatAddedByAReloadIsAdmittedAfterTheSwapAndNotBefore`; schedproc `TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat` |
 | B | schedproc `TestARelaunchWhoseSquadDoesNotCompileIsRefusedBeforeTheDrain` (`squad_invalid` and `relaunch_malformed` by name; no `roster_relaunch_requested`, no close, no launch; roster, squad and pools unchanged); schedproc `TestAHalfAppliedReloadIsNeverObserved` (a failure injected after the slots' write and after the pools' write: slots, pools and roster all old, `roster_reload_failed`, the old roster relaunched); scheduler `TestAFailedSwapRelaunchesTheRunningRosterUnchanged` |
 | C | scheduler `TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress` (s-b, removed from squad.yaml, keeps its lease and is not closed while it holds it; nothing swaps; once it finishes it closes with `roster_relaunch`, never another reason, and is not launched again; s-a's changed line, sonnet to opus, launches on its new pool in the relaunch's apply) |
 | D | seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the key press 11 s before seat live and the relaunch's decision 2 s before: the mark is the press, so the seat is over the 10 s ceiling counted from the press though under it from the decision) |
 | E | pi `the lead's model tool list carries no key verb and no gate-answer verb` (PR 1's row, unchanged: the exact thirteen tools) |
-| Start bound (Codex P2 1) | schedproc `TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain` (a stamp a minute ahead and one before the launch start: `start_out_of_range`, no `roster_relaunch_requested`, no launch, squad, pools and roster unchanged; an in-range stamp relaunches); cli `TestSchedulerRelaunchBoundsItsStart` (the verb refuses both with nothing sent; an in-range stamp is sent in UTC) |
-| The press's launch only, added_at kept (the plan reviewer, replacing Codex P2 2's rows) | scheduler `TestTheKeyPressIsTheStartOfTheLaunchItCausedOnly` (s-c added at T1, s-d at T2: each press is carried by its own relaunch only; a plain relaunch carries none); seatlaunch `TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart` (A added at T1, B at T2: the next launch gives both seats that launch's start, with added_at T1 and T2 kept and no drain end); status `TestARelaunchedSeatsBudgetNamesTheDrain` (the press shown as `launch.added_at`, null for a seat in the squad from its start) |
+| Start bound (Codex P2 1, measured against the relaunch) | schedproc `TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain` (a stamp a minute ahead and one before the launch start: `start_out_of_range`, no `roster_relaunch_requested`, no launch, squad, pools and roster unchanged; an in-range stamp relaunches); schedproc `TestARelaunchStartBeforeTheLastRelaunchIsRefused` (a press after the launch start but before the last relaunch is refused; a later one relaunches); cli `TestSchedulerRelaunchBoundsItsStart` and `TestSchedulerRelaunchStartFloorIsTheLastRelaunch` (the verb refuses with nothing sent, its floor the state's `last_relaunch_at`) |
+| Every launch's own start (the plan reviewer's settled reading, replacing Codex P2 2's rows) | scheduler `TestEveryRelaunchStampsItsOwnStart` (the launch at scheduler run carries no start; s-c added at T1 by a relaunch decided at R1: s-a and s-b start at R1, s-c at T1 with added_at T1; a plain relaunch at R2: every seat at R2, no added_at; `LastRelaunchAt` is R2); seatlaunch `TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart` (A added at T1, B at T2: each relaunch gives every seat its own start and a drain end, the presses kept as added_at T1 and T2); status `TestAPlainRelaunchsSeatsAreNotOverTheBudgetForTheGapSinceUp` (a seat relaunched an hour after up counts about 4 s from the relaunch, with a drain segment and no warning; from the squad's start the warning shows); status `TestARelaunchedSeatsBudgetNamesTheDrain` (the press shown as `launch.added_at`); cli `TestARelaunchAfterASquadYAMLEdit...` (impl-1 starts from the relaunch decision, rev-1 from the press with added_at) |
 | State agrees (Codex P2 3) | scheduler `TestTheStateWrittenInTheRelaunchsTickNamesTheNewRoster` (scheduler.json read right after the relaunch's tick names s-a and s-c and max_seats 3) |
 | Drain | status `TestARelaunchedSeatsBudgetNamesTheDrain` (a key press, 30 s of drain, then the launch: segments drain, prepare, mint, apply, seat_exec; drain 30000 ms, prepare 200 ms; the slowest is drain and the warning says `slowest segment drain 30.000 s`; a seat without a drain end keeps four segments); seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the added seat's `drain_end` lies between the key press and seat live; the existing seat has none) |
 | Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it launches, `roster_over_cap` names it "launched, leases capped at 2", and its task waits `seat_cap`); schedproc `TestAReloadOverTheCapLaunchesEverySeatAndCapsTheLeases` (a cap of 3 over four roster seats: all four launch, the fourth's pool reaches the router, the cap is 3); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns` (under `--max-seats 2`: every added seat launches, `roster_over_cap` names rev-2 "launched, leases capped at 2", two leases and the third `seat_cap`, the state's 3 live seats over max_seats 2); pi `over the lease cap: a warning line in the seats block, never a refusal`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
@@ -452,7 +468,8 @@ grep -E '"kind":"(roster_relaunch_requested|roster_reloaded|roster_launched)"' .
 ```
 
 Expect `added_at`, `start` and the `marks.json` start equal to the key
-line's STAMP (UTC), `ceiling_ms` 10000, and `to_seat_live_ms` measured from it;
+line's STAMP (UTC); every other seat's `start` is the relaunch decision's
+time, a moment after it; `ceiling_ms` 10000, and `to_seat_live_ms` measured from it;
 `over_ceiling` is the verdict. Add `segments: .launch.timing.segments` to
 the jq to read the five segments; on an idle squad `drain` is near zero.
 

@@ -29,9 +29,9 @@ func rosterHandles(r []RosterSeat) string {
 //   - at the drain's end, after every seat closed (s-b at its own close
 //     once it finished, with the relaunch's reason, never a kill), swaps
 //     once, then launches the new roster: s-c, the added seat, carries the
-//     key press as its start; s-a, whose line changed (sonnet to opus),
-//     launches on its new pool with no start of its own; s-b is not
-//     launched again (rows A, C, 4);
+//     key press as its start and added_at; s-a, whose line changed (sonnet
+//     to opus), launches on its new pool from the relaunch's own stamp;
+//     s-b is not launched again (rows A, C, 4);
 //
 // Reverted to a swap at the request (change 2), Swap runs while s-b holds
 // its lease; without the start (change 4), s-c's request carries none.
@@ -79,51 +79,58 @@ func TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress(t *t
 		t.Fatalf("launches %d", len(fr.launches))
 	}
 	got := fr.launches[1]
-	if len(got) != 2 || got[0].Handle != "s-a" || got[0].Pool != opus || !got[0].Start.IsZero() || got[1].Handle != "s-c" || !got[1].Start.Equal(keyPress) {
+	// s-a starts from the relaunch's own stamp (the tick that took the ask,
+	// t0 on the harness clock); s-c, added, from the key press, its added_at
+	if len(got) != 2 || got[0].Handle != "s-a" || got[0].Pool != opus || !got[0].Start.Equal(t0) || !got[0].AddedAt.IsZero() ||
+		got[1].Handle != "s-c" || !got[1].Start.Equal(keyPress) || !got[1].AddedAt.Equal(keyPress) {
 		t.Fatalf("the relaunch's requests: %+v", got)
 	}
 }
 
-// The plan reviewer before the merge (the key press): an added seat is an
-// existing seat from its next relaunch on, and each launch's start is that
-// launch's. s-c added at T1, then s-d at T2: the relaunch s-c's press
-// caused carries T1 for s-c; the one s-d's press caused carries T2 for s-d
-// and none for s-c; a plain relaunch after it carries none for either (each
-// seat takes that launch's start; seatlaunch keeps the presses as added_at,
-// TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart). Reverted (the press
-// kept as a start), the later relaunches carry T1 and T2 again.
-func TestTheKeyPressIsTheStartOfTheLaunchItCausedOnly(t *testing.T) {
+// The plan reviewer's settled reading (each launch's start is that
+// launch's): the launch at scheduler run carries no start of its own (it
+// keeps AMQ_SQUAD_START); every relaunch stamps every seat it launches with
+// the relaunch decision's time, and a seat its reload added with the add
+// key's press, also its added_at. s-c added at T1 by a relaunch decided at
+// R1: s-a and s-b start at R1, s-c at T1 with added_at T1. A plain
+// relaunch decided at R2: every seat starts at R2, with no added_at (the
+// press stays in s-c's marks, seatlaunch). Reverted (a relaunch carrying no
+// stamp), the existing seats keep the squad's start and show the budget
+// warning for the gap since up.
+func TestEveryRelaunchStampsItsOwnStart(t *testing.T) {
 	h, fr := newRosterHarness(t, Config{MaxSeats: 4, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute}, rosterAB...)
 	h.tick()
-	t1, t2 := t0.Add(-time.Hour), t0.Add(-time.Minute)
+	t1 := t0.Add(-2 * time.Second)
+	r1, r2 := t0.Add(-time.Second), t0.Add(time.Hour)
 	withC := append(slices.Clone(rosterAB), RosterSeat{Handle: "s-c", Pool: opus})
-	h.s.RequestRelaunchReload("add s-c", t1, &RosterReload{Roster: withC})
+	h.s.RequestRelaunchAt("add s-c", t1, r1, &RosterReload{Roster: withC})
 	h.tick()
-	withD := append(slices.Clone(withC), RosterSeat{Handle: "s-d", Pool: opus})
-	h.s.RequestRelaunchReload("add s-d", t2, &RosterReload{Roster: withD})
+	h.s.RequestRelaunchAt("again", time.Time{}, r2, nil)
 	h.tick()
-	h.s.RequestRelaunch("again")
-	h.tick()
-	starts := func(reqs []SeatRequest) map[string]time.Time {
-		out := map[string]time.Time{}
-		for _, r := range reqs {
-			out[r.Handle] = r.Start
-		}
-		return out
-	}
-	if len(fr.launches) != 4 {
+	if len(fr.launches) != 3 {
 		t.Fatalf("launches %d", len(fr.launches))
 	}
-	if got := starts(fr.launches[1]); !got["s-c"].Equal(t1) || !got["s-a"].IsZero() || !got["s-b"].IsZero() {
-		t.Fatalf("s-c's own relaunch: %v", got)
-	}
-	if got := starts(fr.launches[2]); !got["s-c"].IsZero() || !got["s-d"].Equal(t2) {
-		t.Fatalf("s-d's own relaunch: %v", got)
-	}
-	for h, at := range starts(fr.launches[3]) {
-		if !at.IsZero() {
-			t.Fatalf("a plain relaunch carried a press for %s: %s", h, at)
+	for _, r := range fr.launches[0] {
+		if !r.Start.IsZero() || !r.AddedAt.IsZero() {
+			t.Fatalf("the launch at scheduler run carried a start: %+v", r)
 		}
+	}
+	for _, r := range fr.launches[1] {
+		want, added := r1, time.Time{}
+		if r.Handle == "s-c" {
+			want, added = t1, t1
+		}
+		if !r.Start.Equal(want) || !r.AddedAt.Equal(added) {
+			t.Fatalf("s-c's relaunch, %s: start %s added %s; want %s, %s", r.Handle, r.Start, r.AddedAt, want, added)
+		}
+	}
+	for _, r := range fr.launches[2] {
+		if !r.Start.Equal(r2) || !r.AddedAt.IsZero() {
+			t.Fatalf("a plain relaunch, %s: start %s added %s; want %s and none", r.Handle, r.Start, r.AddedAt, r2)
+		}
+	}
+	if !h.s.LastRelaunchAt().Equal(r2) {
+		t.Fatalf("the last relaunch's start %s", h.s.LastRelaunchAt())
 	}
 }
 
@@ -141,7 +148,7 @@ func TestAFailedSwapRelaunchesTheRunningRosterUnchanged(t *testing.T) {
 	if !has(ds, "roster_reload_failed", "", "") || has(ds, "roster_reloaded", "", "") || rosterHandles(h.s.Config.Roster) != rosterHandles(rosterAB) {
 		t.Fatalf("after a failed swap: roster %s; %+v", rosterHandles(h.s.Config.Roster), ds)
 	}
-	if len(fr.launches) != 2 || rosterHandles(asRoster(fr.launches[1])) != rosterHandles(rosterAB) || !fr.launches[1][0].Start.IsZero() || !fr.launches[1][1].Start.IsZero() {
+	if len(fr.launches) != 2 || rosterHandles(asRoster(fr.launches[1])) != rosterHandles(rosterAB) || !fr.launches[1][0].Start.Equal(t0) || !fr.launches[1][1].Start.Equal(t0) || !fr.launches[1][0].AddedAt.IsZero() {
 		t.Fatalf("the relaunch after a failed swap: %+v", fr.launches)
 	}
 }

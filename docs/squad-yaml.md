@@ -117,14 +117,17 @@ compiles squad.yaml again as `scheduler run` does at its start:
   while live finishes what it holds and leaves at the relaunch's close, and
   is not launched again. A changed line for a live seat (model, effort,
   role) applies at that seat's launch in the same apply, never by a kill.
-- `scheduler relaunch --start STAMP` (RFC3339) carries the key press: a seat
-  the reload adds writes it as its `marks.json` start for that relaunch, so
-  the launch budget's 10 s ceiling binds that launch from the press. Every
-  other seat keeps the squad's start, and so does the added seat from its
-  next relaunch on; the press stays on it as `added_at` (status's
-  `launch.added_at`). A start more than 5 s in the future, or before the
-  scheduler's own launch start, is refused `start_out_of_range` before
-  anything drains. The lead's screen runs propose, apply and the relaunch with
+- Each launch's start is that launch's. A relaunch stamps every seat it
+  launches with the relaunch decision's time (`marks.json` start), so the
+  launch budget's 10 s ceiling binds every relaunch from its own mark; the
+  squad's `AMQ_SQUAD_START` is the start of the launch at `scheduler run`
+  only. `scheduler relaunch --start STAMP` (RFC3339) carries the key press:
+  a seat the reload adds starts from it for that relaunch, and keeps it as
+  `added_at` (status's `launch.added_at`); from its next relaunch on it
+  takes that relaunch's stamp like every seat. A start more than 5 s after
+  the relaunch decision, or before the start of the launch running now
+  (the last relaunch's, else the scheduler's), is refused
+  `start_out_of_range` before anything drains. The lead's screen runs propose, apply and the relaunch with
   `/squad add`, `seat`, and one confirmation, and stamps the confirmation.
 - The lease cap (the leases held at once: the grant's `max_seats`, bounded
   by the squad's seat count, narrowed by `scheduler run --max-seats`) is

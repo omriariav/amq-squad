@@ -100,9 +100,11 @@ compile refuses the relaunch squad_invalid before anything drains (as does
 one that changes the session or the lead). --start STAMP (RFC3339) is the
 key press that asked for it: a seat the reload adds takes it as its
 marks.json start, so the launch budget's 10 s ceiling counts from it;
-every other seat keeps the squad's start. A start more than 5 s in the
-future, or before the scheduler's own launch start, is refused
-start_out_of_range before anything drains.
+every other seat of the relaunch starts from the relaunch decision's time
+(the scheduler's own AMQ_SQUAD_START is the start of the launch at
+scheduler run only). A start more than 5 s after the relaunch decision, or
+before the start of the launch running now, is refused start_out_of_range
+before anything drains.
 
 scheduler clear is the screen's clear key (brief 31-2): the owner's
 acknowledgement of a seat's warning line (its code, the text before the
@@ -615,11 +617,16 @@ func runSchedulerRelaunch(args []string, out io.Writer) error {
 	if stamp != "" {
 		// bounded here and again at the socket (Codex P2 1 on 31-2 PR 2)
 		t, _ := time.Parse(time.RFC3339Nano, stamp)
-		var launchStart time.Time
+		// the floor is the launch running now: the last relaunch's start
+		// (the scheduler's state), else the scheduler's launch start
+		var launchStart, lastRelaunch time.Time
 		if rec.Start != nil {
 			launchStart = *rec.Start
 		}
-		if why := schedproc.CheckRelaunchStart(t, launchStart, time.Now()); why != "" {
+		if st, err := scheduler.ReadState(scheduler.StatePathFor(root)); err == nil && st.LastRelaunchAt != nil {
+			lastRelaunch = *st.LastRelaunchAt
+		}
+		if why := schedproc.CheckRelaunchStart(t, schedproc.RunningLaunchStart(launchStart, lastRelaunch), time.Now()); why != "" {
 			return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("scheduler relaunch refused (%s): %s; nothing was sent", schedproc.RefusedStartOutOfRange, why)}
 		}
 	}

@@ -62,3 +62,43 @@ func TestARelaunchedSeatsBudgetNamesTheDrain(t *testing.T) {
 		t.Fatalf("added_at: qa-2 %v, dev %v", s.Launch.AddedAt, seatByHandle(t, st, "dev").Launch.AddedAt)
 	}
 }
+
+// The plan reviewer's settled reading: a relaunch stamps its own start for
+// every seat it launches. A seat relaunched an hour after up, its marks
+// starting at the relaunch decision with the drain end a second later and
+// seat live three seconds after that, counts its budget from the
+// relaunch: about 4 s, a drain segment, and no launch_budget_exceeded for
+// the hour since up. The same records with the squad's start as the marks
+// start (the relaunch carrying no stamp of its own) show the warning.
+func TestAPlainRelaunchsSeatsAreNotOverTheBudgetForTheGapSinceUp(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	root := filepath.Join(base, "root")
+	up := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	relaunch := up.Add(time.Hour)
+	if err := os.MkdirAll(schedproc.Dir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "cto", Root: root, PID: 77, StartedAt: up, Start: &up}); err != nil {
+		t.Fatal(err)
+	}
+	ms := time.Millisecond
+	budgetSeat(t, root, "dev", "codex", "gpt-5.6-terra", relaunch, 1200*ms, 602*ms, 538*ms, 1644*ms, nil)
+	drainEnd := relaunch.Add(time.Second)
+	write := func(start time.Time, drain *time.Time) {
+		marks, _ := json.Marshal(seatlaunch.SeatMarks{LaunchID: "launch-1", Start: &start, DrainEnd: drain})
+		if err := os.WriteFile(filepath.Join(launch.StagedDir(root, "dev"), seatlaunch.MarksFileName), marks, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(relaunch, &drainEnd)
+	s := seatByHandle(t, Build(Collect(CollectOptions{Root: root, Now: relaunch.Add(time.Minute), PIDAlive: func(int) bool { return false }})), "dev")
+	tm := s.Launch.Timing
+	if deref64(tm.ToSeatLiveMS) != 3984 || tm.OverCeiling || hasWarning(s, WarnLaunchBudget) != "" || segNames(tm.Segments) != "drain,prepare,mint,apply,seat_exec" || deref64(tm.Segments[0].MS) != 1000 {
+		t.Fatalf("a relaunched seat from the relaunch's stamp: %+v, warnings %v", tm, s.Warnings)
+	}
+	write(up, nil)
+	s = seatByHandle(t, Build(Collect(CollectOptions{Root: root, Now: relaunch.Add(time.Minute), PIDAlive: func(int) bool { return false }})), "dev")
+	if !s.Launch.Timing.OverCeiling || hasWarning(s, WarnLaunchBudget) == "" {
+		t.Fatalf("from the squad's start the gap since up must show: %+v", s.Launch.Timing)
+	}
+}

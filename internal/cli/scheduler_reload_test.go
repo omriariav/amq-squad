@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -39,7 +40,8 @@ func waitTask(t *testing.T, store task.Store, id string, ok func(task.Task) bool
 // and `scheduler relaunch --start STAMP` reaches the scheduler over its
 // socket: the relaunch compiles squad.yaml again, the real roster plan
 // (PlanRoster) finds rev-1, the launch's request for rev-1 carries the key
-// press while impl-1's carries none, and a task pinned to rev-1's pool now
+// press (its start and added_at) while impl-1's carries the relaunch
+// decision's time, and a task pinned to rev-1's pool now
 // dispatches to rev-1 (after). Reverted (no reload), the second launch has
 // impl-1 only and the pinned task is refused again.
 func TestARelaunchAfterASquadYAMLEditLaunchesTheNewSeatAndAdmitsItsPool(t *testing.T) {
@@ -153,7 +155,9 @@ func TestARelaunchAfterASquadYAMLEditLaunchesTheNewSeatAndAdmitsItsPool(t *testi
 			revReq = &fake.reqs[i]
 		}
 	}
-	if revReq == nil || revReq.Pool != rev || revReq.Start.UTC().Format(time.RFC3339Nano) != keyPress || impl == nil || !impl.Start.IsZero() {
+	pressed, _ := time.Parse(time.RFC3339Nano, keyPress)
+	if revReq == nil || revReq.Pool != rev || !revReq.Start.Equal(pressed) || !revReq.AddedAt.Equal(pressed) ||
+		impl == nil || !impl.Start.After(pressed) || time.Since(impl.Start) > time.Minute || !impl.AddedAt.IsZero() {
 		t.Fatalf("the relaunch's requests: %+v", fake.reqs)
 	}
 	found := false
@@ -197,5 +201,46 @@ func TestSchedulerRelaunchBoundsItsStart(t *testing.T) {
 		return runScheduler([]string{"relaunch", "--start", ok.Format(time.RFC3339Nano)})
 	}); err != nil || len(sent) != 1 || sent[0].Start != ok.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("an in-range start: %v, sent %+v", err, sent)
+	}
+}
+
+// The plan reviewer's settled reading, the verb's half: the floor of
+// `scheduler relaunch --start` is the start of the launch running now, the
+// last relaunch's start from the scheduler's state when one ran. A press
+// after the scheduler's launch start but before the last relaunch is
+// refused start_out_of_range with nothing sent; one after it is sent.
+// Reverted (the floor the launch record's start), the stale press is sent.
+func TestSchedulerRelaunchStartFloorIsTheLastRelaunch(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("AM_ROOT", root)
+	var sent []schedproc.RelaunchRequest
+	prev := schedulerRelaunchSend
+	t.Cleanup(func() { schedulerRelaunchSend = prev })
+	schedulerRelaunchSend = func(_, _ string, req schedproc.RelaunchRequest) (schedproc.DecideReply, error) {
+		sent = append(sent, req)
+		return schedproc.DecideReply{OK: true, Detail: "accepted"}, nil
+	}
+	launch := time.Now().Add(-time.Hour).UTC()
+	last := time.Now().Add(-10 * time.Second).UTC()
+	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "lead", Root: root, PID: 1, StartedAt: launch, Start: &launch, DecisionSocket: "/sock"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(scheduler.State{UpdatedAt: time.Now(), LastRelaunchAt: &last})
+	if err := os.MkdirAll(filepath.Dir(scheduler.StatePathFor(root)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scheduler.StatePathFor(root), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runScheduler([]string{"relaunch", "--start", last.Add(-5 * time.Second).Format(time.RFC3339Nano)})
+	})
+	if ExitCode(err) != ExitCommitRefused || !strings.Contains(err.Error(), schedproc.RefusedStartOutOfRange) || len(sent) != 0 {
+		t.Fatalf("a press before the last relaunch: %v, sent %+v", err, sent)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runScheduler([]string{"relaunch", "--start", time.Now().Add(-time.Second).Format(time.RFC3339Nano)})
+	}); err != nil || len(sent) != 1 {
+		t.Fatalf("a press after it: %v, sent %+v", err, sent)
 	}
 }

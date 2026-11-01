@@ -109,8 +109,8 @@ func reloadRunAt(t *testing.T, launch time.Time, reload *Reload, start string, u
 // a relaunch over the decision socket compiles squad.yaml again; at the
 // drain's end the slots' squad, the router's roster pools and the
 // scheduler's roster all name the added seat n1, the relaunch launches it,
-// and its request carries the key press as its start, while c1 and x1
-// carry none; the lease cap is the reload's (3). Reverted (the relaunch
+// and its request carries the key press as its start and added_at, while
+// c1 and x1 carry the relaunch decision's time; the lease cap is the reload's (3). Reverted (the relaunch
 // without the reload), n1 is never launched and nothing changes.
 func TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat(t *testing.T) {
 	slots := &Slots{Squad: reloadSquad()}
@@ -132,7 +132,10 @@ func TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat(t *testing.T) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	second := l.launches[1]
-	if len(second) != 3 || second[2].Handle != "n1" || !second[2].Start.Equal(keyPress) || !second[0].Start.IsZero() || !second[1].Start.IsZero() {
+	// c1 and x1 start from the relaunch decision's time (after the press);
+	// n1, added, from the press, its added_at
+	if len(second) != 3 || second[2].Handle != "n1" || !second[2].Start.Equal(keyPress) || !second[2].AddedAt.Equal(keyPress) ||
+		!second[0].Start.After(keyPress) || !second[0].Start.Equal(second[1].Start) || !second[0].AddedAt.IsZero() {
 		t.Fatalf("the relaunch's requests: %+v", second)
 	}
 }
@@ -291,5 +294,75 @@ func TestAReloadOverTheCapLaunchesEverySeatAndCapsTheLeases(t *testing.T) {
 	}
 	if strings.Join(hs, ",") != "c1,x1,n1,n2" || len(s.Config.Roster) != 4 || s.Config.MaxSeats != 3 || !slices.Contains(pools.RosterPools(), n2Pool) {
 		t.Fatalf("launched %v; roster %+v; cap %d; pools %+v", hs, s.Config.Roster, s.Config.MaxSeats, pools.RosterPools())
+	}
+}
+
+// The plan reviewer's settled reading, the bound: a relaunch's key press is
+// measured against the relaunch, and its floor is the start of the launch
+// running now. After a first relaunch (decided at R1, its launch run), a
+// second relaunch whose press predates R1, though it is after the
+// scheduler's own launch start, is refused start_out_of_range before any
+// drain; a press after R1 is accepted. Reverted (the floor the scheduler's
+// launch start), the stale press relaunches.
+func TestARelaunchStartBeforeTheLastRelaunchIsRefused(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	launchStart := time.Now().Add(-time.Hour).UTC()
+	l, log := &rosterLauncher{}, &lockedBuf{}
+	lead := panechain.Pane{Shell: 80, Start: "s80", Agent: "lead"}
+	var r1 time.Time
+	var stale, fresh DecideReply
+	step := 0 // read and written in the until callback only
+	results := make(chan [2]DecideReply, 1)
+	send := func(start string) DecideReply {
+		rec, _ := ReadLaunchRecord(root)
+		reply, err := SendRelaunch(root, rec.DecisionSocket, RelaunchRequest{Reason: "r", Start: start})
+		if err != nil {
+			return DecideReply{Code: err.Error()}
+		}
+		return reply
+	}
+	done := make(chan struct{})
+	err := runUntil(t, Options{Root: root, Launcher: l, Log: log, Start: launchStart,
+		Config: scheduler.Config{MaxSeats: 2, Lead: "lead", Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet}, {Handle: "x1", Pool: gptPool}}},
+		Decisions: &DecideOptions{Apply: func(string, WidenRequest) DecideReply { return DecideReply{OK: true} },
+			LeadPane:   func(string, string) (panechain.Pane, error) { return lead, nil },
+			Reaches:    func(_ int, _ string, panes []panechain.Pane) (*panechain.Pane, bool) { return &panes[0], true },
+			StartToken: func(int) (string, bool) { return "s", true },
+			Peer:       func(*net.UnixConn) (int, bool) { return 4242, true }}},
+		l, func([]scheduler.Decision) bool {
+			rec, _ := ReadLaunchRecord(root)
+			switch {
+			case step == 0 && rec.DecisionSocket != "":
+				step = 1
+				r1 = time.Now()
+				go func() { send(""); close(done) }()
+			case step == 1 && l.launched() == 2:
+				<-done
+				step = 2
+				at := r1
+				go func() {
+					st := send(at.Add(-time.Second).UTC().Format(time.RFC3339Nano))
+					fr := send(time.Now().UTC().Format(time.RFC3339Nano))
+					results <- [2]DecideReply{st, fr}
+				}()
+			case step == 2:
+				select {
+				case got := <-results:
+					stale, fresh, step = got[0], got[1], 3
+				default:
+				}
+			case step == 3:
+				return l.launched() == 3
+			}
+			return false
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.OK || stale.Code != RefusedStartOutOfRange || !strings.Contains(stale.Detail, "before the start of the launch running now") {
+		t.Fatalf("a press before the last relaunch: %+v", stale)
+	}
+	if !fresh.OK {
+		t.Fatalf("a press after the last relaunch: %+v", fresh)
 	}
 }

@@ -162,6 +162,7 @@ type RosterReload struct {
 type relaunchAsk struct {
 	reason string
 	start  time.Time
+	at     time.Time // the relaunch decision's time; zero: the tick's
 	reload *RosterReload
 }
 
@@ -173,9 +174,26 @@ type relaunchAsk struct {
 // removed from squad.yaml leaves at that close and is not launched again,
 // and a changed line applies at that seat's launch in the same apply.
 func (s *Scheduler) RequestRelaunchReload(reason string, start time.Time, reload *RosterReload) {
+	s.RequestRelaunchAt(reason, start, time.Time{}, reload)
+}
+
+// RequestRelaunchAt is RequestRelaunchReload stamped with the relaunch
+// decision's time (at; zero stamps it at the tick that takes it): the
+// relaunch's own start, written as every launched seat's marks.json start
+// (the plan reviewer's settled reading on 31-2 PR 2), the added seats'
+// key press excepted.
+func (s *Scheduler) RequestRelaunchAt(reason string, start, at time.Time, reload *RosterReload) {
 	s.mu.Lock()
-	s.relaunchAsk = &relaunchAsk{reason: reason, start: start, reload: reload}
+	s.relaunchAsk = &relaunchAsk{reason: reason, start: start, at: at, reload: reload}
 	s.mu.Unlock()
+}
+
+// LastRelaunchAt is the start of the last relaunch's launch (zero before
+// one): a relaunch's key press older than it is start_out_of_range.
+func (s *Scheduler) LastRelaunchAt() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastRelaunchAt
 }
 
 // swapReload is the reload's one step at the drain's end: the slots' squad
@@ -334,11 +352,20 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	reqs := make([]SeatRequest, 0, len(s.Config.Roster))
 	for _, rs := range s.Config.Roster {
 		s.requested++
-		req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: rs.Pool, Handle: rs.Handle, Start: s.seatStart[rs.Handle]}
+		req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: rs.Pool, Handle: rs.Handle, Start: s.relaunchAt}
+		if press, ok := s.seatStart[rs.Handle]; ok {
+			req.Start, req.AddedAt = press, press // the add key's press: its own launch's start
+		}
 		reqs = append(reqs, req)
 		s.requests = append(s.requests, request{req: req, at: now})
 	}
-	s.seatStart = nil // the press is the start of this launch only
+	if !s.relaunchAt.IsZero() {
+		s.mu.Lock()
+		s.lastRelaunchAt = s.relaunchAt
+		s.mu.Unlock()
+	}
+	// the press and the relaunch's stamp are this launch's only
+	s.seatStart, s.relaunchAt = nil, time.Time{}
 	out := rl.LaunchRoster(reqs)
 	if out.Stage != RosterApplied {
 		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}

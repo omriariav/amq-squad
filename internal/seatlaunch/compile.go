@@ -239,8 +239,8 @@ type SeatMarks struct {
 	Start        *time.Time `json:"start"`
 	FirstMessage *time.Time `json:"first_message"`
 	// DrainEnd is when the relaunch that launched this seat finished its
-	// drain and began the launch (brief 31-2 PR 2), set only for a seat
-	// whose start is its own (the add key's press): status names the
+	// drain and began the launch (brief 31-2 PR 2), set for every seat a
+	// relaunch launched (its start is the relaunch's own): status names the
 	// segment from the start to it "drain".
 	DrainEnd *time.Time `json:"drain_end,omitempty"`
 	// AddedAt is the add key's press that added this seat to squad.yaml
@@ -256,19 +256,22 @@ func marksPath(root, handle string) string {
 
 // writeMarks records each staged seat's launch start (best effort, like
 // the wake record).
-func writeMarks(c Compiled, launchID string, start time.Time, seatStart map[string]time.Time, drainEnd time.Time) {
+func writeMarks(c Compiled, launchID string, start time.Time, seatStart, seatAddedAt map[string]time.Time, drainEnd time.Time) {
 	for _, rec := range c.Records {
 		m := SeatMarks{LaunchID: launchID}
 		at := start
 		if prev, err := ReadSeatMarks(rec.Root, rec.Handle); err == nil {
 			m.AddedAt = prev.AddedAt // the record of why the seat exists
 		}
-		if own, ok := seatStart[rec.Handle]; ok && !own.IsZero() {
-			// the key press of the add key (brief 31-2 PR 2): the start of
-			// the launch it caused, and the seat's added_at from then on
-			at = own
-			added := own.UTC()
+		if press, ok := seatAddedAt[rec.Handle]; ok && !press.IsZero() {
+			added := press.UTC() // the add key's press: the seat's added_at from now on
 			m.AddedAt = &added
+		}
+		if own, ok := seatStart[rec.Handle]; ok && !own.IsZero() {
+			// a relaunch's own start (brief 31-2 PR 2): its decision's time,
+			// or the add key's press for a seat it added; the drain is inside
+			// that window for every seat of the relaunch
+			at = own
 			if !drainEnd.IsZero() && !drainEnd.Before(own) {
 				d := drainEnd.UTC()
 				m.DrainEnd = &d

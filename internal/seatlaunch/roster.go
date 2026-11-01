@@ -71,10 +71,10 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 	l.mu.Unlock()
 	opts := l.Options
 	opts.BeforeApply = l.resourcesGone(q.SessionRoot(), reqs)
-	// A request's own start (brief 31-2 PR 2: the add key's press for a
-	// seat the relaunch's reload added) overrides the launch's for that
-	// seat's marks; every other seat keeps the launch's start.
-	opts.SeatStart = maps.Clone(l.Options.SeatStart)
+	// A request's own start (brief 31-2 PR 2: a relaunch's own stamp, or
+	// the add key's press for a seat its reload added) overrides the
+	// launch's for that seat's marks; the press is also its added_at.
+	opts.SeatStart, opts.SeatAddedAt = maps.Clone(l.Options.SeatStart), maps.Clone(l.Options.SeatAddedAt)
 	opts.DrainEnd = time.Now() // the drain is over: the scheduler launches now
 	for _, r := range reqs {
 		if !r.Start.IsZero() {
@@ -82,6 +82,12 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 				opts.SeatStart = map[string]time.Time{}
 			}
 			opts.SeatStart[r.Handle] = r.Start
+		}
+		if !r.AddedAt.IsZero() {
+			if opts.SeatAddedAt == nil {
+				opts.SeatAddedAt = map[string]time.Time{}
+			}
+			opts.SeatAddedAt[r.Handle] = r.AddedAt
 		}
 	}
 	res, err := Launch(context.Background(), q, opts)
