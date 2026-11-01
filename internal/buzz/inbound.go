@@ -246,17 +246,15 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 		h.teamYes(ctx, &hd, e, raw, prefix, nil)
 		return hd
 	}
-	// brief 3.1.1-1: a bare yes replied to the post that relayed the lead's
-	// plan is the team confirmation, bound by its thread; a yes replied
-	// anywhere else confirms nothing (a gate thread keeps it, another relay
-	// post continues its request)
+	// brief 3.1.1-1: a bare yes whose direct reply target is the post the
+	// relay record marks as the lead's plan is the team confirmation; a yes
+	// replied anywhere else confirms nothing (a gate thread keeps it, any
+	// other relay post continues its request, whatever its text says)
 	if verb, ok := gatestore.ParseBare(content); ok && verb == "approve" && h.Confirm != nil {
-		if post := h.planPost(vctx, e, relay); post != nil {
+		if plan := h.planPost(vctx, e, relay); plan != nil {
 			closeOnce()
-			if h.teamYes(ctx, &hd, e, raw, "", post) {
-				return hd
-			}
-			hd = Handled{MessageID: m.ID, EventID: id, Kind: "error", Status: hd.Status}
+			h.teamYes(ctx, &hd, e, raw, "", plan)
+			return hd
 		}
 	}
 	// a reply to a relayed post or to the request's receipt continues its
@@ -372,82 +370,66 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 // routing window, the confirmer hands the event's raw bytes (fetched on this
 // handler's own connection) to the lead, which verifies them itself and
 // witnesses the confirmation; the event is then handled once. For a bare
-// yes, post is the relayed plan post it replies to (prefix ""), which the
-// lead verifies too; a post that names no recent proposal is no plan, and
-// teamYes returns false with nothing replied, so the yes goes on as any
-// reply to that post. The reply names the outcome only, never the prefix
-// (no reply carries an answer's digest prefix).
-func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw []byte, prefix string, post []byte) bool {
+// yes, plan is the recorded plan post it replies to (prefix ""), which the
+// lead verifies too. The reply names the outcome only, never the prefix (no
+// reply carries an answer's digest prefix).
+func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw []byte, prefix string, plan *gateverify.PlanPost) {
 	hd.Kind = "team_confirm"
 	now := h.now()
 	if e.CreatedAt < now.Add(-RouteWindow).Unix() || e.CreatedAt > now.Add(FutureSkew).Unix() {
 		hd.Error = fmt.Sprintf("created_at %d is outside the routing window", e.CreatedAt)
 		h.final(ctx, hd, "refused team "+gateverify.RejectWindow)
-		return true
+		return
 	}
-	_, err := h.Confirm(prefix, raw, post)
-	if post != nil && errors.Is(err, gateverify.ErrNotAPlan) {
-		return false
-	}
-	if err != nil {
+	if _, err := h.Confirm(prefix, raw, plan); err != nil {
 		hd.Error = err.Error()
 		code, _, _ := strings.Cut(err.Error(), ":")
 		h.final(ctx, hd, "refused team "+code)
-		return true
+		return
 	}
 	if err := h.seen.put(e.ID, "team", now); err != nil {
 		hd.Error = "once-only record: " + err.Error()
 	}
 	h.final(ctx, hd, "confirmed team")
-	return true
 }
 
-// planPost is the relayed post a bare yes replies to, as raw bytes fetched
-// on the verifier's connection, when it can carry a plan (brief 3.1.1-1):
-// the event the yes names (its parent, else its root) is one of this
-// relay's posts by the relay records, it verifies as the share body's kind 9
-// in the DM channel, and it names a digest-shaped word
-// (gateverify.PlanPrefixes). nil otherwise; a yes in a gate thread is never
-// a team confirmation.
-func (h *Handler) planPost(ctx context.Context, e nostr.Event, relay gateverify.Relay) []byte {
-	refs := nostr.ThreadRefs(e)
-	if len(refs) == 0 || relay == nil {
+// planPost is the recorded plan post a bare yes replies to (brief
+// 3.1.1-1): its direct reply target (the NIP-10 parent, never the root) is
+// a post the relay records mark plan_for a proposal, and no thread
+// reference names a gate question or re-ask. The post is fetched on the
+// verifier's connection and must verify as the share body's kind 9 in the
+// DM channel. nil otherwise: no post text is read to decide it.
+func (h *Handler) planPost(ctx context.Context, e nostr.Event, relay gateverify.Relay) *gateverify.PlanPost {
+	parent, _ := threadParent(e)
+	if parent == "" || relay == nil {
 		return nil
 	}
 	g, err := h.gateView(h.now())
-	if err != nil || slices.ContainsFunc(refs, func(id string) bool { return g.threads[id] }) {
+	if err != nil || slices.ContainsFunc(nostr.ThreadRefs(e), func(id string) bool { return g.threads[id] }) {
 		return nil
 	}
-	posts := map[string]bool{}
+	planFor := ""
 	recs, _ := loadRelayRecords(status.RelayDir(h.Target.Root))
 	for _, r := range recs {
 		for _, p := range r.Posts {
-			for _, id := range p.Events {
-				posts[id] = true
+			if p.PlanFor != "" && slices.Contains(p.Events, parent) {
+				planFor = p.PlanFor
 			}
 		}
 	}
-	parent, root := threadParent(e)
-	id := ""
-	switch {
-	case parent != "" && posts[parent]:
-		id = parent
-	case root != "" && posts[root]:
-		id = root
-	default:
+	if planFor == "" {
 		return nil
 	}
-	raw, err := gateverify.FetchEvent(ctx, relay, id)
+	raw, err := gateverify.FetchEvent(ctx, relay, parent)
 	if err != nil {
 		return nil
 	}
 	pin := h.Core.Pin
 	p, err := nostr.ParseEvent(raw)
-	if err != nil || p.PubKey != pin.Body || p.VerifySignature() != nil || p.Kind != KindDM ||
-		!slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}) || len(gateverify.PlanPrefixes(p.Content)) == 0 {
+	if err != nil || p.PubKey != pin.Body || p.VerifySignature() != nil || p.Kind != KindDM || !slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}) {
 		return nil
 	}
-	return raw
+	return &gateverify.PlanPost{Raw: raw, For: planFor}
 }
 
 // reaskLine points the owner at the gate thread by the id prefix of the

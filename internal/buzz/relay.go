@@ -380,7 +380,7 @@ func (h *Handler) relayReply(ctx context.Context, rec *status.RelayRecord, e Thr
 	if bad {
 		return refused(rec, r, RefusedGateShape, line, now, save)
 	}
-	p := &status.RelayPosting{ReplyID: e.ID, Kind: kind, Events: []string{}}
+	p := &status.RelayPosting{ReplyID: e.ID, Kind: kind, Events: []string{}, PlanFor: planFor(e)}
 	for _, x := range parts {
 		p.Parts = append(p.Parts, sha256Hex(x))
 	}
@@ -454,7 +454,7 @@ func (h *Handler) publish(ctx context.Context, rec *status.RelayRecord, parts []
 			return r, err
 		}
 	}
-	rec.Posts = append(rec.Posts, status.RelayPost{ReplyID: p.ReplyID, Kind: p.Kind, Events: p.Events, SHA256: sha256Hex(strings.Join(parts, "\n")), At: now.UTC()})
+	rec.Posts = append(rec.Posts, status.RelayPost{ReplyID: p.ReplyID, Kind: p.Kind, Events: p.Events, SHA256: sha256Hex(strings.Join(parts, "\n")), At: now.UTC(), PlanFor: p.PlanFor})
 	rec.RelayedAt = timePtr(now)
 	rec.Posting = nil
 	markSeen(rec, p.ReplyID)
@@ -469,6 +469,23 @@ func (h *Handler) publish(ctx context.Context, rec *status.RelayRecord, parts []
 	}
 	r.Outcome, r.Events = "posted", p.Events
 	return r, save()
+}
+
+// planFor is the proposal a lead reply carries as the team plan (brief
+// 3.1.1-1): the content digest of its one team-plan:<64 hex> label, which
+// the lead's process (amq_team_propose's reply) puts on the reply; ""
+// without exactly one such label. The post's text is never read for it.
+func planFor(e ThreadEntry) string {
+	found := ""
+	for _, l := range e.Labels {
+		if v, ok := strings.CutPrefix(l, gateverify.TeamPlanLabel); ok {
+			if found != "" || !nostr.IsHex64(v) {
+				return ""
+			}
+			found = v
+		}
+	}
+	return found
 }
 
 func sha256Hex(s string) string {
@@ -922,6 +939,10 @@ func (h *Handler) continuation(ctx context.Context, e nostr.Event, relay gatever
 	}
 	return nil
 }
+
+// ThreadParent is threadParent for the lead's own check of a team yes
+// (internal/cli, witnessBuzz).
+func ThreadParent(e nostr.Event) (parent, root string) { return threadParent(e) }
 
 // threadParent is an event's direct reply target and its thread root
 // (NIP-10): the e tags marked reply and root; with no markers, the legacy

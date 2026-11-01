@@ -458,11 +458,14 @@ forgets it, so you confirm again:</p>
 <li>type <code>/squad confirm &lt;prefix&gt;</code> in the lead's pane.
 pi hands the command to the extension, never to the model, and the lead
 accepts it only from its own pi;</li>
-<li>or, on the phone, reply <code>yes</code> to the lead's Buzz post
-that relays the plan with its digest. The Buzz attachment hands the lead
-your reply and that post as it fetched them, and the lead, which holds
-no key, verifies both itself: your signature, the post as the share's
-own, and your reply in its thread. A <code>yes</code> sent anywhere else
+<li>or, on the phone, reply <code>yes</code> to the lead's Buzz post of
+the plan. The lead sends the plan as its answer to your phone request,
+marked as the plan (<code>amq_team_propose</code> with
+<code>reply_to</code>), and the relay records that post as the plan for
+its digest. The Buzz attachment hands the lead your reply and that post
+as it fetched them, and the lead, which holds no key, verifies both
+itself: your signature, the post as the share's own, and your reply to
+it directly. A <code>yes</code> to any other post, or anywhere else,
 confirms nothing.</li>
 </ul>
 <p>There is no shell door: under one uid, no kernel read tells your

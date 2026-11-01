@@ -150,25 +150,37 @@ run("a bare yes routed to the lead as a phone request", [(IN,'\tif _, ok := gate
 run("a bare yes goes to the primary squad whatever its thread", [(IN,'\t\t\treturn h.bareCore(e)\n','\t\t\treturn h.Core, nil\n')],
     BZ+"'TestABareYesGoesToTheSquadWhoseThreadItNames'")
 
-# Row 6: the team confirmation, a bare yes replied to the relayed plan post
-run("the handler's team door ignores a bare yes to the plan", [(IN,'if post := h.planPost(vctx, e, relay); post != nil {','if post := h.planPost(vctx, e, relay); false && post != nil {')],
-    BZ+"'TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam'")
-run("a post the relay never posted taken as the plan post", [(IN,'\tcase parent != "" && posts[parent]:\n','\tcase parent != "":\n')],
-    BZ+"'TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam'")
-run("a yes to a post naming no proposal refused, not continued", [(IN,'\tif post != nil && errors.Is(err, gateverify.ErrNotAPlan) {\n\t\treturn false\n\t}\n','')],
-    BZ+"'TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam'")
+# Row 6 with Codex's P1 on #838: the team confirmation, a bare yes whose
+# direct reply target is the post the relay record marks as the plan
+RL='internal/buzz/relay.go'
+SR='internal/status/relay.go'
+TT='pi/extensions/lib/team.ts'
+run("the handler's team door ignores a bare yes to the plan", [(IN,'if plan := h.planPost(vctx, e, relay); plan != nil {','if plan := h.planPost(vctx, e, relay); false && plan != nil {')],
+    BZ+"'TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam'")
+run("any relay post taken as the plan post (its text decides)", [(IN,'\t\t\tif p.PlanFor != "" && slices.Contains(p.Events, parent) {\n\t\t\t\tplanFor = p.PlanFor\n','\t\t\tif slices.Contains(p.Events, parent) {\n\t\t\t\tplanFor = p.PlanFor + "any"\n')],
+    BZ+"'TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam'")
+run("the relay ignores the lead's team-plan label", [(RL,'\t\tif v, ok := strings.CutPrefix(l, gateverify.TeamPlanLabel); ok {','\t\tif v, ok := strings.CutPrefix(l, gateverify.TeamPlanLabel); false && ok {')],
+    BZ+"'TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam|TestTheRelayReadsThePlanFromItsLabelOnly'")
+run("the relay record drops plan_for when the post is published", [(RL,'At: now.UTC(), PlanFor: p.PlanFor})','At: now.UTC()})')],
+    BZ+"'TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam'")
+run("the relay record takes a malformed plan_for", [(SR,'!p.At.IsZero() && optional(eventIDRe, p.PlanFor)','!p.At.IsZero()')],
+    BZ+"'TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam'")
 run("the lead takes a plan post another key signed", [(LS,'\t\tcase p.PubKey != pin.Body:\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a yes that replies elsewhere", [(LS,'\t\tcase !slices.Contains(nostr.ThreadRefs(e), p.ID):\n','\t\tcase false:\n')],
+run("the lead takes a yes whose direct reply target is not the plan post", [(LS,'\t\tcase parent != p.ID:\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the lead takes an altered plan post", [(LS,'\t\tcase !p.CheckID():\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a bare no as the confirmation", [(LS,'bare && verb == "approve" && req.Post != nil {','bare && verb != "" && req.Post != nil {')],
+run("the lead takes a bare no as the confirmation", [(LS,'case bare && verb == "approve" && req.Post != nil && nostr.IsHex64(req.PlanFor):','case bare && verb != "" && req.Post != nil && nostr.IsHex64(req.PlanFor):')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the attachment refuses a post naming no proposal instead of not_a_plan", [(TC,'\t\treturn "", fmt.Errorf("%w: the post names no proposal younger than %s", gateverify.ErrNotAPlan, ConfirmTTL)\n','\t\treturn "", fmt.Errorf("%s: the post names no proposal younger than %s", ReasonNoProposal, ConfirmTTL)\n')],
-    CL+"'TestTheAttachmentRoutesABareYesByThePostsProposal'")
-run("the attachment hands the lead the yes without the post", [(TC,'Event: raw, Post: post})','Event: raw})')],
-    CL+"'TestTheAttachmentRoutesABareYesByThePostsProposal'")
+run("the lead reads the proposal by prefix, not the recorded plan", [(LS,'\tif req.PlanFor != "" {\n\t\tprop, err = proposalByHex','\tif false {\n\t\tprop, err = proposalByHex')],
+    CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
+run("the attachment routes a plan yes by prefix", [(TC,'\t\tif plan != nil {\n\t\t\t_, err = proposalByHex(root, plan.For, at)','\t\tif false {\n\t\t\t_, err = proposalByHex(root, plan.For, at)')],
+    CL+"'TestTheAttachmentRoutesABareYesByTheRecordedPlan'")
+run("the attachment hands the lead the yes without the post and the plan", [(TC,'\t\treq.Post, req.PlanFor = plan.Raw, plan.For\n','\t\t_ = plan\n')],
+    CL+"'TestTheAttachmentRoutesABareYesByTheRecordedPlan'")
+run("the lead's process sends the plan reply without its label", [(TT,'"--id", replyTo, "--labels", `${TEAM_PLAN_LABEL}${hex}`, "--json"','"--id", replyTo, "--json"')],
+    PI+"test/team.test.ts")
 
 # Rows 1 and 5 at the raisers: what the question's lines read
 run("the release prepare raises without the branch it checked", [(RF,'\t\t\tspec.Facts = gatestore.SafeFacts("", *branch)\n','\t\t\tspec.Facts = nil\n')],

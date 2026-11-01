@@ -27,6 +27,9 @@ export const PLAN_KEY = "amq-squad-plan";
 export const CONFIRM_TTL_MS = 30 * 60 * 1000;
 const APPLY_TIMEOUT_MS = 11 * 60 * 1000;
 const DIGEST = /^sha256:([0-9a-f]{64})@([0-9a-f]{64}|absent)$/;
+// TEAM_PLAN_LABEL is gateverify.TeamPlanLabel: the label on the cockpit
+// reply that carries the team plan.
+export const TEAM_PLAN_LABEL = "team-plan:";
 
 type Proposal = { digest: string; prefix: string; plan: string[]; project_dir: string };
 type StartReply = { outcome: string; refusal?: string; detail?: string; roster?: string[]; owner_steps?: string[][]; steps?: { name: string; outcome: string; refusal?: string; detail?: string }[] };
@@ -201,7 +204,14 @@ export class SoloTeam {
 		}
 	}
 
-	async propose(plan: unknown, signal?: AbortSignal): Promise<string> {
+	// propose records the plan; with replyTo (the owner's phone request, an
+	// AMQ message id) this process also sends the plan as the reply there,
+	// labelled team-plan:<content digest> (brief 3.1.1-1, Codex P1 on #838):
+	// the relay records the post as the plan for that digest, and the
+	// owner's bare yes replied to it on the phone confirms it. The label is
+	// set here from the digest the propose printed, never by the model.
+	async propose(input: unknown, signal?: AbortSignal): Promise<string> {
+		const { reply_to: replyTo, ...plan } = (input ?? {}) as Record<string, unknown>;
 		const r = await this.runner(this.cfg.bin, ["team", "propose", "--from", "/dev/stdin", "--project", this.project(), "--json"], { stdin: JSON.stringify(plan), timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000), signal });
 		if (r.spawnError || r.timedOut || r.code !== 0) throw new Error(`team propose refused (${describe(r, 30000)})${r.stdout.trim() ? `: ${r.stdout.trim().slice(0, 2000)}` : ""}`);
 		const d = envelopeData<Proposal & { doors: string }>(r.stdout);
@@ -210,7 +220,13 @@ export class SoloTeam {
 		this.confirmed = undefined;
 		this.line = "";
 		this.render();
-		return [...(d.plan ?? []), `digest ${d.digest}`, `prefix ${d.prefix}`, d.doors].join("\n");
+		const text = [...(d.plan ?? []), `digest ${d.digest}`, `prefix ${d.prefix}`, d.doors].join("\n");
+		if (typeof replyTo !== "string" || !replyTo) return text;
+		const hex = DIGEST.exec(d.digest)?.[1] ?? "";
+		if (replyTo.startsWith("-") || !this.cfg.amq) return `${text}\nthe plan was not sent as the reply to ${replyTo}: ${this.cfg.amq ? "a bad message id" : "no amq binary"}`;
+		const s = await this.runner(this.cfg.amq, ["reply", "--me", this.cfg.me, "--id", replyTo, "--labels", `${TEAM_PLAN_LABEL}${hex}`, "--json", "--body", "-"], { stdin: text, timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000), signal });
+		if (s.spawnError || s.timedOut || s.code !== 0) return `${text}\nthe plan was not sent as the reply to ${replyTo} (${describe(s, 30000)})`;
+		return `${text}\nsent as the reply to ${replyTo}, marked as the team plan: the owner's yes to it on the phone confirms it`;
 	}
 
 	async apply(digest: string, signal?: AbortSignal): Promise<string> {
@@ -266,7 +282,8 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 		description:
 			"Propose a team for this repository from your plan: the goal, the session name, the lead (one of the seats), the seats (handle, role, runtime, model, effort), " +
 			"the files the work touches and the first tasks. It renders squad.yaml, checks it against the owner's grant, and returns the plan with its digest and prefix. " +
-			"Nothing is written but the proposal. The owner confirms it (you cannot); then call amq_team_apply with the digest.",
+			"Nothing is written but the proposal. The owner confirms it (you cannot); then call amq_team_apply with the digest. " +
+			"When the plan answers the owner's phone request, give reply_to (that message's id from amq_drain): the plan is sent as your reply there, marked as the team plan, and the owner's yes to it on the phone confirms it.",
 		promptSnippet: "amq_team_propose: propose a team (plan in, digest out)",
 		parameters: Type.Object({
 			goal: Type.String(),
@@ -283,6 +300,7 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 			),
 			files: Type.Optional(Type.Array(Type.String())),
 			tasks: Type.Optional(Type.Array(Type.Object({ title: Type.String(), class: Type.Optional(Type.String()), files: Type.Optional(Type.Array(Type.String())) }))),
+			reply_to: Type.Optional(Type.String({ description: "the owner's phone request message id (amq_drain) this plan answers" })),
 		}),
 		async execute(_id, p, signal) {
 			return { content: [{ type: "text", text: await team.propose(p, signal) }], details: undefined };

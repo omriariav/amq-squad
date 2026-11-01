@@ -2,9 +2,6 @@ package buzz
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +9,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 )
 
 // Brief 3.1.1-1, row 2 at the handler: a bare yes is a gate answer, never a
@@ -81,52 +79,70 @@ func mustContent(t *testing.T, raw string) string {
 	return e.Content
 }
 
-// Row 6: the team confirmation over Buzz. The lead's plan reaches the
-// owner's DM as a relayed post (brief 31-4); a bare yes replied to that post
-// is the team confirmation: the confirmer gets the yes and the post's raw
-// bytes, fetched on the verifier's connection. The same yes outside the
-// thread confirms nothing (it is a gate answer), and replied to a relay post
-// that names no proposal it continues that request. The 3.1.0 prefix form
-// keeps verifying (TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes).
-func TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam(t *testing.T) {
+// Row 6, with Codex's P1 on #838: the team confirmation over Buzz. The
+// lead's process sends its plan as the cockpit reply labelled
+// team-plan:<content digest>; the relay records plan_for on that post. A
+// bare yes whose direct reply target is the recorded plan post is the team
+// confirmation: the confirmer gets the yes, the post's raw bytes and the
+// recorded digest. A yes to any other post, even one whose text carries the
+// live digest, is a phone continuation and confirms nothing; outside every
+// thread it is a gate answer. The 3.1.0 prefix form keeps verifying
+// (TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes).
+func TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam(t *testing.T) {
 	const content = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	digest := "sha256:" + content + "@absent"
 	pf := newPhoneFixture(t)
-	type call struct {
-		prefix string
-		yes    string
-		post   string
-	}
+	type call struct{ prefix, yes, post, planFor string }
 	var calls []call
-	pf.h.Confirm = func(p string, raw, post []byte) (string, error) {
+	pf.h.Confirm = func(p string, raw []byte, plan *gateverify.PlanPost) (string, error) {
 		y, _ := nostr.ParseEvent(raw)
 		c := call{prefix: p, yes: y.ID}
-		if post != nil {
-			pe, err := nostr.ParseEvent(post)
+		if plan != nil {
+			pe, err := nostr.ParseEvent(plan.Raw)
 			if err != nil || !pe.CheckID() || pe.PubKey != pf.core.Pin.Body {
 				t.Fatalf("the confirmer got a post that is not the body's fetched event: %v", err)
 			}
-			c.post = pe.ID
-			if !slices.Contains(gateverify.PlanPrefixes(pe.Content), content[:16]) {
-				calls = append(calls, c)
-				return "", fmt.Errorf("%w: the post names no proposal", gateverify.ErrNotAPlan)
-			}
+			c.post, c.planFor = pe.ID, plan.For
 		}
 		calls = append(calls, c)
 		return digest, nil
 	}
 	_, rid := pf.ask(t, "propose a team for the release", "")
-	pf.threads.reply("lead-a", CockpitThread(rid), "Proposed team: lead, two implementers.\ndigest "+digest+"\nprefix "+content[:16], "")
+	// a reply that names the digest but is not marked as the plan comes first
+	pf.threads.reply("lead-a", CockpitThread(rid), "I am preparing a plan; its digest will be "+digest+".", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Proposed team: lead, two implementers.\ndigest "+digest, "", gateverify.TeamPlanLabel+content)
 	pf.relay(t)
-	plan := pf.relayPosts()[0]
+	posts := pf.relayPosts()
+	if len(posts) != 2 {
+		t.Fatalf("%d relay posts", len(posts))
+	}
+	mention, plan := posts[0], posts[1]
+	rec := pf.record(t, rid)
+	if len(rec.Posts) != 2 || rec.Posts[0].PlanFor != "" || rec.Posts[1].PlanFor != content {
+		t.Fatalf("the relay record: %+v", rec.Posts)
+	}
+	bad := *rec
+	bad.Posts = []status.RelayPost{rec.Posts[0], rec.Posts[1]}
+	bad.Posts[1].PlanFor = "0123"
+	if err := bad.Validate(rid); err == nil {
+		t.Fatal("a relay record with a malformed plan_for validates")
+	}
 	sent := len(pf.mail.sent)
 
+	// a yes to the post that only mentions the live digest: a continuation
+	_, msg := pf.dm(t, "yes", mention.ID)
+	pf.step(t)
+	if res, _ := pf.serve.result(msg); len(calls) != 0 || !strings.HasPrefix(res, "accepted "+rid+" ") || len(pf.mail.sent) != sent+1 {
+		t.Fatalf("a bare yes to a post naming the digest: %q, calls %+v", res, calls)
+	}
+
+	// a yes to the recorded plan post: the team confirmation
 	yes, msg := pf.dm(t, "yes", plan.ID)
 	pf.step(t)
-	if res, _ := pf.serve.result(msg); res != "confirmed team" || len(calls) != 1 || calls[0] != (call{"", yes, plan.ID}) {
+	if res, _ := pf.serve.result(msg); res != "confirmed team" || len(calls) != 1 || calls[0] != (call{"", yes, plan.ID, content}) {
 		t.Fatalf("a bare yes replied to the plan: %q, calls %+v", res, calls)
 	}
-	if len(pf.mail.sent) != sent || len(pf.record(t, rid).Turns) != 1 {
+	if len(pf.mail.sent) != sent+1 {
 		t.Fatal("the team yes reached the lead as a phone request")
 	}
 
@@ -137,28 +153,21 @@ func TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam(t *testing.T) {
 		t.Fatalf("a bare yes outside the thread: %q, calls %+v", res, calls)
 	}
 
-	// replied to a relay post that names no digest, it continues the request
-	pf.threads.reply("lead-a", CockpitThread(rid), "Shall I start it now?", "")
-	pf.relay(t)
-	other := pf.relayPosts()[1]
-	_, msg = pf.dm(t, "yes", other.ID)
-	pf.step(t)
-	if res, _ := pf.serve.result(msg); len(calls) != 1 || !strings.HasPrefix(res, "accepted "+rid+" ") || len(pf.record(t, rid).Turns) != 2 {
-		t.Fatalf("a bare yes to a post with no plan: %q, calls %+v", res, calls)
+	// a yes naming the plan post only as its root (its parent elsewhere) is
+	// no confirmation: the direct reply target binds it
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: KindDM, Content: "yes", Tags: [][]string{{"h", pf.core.Pin.Channel}, {"e", plan.ID, "", "root"}, {"e", mention.ID, "", "reply"}}}
+	if err := pf.owner.sk.Sign(&e); err != nil {
+		t.Fatal(err)
 	}
-
-	// replied to a post naming a digest no proposal carries, it continues too
-	pf.threads.reply("lead-a", CockpitThread(rid), "Merged as fedcba9876543210fedcba9876543210fedcba98.", "")
-	pf.relay(t)
-	merged := pf.relayPosts()[2]
-	_, msg = pf.dm(t, "yes", merged.ID)
+	_ = pf.mem.Publish(context.Background(), e.Marshal())
+	msg = pf.serve.deliver(e.ID, pf.core.Pin.Channel, e.Content)
 	pf.step(t)
-	if res, _ := pf.serve.result(msg); len(calls) != 2 || calls[1].post != merged.ID || !strings.HasPrefix(res, "accepted "+rid+" ") {
-		t.Fatalf("a bare yes to a post naming no proposal: %q, calls %+v", res, calls)
+	if res, _ := pf.serve.result(msg); len(calls) != 1 || res == "confirmed team" {
+		t.Fatalf("a yes rooted at the plan, replying elsewhere: %q", res)
 	}
 
 	// a body-signed post naming the digest that the relay never posted is no
-	// plan post: the yes to it confirms nothing
+	// plan post
 	stray := nostr.Event{CreatedAt: time.Now().Unix(), Kind: KindDM, Tags: [][]string{{"h", pf.core.Pin.Channel}}, Content: "digest " + digest}
 	if err := pf.body.Sign(&stray); err != nil {
 		t.Fatal(err)
@@ -166,27 +175,35 @@ func TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam(t *testing.T) {
 	_ = pf.mem.Publish(context.Background(), stray.Marshal())
 	_, msg = pf.dm(t, "yes", stray.ID)
 	pf.step(t)
-	if res, _ := pf.serve.result(msg); len(calls) != 2 || res == "confirmed team" {
+	if res, _ := pf.serve.result(msg); len(calls) != 1 || res == "confirmed team" {
 		t.Fatalf("a bare yes to a post the relay never posted: %q, calls %+v", res, calls)
 	}
 
 	// a bare no to the plan is no confirmation (it continues the request)
 	_, msg = pf.dm(t, "no", plan.ID)
 	pf.step(t)
-	if res, _ := pf.serve.result(msg); len(calls) != 2 || res == "confirmed team" {
+	if res, _ := pf.serve.result(msg); len(calls) != 1 || res == "confirmed team" {
 		t.Fatalf("a bare no to the plan: %q", res)
 	}
 }
 
-func TestPlanPrefixes(t *testing.T) {
-	got := gateverify.PlanPrefixes("digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@absent\nprefix 0123456789abcdef; head 4852f761")
-	if len(got) != 1 || got[0] != "0123456789abcdef" {
-		t.Fatalf("PlanPrefixes = %v", got)
-	}
-	if got := gateverify.PlanPrefixes("The plan is ready."); len(got) != 0 {
-		t.Fatalf("PlanPrefixes = %v", got)
-	}
-	if !errors.Is(fmt.Errorf("%w: x", gateverify.ErrNotAPlan), gateverify.ErrNotAPlan) {
-		t.Fatal("ErrNotAPlan does not wrap")
+// planFor reads exactly one team-plan:<64 hex> label; none, two, or a
+// malformed digest is no plan.
+func TestTheRelayReadsThePlanFromItsLabelOnly(t *testing.T) {
+	const h = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for labels, want := range map[string]string{
+		gateverify.TeamPlanLabel + h:             h,
+		"result," + gateverify.TeamPlanLabel + h: h,
+		"":                                       "",
+		gateverify.TeamPlanLabel + "0123":        "",
+		gateverify.TeamPlanLabel + h + "," + gateverify.TeamPlanLabel + h: "",
+	} {
+		var ls []string
+		if labels != "" {
+			ls = strings.Split(labels, ",")
+		}
+		if got := planFor(ThreadEntry{Labels: ls, Body: "digest sha256:" + h}); got != want {
+			t.Errorf("labels %q: %q, want %q", labels, got, want)
+		}
 	}
 }

@@ -279,3 +279,27 @@ test("brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, neve
 	assert.doesNotMatch(text, /yes [0-9a-f]{16}/);
 	assert.match(text, /reply yes to the lead's Buzz post of this plan/);
 });
+
+// Codex P1 on #838: the plan post is marked by the lead's process, never
+// found in post text. With reply_to, amq_team_propose sends the plan as the
+// reply to the owner's phone request, labelled team-plan:<content digest>
+// from the digest the propose printed (the relay records it as plan_for);
+// reply_to never reaches team propose; without it, nothing is sent.
+test("brief 3.1.1-1: amq_team_propose with reply_to sends the plan as the labelled reply", async () => {
+	const calls: { bin: string; args: string[]; stdin?: string }[] = [];
+	const runner = async (bin: string, args: string[], o: RunOptions): Promise<RunResult> => {
+		calls.push({ bin, args, stdin: o.stdin });
+		return args[1] === "propose" ? res(0, proposed) : res(0, envelope("reply", { id: "r-1" }));
+	};
+	const team = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner);
+	const out = await team.propose({ ...plan, reply_to: "m-phone-1" });
+	assert.deepEqual(JSON.parse(calls[0].stdin ?? ""), plan, "reply_to reached team propose");
+	assert.equal(calls.length, 2);
+	assert.equal(calls[1].bin, "/opt/amq");
+	assert.deepEqual(calls[1].args, ["reply", "--me", "lead", "--id", "m-phone-1", "--labels", "team-plan:" + "0123456789abcdef".repeat(4), "--json", "--body", "-"]);
+	assert.match(calls[1].stdin ?? "", new RegExp(`digest ${DIGEST.replace(/[$^.]/g, "\\$&")}`));
+	assert.match(out, /sent as the reply to m-phone-1, marked as the team plan/);
+	calls.length = 0;
+	await team.propose(plan);
+	assert.equal(calls.length, 1, "no reply without reply_to");
+});

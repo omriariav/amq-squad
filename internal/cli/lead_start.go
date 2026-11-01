@@ -66,8 +66,11 @@ type leadStartRequest struct {
 	Pane    string `json:"pane,omitempty"`  // the TUI door's pane
 	Event   []byte `json:"event,omitempty"` // the Buzz door's raw event bytes, as the attachment fetched them
 	// Post is the relayed plan post a bare yes replies to (brief 3.1.1-1),
-	// its raw bytes as the attachment fetched them; nil for `yes <prefix>`.
-	Post []byte `json:"post,omitempty"`
+	// its raw bytes as the attachment fetched them, and PlanFor the
+	// proposal's content digest (64 hex) the relay record marks it with;
+	// both empty for `yes <prefix>`.
+	Post    []byte `json:"post,omitempty"`
+	PlanFor string `json:"plan_for,omitempty"`
 }
 
 // The confirmation kinds on the same socket (the three doors).
@@ -335,15 +338,16 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	case e.CreatedAt < now.Add(-buzz.RouteWindow).Unix() || e.CreatedAt > now.Add(buzz.FutureSkew).Unix():
 		return refusedAs(gateverify.RejectWindow, "event %s was created at %d", e.ID[:12], e.CreatedAt)
 	}
-	var prefixes []string
-	if prefix, ok := gateverify.ParseTeamYes(e.Content); ok && req.Post == nil {
-		prefixes = []string{prefix}
-	} else if verb, bare := gatestore.ParseBare(e.Content); bare && verb == "approve" && req.Post != nil {
-		// brief 3.1.1-1: a bare yes replied to the relayed plan post. The
-		// thread binds it: the post is the share body's own signed kind 9 in
-		// the owner's DM channel, the yes names it, and the post's content
-		// names the proposal
+	prefix, typed := gateverify.ParseTeamYes(e.Content)
+	switch verb, bare := gatestore.ParseBare(e.Content); {
+	case typed && req.Post == nil && req.PlanFor == "":
+	case bare && verb == "approve" && req.Post != nil && nostr.IsHex64(req.PlanFor):
+		// brief 3.1.1-1: a bare yes replied to the relayed plan post. Its
+		// direct reply target binds it: the post is the share body's own
+		// signed kind 9 in the owner's DM channel, the yes replies to it, and
+		// the relay record marks it as the plan for req.PlanFor
 		p, err := nostr.ParseEvent(req.Post)
+		parent, _ := buzz.ThreadParent(e)
 		switch {
 		case err != nil:
 			return refusedAs(ReasonEventUnverified, "the plan post bytes are not an event: %v", err)
@@ -355,11 +359,10 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 			return refusedAs(gateverify.RejectBadSignature, "post %s", p.ID[:12])
 		case p.Kind != buzz.KindDM || !slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}):
 			return refusedAs(gateverify.RejectWrongChannel, "post %s is not a DM in the owner's channel", p.ID[:12])
-		case !slices.Contains(nostr.ThreadRefs(e), p.ID):
+		case parent != p.ID:
 			return refusedAs(gateverify.RejectThread, "event %s does not reply to the plan post %s", e.ID[:12], p.ID[:12])
 		}
-		prefixes = gateverify.PlanPrefixes(p.Content)
-	} else {
+	default:
 		return refusedAs(ReasonEventUnverified, "event %s is not a bare yes replied to the plan post (or yes <16 hex>)", e.ID[:12])
 	}
 	// once-only, restart-proof and atomic: the check and the mark under one
@@ -370,7 +373,12 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	if s.seen[e.ID] || eventLogged(s.root, e.ID) {
 		return refusedAs(gatestore.RejectReplayed, "event %s was witnessed already", e.ID[:12])
 	}
-	prop, err := proposalOf(s.root, prefixes, now)
+	var prop teamProposal
+	if req.PlanFor != "" {
+		prop, err = proposalByHex(s.root, req.PlanFor, now)
+	} else {
+		prop, err = proposalByPrefix(s.root, prefix, now)
+	}
 	if err != nil {
 		return refusedBy(err)
 	}

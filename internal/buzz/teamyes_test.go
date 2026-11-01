@@ -24,7 +24,7 @@ func TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes(t *testing.T) {
 	rig := func(t *testing.T) (handlerFixture, *[]call) {
 		hf := newHandlerFixture(t)
 		var calls []call
-		hf.h.Confirm = func(p string, raw, _ []byte) (string, error) {
+		hf.h.Confirm = func(p string, raw []byte, _ *gateverify.PlanPost) (string, error) {
 			e, err := nostr.ParseEvent(raw)
 			if err != nil || !e.CheckID() {
 				t.Fatalf("the confirmer got bytes that are not the fetched event: %v", err)

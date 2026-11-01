@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/status"
@@ -1248,7 +1249,7 @@ func TestATeamYesIsAConfirmationNotAPhoneRequest(t *testing.T) {
 	const prefix = "0123456789abcdef"
 	pf := newPhoneFixture(t)
 	var confirmed []string
-	pf.h.Confirm = func(p string, raw, _ []byte) (string, error) {
+	pf.h.Confirm = func(p string, raw []byte, _ *gateverify.PlanPost) (string, error) {
 		confirmed = append(confirmed, p)
 		if p != prefix {
 			return "", errors.New("no_proposal: no recent proposal starts with it")

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -372,32 +371,25 @@ func proposalByPrefix(root, prefix string, at time.Time) (teamProposal, error) {
 	return teamProposal{}, fmt.Errorf("%s: %d proposals start with %s; confirm at the lead's pane or the shell door with the full digest", ReasonProposalAmbig, len(hits), prefix)
 }
 
-// proposalOf is the one recent proposal of root that the prefixes name (a
-// post may name a digest and its prefix: one proposal). A prefix naming
-// none is skipped; none named is no_proposal, two is proposal_ambiguous.
-func proposalOf(root string, prefixes []string, at time.Time) (teamProposal, error) {
-	var found []teamProposal
-	err := fmt.Errorf("%s: no proposal younger than %s is named", ReasonNoProposal, ConfirmTTL)
-	for _, prefix := range prefixes {
-		p, perr := proposalByPrefix(root, prefix, at)
-		if perr != nil {
-			if strings.HasPrefix(perr.Error(), ReasonProposalAmbig) {
-				return teamProposal{}, perr
-			}
-			err = perr
-			continue
-		}
-		if !slices.ContainsFunc(found, func(f teamProposal) bool { return f.Digest == p.Digest }) {
-			found = append(found, p)
-		}
+// proposalByHex is root's recent proposal whose content digest is hexDigest
+// (the relay record's plan_for), no_proposal when none or an older one.
+func proposalByHex(root, hexDigest string, at time.Time) (teamProposal, error) {
+	none := fmt.Errorf("%s: no proposal younger than %s has the digest %s", ReasonNoProposal, ConfirmTTL, hexDigest)
+	if !nostr.IsHex64(hexDigest) {
+		return teamProposal{}, none
 	}
-	switch len(found) {
-	case 0:
-		return teamProposal{}, err
-	case 1:
-		return found[0], nil
+	raw, err := os.ReadFile(proposalPath(root, hexDigest))
+	if err != nil || len(raw) > confirmProposalMaxSize {
+		return teamProposal{}, none
 	}
-	return teamProposal{}, fmt.Errorf("%s: the post names %d proposals; confirm at the lead's pane", ReasonProposalAmbig, len(found))
+	var p teamProposal
+	if json.Unmarshal(raw, &p) != nil || at.Sub(p.At) > ConfirmTTL {
+		return teamProposal{}, none
+	}
+	if h, err := digestHex(p.Digest); err != nil || h != hexDigest {
+		return teamProposal{}, none
+	}
+	return p, nil
 }
 
 // confirmParent reads a pid's parent from the kernel (a test seam; the
@@ -559,12 +551,12 @@ func teamProjectDir(project string) (string, error) {
 // confirmByPrefix is the attachment's half of the Buzz door (wired into the
 // mailbox handler, after the handler fetched the event on its own connection
 // and verified the owner's signature): it finds the solo root whose recent
-// proposal the prefix names, or, for a bare yes (brief 3.1.1-1), the
-// relayed plan post names, and hands that root's lead the raw event bytes
-// (and the post's); the lead verifies them itself, with no connection and
-// no key, and witnesses the confirmation. It returns the confirmed digest; a
-// post that names no recent proposal is gateverify.ErrNotAPlan.
-func confirmByPrefix(prefix string, raw, post []byte) (string, error) {
+// proposal the prefix names, or, for a bare yes (brief 3.1.1-1), the one
+// the relay record marks the plan post with, and hands that root's lead the
+// raw event bytes (and the post's, and the plan's digest); the lead
+// verifies them itself, with no connection and no key, and witnesses the
+// confirmation. It returns the confirmed digest.
+func confirmByPrefix(prefix string, raw []byte, plan *gateverify.PlanPost) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -574,36 +566,38 @@ func confirmByPrefix(prefix string, raw, post []byte) (string, error) {
 		return "", fmt.Errorf("%s: the bytes are not an event: %v", ReasonEventUnverified, err)
 	}
 	at := time.Unix(e.CreatedAt, 0) // which proposal to route to; the lead verifies everything
-	prefixes := []string{prefix}
-	if post != nil {
-		p, err := nostr.ParseEvent(post)
-		if err != nil {
-			return "", fmt.Errorf("%w: the post bytes are not an event: %v", gateverify.ErrNotAPlan, err)
-		}
-		prefixes = gateverify.PlanPrefixes(p.Content)
-	}
 	roots, _ := filepath.Glob(filepath.Join(home, ".amq-squad", "solo", "*", "root"))
 	sort.Strings(roots)
 	var found []string
 	for _, root := range roots {
-		if _, err := proposalOf(root, prefixes, at); err == nil || strings.HasPrefix(err.Error(), ReasonProposalAmbig) {
+		var err error
+		if plan != nil {
+			_, err = proposalByHex(root, plan.For, at)
+		} else {
+			_, err = proposalByPrefix(root, prefix, at)
+		}
+		if err == nil {
 			found = append(found, root)
 		}
 	}
 	switch {
-	case len(found) == 0 && post != nil:
-		return "", fmt.Errorf("%w: the post names no proposal younger than %s", gateverify.ErrNotAPlan, ConfirmTTL)
+	case len(found) == 0 && plan != nil:
+		return "", fmt.Errorf("%s: no proposal younger than %s has the plan's digest %s", ReasonNoProposal, ConfirmTTL, plan.For)
 	case len(found) == 0:
 		return "", fmt.Errorf("%s: no proposal younger than %s starts with %s", ReasonNoProposal, ConfirmTTL, prefix)
 	case len(found) > 1:
-		return "", fmt.Errorf("%s: proposals in %d repositories are named", ReasonProposalAmbig, len(found))
+		return "", fmt.Errorf("%s: proposals in %d repositories match", ReasonProposalAmbig, len(found))
+	}
+	req := leadStartRequest{Kind: confirmBuzzKind, Event: raw}
+	if plan != nil {
+		req.Post, req.PlanFor = plan.Raw, plan.For
 	}
 	c, err := dialLead(found[0])
 	if err != nil {
 		return "", err
 	}
 	defer c.Close()
-	reply, err := askLead(c, leadStartRequest{Kind: confirmBuzzKind, Event: raw, Post: post})
+	reply, err := askLead(c, req)
 	if err != nil {
 		return "", err
 	}
