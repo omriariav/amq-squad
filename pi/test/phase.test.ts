@@ -92,7 +92,8 @@ function soloWorld() {
 
 // Rows 2 and 5: before the owner's yes the solo tools answer and the team
 // tools are registered but not declared; amq_team_apply's success, on the
-// lead's reply carrying the team identity (no file is read), switches by
+// lead's reply carrying the team identity (no file is read; phase.json is
+// even a directory), switches by
 // mechanism: the tool list
 // declared to the model becomes exactly the thirteen team tools
 // (pi.setActiveTools: read, bash, edit, write, amq_team_propose and
@@ -109,7 +110,9 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 		for (const t of ["amq_task_add", "amq_status", "amq_scheduler_relaunch", "amq_task_widen"]) assert.ok(!before.includes(t), `${t} is declared before the yes`);
 		const proposed = await pi.tools.get("amq_team_propose").execute("c1", { goal: "x", session: "s1", lead: "cto", seats: [{ handle: "cto", runtime: "pi" }] }, undefined);
 		assert.match(proposed.content[0].text, /prefix 0123456789abcdef/);
-		assert.ok(!fs.existsSync(path.join(w.soloRoot, "extensions", "amq-squad", "phase.json")), "a marker in the world");
+		// the model made phase.json a directory before the yes: the record
+		// cannot be written, and the switch, riding the reply, happens anyway
+		fs.mkdirSync(path.join(w.soloRoot, "extensions", "amq-squad", "phase.json"));
 		const applied = await pi.tools.get("amq_team_apply").execute("c2", { digest: DIGEST }, undefined);
 		assert.match(applied.content[0].text, /team phase: your tools are now the team lead's/);
 		assert.deepEqual(pi.getActiveTools().sort(), TEAM13);

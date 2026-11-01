@@ -22,8 +22,10 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -482,6 +484,14 @@ func (s *leadStarter) start(ctx context.Context, req leadStartRequest) leadStart
 	if err != nil {
 		return refused("squad_invalid", "%v", err)
 	}
+	// R53 (Codex on #837): the team lead's identity is resolved from the
+	// confirmed squad before anything starts, so a started team always
+	// carries it in the reply and the lead's pi always switches; an
+	// identity that cannot be resolved refuses here, with nothing started.
+	id, err := piruntime.NewTeamIdentity(sq.Lead, filepath.Join(s.project, ".agent-mail"), sq.Session)
+	if err != nil {
+		return refused(ReasonTeamIdentity, "the team lead's identity cannot be resolved from the confirmed squad (%v); nothing was started", err)
+	}
 	l := &leadLauncher{s: s, at: rec.At}
 	m := &fleet.Mayor{
 		Grant: leadMayorGrant, RegistryPath: leadMayorRegistry(), Identify: leadMayorIdentify,
@@ -503,14 +513,14 @@ func (s *leadStarter) start(ctx context.Context, req leadStartRequest) leadStart
 	switch {
 	case res.Outcome == fleet.OutcomeStarted:
 		// R53 (brief 31-3 PR 2): the owner's yes switches this lead to team
-		// phase; the marker tells its pi (the tool list and the squad's
-		// identity) and a restarted lead (which starts as lead --team)
+		// phase on this reply (the team identity and the digest), never on
+		// a file. The marker is a record only: a failed write is a
+		// phase_record_failed decision and changes nothing else.
 		detail := l.outcome
-		team, err := s.teamOf(req.Digest)
-		if err != nil {
-			detail += "; the team lead's identity could not be resolved, so the lead stays in the solo phase: " + err.Error()
-		} else if err := writePhaseMarker(s.root, s.project, team, s.self); err != nil {
-			detail += "; the phase marker (a record only) was not written: " + err.Error()
+		team := s.teamOf(id, req.Digest)
+		if err := writePhaseMarker(s.root, s.project, team, s.self); err != nil {
+			detail += "; the phase record was not written (" + KindPhaseRecordFailed + "): " + err.Error()
+			_ = schedproc.AppendDecision(s.root, confirmNow(), scheduler.Decision{Kind: KindPhaseRecordFailed, Reason: phaseMarkerPath(s.root) + ": " + err.Error()})
 		}
 		return leadStartReply{Outcome: "started", Detail: detail, Steps: s.steps, Roster: l.roster, Team: team}
 	case slices.Contains(r40Fallback, res.Reason):
@@ -832,19 +842,24 @@ type leadTeam struct {
 	Digest   string `json:"digest"`
 }
 
-// teamOf resolves the team lead's identity after a start and records it as
+// teamOf records the team lead's identity (resolved before the start) as
 // this lead's phase (the answer to a later phase query).
-func (s *leadStarter) teamOf(digest string) (*leadTeam, error) {
-	id, err := resolveTeamLeadIdentity(s.project)
-	if err != nil {
-		return nil, err
-	}
+func (s *leadStarter) teamOf(id piruntime.TeamIdentity, digest string) *leadTeam {
 	t := &leadTeam{Root: id.Root, BaseRoot: id.BaseRoot, Session: id.Session, Handle: id.Handle, Digest: digest}
 	s.wmu.Lock()
 	s.team = t
 	s.wmu.Unlock()
-	return t, nil
+	return t
 }
+
+// ReasonTeamIdentity refuses a start whose team lead identity cannot be
+// resolved from the confirmed squad (nothing is started).
+const ReasonTeamIdentity = "team_identity"
+
+// KindPhaseRecordFailed is the decision of a phase record (the marker) the
+// lead could not write after its team started: a record failure and
+// nothing else (the switch rode the start's reply).
+const KindPhaseRecordFailed = "phase_record_failed"
 
 // The phase marker (brief 31-3 PR 2, R53, after the plan reviewer: the
 // marker is never authority). The solo lead's process writes it in its own

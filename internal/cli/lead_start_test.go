@@ -41,6 +41,12 @@ func autoFleet(cost float64) grants.Resolved {
 // the mayor derives.
 func startWorld(t *testing.T, g grants.Resolved, identity string) (*upFake, *leadStarter, string) {
 	t.Helper()
+	return startWorldPlan(t, g, identity, soloTeamPlan())
+}
+
+// startWorldPlan is startWorld over a given plan.
+func startWorldPlan(t *testing.T, g grants.Resolved, identity string, plan team.LeadPlan) (*upFake, *leadStarter, string) {
+	t.Helper()
 	f, target := upWorld(t)
 	if err := os.Remove(team.SquadPath(f.proj)); err != nil {
 		t.Fatal(err)
@@ -49,7 +55,7 @@ func startWorld(t *testing.T, g grants.Resolved, identity string) (*upFake, *lea
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := proposeSoloPlan(t, f.proj, soloTeamPlan())["digest"].(string)
+	digest := proposeSoloPlan(t, f.proj, plan)["digest"].(string)
 	prev := []any{leadMayorGrant, leadMayorRegistry, leadMayorIdentify, leadSelfBinary, startLeadScheduler}
 	t.Cleanup(func() {
 		leadMayorGrant = prev[0].(func() (grants.Resolved, error))
@@ -756,5 +762,63 @@ func TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile(t *testing.T) {
 	}
 	if r := ask(); r.Outcome != "team" || r.Team == nil || r.Team.Root != f.root || r.Team.Digest != digest {
 		t.Fatalf("after the start = %+v", r)
+	}
+}
+
+// R53 (Codex on #837): the switch rides the start's reply, never the
+// record. A phase record that cannot be written (the model made phase.json
+// a directory before the yes) leaves the start started, the reply carrying
+// the team identity (so the lead's pi switches and the solo tools go), a
+// phase_record_failed decision, and the lead answering team.
+func TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches(t *testing.T) {
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	if err := os.MkdirAll(phaseMarkerPath(s.root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj})
+	if r.Outcome != "started" || r.Team == nil || r.Team.Root != f.root || r.Team.Digest != digest {
+		t.Fatalf("start with phase.json a directory = %+v", r)
+	}
+	if !strings.Contains(r.Detail, KindPhaseRecordFailed) {
+		t.Fatalf("the detail does not say the record failed: %q", r.Detail)
+	}
+	found := false
+	for _, d := range decisionKinds(t, s.root) {
+		found = found || d.Kind == KindPhaseRecordFailed
+	}
+	if !found {
+		t.Fatalf("no %s decision", KindPhaseRecordFailed)
+	}
+	if _, err := s.serve(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := dialLead(s.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if q, err := askLead(c, leadStartRequest{Kind: phaseKind}); err != nil || q.Outcome != "team" || q.Team == nil {
+		t.Fatalf("phase query after a failed record = %+v, %v", q, err)
+	}
+}
+
+// R53 (Codex on #837): a started team always carries the team lead's
+// identity, because it is resolved from the confirmed squad before anything
+// starts. A confirmed squad that names no lead refuses team_identity with
+// nothing started (no squad.yaml, no scheduler, no lock), rather than
+// starting a team the lead's pi cannot switch to.
+func TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts(t *testing.T) {
+	plan := soloTeamPlan()
+	plan.Lead = ""
+	f, s, digest := startWorldPlan(t, autoFleet(0), "owner/app", plan)
+	r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj})
+	if r.Outcome != "refused" || r.Refusal != ReasonTeamIdentity || r.Team != nil {
+		t.Fatalf("a squad with no lead = %+v", r)
+	}
+	if _, err := os.Stat(team.SquadPath(f.proj)); err == nil {
+		t.Fatal("the refused start wrote squad.yaml")
+	}
+	if s.lock != nil {
+		t.Fatal("the refused start holds the lead lock")
 	}
 }
