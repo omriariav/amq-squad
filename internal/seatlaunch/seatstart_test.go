@@ -3,6 +3,8 @@
 package seatlaunch
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -101,4 +103,44 @@ func TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart(t *testing.T) {
 		map[string]want{"cto": {r2, t1}, "dev": {t2, t2}})
 	check("a plain relaunch", []scheduler.SeatRequest{{ID: "r5", Handle: "cto", Pool: poolA, Start: r3}, {ID: "r6", Handle: "dev", Pool: poolDev, Start: r3}},
 		map[string]want{"cto": {r3, t1}, "dev": {r3, t2}})
+}
+
+// Codex re-check on 31-2 PR 2: drain_end is stamped at the drain's end,
+// before the roster plan (which ensures the worktrees and fetches the base
+// tips), so a slow fetch lands in prepare, not drain. The plan here takes
+// 300 ms (a slow fetch): the relaunched seat's drain_end is before the plan
+// began, and its staged record (prepare's end) is at least 300 ms after
+// drain_end. Reverted (the stamp after the plan), drain_end follows the
+// fetch and the 300 ms count as drain.
+func TestASlowFetchLandsInPrepareNotDrain(t *testing.T) {
+	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed",
+		Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"}, {Handle: "dev", Runnable: true, Resource: "tmux:v1:pane:%8"}}}, true)
+	plan := f.l.PlanRoster
+	var planBegan time.Time
+	f.l.PlanRoster = func(reqs []scheduler.SeatRequest) (Squad, error) {
+		planBegan = time.Now()
+		time.Sleep(300 * time.Millisecond) // the base fetch
+		return plan(reqs)
+	}
+	relaunch := time.Now().Add(-2 * time.Second).UTC()
+	out := f.l.LaunchRoster([]scheduler.SeatRequest{{ID: "r1", Handle: "cto", Pool: poolA, Start: relaunch}, {ID: "r2", Handle: "dev", Pool: poolDev, Start: relaunch}})
+	if out.Stage != scheduler.RosterApplied {
+		t.Fatalf("the launch: %+v", out)
+	}
+	root := f.q.SessionRoot()
+	m, err := ReadSeatMarks(root, "dev")
+	if err != nil || m.DrainEnd == nil {
+		t.Fatalf("dev's marks %+v (%v)", m, err)
+	}
+	staged, err := os.ReadFile(filepath.Join(launch.StagedDir(root, "dev"), launch.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := launch.Decode(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.DrainEnd.After(planBegan) || rec.StartedAt.Sub(*m.DrainEnd) < 300*time.Millisecond {
+		t.Fatalf("drain_end %s, plan began %s, staged %s: the fetch must be prepare's", m.DrainEnd, planBegan, rec.StartedAt)
+	}
 }
