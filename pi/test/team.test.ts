@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "../extensions/lib/hooks.ts";
-import { confirmPath, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal } from "../extensions/lib/team.ts";
+import { confirmPath, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, writeConfirmRecord } from "../extensions/lib/team.ts";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx, tmpdir } from "./fakepi.ts";
@@ -235,4 +235,28 @@ test("the solo lead's shell sees through quoting, expansions and eval", () => {
 	assert.match(soloShellRefusal("exec_command", { cmd: ["sh", "-c", 't""mux ls'] }) ?? "", /^owner_only: /, "an argv sh -c line");
 	assert.match(soloShellRefusal("exec_command", { cmd: ["/usr/bin/TMUX", "ls"] }) ?? "", /^owner_only: /, "an argv TMUX");
 	assert.equal(soloShellRefusal("exec_command", { cmd: ["echo", "hello world"] }), undefined);
+});
+
+// C after Codex on #834: the TUI door's write is an exclusive create of a
+// random temp name with its mode set, then a rename. A temp name planted as
+// a symlink or a file refuses (EEXIST) and is never followed; a planted
+// record's own mode never survives the write.
+test("the TUI door's write refuses a planted temp file or symlink and sets its mode", () => {
+	const root = tmpdir();
+	const target = confirmPath(root, DIGEST);
+	fs.mkdirSync(path.dirname(target), { recursive: true });
+	fs.writeFileSync(target, "{}", { mode: 0o644 });
+	const victim = path.join(root, "victim");
+	fs.writeFileSync(victim, "untouched");
+	const fixed = () => "0000000000000000";
+	fs.symlinkSync(victim, `${target}.tmp-0000000000000000`);
+	assert.throws(() => writeConfirmRecord(root, DIGEST, new Date(), "%7", 4242, fixed), /EEXIST/);
+	assert.equal(fs.readFileSync(victim, "utf8"), "untouched", "the symlink was followed");
+	fs.rmSync(`${target}.tmp-0000000000000000`);
+	fs.writeFileSync(`${target}.tmp-0000000000000000`, "planted", { mode: 0o666 });
+	assert.throws(() => writeConfirmRecord(root, DIGEST, new Date(), "%7", 4242, fixed), /EEXIST/);
+	assert.equal(fs.readFileSync(`${target}.tmp-0000000000000000`, "utf8"), "planted");
+	writeConfirmRecord(root, DIGEST, new Date(), "%7", 4242);
+	assert.equal(fs.statSync(target).mode & 0o777, 0o600);
+	assert.equal(JSON.parse(fs.readFileSync(target, "utf8")).proof.pid, 4242);
 });

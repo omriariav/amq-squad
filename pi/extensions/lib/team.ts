@@ -17,6 +17,7 @@
 //     (3b (ii)): the shell in the lead's pane must not type into its own
 //     pane, nor run the owner's verbs.
 // The switch to the team lead's tools on the owner's yes (R53) is PR 2.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
@@ -46,12 +47,20 @@ export function confirmPath(root: string, digest: string): string {
 }
 
 // writeConfirmRecord writes the TUI door's record by temp name and rename.
-export function writeConfirmRecord(root: string, digest: string, now: Date, pane: string, pid: number): string {
+export function writeConfirmRecord(root: string, digest: string, now: Date, pane: string, pid: number, rand: () => string = () => crypto.randomBytes(8).toString("hex")): string {
 	const p = confirmPath(root, digest);
 	fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
 	const rec = { schema: 1, digest, door: "tui", at: now.toISOString(), by: `pane ${pane || "-"}`, proof: { pane, pid } };
-	const tmp = `${p}.tmp-${process.pid}`;
-	fs.writeFileSync(tmp, JSON.stringify(rec, null, 2) + "\n", { mode: 0o600 });
+	// an exclusive create of a random name: a planted file or symlink at the
+	// temp name refuses (EEXIST) instead of being followed or keeping its mode
+	const tmp = `${p}.tmp-${rand()}`;
+	const fd = fs.openSync(tmp, "wx", 0o600);
+	try {
+		fs.fchmodSync(fd, 0o600);
+		fs.writeFileSync(fd, JSON.stringify(rec, null, 2) + "\n");
+	} finally {
+		fs.closeSync(fd);
+	}
 	fs.renameSync(tmp, p);
 	return p;
 }
