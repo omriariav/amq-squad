@@ -58,7 +58,9 @@ I='internal/buzz/inbound.go'
 T='internal/buzz/route.go'
 
 # Row 1: the post, its first line, redact.Block, the receipt, the thread
-run("the post without redact.Block", [(R,'splitPost(rec.RequestID, rec.Thread, redact.Block(body))','splitPost(rec.RequestID, rec.Thread, body)')],
+# Codex P2-8: redact.Block replaced by an identity that still compiles; the
+# row catches it by the canary in the lead's reply reaching the post
+run("the post without redact.Block (an identity in its place)", [(R,'\t\tparts[i] = redact.Block(p)\n','\t\tparts[i] = func(s string) string { _ = redact.Block; return s }(p)\n')],
     B+"TestRelayPostsTheLeadsReplyToTheOwnersDM")
 run("the post without its re <request id> line", [(R,'head := "re " + requestID','head := requestID')],
     B+"TestRelayPostsTheLeadsReplyToTheOwnersDM")
@@ -75,7 +77,7 @@ run("the held progress never posts", [(R,'if rec.Pending != "" && (rec.ProgressA
     B+"TestRelayProgressRateBound")
 run("kind status is not progress", [(R,'case slices.Contains(e.Labels, LabelProgress) || e.Kind == "status":','case slices.Contains(e.Labels, LabelProgress):')],
     B+"TestRelayProgressRateBound")
-run("a result does not close the request", [(R,'\t\t\tif kind == "result" {\n\t\t\t\trec.Closed = true\n\t\t\t}\n','')],
+run("a result does not close the request", [(R,'\tcase "result":\n\t\trec.Closed = true\n','\tcase "result":\n')],
     B+"TestRelayProgressRateBound")
 # Row 3: the gate-shaped refusal, per form, and the thread guard
 run("no whole-line answer form", [(R,'\tif answerForm(t, g.known) {','\tif false && answerForm(t, g.known) {')],
@@ -94,10 +96,10 @@ run("a request opened in a gate thread posts into it", [(R,'\t\t\t\tif g.threads
 run("a lead-side package imports the key path", [('internal/status/zz_revert_keypath.go',None,'package status\n\nimport _ "github.com/omriariav/amq-squad/v3/internal/nostr"\n')],
     B+"TestTheLeadSideHoldsNoKeyPathNorPoster")
 # Row 5: the restart record
-run("handled replies not recorded (a restart posts again)", [(R,'\t\trec.Seen = append(rec.Seen, e.ID)\n','')],
+run("handled replies not recorded (a restart posts again)", [(R,'\tif !slices.Contains(rec.Seen, id) {\n\t\trec.Seen = append(rec.Seen, id)\n\t}\n','')],
     B+"TestARestartedAttachmentNeitherRepostsNorSkips")
 # Row 6: a gate question is never duplicated by the relay
-run("the relay carries gate-shaped replies", [(R,'if line, bad := g.refuse(body); bad {','if line, bad := g.refuse(body); bad && false {')],
+run("the relay carries gate-shaped replies", [(R,'g.refuse(p); bad {','g.refuse(p); bad && false {'),(R,'g.refuse(parts[i]); bad {','g.refuse(parts[i]); bad && false {')],
     B+"TestAGateQuestionGoesByItsOwnPathOnce")
 # Row 7: the lead's tool list (the change it guards against: a relay tool for the lead)
 run("a lead relay tool added", [('pi/extensions/lib/tools.ts','\tif (cfg.lead) {\n','\tif (cfg.lead) {\n\t\tnames.push("amq_relay_post");\n')],
@@ -127,5 +129,31 @@ run("request fields not redacted", [('internal/status/classify.go','r.RequestID,
     G+"./internal/status/ -run TestStatusShowsThePhoneRequests")
 run("the screen without the requests block", [('pi/extensions/lib/screen.ts','const reqs = st.requests ?? [];','const reqs: RequestRow[] = [];')],
     P+"test/screen.test.ts")
+# The Codex round on PR #835
+S='internal/status/relay.go'
+run("records not validated (load and write)", [(S,'\tif err := r.Validate(requestID); err != nil {\n\t\treturn nil, err\n\t}\n\treturn &r, nil','\treturn &r, nil'),
+    (R,'\tif err := r.Validate(r.RequestID); err != nil {\n\t\treturn err\n\t}\n','')],
+    B+"TestAPlantedRecordIsRefusedAndNothingPosts")
+run("record fields not checked (status)", [(S,'\tif len(bad) > 0 {\n\t\treturn fmt.Errorf','\tif len(bad) > 0 && false {\n\t\treturn fmt.Errorf')],
+    G+"./internal/status/ -run TestARelayRecordIsCheckedFieldByField")
+run("the checks on the body, not the assembled parts (Codex P1-2)", [(R,'\t\tif line, bad := g.refuse(p); bad {\n\t\t\treturn nil, line, true\n\t\t}\n\t\tparts[i] = redact.Block(p)\n\t\tif line, bad := g.refuse(parts[i]); bad {\n\t\t\treturn nil, line, true\n\t\t}','\t\tparts[i] = redact.Block(p)'),
+    (R,'\tparts := splitPost(requestID, thread, body)\n','\tif line, bad := g.refuse(body); bad {\n\t\treturn nil, line, true\n\t}\n\tparts := splitPost(requestID, thread, body)\n')],
+    B+"TestASplitNeverStartsAPartWithAnAnswerForm")
+run("the publish before the intent (Codex P1-3)", [(R,'if err := save(); err != nil {\n\t\t\treturn r, fmt.Errorf("the intent for','if err := error(nil); err != nil {\n\t\t\treturn r, fmt.Errorf("the intent for')],
+    B+"'TestAFailingRecordStorePostsNothing|TestACrashBetweenPublishAndRecordPostsAtMostOnceMore'")
+run("an unconfirmed intent retried forever (Codex P1-3)", [(R,'\t\tif p.Tries >= 2 {','\t\tif false && p.Tries >= 2 {')],
+    B+"TestACrashBetweenPublishAndRecordPostsAtMostOnceMore")
+run("a failed later part ends the reply (Codex P2-5)", [(R,'\t\t\tp.Tries-- // the publish failed: nothing went out\n','\t\t\tp.Tries--\n\t\t\tif len(p.Events) > 0 {\n\t\t\t\tparts = parts[:i]\n\t\t\t\tbreak\n\t\t\t}\n')],
+    B+"TestAFailedPartPostsNextTickWithoutRepeatingTheFirst")
+run("no normalization (Codex P2-4)", [(R,'func normalizeLine(s string) string {\n','func normalizeLine(s string) string {\n\tif true {\n\t\treturn strings.ToLower(s)\n\t}\n')],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
+run("the DM marked handled although its record failed (Codex P2-6)", [(I,'\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\treturn','\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\t_ = h.seen.put(id, "-", now)\n\t\treturn')],
+    B+"TestTheRecordComesBeforeTheQuestion")
+run("a failed delivery keeps its record (Codex P2-6)", [(I,'\t\tundo()\n','')],
+    B+"TestTheRecordComesBeforeTheQuestion")
+run("the helper without AMQ_NO_UPDATE_CHECK (Codex P2-7)", [('internal/buzz/helpers_test.go',', "AMQ_NO_UPDATE_CHECK": "1"}','}')],
+    B+"TestTestsExecAMQOnlyThroughTheHelper")
+run("a test execs amq directly (Codex P2-7)", [('internal/buzz/zz_revert_amq_test.go',None,'package buzz\n\nimport "os/exec"\n\nvar _ = exec.Command("amq", "version")\n')],
+    B+"TestTestsExecAMQOnlyThroughTheHelper")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)
