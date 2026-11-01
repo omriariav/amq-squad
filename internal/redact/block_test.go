@@ -35,6 +35,7 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 	const allocLimit = 40 // builder and slice growth leave bytes a little over linear
 	// Canaries are built at run time and match no RealCredentialShapes.
 	c1, c2, c3, c4, c5 := "Ab9"+"xY7q1", "Ab9"+"xY7q2", "Ab9"+"xY7q3", "Ab9"+"xY7q4", "Ab9"+"xY7q5"
+	c6, c7 := "Zq9"+"xV7mP2wL4", "Zq9"+"xV7mP2wL5"
 	fixtures := []struct {
 		name     string
 		build    func(n int) string
@@ -45,7 +46,7 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 		{"mixed line", func(n int) string {
 			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz "
 			return strings.Repeat(unit, n/len(unit))
-		}, []string{c1, c2, c3}},
+		}, []string{c1, c2, c3, c6, c7}},
 		// Many lines: YAML blocks, a quoted scalar across lines, JSON.
 		{"mixed block", func(n int) string {
 			unit := "password:\n  '" + c4 + "\n  " + c5 + "'\nnext: kept\n{\"password\":\n \"" + c2 + "\"}\npassword:\n  " + c1 + "\n"
