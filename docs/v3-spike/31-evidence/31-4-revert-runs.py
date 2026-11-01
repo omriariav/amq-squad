@@ -58,11 +58,13 @@ I='internal/buzz/inbound.go'
 T='internal/buzz/route.go'
 
 # Row 1: the post, its first line, redact.Block, the receipt, the thread
-# Codex P2-8: redact.Block replaced by an identity that still compiles; the
+# Codex P2-8: redact.Block replaced by an identity that still compiles, in
+# both layers (the whole body before the split, each part after it); the
 # row catches it by the canary in the lead's reply reaching the post
-run("the post without redact.Block (an identity in its place)", [(R,'\t\tparts[i] = redact.Block(p)\n','\t\tparts[i] = func(s string) string { _ = redact.Block; return s }(p)\n')],
+run("the post without redact.Block (an identity in its place)", [(R,'\t\tparts[i] = redact.Block(p)\n','\t\tparts[i] = func(s string) string { _ = redact.Block; return s }(p)\n'),
+    (R,'splitPost(requestID, thread, redact.Block(body))','splitPost(requestID, thread, body)')],
     B+"TestRelayPostsTheLeadsReplyToTheOwnersDM")
-run("the post without its re <request id> line", [(R,'head := "re " + requestID','head := requestID')],
+run("the post without its re <request id> line", [(R,'head := redact.Block("re " + requestID)','head := redact.Block(requestID)')],
     B+"TestRelayPostsTheLeadsReplyToTheOwnersDM")
 run("the receipt is routed, not accepted <request id>", [(I,'text := "accepted " + rid + " routed " + dest','text := "routed " + dest')],
     B+"TestRelayPostsTheLeadsReplyToTheOwnersDM")
@@ -86,7 +88,7 @@ run("the refusal not narrowed (any line containing the word)", [(R,'\tif len(w) 
     B+"'TestRelayRefusesGateShapedLines/sentences'")
 run("no open gate id refusal", [(R,'\t\tif g.open[tok] {','\t\tif false && g.open[tok] {')],
     B+"'TestRelayRefusesGateShapedLines/an_open_gate.s_id'")
-run("no open gate question text refusal", [(R,'\t\tif strings.Contains(t, q) {','\t\tif false && strings.Contains(t, q) {')],
+run("no open gate question text refusal", [(R,'\t\tif utf8.RuneCountInString(q) >= MinQuestionLine && strings.Contains(t, q) {','\t\tif false && strings.Contains(t, q) {')],
     B+"'TestRelayRefusesGateShapedLines/an_open_gate.s_question'")
 run("the poster's gate-thread guard gone", [(R,'\tif g.threads[rec.PostTo] {','\tif false && g.threads[rec.PostTo] {')],
     B+"'TestRelayRefusesGateShapedLines/never_into'")
@@ -143,7 +145,7 @@ run("the publish before the intent (Codex P1-3)", [(R,'if err := save(); err != 
     B+"'TestAFailingRecordStorePostsNothing|TestACrashBetweenPublishAndEventWriteIsANamedState'")
 run("an unconfirmed intent retried forever (Codex P1-3)", [(R,'\t\tif p.Tries >= 2 {','\t\tif false && p.Tries >= 2 {')],
     B+"TestACrashBetweenPublishAndEventWriteIsANamedState")
-run("a failed later part ends the reply (Codex P2-5)", [(R,'\t\t\tp.Tries-- // the publish failed: nothing went out\n','\t\t\tp.Tries--\n\t\t\tif len(p.Events) > 0 {\n\t\t\t\tparts = parts[:i]\n\t\t\t\tbreak\n\t\t\t}\n')],
+run("a failed later part ends the reply (Codex P2-5)", [(R,'\t\t\treturn r, fmt.Errorf("post %s part','\t\t\tif len(p.Events) > 0 {\n\t\t\t\tparts = parts[:i]\n\t\t\t\tbreak\n\t\t\t}\n\t\t\treturn r, fmt.Errorf("post %s part')],
     B+"TestAFailedPartPostsNextTickWithoutRepeatingTheFirst")
 run("no normalization (Codex P2-4)", [(R,'func normalizeLine(s string) string {\n','func normalizeLine(s string) string {\n\tif true {\n\t\treturn strings.ToLower(s)\n\t}\n')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
