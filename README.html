@@ -807,9 +807,37 @@ with <code>remote bind</code>, which writes the owner's gate binding
 <li><strong>The mailbox adapter.</strong> <code>amq-remote serve</code>
 delivers each DM from the owner into the share's mailbox;
 <code>remote attach</code> answers each once (<code>accepted</code>,
-<code>refused</code>, <code>routed</code>), and serve posts the reply
-under the message. A message starting with <code>@&lt;lead&gt;</code> is
-routed to that squad lead.</li>
+<code>refused</code>), and serve posts the reply under the message. A
+message starting with <code>@&lt;lead&gt;</code> is routed to that squad
+lead.</li>
+<li><strong>Ask from the phone, get the answer there (two-way).</strong>
+A question gets
+<code>accepted &lt;request id&gt; routed &lt;lead&gt;</code> at once,
+and goes to the lead on the request's AMQ thread,
+<code>cockpit/&lt;request id&gt;</code>. The lead replies on that thread
+as it replies to any message (<code>amq reply</code>, or
+<code>amq_reply</code> in pi). The attachment follows the thread and
+posts each reply to your DM as a post that starts with
+<code>re &lt;request id&gt;</code>. Reply to that post to continue the
+same request; a DM that is not a reply opens a new one. A reply marked
+progress (<code>--kind status</code> or <code>--labels progress</code>)
+posts at most once per 2 minutes, the newest one winning; answers and
+the result (<code>--labels result</code> or
+<code>--kind decision</code>, which also closes the request) post at
+once. A reply over one DM is split into at most three parts
+(<code>(1/3)</code>).</li>
+<li><strong>What the relay never carries.</strong> Only the lead's own
+text reaches your DM, after <code>redact.Block</code>; the attachment
+never writes a line of its own from status. It refuses a reply with a
+line that is, as a whole, a gate answer (<code>yes</code>,
+<code>no</code>, <code>approve</code>, <code>deny</code>, alone or with
+a gate id or the typed tuple), a line naming an open gate's id, or a
+line of an open gate's question. It never posts into a gate question's
+thread. A sentence like "No, the build is green" posts. A refusal is
+recorded by name (<code>relay_refused_gate_shape</code>) and a sha256 of
+the line, and shows in the lead's <code>/squad</code> screen and in
+<code>status</code> under <code>requests</code>. The lead never holds a
+key: the body key stays in the attachment.</li>
 <li><strong>The gates.</strong> A typed gate's question goes to the
 owner's DM with its reply thread; the owner answers in that thread, and
 the core of the squad that raised it fetches and verifies the signed

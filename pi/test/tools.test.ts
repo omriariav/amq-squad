@@ -129,3 +129,15 @@ test("the lead's widen tool reads the recorded refusal and never widens by a fab
 		"[scheduler][relaunch][--reason][rev-1 is gone][--json]",
 	]);
 });
+
+// Brief 31-4, row 7: the two-way phone adds no lead tool. The lead replies
+// on the cockpit thread with amq_reply as before (a progress reply is
+// `kind: status`); the relay is the core's. The lead's tool list is the
+// exact thirteen.
+test("the lead's tool list is unchanged by the two-way phone: the exact thirteen", () => {
+	const names = registerTools(new FakePi() as any, cfg({ lead: true }));
+	assert.deepEqual(names, [
+		"amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_claim", "amq_task_done",
+		"amq_task_add", "amq_repo_read", "amq_repo_list", "amq_status", "amq_scheduler_relaunch", "amq_task_widen", "amq_task_reset",
+	]);
+});

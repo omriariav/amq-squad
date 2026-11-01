@@ -92,6 +92,8 @@ type Input struct {
 	SchedulerProc Scheduler
 	Decisions     []Decision
 	TrainRuns     []TrainRun
+	// brief 31-4: the phone requests from the relay records
+	Requests []Request
 }
 
 // BaseCapabilities are the features every schema 1 producer fills.
@@ -119,6 +121,7 @@ func Build(in Input) Status {
 		Lead:      in.Lead,
 		Decisions: append([]Decision{}, in.Decisions[max(len(in.Decisions)-DecisionsTail, 0):]...),
 		Train:     Train{Runs: append([]TrainRun{}, in.TrainRuns...), Alerts: []TrainAlert{}},
+		Requests:  append([]Request{}, in.Requests...),
 	}
 	for _, a := range in.Alerts {
 		s.Train.Alerts = append(s.Train.Alerts, TrainAlert{ID: a.ID, Kind: a.Kind, Detail: a.Subject, GateID: a.GateID, At: a.At})
@@ -369,6 +372,12 @@ func redactDocument(s *Status) {
 	}
 	for i := range s.Train.Alerts {
 		s.Train.Alerts[i].Detail = redact.Block(s.Train.Alerts[i].Detail)
+	}
+	for i := range s.Requests {
+		// ids and names only (brief 31-4); a hand-edited record carries no
+		// text into the document either
+		r := &s.Requests[i]
+		r.RequestID, r.Thread, r.Lead, r.Refused = redact.Block(r.RequestID), redact.Block(r.Thread), redact.Block(r.Lead), redactAll(r.Refused)
 	}
 }
 

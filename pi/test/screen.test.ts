@@ -60,6 +60,19 @@ test("the screen renders from a status fixture: the lead and the root, four bloc
 	assert.deepEqual(quiet.filter((l) => l.startsWith("  refusal: ")), ["  refusal: none", "  refusal: none", "  refusal: none", "  refusal: none"]);
 });
 
+// Brief 31-4 (the lead side): per phone request, whether the lead's answer
+// was relayed to the owner's DM or what the relay refused, by name only;
+// the four blocks keep their refusal lines.
+test("the requests block marks each phone request relayed or refused, by name", () => {
+	const lines = renderScreen(fixture, now);
+	const i = lines.indexOf("requests (2)");
+	assert.ok(i > 0, lines.join("\n"));
+	assert.equal(lines[i + 1], "  q-7c41d09e2a55  cto  not relayed  refused: relay_refused_gate_shape");
+	assert.equal(lines[i + 2], "  q-3f2a9c1e7b04  cto  relayed 2m ago");
+	assert.equal(lines.filter((l) => l.startsWith("  refusal: ")).length, 4);
+	assert.ok(!renderScreen({ ...fixture, requests: [] }, now).some((l) => l.startsWith("requests")));
+});
+
 // Row 19 (the screen's half): a Claude seat stalled at a dialog and a pi
 // seat with no key for its provider each show as a line with the seat's
 // state and its warning; neither is the seats block's refusal.

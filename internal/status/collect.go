@@ -109,6 +109,7 @@ func Collect(o CollectOptions) Input {
 	collectProcesses(o, &in, warn)
 	collectDecisions(o, &in, warn)
 	collectTrain(o, &in, warn)
+	in.Requests = collectRequests(o.Root, warn)
 	entries, err := os.ReadDir(filepath.Join(o.Root, "agents"))
 	if err != nil && !os.IsNotExist(err) {
 		warn("agents: %v", err)

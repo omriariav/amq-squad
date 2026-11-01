@@ -23,6 +23,7 @@ type Mail struct {
 	Body    string
 	Labels  []string
 	Refs    []string
+	Thread  string // the AMQ thread ("" for AMQ's default p2p thread)
 	Project string // AMQ peer project of the recipient's root ("" for the same root)
 	Session string // its session
 }
@@ -53,6 +54,9 @@ func (a AMQMailer) Send(ctx context.Context, m Mail) (string, error) {
 	}
 	if len(m.Refs) > 0 {
 		args = append(args, "--refs", strings.Join(m.Refs, ","))
+	}
+	if m.Thread != "" {
+		args = append(args, "--thread", m.Thread)
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -108,12 +112,16 @@ func ParseRoute(content string, leads []string) Route {
 
 // Delivery is what Deliver did with one phone message.
 type Delivery struct {
-	Mailbox   string   `json:"mailbox"`
-	MailboxID string   `json:"mailbox_message_id"`
-	Lead      string   `json:"lead,omitempty"`
-	LeadID    string   `json:"lead_message_id,omitempty"`
-	Refused   string   `json:"refused,omitempty"`   // why a named destination was not forwarded to
-	Ambiguous []string `json:"ambiguous,omitempty"` // the squads a bare lead name matches
+	Mailbox   string `json:"mailbox"`
+	MailboxID string `json:"mailbox_message_id"`
+	Lead      string `json:"lead,omitempty"`
+	LeadID    string `json:"lead_message_id,omitempty"`
+	// LeadHandle is the forward's AMQ handle (Lead may be squad/handle);
+	// Thread the request's cockpit thread both messages went on.
+	LeadHandle string   `json:"lead_handle,omitempty"`
+	Thread     string   `json:"thread,omitempty"`
+	Refused    string   `json:"refused,omitempty"`   // why a named destination was not forwarded to
+	Ambiguous  []string `json:"ambiguous,omitempty"` // the squads a bare lead name matches
 }
 
 // Deliver puts one owner message into the bound mailbox as a message from
@@ -126,17 +134,28 @@ type Delivery struct {
 // is redacted, the owner's own signed text included (ruling 18; 5-amq-B fix
 // round 2).
 func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (Delivery, error) {
+	return DeliverOn(ctx, m, t, eventID, content, "", nil)
+}
+
+// DeliverOn is Deliver on an AMQ thread, the request's cockpit thread
+// (brief 31-4). cont, when set, is the request a continuation belongs to:
+// its text goes the way the request's question went (cont.Lead, "" for the
+// mailbox only), whatever lead the text names.
+func DeliverOn(ctx context.Context, m Mailer, t Target, eventID, content, thread string, cont *Route) (Delivery, error) {
 	if m == nil {
 		return Delivery{}, errors.New("no mailer")
 	}
 	r := ParseRoute(content, t.Leads)
+	if cont != nil {
+		r = Route{Lead: cont.Lead, Text: strings.TrimSpace(content)}
+	}
 	labels := []string{"buzz", "nostr:" + eventID}
-	d := Delivery{Mailbox: t.Handle}
+	d := Delivery{Mailbox: t.Handle, Thread: thread}
 	subject := "Buzz: message from the owner"
 	if r.Lead != "" && r.Lead != t.Handle {
 		subject = "Buzz: message from the owner for " + r.Lead
 	}
-	id, err := m.Send(ctx, Mail{Root: t.Root, From: CarrierHandle, To: t.Handle, Subject: subject, Body: redact.Block(strings.TrimSpace(content)), Labels: labels})
+	id, err := m.Send(ctx, Mail{Root: t.Root, From: CarrierHandle, To: t.Handle, Subject: subject, Body: redact.Block(strings.TrimSpace(content)), Labels: labels, Thread: thread})
 	if err != nil {
 		return d, err
 	}
@@ -163,7 +182,7 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 	// from the mailbox's root (fleet.RelayArgv's route); the ref names the
 	// mailbox copy only when both are in one root
 	fwd := Mail{Root: t.Root, From: CarrierHandle, To: dest.Handle, Project: dest.Project, Session: dest.Session,
-		Subject: "Buzz: from the owner, routed by " + t.Handle, Body: redact.Block(r.Text), Labels: append(labels, "routed")}
+		Subject: "Buzz: from the owner, routed by " + t.Handle, Body: redact.Block(r.Text), Labels: append(labels, "routed"), Thread: thread}
 	if dest.Project == "" {
 		fwd.Refs = []string{id}
 	}
@@ -171,7 +190,7 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 	if err != nil {
 		return d, err
 	}
-	d.Lead, d.LeadID = r.Lead, lid
+	d.Lead, d.LeadID, d.LeadHandle = r.Lead, lid, dest.Handle
 	if dest.Squad != "" && !strings.Contains(r.Lead, "/") {
 		d.Lead = dest.Squad + "/" + r.Lead
 	}
