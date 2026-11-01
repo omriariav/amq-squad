@@ -312,31 +312,31 @@ REVERT the branch not read from git: fails (the row catches it)
    --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
    --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (4.01s)
 REVERT the host commands with no deadline: fails (the row catches it)
-   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (60.73s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (60.77s)
 REVERT the hanging command killed alone, not its group: fails (the row catches it)
-   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (7.01s)
+   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (7.02s)
 REVERT the host commands' output not capped: fails (the row catches it)
-   --- FAIL: TestContextHostRefusesAFloodingCommand (0.18s)
+   --- FAIL: TestContextHostRefusesAFloodingCommand (0.19s)
 REVERT a host fact leaving context --host unredacted: fails (the row catches it)
    --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
 REVERT the AMQ version not read: fails (the row catches it)
-   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.09s)
+   --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
 REVERT the yes writing no phase marker (the record): fails (the row catches it)
-   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (1.10s)
+   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.09s)
 REVERT a failed record not logged phase_record_failed: fails (the row catches it)
-   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.65s)
+   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.07s)
 REVERT a failed record withholding the team identity from the reply: fails (the row catches it)
-   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.91s)
+   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.07s)
 REVERT the identity not resolved before the start (no team_identity refusal): fails (the row catches it)
-   --- FAIL: TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts (0.34s)
+   --- FAIL: TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts (0.02s)
 REVERT the start's reply without the team identity: fails (the row catches it)
-   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.92s)
+   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.08s)
 REVERT the phase query answering team before the start: fails (the row catches it)
-   --- FAIL: TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile (0.38s)
+   --- FAIL: TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile (0.03s)
 REVERT a restarted solo lead not saying the offer: fails (the row catches it)
-   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.19s)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.01s)
 REVERT a marker for another repository read: fails (the row catches it)
-   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.10s)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
 REVERT the team tools declared before the yes: fails (the row catches it)
    not ok 1 - R53: the owner's yes switches the lead's tools to exactly the team lead's thirteen and refuses the solo set phase_team
 REVERT the switch not changing the declared tools (no setActiveTools): fails (the row catches it)
@@ -377,32 +377,32 @@ REVERT the restart's offer not said: fails (the row catches it)
 REVERT the restart's offer said every turn: fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
 REVERT no host line: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT the verbs run every turn (no key): fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT an unchanged host line sent again: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT the task store not in the host key: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT context asked without --host: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT closed tasks shown as open: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT answered gates shown as open: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT a host fact interpolated unredacted in the extension: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT a missing fact left blank, not named missing: fails (the row catches it)
-   not ok 6 - the team lead's first turn carries the host facts from status and context, not the model
+   not ok 7 - the team lead's first turn carries the host facts from status and context, not the model
 REVERT the lead proving no reply: fails (the row catches it)
    --- FAIL: TestTheLeadAnswersItsPisChallengeWithItsProof (0.03s)
 REVERT the challenge not passed through team apply: fails (the row catches it)
-   --- FAIL: TestTheLeadAnswersItsPisChallengeWithItsProof (0.04s)
+   --- FAIL: TestTheLeadAnswersItsPisChallengeWithItsProof (0.03s)
 REVERT no nonce handed to pi at the spawn: fails (the row catches it)
    --- FAIL: TestRunProcessHandsTheNonceOverDescriptorThreeNotTheEnvironment (0.01s)
 REVERT the nonce put in pi's environment: fails (the row catches it)
-   --- FAIL: TestTheSoloLeadServesTheStartSocketToItsPi (0.02s)
+   --- FAIL: TestTheSoloLeadServesTheStartSocketToItsPi (0.01s)
 REVERT pi taking an unproved reply: fails (the row catches it)
    not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
 REVERT the apply switching on an unproved start reply: fails (the row catches it)
@@ -412,33 +412,36 @@ REVERT the phase query's reply taken unproved: fails (the row catches it)
    not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
 REVERT the nonce sent over the socket: fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
+REVERT the nonce read after the extension registers (in installSoloTeam): fails (the row catches it)
+   not ok 5 - R53: the nonce's descriptor is closed before the extension's first registration
 REVERT the nonce's descriptor left open: fails (the row catches it)
    not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
+   not ok 5 - R53: the nonce's descriptor is closed before the extension's first registration
 REVERT each host command given its own deadline: fails (the row catches it)
-   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (8.40s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (8.45s)
 REVERT the started groups not swept when the read ends: fails (the row catches it)
-   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (9.03s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (9.29s)
 REVERT the extension's context --host timeout at the hook timeout: fails (the row catches it)
-   not ok 7 - context --host's timeout is above Go's host budget
+   not ok 8 - context --host's timeout is above Go's host budget
 REVERT the restart offer's old steps (Go): fails (the row catches it)
-   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.79s)
 REVERT the restart offer's old steps (pi): fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
 REVERT the .git directory assumed (no git rev-parse): fails (the row catches it)
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT the ref HEAD names not keyed: fails (the row catches it)
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT answers/ not keyed: fails (the row catches it)
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT an expired gate not keyed: fails (the row catches it)
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT the launch record not keyed: fails (the row catches it)
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT the AMQ executable not keyed: fails (the row catches it)
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT the amq-squad binary not keyed: fails (the row catches it)
-   not ok 8 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
-61 runs, 61 caught, 0 missed
+   not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
+62 runs, 62 caught, 0 missed
 ```
 
 ## 5. The owner-run rows
