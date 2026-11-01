@@ -56,16 +56,16 @@ run("the branch not read from git",
 # Codex on #837, items 5 and 6: the host commands bounded, the facts redacted
 run("the host commands with no deadline",
  [('internal/cli/hook_context.go','ctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)','ctx, cancel := context.WithCancel(context.Background())')],
- C+"TestContextHostKills")
+ C+"TestContextHost")
 run("the hanging command killed alone, not its group",
  [('internal/cli/hook_context.go','cmd.Cancel = func() error { killGuardGroup(cmd); return nil }','cmd.Cancel = func() error { return cmd.Process.Kill() }')],
- C+"TestContextHostKills")
+ C+"TestContextHost")
 run("the host commands' output not capped",
  [('internal/cli/hook_context.go','out := &cappedBuffer{max: contextHostOutputCap, over: cancel}','out := &cappedBuffer{max: 1 << 30, over: cancel}')],
- C+"TestContextHostKills")
+ C+"TestContextHost")
 run("a host fact leaving context --host unredacted",
  [('internal/cli/hook_context.go','\t\t*f = redact.Block(*f)\n','\t\t*f, _ = strings.Clone(*f), redact.Block\n')],
- C+"TestContextHostCarries")
+ C+"TestContextHost")
 run("the AMQ version not read",
  [('internal/cli/hook_context.go','if out, err := contextHostRun(c, h.Repository, amq, "--version"); err == nil {','if out, err := contextHostRun(c, h.Repository, amq, "--version"); err == nil && false {')],
  C+"TestContextHost")
@@ -206,10 +206,10 @@ run("the nonce's descriptor left open",
 run("each host command given its own deadline",
  [('internal/cli/hook_context.go','\tif err := c.ctx.Err(); err != nil {\n\t\treturn "", fmt.Errorf("%s not run','\tif err := c.ctx.Err(); err != nil && false {\n\t\treturn "", fmt.Errorf("%s not run'),
   ('internal/cli/hook_context.go','\tctx, cancel := context.WithCancel(c.ctx)\n','\tctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)\n')],
- C+"TestContextHostShares")
+ C+"TestContextHost")
 run("the started groups not swept when the read ends",
  [('internal/cli/hook_context.go','\t\tcancel()\n\t\tc.sweep()\n','\t\tcancel()\n')],
- C+"TestContextHostShares")
+ C+"TestContextHost")
 run("the extension's context --host timeout at the hook timeout",
  [('pi/extensions/lib/hooks.ts','const timeoutMs = host ? Math.max(cfg.hookTimeoutMs, CONTEXT_HOST_TIMEOUT_MS) : cfg.hookTimeoutMs;','const timeoutMs = cfg.hookTimeoutMs;')],
  P+"test/phase.test.ts")
