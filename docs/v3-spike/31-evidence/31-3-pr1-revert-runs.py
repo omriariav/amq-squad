@@ -68,8 +68,8 @@ run("a witness of another digest taken for this one",
 run("the lead's log read for authority",
  [('internal/cli/lead_start.go','\trec, ok := s.witnessed[digest]\n\ts.wmu.Unlock()\n','\trec, ok := s.witnessed[digest]\n\ts.wmu.Unlock()\n\tif h, herr := digestHex(digest); !ok && herr == nil {\n\t\tif raw, rerr := os.ReadFile(confirmPath(s.root, h)); rerr == nil && json.Unmarshal(raw, &rec) == nil {\n\t\t\tok = true\n\t\t}\n\t}\n')],
  C+"TestTheStartAcceptsOnlyAWitnessed")
-run("the refusal naming two doors (no Buzz door)",
- [('internal/cli/team_confirm.go','; (3) send the signed Buzz DM \\"yes %s\\"", prefix, digest, project, prefix)','", prefix, digest, project)')],
+run("the refusal naming one door (no Buzz door)",
+ [('internal/cli/team_confirm.go','; (2) send the signed Buzz DM \\"yes %s\\" (digest %s)", prefix, prefix, digest)',' (digest %s)", prefix, digest)')],
  C+"TestTheStartAcceptsOnlyAWitnessed")
 # the TUI door, witnessed from the lead's own pi
 run("the TUI door from any peer",
@@ -85,36 +85,24 @@ run("the solo lead not recording its pi",
  [('internal/cli/pi_lead.go','\t\tpiStartedHook = func(pid int) {\n\t\t\tstamp, _ := procinfo.StartToken(pid)\n\t\t\tstarter.setPi(pid, stamp)\n\t\t}\n','\t\t_ = procinfo.StartToken\n')],
  C+"TestTheSoloLeadServes")
 # the shell door, read by the lead from the kernel (and the owner's apply, the act)
-run("the kernel check blind to a lead or seat argv",
- [('internal/cli/team_confirm.go','\t\t\tif leadOrSeatArgv(argv) {','\t\t\tif false && leadOrSeatArgv(argv) {')],
- C+"'TestTheShellDoorIsWitnessed|TestTheOwnersApplyIsTheConfirmation'")
-run("the kernel check blind to an ancestor's AM_ME",
- [('internal/cli/team_confirm.go','ok && amqIdentityEnv(env) {','ok && false && amqIdentityEnv(env) {')],
- C+"'TestTheShellDoorIsWitnessed|TestTheOwnersApplyIsTheConfirmation'")
-run("the kernel check without the peer's terminal",
- [('internal/cli/team_confirm.go','\tcase !has:\n','\tcase has && false:\n')],
- C+"'TestTheShellDoorIsWitnessed|TestTheOwnersApplyIsTheConfirmation'")
-run("the kernel check passing an orphaned chain",
- [('internal/cli/team_confirm.go','\tif !leader {','\tif false && !leader {')],
- C+"'TestTheShellDoorIsWitnessed|TestTheOwnersApplyIsTheConfirmation'")
-run("the shell door passing a descendant of the lead's own pid",
- [('internal/cli/team_confirm.go','\t\tif parent == lead {','\t\tif false && parent == lead {')],
- C+"TestTheShellDoorIsWitnessed")
-run("the kernel check not re-reading the stamps at the end",
- [('internal/cli/team_confirm.go','\treturn chain, restampHops(chain)\n}','\treturn chain, nil\n}')],
- C+"TestTheShellDoorIsWitnessed")
-run("the shell door's witness without the chain the lead read",
- [('internal/cli/lead_start.go','Proof: confirmProof{PIDChain: chain}})','Proof: confirmProof{PIDChain: chain[:0]}})')],
- C+"TestTheShellDoorIsWitnessed")
-run("no lead-start.json (team confirm cannot find the lead)",
+run("no lead-start.json (the shell apply cannot see the running lead)",
  [('internal/cli/lead_start.go','\tif err := atomicfile.Write(filepath.Join(s.root, "extensions", "amq-squad", leadStartRecordName), append(rec, \'\\n\'), 0o600); err != nil {','\tif err := atomicfile.Write(filepath.Join(s.root, "extensions", "amq-squad", "elsewhere.json"), append(rec, \'\\n\'), 0o600); err != nil {')],
- C+"TestTheShellDoorIsWitnessed")
-run("the owner's apply without the kernel check (the act)",
- [('internal/cli/team.go','\tif _, err := ownerAncestry(confirmSelf(), 0); err != nil {\n\t\treturn err\n\t}\n\troot, err := soloRootOf(dir)','\troot, err := soloRootOf(dir)')],
- C+"TestTheOwnersApplyIsTheConfirmation")
-run("the plan-file apply without the kernel check",
- [('internal/cli/team.go','\t\tif _, err := ownerAncestry(confirmSelf(), 0); err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n\tif apply {','\t}\n\tif apply {')],
- C+"TestTheOwnersApplyIsTheConfirmation")
+ C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("the shell apply with no lead check",
+ [('internal/cli/team.go','\tif err := noLeadHolds(dir, proposalSession(prop.SquadYAML), strings.TrimSpace(digest)); err != nil {\n\t\treturn err\n\t}\n','')],
+ C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("the shell apply ignoring a running solo lead",
+ [('internal/cli/team_confirm.go','\tif c, derr := dialLead(root); derr == nil {','\tif c, derr := dialLead(root); false && derr == nil {')],
+ C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("the shell apply ignoring a team lead's lock",
+ [('internal/cli/team_confirm.go','\tif held {','\tif false && held {')],
+ C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("the plan-file apply with no lead check",
+ [('internal/cli/team.go','\t\tif err := noLeadHolds(p.ProjectDir, plan.Session, *o.digest); err != nil {\n\t\t\treturn err\n\t\t}\n','')],
+ C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("the socket accepting the dropped confirm-shell kind",
+ [('internal/cli/lead_start.go','\tcase req.Kind == confirmShellKind:\n','\tcase false && req.Kind == confirmShellKind:\n')],
+ C+"TestTheShellDoorIsGone")
 # the Buzz door, verified by the lead from the event bytes, with no connection
 run("the lead not recomputing the event id from the bytes",
  [('internal/cli/lead_start.go','\tcase !e.CheckID():\n','\tcase false:\n')],
@@ -126,8 +114,15 @@ run("the lead taking an hour-old yes (no window)",
  [('internal/cli/lead_start.go','\tcase e.CreatedAt < now.Add(-buzz.RouteWindow).Unix() || e.CreatedAt > now.Add(buzz.FutureSkew).Unix():','\tcase false:')],
  C+"TestTheBuzzDoorIsWitnessed")
 run("the lead witnessing a replayed event (no once-only)",
- [('internal/cli/lead_start.go','\tif replayed {','\tif false && replayed {')],
+ [('internal/cli/lead_start.go','\tif s.seen[e.ID] || eventLogged(s.root, e.ID) {','\tif false {')],
  C+"TestTheBuzzDoorIsWitnessed")
+run("the once-only not kept across a restart (no event log read)",
+ [('internal/cli/lead_start.go','\tif s.seen[e.ID] || eventLogged(s.root, e.ID) {','\tif s.seen[e.ID] {')],
+ C+"TestTheBuzzDoorIsWitnessed")
+run("the once-only's check and mark not under one lock",
+ [('internal/cli/lead_start.go','\ts.wmu.Lock()\n\tdefer s.wmu.Unlock()\n\tif s.seen[e.ID] || eventLogged(s.root, e.ID) {','\ts.wmu.Lock()\n\tseenNow := s.seen[e.ID] || eventLogged(s.root, e.ID)\n\ts.wmu.Unlock()\n\tif seenNow {'),
+  ('internal/cli/lead_start.go','\ts.seen[e.ID] = true\n\treturn s.witnessLocked(confirmRecord{','\ts.seen[e.ID] = true\n\treturn s.witness(confirmRecord{')],
+ "go test -count=5 ./internal/cli/ -run TestTheBuzzDoorWitnessesOneEventOnceUnderConcurrency")
 run("the Buzz door's witness without the event id",
  [('internal/cli/lead_start.go','Proof: confirmProof{EventID: e.ID}})','Proof: confirmProof{}})')],
  C+"'TestTheBuzzDoorIsWitnessed|TestTheOwnersSignedYes'")
@@ -208,12 +203,6 @@ run("the solo lead's pi without the solo flag",
  [('internal/cli/pi_lead.go','\t\tsolo["AMQ_SQUAD_SOLO_LEAD"] = "1"\n','')],
  C+"TestTheSoloLeadServes")
 # procinfo
-run("the environment read stopping at argv",
- [('internal/procinfo/environ.go','\tfor n := 0; n < argc; n++ {','\tfor n := 0; n < argc-1; n++ {')],
- G+"-run TestEnviron ./internal/procinfo/")
-run("the kernel's terminal read taking tty_nr 0 as a terminal",
- [('internal/procinfo/environ.go','\treturn f[4] != "0", true','\treturn true, true')],
- G+"-run TestHasTTY ./internal/procinfo/")
 # the extension (row 1c, 1f, 3)
 run("the TUI door taking any prefix",
  [('pi/extensions/lib/team.ts','if (prefix.toLowerCase() !== p.prefix) return','if (false && prefix.toLowerCase() !== p.prefix) return')],
@@ -251,6 +240,15 @@ run("the shell's refusal not wired into tool_call",
 run("propose's plan not on stdin",
  [('pi/extensions/lib/team.ts','{ stdin: JSON.stringify(plan), timeoutMs','{ timeoutMs')],
  P+"test/team.test.ts")
+run("any amq-squad verb allowed in the solo lead's shell",
+ [('pi/extensions/lib/team.ts','	return AMQ_SQUAD_ALLOW.includes(words[0] ?? "") ||','	return true ||')],
+ P+"test/team.test.ts")
+run("the extension's allowlist not the table's (up added)",
+ [('pi/extensions/lib/team.ts','export const AMQ_SQUAD_ALLOW = ["status",','export const AMQ_SQUAD_ALLOW = ["up", "status",')],
+ P+"test/team.test.ts")
+run("any amq-squad verb allowed by the guard's second layer",
+ [('internal/cli/hook_guard.go','	return slices.Contains(soloAmqSquadAllow, one) ||','	return true ||')],
+ C+"TestTheGuardRefusesTheSoloLeads")
 run("the team tools and /squad confirm given to the team lead too",
  [('pi/extensions/amq-squad.ts','\telse if (cfg.solo) installSoloTeam(pi, cfg);','\tif (cfg.lead || cfg.solo) installSoloTeam(pi, cfg);')],
  P+"test/keys.test.ts")
