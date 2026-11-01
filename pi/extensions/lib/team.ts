@@ -30,6 +30,8 @@ const DIGEST = /^sha256:([0-9a-f]{64})@([0-9a-f]{64}|absent)$/;
 // TEAM_PLAN_LABEL is gateverify.TeamPlanLabel: the label on the cockpit
 // reply that carries the team plan.
 export const TEAM_PLAN_LABEL = "team-plan:";
+// PLAN_KIND is the start socket's planSentKind (internal/cli/lead_start.go).
+export const PLAN_KIND = "amq-squad.plan-sent.v1";
 
 type Proposal = { digest: string; prefix: string; plan: string[]; project_dir: string };
 type StartReply = { outcome: string; refusal?: string; detail?: string; roster?: string[]; owner_steps?: string[][]; steps?: { name: string; outcome: string; refusal?: string; detail?: string }[] };
@@ -205,11 +207,13 @@ export class SoloTeam {
 	}
 
 	// propose records the plan; with replyTo (the owner's phone request, an
-	// AMQ message id) this process also sends the plan as the reply there,
-	// labelled team-plan:<content digest> (brief 3.1.1-1, Codex P1 on #838):
-	// the relay records the post as the plan for that digest, and the
-	// owner's bare yes replied to it on the phone confirms it. The label is
-	// set here from the digest the propose printed, never by the model.
+	// AMQ message id) this process also sends the plan as the reply there
+	// (brief 3.1.1-1, Codex's rounds on #838). First it records the exact
+	// text with the lead over the start socket (PLAN_KIND, accepted from
+	// this pi only): the lead proves the owner's yes against that text. Then
+	// it sends the reply labelled team-plan:<content digest>, which the relay
+	// records for routing. The label and the text come from the propose's
+	// own output, never from the model.
 	async propose(input: unknown, signal?: AbortSignal): Promise<string> {
 		const { reply_to: replyTo, ...plan } = (input ?? {}) as Record<string, unknown>;
 		const r = await this.runner(this.cfg.bin, ["team", "propose", "--from", "/dev/stdin", "--project", this.project(), "--json"], { stdin: JSON.stringify(plan), timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000), signal });
@@ -224,6 +228,13 @@ export class SoloTeam {
 		if (typeof replyTo !== "string" || !replyTo) return text;
 		const hex = DIGEST.exec(d.digest)?.[1] ?? "";
 		if (replyTo.startsWith("-") || !this.cfg.amq) return `${text}\nthe plan was not sent as the reply to ${replyTo}: ${this.cfg.amq ? "a bad message id" : "no amq binary"}`;
+		let rec: LeadReply;
+		try {
+			rec = await askLead(this.socket, { kind: PLAN_KIND, digest: d.digest, body: text });
+		} catch (err) {
+			return `${text}\nthe plan was not sent as the reply to ${replyTo}: the lead did not record it (${String((err as Error).message ?? err)})`;
+		}
+		if (rec.outcome !== "recorded") return `${text}\nthe plan was not sent as the reply to ${replyTo}: the lead did not record it (${rec.refusal ?? "refused"}: ${rec.detail ?? ""})`;
 		const s = await this.runner(this.cfg.amq, ["reply", "--me", this.cfg.me, "--id", replyTo, "--labels", `${TEAM_PLAN_LABEL}${hex}`, "--json", "--body", "-"], { stdin: text, timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000), signal });
 		if (s.spawnError || s.timedOut || s.code !== 0) return `${text}\nthe plan was not sent as the reply to ${replyTo} (${describe(s, 30000)})`;
 		return `${text}\nsent as the reply to ${replyTo}, marked as the team plan: the owner's yes to it on the phone confirms it`;

@@ -171,13 +171,17 @@ run("the lead takes a yes whose direct reply target is not the plan post", [(LS,
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the lead takes an altered plan post", [(LS,'\t\tcase !p.CheckID():\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a bare no as the confirmation", [(LS,'case bare && verb == "approve" && req.Post != nil && nostr.IsHex64(req.PlanFor):','case bare && verb != "" && req.Post != nil && nostr.IsHex64(req.PlanFor):')],
+run("the lead takes a bare no as the confirmation", [(LS,'case bare && verb == "approve" && req.Post != nil:','case bare && verb != "" && req.Post != nil:')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead reads the proposal by prefix, not the recorded plan", [(LS,'\tif req.PlanFor != "" {\n\t\tprop, err = proposalByHex','\tif false {\n\t\tprop, err = proposalByHex')],
+run("the lead takes a post without its recorded plan text (Codex re-check)", [(LS,'if len(lines) == 0 || slices.ContainsFunc(lines, func(l string) bool { return !have[l] }) {','if len(lines) == 0 {')],
+    CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost|TestTheAttachmentRoutesABareYesByTheRecordedPlan'")
+run("the lead records a plan text from any peer", [(LS,'\tif piPID <= 1 || pid != piPID {\n\t\treturn leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); only','\tif false {\n\t\treturn leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); only')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
+run("pi sends the plan reply the lead did not record", [(TT,'if (rec.outcome !== "recorded") return','if (rec.outcome === "never") return')],
+    PI+"test/team.test.ts")
 run("the attachment routes a plan yes by prefix", [(TC,'\t\tif plan != nil {\n\t\t\t_, err = proposalByHex(root, plan.For, at)','\t\tif false {\n\t\t\t_, err = proposalByHex(root, plan.For, at)')],
     CL+"'TestTheAttachmentRoutesABareYesByTheRecordedPlan'")
-run("the attachment hands the lead the yes without the post and the plan", [(TC,'\t\treq.Post, req.PlanFor = plan.Raw, plan.For\n','\t\t_ = plan\n')],
+run("the attachment hands the lead the yes without the post", [(TC,'\t\treq.Post = plan.Raw\n','\t\t_ = plan\n')],
     CL+"'TestTheAttachmentRoutesABareYesByTheRecordedPlan'")
 run("the lead's process sends the plan reply without its label", [(TT,'"--id", replyTo, "--labels", `${TEAM_PLAN_LABEL}${hex}`, "--json"','"--id", replyTo, "--json"')],
     PI+"test/team.test.ts")

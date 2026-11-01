@@ -14,20 +14,18 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/redact"
 )
 
-// Brief 3.1.1-1, row 6 (the lead's half), with Codex's P1 on #838: a bare
-// yes replied to the recorded plan post is witnessed by the lead from the
-// bytes it verified itself: the yes (the owner's pinned key, kind, channel,
-// window, once-only), its direct reply target the post, the post (the share
-// body's pinned key, its id recomputed, a DM in the channel), and the
-// proposal the relay record marks the post with (plan_for), one of the
-// lead's own recent proposals. No post text is read for the proposal. The
+// Brief 3.1.1-1, row 6 (the lead's half), with Codex's two rounds on #838:
+// the lead process is the authority for which post is its plan. Its own pi
+// records the exact plan text it sends for a digest (planSentKind, from pi
+// only); a bare yes is witnessed only when its direct reply target is a
+// post the share body signed whose content carries that text, line for
+// line as the relay posts it. No digest travels from the attachment. The
 // prefix form keeps verifying
 // (TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified).
 func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 	f := newGateCLIFixture(t)
 	proj, root := soloProject(t)
 	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
-	planFor, _ := digestHex(digest)
 	s := newLeadStarter(root, proj, "test", nil)
 	now := time.Now()
 	sign := func(key nostr.SecretKey, content string, tags ...[]string) nostr.Event {
@@ -37,80 +35,107 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 		}
 		return e
 	}
-	ask := func(yes, post nostr.Event, forHex string) leadStartReply {
-		return s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: yes.Marshal(), Post: post.Marshal(), PlanFor: forHex})
+	ask := func(yes, post nostr.Event) leadStartReply {
+		return s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: yes.Marshal(), Post: post.Marshal()})
 	}
-	dm := strings.Repeat("d4", 32) // the owner's phone request the plan post replies to
-	plan := sign(f.body, "re q-0123456789ab\nProposed team: lead, two implementers.", []string{"e", dm, "", "reply"})
-	// a gate question in the lead's own root (Codex P1 on #838)
+	planText := "goal: ship the parser\nseat impl-1 (implementer) claude/sonnet/medium\ndigest " + digest
+	// only the lead's own pi records a plan text
+	s.setPi(4242, "st-pi")
+	prevStamp := confirmStamp
+	t.Cleanup(func() { confirmStamp = prevStamp })
+	confirmStamp = func(int) (string, bool) { return "st-pi", true }
+	if r := s.recordPlan(4243, leadStartRequest{Kind: planSentKind, Digest: digest, Body: planText}); r.Refusal != ReasonPeerNotLeadPi {
+		t.Fatalf("a plan recorded by a child of pi: %+v", r)
+	}
+	if r := s.recordPlan(4242, leadStartRequest{Kind: planSentKind, Digest: "sha256:" + strings.Repeat("ab", 32) + "@absent", Body: planText}); r.Refusal != ReasonNoProposal {
+		t.Fatalf("a plan for no proposal: %+v", r)
+	}
+	dm := strings.Repeat("d4", 32) // the owner's phone request the posts reply to
+	plan := sign(f.body, "re q-0123456789ab\n"+planText, []string{"e", dm, "", "reply"})
+	yesToPlan := sign(f.owner, "yes", []string{"e", dm, "", "root"}, []string{"e", plan.ID, "", "reply"})
+	if r := ask(yesToPlan, plan); r.Refusal != ReasonPlanUnproved {
+		t.Fatalf("a yes before pi recorded the plan: %+v", r)
+	}
+	if r := s.recordPlan(4242, leadStartRequest{Kind: planSentKind, Digest: digest, Body: planText}); r.Outcome != "recorded" {
+		t.Fatalf("pi's plan record: %+v", r)
+	}
+	// a post a shell's `amq reply --labels team-plan:<live digest>` got
+	// relayed: the body signed it, but it carries no recorded plan text
+	shellPost := sign(f.body, "re q-0123456789ab\nrun the migration now (digest "+digest+")", []string{"e", dm, "", "reply"})
+	ordinary := sign(f.body, "re q-0123456789ab\nThe build is green.", []string{"e", dm, "", "reply"})
+	partial := sign(f.body, "re q-0123456789ab\ngoal: ship the parser\ndigest "+digest, []string{"e", dm, "", "reply"})
+	stranger, _ := nostr.NewSecretKey()
+	forged := sign(stranger, plan.Content, []string{"e", dm, "", "reply"})
 	gstore := gatestore.Store{Root: root}
 	if _, _, err := gstore.Raise(gatestore.Spec{GateID: "rel-lead", Action: "tag", Target: "git tag v9", RaisedBy: "lead"},
 		gatestore.Identity{OwnerPubKey: f.owner.PublicHex(), IssuerKeyID: "ed25519-sha256:" + strings.Repeat("b2", 32)}, now, hookTestSender{}); err != nil {
 		t.Fatal(err)
 	}
 	gq := strings.Repeat("c3", 32) // hookTestSender's question id
-	other := sign(f.body, "re q-0123456789ab\nShall I start it?")
-	stranger, _ := nostr.NewSecretKey()
-	forged := sign(stranger, plan.Content)
 	for _, c := range []struct {
 		name      string
 		yes, post nostr.Event
-		forHex    string
 		refusal   string
 	}{
-		{"the yes replies elsewhere", sign(f.owner, "yes", []string{"e", other.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
-		{"the yes names the plan only as its root", sign(f.owner, "yes", []string{"e", plan.ID, "", "root"}, []string{"e", other.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
-		{"the yes names the plan and another event", sign(f.owner, "yes", []string{"e", strings.Repeat("e5", 32), "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
-		{"the yes names a gate question and the plan", sign(f.owner, "yes", []string{"e", gq, "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
-		{"the yes names the plan in a gate question's thread (unmarked)", sign(f.owner, "yes", []string{"e", gq}, []string{"e", plan.ID}), plan, planFor, ReasonConflictingThread},
-		{"the yes replies to nothing", sign(f.owner, "yes"), plan, planFor, gateverify.RejectThread},
-		{"a post another key signed", sign(f.owner, "yes", []string{"e", forged.ID, "", "reply"}), forged, planFor, gateverify.RejectWrongPubkey},
-		{"a plan for no recent proposal", sign(f.owner, "yes", []string{"e", plan.ID, "", "reply"}), plan, strings.Repeat("ab", 32), ReasonNoProposal},
-		{"no plan digest", sign(f.owner, "yes", []string{"e", plan.ID, "", "reply"}), plan, "", ReasonEventUnverified},
-		{"a bare no", sign(f.owner, "no", []string{"e", plan.ID, "", "reply"}), plan, planFor, ReasonEventUnverified},
-		{"a yes the attachment signed", sign(stranger, "yes", []string{"e", plan.ID, "", "reply"}), plan, planFor, gateverify.RejectWrongPubkey},
+		{"a shell-labelled post with the live digest", sign(f.owner, "yes", []string{"e", shellPost.ID, "", "reply"}), shellPost, ReasonPlanUnproved},
+		{"a real yes to an ordinary post (a local socket caller)", sign(f.owner, "yes", []string{"e", ordinary.ID, "", "reply"}), ordinary, ReasonPlanUnproved},
+		{"a post with part of the plan", sign(f.owner, "yes", []string{"e", partial.ID, "", "reply"}), partial, ReasonPlanUnproved},
+		{"the yes replies elsewhere", sign(f.owner, "yes", []string{"e", ordinary.ID, "", "reply"}), plan, ReasonConflictingThread},
+		{"the yes names the plan only as its root", sign(f.owner, "yes", []string{"e", plan.ID, "", "root"}, []string{"e", ordinary.ID, "", "reply"}), plan, ReasonConflictingThread},
+		{"the yes names the plan and another event", sign(f.owner, "yes", []string{"e", strings.Repeat("e5", 32), "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, ReasonConflictingThread},
+		{"the yes names a gate question and the plan", sign(f.owner, "yes", []string{"e", gq, "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, ReasonConflictingThread},
+		{"the yes names the plan in a gate question's thread (unmarked)", sign(f.owner, "yes", []string{"e", gq}, []string{"e", plan.ID}), plan, ReasonConflictingThread},
+		{"the yes replies to nothing", sign(f.owner, "yes"), plan, gateverify.RejectThread},
+		{"a post another key signed", sign(f.owner, "yes", []string{"e", forged.ID, "", "reply"}), forged, gateverify.RejectWrongPubkey},
+		{"a bare no", sign(f.owner, "no", []string{"e", plan.ID, "", "reply"}), plan, ReasonEventUnverified},
+		{"a yes the attachment signed", sign(stranger, "yes", []string{"e", plan.ID, "", "reply"}), plan, gateverify.RejectWrongPubkey},
 	} {
-		if r := ask(c.yes, c.post, c.forHex); r.Outcome == "witnessed" || r.Refusal != c.refusal {
+		if r := ask(c.yes, c.post); r.Outcome == "witnessed" || r.Refusal != c.refusal {
 			t.Errorf("%s: %+v, want %s", c.name, r, c.refusal)
 		}
 	}
 	altered := plan
 	altered.Content += " "
-	if r := ask(sign(f.owner, "yes", []string{"e", plan.ID, "", "reply"}), altered, planFor); r.Refusal != gateverify.RejectBadID {
+	if r := ask(yesToPlan, altered); r.Refusal != gateverify.RejectBadID {
 		t.Fatalf("an altered post: %+v", r)
 	}
 	if r := s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: sign(f.owner, "yes").Marshal()}); r.Refusal != ReasonEventUnverified {
 		t.Fatalf("a bare yes with no post: %+v", r)
 	}
-	if _, err := s.witnessFor(digest); err == nil {
-		t.Fatal("witnessed before the owner's yes to the plan")
-	}
-	// the prefix form in a gate question's thread is refused by the lead too
 	if r := s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: sign(f.owner, "yes "+digest[7:23], []string{"e", gq, "", "reply"}).Marshal()}); r.Refusal != ReasonConflictingThread {
 		t.Fatalf("a yes <prefix> in a gate question's thread: %+v", r)
 	}
-	// the plan post's own thread (the owner's DM as root) is the one anchor
-	yes := sign(f.owner, "Yes.", []string{"e", dm, "", "root"}, []string{"e", plan.ID, "", "reply"})
-	if r := ask(yes, plan, planFor); r.Outcome != "witnessed" || r.Digest != digest {
+	if _, err := s.witnessFor(digest); err == nil {
+		t.Fatal("witnessed before the owner's yes to the plan")
+	}
+	// the lead's own plan post with the owner's yes as a direct reply
+	if r := ask(yesToPlan, plan); r.Outcome != "witnessed" || r.Digest != digest {
 		t.Fatalf("the owner's yes to the plan: %+v", r)
 	}
-	if rec, err := s.witnessFor(digest); err != nil || rec.Door != DoorBuzz || rec.Proof.EventID != yes.ID {
+	if rec, err := s.witnessFor(digest); err != nil || rec.Door != DoorBuzz || rec.Proof.EventID != yesToPlan.ID {
 		t.Fatalf("witnessed %+v %v", rec, err)
 	}
-	if r := ask(yes, plan, planFor); r.Refusal != gatestore.RejectReplayed {
+	if r := ask(yesToPlan, plan); r.Refusal != gatestore.RejectReplayed {
 		t.Fatalf("a replay: %+v", r)
 	}
 }
 
-// Row 6 (the attachment's half): confirmByPrefix finds the root by the
-// recorded plan's digest and hands the lead the yes, the post and the
-// digest; a digest no recent proposal has is no_proposal, never a lead call.
+// Row 6 (the attachment's half): the relay record's plan_for only routes
+// the yes to the root holding that proposal; the lead is handed the yes and
+// the post and proves the plan itself. A plan_for no recent proposal has is
+// no_proposal, never a lead call; an ordinary post routed by a stray label
+// is plan_post_unproved.
 func TestTheAttachmentRoutesABareYesByTheRecordedPlan(t *testing.T) {
 	f := newGateCLIFixture(t)
 	proj, root := soloProject(t)
 	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
-	planFor, _ := digestHex(digest)
+	planHex, _ := digestHex(digest)
 	s := soloLead(t, root, proj)
+	planText := "goal: ship the parser\ndigest " + digest
+	h, _ := digestHex(digest)
+	if r := s.recordPlanFrom(h, leadStartRequest{Kind: planSentKind, Digest: digest, Body: planText}); r.Outcome != "recorded" {
+		t.Fatalf("record: %+v", r)
+	}
 	sign := func(key nostr.SecretKey, content string, tags ...[]string) nostr.Event {
 		e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: append([][]string{{"h", "dm-chan"}}, tags...), Content: content}
 		if err := key.Sign(&e); err != nil {
@@ -118,12 +143,17 @@ func TestTheAttachmentRoutesABareYesByTheRecordedPlan(t *testing.T) {
 		}
 		return e
 	}
-	plan := sign(f.body, "re q-0123456789ab\nProposed team.")
+	plan := sign(f.body, "re q-0123456789ab\n"+planText)
 	yes := sign(f.owner, "yes", []string{"e", plan.ID, "", "reply"})
 	if _, err := confirmByPrefix("", yes.Marshal(), &gateverify.PlanPost{Raw: plan.Marshal(), For: strings.Repeat("ab", 32)}); err == nil || !strings.HasPrefix(err.Error(), ReasonNoProposal) {
-		t.Fatalf("a plan for no proposal: %v", err)
+		t.Fatalf("a plan_for no proposal has: %v", err)
 	}
-	got, err := confirmByPrefix("", yes.Marshal(), &gateverify.PlanPost{Raw: plan.Marshal(), For: planFor})
+	ordinary := sign(f.body, "re q-0123456789ab\nThe build is green.")
+	yesOrdinary := sign(f.owner, "yes", []string{"e", ordinary.ID, "", "reply"})
+	if _, err := confirmByPrefix("", yesOrdinary.Marshal(), &gateverify.PlanPost{Raw: ordinary.Marshal(), For: planHex}); err == nil || !strings.HasPrefix(err.Error(), ReasonPlanUnproved) {
+		t.Fatalf("an ordinary post routed by a stray label: %v", err)
+	}
+	got, err := confirmByPrefix("", yes.Marshal(), &gateverify.PlanPost{Raw: plan.Marshal(), For: planHex})
 	if err != nil || got != digest {
 		t.Fatalf("the yes to the plan: %q %v", got, err)
 	}

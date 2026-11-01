@@ -588,9 +588,11 @@ func confirmByPrefix(prefix string, raw []byte, plan *gateverify.PlanPost) (stri
 	case len(found) > 1:
 		return "", fmt.Errorf("%s: proposals in %d repositories match", ReasonProposalAmbig, len(found))
 	}
+	// the relay record's plan_for routed the yes to this root; the lead is
+	// handed only the bytes and proves the plan from its own record
 	req := leadStartRequest{Kind: confirmBuzzKind, Event: raw}
 	if plan != nil {
-		req.Post, req.PlanFor = plan.Raw, plan.For
+		req.Post = plan.Raw
 	}
 	c, err := dialLead(found[0])
 	if err != nil {
