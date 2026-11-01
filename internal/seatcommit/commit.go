@@ -866,14 +866,25 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 	}
 	ps := protectedFor(o.Grants.Grants, repoRoot, o.Home, extra...)
 	gated := gatedProtected(o.Task, o.Root, o.Gates)
-	var protected, managed, outside, nested []string
+	var linkTargets, protected, managed, outside, nested []string
 	for _, e := range entries {
 		p := e.Path
+		entry, hit := ps.match(p)
+		name := ps.managedName(p)
+		// Keep the established protected_path reason when the changed entry
+		// itself is protected. link_target_refused is for an otherwise ordinary
+		// changed link whose destination policy refuses.
+		if e.NewMode == "120000" && !hit && name == "" {
+			target, err := ResolveLinkTarget(o.Grants.Grants, o.Root, rec.Worktree, o.Home, p)
+			if err != nil {
+				linkTargets = append(linkTargets, err.Error())
+			} else if target.Protected {
+				linkTargets = append(linkTargets, fmt.Sprintf("link %q resolves to protected target %q", p, target.Path))
+			}
+		}
 		if e.NewMode == "160000" || e.OldMode == "160000" {
 			nested = append(nested, p)
 		}
-		entry, hit := ps.match(p)
-		name := ps.managedName(p)
 		if (hit || name != "") && !regularInSnapshot(e) {
 			// A protected or managed path must stay a regular file: a symlink
 			// (whose target text could match the block while the effective
@@ -894,6 +905,9 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 		}
 	}
 	var out []Violation
+	if len(linkTargets) > 0 {
+		out = append(out, Violation{Reason: ReasonLinkTarget, Paths: linkTargets})
+	}
 	if len(protected) > 0 {
 		out = append(out, Violation{Reason: ReasonProtected, Paths: protected, Managed: managed})
 	}

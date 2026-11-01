@@ -3,6 +3,7 @@ package seatcommit
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -144,6 +145,37 @@ func TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree(t *testing.T) {
 	}
 	if l.Payload.Tree != res.Tree || f.lease(tk.ID).Verdict.Tree != res.Tree {
 		t.Fatal("the verdict does not name the snapshot tree")
+	}
+}
+
+func TestVerifierCheckoutNeverMaterializesARefusedSymlink(t *testing.T) {
+	f := newFixture(t)
+	if err := os.Symlink("CLAUDE.md", filepath.Join(f.wt, "bad-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	rp, err := worktreePaths(f.wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh, err := newShadow(gitBin(t), f.testGitEnv(), rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sh.close()
+	tree, err := snapshot(sh, f.base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(f.dir, "refused-checkout")
+	if err := os.Mkdir(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err = checkoutTree(f.opts(task.Task{}), sh, tree, out)
+	if !errors.Is(err, errLinkTargetRefused) || !strings.Contains(err.Error(), "bad-link") || !strings.Contains(err.Error(), "CLAUDE.md") {
+		t.Fatalf("checkout refusal = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(out, "bad-link")); !os.IsNotExist(err) {
+		t.Fatalf("refused link was materialized: %v", err)
 	}
 }
 

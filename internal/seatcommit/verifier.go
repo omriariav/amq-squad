@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -222,6 +223,9 @@ func verify(o Options, sh *shadow, res Result) (Result, bool) {
 	if errors.Is(err, task.ErrVerdictTreeMismatch) {
 		return res.refuse(task.BlockVerdictTreeMismatch, task.RouteLead, err.Error()), true
 	}
+	if errors.Is(err, errLinkTargetRefused) {
+		return res.refuse(ReasonLinkTarget, task.RouteLead, err.Error()), true
+	}
 	if err != nil {
 		return res.defer_("the verifier: " + err.Error()), true
 	}
@@ -314,7 +318,7 @@ func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan, started fu
 			return verifierRun{}, err
 		}
 	}
-	if err := checkoutTree(sh, tree, work); err != nil {
+	if err := checkoutTree(o, sh, tree, work); err != nil {
 		return verifierRun{}, fmt.Errorf("check out the snapshot tree %s: %w", tree, err)
 	}
 	var cmd *exec.Cmd
@@ -576,13 +580,14 @@ func VerifierWaiting(root string) []VerifierWait {
 // symbolic link is written as one; a gitlink is an empty directory. Every
 // path is checked: no empty, ".", ".." or .git component, and no parent
 // that is not a real directory.
-func checkoutTree(sh *shadow, tree, dir string) error {
+func checkoutTree(o Options, sh *shadow, tree, dir string) error {
 	list, err := sh.g.run(nil, nil, "ls-tree", "-r", "-z", "--full-tree", tree)
 	if err != nil {
 		return err
 	}
 	type entry struct{ mode, oid, path string }
 	var entries []entry
+	modes := map[string]string{}
 	for _, rec := range strings.Split(string(list), "\x00") {
 		if rec == "" {
 			continue
@@ -598,6 +603,7 @@ func checkoutTree(sh *shadow, tree, dir string) error {
 			}
 		}
 		entries = append(entries, entry{mode: f[0], oid: f[2], path: p})
+		modes[p] = f[0]
 	}
 	batch := exec.Command(sh.g.bin, append(append(safeConfig(), sh.g.pre...), "cat-file", "--batch")...)
 	batch.Dir, batch.Env = sh.g.dir, sh.g.env
@@ -639,6 +645,7 @@ func checkoutTree(sh *shadow, tree, dir string) error {
 		}
 		return body[:n], nil
 	}
+	links := map[string]string{}
 	for _, e := range entries {
 		abs := filepath.Join(dir, filepath.FromSlash(e.path))
 		if err := realParents(dir, e.path); err != nil {
@@ -654,9 +661,7 @@ func checkoutTree(sh *shadow, tree, dir string) error {
 			if err != nil {
 				return err
 			}
-			if err := os.Symlink(string(target), abs); err != nil {
-				return err
-			}
+			links[e.path] = string(target)
 		case "100644", "100755":
 			body, err := read(e.oid)
 			if err != nil {
@@ -681,7 +686,64 @@ func checkoutTree(sh *shadow, tree, dir string) error {
 			return fmt.Errorf("the tree entry %s has mode %s", e.path, e.mode)
 		}
 	}
+	ps := protectedFor(o.Grants.Grants, dir, o.Home, filepath.Join(o.Root, "extensions", "amq-squad")+"/", "~/.amq-squad/")
+	for alias, target := range links {
+		resolved, err := resolveTreeLink(alias, target, modes, links)
+		if err != nil {
+			return fmt.Errorf("%w: link %q target %q: %v", errLinkTargetRefused, alias, target, err)
+		}
+		_, protected := ps.match(resolved)
+		if protected || ps.managedName(resolved) != "" {
+			return fmt.Errorf("%w: link %q resolves to protected target %q", errLinkTargetRefused, alias, resolved)
+		}
+		if err := os.Symlink(target, filepath.Join(dir, filepath.FromSlash(alias))); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+var errLinkTargetRefused = errors.New(ReasonLinkTarget)
+
+func resolveTreeLink(alias, target string, modes, links map[string]string) (string, error) {
+	if path.IsAbs(target) {
+		return target, errors.New("target leaves the repository")
+	}
+	seen := map[string]bool{alias: true}
+	cur := path.Clean(path.Join(path.Dir(alias), target))
+	for {
+		if cur == ".." || strings.HasPrefix(cur, "../") {
+			return cur, errors.New("target leaves the repository")
+		}
+		parts := strings.Split(cur, "/")
+		prefix := ""
+		followed := false
+		for i, part := range parts {
+			prefix = path.Join(prefix, part)
+			next, linked := links[prefix]
+			if !linked {
+				continue
+			}
+			if seen[prefix] {
+				return prefix, errors.New("symlink cycle")
+			}
+			seen[prefix] = true
+			if path.IsAbs(next) {
+				return next, errors.New("target leaves the repository")
+			}
+			suffix := strings.Join(parts[i+1:], "/")
+			cur = path.Clean(path.Join(path.Dir(prefix), next, suffix))
+			followed = true
+			break
+		}
+		if followed {
+			continue
+		}
+		if modes[cur] == "" {
+			return cur, errors.New("dangling target")
+		}
+		return cur, nil
+	}
 }
 
 // realParents creates the parents of rel under root, each a real directory

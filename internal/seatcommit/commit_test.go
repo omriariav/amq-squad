@@ -86,9 +86,58 @@ func TestCommitRefusesARetargetedLinkInsteadOfFollowingItsWidenedTarget(t *testi
 	os.Remove(filepath.Join(f.wt, "source-link"))
 	os.Symlink("CLAUDE.md", filepath.Join(f.wt, "source-link"))
 	res := f.run(f.reported("cmd/root.go"))
-	if res.OK || res.ReasonCode != ReasonOutside || !strings.Contains(res.Detail, "source-link") {
+	if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "source-link") || !strings.Contains(res.Detail, "CLAUDE.md") {
 		t.Fatalf("retargeted link commit = %+v", res)
 	}
+}
+
+func TestCommitJudgesChangedSymlinksByDestination(t *testing.T) {
+	for name, target := range map[string]string{
+		"protected": filepath.Join(".github", "workflows", "ci.yml"),
+		"managed":   "CLAUDE.md",
+		"dangling":  "missing.txt",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			if name == "protected" {
+				f.grants.ProtectedPaths = append(f.grants.ProtectedPaths, ".github/workflows/")
+			}
+			if err := os.Symlink(target, filepath.Join(f.wt, "changed-link")); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			res := f.run(f.reported("changed-link"))
+			if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "changed-link") || !strings.Contains(res.Detail, target) {
+				t.Fatalf("%s link = %+v", name, res)
+			}
+		})
+	}
+	t.Run("outside", func(t *testing.T) {
+		f := newFixture(t)
+		target := filepath.Join(f.dir, "outside.txt")
+		write(t, target, "outside\n")
+		os.Symlink(target, filepath.Join(f.wt, "changed-link"))
+		res := f.run(f.reported("changed-link"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "changed-link") || !strings.Contains(res.Detail, target) {
+			t.Fatalf("outside link = %+v", res)
+		}
+	})
+	t.Run("ordinary declared target", func(t *testing.T) {
+		f := newFixture(t)
+		os.Symlink(filepath.Join("cmd", "root.go"), filepath.Join(f.wt, "changed-link"))
+		res := f.run(f.reported("changed-link", "cmd/root.go"))
+		if !res.OK {
+			t.Fatalf("ordinary link = %+v", res)
+		}
+	})
+	t.Run("cycle", func(t *testing.T) {
+		f := newFixture(t)
+		os.Symlink("cycle-b", filepath.Join(f.wt, "cycle-a"))
+		os.Symlink("cycle-a", filepath.Join(f.wt, "cycle-b"))
+		res := f.run(f.reported("cycle-a", "cycle-b"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "cycle-a") || !strings.Contains(res.Detail, "cycle-b") {
+			t.Fatalf("cycle = %+v", res)
+		}
+	})
 }
 
 // Acceptance 7, row 3: the refusal reaches the lead through the store; a

@@ -27,6 +27,7 @@ import (
 // Reason codes of a refusal (task.RefuseCommit's reason code).
 const (
 	ReasonProtected      = "protected_path"         // a changed path is protected by the grant
+	ReasonLinkTarget     = "link_target_refused"    // a changed symlink resolves outside policy
 	ReasonOutside        = "outside_declared_files" // a changed path is outside the task's declared files (S6 W5)
 	ReasonSizeCap        = "size_cap_exceeded"      // the diff is over the size cap
 	ReasonNested         = "nested_repository"      // a changed path is a gitlink or a nested repository
@@ -265,6 +266,24 @@ func ResolveExactFiles(g grants.Grants, root, repoRoot, home string, files []str
 		out = append(out, ResolvedExact{Alias: alias, Path: rel, Protected: protected || ps.managedName(rel) != ""})
 	}
 	return out, nil
+}
+
+// ResolveLinkTarget is the strict commit/verifier form of ResolveExactFiles:
+// the destination must exist, so a dangling link is never a future file.
+func ResolveLinkTarget(g grants.Grants, root, repoRoot, home, alias string) (ResolvedExact, error) {
+	target, readErr := os.Readlink(filepath.Join(repoRoot, filepath.FromSlash(alias)))
+	resolved, err := ResolveExactFiles(g, root, repoRoot, home, []string{alias})
+	if err != nil {
+		if readErr == nil {
+			return ResolvedExact{}, fmt.Errorf("link %q target %q: %w", alias, target, err)
+		}
+		return ResolvedExact{}, err
+	}
+	r := resolved[0]
+	if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(r.Path))); err != nil {
+		return ResolvedExact{}, fmt.Errorf("link %q has dangling target %q: %w", alias, r.Path, err)
+	}
+	return r, nil
 }
 
 // resolveExactPath resolves the longest existing prefix and preserves only a
