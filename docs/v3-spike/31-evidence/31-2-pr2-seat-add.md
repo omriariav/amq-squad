@@ -171,11 +171,38 @@ and `RosterPools` reads them; every read site (`decide`, `check`,
 - **The runtime map** names every runtime squad.yaml takes (`team.Runtimes`),
   so an added seat with a new runtime launches through the same AMQ
   launcher.
-- **The lease cap** (`min(max_seats, the squad's seat count)`) stays fixed at
-  the scheduler's start; an added seat shares it.
+- **The lease cap** (section 2.8) was computed once at the start in the
+  first cut; the lead's gate on 5d20b5ff ruled that a gap, and it is now
+  recomputed in the swap.
 - **The status contract** gains no field: `launch.timing.start` keeps its
   name and now reads the key press for an added seat
   (docs/status-contract.md says so).
+
+### 2.8 The lease cap, recomputed in the swap (the lead's gate on 5d20b5ff)
+
+`scheduler run` computed the lease cap once, `min(max_seats, the squad's
+seat count)` narrowed by `--max-seats` (now `leaseCap` in
+internal/cli/scheduler_run.go). A squad that grew past its starting seat
+count could never lease the extra seats. The reload now carries a cap
+(`Reload.Cap`, scheduler run's `reloadCap`): the grant is read again (the
+owner's file narrowed by the squad.yaml just compiled), it bounds the new
+squad's seat count, and the start's `--max-seats` narrowing still applies.
+A cap of none is `squad_invalid` before the drain. The scheduler writes
+`Config.MaxSeats` with `Config.Roster`, after the slots and the router took
+theirs, so the cap is part of the one step; a failed swap leaves it as it
+was. `roster_reloaded` names the new cap.
+
+Squad.yaml itself cannot outgrow `max_seats`: `team propose --add-seat`
+refuses a seat past it (the owner's grant is never exceeded). Only the
+`--max-seats` narrowing can leave more roster seats up than the cap. Then
+every seat still launches, the reload logs `roster_over_cap`, a seat beyond
+the cap waits for a lease (`seat_cap`), and the state status reads carries
+`live_seats` over `max_seats`. The lead's screen renders that as a warning
+line in its seats block (`! over the lease cap: ...`), never a refusal.
+
+The squad seat count includes the lead, which holds no lease, so a cap of
+`min(max_seats, seats)` already covered one added roster seat. The
+revert-failing row adds two.
 
 ## 3. Rows
 
@@ -189,6 +216,7 @@ Each row fails with its change reverted (section 4).
 | C | scheduler `TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress` (s-b, removed from squad.yaml, keeps its lease and is not closed while it holds it; nothing swaps; once it finishes it closes with `roster_relaunch`, never another reason, and is not launched again; s-a's changed line, sonnet to opus, launches on its new pool in the relaunch's apply) |
 | D | seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the key press 11 s before seat live and the relaunch's decision 2 s before: the mark is the press, so the seat is over the 10 s ceiling counted from the press though under it from the decision) |
 | E | pi `the lead's model tool list carries no key verb and no gate-answer verb` (PR 1's row, unchanged: the exact thirteen tools) |
+| Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it launches, `roster_over_cap` is logged and its task waits `seat_cap`); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns` (under `--max-seats 2`: every added seat launches, `roster_over_cap`, two leases and the third `seat_cap`, the state's 3 live seats over max_seats 2); pi `over the lease cap: a warning line in the seats block, never a refusal`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
 
 No test reaches the network, the real HOME, tmux, AMQ or Buzz: the cli
 rows run `scheduler run` with the fake launcher seam and a temporary HOME

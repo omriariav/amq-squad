@@ -60,6 +60,21 @@ func TestTeamAddSeatAppendsOneSeatThroughTheDigest(t *testing.T) {
 	if s, err = team.LoadSquad(project); err != nil || s.Seats[3] != (team.Seat{Handle: "local-1", Role: "local-1", Runtime: "pi", Model: "ollama/qwen3:32b"}) {
 		t.Fatalf("the pi seat: %+v %v", s.Seats, err)
 	}
+	// the owner's grant is never exceeded: under squad.yaml's max_seats 4
+	// (four seats now) a fifth seat is refused at propose, nothing written
+	if _, _, err := captureOutput(t, func() error {
+		return runTeam([]string{"propose", "--project", project, "--add-seat", "rev-9:implementer:codex:gpt-5.4:high"})
+	}); err != nil {
+		t.Fatalf("a fourth roster seat under the default grant: %v", err)
+	}
+	raw, _ := os.ReadFile(team.SquadPath(project))
+	capped := strings.Replace(string(raw), "lead: lead\n", "lead: lead\nmax_seats: 4\n", 1)
+	mustWrite(t, team.SquadPath(project), capped)
+	if _, _, err := captureOutput(t, func() error {
+		return runTeam([]string{"propose", "--project", project, "--add-seat", "rev-9:implementer:codex:gpt-5.4:high"})
+	}); err == nil || !strings.Contains(err.Error(), "max_seats") {
+		t.Fatalf("a seat past max_seats: %v", err)
+	}
 	for _, bad := range [][]string{
 		{"--add-seat", "rev-2:implementer:codex"},                              // malformed
 		{"--add-seat", "impl-1:implementer:claude:sonnet:medium"},              // a repeated handle

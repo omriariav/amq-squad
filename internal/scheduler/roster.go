@@ -153,6 +153,10 @@ func (s *Scheduler) RequestRelaunch(reason string) {
 type RosterReload struct {
 	Roster []RosterSeat
 	Swap   func() error
+	// MaxSeats is the lease cap recomputed from the new squad (the grant's
+	// max_seats bounding the new seat count, and any narrowing); written
+	// with the roster in the same step. Zero keeps the running cap.
+	MaxSeats int
 }
 
 type relaunchAsk struct {
@@ -208,6 +212,9 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 		}
 	}
 	s.Config.Roster = r.Roster
+	if r.MaxSeats > 0 {
+		s.Config.MaxSeats = r.MaxSeats
+	}
 	s.seatStart = nil
 	if !start.IsZero() {
 		for _, h := range added {
@@ -222,8 +229,18 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 	if !start.IsZero() && len(added) > 0 {
 		why += "; the added seats' launch start is the key press " + start.UTC().Format(time.RFC3339Nano)
 	}
+	why += fmt.Sprintf("; at most %d leases at once", s.Config.MaxSeats)
 	log(Decision{Kind: "roster_reloaded", Seat: strings.Join(added, ","), Reason: why})
+	if len(r.Roster) > s.Config.MaxSeats {
+		// a warning, never a refusal: every seat launches, and a seat beyond
+		// the cap waits for a lease (seat_cap) while the others hold theirs
+		log(Decision{Kind: RosterOverCap, Seat: strings.Join(added, ","), Reason: fmt.Sprintf("%d roster seats over the lease cap of %d (max_seats): every seat launches; one beyond the cap waits for a lease while the others hold theirs", len(r.Roster), s.Config.MaxSeats)})
+	}
 }
+
+// RosterOverCap is the decision of a reload whose roster has more seats than
+// the lease cap: a warning on the screen, never a refusal of the add.
+const RosterOverCap = "roster_over_cap"
 
 // holdOnce logs dispatch_held when its reason changes.
 func (s *Scheduler) holdOnce(reason string, log func(Decision)) {

@@ -216,10 +216,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	seatCap := min(g.MaxSeats, len(q.Seats)) // a lease needs a seat of the roster
-	if *maxSeats > 0 && *maxSeats < seatCap {
-		seatCap = *maxSeats
-	}
+	seatCap := leaseCap(g.MaxSeats, len(q.Seats), *maxSeats)
 	if seatCap <= 0 {
 		return fmt.Errorf("scheduler run: the grant admits no seat (max_seats %d%s)", g.MaxSeats, insecureNote(g))
 	}
@@ -301,7 +298,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	decisions := decisionOptions(sel, q.ProjectRoot)
 	// brief 31-2 PR 2: each relaunch compiles squad.yaml again; the swap
 	// writes the slots' squad and the router's roster pools with the roster
-	decisions.Reload = &schedproc.Reload{Compile: reloadSquad(q, leadHandle), Slots: slots, Pools: router, Lead: leadHandle}
+	decisions.Reload = &schedproc.Reload{Compile: reloadSquad(q, leadHandle), Cap: reloadCap(*maxSeats), Slots: slots, Pools: router, Lead: leadHandle}
 	leadGone, err := teamModeLead(decisions)
 	if err != nil {
 		return err
@@ -390,6 +387,34 @@ func firstMessageMark(root string) func(string, time.Time) (time.Time, bool) {
 			}
 		}
 		return at, ok
+	}
+}
+
+// leaseCap is the leases held at once: the grant's max_seats, bounded by
+// the squad's seat count (a lease needs a seat), narrowed by --max-seats.
+func leaseCap(grantMax, seats, narrow int) int {
+	c := min(grantMax, seats)
+	if narrow > 0 && narrow < c {
+		c = narrow
+	}
+	return c
+}
+
+// reloadCap is the reload's lease cap (brief 31-2 PR 2): the grant read
+// again (the owner's file narrowed by the squad.yaml just compiled) bounding
+// the new squad's seat count, with the start's --max-seats narrowing. The
+// owner's grant is never exceeded; a cap of none is squad_invalid.
+func reloadCap(narrow int) func(seatlaunch.Squad) (int, error) {
+	return func(q seatlaunch.Squad) (int, error) {
+		g, err := grants.Load(q.ProjectRoot)
+		if err != nil {
+			return 0, fmt.Errorf("the grant: %w", err)
+		}
+		c := leaseCap(g.MaxSeats, len(q.Seats), narrow)
+		if c <= 0 {
+			return 0, fmt.Errorf("the grant admits no seat (max_seats %d%s)", g.MaxSeats, insecureNote(g))
+		}
+		return c, nil
 	}
 }
 

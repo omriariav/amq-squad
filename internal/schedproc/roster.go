@@ -182,9 +182,14 @@ type RosterPools interface {
 // never in the roster.
 type Reload struct {
 	Compile func() (seatlaunch.Squad, error)
-	Slots   *Slots
-	Pools   RosterPools
-	Lead    string
+	// Cap is the lease cap for the compiled squad: the grant's max_seats,
+	// read again, bounding the new seat count (and scheduler run's
+	// --max-seats narrowing); an error is squad_invalid. nil keeps the
+	// running cap.
+	Cap   func(seatlaunch.Squad) (int, error)
+	Slots *Slots
+	Pools RosterPools
+	Lead  string
 }
 
 // reloadFault is a test seam: an error injected at a named step between
@@ -206,7 +211,13 @@ func (r *Reload) prepare() (*scheduler.RosterReload, error) {
 	if len(roster) == 0 {
 		return nil, fmt.Errorf("squad.yaml has no seat but the lead")
 	}
-	return &scheduler.RosterReload{Roster: roster, Swap: func() error { return r.swap(q, roster) }}, nil
+	maxSeats := 0
+	if r.Cap != nil {
+		if maxSeats, err = r.Cap(q); err != nil {
+			return nil, err
+		}
+	}
+	return &scheduler.RosterReload{Roster: roster, MaxSeats: maxSeats, Swap: func() error { return r.swap(q, roster) }}, nil
 }
 
 // swap writes the slots' squad (under Slots.mu) and the router's roster

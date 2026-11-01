@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { installScreen, type ScreenStatus } from "../extensions/lib/screen.ts";
+import { installScreen, renderScreen, type ScreenStatus } from "../extensions/lib/screen.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx } from "./fakepi.ts";
@@ -138,5 +138,22 @@ test("add, seat: a cancel at any dialog runs no verb", async () => {
 		const r = rig(verbs(), answers);
 		assert.equal(await r.press(), "  key add: cancelled, nothing run", JSON.stringify(answers));
 		assert.equal(r.calls.length, 0, JSON.stringify(answers));
+	}
+});
+
+// The lease cap on the screen (the lead's gate on 5d20b5ff): when the
+// roster has more seats up than the lease cap (a seat added past it under
+// scheduler run --max-seats; cli TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns
+// shows the state status reads), the seats block carries one warning line,
+// and no refusal line; at or under the cap there is none. Reverted, the
+// screen says nothing while a seat waits for a lease.
+test("over the lease cap: a warning line in the seats block, never a refusal", () => {
+	const over = renderScreen({ ...fixture, scheduler: { max_seats: 2, live_seats: 3 } });
+	const line = "  ! over the lease cap: 3 seats up, max_seats 2: a seat beyond the cap waits for a lease (seat_cap) while the others hold theirs";
+	assert.ok(over.includes(line), over.join("\n"));
+	assert.ok(over.indexOf(line) < over.indexOf("tasks (" + fixture.tasks.length + ")"), "the line is in the seats block");
+	assert.ok(!over.some((l) => l.startsWith("  refusal:") && l.includes("lease cap")));
+	for (const sch of [{ max_seats: 3, live_seats: 3 }, { max_seats: 4, live_seats: 3 }, null]) {
+		assert.ok(!renderScreen({ ...fixture, scheduler: sch }).some((l) => l.includes("over the lease cap")), JSON.stringify(sch));
 	}
 });

@@ -104,14 +104,15 @@ func reloadRun(t *testing.T, reload *Reload, start string, until func(*rosterLau
 // drain's end the slots' squad, the router's roster pools and the
 // scheduler's roster all name the added seat n1, the relaunch launches it,
 // and its request carries the key press as its start, while c1 and x1
-// carry none. Reverted (the relaunch without the reload), n1 is never
-// launched and nothing changes.
+// carry none; the lease cap is the reload's (3). Reverted (the relaunch
+// without the reload), n1 is never launched and nothing changes.
 func TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat(t *testing.T) {
 	slots := &Slots{Squad: reloadSquad()}
 	pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
 	added := reloadSquad(seatlaunch.Seat{Handle: "n1", Runtime: "claude", Model: "opus", Effort: "high", Worktree: "/w/n1"})
 	keyPress := time.Date(2026, 11, 1, 9, 0, 0, 123456789, time.UTC)
-	reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Slots: slots, Pools: pools, Lead: "lead"},
+	capOf := func(q seatlaunch.Squad) (int, error) { return len(q.Seats) - 1, nil } // one lease per roster seat
+	reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Cap: capOf, Slots: slots, Pools: pools, Lead: "lead"},
 		keyPress.Format(time.RFC3339Nano), func(l *rosterLauncher, ds []scheduler.Decision) bool { return l.launched() == 2 })
 	if !reply.OK {
 		t.Fatalf("the relaunch: %+v", reply)
@@ -119,8 +120,8 @@ func TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat(t *testing.T) {
 	if !strings.Contains(text, `"kind":"roster_reloaded","seat":"n1"`) {
 		t.Fatalf("log:\n%s", text)
 	}
-	if seatHandles(slots.Squad) != "lead,c1,x1,n1" || !slices.Equal(pools.RosterPools(), []task.Pool{sonnet, gptPool, opusPool}) || len(s.Config.Roster) != 3 || s.Config.Roster[2].Handle != "n1" {
-		t.Fatalf("after the swap: slots %s, pools %+v, roster %+v", seatHandles(slots.Squad), pools.RosterPools(), s.Config.Roster)
+	if seatHandles(slots.Squad) != "lead,c1,x1,n1" || !slices.Equal(pools.RosterPools(), []task.Pool{sonnet, gptPool, opusPool}) || len(s.Config.Roster) != 3 || s.Config.Roster[2].Handle != "n1" || s.Config.MaxSeats != 3 {
+		t.Fatalf("after the swap: slots %s, pools %+v, roster %+v, cap %d", seatHandles(slots.Squad), pools.RosterPools(), s.Config.Roster, s.Config.MaxSeats)
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -148,12 +149,23 @@ func TestARelaunchWhoseSquadDoesNotCompileIsRefusedBeforeTheDrain(t *testing.T) 
 			return seatlaunch.Squad{Seats: []seatlaunch.Seat{{Handle: "lead", Runtime: "claude"}}}, nil
 		}},
 		{"malformed start", "yesterday", RefusedRelaunchMalformed, func() (seatlaunch.Squad, error) { return reloadSquad(), nil }},
+		{"no cap", "", RefusedSquadInvalid, func() (seatlaunch.Squad, error) {
+			return reloadSquad(seatlaunch.Seat{Handle: "nocap", Runtime: "claude", Model: "opus", Effort: "high"}), nil
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			slots := &Slots{Squad: reloadSquad()}
 			pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
 			ticks := 0
-			reply, text, s, l := reloadRun(t, &Reload{Compile: tc.compile, Slots: slots, Pools: pools, Lead: "lead"}, tc.start,
+			capOf := func(q seatlaunch.Squad) (int, error) {
+				for _, seat := range q.Seats {
+					if seat.Handle == "nocap" {
+						return 0, errors.New("the grant admits no seat (max_seats 0)")
+					}
+				}
+				return 3, nil
+			}
+			reply, text, s, l := reloadRun(t, &Reload{Compile: tc.compile, Cap: capOf, Slots: slots, Pools: pools, Lead: "lead"}, tc.start,
 				func(*rosterLauncher, []scheduler.Decision) bool { ticks++; return ticks > 5 })
 			if reply.OK || reply.Code != tc.code {
 				t.Fatalf("reply %+v", reply)
@@ -161,8 +173,8 @@ func TestARelaunchWhoseSquadDoesNotCompileIsRefusedBeforeTheDrain(t *testing.T) 
 			if strings.Contains(text, "roster_relaunch_requested") || strings.Contains(text, `"reason":"roster_relaunch"`) || l.launched() != 1 {
 				t.Fatalf("the refused relaunch drained: launches %d\n%s", l.launched(), text)
 			}
-			if seatHandles(slots.Squad) != "lead,c1,x1" || !slices.Equal(pools.RosterPools(), []task.Pool{sonnet, gptPool}) || len(s.Config.Roster) != 2 {
-				t.Fatalf("changed: slots %s, pools %+v, roster %+v", seatHandles(slots.Squad), pools.RosterPools(), s.Config.Roster)
+			if seatHandles(slots.Squad) != "lead,c1,x1" || !slices.Equal(pools.RosterPools(), []task.Pool{sonnet, gptPool}) || len(s.Config.Roster) != 2 || s.Config.MaxSeats != 2 {
+				t.Fatalf("changed: slots %s, pools %+v, roster %+v, cap %d", seatHandles(slots.Squad), pools.RosterPools(), s.Config.Roster, s.Config.MaxSeats)
 			}
 		})
 	}
@@ -189,13 +201,13 @@ func TestAHalfAppliedReloadIsNeverObserved(t *testing.T) {
 			slots := &Slots{Squad: reloadSquad()}
 			pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
 			added := reloadSquad(seatlaunch.Seat{Handle: "n1", Runtime: "claude", Model: "opus", Effort: "high", Worktree: "/w/n1"})
-			reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Slots: slots, Pools: pools, Lead: "lead"}, "",
+			reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Cap: func(seatlaunch.Squad) (int, error) { return 3, nil }, Slots: slots, Pools: pools, Lead: "lead"}, "",
 				func(l *rosterLauncher, _ []scheduler.Decision) bool { return l.launched() == 2 })
 			if !reply.OK || !strings.Contains(text, `"kind":"roster_reload_failed"`) || strings.Contains(text, "roster_reloaded") {
 				t.Fatalf("reply %+v\n%s", reply, text)
 			}
-			if seatHandles(slots.Squad) != "lead,c1,x1" || !slices.Equal(pools.RosterPools(), []task.Pool{sonnet, gptPool}) || len(s.Config.Roster) != 2 {
-				t.Fatalf("half applied: slots %s, pools %+v, roster %+v", seatHandles(slots.Squad), pools.RosterPools(), s.Config.Roster)
+			if seatHandles(slots.Squad) != "lead,c1,x1" || !slices.Equal(pools.RosterPools(), []task.Pool{sonnet, gptPool}) || len(s.Config.Roster) != 2 || s.Config.MaxSeats != 2 {
+				t.Fatalf("half applied: slots %s, pools %+v, roster %+v, cap %d", seatHandles(slots.Squad), pools.RosterPools(), s.Config.Roster, s.Config.MaxSeats)
 			}
 			l.mu.Lock()
 			defer l.mu.Unlock()
