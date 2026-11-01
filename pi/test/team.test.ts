@@ -121,6 +121,7 @@ test("amq_team_propose prints the plan and digest; amq_team_apply returns the ro
 	const lines = r.ctx.widgets[PLAN_KEY].lines.join("\n");
 	assert.match(lines, /seat impl-1 \(implementer\) claude\/sonnet\/medium/);
 	assert.match(lines, /confirm: \/squad confirm 0123456789abcdef/);
+	assert.doesNotMatch(lines, /team confirm/, "the plan block names the dropped shell door");
 	const applied = await r.pi.tools.get("amq_team_apply").execute("c2", { digest: DIGEST }, undefined);
 	assert.deepEqual(r.calls[1].args, ["team", "apply", "--digest", DIGEST, "--project", PROJECT, "--json"]);
 	assert.ok(r.calls[1].timeoutMs > 60000, "the apply waits for the roster");

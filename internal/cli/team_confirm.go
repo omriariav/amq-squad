@@ -294,7 +294,8 @@ func proposalByPrefix(root, prefix string, at time.Time) (teamProposal, error) {
 var confirmParent = procinfo.ParentPID
 
 // leadStartRecord names the solo lead's start socket for the processes that
-// are not its descendants (team confirm, the Buzz attachment). It is no
+// are not its descendants (the Buzz attachment, a shell apply checking
+// whether a lead runs). It is no
 // authority: the dial checks the socket is private and the owner's, and the
 // lead proves every peer itself.
 type leadStartRecord struct {

@@ -170,7 +170,7 @@ type guardAction struct {
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
 	credRead       string // a read of the owner's GitHub or release credential (3-2)
 	harness        string // a harness-only verb (the commit step, the scheduler process): v3-5-verifier rule 2
-	ownerOnly      string // the owner's own verb: team confirm and team apply (R55, brief 31-3)
+	ownerOnly      string // team apply, and team confirm (a dropped verb), never from a seat or the lead (R55, brief 31-3)
 	push           guardPush
 	writes         []string
 	blockSafe      bool // a Write/Edit known to keep the file's managed block

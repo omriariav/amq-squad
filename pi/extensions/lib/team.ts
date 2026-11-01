@@ -186,7 +186,7 @@ export class SoloTeam {
 		if (!p) return [];
 		const out = ["amq-squad: proposed team", ...p.plan.map((l) => "  " + l), `  digest ${p.digest}`, `  prefix ${p.prefix}`];
 		if (this.confirmed) out.push(`  confirmed at ${this.confirmed.at.toISOString()} (door tui, witnessed by the lead); the lead applies it with amq_team_apply`);
-		else out.push(`  confirm: /squad confirm ${p.prefix}  (or amq-squad team confirm ${p.digest} in your shell, or the signed Buzz DM "yes ${p.prefix}")`);
+		else out.push(`  confirm: /squad confirm ${p.prefix}  (or the signed Buzz DM "yes ${p.prefix}")`);
 		if (this.line) out.push(`  ${this.line}`);
 		return out;
 	}
