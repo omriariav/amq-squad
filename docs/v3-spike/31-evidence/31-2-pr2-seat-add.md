@@ -84,6 +84,12 @@ closed, then calls `swapReload` (internal/scheduler/roster.go) before
 3. `Config.Roster`, written by the scheduler only once 1 and 2 returned
    nil.
 
+The tick reads its config again after the roster step (Codex P2 3 on
+5d20b5ff), so dispatch and the state written at the tick's end
+(scheduler.json, which status reads) carry the new roster and cap in the
+same tick as the launch, never the old roster beside the seats just
+launched.
+
 `Reload.swap` undoes what it wrote when a step after it fails, so a failure
 between any two writes leaves all three old. The scheduler then logs
 `roster_reload_failed` and relaunches the running roster unchanged. On
@@ -251,6 +257,7 @@ Each row fails with its change reverted (section 4).
 | E | pi `the lead's model tool list carries no key verb and no gate-answer verb` (PR 1's row, unchanged: the exact thirteen tools) |
 | Start bound (Codex P2 1) | schedproc `TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain` (a stamp a minute ahead and one before the launch start: `start_out_of_range`, no `roster_relaunch_requested`, no launch, squad, pools and roster unchanged; an in-range stamp relaunches); cli `TestSchedulerRelaunchBoundsItsStart` (the verb refuses both with nothing sent; an in-range stamp is sent in UTC) |
 | Kept starts (Codex P2 2) | scheduler `TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster` (s-c added at T1, s-d at T2: the next relaunch and a plain one after it carry T1 and T2; a reload removing s-c drops its start, s-d keeps T2); seatlaunch `TestAnAddedSeatKeepsItsStartAcrossRelaunches` (a later launch writes cto's marks with T1 again and no drain end, dev's with T2 and its drain end) |
+| State agrees (Codex P2 3) | scheduler `TestTheStateWrittenInTheRelaunchsTickNamesTheNewRoster` (scheduler.json read right after the relaunch's tick names s-a and s-c and max_seats 3) |
 | Drain | status `TestARelaunchedSeatsBudgetNamesTheDrain` (a key press, 30 s of drain, then the launch: segments drain, prepare, mint, apply, seat_exec; drain 30000 ms, prepare 200 ms; the slowest is drain and the warning says `slowest segment drain 30.000 s`; a seat without a drain end keeps four segments); seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the added seat's `drain_end` lies between the key press and seat live; the existing seat has none) |
 | Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it launches, `roster_over_cap` is logged and its task waits `seat_cap`); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns` (under `--max-seats 2`: every added seat launches, `roster_over_cap`, two leases and the third `seat_cap`, the state's 3 live seats over max_seats 2); pi `over the lease cap: a warning line in the seats block, never a refusal`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
 

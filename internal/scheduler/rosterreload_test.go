@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -197,5 +198,28 @@ func TestAReloadRecomputesTheLeaseCap(t *testing.T) {
 				t.Fatalf("leased %d, want %d; the third task %+v", leased, tc.leased, third)
 			}
 		})
+	}
+}
+
+// Codex P2 3 on 31-2 PR 2: the state the tick writes agrees with the swap.
+// scheduler.json read right after the relaunch's tick names the new roster
+// (s-c added, s-b removed) and the new lease cap, beside the seats just
+// launched. Reverted (the tick's config captured before the swap), it names
+// the old roster and cap until the next tick.
+func TestTheStateWrittenInTheRelaunchsTickNamesTheNewRoster(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scheduler.json")
+	h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute, StatePath: path}, rosterAB...)
+	h.tick()
+	h.s.RequestRelaunchReload("swap s-b for s-c", t0, &RosterReload{Roster: []RosterSeat{{Handle: "s-a", Pool: sonnet}, {Handle: "s-c", Pool: opus}}, MaxSeats: 3})
+	h.tick()
+	if len(fr.launches) != 2 {
+		t.Fatalf("launches %d", len(fr.launches))
+	}
+	st, err := ReadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(st.Roster, ",") != "s-a,s-c" || st.MaxSeats != 3 {
+		t.Fatalf("scheduler.json after the relaunch's tick: roster %v, max_seats %d", st.Roster, st.MaxSeats)
 	}
 }

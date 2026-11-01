@@ -380,7 +380,13 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	// Roster mode: the owed roster launch, or the lead's relaunch, before
 	// any dispatch (3.0.1 t16).
-	if hold, err := s.rosterStep(list, now, cfg, log); err != nil {
+	hold, err := s.rosterStep(list, now, cfg, log)
+	// A relaunch's reload swapped the roster and the lease cap in this tick:
+	// dispatch and the state written below read the new ones (Codex P2 3 on
+	// 31-2 PR 2), so scheduler.json never names the old roster beside the
+	// seats just launched.
+	cfg = s.cfg()
+	if err != nil {
 		return out, err
 	} else if hold {
 		s.closeIdle(list, now, cfg, log)
