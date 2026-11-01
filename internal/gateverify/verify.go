@@ -148,7 +148,13 @@ func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gate
 	}
 	a, err := gatestore.ParseAnswer(e.Content)
 	if err != nil {
-		return Outcome{}, reject(RejectBadTuple, "%v", err)
+		// a bare yes or no (brief 3.1.1-1) names no gate: it is this record's
+		// answer only through its thread, checked below like any answer's
+		verb, ok := gatestore.ParseBare(e.Content)
+		if !ok {
+			return Outcome{}, reject(RejectBadTuple, "%v", err)
+		}
+		a = rec.BareAnswer(verb)
 	}
 	if a.GateID != rec.GateID {
 		return Outcome{}, reject(RejectGateMismatch, "answer names gate %s, verifying gate %s", a.GateID, rec.GateID)
