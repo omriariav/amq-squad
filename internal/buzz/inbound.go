@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 )
 
 // The share's declared target is amq-remote's mailbox adapter (AMQ v0.111.0
@@ -93,6 +94,11 @@ type Handler struct {
 	Inbox  Inbox
 	Mail   Mailer
 	Target Target
+	// Poster and Threads are the lead reply relay (brief 31-4, RelayStep):
+	// the poster signs with the share body in this process; without both
+	// the relay is off (the receipt and the record are still written).
+	Poster  Poster
+	Threads ThreadReader
 	// SeenPath is the durable once-only record of handled event ids
 	// (B-P7); "" keeps it in memory (tests).
 	SeenPath string
@@ -107,6 +113,7 @@ type Handler struct {
 type Handled struct {
 	MessageID string             `json:"message_id"`
 	EventID   string             `json:"event_id,omitempty"`
+	RequestID string             `json:"request_id,omitempty"`
 	Kind      string             `json:"kind"` // gate | route | duplicate | attention | error
 	Gate      *gateverify.Result `json:"gate,omitempty"`
 	Delivery  *Delivery          `json:"delivery,omitempty"`
@@ -228,7 +235,11 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 		h.final(ctx, &hd, "refused "+gateID+" "+code) // nothing is marked
 		return hd
 	}
-	if isGateAnswer(content) {
+	// a reply to a relayed post continues its request (brief 31-4): it
+	// reaches the lead as text, whatever its shape; the gate path keeps
+	// every other answer form, as today
+	cont := h.continuation(e)
+	if cont == nil && isGateAnswer(content) {
 		h.gate(ctx, vctx, &hd, e, raw, gateID, relay, body, grant, limit)
 		return hd
 	}
@@ -242,7 +253,7 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 	// the once-only mark follows the successful forward, as on the gate
 	// path (fix round 2, item 1): a forward that fails leaves no mark and
 	// the next delivery retries it
-	h.route(ctx, &hd, id, content, now)
+	h.route(ctx, &hd, e, content, now, cont)
 	return hd
 }
 
@@ -342,10 +353,21 @@ func reaskLine(eventID string) string {
 	return "re-ask: answer in the gate thread (event " + eventID + ")"
 }
 
-// route delivers the owner-signed event's own content (never the AMQ body).
-func (h *Handler) route(ctx context.Context, hd *Handled, id, content string, now time.Time) {
+// route delivers the owner-signed event's own content (never the AMQ body)
+// on the request's cockpit thread: a new request for a fresh DM, the same
+// request for a continuation. The one result reply is the receipt,
+// `accepted <request id>` and the routing; the lead's answer reaches the
+// owner later as a relay post (RelayStep).
+func (h *Handler) route(ctx context.Context, hd *Handled, e nostr.Event, content string, now time.Time, cont *status.RelayRecord) {
 	hd.Kind = "route"
-	d, err := Deliver(ctx, h.Mail, h.Target, id, content)
+	id := e.ID
+	rid := RequestID(id)
+	var via *Route
+	if cont != nil {
+		rid, via = cont.RequestID, &Route{Lead: cont.Route}
+	}
+	hd.RequestID = rid
+	d, err := DeliverOn(ctx, h.Mail, h.Target, id, content, CockpitThread(rid), via)
 	if err != nil {
 		// the detail (paths, AMQ errors) stays on this machine; the reply is
 		// clear text on the relay
@@ -357,11 +379,14 @@ func (h *Handler) route(ctx context.Context, hd *Handled, id, content string, no
 	if err := h.seen.put(id, "-", now); err != nil {
 		hd.Error = "once-only record: " + err.Error()
 	}
+	if err := h.recordTurn(e, rid, cont, d, now); err != nil {
+		hd.Error = joinErr(hd.Error, "relay record: "+err.Error())
+	}
 	dest := d.Mailbox
 	if d.Lead != "" {
 		dest = d.Lead
 	}
-	text := "routed " + dest
+	text := "accepted " + rid + " routed " + dest
 	switch {
 	case len(d.Ambiguous) > 0:
 		text += " not_forwarded ambiguous_lead"

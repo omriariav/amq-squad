@@ -421,7 +421,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatalf("the attach inbox after serve's delivery of the route: %+v, %v", delivered, err)
 	}
 	handled, err = h.Step(ctx)
-	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || handled[0].Reply != "routed lead-b" {
+	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || !routedTo(handled[0].Reply, "lead-b") {
 		t.Fatalf("route: %+v, %v", handled, err)
 	}
 	if !inboxHas(t, squad, "lead-a", "nostr:"+routeID) || !inboxHas(t, squad, "lead-b", "nostr:"+routeID) {
