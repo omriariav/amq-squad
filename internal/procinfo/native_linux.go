@@ -69,3 +69,13 @@ func bootTimeFromProcStat(stat string) (int64, bool) {
 	}
 	return 0, false
 }
+
+// readArgvNative reads pid's argv from /proc/<pid>/cmdline, each argument
+// its own string.
+func readArgvNative(pid int) ([]string, bool) {
+	buf, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return nil, false
+	}
+	return parseProcCmdlineArgv(buf)
+}
