@@ -145,7 +145,9 @@ func TestTeamApplyWithoutAFreshConfirmationRefusesNamingTheThreeDoors(t *testing
 	raw, _ := json.Marshal(soloTeamPlan())
 	planFile := filepath.Join(t.TempDir(), "plan.json")
 	mustWrite(t, planFile, string(raw))
-	_, _, err := captureOutput(t, func() error { return runTeam([]string{"apply", "--digest", digest, "--project", proj, "--from", planFile}) })
+	_, _, err := captureOutput(t, func() error {
+		return runTeam([]string{"apply", "--digest", digest, "--project", proj, "--from", planFile})
+	})
 	doors(err, ReasonConfirmMissing)
 	stale := confirmRecord{Digest: digest, Door: DoorShell, At: time.Now().Add(-31 * time.Minute), By: "uid 1", Proof: confirmProof{PIDChain: []confirmHop{{PID: 10, Name: "zsh"}}}}
 	if _, err := writeConfirmRecord(root, stale); err != nil {
