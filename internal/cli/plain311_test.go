@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -246,5 +247,71 @@ func TestACanaryInATitleReachesNoQuestionStatusOrKey(t *testing.T) {
 	}
 	if seen != 2 {
 		t.Fatalf("status gates = %+v, want both questions redacted", st.Gates)
+	}
+}
+
+// Codex's third pass on #838 (P2): the lead's plan records are bounded. A
+// record expires with its proposal's 30-minute window (gone at the next
+// write or confirmation, and its yes refused); at most MaxSentPlans are
+// kept, the oldest evicted; the relayed form is computed once, at record
+// time.
+func TestThePlanRecordsExpireAndAreBounded(t *testing.T) {
+	f := newGateCLIFixture(t)
+	proj, root := soloProject(t)
+	s := newLeadStarter(root, proj, "test", nil)
+	now := time.Now()
+	prev := confirmNow
+	t.Cleanup(func() { confirmNow = prev })
+	clock := now
+	confirmNow = func() time.Time { return clock }
+	// nine recent proposals, written as team propose writes them
+	var digests []string
+	for i := 0; i < 9; i++ {
+		h := strings.Repeat(string("0123456789"[i]), 64)
+		d := "sha256:" + h + "@absent"
+		raw, _ := json.Marshal(teamProposal{Schema: confirmProposalSchema, Digest: d, Project: proj, At: now.Add(time.Duration(i) * time.Second)})
+		mustWrite(t, proposalPath(root, h), string(raw))
+		digests = append(digests, d)
+	}
+	record := func(d string) leadStartReply {
+		h, _ := digestHex(d)
+		clock = clock.Add(time.Second)
+		return s.recordPlanFrom(h, leadStartRequest{Kind: planSentKind, Digest: d, Body: "plan " + d[7:23] + "\ndigest " + d})
+	}
+	for _, d := range digests[:MaxSentPlans] {
+		if r := record(d); r.Outcome != "recorded" {
+			t.Fatalf("record %s: %+v", d, r)
+		}
+	}
+	if len(s.plans) != MaxSentPlans || s.plans[digests[0]].Relayed == "" || !s.plans[digests[0]].Fits {
+		t.Fatalf("%d records, the first %+v", len(s.plans), s.plans[digests[0]])
+	}
+	if r := record(digests[8]); r.Outcome != "recorded" {
+		t.Fatalf("the ninth record: %+v", r)
+	}
+	if _, kept := s.plans[digests[0]]; kept || len(s.plans) != MaxSentPlans {
+		t.Fatalf("the ninth record did not evict the first: %d records", len(s.plans))
+	}
+	if _, kept := s.plans[digests[8]]; !kept {
+		t.Fatal("the ninth record is not kept")
+	}
+	// past the proposals' window every record is gone, and a yes to the
+	// exact relayed plan post is refused
+	sign := func(key nostr.SecretKey, content string, tags ...[]string) nostr.Event {
+		e := nostr.Event{CreatedAt: clock.Unix(), Kind: 9, Tags: append([][]string{{"h", "dm-chan"}}, tags...), Content: content}
+		if err := key.Sign(&e); err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	d := digests[8]
+	clock = now.Add(ConfirmTTL + time.Minute)
+	post := sign(f.body, "re q-0123456789ab\nplan "+d[7:23]+"\ndigest "+d)
+	yes := sign(f.owner, "yes", []string{"e", post.ID, "", "reply"})
+	if r := s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: yes.Marshal(), Post: post.Marshal()}); r.Outcome == "witnessed" || r.Refusal != ReasonPlanUnproved {
+		t.Fatalf("a yes to an expired plan: %+v", r)
+	}
+	if len(s.plans) != 0 {
+		t.Fatalf("%d expired records kept", len(s.plans))
 	}
 }

@@ -138,11 +138,32 @@ type leadStarter struct {
 	plans     map[string]sentPlan // the plan texts its pi sent, by digest (memory only)
 }
 
-// sentPlan is the exact text the lead's pi sent as the plan reply for one
-// digest, recorded before it was sent.
+// sentPlan is the plan reply the lead's pi sent for one digest, recorded
+// before it was sent: its body as the relay posts it under the header
+// (redacted once, here), whether it fits one post, and when the record
+// expires (its proposal's 30-minute window).
 type sentPlan struct {
-	Text string
-	At   time.Time
+	Relayed string
+	Fits    bool
+	At      time.Time
+	Expires time.Time
+}
+
+// MaxSentPlans bounds the lead's plan records; the oldest is evicted.
+const MaxSentPlans = 8
+
+// planProbeID is a request id of the relay's fixed shape: the header's
+// length does not depend on the id, so the body as relayed is computed once.
+const planProbeID = "q-000000000000"
+
+// prunePlansLocked drops the records whose proposal window has passed. The
+// caller holds wmu.
+func (s *leadStarter) prunePlansLocked(now time.Time) {
+	for d, sp := range s.plans {
+		if now.After(sp.Expires) {
+			delete(s.plans, d)
+		}
+	}
 }
 
 // setPi records the pi process the lead spawned, with its start stamp read
@@ -459,12 +480,24 @@ func (s *leadStarter) recordPlanFrom(hexDigest string, req leadStartRequest) lea
 	if len(planLines(req.Body)) == 0 || len(req.Body) > 16<<10 {
 		return leadStartReply{Outcome: "refused", Refusal: "request_malformed", Detail: "the plan text is empty or longer than 16 KiB"}
 	}
+	relayed, fits := buzz.RelayedText(planProbeID, req.Body)
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	if s.plans == nil {
 		s.plans = map[string]sentPlan{}
 	}
-	s.plans[prop.Digest] = sentPlan{Text: req.Body, At: now}
+	s.prunePlansLocked(now)
+	if _, again := s.plans[prop.Digest]; !again && len(s.plans) >= MaxSentPlans {
+		oldest := ""
+		for d, sp := range s.plans {
+			if oldest == "" || sp.At.Before(s.plans[oldest].At) {
+				oldest = d
+			}
+		}
+		delete(s.plans, oldest)
+	}
+	s.plans[prop.Digest] = sentPlan{Relayed: strings.TrimRight(strings.TrimPrefix(relayed, "re "+planProbeID+"\n"), " \t\r\n"), Fits: fits,
+		At: now, Expires: prop.At.Add(ConfirmTTL)}
 	return leadStartReply{Outcome: "recorded", Digest: prop.Digest}
 }
 
@@ -486,23 +519,23 @@ func planLines(text string) []string {
 var relayHeaderRe = regexp.MustCompile(`^re (q-[0-9a-f]{12})$`)
 
 // provenPlanLocked is the one recent proposal whose recorded plan text the
-// post IS (Codex's third pass on #838): the post's content equals exactly
-// what the relay posts for that text on the request its header names
-// (buzz.RelayedText: the header line, then the text trimmed and redacted),
-// only trailing whitespace tolerated; no line before, between or after; a
-// multi-part post proves nothing. Anything else is plan_post_unproved. The
-// caller holds wmu.
+// post IS (Codex's third pass on #838): the post's content is exactly the
+// relay's one header line `re <request id>`, then the text as the relay
+// posts it (buzz.RelayedText, computed once when recorded: trimmed and
+// redacted), only trailing whitespace tolerated; no line before, between
+// or after; a multi-part post proves nothing. Expired records are dropped
+// first. Anything else is plan_post_unproved. The caller holds wmu.
 func (s *leadStarter) provenPlanLocked(post nostr.Event, now time.Time) (teamProposal, error) {
-	header, _, _ := strings.Cut(post.Content, "\n")
+	s.prunePlansLocked(now)
+	header, body, _ := strings.Cut(post.Content, "\n")
 	m := relayHeaderRe.FindStringSubmatch(header)
-	content := strings.TrimRight(post.Content, " \t\r\n")
+	body = strings.TrimRight(body, " \t\r\n")
 	var found []teamProposal
 	for digest, sp := range s.plans {
 		if m == nil {
 			break
 		}
-		want, ok := buzz.RelayedText(m[1], sp.Text)
-		if !ok || content != strings.TrimRight(want, " \t\r\n") {
+		if !sp.Fits || body != sp.Relayed {
 			continue
 		}
 		h, err := digestHex(digest)

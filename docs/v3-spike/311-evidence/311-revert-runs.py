@@ -177,9 +177,9 @@ run("the lead takes an altered plan post", [(LS,'\t\tcase !p.CheckID():\n','\t\t
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the lead takes a bare no as the confirmation", [(LS,'case bare && verb == "approve" && req.Post != nil:','case bare && verb != "" && req.Post != nil:')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a post carrying the plan text with other lines (containment, not equality)", [(LS,'if !ok || content != strings.TrimRight(want, " \\t\\r\\n") {','if !ok || !strings.Contains(content, strings.TrimSpace(strings.SplitN(want, "\\n", 2)[1])) {')],
+run("the lead takes a post carrying the plan text with other lines (containment, not equality)", [(LS,'if !sp.Fits || body != sp.Relayed {','if !sp.Fits || !strings.Contains(body, sp.Relayed) {')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a post without its recorded plan text", [(LS,'if !ok || content != strings.TrimRight(want, " \\t\\r\\n") {','if !ok {')],
+run("the lead takes a post without its recorded plan text", [(LS,'if !sp.Fits || body != sp.Relayed {','if !sp.Fits {')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost|TestTheAttachmentRoutesABareYesByTheRecordedPlan'")
 run("the lead records a plan text from any peer", [(LS,'\tif piPID <= 1 || pid != piPID {\n\t\treturn leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); only','\tif false {\n\t\treturn leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); only')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
@@ -197,6 +197,12 @@ run("the lead takes a confirmation in a gate question's thread", [(LS,'if anchor
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the lead takes a yes naming more than the plan's thread", [(LS,'\t\tcase slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(gateverify.EventRefs(p), r) }):\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
+
+# Codex's third pass on #838 (P2): the plan records are bounded
+run("the plan records never expire", [(LS,'\t\tif now.After(sp.Expires) {\n','\t\tif false && now.After(sp.Expires) {\n')],
+    CL+"'TestThePlanRecordsExpireAndAreBounded'")
+run("the plan records are not capped", [(LS,'!again && len(s.plans) >= MaxSentPlans {','!again && false && len(s.plans) >= MaxSentPlans {')],
+    CL+"'TestThePlanRecordsExpireAndAreBounded'")
 
 # Codex re-check on #838, the second layer: no shell sets a team-plan label
 run("the solo shell runs a command string with a team-plan label", [(TT,'\tif (tokens.some((t) => t.includes(TEAM_PLAN_LABEL))) return "a team-plan label";\n','')],
