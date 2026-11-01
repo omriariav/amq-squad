@@ -353,5 +353,14 @@ test("the team lead's first turn carries the host facts from status and context,
 		for (const want of ["branch missing at missing;", "AMQ missing; amq-squad missing;", "roster: missing;", "open tasks: none;"]) {
 			assert.ok(missing.includes(want), `the line lacks ${JSON.stringify(want)}:\n${missing}`);
 		}
+		// Codex on #837, item 6: a credential in a branch name that reached
+		// the extension unredacted is redacted before it is interpolated
+		// (the canary is built at run time and matches no real shape)
+		const canary = "Zq9" + "xV7mP2wL4";
+		fs.writeFileSync(w.env.FAKE_CONTEXT, envelope("context", { seat: { handle: "cto" }, host: { repository: "/repo", branch: `feature/api_key=${canary}`, tip: "", amq_version: "" } }));
+		bump("55555");
+		const redacted = await turn();
+		assert.ok(!redacted.includes(canary), `the canary reached the host line:\n${redacted}`);
+		assert.ok(redacted.includes("branch feature/api_key=<redacted> at missing;"), redacted);
 	});
 });

@@ -20,13 +20,14 @@ func TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty(t *testing.T) {
 	prev := contextHostRun
 	t.Cleanup(func() { contextHostRun = prev })
 	gitOK := true
+	branch := "v3-31-3b"
 	contextHostRun = func(dir, name string, args ...string) (string, error) {
 		ran = append(ran, dir+" "+name+" "+strings.Join(args, " "))
 		switch {
 		case name == "git" && !gitOK:
 			return "", errors.New("not a git repository")
 		case name == "git" && args[1] == "--abbrev-ref":
-			return "v3-31-3b", nil
+			return branch, nil
 		case name == "git":
 			return "95b12207f9a3", nil
 		case name == "/opt/fake/amq":
@@ -59,5 +60,13 @@ func TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty(t *testing.T) {
 	gitOK = false
 	if h := host("--json", "--host"); h["branch"] != "" || h["tip"] != "" || h["amq_version"] != "amq 0.116.2" {
 		t.Fatalf("host without git = %v", h)
+	}
+	// Codex on #837, item 6: a credential in a branch name never leaves
+	// context --host (the canary matches no redact.RealCredentialShapes)
+	canary := "Zq9" + "xV7mP2wL4"
+	gitOK = true
+	branch = "feature/api_key=" + canary
+	if h := host("--json", "--host"); h["branch"] != "feature/api_key=<redacted>" {
+		t.Fatalf("a credential-named branch = %v", h["branch"])
 	}
 }

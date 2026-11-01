@@ -31,16 +31,31 @@ export type HostFacts = { repository?: string; branch?: string; tip?: string; am
 
 const MISSING = "missing";
 const CLOSED_TASKS = new Set(["completed", "cancelled", "done"]);
+const REDACTED = "<redacted>";
+
+// The extension's own pass over every fact before it is interpolated
+// (Codex on #837, item 6), after context --host's redact.Block: a value
+// under a credential name (NAME=value, NAME: value) and the real provider
+// shapes (internal/redact RealCredentialShapes) read <redacted>. A narrow
+// second layer, not the Go rules: it redacts more rather than less.
+const CREDENTIAL_ASSIGN = /([A-Za-z0-9_.-]*(?:key|secret|token|passw(?:or)?d|credential|nsec)[A-Za-z0-9_.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',;]+)/gi;
+const REAL_SHAPES = [/AKIA[0-9A-Z]{16}/g, /sk-[A-Za-z0-9]{20,}/g, /ghp_[A-Za-z0-9]{30,}/g, /AIza[0-9A-Za-z_-]{30,}/g, /nsec1[a-z0-9]{20,}/g, /BEGIN [A-Z ]*PRIVATE KEY/g];
+
+export function redactFact(v: string): string {
+	let out = v.replace(CREDENTIAL_ASSIGN, (_m, name: string, sep: string) => `${name}${sep}${REDACTED}`);
+	for (const re of REAL_SHAPES) out = out.replace(re, REDACTED);
+	return out;
+}
 
 function fact(v: string | undefined): string {
-	return v && v.trim() ? v.trim() : MISSING;
+	return v && v.trim() ? redactFact(v.trim()) : MISSING;
 }
 
 // hostLine is the system line from a status document and context's host
 // facts; either may be undefined (the verb failed), and its facts then read
 // missing.
 export function hostLine(st: StatusDoc | undefined, host: HostFacts | undefined): string {
-	const roster = st?.seats ? (st.seats.length ? st.seats.map((s) => `${s.handle} ${fact(s.runtime)}/${fact(s.model)}`).join(", ") : "none") : MISSING;
+	const roster = st?.seats ? (st.seats.length ? st.seats.map((s) => `${fact(s.handle)} ${fact(s.runtime)}/${fact(s.model)}`).join(", ") : "none") : MISSING;
 	const tasks = st?.tasks ? st.tasks.filter((t) => !CLOSED_TASKS.has(t.task_state ?? "")) : undefined;
 	const gates = st?.gates ? st.gates.filter((g) => g.state === "open") : undefined;
 	const list = <T>(xs: T[] | undefined, f: (x: T) => string) => (xs ? (xs.length ? xs.map(f).join(", ") : "none") : MISSING);
@@ -50,8 +65,8 @@ export function hostLine(st: StatusDoc | undefined, host: HostFacts | undefined)
 		`branch ${fact(host?.branch)} at ${fact(host?.tip)};`,
 		`AMQ ${fact(host?.amq_version)}; amq-squad ${fact(st?.producer_version)};`,
 		`roster: ${roster};`,
-		`open tasks: ${list(tasks, (t) => `${t.id} ${t.task_state ?? MISSING}${t.title ? ` "${t.title}"` : ""}`)};`,
-		`open gates: ${list(gates, (g) => `${g.id} ${fact(g.action_class)}`)}.`,
+		`open tasks: ${list(tasks, (t) => `${fact(t.id)} ${fact(t.task_state)}${t.title ? ` "${redactFact(t.title)}"` : ""}`)};`,
+		`open gates: ${list(gates, (g) => `${fact(g.id)} ${fact(g.action_class)}`)}.`,
 	].join(" ");
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
@@ -140,6 +141,12 @@ func hostFacts() *hookHost {
 		if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil {
 			h.AMQVersion, _, _ = strings.Cut(out, "\n")
 		}
+	}
+	// every fact goes into the team lead's context verbatim, so none leaves
+	// unredacted (Codex on #837, item 6): a branch named api_key=<value>
+	// shows the name, never the value
+	for _, f := range []*string{&h.Repository, &h.Branch, &h.Tip, &h.AMQVersion} {
+		*f = redact.Block(*f)
 	}
 	return h
 }
