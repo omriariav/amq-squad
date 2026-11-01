@@ -4,9 +4,20 @@
 // model guess: the repository, the branch and its tip, the installed AMQ
 // and amq-squad versions, the roster with each seat's runtime and model,
 // the open tasks and the open gates. A fact the verbs do not give is shown
-// as missing, not invented. The line is rebuilt every turn, so a changed
-// status changes it.
-import type { Config, ContextData, Runner } from "./hooks.ts";
+// as missing, not invented. It is a message in the conversation, given on
+// the first turn and again only when a fact in it changed (the plan
+// reviewer: the owner counts tokens; a line repeating what the model holds
+// is the cost he named): HostFacts keys on what the screen's poll stats
+// (the task store's .generation, scheduler.json) plus the decisions log
+// (a roster decision), the gate store and its consumed answers, and the
+// repository's HEAD and its log (the branch and its tip); only when that
+// key changed does it run the verbs, and only a changed line is sent.
+import * as path from "node:path";
+import { contextOf, type Config, type ContextData, type Runner } from "./hooks.ts";
+import { defaultStat, type Stat } from "./screen.ts";
+
+// HOST_MESSAGE is the host line's message type.
+export const HOST_MESSAGE = "amq-squad-host";
 
 type StatusDoc = {
 	project_path?: string;
@@ -60,4 +71,44 @@ export async function readStatus(cfg: Config, runner: Runner): Promise<StatusDoc
 // none.
 export function hostOf(c: { ok: true; data: ContextData } | { ok: false; why: string }): HostFacts | undefined {
 	return c.ok ? ((c.data as ContextData & { host?: HostFacts }).host ?? undefined) : undefined;
+}
+
+// hostPollPaths are what the host facts' key stats under the lead's root
+// and in the repository.
+export function hostPollPaths(root: string, project: string): string[] {
+	const ext = path.join(root, "extensions", "amq-squad");
+	const paths = [path.join(ext, "tasks", ".generation"), path.join(ext, "scheduler.json"), path.join(ext, "scheduler", "decisions.jsonl"), path.join(ext, "gates"), path.join(ext, "consumed")];
+	if (project) paths.push(path.join(project, ".git", "HEAD"), path.join(project, ".git", "logs", "HEAD"));
+	return paths;
+}
+
+// HostFacts gives the host line on the first turn and again only when a
+// fact in it changed.
+export class HostFacts {
+	cfg: Config;
+	runner: Runner;
+	stat: Stat;
+	lastKey: string | undefined;
+	lastLine: string | undefined;
+
+	constructor(cfg: Config, runner: Runner, stat: Stat = defaultStat) {
+		this.cfg = cfg;
+		this.runner = runner;
+		this.stat = stat;
+	}
+
+	// next is the line to send this turn, undefined when nothing changed.
+	async next(): Promise<string | undefined> {
+		const project = process.env.AMQ_SQUAD_PROJECT || this.cfg.project || "";
+		const key = [this.cfg.root, ...hostPollPaths(this.cfg.root, project).map((p) => {
+			const s = this.stat(p);
+			return s ? `${s.mtimeMs}:${s.size}` : "-";
+		})].join("|");
+		if (key === this.lastKey) return undefined;
+		this.lastKey = key;
+		const line = hostLine(await readStatus(this.cfg, this.runner), hostOf(await contextOf(this.cfg, this.runner, true)));
+		if (line === this.lastLine) return undefined;
+		this.lastLine = line;
+		return line;
+	}
 }

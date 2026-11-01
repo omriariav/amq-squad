@@ -18,7 +18,7 @@ import amqPiBridge, { raiseApproval, APPROVE_OPTION, REJECT_OPTION } from "./lib
 import { blockReason, callKey, DEFAULT_CAP, hold, manifestHash, RetryCap, type Decider, type Decision } from "./lib/hold.ts";
 import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, outsideDeclared, roleMessage, type Config, type ContextData, type Verdict } from "./lib/hooks.ts";
 import { restrictModels } from "./lib/models.ts";
-import { hostLine, hostOf, readStatus } from "./lib/firstturn.ts";
+import { HOST_MESSAGE, HostFacts } from "./lib/firstturn.ts";
 import { installScreen } from "./lib/screen.ts";
 import { installSoloTeam, soloShellRefusal, type SoloTeam } from "./lib/team.ts";
 import { registerTools } from "./lib/tools.ts";
@@ -68,20 +68,27 @@ export default function amqSquad(pi: ExtensionAPI): void {
 
 	// R35: role and rules every turn; the role also as the first message.
 	pi.on("before_agent_start", async (event, ctx) => {
-		const c = await contextOf(cfg, run, cfg.lead);
+		const c = await contextOf(cfg);
 		task = c.ok ? (c.data.task ?? null) : null;
 		let roleText = c.ok ? (c.data.role_text ?? "") : "";
 		if (!roleText) roleText = readRole();
 		const sections = event.systemPromptOptions.sections;
 		if (roleText) sections["amq-squad-role"] = roleText.trim();
 		sections["amq-squad"] = c.ok ? contextSection(cfg, c.data) : `You are seat ${cfg.me}.\n${AMQ_DEFINITION}\namq-squad context is unavailable (${c.why}).`;
-		// the team lead's host facts, from status and context, every turn
-		// (brief 31-3 PR 2, section 5): never a model guess
-		if (cfg.lead) sections["amq-squad-host"] = hostLine(await readStatus(cfg, run), hostOf(c));
 		if (!c.ok) status(ctx, `context unavailable: ${c.why}`);
 		if (roleDelivered || !roleText) return undefined;
 		roleDelivered = true;
 		return { message: { customType: ROLE_MESSAGE, content: roleMessage(cfg, roleText), display: true } };
+	});
+
+	// The team lead's host facts (brief 31-3 PR 2, section 5): a message from
+	// status and context on the first turn and again only when a fact in it
+	// changed, never a model guess and never a repeat.
+	const host = new HostFacts(cfg, run);
+	pi.on("before_agent_start", async () => {
+		if (!cfg.lead) return undefined;
+		const line = await host.next();
+		return line ? { message: { customType: HOST_MESSAGE, content: line, display: true } } : undefined;
 	});
 
 	// R36: guard before every tool call; any guard failure blocks.

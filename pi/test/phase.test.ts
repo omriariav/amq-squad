@@ -38,7 +38,8 @@ function fakeBin(dir: string): string {
 	return script(
 		dir,
 		"amq-squad",
-		`case "$1" in
+		`[ -n "$FAKE_LOG" ] && echo "$1" >> "$FAKE_LOG"
+case "$1" in
   context) case " $* " in *" --host "*) cat "$FAKE_CONTEXT" ;; *) echo '{"data":{"seat":{"handle":"cto"}}}' ;; esac ;;
   status) [ -n "$FAKE_STATUS_FAIL" ] && exit 1; cat "$FAKE_STATUS" ;;
   team) case "$2" in propose) cat "$FAKE_PROPOSE" ;; apply) cat "$FAKE_APPLY" ;; esac ;;
@@ -205,11 +206,12 @@ test("R53: lead --team is team phase from its first turn with exactly the thirte
 });
 
 // Row 4: the team lead's first turn carries the host facts from status
-// --json and context --json --host as a system line: the repository, the
+// --json and context --json --host as a message: the repository, the
 // branch and tip, the AMQ and amq-squad versions, the roster with runtime
 // and model, the open tasks (not the closed) and the open gates (not the
-// answered); a changed status changes the line; a fact missing from the
-// verbs reads missing.
+// answered). The second turn with nothing changed carries no host line; a
+// turn after a task change carries it again; a key change with the same
+// facts sends nothing; a fact missing from the verbs reads missing.
 test("the team lead's first turn carries the host facts from status and context, not the model", async () => {
 	const w = soloWorld();
 	const status = {
@@ -232,13 +234,18 @@ test("the team lead's first turn carries the host facts from status and context,
 	};
 	fs.writeFileSync(w.env.FAKE_STATUS, JSON.stringify(status));
 	fs.writeFileSync(w.env.FAKE_CONTEXT, envelope("context", { seat: { handle: "cto" }, host: { repository: "/repo", branch: "v3-31-3b", tip: "95b12207f9a3", amq_version: "amq 0.116.2" } }));
-	const env: Record<string, string> = { ...w.env, AMQ_SQUAD_LEAD: "1", AM_ME: "cto", AM_ROOT: w.squadRoot };
+	const log = path.join(w.dir, "calls.log");
+	const env: Record<string, string> = { ...w.env, AMQ_SQUAD_LEAD: "1", AM_ME: "cto", AM_ROOT: w.squadRoot, FAKE_LOG: log };
 	delete env.AMQ_SQUAD_SOLO_LEAD;
+	const statusRuns = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter((l) => l === "status").length : 0);
+	const gen = path.join(w.squadRoot, "extensions", "amq-squad", "tasks", ".generation");
+	fs.mkdirSync(path.dirname(gen), { recursive: true });
+	fs.writeFileSync(gen, "1");
+	const bump = (n: string) => fs.writeFileSync(gen, n); // the task store changed
 	await withEnv(env, async (pi) => {
 		const turn = async () => {
-			const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
-			await pi.emit("before_agent_start", event, fakeCtx());
-			return event.systemPromptOptions.sections["amq-squad-host"] ?? "";
+			const results = await pi.emitAll("before_agent_start", { systemPromptOptions: { sections: {} } }, fakeCtx());
+			return results.filter((r) => r?.message?.customType === "amq-squad-host").map((r) => r.message.content as string)[0] ?? "";
 		};
 		const line = await turn();
 		for (const want of [
@@ -252,11 +259,18 @@ test("the team lead's first turn carries the host facts from status and context,
 			assert.ok(line.includes(want), `the line lacks ${JSON.stringify(want)}:\n${line}`);
 		}
 		assert.ok(!line.includes("t2") && !line.includes("g2"), "a closed task or an answered gate in the line");
+		const runs = statusRuns();
+		assert.equal(await turn(), "", "a second turn with nothing changed carried the host line again");
+		assert.equal(statusRuns(), runs, "a turn with nothing changed ran status again");
 		status.tasks.push({ id: "t3", title: "review it", task_state: "leased" });
 		fs.writeFileSync(w.env.FAKE_STATUS, JSON.stringify(status));
+		bump("22");
 		assert.match(await turn(), /open tasks: t1 pending "write the parser", t3 leased "review it";/);
+		bump("333"); // the key changed, the facts did not: no repeat
+		assert.equal(await turn(), "", "an unchanged line was sent again");
 		fs.writeFileSync(w.env.FAKE_STATUS, JSON.stringify({ root: w.squadRoot, session: "s1", tasks: [], gates: [] }));
 		fs.writeFileSync(w.env.FAKE_CONTEXT, envelope("context", { seat: { handle: "cto" }, host: { repository: "/repo", branch: "", tip: "", amq_version: "" } }));
+		bump("4444");
 		const missing = await turn();
 		for (const want of ["branch missing at missing;", "AMQ missing; amq-squad missing;", "roster: missing;", "open tasks: none;"]) {
 			assert.ok(missing.includes(want), `the line lacks ${JSON.stringify(want)}:\n${missing}`);
