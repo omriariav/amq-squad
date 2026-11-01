@@ -16,3 +16,5 @@ func readArgvNative(pid int) ([]string, bool) { return nil, false }
 func readEnvironNative(pid int) ([]string, bool) { return nil, false }
 
 func readSessionNative(pid int) (int, bool) { return 0, false }
+
+func readTTYNative(pid int) (bool, bool) { return false, false }

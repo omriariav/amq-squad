@@ -38,3 +38,26 @@ func TestEnvironReadsTheInitialEnvironment(t *testing.T) {
 		t.Fatalf("session id %d %v", sid, ok)
 	}
 }
+
+// The shell door's terminal check reads the peer's controlling terminal
+// from the kernel: linux's tty_nr, and a live read of this process agrees
+// with whether /dev/tty opens for it.
+func TestHasTTYReadsTheKernelsTerminal(t *testing.T) {
+	if has, ok := ttyFromStat("42 (zsh) S 1 42 42 34816 42 0"); !ok || !has {
+		t.Fatalf("tty_nr 34816 = %v %v", has, ok)
+	}
+	if has, ok := ttyFromStat("43 (a b) S 1 43 43 0 -1 0"); !ok || has {
+		t.Fatalf("tty_nr 0 = %v %v", has, ok)
+	}
+	has, ok := HasTTY(os.Getpid())
+	if !ok {
+		t.Skip("no kernel terminal read on this platform")
+	}
+	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err == nil {
+		f.Close()
+	}
+	if has != (err == nil) {
+		t.Fatalf("HasTTY %v, /dev/tty opens %v", has, err == nil)
+	}
+}

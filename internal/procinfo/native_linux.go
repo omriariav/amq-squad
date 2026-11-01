@@ -95,3 +95,12 @@ func readSessionNative(pid int) (int, bool) {
 	sid, err := unix.Getsid(pid)
 	return sid, err == nil
 }
+
+// readTTYNative reads tty_nr from /proc/<pid>/stat: 0 is no terminal.
+func readTTYNative(pid int) (bool, bool) {
+	buf, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false, false
+	}
+	return ttyFromStat(string(buf))
+}

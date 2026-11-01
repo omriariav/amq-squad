@@ -74,3 +74,27 @@ func parseProcEnviron(buf []byte) ([]string, bool) {
 	}
 	return strings.Split(trimmed, "\x00"), true
 }
+
+// HasTTY reports whether pid has a controlling terminal, from the kernel's
+// process record (darwin kinfo_proc e_tdev, linux /proc/<pid>/stat tty_nr);
+// ok=false when it cannot be read. The solo lead reads it for a peer of its
+// start socket (the shell door), never for itself.
+func HasTTY(pid int) (has bool, ok bool) {
+	if pid <= 0 {
+		return false, false
+	}
+	return readTTYNative(pid)
+}
+
+// ttyFromStat reads tty_nr (field 7) of a linux /proc/<pid>/stat line.
+func ttyFromStat(stat string) (bool, bool) {
+	close := strings.LastIndexByte(stat, ')')
+	if close < 0 {
+		return false, false
+	}
+	f := strings.Fields(stat[close+1:])
+	if len(f) < 5 {
+		return false, false
+	}
+	return f[4] != "0", true
+}
