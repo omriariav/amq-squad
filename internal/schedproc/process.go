@@ -246,7 +246,7 @@ func Run(ctx context.Context, o Options) error {
 			d := *o.Decisions
 			d.Root, d.Lead = o.Root, o.Config.Lead
 			if d.Relaunch == nil && len(o.Config.Roster) > 0 {
-				d.Relaunch = relaunchDecision(s)
+				d.Relaunch = relaunchDecision(s, d.Reload, o.Start)
 			}
 			opened, serr := ServeDecisions(d)
 			if serr != nil {

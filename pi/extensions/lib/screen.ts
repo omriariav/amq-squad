@@ -46,6 +46,8 @@ type TrainRun = { run: string; last_kind: string; last_at: string; prs: number[]
 export type ScreenStatus = {
 	root: string;
 	session: string;
+	project_path?: string;
+	scheduler?: { max_seats: number; live_seats: number } | null;
 	lead_handle: string | null;
 	lead: { handle: string; pid: number; pane: string; live: boolean } | null;
 	counts: { needs_you: number; working: number; ready: number; inactive: number };
@@ -114,6 +116,12 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		const budget = l ? `live ${sec(l.timing.to_seat_live_ms)}${l.timing.over_ceiling ? " OVER" : ""} first-msg ${sec(l.timing.to_first_message_ms)}` : "";
 		out.push(`  ${s.handle}  ${rt}  ${s.state}/${s.reason_code}  ${l ? l.outcome : "no launch"}  ${budget}`.trimEnd());
 		for (const w of s.warnings ?? []) out.push(`    ! ${short(w)}`);
+	}
+	const sch = st.scheduler;
+	if (sch && sch.max_seats > 0 && sch.live_seats > sch.max_seats) {
+		// brief 31-2 PR 2: more roster seats up than the lease cap (a seat
+		// added past max_seats); a warning, never a refusal of the add
+		out.push(`  ! over the lease cap: ${sch.live_seats} seats up, max_seats ${sch.max_seats}: a seat beyond the cap waits for a lease (seat_cap) while the others hold theirs`);
 	}
 	out.push(refusalLine(newestDecision(st, SEAT_REFUSALS, "seat", (d) => d.kind === "scheduler_stopped" && d.reason !== "")));
 

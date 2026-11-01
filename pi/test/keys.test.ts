@@ -84,7 +84,7 @@ function keyLine(lines: string[]): string {
 test("each key runs its verb with the lead's own amq-squad binary from the lead's process", async () => {
 	const seen: Call[] = [];
 	for (const [key, answers] of [
-		["add", ["Parser", "implement", "src/parse.go", ""]],
+		["add", ["task", "Parser", "implement", "src/parse.go", ""]],
 		["reset", ["t1  outside_declared_files", "keep its pool"]],
 		["clear", [fixture.seats[0].handle + "  " + fixture.seats[0].warnings![0].slice(0, 97) + "..."]],
 		["answer", ["g1  tag  8502aa0011223344"]],
@@ -139,12 +139,12 @@ test("the lead's model tool list carries no key verb and no gate-answer verb", a
 // them (cli TestAddKeysArgvAddsTheTaskWithItsFilesAndPool runs this argv
 // against a store and finds the task with its files and pool).
 test("add: the task goes to task add with its title, class, declared files and pool", async () => {
-	const r = rig(() => res(0, envelope("task_add", { root: "/r", task: { id: "t9", state: "pending" } })), ["Parser", "implement", "src/parse.go, src/parse_test.go", "codex:gpt-5.6-sol:high"]);
+	const r = rig(() => res(0, envelope("task_add", { root: "/r", task: { id: "t9", state: "pending" } })), ["task", "Parser", "implement", "src/parse.go, src/parse_test.go", "codex:gpt-5.6-sol:high"]);
 	const lines = await r.press("add");
 	assert.deepEqual(r.calls.map((c) => c.args), [["task", "add", "--title", "Parser", "--class", "implement", "--files", "src/parse.go,src/parse_test.go", "--pool", "codex:gpt-5.6-sol:high", "--json"]]);
 	assert.equal(keyLine(lines), '  key add: added t9 "Parser" (pending)');
 	// A refusal shows as the verb printed it.
-	const bad = rig(() => res(2, "", "error: task add: class \"x\" is not one of ..."), ["Parser", "implement", "", ""]);
+	const bad = rig(() => res(2, "", "error: task add: class \"x\" is not one of ..."), ["task", "Parser", "implement", "", ""]);
 	assert.equal(keyLine(await bad.press("add")), '  key add refused: task add: class "x" is not one of ...');
 });
 
@@ -176,7 +176,7 @@ const gateDocForCancel: ScreenStatus = { ...fixture, gates: [{ id: "g1", action_
 
 // Codex P2 2 on #831: a cancel at any dialog aborts the key with one
 // "cancelled, nothing run" line and runs no verb. The add key cancelled at
-// each of its four dialogs (title, class, files, pool) runs nothing; the
+// each of its dialogs (task or seat, title, class, files, pool) runs nothing; the
 // reset key cancelled at the pool dialog, or at the typed pool, runs
 // nothing (a reset with the old pool would return the task to dispatch).
 // Reverted (a cancelled files or pool dialog read as empty), task add or
@@ -184,9 +184,10 @@ const gateDocForCancel: ScreenStatus = { ...fixture, gates: [{ id: "g1", action_
 test("a cancel at any dialog aborts the key and runs no verb", async () => {
 	const addAnswers: (string | undefined)[][] = [
 		[undefined],
-		["Parser", undefined],
-		["Parser", "implement", undefined],
-		["Parser", "implement", "src/parse.go", undefined],
+		["task", undefined],
+		["task", "Parser", undefined],
+		["task", "Parser", "implement", undefined],
+		["task", "Parser", "implement", "src/parse.go", undefined],
 	];
 	for (const answers of addAnswers) {
 		const r = rig(() => res(0, envelope("task_add", { task: { id: "t9", state: "pending" } })), answers);

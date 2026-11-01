@@ -135,19 +135,24 @@ func seatLaunch(root, handle string, staged launch.Record) *SeatLaunch {
 	if w, err := seatlaunch.ReadSeatWake(root, handle); err == nil && w.LaunchID == staged.LaunchID && w.Wake != nil {
 		sl.Wake = &SeatWake{Mode: w.Wake.Mode, RequireWake: w.Wake.RequireWake, Injector: w.Wake.Injector, AuditReason: w.Wake.AuditReason}
 	}
-	var start, first *time.Time
+	var start, first, drainEnd *time.Time
 	if m, err := seatlaunch.ReadSeatMarks(root, handle); err == nil && staged.LaunchID != "" && m.LaunchID == staged.LaunchID {
-		start, first = m.Start, m.FirstMessage
+		start, first, drainEnd = m.Start, m.FirstMessage, m.DrainEnd
+		sl.AddedAt = m.AddedAt
 	}
 	if start != nil && live != nil && live.Before(*start) {
 		start = nil // a proof older than the start is not this start's launch (an adopted seat)
 	}
-	sl.Timing = launchTiming(staged, start, live, first)
+	sl.Timing = launchTiming(staged, start, live, first, drainEnd)
 	return sl
 }
 
 // launchTiming computes the two marks and the segments up to seat live.
-func launchTiming(staged launch.Record, start, live, first *time.Time) LaunchTiming {
+// A seat a relaunch launched from the add key (brief 31-2 PR 2) has its
+// own start, the key press, and a drain end: the segment from the press to
+// the end of the relaunch's drain is "drain", ahead of prepare, so a busy
+// squad's wait is named and never counted as seat_exec's or prepare's.
+func launchTiming(staged launch.Record, start, live, first, drainEnd *time.Time) LaunchTiming {
 	ms := func(a, b *time.Time) *int64 {
 		if a == nil || b == nil || a.IsZero() || b.IsZero() {
 			return nil
@@ -178,6 +183,10 @@ func launchTiming(staged launch.Record, start, live, first *time.Time) LaunchTim
 			{Name: "apply", MS: ms(issued, applied)},
 			{Name: "seat_exec", MS: ms(applied, live)},
 		}}
+	if drainEnd != nil && start != nil && !drainEnd.Before(*start) {
+		t.Segments = append([]LaunchSegment{{Name: "drain", MS: ms(start, drainEnd)}}, t.Segments...)
+		t.Segments[1].MS = ms(drainEnd, compiled)
+	}
 	var slowest int64 = -1
 	for _, s := range t.Segments {
 		if s.MS != nil && *s.MS > slowest {

@@ -8,13 +8,15 @@
 // construction, since its process descends from the proved lead. No key is
 // a tool: the model's tool list gains nothing (row 2).
 //
-// The widen key is PR 2 of brief 31-2: it appears only on a task whose
-// block carries t26's typed widen reason, and it is not built here.
-// The add key adds a task; a seat add waits (see the execution note,
-// docs/v3-spike/31-evidence/31-2-keys.md): on this tip the roster relaunch
-// starts the roster the scheduler was started with and stamps the
-// scheduler's own start, so a new squad.yaml line would not start and its
-// launch budget could not run from the key press.
+// The widen key is a later PR of brief 31-2: it appears only on a task
+// whose block carries t26's typed widen reason, and it is not built here.
+// The add key adds a task or a seat (brief 31-2 PR 2, the seat half;
+// docs/v3-spike/31-evidence/31-2-pr2-seat-add.md): a seat is written to
+// squad.yaml through `team propose` and `team apply --add-seat` under the
+// digest, and starts by one roster relaunch, which reads squad.yaml again;
+// the owner confirms once, since every seat relaunches. The relaunch
+// carries the confirmation's moment as --start: the seat's launch budget
+// counts from it.
 //
 // The answer key is Q7's fallback (the execution note): the terminal door
 // for the four typed gates is not built, so the key shows the gate, posts
@@ -35,6 +37,9 @@ const KEEP_POOL = "keep its pool";
 // dialogs return undefined on a cancel, and a cancelled key runs no verb.
 const CANCELLED = "cancelled, nothing run";
 const TYPE_POOL = "type a pool (runtime:model:effort)";
+const ADD_KINDS = ["task", "seat"];
+// The runtimes squad.yaml takes (team.Runtimes).
+const RUNTIMES = ["claude", "codex", "pi", "cursor-agent", "grok"];
 
 // KeyOutcome is what the key leaves on the screen: its line, and whether
 // the verb refused (the line then carries the refusal as the verb printed
@@ -105,7 +110,7 @@ export class Keys {
 		if (!st) return { key, refused: true, line: "no status yet; the screen is still reading it" };
 		switch (key as KeyName) {
 			case "add":
-				return this.add(ctx);
+				return this.add(ctx, st);
 			case "reset":
 				return this.reset(ctx, st);
 			case "clear":
@@ -115,10 +120,14 @@ export class Keys {
 		}
 	}
 
-	// add: the owner types the title, picks the class, types the declared
-	// files and the pool; the key runs `task add` (the lead's amq_task_add).
-	async add(ctx: ExtensionContext): Promise<KeyOutcome> {
+	// add: a task or a seat. For a task the owner types the title, picks
+	// the class, types the declared files and the pool; the key runs
+	// `task add` (the lead's amq_task_add).
+	async add(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
 		const k = "add";
+		const kind = await ctx.ui.select("add: a task or a seat", ADD_KINDS);
+		if (!kind) return { key: k, refused: false, line: CANCELLED };
+		if (kind === "seat") return this.addSeat(ctx, st);
 		const title = (await ctx.ui.input("add task: title"))?.trim();
 		if (!title) return { key: k, refused: false, line: CANCELLED };
 		const cls = await ctx.ui.select("add task: class", CLASSES);
@@ -134,6 +143,44 @@ export class Keys {
 		if (failed(r)) return { key: k, refused: true, line: refusal(r) };
 		const t = data<{ task: { id: string; state: string } }>(r.stdout)?.task;
 		return { key: k, refused: false, line: `added ${t?.id ?? "?"} ${JSON.stringify(title)} (${t?.state ?? "?"})` };
+	}
+
+	// addSeat: the owner types the handle and the role, picks the runtime,
+	// types the model and the effort; the key runs `team propose
+	// --add-seat`, asks once (every seat relaunches), runs `team apply
+	// --digest D --add-seat` with the proposal's digest, then `scheduler
+	// relaunch --start STAMP`, STAMP the confirmation's moment (the key
+	// press the seat's launch budget counts from). A squad.yaml that does
+	// not take the seat shows as squad_invalid; the relaunch's refusal
+	// shows by its name as the verb printed it.
+	async addSeat(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
+		const k = "add";
+		const project = st.project_path;
+		if (!project) return { key: k, refused: true, line: "squad_invalid: status names no project, so there is no squad.yaml to add to" };
+		const handle = (await ctx.ui.input("add seat: handle"))?.trim();
+		if (!handle) return { key: k, refused: false, line: CANCELLED };
+		const role = await ctx.ui.input("add seat: role (empty: the handle)");
+		if (role === undefined) return { key: k, refused: false, line: CANCELLED };
+		const runtime = await ctx.ui.select("add seat: runtime", RUNTIMES);
+		if (!runtime) return { key: k, refused: false, line: CANCELLED };
+		const model = await ctx.ui.input("add seat: model (empty: the runtime's default)");
+		if (model === undefined) return { key: k, refused: false, line: CANCELLED };
+		const effort = await ctx.ui.input("add seat: effort (empty: none)");
+		if (effort === undefined) return { key: k, refused: false, line: CANCELLED };
+		const spec = [handle, role.trim(), runtime, model.trim(), effort.trim()].join(":");
+		const seatArgs = ["--project", project, "--add-seat", spec, "--json"];
+		const p = await this.verb(["team", "propose", ...seatArgs]);
+		if (failed(p)) return { key: k, refused: true, line: `squad_invalid: ${refusal(p)}` };
+		const digest = data<{ digest: string }>(p.stdout)?.digest;
+		if (!digest) return { key: k, refused: true, line: "squad_invalid: team propose returned no digest" };
+		const ok = await ctx.ui.confirm(`add seat ${handle} (${spec})`, "this relaunches every seat; continue?");
+		if (!ok) return { key: k, refused: false, line: "cancelled, nothing written" };
+		const pressed = new Date().toISOString(); // the key press: the launch budget's start
+		const a = await this.verb(["team", "apply", "--digest", digest, ...seatArgs]);
+		if (failed(a)) return { key: k, refused: true, line: `seat ${handle}: ${refusal(a)}` };
+		const r = await this.verb(["scheduler", "relaunch", "--reason", `add seat ${handle} (the screen's add key)`, "--start", pressed, "--json"]);
+		if (failed(r)) return { key: k, refused: true, line: `seat ${handle} is in squad.yaml; ${refusal(r)}` };
+		return { key: k, refused: false, line: `seat ${handle} added; the roster relaunches with it (every seat finishes what it holds first); its launch budget counts from ${pressed}` };
 	}
 
 	// reset: on a blocked task; `task reset`, with --pool when the owner

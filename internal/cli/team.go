@@ -10,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/catalog"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -58,6 +59,10 @@ Usage:
                                          AGENTS.md); writes nothing
   amq-squad team apply --digest D [same options]
                                          Write those files when the digest still matches
+  amq-squad team propose --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT
+  amq-squad team apply --digest D --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT
+                                         squad.yaml with one seat appended (the screen's
+                                         add key); the team rules stay as they are
   amq-squad team show [--json]           Print squad.yaml and the effective grant
   amq-squad team check                   Validate squad.yaml (strict; widening is an error)
   amq-squad team draft-rules [--template T]
@@ -73,6 +78,11 @@ Options for propose and apply:
   --template auto|dev-only|product-squad|scrum|custom   team-rules template
   --rules-prose FILE     a team-rules prose fragment from team draft-rules
   --project DIR          the repository root (default: cwd)   --json   JSON output
+  --add-seat H:R:RT:M:E  append one seat to the squad.yaml on disk (handle, role,
+                         runtime, model, effort; role empty is the handle, model and
+                         effort may be empty, a model may hold colons); refused with
+                         --from or --roles. The seat starts at the next scheduler
+                         relaunch, which reads squad.yaml again.
 
 The v2 verbs team init, rules, sync and operator were removed; squad.yaml is
 the only team config. See docs/squad-yaml.md.
@@ -88,7 +98,7 @@ Examples:
 type teamProposeFlags struct {
 	project, from, roles, runtime, model, effort, worktree, tools, actorMode  *string
 	lead, leadMode, executionMode, session, controlRoot, targetRoot, operator *string
-	template, rulesProse, digest                                              *string
+	template, rulesProse, digest, addSeat                                     *string
 	json                                                                      *bool
 }
 
@@ -133,6 +143,7 @@ func runTeamPropose(args []string, apply bool) error {
 		session: fs.String("session", "", ""), controlRoot: fs.String("control-root", "", ""), targetRoot: fs.String("target-project-root", "", ""),
 		operator: fs.String("operator-interaction", "", ""), template: fs.String("template", "auto", ""),
 		rulesProse: fs.String("rules-prose", "", ""), digest: fs.String("digest", "", ""), json: fs.Bool("json", false, ""),
+		addSeat: fs.String("add-seat", "", ""),
 	}
 	fs.Usage = printTeamUsage
 	if err := parseFlags(fs, args); err != nil {
@@ -185,7 +196,16 @@ func buildTeamProposal(o teamProposeFlags) (team.Plan, error) {
 		return team.Plan{}, err
 	}
 	text := ""
-	if *o.from != "" {
+	keepRules := false
+	if *o.addSeat != "" {
+		if *o.from != "" || *o.roles != "" {
+			return team.Plan{}, usageErrorf("--add-seat appends to the squad.yaml on disk; it is refused with --from or --roles")
+		}
+		if text, err = squadWithSeat(projectDir, *o.addSeat, owner.Grants); err != nil {
+			return team.Plan{}, err
+		}
+		keepRules = true
+	} else if *o.from != "" {
 		raw, err := os.ReadFile(*o.from)
 		if err != nil {
 			return team.Plan{}, err
@@ -218,11 +238,48 @@ func buildTeamProposal(o teamProposeFlags) (team.Plan, error) {
 		}
 		prose = &parsed
 	}
-	rulesText, err := renderTeamRulesWithTemplateDraft(t, *o.template, prose)
-	if err != nil {
+	rulesText := ""
+	if raw, rerr := os.ReadFile(rules.Path(projectDir)); keepRules && rerr == nil {
+		// a seat added from the screen keeps the team rules the owner
+		// approved (and their prose); team propose re-renders them on purpose
+		rulesText = string(raw)
+	} else if rulesText, err = renderTeamRulesWithTemplateDraft(t, *o.template, prose); err != nil {
 		return team.Plan{}, err
 	}
 	return team.NewPlan(projectDir, text, t, rulesText)
+}
+
+// squadWithSeat is the squad.yaml on disk with one seat appended (brief
+// 31-2 PR 2, the add key's seat half), rendered in canonical form
+// (team.Render; comments in the file are not kept). The spec is
+// HANDLE:ROLE:RUNTIME:MODEL:EFFORT: role empty is the handle, model and
+// effort may be empty, and the model may itself hold colons (an Ollama
+// tag), so the effort is the text after the last colon. The result is
+// parsed again by the caller, strictly against the owner grant.
+func squadWithSeat(projectDir, spec string, owner grants.Grants) (string, error) {
+	parts := strings.SplitN(strings.TrimSpace(spec), ":", 4)
+	if len(parts) != 4 || !strings.Contains(parts[3], ":") {
+		return "", usageErrorf("--add-seat %q: want HANDLE:ROLE:RUNTIME:MODEL:EFFORT (model and effort may be empty, the colons stay)", spec)
+	}
+	i := strings.LastIndex(parts[3], ":")
+	seat := team.Seat{Handle: strings.TrimSpace(parts[0]), Role: strings.TrimSpace(parts[1]), Runtime: strings.TrimSpace(parts[2]),
+		Model: strings.TrimSpace(parts[3][:i]), Effort: strings.TrimSpace(parts[3][i+1:])}
+	if seat.Handle == "" || seat.Runtime == "" {
+		return "", usageErrorf("--add-seat %q: the handle and the runtime are required", spec)
+	}
+	if seat.Role == "" {
+		seat.Role = seat.Handle
+	}
+	raw, err := os.ReadFile(team.SquadPath(projectDir))
+	if err != nil {
+		return "", fmt.Errorf("--add-seat appends to %s: %w", team.SquadPath(projectDir), err)
+	}
+	s, err := team.ParseSquad(string(raw), team.SquadPath(projectDir), owner)
+	if err != nil {
+		return "", err
+	}
+	s.Seats = append(s.Seats, seat)
+	return team.Render(s), nil
 }
 
 // squadFromFlags renders the squad.yaml text the flags describe.

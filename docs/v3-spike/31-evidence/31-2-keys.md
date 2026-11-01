@@ -193,7 +193,7 @@ target and prefix for each of the five typed actions (pi/test/keys.test.ts,
 | 1 | pi `each key runs its verb with the lead's own amq-squad binary from the lead's process`; cli `TestClearKeyIsProvedFromTheLeadsDescendant` (the clear from the lead's descendant is proved over the real socket and recorded; from a process outside the lead's descent it is refused `not_lead` and nothing is recorded) |
 | 2 | pi `the lead's model tool list carries no key verb and no gate-answer verb` (the lead's tool names are the tip's, exactly; no tool names a gate answer or a clear) |
 | 3 | pi `add: the task goes to task add with its title, class, declared files and pool`; cli `TestAddKeysArgvAddsTheTaskWithItsFilesAndPool` (that argv adds the task to a store with its files and pool) |
-| 4 | not built: section 5 |
+| 4 | not built here (section 5); built in PR 2: 31-2-pr2-seat-add.md |
 | 5 | PR 2 (the widen key waits for t26) |
 | 6 | pi `reset: task reset, --pool for a picked pool, and a refusal by name` (`repin_after_attempt` and `reset refused` shown as the verb printed them) |
 | 7 | pi `clear: the acknowledgement names the warning and the launch; the line leaves the screen; the seat's state does not`; status `TestAClearedWarningLeavesTheScreenForItsLaunchOnly` (acknowledged, state, reason code, bucket, live and outcome unchanged, another seat untouched, the next launch's same condition a warning again, a clear of the earlier launch refused); Codex P2 1: schedproc `TestRecordClearAcceptsOnlyAWarningShowingOnTheCurrentLaunch` (`clear_not_a_warning` for refusal codes, `clear_not_showing`, stale, malformed), status `TestAWarningCannotBeClearedBeforeItShows`, `TestTheClearableCodesAreStatusSeatWarnings`; cli `TestClearKeyIsProvedFromTheLeadsDescendant` runs the socket as `decisionOptions` wires it |
@@ -211,6 +211,14 @@ the pi rows run the stand-in pi with a scripted runner; the cli rows run
 the verb in a child of the test process against a temporary root.
 
 ## 5. Row 4, the seat add, is not built: the brief's premise and the tip disagree
+
+PR 2 built it (docs/v3-spike/31-evidence/31-2-pr2-seat-add.md): the
+relaunch reads squad.yaml again and carries the key press. The rule's
+honest form until AMQ's ask 20: the add key is a roster relaunch, so every
+live seat drains and comes back; "the reload only adds" means a removed
+seat is not launched again and no seat is killed outside the drain the
+owner confirmed. When ask 20 lands, the hot add makes the first clause
+literal. The record below is the gap as PR 1 found it.
 
 File:line references in this section are at origin/v3 `3f6c995d`.
 
@@ -288,7 +296,7 @@ tmux attach -t "$(tmux list-sessions -F '#{session_name}' | grep '^squad-lead-' 
    a Codex seat's `wake_off`): `/squad clear`, pick the line. Then
 
    ```sh
-   amq-squad status --json | jq '.data.seats[] | {handle, launch: .launch.launch_id, warnings, acknowledged_warnings, state}'
+   amq-squad status --json | jq '.seats[] | {handle, launch: .launch.launch_id, warnings, acknowledged_warnings, state}'
    tail -n 2 .agent-mail/*/extensions/amq-squad/scheduler/clears.jsonl
    grep warning_cleared .agent-mail/*/extensions/amq-squad/scheduler/decisions.jsonl | tail -n 1
    ```

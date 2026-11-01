@@ -112,8 +112,27 @@ type Options struct {
 	// admitted without a registry entry, and one the table places on no
 	// tier is admitted at the class's own tier (a pin to it, or a candidate
 	// after the tier's chain). The registry stays optional cap and cost
-	// metadata for them.
+	// metadata for them. A relaunch that reloads squad.yaml replaces them
+	// through SetRosterPools (brief 31-2 PR 2); every read is under the
+	// router's lock.
 	RosterPools []task.Pool
+}
+
+// SetRosterPools replaces the roster pools under the router's lock (brief
+// 31-2 PR 2): a relaunch that reloads squad.yaml swaps them at the drain's
+// end with the roster and the slots' squad, so a seat added to squad.yaml
+// has its own pool admitted from that point, and not before.
+func (r *Router) SetRosterPools(pools []task.Pool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.o.RosterPools = slices.Clone(pools)
+}
+
+// RosterPools are the roster pools the router admits now (a copy).
+func (r *Router) RosterPools() []task.Pool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.o.RosterPools)
 }
 
 // Decision is the router's choice for one attempt of one task.
