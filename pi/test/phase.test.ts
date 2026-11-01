@@ -391,3 +391,62 @@ test("context --host's timeout is above Go's host budget", async () => {
 	assert.ok((seen[0].timeoutMs ?? 0) >= 3000 + 5000, `context --host timeout ${seen[0].timeoutMs}`);
 	assert.equal(seen[1].timeoutMs, 5000);
 });
+
+// Codex's re-check on #837, item 4: the host line's key follows the real
+// changes. In a linked worktree (its .git is a pointer file, as in this
+// checkout) a commit refreshes; a gate decision (a file under answers/)
+// refreshes; a gate whose not_after passes refreshes with time alone; the
+// lead's launch record, the AMQ executable and the amq-squad binary are
+// keyed. Each refresh is
+// the verbs running again; nothing changed runs nothing.
+test("the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable", async () => {
+	const { HostFacts } = await import("../extensions/lib/firstturn.ts");
+	const { run } = await import("../extensions/lib/verbs.ts");
+	const { execFileSync } = await import("node:child_process");
+	const w = soloWorld();
+	const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", "-C", cwd, ...args], { stdio: "pipe" });
+	const repo = path.join(w.dir, "repo-git");
+	const wt = path.join(w.dir, "wt");
+	fs.mkdirSync(repo);
+	git(repo, "init", "-q");
+	git(repo, "commit", "-q", "--allow-empty", "-m", "one");
+	git(repo, "worktree", "add", "-q", wt, "-b", "wtb");
+	assert.ok(fs.statSync(path.join(wt, ".git")).isFile(), "the worktree's .git is not a pointer file");
+	const ext = path.join(w.squadRoot, "extensions", "amq-squad");
+	for (const d of ["gates", "answers", "denials", path.join("consumed", "gates"), path.join("launch", "cto")]) fs.mkdirSync(path.join(ext, d), { recursive: true });
+	let now = new Date("2026-11-01T09:00:00Z");
+	fs.writeFileSync(path.join(ext, "gates", "g1.json"), JSON.stringify({ gate_id: "g1", class: "tag", digest: "d", not_after: "2026-11-01T09:01:00Z" }));
+	fs.writeFileSync(path.join(ext, "launch", "cto", "launch.json"), "{}");
+	const amq = path.join(w.dir, "amq");
+	fs.writeFileSync(amq, "#!/bin/sh\n", { mode: 0o755 });
+	const log = path.join(w.dir, "key.log");
+	const env: Record<string, string> = { ...w.env, AMQ_SQUAD_LEAD: "1", AM_ME: "cto", AM_ROOT: w.squadRoot, FAKE_LOG: log, AMQ_SQUAD_PROJECT: wt, AMQ_SQUAD_AMQ: amq };
+	delete env.AMQ_SQUAD_SOLO_LEAD;
+	const statusRuns = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter((l) => l === "status").length : 0);
+	await withEnv(env, async () => {
+		const cfg = { bin: env.AMQ_SQUAD_BIN, root: w.squadRoot, me: "cto", hookTimeoutMs: 5000, project: wt } as any;
+		const h = new HostFacts(cfg, run, undefined, () => now);
+		let runs = 0;
+		const refreshes = async (why: string, yes: boolean) => {
+			await h.next();
+			const n = statusRuns();
+			assert.equal(n > runs, yes, `${why}: the verbs ${yes ? "did not run" : "ran"} (status runs ${runs} then ${n})`);
+			runs = n;
+		};
+		await refreshes("the first turn", true);
+		await refreshes("nothing changed", false);
+		git(wt, "commit", "-q", "--allow-empty", "-m", "two");
+		await refreshes("a commit in the linked worktree", true);
+		fs.writeFileSync(path.join(ext, "answers", "g1.json"), JSON.stringify({ gate_id: "g1", decision: "approved" }));
+		await refreshes("a gate decision under answers/", true);
+		now = new Date("2026-11-01T09:02:00Z");
+		await refreshes("a gate's not_after passed", true);
+		await refreshes("nothing changed after the expiry", false);
+		fs.writeFileSync(path.join(ext, "launch", "cto", "launch.json"), '{"handle":"cto"}');
+		await refreshes("the launch record changed", true);
+		fs.writeFileSync(amq, "#!/bin/sh\necho amq 0.117.0\n", { mode: 0o755 });
+		await refreshes("the AMQ executable changed", true);
+		fs.appendFileSync(env.AMQ_SQUAD_BIN, "\n# upgraded\n");
+		await refreshes("the amq-squad binary changed", true);
+	});
+});

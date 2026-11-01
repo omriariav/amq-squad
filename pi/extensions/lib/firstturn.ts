@@ -7,11 +7,13 @@
 // as missing, not invented. It is a message in the conversation, given on
 // the first turn and again only when a fact in it changed (the plan
 // reviewer: the owner counts tokens; a line repeating what the model holds
-// is the cost he named): HostFacts keys on what the screen's poll stats
-// (the task store's .generation, scheduler.json) plus the decisions log
-// (a roster decision), the gate store and its consumed answers, and the
-// repository's HEAD and its log (the branch and its tip); only when that
-// key changed does it run the verbs, and only a changed line is sent.
+// is the cost he named): HostFacts keys on the files the facts come from
+// (HostFacts.key: the task store, the scheduler and its decisions, the
+// lead's launch record, every entry of the gate store, the gates whose
+// not_after passed, the repository's HEAD and the ref it names, the AMQ
+// executable); only when that key changed does it run the verbs, and only
+// a changed line is sent.
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { contextOf, type Config, type ContextData, type Runner } from "./hooks.ts";
 import { defaultStat, type Stat } from "./screen.ts";
@@ -88,14 +90,24 @@ export function hostOf(c: { ok: true; data: ContextData } | { ok: false; why: st
 	return c.ok ? ((c.data as ContextData & { host?: HostFacts }).host ?? undefined) : undefined;
 }
 
-// hostPollPaths are what the host facts' key stats under the lead's root
-// and in the repository.
-export function hostPollPaths(root: string, project: string): string[] {
+// hostPollPaths are the files the host facts' key stats under the lead's
+// root: the task store's generation, the scheduler's state and decisions
+// (a roster decision), and the lead's launch record.
+export function hostPollPaths(root: string, me = ""): string[] {
 	const ext = path.join(root, "extensions", "amq-squad");
-	const paths = [path.join(ext, "tasks", ".generation"), path.join(ext, "scheduler.json"), path.join(ext, "scheduler", "decisions.jsonl"), path.join(ext, "gates"), path.join(ext, "consumed")];
-	if (project) paths.push(path.join(project, ".git", "HEAD"), path.join(project, ".git", "logs", "HEAD"));
+	const paths = [path.join(ext, "tasks", ".generation"), path.join(ext, "scheduler.json"), path.join(ext, "scheduler", "decisions.jsonl")];
+	if (me) paths.push(path.join(ext, "launch", me, "launch.json"));
 	return paths;
 }
+
+// GATE_DIRS are the gate store's directories the key lists entry by entry
+// (a write inside a directory does not touch its parent's mtime): the
+// questions, the approvals, the denials and the consumed marks.
+const GATE_DIRS = ["gates", "answers", "denials", path.join("consumed", "gates")];
+
+// GIT_DIRS_TIMEOUT_MS bounds the one git call that finds the repository's
+// git directories (a linked worktree's .git is a pointer file).
+const GIT_DIRS_TIMEOUT_MS = 3000;
 
 // HostFacts gives the host line on the first turn and again only when a
 // fact in it changed.
@@ -103,22 +115,65 @@ export class HostFacts {
 	cfg: Config;
 	runner: Runner;
 	stat: Stat;
+	now: () => Date;
 	lastKey: string | undefined;
 	lastLine: string | undefined;
+	// the repository's git directory and common directory, resolved once
+	// through git (null: not resolved yet; undefined: git could not say)
+	git: { dir: string; common: string } | undefined | null = null;
 
-	constructor(cfg: Config, runner: Runner, stat: Stat = defaultStat) {
+	constructor(cfg: Config, runner: Runner, stat: Stat = defaultStat, now: () => Date = () => new Date()) {
 		this.cfg = cfg;
 		this.runner = runner;
 		this.stat = stat;
+		this.now = now;
+	}
+
+	// key is what the facts depend on, as files' mtimes and sizes (Codex's
+	// re-check on #837, item 4): the poll paths; every entry of the gate
+	// store's directories; how many gates' not_after has passed (a gate
+	// expires with time alone); the repository's HEAD in its own git
+	// directory, the ref HEAD names (in the common directory, where a
+	// linked worktree's refs live), the packed refs and HEAD's log; the AMQ
+	// executable context --host asks for its version, and the amq-squad
+	// binary.
+	async key(project: string): Promise<string> {
+		const st = (p: string) => {
+			const s = this.stat(p);
+			return s ? `${s.mtimeMs}:${s.size}` : "-";
+		};
+		const ext = path.join(this.cfg.root, "extensions", "amq-squad");
+		const parts = [this.cfg.root, ...hostPollPaths(this.cfg.root, this.cfg.me).map(st)];
+		for (const d of GATE_DIRS) parts.push(listing(path.join(ext, d), st));
+		parts.push(`expired:${expiredGates(path.join(ext, "gates"), this.now())}`);
+		const git = await this.gitDirs(project);
+		if (git) {
+			parts.push(st(path.join(git.dir, "HEAD")), st(path.join(git.dir, "logs", "HEAD")), st(path.join(git.common, "packed-refs")));
+			const ref = headRef(path.join(git.dir, "HEAD"));
+			if (ref) parts.push(st(path.join(git.common, ref)));
+		}
+		const amq = amqPath();
+		if (amq) parts.push(st(amq));
+		// the amq-squad binary itself (its version is in the line)
+		if (path.isAbsolute(this.cfg.bin)) parts.push(st(this.cfg.bin));
+		return parts.join("|");
+	}
+
+	// gitDirs resolves the git directories once, bounded.
+	async gitDirs(project: string): Promise<{ dir: string; common: string } | undefined> {
+		if (this.git !== null) return this.git;
+		this.git = undefined;
+		if (!project) return undefined;
+		const r = await this.runner("git", ["-C", project, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { timeoutMs: GIT_DIRS_TIMEOUT_MS });
+		const lines = r.code === 0 && !r.timedOut && !r.spawnError ? r.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+		if (lines.length === 2 && lines.every((l) => path.isAbsolute(l))) this.git = { dir: lines[0], common: lines[1] };
+		return this.git;
 	}
 
 	// next is the line to send this turn, undefined when nothing changed.
 	async next(): Promise<string | undefined> {
 		const project = process.env.AMQ_SQUAD_PROJECT || this.cfg.project || "";
-		const key = [this.cfg.root, ...hostPollPaths(this.cfg.root, project).map((p) => {
-			const s = this.stat(p);
-			return s ? `${s.mtimeMs}:${s.size}` : "-";
-		})].join("|");
+		const key = await this.key(project);
 		if (key === this.lastKey) return undefined;
 		this.lastKey = key;
 		const line = hostLine(await readStatus(this.cfg, this.runner), hostOf(await contextOf(this.cfg, this.runner, true)));
@@ -126,4 +181,66 @@ export class HostFacts {
 		this.lastLine = line;
 		return line;
 	}
+}
+
+// listing is a directory's entries with their mtimes and sizes, "-" when
+// the directory is absent.
+function listing(dir: string, st: (p: string) => string): string {
+	let names: string[];
+	try {
+		names = fs.readdirSync(dir).sort();
+	} catch {
+		return "-";
+	}
+	return names.map((n) => `${n}:${st(path.join(dir, n))}`).join(",");
+}
+
+// expiredGates counts the gate records whose not_after has passed.
+function expiredGates(dir: string, now: Date): number {
+	let n = 0;
+	let names: string[] = [];
+	try {
+		names = fs.readdirSync(dir);
+	} catch {
+		return 0;
+	}
+	for (const name of names) {
+		if (!name.endsWith(".json") || name.endsWith(".question.json")) continue;
+		try {
+			const t = Date.parse(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")).not_after ?? "");
+			if (Number.isFinite(t) && t <= now.getTime()) n++;
+		} catch {
+			// not a gate record
+		}
+	}
+	return n;
+}
+
+// headRef is the ref a HEAD file names ("ref: refs/heads/x"), "" for a
+// detached HEAD or an unreadable one.
+function headRef(head: string): string {
+	try {
+		const m = /^ref:\s*(refs\/\S+)\s*$/.exec(fs.readFileSync(head, "utf8").trim());
+		return m ? m[1] : "";
+	} catch {
+		return "";
+	}
+}
+
+// amqPath is the AMQ executable context --host asks for its version:
+// $AMQ_SQUAD_AMQ when absolute, else amq on PATH.
+function amqPath(): string {
+	const env = process.env.AMQ_SQUAD_AMQ ?? "";
+	if (path.isAbsolute(env)) return env;
+	for (const d of (process.env.PATH ?? "").split(path.delimiter)) {
+		if (!d) continue;
+		const p = path.join(d, "amq");
+		try {
+			fs.accessSync(p, fs.constants.X_OK);
+			return p;
+		} catch {
+			// not here
+		}
+	}
+	return "";
 }
