@@ -3,6 +3,7 @@ package seatcommit
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
@@ -32,6 +33,10 @@ type WidenOptions struct {
 	RepoRoot  string // the task's repository root
 	Home      string
 	Gates     GateChecker
+	// ProtectedAdded is the subset of Added whose exact source paths resolved
+	// to a protected path or managed file name. The gate binds these resolved
+	// paths, never their symlink aliases.
+	ProtectedAdded []string
 	// Commit, when set, runs the commit step as a dry run with the widened
 	// set on the seat's diff (a task with a done report): the size cap and
 	// the protected paths are checked on the real diff, not only the globs.
@@ -99,7 +104,32 @@ func CheckWiden(o WidenOptions) WidenDecision {
 		return !o.Grants.Insecure && o.Gates != nil && o.Gates.Accepted(target)
 	}
 	ps := protectedFor(o.Grants.Grants, o.RepoRoot, o.Home, filepath.Join(o.Root, "extensions", "amq-squad")+"/", "~/.amq-squad/")
-	if cross := ps.overlaps(added); len(cross) > 0 {
+	cross := ps.overlaps(added)
+	if len(o.ProtectedAdded) > 0 {
+		protected, err := task.CleanDeclaredFiles(o.ProtectedAdded)
+		if err != nil {
+			d.ReasonCode, d.Detail = "widen_invalid", "the resolved protected paths are invalid: "+err.Error()
+			return d
+		}
+		addedSet, seen := make(map[string]bool, len(added)), make(map[string]bool, len(cross))
+		for _, g := range added {
+			addedSet[g] = true
+		}
+		for _, g := range cross {
+			seen[g] = true
+		}
+		for _, g := range protected {
+			if !addedSet[g] {
+				d.ReasonCode, d.Detail = "widen_invalid", fmt.Sprintf("resolved protected path %q is not in the widened paths", g)
+				return d
+			}
+			if !seen[g] {
+				cross, seen[g] = append(cross, g), true
+			}
+		}
+		sort.Strings(cross)
+	}
+	if len(cross) > 0 {
 		t := ProtectedTarget(o.Root, o.Task.ID, cross)
 		d.Crossings = append(d.Crossings, Crossing{Limit: LimitProtected, Target: t, Globs: cross, Accepted: accepted(t),
 			Detail: "the widened paths " + strings.Join(cross, ", ") + " cover protected paths of the grant"})

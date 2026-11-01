@@ -195,14 +195,29 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		return data, err
 	}
 	g, gerr := grants.Load(t.ProjectPath)
+	added := req.Files
+	var protected, resolutions []string
 	if gerr == nil && len(exact) > 0 {
-		aliases, err := seatcommit.ExactProtectedAliases(g.Grants, sel.root, t.ProjectPath, "", exact)
+		resolved, err := seatcommit.ResolveExactFiles(g.Grants, sel.root, t.ProjectPath, "", exact)
 		if err != nil {
 			return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
 		}
-		g.ProtectedPaths = append(append([]string(nil), g.ProtectedPaths...), aliases...)
+		added = nil
+		for _, r := range resolved {
+			literal, err := task.LiteralGlob(r.Path)
+			if err != nil {
+				return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+			}
+			added = append(added, literal)
+			if r.Protected {
+				protected = append(protected, literal)
+			}
+			if r.Alias != r.Path {
+				resolutions = append(resolutions, fmt.Sprintf("%q resolves to %q", r.Alias, r.Path))
+			}
+		}
 	}
-	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: req.Files, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
+	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: added, ProtectedAdded: protected, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
 	} else if typedWidenRequest(t) && len(t.Attempts) > 0 {
@@ -211,6 +226,15 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Attempts[len(t.Attempts)-1].Holder, Now: taskNow}
 	}
 	d := seatcommit.CheckWiden(wo)
+	widenReason := req.Reason
+	if len(resolutions) > 0 {
+		note := "exact-path resolution: " + strings.Join(resolutions, "; ")
+		d.Notes = append(d.Notes, note)
+		widenReason += "; " + note
+		if d.ReasonCode == seatcommit.ReasonGrowthGate {
+			d.Detail += "; " + note
+		}
+	}
 	data.Decision = d
 	if !d.Allowed {
 		if d.ReasonCode == seatcommit.ReasonGrowthGate {
@@ -234,7 +258,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		}
 		return data, &widenRefused{code: d.ReasonCode, msg: d.Detail}
 	}
-	after, err := sel.store.WidenGated(t.ID, lead, req.Reason, wo.Added, d.Gates, taskLeaseDuration, taskNow())
+	after, err := sel.store.WidenGated(t.ID, lead, widenReason, wo.Added, d.Gates, taskLeaseDuration, taskNow())
 	var wr *task.WidenRefusal
 	if errors.As(err, &wr) {
 		data.Decision.ReasonCode, data.Decision.Detail = wr.ReasonCode, wr.Error()
