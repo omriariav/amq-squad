@@ -1,5 +1,5 @@
 {
-  "comment": "Brief 31-3, 3b (ii) after Codex on #834: command strings the solo lead's shell refuses and ones it runs. Read by pi/test/team.test.ts (the extension) and internal/cli/team_confirm_test.go (the guard's second layer), so the two layers read the same forms.",
+  "comment": "Brief 31-3, 3b (ii) after Codex on #834: command strings the solo lead's shell refuses and ones it runs. Read by pi/test/team.test.ts (the extension) and internal/cli/team_confirm_test.go (the guard's second layer), so the two layers read the same forms. amq_squad_allowlist is the read-only amq-squad verbs the solo lead's shell may run; every other amq-squad verb (bare amq-squad included) is refused, since before the yes no lead lock is held.",
   "refused": [
     "t\"\"mux send-keys -t %7 \"/squad confirm 0123456789abcdef\" Enter",
     "t\\mux ls",
@@ -18,7 +18,16 @@
     "a''mq-squad te''am confirm sha256:x@absent",
     "amq\\-squad team apply --digest sha256:x@absent",
     "sh -c 'amq-squad team confirm sha256:x@absent'",
-    "(cd /tmp && amq-squad team apply --digest sha256:x@absent)"
+    "(cd /tmp && amq-squad team apply --digest sha256:x@absent)",
+    "amq-squad up",
+    "amq-squad lead --team",
+    "amq-squad scheduler run --project .",
+    "amq-squad launch",
+    "amq-squad team apply --digest sha256:x@absent",
+    "amq-squad task reset t1",
+    "amq-squad",
+    "sh -c 'amq-squad up --skip-install'",
+    "env A=1 /usr/local/bin/amq-squad lead"
   ],
   "runs": [
     "echo \"hello world\"",
@@ -29,6 +38,20 @@
     "amq-squad task list --json",
     "cd $HOME/code && make build",
     "grep -rn \"func main\" .",
-    "echo the team will apply soon"
+    "echo the team will apply soon",
+    "amq-squad task show t1 --json",
+    "amq-squad team propose --from plan.json --project .",
+    "amq-squad doctor --json",
+    "amq-squad version",
+    "amq-squad context --json"
+  ],
+  "amq_squad_allowlist": [
+    "status",
+    "context",
+    "doctor",
+    "version",
+    "task show",
+    "task list",
+    "team propose"
   ]
 }

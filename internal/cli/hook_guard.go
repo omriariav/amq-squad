@@ -211,7 +211,7 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	// as the extension reads it (pi/extensions/lib/team.ts lineRefusal)
 	if soloLeadIdentity(id) && slices.Contains([]string{"Bash", "bash", "shell", "exec_command"}, call.Tool) {
 		if why := soloLeadShellRefusal(call.Args["command"] + call.Args["cmd"]); why != "" {
-			return out("deny", "owner_only", "the solo lead's shell does not run "+why+" (R55): a tmux command can type into the lead's own pane, and amq-squad team confirm and apply are the owner's")
+			return out("deny", "owner_only", "the solo lead's shell does not run "+why+" (R55): a tmux command can type into the lead's own pane, and only the read-only amq-squad verbs run here ("+strings.Join(soloAmqSquadAllow, ", ")+")")
 		}
 	}
 	actions := classifyGuardCall(env, call)
@@ -313,15 +313,30 @@ func soloLeadIdentity(id hookIdentity) bool {
 }
 
 var (
-	soloSplitRE     = regexp.MustCompile(`[\s;&|()<>{}]+`)
-	soloOwnerWordRE = regexp.MustCompile(`team|confirm|apply`)
-	soloJoinedRE    = []*regexp.Regexp{regexp.MustCompile(`[a-z0-9_]\$[{(a-z_]`), regexp.MustCompile(`\$\{[^}]*\}[a-z0-9_]`), regexp.MustCompile(`\$\([^)]*\)[a-z0-9_]`)}
-	soloInOrderRE   = regexp.MustCompile(`t.*m.*u.*x`)
+	soloSplitRE   = regexp.MustCompile(`[\s;&|()<>{}]+`)
+	soloJoinedRE  = []*regexp.Regexp{regexp.MustCompile(`[a-z0-9_]\$[{(a-z_]`), regexp.MustCompile(`\$\{[^}]*\}[a-z0-9_]`), regexp.MustCompile(`\$\([^)]*\)[a-z0-9_]`)}
+	soloInOrderRE = regexp.MustCompile(`t.*m.*u.*x`)
 )
+
+// soloAmqSquadAllow are the read-only amq-squad verbs the solo lead's shell
+// may run (the extension's AMQ_SQUAD_ALLOW; the shared table
+// pi/test/solo-shell-forms.json carries the same list).
+var soloAmqSquadAllow = []string{"status", "context", "doctor", "version", "task show", "task list", "team propose"}
+
+// soloAmqSquadAllowed reports whether the words after an amq-squad name an
+// allowed verb (one word, or two).
+func soloAmqSquadAllowed(words []string) bool {
+	one := ""
+	if len(words) > 0 {
+		one = words[0]
+	}
+	return slices.Contains(soloAmqSquadAllow, one) || slices.Contains(soloAmqSquadAllow, strings.Join(words[:min(2, len(words))], " "))
+}
 
 // soloLeadShellRefusal is the extension's lineRefusal in Go: over the
 // dequoted, lowercased line (quote characters, backslashes and $' dropped),
-// tmux inside any token; amq-squad with a team verb; an expansion or a
+// tmux inside any token; amq-squad with a verb outside the read-only
+// allowlist (bare amq-squad included); an expansion or a
 // command substitution joined to letters, or backticks; eval, exec -a or
 // env -S with a token holding t, m, u, x in order. "" when it runs.
 func soloLeadShellRefusal(line string) string {
@@ -335,8 +350,10 @@ func soloLeadShellRefusal(line string) string {
 	if slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, "tmux") }) {
 		return "tmux"
 	}
-	if strings.Contains(d, "amq-squad") && soloOwnerWordRE.MatchString(d) {
-		return "amq-squad team"
+	for i, t := range tokens {
+		if strings.Contains(filepath.Base(t), "amq-squad") && !soloAmqSquadAllowed(tokens[i+1:]) {
+			return strings.TrimSpace("amq-squad " + strings.Join(tokens[i+1:min(i+3, len(tokens))], " "))
+		}
 	}
 	for _, re := range soloJoinedRE {
 		if re.MatchString(d) {

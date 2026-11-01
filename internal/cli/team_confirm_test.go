@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -394,9 +395,15 @@ func TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var forms struct{ Refused, Runs []string }
+	var forms struct {
+		Refused, Runs []string
+		Allow         []string `json:"amq_squad_allowlist"`
+	}
 	if err := json.Unmarshal(raw, &forms); err != nil {
 		t.Fatal(err)
+	}
+	if !slices.Equal(soloAmqSquadAllow, forms.Allow) {
+		t.Fatalf("the guard's allowlist %v is not the table's %v", soloAmqSquadAllow, forms.Allow)
 	}
 	for _, line := range forms.Refused {
 		if soloLeadShellRefusal(line) == "" {

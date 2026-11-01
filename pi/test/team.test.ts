@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "../extensions/lib/hooks.ts";
-import { digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
+import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
 import * as net from "node:net";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
@@ -251,8 +251,16 @@ test("the solo lead's shell refuses tmux and the owner's verbs by argv[0] and by
 // tm$(true)ux, backticks), and eval, exec -a or env -S with t, m, u, x in
 // order are refused; ordinary commands with quotes run. The forms are the
 // table the guard's second layer reads too (pi/test/solo-shell-forms.json).
+// After the re-check of #834 the table also carries the read-only amq-squad
+// allowlist: up, lead, scheduler run, launch, team apply, task reset and a
+// bare amq-squad are refused; status, task list and the others run.
 test("the solo lead's shell sees through quoting, expansions and eval", () => {
-	const forms = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "solo-shell-forms.json"), "utf8")) as { refused: string[]; runs: string[] };
+	const forms = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "solo-shell-forms.json"), "utf8")) as { refused: string[]; runs: string[]; amq_squad_allowlist: string[] };
+	assert.deepEqual(AMQ_SQUAD_ALLOW, forms.amq_squad_allowlist, "the extension's allowlist is the table's");
+	for (const argv of [["amq-squad", "up"], ["/opt/bin/amq-squad", "lead", "--team"], ["amq-squad", "scheduler", "run"], ["amq-squad"]]) {
+		assert.match(soloShellRefusal("exec_command", { cmd: argv }) ?? "", /^owner_only: /, argv.join(" "));
+	}
+	assert.equal(soloShellRefusal("exec_command", { cmd: ["amq-squad", "task", "list", "--json"] }), undefined);
 	for (const line of forms.refused) assert.match(soloShellRefusal("bash", { command: line }) ?? "", /^owner_only: /, line);
 	for (const line of forms.runs) assert.equal(soloShellRefusal("bash", { command: line }), undefined, line);
 	assert.match(soloShellRefusal("exec_command", { cmd: ["sh", "-c", 't""mux ls'] }) ?? "", /^owner_only: /, "an argv sh -c line");

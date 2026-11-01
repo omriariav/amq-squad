@@ -78,7 +78,17 @@ export function askLead(socket: string, req: Record<string, unknown>, timeoutMs 
 }
 
 const SHELL_TOOLS = new Set(["bash", "Bash", "shell", "exec_command"]);
-const OWNER_WORDS = new Set(["team", "confirm", "apply"]);
+// AMQ_SQUAD_ALLOW are the amq-squad verbs the solo lead's shell may run,
+// all read-only (the shared table pi/test/solo-shell-forms.json carries the
+// same list): before the owner's yes no lead lock is held, so `up`, `lead
+// --team` or `scheduler run` from its shell would start a team unconfirmed.
+export const AMQ_SQUAD_ALLOW = ["status", "context", "doctor", "version", "task show", "task list", "team propose"];
+
+// amqSquadAllowed reports whether the words after an amq-squad name an
+// allowed verb (one word, or two).
+export function amqSquadAllowed(words: string[]): boolean {
+	return AMQ_SQUAD_ALLOW.includes(words[0] ?? "") || AMQ_SQUAD_ALLOW.includes(words.slice(0, 2).join(" "));
+}
 // argv[0]s that run their arguments as a command line: their argv is read
 // as a shell form too.
 const LINE_RUNNERS = new Set(["sh", "bash", "zsh", "dash", "ksh", "env", "eval", "exec", "xargs", "nohup", "sudo"]);
@@ -101,7 +111,9 @@ export function lineRefusal(line: string): string | undefined {
 	const d = dequote(line);
 	const tokens = d.split(/[\s;&|()<>{}]+/).filter(Boolean);
 	if (tokens.some((t) => t.includes("tmux"))) return "tmux";
-	if (d.includes("amq-squad") && /team|confirm|apply/.test(d)) return "amq-squad team";
+	for (let i = 0; i < tokens.length; i++) {
+		if (base(tokens[i]).includes("amq-squad") && !amqSquadAllowed(tokens.slice(i + 1))) return ("amq-squad " + tokens.slice(i + 1, i + 3).join(" ")).trim();
+	}
 	// a parameter expansion or a command substitution joined to letters
 	// (tm${x}ux, tm$(true)ux) and backticks build a word the split cannot read
 	if (/[a-z0-9_]\$[{(a-z_]/.test(d) || /\$\{[^}]*\}[a-z0-9_]/.test(d) || /\$\([^)]*\)[a-z0-9_]/.test(d) || d.includes("`")) return "an expansion joined to letters";
@@ -123,7 +135,7 @@ export function soloShellRefusal(toolName: string, input: unknown): string | und
 		const words = argv.map((w) => String(w).toLowerCase());
 		const cmd = base(words[0] ?? "");
 		if (cmd.includes("tmux")) return refusalText("tmux");
-		if (cmd.includes("amq-squad") && words.slice(1).some((w) => OWNER_WORDS.has(w))) return refusalText("amq-squad " + words.slice(1, 3).join(" "));
+		if (cmd.includes("amq-squad") && !amqSquadAllowed(words.slice(1))) return refusalText(("amq-squad " + words.slice(1, 3).join(" ")).trim());
 		const inner = LINE_RUNNERS.has(cmd) ? lineRefusal(words.slice(1).join(" ")) : undefined;
 		return inner ? refusalText(inner) : undefined;
 	}
@@ -134,7 +146,7 @@ export function soloShellRefusal(toolName: string, input: unknown): string | und
 }
 
 function refusalText(what: string): string {
-	return `owner_only: the solo lead's shell does not run ${what} (R55): a tmux command can type into the lead's own pane, and amq-squad team confirm and apply are the owner's. Propose with amq_team_propose; the owner confirms at /squad confirm, amq-squad team confirm or the Buzz DM; then amq_team_apply.`;
+	return `owner_only: the solo lead's shell does not run ${what} (R55): a tmux command can type into the lead's own pane, and only the read-only amq-squad verbs run here (${AMQ_SQUAD_ALLOW.join(", ")}). Propose with amq_team_propose; the owner confirms at /squad confirm or the Buzz DM; then amq_team_apply.`;
 }
 
 function envelopeData<T>(stdout: string): T | undefined {
