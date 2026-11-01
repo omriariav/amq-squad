@@ -53,6 +53,12 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 			unit := " api_key: " + c6 + " API_KEY:" + c7 + " "
 			return strings.Repeat(" ", n/2) + "err: see" + strings.Repeat(unit, n/2/len(unit))
 		}, []string{c6, c7}},
+		// Adjacent keys: the inner credential key wins, and a long chain of plain
+		// keys costs a constant per match.
+		{"adjacent keys", func(n int) string {
+			unit := "err: api_key: " + c6 + " warn:token:" + c7 + " msg: password: " + c1 + " "
+			return strings.Repeat(unit, n/2/len(unit)) + strings.Repeat("a: ", n/2/3)
+		}, []string{c6, c7, c1}},
 		// Many lines: YAML blocks, a quoted scalar across lines, JSON.
 		{"mixed block", func(n int) string {
 			unit := "password:\n  '" + c4 + "\n  " + c5 + "'\nnext: kept\n{\"password\":\n \"" + c2 + "\"}\npassword:\n  " + c1 + "\n"

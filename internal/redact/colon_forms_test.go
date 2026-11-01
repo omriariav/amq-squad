@@ -79,3 +79,34 @@ func TestBlockRedactsAPunctuatedColonValueWhole(t *testing.T) {
 		t.Errorf("%q", out)
 	}
 }
+
+// The inner credential key wins when an outer rule's value begins with one:
+// err: api_key: V used to leave V, the first match having consumed the key.
+func TestBlockRedactsACredentialKeyAdjacentToAnotherKey(t *testing.T) {
+	v := "Zq9" + "xV7mP2wL4"
+	for _, outer := range []string{"err", "warn", "msg", "note"} {
+		for _, sep := range []string{": ", ":"} {
+			for _, key := range []string{"api_key", "token", "password", "client_secret"} {
+				for _, isep := range []string{": ", ":"} {
+					in := outer + sep + key + isep + v + " now"
+					want := outer + sep + key + isep + Placeholder + " now"
+					if out := Block(in); out != want {
+						t.Errorf("%q -> %q, want %q", in, out, want)
+					}
+				}
+			}
+		}
+	}
+	// A chain of plain keys before the credential key, within the peel bound.
+	if out := Block("a: b: password: " + v); strings.Contains(out, v) {
+		t.Errorf("a plain-key chain hid the value: %q", out)
+	}
+	for _, in := range []string{
+		"msg: password: reverted before the release", "warn: token:12:30", "err: api_key: sourceV2(rt)",
+		"msg: password: ab12cd", "err: Key: the owner's key", "err: api_key: " + Placeholder,
+	} {
+		if out := Block(in); out != in {
+			t.Errorf("prose changed: %q -> %q", in, out)
+		}
+	}
+}

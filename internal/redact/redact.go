@@ -234,6 +234,11 @@ func spans(line string) (out [][2]int, found []Finding) {
 			continue
 		}
 		a, b := m[8], m[9]
+		if ia, ib, iname, ok := innerCredential(line, a); ok {
+			out = append(out, [2]int{ia, ib}) // err: api_key: V, the inner key wins
+			found = append(found, Finding{Rule: "yaml", Name: iname})
+			continue
+		}
 		val := line[a:b]
 		if q := val[0]; q != '\'' && q != '"' {
 			if c := yamlComment(val); c >= 0 {
@@ -258,12 +263,13 @@ func spans(line string) (out [][2]int, found []Finding) {
 			continue
 		}
 		val := line[m[8]:m[9]]
-		if m[9] < len(line) && line[m[9]] == '(' {
-			continue // a call expression (sourceV2(rt)), not a value
+		if ia, ib, iname, ok := innerCredential(line, m[8]); ok {
+			out = append(out, [2]int{ia, ib}) // warn: token:V, err:api_key: V
+			found = append(found, Finding{Rule: "yaml", Name: iname})
+			continue
 		}
-		inner := strings.Trim(val, `"'`)
-		if len(inner) < minSecretLen || !yamlValue(val) || !letterAndDigit(inner) || pointerRE.MatchString(inner) {
-			continue // prose, a flag, a switch: not credential-shaped
+		if !colonShape(name, val, line, m[9]) {
+			continue // prose, a flag, a switch, a call: not credential-shaped
 		}
 		if lead < 0 {
 			lead = leadEnd(line) // once per line: each byte of the prefix is examined once
@@ -271,10 +277,8 @@ func spans(line string) (out [][2]int, found []Finding) {
 		if m[8] > m[7]+1 && m[4] <= lead {
 			continue // a line-start key with a space after its colon: the yaml rule's
 		}
-		if CredentialName(name) && !countValue(name, val) && namedSecret(name, inner) {
-			out = append(out, [2]int{m[8], m[9]})
-			found = append(found, Finding{Rule: "yaml", Name: name})
-		}
+		out = append(out, [2]int{m[8], m[9]})
+		found = append(found, Finding{Rule: "yaml", Name: name})
 	}
 	for _, m := range jsonRE.FindAllStringSubmatchIndex(line, -1) {
 		work(1)
@@ -321,6 +325,49 @@ func leadEnd(line string) int {
 	}
 	work(i + 1)
 	return i
+}
+
+// colonShape reports whether a colon-form value under name is a credential:
+// one token (or a quoted scalar) of at least minSecretLen with a letter and a
+// digit, not a Go pointer, not followed at once by "(" (a call), under a
+// credential name that is not "key", not a count, and a namedSecret.
+func colonShape(name, val, line string, end int) bool {
+	if strings.EqualFold(name, "key") || (end < len(line) && line[end] == '(') {
+		return false
+	}
+	inner := strings.Trim(val, `"'`)
+	if len(inner) < minSecretLen || !yamlValue(val) || !letterAndDigit(inner) || pointerRE.MatchString(inner) {
+		return false
+	}
+	return CredentialName(name) && !countValue(name, val) && namedSecret(name, inner)
+}
+
+// maxPeel bounds the plain keys innerCredential skips: a chain of keys
+// (a: a: a: ...) costs a constant per match, not the rest of the line.
+const maxPeel = 3
+
+// innerCredential finds a credential key and its value at the start of
+// line[a:], past any run of plain keys (err: api_key: V, warn: token:V, a: b:
+// password: V): when an outer rule's captured value begins with a key and a
+// colon, the inner key wins. ok is false unless the first credential-class
+// key has a credential-shaped value (prose such as password: reverted stays).
+func innerCredential(line string, a int) (from, to int, name string, ok bool) {
+	for pos, peeled := a, 0; pos < len(line) && peeled < maxPeel; peeled++ {
+		work(1)
+		m := innerKeyRE.FindStringSubmatchIndex(line[pos:])
+		if m == nil || line[pos+m[2]:pos+m[3]] != line[pos+m[6]:pos+m[7]] {
+			return 0, 0, "", false
+		}
+		n, vs, ve := line[pos+m[4]:pos+m[5]], pos+m[8], pos+m[9]
+		if CredentialName(n) {
+			if colonShape(n, line[vs:ve], line, ve) {
+				return vs, ve, n, true
+			}
+			return 0, 0, "", false
+		}
+		pos = vs
+	}
+	return 0, 0, "", false
 }
 
 // pointerRE is a Go pointer or address as %+v prints it (TokensIn:0xc0001a2b3c).
@@ -520,7 +567,10 @@ var (
 	// semicolon, a parenthesis or a bracket; the value is one token of the
 	// equals rule's value class, whole or not at all. Groups
 	// 1 and 3 are the key's quotes, group 2 the name, group 4 the value.
-	colonKeyRE           = regexp.MustCompile(`(?:^|[ \t"',;(\[])(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)(['"]?):[ \t]*('(?:[^'\n]|'')*'|"(?:[^"\\\n]|\\.)*"|[^\s"'\[\](){},;<>|&` + "`" + `]+)`)
+	colonKeyRE = regexp.MustCompile(`(?:^|[ \t"',;(\[])(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)(['"]?):[ \t]*('(?:[^'\n]|'')*'|"(?:[^"\\\n]|\\.)*"|[^\s"'\[\](){},;<>|&` + "`" + `]+)`)
+	// innerKeyRE is a key, a colon, optional blanks and a value at the start
+	// of a string, the colon rule's own shape without the delimiter before it.
+	innerKeyRE           = regexp.MustCompile(`^(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)(['"]?):[ \t]*('(?:[^'\n]|'')*'|"(?:[^"\\\n]|\\.)*"|[^\s"'\[\](){},;<>|&` + "`" + `]+)`)
 	yamlBlockIndicatorRE = regexp.MustCompile(`^[|>][-+0-9]*[ \t]*(#.*)?$`)
 )
 
