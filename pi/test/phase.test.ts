@@ -26,7 +26,8 @@ const d = env.data;
 const nonce = process.env.FAKE_APPLY_NONCE ?? process.env.FAKE_NONCE ?? "";
 if (nonce && challenge) {
 	const t = d.team ?? {};
-	const msg = ["amq-squad.lead-proof.v1", challenge, d.outcome ?? "", d.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""].join("\\n");
+	const fields = ["amq-squad.lead-proof.v2", challenge, d.outcome ?? "", d.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""];
+	const msg = fields.map((f) => Buffer.byteLength(f, "utf8") + ":" + f + ",").join("");
 	d.proof = crypto.createHmac("sha256", nonce).update(msg).digest("hex");
 }
 process.stdout.write(JSON.stringify(env));
@@ -331,9 +332,15 @@ test("R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run afte
 test("R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply", async () => {
 	const { leadProof } = await import("../extensions/lib/team.ts");
 	const vectorReply = { outcome: "team", team: { root: "/r/.agent-mail/s1", base_root: "/r/.agent-mail", session: "s1", handle: "cto", digest: "sha256:" + "ab".repeat(32) + "@absent" } };
-	const vector = "a6ebbbb901bdeb3f1b0901ac425a6b27c590085b4ae53deb2324447af4018632";
+	const vector = "70e5982a1f9b362bb43906fe55a452f5ec5bff328288992a6100e54b40fed165";
 	assert.equal(leadProof("test-nonce-not-a-secret", "0123456789abcdef".repeat(2), vectorReply), vector);
 	assert.equal(testProof("test-nonce-not-a-secret", "0123456789abcdef".repeat(2), vectorReply), vector);
+	// Codex's pass 3 on #837: two identities that a newline join made one
+	// (a newline inside a repository path) sign differently
+	const one = { outcome: "team", team: { root: "/a\n/b", base_root: "/c", session: "s1", handle: "cto", digest: "d" } };
+	const two = { outcome: "team", team: { root: "/a", base_root: "/b\n/c", session: "s1", handle: "cto", digest: "d" } };
+	assert.equal([one.team.root, one.team.base_root].join("\n"), [two.team.root, two.team.base_root].join("\n"));
+	assert.notEqual(leadProof("n", "c", one), leadProof("n", "c", two), "two different identities sign alike");
 	const w = soloWorld();
 	for (const [why, nonce] of [
 		["a server that is not the lead", ""],

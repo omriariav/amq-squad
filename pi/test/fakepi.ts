@@ -171,6 +171,7 @@ export function script(dir: string, name: string, body: string): string {
 // two must agree; the fixed vector in phase.test.ts ties both to Go's.
 export function testProof(nonce: string, challenge: string, r: { outcome?: string; digest?: string; team?: Record<string, string | undefined> }): string {
 	const t = r.team ?? {};
-	const msg = ["amq-squad.lead-proof.v1", challenge, r.outcome ?? "", r.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""].join("\n");
+	const fields = ["amq-squad.lead-proof.v2", challenge, r.outcome ?? "", r.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""];
+	const msg = fields.map((f) => `${Buffer.byteLength(f, "utf8")}:${f},`).join("");
 	return crypto.createHmac("sha256", nonce).update(msg).digest("hex");
 }

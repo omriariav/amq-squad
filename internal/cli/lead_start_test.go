@@ -851,8 +851,18 @@ func TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts(t *testing.T) {
 func TestTheLeadAnswersItsPisChallengeWithItsProof(t *testing.T) {
 	vector := leadProof("test-nonce-not-a-secret", strings.Repeat("0123456789abcdef", 2), leadStartReply{Outcome: "team",
 		Team: &leadTeam{Root: "/r/.agent-mail/s1", BaseRoot: "/r/.agent-mail", Session: "s1", Handle: "cto", Digest: "sha256:" + strings.Repeat("ab", 32) + "@absent"}})
-	if vector != "a6ebbbb901bdeb3f1b0901ac425a6b27c590085b4ae53deb2324447af4018632" {
+	if vector != "70e5982a1f9b362bb43906fe55a452f5ec5bff328288992a6100e54b40fed165" {
 		t.Fatalf("the proof's fixed vector = %s", vector)
+	}
+	// Codex's pass 3 on #837: two identities that a newline join made one
+	// (a newline inside a repository path) sign differently
+	one := leadStartReply{Outcome: "team", Team: &leadTeam{Root: "/a\n/b", BaseRoot: "/c", Session: "s1", Handle: "cto", Digest: "d"}}
+	two := leadStartReply{Outcome: "team", Team: &leadTeam{Root: "/a", BaseRoot: "/b\n/c", Session: "s1", Handle: "cto", Digest: "d"}}
+	if one.Team.Root+"\n"+one.Team.BaseRoot != two.Team.Root+"\n"+two.Team.BaseRoot {
+		t.Fatal("the pair does not collide under a newline join")
+	}
+	if leadProof("n", "c", one) == leadProof("n", "c", two) {
+		t.Fatal("two different identities sign alike")
 	}
 	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
 	if _, err := s.serve(); err != nil {

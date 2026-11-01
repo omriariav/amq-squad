@@ -285,13 +285,14 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 // at load and closes the descriptor, so no child of pi holds it. Every
 // request pi sends carries a fresh challenge, and the lead answers with
 // HMAC-SHA256 keyed by the nonce over the tag, the challenge, the outcome,
-// the digest and the team identity's fields. The nonce never crosses the
+// the digest and the team identity's fields, each length-prefixed
+// (proofMessage). The nonce never crosses the
 // socket, so a server on the socket path that is not this lead cannot
 // answer with a proof; pi refuses an unproved reply lead_unproved and
 // stays solo. A reply to a lead of an earlier spawn carries that spawn's
 // nonce, which this pi does not hold.
 const (
-	leadProofTag   = "amq-squad.lead-proof.v1"
+	leadProofTag   = "amq-squad.lead-proof.v2"
 	leadNonceFDEnv = "AMQ_SQUAD_LEAD_NONCE_FD"
 )
 
@@ -306,8 +307,20 @@ func leadProof(nonce, challenge string, r leadStartReply) string {
 		t = *r.Team
 	}
 	mac := hmac.New(sha256.New, []byte(nonce))
-	mac.Write([]byte(strings.Join([]string{leadProofTag, challenge, r.Outcome, r.Digest, t.Root, t.BaseRoot, t.Session, t.Handle, t.Digest}, "\n")))
+	mac.Write([]byte(proofMessage(leadProofTag, challenge, r.Outcome, r.Digest, t.Root, t.BaseRoot, t.Session, t.Handle, t.Digest)))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// proofMessage encodes the proof's fields each as its byte length, a
+// colon, the bytes and a comma (a netstring; Codex's pass 3 on #837): no
+// field's bytes can stand for a field boundary, so two different
+// identities (a newline inside a repository path) never sign alike.
+func proofMessage(fields ...string) string {
+	var b strings.Builder
+	for _, f := range fields {
+		fmt.Fprintf(&b, "%d:%s,", len(f), f)
+	}
+	return b.String()
 }
 
 // newLeadNonce is a fresh per-spawn nonce: 32 random bytes, hex.

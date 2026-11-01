@@ -115,7 +115,16 @@ export function askLead(socket: string, req: Record<string, unknown>, timeoutMs 
 // socket path that is not the lead cannot prove a reply; an unproved reply
 // is refused lead_unproved and pi stays solo.
 export const LEAD_NONCE_FD_ENV = "AMQ_SQUAD_LEAD_NONCE_FD";
-export const LEAD_PROOF_TAG = "amq-squad.lead-proof.v1";
+export const LEAD_PROOF_TAG = "amq-squad.lead-proof.v2";
+
+// proofMessage encodes the proof's fields each as its byte length, a colon,
+// the bytes and a comma (a netstring; Codex's pass 3 on #837): no field's
+// bytes can stand for a field boundary, so two different identities (a
+// newline inside a repository path) never sign alike. The same encoding as
+// internal/cli/lead_start.go proofMessage.
+export function proofMessage(fields: string[]): string {
+	return fields.map((f) => `${Buffer.byteLength(f, "utf8")}:${f},`).join("");
+}
 
 // readLeadNonce reads the nonce from the descriptor the environment names
 // and closes it; "" when there is none (a pi not spawned by the lead).
@@ -139,7 +148,7 @@ export function readLeadNonce(env: NodeJS.ProcessEnv = process.env): string {
 // leadProof is the lead's proof of reply r to challenge under nonce.
 export function leadProof(nonce: string, challenge: string, r: { outcome?: string; digest?: string; team?: Partial<TeamIdentity> }): string {
 	const t = r.team ?? {};
-	const msg = [LEAD_PROOF_TAG, challenge, r.outcome ?? "", r.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""].join("\n");
+	const msg = proofMessage([LEAD_PROOF_TAG, challenge, r.outcome ?? "", r.digest ?? "", t.root ?? "", t.base_root ?? "", t.session ?? "", t.handle ?? "", t.digest ?? ""]);
 	return crypto.createHmac("sha256", nonce).update(msg).digest("hex");
 }
 
