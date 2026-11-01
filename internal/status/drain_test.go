@@ -19,7 +19,8 @@ import (
 // "drain", ahead of prepare, mint, apply and seat_exec. On a busy squad the
 // drain is the slowest, and the over-ceiling warning says so rather than
 // blame seat_exec or prepare. A seat without a drain end keeps the four
-// segments. Reverted (no drain segment), the 30 s wait is prepare's.
+// segments. Reverted (no drain segment), the 30 s wait is prepare's. The
+// press is also shown as qa-2's added_at, and dev has none.
 func TestARelaunchedSeatsBudgetNamesTheDrain(t *testing.T) {
 	base, _ := filepath.EvalSymlinks(t.TempDir())
 	root := filepath.Join(base, "root")
@@ -35,7 +36,7 @@ func TestARelaunchedSeatsBudgetNamesTheDrain(t *testing.T) {
 	// 30 s of drain, then 200 ms to the staged record, then the launch
 	budgetSeat(t, root, "qa-2", "codex", "gpt-5.6-sol", keyPress, 30200*ms, 602*ms, 538*ms, 144*ms, nil)
 	drainEnd := keyPress.Add(30 * time.Second)
-	marks, _ := json.Marshal(seatlaunch.SeatMarks{LaunchID: "launch-1", Start: &keyPress, DrainEnd: &drainEnd})
+	marks, _ := json.Marshal(seatlaunch.SeatMarks{LaunchID: "launch-1", Start: &keyPress, DrainEnd: &drainEnd, AddedAt: &keyPress})
 	if err := os.WriteFile(filepath.Join(launch.StagedDir(root, "qa-2"), seatlaunch.MarksFileName), marks, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -54,5 +55,10 @@ func TestARelaunchedSeatsBudgetNamesTheDrain(t *testing.T) {
 	}
 	if names := segNames(seatByHandle(t, st, "dev").Launch.Timing.Segments); names != "prepare,mint,apply,seat_exec" {
 		t.Fatalf("dev segments %s", names)
+	}
+	// the press that added qa-2 is shown as its added_at (the plan reviewer
+	// before the merge); dev, in the squad from its start, has none
+	if s.Launch.AddedAt == nil || !s.Launch.AddedAt.Equal(keyPress) || seatByHandle(t, st, "dev").Launch.AddedAt != nil {
+		t.Fatalf("added_at: qa-2 %v, dev %v", s.Launch.AddedAt, seatByHandle(t, st, "dev").Launch.AddedAt)
 	}
 }

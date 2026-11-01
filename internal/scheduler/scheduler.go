@@ -188,9 +188,8 @@ type Scheduler struct {
 	relaunching bool
 	heldReason  string
 	// reload is the relaunch's re-compiled squad.yaml, swapped in at the
-	// drain's end (brief 31-2 PR 2); seatStart the key press of each seat a
-	// reload added, carried by every roster launch's request for it until
-	// the seat leaves the roster (Codex P2 2).
+	// drain's end (brief 31-2 PR 2); seatStart the key press of each seat
+	// the swap added, carried by the next roster launch's requests only.
 	reload    *RosterReload
 	reloadAt  time.Time
 	seatStart map[string]time.Time

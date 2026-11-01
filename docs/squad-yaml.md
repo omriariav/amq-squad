@@ -118,9 +118,11 @@ compiles squad.yaml again as `scheduler run` does at its start:
   is not launched again. A changed line for a live seat (model, effort,
   role) applies at that seat's launch in the same apply, never by a kill.
 - `scheduler relaunch --start STAMP` (RFC3339) carries the key press: a seat
-  the reload adds writes it as its `marks.json` start, so the launch budget's
-  10 s ceiling binds that seat from the press. Every other seat keeps the
-  squad's start. A start more than 5 s in the future, or before the
+  the reload adds writes it as its `marks.json` start for that relaunch, so
+  the launch budget's 10 s ceiling binds that launch from the press. Every
+  other seat keeps the squad's start, and so does the added seat from its
+  next relaunch on; the press stays on it as `added_at` (status's
+  `launch.added_at`). A start more than 5 s in the future, or before the
   scheduler's own launch start, is refused `start_out_of_range` before
   anything drains. The lead's screen runs propose, apply and the relaunch with
   `/squad add`, `seat`, and one confirmation, and stamps the confirmation.

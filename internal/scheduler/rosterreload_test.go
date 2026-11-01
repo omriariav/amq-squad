@@ -84,14 +84,15 @@ func TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress(t *t
 	}
 }
 
-// Codex P2 2 on 31-2 PR 2: each added seat keeps its key press on the
-// scheduler until it leaves the roster. s-c added at T1, then s-d at T2:
-// the second relaunch carries T1 for s-c and T2 for s-d, and so does a
-// plain relaunch after it (seatlaunch writes each as the seat's marks.json
-// start, TestAnAddedSeatKeepsItsStartAcrossRelaunches); a reload that
-// removes s-c drops its start, s-d keeps T2. Reverted (the starts cleared
-// after each launch), the later relaunches carry none.
-func TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster(t *testing.T) {
+// The plan reviewer before the merge (the key press): an added seat is an
+// existing seat from its next relaunch on, and each launch's start is that
+// launch's. s-c added at T1, then s-d at T2: the relaunch s-c's press
+// caused carries T1 for s-c; the one s-d's press caused carries T2 for s-d
+// and none for s-c; a plain relaunch after it carries none for either (each
+// seat takes that launch's start; seatlaunch keeps the presses as added_at,
+// TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart). Reverted (the press
+// kept as a start), the later relaunches carry T1 and T2 again.
+func TestTheKeyPressIsTheStartOfTheLaunchItCausedOnly(t *testing.T) {
 	h, fr := newRosterHarness(t, Config{MaxSeats: 4, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute}, rosterAB...)
 	h.tick()
 	t1, t2 := t0.Add(-time.Hour), t0.Add(-time.Minute)
@@ -113,17 +114,16 @@ func TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster(t *testing.T) {
 	if len(fr.launches) != 4 {
 		t.Fatalf("launches %d", len(fr.launches))
 	}
-	for i := 2; i <= 3; i++ {
-		got := starts(fr.launches[i])
-		if !got["s-c"].Equal(t1) || !got["s-d"].Equal(t2) || !got["s-a"].IsZero() || !got["s-b"].IsZero() {
-			t.Fatalf("launch %d starts %v", i, got)
-		}
+	if got := starts(fr.launches[1]); !got["s-c"].Equal(t1) || !got["s-a"].IsZero() || !got["s-b"].IsZero() {
+		t.Fatalf("s-c's own relaunch: %v", got)
 	}
-	h.s.RequestRelaunchReload("drop s-c", t0, &RosterReload{Roster: append(slices.Clone(rosterAB), RosterSeat{Handle: "s-d", Pool: opus})})
-	h.tick()
-	got := starts(fr.launches[4])
-	if _, in := got["s-c"]; in || !got["s-d"].Equal(t2) || len(h.s.seatStart) != 1 {
-		t.Fatalf("after s-c left: %v; kept %v", got, h.s.seatStart)
+	if got := starts(fr.launches[2]); !got["s-c"].IsZero() || !got["s-d"].Equal(t2) {
+		t.Fatalf("s-d's own relaunch: %v", got)
+	}
+	for h, at := range starts(fr.launches[3]) {
+		if !at.IsZero() {
+			t.Fatalf("a plain relaunch carried a press for %s: %s", h, at)
+		}
 	}
 }
 

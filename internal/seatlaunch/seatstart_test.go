@@ -61,37 +61,45 @@ func TestTheAddedSeatsMarksStartIsTheKeyPress(t *testing.T) {
 	}
 }
 
-// Codex P2 2 on 31-2 PR 2, the launch's half: a seat keeps its own start
-// across relaunches. cto was added at T1: its first launch writes T1 and a
-// drain end. A later roster launch whose requests carry T1 for cto (kept
-// by the scheduler, TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster) and
-// T2 for dev, added since, writes cto's marks with T1 again and no drain
-// end (that launch's wait is not cto's drain), and dev's with T2 and its
-// drain end. Reverted (the scheduler dropping cto's start), cto's marks
-// fall back to the squad's start.
-func TestAnAddedSeatKeepsItsStartAcrossRelaunches(t *testing.T) {
+// The plan reviewer before the merge (the key press), the launch's half:
+// the press is the start of the launch it caused only, and stays on the
+// seat as added_at. cto added at T1: its own launch writes start T1,
+// added_at T1 and a drain end. The launch dev's press (T2) caused writes
+// dev's start T2, added_at T2 and a drain end, and cto's start as that
+// launch's (Options.Start), added_at T1 kept, no drain end. A plain launch
+// after it gives both seats that launch's start, added_at T1 and T2 kept,
+// no drain end. Reverted (added_at not carried), cto's and dev's added_at
+// are gone after the next launch.
+func TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart(t *testing.T) {
 	f := newRosterFixture(t, launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed",
 		Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"}, {Handle: "dev", Runnable: true, Resource: "tmux:v1:pane:%8"}}}, true)
-	f.l.Options.Start = time.Now().Add(-2 * time.Hour).UTC()
+	launchStart := time.Now().Add(-2 * time.Hour).UTC()
+	f.l.Options.Start = launchStart
 	t1 := time.Now().Add(-time.Hour).UTC()
 	t2 := time.Now().Add(-11 * time.Second).UTC()
-	if out := f.l.LaunchRoster([]scheduler.SeatRequest{{ID: "r1", Handle: "cto", Pool: poolA, Start: t1}, {ID: "r2", Handle: "dev", Pool: poolDev}}); out.Stage != scheduler.RosterApplied {
-		t.Fatalf("the first launch: %+v", out)
-	}
 	root := f.q.SessionRoot()
-	if cto, _ := ReadSeatMarks(root, "cto"); cto.Start == nil || !cto.Start.Equal(t1) || cto.DrainEnd == nil {
-		t.Fatalf("cto after its own relaunch: %+v", cto)
+	type want struct {
+		start, added time.Time
+		drain        bool
 	}
-	out := f.l.LaunchRoster([]scheduler.SeatRequest{{ID: "r3", Handle: "cto", Pool: poolA, Start: t1}, {ID: "r4", Handle: "dev", Pool: poolDev, Start: t2}})
-	if out.Stage != scheduler.RosterApplied {
-		t.Fatalf("the second launch: %+v", out)
+	check := func(label string, reqs []scheduler.SeatRequest, w map[string]want) {
+		t.Helper()
+		out := f.l.LaunchRoster(reqs)
+		if out.Stage != scheduler.RosterApplied {
+			t.Fatalf("%s: %+v", label, out)
+		}
+		for h, x := range w {
+			m, err := ReadSeatMarks(root, h)
+			addedOK := (x.added.IsZero() && m.AddedAt == nil) || (m.AddedAt != nil && m.AddedAt.Equal(x.added))
+			if err != nil || m.LaunchID != out.LaunchID || m.Start == nil || !m.Start.Equal(x.start) || !addedOK || (m.DrainEnd != nil) != x.drain {
+				t.Fatalf("%s: %s's marks %+v (%v); want start %s, added_at %s, drain end %v", label, h, m, err, x.start, x.added, x.drain)
+			}
+		}
 	}
-	cto, _ := ReadSeatMarks(root, "cto")
-	dev, _ := ReadSeatMarks(root, "dev")
-	if cto.Start == nil || !cto.Start.Equal(t1) || cto.DrainEnd != nil || cto.LaunchID != out.LaunchID {
-		t.Fatalf("cto after a later relaunch: %+v (want T1 %s, no drain end)", cto, t1)
-	}
-	if dev.Start == nil || !dev.Start.Equal(t2) || dev.DrainEnd == nil || dev.LaunchID != out.LaunchID {
-		t.Fatalf("dev, added since: %+v (want T2 %s and a drain end)", dev, t2)
-	}
+	check("cto's own launch", []scheduler.SeatRequest{{ID: "r1", Handle: "cto", Pool: poolA, Start: t1}, {ID: "r2", Handle: "dev", Pool: poolDev}},
+		map[string]want{"cto": {t1, t1, true}, "dev": {launchStart, time.Time{}, false}})
+	check("dev's own launch", []scheduler.SeatRequest{{ID: "r3", Handle: "cto", Pool: poolA}, {ID: "r4", Handle: "dev", Pool: poolDev, Start: t2}},
+		map[string]want{"cto": {launchStart, t1, false}, "dev": {t2, t2, true}})
+	check("a plain launch", []scheduler.SeatRequest{{ID: "r5", Handle: "cto", Pool: poolA}, {ID: "r6", Handle: "dev", Pool: poolDev}},
+		map[string]want{"cto": {launchStart, t1, false}, "dev": {launchStart, t2, false}})
 }

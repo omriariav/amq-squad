@@ -138,6 +138,7 @@ func seatLaunch(root, handle string, staged launch.Record) *SeatLaunch {
 	var start, first, drainEnd *time.Time
 	if m, err := seatlaunch.ReadSeatMarks(root, handle); err == nil && staged.LaunchID != "" && m.LaunchID == staged.LaunchID {
 		start, first, drainEnd = m.Start, m.FirstMessage, m.DrainEnd
+		sl.AddedAt = m.AddedAt
 	}
 	if start != nil && live != nil && live.Before(*start) {
 		start = nil // a proof older than the start is not this start's launch (an adopted seat)

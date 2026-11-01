@@ -223,12 +223,11 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 		s.Config.MaxSeats = r.MaxSeats
 	}
 	s.unlaunched = append([]string(nil), r.Unlaunched...)
-	// Each added seat keeps its key press for every later relaunch, until
-	// it leaves the roster (Codex P2 2 on 31-2 PR 2): its marks never fall
-	// back to the squad's start.
-	for _, h := range removed {
-		delete(s.seatStart, h)
-	}
+	// The key press is the start of the launch it caused only (the plan
+	// reviewer before the merge): from its next relaunch on an added seat is
+	// an existing seat, which starts from that launch's own start; the press
+	// stays in its marks as added_at (seatlaunch).
+	s.seatStart = nil
 	if !start.IsZero() {
 		for _, h := range added {
 			if s.seatStart == nil {
@@ -342,6 +341,7 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 		reqs = append(reqs, req)
 		s.requests = append(s.requests, request{req: req, at: now})
 	}
+	s.seatStart = nil // the press is the start of this launch only
 	out := rl.LaunchRoster(reqs)
 	if out.Stage != RosterApplied {
 		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}

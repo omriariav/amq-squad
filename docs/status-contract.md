@@ -77,7 +77,10 @@ before one) and `launch`, its last launch, null without a staged record:
 `launch_id`; `outcome` (`staged`, `applied`, `apply_failed`,
 `exec_refused`, `proof_expired`, `live`: its accepted proof) with
 `reason_code`; `wake`, AMQ's admitted wake (`mode`, `require_wake`,
-`injector`, `audit_reason`), null when none was recorded; and `timing`, the
+`injector`, `audit_reason`), null when none was recorded; `added_at`, the add
+key's press that added the seat to squad.yaml (brief 31-2 PR 2: its
+`marks.json`, carried into every later launch's), null for a seat that was in
+the squad at its start, never the launch's start; and `timing`, the
 launch budget:
 
 | `timing` field | meaning |
@@ -211,9 +214,8 @@ lead's presence is its seat row's `live`, found by `lead_handle`.
 - A roster relaunch (`scheduler relaunch`) within one scheduler incarnation
   records the same start (the `up` that launched the squad) for every seat
   that was in the roster, so its marks are not a cold launch's; a seat a
-  relaunch's reload added records its key press (`--start`) instead, at that
-  relaunch and every later one while it stays in the roster (`drain_end`
-  only at the first).
+  relaunch's reload added records its key press (`--start`) as the start of
+  that relaunch only, and as `launch.added_at` from then on.
 
 - `live` from a launch record is the recorded `AgentPID` answering signal-0
   (`status.Collect`); the binary and the process birth time are not checked,

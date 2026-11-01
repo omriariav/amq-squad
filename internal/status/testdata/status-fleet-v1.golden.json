@@ -81,6 +81,7 @@
             "launch_id": "0de97c89b15b5262f41e4fd3ee0b1a87",
             "outcome": "live",
             "reason_code": "",
+            "added_at": null,
             "wake": {
               "mode": "enabled",
               "require_wake": true,
@@ -142,6 +143,7 @@
             "launch_id": "0de97c89b15b5262f41e4fd3ee0b1a87",
             "outcome": "live",
             "reason_code": "",
+            "added_at": null,
             "wake": {
               "mode": "disabled",
               "require_wake": false,

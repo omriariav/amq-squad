@@ -21,6 +21,7 @@ var NullableFields = map[string]bool{
 	// its admitted wake and its launch budget's marks
 	"lead": true, "started_at": true, "launch_start": true, "launch": true, "wake": true,
 	"start": true, "seat_live": true, "first_message": true, "to_seat_live_ms": true, "to_first_message_ms": true, "ms": true,
+	"added_at": true, // brief 31-2 PR 2: a seat added from the screen's add key
 }
 
 // CheckAdditive reports whether produced is an additive change of golden:

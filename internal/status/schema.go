@@ -227,6 +227,10 @@ type SeatLaunch struct {
 	// recorded.
 	Wake   *SeatWake    `json:"wake"`
 	Timing LaunchTiming `json:"timing"`
+	// AddedAt is the add key's press that added the seat to squad.yaml
+	// (brief 31-2 PR 2), from its marks; null for a seat that was in the
+	// squad when it started. It is not the launch's start.
+	AddedAt *time.Time `json:"added_at"`
 }
 
 // SeatWake is AMQ's admitted wake for a seat.

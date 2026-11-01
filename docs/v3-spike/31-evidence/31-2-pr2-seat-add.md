@@ -127,14 +127,22 @@ slots' squad, and a squad without it closes nothing.
 
 `SeatRequest` gains `Start`. `swapReload` records the key press for each
 seat the reload added (in the new roster, not in the old), and
-`launchRoster` puts it on that seat's request. The scheduler keeps each
-added seat's press until the seat leaves the roster, so every later
-relaunch carries it again and the seat's marks never fall back to the
-squad's start (Codex P2 2 on 5d20b5ff: the first cut cleared it after one
-launch). A later launch that carries the same press writes no `drain_end`:
-the wait before that launch is not the seat's drain. The starts live in the
-scheduler's memory; a restarted scheduler starts the squad again from its
-own start. `seatlaunch.Launcher.LaunchRoster` copies each
+`launchRoster` puts it on that seat's request, for the launch the press
+caused only. From its next relaunch on the added seat is an existing seat,
+and each launch's start is that launch's: the press is never a later
+launch's start, which would make start-to-live grow with the clock (the
+plan reviewer before the merge; Codex P2 2 on 5d20b5ff had asked to carry
+it, and the reviewer's ruling replaced that commit's rows). The press stays
+on the seat as `added_at`, the record of why it exists: `writeMarks`
+writes it at the press's launch and carries it from the previous marks
+into every later launch's, so it survives relaunches and a scheduler
+restart. Status shows it as the seat's `launch.added_at`. `drain_end` is
+written for the press's launch and no other.
+
+"That launch's start", for a relaunch, is `seatlaunch.Options.Start`: the
+squad's `AMQ_SQUAD_START`, the same for every relaunch of one scheduler
+incarnation (status-contract's recorded limit). A per-relaunch stamp for
+every seat would be a further change to the relaunch, not made here. `seatlaunch.Launcher.LaunchRoster` copies each
 request's start into `Options.SeatStart` (a per-launch map, cloned so the
 launcher's own options never keep it), and `writeMarks` writes it as that
 seat's `marks.json` start in place of `Options.Start`. Every seat that was
@@ -273,7 +281,7 @@ Each row fails with its change reverted (section 4).
 | D | seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the key press 11 s before seat live and the relaunch's decision 2 s before: the mark is the press, so the seat is over the 10 s ceiling counted from the press though under it from the decision) |
 | E | pi `the lead's model tool list carries no key verb and no gate-answer verb` (PR 1's row, unchanged: the exact thirteen tools) |
 | Start bound (Codex P2 1) | schedproc `TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain` (a stamp a minute ahead and one before the launch start: `start_out_of_range`, no `roster_relaunch_requested`, no launch, squad, pools and roster unchanged; an in-range stamp relaunches); cli `TestSchedulerRelaunchBoundsItsStart` (the verb refuses both with nothing sent; an in-range stamp is sent in UTC) |
-| Kept starts (Codex P2 2) | scheduler `TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster` (s-c added at T1, s-d at T2: the next relaunch and a plain one after it carry T1 and T2; a reload removing s-c drops its start, s-d keeps T2); seatlaunch `TestAnAddedSeatKeepsItsStartAcrossRelaunches` (a later launch writes cto's marks with T1 again and no drain end, dev's with T2 and its drain end) |
+| The press's launch only, added_at kept (the plan reviewer, replacing Codex P2 2's rows) | scheduler `TestTheKeyPressIsTheStartOfTheLaunchItCausedOnly` (s-c added at T1, s-d at T2: each press is carried by its own relaunch only; a plain relaunch carries none); seatlaunch `TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart` (A added at T1, B at T2: the next launch gives both seats that launch's start, with added_at T1 and T2 kept and no drain end); status `TestARelaunchedSeatsBudgetNamesTheDrain` (the press shown as `launch.added_at`, null for a seat in the squad from its start) |
 | State agrees (Codex P2 3) | scheduler `TestTheStateWrittenInTheRelaunchsTickNamesTheNewRoster` (scheduler.json read right after the relaunch's tick names s-a and s-c and max_seats 3) |
 | Drain | status `TestARelaunchedSeatsBudgetNamesTheDrain` (a key press, 30 s of drain, then the launch: segments drain, prepare, mint, apply, seat_exec; drain 30000 ms, prepare 200 ms; the slowest is drain and the warning says `slowest segment drain 30.000 s`; a seat without a drain end keeps four segments); seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the added seat's `drain_end` lies between the key press and seat live; the existing seat has none) |
 | Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it is not launched, `roster_over_cap` names it with the cure, the state lists it as unlaunched, and its task gets no lease); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest` (under `--max-seats 2`: impl-1 and rev-1 launch and hold leases, rev-2 is not launched and its task gets no lease, `roster_over_cap` names it, the state and the status document list it under unlaunched); schedproc `TestAReloadOverTheCapLaunchesTheFirstSeatsInSquadOrder` (a cap of 3: c1, x1, n1 launch, n2 does not, its pool never reaches the router); pi `unlaunched seats: one line each in the seats block, naming max_seats and the cure`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
@@ -430,13 +438,13 @@ from <STAMP>`. Once the relaunch launched (the screen shows qa-2 live):
 
 ```sh
 cd ~/code/amq-squad
-amq-squad status --json | jq '.seats[] | select(.handle=="qa-2") | {handle, launch: .launch.launch_id, start: .launch.timing.start, seat_live: .launch.timing.seat_live, to_seat_live_ms: .launch.timing.to_seat_live_ms, ceiling_ms: .launch.timing.ceiling_ms, over_ceiling: .launch.timing.over_ceiling, slowest: .launch.timing.slowest_segment}'
+amq-squad status --json | jq '.seats[] | select(.handle=="qa-2") | {handle, launch: .launch.launch_id, added_at: .launch.added_at, start: .launch.timing.start, seat_live: .launch.timing.seat_live, to_seat_live_ms: .launch.timing.to_seat_live_ms, ceiling_ms: .launch.timing.ceiling_ms, over_ceiling: .launch.timing.over_ceiling, slowest: .launch.timing.slowest_segment}'
 cat .agent-mail/v31/extensions/amq-squad/launch/qa-2/marks.json
 grep -E '"kind":"(roster_relaunch_requested|roster_reloaded|roster_launched)"' .agent-mail/v31/extensions/amq-squad/scheduler/decisions.jsonl | tail -n 3
 ```
 
-Expect `start` and the `marks.json` start equal to the key line's STAMP
-(UTC), `ceiling_ms` 10000, and `to_seat_live_ms` measured from it;
+Expect `added_at`, `start` and the `marks.json` start equal to the key
+line's STAMP (UTC), `ceiling_ms` 10000, and `to_seat_live_ms` measured from it;
 `over_ceiling` is the verdict. Add `segments: .launch.timing.segments` to
 the jq to read the five segments; on an idle squad `drain` is near zero.
 

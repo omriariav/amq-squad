@@ -243,6 +243,11 @@ type SeatMarks struct {
 	// whose start is its own (the add key's press): status names the
 	// segment from the start to it "drain".
 	DrainEnd *time.Time `json:"drain_end,omitempty"`
+	// AddedAt is the add key's press that added this seat to squad.yaml
+	// (brief 31-2 PR 2): written at the launch the press caused and carried
+	// into every later launch's marks, the record of why the seat exists.
+	// It is never a later launch's start.
+	AddedAt *time.Time `json:"added_at,omitempty"`
 }
 
 func marksPath(root, handle string) string {
@@ -255,14 +260,16 @@ func writeMarks(c Compiled, launchID string, start time.Time, seatStart map[stri
 	for _, rec := range c.Records {
 		m := SeatMarks{LaunchID: launchID}
 		at := start
+		if prev, err := ReadSeatMarks(rec.Root, rec.Handle); err == nil {
+			m.AddedAt = prev.AddedAt // the record of why the seat exists
+		}
 		if own, ok := seatStart[rec.Handle]; ok && !own.IsZero() {
-			at = own // the key press of the add key (brief 31-2 PR 2)
-			// the drain is the press's own relaunch only: a later relaunch
-			// carries the same press again (the seat keeps its start), and
-			// the time before that launch is not a drain
-			prev, perr := ReadSeatMarks(rec.Root, rec.Handle)
-			again := perr == nil && prev.Start != nil && prev.Start.Equal(own)
-			if !again && !drainEnd.IsZero() && !drainEnd.Before(own) {
+			// the key press of the add key (brief 31-2 PR 2): the start of
+			// the launch it caused, and the seat's added_at from then on
+			at = own
+			added := own.UTC()
+			m.AddedAt = &added
+			if !drainEnd.IsZero() && !drainEnd.Before(own) {
 				d := drainEnd.UTC()
 				m.DrainEnd = &d
 			}
