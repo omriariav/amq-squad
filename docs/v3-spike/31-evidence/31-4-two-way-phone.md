@@ -126,7 +126,75 @@ expectations in internal/buzz (handler, fixround2, enroll) and internal/cli
 checkout. Each run reverts one change, runs the rows that must catch it,
 and restores the tree.
 
-REVERT_RUNS_OUTPUT
+```text
+REVERT the post without redact.Block: fails (the row catches it)
+   FAIL	github.com/omriariav/amq-squad/v3/internal/buzz [build failed]
+REVERT the post without its re <request id> line: fails (the row catches it)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.03s)
+REVERT the receipt is routed, not accepted <request id>: fails (the row catches it)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.02s)
+REVERT the question post off the cockpit thread: fails (the row catches it)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.02s)
+REVERT the post not in the request's DM conversation: fails (the row catches it)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.04s)
+REVERT no progress rate bound: fails (the row catches it)
+   --- FAIL: TestRelayProgressRateBound (0.06s)
+REVERT the held progress never posts: fails (the row catches it)
+   --- FAIL: TestRelayProgressRateBound (0.06s)
+REVERT kind status is not progress: fails (the row catches it)
+   --- FAIL: TestRelayProgressRateBound (0.06s)
+REVERT a result does not close the request: fails (the row catches it)
+   --- FAIL: TestRelayProgressRateBound (0.09s)
+REVERT no whole-line answer form: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.07s)
+   --- FAIL: TestRelayRefusesGateShapedLines/whole-line_answer_forms (0.07s)
+REVERT the refusal not narrowed (any line containing the word): fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.07s)
+   --- FAIL: TestRelayRefusesGateShapedLines/sentences_with_the_word_post_unchanged (0.07s)
+REVERT no open gate id refusal: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.08s)
+   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_id (0.08s)
+REVERT no open gate question text refusal: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.08s)
+   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_question_text (0.08s)
+REVERT the poster's gate-thread guard gone: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.09s)
+   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.09s)
+REVERT a request opened in a gate thread posts into it: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.06s)
+   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.06s)
+REVERT a lead-side package imports the key path: fails (the row catches it)
+   --- FAIL: TestTheLeadSideHoldsNoKeyPathNorPoster (0.05s)
+REVERT handled replies not recorded (a restart posts again): fails (the row catches it)
+   --- FAIL: TestARestartedAttachmentNeitherRepostsNorSkips (0.06s)
+REVERT the relay carries gate-shaped replies: fails (the row catches it)
+   --- FAIL: TestAGateQuestionGoesByItsOwnPathOnce (0.12s)
+REVERT a lead relay tool added: fails (the row catches it)
+   not ok 7 - the lead's tool list is unchanged by the two-way phone: the exact thirteen
+REVERT no continuation (every DM a new request): fails (the row catches it)
+   --- FAIL: TestThePhoneConversation (0.08s)
+REVERT an answer form in the conversation goes to the gate path: fails (the row catches it)
+   --- FAIL: TestThePhoneConversation (0.09s)
+REVERT a continuation does not follow the request's lead: fails (the row catches it)
+   --- FAIL: TestThePhoneConversation (0.11s)
+REVERT a gate-thread answer that names a relay post leaves the gate path: fails (the row catches it)
+   --- FAIL: TestAnAnswerInTheGateThreadStaysOnTheGatePath (0.08s)
+REVERT no split of a long post: fails (the row catches it)
+   --- FAIL: TestALongReplyIsSplitIntoAtMostThreeParts (0.00s)
+REVERT amq send without --thread: fails (the row catches it)
+   --- FAIL: TestAMQThreadsThroughTheCLI (0.12s)
+REVERT remote attach without the relay: fails (the row catches it)
+   --- FAIL: TestRemoteAttachRelaysTheLeadsReply (0.05s)
+REVERT status without the requests: fails (the row catches it)
+   --- FAIL: TestStatusShowsThePhoneRequests (0.00s)
+REVERT relayed_at not nullable: fails (the row catches it)
+   --- FAIL: TestStatusShowsThePhoneRequests (0.00s)
+REVERT request fields not redacted: fails (the row catches it)
+   --- FAIL: TestStatusShowsThePhoneRequests (0.00s)
+REVERT the screen without the requests block: fails (the row catches it)
+   not ok 2 - the requests block marks each phone request relayed or refused, by name
+30 of 30 reverts caught
+```
 
 ## 5. The owner-run row (not run; the owner runs it)
 
@@ -219,7 +287,13 @@ avivsinai/agent-message-queue:
 
 ## 10. Gate
 
-GATE_OUTPUT
+Run on e3993144965fc9a682569bc7b6f72cd24353fd05 (the code head; later commits on the branch are this note only):
+
+```text
+go build ./... && go vet ./... && go test -count=1 ./...   exit 0: 56 packages ok, 0 FAIL
+cd pi && npm ci --offline --ignore-scripts && npm test    exit 0: tests 60; pass 60; fail 0
+PATH=<pyvenv>/bin:$PATH make ci                         exit 0
+```
 
 ## 11. A line for the 3.1 release notes
 
