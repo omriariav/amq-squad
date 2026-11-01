@@ -565,6 +565,33 @@ func TestAPlantedRecordIsRefusedAndNothingPosts(t *testing.T) {
 	}
 }
 
+// Codex P1-2: the checks run on each part after the split. A long padded
+// line ending in " yes" would split into a part that starts with a bare
+// yes line; the whole reply is refused. An ordinary long reply still posts
+// in parts.
+func TestASplitNeverStartsAPartWithAnAnswerForm(t *testing.T) {
+	pf := newPhoneFixture(t)
+	_, rid := pf.ask(t, "send the full log", "")
+	th := CockpitThread(rid)
+	head := "re " + rid
+	budget := DMLimit - len(head) - len(" (3/3)\n") - len("\n\n") - len("(the rest is on the cockpit thread "+th+")")
+	padded := strings.Repeat("x", budget-2) + " yes\n\n" + strings.Repeat("more log ", 100)
+	if g, _ := pf.h.gateView(time.Now()); g.gateShaped(strings.Repeat("x", budget-2)+" yes") || !strings.HasPrefix(splitPost(rid, th, padded)[1], head+" (2/2)\nyes") {
+		t.Fatal("the padded reply does not exercise the split")
+	}
+	pf.threads.reply("lead-a", th, padded, "")
+	got := pf.relay(t)
+	if len(got) != 1 || got[0].Outcome != "refused" || got[0].Reason != RefusedGateShape || len(pf.relayPosts()) != 0 {
+		t.Fatalf("the padded reply: %+v, %d posts", got, len(pf.relayPosts()))
+	}
+	long := strings.TrimSpace(strings.Repeat(strings.Repeat("word ", 300)+"\n\n", 4))
+	pf.threads.reply("lead-a", th, long, "")
+	got = pf.relay(t)
+	if posts := pf.relayPosts(); len(got) != 1 || got[0].Outcome != "posted" || len(posts) != 2 || !strings.HasPrefix(posts[1].Content, head+" (2/2)\n") {
+		t.Fatalf("an ordinary long reply: %+v, %d posts", got, len(posts))
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.
