@@ -41,6 +41,12 @@ func autoFleet(cost float64) grants.Resolved {
 // the mayor derives.
 func startWorld(t *testing.T, g grants.Resolved, identity string) (*upFake, *leadStarter, string) {
 	t.Helper()
+	return startWorldPlan(t, g, identity, soloTeamPlan())
+}
+
+// startWorldPlan is startWorld over a given plan.
+func startWorldPlan(t *testing.T, g grants.Resolved, identity string, plan team.LeadPlan) (*upFake, *leadStarter, string) {
+	t.Helper()
 	f, target := upWorld(t)
 	if err := os.Remove(team.SquadPath(f.proj)); err != nil {
 		t.Fatal(err)
@@ -49,7 +55,7 @@ func startWorld(t *testing.T, g grants.Resolved, identity string) (*upFake, *lea
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := proposeSoloPlan(t, f.proj, soloTeamPlan())["digest"].(string)
+	digest := proposeSoloPlan(t, f.proj, plan)["digest"].(string)
 	prev := []any{leadMayorGrant, leadMayorRegistry, leadMayorIdentify, leadSelfBinary, startLeadScheduler}
 	t.Cleanup(func() {
 		leadMayorGrant = prev[0].(func() (grants.Resolved, error))
@@ -150,6 +156,14 @@ func TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux(t *testing
 	rec, _ := s.witnessFor(digest)
 	if os.Getenv(leadStartEnv) != rec.At.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("launch start %q, want the confirmation's moment %s", os.Getenv(leadStartEnv), rec.At)
+	}
+	// R53: the yes's reply carries the team lead's identity (the lead's pi
+	// switches on it), and the marker is written for the record
+	if r.Team == nil || r.Team.Root != f.root || r.Team.Session != "s1" || r.Team.Handle != "lead" || r.Team.Digest != digest {
+		t.Fatalf("the start's team %+v", r.Team)
+	}
+	if m, ok := markerInfo(s.root, f.proj); !ok || m.Root != f.root || m.Digest != digest || m.PID != os.Getpid() {
+		t.Fatalf("phase marker %+v %v", m, ok)
 	}
 	if again := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj}); again.Refusal != schedproc.ReasonLeadRunning {
 		t.Fatalf("a second start = %+v", again)
@@ -306,14 +320,28 @@ func TestTheSoloLeadServesTheStartSocketToItsPi(t *testing.T) {
 	// pi's spawn as runProcess reports it
 	fakeRun := piRun
 	t.Cleanup(func() { piRun = fakeRun })
+	var spawnNonce string
+	var spawnEnv []string
 	piRun = func(path string, argv, env []string) (int, error) {
 		if piStartedHook != nil {
 			piStartedHook(os.Getpid())
 		}
+		spawnNonce, spawnEnv = piSpawnNonce, env
 		return fakeRun(path, argv, env)
 	}
 	if _, _, err := captureOutput(t, func() error { return runLead(nil) }); err != nil {
 		t.Fatal(err)
+	}
+	// Codex's re-check on #837, item 1: the spawn hands pi a fresh nonce
+	// (the lead keeps it to prove its replies); the environment names only
+	// the descriptor, never the nonce
+	if len(spawnNonce) != 64 || served == nil || served.nonce != spawnNonce || call.getenv(leadNonceFDEnv) != "3" {
+		t.Fatalf("the spawn's nonce: %d chars, starter holds it %v, fd env %q", len(spawnNonce), served != nil && served.nonce == spawnNonce, call.getenv(leadNonceFDEnv))
+	}
+	for _, kv := range spawnEnv {
+		if strings.Contains(kv, spawnNonce) {
+			t.Fatalf("the nonce is in pi's environment: %s", strings.SplitN(kv, "=", 2)[0])
+		}
 	}
 	if served == nil || served.piPID != os.Getpid() || served.piStamp == "" {
 		t.Fatalf("the solo lead did not record its pi: %+v", served)
@@ -673,5 +701,221 @@ func TestUpReadsTheSoloLeadsDiscoveryRecordByItsLiveness(t *testing.T) {
 	}
 	if _, err := os.Stat(rec); err == nil {
 		t.Fatal("up left the stale record")
+	}
+}
+
+// Row 2 after the plan reviewer (the marker is never authority): a solo
+// lead restarted in a marked repository, the marker planted with any
+// content (the lead's own pid and start stamp copied in), comes up solo:
+// no lead lock, no scheduler, the solo tools; it says the offer (the team's
+// date and digest, amq-squad up to resume, or a fresh yes at either door).
+func TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing(t *testing.T) {
+	call, starts, project, root := teamLeadFixture(t)
+	prev := serveLeadStart
+	t.Cleanup(func() { serveLeadStart = prev })
+	serveLeadStart = func(*leadStarter) (string, error) { return "/tmp/lead-start.sock", nil }
+	soloRoot, err := soloRootOf(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp, _ := procinfo.StartToken(os.Getpid())
+	digest := "sha256:" + strings.Repeat("cd", 32) + "@absent"
+	m, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: root, Session: "v31", Handle: "cto", Digest: digest, At: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC), PID: os.Getpid(), Start: stamp})
+	mustWrite(t, phaseMarkerPath(soloRoot), string(m))
+	_, stderr, err := captureOutput(t, func() error { return runLead(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*starts) != 0 || call.getenv("AMQ_SQUAD_SOLO_LEAD") != "1" || call.getenv("AMQ_SQUAD_LEAD") != "" {
+		t.Fatalf("a marked restart: scheduler starts %d, solo %q, lead %q", len(*starts), call.getenv("AMQ_SQUAD_SOLO_LEAD"), call.getenv("AMQ_SQUAD_LEAD"))
+	}
+	// the offer's steps work as written: up after this lead quits (a live
+	// solo lead is lead_running to it), and a fresh proposal confirmed
+	// anew (a restarted lead holds no proposal; a confirmation lapses)
+	for _, want := range []string{"started on 2026-11-01T09:00:00Z with digest " + digest + " and this lead was restarted", "To resume it: quit this lead and run `amq-squad up`.",
+		"To start it again from here: ask me to propose the team again and confirm the new plan at your pane or over Buzz.",
+		"a restarted lead holds no proposal, and a confirmation stands for 30 minutes"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("the offer lacks %q:\n%s", want, stderr)
+		}
+	}
+	if h, _ := lockHeld(filepath.Join(schedproc.Dir(root), schedproc.LeadLockName)); h {
+		t.Fatal("a marked restart took the lead lock")
+	}
+	// a marker naming another repository offers nothing
+	other, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: "/elsewhere", Digest: digest, At: time.Now()})
+	mustWrite(t, phaseMarkerPath(soloRoot), string(other))
+	if _, stderr, err := captureOutput(t, func() error { return runLead(nil) }); err != nil || strings.Contains(stderr, "To resume it") {
+		t.Fatalf("another repository's marker: %v\n%s", err, stderr)
+	}
+}
+
+// R53's in-life switch rides the lead's own answer: a phase query on the
+// start socket answers solo before this lead's start and team (with the
+// identity) after it; a marker written by another process changes neither.
+func TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile(t *testing.T) {
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	if _, err := s.serve(); err != nil {
+		t.Fatal(err)
+	}
+	ask := func() leadStartReply {
+		t.Helper()
+		c, err := dialLead(s.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		r, err := askLead(c, leadStartRequest{Kind: phaseKind})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	planted, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: f.proj, Root: "/planted", Handle: "x", PID: os.Getpid()})
+	mustWrite(t, phaseMarkerPath(s.root), string(planted))
+	if r := ask(); r.Outcome != "solo" || r.Team != nil {
+		t.Fatalf("before the start, with a planted marker = %+v", r)
+	}
+	if r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj}); r.Outcome != "started" {
+		t.Fatalf("start = %+v", r)
+	}
+	if r := ask(); r.Outcome != "team" || r.Team == nil || r.Team.Root != f.root || r.Team.Digest != digest {
+		t.Fatalf("after the start = %+v", r)
+	}
+}
+
+// R53 (Codex on #837): the switch rides the start's reply, never the
+// record. A phase record that cannot be written (the model made phase.json
+// a directory before the yes) leaves the start started, the reply carrying
+// the team identity (so the lead's pi switches and the solo tools go), a
+// phase_record_failed decision, and the lead answering team.
+func TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches(t *testing.T) {
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	if err := os.MkdirAll(phaseMarkerPath(s.root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj})
+	if r.Outcome != "started" || r.Team == nil || r.Team.Root != f.root || r.Team.Digest != digest {
+		t.Fatalf("start with phase.json a directory = %+v", r)
+	}
+	if !strings.Contains(r.Detail, KindPhaseRecordFailed) {
+		t.Fatalf("the detail does not say the record failed: %q", r.Detail)
+	}
+	found := false
+	for _, d := range decisionKinds(t, s.root) {
+		found = found || d.Kind == KindPhaseRecordFailed
+	}
+	if !found {
+		t.Fatalf("no %s decision", KindPhaseRecordFailed)
+	}
+	if _, err := s.serve(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := dialLead(s.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if q, err := askLead(c, leadStartRequest{Kind: phaseKind}); err != nil || q.Outcome != "team" || q.Team == nil {
+		t.Fatalf("phase query after a failed record = %+v, %v", q, err)
+	}
+}
+
+// R53 (Codex on #837): a started team always carries the team lead's
+// identity, because it is resolved from the confirmed squad before anything
+// starts. A confirmed squad that names no lead refuses team_identity with
+// nothing started (no squad.yaml, no scheduler, no lock), rather than
+// starting a team the lead's pi cannot switch to.
+func TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts(t *testing.T) {
+	plan := soloTeamPlan()
+	plan.Lead = ""
+	f, s, digest := startWorldPlan(t, autoFleet(0), "owner/app", plan)
+	r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj})
+	if r.Outcome != "refused" || r.Refusal != ReasonTeamIdentity || r.Team != nil {
+		t.Fatalf("a squad with no lead = %+v", r)
+	}
+	if _, err := os.Stat(team.SquadPath(f.proj)); err == nil {
+		t.Fatal("the refused start wrote squad.yaml")
+	}
+	if s.lock != nil {
+		t.Fatal("the refused start holds the lead lock")
+	}
+}
+
+// Codex's re-check on #837, item 1: the lead proves its replies to its pi.
+// A request with a challenge is answered with HMAC-SHA256 under the nonce
+// the lead gave its pi, over the challenge and the reply (the fixed vector
+// is the one pi/test/phase.test.ts checks, so both sides compute one
+// message); a request without a challenge, or a lead holding no nonce, gets
+// no proof; the challenge rides through team apply to the lead.
+func TestTheLeadAnswersItsPisChallengeWithItsProof(t *testing.T) {
+	vector := leadProof("test-nonce-not-a-secret", strings.Repeat("0123456789abcdef", 2), leadStartReply{Outcome: "team",
+		Team: &leadTeam{Root: "/r/.agent-mail/s1", BaseRoot: "/r/.agent-mail", Session: "s1", Handle: "cto", Digest: "sha256:" + strings.Repeat("ab", 32) + "@absent"}})
+	if vector != "70e5982a1f9b362bb43906fe55a452f5ec5bff328288992a6100e54b40fed165" {
+		t.Fatalf("the proof's fixed vector = %s", vector)
+	}
+	// Codex's pass 3 on #837: two identities that a newline join made one
+	// (a newline inside a repository path) sign differently
+	one := leadStartReply{Outcome: "team", Team: &leadTeam{Root: "/a\n/b", BaseRoot: "/c", Session: "s1", Handle: "cto", Digest: "d"}}
+	two := leadStartReply{Outcome: "team", Team: &leadTeam{Root: "/a", BaseRoot: "/b\n/c", Session: "s1", Handle: "cto", Digest: "d"}}
+	if one.Team.Root+"\n"+one.Team.BaseRoot != two.Team.Root+"\n"+two.Team.BaseRoot {
+		t.Fatal("the pair does not collide under a newline join")
+	}
+	if leadProof("n", "c", one) == leadProof("n", "c", two) {
+		t.Fatal("two different identities sign alike")
+	}
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	if _, err := s.serve(); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(challenge string) leadStartReply {
+		t.Helper()
+		c, err := dialLead(s.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		r, err := askLead(c, leadStartRequest{Kind: phaseKind, Challenge: challenge})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	ch := strings.Repeat("5a", 16)
+	if r := ask(ch); r.Proof != "" {
+		t.Fatalf("a lead holding no nonce proved a reply: %+v", r)
+	}
+	nonce, err := newLeadNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.setNonce(nonce)
+	r := ask(ch)
+	if want := leadProof(nonce, ch, r); r.Proof != want || r.Outcome != "solo" {
+		t.Fatalf("the phase reply's proof = %q, want %q (%+v)", r.Proof, want, r)
+	}
+	if r := ask(""); r.Proof != "" {
+		t.Fatalf("a request with no challenge got a proof: %+v", r)
+	}
+	if r := ask("not-hex"); r.Proof != "" {
+		t.Fatalf("a malformed challenge got a proof: %+v", r)
+	}
+	// through team apply: the CLI never holds the nonce; it passes the
+	// challenge, and the lead's reply (here a refusal: nothing witnessed)
+	// carries the proof the lead's pi checks
+	s.unwitness(digest)
+	t.Setenv("AM_ROOT", s.root)
+	t.Setenv(leadStartSocketEnv, s.sock.Path)
+	out, _, _ := captureOutput(t, func() error {
+		return runTeam([]string{"apply", "--digest", digest, "--project", f.proj, "--json", "--challenge", ch})
+	})
+	var env struct {
+		Data leadStartReply `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("apply json: %v\n%s", err, out)
+	}
+	if want := leadProof(nonce, ch, env.Data); env.Data.Proof == "" || env.Data.Proof != want {
+		t.Fatalf("the apply's reply proof = %q, want %q", env.Data.Proof, want)
 	}
 }

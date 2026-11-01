@@ -488,6 +488,23 @@ only after the lead has quit: while any lead holds the repository it
 refuses <code>lead_running</code>, or <code>lead_unreachable</code> when
 the lead's process is alive but its socket does not answer. A record a
 dead lead left is removed for you.</p></li>
+<li><p>Then the lead is the team's lead for the rest of the
+conversation. Its tools switch from the solo set (read, bash, edit,
+write and the two team tools) to the team lead's: mail, the task store,
+the repository read and list, status, the relaunch and the widening. The
+old tools are no longer offered, and a call to one is refused
+<code>phase_team</code>. The lead applies the team in a turn of its own:
+an apply batched with any other tool call is refused
+<code>apply_not_alone</code> and starts nothing. The first turn carries
+the host facts read from <code>status</code> and <code>context</code>:
+the repository, the branch and tip, the AMQ and amq-squad versions, the
+roster, the open tasks and the open gates. They come again only when one
+changes. Quit the lead and run <code>amq-squad lead</code> again in the
+repository and it comes up solo: it says when the team was started and
+with which digest, and offers the two ways back. Quit it and run
+<code>amq-squad up</code> to resume the team, or ask it to propose the
+team again and confirm the new plan at the pane or over Buzz. It starts
+nothing on its own.</p></li>
 </ol>
 <p>The solo lead's shell refuses <code>tmux</code> and every
 <code>amq-squad</code> verb but the read-only ones (status, context,

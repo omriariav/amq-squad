@@ -94,6 +94,19 @@ func runLead(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "amq-squad lead: model %s (%s)\n", model, src)
 	}
+	if !*team {
+		// R53 after the plan reviewer: a marked repository never starts a
+		// team by itself; the solo lead comes up solo and offers the two ways
+		// back (its pi says it again on the first turn)
+		if cwd, err := os.Getwd(); err == nil {
+			project := projectTop(cwd)
+			if root, err := soloRootOf(project); err == nil {
+				if m, ok := markerInfo(root, project); ok {
+					fmt.Fprintf(os.Stderr, "amq-squad lead: %s\n", resumeOffer(m))
+				}
+			}
+		}
+	}
 	f.lead = *team
 	// The team lead's tool set (amendment 26) is applied by piLaunch for
 	// every lead launch, here and under an AMQ launch.
@@ -205,6 +218,16 @@ func runLead(args []string) error {
 		}
 		solo[leadStartSocketEnv] = sock
 		defer starter.close()
+		// the per-spawn nonce, handed to pi over fd 3 (runProcess); the
+		// environment names only the descriptor
+		nonce, err := newLeadNonce()
+		if err != nil {
+			return fmt.Errorf("lead: the nonce for its pi: %w", err)
+		}
+		starter.setNonce(nonce)
+		piSpawnNonce = nonce
+		defer func() { piSpawnNonce = "" }()
+		solo[leadNonceFDEnv] = "3"
 		// the TUI door's one accepted peer: the pi this process spawns
 		piStartedHook = func(pid int) {
 			stamp, _ := procinfo.StartToken(pid)
@@ -220,6 +243,10 @@ func runLead(args []string) error {
 	}
 	return piLaunch(piLaunchSpec{Seat: "lead", Flags: f, PiArgs: piArgs, Overlay: solo})
 }
+
+// piSpawnNonce is the nonce runProcess hands the pi it spawns over fd 3
+// (the solo lead's, set while it runs).
+var piSpawnNonce string
 
 // piStartedHook runs with the pid of the pi process runProcess started
 // (the solo lead records it with its start stamp).

@@ -204,6 +204,10 @@ run("the plan records never expire", [(LS,'\t\tif now.After(sp.Expires) {\n','\t
 run("the plan records are not capped", [(LS,'!again && len(s.plans) >= MaxSentPlans {','!again && false && len(s.plans) >= MaxSentPlans {')],
     CL+"'TestThePlanRecordsExpireAndAreBounded'")
 
+# The merge with 31-3 PR 2 (#837): pi acts only on a proved plan record
+run("pi acts on a plan record the lead did not prove", [(TT,'rec = await askLeadProved(this.socket, { kind: PLAN_KIND, digest: d.digest, body: text }, this.nonce);','rec = await askLead(this.socket, { kind: PLAN_KIND, digest: d.digest, body: text });')],
+    PI+"test/team.test.ts")
+
 # Codex re-check on #838, the second layer: no shell sets a team-plan label
 run("the solo shell runs a command string with a team-plan label", [(TT,'\tif (tokens.some((t) => t.includes(TEAM_PLAN_LABEL))) return "a team-plan label";\n','')],
     "cd pi && node --test --test-name-pattern 'sees through quoting' test/team.test.ts")

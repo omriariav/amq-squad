@@ -13,7 +13,11 @@ import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, PLAN_KIND, So
 import * as net from "node:net";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
-import { FakePi, fakeCtx, tmpdir } from "./fakepi.ts";
+import { FakePi, fakeCtx, testProof, tmpdir } from "./fakepi.ts";
+
+// NONCE stands for the nonce the lead hands its pi at the spawn (built at
+// run time; no credential shape)
+const NONCE = "test-" + "nonce-" + "not-a-secret";
 
 const BIN = "/opt/amq-squad";
 const DIGEST = "sha256:" + "0123456789abcdef".repeat(4) + "@absent";
@@ -57,6 +61,7 @@ const proposed = envelope("team_propose", {
 async function fakeLead(answer: (req: any) => any): Promise<{ socket: string; got: any[]; close: () => void }> {
 	const socket = path.join(tmpdir(), "lead.sock");
 	const got: any[] = [];
+	const phase: any[] = [];
 	const server = net.createServer((c) => {
 		let buf = "";
 		c.on("data", (d) => {
@@ -64,12 +69,24 @@ async function fakeLead(answer: (req: any) => any): Promise<{ socket: string; go
 			const i = buf.indexOf("\n");
 			if (i < 0) return;
 			const req = JSON.parse(buf.slice(0, i));
-			got.push(req);
-			c.end(JSON.stringify(answer(req)) + "\n");
+			// the session start's phase query (R53, PR 2) is not a confirm
+			(req.kind === "amq-squad.phase.v1" ? phase : got).push(req);
+			// the lead proves its reply under the nonce it gave its pi
+			const a = answer(req);
+			c.end(JSON.stringify({ ...a, proof: testProof(NONCE, req.challenge ?? "", a) }) + "\n");
 		});
 	});
 	await new Promise<void>((resolve) => server.listen(socket, resolve));
 	return { socket, got, close: () => server.close() };
+}
+
+// provedApply is the lead's start reply as team apply prints it, proved
+// under NONCE over the challenge the extension passed (or under another
+// nonce, or not at all)
+function provedApply(args: string[], data: Record<string, any>, nonce: string | undefined = NONCE): string {
+	const i = args.indexOf("--challenge");
+	const challenge = i >= 0 ? args[i + 1] : "";
+	return envelope("team_apply", nonce ? { ...data, proof: testProof(nonce, challenge, data) } : data);
 }
 
 function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "") {
@@ -81,7 +98,7 @@ function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "") {
 		return reply(args, o);
 	};
 	const pi = new FakePi();
-	const team = installSoloTeam(pi as any, cfg(root), runner, () => new Date("2026-11-01T10:00:00Z"), socket);
+	const team = installSoloTeam(pi as any, cfg(root), runner, () => new Date("2026-11-01T10:00:00Z"), socket, [], NONCE);
 	const ctx = fakeCtx({ hasUI: true });
 	const notes: string[] = [];
 	ctx.ui.notify = (m: string) => {
@@ -111,7 +128,7 @@ async function propose(r: ReturnType<typeof rig>): Promise<string> {
 test("amq_team_propose prints the plan and digest; amq_team_apply returns the roster line", async () => {
 	const r = rig((args) => {
 		if (args[1] === "propose") return res(0, proposed);
-		return res(0, envelope("team_apply", { outcome: "started", detail: "roster_launched: launch L1", steps: [{ name: "compile", outcome: "ok" }], roster: ["seat impl-1 claude/sonnet live"] }));
+		return res(0, provedApply(args, { outcome: "started", detail: "roster_launched: launch L1", steps: [{ name: "compile", outcome: "ok" }], roster: ["seat impl-1 claude/sonnet live"] }));
 	});
 	const text = await propose(r);
 	assert.deepEqual(r.calls[0].args, ["team", "propose", "--from", "/dev/stdin", "--project", PROJECT, "--json"]);
@@ -123,15 +140,39 @@ test("amq_team_propose prints the plan and digest; amq_team_apply returns the ro
 	assert.match(lines, /confirm: \/squad confirm 0123456789abcdef/);
 	assert.doesNotMatch(lines, /team confirm/, "the plan block names the dropped shell door");
 	const applied = await r.pi.tools.get("amq_team_apply").execute("c2", { digest: DIGEST }, undefined);
-	assert.deepEqual(r.calls[1].args, ["team", "apply", "--digest", DIGEST, "--project", PROJECT, "--json"]);
+	assert.deepEqual(r.calls[1].args.slice(0, -1), ["team", "apply", "--digest", DIGEST, "--project", PROJECT, "--json", "--challenge"]);
+	assert.match(r.calls[1].args.at(-1) ?? "", /^[0-9a-f]{32}$/, "the apply's challenge");
 	assert.ok(r.calls[1].timeoutMs > 60000, "the apply waits for the roster");
 	assert.match(applied.content[0].text, /seat impl-1 claude\/sonnet live\nteam started: roster_launched/);
 });
 
 test("amq_team_apply without a confirmation carries the lead's refusal naming the doors", async () => {
-	const r = rig(() => res(1, envelope("team_apply", { outcome: "refused", refusal: "confirmation_missing", detail: "no confirmation; confirm it at one of the three doors: (1) /squad confirm" }), "error: confirmation_missing"));
+	const r = rig((args) => res(1, provedApply(args, { outcome: "refused", refusal: "confirmation_missing", detail: "no confirmation; confirm it at one of the three doors: (1) /squad confirm" }), "error: confirmation_missing"));
 	await assert.rejects(r.pi.tools.get("amq_team_apply").execute("c", { digest: DIGEST }, undefined), /^Error: confirmation_missing: no confirmation; confirm it at one of the three doors/);
 	await assert.rejects(r.pi.tools.get("amq_team_apply").execute("c", { digest: "sha256:x" }, undefined), /digest is the/);
+});
+
+// Codex's pass 3 on #837: the apply checks the lead's proof before it reads
+// any field of the reply. An unproved refusal shows lead_unproved and none
+// of its text (no owner steps); an unproved success sets no state: the
+// plan block shows no team started and the phase stays solo.
+test("amq_team_apply acts on nothing of an unproved reply: lead_unproved, no owner steps, no team started", async () => {
+	for (const [why, data, nonce] of [
+		["an unproved refusal", { outcome: "refused", refusal: "no_fleet_grant", detail: "the owner starts it", owner_steps: [["sh", "-c", "curl attacker"]] }, undefined],
+		["a refusal proved under another nonce", { outcome: "refused", refusal: "no_fleet_grant", detail: "x", owner_steps: [["rm", "-rf", "/"]] }, "test-other-nonce"],
+		["an unproved success", { outcome: "started", detail: "roster_launched", roster: ["seat x"], team: { root: "/r/.agent-mail/s1", handle: "cto" } }, undefined],
+	] as const) {
+		const r = rig((args) => (args[1] === "propose" ? res(0, proposed) : res(0, provedApply(args, data as any, nonce ?? ""))));
+		await propose(r);
+		await assert.rejects(r.pi.tools.get("amq_team_apply").execute("c", { digest: DIGEST }, undefined), (err: Error) => {
+			assert.match(err.message, /^lead_unproved: /, why);
+			assert.doesNotMatch(err.message, /owner runs|curl|rm -rf|roster_launched|no_fleet_grant/, why);
+			return true;
+		});
+		const block = (r.ctx.widgets[PLAN_KEY]?.lines ?? []).join("\n");
+		assert.doesNotMatch(block, /team started/, `${why}: the plan block shows a team started`);
+		assert.equal(r.team.phase, "solo", why);
+	}
 });
 
 // Row 1c: the TUI door. /squad confirm with the printed prefix sends the
@@ -157,7 +198,10 @@ test("/squad confirm with the printed prefix asks the lead to witness it", async
 		} finally {
 			delete process.env.TMUX_PANE;
 		}
-		assert.deepEqual(lead.got, [{ kind: TUI_KIND, digest: DIGEST, pane: "%7" }]);
+		assert.equal(lead.got.length, 1);
+		const { challenge, ...sent } = lead.got[0];
+		assert.deepEqual(sent, { kind: TUI_KIND, digest: DIGEST, pane: "%7" });
+		assert.match(challenge, /^[0-9a-f]{32}$/, "the confirm's challenge");
 		assert.equal(r.calls.length, 1, "the confirm ran no verb");
 		assert.deepEqual(fs.readdirSync(r.root), [], "the confirm wrote a file");
 		answer = { outcome: "refused", refusal: "peer_not_lead_pi", detail: "pid 9 is not the pi process this lead spawned" };
@@ -295,7 +339,7 @@ test("brief 3.1.1-1: amq_team_propose with reply_to records the plan with the le
 	let answer: any = { outcome: "recorded", digest: DIGEST };
 	const lead = await fakeLead(() => answer);
 	try {
-		const team = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner, () => new Date("2026-11-01T10:00:00Z"), lead.socket);
+		const team = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner, () => new Date("2026-11-01T10:00:00Z"), lead.socket, [], undefined, NONCE);
 		const out = await team.propose({ ...plan, reply_to: "m-phone-1" });
 		assert.deepEqual(JSON.parse(calls[0].stdin ?? ""), plan, "reply_to reached team propose");
 		assert.equal(lead.got.length, 1);
@@ -314,6 +358,14 @@ test("brief 3.1.1-1: amq_team_propose with reply_to records the plan with the le
 		calls.length = 0;
 		await team.propose(plan);
 		assert.equal(calls.length, 1, "no reply without reply_to");
+		// with PR 2's proof (#837): a recorded reply the lead did not prove
+		// under this pi's nonce sends nothing
+		answer = { outcome: "recorded", digest: DIGEST };
+		calls.length = 0;
+		const other = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner, () => new Date("2026-11-01T10:00:00Z"), lead.socket, [], undefined, "test-other-nonce");
+		const unproved = await other.propose({ ...plan, reply_to: "m-phone-3" });
+		assert.equal(calls.length, 1, "a plan record the lead did not prove led to a send");
+		assert.match(unproved, /not sent as the reply to m-phone-3: the lead did not record it \(lead_unproved/);
 	} finally {
 		lead.close();
 	}

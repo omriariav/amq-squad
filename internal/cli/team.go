@@ -112,7 +112,7 @@ Examples:
 type teamProposeFlags struct {
 	project, from, roles, runtime, model, effort, worktree, tools, actorMode  *string
 	lead, leadMode, executionMode, session, controlRoot, targetRoot, operator *string
-	template, rulesProse, digest, addSeat                                     *string
+	template, rulesProse, digest, addSeat, challenge                          *string
 	json                                                                      *bool
 }
 
@@ -157,7 +157,7 @@ func runTeamPropose(args []string, apply bool) error {
 		session: fs.String("session", "", ""), controlRoot: fs.String("control-root", "", ""), targetRoot: fs.String("target-project-root", "", ""),
 		operator: fs.String("operator-interaction", "", ""), template: fs.String("template", "auto", ""),
 		rulesProse: fs.String("rules-prose", "", ""), digest: fs.String("digest", "", ""), json: fs.Bool("json", false, ""),
-		addSeat: fs.String("add-seat", "", ""),
+		addSeat: fs.String("add-seat", "", ""), challenge: fs.String("challenge", "", ""),
 	}
 	fs.Usage = printTeamUsage
 	if err := parseFlags(fs, args); err != nil {
@@ -171,7 +171,7 @@ func runTeamPropose(args []string, apply bool) error {
 	}
 	if apply && *o.addSeat == "" && *o.from == "" && *o.roles == "" {
 		// the apply of a proposal the lead recorded (brief 31-3)
-		return runTeamApplyConfirmed(*o.project, *o.digest, *o.json)
+		return runTeamApplyConfirmed(*o.project, *o.digest, *o.challenge, *o.json)
 	}
 	p, plan, err := buildTeamProposal(o)
 	if err != nil {
@@ -266,7 +266,7 @@ func printLeadProposal(p team.Plan, lp team.LeadPlan, jsonOut bool) error {
 // only while no lead holds the repository: with no lead there is no model
 // under it (noLeadHolds); no file is read for it. squad.yaml is then written
 // through the digest flow, and the owner starts the team with amq-squad up.
-func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
+func runTeamApplyConfirmed(project, digest, challenge string, jsonOut bool) error {
 	dir, err := teamProjectDir(project)
 	if err != nil {
 		return err
@@ -275,7 +275,7 @@ func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 		return err
 	}
 	if sock := os.Getenv(leadStartSocketEnv); sock != "" {
-		return applyThroughLead(sock, dir, strings.TrimSpace(digest), jsonOut)
+		return applyThroughLead(sock, dir, strings.TrimSpace(digest), challenge, jsonOut)
 	}
 	root, err := soloRootOf(dir)
 	if err != nil {
