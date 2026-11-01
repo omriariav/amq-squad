@@ -35,6 +35,7 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 	const allocLimit = 40 // builder and slice growth leave bytes a little over linear
 	// Canaries are built at run time and match no RealCredentialShapes.
 	c1, c2, c3, c4, c5 := "Ab9"+"xY7q1", "Ab9"+"xY7q2", "Ab9"+"xY7q3", "Ab9"+"xY7q4", "Ab9"+"xY7q5"
+	c6, c7 := "Zq9"+"xV7mP2wL4", "Zq9"+"xV7mP2wL5"
 	fixtures := []struct {
 		name     string
 		build    func(n int) string
@@ -43,9 +44,21 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 		{"assign", longLine, []string{"=x "}},
 		// One long line: YAML flow, JSON and provider-token paths.
 		{"mixed line", func(n int) string {
-			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz "
+			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz err: see api_key: " + c6 + " now API_KEY:" + c7 + " "
 			return strings.Repeat(unit, n/len(unit))
-		}, []string{c1, c2, c3}},
+		}, []string{c1, c2, c3, c6, c7}},
+		// Growing indentation, then repeated colon-form values: the line-start
+		// prefix is classified once, not per match.
+		{"indented colon forms", func(n int) string {
+			unit := " api_key: " + c6 + " API_KEY:" + c7 + " "
+			return strings.Repeat(" ", n/2) + "err: see" + strings.Repeat(unit, n/2/len(unit))
+		}, []string{c6, c7}},
+		// Adjacent keys: the inner credential key wins, and a long chain of plain
+		// keys costs a constant per match.
+		{"adjacent keys", func(n int) string {
+			unit := "err: api_key: " + c6 + " warn:token:" + c7 + " msg: password: " + c1 + " "
+			return strings.Repeat(unit, n/2/len(unit)) + strings.Repeat("a: ", n/2/3)
+		}, []string{c6, c7, c1}},
 		// Many lines: YAML blocks, a quoted scalar across lines, JSON.
 		{"mixed block", func(n int) string {
 			unit := "password:\n  '" + c4 + "\n  " + c5 + "'\nnext: kept\n{\"password\":\n \"" + c2 + "\"}\npassword:\n  " + c1 + "\n"
