@@ -1,0 +1,397 @@
+{
+  "schema_version": 1,
+  "kind": "up",
+  "data": {
+    "project": "/Users/omri/code/amq-squad",
+    "root": "/Users/omri/code/amq-squad/.agent-mail/v31",
+    "session": "v31",
+    "lead": "cto",
+    "binary": "/Users/omri/go/bin/amq-squad",
+    "start": "2026-11-01T18:29:31.965109Z",
+    "tmux_session": "squad-lead-amq-squad-f42a4",
+    "attach": "tmux attach -t squad-lead-amq-squad-f42a4",
+    "steps": [
+      {
+        "name": "compile",
+        "outcome": "ok",
+        "detail": "3 seats, lead cto, session v31"
+      },
+      {
+        "name": "install",
+        "outcome": "ok",
+        "detail": "installed /Users/omri/scratch-v31rc1/build/pi/amq-squad (v3.1.0-rc.1) at /Users/omri/go/bin/amq-squad by temp name and rename"
+      },
+      {
+        "name": "session",
+        "outcome": "skipped",
+        "detail": "skipped: the session root /Users/omri/code/amq-squad/.agent-mail/v31 exists"
+      },
+      {
+        "name": "doctor",
+        "outcome": "ok",
+        "detail": "39 checks, none failed (5 warnings)"
+      },
+      {
+        "name": "lead",
+        "outcome": "ok",
+        "detail": "no recorded lead or scheduler is running"
+      },
+      {
+        "name": "tmux",
+        "outcome": "ok",
+        "detail": "tmux session squad-lead-amq-squad-f42a4 runs /Users/omri/go/bin/amq-squad lead --team in /Users/omri/code/amq-squad"
+      },
+      {
+        "name": "roster",
+        "outcome": "ok",
+        "detail": "roster_launched: launch c811afa66d2ff8067d7870bcc0b089d1: 2 seats in one apply"
+      }
+    ],
+    "roster": [
+      {
+        "handle": "cto",
+        "role": "",
+        "runtime": "",
+        "model": "",
+        "effort": "",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "",
+        "last_activity_at": "2026-10-30T21:01:30.579799Z",
+        "last_message_at": "2026-10-30T21:01:25.369744Z",
+        "last_message": "widen t20 (record): {\"decision\":{\"ok\":true,\"data\":{\"root\":\"/Users/omri/code/amq-squad/.agent-mail/v31\",\"decision\":{\"allowed\":true,\"crossings\":[],\"dry_run\":{\"ok\":true,\"task\":\"t20\",\"seat\":\"dev\",\"branch\"",
+        "prompt_state": "running",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "",
+        "branch": "",
+        "launch": null
+      },
+      {
+        "handle": "dev",
+        "role": "senior-dev",
+        "runtime": "codex",
+        "model": "gpt-5.6-terra",
+        "effort": "medium",
+        "state": "online",
+        "live": true,
+        "reason_code": "idle",
+        "bucket": "ready",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/dev",
+        "last_activity_at": "2026-11-01T18:29:36.022428Z",
+        "last_message_at": "2026-10-30T20:59:58.535752Z",
+        "last_message": "t20 ready for review: t20 is ready for independent review. Changed only declared files: internal/task/{task.go,lease.go,task_test.go}, internal/cli/task.go, pi/extensions/lib/tools.ts. Seats can issue",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/dev",
+        "branch": "seat/dev",
+        "launch": {
+          "launch_id": "c811afa66d2ff8067d7870bcc0b089d1",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-01T18:29:31.965109Z",
+            "seat_live": "2026-11-01T18:29:36.163211Z",
+            "first_message": null,
+            "to_seat_live_ms": 4198,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "prepare",
+                "ms": 3621
+              },
+              {
+                "name": "mint",
+                "ms": 74
+              },
+              {
+                "name": "apply",
+                "ms": 424
+              },
+              {
+                "name": "seat_exec",
+                "ms": 77
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "lead",
+        "role": "",
+        "runtime": "",
+        "model": "",
+        "effort": "",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "",
+        "last_activity_at": "2026-11-01T16:22:53.488091Z",
+        "last_message_at": null,
+        "last_message": "",
+        "prompt_state": "running",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "",
+        "branch": "",
+        "launch": null
+      },
+      {
+        "handle": "qa",
+        "role": "qa",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/qa",
+        "last_activity_at": null,
+        "last_message_at": null,
+        "last_message": "",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/qa",
+        "branch": "seat/qa",
+        "launch": {
+          "launch_id": "c1e2fb66142c42a18f918ec39123b32f",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": null,
+          "timing": {
+            "start": null,
+            "seat_live": "2026-10-30T14:40:55.659737Z",
+            "first_message": null,
+            "to_seat_live_ms": null,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "apply",
+            "segments": [
+              {
+                "name": "prepare",
+                "ms": null
+              },
+              {
+                "name": "mint",
+                "ms": 41
+              },
+              {
+                "name": "apply",
+                "ms": 313
+              },
+              {
+                "name": "seat_exec",
+                "ms": 86
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "reviewer",
+        "role": "qa",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "blocked",
+        "live": true,
+        "reason_code": "size_cap_exceeded",
+        "bucket": "working",
+        "bucket_marker": "",
+        "task_id": "t27",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/reviewer",
+        "last_activity_at": "2026-11-01T18:29:36.054507Z",
+        "last_message_at": "2026-11-01T17:25:54.282392Z",
+        "last_message": "t27 needs size-cap decision: The t27 implementation is verified and reported done, but the harness blocked its commit: size_cap_exceeded (16 changed files, cap 8), route=lead. The report and worktree ",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/reviewer",
+        "branch": "seat/reviewer",
+        "launch": {
+          "launch_id": "c811afa66d2ff8067d7870bcc0b089d1",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-01T18:29:31.965109Z",
+            "seat_live": "2026-11-01T18:29:36.201542Z",
+            "first_message": null,
+            "to_seat_live_ms": 4236,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "prepare",
+                "ms": 3621
+              },
+              {
+                "name": "mint",
+                "ms": 74
+              },
+              {
+                "name": "apply",
+                "ms": 424
+              },
+              {
+                "name": "seat_exec",
+                "ms": 116
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "scribe",
+        "role": "scribe",
+        "runtime": "claude",
+        "model": "sonnet",
+        "effort": "medium",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/scribe",
+        "last_activity_at": "2026-10-31T19:24:37.668787Z",
+        "last_message_at": null,
+        "last_message": "",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/scribe",
+        "branch": "seat/scribe",
+        "launch": {
+          "launch_id": "0de97c89b15b5262f41e4fd3ee0b1a87",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": null,
+          "timing": {
+            "start": null,
+            "seat_live": "2026-10-31T19:24:37.629049Z",
+            "first_message": null,
+            "to_seat_live_ms": null,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "mint",
+            "segments": [
+              {
+                "name": "prepare",
+                "ms": null
+              },
+              {
+                "name": "mint",
+                "ms": 602
+              },
+              {
+                "name": "apply",
+                "ms": 538
+              },
+              {
+                "name": "seat_exec",
+                "ms": 324
+              }
+            ]
+          },
+          "added_at": null
+        },
+        "warnings": [
+          "claude_hooks_silent: no hook report since the seat's launch at 2026-10-31T19:24:37Z"
+        ]
+      },
+      {
+        "handle": "senior-dev",
+        "role": "senior-dev",
+        "runtime": "claude",
+        "model": "opus",
+        "effort": "high",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/senior-dev",
+        "last_activity_at": null,
+        "last_message_at": null,
+        "last_message": "",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/senior-dev",
+        "branch": "seat/senior-dev",
+        "launch": {
+          "launch_id": "8ef82d6cd6f4955fd44e4bf8d9178c1d",
+          "outcome": "apply_failed",
+          "reason_code": "launch_lease_unavailable",
+          "wake": null,
+          "timing": {
+            "start": null,
+            "seat_live": null,
+            "first_message": null,
+            "to_seat_live_ms": null,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "mint",
+            "segments": [
+              {
+                "name": "prepare",
+                "ms": null
+              },
+              {
+                "name": "mint",
+                "ms": 525
+              },
+              {
+                "name": "apply",
+                "ms": 49
+              },
+              {
+                "name": "seat_exec",
+                "ms": null
+              }
+            ]
+          },
+          "added_at": null
+        }
+      }
+    ]
+  }
+}
