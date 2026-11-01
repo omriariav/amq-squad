@@ -71,7 +71,7 @@ run("no per-request start in the roster launch",
  [('internal/scheduler/roster.go',', Handle: rs.Handle, Start: s.seatStart[rs.Handle]}',', Handle: rs.Handle}')],
  both(G+"-run TestAReloadSwapsAtTheDrainsEnd ./internal/scheduler/", G+"-run TestARelaunchReloadsSquadYAML ./internal/schedproc/"))
 run("marks.json with the launch's start for every seat",
- [('internal/seatlaunch/compile.go','\t\t\tat = own // the key press','\t\t\t_ = own // the key press')],
+ [('internal/seatlaunch/compile.go','\t\t\tat = own\n','\t\t\t_ = at\n')],
  G+"-run TestTheAddedSeatsMarksStart ./internal/seatlaunch/")
 run("relaunch --start not passed to the request",
  [('internal/cli/scheduler_run.go','schedproc.RelaunchRequest{Reason: strings.TrimSpace(*reason), Start: stamp}','schedproc.RelaunchRequest{Reason: strings.TrimSpace(*reason)}')],
@@ -100,12 +100,6 @@ run("the swap keeping the start's lease cap",
 run("scheduler run wiring no cap (Reload.Cap returning none)",
  [('internal/cli/scheduler_run.go','Cap: reloadCap(*maxSeats), ','Cap: func(seatlaunch.Squad) (int, error) { return 0, nil }, ')],
  G+"-run TestAReloadRecomputesTheLeaseCapFromTheNewSquad ./internal/cli/")
-run("no roster_over_cap decision",
- [('internal/scheduler/roster.go','\tif len(r.Roster) > s.Config.MaxSeats {\n','\tif false && len(r.Roster) > s.Config.MaxSeats {\n')],
- both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestAReloadOverTheLeaseCap ./internal/cli/"))
-run("the screen showing no over-cap line",
- [('pi/extensions/lib/screen.ts','if (sch && sch.max_seats > 0 && sch.live_seats > sch.max_seats) {','if (false && sch) {')],
- P+"test/keys-seat.test.ts")
 run("the cap written before Swap (outside the one step)",
  [('internal/scheduler/roster.go',"\tif r.Swap != nil {\n\t\tif err := r.Swap(); err != nil {","\tif r.MaxSeats > 0 {\n\t\ts.Config.MaxSeats = r.MaxSeats\n\t}\n\tif r.Swap != nil {\n\t\tif err := r.Swap(); err != nil {")],
  G+"-run TestAHalfAppliedReload ./internal/schedproc/")
@@ -121,15 +115,33 @@ run("the socket only parsing the start",
 run("the verb only parsing the start",
  [('internal/cli/scheduler_run.go','if why := schedproc.CheckRelaunchStart(t, launchStart, time.Now()); why != "" {','if why := schedproc.CheckRelaunchStart(t, launchStart, time.Now()); false && why != "" {')],
  G+"-run TestSchedulerRelaunchBoundsItsStart ./internal/cli/")
-run("the added seats' starts cleared after each launch",
- [('internal/scheduler/roster.go','\tout := rl.LaunchRoster(reqs)\n','\ts.seatStart = nil\n\tout := rl.LaunchRoster(reqs)\n')],
- G+"-run TestAnAddedSeatsStartIsKept ./internal/scheduler/")
-run("a removed seat's start kept",
- [('internal/scheduler/roster.go','\t\tdelete(s.seatStart, h)\n','\t\t_ = h\n')],
- G+"-run TestAnAddedSeatsStartIsKept ./internal/scheduler/")
-run("a drain end written again on a later launch",
- [('internal/seatlaunch/compile.go','again := perr == nil && prev.Start != nil && prev.Start.Equal(own)','again := false && perr == nil && prev.Start != nil && prev.Start.Equal(own)')],
- G+"-run TestAnAddedSeatKeepsItsStart ./internal/seatlaunch/")
 run("the tick's state written from the config captured before the swap",
  [('internal/scheduler/scheduler.go','\tcfg = s.cfg()\n\tif err != nil {','\tif err != nil {')],
  G+"-run TestTheStateWritten ./internal/scheduler/")
+run("seats beyond the cap launched at a reload (no trim)",
+ [('internal/schedproc/roster.go','\tif maxSeats > 0 && len(roster) > maxSeats {','\tif false && maxSeats > 0 && len(roster) > maxSeats {')],
+ both(G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsInSquadOrder ./internal/schedproc/", G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/"))
+run("no roster_over_cap decision",
+ [('internal/scheduler/roster.go','\tif len(r.Unlaunched) > 0 {','\tif false && len(r.Unlaunched) > 0 {')],
+ both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/"))
+run("the unlaunched seats not written to the state",
+ [('internal/scheduler/scheduler.go','\tst.Unlaunched = append([]string(nil), s.unlaunched...)','\t_ = s.unlaunched')],
+ both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/"))
+run("status dropping the unlaunched seats",
+ [('internal/status/classify.go','UnlaunchedSeats: append([]string{}, in.Scheduler.Unlaunched...)},','UnlaunchedSeats: []string{}},')],
+ G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/")
+run("the screen showing no unlaunched line",
+ [('pi/extensions/lib/screen.ts','for (const h of st.scheduler?.unlaunched_seats ?? []) {','for (const h of [] as string[]) {')],
+ P+"test/keys-seat.test.ts")
+run("the key press kept as a later launch's start",
+ [('internal/scheduler/roster.go','\ts.seatStart = nil // the press is the start of this launch only\n','')],
+ G+"-run TestTheKeyPressIsTheStartOfTheLaunchItCausedOnly ./internal/scheduler/")
+run("added_at not carried into later marks",
+ [('internal/seatlaunch/compile.go','\t\t\tm.AddedAt = prev.AddedAt // the record','\t\t\t_ = prev.AddedAt // the record')],
+ G+"-run TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart ./internal/seatlaunch/")
+run("added_at not written at the press's launch",
+ [('internal/seatlaunch/compile.go','\t\t\tm.AddedAt = &added\n','\t\t\t_ = &added\n')],
+ G+"-run TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart ./internal/seatlaunch/")
+run("status not showing added_at",
+ [('internal/status/screen.go','\t\tsl.AddedAt = m.AddedAt\n','\t\t_ = m.AddedAt\n')],
+ G+"-run TestARelaunchedSeatsBudgetNamesTheDrain ./internal/status/")
