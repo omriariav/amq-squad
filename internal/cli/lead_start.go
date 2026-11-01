@@ -65,6 +65,9 @@ type leadStartRequest struct {
 	Project string `json:"project,omitempty"`
 	Pane    string `json:"pane,omitempty"`  // the TUI door's pane
 	Event   []byte `json:"event,omitempty"` // the Buzz door's raw event bytes, as the attachment fetched them
+	// Post is the relayed plan post a bare yes replies to (brief 3.1.1-1),
+	// its raw bytes as the attachment fetched them; nil for `yes <prefix>`.
+	Post []byte `json:"post,omitempty"`
 }
 
 // The confirmation kinds on the same socket (the three doors).
@@ -225,7 +228,7 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	case req.Kind == confirmShellKind:
 		// the shell door was dropped (no kernel read tells the owner's shell
 		// from a tree the model built); its kind is refused by name
-		reply.Refusal, reply.Detail = ReasonShellDoorRemoved, "the shell door was dropped: under one uid, no kernel read tells the owner's shell from a tree the model built; confirm at the lead's pane (/squad confirm) or over Buzz (yes <prefix>)"
+		reply.Refusal, reply.Detail = ReasonShellDoorRemoved, "the shell door was dropped: under one uid, no kernel read tells the owner's shell from a tree the model built; confirm at the lead's pane (/squad confirm) or over Buzz (reply yes to the lead's post of the plan)"
 	case req.Kind == confirmBuzzKind:
 		reply = s.witnessBuzz(req)
 	default:
@@ -332,9 +335,32 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	case e.CreatedAt < now.Add(-buzz.RouteWindow).Unix() || e.CreatedAt > now.Add(buzz.FutureSkew).Unix():
 		return refusedAs(gateverify.RejectWindow, "event %s was created at %d", e.ID[:12], e.CreatedAt)
 	}
-	prefix, ok := gateverify.ParseTeamYes(e.Content)
-	if !ok {
-		return refusedAs(ReasonEventUnverified, "event %s is not yes <16 hex>", e.ID[:12])
+	var prefixes []string
+	if prefix, ok := gateverify.ParseTeamYes(e.Content); ok && req.Post == nil {
+		prefixes = []string{prefix}
+	} else if verb, bare := gatestore.ParseBare(e.Content); bare && verb == "approve" && req.Post != nil {
+		// brief 3.1.1-1: a bare yes replied to the relayed plan post. The
+		// thread binds it: the post is the share body's own signed kind 9 in
+		// the owner's DM channel, the yes names it, and the post's content
+		// names the proposal
+		p, err := nostr.ParseEvent(req.Post)
+		switch {
+		case err != nil:
+			return refusedAs(ReasonEventUnverified, "the plan post bytes are not an event: %v", err)
+		case !p.CheckID():
+			return refusedAs(gateverify.RejectBadID, "the plan post's id does not recompute from its bytes")
+		case p.PubKey != pin.Body:
+			return refusedAs(gateverify.RejectWrongPubkey, "post %s is not signed by the share body's pinned key", p.ID[:12])
+		case p.VerifySignature() != nil:
+			return refusedAs(gateverify.RejectBadSignature, "post %s", p.ID[:12])
+		case p.Kind != buzz.KindDM || !slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}):
+			return refusedAs(gateverify.RejectWrongChannel, "post %s is not a DM in the owner's channel", p.ID[:12])
+		case !slices.Contains(nostr.ThreadRefs(e), p.ID):
+			return refusedAs(gateverify.RejectThread, "event %s does not reply to the plan post %s", e.ID[:12], p.ID[:12])
+		}
+		prefixes = gateverify.PlanPrefixes(p.Content)
+	} else {
+		return refusedAs(ReasonEventUnverified, "event %s is not a bare yes replied to the plan post (or yes <16 hex>)", e.ID[:12])
 	}
 	// once-only, restart-proof and atomic: the check and the mark under one
 	// lock; the event ids this lead or an earlier one witnessed are in the
@@ -344,7 +370,7 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	if s.seen[e.ID] || eventLogged(s.root, e.ID) {
 		return refusedAs(gatestore.RejectReplayed, "event %s was witnessed already", e.ID[:12])
 	}
-	prop, err := proposalByPrefix(s.root, prefix, now)
+	prop, err := proposalOf(s.root, prefixes, now)
 	if err != nil {
 		return refusedBy(err)
 	}

@@ -449,7 +449,7 @@ func TestTheStartAcceptsOnlyAWitnessedFreshConfirmation(t *testing.T) {
 		if r.Refusal != name {
 			t.Fatalf("start = %+v, want %s", r, name)
 		}
-		for _, door := range []string{"two doors", "/squad confirm " + team.DigestPrefix(digest), `Buzz DM "yes ` + team.DigestPrefix(digest)} {
+		for _, door := range []string{"two doors", "/squad confirm " + team.DigestPrefix(digest), "reply yes to the lead's Buzz post that relays this plan with its digest " + digest} {
 			if !strings.Contains(r.Detail, door) {
 				t.Fatalf("%s does not name the door %q: %s", name, door, r.Detail)
 			}

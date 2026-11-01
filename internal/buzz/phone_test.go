@@ -1248,7 +1248,7 @@ func TestATeamYesIsAConfirmationNotAPhoneRequest(t *testing.T) {
 	const prefix = "0123456789abcdef"
 	pf := newPhoneFixture(t)
 	var confirmed []string
-	pf.h.Confirm = func(p string, raw []byte) (string, error) {
+	pf.h.Confirm = func(p string, raw, _ []byte) (string, error) {
 		confirmed = append(confirmed, p)
 		return "sha256:" + prefix, nil
 	}

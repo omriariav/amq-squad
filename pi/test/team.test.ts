@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "../extensions/lib/hooks.ts";
-import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
+import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, SoloTeam, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
 import * as net from "node:net";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
@@ -267,4 +267,15 @@ test("the solo lead's shell sees through quoting, expansions and eval", () => {
 	assert.match(soloShellRefusal("exec_command", { cmd: ["sh", "-c", 't""mux ls'] }) ?? "", /^owner_only: /, "an argv sh -c line");
 	assert.match(soloShellRefusal("exec_command", { cmd: ["/usr/bin/TMUX", "ls"] }) ?? "", /^owner_only: /, "an argv TMUX");
 	assert.equal(soloShellRefusal("exec_command", { cmd: ["echo", "hello world"] }), undefined);
+});
+
+// Brief 3.1.1-1, row 3: the plan block asks for no typed prefix over Buzz:
+// on the phone the owner replies yes to the lead's post of the plan (the
+// `yes <prefix>` form keeps verifying, but no text asks for it).
+test("brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, never yes <prefix>", () => {
+	const team = new SoloTeam(cfg(tmpdir()), async () => res(0, ""));
+	team.proposal = { digest: DIGEST, prefix: PREFIX, plan: ["lead  pi"], project_dir: PROJECT };
+	const text = team.planLines().join("\n");
+	assert.doesNotMatch(text, /yes [0-9a-f]{16}/);
+	assert.match(text, /reply yes to the lead's Buzz post of this plan/);
 });

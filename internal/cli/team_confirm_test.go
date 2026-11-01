@@ -148,7 +148,7 @@ func TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot(t *testing.T) {
 		t.Helper()
 		for _, args := range forms {
 			_, _, err := captureOutput(t, func() error { return runTeam(args) })
-			if err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") || !strings.Contains(err.Error(), "/squad confirm "+team.DigestPrefix(digest)) || !strings.Contains(err.Error(), `Buzz DM "yes `) {
+			if err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") || !strings.Contains(err.Error(), "/squad confirm "+team.DigestPrefix(digest)) || !strings.Contains(err.Error(), "reply yes to the lead's Buzz post") {
 				t.Fatalf("%s: %v = %v", why, args[5:], err)
 			}
 		}
