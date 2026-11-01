@@ -217,6 +217,7 @@ Every row is in `go test ./...` or `npm test`.
 | Re-check #5: an undelivered turn is taken back next step; a failed rollback is named | internal/buzz `TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed` |
 | Re-check #7: status shows a request's current state, history stays in the record | internal/status `TestStatusShowsThePhoneRequests` |
 | The lead's addition: a request whose only reply ended unconfirmed is continued by a reply to its receipt; the mark clears, the next reply posts; a forged row maps nothing | internal/buzz `TestAReplyToTheReceiptContinuesTheRequest` |
+| The merge with brief 31-3: a signed `yes <16 hex>` DM is a team confirmation (no receipt, no record, no question), also replying to a relay post; the relay refuses that shape from the lead | internal/buzz `TestATeamYesIsAConfirmationNotAPhoneRequest` |
 | Codex pass 4 and the lead's correction: the parent decides when it resolves, else the root; a reply to B's receipt continues B (with or without root A); a reply to A's receipt, a root-only reply and a reply with an unknown parent under root A continue A | internal/buzz `TestAReceiptMapsByItsParentAndTheRootIsTheFallback` |
 | The screen's requests block | pi/test/screen.test.ts |
 
@@ -239,57 +240,57 @@ compiles, Codex P2-8).
 
 ```text
 REVERT the post without redact.Block (an identity in its place): fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.10s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.05s)
 REVERT the post without its re <request id> line: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.09s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.06s)
 REVERT the receipt is routed, not accepted <request id>: fails (the row catches it)
    --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.03s)
 REVERT the question post off the cockpit thread: fails (the row catches it)
    --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.03s)
 REVERT the post not in the request's DM conversation: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.05s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.06s)
 REVERT no progress rate bound: fails (the row catches it)
    --- FAIL: TestRelayProgressRateBound (0.16s)
 REVERT the held progress never posts: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.15s)
+   --- FAIL: TestRelayProgressRateBound (0.11s)
 REVERT kind status is not progress: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.14s)
+   --- FAIL: TestRelayProgressRateBound (0.10s)
 REVERT a result does not close the request: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.19s)
+   --- FAIL: TestRelayProgressRateBound (0.18s)
 REVERT no whole-line answer form: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.11s)
-   --- FAIL: TestRelayRefusesGateShapedLines/whole-line_answer_forms (0.11s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
+   --- FAIL: TestRelayRefusesGateShapedLines/whole-line_answer_forms (0.10s)
 REVERT the refusal not narrowed (any line containing the word): fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.09s)
-   --- FAIL: TestRelayRefusesGateShapedLines/sentences_with_the_word_post_unchanged (0.09s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.08s)
+   --- FAIL: TestRelayRefusesGateShapedLines/sentences_with_the_word_post_unchanged (0.08s)
 REVERT no open gate id refusal: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.09s)
-   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_id (0.09s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
+   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_id (0.10s)
 REVERT no open gate question text refusal: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.12s)
-   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_question_text (0.12s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
+   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_question_text (0.10s)
 REVERT the poster's gate-thread guard gone: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.13s)
-   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.13s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.14s)
+   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.14s)
 REVERT a request opened in a gate thread posts into it: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.07s)
-   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.07s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.08s)
+   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.08s)
 REVERT a lead-side package imports the key path: fails (the row catches it)
    --- FAIL: TestTheLeadSideHoldsNoKeyPathNorPoster (0.05s)
 REVERT handled replies not recorded (a restart posts again): fails (the row catches it)
-   --- FAIL: TestARestartedAttachmentNeitherRepostsNorSkips (0.13s)
+   --- FAIL: TestARestartedAttachmentNeitherRepostsNorSkips (0.12s)
 REVERT the relay carries gate-shaped replies: fails (the row catches it)
    --- FAIL: TestAGateQuestionGoesByItsOwnPathOnce (0.18s)
 REVERT a lead relay tool added: fails (the row catches it)
    not ok 7 - the lead's tool list is unchanged by the two-way phone: the exact thirteen
 REVERT no continuation (every DM a new request): fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.12s)
-REVERT an answer form in the conversation goes to the gate path: fails (the row catches it)
    --- FAIL: TestThePhoneConversation (0.13s)
+REVERT an answer form in the conversation goes to the gate path: fails (the row catches it)
+   --- FAIL: TestThePhoneConversation (0.14s)
 REVERT a continuation does not follow the request's lead: fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.19s)
+   --- FAIL: TestThePhoneConversation (0.20s)
 REVERT a gate-thread answer that names a relay post leaves the gate path: fails (the row catches it)
-   --- FAIL: TestAnAnswerInTheGateThreadStaysOnTheGatePath (0.11s)
+   --- FAIL: TestAnAnswerInTheGateThreadStaysOnTheGatePath (0.12s)
 REVERT no split of a long post: fails (the row catches it)
    --- FAIL: TestALongReplyIsSplitIntoAtMostThreeParts (0.00s)
 REVERT amq send without --thread: fails (the row catches it)
@@ -305,23 +306,23 @@ REVERT request fields not redacted: fails (the row catches it)
 REVERT the screen without the requests block: fails (the row catches it)
    not ok 2 - the requests block marks each phone request relayed or refused, by name
 REVERT records not validated (load and write): fails (the row catches it)
-   --- FAIL: TestAPlantedRecordIsRefusedAndNothingPosts (0.11s)
+   --- FAIL: TestAPlantedRecordIsRefusedAndNothingPosts (0.12s)
 REVERT record fields not checked (status): fails (the row catches it)
    --- FAIL: TestARelayRecordIsCheckedFieldByField (0.00s)
 REVERT the checks on the body, not the assembled parts (Codex P1-2): fails (the row catches it)
-   --- FAIL: TestASplitNeverStartsAPartWithAnAnswerForm (0.07s)
+   --- FAIL: TestASplitNeverStartsAPartWithAnAnswerForm (0.08s)
 REVERT the publish before the intent (Codex P1-3): fails (the row catches it)
-   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.07s)
+   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.06s)
    --- FAIL: TestAFailingRecordStorePostsNothing (0.02s)
 REVERT an unconfirmed intent retried forever (Codex P1-3): fails (the row catches it)
-   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.07s)
+   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.08s)
 REVERT a failed later part ends the reply (Codex P2-5): fails (the row catches it)
-   --- FAIL: TestAFailedPartPostsNextTickWithoutRepeatingTheFirst (0.07s)
+   --- FAIL: TestAFailedPartPostsNextTickWithoutRepeatingTheFirst (0.06s)
 REVERT no normalization (Codex P2-4): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.14s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
 REVERT the DM marked handled although its record failed (Codex P2-6): fails (the row catches it)
    --- FAIL: TestTheRecordComesBeforeTheQuestion (0.01s)
 REVERT a failed delivery keeps its record (Codex P2-6): fails (the row catches it)
@@ -331,31 +332,31 @@ REVERT the helper without AMQ_NO_UPDATE_CHECK (Codex P2-7): fails (the row catch
 REVERT a test execs amq directly (Codex P2-7): fails (the row catches it)
    --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.01s)
 REVERT the owner's next turn does not clear an unconfirmed post: fails (the row catches it)
-   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.12s)
+   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.13s)
 REVERT an ambiguous post failure gives its try back (unbounded retries): fails (the row catches it)
-   --- FAIL: TestAFailedPostKeepsItsTryUnlessNothingWasSent (0.13s)
+   --- FAIL: TestAFailedPostKeepsItsTryUnlessNothingWasSent (0.12s)
 REVERT a failure before the send consumes a try: fails (the row catches it)
    --- FAIL: TestAFailedPostKeepsItsTryUnlessNothingWasSent (0.08s)
 REVERT no minimum question-line length: fails (the row catches it)
-   --- FAIL: TestAShortQuestionLineDoesNotRefuseOrdinaryReplies (0.05s)
+   --- FAIL: TestAShortQuestionLineDoesNotRefuseOrdinaryReplies (0.06s)
 REVERT redaction only after the split (Codex re-check #2): fails (the row catches it)
-   --- FAIL: TestACanaryAcrossTheSplitBoundaryIsRedacted (0.09s)
+   --- FAIL: TestACanaryAcrossTheSplitBoundaryIsRedacted (0.10s)
 REVERT marks (Mn, Me) not stripped (Codex re-check #3): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.14s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
 REVERT no confusables fold (Codex re-check #3): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.14s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
 REVERT status shows every historical refusal (Codex re-check #7): fails (the row catches it)
    --- FAIL: TestStatusShowsThePhoneRequests (0.00s)
 REVERT an undelivered turn is kept (Codex re-check #5): fails (the row catches it)
    --- FAIL: TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed (0.02s)
 REVERT a failed rollback ignored (Codex re-check #5): fails (the row catches it)
-   --- FAIL: TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed (0.09s)
+   --- FAIL: TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed (0.08s)
 REVERT the DM marked handled before the real lead is recorded (Codex re-check #4): fails (the row catches it)
    --- FAIL: TestTheRealLeadIsRecordedBeforeTheDMIsHandled (0.02s)
 REVERT a computed exec without its not-amq line (Codex re-check #6): fails (the row catches it)
@@ -379,18 +380,22 @@ REVERT σ and ς not lookalikes of c (the lunate sigma passes): fails (the row c
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
 REVERT no Armenian lookalikes: fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.14s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
 REVERT an entry dropped from the explicit default-ignorable list: fails (the row catches it)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
 REVERT the root before the parent: fails (the row catches it)
-   --- FAIL: TestAReceiptMapsByItsParentAndTheRootIsTheFallback (0.13s)
+   --- FAIL: TestAReceiptMapsByItsParentAndTheRootIsTheFallback (0.14s)
 REVERT no fallback to the root when the parent resolves to nothing: fails (the row catches it)
    --- FAIL: TestAReceiptMapsByItsParentAndTheRootIsTheFallback (0.13s)
 REVERT a receipt mapped by its root: fails (the row catches it)
-   --- FAIL: TestAReceiptMapsByItsParentAndTheRootIsTheFallback (0.20s)
-64 of 64 reverts caught
+   --- FAIL: TestAReceiptMapsByItsParentAndTheRootIsTheFallback (0.13s)
+REVERT a team yes taken as a phone request (continuation before the team door): fails (the row catches it)
+   --- FAIL: TestATeamYesIsAConfirmationNotAPhoneRequest (0.07s)
+REVERT the relay carries a team yes: fails (the row catches it)
+   --- FAIL: TestATeamYesIsAConfirmationNotAPhoneRequest (0.08s)
+66 of 66 reverts caught
 ```
 
 ## 5. The owner-run row (not run; the owner runs it)
@@ -489,14 +494,14 @@ avivsinai/agent-message-queue:
 
 ## 10. Gate
 
-Run on ee2f9e53 after the root fallback (later commits on the branch are this
-note only):
+Run on a342f2fb, the merged tree (origin/v3 at 95b12207, brief 31-3 PR 1, merged
+into the branch; later commits are this note only):
 
 ```text
 go build ./... && go vet ./... && go test -count=1 ./...   exit 0: 56 packages ok, 0 FAIL
-cd pi && npm ci --offline --ignore-scripts && npm test    exit 0: tests 60; pass 60; fail 0
+cd pi && npm ci --offline --ignore-scripts && npm test    exit 0: tests 66; pass 66; fail 0
 PATH=<pyvenv>/bin:$PATH make ci                         exit 0
-revert runs                                               64 of 64 caught, none by a build error
+revert runs                                               66 of 66 caught, none by a build error
 ```
 
 ## 11. A line for the 3.1 release notes
@@ -617,4 +622,26 @@ resolves to nothing, the root is resolved (the lead's correction: the
 conflict exists only when the parent resolves to a different request than
 the root). Each post and delivered DM maps to its one request, and a
 fetched receipt maps by its own parent, never its root.
+
+## 16. The merge with brief 31-3 (origin/v3 at 95b12207, #834)
+
+Merged as the brief's order section says (a merge commit, never a
+rebase). Two conflicts, both kept:
+
+- **internal/buzz/inbound.go.** The team door's dispatch of a signed
+  `yes <prefix>` goes first and returns before any continuation or route.
+  Then the continuation and the gate path follow.
+- **internal/cli/remote.go.** `Confirm: confirmByPrefix` sits beside the
+  relay's `Poster` and `Threads`. The loop runs the inbox step (which
+  dispatches the team yes), then `RelayStep`.
+
+31-3's team-yes test expected the old `routed lead-a` receipt; it now
+expects this brief's `accepted <request id> routed lead-a`. After the
+merge, one commit adds the row that a signed `yes <16 hex>` DM is a team
+confirmation, not a phone request: no receipt, no relay record, no
+question to the lead, also when it replies to a relay post. The same
+commit makes the relay refuse a lead line of that shape, the team door's
+typed approval, as `relay_refused_gate_shape`. 31-3 did not change the
+screen file (its plan block is in team.ts), so the requests block stands
+as it was. The lead's tool list is still the exact thirteen.
 
