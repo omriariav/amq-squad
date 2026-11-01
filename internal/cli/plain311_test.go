@@ -64,6 +64,13 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 	shellPost := sign(f.body, "re q-0123456789ab\nrun the migration now (digest "+digest+")", []string{"e", dm, "", "reply"})
 	ordinary := sign(f.body, "re q-0123456789ab\nThe build is green.", []string{"e", dm, "", "reply"})
 	partial := sign(f.body, "re q-0123456789ab\ngoal: ship the parser\ndigest "+digest, []string{"e", dm, "", "reply"})
+	// Codex's third pass: containment is not enough; the post must be the
+	// relayed plan text and nothing else
+	extra := sign(f.body, "re q-0123456789ab\n"+planText+"\nShould I explain this example?", []string{"e", dm, "", "reply"})
+	before := sign(f.body, "re q-0123456789ab\nHere it is again:\n"+planText, []string{"e", dm, "", "reply"})
+	pl := strings.Split(planText, "\n")
+	reordered := sign(f.body, "re q-0123456789ab\n"+strings.Join([]string{pl[2], pl[0], pl[1]}, "\n"), []string{"e", dm, "", "reply"})
+	split := sign(f.body, "re q-0123456789ab (1/2)\n"+planText, []string{"e", dm, "", "reply"})
 	stranger, _ := nostr.NewSecretKey()
 	forged := sign(stranger, plan.Content, []string{"e", dm, "", "reply"})
 	gstore := gatestore.Store{Root: root}
@@ -80,6 +87,10 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 		{"a shell-labelled post with the live digest", sign(f.owner, "yes", []string{"e", shellPost.ID, "", "reply"}), shellPost, ReasonPlanUnproved},
 		{"a real yes to an ordinary post (a local socket caller)", sign(f.owner, "yes", []string{"e", ordinary.ID, "", "reply"}), ordinary, ReasonPlanUnproved},
 		{"a post with part of the plan", sign(f.owner, "yes", []string{"e", partial.ID, "", "reply"}), partial, ReasonPlanUnproved},
+		{"the plan lines plus a question after them", sign(f.owner, "yes", []string{"e", extra.ID, "", "reply"}), extra, ReasonPlanUnproved},
+		{"a line before the plan lines", sign(f.owner, "yes", []string{"e", before.ID, "", "reply"}), before, ReasonPlanUnproved},
+		{"the plan lines in another order", sign(f.owner, "yes", []string{"e", reordered.ID, "", "reply"}), reordered, ReasonPlanUnproved},
+		{"a part of a split post", sign(f.owner, "yes", []string{"e", split.ID, "", "reply"}), split, ReasonPlanUnproved},
 		{"the yes replies elsewhere", sign(f.owner, "yes", []string{"e", ordinary.ID, "", "reply"}), plan, ReasonConflictingThread},
 		{"the yes names the plan only as its root", sign(f.owner, "yes", []string{"e", plan.ID, "", "root"}, []string{"e", ordinary.ID, "", "reply"}), plan, ReasonConflictingThread},
 		{"the yes names the plan and another event", sign(f.owner, "yes", []string{"e", strings.Repeat("e5", 32), "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, ReasonConflictingThread},
@@ -114,7 +125,8 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 	if _, err := s.witnessFor(digest); err == nil {
 		t.Fatal("witnessed before the owner's yes to the plan")
 	}
-	// the lead's own plan post with the owner's yes as a direct reply
+	// the lead's own plan post (trailing whitespace tolerated) with the
+	// owner's yes as a direct reply
 	if r := ask(yesToPlan, plan); r.Outcome != "witnessed" || r.Digest != digest {
 		t.Fatalf("the owner's yes to the plan: %+v", r)
 	}

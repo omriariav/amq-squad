@@ -177,7 +177,9 @@ run("the lead takes an altered plan post", [(LS,'\t\tcase !p.CheckID():\n','\t\t
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the lead takes a bare no as the confirmation", [(LS,'case bare && verb == "approve" && req.Post != nil:','case bare && verb != "" && req.Post != nil:')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a post without its recorded plan text (Codex re-check)", [(LS,'if len(lines) == 0 || slices.ContainsFunc(lines, func(l string) bool { return !have[l] }) {','if len(lines) == 0 {')],
+run("the lead takes a post carrying the plan text with other lines (containment, not equality)", [(LS,'if !ok || content != strings.TrimRight(want, " \\t\\r\\n") {','if !ok || !strings.Contains(content, strings.TrimSpace(strings.SplitN(want, "\\n", 2)[1])) {')],
+    CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
+run("the lead takes a post without its recorded plan text", [(LS,'if !ok || content != strings.TrimRight(want, " \\t\\r\\n") {','if !ok {')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost|TestTheAttachmentRoutesABareYesByTheRecordedPlan'")
 run("the lead records a plan text from any peer", [(LS,'\tif piPID <= 1 || pid != piPID {\n\t\treturn leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); only','\tif false {\n\t\treturn leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); only')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")

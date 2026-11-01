@@ -514,6 +514,20 @@ func (g gateView) assemble(requestID, thread, body string) ([]string, string, bo
 	return parts, "", false
 }
 
+// RelayedText is the exact content the relay posts for a lead reply body on
+// request requestID when it fits one post (brief 3.1.1-1, Codex's third
+// pass on #838): the body trimmed and redacted, under the one header line
+// `re <request id>`, the whole part redacted again (assemble's transform,
+// without its refusal checks). ok is false when the body would be split
+// into parts marked (i/n): a split plan proves nothing.
+func RelayedText(requestID, body string) (string, bool) {
+	parts := splitPost(requestID, CockpitThread(requestID), redact.Block(strings.TrimSpace(body)))
+	if len(parts) != 1 {
+		return "", false
+	}
+	return redact.Block(parts[0]), true
+}
+
 // splitPost is the post's text: the first line `re <request id>`, then the
 // (redacted) reply. A text over DMLimit is split at paragraph boundaries
 // into parts marked (1/n), at most MaxParts; what does not fit is replaced

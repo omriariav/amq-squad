@@ -110,13 +110,19 @@ func TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam(t *testing.T) {
 	_, rid := pf.ask(t, "propose a team for the release", "")
 	// a reply that names the digest but is not marked as the plan comes first
 	pf.threads.reply("lead-a", CockpitThread(rid), "I am preparing a plan; its digest will be "+digest+".", "")
-	pf.threads.reply("lead-a", CockpitThread(rid), "Proposed team: lead, two implementers.\ndigest "+digest, "", gateverify.TeamPlanLabel+content)
+	planBody := "Proposed team: lead, two implementers.\nnote GH_TOKEN=zebraplan311value\ndigest " + digest
+	pf.threads.reply("lead-a", CockpitThread(rid), planBody, "", gateverify.TeamPlanLabel+content)
 	pf.relay(t)
 	posts := pf.relayPosts()
 	if len(posts) != 2 {
 		t.Fatalf("%d relay posts", len(posts))
 	}
 	mention, plan := posts[0], posts[1]
+	// the lead's equality check reproduces the relay's own post exactly,
+	// redaction included (RelayedText is the relay's transform)
+	if want, ok := RelayedText(rid, planBody); !ok || plan.Content != want || strings.Contains(plan.Content, "zebraplan311value") {
+		t.Fatalf("the relayed plan %q is not RelayedText %q (%v)", plan.Content, want, ok)
+	}
 	rec := pf.record(t, rid)
 	if len(rec.Posts) != 2 || rec.Posts[0].PlanFor != "" || rec.Posts[1].PlanFor != content {
 		t.Fatalf("the relay record: %+v", rec.Posts)

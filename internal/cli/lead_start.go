@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -23,7 +24,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
-	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -468,12 +468,11 @@ func (s *leadStarter) recordPlanFrom(hexDigest string, req leadStartRequest) lea
 	return leadStartReply{Outcome: "recorded", Digest: prop.Digest}
 }
 
-// planLines are a plan text's lines as the relay posts them: redacted
-// (redact.Block, as the relay passes every reply), trimmed, blank lines
-// dropped.
+// planLines are a plan text's non-blank lines (a record with none is
+// refused).
 func planLines(text string) []string {
 	var out []string
-	for _, l := range strings.Split(redact.Block(text), "\n") {
+	for _, l := range strings.Split(text, "\n") {
 		if l = strings.TrimSpace(l); l != "" {
 			out = append(out, l)
 		}
@@ -481,20 +480,29 @@ func planLines(text string) []string {
 	return out
 }
 
+// relayHeaderRe is the relay's one decoration of a single-part post: its
+// first line, `re <request id>` (buzz.splitPost); a multi-part mark (i/n)
+// does not match.
+var relayHeaderRe = regexp.MustCompile(`^re (q-[0-9a-f]{12})$`)
+
 // provenPlanLocked is the one recent proposal whose recorded plan text the
-// post carries: every line of the text, as the relay posts it, is a line of
-// the post's content (the relay adds its "re <request id>" header; a plan
-// split over several posts proves nothing). Anything else is
-// plan_post_unproved. The caller holds wmu.
+// post IS (Codex's third pass on #838): the post's content equals exactly
+// what the relay posts for that text on the request its header names
+// (buzz.RelayedText: the header line, then the text trimmed and redacted),
+// only trailing whitespace tolerated; no line before, between or after; a
+// multi-part post proves nothing. Anything else is plan_post_unproved. The
+// caller holds wmu.
 func (s *leadStarter) provenPlanLocked(post nostr.Event, now time.Time) (teamProposal, error) {
-	have := map[string]bool{}
-	for _, l := range strings.Split(post.Content, "\n") {
-		have[strings.TrimSpace(l)] = true
-	}
+	header, _, _ := strings.Cut(post.Content, "\n")
+	m := relayHeaderRe.FindStringSubmatch(header)
+	content := strings.TrimRight(post.Content, " \t\r\n")
 	var found []teamProposal
 	for digest, sp := range s.plans {
-		lines := planLines(sp.Text)
-		if len(lines) == 0 || slices.ContainsFunc(lines, func(l string) bool { return !have[l] }) {
+		if m == nil {
+			break
+		}
+		want, ok := buzz.RelayedText(m[1], sp.Text)
+		if !ok || content != strings.TrimRight(want, " \t\r\n") {
 			continue
 		}
 		h, err := digestHex(digest)
@@ -506,7 +514,7 @@ func (s *leadStarter) provenPlanLocked(post nostr.Event, now time.Time) (teamPro
 		}
 	}
 	if len(found) != 1 {
-		return teamProposal{}, fmt.Errorf("%s: post %s carries %d plan texts this lead's pi recorded for a recent proposal, want 1", ReasonPlanUnproved, post.ID[:12], len(found))
+		return teamProposal{}, fmt.Errorf("%s: post %s is not exactly the relayed plan text this lead's pi recorded for one recent proposal (%d match)", ReasonPlanUnproved, post.ID[:12], len(found))
 	}
 	return found[0], nil
 }
