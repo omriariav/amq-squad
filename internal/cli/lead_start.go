@@ -138,6 +138,16 @@ func newLeadStarter(root, project, version string, pools []string) *leadStarter 
 
 // serve binds the socket and answers requests until close.
 func (s *leadStarter) serve() (string, error) {
+	// solo startup (the socket's bind and the discovery record's publish)
+	// is serialized on the repository's apply lock, as the lead lock step
+	// is: a solo lead starting while a shell apply holds it (between its
+	// probe and its write) waits for the write, up to applyLockWait, then
+	// refuses apply_busy; the lock is released once the record is published
+	unlock, err := takeApplyLock(s.project)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	sock, err := seatlaunch.ListenPrivate(s.root, leadStartSocketName)
 	if err != nil {
 		return "", err

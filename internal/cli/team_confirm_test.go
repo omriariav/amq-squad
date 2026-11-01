@@ -521,3 +521,35 @@ func TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite(t *testing.T) {
 		t.Fatalf("squad.yaml %q %v", raw, err)
 	}
 }
+
+// Codex's narrow pass on #834, P1: solo startup takes the apply lock. A
+// solo lead starting inside a shell apply's probe-to-write window cannot
+// bind its socket or publish its record until the write is done (it waits
+// on the lock); the apply then sees it on its next probe.
+func TestASoloLeadStartingInTheApplyWindowWaitsForTheWrite(t *testing.T) {
+	proj, root := soloProject(t)
+	t.Setenv(leadStartSocketEnv, "")
+	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
+	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
+	lead := newLeadStarter(root, proj, "test", nil)
+	t.Cleanup(lead.close)
+	served := make(chan error, 1)
+	prev := applyAfterProbe
+	t.Cleanup(func() { applyAfterProbe = prev })
+	applyAfterProbe = func() {
+		go func() { _, err := lead.serve(); served <- err }()
+		time.Sleep(200 * time.Millisecond)
+		if _, err := os.Stat(rec); err == nil {
+			t.Error("the solo lead published its record inside the apply's window")
+		}
+	}
+	if _, _, err := captureOutput(t, func() error { return runTeam([]string{"apply", "--digest", digest, "--project", proj}) }); err != nil {
+		t.Fatalf("the apply: %v", err)
+	}
+	if err := <-served; err != nil {
+		t.Fatalf("the solo lead that waited for the write: %v", err)
+	}
+	if err := noLeadHolds(proj, digest); err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") {
+		t.Fatalf("the next probe after the lead started = %v", err)
+	}
+}
