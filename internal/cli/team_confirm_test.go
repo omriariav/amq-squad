@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -139,6 +141,12 @@ func TestTeamApplyWithoutAFreshConfirmationRefusesNamingTheThreeDoors(t *testing
 		}
 	}
 	doors(apply(), ReasonConfirmMissing)
+	// the plan file given again (team apply --from PLAN) needs it as well
+	raw, _ := json.Marshal(soloTeamPlan())
+	planFile := filepath.Join(t.TempDir(), "plan.json")
+	mustWrite(t, planFile, string(raw))
+	_, _, err := captureOutput(t, func() error { return runTeam([]string{"apply", "--digest", digest, "--project", proj, "--from", planFile}) })
+	doors(err, ReasonConfirmMissing)
 	stale := confirmRecord{Digest: digest, Door: DoorShell, At: time.Now().Add(-31 * time.Minute), By: "uid 1", Proof: confirmProof{PIDChain: []confirmHop{{PID: 10, Name: "zsh"}}}}
 	if _, err := writeConfirmRecord(root, stale); err != nil {
 		t.Fatal(err)
@@ -317,5 +325,51 @@ func TestBuzzDoorConfirmsTheProposalItsPrefixNames(t *testing.T) {
 	rec, err := checkConfirmation(root, digest, proj)
 	if err != nil || rec.Door != DoorBuzz || rec.Proof.EventID != event {
 		t.Fatalf("record %+v %v", rec, err)
+	}
+}
+
+// Row 1d end to end through the test relay: the owner's signed DM `yes
+// <prefix>`, delivered by serve to the attachment (remote attach --once),
+// is fetched and verified on the handler's typed path and confirms the
+// proposal: the record carries the event id, and the reply names the team
+// only. A DM signed by another key confirms nothing.
+func TestTheOwnersSignedYesOverBuzzConfirmsTheProposal(t *testing.T) {
+	f := newGateCLIFixture(t)
+	proj, root := soloProject(t)
+	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
+	attach := func() {
+		t.Helper()
+		if _, _, err := captureOutput(t, func() error {
+			return runRemote([]string{"attach", "--once", "--json", "--project", f.project, "--session", "s", "--me", "cto", "--lead", "cto"}, "test")
+		}); err != nil {
+			t.Fatalf("attach: %v", err)
+		}
+	}
+	h, _ := digestHex(digest)
+	stranger, _ := nostr.NewSecretKey()
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", "dm-chan"}}, Content: "yes " + team.DigestPrefix(digest)}
+	_ = stranger.Sign(&e)
+	_ = f.relay.Publish(context.Background(), e.Marshal())
+	foreign := f.serve().deliver(e.ID, e.Content)
+	attach()
+	if _, err := os.Stat(confirmPath(root, h)); err == nil {
+		t.Fatal("a DM signed by another key confirmed the proposal")
+	}
+	if res, _ := f.serve().result(foreign); !strings.HasPrefix(res, "refused") {
+		t.Fatalf("foreign reply %q", res)
+	}
+	yes := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", "dm-chan"}}, Content: "yes " + team.DigestPrefix(digest)}
+	if err := f.owner.Sign(&yes); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.relay.Publish(context.Background(), yes.Marshal())
+	id, msg := yes.ID, f.serve().deliver(yes.ID, yes.Content)
+	attach()
+	rec, err := checkConfirmation(root, digest, proj)
+	if err != nil || rec.Door != DoorBuzz || rec.Proof.EventID != id || rec.By != "owner key "+f.owner.PublicHex() {
+		t.Fatalf("record %+v %v", rec, err)
+	}
+	if res, _ := f.serve().result(msg); res != "confirmed team" {
+		t.Fatalf("reply %q", res)
 	}
 }

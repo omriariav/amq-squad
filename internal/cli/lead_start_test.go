@@ -100,6 +100,16 @@ func sharedDelta(before map[string]int) map[string]int {
 // process's; the launch budget starts at the confirmation's moment.
 func TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux(t *testing.T) {
 	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	// the mayor's canonical path spells the checkout another way (a
+	// symlink): the squad files are planned over the confirmed spelling
+	link := filepath.Join(t.TempDir(), "app-link")
+	if err := os.Symlink(f.proj, link); err != nil {
+		t.Fatal(err)
+	}
+	leadMayorIdentify = func(string, grants.Fleet) (string, string, error) { return "owner/app", link, nil }
+	if r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: filepath.Join(f.proj, "sub")}); r.Refusal != "project_mismatch" {
+		t.Fatalf("another project = %+v", r)
+	}
 	before := sharedSnapshot()
 	r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj})
 	if r.Outcome != "started" || !strings.HasPrefix(r.Detail, "roster_launched") {
@@ -135,6 +145,26 @@ func TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux(t *testing
 	}
 	if again := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj}); again.Refusal != schedproc.ReasonLeadRunning {
 		t.Fatalf("a second start = %+v", again)
+	}
+}
+
+// Row 3: the start writes only what the owner confirmed. A proposal whose
+// plan changed since the confirmation (here a CLAUDE.md created at the
+// repository root, so the pointer stubs plan differently) is refused
+// squad_yaml_digest_mismatch before anything is written or started.
+func TestTheStartRefusesAPlanThatChangedSinceTheConfirmation(t *testing.T) {
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	mustWrite(t, filepath.Join(f.proj, "CLAUDE.md"), "# notes\n")
+	before := sharedSnapshot()
+	r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj})
+	if r.Outcome != "refused" || !strings.Contains(r.Detail, team.CodeDigestMismatch) {
+		t.Fatalf("start = %+v", r)
+	}
+	if _, err := os.Stat(team.SquadPath(f.proj)); err == nil {
+		t.Fatal("squad.yaml written for a digest the owner did not confirm")
+	}
+	if len(sharedDelta(before)) != 0 {
+		t.Fatalf("steps ran: %v", sharedDelta(before))
 	}
 }
 
