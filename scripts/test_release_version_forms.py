@@ -171,10 +171,10 @@ class ReleaseVersionFormsTest(unittest.TestCase):
 
 
 
-def release_check_recipe() -> str:
-    """The Makefile's release-check recipe lines."""
+def release_check_recipe(target: str = "release-check") -> str:
+    """The recipe lines of a Makefile target."""
     lines = open(os.path.join(HERE, "..", "Makefile"), encoding="utf-8").read().splitlines()
-    start = lines.index("release-check:")
+    start = lines.index(target + ":")
     recipe = []
     for line in lines[start + 1 :]:
         if not line.startswith("\t"):
@@ -200,6 +200,8 @@ class ReleaseCheckRunsCIValidatorsTest(unittest.TestCase):
             if os.path.isfile(os.path.join(HERE, test)):
                 self.assertIn(f"scripts/{test}", recipe, f"make release-check does not run {test}")
         self.assertIn("scripts/test_release_version_forms.py", recipe)
+        # and make ci runs the row on every pull request
+        self.assertIn("scripts/test_release_version_forms.py", release_check_recipe("release-validator-test"))
 
 
 if __name__ == "__main__":
