@@ -121,7 +121,7 @@ run("the stored title not redacted (the question is)", [(PL,'\tc.Title = redact.
     (PL,'\t\tif f.Title != redact.Block(f.Title) {\n','\t\tif false {\n'),
     (PL,'Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch','Title: strings.Join(strings.Fields(title), " "), Branch')],
     CL+"'TestACanaryInATitleReachesNoQuestionStatusOrKey'")
-run("status does not redact gates[].question", [(CF,'\t\ts.Gates[i].Question = redact.Block(s.Gates[i].Question)\n','')],
+run("status does not redact gates[].question", [(CF,'\t\ts.Gates[i].Question = redact.Block(s.Gates[i].Question)\n','\t\t_ = s.Gates[i]\n')],
     CL+"'TestACanaryInATitleReachesNoQuestionStatusOrKey'")
 
 # Row 2: the bare yes or no, bound by the thread
@@ -167,7 +167,7 @@ run("the relay record takes a malformed plan_for", [(SR,'!p.At.IsZero() && optio
     BZ+"'TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam'")
 run("the lead takes a plan post another key signed", [(LS,'\t\tcase p.PubKey != pin.Body:\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
-run("the lead takes a yes whose direct reply target is not the plan post", [(LS,'\t\tcase parent != p.ID:\n','\t\tcase false:\n')],
+run("the lead takes a yes whose direct reply target is not the plan post", [(LS,'\t\tcase parent != p.ID:\n','\t\tcase parent != p.ID && false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 run("the lead takes an altered plan post", [(LS,'\t\tcase !p.CheckID():\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
