@@ -1,16 +1,20 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
@@ -19,14 +23,17 @@ import (
 const contextUsage = `amq-squad context - the seat's role, rules digest, current task and open gates
 
 Usage:
-  amq-squad context --me HANDLE [--root DIR] [--session S] [--project DIR] [--json]
+  amq-squad context --me HANDLE [--root DIR] [--session S] [--project DIR] [--host] [--json]
 
 Reads only and never renews a lease; identity comes from AM_ME, AM_ROOT and
 AM_SESSION (a flag may fill an unset variable, never contradict a set one).
 Rules: $AMQ_SQUAD_RULES_PATH, else team-rules.md under the launch record's team
 home (or --project). Task: the task whose lease the seat holds in the store
 under the session root (<root>/extensions/amq-squad/tasks/). Exit 2 on a usage
-or identity error.
+or identity error. --host adds the host facts the team lead's first turn
+carries (brief 31-3, section 5): the repository ($AMQ_SQUAD_PROJECT, else the
+repository of the working directory), its branch and tip, and the installed
+AMQ's version; a fact that cannot be read is empty, never guessed.
 
 Examples:
   amq-squad context --me cto
@@ -62,6 +69,135 @@ type hookContextData struct {
 	// the repository, not the seat's tree.
 	Worktree string   `json:"worktree,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+	// Host is the host facts (context --host): absent without the flag.
+	Host *hookHost `json:"host,omitempty"`
+}
+
+// hookHost is the host facts of context --host: each "" when it cannot be
+// read (the extension shows it as missing).
+type hookHost struct {
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
+	Tip        string `json:"tip"`
+	AMQVersion string `json:"amq_version"`
+}
+
+// contextHostDeadline bounds the whole host-fact read (Codex on #837, item
+// 5, and its re-check, item 2): git and amq run one after another, each
+// under what remains of this one budget, each in its own process group,
+// which is killed with everything it started when the budget runs out; the
+// fact then reads missing. When the read ends, for any reason, every group
+// it started that still had a member when its leader was reaped is killed
+// (a child that outlived its leader). The
+// extension's timeout for context --host is above this budget
+// (pi/extensions/lib/hooks.ts CONTEXT_HOST_TIMEOUT_MS), so this process
+// always finishes its own cleanup. A test seam.
+var contextHostDeadline = 3 * time.Second
+
+// contextHostOutputCap bounds a host-fact command's output: more is no
+// fact (the group is killed and the fact reads missing).
+const contextHostOutputCap = 4 << 10
+
+// hostCall is one host-fact read: its shared deadline and the commands
+// whose group still had a member when their leader was reaped.
+type hostCall struct {
+	ctx  context.Context
+	cmds []*exec.Cmd
+}
+
+// The group seams (tests stand in a reused id): whether a group has a
+// member, and its kill.
+var (
+	hostGroupAlive = guardGroupAlive
+	hostGroupKill  = killGuardGroup
+)
+
+// sweep kills the groups the read kept (Codex's pass 3 on #837): a group
+// whose leader was reaped with no member left was never kept, so its id,
+// free for reuse, is never signalled. A kept group had a member at the
+// reap, and while a member lives no process can take the group's id; the
+// sweep runs right after the read's last reap.
+func (c *hostCall) sweep() {
+	for _, cmd := range c.cmds {
+		hostGroupKill(cmd)
+	}
+	c.cmds = nil
+}
+
+// contextHostRun runs one command for the host facts under the read's
+// shared deadline (a test seam).
+var contextHostRun = func(c *hostCall, dir, name string, args ...string) (string, error) {
+	if err := c.ctx.Err(); err != nil {
+		return "", fmt.Errorf("%s not run: the host facts' %s budget is spent", name, contextHostDeadline)
+	}
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	guardGroup(cmd)
+	// the group is killed before Wait returns (never after the reap, when
+	// its id can be reused): on the deadline, or when the output passes
+	// the cap
+	cmd.Cancel = func() error { killGuardGroup(cmd); return nil }
+	cmd.WaitDelay = time.Second
+	out := &cappedBuffer{max: contextHostOutputCap, over: cancel}
+	cmd.Stdout = out
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	err := cmd.Wait()
+	// kept for the sweep only when a member outlived the leader's reap
+	if hostGroupAlive(cmd) {
+		c.cmds = append(c.cmds, cmd)
+	}
+	switch {
+	case out.hit:
+		return "", fmt.Errorf("%s printed more than %d bytes", name, contextHostOutputCap)
+	case errors.Is(c.ctx.Err(), context.DeadlineExceeded):
+		return "", fmt.Errorf("%s did not finish within the host facts' %s budget", name, contextHostDeadline)
+	}
+	return strings.TrimSpace(out.buf.String()), err
+}
+
+// hostFacts reads the host facts: the repository, its branch and tip from
+// git, and the installed amq's version ($AMQ_SQUAD_AMQ, else amq on PATH).
+func hostFacts() *hookHost {
+	ctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)
+	c := &hostCall{ctx: ctx}
+	defer func() {
+		cancel()
+		c.sweep()
+	}()
+	h := &hookHost{Repository: os.Getenv("AMQ_SQUAD_PROJECT")}
+	if h.Repository == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			h.Repository = projectTop(cwd)
+		}
+	}
+	if h.Repository != "" {
+		if out, err := contextHostRun(c, h.Repository, "git", "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+			h.Branch = out
+		}
+		if out, err := contextHostRun(c, h.Repository, "git", "rev-parse", "--short=12", "HEAD"); err == nil {
+			h.Tip = out
+		}
+	}
+	amq := os.Getenv("AMQ_SQUAD_AMQ")
+	if !filepath.IsAbs(amq) {
+		amq, _ = exec.LookPath("amq")
+	}
+	if amq != "" {
+		if out, err := contextHostRun(c, h.Repository, amq, "--version"); err == nil {
+			h.AMQVersion, _, _ = strings.Cut(out, "\n")
+		}
+	}
+	// every fact goes into the team lead's context verbatim, so none leaves
+	// unredacted (Codex on #837, item 6): a branch named api_key=<value>
+	// shows the name, never the value
+	for _, f := range []*string{&h.Repository, &h.Branch, &h.Tip, &h.AMQVersion} {
+		*f = redact.Block(*f)
+	}
+	return h
 }
 
 // recordHookReport is the hook's evidence of its own run (P1-10): every
@@ -84,6 +220,7 @@ func recordHookReport(id hookIdentity, now time.Time) {
 func runContext(args []string) error {
 	h := newHookFlags("context", contextUsage)
 	project := h.fs.String("project", "", "team home of the rules file (default: launch record)")
+	host := h.fs.Bool("host", false, "add the host facts (repository, branch, tip, AMQ version)")
 	if err := h.parse(args); err != nil {
 		return err
 	}
@@ -92,6 +229,9 @@ func runContext(args []string) error {
 		return err
 	}
 	d := buildHookContext(id, *project, hookNow())
+	if *host {
+		d.Host = hostFacts()
+	}
 	if *h.jsonOut {
 		return printJSONEnvelope("context", d)
 	}

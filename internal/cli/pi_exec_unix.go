@@ -20,6 +20,23 @@ import (
 // SIGTERM and SIGHUP.
 func runProcess(path string, argv, env []string) (int, error) {
 	cmd := &exec.Cmd{Path: path, Args: argv, Env: env, Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
+	if piSpawnNonce != "" {
+		// the lead's nonce for its pi (Codex's re-check on #837, item 1):
+		// over an inherited pipe at fd 3, never the environment or a file;
+		// the parent keeps neither end
+		r, w, err := os.Pipe()
+		if err != nil {
+			return -1, err
+		}
+		_, werr := w.Write([]byte(piSpawnNonce + "\n"))
+		w.Close()
+		if werr != nil {
+			r.Close()
+			return -1, werr
+		}
+		cmd.ExtraFiles = []*os.File{r}
+		defer r.Close()
+	}
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)

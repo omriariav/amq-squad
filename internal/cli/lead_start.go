@@ -3,6 +3,10 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -22,8 +27,10 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -65,24 +72,37 @@ type leadStartRequest struct {
 	Project string `json:"project,omitempty"`
 	Pane    string `json:"pane,omitempty"`  // the TUI door's pane
 	Event   []byte `json:"event,omitempty"` // the Buzz door's raw event bytes, as the attachment fetched them
+	// Challenge is the lead's pi's fresh challenge (Codex's re-check on
+	// #837, item 1): the lead answers it with Proof
+	Challenge string `json:"challenge,omitempty"`
 }
 
 // The confirmation kinds on the same socket (the three doors).
 const (
 	confirmTUIKind   = "amq-squad.confirm-tui.v1"
 	confirmShellKind = "amq-squad.confirm-shell.v1" // dropped: refused by name
+	phaseKind        = "amq-squad.phase.v1"         // R53: the lead's pi asks whether the team started
 	confirmBuzzKind  = "amq-squad.confirm-buzz.v1"
 )
 
 // leadStartReply is the lead's answer.
 type leadStartReply struct {
-	Outcome    string     `json:"outcome"` // started | witnessed | refused
+	Outcome    string     `json:"outcome"` // started | witnessed | refused | team | solo
 	Digest     string     `json:"digest,omitempty"`
 	Refusal    string     `json:"refusal,omitempty"`
 	Detail     string     `json:"detail,omitempty"`
 	Steps      []upStep   `json:"steps,omitempty"`
 	Roster     []string   `json:"roster,omitempty"`
 	OwnerSteps [][]string `json:"owner_steps,omitempty"` // R40's fallback: what the owner runs
+	// Team is the team lead's identity and the confirmed digest, in the
+	// reply of a start that succeeded and of a phase query after it (R53,
+	// brief 31-3 PR 2): the lead's pi switches on this reply, never on a file
+	Team *leadTeam `json:"team,omitempty"`
+	// Proof is HMAC-SHA256 under the nonce this lead gave its pi at the
+	// spawn, over the request's challenge and this reply (leadProof): what
+	// tells the lead's pi that the lead, not another server on the socket
+	// path, answered
+	Proof string `json:"proof,omitempty"`
 }
 
 // Seams of the start for tests: the grant the mayor loads, the fleet
@@ -117,8 +137,10 @@ type leadStarter struct {
 	// the witness (R55 after the plan reviewer's ruling): the pi process the
 	// lead spawned, and the confirmations it witnessed, in memory only
 	wmu       sync.Mutex
+	team      *leadTeam // set when this lead's start succeeded (R53)
 	piPID     int
 	piStamp   string
+	nonce     string // the per-spawn nonce handed to pi over fd 3 (leadNonce)
 	witnessed map[string]confirmRecord
 	seen      map[string]bool // Buzz event ids witnessed (once-only)
 }
@@ -220,6 +242,20 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 		}
 		conn.SetDeadline(time.Time{}) // the start is the lead's own work
 		reply = s.start(context.Background(), req)
+	case req.Kind == phaseKind:
+		// R53: the lead's pi asks, at a session start, whether this lead
+		// started its team; only a descendant of the lead is answered
+		if _, err := callerChain(pid, s.self); err != nil {
+			reply = refusedBy(err)
+			break
+		}
+		s.wmu.Lock()
+		team := s.team
+		s.wmu.Unlock()
+		reply = leadStartReply{Outcome: "solo"}
+		if team != nil {
+			reply = leadStartReply{Outcome: "team", Team: team}
+		}
 	case req.Kind == confirmTUIKind:
 		reply = s.witnessTUI(pid, req)
 	case req.Kind == confirmShellKind:
@@ -231,9 +267,76 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	default:
 		reply.Refusal, reply.Detail = "request_malformed", "an unknown request kind"
 	}
+	s.wmu.Lock()
+	nonce := s.nonce
+	s.wmu.Unlock()
+	if nonce != "" && challengeRE.MatchString(req.Challenge) {
+		reply.Proof = leadProof(nonce, req.Challenge, reply)
+	}
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	b, _ := json.Marshal(reply)
 	conn.Write(append(b, '\n'))
+}
+
+// The lead's proof to its pi (Codex's re-check on #837, item 1). At the
+// spawn the lead hands pi a random nonce over an inherited pipe (fd 3;
+// the environment names only the descriptor's number), never through the
+// environment (readable by any process of the uid) or a file; pi reads it
+// at load and closes the descriptor, so no child of pi holds it. Every
+// request pi sends carries a fresh challenge, and the lead answers with
+// HMAC-SHA256 keyed by the nonce over the tag, the challenge, the outcome,
+// the digest and the team identity's fields, each length-prefixed
+// (proofMessage). The nonce never crosses the
+// socket, so a server on the socket path that is not this lead cannot
+// answer with a proof; pi refuses an unproved reply lead_unproved and
+// stays solo. A reply to a lead of an earlier spawn carries that spawn's
+// nonce, which this pi does not hold.
+const (
+	leadProofTag   = "amq-squad.lead-proof.v2"
+	leadNonceFDEnv = "AMQ_SQUAD_LEAD_NONCE_FD"
+)
+
+// challengeRE is a challenge pi sends: 32 to 128 lowercase hex digits.
+var challengeRE = regexp.MustCompile(`^[0-9a-f]{32,128}$`)
+
+// leadProof is the proof of reply r to challenge under nonce (the same
+// message as pi/extensions/lib/team.ts leadProof).
+func leadProof(nonce, challenge string, r leadStartReply) string {
+	var t leadTeam
+	if r.Team != nil {
+		t = *r.Team
+	}
+	mac := hmac.New(sha256.New, []byte(nonce))
+	mac.Write([]byte(proofMessage(leadProofTag, challenge, r.Outcome, r.Digest, t.Root, t.BaseRoot, t.Session, t.Handle, t.Digest)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// proofMessage encodes the proof's fields each as its byte length, a
+// colon, the bytes and a comma (a netstring; Codex's pass 3 on #837): no
+// field's bytes can stand for a field boundary, so two different
+// identities (a newline inside a repository path) never sign alike.
+func proofMessage(fields ...string) string {
+	var b strings.Builder
+	for _, f := range fields {
+		fmt.Fprintf(&b, "%d:%s,", len(f), f)
+	}
+	return b.String()
+}
+
+// newLeadNonce is a fresh per-spawn nonce: 32 random bytes, hex.
+func newLeadNonce() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// setNonce records the nonce this lead handed its pi.
+func (s *leadStarter) setNonce(n string) {
+	s.wmu.Lock()
+	s.nonce = n
+	s.wmu.Unlock()
 }
 
 // refusedBy is a refusal whose error text starts with its name.
@@ -462,6 +565,14 @@ func (s *leadStarter) start(ctx context.Context, req leadStartRequest) leadStart
 	if err != nil {
 		return refused("squad_invalid", "%v", err)
 	}
+	// R53 (Codex on #837): the team lead's identity is resolved from the
+	// confirmed squad before anything starts, so a started team always
+	// carries it in the reply and the lead's pi always switches; an
+	// identity that cannot be resolved refuses here, with nothing started.
+	id, err := piruntime.NewTeamIdentity(sq.Lead, filepath.Join(s.project, ".agent-mail"), sq.Session)
+	if err != nil {
+		return refused(ReasonTeamIdentity, "the team lead's identity cannot be resolved from the confirmed squad (%v); nothing was started", err)
+	}
 	l := &leadLauncher{s: s, at: rec.At}
 	m := &fleet.Mayor{
 		Grant: leadMayorGrant, RegistryPath: leadMayorRegistry(), Identify: leadMayorIdentify,
@@ -482,7 +593,17 @@ func (s *leadStarter) start(ctx context.Context, req leadStartRequest) leadStart
 	}
 	switch {
 	case res.Outcome == fleet.OutcomeStarted:
-		return leadStartReply{Outcome: "started", Detail: l.outcome, Steps: s.steps, Roster: l.roster}
+		// R53 (brief 31-3 PR 2): the owner's yes switches this lead to team
+		// phase on this reply (the team identity and the digest), never on
+		// a file. The marker is a record only: a failed write is a
+		// phase_record_failed decision and changes nothing else.
+		detail := l.outcome
+		team := s.teamOf(id, req.Digest)
+		if err := writePhaseMarker(s.root, s.project, team, s.self); err != nil {
+			detail += "; the phase record was not written (" + KindPhaseRecordFailed + "): " + err.Error()
+			_ = schedproc.AppendDecision(s.root, confirmNow(), scheduler.Decision{Kind: KindPhaseRecordFailed, Reason: phaseMarkerPath(s.root) + ": " + err.Error()})
+		}
+		return leadStartReply{Outcome: "started", Detail: detail, Steps: s.steps, Roster: l.roster, Team: team}
 	case slices.Contains(r40Fallback, res.Reason):
 		r := refused(res.Reason, "%s; the lead proposes, the owner starts: from your own shell run the two commands below", res.Detail)
 		r.OwnerSteps = [][]string{{"amq-squad", "team", "apply", "--digest", req.Digest, "--project", s.project}, {"amq-squad", "up", "--project", s.project}}
@@ -630,7 +751,7 @@ func (l *leadLauncher) Close(context.Context, fleet.LaunchRequest) error {
 
 // applyThroughLead is `team apply --digest D` under the solo lead: the
 // request over the lead's socket, the reply printed.
-func applyThroughLead(sock, project, digest string, jsonOut bool) error {
+func applyThroughLead(sock, project, digest, challenge string, jsonOut bool) error {
 	root := os.Getenv("AM_ROOT")
 	c, err := seatlaunch.DialPrivate(root, sock, leadStartSocketName)
 	if err != nil {
@@ -638,7 +759,9 @@ func applyThroughLead(sock, project, digest string, jsonOut bool) error {
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(leadStartWait))
-	b, _ := json.Marshal(leadStartRequest{Kind: leadStartKind, Digest: digest, Project: project})
+	// the lead's pi's challenge rides through (the lead's proof answers it;
+	// this process never holds the nonce)
+	b, _ := json.Marshal(leadStartRequest{Kind: leadStartKind, Digest: digest, Project: project, Challenge: challenge})
 	if _, err := c.Write(append(b, '\n')); err != nil {
 		return err
 	}
@@ -790,4 +913,102 @@ func underSoloLead(verb string, leadRefuses, checkEnv bool) error {
 		}
 	}
 	return restamp(chain)
+}
+
+// leadTeam is the team lead's identity as lead --team resolves it from
+// squad.yaml (resolveTeamLeadIdentity), with the confirmed digest.
+type leadTeam struct {
+	Root     string `json:"root"`
+	BaseRoot string `json:"base_root"`
+	Session  string `json:"session"`
+	Handle   string `json:"handle"`
+	Digest   string `json:"digest"`
+}
+
+// teamOf records the team lead's identity (resolved before the start) as
+// this lead's phase (the answer to a later phase query).
+func (s *leadStarter) teamOf(id piruntime.TeamIdentity, digest string) *leadTeam {
+	t := &leadTeam{Root: id.Root, BaseRoot: id.BaseRoot, Session: id.Session, Handle: id.Handle, Digest: digest}
+	s.wmu.Lock()
+	s.team = t
+	s.wmu.Unlock()
+	return t
+}
+
+// ReasonTeamIdentity refuses a start whose team lead identity cannot be
+// resolved from the confirmed squad (nothing is started).
+const ReasonTeamIdentity = "team_identity"
+
+// KindPhaseRecordFailed is the decision of a phase record (the marker) the
+// lead could not write after its team started: a record failure and
+// nothing else (the switch rode the start's reply).
+const KindPhaseRecordFailed = "phase_record_failed"
+
+// The phase marker (brief 31-3 PR 2, R53, after the plan reviewer: the
+// marker is never authority). The solo lead's process writes it in its own
+// AMQ root (<root>/extensions/amq-squad/phase.json) when the start of a
+// confirmed team succeeds, for the record only: the lead's pi switches on
+// the lead's reply over its start socket, and a solo lead restarted in a
+// marked repository comes up solo and offers the two ways back (the owner's
+// amq-squad up, or a fresh yes at either door). Nobody reads it to grant
+// anything: under one uid a model with write could plant it.
+const phaseMarkerName = "phase.json"
+
+// PhaseTeam is the one phase a marker records.
+const PhaseTeam = "team"
+
+type phaseMarker struct {
+	Schema   int       `json:"schema"`
+	Phase    string    `json:"phase"`
+	Project  string    `json:"project"`
+	Root     string    `json:"root"`
+	BaseRoot string    `json:"base_root"`
+	Session  string    `json:"session"`
+	Handle   string    `json:"handle"`
+	Digest   string    `json:"digest"`
+	At       time.Time `json:"at"`
+	PID      int       `json:"pid"`
+	Start    string    `json:"start"`
+}
+
+func phaseMarkerPath(soloRoot string) string {
+	return filepath.Join(soloRoot, "extensions", "amq-squad", phaseMarkerName)
+}
+
+// writePhaseMarker writes the record of a team started from project's solo
+// lead.
+func writePhaseMarker(soloRoot, project string, t *leadTeam, pid int) error {
+	start, _ := confirmStamp(pid)
+	m := phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: t.Root, BaseRoot: t.BaseRoot, Session: t.Session, Handle: t.Handle,
+		Digest: t.Digest, At: confirmNow().UTC(), PID: pid, Start: start}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(phaseMarkerPath(soloRoot), append(b, '\n'), 0o600)
+}
+
+// markerInfo reads the marker as information only (a regular file, not
+// followed, for this project): what the restarted lead offers the owner.
+func markerInfo(soloRoot, project string) (phaseMarker, bool) {
+	var m phaseMarker
+	raw, err := readDiscoveryRecord(phaseMarkerPath(soloRoot))
+	if err != nil || json.Unmarshal(raw, &m) != nil {
+		return m, false
+	}
+	return m, m.Schema == 1 && m.Phase == PhaseTeam && m.Project == project
+}
+
+// resumeOffer is what a solo lead restarted in a marked repository says:
+// the team it started, and the two ways back, the owner's up (the resume by
+// the act) or a fresh yes at either door (the witness path).
+// The steps work as written (Codex on #837): `amq-squad up` only once this
+// lead has quit (a live solo lead is lead_running to it), and a fresh
+// proposal, since a restarted lead holds none and a confirmation lapses.
+func resumeOffer(m phaseMarker) string {
+	return fmt.Sprintf("This repository's team was started on %s with digest %s and this lead was restarted. "+
+		"To resume it: quit this lead and run `amq-squad up`. "+
+		"To start it again from here: ask me to propose the team again and confirm the new plan at your pane or over Buzz. "+
+		"The old plan cannot be confirmed again: a restarted lead holds no proposal, and a confirmation stands for %d minutes.",
+		m.At.UTC().Format(time.RFC3339), m.Digest, int(ConfirmTTL.Minutes()))
 }
