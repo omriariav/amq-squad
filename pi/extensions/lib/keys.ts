@@ -48,7 +48,19 @@ export type KeyOutcome = { key: string; refused: boolean; line: string };
 
 // The `amq-squad gate status --json` row the answer key reads (the gate
 // record and its state).
-type GateStatusRow = { gate_id: string; class: string; typed_class: string; target: string; digest: string; state: string; question_sent: boolean };
+type GateStatusRow = { gate_id: string; class: string; typed_class: string; target: string; digest: string; state: string; question_sent: boolean; text?: string };
+
+// RULE is the line between a gate question's plain lines and its
+// identifiers (gatestore.Rule).
+export const RULE = "----------";
+
+// plainOf is a gate text's plain lines, the text above its rule
+// (gatestore.Plain): "" for a text with no rule (a gate raised before
+// 3.1.1).
+export function plainOf(text: string | undefined): string {
+	const at = (text ?? "").indexOf(`\n\n${RULE}\n`);
+	return at < 0 ? "" : (text ?? "").slice(0, at);
+}
 
 // typedPrefix is the 16-hex prefix the owner types for a gate (R32): the
 // first 16 hex of its target digest.
@@ -233,8 +245,8 @@ export class Keys {
 		return { key: k, refused: false, line: `${l.seat} ${l.code} acknowledged for launch ${l.launch}` };
 	}
 
-	// answer: Q7's fallback. The gate is read fresh, shown with its kind,
-	// target and typed prefix; its question is posted over Buzz when it has
+	// answer: Q7's fallback. The gate is read fresh, shown with its
+	// question's plain lines, then its kind, target and typed prefix; its question is posted over Buzz when it has
 	// not reached Buzz; the key says the gate waits there. A gate that is not
 	// open (answered over Buzz, denied, expired) is refused by its state.
 	async answer(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
@@ -252,14 +264,18 @@ export class Keys {
 		if (g.state !== "open") {
 			return { key: k, refused: true, line: `${id}: gate_not_open: the gate is ${g.state}; an answer at either door closes it` };
 		}
-		const shown = `${g.gate_id} ${g.class} (${g.typed_class}) ${g.target} prefix ${typedPrefix(g.digest)}`;
+		// brief 3.1.1-1: the question's plain lines verbatim, as the phone
+		// shows them, then the identifiers for the record
+		const plain = plainOf(g.text);
+		const ids = `${g.gate_id} ${g.class} (${g.typed_class}) ${g.target} prefix ${typedPrefix(g.digest)}`;
+		const shown = plain ? `${plain}\n${ids}` : ids;
 		let posted = "";
 		if (!g.question_sent) {
 			const p = await this.verb(["gate", "post", "--gate", id, "--json"]);
 			if (failed(p)) return { key: k, refused: true, line: `${shown}: the question was not posted over Buzz: ${refusal(p)}` };
 			posted = "question posted over Buzz; ";
 		}
-		const line = `${shown}: ${posted}waiting on Buzz: the terminal door is not built (Q7); answer it in the owner's Buzz DM thread`;
+		const line = `${shown}: ${posted}waiting on Buzz: the terminal door is not built (Q7); reply yes or no in the question's Buzz thread`;
 		try {
 			ctx.ui.notify(line, "info");
 		} catch {

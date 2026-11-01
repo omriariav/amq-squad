@@ -46,6 +46,7 @@ type SeatInput struct {
 type GateInput struct {
 	ID, Class, Digest, State, RaisedBy string
 	Since                              time.Time
+	Question                           string // the question's plain lines (brief 3.1.1-1)
 }
 
 // ThreadInput is one AMQ thread that waits on the owner (the thread triage
@@ -129,7 +130,7 @@ func Build(in Input) Status {
 	openGateBy := map[string]GateInput{}
 	openGates := map[string]bool{}
 	for _, g := range sortedGates(in.Gates) {
-		s.Gates = append(s.Gates, Gate{ID: g.ID, ActionClass: g.Class, TargetDigest: g.Digest, State: g.State, RaisedBy: g.RaisedBy})
+		s.Gates = append(s.Gates, Gate{ID: g.ID, ActionClass: g.Class, TargetDigest: g.Digest, State: g.State, RaisedBy: g.RaisedBy, Question: g.Question})
 		if g.State == "open" {
 			openGates[g.ID] = true
 			if _, seen := openGateBy[g.RaisedBy]; !seen {
