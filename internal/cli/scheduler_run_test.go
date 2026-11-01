@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,13 +76,7 @@ func TestSchedulerRunVerbDispatchesRingsAndStops(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(proj, "roles", "impl.md"), "# Role: implementer\n\nYou implement tasks.\n")
-	seats := map[string]any{"project_root": proj, "session": "s1", "seats": []map[string]any{
-		{"handle": "impl-1", "runtime": "claude", "model": "sonnet", "effort": "medium", "role": "implementer", "role_file": filepath.Join(proj, "roles", "impl.md"), "worktree": filepath.Join(proj, "wt-impl-1")},
-	}}
-	raw, _ := json.Marshal(seats)
-	seatsFile := filepath.Join(proj, "seats.json")
-	mustWrite(t, seatsFile, string(raw))
+	writeSquadProject(t, proj, fixtureSquadYAML, "implementer")
 	if err := os.MkdirAll(filepath.Join(proj, "wt-impl-1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +128,7 @@ func TestSchedulerRunVerbDispatchesRingsAndStops(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, _, err := captureOutput(t, func() error {
-			return runSchedulerRun(ctx, []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+			return runSchedulerRun(ctx, []string{"--project", proj, "--tick", "20ms"}, os.Stdout)
 		})
 		done <- err
 	}()
@@ -233,13 +226,7 @@ func bindRun(t *testing.T, noGrant bool, extra ...string) (task.Task, string, st
 			t.Fatal(err)
 		}
 	}
-	mustWrite(t, filepath.Join(proj, "roles", "impl.md"), "# Role: implementer\n\nYou implement tasks.\n")
-	seats := map[string]any{"project_root": proj, "session": "s1", "seats": []map[string]any{
-		{"handle": "s1", "runtime": "claude", "model": "sonnet", "effort": "medium", "role": "implementer", "role_file": filepath.Join(proj, "roles", "impl.md"), "worktree": wt, "branch": "seat/s1"},
-	}}
-	raw, _ := json.Marshal(seats)
-	seatsFile := filepath.Join(proj, "seats.json")
-	mustWrite(t, seatsFile, string(raw))
+	writeSquadProject(t, proj, "schema: 1\nsession: s1\nlead: lead\nseats:\n  - handle: lead\n    role: lead\n    runtime: pi\n  - handle: s1\n    role: implementer\n    runtime: claude\n    model: sonnet\n    effort: medium\n    worktree: "+wt+"\n", "implementer")
 	ghLog := filepath.Join(t.TempDir(), "gh.log")
 	gh := filepath.Join(t.TempDir(), "gh")
 	mustWrite(t, gh, "#!/bin/sh\necho \"$*\" >> '"+ghLog+"'\nif [ \"$2\" = list ]; then echo '[]'; exit 0; fi\necho https://github.com/o/r/pull/7\n")
@@ -284,7 +271,7 @@ func bindRun(t *testing.T, noGrant bool, extra ...string) (task.Task, string, st
 	var stdout string
 	go func() {
 		o, _, err := captureOutput(t, func() error {
-			return runSchedulerRun(ctx, append([]string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, extra...), os.Stdout)
+			return runSchedulerRun(ctx, append([]string{"--project", proj, "--tick", "20ms"}, extra...), os.Stdout)
 		})
 		stdout = o
 		done <- err
@@ -362,18 +349,12 @@ func TestSchedulerNoOpenPRRefusedUnderAMergeGrant(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(proj, "roles", "impl.md"), "# Role: implementer\n\nYou implement tasks.\n")
-	seats := map[string]any{"project_root": proj, "session": "s1", "seats": []map[string]any{
-		{"handle": "s1", "runtime": "claude", "model": "sonnet", "effort": "medium", "role": "implementer", "role_file": filepath.Join(proj, "roles", "impl.md"), "worktree": filepath.Join(proj, "wt-s1")},
-	}}
-	raw, _ := json.Marshal(seats)
-	seatsFile := filepath.Join(proj, "seats.json")
-	mustWrite(t, seatsFile, string(raw))
+	writeSquadProject(t, proj, "schema: 1\nsession: s1\nlead: lead\nseats:\n  - handle: lead\n    role: lead\n    runtime: pi\n  - handle: s1\n    role: implementer\n    runtime: claude\n    model: sonnet\n    effort: medium\n    worktree: wt-s1\n", "implementer")
 	// Bounded: a scheduler that is not refused starts and returns nil here.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, _, err := captureOutput(t, func() error {
-		return runSchedulerRun(ctx, []string{"--seats", seatsFile, "--lead", "lead", "--no-open-pr"}, os.Stdout)
+		return runSchedulerRun(ctx, []string{"--project", proj, "--no-open-pr"}, os.Stdout)
 	})
 	if err == nil || !strings.Contains(err.Error(), "o/r has a merge grant") || !strings.Contains(err.Error(), "merge train needs each completed task bound to its PR") {
 		t.Fatalf("--no-open-pr under a merge grant: %v", err)

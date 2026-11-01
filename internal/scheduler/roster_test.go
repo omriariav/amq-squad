@@ -184,7 +184,7 @@ func TestRosterOccupancyOmitsParkedSeats(t *testing.T) {
 	if occ := h.s.Occupancy(); len(occ) != 0 {
 		t.Fatalf("parked seats in the occupancy: %+v", occ)
 	}
-	h.s.seats["s-b"].closing = "quarantined"
+	h.s.seats["s-b"].closing = "exit_refused"
 	if occ := h.s.Occupancy(); len(occ) != 1 || occ[0].Handle != "s-b" {
 		t.Fatalf("a closing seat: %+v", occ)
 	}

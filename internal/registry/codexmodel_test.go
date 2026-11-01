@@ -63,24 +63,22 @@ func TestClassifyCodexRequiresStructuredOK(t *testing.T) {
 	}
 }
 
-func TestCheckCodexModelBeforeLaunch(t *testing.T) {
-	if v := CheckCodexModel("0.147.0", "gpt-6-astra", nil); v.Usable || !v.Known {
-		t.Fatalf("astra on 0.147.0: %+v", v)
+// Brief 31-1 (row 9): no list gates a Codex id; an id outside the old
+// picker lists is usable and unchecked, and only a recorded probe that
+// refused it refuses it.
+func TestCheckCodexModelGatesOnlyOnAProbe(t *testing.T) {
+	if v := CheckCodexModel("0.147.0", "gpt-6-astra", nil); !v.Usable || v.Known {
+		t.Fatalf("an id outside 0.147.0's picker list: %+v", v)
 	}
-	if v := CheckCodexModel("0.147.0", "gpt-5.6-sol", nil); !v.Usable {
-		t.Fatalf("sol on 0.147.0: %+v", v)
+	probed := map[string]CodexVerdict{
+		"gpt-5.6-sol": {Model: "gpt-5.6-sol", Version: "0.163.0", Known: true, Usable: true},
+		"gpt-9":       {Model: "gpt-9", Version: "0.163.0", Known: true, Reason: "refused"},
 	}
-	if v := CheckCodexModel("0.163.0", "gpt-5.6-sol", nil); v.Usable || v.Known {
-		t.Fatalf("an unlisted version must leave the id unchecked: %+v", v)
-	}
-	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna"} {
-		if v := CheckCodexModel("0.166.0", model, nil); !v.Known || !v.Usable {
-			t.Fatalf("0.166.0/%s = %+v, want a cached usable probe result", model, v)
-		}
-	}
-	probed := map[string]CodexVerdict{"gpt-5.6-sol": {Model: "gpt-5.6-sol", Version: "0.163.0", Known: true, Usable: true}}
 	if v := CheckCodexModel("0.163.0", "gpt-5.6-sol", probed); !v.Usable {
 		t.Fatalf("probed id: %+v", v)
+	}
+	if v := CheckCodexModel("0.163.0", "gpt-9", probed); v.Usable {
+		t.Fatalf("a probe-refused id: %+v", v)
 	}
 }
 

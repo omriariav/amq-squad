@@ -1,0 +1,894 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+)
+
+// upFake is `up`'s world: a fake amq (coop init and session create make the
+// directories), a fake tmux (panes and sessions in maps; new-session plays
+// the lead by logging the roster's outcome), the tagged binary's version,
+// pi verify and doctor, and the signals sent. No real tmux, AMQ or process
+// is touched.
+type upFake struct {
+	t        *testing.T
+	mu       sync.Mutex
+	proj     string
+	root     string
+	calls    []string
+	panes    map[string]string // pane id -> its session
+	sessions map[string]bool
+	tmuxErr  string // list-panes fails with this (no tmux, no server, a wrong socket)
+	tmuxJunk bool   // list-panes answers something unparseable
+	// leadHolds: the lead new-session starts takes the lead lock (a live
+	// lead); its record and pane are written either way.
+	leadHolds bool
+	leadLocks []*flock.Exclusive
+	signals   []string
+	onSignal  func(pid int, sig syscall.Signal)
+	newEnv    []string // the -e values of tmux new-session
+	newCmd    []string
+	version   string
+	outcome   string // the decision the lead's scheduler logs once new-session runs
+}
+
+func (f *upFake) run(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	base := filepath.Base(name)
+	f.calls = append(f.calls, base+" "+strings.Join(args, " "))
+	fail := fmt.Errorf("exit status 1")
+	switch {
+	case base == "amq-squad" && len(args) > 0 && args[0] == "version":
+		return []byte("amq-squad " + f.version + "\n"), nil
+	case base == "amq-squad" && len(args) > 1 && args[0] == "pi" && args[1] == "path":
+		return []byte(`{"schema_version":1,"kind":"pi_path","data":{"runtime":"/h/.amq-squad/runtime/pi-1.3.0-x","pi_argv":["node"]}}`), nil
+	case base == "amq-squad" && len(args) > 0 && args[0] == "doctor":
+		// AMQ v0.116.2's amq env refuses a repository with no .agent-mail
+		// (env.go:428), so doctor's amq ops row fails there.
+		if _, err := os.Stat(filepath.Join(f.proj, ".agent-mail")); err != nil {
+			return []byte(`{"schema_version":1,"kind":"doctor","data":{"team_home":"x","checks":[{"name":"amq ops","status":"fail","detail":"amq env failed: no AMQ root"}]}}` + "\nerror: doctor: 1 check(s) failed\n"), fail
+		}
+		return []byte(`{"schema_version":1,"kind":"doctor","data":{"team_home":"x","checks":[{"name":"amq version","status":"ok"},{"name":"codex trust","status":"warn"}]}}`), nil
+	case base == "amq" && args[0] == "coop" && args[1] == "init":
+		r := args[slices.Index(args, "--root")+1]
+		if !filepath.IsAbs(r) {
+			r = filepath.Join(dir, r)
+		}
+		mustWrite(f.t, filepath.Join(r, "meta", "config.json"), `{"version":1,"agents":["lead"]}`)
+		return []byte(`{}`), nil
+	case base == "amq" && args[0] == "session" && args[1] == "create":
+		mustMkdir(f.t, filepath.Join(args[slices.Index(args, "--root")+1], args[2], "agents"))
+		return []byte("Created session\n"), nil
+	case base == "tmux" && args[0] == "list-panes":
+		switch {
+		case f.tmuxErr != "":
+			return []byte(f.tmuxErr), fail
+		case f.tmuxJunk:
+			return []byte("tmux 3.5a\nsomething else\n"), nil
+		}
+		var out []string
+		for pane, sess := range f.panes {
+			out = append(out, sess+"\t"+pane)
+		}
+		slices.Sort(out)
+		return []byte(strings.Join(out, "\n") + "\n"), nil
+	case base == "tmux" && args[0] == "has-session":
+		if f.sessions[strings.TrimPrefix(args[2], "=")] {
+			return nil, nil
+		}
+		return []byte("can't find session"), fail
+	case base == "tmux" && args[0] == "kill-session":
+		name := strings.TrimPrefix(args[2], "=")
+		delete(f.sessions, name)
+		for pane, sess := range f.panes {
+			if sess == name {
+				delete(f.panes, pane)
+			}
+		}
+		return nil, nil
+	case base == "tmux" && args[0] == "new-session":
+		name := args[slices.Index(args, "-s")+1]
+		if f.sessions[name] {
+			return []byte("duplicate session: " + name), fail
+		}
+		f.sessions[name] = true
+		for i, a := range args {
+			if a == "-e" {
+				f.newEnv = append(f.newEnv, args[i+1])
+			}
+		}
+		f.newCmd = args[len(args)-3:]
+		// the lead starts: its pane, its record, and its lock while it lives
+		f.panes["%50"] = name
+		writeLeadRecord(f.t, f.root, schedproc.LeadRecord{PID: 999900, Start: "lead-start", Pane: "%50", At: time.Now()})
+		if f.leadHolds {
+			f.leadLocks = append(f.leadLocks, holdLock(f.t, filepath.Join(schedproc.Dir(f.root), schedproc.LeadLockName)))
+		}
+		if f.outcome != "" {
+			_ = schedproc.AppendDecision(f.root, time.Now(), scheduler.Decision{Kind: f.outcome, Reason: "launch L1: 1 seats in one apply"})
+		}
+		return nil, nil
+	}
+	return nil, fmt.Errorf("upFake: unexpected %s %v", name, args)
+}
+
+func (f *upFake) callIndex(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+// upWorld sets up a repository with the fixture squad.yaml, a tagged build
+// at build/pi/amq-squad, an installed amq-squad on a temp PATH dir, and
+// every seam of up faked.
+func upWorld(t *testing.T) (*upFake, string) {
+	t.Helper()
+	proj, _ := filepath.EvalSymlinks(t.TempDir())
+	writeSquadProject(t, proj, fixtureSquadYAML, "implementer")
+	mustMkdir(t, filepath.Join(proj, "wt-impl-1"))
+	mustWrite(t, filepath.Join(proj, "build", "pi", "amq-squad"), "#!/bin/sh\necho tagged build\n")
+	bin, _ := filepath.EvalSymlinks(t.TempDir())
+	target := filepath.Join(bin, "amq-squad")
+	mustWrite(t, target, "#!/bin/sh\necho old build\n")
+	f := &upFake{t: t, proj: proj, root: filepath.Join(proj, ".agent-mail", "s1"), panes: map[string]string{}, sessions: map[string]bool{},
+		version: "v3.1.0", outcome: "roster_launched"}
+	t.Cleanup(func() {
+		for _, l := range f.leadLocks {
+			l.Close()
+		}
+	})
+	prev := []any{squadRun, upLookPath, upPIDAlive, upStartToken, upProcArgv, upSignal, upPoll, upStopWait, upBeforeSignal, upAfterLeadStart}
+	t.Cleanup(func() {
+		squadRun = prev[0].(squadRunner)
+		upLookPath = prev[1].(func(string) (string, error))
+		upPIDAlive = prev[2].(func(int) bool)
+		upStartToken = prev[3].(func(int) (string, bool))
+		upProcArgv = prev[4].(func(int) ([]string, bool))
+		upSignal = prev[5].(func(int, syscall.Signal) error)
+		upPoll, upStopWait = prev[6].(time.Duration), prev[7].(time.Duration)
+		upBeforeSignal, _ = prev[8].(func(int, syscall.Signal))
+		upAfterLeadStart, _ = prev[9].(func())
+	})
+	squadRun = f.run
+	upLookPath = func(name string) (string, error) {
+		switch name {
+		case "amq-squad":
+			return target, nil
+		case "amq":
+			return "/opt/fake/bin/amq", nil
+		}
+		return "", fmt.Errorf("%s not found", name)
+	}
+	upPIDAlive = func(int) bool { return false }
+	upStartToken = func(int) (string, bool) { return "", false }
+	upProcArgv = func(int) ([]string, bool) { return nil, false }
+	upSignal = func(pid int, sig syscall.Signal) error {
+		f.mu.Lock()
+		f.signals = append(f.signals, fmt.Sprintf("%d %s", pid, sig))
+		on := f.onSignal
+		f.mu.Unlock()
+		if on != nil {
+			on(pid, sig)
+		}
+		return nil
+	}
+	upPoll, upStopWait = 5*time.Millisecond, 2*time.Second
+	return f, target
+}
+
+func runUpJSON(t *testing.T, proj string, extra ...string) (upReport, error) {
+	t.Helper()
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp(append([]string{"--project", proj, "--json", "--wait", "5s"}, extra...), "v3.1.0")
+	})
+	var env struct {
+		Data upReport `json:"data"`
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &env); jerr != nil {
+		t.Fatalf("up --json: %v\n%s", jerr, stdout)
+	}
+	return env.Data, err
+}
+
+func stepNames(r upReport) string {
+	var out []string
+	for _, s := range r.Steps {
+		out = append(out, s.Name+":"+s.Outcome)
+	}
+	return strings.Join(out, " ")
+}
+
+func decisionKinds(t *testing.T, root string) []schedproc.DecisionLine {
+	t.Helper()
+	lines, err := schedproc.ReadDecisionsTail(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lines
+}
+
+func holdLock(t *testing.T, path string) *flock.Exclusive {
+	t.Helper()
+	mustMkdir(t, filepath.Dir(path))
+	l, ok, err := flock.TryExclusive(path, true)
+	if err != nil || !ok {
+		t.Fatalf("hold %s: %v %v", path, ok, err)
+	}
+	return l
+}
+
+func writeLeadRecord(t *testing.T, root string, rec schedproc.LeadRecord) {
+	t.Helper()
+	rec.Schema = 1
+	raw, _ := json.Marshal(rec)
+	mustWrite(t, filepath.Join(schedproc.Dir(root), schedproc.LeadRecordName), string(raw))
+}
+
+// Brief 31-1's second PR, row 7: `up` on a repository with no AMQ root
+// creates the root (amq coop init in the repository) and the session (amq
+// session create), records it as a decision, and launches: the lead starts
+// in its tmux session and the roster's outcome ends the wait.
+func TestUpOnAProjectWithNoAMQRootCreatesItAndLaunches(t *testing.T) {
+	f, _ := upWorld(t)
+	if _, err := os.Stat(filepath.Join(f.proj, ".agent-mail")); err == nil {
+		t.Fatal("the fixture has an AMQ root")
+	}
+	r, err := runUpJSON(t, f.proj)
+	if err != nil {
+		t.Fatalf("up: %v\n%+v", err, r.Steps)
+	}
+	if f.callIndex("amq coop init --root .agent-mail --agents impl-1,lead,user") < 0 || f.callIndex("amq session create s1 --root "+filepath.Join(f.proj, ".agent-mail")) < 0 {
+		t.Fatalf("calls %q", f.calls)
+	}
+	if st, err := os.Stat(f.root); err != nil || !st.IsDir() {
+		t.Fatalf("session root %s: %v", f.root, err)
+	}
+	created := false
+	for _, d := range decisionKinds(t, f.root) {
+		created = created || (d.Kind == KindSessionCreated && strings.Contains(d.Reason, "amq session create s1"))
+	}
+	if !created || f.callIndex("tmux new-session") < 0 || r.Steps[len(r.Steps)-1].Detail == "" || !strings.HasPrefix(r.Steps[len(r.Steps)-1].Detail, "roster_launched") {
+		t.Fatalf("created %v; steps %+v; calls %q", created, r.Steps, f.calls)
+	}
+}
+
+// Row 13: the seven steps run in order against the fake tmux and AMQ; the
+// install copies the tagged build to a temporary name and renames it over
+// the installed binary, never writing the old file in place (its inode is
+// replaced and an open descriptor still reads the old bytes); the lead's
+// tmux session never matches AMQ's amq-* sessions and carries the start
+// stamp; a second run on a session root that exists skips its creation.
+func TestUpRunsItsSevenStepsInOrderAndInstallsByRename(t *testing.T) {
+	f, target := upWorld(t)
+	old, err := os.Open(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	before, _ := os.Stat(target)
+	r, err := runUpJSON(t, f.proj)
+	if err != nil {
+		t.Fatalf("up: %v\n%+v", err, r.Steps)
+	}
+	if got := stepNames(r); got != "compile:ok install:ok session:ok doctor:ok lead:ok tmux:ok roster:ok" {
+		t.Fatalf("steps %s", got)
+	}
+	order := []string{"amq-squad version", "amq-squad pi path", "amq coop init", "amq session create", "amq-squad doctor --json", "tmux has-session", "tmux new-session"}
+	last := -1
+	for _, c := range order {
+		i := f.callIndex(c)
+		if i <= last {
+			t.Fatalf("%q at %d after %d: calls %q", c, i, last, f.calls)
+		}
+		last = i
+	}
+	after, _ := os.Stat(target)
+	if os.SameFile(before, after) {
+		t.Fatal("the installed binary keeps its inode: it was written over in place")
+	}
+	oldBytes, _ := io.ReadAll(old)
+	newBytes, _ := os.ReadFile(target)
+	if string(oldBytes) != "#!/bin/sh\necho old build\n" || string(newBytes) != "#!/bin/sh\necho tagged build\n" || after.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("old descriptor reads %q, target %q mode %v", oldBytes, newBytes, after.Mode())
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(target), ".amq-squad.up-*")); len(left) != 0 {
+		t.Fatalf("temporary files left: %v", left)
+	}
+	name := upTmuxSessionName(f.proj)
+	if r.TmuxSession != name || strings.HasPrefix(name, "amq-") || !strings.HasPrefix(name, "squad-lead-") || r.Attach != "tmux attach -t "+name {
+		t.Fatalf("tmux session %q attach %q", r.TmuxSession, r.Attach)
+	}
+	if !slices.Contains(f.newEnv, leadStartEnv+"="+r.Start.Format(time.RFC3339Nano)) || !slices.Equal(f.newCmd, []string{target, "lead", "--team"}) {
+		t.Fatalf("new-session env %q cmd %q", f.newEnv, f.newCmd)
+	}
+	for _, p := range []string{"amq-squad", "amq-x", "AMQ-Thing", strings.Repeat("amq-", 20)} {
+		n := upTmuxSessionName(filepath.Join("/repos", p))
+		if strings.HasPrefix(n, "amq-") || !strings.HasPrefix(n, "squad-lead-") || len(n) > len("squad-lead-")+30+6 {
+			t.Errorf("session name %q for %q", n, p)
+		}
+	}
+	// A second up: the root exists (no creation), the dead lead's tmux
+	// session is a leftover and is stopped, and the lead starts again.
+	f.calls = nil
+	r, err = runUpJSON(t, f.proj, "--skip-install")
+	if err != nil {
+		t.Fatalf("second up: %v %+v", err, r.Steps)
+	}
+	if got := stepNames(r); got != "compile:ok install:skipped session:skipped doctor:ok lead:ok tmux:ok roster:ok" || f.callIndex("amq coop init") >= 0 || f.callIndex("tmux kill-session -t ="+name) < 0 {
+		t.Fatalf("second run steps %s; calls %q", got, f.calls)
+	}
+}
+
+// Row 13 (the stops): a lead whose pid is dead (its lead lock free) leaves
+// its tmux session behind, which up kills; the scheduler still holding
+// run.lock serves that dead lead, so its lead_gone check has passed and up
+// stops it; each stop is a decision.
+func TestUpStopsADeadLeadsSessionAndItsScheduler(t *testing.T) {
+	f, _ := upWorld(t)
+	mustMkdir(t, filepath.Join(f.root, "agents"))
+	mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+	writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999991, Start: "s1", Pane: "%7", At: time.Now()})
+	if err := schedproc.WriteLaunchRecord(f.root, schedproc.LaunchRecord{Lead: "lead", Root: f.root, PID: 999992, StartedAt: time.Now(), ProcessStart: "sched-start"}); err != nil {
+		t.Fatal(err)
+	}
+	f.sessions[upTmuxSessionName(f.proj)] = true
+	run := holdLock(t, filepath.Join(schedproc.Dir(f.root), "run.lock"))
+	upPIDAlive = func(pid int) bool { return pid == 999992 }
+	upStartToken = func(pid int) (string, bool) { return "sched-start", pid == 999992 }
+	upProcArgv = func(pid int) ([]string, bool) {
+		return []string{"/usr/local/bin/amq-squad", "scheduler", "run", "--project", f.proj, "--lead-pool", "pi:ollama/q:"}, pid == 999992
+	}
+	f.onSignal = func(pid int, sig syscall.Signal) {
+		if pid == 999992 && sig == syscall.SIGTERM {
+			_ = run.Close() // the scheduler exits on SIGTERM
+		}
+	}
+	r, err := runUpJSON(t, f.proj)
+	if err != nil {
+		t.Fatalf("up: %v %+v", err, r.Steps)
+	}
+	if !slices.Equal(f.signals, []string{"999992 terminated"}) || f.callIndex("tmux kill-session") < 0 {
+		t.Fatalf("signals %q calls %q", f.signals, f.calls)
+	}
+	var stopped []string
+	for _, d := range decisionKinds(t, f.root) {
+		if d.Kind == KindUpStoppedLead || d.Kind == KindUpStoppedScheduler {
+			stopped = append(stopped, d.Kind+": "+d.Reason)
+		}
+	}
+	if len(stopped) != 2 || !strings.Contains(stopped[0], "lead pid 999991 is dead") || !strings.Contains(stopped[1], "pid 999992: lead_gone") {
+		t.Fatalf("stop decisions %q", stopped)
+	}
+}
+
+// Row 13 (the stops): a lead whose pid is alive but whose tmux pane is gone
+// is stopped (SIGTERM to the recorded pid with its start stamp), and the
+// stop is a decision.
+func TestUpStopsALeadWhosePaneIsGone(t *testing.T) {
+	f, _ := upWorld(t)
+	mustMkdir(t, filepath.Join(f.root, "agents"))
+	mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+	lead := holdLock(t, filepath.Join(schedproc.Dir(f.root), schedproc.LeadLockName))
+	writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999993, Start: "st", Pane: "%9", At: time.Now()})
+	f.panes["%1"] = upTmuxSessionName(f.proj) // tmux lists the lead's session, not its pane %9
+	f.sessions[upTmuxSessionName(f.proj)] = true
+	upPIDAlive = func(pid int) bool { return pid == 999993 }
+	upStartToken = func(pid int) (string, bool) { return "st", pid == 999993 }
+	f.onSignal = func(pid int, sig syscall.Signal) {
+		if pid == 999993 {
+			_ = lead.Close()
+		}
+	}
+	r, err := runUpJSON(t, f.proj)
+	if err != nil {
+		t.Fatalf("up: %v %+v", err, r.Steps)
+	}
+	if !slices.Equal(f.signals, []string{"999993 terminated"}) {
+		t.Fatalf("signals %q", f.signals)
+	}
+	found := false
+	for _, d := range decisionKinds(t, f.root) {
+		found = found || (d.Kind == KindUpStoppedLead && strings.Contains(d.Reason, "its tmux pane %9 is gone") && strings.Contains(d.Reason, "killed"))
+	}
+	if !found {
+		t.Fatalf("no stop decision: %+v", decisionKinds(t, f.root))
+	}
+}
+
+// Row 18: against a live lead (its lead lock held, its pid alive, its tmux
+// pane present) up refuses lead_running with the pid, the pane and the
+// attach command, and touches neither the lead nor its scheduler: no
+// signal, no tmux kill, no new session, both locks still held.
+func TestUpAgainstALiveLeadRefusesLeadRunningAndTouchesNothing(t *testing.T) {
+	f, _ := upWorld(t)
+	mustMkdir(t, filepath.Join(f.root, "agents"))
+	mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+	leadLock := filepath.Join(schedproc.Dir(f.root), schedproc.LeadLockName)
+	runLock := filepath.Join(schedproc.Dir(f.root), "run.lock")
+	lead := holdLock(t, leadLock)
+	defer lead.Close()
+	sched := holdLock(t, runLock)
+	defer sched.Close()
+	writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999994, Start: "st", Pane: "%4", At: time.Now()})
+	if err := schedproc.WriteLaunchRecord(f.root, schedproc.LaunchRecord{Lead: "lead", Root: f.root, PID: 999995, StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	f.panes["%4"] = "owner-shell"
+	f.sessions[upTmuxSessionName(f.proj)] = true
+	upPIDAlive = func(int) bool { return true }
+	upStartToken = func(pid int) (string, bool) { return "st", true }
+	r, err := runUpJSON(t, f.proj)
+	if err == nil {
+		t.Fatalf("up against a live lead succeeded: %+v", r.Steps)
+	}
+	step := r.Steps[len(r.Steps)-1]
+	if step.Name != "lead" || step.Refusal != schedproc.ReasonLeadRunning || !strings.Contains(step.Detail, "pid 999994") ||
+		!strings.Contains(step.Detail, "tmux pane %4") || !strings.Contains(step.Detail, "tmux attach -t %4") {
+		t.Fatalf("refusal %+v", step)
+	}
+	if len(f.signals) != 0 || f.callIndex("tmux kill-session") >= 0 || f.callIndex("tmux new-session") >= 0 {
+		t.Fatalf("the live lead was touched: signals %q calls %q", f.signals, f.calls)
+	}
+	for _, p := range []string{leadLock, runLock} {
+		if held, _ := lockHeld(p); !held {
+			t.Fatalf("%s is no longer held", p)
+		}
+	}
+	for _, d := range decisionKinds(t, f.root) {
+		if d.Kind == KindUpStoppedLead || d.Kind == KindUpStoppedScheduler {
+			t.Fatalf("a stop was recorded: %+v", d)
+		}
+	}
+}
+
+// The install refuses by name: a build that does not name a tag, one that
+// carries no pi runtime, and a rejected runtime.
+func TestUpInstallRefusesAnUntaggedOrUnembeddedBuildByName(t *testing.T) {
+	for _, tc := range []struct {
+		version, verify, want string
+	}{
+		{"v3.0.2-14-gabcdef1", "", "pi_binary_untagged"},
+		{"v3.1.0-dirty", "", "pi_binary_untagged"},
+		{"dev", "", "pi_binary_untagged"},
+		{"v3.1.0", "error: this amq-squad build carries no pi runtime (build with scripts/build-pi-runtime.sh, tag amqpi)", "pi_not_embedded"},
+		{"v3.1.0", "error: pi runtime /h/.amq-squad/runtime/x rejected (run `amq-squad doctor --fix` or remove it explicitly to repair): changed", "pi_runtime_rejected"},
+		// Codex P2 (9): a non-zero exit, and an exit 0 with no runtime in its
+		// reply, refuse pi_runtime_rejected
+		{"v3.1.0", "error: open /h/.amq-squad/runtime: permission denied", "pi_runtime_rejected"},
+		{"v3.1.0", "exit0:not json at all", "pi_runtime_rejected"},
+		// Codex re-check: valid JSON naming no runtime, and the wrong kind
+		{"v3.1.0", `exit0:{"schema_version":1,"kind":"pi_path","data":{}}`, "pi_runtime_rejected"},
+		{"v3.1.0", `exit0:{"schema_version":1,"kind":"pi_verify","data":{"runtime":"/h/x","ok":true}}`, "pi_runtime_rejected"},
+	} {
+		f, target := upWorld(t)
+		f.version = tc.version
+		if tc.verify != "" {
+			inner := f.run
+			squadRun = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+				if len(args) > 1 && args[0] == "pi" {
+					if text, ok := strings.CutPrefix(tc.verify, "exit0:"); ok {
+						return []byte(text), nil
+					}
+					return []byte(tc.verify), fmt.Errorf("exit status 1")
+				}
+				return inner(ctx, dir, env, name, args...)
+			}
+		}
+		before, _ := os.ReadFile(target)
+		r, err := runUpJSON(t, f.proj)
+		if err == nil || len(r.Steps) != 2 || r.Steps[1].Name != "install" || r.Steps[1].Refusal != tc.want {
+			t.Errorf("%s / %q: %v %+v", tc.version, tc.verify, err, r.Steps)
+		}
+		if after, _ := os.ReadFile(target); string(after) != string(before) {
+			t.Errorf("%s: the installed binary changed on a refusal", tc.version)
+		}
+	}
+}
+
+// Step 2 refuses on a failing doctor row by its name, read from the
+// envelope a failing doctor prints before its error line.
+func TestUpDoctorRefusesAFailingRowByName(t *testing.T) {
+	f, _ := upWorld(t)
+	inner := f.run
+	squadRun = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "doctor" {
+			return []byte(`{"schema_version":1,"kind":"doctor","data":{"team_home":"x","checks":[{"name":"amq version","status":"fail","detail":"amq 0.99.0 is below the floor 0.116.2"}]}}` +
+				"\nerror: doctor: 1 check(s) failed\n"), fmt.Errorf("exit status 2")
+		}
+		return inner(ctx, dir, env, name, args...)
+	}
+	r, err := runUpJSON(t, f.proj)
+	if err == nil || stepNames(r) != "compile:ok install:ok session:ok doctor:refused" || r.Steps[3].Refusal != "doctor_failed" || !strings.Contains(r.Steps[3].Detail, `"amq version"`) {
+		t.Fatalf("%v %+v", err, r.Steps)
+	}
+	if f.callIndex("tmux") >= 0 {
+		t.Fatalf("a step ran after the refusal: %q", f.calls)
+	}
+}
+
+// Codex P2 (5) on #829: squad.yaml compiles before anything is installed or
+// created. A squad.yaml that does not compile refuses at the first step:
+// the installed binary is untouched, no amq, tmux or binary was run, and
+// no AMQ root exists.
+func TestUpCompilesSquadYAMLBeforeInstallingOrCreatingAnything(t *testing.T) {
+	f, target := upWorld(t)
+	before, _ := os.Stat(target)
+	mustWrite(t, filepath.Join(f.proj, "squad.yaml"), strings.Replace(fixtureSquadYAML, "session: s1\n", "", 1))
+	r, err := runUpJSON(t, f.proj)
+	if err == nil || stepNames(r) != "compile:refused" || r.Steps[0].Refusal != "squad_invalid" {
+		t.Fatalf("%v %+v", err, r.Steps)
+	}
+	if after, _ := os.Stat(target); !os.SameFile(before, after) || len(f.calls) != 0 {
+		t.Fatalf("something ran before the compile refused: calls %q", f.calls)
+	}
+	if _, err := os.Stat(filepath.Join(f.proj, ".agent-mail")); err == nil {
+		t.Fatal("an AMQ root was created before the compile refused")
+	}
+}
+
+// liveLeadWorld is a root whose lead lock is held by a lead recorded with
+// pid 999994 in tmux pane %4 (its session root and AMQ root present).
+func liveLeadWorld(t *testing.T) (*upFake, *flock.Exclusive) {
+	t.Helper()
+	f, _ := upWorld(t)
+	mustMkdir(t, filepath.Join(f.root, "agents"))
+	mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+	lead := holdLock(t, filepath.Join(schedproc.Dir(f.root), schedproc.LeadLockName))
+	t.Cleanup(func() { lead.Close() })
+	writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999994, Start: "st", Pane: "%4", At: time.Now()})
+	upPIDAlive = func(int) bool { return true }
+	upStartToken = func(int) (string, bool) { return "st", true }
+	return f, lead
+}
+
+func assertNothingStopped(t *testing.T, f *upFake) {
+	t.Helper()
+	if len(f.signals) != 0 || f.callIndex("tmux kill-session") >= 0 || f.callIndex("tmux new-session") >= 0 {
+		t.Fatalf("something was stopped or started: signals %q calls %q", f.signals, f.calls)
+	}
+	for _, d := range decisionKinds(t, f.root) {
+		if d.Kind == KindUpStoppedLead || d.Kind == KindUpStoppedScheduler {
+			t.Fatalf("a stop was recorded: %+v", d)
+		}
+	}
+}
+
+// Codex P1 (1) on #829: "pane gone" is only a tmux answer that lists the
+// lead's session and not its pane. When tmux cannot be asked (no tmux, no
+// server, a wrong socket, an unparseable reply) up refuses tmux_unavailable
+// naming the probe failure; when tmux answers but lists neither the pane
+// nor the lead's session, up refuses lead_pane_unknown. Neither is
+// lead_running, and both stop nothing.
+func TestUpStopsALeadOnlyWhenTmuxSaysItsPaneIsGone(t *testing.T) {
+	for _, tc := range []struct {
+		name, refusal, detail string
+		setup                 func(f *upFake)
+	}{
+		{"no tmux server", "tmux_unavailable", "no server running", func(f *upFake) { f.tmuxErr = "no server running on /tmp/tmux-501/default" }},
+		{"unparseable reply", "tmux_unavailable", "unparseable reply", func(f *upFake) { f.tmuxJunk = true }},
+		{"lists neither the pane nor the session", "lead_pane_unknown", "lists neither the lead's pane %4 nor its session", func(f *upFake) { f.panes["%2"] = "other" }},
+		{"lists the pane", schedproc.ReasonLeadRunning, "tmux attach -t %4", func(f *upFake) { f.panes["%4"] = "owner" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := liveLeadWorld(t)
+			f.sessions[upTmuxSessionName(f.proj)] = true
+			tc.setup(f)
+			r, err := runUpJSON(t, f.proj)
+			step := r.Steps[len(r.Steps)-1]
+			if err == nil || step.Name != "lead" || step.Refusal != tc.refusal || !strings.Contains(step.Detail, tc.detail) {
+				t.Fatalf("%v %+v", err, step)
+			}
+			assertNothingStopped(t, f)
+		})
+	}
+}
+
+// Codex P1 (2): with the lead lock free and the lead's tmux session
+// present, the session is killed only when lead.json says whose it was; an
+// absent or unreadable record refuses lead_record_unreadable and kills
+// nothing.
+func TestUpKillsNoSessionWithoutTheLeadRecord(t *testing.T) {
+	f, _ := upWorld(t)
+	mustMkdir(t, filepath.Join(f.root, "agents"))
+	mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+	f.sessions[upTmuxSessionName(f.proj)] = true
+	for _, body := range []string{"", "{not json"} {
+		if body != "" {
+			mustWrite(t, filepath.Join(schedproc.Dir(f.root), schedproc.LeadRecordName), body)
+		}
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "lead_record_unreadable" || !f.sessions[upTmuxSessionName(f.proj)] {
+			t.Fatalf("record %q: %v %+v", body, err, step)
+		}
+		assertNothingStopped(t, f)
+	}
+}
+
+// Codex P1 (2) and its re-check: two ups on one root. The second up runs
+// in the window up.lock exists for, after the first started its lead in
+// tmux and before that lead holds the lead lock (forced with a test hook):
+// it refuses up_running and kills nothing. Without up.lock it would find
+// the lead lock free and the first's fresh session present with a readable
+// record, and kill it.
+func TestTwoUpsRacingOneProceedsAndNoLiveLeadDies(t *testing.T) {
+	f, _ := upWorld(t)
+	var second error
+	upAfterLeadStart = func() {
+		upAfterLeadStart = nil
+		b := &upRun{ctx: context.Background(), report: upReport{Project: f.proj, Start: time.Now().UTC(), Steps: []upStep{}}, wait: time.Second, version: "v3.1.0", skipInstall: true}
+		second = b.run()
+	}
+	r, err := runUpJSON(t, f.proj)
+	if err != nil {
+		t.Fatalf("the first up: %v %+v", err, r.Steps)
+	}
+	var refused *upRefusal
+	if !errors.As(second, &refused) || refused.Name != "up_running" {
+		t.Fatalf("the second up: %v", second)
+	}
+	if f.callIndex("tmux kill-session") >= 0 || len(f.signals) != 0 || !f.sessions[upTmuxSessionName(f.proj)] {
+		t.Fatalf("the first up's lead was stopped: calls %q signals %q", f.calls, f.signals)
+	}
+}
+
+// schedWorld is a root whose lead (pid 999991) is dead and whose scheduler
+// (pid 999992, start stamp sched-start, scheduler run --project <repo>)
+// still holds run.lock.
+func schedWorld(t *testing.T) (*upFake, *flock.Exclusive) {
+	t.Helper()
+	f, _ := upWorld(t)
+	mustMkdir(t, filepath.Join(f.root, "agents"))
+	mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+	writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999991, Start: "s1", Pane: "%7", At: time.Now()})
+	if err := schedproc.WriteLaunchRecord(f.root, schedproc.LaunchRecord{Lead: "lead", Root: f.root, PID: 999992, StartedAt: time.Now(), ProcessStart: "sched-start"}); err != nil {
+		t.Fatal(err)
+	}
+	run := holdLock(t, filepath.Join(schedproc.Dir(f.root), "run.lock"))
+	t.Cleanup(func() { run.Close() })
+	upPIDAlive = func(pid int) bool { return pid == 999992 }
+	upStartToken = func(pid int) (string, bool) { return "sched-start", pid == 999992 }
+	upProcArgv = func(pid int) ([]string, bool) {
+		return []string{"/usr/local/bin/amq-squad", "scheduler", "run", "--project", f.proj, "--lead-pool", "pi:ollama/q:"}, pid == 999992
+	}
+	return f, run
+}
+
+// Codex P1 (3): a scheduler is stopped only as its recorded identity: the
+// pid, its recorded start stamp and this project in its scheduler run argv,
+// rechecked before each signal; SIGKILL only when the same identity still
+// holds after SIGTERM's grace; and a stop whose decision cannot be recorded
+// refuses before the lead starts.
+func TestUpStopsASchedulerOnlyAsItsRecordedIdentity(t *testing.T) {
+	t.Run("another project in its argv", func(t *testing.T) {
+		f, _ := schedWorld(t)
+		upProcArgv = func(int) ([]string, bool) {
+			return []string{"/usr/local/bin/amq-squad", "scheduler", "run", "--project", "/elsewhere"}, true
+		}
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "scheduler_unknown" {
+			t.Fatalf("%v %+v", err, step)
+		}
+		assertNothingStopped(t, f)
+	})
+	t.Run("a pid carrying another start stamp", func(t *testing.T) {
+		f, _ := schedWorld(t)
+		upStartToken = func(int) (string, bool) { return "reused", true }
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "scheduler_unknown" {
+			t.Fatalf("%v %+v", err, step)
+		}
+		assertNothingStopped(t, f)
+	})
+	t.Run("the identity changes during SIGTERM's grace", func(t *testing.T) {
+		f, _ := schedWorld(t)
+		upStopWait = 50 * time.Millisecond
+		f.onSignal = func(pid int, sig syscall.Signal) {
+			upStartToken = func(int) (string, bool) { return "reused", true } // the pid now names another process
+		}
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "scheduler_stop_failed" || !slices.Equal(f.signals, []string{"999992 terminated"}) {
+			t.Fatalf("%v %+v signals %q", err, step, f.signals)
+		}
+	})
+	t.Run("a stop decision that cannot be recorded", func(t *testing.T) {
+		f, run := schedWorld(t)
+		f.onSignal = func(int, syscall.Signal) { run.Close() }
+		mustMkdir(t, schedproc.DecisionsPath(f.root)) // decisions.jsonl is a directory: no append
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "decision_unrecorded" || f.callIndex("tmux new-session") >= 0 {
+			t.Fatalf("%v %+v calls %q", err, step, f.calls)
+		}
+	})
+}
+
+// Codex P2 (8) on #829: a symlinked AMQ root or session root is refused by
+// name (Lstat, never followed), and nothing is created through it.
+func TestUpRefusesASymlinkedAMQRootOrSession(t *testing.T) {
+	for _, which := range []string{".agent-mail", filepath.Join(".agent-mail", "s1")} {
+		f, _ := upWorld(t)
+		elsewhere := t.TempDir()
+		link := filepath.Join(f.proj, which)
+		mustMkdir(t, filepath.Dir(link))
+		if err := os.Symlink(elsewhere, link); err != nil {
+			t.Fatal(err)
+		}
+		r, err := runUpJSON(t, f.proj)
+		step := r.Steps[len(r.Steps)-1]
+		if err == nil || step.Name != "session" || step.Refusal != "amq_root_symlinked" || f.callIndex("amq ") >= 0 {
+			t.Fatalf("%s: %v %+v calls %q", which, err, step, f.calls)
+		}
+		if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+			t.Fatalf("%s: something was created through the link: %v", which, entries)
+		}
+	}
+}
+
+// Reviewer on #829: a filesystem without advisory locks is its own refusal,
+// lock_unsupported naming the lock path, never "another up runs" or "a lead
+// lives" (which takeLock's nil once read it as) nor "free"; it stops
+// nothing. Each of up's locks in turn reports flock.ErrUnsupported.
+func TestUpRefusesLockUnsupportedNamingTheLock(t *testing.T) {
+	for _, name := range []string{upLockName, schedproc.LeadLockName, "run.lock"} {
+		t.Run(name, func(t *testing.T) {
+			f, _ := upWorld(t)
+			mustMkdir(t, filepath.Join(f.root, "agents"))
+			mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+			f.sessions[upTmuxSessionName(f.proj)] = true
+			writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999991, Start: "s1", Pane: "%7", At: time.Now()})
+			prev := upTryLock
+			t.Cleanup(func() { upTryLock = prev })
+			upTryLock = func(path string, create bool) (*flock.Exclusive, bool, error) {
+				if filepath.Base(path) == name {
+					return nil, false, flock.ErrUnsupported
+				}
+				return prev(path, create)
+			}
+			r, err := runUpJSON(t, f.proj)
+			step := r.Steps[len(r.Steps)-1]
+			want := filepath.Join(schedproc.Dir(f.root), name)
+			if err == nil || step.Name != "lead" || step.Refusal != "lock_unsupported" || !strings.Contains(step.Detail, want) {
+				t.Fatalf("%v %+v", err, step)
+			}
+			if name == schedproc.LeadLockName {
+				// the lead lock is free on a flock filesystem: the leftover
+				// session would have been killed; here nothing is
+				if !f.sessions[upTmuxSessionName(f.proj)] {
+					t.Fatal("the session was killed")
+				}
+			}
+			assertNothingStopped(t, f)
+		})
+	}
+}
+
+// Codex re-check P1 (1): tmux's reply is parsed line by line with nothing
+// trimmed and exactly two tab-separated fields per row, so a leading tab
+// is unparseable (tmux_unavailable), never a shifted field read as the
+// lead's session; a session whose name only starts with the lead's is not
+// the lead's session (lead_pane_unknown); and the probe's argv is exact.
+func TestUpParsesTmuxsPaneListingExactly(t *testing.T) {
+	t.Run("a leading tab", func(t *testing.T) {
+		f, _ := liveLeadWorld(t)
+		inner := f.run
+		squadRun = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+			if name == "tmux" && args[0] == "list-panes" {
+				f.mu.Lock()
+				f.calls = append(f.calls, "tmux "+strings.Join(args, " "))
+				f.mu.Unlock()
+				return []byte("\t" + upTmuxSessionName(f.proj) + "\t%2\n"), nil
+			}
+			return inner(ctx, dir, env, name, args...)
+		}
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "tmux_unavailable" || !strings.Contains(step.Detail, "unparseable") {
+			t.Fatalf("%v %+v", err, step)
+		}
+		if f.callIndex("tmux list-panes -a -F #{session_name}\t#{pane_id}") < 0 {
+			t.Fatalf("probe argv: %q", f.calls)
+		}
+		assertNothingStopped(t, f)
+	})
+	t.Run("a row with a third field", func(t *testing.T) {
+		f, _ := liveLeadWorld(t)
+		inner := f.run
+		squadRun = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+			if name == "tmux" && args[0] == "list-panes" {
+				return []byte(upTmuxSessionName(f.proj) + "\t%1\textra\n"), nil
+			}
+			return inner(ctx, dir, env, name, args...)
+		}
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "tmux_unavailable" {
+			t.Fatalf("%v %+v", err, step)
+		}
+		assertNothingStopped(t, f)
+	})
+	t.Run("a session named with the lead's as a prefix", func(t *testing.T) {
+		f, _ := liveLeadWorld(t)
+		f.panes["%2"] = upTmuxSessionName(f.proj) + "1"
+		r, err := runUpJSON(t, f.proj)
+		if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "lead_pane_unknown" {
+			t.Fatalf("%v %+v", err, step)
+		}
+		assertNothingStopped(t, f)
+	})
+}
+
+// Codex re-check P2 (3): the scheduler's identity compares its exact argv,
+// argument by argument: the lead's team-mode form with --lead-pool pairs
+// matches, a project path holding a space matches only as one argument,
+// and a second --project, a reordered argv or another binary do not.
+func TestSchedulerArgvIsExact(t *testing.T) {
+	proj := "/repos/my app"
+	for _, tc := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"/bin/amq-squad", "scheduler", "run", "--project", proj}, true},
+		{[]string{"/bin/amq-squad", "scheduler", "run", "--project", proj, "--lead-pool", "pi:ollama/q:"}, true},
+		{[]string{"/bin/amq-squad", "scheduler", "run", "--project", "/repos/my", "app"}, false},
+		{[]string{"/bin/amq-squad", "scheduler", "run", "--project", proj, "--project", "/other"}, false},
+		{[]string{"/bin/amq-squad", "scheduler", "run", "--project", "/other", "--project", proj}, false},
+		{[]string{"/bin/amq-squad", "--project", proj, "scheduler", "run"}, false},
+		{[]string{"/bin/other", "scheduler", "run", "--project", proj}, false},
+		{[]string{"/bin/amq-squad", "scheduler", "run", "--project", proj, "--lead-pool"}, false},
+	} {
+		if got := schedulerArgvIs(tc.argv, proj); got != tc.want {
+			t.Errorf("%q: %v, want %v", tc.argv, got, tc.want)
+		}
+	}
+	// through up: a scheduler whose argv carries a second --project is not
+	// stopped
+	f, _ := schedWorld(t)
+	upProcArgv = func(int) ([]string, bool) {
+		return []string{"/usr/local/bin/amq-squad", "scheduler", "run", "--project", f.proj, "--project", "/other"}, true
+	}
+	r, err := runUpJSON(t, f.proj)
+	if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "scheduler_unknown" {
+		t.Fatalf("%v %+v", err, step)
+	}
+	assertNothingStopped(t, f)
+}
+
+// Codex re-check P2 (4): the lead record is re-read in the same call as the
+// signal, immediately before it: a record that changed after up decided to
+// stop the lead (another lead took over) is never signalled.
+func TestUpSendsNoSignalWhenTheLeadRecordChangedBeforeIt(t *testing.T) {
+	f, _ := upWorld(t)
+	mustMkdir(t, filepath.Join(f.root, "agents"))
+	mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+	lead := holdLock(t, filepath.Join(schedproc.Dir(f.root), schedproc.LeadLockName))
+	defer lead.Close()
+	writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999993, Start: "st", Pane: "%9", At: time.Now()})
+	f.panes["%1"] = upTmuxSessionName(f.proj)
+	upPIDAlive = func(pid int) bool { return pid == 999993 }
+	upStartToken = func(pid int) (string, bool) { return "st", pid == 999993 }
+	upBeforeSignal = func(int, syscall.Signal) {
+		writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 888888, Start: "other", Pane: "%8", At: time.Now()})
+	}
+	r, err := runUpJSON(t, f.proj)
+	if step := r.Steps[len(r.Steps)-1]; err == nil || step.Refusal != "lead_stop_failed" || len(f.signals) != 0 {
+		t.Fatalf("%v %+v signals %q", err, step, f.signals)
+	}
+}

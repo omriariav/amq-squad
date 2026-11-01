@@ -16,6 +16,8 @@ export type Config = {
 	holdTimeoutMs: number;
 	models: string[]; // provider/id the seat may use (registry entry)
 	lead: boolean; // AMQ_SQUAD_LEAD=1: the team lead (dispatch tools)
+	solo?: boolean; // AMQ_SQUAD_SOLO_LEAD=1: the solo lead (propose and apply a team, brief 31-3)
+	project?: string; // AMQ_SQUAD_PROJECT: the repository
 };
 
 const HANDLE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -41,6 +43,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv): Config | { inactive: stri
 		holdTimeoutMs: positive(env.AMQ_SQUAD_HOLD_TIMEOUT_MS, 30 * 60 * 1000),
 		models: (env.AMQ_SQUAD_MODELS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 		lead: env.AMQ_SQUAD_LEAD === "1",
+		solo: env.AMQ_SQUAD_SOLO_LEAD === "1",
+		project: env.AMQ_SQUAD_PROJECT ?? "",
 	};
 }
 
@@ -125,9 +129,19 @@ export type ContextData = {
 	worktree?: string;
 };
 
-export async function contextOf(cfg: Config, runner: Runner = run): Promise<{ ok: true; data: ContextData } | { ok: false; why: string }> {
-	const r = await runner(cfg.bin, ["context", "--me", cfg.me, "--json"], { timeoutMs: cfg.hookTimeoutMs });
-	if (r.spawnError || r.timedOut || r.code !== 0) return { ok: false, why: describe(r, cfg.hookTimeoutMs) };
+// CONTEXT_HOST_TIMEOUT_MS is the floor of context --host's timeout (Codex's
+// re-check on #837, item 2): above Go's one budget for every host command
+// (internal/cli/hook_context.go contextHostDeadline, 3 s) and the verb's own
+// work, so context always finishes killing its command groups before this
+// timeout kills it.
+export const CONTEXT_HOST_TIMEOUT_MS = 10000;
+
+export async function contextOf(cfg: Config, runner: Runner = run, host = false): Promise<{ ok: true; data: ContextData } | { ok: false; why: string }> {
+	const args = ["context", "--me", cfg.me, "--json"];
+	if (host) args.push("--host"); // the team lead's host facts (brief 31-3 PR 2)
+	const timeoutMs = host ? Math.max(cfg.hookTimeoutMs, CONTEXT_HOST_TIMEOUT_MS) : cfg.hookTimeoutMs;
+	const r = await runner(cfg.bin, args, { timeoutMs });
+	if (r.spawnError || r.timedOut || r.code !== 0) return { ok: false, why: describe(r, timeoutMs) };
 	try {
 		const env = JSON.parse(r.stdout);
 		return { ok: true, data: (env.data ?? env) as ContextData };

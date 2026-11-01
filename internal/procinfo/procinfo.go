@@ -82,6 +82,17 @@ func Args(pid int) (string, bool) {
 	return readArgsWithRetry(pid, readPSArgs)
 }
 
+// Argv returns pid's argv, each argument its own string (an argument that
+// holds a space stays one), from the fork-free read only (darwin sysctl,
+// linux /proc): ps flattens the arguments, so there is no ps fallback and
+// ok=false means the argv could not be read exactly.
+func Argv(pid int) ([]string, bool) {
+	if pid <= 0 {
+		return nil, false
+	}
+	return readArgvNative(pid)
+}
+
 // readPSArgs reads pid's command line via ps.
 func readPSArgs(pid int) (args string, ran bool, err error) {
 	out, e := exec.Command("ps", "-ww", "-o", "args=", "-p", fmt.Sprintf("%d", pid)).Output()

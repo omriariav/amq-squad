@@ -16,7 +16,7 @@ const DefaultInline = 2 * time.Second
 
 // Committer runs `amq-squad seat commit` for the scheduler (briefs ruling
 // 4): Step is the same function the verb runs (the CLI passes it), and the
-// scheduler records the result (Complete or RefuseCommit, the quarantine).
+// scheduler records the result (Complete or RefuseCommit).
 //
 // The step runs off the scheduler's tick (v3-5-verifier, the liveness
 // ruling): Commit starts it in its own goroutine, one per task, and answers
@@ -90,7 +90,7 @@ func (c *Committer) Commit(handle string, t task.Task) scheduler.CommitResult {
 		j.cancel()
 		return scheduler.CommitResult{Deferred: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
 	}
-	final := scheduler.CommitResult{ReasonCode: res.ReasonCode, Detail: res.Detail, Route: res.Route, Quarantine: res.Quarantine, RefusedPaths: res.OutsidePaths()}
+	final := scheduler.CommitResult{ReasonCode: res.ReasonCode, Detail: res.Detail, Route: res.Route, RefusedPaths: res.OutsidePaths()}
 	if res.OK {
 		final = scheduler.CommitResult{OK: true, PRRepository: res.PRRepository, PRNumber: res.PRNumber, PRHead: res.PRHead}
 	}
@@ -145,7 +145,7 @@ func (c *Committer) CancelCommit(taskID string) (ended bool) {
 
 // CheckExit is the exit check at a seat exit that is not a done report (R3
 // of the milestone B first pass): ExitStep is seatcommit.ExitCheck with the
-// verb's options; a quarantine there is recorded like the done path's.
+// verb's options; a refusal there closes the seat.
 func (c *Committer) CheckExit(handle, taskID, why string) scheduler.ExitResult {
 	if c.ExitStep == nil {
 		return scheduler.ExitResult{OK: true}
@@ -154,12 +154,9 @@ func (c *Committer) CheckExit(handle, taskID, why string) scheduler.ExitResult {
 	switch {
 	case res.Deferred:
 		return scheduler.ExitResult{Deferred: true, Detail: res.Detail}
-	case res.Quarantine:
-		return scheduler.ExitResult{Quarantine: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
 	case !res.OK:
-		// a refusal the exit step does not name (ledger_tampered above all)
-		// is a block routed to the owner that quarantines the seat, never OK
-		return scheduler.ExitResult{Quarantine: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
+		// a refusal (ledger_tampered) closes the seat, never OK
+		return scheduler.ExitResult{Refused: true, ReasonCode: res.ReasonCode, Detail: res.Detail}
 	}
 	return scheduler.ExitResult{OK: true}
 }

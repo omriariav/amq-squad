@@ -46,7 +46,7 @@ func TestHandlerGatesAndRouting(t *testing.T) {
 	if res, n := hf.serve.result(plainMsg); n != 1 || res != "refused rel-1 "+gateverify.RejectThread+"\nre-ask: answer in the gate thread (event "+reask.EventID[:12]+")" {
 		t.Fatalf("re-ask reply %q (%d)", res, n)
 	}
-	if res, n := hf.serve.result(routeMsg); n != 1 || res != "routed lead-b" {
+	if res, n := hf.serve.result(routeMsg); n != 1 || !routedTo(res, "lead-b") {
 		t.Fatalf("route reply %q (%d)", res, n)
 	}
 	if again := hf.step(t); len(again) != 0 {
@@ -139,12 +139,12 @@ func TestHandlerReplyTable(t *testing.T) {
 		{"routed", func(t *testing.T, hf handlerFixture) string {
 			_, m := hf.dm(t, "@lead-b "+canary, "")
 			return m
-		}, regexp.MustCompile(`^routed lead-b$`)},
+		}, regexp.MustCompile(`^accepted q-[0-9a-f]{12} routed lead-b$`)},
 		{"not routed on", func(t *testing.T, hf handlerFixture) string {
 			hf.h.Target.Leads = append(hf.h.Target.Leads, "ghost")
 			_, m := hf.dm(t, "@ghost "+canary, "")
 			return m
-		}, regexp.MustCompile(`^routed lead-a not_forwarded not_a_lead$`)},
+		}, regexp.MustCompile(`^accepted q-[0-9a-f]{12} routed lead-a not_forwarded not_a_lead$`)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -193,7 +193,7 @@ func TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents(t *testing.T) {
 	if len(got) != 1 || got[0].Gate != nil || got[0].Kind != "route" || len(hf.mail.sent) != 1 || hf.mail.sent[0].Body != "hello" {
 		t.Fatalf("serve's text was acted on: %+v, sent %+v", got, hf.mail.sent)
 	}
-	if res, _ := hf.serve.result(msg); res != "routed lead-a" {
+	if res, _ := hf.serve.result(msg); !routedTo(res, "lead-a") {
 		t.Fatalf("reply %q", res)
 	}
 	if rec, _ := hf.core.Store.Load("rel-2"); hf.core.Store.State(rec, time.Now()) != gatestore.StateOpen {
@@ -237,7 +237,7 @@ func TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents(t *testing.T) {
 	_ = hf.mem.Publish(context.Background(), ghost.Marshal())
 	later := hf.serve.deliver(ghost.ID, hf.core.Pin.Channel, "@lead-b later")
 	hf.step(t)
-	if res, _ := hf.serve.result(later); res != "routed lead-b" {
+	if res, _ := hf.serve.result(later); !routedTo(res, "lead-b") {
 		t.Fatalf("the not_fetched event was marked: %q", res)
 	}
 	if _, err := (&Handler{Inbox: hf.serve}).Step(context.Background()); err == nil {

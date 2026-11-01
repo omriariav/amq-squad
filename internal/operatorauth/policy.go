@@ -21,9 +21,6 @@ const (
 	// GateCredential is the credential-change typed gate (plan 7.1, R30;
 	// S1 open question 5).
 	GateCredential = "credential"
-	// GateQuarantineClear is the Buzz-signed seat clear (phase 5): the
-	// owner's signed answer that lifts a seat's config-change quarantine.
-	GateQuarantineClear = "quarantine_clear"
 )
 
 // ActionCapability is one atomic action admitted by the taxonomy. The catalog
@@ -46,7 +43,6 @@ var actionCatalog = mustActionCatalog([]ActionCapability{
 	{Action: "github_release", GateKind: GateRelease, Aliases: []string{"gh_release"}, HumanOnly: true},
 	{Action: "package_publish", GateKind: GatePublish, HumanOnly: true},
 	{Action: "protected_branch_push", GateKind: GateMerge, Aliases: []string{"push_protected_branch"}, SelfEligible: true},
-	{Action: "quarantine_clear", GateKind: GateQuarantineClear, HumanOnly: true},
 	{Action: "spawn", GateKind: GateSpawn, HumanOnly: true, SelfEligible: false},
 	{Action: "tag", GateKind: GateTag, Aliases: []string{"tag_push", "create_tag", "push_tag"}, HumanOnly: true},
 })
@@ -285,17 +281,4 @@ func Evaluate(kind, action string, allowlist []string) error {
 		return fmt.Errorf("gate kind %q is not allowlisted", item.GateKind)
 	}
 	return nil
-}
-
-// ReasonActionReserved is the refusal of a generic raise of a reserved
-// action.
-const ReasonActionReserved = "action_reserved"
-
-// Reserved reports whether an action may be raised only by its own verb: the
-// Buzz-signed seat clear's quarantine_clear gate is raised by `seat clear`
-// after the owner's pty proof, never by the generic `gate raise`, which any
-// process with the session flags can run.
-func Reserved(action string) bool {
-	canonical, err := CanonicalAction(action)
-	return err == nil && canonical == "quarantine_clear"
 }

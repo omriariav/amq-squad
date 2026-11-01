@@ -242,17 +242,6 @@ func verify(o Options, sh *shadow, res Result) (Result, bool) {
 		return res.defer_("the verifier's evidence: " + err.Error()), true
 	}
 	out.Evidence = path
-	// Rule 10: the owner's config is diffed again after the verifier ran
-	// (seat-authored code ran as the owner): a change discards the verdict,
-	// quarantines the seat and pushes nothing.
-	code, changes, err := exitChanges(o)
-	if err != nil {
-		return res.defer_("exit check after the verifier: " + err.Error()), true
-	}
-	if code != "" {
-		res.Verifier.Result = "discarded"
-		return quarantine(o, res, code, changes, "while the verifier ran (its verdict is discarded, nothing is pushed)"), true
-	}
 	detail = verdictDetail(p, run)
 	verdict := task.Verdict{Verifier: task.ClassVerifier(p.class), Result: out.Result, Source: VerifierSource, Detail: detail, Tree: res.Tree, CommandDigest: p.digest}
 	if _, err := store.RecordVerdict(o.Task.ID, verdict, o.Now()); err != nil {

@@ -112,7 +112,6 @@ func TestDoctorHostFileChecks(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
 	hostWrite(t, filepath.Join(home, ".zshrc"), "export GEMINI_API_KEY=AIzaSecretValue\n")
-	hostWrite(t, filepath.Join(home, ".amq-squad", "preflight", "claude-settings.json"), "{\n  \"model\": \"opus\"\n}\n")
 	hostWrite(t, filepath.Join(home, ".claude", "settings.json"), "{\n  \"model\": \"sonnet\"\n}\n")
 	hostWrite(t, filepath.Join(home, ".codex", "config.toml"), "[projects.\"/elsewhere\"]\ntrust_level = \"trusted\"\n")
 	h := hostWith(t, home, "amq", "codex")
@@ -124,12 +123,8 @@ func TestDoctorHostFileChecks(t *testing.T) {
 	if profile.Status != doctorWarn || !strings.Contains(profile.Detail, "GEMINI_API_KEY") || strings.Contains(profile.Detail, "AIza") {
 		t.Fatalf("shell profile: %+v", profile)
 	}
-	diff := findCheck(data.Checks, "owner config/claude-settings.json")
-	if diff.Status != doctorWarn || !strings.Contains(diff.Detail, `-  "model": "opus"`) || !strings.Contains(diff.Detail, `+  "model": "sonnet"`) {
-		t.Fatalf("config diff: %+v", diff)
-	}
-	if c := findCheck(data.Checks, "owner config/codex-config.toml"); c.Status != doctorOK {
-		t.Fatalf("codex config without preflight: %+v", c)
+	if c := findCheck(data.Checks, "owner config/claude-settings.json"); c != nil {
+		t.Fatalf("the preflight diff row is deleted (brief 31-1): %+v", c)
 	}
 	trust := findCheck(data.Checks, "codex trust")
 	if trust.Status != doctorWarn || !strings.Contains(trust.Detail, canonicalFilesystemPath(project)) || !strings.Contains(trust.Detail, "amq-squad trust") {

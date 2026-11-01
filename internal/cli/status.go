@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/activity"
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/status"
@@ -90,6 +91,13 @@ func buildStatusContract(root, project, version string, now time.Time) status.St
 	var warnings []string
 	if err != nil {
 		warnings = append(warnings, "gate store: "+err.Error())
+	}
+	if ids, err := (gatestore.Store{Root: root}).IDs(); err == nil {
+		for _, id := range ids {
+			if kind, legacy := (gatestore.Store{Root: root}).Legacy(id); legacy {
+				warnings = append(warnings, "gate store: "+gatestore.LegacyLine(id, kind))
+			}
+		}
 	}
 	for _, g := range records {
 		since := time.Time{}

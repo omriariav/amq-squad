@@ -23,13 +23,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
-	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -69,9 +67,6 @@ type Options struct {
 	// BindPR binds a PR the step opened to the task at once (the store's
 	// BindPR, 3-2's binding), so a re-run finds it bound.
 	BindPR func(repository string, number int, head string) error
-	// Clear verifies the owner's signed clear of a quarantine (the owner's
-	// trust store); nil verifies nothing, so no clear counts.
-	Clear ClearVerifier
 	// Ctx cancels the step (the task was cancelled while the step ran, P2-1
 	// of the second pass): a running verifier's group is killed, no verdict
 	// is recorded and nothing is pushed. nil never cancels.
@@ -89,31 +84,27 @@ type Change struct {
 // Result is the step's answer. OK, a refusal (ReasonCode, Route) or
 // Deferred (an infrastructure failure: nothing was decided).
 type Result struct {
-	OK             bool                    `json:"ok"`
-	Deferred       bool                    `json:"deferred,omitempty"`
-	ReasonCode     string                  `json:"reason_code,omitempty"`
-	Route          string                  `json:"route,omitempty"`
-	Detail         string                  `json:"detail,omitempty"`
-	Task           string                  `json:"task"`
-	Seat           string                  `json:"seat"`
-	Branch         string                  `json:"branch,omitempty"`
-	Parent         string                  `json:"parent,omitempty"`
-	Tree           string                  `json:"tree,omitempty"`
-	Commit         string                  `json:"commit,omitempty"`
-	Pushed         bool                    `json:"pushed"`
-	Changes        []Change                `json:"changes"`
-	Lines          int                     `json:"lines"`
-	Files          int                     `json:"files"`
-	CapLines       int                     `json:"cap_lines"`
-	CapFiles       int                     `json:"cap_files"`
-	DeclaredDigest string                  `json:"declared_digest,omitempty"`
-	DiffDigest     string                  `json:"diff_digest,omitempty"`
-	Violations     []Violation             `json:"violations,omitempty"`
-	Config         []seatexec.ConfigChange `json:"config_changes,omitempty"`
-	Notes          []string                `json:"notes,omitempty"`
-	// Quarantine is set on a global_config_changed or claude_config_changed
-	// refusal: the caller quarantines the seat (no new lease) and closes it.
-	Quarantine bool `json:"quarantine,omitempty"`
+	OK             bool        `json:"ok"`
+	Deferred       bool        `json:"deferred,omitempty"`
+	ReasonCode     string      `json:"reason_code,omitempty"`
+	Route          string      `json:"route,omitempty"`
+	Detail         string      `json:"detail,omitempty"`
+	Task           string      `json:"task"`
+	Seat           string      `json:"seat"`
+	Branch         string      `json:"branch,omitempty"`
+	Parent         string      `json:"parent,omitempty"`
+	Tree           string      `json:"tree,omitempty"`
+	Commit         string      `json:"commit,omitempty"`
+	Pushed         bool        `json:"pushed"`
+	Changes        []Change    `json:"changes"`
+	Lines          int         `json:"lines"`
+	Files          int         `json:"files"`
+	CapLines       int         `json:"cap_lines"`
+	CapFiles       int         `json:"cap_files"`
+	DeclaredDigest string      `json:"declared_digest,omitempty"`
+	DiffDigest     string      `json:"diff_digest,omitempty"`
+	Violations     []Violation `json:"violations,omitempty"`
+	Notes          []string    `json:"notes,omitempty"`
 	// PRRepository, PRNumber and PRHead are the task binding the commit
 	// step writes (3-2's pr_repository, pr_number, pr_head: the grant's
 	// repository, the PR it opened, 0 when none, and the head it pushed).
@@ -145,11 +136,7 @@ func (r Result) defer_(detail string) Result {
 //
 // The ledger contract (3.0.2 t24): a step refused or deferred by the path
 // checks or the binding check leaves the ledger byte-for-byte unchanged. No
-// ledger write of any kind comes before the binding check passes: a
-// quarantine records its evidence only after it (and still quarantines the
-// seat, with nothing written, when it does not pass). After the binding
-// check, a verified quarantine clear may be lifted onto the ledger before
-// the verifier runs.
+// ledger write of any kind comes before the binding check passes.
 func Run(o Options) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
 	// A dry run also takes a task blocked by a refusal (the widening check).
@@ -198,59 +185,13 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// exitChanges is amendment 28's check at a seat exit: the owner's global
-// agent config against the preflight copy, a Claude seat's config dir
-// against its launch digest, and a quarantine the store already holds for
-// the seat (the hook's context call found the dir changed during the run).
-// It returns the reason code and the changes; "" when nothing changed.
-func exitChanges(o Options) (string, []seatexec.ConfigChange, error) {
-	changes, err := seatexec.PreflightDiff(o.Home)
-	if err != nil {
-		return "", nil, err
-	}
-	code := ""
-	if len(changes) > 0 {
-		code = ReasonGlobalConfig
-	}
-	if rec, err := stagedRecord(o.Root, o.Handle); err == nil && rec.Runtime == "claude" {
-		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
-		if drift, detail := claudeseat.ConfigDrift(rec.Root, rec.Handle, rec.LaunchID, rec.ClaudeConfig); drift {
-			changes = append(changes, seatexec.ConfigChange{File: dir, Preflight: "the launch digest " + rec.ClaudeConfig, Detail: detail})
-			code = firstNonEmpty(code, ReasonClaudeConfig)
-		}
-		// P1-10: a Claude seat that ran (an accepted proof in the core's
-		// launch ledger) with no hook report since its launch had its hook
-		// removed.
-		if proof, err := launch.ReadProof(rec.Root, rec.Handle); err == nil && rec.ClaudeConfig != "" && proof.PID > 0 {
-			if n, err := claudeseat.ReportsSince(rec.Root, rec.Handle, proof.At); err != nil || n == 0 {
-				changes = append(changes, seatexec.ConfigChange{File: dir, Detail: fmt.Sprintf("no hook context report since the launch at %s: a removed hook is the drift signal", proof.At.UTC().Format(time.RFC3339))})
-				code = firstNonEmpty(code, claudeseat.HooksSilent)
-			}
-		}
-	}
-	if code != "" && clearedOnThisLaunch(o, code) {
-		code, changes = "", nil
-	}
-	if code == "" {
-		qs, err := task.Quarantined(task.DirFor(o.Root))
-		if err != nil {
-			return "", nil, err
-		}
-		for _, q := range qs {
-			if q.Handle == o.Handle {
-				changes = append(changes, seatexec.ConfigChange{File: "task store quarantine", Detail: q.Reason + ": " + q.Detail})
-				code = firstNonEmpty(q.Reason, ReasonGlobalConfig)
-			}
-		}
-	}
-	return code, changes, nil
-}
-
 // ExitCheck runs the exit check at a seat exit that is not a done report
-// (failed, gone, expired: R3 of the milestone B first pass): on a change the
-// seat's tree is snapshotted onto the ledger as evidence and the result
-// quarantines the seat, exactly as at a done report. OK means nothing
-// changed. why names the exit (failed, gone, expired) in the detail.
+// (failed, gone, expired: R3 of the milestone B first pass): the evidence
+// refs the sealed ledger records must still resolve to their trees
+// (ledger_tampered otherwise, routed to the owner). OK means the ledger and
+// its evidence are intact. why names the exit (failed, gone, expired) in the
+// detail. Brief 31-1 deleted its config checks (the preflight diff, the
+// Claude config dir digest, the silent hook) and the quarantine with them.
 func ExitCheck(o Options, why string) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
 	o = o.withDefaults()
@@ -260,23 +201,11 @@ func ExitCheck(o Options, why string) Result {
 	err := withLedgerTryLock(o.Root, o.Handle, func() error {
 		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
 			out = res.tamperedRefusal(terr)
+			out.Detail += " (at the seat's exit: " + why + ")"
 			return nil
 		}
-		if l, lerr := ReadLedger(o.Root, o.Handle); lerr == nil && l.Quarantine != nil && l.Quarantine.ClearedAt != nil && !l.Quarantine.Clear.Verified(o.Handle, l.Quarantine, o.Clear) {
-			res.Quarantine = true
-			out = res.refuse(ReasonQuarantineUnverified, task.RouteOwner, unverifiedDetail(o.Handle))
-			return nil
-		}
-		code, changes, err := exitChanges(o)
-		switch {
-		case err != nil:
-			out = res.defer_("exit check: " + err.Error())
-		case code != "":
-			out = quarantine(o, res, code, changes, "at the seat's exit ("+why+")")
-		default:
-			res.OK = true
-			out = res
-		}
+		res.OK = true
+		out = res
 		return nil
 	})
 	if err != nil {
@@ -289,34 +218,10 @@ func run(o Options, res Result) Result {
 	if o.Git == "" {
 		return res.defer_("git is not on PATH")
 	}
-	// Amendment 28 and R3: the exit check at every seat exit, before anything
-	// is committed. A change blocks before the commit step and quarantines
-	// the seat.
+	// The evidence check at every step, before anything is committed.
 	if !o.DryRun {
 		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
 			return res.tamperedRefusal(terr)
-		}
-		code, changes, err := exitChanges(o)
-		if err != nil {
-			return res.defer_("exit check: " + err.Error())
-		}
-		if code != "" {
-			// A lease of another task on the ledger is its own refusal, before
-			// any quarantine: nothing is written (Codex re-check on 7c1a8098).
-			if l, err := ReadLedger(o.Root, o.Handle); err == nil {
-				if _, _, _, why := l.taskStart(o.Handle, o.Task.ID); why != "" {
-					return res.refuse(ReasonLeaseTaskMismatch, task.RouteLead, why+"; nothing is written and the seat is not quarantined by this step")
-				}
-			}
-			// The quarantine's evidence is a ledger write: it is made only
-			// once the binding check passed. A binding check that does not
-			// pass still quarantines the seat (the task store, the caller),
-			// with nothing written to the ledger.
-			if why := quarantineGate(o); why != "" {
-				res.Config, res.Quarantine = changes, true
-				return res.refuse(code, task.RouteOwner, fmt.Sprintf("the owner's agent config changed during the seat's run (%d changes); the seat is quarantined until the owner clears it (amq-squad seat clear --seat %s); the binding check did not pass (%s), so no tree is kept on the commit ledger", len(changes), o.Handle, why))
-			}
-			return quarantine(o, res, code, changes, "")
 		}
 	}
 	if o.GrantsErr != nil {
@@ -382,30 +287,6 @@ func run(o Options, res Result) Result {
 		}
 	}
 	res.Tree = tree
-	// lift is a verified clear the step lifts: written to the ledger only once
-	// the binding check passed, so a refused or deferred step leaves the
-	// ledger unchanged (Codex pass on 2477f10f, finding 3).
-	var lift *LedgerQuarantine
-	if q := ledger.Quarantine; q != nil {
-		switch {
-		case q.ClearedAt == nil && o.DryRun:
-			// a dry run of a quarantined seat has nothing to verify
-		case q.ClearedAt == nil:
-			res.Quarantine = true
-			return res.refuse(firstNonEmpty(q.Reason, ReasonGlobalConfig), task.RouteOwner, fmt.Sprintf("seat %s is quarantined since %s (task %s); nothing of its work is committed until the owner clears it (amq-squad seat clear --seat %s)", o.Handle, q.At.Format(time.RFC3339), q.Task, o.Handle))
-		case !q.Clear.Verified(o.Handle, q, o.Clear):
-			// every mode of the commit step, a dry run included, verifies
-			// the clear and refuses on any failure, an unreadable gate store too
-			res.Quarantine = true
-			return res.refuse(ReasonQuarantineUnverified, task.RouteOwner, unverifiedDetail(o.Handle))
-		case o.DryRun:
-		case q.Task == o.Task.ID && q.Tree != "" && q.Tree != tree:
-			return res.refuse(ReasonQuarantineTree, task.RouteOwner, fmt.Sprintf("the seat's tree changed after the quarantine: the owner cleared %s, the worktree is now %s", q.Tree, tree))
-		}
-		if !o.DryRun && q.ClearedAt != nil {
-			lift = q
-		}
-	}
 	raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 	if err != nil {
 		return res.defer_(err.Error())
@@ -461,16 +342,8 @@ func run(o Options, res Result) Result {
 	if r, stop := prCheck(o, sh.dir, ledger, res); stop {
 		return r
 	}
-	if lift != nil {
-		ledger.Cleared = append(ledger.Cleared, *lift)
-		ledger.Quarantine = nil
-		if err := writeLedger(o.Root, ledger); err != nil {
-			return res.defer_("commit ledger: " + err.Error())
-		}
-		res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+lift.Task)
-	}
 	// v3-5-verifier rule 7: the class's verifier on the snapshot tree, the
-	// owner-config diff again, the verdict; only a pass reaches the push.
+	// verdict; only a pass reaches the push.
 	res, done := verify(o, sh, res)
 	if done {
 		return res
@@ -518,79 +391,6 @@ func (l Ledger) base(g grants.Resolved) string {
 	return firstNonEmpty(l.BaseBranch, g.DefaultBranch, "main")
 }
 
-// quarantine is the config-change block: before the commit step, the seat's
-// tree is snapshotted (never committed or pushed) and kept on the ledger
-// with its diff digest and the config diff as the block's evidence; the
-// caller quarantines the seat (task.Store.Quarantine: no new lease) and
-// closes it. Only an existing ledger holds the evidence; without one the
-// refusal still stands and names why no tree was kept.
-func quarantine(o Options, res Result, code string, changes []seatexec.ConfigChange, when string) Result {
-	res.Config, res.Quarantine = changes, true
-	var files []string
-	for _, c := range changes {
-		files = append(files, c.File+" ("+c.Detail+")")
-	}
-	what := "the owner's global agent config changed during the seat's run"
-	if code == ReasonClaudeConfig {
-		what = "the seat's Claude config dir changed during its run"
-	}
-	if when != "" {
-		what += " " + when
-	}
-	detail := what + ": " + strings.Join(files, "; ") + "; the seat is quarantined and its diff kept uncommitted until the owner clears it (amq-squad seat clear --seat " + o.Handle + ")"
-	q := LedgerQuarantine{Task: o.Task.ID, Reason: code, Config: changes, At: o.Now().UTC()}
-	if rec, err := stagedRecord(o.Root, o.Handle); err == nil {
-		q.Launch = rec.LaunchID
-	}
-	l, lerr := ReadLedger(o.Root, o.Handle)
-	if lerr == nil && l.Quarantine != nil && l.Quarantine.ClearedAt == nil {
-		return res.refuse(code, task.RouteOwner, detail) // the first evidence stays
-	}
-	if rec, err := stagedRecord(o.Root, o.Handle); err != nil {
-		q.Snapshot = err.Error()
-	} else if lerr != nil {
-		q.Snapshot = "no commit ledger: " + lerr.Error()
-	} else if l.Seeded && l.Base == "" {
-		q.Snapshot = "seed entry: no base recorded yet, no diff yet"
-	} else if rp, err := worktreePaths(rec.Worktree); err != nil {
-		q.Snapshot = err.Error()
-	} else if sh, err := newShadow(o.Git, harnessEnv(o.Env), rp); err != nil {
-		q.Snapshot = err.Error()
-	} else {
-		defer sh.close()
-		q.Parent = l.Parent()
-		if tree, err := snapshot(sh, q.Parent); err != nil {
-			q.Snapshot = err.Error()
-		} else if raw, err := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", q.Parent, tree); err != nil {
-			q.Snapshot = err.Error()
-		} else {
-			q.Tree, q.DiffDigest = tree, digest(raw)
-			res.Parent, res.Tree, res.DiffDigest = q.Parent, tree, q.DiffDigest
-			if lerr == nil {
-				repo := seatRepo(o.Git, harnessEnv(o.Env), rp)
-				expireEvidence(repo, &l, o.Now())
-				if ref, err := anchorEvidence(repo, &l, o.Task.ID, tree, o.Now()); err != nil {
-					detail += "; the kept tree could not be anchored: " + err.Error()
-				} else {
-					q.EvidenceRef = ref
-				}
-			}
-		}
-	}
-	if lerr == nil {
-		if l.Quarantine != nil && l.Quarantine.Clear != nil {
-			l.Cleared = append(l.Cleared, *l.Quarantine)
-		}
-		l.Quarantine = &q
-		if err := writeLedger(o.Root, l); err != nil {
-			detail += "; the evidence could not be written: " + err.Error()
-		}
-	} else {
-		detail += "; no tree kept: " + q.Snapshot
-	}
-	return res.refuse(code, task.RouteOwner, detail)
-}
-
 // CleanSeat returns a seat's worktree to a clean base before the seat gets
 // a new lease (2b-2 milestone B, the R19 live finding: after a refused task
 // was reset, the seat's next lease inherited the refused diff and every
@@ -608,7 +408,7 @@ func quarantine(o Options, res Result, code string, changes []seatexec.ConfigCha
 // dropped too: the ledger is the core's record, never the seat's history.
 // The whole reset runs under the task store's lock with the seat free (R3):
 // no claim can land between the check and the reset.
-func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, now time.Time) (discarded bool, err error) {
+func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discarded bool, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
 			return false, err
@@ -637,7 +437,7 @@ func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, n
 			return err
 		}
 		var derr error
-		discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
+		discarded, derr = cleanSeat(root, handle, gitBin, env, list, now)
 		if derr != nil {
 			return derr
 		}
@@ -650,7 +450,7 @@ func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, n
 // and the reset.
 var beforeReset func()
 
-func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, list []task.Task, now time.Time) (bool, error) {
+func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now time.Time) (bool, error) {
 	rec, err := stagedRecord(root, handle)
 	if err != nil {
 		return false, err
@@ -658,9 +458,6 @@ func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, l
 	l, err := ReadLedger(root, handle)
 	if err != nil {
 		return false, err
-	}
-	if q := l.Quarantine; q != nil && (q.ClearedAt == nil || !q.Clear.Verified(handle, q, clear)) {
-		return false, fmt.Errorf("seat %s is quarantined; its tree is evidence and is not cleaned", handle)
 	}
 	// The worktree is on the resting branch, or on the task branch of the
 	// lease the ledger records: the lease record decides, never the name.
@@ -1413,27 +1210,6 @@ func branchPR(o Options, run func(args ...string) (string, error), l Ledger, bra
 	return mine, "", nil
 }
 
-// quarantineGate is the binding check of a step that would quarantine the
-// seat (prCheck on the task's branch, run before the quarantine's ledger
-// write): the refusal or deferral's reason code and detail, "" when it
-// passes or there is no binding to check (no ledger). The caller refuses a
-// lease of another task (lease_task_mismatch) before it gets here.
-func quarantineGate(o Options) string {
-	l, err := ReadLedger(o.Root, o.Handle)
-	if err != nil {
-		return ""
-	}
-	branch, _, _, why := l.taskStart(o.Handle, o.Task.ID)
-	if why != "" {
-		return ReasonLeaseTaskMismatch + ": " + why
-	}
-	r, stop := prCheck(o, os.TempDir(), l, Result{Task: o.Task.ID, Seat: o.Handle, Branch: branch})
-	if !stop {
-		return ""
-	}
-	return r.ReasonCode + ": " + r.Detail
-}
-
 // prCheck is the binding check before the commit and the push (3.0.2 t24,
 // the v31 finding: t20's commit was pushed onto seat/dev, which carried PR
 // #815 bound to t12, and only then refused). With --open-pr, the task's
@@ -1593,34 +1369,4 @@ func firstLine(s string) string {
 		}
 	}
 	return strings.TrimSpace(s)
-}
-
-func unverifiedDetail(handle string) string {
-	return fmt.Sprintf("seat %s's quarantine carries a clear that is not the owner's verified record (the owner's signature, and for a Buzz-signed clear the owner's answer in the gate store); it stays quarantined", handle)
-}
-
-// clearedOnThisLaunch says whether the owner already cleared this condition
-// on the seat's current launch (a verified ClearRecord, pending or lifted, that
-// names this launch and this condition): the same silence or drift is not
-// raised again, and a new lease is a new launch, so detection runs fresh.
-func clearedOnThisLaunch(o Options, code string) bool {
-	rec, err := stagedRecord(o.Root, o.Handle)
-	if err != nil || rec.LaunchID == "" {
-		return false
-	}
-	l, err := ReadLedger(o.Root, o.Handle)
-	if err != nil {
-		return false
-	}
-	qs := l.Cleared
-	if l.Quarantine != nil {
-		qs = append(append([]LedgerQuarantine{}, qs...), *l.Quarantine)
-	}
-	for i := range qs {
-		q := &qs[i]
-		if q.ClearedAt != nil && q.Clear != nil && q.Clear.Condition == code && q.Clear.Launch == rec.LaunchID && q.Clear.Verified(o.Handle, q, o.Clear) {
-			return true
-		}
-	}
-	return false
 }

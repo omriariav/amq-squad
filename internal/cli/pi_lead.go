@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 )
@@ -37,20 +39,20 @@ var leadBuiltinRules string
 const leadUsage = `amq-squad lead - start the lead on the built-in pi
 
 Usage:
-  amq-squad lead [--team [--scheduler-seats FILE [--trust] [--lead HANDLE]]] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
+  amq-squad lead [--team] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
 
 Without an AMQ identity (AM_ME, AM_ROOT) the lead runs in solo mode for this
 directory: its state lives under ~/.amq-squad/solo/<dir>-<digest>/ and nothing
 is written inside the repository. --team starts the team-lead role, which
 decomposes and dispatches through the task store and never edits code.
---scheduler-seats FILE (team mode) starts the squad's scheduler process
-(amq-squad scheduler run --seats FILE --lead <this seat>) beside the lead,
-restarts it if it exits (not after a refused roster launch) and stops it
-when the lead ends. --trust passes the owner's standing answer to AMQ's
-trust confirmation through to scheduler run --trust for this session.
-The pi lead uses that seats file's AMQ session root, so its task tools see
-the scheduler's store. --lead names their shared handle (default AM_ME,
-else "lead").
+In a repository with a squad.yaml, --team is the squad's lead: it takes the
+root's lead lock (a second lead on the same root is refused lead_running,
+naming the first's pid and tmux pane), starts the squad's scheduler process
+(amq-squad scheduler run --project <repo>) beside the lead, restarts it if
+it crashes (not after a refusal) and stops it when the lead ends. The
+handle, the session and the seats come from squad.yaml (its lead: key); the
+pi lead uses that session's AMQ root, so its task tools see the scheduler's
+store.
 --model restricts the lead to these models (default ollama/qwen3.6:27b, the
 locally verified entry); pass pi arguments after "--".
 
@@ -71,9 +73,6 @@ func runLead(args []string) error {
 	fs.SetOutput(io.Discard)
 	var f piRunFlags
 	team := fs.Bool("team", false, "team-lead role: decompose and dispatch, never edit")
-	schedSeats := fs.String("scheduler-seats", "", "team mode: start and supervise the squad's scheduler process over this typed seat list")
-	trust := fs.Bool("trust", false, "team mode: pass the owner's standing trust of this squad's launch subjects to scheduler run")
-	leadHandle := fs.String("lead", "", "team mode: lead handle shared by the pi tools and scheduler (default AM_ME, else lead)")
 	fs.Var(&f.models, "model", "PROVIDER/ID the lead may use (repeatable)")
 	fs.StringVar(&f.thinking, "thinking", "", "pi thinking level")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the launch as JSON and do not exec")
@@ -95,33 +94,69 @@ func runLead(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "amq-squad lead: model %s (%s)\n", model, src)
 	}
+	if !*team {
+		// R53 after the plan reviewer: a marked repository never starts a
+		// team by itself; the solo lead comes up solo and offers the two ways
+		// back (its pi says it again on the first turn)
+		if cwd, err := os.Getwd(); err == nil {
+			project := projectTop(cwd)
+			if root, err := soloRootOf(project); err == nil {
+				if m, ok := markerInfo(root, project); ok {
+					fmt.Fprintf(os.Stderr, "amq-squad lead: %s\n", resumeOffer(m))
+				}
+			}
+		}
+	}
 	f.lead = *team
 	// The team lead's tool set (amendment 26) is applied by piLaunch for
 	// every lead launch, here and under an AMQ launch.
 	piArgs := fs.Args()
 	var teamIdentity piruntime.TeamIdentity
 	var teamProject string
-	if *schedSeats != "" {
-		// Ruling 15: the team mode starts and supervises the scheduler.
-		if !*team {
-			return usageErrorf("lead: --scheduler-seats needs --team")
-		}
-	} else if *trust {
-		return usageErrorf("lead: --trust needs --team --scheduler-seats")
-	}
-	if *schedSeats != "" {
-		var err error
-		teamIdentity, teamProject, err = resolveTeamLeadIdentity(*schedSeats, *leadHandle)
+	if *team {
+		cwd, err := os.Getwd()
 		if err != nil {
+			return err
+		}
+		teamProject = projectTop(cwd)
+	}
+	if *team && squadPresent(teamProject) {
+		// a lead --team under another lead (a renamed binary in its shell)
+		// is refused; AM_ME is not read here, since an AMQ launch carries
+		// the lead's own identity
+		if err := underSoloLead("lead --team", true, false); err != nil {
+			return fmt.Errorf("lead: %w", err)
+		}
+		// Ruling 15 and brief 31-1: in a repository with a squad.yaml the
+		// team mode takes the root's lead lock, then starts and supervises
+		// the scheduler over that squad.yaml.
+		var err error
+		if teamIdentity, err = resolveTeamLeadIdentity(teamProject); err != nil {
 			return fmt.Errorf("lead: resolve the team identity: %w", err)
 		}
-		sup, err := startLeadScheduler(*schedSeats, teamIdentity.Handle, leadPools(f.models, f.thinking), *trust)
+		lock, err := UpLeadLock(teamProject, teamIdentity.Root)
+		if err != nil {
+			return fmt.Errorf("lead: %w", err)
+		}
+		defer lock.Release()
+		if os.Getenv(leadStartEnv) == "" {
+			// the start of this launch, for the launch budget (brief 31-1)
+			os.Setenv(leadStartEnv, time.Now().UTC().Format(time.RFC3339Nano))
+		}
+		sup, err := UpScheduler(teamProject, teamIdentity.Root, leadPools(f.models, f.thinking))
 		if err != nil {
 			return fmt.Errorf("lead: start the scheduler process: %w", err)
 		}
 		defer sup.stop()
-	} else if *leadHandle != "" {
-		return usageErrorf("lead: --lead needs --team --scheduler-seats FILE")
+		// A lead that exits non-zero ends through piExit (os.Exit), which
+		// skips the deferred stop: the scheduler stops first (brief 31-1).
+		prevExit := piExit
+		piExit = func(code int) {
+			sup.stop()
+			lock.Release()
+			prevExit(code)
+		}
+		defer func() { piExit = prevExit }()
 	}
 	if teamIdentity.Handle != "" {
 		overlay := teamIdentity.Overlay()
@@ -171,8 +206,58 @@ func runLead(args []string) error {
 	if err != nil {
 		return err
 	}
+	if !*team && !f.dryRun {
+		// The solo lead proposes a team from the conversation and, on the
+		// owner's confirmation, starts it in this process (brief 31-3): its
+		// pi gets the two team tools and the start socket.
+		solo["AMQ_SQUAD_SOLO_LEAD"] = "1"
+		starter := newLeadStarter(solo["AM_ROOT"], solo["AMQ_SQUAD_PROJECT"], leadVersion, leadPools(f.models, f.thinking))
+		sock, err := serveLeadStart(starter)
+		if err != nil {
+			return fmt.Errorf("lead: the start socket: %w", err)
+		}
+		solo[leadStartSocketEnv] = sock
+		defer starter.close()
+		// the per-spawn nonce, handed to pi over fd 3 (runProcess); the
+		// environment names only the descriptor
+		nonce, err := newLeadNonce()
+		if err != nil {
+			return fmt.Errorf("lead: the nonce for its pi: %w", err)
+		}
+		starter.setNonce(nonce)
+		piSpawnNonce = nonce
+		defer func() { piSpawnNonce = "" }()
+		solo[leadNonceFDEnv] = "3"
+		// the TUI door's one accepted peer: the pi this process spawns
+		piStartedHook = func(pid int) {
+			stamp, _ := procinfo.StartToken(pid)
+			starter.setPi(pid, stamp)
+		}
+		defer func() { piStartedHook = nil }()
+		prevExit := piExit
+		piExit = func(code int) {
+			starter.close()
+			prevExit(code)
+		}
+		defer func() { piExit = prevExit }()
+	}
 	return piLaunch(piLaunchSpec{Seat: "lead", Flags: f, PiArgs: piArgs, Overlay: solo})
 }
+
+// piSpawnNonce is the nonce runProcess hands the pi it spawns over fd 3
+// (the solo lead's, set while it runs).
+var piSpawnNonce string
+
+// piStartedHook runs with the pid of the pi process runProcess started
+// (the solo lead records it with its start stamp).
+var piStartedHook func(pid int)
+
+// serveLeadStart binds the solo lead's start socket (a test seam).
+var serveLeadStart = func(s *leadStarter) (string, error) { return s.serve() }
+
+// leadVersion is this build's version for the start's roster read (set by
+// the command dispatcher).
+var leadVersion = ""
 
 var soloSlugRE = regexp.MustCompile(`[^a-z0-9-]+`)
 

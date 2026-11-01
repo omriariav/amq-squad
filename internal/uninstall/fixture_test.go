@@ -98,7 +98,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(f.wt, "left-behind.txt"), "work\n", 0o644)
-	if ok, err := seatcommit.CleanSeat(f.root, "seat-a", "git", nil, nil, time.Now()); err != nil || !ok {
+	if ok, err := seatcommit.CleanSeat(f.root, "seat-a", "git", nil, time.Now()); err != nil || !ok {
 		t.Fatalf("clean seat: %v %v", ok, err)
 	}
 	l, err := seatcommit.ReadLedger(f.root, "seat-a")

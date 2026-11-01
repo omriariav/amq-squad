@@ -46,6 +46,10 @@ type Config struct {
 	// MaxSeats caps live leases, and a gone seat is replaced only by the
 	// lead's relaunch of the whole roster. Empty: seats start on demand.
 	Roster []RosterSeat
+	// FirstMessage, when set, finds a seat's first AMQ message sent at or
+	// after since (brief 31-1, the launch budget's second mark): the tick
+	// logs seat_first_message once per launched seat. nil: no such mark.
+	FirstMessage func(handle string, since time.Time) (time.Time, bool)
 }
 
 // EventKind orders events applied in one tick.
@@ -108,9 +112,11 @@ type seat struct {
 	requestID    string // the request it joined on: the identity the liveness check reads the launch ledger by
 	freeSince    time.Time
 	lastActivity time.Time
-	unresponsive bool   // held a lease it never claimed; no dispatch until it shows activity
-	closing      string // a close the launcher could not do yet: counted, never dispatched, retried each tick
-	awaitGone    bool   // closed, termination not yet confirmed: counted and never dispatched until SeatGone
+	unresponsive bool      // held a lease it never claimed; no dispatch until it shows activity
+	closing      string    // a close the launcher could not do yet: counted, never dispatched, retried each tick
+	awaitGone    bool      // closed, termination not yet confirmed: counted and never dispatched until SeatGone
+	launchedAt   time.Time // when this incarnation requested the seat; zero for an adopted seat
+	firstSent    bool      // seat_first_message is logged
 }
 
 type request struct {
@@ -147,9 +153,10 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	pending []Event
-	// relaunchAsk is the lead's relaunch decision (its reason) waiting for
-	// the next tick (RequestRelaunch); set under mu.
-	relaunchAsk *string
+	// relaunchAsk is the lead's relaunch decision (its reason, the key
+	// press and the reload) waiting for the next tick (RequestRelaunch,
+	// RequestRelaunchReload); set under mu.
+	relaunchAsk *relaunchAsk
 
 	seats       map[string]*seat
 	requests    []request
@@ -180,6 +187,18 @@ type Scheduler struct {
 	rosterOwed  bool
 	relaunching bool
 	heldReason  string
+	// reload is the relaunch's re-compiled squad.yaml, swapped in at the
+	// drain's end (brief 31-2 PR 2); seatStart the key press of each seat
+	// the swap added, carried by the next roster launch's requests only.
+	reload    *RosterReload
+	reloadAt  time.Time
+	seatStart map[string]time.Time
+	// relaunchAt is the pending relaunch's own start, the relaunch
+	// decision's time, carried by its launch's requests;
+	// lastRelaunchAt the last one launched (under mu: the decision socket
+	// reads it for the start's bound).
+	relaunchAt     time.Time
+	lastRelaunchAt time.Time
 	// Launch failures (3.0.1 t17): the last failure per pool, the tasks
 	// blocked on a repeated one (task id -> the pool and the failure's
 	// sequence number), the requests whose failure was noted while a failed
@@ -297,6 +316,7 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	if err := s.applyEvents(now, cfg, log); err != nil {
 		return out, err
 	}
+	s.noteFirstMessages(cfg, log)
 	if err := s.pollLimits(now, log); err != nil {
 		return out, err
 	}
@@ -365,7 +385,13 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	// Roster mode: the owed roster launch, or the lead's relaunch, before
 	// any dispatch (3.0.1 t16).
-	if hold, err := s.rosterStep(list, now, cfg, log); err != nil {
+	hold, err := s.rosterStep(list, now, cfg, log)
+	// A relaunch's reload swapped the roster and the lease cap in this tick:
+	// dispatch and the state written below read the new ones (Codex P2 3 on
+	// 31-2 PR 2), so scheduler.json never names the old roster beside the
+	// seats just launched.
+	cfg = s.cfg()
+	if err != nil {
 		return out, err
 	} else if hold {
 		s.closeIdle(list, now, cfg, log)
@@ -407,6 +433,7 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				continue
 			}
 			reason := ""
+			requestedAt := s.requestAt(ev.RequestID)
 			switch {
 			case ev.RequestID != "" && s.requestClosing(ev.RequestID):
 				// The request's cancel is pending: its seat is being closed,
@@ -447,7 +474,7 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				}
 				continue
 			}
-			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, requestID: ev.RequestID}
+			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, requestID: ev.RequestID, launchedAt: requestedAt}
 			log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
 			s.clearLaunchFailures(ev.Pool)
 		case SeatLaunchFailed:
@@ -515,7 +542,18 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			log(Decision{Kind: "roster_relaunch_refused", Reason: "the scheduler runs no roster"})
 		case !s.relaunching:
 			s.relaunching = true
-			log(Decision{Kind: "roster_relaunch_requested", Reason: firstNonEmpty(*ask, "the lead's decision")})
+			s.reload, s.reloadAt = ask.reload, ask.start
+			// the relaunch's own start: every seat it launches counts its
+			// launch budget from it (the plan reviewer on 31-2 PR 2)
+			s.relaunchAt = ask.at
+			if s.relaunchAt.IsZero() {
+				s.relaunchAt = now
+			}
+			log(Decision{Kind: "roster_relaunch_requested", Reason: firstNonEmpty(ask.reason, "the lead's decision")})
+		case ask.reload != nil:
+			// a relaunch already draining: its swap takes the later
+			// squad.yaml and key press (the swap is still to come)
+			s.reload, s.reloadAt = ask.reload, ask.start
 		}
 	}
 	return nil
@@ -641,26 +679,11 @@ func (s *Scheduler) applyCommit(holder string, t task.Task, res CommitResult, no
 			return nil
 		}
 	}
-	if res.Quarantine {
-		// No new lease for the seat until the owner clears it, and the seat
-		// closes (retried each tick while the close fails). Written before the
-		// refusal: the store keeps the first quarantine, so a retried
-		// application records it once.
-		if err := s.Store.Quarantine(task.Quarantine{Handle: holder, Reason: res.ReasonCode, Detail: res.Detail, TaskID: t.ID, At: now}); err != nil {
-			return err
-		}
-	}
 	refused, err := s.Store.RefuseCommitPaths(t.ID, res.ReasonCode, res.Detail, res.Route, res.RefusedPaths, now)
 	if err != nil {
 		return err
 	}
 	log(Decision{Kind: "commit_refused", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
-	if res.Quarantine {
-		log(Decision{Kind: "seat_quarantined", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
-		if st := s.seats[holder]; st != nil && st.closing == "" {
-			st.closing = "quarantined"
-		}
-	}
 	// The store record first, then the lead's message (a hint).
 	if s.Lead != nil {
 		if err := s.Lead.CommitRefused(refused); err != nil {
@@ -688,18 +711,6 @@ func (s *Scheduler) router() Router {
 }
 
 func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log func(Decision)) error {
-	// A quarantined seat is never dispatched to and is closed (2b-2: the
-	// store refuses it any lease until the owner clears it).
-	qs, err := task.Quarantined(s.Store.Dir)
-	if err != nil {
-		return err
-	}
-	for _, q := range qs {
-		if st := s.seats[q.Handle]; st != nil && st.closing == "" {
-			st.closing = "quarantined"
-			log(Decision{Kind: "seat_quarantined", Seat: q.Handle, Reason: q.Reason})
-		}
-	}
 	// A request that never joined is released only after the launcher
 	// confirms it is cancelled or terminated; until then it keeps its place
 	// under the seat cap, so a late join can never exceed the cap.
@@ -915,7 +926,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 		st := s.seats[h]
 		if st.closing != "" {
 			// Retry the close that failed (or the first close of a
-			// quarantined seat); the seat counts until it works.
+			// seat refused at its exit); the seat counts until it works.
 			if st.awaitGone {
 				continue // closed; counted until its SeatGone confirms it
 			}
@@ -981,6 +992,9 @@ type State struct {
 	// relaunch is in progress.
 	Roster          []string `json:"roster,omitempty"`
 	RelaunchPending bool     `json:"relaunch_pending,omitempty"`
+	// LastRelaunchAt is the start of the last relaunch's launch (brief
+	// 31-2 PR 2): the lower bound of a relaunch's key press.
+	LastRelaunchAt *time.Time `json:"last_relaunch_at,omitempty"`
 	// LaunchFailures are the last launch failure of each pool whose seat
 	// has not come up since (3.0.1 t17): status shows the reason on the
 	// seat's row in place of seat_starting.
@@ -1061,6 +1075,9 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 		return nil
 	}
 	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...), RelaunchPending: s.relaunching}
+	if last := s.LastRelaunchAt(); !last.IsZero() {
+		st.LastRelaunchAt = &last
+	}
 	for _, rs := range cfg.Roster {
 		st.Roster = append(st.Roster, rs.Handle)
 	}

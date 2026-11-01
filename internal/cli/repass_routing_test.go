@@ -19,17 +19,16 @@ import (
 // `scheduler run` at its start with routing_invalid (routing.Open), never a
 // plain wrapped error; and --lead-pool takes only runtime:model:effort.
 func TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid(t *testing.T) {
-	_, root, seatsFile := schedulerFixture(t)
-	proj := filepath.Dir(filepath.Dir(root))
+	_, _, proj := schedulerFixture(t)
 	mustWrite(t, filepath.Join(proj, ".amq-squad", "routing.yaml"), "schema: 1\nunknown_key: 1\n")
 	_, _, err := captureOutput(t, func() error {
-		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead"}, os.Stdout)
+		return runSchedulerRun(context.Background(), []string{"--project", proj}, os.Stdout)
 	})
 	if !routing.IsInvalid(err) || !strings.Contains(err.Error(), routing.ReasonInvalid) {
 		t.Fatalf("an invalid routing.yaml: %v", err)
 	}
 	_, _, err = captureOutput(t, func() error {
-		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--lead-pool", "pi"}, os.Stdout)
+		return runSchedulerRun(context.Background(), []string{"--project", proj, "--lead-pool", "pi"}, os.Stdout)
 	})
 	if err == nil || !strings.Contains(err.Error(), "--lead-pool") {
 		t.Fatalf("a malformed --lead-pool: %v", err)
@@ -39,11 +38,11 @@ func TestRepassSchedulerRunRefusesAnInvalidTableAsRoutingInvalid(t *testing.T) {
 // Narrow pass R2 (b): --lead-pool is refused when the process was not
 // started by the lead's team mode (here the parent is the test binary).
 func TestRepassLeadPoolOnlyFromTheLeadsTeamMode(t *testing.T) {
-	_, _, seatsFile := schedulerFixture(t)
+	_, _, proj := schedulerFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // were the flag admitted, the process would stop at once
 	_, _, err := captureOutput(t, func() error {
-		return runSchedulerRun(ctx, []string{"--seats", seatsFile, "--lead", "lead", "--lead-pool", "pi:ollama/qwen3.6:27b:low"}, os.Stdout)
+		return runSchedulerRun(ctx, []string{"--project", proj, "--lead-pool", "pi:ollama/qwen3.6:27b:low"}, os.Stdout)
 	})
 	if err == nil || !strings.Contains(err.Error(), "team mode") {
 		t.Fatalf("--lead-pool from a process the lead did not start: %v", err)
@@ -54,8 +53,8 @@ func TestRepassLeadPoolOnlyFromTheLeadsTeamMode(t *testing.T) {
 // model at its thinking level to the scheduler child it starts.
 func TestRepassLeadForwardsItsPools(t *testing.T) {
 	pools := leadPools([]string{"ollama/qwen3.6:27b", "ollama/qwen3.6:35b-a3b"}, "high")
-	cmd := leadSchedulerCommand("/bin/amq-squad", "/p/seats.json", "lead-1", pools, false)(context.Background())
-	want := []string{"/bin/amq-squad", "scheduler", "run", "--seats", "/p/seats.json", "--lead", "lead-1",
+	cmd := leadSchedulerCommand("/bin/amq-squad", "/p", pools)(context.Background())
+	want := []string{"/bin/amq-squad", "scheduler", "run", "--project", "/p",
 		"--lead-pool", "pi:ollama/qwen3.6:27b:high", "--lead-pool", "pi:ollama/qwen3.6:35b-a3b:high"}
 	if !slices.Equal(cmd.Args, want) {
 		t.Fatalf("child argv %q, want %q", cmd.Args, want)

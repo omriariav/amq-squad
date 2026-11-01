@@ -8,24 +8,16 @@ import (
 	"time"
 )
 
-// Hook reports (P1-10 of the 2b-2 milestone B second pass): every context
-// call of a Claude seat's hook records the config dir digest it saw, so a
-// hook that was removed is itself the drift signal: a seat that ran (the
-// core's launch ledger holds its accepted proof) with no report since its
-// launch is quarantined at its exit (claude_hooks_silent). Residual: the
-// reports file is same-UID writable, so a seat can forge a report; a forged
-// report hides a removed hook, never a changed digest, which the exit check
-// re-hashes itself.
+// Hook reports (P1-10 of the 2b-2 milestone B second pass): every hook call
+// of a Claude seat appends a report, so a hook that was removed or never ran
+// shows: a seat that ran (the core's launch ledger holds its accepted proof)
+// with no report since its launch is a silent hook. Since brief 31-1 that is
+// a seat warning in status (claude_hooks_silent), never a quarantine.
 
-// HooksSilent is the quarantine code of a Claude seat that ran with no hook
-// report.
-const HooksSilent = "claude_hooks_silent"
-
-// Report is one hook report.
+// Report is one hook report. Lines written before 3.1 also carry the config
+// dir digest the hook saw; only the time is read.
 type Report struct {
-	At     time.Time `json:"at"`
-	Digest string    `json:"digest"`
-	OK     bool      `json:"ok"`
+	At time.Time `json:"at"`
 }
 
 // ReportsPath is <root>/extensions/amq-squad/claude-config/<handle>.jsonl.

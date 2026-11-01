@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -103,13 +102,13 @@ func TestStatusShowsTheLastLaunchFailureReason(t *testing.T) {
 // Reverted (no state written on the failure, or no Liveness wired), the
 // status names nothing and a dead seat is never seen.
 func TestSchedulerRunRefusalLeavesTheReasonForStatus(t *testing.T) {
-	_, root, seatsFile := schedulerFixture(t)
+	_, root, proj := schedulerFixture(t)
 	f := &refusingRoster{out: scheduler.RosterOutcome{Stage: "apply_failed", ReasonCode: scheduler.AMQBindingPresent, Detail: "launch: the session binding is present"}}
 	schedulerAMQLauncher = func(sl *schedproc.Slots, _ string, _ seatlaunch.Options) scheduler.SeatLauncher { f.sl = sl; return f }
 	var started *scheduler.Scheduler
 	schedulerStarted = func(s *scheduler.Scheduler) { started = s }
 	_, _, err := captureOutput(t, func() error {
-		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+		return runSchedulerRun(context.Background(), []string{"--project", proj, "--tick", "20ms"}, os.Stdout)
 	})
 	if ExitCode(err) != ExitSchedulerRefused {
 		t.Fatalf("the refusal: %v (exit %d)", err, ExitCode(err))
@@ -149,16 +148,13 @@ func TestSchedulerRunRefusalLeavesTheReasonForStatus(t *testing.T) {
 // table, which all name the failure. Reverted (AMQ's stderr wrapped before
 // its redaction), every one of them carries the value.
 func TestInvalidJSONThroughTheVerbLeavesNoCredentialInStatus(t *testing.T) {
-	_, root, seatsFile := schedulerFixture(t)
+	_, root, proj := schedulerFixture(t)
 	value := "t17" + "statusvalue" + "0095"
 	stderr := "api" + "_key:\n  \"" + value + "\""
 	var real *seatlaunch.Launcher
 	schedulerAMQLauncher = func(sl *schedproc.Slots, r string, opts seatlaunch.Options) scheduler.SeatLauncher {
 		opts.RunAMQ = func(context.Context, string, []string, []byte, []string, string) ([]byte, []byte, int, error) {
 			return []byte("amq: not json"), []byte(stderr), 2, nil
-		}
-		opts.PinFor = func(seatlaunch.Seat) (registry.Pin, error) {
-			return registry.Pin{Name: "claude", Path: "/usr/local/bin/claude", SHA256: "test"}, nil
 		}
 		opts.LookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
 		opts.Home, opts.Env = t.TempDir(), []string{"PATH=/usr/bin"}
@@ -168,7 +164,7 @@ func TestInvalidJSONThroughTheVerbLeavesNoCredentialInStatus(t *testing.T) {
 	}
 	schedulerStarted = func(s *scheduler.Scheduler) { real.Post = s.Post }
 	_, _, err := captureOutput(t, func() error {
-		return runSchedulerRun(context.Background(), []string{"--seats", seatsFile, "--lead", "lead", "--tick", "20ms"}, os.Stdout)
+		return runSchedulerRun(context.Background(), []string{"--project", proj, "--tick", "20ms"}, os.Stdout)
 	})
 	if err == nil || !strings.Contains(err.Error(), "without a PrepareResult") || strings.Contains(err.Error(), value) {
 		t.Fatalf("the verb's error: %v", err)

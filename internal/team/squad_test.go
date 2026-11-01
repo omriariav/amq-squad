@@ -99,7 +99,9 @@ func TestSquadStrictParse(t *testing.T) {
 		"no runtime":           "schema: 1\nseats:\n  - handle: dev\n",
 		"repeated handle":      "schema: 1\ndefaults:\n  runtime: claude\nseats:\n  - handle: dev\n  - handle: dev\n",
 		"operator handle":      "schema: 1\nseats:\n  - handle: user\n    runtime: claude\n",
-		"pi with a model":      "schema: 1\nseats:\n  - handle: p\n    runtime: pi\n    model: x\n",
+		"worktree at the root": "schema: 1\nseats:\n  - handle: p\n    runtime: pi\n    worktree: .\n",
+		"cursor-agent effort":  "schema: 1\nseats:\n  - handle: c\n    runtime: cursor-agent\n    effort: high\n",
+		"unadapted runtime":    "schema: 1\nseats:\n  - handle: g\n    runtime: gemini\n",
 		"lead not a seat":      "lead: boss\n" + minimalSquad,
 		"relative control":     "control_root: rel\n" + minimalSquad,
 		"bad execution mode":   "execution_mode: wild\n" + minimalSquad,
@@ -150,8 +152,12 @@ func TestSquadNarrowingMatchesGuardReader(t *testing.T) {
 	}
 }
 
+// Brief 31-1, rows 8 and 9 (the parse's half): a seat with no worktree
+// gets one derived per handle under <repo>/.worktrees/, never the
+// repository root; a pi seat may name a PROVIDER/ID model; grok and
+// cursor-agent are runtimes, as far as AMQ's adapters map their flags.
 func TestSeatWorktree(t *testing.T) {
-	if got := SeatWorktree("/r", Seat{}); got != "/r" {
+	if got := SeatWorktree("/r", Seat{Handle: "dev"}); got != "/r/.worktrees/dev" {
 		t.Fatal(got)
 	}
 	if got := SeatWorktree("/r", Seat{Worktree: "../w"}); got != "/w" {
@@ -159,5 +165,20 @@ func TestSeatWorktree(t *testing.T) {
 	}
 	if got := SeatWorktree("/r", Seat{Worktree: "/abs/w"}); got != "/abs/w" {
 		t.Fatal(got)
+	}
+}
+
+func TestSquadAdmitsAPiModelAndTheAdaptedRuntimes(t *testing.T) {
+	text := "schema: 1\nseats:\n  - handle: p\n    runtime: pi\n    model: ollama/qwen3.6:27b\n  - handle: g\n    runtime: grok\n    model: grok-4\n    effort: high\n  - handle: c\n    runtime: cursor-agent\n    model: auto\n"
+	s, err := ParseSquad(text, "/repo/squad.yaml", grants.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seats, err := s.LaunchSeats("/repo", func(string) (string, error) { return "# Role\n\nrole text for the seat.\n", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seats[0].Model != "ollama/qwen3.6:27b" || seats[0].Worktree != "/repo/.worktrees/p" || seats[1].Runtime != "grok" || seats[2].Runtime != "cursor-agent" {
+		t.Fatalf("seats %+v", seats)
 	}
 }

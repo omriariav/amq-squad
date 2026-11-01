@@ -193,7 +193,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	g, gerr := grants.Load(t.ProjectPath)
 	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: req.Files, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
-		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow, Clear: ownerTrust{Root: sel.root}}
+		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
 	}
 	d := seatcommit.CheckWiden(wo)
 	data.Decision = d

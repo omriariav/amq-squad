@@ -29,3 +29,22 @@ func readStartTimeNative(pid int) (time.Time, bool) {
 	}
 	return time.Unix(start.Sec, int64(start.Usec)*int64(time.Microsecond)).UTC(), true
 }
+
+// readArgvNative reads pid's argv via the KERN_PROCARGS2 sysctl, each
+// argument its own string.
+func readArgvNative(pid int) ([]string, bool) {
+	buf, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		return nil, false
+	}
+	return parseKernProcArgs2Argv(buf)
+}
+
+// readEnvironNative reads pid's initial environment via KERN_PROCARGS2.
+func readEnvironNative(pid int) ([]string, bool) {
+	buf, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		return nil, false
+	}
+	return parseKernProcArgs2Env(buf)
+}

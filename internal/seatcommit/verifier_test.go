@@ -405,26 +405,6 @@ func TestVerifierToolIsAnAbsolutePathOrAPin(t *testing.T) {
 	}
 }
 
-// Rule 10: the owner's config is diffed again after the verifier: a verifier
-// that appends to ~/.claude/settings.json (the test's fake HOME) blocks the
-// task with global_config_changed, no verdict, the seat quarantined, no push.
-func TestOwnerConfigChangeDuringTheVerifierDiscardsTheVerdict(t *testing.T) {
-	f := newFixture(t)
-	settings := filepath.Join(f.home, ".claude", "settings.json")
-	write(t, settings, `{"a":1}`)
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n\n// owner config\n")
-	f.verifying(f.script("v", "echo ' ' >> "+settings+"\n"))
-	tk := f.reportedBare("cmd/**")
-	res := f.run(tk)
-	if res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || res.Pushed || f.originBranch() != "" {
-		t.Fatalf("a config change during the verifier: %s quarantine %v pushed %v", res.ReasonCode, res.Quarantine, res.Pushed)
-	}
-	if v := f.lease(tk.ID).Verdict; v != nil {
-		t.Fatal("the verdict of a run that changed the owner's config was recorded")
-	}
-}
-
 // Rule 12, concurrency: past verifier_parallelism the commit step waits with
 // a status row, and runs once a slot frees.
 func TestVerifierParallelismWaitsWithAStatusRow(t *testing.T) {

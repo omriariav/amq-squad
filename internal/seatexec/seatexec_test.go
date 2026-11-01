@@ -17,7 +17,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
-	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 type fixture struct {
@@ -73,9 +72,6 @@ func newFixture(t *testing.T, runtime string) *fixture {
 	}
 	if runtime == "claude" {
 		f.rec.PermissionMode, f.rec.LaunchID = "dontAsk", "launch-1"
-		// A Claude seat runs the registry's claude pin (the phase 5 re-pass's
-		// HIGH): the fixture pins its fake claude.
-		f.pinClaude()
 		// The owner's token file (0600 in 0700): a canary that must reach the
 		// provider environment and nothing else.
 		if err := os.MkdirAll(filepath.Join(f.home, ".amq-squad"), 0o700); err != nil {
@@ -94,20 +90,6 @@ const canaryToken = "canary-claude-token-2b2b-9f3c"
 
 const ownerSettings = `{"owner":true,"permissions":{"allow":["Bash(echo:*)"]}}`
 
-// pinClaude writes the registry pin of the fixture's claude (its path and
-// current sha256) into the fixture's HOME.
-func (f *fixture) pinClaude() {
-	f.t.Helper()
-	claude := filepath.Join(f.bin, "claude")
-	sum, err := registry.FileSHA256(claude)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	if err := registry.Write(registry.Path(f.home), registry.Registry{Schema: 1, Pins: []registry.Pin{{Name: "claude", Path: claude, SHA256: sum}}}); err != nil {
-		f.t.Fatal(err)
-	}
-}
-
 func write(t *testing.T, path, body string, mode os.FileMode) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), mode); err != nil {
@@ -117,21 +99,13 @@ func write(t *testing.T, path, body string, mode os.FileMode) {
 
 func (f *fixture) stage() {
 	f.t.Helper()
-	if f.rec.Runtime == "claude" && f.rec.ClaudeConfig == "" {
-		// What the launch writes: the seat's own config dir and its digest.
+	if f.rec.Runtime == "claude" {
+		// What the launch writes: the seat's own config dir.
 		dir := claudeseat.Dir(f.root, "cto", f.rec.LaunchID)
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			w, err := claudeseat.Write(dir, f.rec.PermissionMode, f.wt, time.Unix(100, 0))
-			if err != nil {
+			if _, err := claudeseat.Write(dir, f.rec.PermissionMode, f.wt, time.Unix(100, 0)); err != nil {
 				f.t.Fatal(err)
 			}
-			f.rec.ClaudeConfig = w.Digest
-		}
-	}
-	if f.rec.Runtime == "claude" && f.rec.ClaudePin == "" {
-		// What the launch records: the digest of the claude pin it probed.
-		if pin, ok := f.pinOf(); ok {
-			f.rec.ClaudePin = pin.SHA256
 		}
 	}
 	b, err := launch.Marshal(f.rec)
@@ -411,29 +385,6 @@ func TestSeatExecRuntimeMismatch(t *testing.T) {
 	}
 }
 
-func TestSeatExecPreflightCopy(t *testing.T) {
-	f := newFixture(t, "claude")
-	f.stage()
-	if err := f.run(Options{}); err != nil {
-		t.Fatal(err)
-	}
-	copyPath := filepath.Join(PreflightDir(f.home), "claude-settings.json")
-	if b, err := os.ReadFile(copyPath); err != nil || string(b) != ownerSettings {
-		t.Fatalf("preflight copy: %q %v", b, err)
-	}
-	// A later seat start never overwrites the copy taken first.
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"changed":true,"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
-	if err := f.run(Options{}); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(copyPath); string(b) != ownerSettings {
-		t.Fatalf("seat-exec refreshed the preflight copy: %s", b)
-	}
-	if _, err := os.Stat(filepath.Join(PreflightDir(f.home), "codex-config.toml")); !os.IsNotExist(err) {
-		t.Fatalf("no codex config, so no copy: %v", err)
-	}
-}
-
 // piSelf is the fixture's amq-squad: the binary the pi shim names and
 // seat-exec execs for a pi seat.
 func (f *fixture) piSelf() string { return filepath.Join(f.bin, "amq-squad") }
@@ -629,14 +580,4 @@ func TestScrubbedNames(t *testing.T) {
 			t.Errorf("Scrubbed(%s) = %v", name, !want)
 		}
 	}
-}
-
-// pinOf is the fixture registry's claude pin.
-func (f *fixture) pinOf() (registry.Pin, bool) {
-	f.t.Helper()
-	reg, err := registry.Read(registry.Path(f.home))
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return reg.PinFor("claude")
 }

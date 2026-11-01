@@ -14,7 +14,9 @@ import (
 
 // LaunchSeats is the squad's seats as seatlaunch.Seat, resolved against the
 // repository root, with Role the role.md text roleText returns for the
-// seat's role id. A pi seat carries no model or effort (amendment 23).
+// seat's role id. A pi seat's model is a PROVIDER/ID, which seat-exec hands
+// the embedded runtime's launcher as --model (brief 31-1); pi still takes
+// no provider arguments.
 func (s Squad) LaunchSeats(repoRoot string, roleText func(roleID string) (string, error)) ([]seatlaunch.Seat, error) {
 	var out []seatlaunch.Seat
 	for _, seat := range s.Resolved() {

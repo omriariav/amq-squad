@@ -1,7 +1,6 @@
 package seatlaunch
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -14,7 +13,6 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
 
 var advertised = []launchapi.ProviderCapabilitiesV1{
@@ -43,7 +41,6 @@ func testSquad(t *testing.T) Squad {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q.ClaudePins = map[string]registry.Pin{"cto": testPin}
 	return q
 }
 
@@ -209,13 +206,19 @@ func preparedResult() launchapi.PrepareResultV1 {
 
 func launchOpts(t *testing.T, f *fakeAMQ, decisions map[string]string) Options {
 	return Options{Decisions: decisions, Home: t.TempDir(), LookPath: lookPath, RunAMQ: f.run, Wait: 2 * time.Second, Poll: 10 * time.Millisecond,
-		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}, PaneShell: paneOf(os.Getpid()), ProbeMode: probeAsLaunched, PinFor: testClaudePin,
+		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}, PaneShell: paneOf(os.Getpid()),
 		PaneID: func(int) string { return "" }} // the pane id lookup stubbed: no row reaches tmux (t16)
 }
 
+// rebindAction is a required action no standing answer covers.
+var rebindAction = launchapi.RequiredActionV1{ActionID: "sha256:a1", Kind: launchapi.RequiredActionRebindConfirmation, Handles: []string{"cto", "dev"},
+	AllowedDecisions: []launchapi.DecisionChoiceV1{"close_old", "leave_old"}, ReasonCode: "binding_present"}
+
 func TestPendingDecisionsStopBeforeApplyAndSendNothing(t *testing.T) {
 	q := testSquad(t)
-	f := &fakeAMQ{t: t, prepare: preparedResult()}
+	prepared := preparedResult()
+	prepared.RequiredActions, prepared.Reason = []launchapi.RequiredActionV1{rebindAction}, "binding_present"
+	f := &fakeAMQ{t: t, prepare: prepared}
 	res, err := Launch(context.Background(), q, launchOpts(t, f, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -233,16 +236,14 @@ func TestPendingDecisionsStopBeforeApplyAndSendNothing(t *testing.T) {
 	if _, err := os.Stat(launch.StagedDir(q.SessionRoot(), "cto")); !os.IsNotExist(err) {
 		t.Fatalf("nothing is staged before the decisions: %v", err)
 	}
-	var out bytes.Buffer
-	Report(&out, res)
-	text := out.String()
-	if !strings.Contains(text, "--decision sha256:a1=<trust_exact_subject|deny>") || strings.Contains(text, "--force-duplicate") {
+	text := strings.Join(res.NextActions, "\n")
+	if !strings.Contains(text, "--decision sha256:a1=<close_old|leave_old>") || strings.Contains(text, "--force-duplicate") {
 		t.Fatalf("next actions (R50):\n%s", text)
 	}
-	if _, err := Launch(context.Background(), q, launchOpts(t, f, map[string]string{"sha256:old": "trust_exact_subject"})); err == nil {
+	if _, err := Launch(context.Background(), q, launchOpts(t, f, map[string]string{"sha256:old": "close_old"})); err == nil {
 		t.Fatal("a stale decision was accepted")
 	}
-	if _, err := Launch(context.Background(), q, launchOpts(t, f, map[string]string{"sha256:a1": "yes"})); err == nil {
+	if _, err := Launch(context.Background(), q, launchOpts(t, f, map[string]string{"sha256:a1": "trust_exact_subject"})); err == nil {
 		t.Fatal("a choice outside the allowed set was accepted")
 	}
 }
@@ -263,12 +264,8 @@ func TestForcedBackendCreateFailedShowsOutcomeReasonAndDetail(t *testing.T) {
 	if res.Stage != "apply_failed" || !res.Failed() {
 		t.Fatalf("stage %s", res.Stage)
 	}
-	var out bytes.Buffer
-	Report(&out, res)
-	for _, want := range []string{"apply: outcome action_required, reason_code backend_create_failed", "failure_detail launch: tmux create failed: pane exited: amq-squad coop exec: unknown command"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("report lacks %q:\n%s", want, out.String())
-		}
+	if res.Apply.Outcome != "action_required" || res.Apply.ReasonCode != "backend_create_failed" || !strings.Contains(res.FailureDetail, "launch: tmux create failed: pane exited: amq-squad coop exec: unknown command") {
+		t.Fatalf("the result lacks the outcome, reason or detail: %+v / %q", res.Apply, res.FailureDetail)
 	}
 	rec, err := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "cto"), launch.FileName))
 	if err != nil || !strings.Contains(string(rec), `"reason_code": "backend_create_failed"`) {
@@ -291,5 +288,31 @@ func publishExec(t *testing.T, q Squad, handle string, exec *launch.Exec) {
 	rec.Exec = exec
 	if err := launch.WriteUnderRecordLock(filepath.Join(q.SessionRoot(), "agents", handle), rec); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// reportOf is a launch result for a test log.
+func reportOf(r Result) string {
+	b, _ := json.MarshalIndent(r, "", "  ")
+	return string(b)
+}
+
+// Brief 31-1, row 6: every launch carries the owner's standing answer to
+// AMQ's trust confirmation (there is no --trust): a Prepare that asks for it
+// applies with trust_exact_subject and no explicit decision.
+func TestEveryLaunchCarriesTheStandingTrustAnswer(t *testing.T) {
+	q := testSquad(t)
+	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}}
+	o := launchOpts(t, f, nil)
+	o.Wait = 50 * time.Millisecond
+	res, err := Launch(context.Background(), q, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.proof != nil {
+		res.proof.close()
+	}
+	if f.applied == nil || len(f.applied.Decisions) != 1 || f.applied.Decisions[0].ActionID != "sha256:a1" || f.applied.Decisions[0].Choice != "trust_exact_subject" {
+		t.Fatalf("stage %s, applied %+v", res.Stage, f.applied)
 	}
 }

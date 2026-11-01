@@ -21,7 +21,7 @@ func TestFailedForwardLeavesNoMark(t *testing.T) {
 	hf.mail.err = nil
 	again := hf.serve.deliver(id, hf.core.Pin.Channel, "@lead-b rebase #12")
 	hf.step(t)
-	if res, _ := hf.serve.result(again); res != "routed lead-b" || len(hf.mail.sent) != 2 {
+	if res, _ := hf.serve.result(again); !routedTo(res, "lead-b") || len(hf.mail.sent) != 2 {
 		t.Fatalf("the retry: %q, sent %d", res, len(hf.mail.sent))
 	}
 }

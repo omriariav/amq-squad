@@ -1,0 +1,5 @@
+join PR #824 merge: MERGED dda3fce7a4c80aa6270cd51b4bd520cf39450f57
+v3 tip: 8f6b6fbd7d91936ebd1628f4c4ab68c0ff2d53db
+main tip: dda3fce7a4c80aa6270cd51b4bd520cf39450f57
+merge-base --is-ancestor v3-tip origin/main: true
+diff --stat origin/v3 origin/main: 0 lines

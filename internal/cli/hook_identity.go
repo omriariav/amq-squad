@@ -131,17 +131,16 @@ func seatEnvMarker(getenv func(string) string) string {
 	return ""
 }
 
-// seatIdentity is identity plus the seat's config-dir check and digest
-// report (checkClaudeConfig), the one check every hook verb runs (phase 5
-// re-pass of 4-2, P2-3): context through buildHookContext, guard and
-// evidence ingest here. A changed config dir quarantines the seat and is
-// returned to the caller.
-func (h hookFlags) seatIdentity(now time.Time) (hookIdentity, *hookConfigChange, error) {
+// seatIdentity is identity plus the hook's run report (recordHookReport),
+// which every hook verb makes (phase 5 re-pass of 4-2, P2-3): context
+// through buildHookContext, guard and evidence ingest here.
+func (h hookFlags) seatIdentity(now time.Time) (hookIdentity, error) {
 	id, err := h.identity()
 	if err != nil {
-		return id, nil, err
+		return id, err
 	}
-	return id, checkClaudeConfig(id, now), nil
+	recordHookReport(id, now)
+	return id, nil
 }
 
 // readHookPayload reads one hook payload from stdin, refusing more than

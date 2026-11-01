@@ -34,14 +34,14 @@ func TestInterruptedCleanLeavesTheSeatUnclean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CleanSeat(f.root, f.handle, f.gitStandin("git-dies", "exit 1"), nil, f.trust(), f.now); err == nil {
+	if _, err := CleanSeat(f.root, f.handle, f.gitStandin("git-dies", "exit 1"), nil, f.now); err == nil {
 		t.Fatal("the interrupted clean succeeded")
 	}
 	later := f.now.Add(task.SeatReservationTTL + time.Minute)
 	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, later); !errors.Is(err, task.ErrSeatUnclean) {
 		t.Fatalf("a direct claim past the TTL: %v", err)
 	}
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), later); err != nil {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, later); err != nil {
 		t.Fatalf("the next clean: %v", err)
 	}
 	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, later); err != nil {
@@ -62,7 +62,7 @@ func TestLiveCleanerPastTheTTLHoldsTheSeat(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := CleanSeat(f.root, f.handle, f.gitStandin("git-slow", ": > "+marker+"; /bin/sleep 5"), nil, f.trust(), f.now)
+		_, err := CleanSeat(f.root, f.handle, f.gitStandin("git-slow", ": > "+marker+"; /bin/sleep 5"), nil, f.now)
 		done <- err
 	}()
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
@@ -74,7 +74,7 @@ func TestLiveCleanerPastTheTTLHoldsTheSeat(t *testing.T) {
 	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, later); !errors.Is(err, task.ErrSeatUnclean) {
 		t.Fatalf("a claim during a live clean past the TTL: %v", err)
 	}
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), later); !errors.Is(err, ErrLedgerBusy) {
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, later); !errors.Is(err, ErrLedgerBusy) {
 		t.Fatalf("a second cleaner during a live clean: %v", err)
 	}
 	if err := <-done; err != nil {

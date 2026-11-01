@@ -27,8 +27,10 @@ const (
 	SquadFileName = "squad.yaml"
 )
 
-// Runtimes a seat may name (plan 4.3).
-var Runtimes = []string{"claude", "codex", "pi"}
+// Runtimes a seat may name: the providers AMQ v0.116.2's launch adapters
+// serve (internal/launch/adapter.go:21-36 there; brief 31-1, Q4). Another
+// runtime is refused by name at parse.
+var Runtimes = []string{"claude", "codex", "cursor-agent", "grok", "pi"}
 
 // Execution modes (2a-2 ruling 10: the execution-mode fields live here).
 const (
@@ -329,7 +331,7 @@ func (s Squad) Resolved() []Seat {
 			if out[i].Model == "" {
 				out[i].Model = s.Defaults.Model
 			}
-			if out[i].Effort == "" {
+			if out[i].Effort == "" && out[i].Runtime != "cursor-agent" {
 				out[i].Effort = s.Defaults.Effort
 			}
 		}
@@ -364,11 +366,16 @@ func (s Squad) validate(source string, effective grants.Grants) error {
 			return fail("seat %s: runtime missing (set it or defaults.runtime)", seat.Handle)
 		case !effective.RuntimePermitted(seat.Runtime):
 			return &WidenError{Source: source, Field: "seats", Detail: fmt.Sprintf("seat %s runtime %s is not a permitted runtime", seat.Handle, seat.Runtime)}
-		case seat.Runtime == "pi" && (s.Seats[i].Model != "" || s.Seats[i].Effort != ""):
-			// pi admits no provider arguments (plan 4.3, amendment 23)
-			return fail("seat %s: a pi seat takes no model or effort (pi admits no provider arguments; its model list comes from the registry)", seat.Handle)
+		case seat.Runtime == "cursor-agent" && seat.Effort != "":
+			// AMQ's cursor-agent adapter maps --model only (Q4 of brief 31-1)
+			return fail("seat %s: a cursor-agent seat takes no effort (AMQ's cursor-agent adapter maps --model only)", seat.Handle)
 		case strings.ContainsAny(seat.Worktree, "\x00\r\n"):
 			return fail("seat %s: bad worktree", seat.Handle)
+		case seat.Worktree != "" && SeatWorktree(filepath.Dir(source), seat) == filepath.Clean(filepath.Dir(source)):
+			// the commit step moves the seat's branch, so a seat never works
+			// in the repository root (brief 31-1: leave worktree out and one
+			// is derived per handle)
+			return fail("seat %s: worktree %q is the repository root; leave it out and the seat's worktree is %s/<handle>", seat.Handle, seat.Worktree, SeatWorktreesDir)
 		}
 		seen[seat.Handle] = true
 	}
@@ -378,10 +385,17 @@ func (s Squad) validate(source string, effective grants.Grants) error {
 	return nil
 }
 
-// SeatWorktree is the seat's absolute worktree under repoRoot.
+// SeatWorktreesDir is where a seat's worktree is derived when squad.yaml
+// names none: <repo root>/.worktrees/<handle> (brief 31-1).
+const SeatWorktreesDir = ".worktrees"
+
+// SeatWorktree is the seat's absolute worktree: squad.yaml's worktree
+// resolved against repoRoot, else derived per handle under
+// <repoRoot>/.worktrees/ (brief 31-1: never the repository root; validate
+// refuses a squad.yaml worktree that names it).
 func SeatWorktree(repoRoot string, seat Seat) string {
 	if seat.Worktree == "" {
-		return filepath.Clean(repoRoot)
+		return filepath.Join(repoRoot, SeatWorktreesDir, seat.Handle)
 	}
 	if filepath.IsAbs(seat.Worktree) {
 		return filepath.Clean(seat.Worktree)
@@ -498,5 +512,5 @@ seats:
     tools: coding
   - handle: scout
     role: researcher
-    runtime: pi                # pi takes no model or effort (plan 4.3)
+    runtime: pi                # a pi model, when named, is PROVIDER/ID
 `
