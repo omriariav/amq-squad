@@ -366,3 +366,33 @@ func TestARelaunchStartBeforeTheLastRelaunchIsRefused(t *testing.T) {
 		t.Fatalf("a press after the last relaunch: %+v", fresh)
 	}
 }
+
+// Codex re-check on 31-2 PR 2: the cap installed at the swap is the grant
+// read again at the drain's end, not the one computed at acceptance. The
+// cap seam answers 3 when the relaunch is accepted and 2 afterwards (the
+// grant narrowed during the drain): the scheduler installs 2. Reverted (the
+// integer captured at acceptance), it installs 3.
+func TestTheCapInstalledAtTheSwapIsTheGrantReadAtTheDrainsEnd(t *testing.T) {
+	slots := &Slots{Squad: reloadSquad()}
+	pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
+	added := reloadSquad(seatlaunch.Seat{Handle: "n1", Runtime: "claude", Model: "opus", Effort: "high", Worktree: "/w/n1"})
+	var mu sync.Mutex
+	calls := 0
+	capOf := func(seatlaunch.Squad) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls == 1 {
+			return 3, nil // at acceptance
+		}
+		return 2, nil // the grant narrowed before the drain's end
+	}
+	reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Cap: capOf, Slots: slots, Pools: pools, Lead: "lead"}, "",
+		func(l *rosterLauncher, _ []scheduler.Decision) bool { return l.launched() == 2 })
+	if !reply.OK || s.Config.MaxSeats != 2 || !strings.Contains(text, "at most 2 leases at once") {
+		t.Fatalf("reply %+v; installed cap %d\n%s", reply, s.Config.MaxSeats, text)
+	}
+	if l.launched() != 2 {
+		t.Fatalf("launches %d", l.launched())
+	}
+}

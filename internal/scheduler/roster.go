@@ -157,6 +157,11 @@ type RosterReload struct {
 	// max_seats bounding the new seat count, and any narrowing); written
 	// with the roster in the same step. Zero keeps the running cap.
 	MaxSeats int
+	// Cap, when set, recomputes MaxSeats at the drain's end, inside the
+	// swap's step (the grant read again: a grant lowered during a long
+	// drain is the one installed; Codex re-check on 31-2 PR 2). An error
+	// fails the swap before anything is written.
+	Cap func() (int, error)
 }
 
 type relaunchAsk struct {
@@ -206,6 +211,15 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 	if r == nil {
 		return
 	}
+	maxSeats := r.MaxSeats
+	if r.Cap != nil {
+		c, err := r.Cap()
+		if err != nil {
+			log(Decision{Kind: "roster_reload_failed", Reason: "the running roster relaunches unchanged: the lease cap: " + err.Error()})
+			return
+		}
+		maxSeats = c
+	}
 	if r.Swap != nil {
 		if err := r.Swap(); err != nil {
 			log(Decision{Kind: "roster_reload_failed", Reason: "the running roster relaunches unchanged: " + err.Error()})
@@ -230,8 +244,8 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 		}
 	}
 	s.Config.Roster = r.Roster
-	if r.MaxSeats > 0 {
-		s.Config.MaxSeats = r.MaxSeats
+	if maxSeats > 0 {
+		s.Config.MaxSeats = maxSeats
 	}
 	// The key press is the start of the launch it caused only (the plan
 	// reviewer before the merge): from its next relaunch on an added seat is

@@ -131,7 +131,9 @@ compiles squad.yaml again as `scheduler run` does at its start:
   `/squad add`, `seat`, and one confirmation, and stamps the confirmation.
 - The lease cap (the leases held at once: the grant's `max_seats`, bounded
   by the squad's seat count, narrowed by `scheduler run --max-seats`) is
-  recomputed from the new squad in the same step, with the grant read again,
+  recomputed from the new squad in the same step, with the grant read again
+  at the drain's end (the check at the relaunch's acceptance is the early
+  refusal),
   so a seat added live gets a lease; the owner's grant is never exceeded.
   `team propose` already refuses a squad.yaml with more seats than
   `max_seats`; only the `--max-seats` narrowing can leave more seats up than

@@ -237,3 +237,21 @@ func TestTheStateWrittenInTheRelaunchsTickNamesTheNewRoster(t *testing.T) {
 		t.Fatalf("scheduler.json after the relaunch's tick: roster %v, max_seats %d", st.Roster, st.MaxSeats)
 	}
 }
+
+// Codex re-check on 31-2 PR 2: the cap is read again inside the swap's
+// step; a read that fails there writes nothing (roster, cap and the swap's
+// own halves stay as they were) and the running roster relaunches.
+// Reverted (the cap read after Swap, or its error ignored), the swap's
+// halves are written.
+func TestACapThatCannotBeReadAtTheSwapWritesNothing(t *testing.T) {
+	h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute}, rosterAB...)
+	h.tick()
+	swapped := false
+	h.s.RequestRelaunchReload("add s-c", t0, &RosterReload{Roster: append(slices.Clone(rosterAB), RosterSeat{Handle: "s-c", Pool: opus}), MaxSeats: 3,
+		Cap:  func() (int, error) { return 0, errors.New("the grant: unreadable") },
+		Swap: func() error { swapped = true; return nil }})
+	ds := h.tick()
+	if !has(ds, "roster_reload_failed", "", "") || swapped || h.s.Config.MaxSeats != 2 || rosterHandles(h.s.Config.Roster) != rosterHandles(rosterAB) || len(fr.launches) != 2 {
+		t.Fatalf("swapped %v, cap %d, roster %s, launches %d: %+v", swapped, h.s.Config.MaxSeats, rosterHandles(h.s.Config.Roster), len(fr.launches), ds)
+	}
+}

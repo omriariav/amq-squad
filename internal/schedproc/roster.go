@@ -251,7 +251,13 @@ func (r *Reload) prepare() (*scheduler.RosterReload, error) {
 			return nil, err
 		}
 	}
-	return &scheduler.RosterReload{Roster: roster, MaxSeats: maxSeats, Swap: func() error { return r.swap(q, roster) }}, nil
+	next := &scheduler.RosterReload{Roster: roster, MaxSeats: maxSeats, Swap: func() error { return r.swap(q, roster) }}
+	if r.Cap != nil {
+		// the cap above is the early refusal; the one installed is read
+		// again at the drain's end, in the swap's step
+		next.Cap = func() (int, error) { return r.Cap(q) }
+	}
+	return next, nil
 }
 
 // swap writes the slots' squad (under Slots.mu) and the router's roster
