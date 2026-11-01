@@ -86,10 +86,18 @@ func CockpitThread(requestID string) string { return "cockpit/" + requestID }
 
 // Poster posts one text into the owner's DM channel as the share body, in
 // reply to the event replyTo ("" for a top-level post), and returns the
-// posted event's id. Only the core's process holds one (BodyPoster).
+// posted event's id. Only the core's process holds one (BodyPoster). An
+// error that wraps ErrNotSent says nothing was written to the relay;
+// any other error is ambiguous (the relay may have the event).
 type Poster interface {
 	Post(ctx context.Context, text, replyTo string) (string, error)
 }
+
+// ErrNotSent marks a post failure before anything was written to the
+// relay: the connection never opened, or the event was never signed.
+var ErrNotSent = errors.New("not sent")
+
+func notSent(err error) error { return fmt.Errorf("%w: %w", ErrNotSent, err) }
 
 // BodyPoster posts through the verifier's per-use connection (ruling 20
 // point 1): one connection per post, signed with the share body key, the
@@ -102,15 +110,15 @@ type BodyPoster struct {
 
 func (p BodyPoster) Post(ctx context.Context, text, replyTo string) (string, error) {
 	if p.Dial == nil {
-		return "", errors.New("the poster needs a dialer")
+		return "", notSent(errors.New("the poster needs a dialer"))
 	}
 	relay, body, grant, closeFn, err := p.Dial(ctx)
 	if err != nil {
-		return "", err
+		return "", notSent(err)
 	}
 	defer closeFn()
 	if body.PublicHex() != p.Pin.Body {
-		return "", errors.New("the body key is not the pinned body")
+		return "", notSent(errors.New("the body key is not the pinned body"))
 	}
 	tags := [][]string{{"h", p.Pin.Channel}, {"p", p.Pin.Owner}}
 	if replyTo != "" {
@@ -125,8 +133,11 @@ func (p BodyPoster) Post(ctx context.Context, text, replyTo string) (string, err
 	}
 	evt := nostr.Event{CreatedAt: now().Unix(), Kind: KindDM, Tags: tags, Content: text}
 	if err := body.Sign(&evt); err != nil {
-		return "", err
+		return "", notSent(err)
 	}
+	// ambiguous from here: the relay writes the event before it awaits the
+	// acknowledgment (gateverify WSRelay.Publish), so a timeout or a closed
+	// connection may follow an accepted event
 	if err := relay.Publish(ctx, evt.Marshal()); err != nil {
 		return "", err
 	}
@@ -405,8 +416,14 @@ func (h *Handler) publish(ctx context.Context, rec *status.RelayRecord, parts []
 		}
 		id, err := h.Poster.Post(ctx, parts[i], rec.PostTo)
 		if err != nil {
-			p.Tries-- // the publish failed: nothing went out
-			_ = save()
+			// a failed post keeps its try: the relay may have accepted the
+			// event before the failure, so an ambiguous failure gets the one
+			// retry and then relay_post_unconfirmed. Only a failure before
+			// anything was written gives the try back.
+			if errors.Is(err, ErrNotSent) {
+				p.Tries--
+				_ = save()
+			}
 			return r, fmt.Errorf("post %s part %d of %d: %w", p.ReplyID, i+1, len(parts), err)
 		}
 		if relayAfterPublish != nil {

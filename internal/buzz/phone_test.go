@@ -691,19 +691,62 @@ func TestAFailingRecordStorePostsNothing(t *testing.T) {
 	}
 }
 
-// flakyPoster fails the publishes whose call numbers are in fail.
+// flakyPoster fails the publishes whose call numbers are in fail (an
+// ambiguous failure: the relay may have the event) or in before (a failure
+// before anything was written, ErrNotSent).
 type flakyPoster struct {
-	inner Poster
-	calls int
-	fail  map[int]bool
+	inner        Poster
+	calls        int
+	fail, before map[int]bool
 }
 
 func (f *flakyPoster) Post(ctx context.Context, text, replyTo string) (string, error) {
 	f.calls++
+	if f.before[f.calls] {
+		return "", notSent(errors.New("the relay did not answer the dial"))
+	}
 	if f.fail[f.calls] {
 		return "", errors.New("relay closed the connection")
 	}
 	return f.inner.Post(ctx, text, replyTo)
+}
+
+// The plan reviewer on publish: a failed post keeps its try, since the
+// relay writes the event before it awaits the acknowledgment
+// (gateverify/relay.go WSRelay.Publish), so a timeout after the send may
+// follow an accepted event. An ambiguous failure gets at most two attempts
+// in all and then relay_post_unconfirmed; a failure before anything was
+// written (ErrNotSent) does not consume a try.
+func TestAFailedPostKeepsItsTryUnlessNothingWasSent(t *testing.T) {
+	pf := newPhoneFixture(t)
+	flaky := &flakyPoster{inner: pf.h.Poster, fail: map[int]bool{1: true, 2: true, 3: true, 4: true}}
+	pf.h.Poster = flaky
+	_, rid := pf.ask(t, "is the build green?", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Green.", "")
+	var last []Relayed
+	for i := 0; i < 5; i++ {
+		last, _ = pf.h.RelayStep(context.Background())
+	}
+	if flaky.calls != 2 {
+		t.Fatalf("an ambiguous failure was attempted %d times, want 2 in all", flaky.calls)
+	}
+	if rec := pf.record(t, rid); len(rec.Refusals) != 1 || rec.Refusals[0].Reason != status.RelayPostUnconfirmed || rec.Posting != nil {
+		t.Fatalf("after two ambiguous failures: %+v (last %+v)", rec.Refusals, last)
+	}
+	pf2 := newPhoneFixture(t)
+	flaky2 := &flakyPoster{inner: pf2.h.Poster, before: map[int]bool{1: true, 2: true, 3: true}}
+	pf2.h.Poster = flaky2
+	_, rid2 := pf2.ask(t, "is the build green?", "")
+	pf2.threads.reply("lead-a", CockpitThread(rid2), "Green.", "")
+	for i := 0; i < 3; i++ {
+		_, _ = pf2.h.RelayStep(context.Background())
+		if rec := pf2.record(t, rid2); rec.Posting == nil || rec.Posting.Tries != 0 {
+			t.Fatalf("a failure before the send consumed a try: %+v", rec.Posting)
+		}
+	}
+	if got := pf2.relay(t); len(got) != 1 || got[0].Outcome != "posted" || flaky2.calls != 4 || len(pf2.relayPosts()) != 1 {
+		t.Fatalf("after three failures before the send: %+v, %d calls", got, flaky2.calls)
+	}
 }
 
 // Codex P2-5: a later part's failure loses nothing. Part two fails once;
