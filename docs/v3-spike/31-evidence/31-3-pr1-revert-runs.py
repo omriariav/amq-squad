@@ -97,6 +97,39 @@ run("the shell apply ignoring a running solo lead",
 run("the shell apply ignoring a team lead's lock",
  [('internal/cli/team_confirm.go','\tif held {','\tif false && held {')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("the shell apply's probe failing open on an unreachable record",
+ [('internal/cli/team_confirm.go','\t\tif derr != nil {\n\t\t\treturn fmt.Errorf("%s: %s names a solo lead','\t\tif derr != nil {\n\t\t\tbreak\n\t\t}\n\t\tif false {\n\t\t\treturn fmt.Errorf("%s: %s names a solo lead')],
+ C+"TestTheShellApplyProbeFailsClosed")
+run("the shell apply probing only the proposed session's lock",
+ [('internal/cli/team_confirm.go','filepath.Join(project, ".agent-mail", "*", "extensions"','filepath.Join(project, ".agent-mail", "s1", "extensions"')],
+ C+"TestTheShellApplyProbeFailsClosed")
+run("the lead lock step not taking the apply lock",
+ [('internal/cli/up.go','\tunlock, err := takeApplyLock(project)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tdefer unlock()\n\treturn takeLeadLock(root)','\t_ = project\n\treturn takeLeadLock(root)')],
+ C+"TestTheShellApplyProbeFailsClosed")
+run("the shell apply not holding the apply lock through the write",
+ [('internal/cli/team_confirm.go','\tunlock, err := takeApplyLock(project)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer unlock()\n\tif err := noLeadHolds(project, digest); err != nil {','\tif err := noLeadHolds(project, digest); err != nil {')],
+ C+"TestTheShellApplyProbeFailsClosed")
+run("the discovery record left after a clean exit",
+ [('internal/cli/lead_start.go','\t\t_ = os.Remove(filepath.Join(s.root, "extensions", "amq-squad", leadStartRecordName))\n','')],
+ C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
+run("up without the under-a-lead check",
+ [('internal/cli/up.go','\tif err := underSoloLead("up", false, true); err != nil {','\tif err := error(nil); err != nil {')],
+ C+"TestUpRefusesUnderASoloLead")
+run("up not reading AM_ME",
+ [('internal/cli/up.go','underSoloLead("up", false, true)','underSoloLead("up", false, false)')],
+ C+"TestUpRefusesUnderASoloLead")
+run("lead --team without the under-a-lead check",
+ [('internal/cli/pi_lead.go','\t\tif err := underSoloLead("lead --team", false, false); err != nil {','\t\tif err := error(nil); err != nil {')],
+ C+"TestUpRefusesUnderASoloLead")
+run("scheduler run without the under-a-lead check",
+ [('internal/cli/scheduler_run.go','\tif err := underSoloLead("scheduler run", byLead, !byLead); err != nil {','\tif err := error(nil); err != nil {')],
+ C+"TestUpRefusesUnderASoloLead")
+run("the lead's pi not recognized as a lead",
+ [('internal/cli/lead_start.go','\t\tif strings.Contains(a, "/.amq-squad/runtime/pi-") {','\t\tif false && strings.Contains(a, "/.amq-squad/runtime/pi-") {')],
+ C+"TestUpRefusesUnderASoloLead")
+run("the supervising lead not passed over",
+ [('internal/cli/lead_start.go','\t\tif (skipParent && i == 0) || hop.PID <= 1 {','\t\tif (skipParent && i < 0) || hop.PID <= 1 {')],
+ C+"TestUpRefusesUnderASoloLead")
 run("the plan-file apply with no lead check",
  [('internal/cli/team.go','\t\tif err := noLeadHolds(p.ProjectDir, plan.Session, *o.digest); err != nil {\n\t\t\treturn err\n\t\t}\n','')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
