@@ -101,7 +101,7 @@ run("a bare answer bound to every gate (not the thread it names)", [(CO,'if slic
 # Row 3: no text asks for a tuple; the plain re-ask
 run("the re-ask asks for the tuple (the 3.0 text)", [(CO,'\treturn "Reply yes or no to this message.\\n\\n" + gatestore.Rule + "\\namq-squad gate " + a.GateID\n','\treturn "amq-squad gate " + a.GateID + ": that answer was not in this thread. Reply here to confirm, with one line:\\n" + strings.Join([]string{a.Verb, a.GateID, a.Class, a.DigestPrefix}, " ")\n')],
     GV+"'TestNoReaskAsksForATuple|TestABareYesOutsideTheThreadGetsThePlainReask|TestThreadReask'")
-run("the history re-ask asks for the tuple", [(CO,'".\\nReply yes or no to this message.\\n\\n" + rec.Text','".\\n\\n" + rec.Text + "\\n\\nReply here to confirm, with one line:\\n" + strings.Join([]string{a.Verb, a.GateID, a.Class, a.DigestPrefix}, " ")')],
+run("the history re-ask asks for the tuple", [(CO,'deleted).\\nReply yes or no to this message.\\n\\n" + rec.Text','deleted).\\n\\n" + rec.Text + "\\n\\nReply here to confirm, with one line:\\n" + strings.Join([]string{a.Verb, a.GateID, a.Class, a.DigestPrefix}, " ")')],
     GV+"'TestNoReaskAsksForATuple'")
 run("the doors text asks for yes <prefix>", [(TC,'''(2) on the phone, reply yes to the lead's Buzz post that relays this plan with its digest %s", prefix, digest)''','''(2) send the signed Buzz DM \\"yes %s\\" (digest %s)", prefix, prefix, digest)''')],
     CL+"'TestTheDoorsTextAsksForNoPrefix'")
