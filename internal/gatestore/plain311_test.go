@@ -71,6 +71,7 @@ var samples = map[string][]sample{
 		{"growth: seats", gatetarget.Grow("/r/s1", 13), nil},
 		{"growth: files", gatetarget.GrowLimit("/r/s1", "files", 40), nil},
 		{"widen: protected paths", gatetarget.GrowTask("/r/s1", "t3", "protected_paths", `["docs/**","internal/x/**"]`), &Facts{Title: "Ship the plain gate questions"}},
+		{"widen: one protected path", gatetarget.GrowTask("/r/s1", "t5", "protected_paths", `[".claude/settings.json"]`), &Facts{Title: "tune settings"}},
 		{"widen: size cap", gatetarget.GrowTask("/r/s1", "t4", "size_cap", `{"lines":900,"files":30}`), &Facts{Title: "Refactor the relay"}},
 		{"merge outside the grant", gatetarget.MergeBeyond("omriariav/amq-squad", 834, "4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d", []string{"ci_green", "task_scope"}),
 			&Facts{Title: "gate: the question in plain words, answered with a bare yes or no replied in its thread, and the team confirmation", Branch: "v3"}},
@@ -342,7 +343,7 @@ func TestEveryWordOfThePlainLinesTracesToAField(t *testing.T) {
 		}
 	}
 	// a line asserting what nobody recorded fails the row
-	rec := renderSample(t, "spawn", 4, samples["spawn"][4])
+	rec := renderSample(t, "spawn", 5, samples["spawn"][5])
 	lines := PlainLines(rec)
 	lines[len(lines)-2] = "Its checks passed on the train."
 	if err := traceWords(rec, strings.Join(lines, "\n")); err == nil || !strings.Contains(err.Error(), "passed") {
@@ -357,7 +358,7 @@ func TestEveryWordOfThePlainLinesTracesToAField(t *testing.T) {
 // Row 5: a quoted PR or task title is exempt from the sentence count and is
 // cut at 80 characters with an ellipsis; a hex run in it is cut too.
 func TestAQuotedTitleIsCutAt80WithAnEllipsis(t *testing.T) {
-	rec := renderSample(t, "spawn", 4, samples["spawn"][4])
+	rec := renderSample(t, "spawn", 5, samples["spawn"][5])
 	lines := PlainLines(rec)
 	if len(lines) != 4 || lines[0] != "Allow a merge of pull request #834 into v3?" {
 		t.Fatalf("lines = %q", lines)
