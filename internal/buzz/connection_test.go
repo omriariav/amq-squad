@@ -151,8 +151,9 @@ func TestAMQInboxThroughTheCLI(t *testing.T) {
 	if _, err := exec.LookPath("amq"); err != nil {
 		t.Skip("amq not installed")
 	}
+	amqProcess(t)
 	root := filepath.Join(realTempDir(t), "share")
-	if out, err := exec.Command("amq", "init", "--root", root, "--agents", "remote,attach,buzz").CombinedOutput(); err != nil {
+	if out, err := amqCmd(context.Background(), t, nil, "init", "--root", root, "--agents", "remote,attach,buzz").CombinedOutput(); err != nil {
 		t.Fatalf("amq init: %v\n%s", err, out)
 	}
 	ctx := context.Background()
@@ -181,8 +182,7 @@ func TestAMQInboxThroughTheCLI(t *testing.T) {
 	if err := in.Reply(ctx, p.ID, "routed user", false); err != nil {
 		t.Fatal(err)
 	}
-	list2 := exec.Command("amq", "list", "--root", root, "--me", CarrierHandle, "--new", "--json")
-	list2.Env = append(os.Environ(), "AMQ_NO_UPDATE_CHECK=1")
+	list2 := amqCmd(ctx, t, nil, "list", "--root", root, "--me", CarrierHandle, "--new", "--json")
 	out, err := list2.Output()
 	if err != nil {
 		t.Fatalf("amq list: %v\n%s", err, out)

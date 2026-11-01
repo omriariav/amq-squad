@@ -42,6 +42,8 @@ type TaskRow = { id: string; task_state: string; lease_holder: string; block_rea
 type GateRow = { id: string; action_class: string; target_digest: string; state: string };
 type Attention = { kind: string; subject: string; gate_id: string; since: string };
 type DecisionRow = { at: string; kind: string; seat: string; task_id: string; reason: string; reason_code: string };
+// brief 31-4: a phone request of the lead reply relay
+type RequestRow = { request_id: string; thread: string; lead: string; turns: number; posts: number; relayed_at: string | null; refused: string[]; closed: boolean; updated_at: string };
 type TrainRun = { run: string; last_kind: string; last_at: string; prs: number[]; merged: number[]; refusal: string; done: boolean };
 export type ScreenStatus = {
 	root: string;
@@ -57,6 +59,7 @@ export type ScreenStatus = {
 	attention: Attention[];
 	decisions?: DecisionRow[];
 	train?: { runs: TrainRun[]; alerts: { kind: string; detail: string }[] };
+	requests?: RequestRow[];
 	warnings: string[];
 };
 
@@ -166,6 +169,17 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 	const gateAlert = [...st.attention].reverse().find((a) => a.gate_id && a.kind !== "gate");
 	const gateWarn = st.warnings.find((w) => w.startsWith("gate store:"));
 	out.push(refusalLine(gateAlert ? `${gateAlert.kind}: ${short(gateAlert.subject)}` : gateWarn ? short(gateWarn) : undefined));
+	// brief 31-4: the phone requests, newest first, each marked relayed (the
+	// lead's answer reached the owner's DM) or refused by the relay, by name
+	const reqs = st.requests ?? [];
+	if (reqs.length) {
+		out.push(`requests (${reqs.length})`);
+		for (const r of reqs.slice(0, 5)) {
+			const mark = r.relayed_at ? `relayed ${age(r.relayed_at, now)} ago` : "not relayed";
+			const refused = r.refused.length ? `  refused: ${[...new Set(r.refused)].join(", ")}` : "";
+			out.push(`  ${r.request_id}  ${r.lead || "-"}  ${mark}${refused}`);
+		}
+	}
 	out.push(`keys: ${KEYS.map((k) => "/squad " + k).join(" | ")}`);
 	if (key) out.push(`  key ${key.key}${key.refused ? " refused" : ""}: ${short(key.line, 200)}`);
 	return out;

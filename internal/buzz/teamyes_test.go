@@ -87,7 +87,7 @@ func TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes(t *testing.T) {
 		id := hf.ownerDM(t, "hello", "")
 		msg := hf.serve.deliver(id, hf.core.Pin.Channel, "yes "+prefix)
 		hf.step(t)
-		if res, _ := hf.serve.result(msg); res != "routed lead-a" || len(*calls) != 0 {
+		if res, _ := hf.serve.result(msg); !routedTo(res, "lead-a") || len(*calls) != 0 { // brief 31-4's receipt
 			t.Fatalf("reply %q calls %+v", res, *calls)
 		}
 	})

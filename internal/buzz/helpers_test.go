@@ -11,7 +11,9 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -234,4 +236,59 @@ func statusDoc(t *testing.T, handle string, live bool) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+// amqEnv is the environment of every amq a test runs (briefs ruling 18;
+// Codex P2-7): base (the process environment when nil) with HOME a scratch
+// directory (base's own scratch HOME, else a fresh one), the XDG cache,
+// config and data directories under it, and AMQ_NO_UPDATE_CHECK=1, so no
+// amq a test starts reads the real HOME or reaches the network.
+func amqEnv(t *testing.T, base []string) []string {
+	t.Helper()
+	home := ""
+	if base == nil {
+		base = os.Environ()
+	} else {
+		for _, kv := range base {
+			if v, ok := strings.CutPrefix(kv, "HOME="); ok {
+				home = v
+			}
+		}
+	}
+	if home == "" {
+		home = realTempDir(t)
+	}
+	set := map[string]string{"HOME": home, "XDG_CACHE_HOME": filepath.Join(home, ".cache"), "XDG_CONFIG_HOME": filepath.Join(home, ".config"),
+		"XDG_DATA_HOME": filepath.Join(home, ".local", "share"), "AMQ_NO_UPDATE_CHECK": "1"}
+	var out []string
+	for _, kv := range base {
+		k, _, _ := strings.Cut(kv, "=")
+		if _, replaced := set[k]; !replaced {
+			out = append(out, kv)
+		}
+	}
+	for k, v := range set {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
+// amqCmd is the only way a test execs amq (TestTestsExecAMQOnlyThroughTheHelper).
+func amqCmd(ctx context.Context, t *testing.T, base []string, args ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, "amq", args...)
+	cmd.Env = amqEnv(t, base)
+	return cmd
+}
+
+// amqProcess points this test process at a scratch HOME (and the XDG
+// directories, and AMQ_NO_UPDATE_CHECK=1) for the production AMQ seams a
+// test runs against the installed amq: they inherit the process
+// environment.
+func amqProcess(t *testing.T) {
+	t.Helper()
+	for _, kv := range amqEnv(t, []string{}) {
+		k, v, _ := strings.Cut(kv, "=")
+		t.Setenv(k, v)
+	}
 }

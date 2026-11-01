@@ -92,5 +92,9 @@
       { "run": "r1", "started_at": "2026-11-01T08:00:00Z", "last_at": "2026-11-01T08:03:00Z", "last_kind": "merge", "repository": "owner/app", "base": "main", "prs": [810], "merged": [810], "refusal": "", "done": true, "dry_run": false }
     ],
     "alerts": [ { "id": "a1", "kind": "ungated_tag", "detail": "tag v1.2.0 has no accepted gate", "gate_id": "", "at": "2026-11-01T08:40:00Z" } ]
-  }
+  },
+  "requests": [
+    { "request_id": "q-7c41d09e2a55", "thread": "cockpit/q-7c41d09e2a55", "lead": "cto", "turns": 1, "posts": 0, "relayed_at": null, "refused": ["relay_refused_gate_shape"], "closed": false, "updated_at": "2026-11-01T09:05:00Z" },
+    { "request_id": "q-3f2a9c1e7b04", "thread": "cockpit/q-3f2a9c1e7b04", "lead": "cto", "turns": 3, "posts": 3, "relayed_at": "2026-11-01T09:03:00Z", "refused": [], "closed": true, "updated_at": "2026-11-01T09:03:00Z" }
+  ]
 }

@@ -267,8 +267,8 @@ func TestOwnerScriptDryRun(t *testing.T) {
 
 	// the squad: one lead (lead-a) the agent attaches to, lead-b routable
 	squad := filepath.Join(realTempDir(t), "root")
-	initCmd := exec.CommandContext(ctx, "amq", "init", "--root", squad, "--agents", "buzz,lead-a,lead-b")
-	initCmd.Env = env // the scratch HOME and AMQ_NO_UPDATE_CHECK=1: amq starts its update notifier before init
+	// the scratch HOME and AMQ_NO_UPDATE_CHECK=1: amq starts its update notifier before init
+	initCmd := amqCmd(ctx, t, env, "init", "--root", squad, "--agents", "buzz,lead-a,lead-b")
 	initTree := guardTree(initCmd)
 	if out, err := initCmd.CombinedOutput(); ctx.Err() != nil {
 		initTree.reap(t, "amq init")
@@ -421,7 +421,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatalf("the attach inbox after serve's delivery of the route: %+v, %v", delivered, err)
 	}
 	handled, err = h.Step(ctx)
-	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || handled[0].Reply != "routed lead-b" {
+	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || !routedTo(handled[0].Reply, "lead-b") {
 		t.Fatalf("route: %+v, %v", handled, err)
 	}
 	if !inboxHas(t, squad, "lead-a", "nostr:"+routeID) || !inboxHas(t, squad, "lead-b", "nostr:"+routeID) {
@@ -646,10 +646,20 @@ func amqBinaries(t *testing.T) {
 		if err != nil {
 			t.Skipf("%s not installed", bin)
 		}
-		out, _ := exec.Command(p, "--version").CombinedOutput()
+		args := []string{"--version"}
 		if bin == "amq-remote" {
-			out, _ = exec.Command(p, "version").CombinedOutput()
+			args = []string{"version"}
 		}
+		// amq through the scratch-HOME helper; the other two get its
+		// environment (this runs before the test changes HOME)
+		var cmd *exec.Cmd
+		if filepath.Base(p) == "amq" {
+			cmd = amqCmd(context.Background(), t, nil, args...)
+		} else {
+			cmd = exec.Command(p, args...) // exec: not amq (amq-remote, amq-owner-sign)
+			cmd.Env = amqEnv(t, nil)
+		}
+		out, _ := cmd.CombinedOutput()
 		v := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(out)), "amq-remote"))
 		t.Logf("AMQ binary %s: %s (%s)", bin, v, p)
 		if bin == "amq-remote" && semverLess(v, AMQFloor) {

@@ -49,7 +49,11 @@ reads it, sends a gate answer to the core of the squad whose store holds
 the gate (the core fetches and verifies the signed event on its own short
 connection), routes every other message through AMQ (to a named squad lead
 by cross-project routing), and replies once per message (serve posts the
-reply as the result row). It runs the share's amq-remote endpoint only
+reply as the result row: accepted <request id> for a question). It follows
+each question's cockpit thread (cockpit/<request id>) and posts the lead's
+replies to the owner's DM, each starting with re <request id> (brief 31-4,
+the lead reply relay); a DM that replies to such a post continues the same
+request. It runs the share's amq-remote endpoint only
 while the mailbox's seat is present in the status document. status prints
 the presence and activity line and the login service warning.
 `
@@ -646,7 +650,10 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 					emit("error", map[string]string{"step": "squad core", "error": pr})
 				}
 				handler = &buzz.Handler{Core: core, Cores: cores, Dial: remoteDialer(b, core.Pin), Inbox: remoteInbox(shareRoot), Mail: remoteMailer, Target: t, Confirm: confirmByPrefix,
-					SeenPath: buzz.SeenPath(shareRoot), VerifyTimeout: remoteVerifyTimeout}
+					SeenPath: buzz.SeenPath(shareRoot), VerifyTimeout: remoteVerifyTimeout,
+					// the lead reply relay (brief 31-4): the body key stays in
+					// this process, one connection per post
+					Poster: remotePoster(b, core.Pin), Threads: remoteThreads}
 			}
 		}
 		if handler != nil {
@@ -662,6 +669,14 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 			}
 			if err != nil && ctx.Err() == nil {
 				emit("error", map[string]string{"step": "inbox", "error": err.Error()})
+			}
+			// the lead's replies on the cockpit threads, to the owner's DM
+			relayed, err := handler.RelayStep(ctx)
+			for _, r := range relayed {
+				emit("relayed", r)
+			}
+			if err != nil && ctx.Err() == nil {
+				emit("error", map[string]string{"step": "relay", "error": err.Error()})
 			}
 		}
 		if *once {
@@ -704,6 +719,16 @@ var remoteDialer = func(b gateverify.Binding, pin gateverify.Pin) buzz.Dialer {
 		return relay, body, grant, closeFn, nil
 	}
 }
+
+// remotePoster is the lead reply relay's poster: the share body over the
+// verifier's per-use connection (ruling 20 point 1); remoteThreads reads the
+// cockpit threads. Test seams.
+var (
+	remotePoster = func(b gateverify.Binding, pin gateverify.Pin) buzz.Poster {
+		return buzz.BodyPoster{Dial: remoteDialer(b, pin), Pin: pin}
+	}
+	remoteThreads buzz.ThreadReader = buzz.AMQThreads{}
+)
 
 // remoteVerifyTimeout overrides the verification cap (0: buzz.VerifyTimeout,
 // 10 s); a test seam.

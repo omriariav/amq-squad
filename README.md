@@ -478,8 +478,29 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   `~/.amq-squad/gate-binding.json` (no secret in it).
 - **The mailbox adapter.** `amq-remote serve` delivers each DM from the owner
   into the share's mailbox; `remote attach` answers each once (`accepted`,
-  `refused`, `routed`), and serve posts the reply under the message. A message
+  `refused`), and serve posts the reply under the message. A message
   starting with `@<lead>` is routed to that squad lead.
+- **Ask from the phone, get the answer there (two-way).** A question gets
+  `accepted <request id> routed <lead>` at once, and goes to the lead on the
+  request's AMQ thread, `cockpit/<request id>`. The lead replies on that
+  thread as it replies to any message (`amq reply`, or `amq_reply` in pi).
+  The attachment follows the thread and posts each reply to your DM as a post
+  that starts with `re <request id>`. Reply to that post to continue the same
+  request; a DM that is not a reply opens a new one. A reply marked progress
+  (`--kind status` or `--labels progress`) posts at most once per 2 minutes,
+  the newest one winning; answers and the result (`--labels result` or
+  `--kind decision`, which also closes the request) post at once. A reply
+  over one DM is split into at most three parts (`(1/3)`).
+- **What the relay never carries.** Only the lead's own text reaches your DM,
+  after `redact.Block`; the attachment never writes a line of its own from
+  status. It refuses a reply with a line that is, as a whole, a gate answer
+  (`yes`, `no`, `approve`, `deny`, alone or with a gate id or the typed
+  tuple), a line naming an open gate's id, or a line of an open gate's
+  question. It never posts into a gate question's thread. A sentence like
+  "No, the build is green" posts. A refusal is recorded by name
+  (`relay_refused_gate_shape`) and a sha256 of the line, and shows in the
+  lead's `/squad` screen and in `status` under `requests`. The lead never
+  holds a key: the body key stays in the attachment.
 - **The gates.** A typed gate's question goes to the owner's DM with its reply
   thread; the owner answers in that thread, and the core of the squad that
   raised it fetches and verifies the signed event itself. An answer outside the
