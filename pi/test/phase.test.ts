@@ -6,7 +6,40 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { FakePi, fakeCtx, script, testProof, tmpdir } from "./fakepi.ts";
+
+// gitHome is a scratch HOME for git with an empty global config file.
+function gitHome(dir: string): string {
+	const home = path.join(dir, "git-home");
+	fs.mkdirSync(home, { recursive: true });
+	fs.writeFileSync(path.join(home, "gitconfig"), "");
+	return home;
+}
+
+// gitEnv is the environment every git in this file runs under (ruling 18):
+// the scratch HOME, its empty global config, no system config, and a fixed
+// author, so nothing of the owner's git setup (signing, hooks, aliases) runs.
+function gitEnv(home: string): Record<string, string> {
+	return {
+		HOME: home,
+		GIT_CONFIG_GLOBAL: path.join(home, "gitconfig"),
+		GIT_CONFIG_NOSYSTEM: "1",
+		GIT_AUTHOR_NAME: "t",
+		GIT_AUTHOR_EMAIL: "t@example.invalid",
+		GIT_COMMITTER_NAME: "t",
+		GIT_COMMITTER_EMAIL: "t@example.invalid",
+	};
+}
+
+// gitExec is the one way this file runs git: gitEnv, no signing, no hooks.
+function gitExec(home: string, cwd: string, ...args: string[]): string {
+	return execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-C", cwd, ...args], {
+		stdio: "pipe",
+		env: { ...process.env, ...gitEnv(home) },
+	}).toString();
+}
 
 // NONCE stands for the nonce the lead hands its pi over fd 3 at the spawn
 // (built at run time; no credential shape); STALE is an earlier spawn's
@@ -563,9 +596,9 @@ test("context --host's timeout is above Go's host budget", async () => {
 test("the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable", async () => {
 	const { HostFacts } = await import("../extensions/lib/firstturn.ts");
 	const { run } = await import("../extensions/lib/verbs.ts");
-	const { execFileSync } = await import("node:child_process");
 	const w = soloWorld();
-	const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", "-C", cwd, ...args], { stdio: "pipe" });
+	const home = gitHome(w.dir);
+	const git = (cwd: string, ...args: string[]) => gitExec(home, cwd, ...args);
 	const repo = path.join(w.dir, "repo-git");
 	const wt = path.join(w.dir, "wt");
 	fs.mkdirSync(repo);
@@ -581,7 +614,8 @@ test("the host line refreshes on a linked worktree's HEAD, a gate decision, an e
 	const amq = path.join(w.dir, "amq");
 	fs.writeFileSync(amq, "#!/bin/sh\n", { mode: 0o755 });
 	const log = path.join(w.dir, "key.log");
-	const env: Record<string, string> = { ...w.env, AMQ_SQUAD_LEAD: "1", AM_ME: "cto", AM_ROOT: w.squadRoot, FAKE_LOG: log, AMQ_SQUAD_PROJECT: wt, AMQ_SQUAD_AMQ: amq };
+	// the extension's own git rev-parse runs under the same scratch setup
+	const env: Record<string, string> = { ...w.env, ...gitEnv(home), AMQ_SQUAD_LEAD: "1", AM_ME: "cto", AM_ROOT: w.squadRoot, FAKE_LOG: log, AMQ_SQUAD_PROJECT: wt, AMQ_SQUAD_AMQ: amq };
 	delete env.AMQ_SQUAD_SOLO_LEAD;
 	const statusRuns = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter((l) => l === "status").length : 0);
 	await withEnv(env, async () => {
@@ -600,9 +634,7 @@ test("the host line refreshes on a linked worktree's HEAD, a gate decision, an e
 		await refreshes("a commit in the linked worktree", true);
 		// the branch moved from the main checkout: only the ref in the
 		// common directory changes (the worktree's HEAD and its log do not)
-		const moved = execFileSync("git", ["-C", repo, "commit-tree", "wtb^{tree}", "-p", "wtb", "-m", "three"], { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" } })
-			.toString()
-			.trim();
+		const moved = git(repo, "commit-tree", "wtb^{tree}", "-p", "wtb", "-m", "three").trim();
 		git(repo, "update-ref", "refs/heads/wtb", moved);
 		await refreshes("the worktree's branch moved from the main checkout", true);
 		fs.writeFileSync(path.join(ext, "answers", "g1.json"), JSON.stringify({ gate_id: "g1", decision: "approved" }));
@@ -617,4 +649,24 @@ test("the host line refreshes on a linked worktree's HEAD, a gate decision, an e
 		fs.appendFileSync(env.AMQ_SQUAD_BIN, "\n# upgraded\n");
 		await refreshes("the amq-squad binary changed", true);
 	});
+});
+
+// Ruling 18 for the git the tests run: gitExec is the only place this file
+// starts a process directly (the fake verbs run through the extension), so
+// every git here runs with the scratch HOME, the empty global config, no
+// system config, no signing and no hooks.
+test("gitExec is the only process exec in the phase tests", () => {
+	const src = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+	const execs = src.match(new RegExp("\\b(exec" + "FileSync|exec" + "Sync|spawn" + "Sync|spawn|exec" + "File)\\(", "g")) ?? [];
+	assert.equal(execs.length, 1, `process execs in the file: ${execs.join(", ")}`);
+	// the one exec sits in gitExec's body, with no signing and no hooks
+	const at = src.indexOf(execs[0]);
+	const fn = src.lastIndexOf("\nfunction ", at);
+	assert.ok(src.startsWith("\nfunction gitExec(", fn), "the one exec is not inside gitExec");
+	const body = src.slice(fn, src.indexOf("\n}\n", at));
+	for (const flag of ['"commit.gpgsign=false"', '"core.hooksPath=/dev/null"', "...gitEnv(home)"]) assert.ok(body.includes(flag), `gitExec lacks ${flag}`);
+	const env = gitEnv("/h");
+	assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
+	assert.equal(env.GIT_CONFIG_GLOBAL, "/h/gitconfig");
+	assert.equal(env.HOME, "/h");
 });
