@@ -1,51 +1,56 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-// R55's confirmation record (brief 31-3, sections 2, 3b, 3c). The lead
-// proposes a team as a squad.yaml digest; the owner says yes at one of three
-// doors, and each door writes the same record:
+// R55's confirmation (brief 31-3, sections 2, 3b, 3c, after the plan
+// reviewer's ruling on Codex's P1 on #834): no file is authority anywhere.
+// The verifier is the solo lead's own process, the one that serves the start
+// socket, takes the lead lock and supervises the scheduler. It witnesses
+// each confirmation live at one of three doors, checking the door's proof
+// itself, and keeps what it witnessed in memory, keyed by digest, for 30
+// minutes from the witness; the start accepts only a witnessed, unexpired
+// confirmation of the exact digest. A lead restart forgets them all and the
+// owner confirms again.
 //
-//	<root>/extensions/amq-squad/confirm/<content hex>.json
-//	{schema, digest, door, at, by, proof}
+//	tui:   `/squad confirm <prefix>`: the extension sends the digest and its
+//	       pane over the start socket; the lead accepts it only from the pi
+//	       process it spawned (its pid and the start stamp read at spawn).
+//	shell: `amq-squad team confirm D` connects to the start socket; the lead
+//	       reads the peer from the kernel: not a descendant of the lead or a
+//	       seat, a controlling terminal, its chain through its session
+//	       leader, every pid with its start stamp.
+//	buzz:  the attachment hands the lead the event id of the owner's signed
+//	       `yes <prefix>`; the lead fetches the event by that id itself and
+//	       runs the typed path's checks.
 //
-// where <root> is the solo lead's AMQ root for the repository (soloHome:
-// ~/.amq-squad/solo/<dir>-<digest>/root, the lead's AM_ROOT in the solo
-// phase), so every door and the apply find it from the repository alone.
-// The doors:
-//
-//	tui:   `/squad confirm <prefix>` in the lead's pane; the extension's
-//	       command handler (pi hands a slash command to the extension, never
-//	       to the model) writes it; proof: the pane and the pid.
-//	shell: `amq-squad team confirm D` from the owner's own shell; refused
-//	       lead_descendant when an amq-squad lead or a seat process is an
-//	       ancestor (the parent chain read from the kernel); proof: the pid
-//	       chain.
-//	buzz:  a signed Buzz DM `yes <16-hex prefix>` through the mailbox
-//	       handler's typed path; proof: the event id.
-//
-// `team apply --digest D` refuses without a record for D that is younger
-// than 30 minutes and carries its door's proof, naming the three doors.
+// The directory <root>/extensions/amq-squad/confirm/ is the lead's log of
+// what it witnessed (atomicfile, 0600): the door and what the lead read,
+// never what a claimant asserted. Nothing reads it for authority. The
+// proposal `team propose --from PLAN` records under confirm/proposed/ is an
+// index from a prefix to a digest and the squad.yaml to plan again, never a
+// confirmation.
 
-// ConfirmTTL is how long a confirmation stands.
+// ConfirmTTL is how long a witnessed confirmation stands.
 const ConfirmTTL = 30 * time.Minute
 
 // The doors.
@@ -59,39 +64,46 @@ const (
 const (
 	ReasonConfirmMissing   = "confirmation_missing"
 	ReasonConfirmStale     = "confirmation_stale"
-	ReasonConfirmUnproved  = "confirmation_unproved"
 	ReasonLeadDescendant   = "lead_descendant"
 	ReasonAncestryUnknown  = "ancestry_unknown"
 	ReasonNoTerminal       = "no_terminal"
 	ReasonNoProposal       = "no_proposal"
 	ReasonProposalAmbig    = "proposal_ambiguous"
 	ReasonDigestMalformed  = "digest_malformed"
+	ReasonNoLead           = "no_lead"
+	ReasonPeerNotLeadPi    = "peer_not_lead_pi"
+	ReasonEventUnverified  = "event_unverified"
 	confirmDirName         = "confirm"
 	proposedDirName        = "proposed"
-	confirmFutureSkew      = time.Minute
+	leadStartRecordName    = "lead-start.json"
 	confirmMaxHops         = 64
 	confirmRecordSchema    = 1
 	confirmProposalSchema  = 1
 	confirmProposalMaxSize = 1 << 20
 )
 
-// confirmHop is one ancestor in the shell door's proof: its pid and its
-// argv[0]'s base name (never the full argv, which can hold a secret).
+// confirmHop is one process of a chain the lead read: its pid, its start
+// stamp and its argv[0]'s base name (never the full argv, which can hold a
+// secret).
 type confirmHop struct {
-	PID  int    `json:"pid"`
-	Name string `json:"name"`
+	PID   int    `json:"pid"`
+	Stamp string `json:"stamp,omitempty"`
+	Name  string `json:"name"`
 }
 
-// confirmProof is how the record was made (3c): the TUI door's pane and
-// pid, the shell door's pid chain, the Buzz door's event id.
+// confirmProof is what the lead itself read at the door: the pi process
+// and the pane (tui), the peer's chain (shell), the event id it verified
+// (buzz).
 type confirmProof struct {
 	Pane     string       `json:"pane,omitempty"`
 	PID      int          `json:"pid,omitempty"`
+	Stamp    string       `json:"stamp,omitempty"`
 	PIDChain []confirmHop `json:"pid_chain,omitempty"`
 	EventID  string       `json:"event_id,omitempty"`
 }
 
-// confirmRecord is R55's record.
+// confirmRecord is one witnessed confirmation: in the lead's memory, and a
+// line of its log.
 type confirmRecord struct {
 	Schema int          `json:"schema"`
 	Digest string       `json:"digest"`
@@ -101,9 +113,9 @@ type confirmRecord struct {
 	Proof  confirmProof `json:"proof"`
 }
 
-// teamProposal is what `team propose --from PLAN` leaves beside the
-// records: the proposal the Buzz door looks a prefix up in, and the
-// squad.yaml text the apply plans again (nothing else is written).
+// teamProposal is what `team propose --from PLAN` leaves under the solo
+// root: an index from the prefix to the digest (the Buzz door) and the
+// squad.yaml text the start plans again.
 type teamProposal struct {
 	Schema    int       `json:"schema"`
 	Digest    string    `json:"digest"`
@@ -115,7 +127,7 @@ type teamProposal struct {
 
 var digestTokenRE = regexp.MustCompile(`^sha256:([0-9a-f]{64})@([0-9a-f]{64}|absent)$`)
 
-// digestHex is the content hex of an apply token, the record's file stem.
+// digestHex is the content hex of an apply token, the log's file stem.
 func digestHex(digest string) (string, error) {
 	m := digestTokenRE.FindStringSubmatch(strings.TrimSpace(digest))
 	if m == nil {
@@ -146,11 +158,12 @@ func proposalPath(root, hexDigest string) string {
 	return filepath.Join(confirmDir(root), proposedDirName, hexDigest+".json")
 }
 
-// confirmNow is the clock of the doors and the apply (a test seam).
+// confirmNow is the clock of the witness (a test seam).
 var confirmNow = time.Now
 
-// writeConfirmRecord writes rec under root by temp name and rename.
-func writeConfirmRecord(root string, rec confirmRecord) (string, error) {
+// writeConfirmLog writes the lead's log line of a witnessed confirmation
+// (atomicfile, 0600). Nothing reads it for authority.
+func writeConfirmLog(root string, rec confirmRecord) (string, error) {
 	h, err := digestHex(rec.Digest)
 	if err != nil {
 		return "", err
@@ -173,59 +186,8 @@ func doorsText(digest, project string) string {
 	return fmt.Sprintf("confirm it at one of the three doors: (1) type /squad confirm %s in the lead's pane; (2) run amq-squad team confirm %s --project %s from your own shell; (3) send the signed Buzz DM \"yes %s\"", prefix, digest, project, prefix)
 }
 
-// checkConfirmation is the apply's check: a record for digest, younger
-// than ConfirmTTL, carrying its door's proof. It returns the record.
-func checkConfirmation(root, digest, project string) (confirmRecord, error) {
-	var rec confirmRecord
-	h, err := digestHex(digest)
-	if err != nil {
-		return rec, err
-	}
-	raw, err := os.ReadFile(confirmPath(root, h))
-	if errors.Is(err, os.ErrNotExist) {
-		return rec, fmt.Errorf("%s: no confirmation of %s; %s", ReasonConfirmMissing, digest, doorsText(digest, project))
-	}
-	if err != nil {
-		return rec, err
-	}
-	if err := json.Unmarshal(raw, &rec); err != nil || rec.Schema != confirmRecordSchema || rec.Digest != strings.TrimSpace(digest) {
-		return rec, fmt.Errorf("%s: the confirmation record of %s is unreadable or names another digest; %s", ReasonConfirmMissing, digest, doorsText(digest, project))
-	}
-	now := confirmNow()
-	if age := now.Sub(rec.At); age > ConfirmTTL || age < -confirmFutureSkew {
-		return rec, fmt.Errorf("%s: the confirmation of %s was made at %s, older than %s (or dated ahead); %s", ReasonConfirmStale, digest, rec.At.UTC().Format(time.RFC3339), ConfirmTTL, doorsText(digest, project))
-	}
-	if why := proofMissing(rec); why != "" {
-		return rec, fmt.Errorf("%s: the %s door's record of %s carries no %s; %s", ReasonConfirmUnproved, rec.Door, digest, why, doorsText(digest, project))
-	}
-	return rec, nil
-}
-
-var eventIDRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-// proofMissing names the door's proof a record lacks, "" when it has it.
-func proofMissing(rec confirmRecord) string {
-	switch rec.Door {
-	case DoorTUI:
-		if rec.Proof.PID <= 1 {
-			return "pane and pid"
-		}
-	case DoorShell:
-		if len(rec.Proof.PIDChain) == 0 {
-			return "pid chain"
-		}
-	case DoorBuzz:
-		if !eventIDRE.MatchString(rec.Proof.EventID) {
-			return "event id"
-		}
-	default:
-		return "known door"
-	}
-	return ""
-}
-
-// writeProposal records a proposal beside the records (the one write of
-// `team propose --from PLAN`).
+// writeProposal records a proposal (the one write of `team propose --from
+// PLAN`).
 func writeProposal(root string, p teamProposal) error {
 	h, err := digestHex(p.Digest)
 	if err != nil {
@@ -259,28 +221,47 @@ func readProposal(root, digest string) (teamProposal, error) {
 	return p, nil
 }
 
-// Seams of door (a)'s ancestry check: the kernel's records of this process
-// and its ancestors (procinfo), and whether it has a controlling terminal.
-var (
-	confirmSelf     = os.Getpid
-	confirmParent   = procinfo.ParentPID
-	confirmArgv     = procinfo.Argv
-	confirmEnviron  = procinfo.Environ
-	confirmSession  = procinfo.SessionID
-	confirmTerminal = hasControllingTerminal
-)
-
-// hasControllingTerminal reports whether this process has a controlling
-// terminal: /dev/tty opens only then. A process the lead detaches (setsid,
-// a daemon) has none.
-func hasControllingTerminal() bool {
-	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if err != nil {
-		return false
+// proposalByPrefix is the one proposal under root whose digest starts with
+// prefix and that is younger than ConfirmTTL at at.
+func proposalByPrefix(root, prefix string, at time.Time) (teamProposal, error) {
+	if _, err := hex.DecodeString(prefix); err != nil || len(prefix) != 16 {
+		return teamProposal{}, fmt.Errorf("%s: %q is not a 16-hex prefix", ReasonNoProposal, prefix)
 	}
-	_ = f.Close()
-	return true
+	matches, _ := filepath.Glob(filepath.Join(confirmDir(root), proposedDirName, prefix+"*.json"))
+	sort.Strings(matches)
+	var hits []teamProposal
+	for _, m := range matches {
+		raw, err := os.ReadFile(m)
+		if err != nil || len(raw) > confirmProposalMaxSize {
+			continue
+		}
+		var p teamProposal
+		if json.Unmarshal(raw, &p) != nil || team.DigestPrefix(p.Digest) != prefix || at.Sub(p.At) > ConfirmTTL {
+			continue
+		}
+		hits = append(hits, p)
+	}
+	switch len(hits) {
+	case 0:
+		return teamProposal{}, fmt.Errorf("%s: no proposal younger than %s starts with %s", ReasonNoProposal, ConfirmTTL, prefix)
+	case 1:
+		return hits[0], nil
+	}
+	return teamProposal{}, fmt.Errorf("%s: %d proposals start with %s; confirm at the lead's pane or the shell door with the full digest", ReasonProposalAmbig, len(hits), prefix)
 }
+
+// Seams of the kernel reads the lead (the shell door) and the owner's apply
+// make: this process, the parent chain, argv, initial environment, session
+// leader and controlling terminal of any pid (the start stamp is
+// confirmStamp).
+var (
+	confirmSelf    = os.Getpid
+	confirmParent  = procinfo.ParentPID
+	confirmArgv    = procinfo.Argv
+	confirmEnviron = procinfo.Environ
+	confirmSession = procinfo.SessionID
+	confirmHasTTY  = procinfo.HasTTY
+)
 
 // leadOrSeatArgv reports whether argv is an amq-squad lead or a seat
 // process: amq-squad bare (the solo lead), lead, seat-exec, pi (a pi seat
@@ -304,55 +285,130 @@ func amqIdentityEnv(env []string) bool {
 	return false
 }
 
-// confirmAncestry is door (a)'s kernel-level refusal (3b (i)): the process
-// must have a controlling terminal; its parent chain, walked to pid 1 from
-// the kernel's records, must reach its session leader (a process the lead
-// orphaned out of the chain does not) and must hold no amq-squad lead or
-// seat process (by argv) and no process carrying an AMQ identity (by its
-// initial environment). An ancestor whose records cannot be read (another
-// user's: login, sshd) is passed over; the lead and its seats are the
-// owner's own processes, always readable. It returns the chain.
-func confirmAncestry() ([]confirmHop, error) {
-	if !confirmTerminal() {
-		return nil, fmt.Errorf("%s: this process has no controlling terminal; run amq-squad team confirm from your own shell", ReasonNoTerminal)
-	}
-	self := confirmSelf()
-	sid, ok := confirmSession(self)
+// ownerAncestry is the kernel-level check of a process that claims to be
+// the owner's (3b (i)), read entirely from the kernel's records (procinfo):
+// pid has a controlling terminal (its own, read for it, never the reader's);
+// its parent chain, walked to pid 1, passes through its session leader (a
+// process orphaned out of its shell does not), never passes lead (the solo
+// lead's pid, 0 for none), and holds no amq-squad lead or seat process (by
+// argv) and no process carrying an AMQ identity (by its initial
+// environment). Every pid's start stamp is read when the pid is first read,
+// the child's parent and stamp again after each hop, and every stamp again
+// at the end (caller_unproved on a change: a reused pid). An ancestor whose
+// argv cannot be read (another user's: login, sshd) is passed over; the lead
+// and its seats are the owner's own processes, always readable. It returns
+// the chain as read, pid first.
+func ownerAncestry(pid, lead int) ([]confirmHop, error) {
+	first, ok := confirmStamp(pid)
 	if !ok {
-		return nil, fmt.Errorf("%s: the session of pid %d cannot be read", ReasonAncestryUnknown, self)
+		return nil, fmt.Errorf("%s: the start stamp of pid %d cannot be read", ReasonAncestryUnknown, pid)
 	}
-	var chain []confirmHop
-	leader := sid == self
-	p, ok := confirmParent(self)
+	switch has, ok := confirmHasTTY(pid); {
+	case !ok:
+		return nil, fmt.Errorf("%s: the terminal of pid %d cannot be read", ReasonAncestryUnknown, pid)
+	case !has:
+		return nil, fmt.Errorf("%s: pid %d has no controlling terminal; confirm from your own shell", ReasonNoTerminal, pid)
+	}
+	sid, ok := confirmSession(pid)
 	if !ok {
-		return nil, fmt.Errorf("%s: the parent of pid %d cannot be read", ReasonAncestryUnknown, self)
+		return nil, fmt.Errorf("%s: the session of pid %d cannot be read", ReasonAncestryUnknown, pid)
 	}
-	for hops := 0; p > 1; hops++ {
+	name := "?"
+	if argv, ok := confirmArgv(pid); ok {
+		name = filepath.Base(argv[0])
+	}
+	chain := []confirmHop{{PID: pid, Stamp: first, Name: name}}
+	leader := sid == pid
+	for p, hops := pid, 0; ; hops++ {
 		if hops >= confirmMaxHops {
-			return nil, fmt.Errorf("%s: the parent chain of pid %d is longer than %d hops", ReasonAncestryUnknown, self, confirmMaxHops)
+			return nil, fmt.Errorf("%s: the parent chain of pid %d is longer than %d hops", ReasonAncestryUnknown, pid, confirmMaxHops)
 		}
-		hop := confirmHop{PID: p}
-		if argv, ok := confirmArgv(p); ok {
-			hop.Name = filepath.Base(argv[0])
-			if leadOrSeatArgv(argv) {
-				return nil, fmt.Errorf("%s: pid %d (%s) is an amq-squad lead or seat process and an ancestor of this command; only the owner's own shell confirms (from the lead's pane type /squad confirm instead)", ReasonLeadDescendant, p, strings.Join(argv[:min(2, len(argv))], " "))
-			}
-		}
-		if env, ok := confirmEnviron(p); ok && amqIdentityEnv(env) {
-			return nil, fmt.Errorf("%s: pid %d (%s) carries an AMQ seat identity (AM_ME) and is an ancestor of this command; only the owner's own shell confirms", ReasonLeadDescendant, p, firstNonEmptyStr(hop.Name, "?"))
-		}
-		chain = append(chain, hop)
-		leader = leader || p == sid
-		next, ok := confirmParent(p)
+		parent, ok := confirmParent(p)
 		if !ok {
 			return nil, fmt.Errorf("%s: the parent of pid %d cannot be read", ReasonAncestryUnknown, p)
 		}
-		p = next
+		if parent <= 1 {
+			break
+		}
+		stamp, ok := confirmStamp(parent)
+		if !ok {
+			return nil, fmt.Errorf("%s: the start stamp of pid %d cannot be read", ReasonAncestryUnknown, parent)
+		}
+		if again, ok := confirmParent(p); !ok || again != parent {
+			return nil, fmt.Errorf("%s: pid %d was reparented while it was read", ReasonCallerUnproved, p)
+		}
+		if err := restampHops(chain[len(chain)-1:]); err != nil {
+			return nil, err
+		}
+		hop := confirmHop{PID: parent, Stamp: stamp}
+		if parent == lead {
+			return nil, fmt.Errorf("%s: pid %d descends from the solo lead (pid %d); only the owner's own shell confirms (from the lead's pane type /squad confirm instead)", ReasonLeadDescendant, pid, lead)
+		}
+		if argv, ok := confirmArgv(parent); ok {
+			hop.Name = filepath.Base(argv[0])
+			if leadOrSeatArgv(argv) {
+				return nil, fmt.Errorf("%s: pid %d (%s) is an amq-squad lead or seat process and an ancestor of pid %d; only the owner's own shell confirms", ReasonLeadDescendant, parent, strings.Join(argv[:min(2, len(argv))], " "), pid)
+			}
+		}
+		if env, ok := confirmEnviron(parent); ok && amqIdentityEnv(env) {
+			return nil, fmt.Errorf("%s: pid %d (%s) carries an AMQ seat identity (AM_ME) and is an ancestor of pid %d; only the owner's own shell confirms", ReasonLeadDescendant, parent, firstNonEmptyStr(hop.Name, "?"), pid)
+		}
+		chain = append(chain, hop)
+		leader = leader || parent == sid
+		p = parent
 	}
 	if !leader {
-		return nil, fmt.Errorf("%s: the parent chain of pid %d does not reach its session leader (pid %d): the command was orphaned out of the shell that ran it", ReasonAncestryUnknown, self, sid)
+		return nil, fmt.Errorf("%s: the parent chain of pid %d does not reach its session leader (pid %d): it was orphaned out of the shell that ran it", ReasonAncestryUnknown, pid, sid)
 	}
-	return chain, nil
+	return chain, restampHops(chain)
+}
+
+// restampHops is restamp over a chain the lead read.
+func restampHops(chain []confirmHop) error {
+	var s []stampedPID
+	for _, h := range chain {
+		s = append(s, stampedPID{h.PID, h.Stamp})
+	}
+	return restamp(s)
+}
+
+// leadStartRecord names the solo lead's start socket for the processes that
+// are not its descendants (team confirm, the Buzz attachment). It is no
+// authority: the dial checks the socket is private and the owner's, and the
+// lead proves every peer itself.
+type leadStartRecord struct {
+	Schema int    `json:"schema"`
+	Socket string `json:"socket"`
+	PID    int    `json:"pid"`
+}
+
+// dialLead connects to the solo lead of root: no_lead when none serves it.
+func dialLead(root string) (io.ReadWriteCloser, error) {
+	raw, err := os.ReadFile(filepath.Join(root, "extensions", "amq-squad", leadStartRecordName))
+	var rec leadStartRecord
+	if err != nil || json.Unmarshal(raw, &rec) != nil || rec.Socket == "" {
+		return nil, fmt.Errorf("%s: no solo lead serves %s", ReasonNoLead, root)
+	}
+	c, err := seatlaunch.DialPrivate(root, rec.Socket, leadStartSocketName)
+	if err != nil {
+		return nil, fmt.Errorf("%s: the solo lead's socket %s: %v", ReasonNoLead, rec.Socket, err)
+	}
+	c.SetDeadline(time.Now().Add(60 * time.Second))
+	return c, nil
+}
+
+// askLead sends one request to a lead and reads its reply.
+func askLead(c io.ReadWriter, req any) (leadStartReply, error) {
+	var reply leadStartReply
+	b, _ := json.Marshal(req)
+	if _, err := c.Write(append(b, '\n')); err != nil {
+		return reply, err
+	}
+	line, err := bufio.NewReader(io.LimitReader(c, 4<<20)).ReadBytes('\n')
+	if err != nil {
+		return reply, fmt.Errorf("%s: no reply from the lead: %w", ReasonNoLead, err)
+	}
+	return reply, json.Unmarshal(line, &reply)
 }
 
 const teamConfirmUsage = `amq-squad team confirm - the owner's yes to a team the lead proposed (R55, door 2)
@@ -360,14 +416,17 @@ const teamConfirmUsage = `amq-squad team confirm - the owner's yes to a team the
 Usage:
   amq-squad team confirm DIGEST [--project DIR] [--json]
 
-Run it from your own shell: it refuses lead_descendant when an amq-squad lead
-or a seat process is its ancestor, and no_terminal without a controlling
-terminal. It writes the confirmation record team apply --digest DIGEST needs
-(younger than 30 minutes). The other doors: /squad confirm <prefix> in the
-lead's pane, and the signed Buzz DM "yes <prefix>".
+Run it from your own shell while the solo lead runs: it asks the lead, which
+reads this process from the kernel (no lead or seat ancestor, a controlling
+terminal, the chain through its session leader) and witnesses the
+confirmation for 30 minutes. With no lead running it refuses no_lead; apply
+from your own shell instead (team apply --digest DIGEST). The other doors:
+/squad confirm <prefix> in the lead's pane, and the signed Buzz DM
+"yes <prefix>".
 `
 
-// runTeamConfirm is door (a).
+// runTeamConfirm is door (a): the lead witnesses it, the claimant asserts
+// nothing.
 func runTeamConfirm(args []string) error {
 	fs := flag.NewFlagSet("team confirm", flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, teamConfirmUsage) }
@@ -385,6 +444,7 @@ func runTeamConfirm(args []string) error {
 	} else if fs.NArg() != 0 || digest == "" {
 		return usageErrorf("team confirm takes one DIGEST")
 	}
+	digest = strings.TrimSpace(digest)
 	if _, err := digestHex(digest); err != nil {
 		return err
 	}
@@ -392,23 +452,29 @@ func runTeamConfirm(args []string) error {
 	if err != nil {
 		return err
 	}
-	chain, err := confirmAncestry()
-	if err != nil {
-		return err
-	}
 	root, err := soloRootOf(dir)
 	if err != nil {
 		return err
 	}
-	rec := confirmRecord{Digest: strings.TrimSpace(digest), Door: DoorShell, At: confirmNow().UTC(), By: "uid " + strconv.Itoa(os.Getuid()), Proof: confirmProof{PIDChain: chain}}
-	p, err := writeConfirmRecord(root, rec)
+	c, err := dialLead(root)
+	if err != nil {
+		return fmt.Errorf("%v; start the lead (amq-squad lead) and confirm again, or apply from your own shell: amq-squad team apply --digest %s --project %s", err, digest, dir)
+	}
+	defer c.Close()
+	reply, err := askLead(c, leadStartRequest{Kind: confirmShellKind, Digest: digest, Project: dir})
 	if err != nil {
 		return err
 	}
 	if *jsonOut {
-		return printJSONEnvelope("team_confirm", map[string]any{"record": p, "confirmation": rec})
+		if err := printJSONEnvelope("team_confirm", reply); err != nil {
+			return err
+		}
+	} else if reply.Outcome == "witnessed" {
+		fmt.Printf("confirmed %s (door shell, witnessed by the lead); it stands for %s\n", digest, ConfirmTTL)
 	}
-	fmt.Printf("confirmed %s (door shell) at %s; it stands for %s: %s\n", rec.Digest, rec.At.Format(time.RFC3339), ConfirmTTL, p)
+	if reply.Outcome != "witnessed" {
+		return fmt.Errorf("%s: %s", reply.Refusal, reply.Detail)
+	}
 	return nil
 }
 
@@ -424,59 +490,42 @@ func teamProjectDir(project string) (string, error) {
 	return filepath.Abs(project)
 }
 
-// confirmByPrefix is the Buzz door's write (wired into the mailbox
-// handler): the owner's signed `yes <prefix>`, its signature already
-// verified, confirms the one proposal younger than ConfirmTTL whose digest
-// starts with prefix, among every solo root under ~/.amq-squad/solo/. It
-// returns the confirmed digest.
-func confirmByPrefix(prefix, eventID, owner string, at time.Time) (string, error) {
+// confirmByPrefix is the attachment's half of the Buzz door (wired into the
+// mailbox handler, after the handler verified the owner's signature): it
+// finds the solo root whose recent proposal the prefix names and hands that
+// root's lead the event id only; the lead fetches and verifies the event
+// itself and witnesses the confirmation. It returns the confirmed digest.
+func confirmByPrefix(prefix, eventID, _ string, at time.Time) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	if _, err := hex.DecodeString(prefix); err != nil || len(prefix) != 16 {
-		return "", fmt.Errorf("%s: %q is not a 16-hex prefix", ReasonNoProposal, prefix)
-	}
-	matches, _ := filepath.Glob(filepath.Join(home, ".amq-squad", "solo", "*", "root", "extensions", "amq-squad", confirmDirName, proposedDirName, prefix+"*.json"))
-	sort.Strings(matches)
-	type hit struct {
-		root string
-		p    teamProposal
-	}
-	var hits []hit
-	for _, m := range matches {
-		root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(m)))))
-		h := strings.TrimSuffix(filepath.Base(m), ".json")
-		p, err := readProposal(root, proposalDigestFor(m, h))
-		if err != nil || at.Sub(p.At) > ConfirmTTL {
-			continue
+	roots, _ := filepath.Glob(filepath.Join(home, ".amq-squad", "solo", "*", "root"))
+	sort.Strings(roots)
+	var found []string
+	for _, root := range roots {
+		if _, err := proposalByPrefix(root, prefix, at); err == nil {
+			found = append(found, root)
 		}
-		hits = append(hits, hit{root, p})
 	}
-	switch len(hits) {
+	switch len(found) {
 	case 0:
 		return "", fmt.Errorf("%s: no proposal younger than %s starts with %s", ReasonNoProposal, ConfirmTTL, prefix)
 	case 1:
 	default:
-		return "", fmt.Errorf("%s: %d proposals start with %s; confirm at the lead's pane or the shell door with the full digest", ReasonProposalAmbig, len(hits), prefix)
+		return "", fmt.Errorf("%s: proposals in %d repositories start with %s", ReasonProposalAmbig, len(found), prefix)
 	}
-	rec := confirmRecord{Digest: hits[0].p.Digest, Door: DoorBuzz, At: at.UTC(), By: "owner key " + owner, Proof: confirmProof{EventID: eventID}}
-	if _, err := writeConfirmRecord(hits[0].root, rec); err != nil {
+	c, err := dialLead(found[0])
+	if err != nil {
 		return "", err
 	}
-	return rec.Digest, nil
-}
-
-// proposalDigestFor reads a proposal file's digest field (the file stem is
-// only its content hex).
-func proposalDigestFor(path, _ string) string {
-	raw, err := os.ReadFile(path)
-	if err != nil || len(raw) > confirmProposalMaxSize {
-		return ""
+	defer c.Close()
+	reply, err := askLead(c, leadStartRequest{Kind: confirmBuzzKind, EventID: eventID})
+	if err != nil {
+		return "", err
 	}
-	var p struct {
-		Digest string `json:"digest"`
+	if reply.Outcome != "witnessed" {
+		return "", errors.New(reply.Refusal + ": " + reply.Detail)
 	}
-	_ = json.Unmarshal(raw, &p)
-	return p.Digest
+	return reply.Digest, nil
 }

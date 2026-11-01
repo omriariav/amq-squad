@@ -15,8 +15,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/buzz"
 	"github.com/omriariav/amq-squad/v3/internal/fleet"
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -56,13 +61,23 @@ const (
 // leadStartRequest is the apply's request.
 type leadStartRequest struct {
 	Kind    string `json:"kind"`
-	Digest  string `json:"digest"`
-	Project string `json:"project"`
+	Digest  string `json:"digest,omitempty"`
+	Project string `json:"project,omitempty"`
+	Pane    string `json:"pane,omitempty"`     // the TUI door's pane
+	EventID string `json:"event_id,omitempty"` // the Buzz door's event
 }
+
+// The confirmation kinds on the same socket (the three doors).
+const (
+	confirmTUIKind   = "amq-squad.confirm-tui.v1"
+	confirmShellKind = "amq-squad.confirm-shell.v1"
+	confirmBuzzKind  = "amq-squad.confirm-buzz.v1"
+)
 
 // leadStartReply is the lead's answer.
 type leadStartReply struct {
-	Outcome    string     `json:"outcome"` // started | refused
+	Outcome    string     `json:"outcome"` // started | witnessed | refused
+	Digest     string     `json:"digest,omitempty"`
 	Refusal    string     `json:"refusal,omitempty"`
 	Detail     string     `json:"detail,omitempty"`
 	Steps      []upStep   `json:"steps,omitempty"`
@@ -98,6 +113,22 @@ type leadStarter struct {
 	sup   *supervisor
 	sock  *seatlaunch.PrivateSocket
 	steps []upStep
+
+	// the witness (R55 after the plan reviewer's ruling): the pi process the
+	// lead spawned, and the confirmations it witnessed, in memory only
+	wmu       sync.Mutex
+	piPID     int
+	piStamp   string
+	witnessed map[string]confirmRecord
+	seen      map[string]bool // Buzz event ids witnessed (once-only)
+}
+
+// setPi records the pi process the lead spawned, with its start stamp read
+// at the spawn: the TUI door's only accepted peer.
+func (s *leadStarter) setPi(pid int, stamp string) {
+	s.wmu.Lock()
+	s.piPID, s.piStamp = pid, stamp
+	s.wmu.Unlock()
 }
 
 // newLeadStarter is the starter of the solo lead whose AMQ root is root.
@@ -112,6 +143,13 @@ func (s *leadStarter) serve() (string, error) {
 		return "", err
 	}
 	s.sock = sock
+	// where the processes that are not the lead's descendants (team
+	// confirm, the Buzz attachment) find the socket; no authority
+	rec, _ := json.Marshal(leadStartRecord{Schema: 1, Socket: sock.Path, PID: s.self})
+	if err := atomicfile.Write(filepath.Join(s.root, "extensions", "amq-squad", leadStartRecordName), append(rec, '\n'), 0o600); err != nil {
+		sock.Close()
+		return "", err
+	}
 	go func() {
 		for {
 			conn, err := sock.Listener.AcceptUnix()
@@ -144,22 +182,17 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	reply := leadStartReply{Outcome: "refused"}
 	pid, ok := leadStartPeer(conn)
-	var chain []stampedPID
-	var walkErr error
-	if ok {
-		chain, walkErr = callerChain(pid, s.self)
-	}
+	var req leadStartRequest
+	line, rerr := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
 	switch {
 	case !ok:
 		reply.Refusal, reply.Detail = "origin_unknown", "the kernel did not name the requesting process"
-	case walkErr != nil:
-		name, _, _ := strings.Cut(walkErr.Error(), ":")
-		reply.Refusal, reply.Detail = name, strings.TrimSpace(strings.TrimPrefix(walkErr.Error(), name+":"))
-	default:
-		var req leadStartRequest
-		line, err := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
-		if err != nil || json.Unmarshal(line, &req) != nil || req.Kind != leadStartKind {
-			reply.Refusal, reply.Detail = "request_malformed", "not a team start request"
+	case rerr != nil || json.Unmarshal(line, &req) != nil:
+		reply.Refusal, reply.Detail = "request_malformed", "not a request"
+	case req.Kind == leadStartKind:
+		chain, err := callerChain(pid, s.self)
+		if err != nil {
+			reply = refusedBy(err)
 			break
 		}
 		if leadStartBeforeAct != nil {
@@ -172,10 +205,157 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 		}
 		conn.SetDeadline(time.Time{}) // the start is the lead's own work
 		reply = s.start(context.Background(), req)
+	case req.Kind == confirmTUIKind:
+		reply = s.witnessTUI(pid, req)
+	case req.Kind == confirmShellKind:
+		reply = s.witnessShell(pid, req)
+	case req.Kind == confirmBuzzKind:
+		reply = s.witnessBuzz(context.Background(), req)
+	default:
+		reply.Refusal, reply.Detail = "request_malformed", "an unknown request kind"
 	}
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	b, _ := json.Marshal(reply)
 	conn.Write(append(b, '\n'))
+}
+
+// refusedBy is a refusal whose error text starts with its name.
+func refusedBy(err error) leadStartReply {
+	name, _, _ := strings.Cut(err.Error(), ":")
+	return leadStartReply{Outcome: "refused", Refusal: name, Detail: strings.TrimSpace(strings.TrimPrefix(err.Error(), name+":"))}
+}
+
+// witness keeps a confirmation the lead witnessed and logs it.
+func (s *leadStarter) witness(rec confirmRecord) leadStartReply {
+	s.wmu.Lock()
+	if s.witnessed == nil {
+		s.witnessed = map[string]confirmRecord{}
+	}
+	s.witnessed[rec.Digest] = rec
+	s.wmu.Unlock()
+	detail := "witnessed by the lead (pid " + fmt.Sprint(s.self) + "); it stands for " + ConfirmTTL.String()
+	if _, err := writeConfirmLog(s.root, rec); err != nil {
+		detail += "; the log line was not written: " + err.Error()
+	}
+	return leadStartReply{Outcome: "witnessed", Digest: rec.Digest, Detail: detail}
+}
+
+// witnessFor is the start's check: a confirmation of exactly digest that
+// this lead witnessed, younger than ConfirmTTL.
+func (s *leadStarter) witnessFor(digest string) (confirmRecord, error) {
+	s.wmu.Lock()
+	rec, ok := s.witnessed[digest]
+	s.wmu.Unlock()
+	switch {
+	case !ok:
+		return rec, fmt.Errorf("%s: this lead witnessed no confirmation of %s (a lead restart forgets them); %s", ReasonConfirmMissing, digest, doorsText(digest, s.project))
+	case confirmNow().Sub(rec.At) > ConfirmTTL:
+		return rec, fmt.Errorf("%s: the confirmation of %s was witnessed at %s, older than %s; %s", ReasonConfirmStale, digest, rec.At.UTC().Format(time.RFC3339), ConfirmTTL, doorsText(digest, s.project))
+	}
+	return rec, nil
+}
+
+// witnessTUI is the TUI door: accepted only from the pi process the lead
+// spawned, its pid and the start stamp read at the spawn (the model's
+// commands are pi's children, never pi itself; a reused pid carries another
+// stamp).
+func (s *leadStarter) witnessTUI(pid int, req leadStartRequest) leadStartReply {
+	if _, err := digestHex(req.Digest); err != nil {
+		return refusedBy(err)
+	}
+	s.wmu.Lock()
+	piPID, piStamp := s.piPID, s.piStamp
+	s.wmu.Unlock()
+	if piPID <= 1 || pid != piPID {
+		return leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); /squad confirm is typed in the lead's pane", pid, piPID)}
+	}
+	if now, ok := confirmStamp(pid); !ok || now != piStamp {
+		return leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d does not carry the start stamp the lead read when it spawned pi", pid)}
+	}
+	return s.witness(confirmRecord{Digest: strings.TrimSpace(req.Digest), Door: DoorTUI, At: confirmNow().UTC(), By: "the lead's pi, pane " + firstNonEmptyStr(req.Pane, "-"),
+		Proof: confirmProof{PID: pid, Stamp: piStamp, Pane: req.Pane}})
+}
+
+// witnessShell is the shell door: the lead reads the peer from the kernel
+// (ownerAncestry with the lead's own pid as the one it must not descend
+// from) and records the chain it read.
+func (s *leadStarter) witnessShell(pid int, req leadStartRequest) leadStartReply {
+	if _, err := digestHex(req.Digest); err != nil {
+		return refusedBy(err)
+	}
+	chain, err := ownerAncestry(pid, s.self)
+	if err != nil {
+		return refusedBy(err)
+	}
+	return s.witness(confirmRecord{Digest: strings.TrimSpace(req.Digest), Door: DoorShell, At: confirmNow().UTC(), By: fmt.Sprintf("the owner's shell (pid %d, read by the lead)", pid),
+		Proof: confirmProof{PIDChain: chain}})
+}
+
+// witnessBuzz is the Buzz door: from the event id alone, the lead fetches
+// the event itself and runs the typed path's checks (the owner's pinned
+// key, the DM kind, the pinned channel, the window, once-only), then the
+// prefix against its own recent proposals.
+func (s *leadStarter) witnessBuzz(ctx context.Context, req leadStartRequest) leadStartReply {
+	refusedAs := func(name, format string, args ...any) leadStartReply {
+		return leadStartReply{Outcome: "refused", Refusal: name, Detail: fmt.Sprintf(format, args...)}
+	}
+	if !nostr.IsHex64(req.EventID) {
+		return refusedAs(ReasonEventUnverified, "%q is not an event id", req.EventID)
+	}
+	b, pin, err := gateverify.LoadBinding(gateBindingPath())
+	if err != nil {
+		return refusedAs(ReasonEventUnverified, "the owner's gate binding: %v", err)
+	}
+	vctx, cancel := context.WithTimeout(ctx, buzz.VerifyTimeout)
+	defer cancel()
+	relay, _, _, err := gateTransport(vctx, b, pin)
+	if err != nil {
+		return refusedAs(ReasonEventUnverified, "the lead's read connection: %v", err)
+	}
+	if c, ok := relay.(interface{ Close() }); ok {
+		defer c.Close()
+	}
+	raw, err := gateverify.FetchEvent(vctx, relay, req.EventID)
+	if err != nil {
+		return refusedAs(ReasonEventUnverified, "event %s: %v", req.EventID[:12], err)
+	}
+	e, err := nostr.ParseEvent(raw)
+	now := confirmNow()
+	switch {
+	case err != nil || !e.CheckID():
+		return refusedAs(gateverify.RejectBadID, "event %s", req.EventID[:12])
+	case e.PubKey != pin.Owner:
+		return refusedAs(gateverify.RejectWrongPubkey, "event %s is not signed by the owner's pinned key", req.EventID[:12])
+	case e.VerifySignature() != nil:
+		return refusedAs(gateverify.RejectBadSignature, "event %s", req.EventID[:12])
+	case e.Kind != buzz.KindDM:
+		return refusedAs(gateverify.RejectWrongKind, "event %s is kind %d", req.EventID[:12], e.Kind)
+	case !slices.Equal(nostr.TagValues(e, "h"), []string{pin.Channel}):
+		return refusedAs(gateverify.RejectWrongChannel, "event %s is not in the owner's DM channel", req.EventID[:12])
+	case e.CreatedAt < now.Add(-buzz.RouteWindow).Unix() || e.CreatedAt > now.Add(buzz.FutureSkew).Unix():
+		return refusedAs(gateverify.RejectWindow, "event %s was created at %d", req.EventID[:12], e.CreatedAt)
+	}
+	prefix, ok := gateverify.ParseTeamYes(e.Content)
+	if !ok {
+		return refusedAs(ReasonEventUnverified, "event %s is not yes <16 hex>", req.EventID[:12])
+	}
+	s.wmu.Lock()
+	replayed := s.seen[e.ID]
+	s.wmu.Unlock()
+	if replayed {
+		return refusedAs(gatestore.RejectReplayed, "event %s was witnessed already", req.EventID[:12])
+	}
+	prop, err := proposalByPrefix(s.root, prefix, now)
+	if err != nil {
+		return refusedBy(err)
+	}
+	s.wmu.Lock()
+	if s.seen == nil {
+		s.seen = map[string]bool{}
+	}
+	s.seen[e.ID] = true
+	s.wmu.Unlock()
+	return s.witness(confirmRecord{Digest: prop.Digest, Door: DoorBuzz, At: now.UTC(), By: "owner key " + e.PubKey, Proof: confirmProof{EventID: e.ID}})
 }
 
 // leadStartBeforeAct runs between the request's read and the last proof of
@@ -266,10 +446,11 @@ func (s *leadStarter) start(ctx context.Context, req leadStartRequest) leadStart
 	if filepath.Clean(req.Project) != s.project {
 		return refused("project_mismatch", "the lead leads %s, not %s", s.project, req.Project)
 	}
-	rec, err := checkConfirmation(s.root, req.Digest, s.project)
+	rec, err := s.witnessFor(strings.TrimSpace(req.Digest))
 	if err != nil {
-		name, _, _ := strings.Cut(err.Error(), ":")
-		return refused(name, "%s", strings.TrimSpace(strings.TrimPrefix(err.Error(), name+":")))
+		r := refusedBy(err)
+		r.Steps = s.steps
+		return r
 	}
 	prop, err := readProposal(s.root, req.Digest)
 	if err != nil {

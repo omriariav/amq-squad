@@ -183,15 +183,12 @@ func runTeamPropose(args []string, apply bool) error {
 		return err
 	}
 	if apply && plan != nil {
-		// R55: the apply of the lead's plan needs the owner's confirmation
-		// (the 3.0 flag form, which the owner types with the digest of the
-		// files in front of them, and the screen's add key, which the owner
-		// confirms at the key, stay as they were)
-		root, err := soloRootOf(p.ProjectDir)
-		if err != nil {
-			return err
-		}
-		if _, err := checkConfirmation(root, *o.digest, p.ProjectDir); err != nil {
+		// R55: the apply of the lead's plan is the owner's confirmation by
+		// the act, so the kernel must show this process is the owner's own
+		// shell (the 3.0 flag form, which the owner types with the digest
+		// of the files in front of them, and the screen's add key, which the
+		// owner confirms at the key, stay as they were)
+		if _, err := ownerAncestry(confirmSelf(), 0); err != nil {
 			return err
 		}
 	}
@@ -266,10 +263,13 @@ func printLeadProposal(p team.Plan, lp team.LeadPlan, jsonOut bool) error {
 
 // runTeamApplyConfirmed is `team apply --digest D` of a recorded proposal
 // (brief 31-3, section 3). Under the solo lead (its start socket in the
-// environment) the lead's process checks the confirmation and starts the
-// team; from the owner's shell the confirmation is checked here, squad.yaml
-// is written through the digest flow, and the owner starts the team with
-// amq-squad up.
+// environment) the lead's process starts the team on a confirmation it
+// witnessed. From the owner's own shell the apply is the confirmation by the
+// act (the digest is in front of the owner, who typed the apply): the
+// kernel must show this process is the owner's (no lead or seat ancestor, a
+// controlling terminal, the chain through its session leader); no file is
+// read for it. squad.yaml is then written through the digest flow, and the
+// owner starts the team with amq-squad up.
 func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 	dir, err := teamProjectDir(project)
 	if err != nil {
@@ -281,11 +281,11 @@ func runTeamApplyConfirmed(project, digest string, jsonOut bool) error {
 	if sock := os.Getenv(leadStartSocketEnv); sock != "" {
 		return applyThroughLead(sock, dir, strings.TrimSpace(digest), jsonOut)
 	}
-	root, err := soloRootOf(dir)
-	if err != nil {
+	if _, err := ownerAncestry(confirmSelf(), 0); err != nil {
 		return err
 	}
-	if _, err := checkConfirmation(root, digest, dir); err != nil {
+	root, err := soloRootOf(dir)
+	if err != nil {
 		return err
 	}
 	prop, err := readProposal(root, digest)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 )
@@ -198,6 +199,12 @@ func runLead(args []string) error {
 		}
 		solo[leadStartSocketEnv] = sock
 		defer starter.close()
+		// the TUI door's one accepted peer: the pi this process spawns
+		piStartedHook = func(pid int) {
+			stamp, _ := procinfo.StartToken(pid)
+			starter.setPi(pid, stamp)
+		}
+		defer func() { piStartedHook = nil }()
 		prevExit := piExit
 		piExit = func(code int) {
 			starter.close()
@@ -207,6 +214,10 @@ func runLead(args []string) error {
 	}
 	return piLaunch(piLaunchSpec{Seat: "lead", Flags: f, PiArgs: piArgs, Overlay: solo})
 }
+
+// piStartedHook runs with the pid of the pi process runProcess started
+// (the solo lead records it with its start stamp).
+var piStartedHook func(pid int)
 
 // serveLeadStart binds the solo lead's start socket (a test seam).
 var serveLeadStart = func(s *leadStarter) (string, error) { return s.serve() }

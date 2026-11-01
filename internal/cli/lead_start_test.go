@@ -48,9 +48,6 @@ func startWorld(t *testing.T, g grants.Resolved, identity string) (*upFake, *lea
 		t.Fatal(err)
 	}
 	digest := proposeSoloPlan(t, f.proj, soloTeamPlan())["digest"].(string)
-	if _, err := writeConfirmRecord(root, confirmRecord{Digest: digest, Door: DoorTUI, At: time.Now().UTC(), By: "pane %7", Proof: confirmProof{Pane: "%7", PID: 4242}}); err != nil {
-		t.Fatal(err)
-	}
 	prev := []any{leadMayorGrant, leadMayorRegistry, leadMayorIdentify, leadSelfBinary, startLeadScheduler}
 	t.Cleanup(func() {
 		leadMayorGrant = prev[0].(func() (grants.Resolved, error))
@@ -73,7 +70,16 @@ func startWorld(t *testing.T, g grants.Resolved, identity string) (*upFake, *lea
 	s := newLeadStarter(root, f.proj, "v3.1.0", nil)
 	s.wait = 5 * time.Second
 	t.Cleanup(s.close)
+	// the confirmation this lead witnessed (at the TUI door)
+	s.witness(confirmRecord{Digest: digest, Door: DoorTUI, At: time.Now().UTC(), By: "the lead's pi, pane %7", Proof: confirmProof{Pane: "%7", PID: 4242, Stamp: "st-pi"}})
 	return f, s, digest
+}
+
+// unwitness drops the lead's witness of digest (a lead that witnessed none).
+func (s *leadStarter) unwitness(digest string) {
+	s.wmu.Lock()
+	delete(s.witnessed, digest)
+	s.wmu.Unlock()
 }
 
 func sharedSnapshot() map[string]int {
@@ -139,7 +145,7 @@ func TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux(t *testing
 	if rec, err := schedproc.ReadLeadRecord(f.root); err != nil || rec.PID != os.Getpid() {
 		t.Fatalf("lead.json %+v %v", rec, err)
 	}
-	rec, _ := checkConfirmation(s.root, digest, f.proj)
+	rec, _ := s.witnessFor(digest)
 	if os.Getenv(leadStartEnv) != rec.At.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("launch start %q, want the confirmation's moment %s", os.Getenv(leadStartEnv), rec.At)
 	}
@@ -256,10 +262,7 @@ func TestTheMayorsChecksRefuseByNameOnTheStartsPath(t *testing.T) {
 // read; with no confirmation the lead refuses naming the doors.
 func TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants(t *testing.T) {
 	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
-	h, _ := digestHex(digest)
-	if err := os.Remove(confirmPath(s.root, h)); err != nil {
-		t.Fatal(err)
-	}
+	s.unwitness(digest)
 	sock, err := s.serve()
 	if err != nil {
 		t.Fatal(err)
@@ -352,8 +355,7 @@ func TestASoloLeadIsALeadParentOfItsScheduler(t *testing.T) {
 // never runs.
 func TestTheStartSocketProvesItsCallerWithStartStamps(t *testing.T) {
 	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
-	h, _ := digestHex(digest)
-	_ = os.Remove(confirmPath(s.root, h))
+	s.unwitness(digest)
 	sock, err := s.serve()
 	if err != nil {
 		t.Fatal(err)
@@ -397,5 +399,113 @@ func TestTheStartSocketProvesItsCallerWithStartStamps(t *testing.T) {
 	leadStartBeforeAct = func() { flipped = true }
 	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
 		t.Fatalf("a stamp changed before the act = %v", err)
+	}
+}
+
+// Rows 1a and 6 of the witness design: the start accepts only a
+// confirmation this lead witnessed, of the exact digest, younger than 30
+// minutes. Without one it refuses naming the three doors; a planted or
+// edited log entry (confirm/<digest>.json, the lead's log) changes nothing;
+// a witness older than 30 minutes is confirmation_stale naming the doors;
+// nothing is written or started.
+func TestTheStartAcceptsOnlyAWitnessedFreshConfirmation(t *testing.T) {
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	s.unwitness(digest)
+	start := func() leadStartReply {
+		return s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj})
+	}
+	doors := func(r leadStartReply, name string) {
+		t.Helper()
+		if r.Refusal != name {
+			t.Fatalf("start = %+v, want %s", r, name)
+		}
+		for _, door := range []string{"/squad confirm " + team.DigestPrefix(digest), "amq-squad team confirm " + digest, `Buzz DM "yes ` + team.DigestPrefix(digest)} {
+			if !strings.Contains(r.Detail, door) {
+				t.Fatalf("%s does not name the door %q: %s", name, door, r.Detail)
+			}
+		}
+	}
+	doors(start(), ReasonConfirmMissing)
+	if _, err := writeConfirmLog(s.root, confirmRecord{Digest: digest, Door: DoorTUI, At: time.Now(), By: "planted", Proof: confirmProof{Pane: "%7", PID: 4242, Stamp: "st-pi"}}); err != nil {
+		t.Fatal(err)
+	}
+	doors(start(), ReasonConfirmMissing)
+	s.witness(confirmRecord{Digest: digest, Door: DoorShell, At: time.Now().Add(-31 * time.Minute), By: "x", Proof: confirmProof{PIDChain: []confirmHop{{PID: 500}}}})
+	doors(start(), ReasonConfirmStale)
+	before := sharedSnapshot()
+	other := "sha256:" + strings.Repeat("ab", 32) + "@absent"
+	s.witness(confirmRecord{Digest: other, Door: DoorTUI, At: time.Now(), By: "x", Proof: confirmProof{PID: 4242}})
+	doors(start(), ReasonConfirmStale)
+	if len(sharedDelta(before)) != 0 {
+		t.Fatalf("steps ran: %v", sharedDelta(before))
+	}
+	if _, err := os.Stat(team.SquadPath(f.proj)); err == nil {
+		t.Fatal("squad.yaml written without a witnessed confirmation")
+	}
+	// a witness, then the log edited to say anything: the start goes on
+	s.witness(confirmRecord{Digest: digest, Door: DoorTUI, At: time.Now(), By: "the lead's pi", Proof: confirmProof{PID: 4242, Stamp: "st-pi"}})
+	h, _ := digestHex(digest)
+	mustWrite(t, confirmPath(s.root, h), `{"schema":1,"digest":"forged","door":"none"}`)
+	if r := start(); r.Outcome != "started" {
+		t.Fatalf("start after the witness = %+v", r)
+	}
+}
+
+// Row 1c of the witness design (the lead's half): the TUI door is accepted
+// only from the pi process the lead spawned. A confirm from a child of pi
+// (the model's shell) is peer_not_lead_pi, a confirm from pi's pid carrying
+// another start stamp (a reused pid) the same; pi's own is witnessed with
+// the pi pid, its stamp and the pane. runProcess hands the lead its pi's
+// pid at the spawn.
+func TestTheTUIDoorIsWitnessedOnlyFromTheLeadsOwnPi(t *testing.T) {
+	proj, root := soloProject(t)
+	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
+	s := soloLead(t, root, proj)
+	s.setPi(4242, "st-pi")
+	peer, stamp := 0, ""
+	prev := []any{leadStartPeer, confirmStamp}
+	t.Cleanup(func() {
+		leadStartPeer = prev[0].(func(*net.UnixConn) (int, bool))
+		confirmStamp = prev[1].(func(int) (string, bool))
+	})
+	leadStartPeer = func(*net.UnixConn) (int, bool) { return peer, true }
+	confirmStamp = func(int) (string, bool) { return stamp, true }
+	send := func() leadStartReply {
+		t.Helper()
+		c, err := dialLead(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		r, err := askLead(c, leadStartRequest{Kind: confirmTUIKind, Digest: digest, Pane: "%7"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	peer, stamp = 4243, "st-child"
+	if r := send(); r.Refusal != ReasonPeerNotLeadPi {
+		t.Fatalf("a child of pi = %+v", r)
+	}
+	peer, stamp = 4242, "st-reused"
+	if r := send(); r.Refusal != ReasonPeerNotLeadPi {
+		t.Fatalf("pi's pid with another stamp = %+v", r)
+	}
+	if _, err := s.witnessFor(digest); err == nil {
+		t.Fatal("witnessed from a wrong peer")
+	}
+	peer, stamp = 4242, "st-pi"
+	if r := send(); r.Outcome != "witnessed" {
+		t.Fatalf("pi's confirm = %+v", r)
+	}
+	rec, err := s.witnessFor(digest)
+	if err != nil || rec.Door != DoorTUI || rec.Proof.PID != 4242 || rec.Proof.Stamp != "st-pi" || rec.Proof.Pane != "%7" {
+		t.Fatalf("witnessed %+v %v", rec, err)
+	}
+	var started int
+	t.Cleanup(func() { piStartedHook = nil })
+	piStartedHook = func(pid int) { started = pid }
+	if code, err := runProcess("/usr/bin/true", []string{"true"}, os.Environ()); err != nil || code != 0 || started <= 1 {
+		t.Fatalf("runProcess: code %d err %v, the hook saw pid %d", code, err, started)
 	}
 }
