@@ -606,7 +606,7 @@ REVERT the answer key finds no rule in the text: fails (the row catches it)
 
 ## 6. The gates
 
-Run on `ee7212d5` (the tree of this note's commit but for this section).
+Run on `46c0f0d2` (after the review round on #838; the tree of this note's commit but for this section).
 
 ```text
 $ go build ./... && go vet ./... && go test -count=1 ./...
@@ -621,8 +621,8 @@ Ran 19 tests in 12.850s
 
 OK
 context injection: last run 16.8 ms
-PERF pre-tool allow in a seat: p50 21.1 ms, p95 29.3 ms
-PERF outside a seat: 60 runs, p50 5.7 ms, p95 6.3 ms, max 6.5 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 21.8 ms, p95 23.8 ms
+PERF outside a seat: 60 runs, p50 6.0 ms, p95 6.9 ms, max 7.1 ms (budget p95 < 20 ms: met)
 ```
 
 ## 7. The owner-run row: a release gate read on the phone, answered with a bare yes
