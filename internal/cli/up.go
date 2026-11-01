@@ -500,15 +500,27 @@ func (u *upRun) compile() (string, error) {
 	return fmt.Sprintf("%d seats, lead %s, session %s", len(q.Seats), lead, q.Session), nil
 }
 
+// upTryLock is the flock up's locks go through (a test seam).
+var upTryLock = flock.TryExclusive
+
+// lockUnsupported is the refusal of a lock this filesystem cannot take: no
+// advisory lock means up cannot tell which lead or scheduler holds the root
+// (or whether another up runs), so it refuses by name and stops nothing,
+// never reading the missing lock as "held" or as "free".
+func lockUnsupported(path string) *upRefusal {
+	return refuse("lock_unsupported", "%s: this filesystem has no advisory locks (flock), so up cannot tell whether a lead, a scheduler or another up holds it; nothing was stopped", path)
+}
+
 // lockHeld probes a flock without keeping it: held is true when another
-// process holds it. An absent file is not held.
+// process holds it. An absent file is not held; a filesystem without
+// advisory locks is lock_unsupported.
 func lockHeld(path string) (bool, error) {
-	lock, acquired, err := flock.TryExclusive(path, false)
+	lock, acquired, err := upTryLock(path, false)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return false, nil
 	case errors.Is(err, flock.ErrUnsupported):
-		return false, nil
+		return false, lockUnsupported(path)
 	case err != nil:
 		return false, err
 	case !acquired:
@@ -589,12 +601,13 @@ func stopProcess(pid int, same func() bool, held func() bool) error {
 // the roster's outcome.
 const upLockName = "up.lock"
 
-// takeLock takes a flock and keeps it; nil when another process holds it.
+// takeLock takes a flock and keeps it; nil when another process holds it,
+// lock_unsupported on a filesystem without advisory locks.
 func takeLock(path string) (*flock.Exclusive, error) {
-	l, ok, err := flock.TryExclusive(path, true)
+	l, ok, err := upTryLock(path, true)
 	switch {
 	case errors.Is(err, flock.ErrUnsupported):
-		return nil, nil
+		return nil, lockUnsupported(path)
 	case err != nil:
 		return nil, err
 	case !ok:
@@ -636,7 +649,10 @@ func (u *upRun) lead() (string, error) {
 		return "", refuse("lead_unknown", "%v", err)
 	}
 	ul, err := takeLock(filepath.Join(dir, upLockName))
+	var named *upRefusal
 	switch {
+	case errors.As(err, &named):
+		return "", named
 	case err != nil:
 		return "", refuse("up_unknown", "the up lock cannot be taken: %v", err)
 	case ul == nil:
@@ -653,7 +669,14 @@ func (u *upRun) lead() (string, error) {
 		return nil
 	}
 	var did []string
-	if u.leadLock, err = takeLock(leadLockPath); err != nil {
+	// run.lock is probed once before anything is stopped, so a filesystem
+	// without advisory locks refuses before the first stop, not after it
+	if _, err := lockHeld(runLock); errors.As(err, &named) {
+		return "", named
+	}
+	if u.leadLock, err = takeLock(leadLockPath); errors.As(err, &named) {
+		return "", named
+	} else if err != nil {
 		return "", refuse("lead_unknown", "the lead lock %s cannot be taken: %v", leadLockPath, err)
 	}
 	rec, recErr := schedproc.ReadLeadRecord(root)
@@ -718,7 +741,9 @@ func (u *upRun) lead() (string, error) {
 	// A scheduler still holding run.lock serves a lead that is gone: its
 	// lead_gone check has passed, so it is stopped by its recorded identity:
 	// the pid, its recorded start stamp and this project in its argv.
-	if held, err := lockHeld(runLock); err != nil {
+	if held, err := lockHeld(runLock); errors.As(err, &named) {
+		return "", named
+	} else if err != nil {
 		return "", refuse("scheduler_unknown", "the scheduler lock %s cannot be probed: %v", runLock, err)
 	} else if held {
 		if recErr != nil {

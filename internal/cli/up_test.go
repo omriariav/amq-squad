@@ -747,3 +747,41 @@ func TestUpRefusesASymlinkedAMQRootOrSession(t *testing.T) {
 		}
 	}
 }
+
+// Reviewer on #829: a filesystem without advisory locks is its own refusal,
+// lock_unsupported naming the lock path, never "another up runs" or "a lead
+// lives" (which takeLock's nil once read it as) nor "free"; it stops
+// nothing. Each of up's locks in turn reports flock.ErrUnsupported.
+func TestUpRefusesLockUnsupportedNamingTheLock(t *testing.T) {
+	for _, name := range []string{upLockName, schedproc.LeadLockName, "run.lock"} {
+		t.Run(name, func(t *testing.T) {
+			f, _ := upWorld(t)
+			mustMkdir(t, filepath.Join(f.root, "agents"))
+			mustWrite(t, filepath.Join(f.proj, ".agent-mail", "meta", "config.json"), `{}`)
+			f.sessions[upTmuxSessionName(f.proj)] = true
+			writeLeadRecord(t, f.root, schedproc.LeadRecord{PID: 999991, Start: "s1", Pane: "%7", At: time.Now()})
+			prev := upTryLock
+			t.Cleanup(func() { upTryLock = prev })
+			upTryLock = func(path string, create bool) (*flock.Exclusive, bool, error) {
+				if filepath.Base(path) == name {
+					return nil, false, flock.ErrUnsupported
+				}
+				return prev(path, create)
+			}
+			r, err := runUpJSON(t, f.proj)
+			step := r.Steps[len(r.Steps)-1]
+			want := filepath.Join(schedproc.Dir(f.root), name)
+			if err == nil || step.Name != "lead" || step.Refusal != "lock_unsupported" || !strings.Contains(step.Detail, want) {
+				t.Fatalf("%v %+v", err, step)
+			}
+			if name == schedproc.LeadLockName {
+				// the lead lock is free on a flock filesystem: the leftover
+				// session would have been killed; here nothing is
+				if !f.sessions[upTmuxSessionName(f.proj)] {
+					t.Fatal("the session was killed")
+				}
+			}
+			assertNothingStopped(t, f)
+		})
+	}
+}

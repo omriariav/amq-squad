@@ -162,6 +162,10 @@ root and session exist before doctor runs (Codex P2 4, 5; section 5).
    - Each stop is an `up_stopped_lead` or `up_stopped_scheduler` decision; a
      decision that cannot be recorded refuses `decision_unrecorded` before
      the lead starts.
+   - A filesystem without advisory locks (flock's ErrUnsupported on
+     `up.lock`, `lead.lock` or `run.lock`) refuses `lock_unsupported`
+     naming the lock, before anything is stopped: a lock that cannot be
+     taken is neither "held" nor "free" (reviewer).
 6. **tmux**: the lead lock is dropped (the new lead takes it; `up.lock` is
    kept), then `tmux new-session -d -s squad-lead-<repo<=30>-<sha5> -c
    <repo> -e AMQ_SQUAD_START=<up's start> -e AM_ME= ... <installed> lead
@@ -260,6 +264,7 @@ function `up` uses) and logs `session_created`
 | 19 | status `TestStalledSeatAndKeylessPiSeatAreWarningsNotRefusals`; pi `a seat stalled at a dialog and a keyless pi seat are screen lines …` |
 | 20 | cli `TestSchedulerRunOnAnAbsentSessionRootCreatesIt` |
 | symlinked roots | cli `TestUpRefusesASymlinkedAMQRootOrSession` |
+| no advisory locks | cli `TestUpRefusesLockUnsupportedNamingTheLock` (each of up.lock, lead.lock, run.lock) |
 | redaction | status `TestStatusRedactsEveryFreeTextField` |
 | day 3: a file-lock wait names its holders | status `TestAFileLockWaitNamesItsHolders` (`wait_holders`); pi `a pending task waiting on a file lock names its holder tasks` |
 
