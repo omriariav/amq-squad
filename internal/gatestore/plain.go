@@ -449,18 +449,26 @@ func rulePhrases(rules []string) string {
 	return fmt.Sprintf("%s, %s and %d more", ps[0], ps[1], len(ps)-2)
 }
 
-var hexRunRe = regexp.MustCompile(`[0-9a-f]{8,}`)
+var hexRunRe = regexp.MustCompile(`(?i)[0-9a-f]{8,}`)
 
-// plain is a field value as the plain lines show it: a hex run of 8 or more
-// is cut to its first 7 and an ellipsis (no hash above the rule).
+// plain is a field value as the plain lines show it: a hex run of 8 or more,
+// in either case, is cut to its first 7 and an ellipsis (no hash above the
+// rule).
 func plain(s string) string {
 	return hexRunRe.ReplaceAllStringFunc(s, func(h string) string { return h[:7] + "…" })
 }
 
-// quote is a title as its own line: plain, cut at TitleMax characters with
-// an ellipsis, in double quotes.
+// quote is a title as its own line: plain, each code token (IsToken: a
+// double underscore, a path separator, a dot inside) replaced by an
+// ellipsis, cut at TitleMax characters with an ellipsis, in double quotes.
 func quote(s string) string {
-	s = plain(s)
+	words := strings.Fields(plain(s))
+	for i, w := range words {
+		if IsToken(w) {
+			words[i] = "…"
+		}
+	}
+	s = strings.Join(words, " ")
 	if utf8.RuneCountInString(s) > TitleMax {
 		s = string([]rune(s)[:TitleMax]) + "…"
 	}

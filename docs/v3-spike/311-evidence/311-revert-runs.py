@@ -102,6 +102,12 @@ run("a repository named owner/name above the rule", [(PL,'\treturn plain(name)\n
 run("a generic question names the whole target", [(PL,'\tvar out []string\n\tfor _, w := range strings.Fields(t) {\n\t\tif IsToken(w) {','\tvar out []string\n\tfor _, w := range strings.Fields(t) {\n\t\tif false && IsToken(w) {')],
     GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
 
+# Codex on #838 (P2): an uppercase hash or a token in a title
+run("the sanitizer reads lowercase hex only", [(PL,'var hexRunRe = regexp.MustCompile(`(?i)[0-9a-f]{8,}`)','var hexRunRe = regexp.MustCompile(`[0-9a-f]{8,}`)')],
+    GS+"'TestATitleCarriesNoHashOrTokenAboveTheRule'")
+run("a token in a title reaches the quoted line", [(PL,'\t\tif IsToken(w) {\n\t\t\twords[i] = "…"','\t\tif false && IsToken(w) {\n\t\t\twords[i] = "…"')],
+    GS+"'TestATitleCarriesNoHashOrTokenAboveTheRule'")
+
 # Row 2: the bare yes or no, bound by the thread
 run("Verify refuses the bare form", [(VE,'\t\tverb, ok := gatestore.ParseBare(e.Content)\n\t\tif !ok {\n\t\t\treturn Outcome{}, reject(RejectBadTuple','\t\tverb, ok := "", false\n\t\tif !ok {\n\t\t\treturn Outcome{}, reject(RejectBadTuple')],
     GV+"'TestABareYesOrNoInTheThreadIsTheAnswer'")

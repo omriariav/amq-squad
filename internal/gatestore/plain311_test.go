@@ -93,7 +93,7 @@ func renderSample(t *testing.T, action string, i int, s sample) Record {
 }
 
 var (
-	hexRun8 = regexp.MustCompile(`[0-9a-f]{8,}`)
+	hexRun8 = regexp.MustCompile(`(?i)[0-9a-f]{8,}`)
 	tupleRe = regexp.MustCompile(`(?i)\b(approve|deny|yes) \S+ (release|send|credential|grow) [0-9a-f]{16}|\byes [0-9a-f]{16}\b`)
 )
 
@@ -162,19 +162,16 @@ var (
 	emailWord   = regexp.MustCompile(`^[^@\s/]+@[^@\s/]+\.[^@\s/]+$`)
 )
 
-// tokenAbove is the first code token among the plain lines (a quoted title
-// is the author's text and exempt): a word holding a double underscore, a
+// tokenAbove is the first code token above the rule, the quoted title
+// included: a word holding a double underscore, a
 // path separator, or a dot inside other than a version (v3.1.0-rc.1), an
 // email address or a sentence's end. The check is the row's own, so the
 // next class someone adds cannot leak a tool name, a setting or a path
 // upward through a looser composer.
 func tokenAbove(above string) string {
 	for _, l := range strings.Split(above, "\n") {
-		if strings.HasPrefix(l, `"`) {
-			continue
-		}
 		for _, w := range strings.Fields(l) {
-			w = strings.TrimRight(w, ".?!,:;")
+			w = strings.Trim(w, `".?!,:;`)
 			if strings.Contains(w, "__") || strings.ContainsAny(w, "/\\") ||
 				strings.Contains(w, ".") && !versionWord.MatchString(w) && !emailWord.MatchString(w) {
 				return w
@@ -413,6 +410,30 @@ func TestTheOldTextStillValidatesAndFactsAreSafe(t *testing.T) {
 	raw, _ := json.Marshal(renderSample(t, "tag", 2, samples["tag"][2]))
 	if strings.Contains(string(raw), `"facts"`) {
 		t.Fatal("a record without facts carries the field")
+	}
+}
+
+// Codex on #838 (P2): an uppercase hex run and a code token in a title never
+// reach the quoted title line above the rule.
+func TestATitleCarriesNoHashOrTokenAboveTheRule(t *testing.T) {
+	for title, want := range map[string]string{
+		"Fix DEADBEEF in the relay":               `"Fix DEADBEE… in the relay"`,
+		"Fix internal/buzz/relay.go and the docs": `"Fix … and the docs"`,
+		"Wire mcp__slack__send_message":           `"Wire …"`,
+	} {
+		rec, err := Render(Spec{GateID: "w-t", Action: "spawn", Target: gatetarget.GrowTask("/r/s1", "t9", "size_cap", `{"lines":10,"files":2}`), RaisedBy: "lead-a", Facts: &Facts{Title: title}}, testNow, testIdent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := PlainLines(rec)[1]; got != want {
+			t.Errorf("title %q shows %q, want %q", title, got, want)
+		}
+		if err := checkPlain(rec.Text, rec); err != nil {
+			t.Errorf("title %q: %v", title, err)
+		}
+	}
+	if !hexRun8.MatchString("Fix DEADBEEF") || tokenAbove(`"Fix internal/buzz/relay.go"`) == "" {
+		t.Fatal("the row's checks miss an uppercase hash or a token in a quoted title")
 	}
 }
 
