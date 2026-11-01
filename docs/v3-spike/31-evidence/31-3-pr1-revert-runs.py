@@ -113,22 +113,28 @@ run("the discovery record left after a clean exit",
  [('internal/cli/lead_start.go','\t\t_ = os.Remove(filepath.Join(s.root, "extensions", "amq-squad", leadStartRecordName))\n','')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("up without the under-a-lead check",
- [('internal/cli/up.go','\tif err := underSoloLead("up", false, true); err != nil {','\tif err := error(nil); err != nil {')],
+ [('internal/cli/up.go','\tif err := underSoloLead("up", true, true); err != nil {','\tif err := error(nil); err != nil {')],
  C+"TestUpRefusesUnderASoloLead")
 run("up not reading AM_ME",
- [('internal/cli/up.go','underSoloLead("up", false, true)','underSoloLead("up", false, false)')],
+ [('internal/cli/up.go','underSoloLead("up", true, true)','underSoloLead("up", true, false)')],
+ C+"TestUpRefusesUnderASoloLead")
+run("up not refusing a lead ancestor",
+ [('internal/cli/up.go','underSoloLead("up", true, true)','underSoloLead("up", false, true)')],
  C+"TestUpRefusesUnderASoloLead")
 run("lead --team without the under-a-lead check",
- [('internal/cli/pi_lead.go','\t\tif err := underSoloLead("lead --team", false, false); err != nil {','\t\tif err := error(nil); err != nil {')],
+ [('internal/cli/pi_lead.go','\t\tif err := underSoloLead("lead --team", true, false); err != nil {','\t\tif err := error(nil); err != nil {')],
+ C+"TestUpRefusesUnderASoloLead")
+run("lead --team not refusing a lead ancestor",
+ [('internal/cli/pi_lead.go','underSoloLead("lead --team", true, false)','underSoloLead("lead --team", false, false)')],
  C+"TestUpRefusesUnderASoloLead")
 run("scheduler run without the under-a-lead check",
- [('internal/cli/scheduler_run.go','\tif err := underSoloLead("scheduler run", byLead, !byLead); err != nil {','\tif err := error(nil); err != nil {')],
+ [('internal/cli/scheduler_run.go','\tif err := underSoloLead("scheduler run", false, !byLead); err != nil {','\tif err := error(nil); err != nil {')],
  C+"TestUpRefusesUnderASoloLead")
-run("the lead's pi not recognized as a lead",
+run("the lead's pi not recognized",
  [('internal/cli/lead_start.go','\t\tif strings.Contains(a, "/.amq-squad/runtime/pi-") {','\t\tif false && strings.Contains(a, "/.amq-squad/runtime/pi-") {')],
  C+"TestUpRefusesUnderASoloLead")
-run("the supervising lead not passed over",
- [('internal/cli/lead_start.go','\t\tif (skipParent && i == 0) || hop.PID <= 1 {','\t\tif (skipParent && i < 0) || hop.PID <= 1 {')],
+run("scheduler run refusing for a lead ancestor (the scheduler lead --team starts)",
+ [('internal/cli/scheduler_run.go','underSoloLead("scheduler run", false, !byLead)','underSoloLead("scheduler run", true, !byLead)')],
  C+"TestUpRefusesUnderASoloLead")
 run("the plan-file apply with no lead check",
  [('internal/cli/team.go','\t\t\tif err := withNoLead(p.ProjectDir, *o.digest, write); err != nil {','\t\t\tif err := write(); err != nil {')],
