@@ -254,8 +254,12 @@ func collectRequests(root string, warn func(string, ...any)) []Request {
 		}
 		row := Request{RequestID: r.RequestID, Thread: r.Thread, Lead: r.Lead, Turns: len(r.Turns), Posts: len(r.Posts),
 			RelayedAt: r.RelayedAt, Refused: []string{}, Closed: r.Closed, UpdatedAt: r.UpdatedAt.UTC()}
+		// the current state only: what the relay refused since the owner's
+		// newest turn (that turn clears what came before, an unconfirmed post
+		// included); the history stays in the record
+		since := r.Turns[len(r.Turns)-1].At
 		for _, f := range r.Refusals {
-			if f.ClearedAt == nil { // an unconfirmed post the owner's next turn cleared is not shown
+			if f.ClearedAt == nil && !f.At.Before(since) {
 				row.Refused = append(row.Refused, f.Reason)
 			}
 		}

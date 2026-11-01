@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,16 @@ func TestStatusShowsThePhoneRequests(t *testing.T) {
 	leaked := Build(Input{Root: root, Now: now, Requests: []Request{{RequestID: "q-dddddddddddd", Thread: "cockpit/q-dddddddddddd", Lead: "GH_TOKEN=" + secret, Refused: []string{"GH_TOKEN=" + secret}}}})
 	if raw, _ := json.Marshal(leaked.Requests); strings.Contains(string(raw), secret) {
 		t.Fatalf("a request field carries the secret: %s", raw)
+	}
+	// the current state only: a refusal before the owner's newest turn is
+	// history (in the record), not shown
+	write(RelayRecord{Schema: 1, RequestID: "q-eeeeeeeeeeee", Thread: "cockpit/q-eeeeeeeeeeee", Lead: "cto", RootEvent: ev("e"), UpdatedAt: now.Add(-4 * time.Minute),
+		Turns:    []RelayTurn{{Event: ev("e"), At: now.Add(-time.Hour)}, {Event: ev("f"), At: now.Add(-time.Minute)}},
+		Refusals: []RelayRefusal{{ReplyID: "r3", Reason: "relay_refused_gate_shape", SHA256: sha, At: now.Add(-30 * time.Minute)}, {ReplyID: "r4", Reason: "relay_refused_gate_thread", SHA256: sha, At: now}}})
+	for _, r := range Build(Collect(CollectOptions{Root: root, Session: "s", Now: now})).Requests {
+		if r.RequestID == "q-eeeeeeeeeeee" && !slices.Equal(r.Refused, []string{"relay_refused_gate_thread"}) {
+			t.Fatalf("the current state of a request with history: %v", r.Refused)
+		}
 	}
 	if empty := Build(Input{Root: root, Now: now}); empty.Requests == nil {
 		t.Fatal("requests is null without records; the contract says []")
