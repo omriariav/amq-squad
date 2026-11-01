@@ -144,12 +144,21 @@ it otherwise.
 - Greek α ϲ σ ς ε ο ρ χ γ ι κ η τ ν υ μ map to a c c c e o p x y i k n t v u u.
   σ and ς are there because NFKC and folding turn the lunate sigma ϲ into
   them.
-- Armenian ս օ ո ց հ զ map to s o n g h q. ս is u-shaped, but it maps to
-  s, as the lead asked: no answer word has a u, and a refusal costs only
-  one line, so `yeս` is refused as `yes` is.
+- Armenian ս օ ո ց հ զ map to u o n g h q, by glyph, as Unicode's
+  confusables data maps them. ս reads as u, so `yeս` reads "yeu" and is no
+  answer form (a row asserts it); `nօ` and `rel-nօrm` are refused.
 
-The residual is scripts outside the table: a lookalike from another script
-(or a Latin-script lookalike outside this list) passes the checks.
+The residual is scripts outside the table: a lookalike from another script,
+or a Latin-script lookalike outside this list, passes the checks. Codex's
+fourth pass named the forms it found:
+
+- Cherokee ᎽᎬᏚ;
+- Lisu ꓬꓰꓢ;
+- Latin extended ɑ ɡ ı ȷ æ;
+- the negative circled and squared enclosed letters 🅨🅔🅢 and 🆈🅴🆂.
+
+NFKC already folds Roman numerals, superscripts, ligatures and the plain
+circled letters.
 
 **The intent record's semantics (P1-3).** Before each publish the relay
 writes a durable intent: the reply id, each part's sha256, the event ids
@@ -208,6 +217,7 @@ Every row is in `go test ./...` or `npm test`.
 | Re-check #5: an undelivered turn is taken back next step; a failed rollback is named | internal/buzz `TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed` |
 | Re-check #7: status shows a request's current state, history stays in the record | internal/status `TestStatusShowsThePhoneRequests` |
 | The lead's addition: a request whose only reply ended unconfirmed is continued by a reply to its receipt; the mark clears, the next reply posts; a forged row maps nothing | internal/buzz `TestAReplyToTheReceiptContinuesTheRequest` |
+| Codex pass 4: the parent decides; a reply to B's receipt continues B (with or without root A), a reply to A's receipt continues A | internal/buzz `TestAReceiptMapsByItsParentNeverItsRoot` |
 | The screen's requests block | pi/test/screen.test.ts |
 
 Row 4 lists the dependencies of internal/status, schedproc, task,
@@ -229,26 +239,26 @@ compiles, Codex P2-8).
 
 ```text
 REVERT the post without redact.Block (an identity in its place): fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.05s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.06s)
 REVERT the post without its re <request id> line: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.07s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.06s)
 REVERT the receipt is routed, not accepted <request id>: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.04s)
-REVERT the question post off the cockpit thread: fails (the row catches it)
    --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.03s)
+REVERT the question post off the cockpit thread: fails (the row catches it)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.05s)
 REVERT the post not in the request's DM conversation: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.07s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.08s)
 REVERT no progress rate bound: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.15s)
+   --- FAIL: TestRelayProgressRateBound (0.22s)
 REVERT the held progress never posts: fails (the row catches it)
    --- FAIL: TestRelayProgressRateBound (0.08s)
 REVERT kind status is not progress: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.15s)
+   --- FAIL: TestRelayProgressRateBound (0.11s)
 REVERT a result does not close the request: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.24s)
+   --- FAIL: TestRelayProgressRateBound (0.20s)
 REVERT no whole-line answer form: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.14s)
-   --- FAIL: TestRelayRefusesGateShapedLines/whole-line_answer_forms (0.14s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
+   --- FAIL: TestRelayRefusesGateShapedLines/whole-line_answer_forms (0.10s)
 REVERT the refusal not narrowed (any line containing the word): fails (the row catches it)
    --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
    --- FAIL: TestRelayRefusesGateShapedLines/sentences_with_the_word_post_unchanged (0.10s)
@@ -256,11 +266,11 @@ REVERT no open gate id refusal: fails (the row catches it)
    --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
    --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_id (0.10s)
 REVERT no open gate question text refusal: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.09s)
-   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_question_text (0.09s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.11s)
+   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_question_text (0.11s)
 REVERT the poster's gate-thread guard gone: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.13s)
-   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.13s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.14s)
+   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.14s)
 REVERT a request opened in a gate thread posts into it: fails (the row catches it)
    --- FAIL: TestRelayRefusesGateShapedLines (0.07s)
    --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.07s)
@@ -269,23 +279,23 @@ REVERT a lead-side package imports the key path: fails (the row catches it)
 REVERT handled replies not recorded (a restart posts again): fails (the row catches it)
    --- FAIL: TestARestartedAttachmentNeitherRepostsNorSkips (0.12s)
 REVERT the relay carries gate-shaped replies: fails (the row catches it)
-   --- FAIL: TestAGateQuestionGoesByItsOwnPathOnce (0.18s)
+   --- FAIL: TestAGateQuestionGoesByItsOwnPathOnce (0.17s)
 REVERT a lead relay tool added: fails (the row catches it)
    not ok 7 - the lead's tool list is unchanged by the two-way phone: the exact thirteen
 REVERT no continuation (every DM a new request): fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.12s)
+   --- FAIL: TestThePhoneConversation (0.22s)
 REVERT an answer form in the conversation goes to the gate path: fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.15s)
+   --- FAIL: TestThePhoneConversation (0.14s)
 REVERT a continuation does not follow the request's lead: fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.19s)
+   --- FAIL: TestThePhoneConversation (0.20s)
 REVERT a gate-thread answer that names a relay post leaves the gate path: fails (the row catches it)
-   --- FAIL: TestAnAnswerInTheGateThreadStaysOnTheGatePath (0.11s)
+   --- FAIL: TestAnAnswerInTheGateThreadStaysOnTheGatePath (0.22s)
 REVERT no split of a long post: fails (the row catches it)
    --- FAIL: TestALongReplyIsSplitIntoAtMostThreeParts (0.00s)
 REVERT amq send without --thread: fails (the row catches it)
    --- FAIL: TestAMQThreadsThroughTheCLI (0.13s)
 REVERT remote attach without the relay: fails (the row catches it)
-   --- FAIL: TestRemoteAttachRelaysTheLeadsReply (0.05s)
+   --- FAIL: TestRemoteAttachRelaysTheLeadsReply (0.06s)
 REVERT status without the requests: fails (the row catches it)
    --- FAIL: TestStatusShowsThePhoneRequests (0.00s)
 REVERT relayed_at not nullable: fails (the row catches it)
@@ -295,86 +305,90 @@ REVERT request fields not redacted: fails (the row catches it)
 REVERT the screen without the requests block: fails (the row catches it)
    not ok 2 - the requests block marks each phone request relayed or refused, by name
 REVERT records not validated (load and write): fails (the row catches it)
-   --- FAIL: TestAPlantedRecordIsRefusedAndNothingPosts (0.19s)
+   --- FAIL: TestAPlantedRecordIsRefusedAndNothingPosts (0.11s)
 REVERT record fields not checked (status): fails (the row catches it)
    --- FAIL: TestARelayRecordIsCheckedFieldByField (0.00s)
 REVERT the checks on the body, not the assembled parts (Codex P1-2): fails (the row catches it)
-   --- FAIL: TestASplitNeverStartsAPartWithAnAnswerForm (0.09s)
+   --- FAIL: TestASplitNeverStartsAPartWithAnAnswerForm (0.07s)
 REVERT the publish before the intent (Codex P1-3): fails (the row catches it)
-   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.11s)
-   --- FAIL: TestAFailingRecordStorePostsNothing (0.05s)
+   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.06s)
+   --- FAIL: TestAFailingRecordStorePostsNothing (0.02s)
 REVERT an unconfirmed intent retried forever (Codex P1-3): fails (the row catches it)
-   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.11s)
+   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.07s)
 REVERT a failed later part ends the reply (Codex P2-5): fails (the row catches it)
-   --- FAIL: TestAFailedPartPostsNextTickWithoutRepeatingTheFirst (0.10s)
+   --- FAIL: TestAFailedPartPostsNextTickWithoutRepeatingTheFirst (0.06s)
 REVERT no normalization (Codex P2-4): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.22s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.15s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
 REVERT the DM marked handled although its record failed (Codex P2-6): fails (the row catches it)
    --- FAIL: TestTheRecordComesBeforeTheQuestion (0.01s)
 REVERT a failed delivery keeps its record (Codex P2-6): fails (the row catches it)
-   --- FAIL: TestTheRecordComesBeforeTheQuestion (0.06s)
+   --- FAIL: TestTheRecordComesBeforeTheQuestion (0.03s)
 REVERT the helper without AMQ_NO_UPDATE_CHECK (Codex P2-7): fails (the row catches it)
-   --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.00s)
+   --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.01s)
 REVERT a test execs amq directly (Codex P2-7): fails (the row catches it)
-   --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.00s)
+   --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.01s)
 REVERT the owner's next turn does not clear an unconfirmed post: fails (the row catches it)
-   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.11s)
+   --- FAIL: TestACrashBetweenPublishAndEventWriteIsANamedState (0.12s)
 REVERT an ambiguous post failure gives its try back (unbounded retries): fails (the row catches it)
-   --- FAIL: TestAFailedPostKeepsItsTryUnlessNothingWasSent (0.12s)
+   --- FAIL: TestAFailedPostKeepsItsTryUnlessNothingWasSent (0.11s)
 REVERT a failure before the send consumes a try: fails (the row catches it)
-   --- FAIL: TestAFailedPostKeepsItsTryUnlessNothingWasSent (0.07s)
+   --- FAIL: TestAFailedPostKeepsItsTryUnlessNothingWasSent (0.09s)
 REVERT no minimum question-line length: fails (the row catches it)
-   --- FAIL: TestAShortQuestionLineDoesNotRefuseOrdinaryReplies (0.09s)
+   --- FAIL: TestAShortQuestionLineDoesNotRefuseOrdinaryReplies (0.07s)
 REVERT redaction only after the split (Codex re-check #2): fails (the row catches it)
-   --- FAIL: TestACanaryAcrossTheSplitBoundaryIsRedacted (0.18s)
+   --- FAIL: TestACanaryAcrossTheSplitBoundaryIsRedacted (0.09s)
 REVERT marks (Mn, Me) not stripped (Codex re-check #3): fails (the row catches it)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
 REVERT no confusables fold (Codex re-check #3): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.12s)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
 REVERT status shows every historical refusal (Codex re-check #7): fails (the row catches it)
    --- FAIL: TestStatusShowsThePhoneRequests (0.00s)
 REVERT an undelivered turn is kept (Codex re-check #5): fails (the row catches it)
    --- FAIL: TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed (0.02s)
 REVERT a failed rollback ignored (Codex re-check #5): fails (the row catches it)
-   --- FAIL: TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed (0.14s)
+   --- FAIL: TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed (0.09s)
 REVERT the DM marked handled before the real lead is recorded (Codex re-check #4): fails (the row catches it)
-   --- FAIL: TestTheRealLeadIsRecordedBeforeTheDMIsHandled (0.03s)
+   --- FAIL: TestTheRealLeadIsRecordedBeforeTheDMIsHandled (0.02s)
 REVERT a computed exec without its not-amq line (Codex re-check #6): fails (the row catches it)
    --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.01s)
 REVERT a reply naming only the receipt row is not read: fails (the row catches it)
-   --- FAIL: TestAReplyToTheReceiptContinuesTheRequest (0.09s)
+   --- FAIL: TestAReplyToTheReceiptContinuesTheRequest (0.08s)
 REVERT a receipt row not checked as the body's: fails (the row catches it)
    --- FAIL: TestAReplyToTheReceiptContinuesTheRequest (0.07s)
-REVERT a reply naming the thread root does not map: fails (the row catches it)
-   --- FAIL: TestAReplyToTheReceiptContinuesTheRequest (0.13s)
+REVERT delivered owner DMs not indexed (a reply naming the root does not map): fails (the row catches it)
+   --- FAIL: TestAReplyToTheReceiptContinuesTheRequest (0.08s)
 REVERT NFKC before the mark strip (accents survive): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.15s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
 REVERT default-ignorable code points not stripped (the explicit list and the tables): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.19s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
 REVERT σ and ς not lookalikes of c (the lunate sigma passes): fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.14s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.18s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
 REVERT no Armenian lookalikes: fails (the row catches it)
-   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.16s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
 REVERT an entry dropped from the explicit default-ignorable list: fails (the row catches it)
    --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.13s)
-61 of 61 reverts caught
+REVERT the root before the parent: fails (the row catches it)
+   --- FAIL: TestAReceiptMapsByItsParentNeverItsRoot (0.04s)
+REVERT a receipt mapped by its root: fails (the row catches it)
+   --- FAIL: TestAReceiptMapsByItsParentNeverItsRoot (0.06s)
+63 of 63 reverts caught
 ```
 
 ## 5. The owner-run row (not run; the owner runs it)
@@ -556,11 +570,13 @@ Each item is a commit with its row:
   row, not the attachment's: amq-remote posts a body-signed kind 9 that
   replies to the owner's DM (v0.116.2 buzzio/carrier.go `rowTags`) and
   edits it to the result text, and the attachment never learns its event
-  id. So the mapping goes through the row's own thread tags. A reply that
-  names a delivered turn's DM (Buzz names the thread root) maps directly.
-  A reply that names only the row has the row read on the verifier's
-  connection; it must verify as the body's kind 9 in the channel, and the
-  DM it replies to is mapped. A row anyone else signed maps nothing.
+  id. So the mapping goes through the row's own thread tags. The DM's
+  direct reply target (its parent, the e tag marked reply) decides; its
+  thread root counts only when it names no parent (Codex pass 4). A parent
+  that is a relay post or a delivered owner DM maps to its one request. Any
+  other parent is read on the verifier's connection; it must verify as the
+  body's kind 9 in the channel, and the DM it replies to (its own parent,
+  never its root) is mapped. A row anyone else signed maps nothing.
 
 ## 14. Codex pass 3 at e51dda66
 
@@ -577,10 +593,21 @@ normalization, fixed in one commit with its rows:
   is a letter, so `yesᅟ` passed. Every default-ignorable code point is now
   stripped by Unicode's property tables, not by category alone.
 - **Armenian lookalikes passed.** They join the hand table, with the
-  residual named above; ս maps to s, so `yeս` (U+057D) is refused.
+  residual named above. ս maps to u (the lead's ruling, after a brief
+  detour to s), so `yeս` (U+057D) reads "yeu" and is not refused.
 - **Rows** (`TestTheChecksSeeThroughInvisibleCharacters`): `yés` composed
   and decomposed, `rel-ϲ` for an open `rel-c`, `yesᅟ` and the other
   fillers, the soft hyphen, the grapheme joiner, `yeս`, `nօ`, each refused
   where the ASCII form is, and a pin on the explicit list's named code
   points.
+
+## 15. Codex pass 4 at 97acb199
+
+The normalization had no findings; the residual forms it named are in
+section 2a. One P2 in the receipt mapping, fixed with its row and two
+revert runs: the search returned the first record matching any
+reference, so a reply to B's receipt (parent B, root A) could continue A.
+Now the parent decides, and the root counts only when there is no parent.
+Each post and delivered DM maps to its one request, and a fetched receipt
+maps by its own parent, never its root.
 
