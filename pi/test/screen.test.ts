@@ -51,7 +51,8 @@ test("the screen renders from a status fixture: the lead and the root, four bloc
 	assert.ok(train.some((l) => l.includes("ungated_tag: tag v1.2.0 has no accepted gate")), train.join("\n"));
 	assert.equal(train.at(-1), "  refusal: refusal PR #812 checks: a required check failed");
 	const gates = block(lines, "gates (1 open)");
-	assert.ok(gates.some((l) => l === "  g1  tag  8502aa001122  age 6m"), gates.join("\n"));
+	// brief 31-2: the 16-hex typed prefix, and the gate waits on Buzz (Q7)
+	assert.ok(gates.some((l) => l === "  g1  tag  8502aa0011223344  age 6m  waiting on Buzz"), gates.join("\n"));
 	assert.ok(!gates.some((l) => l.includes("g0")), "an accepted gate is not shown");
 	assert.equal(gates.at(-1), "  refusal: none");
 	// A document with nothing that stopped an item shows none in every block.

@@ -2,13 +2,16 @@
 // a widget below the editor of the lead's own pi. It is fed by
 // `amq-squad status --json` and nothing else, refreshed by a poll keyed on
 // the task store's .generation and scheduler.json (both stat'ed on a short
-// timer; status runs only when either changed). No key changes state here;
-// brief 31-2 adds the keys. `/squad` toggles it; collapsed, it is one footer
-// line with the counts.
+// timer; status runs only when either changed). `/squad` toggles it;
+// collapsed, it is one footer line with the counts. The keys (brief 31-2,
+// lib/keys.ts) are `/squad add`, `/squad reset`, `/squad clear` and
+// `/squad answer`: pi hands a command to the extension, never to the model,
+// and each key's verb runs from this process.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
+import { KEYS, Keys, typedPrefix, type KeyOutcome } from "./keys.ts";
 import { run } from "./verbs.ts";
 
 export const SCREEN_KEY = "amq-squad-screen";
@@ -28,10 +31,12 @@ type SeatRow = {
 	handle: string;
 	runtime: string;
 	model: string;
+	effort?: string;
 	state: string;
 	reason_code: string;
 	warnings?: string[];
-	launch: { outcome: string; reason_code: string; timing: Timing } | null;
+	acknowledged_warnings?: string[];
+	launch: { launch_id?: string; outcome: string; reason_code: string; timing: Timing } | null;
 };
 type TaskRow = { id: string; task_state: string; lease_holder: string; block_reason: string; wait_reason: string; wait_holders?: string[]; pr_number: number; updated_at: string };
 type GateRow = { id: string; action_class: string; target_digest: string; state: string };
@@ -97,7 +102,7 @@ function refusalLine(r: string | undefined): string {
 
 // renderScreen is the screen's lines: the lead handle and the root, then the
 // four blocks (seats, tasks, train, gates), each closed by its refusal line.
-export function renderScreen(st: ScreenStatus, now: Date = new Date()): string[] {
+export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: KeyOutcome): string[] {
 	const lead = st.lead_handle ?? st.lead?.handle ?? "-";
 	const leadProc = st.lead ? ` (pid ${st.lead.pid}${st.lead.pane ? `, pane ${st.lead.pane}` : ""}${st.lead.live ? "" : ", not live"})` : "";
 	const out: string[] = [`amq-squad: lead ${lead}${leadProc} · root ${st.root}`];
@@ -146,11 +151,15 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date()): string[]
 	out.push(`gates (${open.length} open)`);
 	for (const g of open) {
 		const since = st.attention.find((a) => a.kind === "gate" && a.gate_id === g.id)?.since ?? "";
-		out.push(`  ${g.id}  ${g.action_class}  ${g.target_digest.replace(/^sha256:/, "").slice(0, 12)}  age ${age(since, now)}`);
+		// the 16-hex typed prefix (R32); the terminal door is not built (Q7 of
+		// brief 31-2), so an open typed gate waits on Buzz
+		out.push(`  ${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}  age ${age(since, now)}  waiting on Buzz`);
 	}
 	const gateAlert = [...st.attention].reverse().find((a) => a.gate_id && a.kind !== "gate");
 	const gateWarn = st.warnings.find((w) => w.startsWith("gate store:"));
 	out.push(refusalLine(gateAlert ? `${gateAlert.kind}: ${short(gateAlert.subject)}` : gateWarn ? short(gateWarn) : undefined));
+	out.push(`keys: ${KEYS.map((k) => "/squad " + k).join(" | ")}`);
+	if (key) out.push(`  key ${key.key}${key.refused ? " refused" : ""}: ${short(key.line, 200)}`);
 	return out;
 }
 
@@ -195,30 +204,53 @@ export class Screen {
 	ctx: ExtensionContext | undefined;
 	expanded = true;
 	last: ScreenStatus | undefined;
-	lastKey: string | undefined;
+	pollKeySeen: string | undefined;
 	statusRuns = 0;
 	busy = false;
 	timer: ReturnType<typeof setInterval> | undefined;
 	error = "";
+	keys: Keys;
+	lastKey: KeyOutcome | undefined;
 
 	constructor(cfg: Config, runner: Runner = run, stat: Stat = defaultStat) {
 		this.cfg = cfg;
 		this.runner = runner;
 		this.stat = stat;
+		this.keys = new Keys(cfg, runner);
+	}
+
+	// press runs one key and shows its outcome; then the screen reads status
+	// again whatever the poll key says, so what the key changed shows now.
+	async press(name: string, ctx: ExtensionContext): Promise<KeyOutcome> {
+		this.ctx = ctx;
+		if (!this.last) await this.poll(); // a key pressed before the first read
+		const outcome = await this.keys.press(name, ctx, this.last);
+		this.lastKey = outcome;
+		if (!this.expanded) {
+			try {
+				ctx.ui.notify(`key ${outcome.key}${outcome.refused ? " refused" : ""}: ${outcome.line}`, outcome.refused ? "warning" : "info");
+			} catch {
+				// UI is optional
+			}
+		}
+		this.pollKeySeen = undefined;
+		await this.poll();
+		this.render();
+		return outcome;
 	}
 
 	// poll stats both keys and runs status --json only when either changed.
 	async poll(): Promise<void> {
 		if (this.busy) return;
 		const key = pollKey(this.cfg.root, this.stat);
-		if (key === this.lastKey) return;
+		if (key === this.pollKeySeen) return;
 		this.busy = true;
 		try {
 			this.statusRuns++;
 			const r = await this.runner(this.cfg.bin, ["status", "--root", this.cfg.root, "--json"], { timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000) });
 			if (r.code === 0) {
 				this.last = JSON.parse(r.stdout) as ScreenStatus;
-				this.lastKey = key;
+				this.pollKeySeen = key;
 				this.error = "";
 			} else {
 				this.error = `status --json failed: exit ${r.code}${r.stderr.trim() ? ": " + r.stderr.trim().split("\n")[0] : ""}`;
@@ -240,7 +272,7 @@ export class Screen {
 				return;
 			}
 			if (this.expanded) {
-				const lines = renderScreen(this.last);
+				const lines = renderScreen(this.last, new Date(), this.lastKey);
 				if (this.error) lines.push(`  (stale: ${this.error})`);
 				ui.setWidget(SCREEN_KEY, lines, { placement: "belowEditor" });
 				ui.setStatus(SCREEN_KEY, undefined);
@@ -283,10 +315,15 @@ export function installScreen(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 		screen.stop();
 	});
 	pi.registerCommand("squad", {
-		description: "Show or hide the squad screen (seats, tasks, train, gates); read-only",
-		handler: async (_args, ctx) => {
+		description: "The squad screen: /squad shows or hides it; /squad add|reset|clear|answer presses a key",
+		getArgumentCompletions: (prefix: string) => KEYS.filter((k) => k.startsWith(prefix.trim())).map((k) => ({ value: k, label: k })),
+		handler: async (args, ctx) => {
 			screen.ctx = ctx;
-			screen.toggle();
+			if (!args.trim()) {
+				screen.toggle();
+				return;
+			}
+			await screen.press(args, ctx);
 		},
 	});
 	return screen;

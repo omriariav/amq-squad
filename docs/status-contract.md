@@ -64,6 +64,14 @@ is off, with AMQ's audit reason (a Codex seat without AMQ's dialog hook, a
 pi seat); `seat_stalled_at_dialog`, a seat at an open harness dialog (AMQ's
 `.wake.dialog` marker in its mailbox); `pi_provider_key_missing`, a pi seat
 whose `PROVIDER/ID` model has no key in its env needs or its pi login).
+Brief 31-2 adds `acknowledged_warnings` (absent when none): the seat's
+warnings the owner cleared with the screen's clear key for the seat's
+current launch (`launch.launch_id`), each listed here instead of in
+`warnings`. A clear is recorded by the scheduler as a `warning_cleared`
+decision and a line in the scheduler directory's `clears.jsonl`; it names
+the warning's code and the launch, so the same condition on a later launch
+is in `warnings` again. A clear never changes `state`, `reason_code`,
+`bucket` or `live`.
 Brief 31-1 adds `worktree` and `branch` (from its launch record, empty
 before one) and `launch`, its last launch, null without a staged record:
 `launch_id`; `outcome` (`staged`, `applied`, `apply_failed`,
