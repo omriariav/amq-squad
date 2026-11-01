@@ -68,11 +68,9 @@ macOS 26.6.2, arm64; no keychain was read or written):
 - No terminal answer is written: the key never runs `gate answer`, which
   stays the Buzz verifier.
 
-**What a later brief needs for the terminal door:** a signed amq-squad
-build with a keychain-access-groups entitlement (or a Swift helper with
-CryptoKit, built and shipped beside the binary), the release script's cgo
-switch, a gate kind that registers the terminal public key over Buzz, and
-gateverify accepting that key with the door and key id in the store.
+**What a later brief needs for the terminal door:** not the Keychain. The
+four facts above close it; the one shape they leave open is section 8's
+3.2 candidate.
 
 ## 2. Where the keys run
 
@@ -155,6 +153,17 @@ its kind, typed class, target and prefix; a question that never reached
 Buzz is posted (`gate post`, which posts once); the line then says the gate
 waits on Buzz and the terminal door is not built. The key never runs
 `gate answer`, which stays the verifier of the owner's Buzz reply.
+
+**The same gate on both doors** (plan reviewer). The answer key's line
+shows the gate as the owner reads it in Buzz: its action (the kind), its
+typed class, its target and its 16-hex typed prefix, `<id> <action>
+(<typed class>) <target> prefix <16 hex>: ... waiting on Buzz ...`
+(pi/extensions/lib/keys.ts, `answer`, the `shown` line). The gates block
+shows the id, the action and the same 16-hex prefix; the target is not in
+status's gate rows, so the block does not carry it, and the key reads it
+from `gate status`. Row 9 asserts the key's line, kind, typed class,
+target and prefix for each of the five typed actions (pi/test/keys.test.ts,
+"answer, Q7 no: every typed gate kind waits on Buzz ...").
 
 ## 4. Rows
 
@@ -303,3 +312,39 @@ tmux attach -t "$(tmux list-sessions -F '#{session_name}' | grep '^squad-lead-' 
   later PR; this PR adds no seat text.
 - **The commit trailer** names the model this session ran on (Opus 5.5);
   the brief's template named Fable 5.1.
+
+## 8. The 3.2 candidate for the terminal door (not work for this brief)
+
+The plan reviewer's line, so nobody reopens the Keychain: the four facts
+of section 1 close every Keychain and Secure Enclave shape for this
+binary (no entitlement, no Swift, no cgo, no presence on every use from the
+`security` CLI). The one shape they leave open is **a signature made by a
+separate agent process that the owner confirms on every use, reached from
+Go without cgo**:
+
+- **ssh-agent over its socket.** `amq-squad gate answer` asks the agent
+  for a signature over `SSH_AUTH_SOCK` with golang.org/x/crypto/ssh/agent.
+  The key is added with `ssh-add -c`, so the agent asks the owner to
+  confirm every signature. The key never enters amq-squad's process or
+  the lead's; the agent holds it. Read 2026-11-01: golang.org/x/crypto
+  v0.58.0 is in this machine's module cache with its `ssh/agent` package,
+  and go.sum already carries its hashes, although the main module does
+  not require it today (`go mod why -m golang.org/x/crypto`). If a later
+  build cannot take it offline, this candidate waits too.
+- **Or a FIDO security key** under an OpenSSH that carries security-key
+  support (`ecdsa-sk` or `ed25519-sk`): the touch is the presence, on every
+  signature, by the key's own hardware. Read 2026-11-01: the system
+  OpenSSH is 10.3p1 and ships /usr/libexec/ssh-sk-helper; whether Apple's
+  build carries the internal FIDO middleware is the row's first check.
+- **Registration, as before:** the public key is registered once through
+  a Buzz-signed gate, so the trust chain starts at the phone; gateverify
+  accepts the Buzz key or that registered key; the gate store records the
+  door (`terminal`) and the key id (the key's SSH fingerprint).
+- **The owner setup is the line's first row:** on macOS, `ssh-add -c`
+  needs an askpass program for the agent's confirmation (macOS ships
+  none; `SSH_ASKPASS` names one, which shows the gate's kind, target and
+  16-hex prefix before the owner confirms), or the FIDO key itself. Without
+  that setup, the answer key keeps today's fallback: it shows the gate,
+  posts it over Buzz and says so.
+
+A candidate for 3.2, carried as a follow-up; nothing in this PR builds it.
