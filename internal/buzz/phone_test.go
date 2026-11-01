@@ -1239,6 +1239,46 @@ func TestAReceiptMapsByItsParentAndTheRootIsTheFallback(t *testing.T) {
 	}
 }
 
+// The merge with brief 31-3: a signed `yes <16 hex>` DM is a team
+// confirmation for the confirmer, never a phone request or a continuation:
+// no accepted receipt, no relay record, no question to the lead, also when
+// it replies to a relay post. And the relay refuses a lead line of that
+// shape, as it refuses a gate answer's.
+func TestATeamYesIsAConfirmationNotAPhoneRequest(t *testing.T) {
+	const prefix = "0123456789abcdef"
+	pf := newPhoneFixture(t)
+	var confirmed []string
+	pf.h.Confirm = func(p string, raw []byte) (string, error) {
+		confirmed = append(confirmed, p)
+		return "sha256:" + prefix, nil
+	}
+	dir := status.RelayDir(pf.h.Target.Root)
+	ev, msg := pf.dm(t, "yes "+prefix, "")
+	pf.step(t)
+	if res, _ := pf.serve.result(msg); res != "confirmed team" || len(confirmed) != 1 || len(pf.mail.sent) != 0 {
+		t.Fatalf("a fresh team yes: %q, confirmed %v, sent %d", res, confirmed, len(pf.mail.sent))
+	}
+	if _, err := os.Stat(relayRecordPath(dir, RequestID(ev))); !os.IsNotExist(err) {
+		t.Fatalf("a team yes opened a request: %v", err)
+	}
+	// as a reply to a relay post: still the confirmer's, the request untouched
+	_, rid := pf.ask(t, "what is the plan?", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "The plan is ready.", "")
+	pf.relay(t)
+	post := pf.relayPosts()[0]
+	sent := len(pf.mail.sent)
+	_, msg2 := pf.dm(t, "yes "+prefix, post.ID)
+	pf.step(t)
+	if res, _ := pf.serve.result(msg2); res != "confirmed team" || len(confirmed) != 2 || len(pf.mail.sent) != sent || len(pf.record(t, rid).Turns) != 1 {
+		t.Fatalf("a team yes replying to a relay post: %q, confirmed %v, turns %d", res, confirmed, len(pf.record(t, rid).Turns))
+	}
+	// the relay refuses the shape from the lead
+	pf.threads.reply("lead-a", CockpitThread(rid), "yes "+prefix, "")
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "refused" || got[0].Reason != RefusedGateShape || len(pf.relayPosts()) != 1 {
+		t.Fatalf("a team yes from the lead: %+v", got)
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

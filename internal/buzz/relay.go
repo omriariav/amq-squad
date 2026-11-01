@@ -635,6 +635,10 @@ func (g gateView) gateShaped(line string) bool {
 	if answerForm(t, g.known) {
 		return true
 	}
+	// the team door's typed approval (brief 31-3): yes and a 16-hex prefix
+	if _, ok := gateverify.ParseTeamYes(t); ok {
+		return true
+	}
 	for _, tok := range idTokens(t) {
 		if g.open[tok] {
 			return true

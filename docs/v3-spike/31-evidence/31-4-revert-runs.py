@@ -227,5 +227,25 @@ run("no fallback to the root when the parent resolves to nothing", [(R,"""	if ro
     B+"TestAReceiptMapsByItsParentAndTheRootIsTheFallback")
 run("a receipt mapped by its root", [(R,'\t\tif rp, _ := threadParent(row); rp != "" {\n\t\t\treturn index[rp]\n\t\t}','\t\tif _, rr := threadParent(row); rr != "" {\n\t\t\treturn index[rr]\n\t\t}')],
     B+"TestAReceiptMapsByItsParentAndTheRootIsTheFallback")
+# The merge with brief 31-3
+run("a team yes taken as a phone request (continuation before the team door)", [(I,"""	if prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil {
+		closeOnce()
+		h.teamYes(ctx, &hd, e, raw, prefix)
+		return hd
+	}
+	// a reply to a relayed post or to the request's receipt continues its
+	// request (brief 31-4): it reaches the lead as text, whatever its shape;
+	// the gate path keeps every other answer form, as today
+	cont := h.continuation(vctx, e, relay)
+""","""	cont := h.continuation(vctx, e, relay)
+	if prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil && cont == nil {
+		closeOnce()
+		h.teamYes(ctx, &hd, e, raw, prefix)
+		return hd
+	}
+""")],
+    B+"TestATeamYesIsAConfirmationNotAPhoneRequest")
+run("the relay carries a team yes", [(R,"\tif _, ok := gateverify.ParseTeamYes(t); ok {\n\t\treturn true\n\t}\n","")],
+    B+"TestATeamYesIsAConfirmationNotAPhoneRequest")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)
