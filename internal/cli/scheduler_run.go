@@ -165,7 +165,13 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if len(leadPoolFlags) > 0 && !startedByLeadTeam() {
+	// a scheduler run under a lead is refused unless that lead is its
+	// direct parent (the lead supervising its own scheduler)
+	byLead := startedByLeadTeam()
+	if err := underSoloLead("scheduler run", byLead, !byLead); err != nil {
+		return fmt.Errorf("scheduler run: %w", err)
+	}
+	if len(leadPoolFlags) > 0 && !byLead {
 		// The lead's team mode is the only starter that passes its own
 		// pools (narrow pass, R2 (b)): anyone else could name a pool to
 		// fill or free a concurrency cap.

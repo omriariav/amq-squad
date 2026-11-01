@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -537,5 +539,73 @@ func TestTheTUIDoorIsWitnessedOnlyFromTheLeadsOwnPi(t *testing.T) {
 	piStartedHook = func(pid int) { started = pid }
 	if code, err := runProcess("/usr/bin/true", []string{"true"}, os.Environ()); err != nil || code != 0 || started <= 1 {
 		t.Fatalf("runProcess: code %d err %v, the hook saw pid %d", code, err, started)
+	}
+}
+
+// fakeAncestors installs a parent chain for the under-a-lead check: this
+// process is 100, each pid's parent and argv as given, stamps stable.
+func fakeAncestors(t *testing.T, parent map[int]int, argv map[int][]string) {
+	t.Helper()
+	prev := []any{underLeadSelf, confirmParent, confirmStamp, ancestorArgv}
+	t.Cleanup(func() {
+		underLeadSelf = prev[0].(func() int)
+		confirmParent = prev[1].(func(int) (int, bool))
+		confirmStamp = prev[2].(func(int) (string, bool))
+		ancestorArgv = prev[3].(func(int) ([]string, bool))
+	})
+	underLeadSelf = func() int { return 100 }
+	confirmParent = func(p int) (int, bool) { q, ok := parent[p]; return q, ok }
+	confirmStamp = func(p int) (string, bool) { return fmt.Sprintf("st-%d", p), true }
+	ancestorArgv = func(p int) ([]string, bool) { a, ok := argv[p]; return a, ok }
+}
+
+// Codex's third pass on #834, the renamed-binary residual's in-binary
+// check: `up` run as a descendant of a solo lead (whatever its own name:
+// /tmp/squadctl) refuses under_solo_lead naming the ancestor, as it does
+// under the lead's pi and with AM_ME in its environment; `up` from a plain
+// shell proceeds through its steps as before. lead --team refuses the same;
+// scheduler run passes over its direct parent, the lead that supervises it,
+// and refuses a lead further up otherwise.
+func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
+	f, _ := upWorld(t)
+	underLead := map[int]int{100: 90, 90: 80, 80: 1}
+	bash := []string{"/bin/bash", "-c", "/tmp/squadctl up"}
+	for name, lead := range map[string][]string{
+		"the solo lead":      {"/usr/local/bin/amq-squad", "lead"},
+		"the bare solo lead": {"amq-squad"},
+		"the lead's pi":      {"/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/node", "/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/cli.js"},
+	} {
+		fakeAncestors(t, underLead, map[int][]string{90: bash, 80: lead})
+		if _, err := runUpJSON(t, f.proj); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": up runs under pid 80") {
+			t.Fatalf("up under %s = %v", name, err)
+		}
+	}
+	if f.callIndex("amq") >= 0 || f.callIndex("tmux") >= 0 {
+		t.Fatalf("a refused up ran %q", f.calls)
+	}
+	fakeAncestors(t, map[int]int{100: 90, 90: 1}, map[int][]string{90: {"-zsh"}})
+	t.Setenv("AM_ME", "lead")
+	if _, err := runUpJSON(t, f.proj); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": up runs with AM_ME") {
+		t.Fatalf("up with AM_ME = %v", err)
+	}
+	t.Setenv("AM_ME", "")
+	if r, err := runUpJSON(t, f.proj); err != nil || stepNames(r) != "compile:ok install:ok session:ok doctor:ok lead:ok tmux:ok roster:ok" {
+		t.Fatalf("up from a plain shell: %v %s", err, stepNames(r))
+	}
+	_, starts, _, _ := teamLeadFixture(t)
+	fakeAncestors(t, map[int]int{100: 90, 90: 80, 80: 1}, map[int][]string{90: bash, 80: {"amq-squad", "lead"}})
+	if _, _, err := captureOutput(t, func() error { return runLead([]string{"--team"}) }); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": lead --team runs under pid 80") || len(*starts) != 0 {
+		t.Fatalf("lead --team under a lead = %v (scheduler starts %d)", err, len(*starts))
+	}
+	if err := runSchedulerRun(context.Background(), []string{"--project", f.proj}, io.Discard); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": scheduler run runs under pid 80") {
+		t.Fatalf("scheduler run in the lead's shell = %v", err)
+	}
+	fakeAncestors(t, map[int]int{100: 80, 80: 1}, map[int][]string{80: {"amq-squad", "lead"}})
+	if err := underSoloLead("scheduler run", true, false); err != nil {
+		t.Fatalf("the scheduler its lead supervises = %v", err)
+	}
+	fakeAncestors(t, map[int]int{100: 90, 90: 80, 80: 1}, map[int][]string{90: bash, 80: {"amq-squad", "lead"}})
+	if err := underSoloLead("scheduler run", true, false); err == nil || !strings.Contains(err.Error(), "pid 80") {
+		t.Fatalf("a scheduler run in the lead's shell = %v", err)
 	}
 }

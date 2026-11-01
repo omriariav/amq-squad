@@ -173,7 +173,16 @@ func runUp(args []string, version string) error {
 	}
 	u := &upRun{ctx: context.Background(), report: upReport{Project: dir, Start: start, Steps: []upStep{}},
 		binary: *binary, skipInstall: *skipInstall, to: *to, wait: *wait, version: version}
-	runErr := u.run()
+	// under a lead (renamed or not) up starts nothing (Codex's third pass on
+	// #834; the string layers read names, this reads the process tree): a
+	// refused preflight step, before any of the seven
+	var runErr error
+	if err := underSoloLead("up", false, true); err != nil {
+		u.report.Steps = append(u.report.Steps, upStep{Name: "preflight", Outcome: "refused", Refusal: ReasonUnderSoloLead, Detail: strings.TrimPrefix(err.Error(), ReasonUnderSoloLead+": ")})
+		runErr = err
+	} else {
+		runErr = u.run()
+	}
 	out := os.Stdout
 	if *jsonOut {
 		if err := writeJSONEnvelope(out, "up", u.report); err != nil {

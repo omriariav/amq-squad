@@ -108,6 +108,12 @@ func runLead(args []string) error {
 		teamProject = projectTop(cwd)
 	}
 	if *team && squadPresent(teamProject) {
+		// a lead --team under another lead (a renamed binary in its shell)
+		// is refused; AM_ME is not read here, since an AMQ launch carries
+		// the lead's own identity
+		if err := underSoloLead("lead --team", false, false); err != nil {
+			return fmt.Errorf("lead: %w", err)
+		}
 		// Ruling 15 and brief 31-1: in a repository with a squad.yaml the
 		// team mode takes the root's lead lock, then starts and supervises
 		// the scheduler over that squad.yaml.
