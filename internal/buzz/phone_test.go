@@ -1091,6 +1091,80 @@ func TestTheRealLeadIsRecordedBeforeTheDMIsHandled(t *testing.T) {
 	}
 }
 
+// serveReceiptRow is serve's receipt for an owner DM as amq-remote v0.116.2
+// posts it (buzzio carrier.go rowTags): the body's kind 9 in the channel,
+// addressed to the owner, replying to the DM; serve edits it to the result
+// text. Its event id is serve's; the attachment never learns it.
+func (pf phoneFixture) serveReceiptRow(t *testing.T, dm, text string) string {
+	t.Helper()
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: text,
+		Tags: [][]string{{"h", pf.core.Pin.Channel}, {"p", pf.owner.pubHex()}, {"e", dm, "", "reply"}}}
+	if err := pf.body.Sign(&e); err != nil {
+		t.Fatal(err)
+	}
+	if err := pf.mem.Publish(context.Background(), e.Marshal()); err != nil {
+		t.Fatal(err)
+	}
+	return e.ID
+}
+
+// The lead's addition: the owner never has to start a new request because
+// a post went unconfirmed. A request whose only lead reply ended
+// relay_post_unconfirmed is continued by a reply to its receipt (the reply
+// names only serve's receipt row, which the attachment reads and verifies
+// on the verifier's connection), the unconfirmed mark clears, and the next
+// lead reply posts. A reply that names the thread root (the owner's DM)
+// maps directly, and a row the body did not sign maps nothing.
+func TestAReplyToTheReceiptContinuesTheRequest(t *testing.T) {
+	pf := newPhoneFixture(t)
+	dm, rid := pf.ask(t, "is the build green?", "")
+	receipt := pf.serveReceiptRow(t, dm, "amq-squad: completed\n\naccepted "+rid+" routed lead-a")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Green.", "")
+	flaky := &flakyPoster{inner: pf.h.Poster, fail: map[int]bool{1: true, 2: true}}
+	pf.h.Poster = flaky
+	for i := 0; i < 3; i++ {
+		_, _ = pf.h.RelayStep(context.Background())
+	}
+	if rec := pf.record(t, rid); len(rec.Posts) != 0 || len(rec.Refusals) != 1 || rec.Refusals[0].Reason != status.RelayPostUnconfirmed {
+		t.Fatalf("the only reply did not end unconfirmed: %+v", rec)
+	}
+	pf.h.Poster = flaky.inner
+	// a stranger's row replying to the DM maps nothing
+	stranger := newThrowaway(t)
+	fake := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "accepted",
+		Tags: [][]string{{"h", pf.core.Pin.Channel}, {"e", dm, "", "reply"}}}
+	_ = stranger.sk.Sign(&fake)
+	_ = pf.mem.Publish(context.Background(), fake.Marshal())
+	if _, other := pf.ask(t, "via a forged row", fake.ID); other == rid {
+		t.Fatal("a row the body did not sign continued the request")
+	}
+	// the reply to the receipt, naming only the row
+	if _, again := pf.ask(t, "and the deploy?", receipt); again != rid {
+		t.Fatalf("a reply to the receipt opened %s, not %s", again, rid)
+	}
+	in := status.Collect(status.CollectOptions{Root: pf.h.Target.Root, Session: "s", Now: time.Now()})
+	for _, r := range in.Requests {
+		if r.RequestID == rid && len(r.Refused) != 0 {
+			t.Fatalf("the unconfirmed mark did not clear: %+v", r)
+		}
+	}
+	pf.threads.reply("lead-a", CockpitThread(rid), "Deployed.", "")
+	got := pf.relay(t)
+	if len(got) != 1 || got[0].Outcome != "posted" || pf.relayPosts()[len(pf.relayPosts())-1].Content != "re "+rid+"\nDeployed." {
+		t.Fatalf("the next lead reply: %+v", got)
+	}
+	// a reply naming the thread root and the row maps without a fetch
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "thanks",
+		Tags: [][]string{{"h", pf.core.Pin.Channel}, {"p", pf.body.PublicHex()}, {"e", dm, "", "root"}, {"e", strings.Repeat("0", 64), "", "reply"}}}
+	_ = pf.owner.sk.Sign(&e)
+	_ = pf.mem.Publish(context.Background(), e.Marshal())
+	msg := pf.serve.deliver(e.ID, pf.core.Pin.Channel, "thanks")
+	pf.step(t)
+	if res, _ := pf.serve.result(msg); !strings.HasPrefix(res, "accepted "+rid+" ") {
+		t.Fatalf("a reply naming the thread root: %q", res)
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

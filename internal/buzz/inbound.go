@@ -235,10 +235,10 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 		h.final(ctx, &hd, "refused "+gateID+" "+code) // nothing is marked
 		return hd
 	}
-	// a reply to a relayed post continues its request (brief 31-4): it
-	// reaches the lead as text, whatever its shape; the gate path keeps
-	// every other answer form, as today
-	cont := h.continuation(e)
+	// a reply to a relayed post or to the request's receipt continues its
+	// request (brief 31-4): it reaches the lead as text, whatever its shape;
+	// the gate path keeps every other answer form, as today
+	cont := h.continuation(vctx, e, relay)
 	if cont == nil && isGateAnswer(content) {
 		h.gate(ctx, vctx, &hd, e, raw, gateID, relay, body, grant, limit)
 		return hd

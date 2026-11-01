@@ -808,9 +808,16 @@ func writeRelayRecord(dir string, r *status.RelayRecord, now time.Time) error {
 }
 
 // continuation is the request a DM continues: the record one of whose
-// relay posts the event replies to. A DM in a gate question's thread is
-// never a continuation (the gate path keeps it, as today).
-func (h *Handler) continuation(e nostr.Event) *status.RelayRecord {
+// relay posts the event replies to, or whose receipt it replies to. The
+// receipt (`accepted <request id>`) is serve's row, a body-signed kind 9
+// that replies to the owner's DM; its event id is serve's, never the
+// attachment's, so the mapping goes through the row's own thread tags: a
+// reply naming a delivered turn's DM (Buzz names the thread root) maps
+// directly, and a reply naming only the row has the row read on the
+// verifier's connection, its signature checked as the body's in the
+// channel, and its replied-to DM mapped. A DM in a gate question's thread
+// is never a continuation (the gate path keeps it, as today).
+func (h *Handler) continuation(ctx context.Context, e nostr.Event, relay gateverify.Relay) *status.RelayRecord {
 	refs := nostr.ThreadRefs(e)
 	if len(refs) == 0 {
 		return nil
@@ -819,15 +826,43 @@ func (h *Handler) continuation(e nostr.Event) *status.RelayRecord {
 	if err != nil {
 		return nil
 	}
-	for _, ref := range refs {
-		if g.threads[ref] {
-			return nil
-		}
+	inGate := func(ids []string) bool {
+		return slices.ContainsFunc(ids, func(id string) bool { return g.threads[id] })
+	}
+	if inGate(refs) {
+		return nil
 	}
 	recs, _ := loadRelayRecords(status.RelayDir(h.Target.Root))
-	for _, r := range recs {
-		for _, ref := range refs {
-			if slices.ContainsFunc(r.Posts, func(p status.RelayPost) bool { return slices.Contains(p.Events, ref) }) {
+	match := func(ids []string) *status.RelayRecord {
+		for _, r := range recs {
+			for _, ref := range ids {
+				if slices.ContainsFunc(r.Posts, func(p status.RelayPost) bool { return slices.Contains(p.Events, ref) }) ||
+					slices.ContainsFunc(r.Turns, func(t status.RelayTurn) bool { return t.Delivered && t.Event == ref }) {
+					return r
+				}
+			}
+		}
+		return nil
+	}
+	if r := match(refs); r != nil {
+		return r
+	}
+	if relay == nil {
+		return nil
+	}
+	pin := h.Core.Pin
+	for _, ref := range refs {
+		raw, err := gateverify.FetchEvent(ctx, relay, ref)
+		if err != nil {
+			continue
+		}
+		row, err := nostr.ParseEvent(raw)
+		if err != nil || row.PubKey != pin.Body || row.VerifySignature() != nil || row.Kind != KindDM ||
+			!slices.Equal(nostr.TagValues(row, "h"), []string{pin.Channel}) {
+			continue
+		}
+		if rowRefs := nostr.ThreadRefs(row); !inGate(rowRefs) {
+			if r := match(rowRefs); r != nil {
 				return r
 			}
 		}
