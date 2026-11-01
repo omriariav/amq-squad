@@ -60,6 +60,7 @@ type Options struct {
 	// AfterSnapshot is a test seam: production leaves it nil. It proves that
 	// every later policy decision and commit uses tree, not the mutable worktree.
 	AfterSnapshot func(tree string)
+	TreeObjects   treeObjectSource // test injection; nil reads the shadow's Git objects
 	// OpenPR opens (or finds) the seat branch's draft PR with gh after the
 	// push; Gh is the gh executable (default from PATH).
 	OpenPR bool
@@ -875,7 +876,11 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 	}
 	ps := protectedFor(o.Grants.Grants, repoRoot, o.Home, extra...)
 	gated := gatedProtected(o.Task, o.Root, o.Gates)
-	linkTargets, err := treeLinkRefusals(gitTreeObjectSource{g: g}, tree, entries, ps)
+	source := o.TreeObjects
+	if source == nil {
+		source = gitTreeObjectSource{g: g}
+	}
+	linkTargets, err := treeLinkRefusals(source, tree, entries, ps)
 	if err != nil {
 		return nil, err
 	}

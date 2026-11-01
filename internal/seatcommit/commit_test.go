@@ -1,6 +1,7 @@
 package seatcommit
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,12 +131,47 @@ func TestCommitJudgesChangedLinksFromTheSnapshotTree(t *testing.T) {
 		}
 	})
 	t.Run("ordinary declared destination", func(t *testing.T) {
-		f := newFixtureWithBaseLink(t, "old-dangling", "missing")
-		write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// unrelated\n")
+		f := newFixture(t)
 		os.Symlink("cmd/root.go", filepath.Join(f.wt, "link"))
 		res := f.run(f.reported("link", "cmd/root.go"))
 		if !res.OK {
 			t.Fatalf("ordinary link = %+v", res)
+		}
+	})
+	t.Run("unchanged dangling base link", func(t *testing.T) {
+		f := newFixtureWithBaseLink(t, "old-dangling", "missing")
+		write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// unrelated\n")
+		if res := f.run(f.reported("cmd/root.go")); !res.OK {
+			t.Fatalf("unchanged dangling link = %+v", res)
+		}
+	})
+	t.Run("mode-only file to link", func(t *testing.T) {
+		f := newFixture(t)
+		os.Remove(filepath.Join(f.wt, "README.md"))
+		os.Symlink("readme\n", filepath.Join(f.wt, "README.md"))
+		res := f.run(f.reported("README.md"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "dangling") {
+			t.Fatalf("mode-only link = %+v", res)
+		}
+	})
+	t.Run("depth limit", func(t *testing.T) {
+		f := newFixture(t)
+		for i := 0; i <= treeLinkMaxDepth; i++ {
+			os.Symlink(fmt.Sprintf("l%02d", i+1), filepath.Join(f.wt, fmt.Sprintf("l%02d", i)))
+		}
+		os.Symlink("README.md", filepath.Join(f.wt, fmt.Sprintf("l%02d", treeLinkMaxDepth+1)))
+		res := f.run(f.reported("l*"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "depth limit 40") {
+			t.Fatalf("depth link = %+v", res)
+		}
+	})
+	t.Run("finite revisit", func(t *testing.T) {
+		f := newFixture(t)
+		write(t, filepath.Join(f.wt, "real", "file"), "safe\n")
+		os.Symlink("real", filepath.Join(f.wt, "d"))
+		os.Symlink("d/../d/file", filepath.Join(f.wt, "link"))
+		if res := f.run(f.reported("d", "link", "real/file")); !res.OK {
+			t.Fatalf("finite revisit = %+v", res)
 		}
 	})
 	t.Run("worktree swap after snapshot", func(t *testing.T) {
@@ -143,6 +179,7 @@ func TestCommitJudgesChangedLinksFromTheSnapshotTree(t *testing.T) {
 		os.Symlink("cmd/root.go", filepath.Join(f.wt, "link"))
 		tk := f.reported("link", "cmd/root.go")
 		opts := f.opts(tk)
+		opts.TreeObjects = panicOnFilesystemRead{fakeTree(map[string]string{"link": "cmd/root.go"}, "cmd/root.go")}
 		opts.AfterSnapshot = func(string) {
 			if err := os.Remove(filepath.Join(f.wt, "link")); err != nil {
 				t.Fatal(err)

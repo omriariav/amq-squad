@@ -218,9 +218,12 @@ func verify(o Options, sh *shadow, res Result) (Result, bool) {
 		}
 		return nil
 	}
-	run, err := runVerifier(o, sh, res.Tree, p, started)
+	run, err := runVerifier(o, sh, res.Parent, res.Tree, p, started)
 	if errors.Is(err, task.ErrVerdictTreeMismatch) {
 		return res.refuse(task.BlockVerdictTreeMismatch, task.RouteLead, err.Error()), true
+	}
+	if errors.Is(err, errLinkTargetRefused) {
+		return res.refuse(ReasonLinkTarget, task.RouteLead, err.Error()), true
 	}
 	if err != nil {
 		return res.defer_("the verifier: " + err.Error()), true
@@ -294,7 +297,7 @@ type verifierRun struct {
 
 // runVerifier takes a slot, checks the tree out into a fresh shadow
 // worktree under a private TMPDIR, and runs the command there.
-func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan, started func() error) (verifierRun, error) {
+func runVerifier(o Options, sh *shadow, parent, tree string, p *verifierPlan, started func() error) (verifierRun, error) {
 	release, err := verifierSlot(o, p)
 	if err != nil {
 		return verifierRun{}, err
@@ -314,7 +317,7 @@ func runVerifier(o Options, sh *shadow, tree string, p *verifierPlan, started fu
 			return verifierRun{}, err
 		}
 	}
-	if err := checkoutTree(sh, tree, work); err != nil {
+	if err := checkoutTree(o, sh, parent, tree, work); err != nil {
 		return verifierRun{}, fmt.Errorf("check out the snapshot tree %s: %w", tree, err)
 	}
 	var cmd *exec.Cmd
@@ -576,7 +579,27 @@ func VerifierWaiting(root string) []VerifierWait {
 // symbolic link is written as one; a gitlink is an empty directory. Every
 // path is checked: no empty, ".", ".." or .git component, and no parent
 // that is not a real directory.
-func checkoutTree(sh *shadow, tree, dir string) error {
+func checkoutTree(o Options, sh *shadow, parent, tree, dir string) error {
+	diff, err := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
+	if err != nil {
+		return err
+	}
+	changed, err := parseRaw(diff)
+	if err != nil {
+		return err
+	}
+	ps := protectedFor(o.Grants.Grants, sh.rp.Worktree, o.Home, filepath.Join(o.Root, "extensions", "amq-squad")+"/", "~/.amq-squad/")
+	source := o.TreeObjects
+	if source == nil {
+		source = gitTreeObjectSource{g: sh.g}
+	}
+	refused, err := treeLinkRefusals(source, tree, changed, ps)
+	if err != nil {
+		return err
+	}
+	if len(refused) > 0 {
+		return fmt.Errorf("%w: %s", errLinkTargetRefused, strings.Join(refused, "; "))
+	}
 	list, err := sh.g.run(nil, nil, "ls-tree", "-r", "-z", "--full-tree", tree)
 	if err != nil {
 		return err
