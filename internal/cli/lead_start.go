@@ -63,8 +63,8 @@ type leadStartRequest struct {
 	Kind    string `json:"kind"`
 	Digest  string `json:"digest,omitempty"`
 	Project string `json:"project,omitempty"`
-	Pane    string `json:"pane,omitempty"`     // the TUI door's pane
-	EventID string `json:"event_id,omitempty"` // the Buzz door's event
+	Pane    string `json:"pane,omitempty"`  // the TUI door's pane
+	Event   []byte `json:"event,omitempty"` // the Buzz door's raw event bytes, as the attachment fetched them
 }
 
 // The confirmation kinds on the same socket (the three doors).
@@ -210,7 +210,7 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	case req.Kind == confirmShellKind:
 		reply = s.witnessShell(pid, req)
 	case req.Kind == confirmBuzzKind:
-		reply = s.witnessBuzz(context.Background(), req)
+		reply = s.witnessBuzz(req)
 	default:
 		reply.Refusal, reply.Detail = "request_malformed", "an unknown request kind"
 	}
@@ -291,59 +291,49 @@ func (s *leadStarter) witnessShell(pid int, req leadStartRequest) leadStartReply
 		Proof: confirmProof{PIDChain: chain}})
 }
 
-// witnessBuzz is the Buzz door: from the event id alone, the lead fetches
-// the event itself and runs the typed path's checks (the owner's pinned
-// key, the DM kind, the pinned channel, the window, once-only), then the
-// prefix against its own recent proposals.
-func (s *leadStarter) witnessBuzz(ctx context.Context, req leadStartRequest) leadStartReply {
+// witnessBuzz is the Buzz door: the attachment fetched the owner's event on
+// its own connection and hands the lead the raw bytes; the lead holds no key
+// and opens no connection (the plan reviewer: it signs in with nothing,
+// ever). It verifies the bytes itself: the id recomputed from them and
+// matched, the signature under the pinned owner key, the DM kind, the pinned
+// channel, the routing window, `yes <prefix>` against its own recent
+// proposals, once-only per event id; only then is the confirmation
+// witnessed, with the event id it verified.
+func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	refusedAs := func(name, format string, args ...any) leadStartReply {
 		return leadStartReply{Outcome: "refused", Refusal: name, Detail: fmt.Sprintf(format, args...)}
 	}
-	if !nostr.IsHex64(req.EventID) {
-		return refusedAs(ReasonEventUnverified, "%q is not an event id", req.EventID)
-	}
-	b, pin, err := gateverify.LoadBinding(gateBindingPath())
+	_, pin, err := gateverify.LoadBinding(gateBindingPath())
 	if err != nil {
-		return refusedAs(ReasonEventUnverified, "the owner's gate binding: %v", err)
+		return refusedAs(ReasonEventUnverified, "the owner's gate binding (the pinned key and channel): %v", err)
 	}
-	vctx, cancel := context.WithTimeout(ctx, buzz.VerifyTimeout)
-	defer cancel()
-	relay, _, _, err := gateTransport(vctx, b, pin)
-	if err != nil {
-		return refusedAs(ReasonEventUnverified, "the lead's read connection: %v", err)
-	}
-	if c, ok := relay.(interface{ Close() }); ok {
-		defer c.Close()
-	}
-	raw, err := gateverify.FetchEvent(vctx, relay, req.EventID)
-	if err != nil {
-		return refusedAs(ReasonEventUnverified, "event %s: %v", req.EventID[:12], err)
-	}
-	e, err := nostr.ParseEvent(raw)
+	e, err := nostr.ParseEvent(req.Event)
 	now := confirmNow()
 	switch {
-	case err != nil || !e.CheckID():
-		return refusedAs(gateverify.RejectBadID, "event %s", req.EventID[:12])
+	case err != nil:
+		return refusedAs(ReasonEventUnverified, "the bytes are not an event: %v", err)
+	case !e.CheckID():
+		return refusedAs(gateverify.RejectBadID, "the event's id does not recompute from its bytes")
 	case e.PubKey != pin.Owner:
-		return refusedAs(gateverify.RejectWrongPubkey, "event %s is not signed by the owner's pinned key", req.EventID[:12])
+		return refusedAs(gateverify.RejectWrongPubkey, "event %s is not signed by the owner's pinned key", e.ID[:12])
 	case e.VerifySignature() != nil:
-		return refusedAs(gateverify.RejectBadSignature, "event %s", req.EventID[:12])
+		return refusedAs(gateverify.RejectBadSignature, "event %s", e.ID[:12])
 	case e.Kind != buzz.KindDM:
-		return refusedAs(gateverify.RejectWrongKind, "event %s is kind %d", req.EventID[:12], e.Kind)
+		return refusedAs(gateverify.RejectWrongKind, "event %s is kind %d", e.ID[:12], e.Kind)
 	case !slices.Equal(nostr.TagValues(e, "h"), []string{pin.Channel}):
-		return refusedAs(gateverify.RejectWrongChannel, "event %s is not in the owner's DM channel", req.EventID[:12])
+		return refusedAs(gateverify.RejectWrongChannel, "event %s is not in the owner's DM channel", e.ID[:12])
 	case e.CreatedAt < now.Add(-buzz.RouteWindow).Unix() || e.CreatedAt > now.Add(buzz.FutureSkew).Unix():
-		return refusedAs(gateverify.RejectWindow, "event %s was created at %d", req.EventID[:12], e.CreatedAt)
+		return refusedAs(gateverify.RejectWindow, "event %s was created at %d", e.ID[:12], e.CreatedAt)
 	}
 	prefix, ok := gateverify.ParseTeamYes(e.Content)
 	if !ok {
-		return refusedAs(ReasonEventUnverified, "event %s is not yes <16 hex>", req.EventID[:12])
+		return refusedAs(ReasonEventUnverified, "event %s is not yes <16 hex>", e.ID[:12])
 	}
 	s.wmu.Lock()
 	replayed := s.seen[e.ID]
 	s.wmu.Unlock()
 	if replayed {
-		return refusedAs(gatestore.RejectReplayed, "event %s was witnessed already", req.EventID[:12])
+		return refusedAs(gatestore.RejectReplayed, "event %s was witnessed already", e.ID[:12])
 	}
 	prop, err := proposalByPrefix(s.root, prefix, now)
 	if err != nil {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -325,57 +326,70 @@ func TestTheShellDoorIsWitnessedByTheLeadFromTheKernel(t *testing.T) {
 	}
 }
 
-// Row 1d of the witness design: the Buzz door. The lead takes only an
-// event id, fetches the event itself on its read connection (the test
-// relay) and runs the typed path's checks: a made-up id is
-// event_unverified, an event signed by another key wrong_pubkey, the
-// owner's yes is witnessed once with the event id it verified (a replay of
-// the id is refused), and a yes whose prefix no proposal carries is
-// no_proposal.
-func TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventItFetched(t *testing.T) {
+// Row 1d of the witness design: the Buzz door. The lead takes the raw
+// event bytes the attachment fetched and verifies them itself with no
+// connection (the test fails if the lead dials anything): an event the
+// attachment altered (one byte of the content, so its id no longer
+// recomputes) is bad_id, an event the attachment signed with its own key
+// wrong_pubkey, a yes whose prefix no proposal carries no_proposal, an
+// hour-old yes outside the window; the owner's yes is witnessed once with
+// the event id the lead verified, and a replay of that id is refused.
+func TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified(t *testing.T) {
 	f := newGateCLIFixture(t)
 	proj, root := soloProject(t)
 	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
 	s := newLeadStarter(root, proj, "test", nil)
-	ask := func(id string) leadStartReply {
-		return s.witnessBuzz(context.Background(), leadStartRequest{Kind: confirmBuzzKind, EventID: id})
+	prev := gateTransport
+	t.Cleanup(func() { gateTransport = prev })
+	gateTransport = func(context.Context, gateverify.Binding, gateverify.Pin) (gateverify.Relay, nostr.SecretKey, []string, error) {
+		t.Fatal("the lead opened a relay connection")
+		return nil, nostr.SecretKey{}, nil, nil
+	}
+	ask := func(raw []byte) leadStartReply {
+		return s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: raw})
 	}
 	created := time.Now()
-	publish := func(key nostr.SecretKey, content string) string {
+	event := func(key nostr.SecretKey, content string) nostr.Event {
 		e := nostr.Event{CreatedAt: created.Unix(), Kind: 9, Tags: [][]string{{"h", "dm-chan"}}, Content: content}
 		if err := key.Sign(&e); err != nil {
 			t.Fatal(err)
 		}
-		_ = f.relay.Publish(context.Background(), e.Marshal())
-		return e.ID
+		return e
 	}
-	if r := ask(strings.Repeat("cd", 32)); r.Refusal != ReasonEventUnverified {
-		t.Fatalf("made-up id = %+v", r)
+	yes := "yes " + team.DigestPrefix(digest)
+	genuine := event(f.owner, yes)
+	altered := bytes.Replace(genuine.Marshal(), []byte(`"content":"yes `), []byte(`"content":"YES `), 1)
+	if bytes.Equal(altered, genuine.Marshal()) {
+		t.Fatal("the content was not altered")
 	}
-	stranger, _ := nostr.NewSecretKey()
-	if r := ask(publish(stranger, "yes "+team.DigestPrefix(digest))); r.Refusal != gateverify.RejectWrongPubkey {
-		t.Fatalf("another key = %+v", r)
+	if r := ask(altered); r.Refusal != gateverify.RejectBadID {
+		t.Fatalf("an altered event = %+v", r)
 	}
-	if r := ask(publish(f.owner, "yes 0000000000000000")); r.Refusal != ReasonNoProposal {
+	attachKey, _ := nostr.NewSecretKey()
+	if r := ask(event(attachKey, yes).Marshal()); r.Refusal != gateverify.RejectWrongPubkey {
+		t.Fatalf("an event signed by the attachment = %+v", r)
+	}
+	if r := ask(event(f.owner, "yes 0000000000000000").Marshal()); r.Refusal != ReasonNoProposal {
 		t.Fatalf("no proposal = %+v", r)
 	}
 	created = time.Now().Add(-time.Hour)
-	if r := ask(publish(f.owner, "yes "+team.DigestPrefix(digest))); r.Refusal != gateverify.RejectWindow {
+	if r := ask(event(f.owner, yes).Marshal()); r.Refusal != gateverify.RejectWindow {
 		t.Fatalf("an hour-old yes = %+v", r)
 	}
-	created = time.Now()
+	if r := ask([]byte("not an event")); r.Refusal != ReasonEventUnverified {
+		t.Fatalf("garbage = %+v", r)
+	}
 	if _, err := s.witnessFor(digest); err == nil {
 		t.Fatal("witnessed before the owner's yes")
 	}
-	id := publish(f.owner, "yes "+team.DigestPrefix(digest))
-	if r := ask(id); r.Outcome != "witnessed" || r.Digest != digest {
+	if r := ask(genuine.Marshal()); r.Outcome != "witnessed" || r.Digest != digest {
 		t.Fatalf("the owner's yes = %+v", r)
 	}
 	rec, err := s.witnessFor(digest)
-	if err != nil || rec.Door != DoorBuzz || rec.Proof.EventID != id {
+	if err != nil || rec.Door != DoorBuzz || rec.Proof.EventID != genuine.ID {
 		t.Fatalf("witnessed %+v %v", rec, err)
 	}
-	if r := ask(id); r.Refusal != gatestore.RejectReplayed {
+	if r := ask(genuine.Marshal()); r.Refusal != gatestore.RejectReplayed {
 		t.Fatalf("a replay = %+v", r)
 	}
 }

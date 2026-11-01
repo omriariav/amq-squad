@@ -14,8 +14,8 @@ import (
 // owner's signed DM `yes <16-hex prefix>` takes the typed path of a gate
 // answer (the event fetched by its id on the verifier's connection, the
 // owner's pinned key, the DM kind, the pinned channel) and only then
-// reaches the confirmer, which writes the record with the event id as its
-// proof. A DM signed by another key, or with a broken signature, never
+// reaches the confirmer, which gets the raw bytes the handler fetched (for
+// the lead to verify itself). A DM signed by another key, or with a broken signature, never
 // reaches it; a prefix no proposal carries is refused by the confirmer's
 // name. The test relay (memRelay) carries every event.
 func TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes(t *testing.T) {
@@ -24,8 +24,12 @@ func TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes(t *testing.T) {
 	rig := func(t *testing.T) (handlerFixture, *[]call) {
 		hf := newHandlerFixture(t)
 		var calls []call
-		hf.h.Confirm = func(p, event, owner string, _ time.Time) (string, error) {
-			calls = append(calls, call{p, event, owner})
+		hf.h.Confirm = func(p string, raw []byte) (string, error) {
+			e, err := nostr.ParseEvent(raw)
+			if err != nil || !e.CheckID() {
+				t.Fatalf("the confirmer got bytes that are not the fetched event: %v", err)
+			}
+			calls = append(calls, call{p, e.ID, e.PubKey})
 			if p != prefix {
 				return "", errors.New("no_proposal: no proposal starts with it")
 			}

@@ -234,7 +234,7 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 	}
 	if prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil {
 		closeOnce()
-		h.teamYes(ctx, &hd, e, prefix)
+		h.teamYes(ctx, &hd, e, raw, prefix)
 		return hd
 	}
 	if isGateAnswer(content) {
@@ -343,11 +343,12 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 }
 
 // teamYes is the Buzz door of R55 on an owner-signed event: inside the
-// routing window, the confirmer writes the record of the proposal the
-// prefix names, the event id its proof; the event is then handled once.
+// routing window, the confirmer hands the event's raw bytes (fetched on this
+// handler's own connection) to the lead, which verifies them itself and
+// witnesses the confirmation; the event is then handled once.
 // The reply names the outcome only, never the prefix (no reply carries an
 // answer's digest prefix).
-func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, prefix string) {
+func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw []byte, prefix string) {
 	hd.Kind = "team_confirm"
 	now := h.now()
 	if e.CreatedAt < now.Add(-RouteWindow).Unix() || e.CreatedAt > now.Add(FutureSkew).Unix() {
@@ -355,7 +356,7 @@ func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, prefi
 		h.final(ctx, hd, "refused team "+gateverify.RejectWindow)
 		return
 	}
-	_, err := h.Confirm(prefix, e.ID, e.PubKey, time.Unix(e.CreatedAt, 0))
+	_, err := h.Confirm(prefix, raw)
 	if err != nil {
 		hd.Error = err.Error()
 		code, _, _ := strings.Cut(err.Error(), ":")

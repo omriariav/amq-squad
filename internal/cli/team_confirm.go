@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -39,9 +40,11 @@ import (
 //	       reads the peer from the kernel: not a descendant of the lead or a
 //	       seat, a controlling terminal, its chain through its session
 //	       leader, every pid with its start stamp.
-//	buzz:  the attachment hands the lead the event id of the owner's signed
-//	       `yes <prefix>`; the lead fetches the event by that id itself and
-//	       runs the typed path's checks.
+//	buzz:  the attachment fetches the owner's signed `yes <prefix>` on its
+//	       own connection and hands the lead the raw event bytes; the lead,
+//	       which holds no key and opens no connection, verifies them itself
+//	       (the id recomputed, the pinned owner's signature, kind, channel,
+//	       window, once-only, the prefix).
 //
 // The directory <root>/extensions/amq-squad/confirm/ is the lead's log of
 // what it witnessed (atomicfile, 0600): the door and what the lead read,
@@ -488,15 +491,21 @@ func teamProjectDir(project string) (string, error) {
 }
 
 // confirmByPrefix is the attachment's half of the Buzz door (wired into the
-// mailbox handler, after the handler verified the owner's signature): it
-// finds the solo root whose recent proposal the prefix names and hands that
-// root's lead the event id only; the lead fetches and verifies the event
-// itself and witnesses the confirmation. It returns the confirmed digest.
-func confirmByPrefix(prefix, eventID, _ string, at time.Time) (string, error) {
+// mailbox handler, after the handler fetched the event on its own connection
+// and verified the owner's signature): it finds the solo root whose recent
+// proposal the prefix names and hands that root's lead the raw event bytes;
+// the lead verifies them itself, with no connection and no key, and
+// witnesses the confirmation. It returns the confirmed digest.
+func confirmByPrefix(prefix string, raw []byte) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
+	e, err := nostr.ParseEvent(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: the bytes are not an event: %v", ReasonEventUnverified, err)
+	}
+	at := time.Unix(e.CreatedAt, 0) // which proposal to route to; the lead verifies everything
 	roots, _ := filepath.Glob(filepath.Join(home, ".amq-squad", "solo", "*", "root"))
 	sort.Strings(roots)
 	var found []string
@@ -517,7 +526,7 @@ func confirmByPrefix(prefix, eventID, _ string, at time.Time) (string, error) {
 		return "", err
 	}
 	defer c.Close()
-	reply, err := askLead(c, leadStartRequest{Kind: confirmBuzzKind, EventID: eventID})
+	reply, err := askLead(c, leadStartRequest{Kind: confirmBuzzKind, Event: raw})
 	if err != nil {
 		return "", err
 	}

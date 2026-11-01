@@ -3,7 +3,6 @@ package gateverify
 import (
 	"regexp"
 	"strings"
-	"time"
 )
 
 // The Buzz door of R55 (brief 31-3, section 2 (b)): the owner confirms a
@@ -28,8 +27,9 @@ func ParseTeamYes(content string) (string, bool) {
 	return m[1], true
 }
 
-// TeamConfirmer writes the confirmation record of the one recent proposal
-// whose digest starts with prefix, for the owner-signed event eventID
-// (signed by owner, created at): it returns the confirmed digest, or a
-// refusal whose text starts with its name.
-type TeamConfirmer func(prefix, eventID, owner string, at time.Time) (string, error)
+// TeamConfirmer hands the raw bytes of the owner-signed event (as the
+// handler fetched them on its own connection) to the lead of the one recent
+// proposal whose digest starts with prefix; the lead verifies the bytes
+// itself with no connection and witnesses the confirmation. It returns the
+// confirmed digest, or a refusal whose text starts with its name.
+type TeamConfirmer func(prefix string, raw []byte) (string, error)
