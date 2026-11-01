@@ -246,23 +246,18 @@ the reload's `squadOfProject` parses squad.yaml against the owner's grant
 again, so a narrowed grant file refuses the relaunch `squad_invalid`, and
 in practice the case is `scheduler run --max-seats`.
 
-Over the cap, the plan reviewer ruled before the merge that the grant is
-the owner's cap on seats: a launched seat that only waits `seat_cap` is
-still a Claude or Codex process with a wake running outside what he
-granted. So `Reload.prepare` keeps the first cap seats of the roster in
-squad.yaml order and leaves the rest out (`RosterReload.Unlaunched`). The
-router's pools and the roster are the launched set, so the leases follow
-it. The scheduler logs `roster_over_cap` naming the unlaunched seats and
-the cure, and writes them to its state (`unlaunched`). Status lists them
-under `scheduler.unlaunched_seats`, and the lead's screen shows one line
-per seat: `! rev-2 not launched: over max_seats 2; widen the grant or
-remove the seat`. The relaunch itself is not refused. The first cut
-launched every seat and warned; that row is replaced.
-
-The bound applies at a relaunch's reload only. At `scheduler run`'s start,
-3.0.1's rule still holds (`max_seats` caps the leases held at once, not the
-seats up): `TestRosterSeatCapOfOneMeansOneLeaseAtATime` keeps it, and
-changing the start is outside this brief.
+Over the cap, the reload follows the start (the plan reviewer's settled
+reading, which withdrew the ruling that left seats unlaunched): 3.0.1's rule
+for `--max-seats` is that `max_seats` caps the leases held at once, not the
+seats launched. So every seat of the new roster launches, the router admits
+every launched seat's pool, and the leases follow the cap: a seat beyond it
+waits `seat_cap` while the others hold theirs. The scheduler logs
+`roster_over_cap` naming the seats beyond the cap as "launched, leases
+capped at N", and the lead's screen shows one line from status's
+`live_seats` over `max_seats` (`! over the lease cap: ...`). The relaunch is
+not refused. A first follow-up commit (cf7d2768) left those seats unlaunched,
+with a `scheduler.unlaunched_seats` status field; a forward commit undid it
+and removed the field, since nothing fills it.
 
 The squad seat count includes the lead, which holds no lease, so a cap of
 `min(max_seats, seats)` already covered one added roster seat. The
@@ -284,7 +279,7 @@ Each row fails with its change reverted (section 4).
 | The press's launch only, added_at kept (the plan reviewer, replacing Codex P2 2's rows) | scheduler `TestTheKeyPressIsTheStartOfTheLaunchItCausedOnly` (s-c added at T1, s-d at T2: each press is carried by its own relaunch only; a plain relaunch carries none); seatlaunch `TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart` (A added at T1, B at T2: the next launch gives both seats that launch's start, with added_at T1 and T2 kept and no drain end); status `TestARelaunchedSeatsBudgetNamesTheDrain` (the press shown as `launch.added_at`, null for a seat in the squad from its start) |
 | State agrees (Codex P2 3) | scheduler `TestTheStateWrittenInTheRelaunchsTickNamesTheNewRoster` (scheduler.json read right after the relaunch's tick names s-a and s-c and max_seats 3) |
 | Drain | status `TestARelaunchedSeatsBudgetNamesTheDrain` (a key press, 30 s of drain, then the launch: segments drain, prepare, mint, apply, seat_exec; drain 30000 ms, prepare 200 ms; the slowest is drain and the warning says `slowest segment drain 30.000 s`; a seat without a drain end keeps four segments); seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the added seat's `drain_end` lies between the key press and seat live; the existing seat has none) |
-| Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it is not launched, `roster_over_cap` names it with the cure, the state lists it as unlaunched, and its task gets no lease); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest` (under `--max-seats 2`: impl-1 and rev-1 launch and hold leases, rev-2 is not launched and its task gets no lease, `roster_over_cap` names it, the state and the status document list it under unlaunched); schedproc `TestAReloadOverTheCapLaunchesTheFirstSeatsInSquadOrder` (a cap of 3: c1, x1, n1 launch, n2 does not, its pool never reaches the router); pi `unlaunched seats: one line each in the seats block, naming max_seats and the cure`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
+| Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it launches, `roster_over_cap` names it "launched, leases capped at 2", and its task waits `seat_cap`); schedproc `TestAReloadOverTheCapLaunchesEverySeatAndCapsTheLeases` (a cap of 3 over four roster seats: all four launch, the fourth's pool reaches the router, the cap is 3); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns` (under `--max-seats 2`: every added seat launches, `roster_over_cap` names rev-2 "launched, leases capped at 2", two leases and the third `seat_cap`, the state's 3 live seats over max_seats 2); pi `over the lease cap: a warning line in the seats block, never a refusal`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
 
 No test reaches the network, the real HOME, tmux, AMQ or Buzz: the cli
 rows run `scheduler run` with the fake launcher seam and a temporary HOME

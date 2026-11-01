@@ -77,7 +77,7 @@
     { "id": "g0", "action_class": "merge", "target_digest": "sha256:aa", "state": "accepted", "raised_by": "qa" }
   ],
   "actions": { "new_task": { "id": "task.new", "label": "new task", "argv": ["amq-squad"], "inputs": [] } },
-  "scheduler": { "max_seats": 3, "live_seats": 3, "usage_limit_since": null, "usage_limit_until": null, "pid": 4321, "started_at": "2026-11-01T09:00:01.100Z", "launch_start": "2026-11-01T09:00:00Z", "live": true, "unlaunched_seats": [] },
+  "scheduler": { "max_seats": 3, "live_seats": 3, "usage_limit_since": null, "usage_limit_until": null, "pid": 4321, "started_at": "2026-11-01T09:00:01.100Z", "launch_start": "2026-11-01T09:00:00Z", "live": true },
   "warnings": [],
   "lead": { "handle": "cto", "pid": 4300, "start": "1761987600.1", "pane": "%3", "recorded_at": "2026-11-01T09:00:00.500Z", "live": true, "attach": "tmux attach -t %3" },
   "decisions": [

@@ -131,14 +131,12 @@ compiles squad.yaml again as `scheduler run` does at its start:
   recomputed from the new squad in the same step, with the grant read again,
   so a seat added live gets a lease; the owner's grant is never exceeded.
   `team propose` already refuses a squad.yaml with more seats than
-  `max_seats`. When the cap is lower than the roster at a relaunch (the
-  grant or the `--max-seats` narrowing tightened after the propose), the
-  grant is the owner's cap on seats: the seats beyond it, in squad.yaml
-  order, are not launched, and the leases follow the launched seats. The
-  reload logs `roster_over_cap`, status lists those seats under
-  `scheduler.unlaunched_seats`, and the lead's screen shows one line per
-  unlaunched seat naming `max_seats` and the cure (widen the grant or
-  remove the seat). The relaunch itself is not refused.
+  `max_seats`; only the `--max-seats` narrowing can leave more seats up than
+  the cap. Then, as at the start (3.0.1's rule: `max_seats` caps leases,
+  not the seats launched), every seat still launches, a seat beyond the cap
+  waits for a lease (`seat_cap`), the reload logs `roster_over_cap` naming
+  those seats as "launched, leases capped at N", and the lead's screen
+  shows one warning line in its seats block, never a refusal.
 
 ## Format
 

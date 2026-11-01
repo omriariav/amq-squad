@@ -193,9 +193,6 @@ type Scheduler struct {
 	reload    *RosterReload
 	reloadAt  time.Time
 	seatStart map[string]time.Time
-	// unlaunched are the squad.yaml seats the last reload left out, over
-	// the cap (written to the state for status and the screen).
-	unlaunched []string
 	// Launch failures (3.0.1 t17): the last failure per pool, the tasks
 	// blocked on a repeated one (task id -> the pool and the failure's
 	// sequence number), the requests whose failure was noted while a failed
@@ -983,9 +980,6 @@ type State struct {
 	// relaunch is in progress.
 	Roster          []string `json:"roster,omitempty"`
 	RelaunchPending bool     `json:"relaunch_pending,omitempty"`
-	// Unlaunched are squad.yaml's seats beyond max_seats that the last
-	// reload did not launch (brief 31-2 PR 2), in squad.yaml order.
-	Unlaunched []string `json:"unlaunched,omitempty"`
 	// LaunchFailures are the last launch failure of each pool whose seat
 	// has not come up since (3.0.1 t17): status shows the reason on the
 	// seat's row in place of seat_starting.
@@ -1066,7 +1060,6 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 		return nil
 	}
 	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...), RelaunchPending: s.relaunching}
-	st.Unlaunched = append([]string(nil), s.unlaunched...)
 	for _, rs := range cfg.Roster {
 		st.Roster = append(st.Roster, rs.Handle)
 	}

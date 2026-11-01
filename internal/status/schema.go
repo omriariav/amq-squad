@@ -402,11 +402,7 @@ type Scheduler struct {
 	PID         int        `json:"pid"`
 	StartedAt   *time.Time `json:"started_at"`
 	LaunchStart *time.Time `json:"launch_start"`
-	// UnlaunchedSeats are squad.yaml's seats beyond max_seats that the
-	// last relaunch did not launch (brief 31-2 PR 2), in squad.yaml order;
-	// empty when none.
-	UnlaunchedSeats []string `json:"unlaunched_seats"`
-	Live            bool     `json:"live"`
+	Live        bool       `json:"live"`
 }
 
 // ValidateAction checks the argv rule of plan 4.6: a stable id, a non-empty

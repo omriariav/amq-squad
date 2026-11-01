@@ -264,13 +264,14 @@ func TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain(t *testing.T) {
 	}
 }
 
-// The plan reviewer before the merge (the cap): the grant is the owner's
-// cap on seats, so a reload whose squad.yaml has more roster seats than the
-// recomputed cap launches the first ones in squad.yaml order only. Here the
-// cap is 3 and squad.yaml gains n1 and n2: c1, x1 and n1 launch, n2 is not
-// launched and roster_over_cap names it, and the router's pools never
-// admit n2's pool. Reverted (the whole roster swapped in), n2 launches.
-func TestAReloadOverTheCapLaunchesTheFirstSeatsInSquadOrder(t *testing.T) {
+// The plan reviewer's settled reading (3.0.1's rule: max_seats caps leases,
+// not the seats launched): a reload whose roster is larger than its
+// recomputed cap still launches every seat, and the router admits every
+// launched seat's pool; only the leases held at once are capped. Here the
+// cap is 3 and squad.yaml gains n1 and n2: c1, x1, n1 and n2 all launch,
+// n2's pool reaches the router, and the scheduler's cap is 3. Reverted (the
+// roster trimmed to the cap), n2 is not launched.
+func TestAReloadOverTheCapLaunchesEverySeatAndCapsTheLeases(t *testing.T) {
 	slots := &Slots{Squad: reloadSquad()}
 	pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
 	n2Pool := task.Pool{Runtime: "codex", Model: "gpt-9-nova", Effort: "high"}
@@ -288,7 +289,7 @@ func TestAReloadOverTheCapLaunchesTheFirstSeatsInSquadOrder(t *testing.T) {
 	for _, r := range second {
 		hs = append(hs, r.Handle)
 	}
-	if strings.Join(hs, ",") != "c1,x1,n1" || len(s.Config.Roster) != 3 || slices.Contains(pools.RosterPools(), n2Pool) {
-		t.Fatalf("launched %v; roster %+v; pools %+v", hs, s.Config.Roster, pools.RosterPools())
+	if strings.Join(hs, ",") != "c1,x1,n1,n2" || len(s.Config.Roster) != 4 || s.Config.MaxSeats != 3 || !slices.Contains(pools.RosterPools(), n2Pool) {
+		t.Fatalf("launched %v; roster %+v; cap %d; pools %+v", hs, s.Config.Roster, s.Config.MaxSeats, pools.RosterPools())
 	}
 }
