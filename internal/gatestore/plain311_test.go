@@ -50,6 +50,8 @@ var samples = map[string][]sample{
 	},
 	"external_send": {
 		{"mcp send", gatetarget.MCPSend("mcp__slack__send_message", "C1"), nil},
+		{"mcp send to a user", gatetarget.MCPSend("mcp__slack__send_message", "U024BE7LH"), nil},
+		{"mcp send, another family", gatetarget.MCPSend("mcp__gmail__send_email", "owner@example.com"), nil},
 		{"gws send", gatetarget.GWSSend("gmail", "send"), nil},
 		{"mail", gatetarget.Command("mail", "owner@example.com"), nil},
 		{"sendmail", gatetarget.Command("sendmail", ""), nil},
@@ -58,7 +60,12 @@ var samples = map[string][]sample{
 		{"gh auth login", gatetarget.Command("gh auth login", ""), nil},
 		{"git config", gatetarget.GitConfig("credential.helper"), nil},
 		{"write", gatetarget.Write("/home/u/.ssh/config"), nil},
+		{"write, no known program", gatetarget.Write("/home/u/.netrc"), nil},
+		{"git config signing key", gatetarget.GitConfig("user.signingkey"), nil},
+		{"gh auth logout", gatetarget.Command("gh auth logout", ""), nil},
+		{"gh secret set", gatetarget.Command("gh secret set", "NPM_TOKEN"), nil},
 		{"ssh-keygen", gatetarget.Command("ssh-keygen", ""), nil},
+		{"keychain item", gatetarget.Command("security add-generic-password", "com.example.deploy"), nil},
 	},
 	"spawn": {
 		{"growth: seats", gatetarget.Grow("/r/s1", 13), nil},
@@ -135,8 +142,11 @@ func checkPlain(text string, rec Record) error {
 			}
 		}
 	}
-	if !slices.ContainsFunc(ClassWords, func(w string) bool { return strings.Contains(above, w) }) {
+	if !slices.ContainsFunc(ClassWords, func(w string) bool { return strings.Contains(strings.ToLower(above), strings.ToLower(w)) }) {
 		return fmt.Errorf("no class in words above the rule")
+	}
+	if tok := tokenAbove(above); tok != "" {
+		return fmt.Errorf("a token above the rule: %q", tok)
 	}
 	for _, want := range []string{"amq-squad gate " + rec.GateID, "target: " + rec.Target, "digest: " + rec.Digest} {
 		if !strings.Contains(below, want) {
@@ -144,6 +154,49 @@ func checkPlain(text string, rec Record) error {
 		}
 	}
 	return nil
+}
+
+var (
+	versionWord = regexp.MustCompile(`^v?[0-9]+(\.[0-9]+)+([-+][0-9A-Za-z.-]+)?$`)
+	emailWord   = regexp.MustCompile(`^[^@\s/]+@[^@\s/]+\.[^@\s/]+$`)
+)
+
+// tokenAbove is the first code token among the plain lines (a quoted title
+// is the author's text and exempt): a word holding a double underscore, a
+// path separator, or a dot inside other than a version (v3.1.0-rc.1), an
+// email address or a sentence's end. The check is the row's own, so the
+// next class someone adds cannot leak a tool name, a setting or a path
+// upward through a looser composer.
+func tokenAbove(above string) string {
+	for _, l := range strings.Split(above, "\n") {
+		if strings.HasPrefix(l, `"`) {
+			continue
+		}
+		for _, w := range strings.Fields(l) {
+			w = strings.TrimRight(w, ".?!,:;")
+			if strings.Contains(w, "__") || strings.ContainsAny(w, "/\\") ||
+				strings.Contains(w, ".") && !versionWord.MatchString(w) && !emailWord.MatchString(w) {
+				return w
+			}
+		}
+	}
+	return ""
+}
+
+// The three texts the plan reviewer read on draft PR #838 fail the row.
+func TestTheRowFailsTheReviewersThreeTexts(t *testing.T) {
+	for name, above := range map[string]string{
+		"external send": "Send an outside message with mcp__slack__send_message to C1?\nAsked by lead-a.\nYes lets it run. No stops it.",
+		"credential":    "Make a credential change to git setting credential.helper?\nAsked by lead-a.\nYes lets it run. No stops it.",
+		"widen":         "Allow a task widen of t3 onto protected paths?\n\"Ship the plain gate questions\"\nThe grant refused the widen at docs/** and 1 more.\nYes widens the task. No leaves it as it is.",
+	} {
+		if tok := tokenAbove(above); tok == "" {
+			t.Errorf("%s: the old text passes the token check", name)
+		}
+	}
+	if tok := tokenAbove("Create a tag for v3.1.0-rc.1 in amq-squad?\nSend it to owner@example.com.\nYes creates the tag. No does nothing."); tok != "" {
+		t.Fatalf("a version, an email address or a sentence end read as a token: %q", tok)
+	}
 }
 
 func TestEveryClassTheCatalogRaisesAsksInPlainWords(t *testing.T) {
@@ -204,6 +257,9 @@ func TestNoQuestionAsksForATuple(t *testing.T) {
 // It holds no claim a record does not carry (no reviewer, no passed, no
 // green, no verified): such words reach a line only from a field.
 var glue = strings.Fields(`a all allow an and as asked by cap change commit create creates credential delete does each edit files for found
+	message squad channel user mail which program uses credentials file key signs commits how stores log out write makes let path`)
+
+var glue0 = strings.Fields(`a all allow an and as asked by cap change commit create creates credential delete does each edit files for found
 	github grant growth in into is it its keeps at leaves lets limit local make merge message more named no nothing of on onto open outside
 	past paths prepare protected publish pull push refused release request run see send setting size squad stops tag task the to train
 	upload widen widens with writing yes package gws git grow lines`)
@@ -246,6 +302,10 @@ func fieldWords(rec Record) map[string]bool {
 			add(RuleWords(r))
 		}
 	}
+	// the fixed tables a field is read through: the send's service, the
+	// credential file's program
+	add(ServiceOf(rec.Target))
+	add(CredentialProgram(strings.TrimPrefix(rec.Target, "write ")))
 	return m
 }
 
@@ -254,7 +314,7 @@ func fieldWords(rec Record) map[string]bool {
 // line carries at least one field word (it states a recorded fact).
 func traceWords(rec Record, above string) error {
 	fields := fieldWords(rec)
-	isGlue := func(w string) bool { return slices.Contains(glue, w) }
+	isGlue := func(w string) bool { return slices.Contains(glue, w) || slices.Contains(glue0, w) }
 	for _, w := range words(above) {
 		if !isGlue(w) && !fields[w] && strings.Trim(w, "0123456789") != "" {
 			return fmt.Errorf("the word %q comes from no field", w)

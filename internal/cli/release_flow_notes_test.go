@@ -130,7 +130,7 @@ func TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote(t *testing.T) {
 			t.Fatal(err)
 		}
 		lines := gatestore.PlainLines(rec)
-		want := map[string]string{"tag": "Create a tag for v1.2.0 in owner/fixture?", "github_release": "Publish a GitHub release for v1.2.0 in owner/fixture?"}[rec.Class]
+		want := map[string]string{"tag": "Create a tag for v1.2.0 in fixture?", "github_release": "Publish a GitHub release for v1.2.0 in fixture?"}[rec.Class]
 		if len(lines) != 3 || lines[0] != want || lines[1] != "The prepare found its commit on main." {
 			t.Fatalf("%s question = %q", rec.Class, lines)
 		}

@@ -510,7 +510,7 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   release:
 
   ```text
-  Publish a GitHub release for v3.1.1 in omriariav/amq-squad?
+  Publish a GitHub release for v3.1.1 in amq-squad?
   The prepare found its commit on v3.
   Yes creates the release. No does nothing.
 

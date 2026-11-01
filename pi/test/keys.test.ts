@@ -319,7 +319,7 @@ test("an unknown key, or a key without the interactive screen, runs nothing", as
 // the phone), then the identifiers below. Reverted (the 3.1.0 identifiers
 // only), neither shows the question.
 test("brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim", async () => {
-	const plain = "Create a tag for v3.1.0-rc.1 in omriariav/amq-squad?\nThe prepare found its commit on v3.\nYes creates the tag. No does nothing.";
+	const plain = "Create a tag for v3.1.0-rc.1 in amq-squad?\nThe prepare found its commit on v3.\nYes creates the tag. No does nothing.";
 	const text = `${plain}\n\n----------\namq-squad gate g1\nclass: release (tag)\ntarget: git tag v3.1.0-rc.1 4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d on omriariav/amq-squad\ndigest: sha256:8502aa0011223344`;
 	const doc = { ...fixture, gates: [{ ...fixture.gates[0], question: plain }, fixture.gates[1]] } as ScreenStatus;
 	const lines = renderScreen(doc, new Date("2026-11-01T09:10:00Z"));

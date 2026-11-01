@@ -94,7 +94,8 @@ func SafeFacts(title, branch string) *Facts {
 
 // ClassWords are the classes in words, the one fixed list the plain lines
 // name a class from (never a typed-class token above the rule).
-var ClassWords = []string{"a tag", "a GitHub release", "a package release", "an outside message", "a credential change", "growth past the grant", "a task widen", "a merge"}
+// The check reads them case-insensitively anywhere above the rule.
+var ClassWords = []string{"tag", "GitHub release", "package release", "message outside the squad", "credential", "growth past the grant", "widen", "merge"}
 
 // TextOf is the only renderer of the owner-facing gate text: the plain lines,
 // a blank line, the rule, and the identifiers.
@@ -164,7 +165,7 @@ func compose(r Record) plainQ {
 	case "tag":
 		switch {
 		case len(w) == 6 && w[0] == "git" && w[1] == "tag" && w[4] == "on": // the release flow
-			q.ask, q.why, q.answer = "Create a tag for "+plain(w[2])+" in "+plain(w[5])+"?", prepared, "Yes creates the tag. No does nothing."
+			q.ask, q.why, q.answer = "Create a tag for "+plain(w[2])+" in "+repoName(w[5])+"?", prepared, "Yes creates the tag. No does nothing."
 		case len(w) == 3 && w[0] == "git" && w[1] == "tag":
 			q.ask = "Create a tag named " + plain(w[2]) + "?"
 		case t == "git push --tags":
@@ -172,12 +173,12 @@ func compose(r Record) plainQ {
 		case len(w) == 3 && w[0] == "git" && w[1] == "push" && strings.HasPrefix(w[2], "refs/tags/"):
 			q.ask = "Push a tag named " + plain(strings.TrimPrefix(w[2], "refs/tags/")) + "?"
 		default:
-			q.ask = "Allow a tag with " + plain(t) + "?"
+			q.ask = "Allow a tag with " + safeWords(t) + "?"
 		}
 	case "github_release":
 		switch {
 		case len(w) == 6 && w[0] == "gh" && w[1] == "release" && w[2] == "create" && w[4] == "on": // the release flow
-			q.ask, q.why, q.answer = "Publish a GitHub release for "+plain(w[3])+" in "+plain(w[5])+"?", prepared, "Yes creates the release. No does nothing."
+			q.ask, q.why, q.answer = "Publish a GitHub release for "+plain(w[3])+" in "+repoName(w[5])+"?", prepared, "Yes creates the release. No does nothing."
 		case len(w) == 4 && w[0] == "gh" && w[1] == "release":
 			switch w[2] {
 			case "create":
@@ -191,40 +192,27 @@ func compose(r Record) plainQ {
 			}
 		}
 		if q.ask == "" {
-			q.ask = "Allow a GitHub release with " + plain(t) + "?"
+			q.ask = "Allow a GitHub release with " + safeWords(t) + "?"
 		}
 	case "package_publish":
 		switch {
-		case len(w) > 2:
-			q.ask = "Publish a package release of " + plain(strings.Join(w[2:], " ")) + " with " + plain(w[0]) + "?"
-		case len(w) > 0:
+		case len(w) > 0: // the package spec (a scope, a path) stays below the rule
 			q.ask = "Publish a package release with " + plain(w[0]) + "?"
 		}
 	case "external_send":
-		switch {
-		case len(w) == 3 && w[0] == "gws":
-			q.ask = "Send an outside message with gws " + plain(w[1]) + " " + plain(w[2]) + "?"
-		case len(w) == 2:
-			q.ask = "Send an outside message with " + plain(w[0]) + " to " + plain(w[1]) + "?"
-		case len(w) == 1:
-			q.ask = "Send an outside message with " + plain(w[0]) + "?"
-		default:
-			q.ask = "Send an outside message with " + plain(t) + "?"
-		}
+		// the service in words from the tool's family and the destination as
+		// the tool names it; the tool's name stays below the rule
+		q.ask = "Send a message outside the squad" + sendWhere(w) + "?"
 	case "credential_change":
-		switch {
-		case len(w) >= 2 && w[0] == "write":
-			q.ask = "Make a credential change by writing " + plain(strings.TrimPrefix(t, "write ")) + "?"
-		case len(w) == 3 && w[0] == "git" && w[1] == "config":
-			q.ask = "Make a credential change to git setting " + plain(w[2]) + "?"
-		default:
-			q.ask = "Make a credential change with " + plain(t) + "?"
-		}
+		// what changes in words; the setting, the path and the command stay
+		// below the rule
+		q.ask = credentialAsk(t, w)
+		q.answer = "Yes makes the credential change. No stops it."
 	case "spawn":
 		q = composeGrow(t, w, f, q)
 	}
 	if q.ask == "" {
-		q.ask = "Allow " + plain(t) + "?"
+		q.ask = "Allow " + safeWords(t) + "?"
 	}
 	return q
 }
@@ -235,7 +223,7 @@ var mergeTargetRe = regexp.MustCompile(`^grow merge ([^ #]+)#([0-9]+) head=[0-9a
 // widen past a grant limit, or the squad past a grant limit.
 func composeGrow(t string, w []string, f *Facts, q plainQ) plainQ {
 	if m := mergeTargetRe.FindStringSubmatch(t); m != nil {
-		where := " in " + plain(m[1])
+		where := " in " + repoName(m[1])
 		if f.Branch != "" {
 			where = " into " + plain(f.Branch)
 		}
@@ -250,23 +238,24 @@ func composeGrow(t string, w []string, f *Facts, q plainQ) plainQ {
 		q.answer = "Yes widens the task. No leaves it as it is."
 		switch limit {
 		case "protected_paths":
-			q.ask = "Allow a task widen of " + id + " onto protected paths?"
+			// the globs stay below the rule (a path is a token)
+			q.ask = "Let task " + id + " change protected files?"
 			var globs []string
 			if json.Unmarshal([]byte(value), &globs) == nil && len(globs) > 0 {
-				more := ""
+				what := "a protected path"
 				if len(globs) > 1 {
-					more = fmt.Sprintf(" and %d more", len(globs)-1)
+					what = fmt.Sprintf("%d protected paths", len(globs))
 				}
-				q.why = "The grant refused the widen at " + plain(globs[0]) + more + "."
+				q.why = "The grant refused its widen onto " + what + "."
 			}
 		case "size_cap":
-			q.ask = "Allow a task widen of " + id + " past the size cap?"
+			q.ask = "Let task " + id + " grow past the size cap?"
 			var v struct{ Lines, Files int }
 			if json.Unmarshal([]byte(value), &v) == nil {
 				q.why = fmt.Sprintf("The grant refused %d lines in %d files.", v.Lines, v.Files)
 			}
 		default:
-			q.ask = "Allow a task widen of " + id + " past its " + plain(strings.ReplaceAll(limit, "_", " ")) + " limit?"
+			q.ask = "Let task " + id + " grow past its " + plain(strings.ReplaceAll(limit, "_", " ")) + " limit?"
 		}
 		return q
 	}
@@ -277,6 +266,143 @@ func composeGrow(t string, w []string, f *Facts, q plainQ) plainQ {
 		}
 	}
 	return q
+}
+
+// repoName is a repository's name without its owner (owner/name has a
+// path separator, a token above the rule; the full name is in the target).
+func repoName(repo string) string {
+	_, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		name = repo
+	}
+	return plain(name)
+}
+
+// ServiceOf is an external send's service in words, from the tool's family:
+// Slack for mcp__slack__*, Google Workspace for gws, mail for the mail
+// tools, an MCP server's family name otherwise.
+func ServiceOf(target string) string {
+	w := strings.Fields(target)
+	if len(w) == 0 {
+		return ""
+	}
+	switch {
+	case w[0] == "gws":
+		return "Google Workspace"
+	case w[0] == "mail" || w[0] == "mailx" || w[0] == "sendmail" || w[0] == "msmtp":
+		return "mail"
+	case strings.HasPrefix(w[0], "mcp__"):
+		family, _, _ := strings.Cut(strings.TrimPrefix(w[0], "mcp__"), "__")
+		if family == "slack" {
+			return "Slack"
+		}
+		family = strings.ReplaceAll(strings.ReplaceAll(family, "_", " "), "-", " ")
+		if family != "" {
+			return strings.ToUpper(family[:1]) + family[1:]
+		}
+	}
+	return ""
+}
+
+// sendWhere is ", on <service>, to <destination>" for an external send: a
+// Slack id names a channel (C, G) or a user (U); an email address stands as
+// written; gws names its service and verb.
+func sendWhere(w []string) string {
+	svc := ServiceOf(strings.Join(w, " "))
+	out := ""
+	switch svc {
+	case "":
+	case "mail":
+		out = ", by mail"
+	default:
+		out = ", on " + svc
+	}
+	switch {
+	case len(w) == 3 && w[0] == "gws":
+		out += ", as a " + plain(w[1]) + " " + plain(w[2])
+	case len(w) == 2 && svc == "Slack" && (strings.HasPrefix(w[1], "C") || strings.HasPrefix(w[1], "G")):
+		out += ", to channel " + plain(w[1])
+	case len(w) == 2 && svc == "Slack" && strings.HasPrefix(w[1], "U"):
+		out += ", to user " + plain(w[1])
+	case len(w) == 2:
+		out += ", to " + plain(w[1])
+	}
+	return out
+}
+
+// CredentialProgram is the program a credential file belongs to, by the
+// guard's credential locations (internal/cli guardCredentialPaths), "" when
+// none is known.
+func CredentialProgram(path string) string {
+	for _, c := range []struct{ part, program string }{
+		{"/.ssh/", "SSH"}, {"/.aws/", "AWS"}, {"/.git-credentials", "git"}, {"/.config/gh/", "gh"},
+		{"/.docker/", "Docker"}, {"/.npmrc", "npm"}, {"/.gnupg/", "GnuPG"}, {"/.kube/", "Kubernetes"},
+	} {
+		if strings.Contains(path, c.part) {
+			return c.program
+		}
+	}
+	return ""
+}
+
+// credentialAsk is a credential change's question in words.
+func credentialAsk(t string, w []string) string {
+	switch {
+	case len(w) >= 2 && w[0] == "write":
+		if p := CredentialProgram(strings.TrimPrefix(t, "write ")); p != "" {
+			return "Write a credentials file for " + p + "?"
+		}
+		return "Write a credentials file?"
+	case len(w) == 3 && w[0] == "git" && w[1] == "config":
+		switch {
+		case strings.HasPrefix(w[2], "credential.") && strings.HasSuffix(w[2], ".helper") || w[2] == "credential.helper":
+			return "Change which program git uses for credentials?"
+		case w[2] == "user.signingkey":
+			return "Change the key git signs commits with?"
+		}
+		return "Change how git stores credentials?"
+	case len(w) >= 2 && w[len(w)-1] == "login":
+		return "Log " + plain(w[0]) + " in?"
+	case len(w) >= 2 && w[len(w)-1] == "logout":
+		return "Log " + plain(w[0]) + " out?"
+	}
+	return "Make a credential change with " + safeWords(t) + "?"
+}
+
+// safeWords are a target's leading words up to the first token (a word with
+// a double underscore, a dot inside or a path separator): what a generic
+// question names above the rule; the whole target is below it.
+func safeWords(t string) string {
+	var out []string
+	for _, w := range strings.Fields(t) {
+		if IsToken(w) {
+			break
+		}
+		out = append(out, w)
+	}
+	if len(out) == 0 {
+		return "a command"
+	}
+	return plain(strings.Join(out, " "))
+}
+
+var (
+	versionRe = regexp.MustCompile(`^v?[0-9]+(\.[0-9]+)+([-+][0-9A-Za-z.-]+)?$`)
+	emailRe   = regexp.MustCompile(`^[^@\s/]+@[^@\s/]+\.[^@\s/]+$`)
+)
+
+// IsToken reports whether a word reads as a code token, not a word: it holds
+// a double underscore, a path separator, or a dot inside (other than a
+// version such as v3.1.0-rc.1, an email address, or a sentence's end).
+func IsToken(w string) bool {
+	w = strings.TrimRight(w, ".?!,:;\"")
+	switch {
+	case strings.Contains(w, "__") || strings.ContainsAny(w, "/\\"):
+		return true
+	case strings.Contains(w, "."):
+		return !versionRe.MatchString(w) && !emailRe.MatchString(w)
+	}
+	return false
 }
 
 // ruleWords are the merge train's refusal rules in words

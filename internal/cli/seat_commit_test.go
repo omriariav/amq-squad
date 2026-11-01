@@ -142,8 +142,8 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	// brief 3.1.1-1: the widen's question quotes the task's title, and the
 	// status document's gate row carries the question's plain lines (the
 	// screen's gates block shows them verbatim)
-	if lines := gatestore.PlainLines(rec); len(lines) != 4 || lines[0] != "Allow a task widen of "+tk.ID+" onto protected paths?" || lines[1] != `"tune settings"` ||
-		lines[2] != "The grant refused the widen at .claude/settings.json." {
+	if lines := gatestore.PlainLines(rec); len(lines) != 4 || lines[0] != "Let task "+tk.ID+" change protected files?" || lines[1] != `"tune settings"` ||
+		lines[2] != "The grant refused its widen onto a protected path." {
 		t.Fatalf("growth gate question = %q", lines)
 	}
 	st := buildStatusContract(f.root, repo, "test", time.Now())
