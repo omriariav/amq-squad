@@ -844,10 +844,12 @@ func writeRelayRecord(dir string, r *status.RelayRecord, now time.Time) error {
 // continuation is the request a DM continues: the request one of whose
 // relay posts or delivered owner DMs the DM replies to, or whose receipt it
 // replies to. The DM's direct reply target (its parent, the e tag marked
-// reply) decides; its thread root is used only when it names no parent. The
-// receipt (`accepted <request id>`) is serve's row, a body-signed kind 9
-// replying to the owner's DM; its event id is serve's, never the
-// attachment's, so a parent that maps to no record is read on the
+// reply) is resolved first and decides when it resolves; when it resolves
+// to nothing (or the DM names none), the thread root is resolved: an owner
+// replying inside a request's thread continues it. A DM with neither opens
+// a new request. The receipt (`accepted <request id>`) is serve's row, a
+// body-signed kind 9 replying to the owner's DM; its event id is serve's,
+// never the attachment's, so an id that maps to no record is read on the
 // verifier's connection and, when it verifies as the body's kind 9 in the
 // channel, the DM it replies to (its own parent, never its root) is
 // mapped. A DM in a gate question's thread is never a continuation (the
@@ -883,32 +885,36 @@ func (h *Handler) continuation(ctx context.Context, e nostr.Event, relay gatever
 			}
 		}
 	}
-	parent, root := threadParent(e)
-	target := parent
-	if target == "" {
-		target = root
-	}
-	if target == "" {
-		return nil
-	}
-	if r := index[target]; r != nil {
-		return r
-	}
-	if relay == nil {
-		return nil
-	}
-	raw, err := gateverify.FetchEvent(ctx, relay, target)
-	if err != nil {
-		return nil
-	}
 	pin := h.Core.Pin
-	row, err := nostr.ParseEvent(raw)
-	if err != nil || row.PubKey != pin.Body || row.VerifySignature() != nil || row.Kind != KindDM ||
-		!slices.Equal(nostr.TagValues(row, "h"), []string{pin.Channel}) || inGate(nostr.ThreadRefs(row)) {
+	resolve := func(id string) *status.RelayRecord {
+		if r := index[id]; r != nil {
+			return r
+		}
+		if relay == nil {
+			return nil
+		}
+		raw, err := gateverify.FetchEvent(ctx, relay, id)
+		if err != nil {
+			return nil
+		}
+		row, err := nostr.ParseEvent(raw)
+		if err != nil || row.PubKey != pin.Body || row.VerifySignature() != nil || row.Kind != KindDM ||
+			!slices.Equal(nostr.TagValues(row, "h"), []string{pin.Channel}) || inGate(nostr.ThreadRefs(row)) {
+			return nil
+		}
+		if rp, _ := threadParent(row); rp != "" {
+			return index[rp]
+		}
 		return nil
 	}
-	if rp, _ := threadParent(row); rp != "" {
-		return index[rp]
+	parent, root := threadParent(e)
+	if parent != "" {
+		if r := resolve(parent); r != nil {
+			return r
+		}
+	}
+	if root != "" && root != parent {
+		return resolve(root)
 	}
 	return nil
 }

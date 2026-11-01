@@ -183,7 +183,7 @@ run("the DM marked handled before the real lead is recorded (Codex re-check #4)"
 run("a computed exec without its not-amq line (Codex re-check #6)", [('internal/buzz/phone_test.go',' // exec: not amq (the go tool)','')],
     B+"TestTestsExecAMQOnlyThroughTheHelper")
 # The receipt as a continuation anchor (the lead's addition)
-run("a reply naming only the receipt row is not read", [(R,'\tif relay == nil {\n\t\treturn nil\n\t}\n\traw, err := gateverify.FetchEvent(ctx, relay, target)','\tif relay == nil || true {\n\t\treturn nil\n\t}\n\traw, err := gateverify.FetchEvent(ctx, relay, target)')],
+run("a reply naming only the receipt row is not read", [(R,'\t\tif relay == nil {\n\t\t\treturn nil\n\t\t}\n\t\traw, err := gateverify.FetchEvent(ctx, relay, id)','\t\tif relay == nil || true {\n\t\t\treturn nil\n\t\t}\n\t\traw, err := gateverify.FetchEvent(ctx, relay, id)')],
     B+"TestAReplyToTheReceiptContinuesTheRequest")
 run("a receipt row not checked as the body's", [(R,'if err != nil || row.PubKey != pin.Body || row.VerifySignature() != nil','if err != nil || row.VerifySignature() != nil')],
     B+"TestAReplyToTheReceiptContinuesTheRequest")
@@ -200,10 +200,32 @@ run("no Armenian lookalikes", [(R,"\t'ս': 'u', 'օ': 'o', 'ո': 'n', 'ց': 'g',
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 run("an entry dropped from the explicit default-ignorable list", [(R,'0x115F: true, ','')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
-# Codex pass 4: the parent decides
-run("the root before the parent", [(R,'\ttarget := parent\n\tif target == "" {\n\t\ttarget = root\n\t}','\ttarget := root\n\tif target == "" {\n\t\ttarget = parent\n\t}')],
-    B+"TestAReceiptMapsByItsParentNeverItsRoot")
-run("a receipt mapped by its root", [(R,'\tif rp, _ := threadParent(row); rp != "" {\n\t\treturn index[rp]\n\t}','\tif _, rr := threadParent(row); rr != "" {\n\t\treturn index[rr]\n\t}')],
-    B+"TestAReceiptMapsByItsParentNeverItsRoot")
+# Codex pass 4 and the lead's correction: the parent first, the root as fallback
+run("the root before the parent", [(R,"""	parent, root := threadParent(e)
+	if parent != "" {
+		if r := resolve(parent); r != nil {
+			return r
+		}
+	}
+	if root != "" && root != parent {
+		return resolve(root)
+	}""","""	parent, root := threadParent(e)
+	if root != "" {
+		if r := resolve(root); r != nil {
+			return r
+		}
+	}
+	if parent != "" {
+		return resolve(parent)
+	}""")],
+    B+"TestAReceiptMapsByItsParentAndTheRootIsTheFallback")
+run("no fallback to the root when the parent resolves to nothing", [(R,"""	if root != "" && root != parent {
+		return resolve(root)
+	}""","""	if root != "" && parent == "" {
+		return resolve(root)
+	}""")],
+    B+"TestAReceiptMapsByItsParentAndTheRootIsTheFallback")
+run("a receipt mapped by its root", [(R,'\t\tif rp, _ := threadParent(row); rp != "" {\n\t\t\treturn index[rp]\n\t\t}','\t\tif _, rr := threadParent(row); rr != "" {\n\t\t\treturn index[rr]\n\t\t}')],
+    B+"TestAReceiptMapsByItsParentAndTheRootIsTheFallback")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)

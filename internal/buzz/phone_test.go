@@ -1184,37 +1184,32 @@ func TestAReplyToTheReceiptContinuesTheRequest(t *testing.T) {
 	}
 }
 
-// Codex pass 4: the direct reply target decides, the root only when there
-// is no parent, and a receipt maps by the DM it replies to, never its root.
-// Owner DM B replied to a message in A's thread that is no request turn, so
-// B opened its own request; serve's receipt for B names B as its parent and
-// A as its root. A reply to B's receipt continues B (also when it names
-// root A), a reply to A's receipt continues A.
-func TestAReceiptMapsByItsParentNeverItsRoot(t *testing.T) {
+// Codex pass 4 and the lead's correction: the direct reply target is
+// resolved first and decides when it resolves; when it resolves to nothing
+// the thread root is resolved; a receipt maps by the DM it replies to,
+// never its root. B opened its own request by replying to owner DM A before
+// A was delivered; serve's receipt for B names B as its parent and A as its
+// root (a single reply-marked tag is the root too). A reply to B's receipt
+// continues B, with or without root A; a reply to A's receipt continues A;
+// a root-only reply and a reply whose parent is unknown, both with root A,
+// continue A.
+func TestAReceiptMapsByItsParentAndTheRootIsTheFallback(t *testing.T) {
 	pf := newPhoneFixture(t)
-	dmA, ridA := pf.ask(t, "is the build green?", "")
-	receiptA := pf.serveReceiptRow(t, dmA, "accepted "+ridA)
-	// an owner message in A's thread that the attachment never saw
-	m := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "hmm",
-		Tags: [][]string{{"h", pf.core.Pin.Channel}, {"e", dmA, "", "root"}, {"e", receiptA, "", "reply"}}}
-	_ = pf.owner.sk.Sign(&m)
-	_ = pf.mem.Publish(context.Background(), m.Marshal())
-	// B replies to that message: its parent maps to nothing, so B is a new
-	// request (its root A is not used while it names a parent)
-	bTags := [][]string{{"h", pf.core.Pin.Channel}, {"p", pf.body.PublicHex()}, {"e", dmA, "", "root"}, {"e", m.ID, "", "reply"}}
-	b := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "and the deploy?", Tags: bTags}
-	_ = pf.owner.sk.Sign(&b)
-	_ = pf.mem.Publish(context.Background(), b.Marshal())
-	msg := pf.serve.deliver(b.ID, pf.core.Pin.Channel, b.Content)
-	pf.step(t)
-	res, _ := pf.serve.result(msg)
-	ridB := RequestID(b.ID)
-	if !strings.HasPrefix(res, "accepted "+ridB+" ") {
-		t.Fatalf("B did not open its own request: %q", res)
+	dmA := pf.ownerDM(t, "is the build green?", "") // on the relay, not yet delivered
+	evB, ridB := pf.ask(t, "and the deploy?", dmA)
+	if ridB != RequestID(evB) {
+		t.Fatalf("B did not open its own request: %s", ridB)
 	}
-	// serve's receipt for B: parent B, root A (amq-remote rowTags)
+	msgA := pf.serve.deliver(dmA, pf.core.Pin.Channel, "is the build green?")
+	pf.step(t)
+	resA, _ := pf.serve.result(msgA)
+	ridA := RequestID(dmA)
+	if !strings.HasPrefix(resA, "accepted "+ridA+" ") {
+		t.Fatalf("A: %q", resA)
+	}
+	receiptA := pf.serveReceiptRow(t, dmA, "accepted "+ridA)
 	rb := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "accepted " + ridB,
-		Tags: [][]string{{"h", pf.core.Pin.Channel}, {"p", pf.owner.pubHex()}, {"e", dmA, "", "root"}, {"e", b.ID, "", "reply"}}}
+		Tags: [][]string{{"h", pf.core.Pin.Channel}, {"p", pf.owner.pubHex()}, {"e", dmA, "", "root"}, {"e", evB, "", "reply"}}}
 	_ = pf.body.Sign(&rb)
 	_ = pf.mem.Publish(context.Background(), rb.Marshal())
 	reply := func(tags [][]string) string {
@@ -1226,14 +1221,21 @@ func TestAReceiptMapsByItsParentNeverItsRoot(t *testing.T) {
 		r, _ := pf.serve.result(msg)
 		return r
 	}
-	if r := reply([][]string{{"e", rb.ID, "", "reply"}}); !strings.HasPrefix(r, "accepted "+ridB+" ") {
-		t.Fatalf("a reply to B's receipt: %q, want %s", r, ridB)
+	cases := []struct {
+		name string
+		tags [][]string
+		want string
+	}{
+		{"a reply to B's receipt", [][]string{{"e", rb.ID, "", "reply"}}, ridB},
+		{"a reply to B's receipt naming root A", [][]string{{"e", dmA, "", "root"}, {"e", rb.ID, "", "reply"}}, ridB},
+		{"a reply to A's receipt", [][]string{{"e", receiptA, "", "reply"}}, ridA},
+		{"a root-only reply in A's thread", [][]string{{"e", dmA, "", "root"}}, ridA},
+		{"a reply whose parent is unknown, root A", [][]string{{"e", dmA, "", "root"}, {"e", strings.Repeat("ab", 32), "", "reply"}}, ridA},
 	}
-	if r := reply([][]string{{"e", dmA, "", "root"}, {"e", rb.ID, "", "reply"}}); !strings.HasPrefix(r, "accepted "+ridB+" ") {
-		t.Fatalf("a reply to B's receipt naming root A: %q, want %s", r, ridB)
-	}
-	if r := reply([][]string{{"e", receiptA, "", "reply"}}); !strings.HasPrefix(r, "accepted "+ridA+" ") {
-		t.Fatalf("a reply to A's receipt: %q, want %s", r, ridA)
+	for _, c := range cases {
+		if r := reply(c.tags); !strings.HasPrefix(r, "accepted "+c.want+" ") {
+			t.Errorf("%s: %q, want %s", c.name, r, c.want)
+		}
 	}
 }
 
