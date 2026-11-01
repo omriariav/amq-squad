@@ -437,9 +437,62 @@ against replacement of its seed, its sockets and its anchored
 directories are weaker there than on APFS, which never reuses one. Linux
 seats are 3.1 work.</p>
 <h2 id="first-run">First run</h2>
-<p>Each step below is the owner's, at the owner's own terminal.
-amq-squad never writes the owner's Claude or Codex configuration and
-never answers a trust prompt for you.</p>
+<p>The first run is a conversation with the lead, in the repository:</p>
+<ol type="1">
+<li><p>Start the lead: <code>amq-squad lead</code> (or a bare
+<code>amq-squad</code> on a terminal). With no squad.yaml it is the solo
+lead; its state lives under <code>~/.amq-squad/solo/</code> and nothing
+is written in the repository.</p></li>
+<li><p>Say what you want. The lead writes a plan (the goal, the seats
+with their runtime, model and effort, the files, the first tasks) and
+proposes it with its <code>amq_team_propose</code> tool.
+<code>team propose --from PLAN.json</code> renders squad.yaml from it,
+checks it against your grant and prints the plan with one digest and its
+16-hex prefix. The plan block below the editor shows them. Nothing is
+written but the proposal.</p></li>
+<li><p>Confirm it at one of the two doors. The lead's own process
+witnesses the confirmation, checks the door's proof itself and holds it
+for 30 minutes in memory; no file is a confirmation, and a lead restart
+forgets it, so you confirm again:</p>
+<ul>
+<li>type <code>/squad confirm &lt;prefix&gt;</code> in the lead's pane.
+pi hands the command to the extension, never to the model, and the lead
+accepts it only from its own pi;</li>
+<li>or send the signed Buzz DM <code>yes &lt;prefix&gt;</code>. The Buzz
+attachment hands the lead the event as it fetched it, and the lead,
+which holds no key, verifies the owner's signature itself.</li>
+</ul>
+<p>There is no shell door: under one uid, no kernel read tells your
+shell from one the lead's model built, so a confirmation from a shell
+would need a key or another user.</p></li>
+<li><p>The lead applies it with its <code>amq_team_apply</code> tool.
+The lead's own process writes squad.yaml through the digest flow and
+starts the team through <code>up</code>'s steps: the session, the
+doctor, the lead lock, the scheduler and the roster's outcome. The
+roster comes back in the conversation. An apply with no confirmation, or
+a stale one, is refused naming the two doors. The start runs the mayor's
+checks of your fleet grant: the permitted repositories, the maximum
+squads and the cost cap, which refuses while no meter can read it. A
+repository outside a fleet grant in auto mode gets R40's fallback: the
+lead proposes, you start. Run the two commands the refusal prints,
+<code>amq-squad team apply --digest &lt;digest&gt; --project .</code>
+and then <code>amq-squad up</code>. From your own shell that apply is
+itself the confirmation (the digest is in front of you), and it runs
+only after the lead has quit: while any lead holds the repository it
+refuses <code>lead_running</code>, or <code>lead_unreachable</code> when
+the lead's process is alive but its socket does not answer. A record a
+dead lead left is removed for you.</p></li>
+</ol>
+<p>The solo lead's shell refuses <code>tmux</code> and every
+<code>amq-squad</code> verb but the read-only ones (status, context,
+doctor, version, task show, task list, team propose), so it cannot type
+into its own pane or start a team. The limit of that refusal is written
+in <a href="docs/v3-spike/31-evidence/31-3-squad-verbs.md">the execution
+note</a>.</p>
+<p>Before the first run, set up the host. Each step below is the
+owner's, at the owner's own terminal. amq-squad never writes the owner's
+Claude or Codex configuration and never answers a trust prompt for
+you.</p>
 <p><strong>1. The AMQ root.</strong> The repository needs an AMQ queue
 first: run <code>amq coop init</code> once inside it (AMQ's verb; it
 writes <code>.amqrc</code> and <code>.agent-mail/</code>).</p>
@@ -500,7 +553,8 @@ folder-trust prompt. This prints the lines you add to
 <code>~/.codex/config.toml</code> yourself, and the candidate Codex
 notify fan-out line:</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> trust .</span></code></pre></div>
-<p><strong>8. The squad.</strong> <code>team propose</code> prints every
+<p><strong>8. The squad.</strong> The lead proposes it from the
+conversation (above). By hand, <code>team propose</code> prints every
 file the squad needs (<code>squad.yaml</code>,
 <code>.amq-squad/team-rules.md</code>, the <code>CLAUDE.md</code> and
 <code>AGENTS.md</code> pointer stubs) with one digest, and writes

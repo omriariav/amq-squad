@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -172,7 +173,16 @@ func runUp(args []string, version string) error {
 	}
 	u := &upRun{ctx: context.Background(), report: upReport{Project: dir, Start: start, Steps: []upStep{}},
 		binary: *binary, skipInstall: *skipInstall, to: *to, wait: *wait, version: version}
-	runErr := u.run()
+	// under a lead (renamed or not) up starts nothing (Codex's third pass on
+	// #834; the string layers read names, this reads the process tree): a
+	// refused preflight step, before any of the seven
+	var runErr error
+	if err := underSoloLead("up", true, true); err != nil {
+		u.report.Steps = append(u.report.Steps, upStep{Name: "preflight", Outcome: "refused", Refusal: ReasonUnderSoloLead, Detail: strings.TrimPrefix(err.Error(), ReasonUnderSoloLead+": ")})
+		runErr = err
+	} else {
+		runErr = u.run()
+	}
 	out := os.Stdout
 	if *jsonOut {
 		if err := writeJSONEnvelope(out, "up", u.report); err != nil {
@@ -374,10 +384,15 @@ func installByRename(src, target string) (err error) {
 	return os.Rename(tmp, target)
 }
 
-// doctor is step 2: the installed binary's doctor, a failing row refusing
-// by its name.
-func (u *upRun) doctor() (string, error) {
-	out, _ := squadRun(u.ctx, u.report.Project, os.Environ(), u.installed, "doctor", "--json", "--project", u.report.Project)
+// doctor is step 4.
+func (u *upRun) doctor() (string, error) { return UpDoctor(u.ctx, u.report.Project, u.installed) }
+
+// UpDoctor is the doctor step (shared by up and the lead's start of a
+// confirmed team, brief 31-3): the installed binary's doctor in the
+// repository, a failing row refusing by its name.
+func UpDoctor(ctx context.Context, project, installed string) (string, error) {
+	countShared("doctor")
+	out, _ := squadRun(ctx, project, os.Environ(), installed, "doctor", "--json", "--project", project)
 	var env struct {
 		Data doctorEnvelopeData `json:"data"`
 	}
@@ -388,7 +403,7 @@ func (u *upRun) doctor() (string, error) {
 	// The envelope is the first JSON value: a failing doctor exits non-zero
 	// and its error line follows it in the combined output.
 	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&env); err != nil || len(env.Data.Checks) == 0 {
-		return "", refuse("doctor_unreadable", "%s doctor --json printed no checks: %s", u.installed, strings.TrimSpace(lastLine(string(out))))
+		return "", refuse("doctor_unreadable", "%s doctor --json printed no checks: %s", installed, strings.TrimSpace(lastLine(string(out))))
 	}
 	warn := 0
 	for _, c := range env.Data.Checks {
@@ -403,13 +418,18 @@ func (u *upRun) doctor() (string, error) {
 }
 
 // session is step 3.
-func (u *upRun) session() (string, error) {
-	q := u.q
-	handles := []string{u.leadHandle}
+func (u *upRun) session() (string, error) { return UpSession(u.ctx, u.q, u.leadHandle) }
+
+// UpSession is the session step (shared by up and the lead's start of a
+// confirmed team): the AMQ root and the squad's session created when
+// absent, the creation a decision.
+func UpSession(ctx context.Context, q seatlaunch.Squad, leadHandle string) (string, error) {
+	countShared("session")
+	handles := []string{leadHandle}
 	for _, seat := range q.Seats {
 		handles = append(handles, seat.Handle)
 	}
-	done, err := ensureSquadSession(u.ctx, q.AMQPath, q, handles)
+	done, err := ensureSquadSession(ctx, q.AMQPath, q, handles)
 	var named *upRefusal
 	switch {
 	case errors.As(err, &named):
@@ -478,11 +498,26 @@ func ensureSquadSession(ctx context.Context, amq string, q seatlaunch.Squad, han
 // anything is installed or created. The wrapper is the binary the install
 // step will put in place (its target), else this one.
 func (u *upRun) compile() (string, error) {
-	q, lead, err := squadOfProject(u.report.Project)
+	q, lead, err := UpCompile(u.report.Project, u.to)
 	if err != nil {
-		return "", refuse("squad_invalid", "%v", err)
+		return "", err
 	}
-	q.Wrapper = u.to
+	u.q, u.leadHandle = q, lead
+	u.report.Root, u.report.Session, u.report.Lead = q.SessionRoot(), q.Session, lead
+	return fmt.Sprintf("%d seats, lead %s, session %s", len(q.Seats), lead, q.Session), nil
+}
+
+// UpCompile is the compile step (shared by up and the lead's start of a
+// confirmed team): squad.yaml as scheduler run reads it, the wrapper (the
+// given path, else the amq-squad on PATH, else this binary) and the
+// installed amq, normalized. It returns the squad and its lead handle.
+func UpCompile(project, wrapper string) (seatlaunch.Squad, string, error) {
+	countShared("compile")
+	q, lead, err := squadOfProject(project)
+	if err != nil {
+		return q, "", refuse("squad_invalid", "%v", err)
+	}
+	q.Wrapper = wrapper
 	if q.Wrapper == "" {
 		if p, err := upLookPath("amq-squad"); err == nil {
 			q.Wrapper = p
@@ -491,17 +526,59 @@ func (u *upRun) compile() (string, error) {
 		}
 	}
 	if q.Wrapper, err = filepath.Abs(q.Wrapper); err != nil {
-		return "", refuse("squad_invalid", "%v", err)
+		return q, "", refuse("squad_invalid", "%v", err)
 	}
 	if q.AMQPath, err = upLookPath("amq"); err != nil {
-		return "", refuse("amq_missing", "the installed amq is required on PATH (R51): %v", err)
+		return q, "", refuse("amq_missing", "the installed amq is required on PATH (R51): %v", err)
 	}
 	if q, err = q.Normalize(); err != nil {
-		return "", refuse("squad_invalid", "%v", err)
+		return q, "", refuse("squad_invalid", "%v", err)
 	}
-	u.q, u.leadHandle = q, lead
-	u.report.Root, u.report.Session, u.report.Lead = q.SessionRoot(), q.Session, lead
-	return fmt.Sprintf("%d seats, lead %s, session %s", len(q.Seats), lead, q.Session), nil
+	return q, lead, nil
+}
+
+// The shared steps (brief 31-3, the plan reviewer's edit 1): `up` and the
+// lead's start of a confirmed team (team apply under the solo lead) run one
+// implementation of the compile, the session, the doctor, the lead lock,
+// the scheduler and the roster's outcome. `up` alone installs and starts
+// the tmux lead (whose `lead --team` takes the lead lock and starts the
+// scheduler through the same two functions); the start of a confirmed team
+// alone takes the lead lock and starts the scheduler in the lead's own
+// process. Each shared step counts its calls (a test reads the counter to
+// show both paths run the same functions).
+var (
+	sharedMu    sync.Mutex
+	sharedCalls = map[string]int{}
+)
+
+func countShared(step string) {
+	sharedMu.Lock()
+	sharedCalls[step]++
+	sharedMu.Unlock()
+}
+
+// UpLeadLock is the lead lock step: the root's lead lock for this process
+// (one lead per root; a held lock is lead_running with the first lead's pid
+// and pane), held for the process's life. It is taken under the
+// repository's apply lock (takeApplyLock), which a shell apply holds from
+// its probe that no lead runs through its write, so no lead starts in
+// between.
+func UpLeadLock(project, root string) (*schedproc.LeadLock, error) {
+	countShared("lead_lock")
+	unlock, err := takeApplyLock(project)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return takeLeadLock(root)
+}
+
+// UpScheduler is the scheduler step: `amq-squad scheduler run --project`
+// supervised by this process (leadSchedulerCommand), restarted on a crash,
+// stopped with it.
+func UpScheduler(project, root string, pools []string) (*supervisor, error) {
+	countShared("scheduler")
+	return startLeadScheduler(project, root, pools)
 }
 
 // upTryLock is the flock up's locks go through (a test seam).
@@ -690,6 +767,12 @@ func (u *upRun) lead() (string, error) {
 		return "", refuse("up_running", "another amq-squad up runs for %s; nothing was stopped", root)
 	}
 	u.upLock = ul
+	// the repository's solo lead, by its discovery record's liveness (a
+	// stale record is removed with its decision; a live one refuses)
+	if err := soloLeadProbe(u.report.Project); err != nil {
+		name, detail, _ := strings.Cut(err.Error(), ": ")
+		return "", refuse(name, "%s", detail)
+	}
 	leadLockPath := filepath.Join(dir, schedproc.LeadLockName)
 	runLock := filepath.Join(dir, "run.lock")
 	name := upTmuxSessionName(u.report.Project)
@@ -910,33 +993,50 @@ func namedRefusal(text string) string {
 // started, until the roster's outcome; the lead's tmux session ending and
 // the scheduler's log refusals stop the wait by name.
 func (u *upRun) roster() (string, error) {
-	root := u.q.SessionRoot()
+	detail, seats, err := UpRosterOutcome(u.q.SessionRoot(), u.report.Project, u.version, u.decisionsFrom, u.logFrom, u.wait, func() error {
+		if u.tmuxSessionExists(u.report.TmuxSession) {
+			return nil
+		}
+		text := readFrom(filepath.Join(schedproc.Dir(u.q.SessionRoot()), "scheduler.log"), u.logFrom)
+		return refuse(firstNonEmptyStr(namedRefusal(text), "lead_exited"), "the lead's tmux session %s ended before the roster's outcome; the scheduler's log: %s", u.report.TmuxSession, firstNonEmptyStr(lastLine(text), "(empty)"))
+	}, "attach with: "+u.report.Attach)
+	u.report.Roster = seats
+	return detail, err
+}
+
+// UpRosterOutcome is the roster step (shared by up and the lead's start of
+// a confirmed team): decisions.jsonl from decisionsFrom until the roster's
+// outcome (at most wait), the scheduler's log refusals from logFrom by
+// name, and leadGone (nil: no check) stopping the wait by its refusal. It
+// returns the outcome line and the roster from status.
+func UpRosterOutcome(root, project, version string, decisionsFrom, logFrom int64, wait time.Duration, leadGone func() error, hint string) (string, []status.Seat, error) {
+	countShared("roster")
 	logPath := filepath.Join(schedproc.Dir(root), "scheduler.log")
-	off := u.decisionsFrom
-	deadline := upNow().Add(u.wait)
+	off := decisionsFrom
+	deadline := upNow().Add(wait)
 	for {
 		lines, next, _ := schedproc.ReadDecisionsFrom(root, off)
 		off = next
 		for _, d := range lines {
 			switch {
 			case d.Kind == "roster_launch_failed":
-				return "", refuse(firstNonEmptyStr(namedRefusal(d.Reason), "roster_launch_failed"), "%s", d.Reason)
+				return "", nil, refuse(firstNonEmptyStr(namedRefusal(d.Reason), "roster_launch_failed"), "%s", d.Reason)
 			case slices.Contains(rosterOutcomes, d.Kind):
-				u.report.Roster = buildStatusContract(root, u.report.Project, u.version, upNow().UTC()).Seats
-				return d.Kind + ": " + firstNonEmptyStr(d.Reason, d.Seat), nil
+				return d.Kind + ": " + firstNonEmptyStr(d.Reason, d.Seat), buildStatusContract(root, project, version, upNow().UTC()).Seats, nil
 			case d.Kind == "scheduler_stopped" && d.Reason != "":
-				return "", refuse(firstNonEmptyStr(namedRefusal(d.Reason), "scheduler_stopped"), "%s", d.Reason)
+				return "", nil, refuse(firstNonEmptyStr(namedRefusal(d.Reason), "scheduler_stopped"), "%s", d.Reason)
 			}
 		}
-		if text := readFrom(logPath, u.logFrom); namedRefusal(text) != "" {
-			return "", refuse(namedRefusal(text), "the scheduler's log (%s): %s", logPath, lastLine(text))
+		if text := readFrom(logPath, logFrom); namedRefusal(text) != "" {
+			return "", nil, refuse(namedRefusal(text), "the scheduler's log (%s): %s", logPath, lastLine(text))
 		}
-		if !u.tmuxSessionExists(u.report.TmuxSession) {
-			text := readFrom(logPath, u.logFrom)
-			return "", refuse(firstNonEmptyStr(namedRefusal(text), "lead_exited"), "the lead's tmux session %s ended before the roster's outcome; the scheduler's log: %s", u.report.TmuxSession, firstNonEmptyStr(lastLine(text), "(empty)"))
+		if leadGone != nil {
+			if err := leadGone(); err != nil {
+				return "", nil, err
+			}
 		}
 		if !upNow().Before(deadline) {
-			return "", refuse("roster_wait_timeout", "no roster outcome in decisions.jsonl after %s; attach with: %s", u.wait, u.report.Attach)
+			return "", nil, refuse("roster_wait_timeout", "no roster outcome in decisions.jsonl after %s; %s", wait, hint)
 		}
 		time.Sleep(upPoll)
 	}

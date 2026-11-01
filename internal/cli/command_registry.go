@@ -82,7 +82,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "trust", Summary: commandSummary("trust"), Run: runTrust},
 		{Name: "migrate", Summary: commandSummary("migrate"), Run: runMigrate},
 		{Name: "up", Summary: commandSummary("up"), Run: func(args []string) error { return runUp(args, version) }},
-		{Name: "lead", Summary: commandSummary("lead"), Run: runLead},
+		{Name: "lead", Summary: commandSummary("lead"), Run: func(args []string) error { leadVersion = version; return runLead(args) }},
 		{Name: "pi", Summary: commandSummary("pi"), Run: runPi},
 		{Name: "remote", Summary: commandSummary("remote"), Run: func(args []string) error { return runRemote(args, version) }},
 		{Name: "uninstall", Summary: commandSummary("uninstall"), Run: runUninstall},

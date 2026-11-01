@@ -645,7 +645,7 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 				for _, pr := range problems {
 					emit("error", map[string]string{"step": "squad core", "error": pr})
 				}
-				handler = &buzz.Handler{Core: core, Cores: cores, Dial: remoteDialer(b, core.Pin), Inbox: remoteInbox(shareRoot), Mail: remoteMailer, Target: t,
+				handler = &buzz.Handler{Core: core, Cores: cores, Dial: remoteDialer(b, core.Pin), Inbox: remoteInbox(shareRoot), Mail: remoteMailer, Target: t, Confirm: confirmByPrefix,
 					SeenPath: buzz.SeenPath(shareRoot), VerifyTimeout: remoteVerifyTimeout}
 			}
 		}

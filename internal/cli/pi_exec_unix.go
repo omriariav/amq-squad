@@ -26,6 +26,10 @@ func runProcess(path string, argv, env []string) (int, error) {
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
+	if piStartedHook != nil {
+		// the solo lead records its pi (pid and start stamp) at the spawn
+		piStartedHook(cmd.Process.Pid)
+	}
 	done := make(chan struct{})
 	go func() {
 		for {

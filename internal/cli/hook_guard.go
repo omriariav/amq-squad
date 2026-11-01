@@ -170,6 +170,7 @@ type guardAction struct {
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
 	credRead       string // a read of the owner's GitHub or release credential (3-2)
 	harness        string // a harness-only verb (the commit step, the scheduler process): v3-5-verifier rule 2
+	ownerOnly      string // team apply, and team confirm (a dropped verb), never from a seat or the lead (R55, brief 31-3)
 	push           guardPush
 	writes         []string
 	blockSafe      bool // a Write/Edit known to keep the file's managed block
@@ -204,6 +205,14 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	// answer unattended, so both are denied in a seat.
 	if slices.Contains(seatexec.SeatDeniedDialogTools, call.Tool) {
 		return out("deny", "seat_dialog", call.Tool+" opens a dialog, and a seat never answers one: send the question to the lead as AMQ mail")
+	}
+	// 3b (ii), the second layer (brief 31-3, Codex on #834): the solo lead's
+	// shell refuses tmux and the owner's verbs, read from the dequoted line
+	// as the extension reads it (pi/extensions/lib/team.ts lineRefusal)
+	if soloLeadIdentity(id) && slices.Contains([]string{"Bash", "bash", "shell", "exec_command"}, call.Tool) {
+		if why := soloLeadShellRefusal(call.Args["command"] + call.Args["cmd"]); why != "" {
+			return out("deny", "owner_only", "the solo lead's shell does not run "+why+" (R55): a tmux command can type into the lead's own pane, and only the read-only amq-squad verbs run here ("+strings.Join(soloAmqSquadAllow, ", ")+")")
+		}
 	}
 	actions := classifyGuardCall(env, call)
 	for i := range actions { // a write to a credential path is the credential gate
@@ -248,6 +257,14 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		if a.harness != "" {
 			return out("deny", "harness_only", a.harness+" is the harness's: the commit step runs the verifier and records the verdict, never a seat (v3-5-verifier rule 2)")
 		}
+		if a.ownerOnly != "" {
+			return out("deny", "owner_only", a.ownerOnly+" is the owner's: a team is confirmed from the owner's own shell, the lead's pane (/squad confirm) or the owner's signed Buzz DM, never by a seat or the lead's tools (R55)")
+		}
+		for _, w := range a.writes {
+			if confirmRecordPath(w, a.env.cwd) {
+				return out("deny", "owner_only", w+" is under the confirmation records (extensions/amq-squad/confirm): only a door writes them (R55)")
+			}
+		}
 	}
 	for _, a := range actions {
 		def := a.env.defaultBranch()
@@ -283,6 +300,82 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		}
 	}
 	return out("allow", "allowed", "")
+}
+
+// soloLeadIdentity reports whether the guarded caller is a solo lead: the
+// session solo and an AMQ root under ~/.amq-squad/solo/ (prepareSoloLead).
+func soloLeadIdentity(id hookIdentity) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || id.Session != "solo" {
+		return false
+	}
+	return strings.HasPrefix(filepath.Clean(id.Root)+"/", filepath.Join(home, ".amq-squad", "solo")+"/")
+}
+
+var (
+	soloSplitRE   = regexp.MustCompile(`[\s;&|()<>{}]+`)
+	soloJoinedRE  = []*regexp.Regexp{regexp.MustCompile(`[a-z0-9_]\$[{(a-z_]`), regexp.MustCompile(`\$\{[^}]*\}[a-z0-9_]`), regexp.MustCompile(`\$\([^)]*\)[a-z0-9_]`)}
+	soloInOrderRE = regexp.MustCompile(`t.*m.*u.*x`)
+)
+
+// soloAmqSquadAllow are the read-only amq-squad verbs the solo lead's shell
+// may run (the extension's AMQ_SQUAD_ALLOW; the shared table
+// pi/test/solo-shell-forms.json carries the same list).
+var soloAmqSquadAllow = []string{"status", "context", "doctor", "version", "task show", "task list", "team propose"}
+
+// soloAmqSquadAllowed reports whether the words after an amq-squad name an
+// allowed verb (one word, or two).
+func soloAmqSquadAllowed(words []string) bool {
+	one := ""
+	if len(words) > 0 {
+		one = words[0]
+	}
+	return slices.Contains(soloAmqSquadAllow, one) || slices.Contains(soloAmqSquadAllow, strings.Join(words[:min(2, len(words))], " "))
+}
+
+// soloLeadShellRefusal is the extension's lineRefusal in Go: over the
+// dequoted, lowercased line (quote characters, backslashes and $' dropped),
+// tmux inside any token; amq-squad with a verb outside the read-only
+// allowlist (bare amq-squad included); an expansion or a
+// command substitution joined to letters, or backticks; eval, exec -a or
+// env -S with a token holding t, m, u, x in order. "" when it runs.
+func soloLeadShellRefusal(line string) string {
+	d := strings.ToLower(strings.NewReplacer(`$'`, "", `"`, "", `'`, "", `\`, "").Replace(line))
+	var tokens []string
+	for _, t := range soloSplitRE.Split(d, -1) {
+		if t != "" {
+			tokens = append(tokens, t)
+		}
+	}
+	if slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, "tmux") }) {
+		return "tmux"
+	}
+	for i, t := range tokens {
+		if strings.Contains(filepath.Base(t), "amq-squad") && !soloAmqSquadAllowed(tokens[i+1:]) {
+			return strings.TrimSpace("amq-squad " + strings.Join(tokens[i+1:min(i+3, len(tokens))], " "))
+		}
+	}
+	for _, re := range soloJoinedRE {
+		if re.MatchString(d) {
+			return "an expansion joined to letters"
+		}
+	}
+	if strings.Contains(d, "`") {
+		return "an expansion joined to letters"
+	}
+	runs := slices.Contains(tokens, "eval") || slices.Contains(tokens, "exec") && slices.Contains(tokens, "-a") ||
+		slices.Contains(tokens, "env") && (slices.Contains(tokens, "-s") || slices.ContainsFunc(tokens, func(t string) bool { return strings.HasPrefix(t, "--split-string") }))
+	if runs && slices.ContainsFunc(tokens, soloInOrderRE.MatchString) {
+		return "tmux"
+	}
+	return ""
+}
+
+// confirmRecordPath reports whether a write lands under a confirmation
+// record directory (<root>/extensions/amq-squad/confirm/).
+func confirmRecordPath(w, cwd string) bool {
+	const dir = "/extensions/amq-squad/" + confirmDirName + "/"
+	return strings.Contains(filepath.ToSlash(w)+"/", dir) || strings.Contains(filepath.ToSlash(canonicalGuardPath(w, cwd))+"/", dir)
 }
 
 // namesTokenFile returns the argument that names the owner's Claude token
@@ -430,6 +523,8 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 		a.credRead = strings.Join(append([]string{cmd}, pos[:min(2, len(pos))]...), " ")
 	case cmd == "amq-squad" && (sub[0] == "seat" && sub[1] == "commit" || sub[0] == "scheduler" && sub[1] == "run"):
 		a.harness = "amq-squad " + sub[0] + " " + sub[1]
+	case cmd == "amq-squad" && sub[0] == "team" && (sub[1] == "confirm" || sub[1] == "apply"):
+		a.ownerOnly = "amq-squad team " + sub[1]
 	case cmd == "git" && sub[0] == "merge" && !hasFlagPrefix(args, "--abort"):
 		a.merge = "git"
 	case cmd == "git" && sub[0] == "push":
