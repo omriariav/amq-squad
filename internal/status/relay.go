@@ -95,7 +95,7 @@ func (r *RelayRecord) Validate(requestID string) error {
 	check(optional(eventIDRe, r.PostTo), "post_to")
 	check(len(r.Turns) > 0, "turns")
 	for _, t := range r.Turns {
-		check(eventIDRe.MatchString(t.Event) && optional(messageIDRe, t.MessageID) && !t.At.IsZero(), "turns[]")
+		check(eventIDRe.MatchString(t.Event) && optional(messageIDRe, t.MessageID) && !t.At.IsZero() && (!t.Delivered || t.MessageID != ""), "turns[]")
 	}
 	check(optional(messageIDRe, r.LastReply), "last_reply")
 	for _, id := range r.Seen {
@@ -185,6 +185,10 @@ type RelayTurn struct {
 	Event     string    `json:"event"`
 	MessageID string    `json:"message_id"`
 	At        time.Time `json:"at"`
+	// Delivered is written only after the turn reached the lead (with the
+	// message id and the real lead); a turn without it is undelivered, and
+	// the relay takes it back on its next step.
+	Delivered bool `json:"delivered"`
 }
 
 // RelayPost is one lead reply posted to the owner's DM (in up to three

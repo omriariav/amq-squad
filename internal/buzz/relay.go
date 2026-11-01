@@ -223,7 +223,20 @@ func (h *Handler) RelayStep(ctx context.Context) ([]Relayed, error) {
 		return nil, fmt.Errorf("relay: gate store: %w", err)
 	}
 	var out []Relayed
+	dir := status.RelayDir(h.Target.Root)
 	for _, rec := range recs {
+		// a turn whose record was written but never delivered is taken back
+		// first (Codex re-check #5)
+		if r, did, err := recoverUndelivered(dir, rec, now); did {
+			out = append(out, r)
+			if err != nil {
+				errs = append(errs, rec.RequestID+": "+RelayTurnUndelivered+": "+err.Error())
+				continue
+			}
+			if len(rec.Turns) == 0 || !rec.Turns[0].Delivered {
+				continue
+			}
+		}
 		got, err := h.relayRecord(ctx, rec, g, now)
 		out = append(out, got...)
 		if err != nil {
@@ -822,6 +835,51 @@ func (h *Handler) continuation(e nostr.Event) *status.RelayRecord {
 	return nil
 }
 
+// RelayTurnUndelivered names a turn the relay took back on its step: its
+// record was written but the question never reached the lead (a crash
+// between the two, or a rollback that failed). A fresh request's record is
+// removed (the owner asks again; the question is never re-sent by the
+// relay), a continuation's turn is dropped. RelayRollbackFailed names a
+// rollback write or removal that failed after a failed delivery.
+const (
+	RelayTurnUndelivered = "relay_turn_undelivered"
+	RelayRollbackFailed  = "relay_rollback_failed"
+)
+
+// removeRelayRecord removes a record (through the store's failure seam).
+func removeRelayRecord(dir, requestID string) error {
+	if relayRecordWrite != nil {
+		if err := relayRecordWrite(); err != nil {
+			return err
+		}
+	}
+	err := os.Remove(relayRecordPath(dir, requestID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// recoverUndelivered takes back the undelivered turns of a record: the
+// record is removed when none is left, else rewritten without them.
+func recoverUndelivered(dir string, rec *status.RelayRecord, now time.Time) (Relayed, bool, error) {
+	var kept []status.RelayTurn
+	for _, t := range rec.Turns {
+		if t.Delivered {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == len(rec.Turns) {
+		return Relayed{}, false, nil
+	}
+	r := Relayed{RequestID: rec.RequestID, Outcome: "recovered", Reason: RelayTurnUndelivered}
+	if len(kept) == 0 {
+		return r, true, removeRelayRecord(dir, rec.RequestID)
+	}
+	rec.Turns = kept
+	return r, true, writeRelayRecord(dir, rec, now)
+}
+
 // RelayRecordFailed is the receipt's code when the request's record
 // cannot be written: the question is not posted to the lead and the DM is
 // not marked handled, so serve's redelivery works.
@@ -831,7 +889,7 @@ const RelayRecordFailed = "relay_record_failed"
 // the question goes to the lead (Codex P2-6): a fresh request's record, or
 // a continuation's with one more turn. undo takes the turn back when the
 // delivery fails.
-func (h *Handler) openTurn(e nostr.Event, requestID string, cont *status.RelayRecord, now time.Time) (*status.RelayRecord, func(), error) {
+func (h *Handler) openTurn(e nostr.Event, requestID string, cont *status.RelayRecord, now time.Time) (*status.RelayRecord, func() error, error) {
 	dir := status.RelayDir(h.Target.Root)
 	rec := cont
 	if rec == nil {
@@ -863,27 +921,28 @@ func (h *Handler) openTurn(e nostr.Event, requestID string, cont *status.RelayRe
 	if err := writeRelayRecord(dir, rec, now); err != nil {
 		return nil, nil, err
 	}
-	undo := func() {
+	undo := func() error {
 		if cont == nil {
-			_ = os.Remove(relayRecordPath(dir, requestID))
-			return
+			return removeRelayRecord(dir, requestID)
 		}
 		rec.Turns, rec.Closed = rec.Turns[:len(rec.Turns)-1], wasClosed
 		for _, i := range cleared {
 			rec.Refusals[i].ClearedAt = nil
 		}
-		_ = writeRelayRecord(dir, rec, now)
+		return writeRelayRecord(dir, rec, now)
 	}
 	return rec, undo, nil
 }
 
-// finishTurn records where the turn went: the AMQ message, and for a fresh
-// request the lead it was forwarded to.
+// finishTurn records where the turn went, with its delivered mark: the AMQ
+// message, and for a fresh request the real lead it was forwarded to. It is
+// written before the DM is marked handled (Codex re-check #4).
 func (h *Handler) finishTurn(rec *status.RelayRecord, fresh bool, d Delivery, now time.Time) error {
 	if fresh && d.LeadID != "" {
 		rec.Lead, rec.Route = d.LeadHandle, d.Lead
 	}
-	rec.Turns[len(rec.Turns)-1].MessageID = firstNonEmpty(d.LeadID, d.MailboxID)
+	t := &rec.Turns[len(rec.Turns)-1]
+	t.MessageID, t.Delivered = firstNonEmpty(d.LeadID, d.MailboxID), true
 	return writeRelayRecord(status.RelayDir(h.Target.Root), rec, now)
 }
 

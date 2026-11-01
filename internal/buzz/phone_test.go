@@ -937,6 +937,75 @@ func TestACanaryAcrossTheSplitBoundaryIsRedacted(t *testing.T) {
 	}
 }
 
+// failStoreOn makes the record store fail on its nth operation from now
+// (a write or a removal), once.
+func failStoreOn(t *testing.T, n int) {
+	t.Helper()
+	calls := 0
+	relayRecordWrite = func() error {
+		calls++
+		if calls == n {
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	t.Cleanup(func() { relayRecordWrite = nil })
+}
+
+// Codex re-check #5: a record whose turn was never delivered (a crash
+// between the record write and the delivery) is taken back on the next
+// step: a fresh request's record is removed (the relay never re-sends the
+// question), a continuation's turn is dropped. A rollback that fails after
+// a failed delivery is named, and the next step recovers the orphan.
+func TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed(t *testing.T) {
+	pf := newPhoneFixture(t)
+	dir := status.RelayDir(pf.h.Target.Root)
+	// the crash: the record is written, the question never sent
+	orphan := pf.ownerDM(t, "is the build green?", "")
+	e, _ := pf.mem.FetchByID(context.Background(), orphan)
+	ev, _ := nostr.ParseEvent(e)
+	if _, _, err := pf.h.openTurn(ev, RequestID(orphan), nil, *pf.clock); err != nil {
+		t.Fatal(err)
+	}
+	got := pf.relay(t)
+	if len(got) != 1 || got[0].Outcome != "recovered" || got[0].Reason != RelayTurnUndelivered {
+		t.Fatalf("the orphan: %+v", got)
+	}
+	if _, err := os.Stat(relayRecordPath(dir, RequestID(orphan))); !os.IsNotExist(err) || len(pf.mail.sent) != 0 {
+		t.Fatalf("the orphan's record is still there (%v) or a question went out (%d)", err, len(pf.mail.sent))
+	}
+	// a continuation's undelivered turn is dropped, the request kept
+	_, rid := pf.ask(t, "and the train?", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Running.", "")
+	pf.relay(t)
+	post := pf.relayPosts()[0]
+	cont := pf.ownerDM(t, "and after it?", post.ID)
+	raw, _ := pf.mem.FetchByID(context.Background(), cont)
+	cev, _ := nostr.ParseEvent(raw)
+	if _, _, err := pf.h.openTurn(cev, rid, pf.record(t, rid), *pf.clock); err != nil {
+		t.Fatal(err)
+	}
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "recovered" || len(pf.record(t, rid).Turns) != 1 {
+		t.Fatalf("the continuation's orphan: %+v, turns %d", got, len(pf.record(t, rid).Turns))
+	}
+	// a failed delivery whose rollback fails: named; the next step recovers
+	pf.mail.err = errors.New("amq down")
+	failStoreOn(t, 2) // 1: the record write, 2: the rollback's removal
+	_, msg := pf.dm(t, "and the release?", "")
+	handled := pf.step(t)
+	if res, _ := pf.serve.result(msg); res != "refused - not_delivered" || len(handled) != 1 || !strings.Contains(handled[0].Error, RelayRollbackFailed) {
+		t.Fatalf("the failed rollback: %q, %+v", res, handled)
+	}
+	relayRecordWrite = nil
+	pf.mail.err = nil
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "recovered" {
+		t.Fatalf("the rollback's orphan: %+v", got)
+	}
+	if recs, _ := loadRelayRecords(dir); len(recs) != 1 {
+		t.Fatalf("%d records after the recovery, want the one delivered request", len(recs))
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

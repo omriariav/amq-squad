@@ -377,10 +377,14 @@ func (h *Handler) route(ctx context.Context, hd *Handled, e nostr.Event, content
 	}
 	d, err := DeliverOn(ctx, h.Mail, h.Target, id, content, CockpitThread(rid), via)
 	if err != nil {
-		undo()
 		// the detail (paths, AMQ errors) stays on this machine; the reply is
 		// clear text on the relay
 		hd.Kind, hd.Error = "error", err.Error()
+		if uerr := undo(); uerr != nil {
+			// named, never ignored; the relay's next step takes the
+			// undelivered turn back
+			hd.Error = joinErr(hd.Error, RelayRollbackFailed+": "+uerr.Error())
+		}
 		h.final(ctx, hd, "refused - not_delivered")
 		return
 	}
