@@ -717,6 +717,12 @@ func TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing(t
 	if h, _ := lockHeld(filepath.Join(schedproc.Dir(root), schedproc.LeadLockName)); h {
 		t.Fatal("a marked restart took the lead lock")
 	}
+	// a marker naming another repository offers nothing
+	other, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: "/elsewhere", Digest: digest, At: time.Now()})
+	mustWrite(t, phaseMarkerPath(soloRoot), string(other))
+	if _, stderr, err := captureOutput(t, func() error { return runLead(nil) }); err != nil || strings.Contains(stderr, "run `amq-squad up` to resume it") {
+		t.Fatalf("another repository's marker: %v\n%s", err, stderr)
+	}
 }
 
 // R53's in-life switch rides the lead's own answer: a phase query on the
