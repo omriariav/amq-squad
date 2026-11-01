@@ -109,7 +109,8 @@ func (r *RelayRecord) Validate(requestID string) error {
 		check(ok, "posts[]")
 	}
 	for _, f := range r.Refusals {
-		check(messageIDRe.MatchString(f.ReplyID) && relayReasons[f.Reason] && shaRe.MatchString(f.SHA256) && !f.At.IsZero(), "refusals[]")
+		check(messageIDRe.MatchString(f.ReplyID) && relayReasons[f.Reason] && shaRe.MatchString(f.SHA256) && !f.At.IsZero() &&
+			(f.ClearedAt == nil || f.Reason == RelayPostUnconfirmed), "refusals[]")
 	}
 	check(optional(messageIDRe, r.Pending), "pending_progress")
 	if p := r.Posting; p != nil {
@@ -203,6 +204,10 @@ type RelayRefusal struct {
 	Reason  string    `json:"reason"`
 	SHA256  string    `json:"sha256"`
 	At      time.Time `json:"at"`
+	// ClearedAt is the owner's next turn on the request after an
+	// unconfirmed post (relay_post_unconfirmed only): the state is cleared
+	// and status no longer shows it. The post is never published again.
+	ClearedAt *time.Time `json:"cleared_at,omitempty"`
 }
 
 // Request is a phone request's row in the status document: whether the
@@ -250,7 +255,9 @@ func collectRequests(root string, warn func(string, ...any)) []Request {
 		row := Request{RequestID: r.RequestID, Thread: r.Thread, Lead: r.Lead, Turns: len(r.Turns), Posts: len(r.Posts),
 			RelayedAt: r.RelayedAt, Refused: []string{}, Closed: r.Closed, UpdatedAt: r.UpdatedAt.UTC()}
 		for _, f := range r.Refusals {
-			row.Refused = append(row.Refused, f.Reason)
+			if f.ClearedAt == nil { // an unconfirmed post the owner's next turn cleared is not shown
+				row.Refused = append(row.Refused, f.Reason)
+			}
 		}
 		out = append(out, row)
 	}

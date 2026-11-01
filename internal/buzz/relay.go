@@ -807,6 +807,15 @@ func (h *Handler) openTurn(e nostr.Event, requestID string, cont *status.RelayRe
 	wasClosed := rec.Closed
 	rec.Turns = append(rec.Turns, status.RelayTurn{Event: e.ID, At: now.UTC()})
 	rec.Closed = false
+	// the owner's next turn clears an unconfirmed post (the owner may have
+	// received it; it is never published again, and the conversation goes on)
+	var cleared []int
+	for i := range rec.Refusals {
+		if rec.Refusals[i].Reason == status.RelayPostUnconfirmed && rec.Refusals[i].ClearedAt == nil {
+			rec.Refusals[i].ClearedAt = timePtr(now)
+			cleared = append(cleared, i)
+		}
+	}
 	if err := writeRelayRecord(dir, rec, now); err != nil {
 		return nil, nil, err
 	}
@@ -816,6 +825,9 @@ func (h *Handler) openTurn(e nostr.Event, requestID string, cont *status.RelayRe
 			return
 		}
 		rec.Turns, rec.Closed = rec.Turns[:len(rec.Turns)-1], wasClosed
+		for _, i := range cleared {
+			rec.Refusals[i].ClearedAt = nil
+		}
 		_ = writeRelayRecord(dir, rec, now)
 	}
 	return rec, undo, nil

@@ -593,43 +593,65 @@ func TestASplitNeverStartsAPartWithAnAnswerForm(t *testing.T) {
 	}
 }
 
-// Codex P1-3: the intent is written before the publish. A crash between
-// a publish and its record gives at most one extra post after a restart;
-// a second crash there records relay_post_unconfirmed (named in status)
-// and the reply is never published again.
-func TestACrashBetweenPublishAndRecordPostsAtMostOnceMore(t *testing.T) {
+// Codex P1-3 and the plan reviewer: a crash between publish and the
+// event-id write is a named state, not a duplicate. The intent is written
+// before the publish; a restart publishes that part once more at most; a
+// second crash there leaves relay_post_unconfirmed in status, and no later
+// tick publishes it again on its own (the owner may have received the
+// first attempt). The owner's next turn on the request clears the state
+// and the conversation goes on.
+func TestACrashBetweenPublishAndEventWriteIsANamedState(t *testing.T) {
 	pf := newPhoneFixture(t)
 	_, rid := pf.ask(t, "is the build green?", "")
-	pf.threads.reply("lead-a", CockpitThread(rid), "Green.", "")
+	th := CockpitThread(rid)
+	pf.threads.reply("lead-a", th, "Checking.", "")
+	pf.relay(t)
+	first := pf.relayPosts()[0]
+	pf.threads.reply("lead-a", th, "Green.", "")
 	crash := errors.New("the attachment died after the publish")
 	relayAfterPublish = func() error { return crash }
 	t.Cleanup(func() { relayAfterPublish = nil })
-	if _, err := pf.h.RelayStep(context.Background()); !errors.Is(err, crash) && (err == nil || !strings.Contains(err.Error(), crash.Error())) {
+	if _, err := pf.h.RelayStep(context.Background()); err == nil || !strings.Contains(err.Error(), crash.Error()) {
 		t.Fatalf("the crash: %v", err)
 	}
-	if n := len(pf.relayPosts()); n != 1 {
-		t.Fatalf("%d posts before the restart", n)
-	}
-	// the restart crashes at the same place again: one more post, then never
 	restarted := func() *Handler {
 		return &Handler{Core: pf.core, Dial: pf.dial.dial, Inbox: pf.serve, Mail: pf.mail, Target: pf.h.Target, Now: pf.h.Now,
 			Poster: BodyPoster{Dial: pf.dial.dial, Pin: pf.core.Pin, Now: pf.h.Now}, Threads: pf.threads}
 	}
-	_, _ = restarted().RelayStep(context.Background())
+	_, _ = restarted().RelayStep(context.Background()) // the one retry, and it crashes too
 	relayAfterPublish = nil
 	got, err := restarted().RelayStep(context.Background())
 	if err != nil || len(got) != 1 || got[0].Outcome != "refused" || got[0].Reason != status.RelayPostUnconfirmed {
 		t.Fatalf("the second restart: %+v %v", got, err)
 	}
 	for i := 0; i < 3; i++ {
-		_, _ = restarted().RelayStep(context.Background())
+		pf.advance(time.Minute)
+		if again, _ := restarted().RelayStep(context.Background()); len(again) != 0 {
+			t.Fatalf("a later tick acted on the unconfirmed post: %+v", again)
+		}
 	}
-	if n := len(pf.relayPosts()); n != 2 {
-		t.Fatalf("%d posts of one reply, want at most one extra", n)
+	if n := len(pf.relayPosts()); n != 3 {
+		t.Fatalf("%d posts: the first answer and the crashed one twice (at most one extra)", n)
 	}
-	in := status.Collect(status.CollectOptions{Root: pf.h.Target.Root, Session: "s", Now: time.Now()})
-	if len(in.Requests) != 1 || !slices.Contains(in.Requests[0].Refused, status.RelayPostUnconfirmed) {
-		t.Fatalf("status does not name the unconfirmed post: %+v", in.Requests)
+	requests := func() []status.Request {
+		return status.Collect(status.CollectOptions{Root: pf.h.Target.Root, Session: "s", Now: time.Now()}).Requests
+	}
+	if r := requests(); len(r) != 1 || !slices.Equal(r[0].Refused, []string{status.RelayPostUnconfirmed}) {
+		t.Fatalf("status does not name the unconfirmed post: %+v", r)
+	}
+	// the owner's next turn clears it; the conversation goes on
+	if _, again := pf.ask(t, "and the deploy?", first.ID); again != rid {
+		t.Fatalf("the next turn opened %s", again)
+	}
+	if r := requests(); len(r) != 1 || len(r[0].Refused) != 0 {
+		t.Fatalf("the next turn did not clear the state: %+v", r)
+	}
+	pf.threads.reply("lead-a", th, "Deployed.", "")
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "posted" || len(pf.relayPosts()) != 4 {
+		t.Fatalf("the conversation after the clear: %+v", got)
+	}
+	if rec := pf.record(t, rid); rec.Refusals[0].ClearedAt == nil || rec.Posting != nil {
+		t.Fatalf("the record: %+v", rec.Refusals)
 	}
 	// one crash only: the restart publishes once more and records it
 	pf2 := newPhoneFixture(t)
