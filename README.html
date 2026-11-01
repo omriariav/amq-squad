@@ -439,51 +439,53 @@ seats are 3.1 work.</p>
 <h2 id="first-run">First run</h2>
 <p>The first run is a conversation with the lead, in the repository:</p>
 <ol type="1">
-<li>Start the lead: <code>amq-squad lead</code> (or a bare
+<li><p>Start the lead: <code>amq-squad lead</code> (or a bare
 <code>amq-squad</code> on a terminal). With no squad.yaml it is the solo
 lead; its state lives under <code>~/.amq-squad/solo/</code> and nothing
-is written in the repository.</li>
-<li>Say what you want. The lead writes a plan (the goal, the seats with
-their runtime, model and effort, the files, the first tasks) and
+is written in the repository.</p></li>
+<li><p>Say what you want. The lead writes a plan (the goal, the seats
+with their runtime, model and effort, the files, the first tasks) and
 proposes it with its <code>amq_team_propose</code> tool.
 <code>team propose --from PLAN.json</code> renders squad.yaml from it,
 checks it against your grant and prints the plan with one digest and its
 16-hex prefix. The plan block below the editor shows them. Nothing is
-written but the proposal.</li>
-<li>Confirm it at one of the three doors. The lead's own process
+written but the proposal.</p></li>
+<li><p>Confirm it at one of the two doors. The lead's own process
 witnesses the confirmation, checks the door's proof itself and holds it
 for 30 minutes in memory; no file is a confirmation, and a lead restart
-forgets it, so you confirm again:
+forgets it, so you confirm again:</p>
 <ul>
 <li>type <code>/squad confirm &lt;prefix&gt;</code> in the lead's pane.
 pi hands the command to the extension, never to the model, and the lead
 accepts it only from its own pi;</li>
-<li>or run <code>amq-squad team confirm &lt;digest&gt;</code> from your
-own shell while the lead runs. The lead reads that process from the
-kernel and refuses <code>lead_descendant</code> when a lead or a seat is
-its ancestor;</li>
 <li>or send the signed Buzz DM <code>yes &lt;prefix&gt;</code>. The Buzz
 attachment hands the lead the event as it fetched it, and the lead,
 which holds no key, verifies the owner's signature itself.</li>
-</ul></li>
-<li>The lead applies it with its <code>amq_team_apply</code> tool. The
-lead's own process writes squad.yaml through the digest flow and starts
-the team through <code>up</code>'s steps: the session, the doctor, the
-lead lock, the scheduler and the roster's outcome. The roster comes back
-in the conversation. An apply with no confirmation, or a stale one, is
-refused naming the three doors. The start runs the mayor's checks of
-your fleet grant: the permitted repositories, the maximum squads and the
-cost cap, which refuses while no meter can read it. A repository outside
-a fleet grant in auto mode gets R40's fallback: the lead proposes, you
-start. Run the two commands the refusal prints,
+</ul>
+<p>There is no shell door: under one uid, no kernel read tells your
+shell from one the lead's model built, so a confirmation from a shell
+would need a key or another user.</p></li>
+<li><p>The lead applies it with its <code>amq_team_apply</code> tool.
+The lead's own process writes squad.yaml through the digest flow and
+starts the team through <code>up</code>'s steps: the session, the
+doctor, the lead lock, the scheduler and the roster's outcome. The
+roster comes back in the conversation. An apply with no confirmation, or
+a stale one, is refused naming the two doors. The start runs the mayor's
+checks of your fleet grant: the permitted repositories, the maximum
+squads and the cost cap, which refuses while no meter can read it. A
+repository outside a fleet grant in auto mode gets R40's fallback: the
+lead proposes, you start. Run the two commands the refusal prints,
 <code>amq-squad team apply --digest &lt;digest&gt; --project .</code>
 and then <code>amq-squad up</code>. From your own shell that apply is
-itself the confirmation: the digest is in front of you.</li>
+itself the confirmation (the digest is in front of you), and it runs
+only after the lead has quit: while any lead holds the repository it
+refuses <code>lead_running</code>.</p></li>
 </ol>
-<p>The solo lead's shell refuses <code>tmux</code> and
-<code>amq-squad team</code>, so it cannot type into its own pane or run
-your verbs. The limit of that refusal is written in <a
-href="docs/v3-spike/31-evidence/31-3-squad-verbs.md">the execution
+<p>The solo lead's shell refuses <code>tmux</code> and every
+<code>amq-squad</code> verb but the read-only ones (status, context,
+doctor, version, task show, task list, team propose), so it cannot type
+into its own pane or start a team. The limit of that refusal is written
+in <a href="docs/v3-spike/31-evidence/31-3-squad-verbs.md">the execution
 note</a>.</p>
 <p>Before the first run, set up the host. Each step below is the
 owner's, at the owner's own terminal. amq-squad never writes the owner's

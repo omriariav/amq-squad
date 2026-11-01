@@ -102,13 +102,13 @@ root (`~/.amq-squad/solo/<dir>-<digest>/root/extensions/amq-squad/confirm/propos
 it is an index, never a confirmation. Under the solo lead, `team apply
 --digest D` of that proposal starts the team only on the owner's
 confirmation (R55) of D that the lead's own process witnessed within the
-last 30 minutes, at one of three doors: `/squad confirm <prefix>` in the
-lead's pane, `amq-squad team confirm D` from the owner's shell, or the
-owner's signed Buzz DM `yes <prefix>` (the prefix is the first 16 hex of
-the content digest). No file is a confirmation, and a lead restart forgets
-them. From the owner's own shell, with no lead, the apply is the
-confirmation by the act: it writes the files and the owner starts the team
-with `amq-squad up`. The flag form below (`--roles`, or a squad.yaml
+last 30 minutes, at one of two doors: `/squad confirm <prefix>` in the
+lead's pane, or the owner's signed Buzz DM `yes <prefix>` (the prefix is
+the first 16 hex of the content digest). No file is a confirmation, and a
+lead restart forgets them. From a shell, while no lead holds the
+repository, the apply is the owner's confirmation by the act: it writes the
+files and the owner starts the team with `amq-squad up`; with a lead
+running it refuses `lead_running`. The flag form below (`--roles`, or a squad.yaml
 `--from`) stays the owner's manual flow.
 
 ## Changing it

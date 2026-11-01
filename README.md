@@ -138,34 +138,38 @@ The first run is a conversation with the lead, in the repository:
    PLAN.json` renders squad.yaml from it, checks it against your grant and
    prints the plan with one digest and its 16-hex prefix. The plan block
    below the editor shows them. Nothing is written but the proposal.
-3. Confirm it at one of the three doors. The lead's own process witnesses
+3. Confirm it at one of the two doors. The lead's own process witnesses
    the confirmation, checks the door's proof itself and holds it for 30
    minutes in memory; no file is a confirmation, and a lead restart forgets
    it, so you confirm again:
    - type `/squad confirm <prefix>` in the lead's pane. pi hands the
      command to the extension, never to the model, and the lead accepts it
      only from its own pi;
-   - or run `amq-squad team confirm <digest>` from your own shell while the
-     lead runs. The lead reads that process from the kernel and refuses
-     `lead_descendant` when a lead or a seat is its ancestor;
    - or send the signed Buzz DM `yes <prefix>`. The Buzz attachment hands
      the lead the event as it fetched it, and the lead, which holds no key,
      verifies the owner's signature itself.
+
+   There is no shell door: under one uid, no kernel read tells your shell
+   from one the lead's model built, so a confirmation from a shell would
+   need a key or another user.
 4. The lead applies it with its `amq_team_apply` tool. The lead's own
    process writes squad.yaml through the digest flow and starts the team
    through `up`'s steps: the session, the doctor, the lead lock, the
    scheduler and the roster's outcome. The roster comes back in the
    conversation. An apply with no confirmation, or a stale one, is refused
-   naming the three doors. The start runs the mayor's checks of your fleet
+   naming the two doors. The start runs the mayor's checks of your fleet
    grant: the permitted repositories, the maximum squads and the cost cap,
    which refuses while no meter can read it. A repository outside a fleet
    grant in auto mode gets R40's fallback: the lead proposes, you start.
    Run the two commands the refusal prints, `amq-squad team apply --digest
    <digest> --project .` and then `amq-squad up`. From your own shell that
-   apply is itself the confirmation: the digest is in front of you.
+   apply is itself the confirmation (the digest is in front of you), and it
+   runs only after the lead has quit: while any lead holds the repository
+   it refuses `lead_running`.
 
-The solo lead's shell refuses `tmux` and `amq-squad team`, so it cannot type
-into its own pane or run your verbs. The limit of that refusal is written in
+The solo lead's shell refuses `tmux` and every `amq-squad` verb but the
+read-only ones (status, context, doctor, version, task show, task list, team
+propose), so it cannot type into its own pane or start a team. The limit of that refusal is written in
 [the execution note](docs/v3-spike/31-evidence/31-3-squad-verbs.md).
 
 Before the first run, set up the host. Each step below is the owner's, at
