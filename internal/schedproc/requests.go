@@ -26,6 +26,10 @@ type LaunchRecord struct {
 	ProjectRoot string    `json:"project_root,omitempty"`
 	PID         int       `json:"pid"`
 	StartedAt   time.Time `json:"started_at"`
+	// ProcessStart is PID's raw start stamp (procinfo.StartToken): with the
+	// pid and the project root in its argv, the identity `amq-squad up`
+	// checks before it signals a scheduler (brief 31-1's second PR).
+	ProcessStart string `json:"process_start,omitempty"`
 	// Start is the start of the squad's launch (brief 31-1, the launch
 	// budget's first mark): when the owner's command began (`amq-squad up`,
 	// else `lead --team`), from the AMQ_SQUAD_START it hands the scheduler.

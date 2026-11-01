@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -108,6 +109,7 @@ func Run(ctx context.Context, o Options) error {
 	// (the fourth pass): until then the record names none, and a decision
 	// is refused scheduler_starting.
 	rec := LaunchRecord{Lead: o.Config.Lead, Root: o.Root, Session: o.Session, ProjectRoot: o.ProjectRoot, PID: os.Getpid(), StartedAt: time.Now().UTC()}
+	rec.ProcessStart, _ = procinfo.StartToken(rec.PID)
 	if !o.Start.IsZero() {
 		start := o.Start.UTC()
 		rec.Start = &start

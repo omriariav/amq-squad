@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -31,6 +32,10 @@ type SeatInput struct {
 	// Warnings are the seat warnings that replace the deleted launch
 	// refusals (brief 31-1), one "<code>: <detail>" line each.
 	Warnings []string
+	// Worktree, Branch and Launch come from the seat's staged launch record
+	// (brief 31-1); Launch is nil without one.
+	Worktree, Branch string
+	Launch           *SeatLaunch
 }
 
 // GateInput is one gate record (verified by the caller against its answer).
@@ -77,6 +82,12 @@ type Input struct {
 	SeatMarkers  []task.SeatMarkerProblem
 	Capabilities []string
 	Warnings     []string
+	// brief 31-1: the lead record, the scheduler process (its launch
+	// record), the decisions log's tail and the merge train's last runs.
+	Lead          *Lead
+	SchedulerProc Scheduler
+	Decisions     []Decision
+	TrainRuns     []TrainRun
 }
 
 // BaseCapabilities are the features every schema 1 producer fills.
@@ -99,7 +110,14 @@ func Build(in Input) Status {
 		Warnings: append([]string{}, in.Warnings...),
 		Actions:  Actions{NewTask: NewTaskAction(in.Root)},
 		Scheduler: Scheduler{MaxSeats: in.Scheduler.MaxSeats, LiveSeats: in.Scheduler.LiveSeats,
-			UsageLimitSince: in.Scheduler.UsageLimitSince, UsageLimitUntil: in.Scheduler.UsageLimitUntil},
+			UsageLimitSince: in.Scheduler.UsageLimitSince, UsageLimitUntil: in.Scheduler.UsageLimitUntil,
+			PID: in.SchedulerProc.PID, StartedAt: in.SchedulerProc.StartedAt, LaunchStart: in.SchedulerProc.LaunchStart, Live: in.SchedulerProc.Live},
+		Lead:      in.Lead,
+		Decisions: append([]Decision{}, in.Decisions[max(len(in.Decisions)-DecisionsTail, 0):]...),
+		Train:     Train{Runs: append([]TrainRun{}, in.TrainRuns...), Alerts: []TrainAlert{}},
+	}
+	for _, a := range in.Alerts {
+		s.Train.Alerts = append(s.Train.Alerts, TrainAlert{ID: a.ID, Kind: a.Kind, Detail: a.Subject, GateID: a.GateID, At: a.At})
 	}
 	openGateBy := map[string]GateInput{}
 	openGates := map[string]bool{}
@@ -130,6 +148,7 @@ func Build(in Input) Status {
 	task.DispatchOrder(tasks)
 	for _, t := range tasks {
 		row := classifyTask(t, in.Now)
+		row.WaitHolders = lockHolders(t, in.Tasks)
 		row.Bucket, row.BucketMarker = BucketFor(row.State, t.State == task.StateBlocked && t.BlockRoute == task.RouteOwner, true)
 		s.Tasks = append(s.Tasks, row)
 		if a := taskAttention(t, row, in.Root); a != nil {
@@ -216,6 +235,7 @@ func Build(in Input) Status {
 			s.LeadHandle = &h
 		}
 	}
+	redactDocument(&s)
 	sortAttention(s.Attention)
 	for _, t := range s.Tasks {
 		s.Counts.add(t.Bucket)
@@ -248,6 +268,7 @@ func classifyTask(t task.Task, now time.Time) Task {
 		ID: t.ID, Title: t.Title, Class: t.Class, TaskState: t.State, Attempt: t.Attempt, WaitReason: t.WaitReason,
 		BlockReason: t.BlockReason, DependsOn: append([]string{}, t.DependsOn...), ProjectPath: t.ProjectPath,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		Evidence: t.Evidence, PRRepository: t.PRRepository, PRNumber: t.PRNumber, PRHead: t.PRHead, WaitHolders: []string{},
 	}
 	if t.Pool != nil {
 		row.Pool = &Pool{Runtime: t.Pool.Runtime, Model: t.Pool.Model, Effort: t.Pool.Effort}
@@ -287,14 +308,93 @@ func classifyTask(t task.Task, now time.Time) Task {
 	return row
 }
 
+// The status document is read by the screen and by the lead's model
+// (amq_status), so every free-text field passes redact.Block before it is
+// serialized (Codex P2 10 on #829): message bodies, warnings, task titles,
+// evidence, block reasons and the reason codes that copy them, attention
+// subjects, decision reasons, the train's refusals and alert details, AMQ's
+// wake audit reasons.
+
+func redactAll(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = redact.Block(v)
+	}
+	return out
+}
+
+func redactLaunch(l *SeatLaunch) *SeatLaunch {
+	if l == nil {
+		return nil
+	}
+	c := *l
+	if l.Wake != nil {
+		w := *l.Wake
+		w.AuditReason = redact.Block(w.AuditReason)
+		c.Wake = &w
+	}
+	return &c
+}
+
+// redactDocument redacts the document's free text that Build assembled
+// (seat rows are redacted in classifySeat).
+func redactDocument(s *Status) {
+	s.Warnings = redactAll(s.Warnings)
+	for i := range s.Tasks {
+		t := &s.Tasks[i]
+		// the store keeps a block reason verbatim (task.Store.Block), and
+		// the row's reason code and wait reason copy it
+		t.Title, t.Evidence = redact.Block(t.Title), redact.Block(t.Evidence)
+		t.BlockReason, t.ReasonCode, t.WaitReason = redact.Block(t.BlockReason), redact.Block(t.ReasonCode), redact.Block(t.WaitReason)
+	}
+	for i := range s.Seats {
+		s.Seats[i].ReasonCode = redact.Block(s.Seats[i].ReasonCode) // a held task's block reason
+	}
+	for i := range s.Attention {
+		// the id embeds a wait reason (task:<id>:wait:<reason>)
+		s.Attention[i].ID, s.Attention[i].Subject = redact.Block(s.Attention[i].ID), redact.Block(s.Attention[i].Subject)
+	}
+	for i := range s.Decisions {
+		s.Decisions[i].Reason = redact.Block(s.Decisions[i].Reason)
+	}
+	for i := range s.Train.Runs {
+		s.Train.Runs[i].Refusal = redact.Block(s.Train.Runs[i].Refusal)
+	}
+	for i := range s.Train.Alerts {
+		s.Train.Alerts[i].Detail = redact.Block(s.Train.Alerts[i].Detail)
+	}
+}
+
+// lockHolders are the tasks that hold a pending task's file lock, by the
+// task store's rule (task.Blocker): in progress or blocked, with declared
+// files overlapping its own. [] unless the task waits on a file lock.
+func lockHolders(t task.Task, all []task.Task) []string {
+	out := []string{}
+	if t.State != task.StatePending || t.WaitReason != task.WaitFileLock {
+		return out
+	}
+	for _, o := range all {
+		if o.ID != t.ID && (o.State == task.StateInProgress || o.State == task.StateBlocked) && task.FilesOverlap(t.DeclaredFiles, o.DeclaredFiles) {
+			out = append(out, o.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // classifySeat gives a seat row its state; routed is true when its blocker
 // is addressed to the owner.
 func classifySeat(in SeatInput, tasks []task.Task, gates map[string]GateInput, asked map[string]ThreadInput, now time.Time) (Seat, bool) {
 	row := Seat{
 		Handle: in.Handle, Role: in.Role, Runtime: in.Runtime, Model: in.Model, Effort: in.Effort, ProjectPath: in.ProjectPath,
-		LastActivityAt: in.LastActivity, LastMessageAt: in.LastMessageAt, LastMessage: truncate(in.LastMessage, lastMessageLimit),
+		// redacted before it is cut, so a cut never hides a credential from
+		// the redaction (Codex P2 10 on #829)
+		LastActivityAt: in.LastActivity, LastMessageAt: in.LastMessageAt, LastMessage: truncate(redact.Block(in.LastMessage), lastMessageLimit),
 		PromptState: firstNonEmpty(in.PromptState, "unknown"), TokensIn: in.TokensIn, TokensOut: in.TokensOut,
-		Warnings: in.Warnings,
+		Warnings: redactAll(in.Warnings), Worktree: in.Worktree, Branch: in.Branch, Launch: redactLaunch(in.Launch),
 	}
 	held := task.HeldBy(in.Handle, tasks)
 	// live is set before the state: a gate or a block overrides liveness in

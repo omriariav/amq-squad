@@ -9,7 +9,8 @@
 //   - restricts models to the seat's registry entry (R16);
 //   - holds a call that needs the owner (a typed gate, or a tool the seat must
 //     have approved) until the first decision from any face, with a retry cap;
-//   - runs the AMQ pi bridge at revision 4 (tool approval, session identity).
+//   - runs the AMQ pi bridge at revision 4 (tool approval, session identity);
+//   - gives the team lead the read-only squad screen (/squad toggles it).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -17,6 +18,7 @@ import amqPiBridge, { raiseApproval, APPROVE_OPTION, REJECT_OPTION } from "./lib
 import { blockReason, callKey, DEFAULT_CAP, hold, manifestHash, RetryCap, type Decider, type Decision } from "./lib/hold.ts";
 import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, outsideDeclared, roleMessage, type Config, type ContextData, type Verdict } from "./lib/hooks.ts";
 import { restrictModels } from "./lib/models.ts";
+import { installScreen } from "./lib/screen.ts";
 import { registerTools } from "./lib/tools.ts";
 import { run } from "./lib/verbs.ts";
 
@@ -38,6 +40,9 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	}
 	amqPiBridge(pi);
 	registerTools(pi, cfg);
+	// The team lead's read-only screen (brief 31-1): a widget below the
+	// editor, fed by status --json on the .generation/updated_at poll.
+	if (cfg.lead) installScreen(pi, cfg);
 	restrictModels(pi, cfg.models, note);
 	const approveTools = new Set((process.env.AMQ_SQUAD_APPROVE_TOOLS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 	let cap = new RetryCap(DEFAULT_CAP);

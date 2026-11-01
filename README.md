@@ -227,18 +227,54 @@ amq-squad brief --seed-from file:./prompt.md --session issue-96
 **10. Launch.** squad.yaml is the one source: each seat's handle, role,
 runtime (the binary), model and effort, the session and the lead's handle
 (`lead:`). A seat's worktree is derived per handle under
-`<repo>/.worktrees/<handle>`, never the repository root. Two entry points,
-each one AMQ launch request with every seat behind `seat-exec`:
+`<repo>/.worktrees/<handle>`, never the repository root. The first run is
+one command, in the repository:
+
+```sh
+amq-squad up
+```
+
+`up` runs seven steps in order and refuses at the first that fails, by
+name: it compiles squad.yaml (before anything is installed or created);
+installs the tagged pi build (`scripts/build-pi-runtime.sh` at a tag,
+`build/pi/amq-squad` or `--binary PATH`) next to the `amq-squad` on PATH
+under a temporary name and renames it over it (`--skip-install` keeps an
+installed binary that already reports a tag); creates the AMQ root and the
+session when absent; runs that binary's doctor in the root; checks the
+recorded lead (a lead whose pid is alive and whose tmux pane
+exists is never stopped: `lead_running`, with its pid, its pane and the
+attach command; tmux that cannot be asked is `tmux_unavailable`, and both
+stop nothing; a dead one, and a scheduler serving it, are stopped by their
+recorded identity and recorded as decisions); starts the lead in its own tmux session,
+`squad-lead-<repo>-<sha5>`; and waits for the roster's outcome in the
+decisions log, then prints the roster and `tmux attach -t <session>`.
+`up --json` prints the steps and their outcomes. Each seat's launch budget
+is in status: the start (`up`'s own) to seat live, its accepted proof,
+within a 10 s ceiling, and to its first AMQ message, with no ceiling; a seat
+over the ceiling carries a warning naming its slowest segment.
+
+In the lead's pi, the squad screen sits below the editor: the lead handle
+and the root, then seats (runtime and model, state, launch outcome and
+budget, warnings), tasks (state, seat, PR, block reason), the merge train
+(the current and last runs, alerts) and open gates, each block closed by
+its newest refusal. It refreshes when the task store or the scheduler
+state changes; `/squad` collapses it to one footer line of counts. It is
+read-only.
+
+Two entry points, each one AMQ launch request with every seat behind
+`seat-exec`:
 
 - the pi lead in team mode with the scheduler beside it, run in the
-  repository; the lead never edits code, it dispatches through the task
-  store, and the scheduler launches every seat but the lead at start:
+  repository (what `up` starts in its tmux session); the lead never edits
+  code, it dispatches through the task store, and the scheduler launches
+  every seat but the lead at start:
 
   ```sh
   amq-squad lead --team --dry-run
   ```
 
-  (drop `--dry-run` to start it; a pi-runtime build only). The lead takes
+  (drop `--dry-run` to start it; a pi-runtime build only). `scheduler run`
+  creates an absent AMQ root and session the way `up` does. The lead takes
   squad.yaml's AMQ identity (its session root, its `lead:` handle); an
   `AM_ME`/`AM_ROOT` already in the environment must match it or it refuses.
   One lead per root: a second `lead --team` on the same root is refused
@@ -265,8 +301,11 @@ amq-squad gate status --project . --session issue-96 --json
 ```
 
 - **Status** is the versioned contract of [docs/status-contract.md](docs/status-contract.md):
-  four buckets (Needs you, Working, Ready, Inactive), seats, tasks, the
-  attention queue and gates, with argv actions. amq-noc renders it for the
+  four buckets (Needs you, Working, Ready, Inactive), seats (with each
+  seat's worktree, branch, launch outcome, launch budget and admitted
+  wake), tasks (with evidence and PR), the attention queue and gates, with
+  argv actions; the lead and the scheduler (pid, start), the decisions
+  log's tail and the merge train's runs. amq-noc renders it for the
   fleet; `amq-squad status --fleet --json` reads every squad of
   `~/.amq-squad/fleet.yaml`.
 - **The commit step.** On a seat's done report the scheduler runs
@@ -319,7 +358,11 @@ amq-squad gate status --project . --session issue-96 --json
   (`claude_allow_rules_present`), a CLAUDE.md importing a file outside its
   worktree (`claude_external_includes_pending`). The seat starts; nothing is
   quarantined. seat-exec still denies a seat's write to the owner's global
-  agent config.
+  agent config. So are a seat over the launch ceiling
+  (`launch_budget_exceeded`), a seat whose wake is off with AMQ's reason
+  (`wake_off`: a Codex seat without AMQ's dialog hook, a pi seat), a seat at
+  an open harness dialog (`seat_stalled_at_dialog`) and a pi seat with no key
+  for its provider (`pi_provider_key_missing`).
 
 Check whether an action is approved, and the evidence of a merge or a release:
 

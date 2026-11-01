@@ -12,6 +12,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -58,6 +59,11 @@ func TestSchedulerRecordsTheLaunchStart(t *testing.T) {
 	rec, err := schedproc.ReadLaunchRecord(root)
 	if err != nil || rec.Start == nil || rec.Start.Format("15:04:05.0") != "19:24:30.5" || rec.Lead != "lead" {
 		t.Fatalf("launch record %+v %v", rec, err)
+	}
+	// brief 31-1's second PR: the scheduler's raw start stamp, the identity
+	// up checks before it signals the recorded pid
+	if want, ok := procinfo.StartToken(os.Getpid()); !ok || rec.ProcessStart != want || rec.PID != os.Getpid() {
+		t.Fatalf("process start %q, want %q (pid %d)", rec.ProcessStart, want, rec.PID)
 	}
 }
 

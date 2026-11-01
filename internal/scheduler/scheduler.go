@@ -46,6 +46,10 @@ type Config struct {
 	// MaxSeats caps live leases, and a gone seat is replaced only by the
 	// lead's relaunch of the whole roster. Empty: seats start on demand.
 	Roster []RosterSeat
+	// FirstMessage, when set, finds a seat's first AMQ message sent at or
+	// after since (brief 31-1, the launch budget's second mark): the tick
+	// logs seat_first_message once per launched seat. nil: no such mark.
+	FirstMessage func(handle string, since time.Time) (time.Time, bool)
 }
 
 // EventKind orders events applied in one tick.
@@ -108,9 +112,11 @@ type seat struct {
 	requestID    string // the request it joined on: the identity the liveness check reads the launch ledger by
 	freeSince    time.Time
 	lastActivity time.Time
-	unresponsive bool   // held a lease it never claimed; no dispatch until it shows activity
-	closing      string // a close the launcher could not do yet: counted, never dispatched, retried each tick
-	awaitGone    bool   // closed, termination not yet confirmed: counted and never dispatched until SeatGone
+	unresponsive bool      // held a lease it never claimed; no dispatch until it shows activity
+	closing      string    // a close the launcher could not do yet: counted, never dispatched, retried each tick
+	awaitGone    bool      // closed, termination not yet confirmed: counted and never dispatched until SeatGone
+	launchedAt   time.Time // when this incarnation requested the seat; zero for an adopted seat
+	firstSent    bool      // seat_first_message is logged
 }
 
 type request struct {
@@ -297,6 +303,7 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	if err := s.applyEvents(now, cfg, log); err != nil {
 		return out, err
 	}
+	s.noteFirstMessages(cfg, log)
 	if err := s.pollLimits(now, log); err != nil {
 		return out, err
 	}
@@ -407,6 +414,7 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				continue
 			}
 			reason := ""
+			requestedAt := s.requestAt(ev.RequestID)
 			switch {
 			case ev.RequestID != "" && s.requestClosing(ev.RequestID):
 				// The request's cancel is pending: its seat is being closed,
@@ -447,7 +455,7 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				}
 				continue
 			}
-			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, requestID: ev.RequestID}
+			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, requestID: ev.RequestID, launchedAt: requestedAt}
 			log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
 			s.clearLaunchFailures(ev.Pool)
 		case SeatLaunchFailed:
