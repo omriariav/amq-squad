@@ -55,6 +55,61 @@ only when the digest is equal; the pointer stubs are refused if they
 changed since the plan. The Go form is `team.NewPlan` and `Plan.Apply`
 (`internal/team/digest.go`); the pi lead of 4-1 uses the same function.
 
+### The propose-rendered form (the lead's plan)
+
+The lead proposes a team from the conversation as a plan, a JSON object
+(brief 31-3; `team.LeadPlan` in `internal/team/plan.go`):
+
+```json
+{
+  "goal": "ship the parser",
+  "session": "parser",
+  "lead": "lead",
+  "seats": [
+    {"handle": "lead", "role": "lead", "runtime": "pi"},
+    {"handle": "impl-1", "role": "implementer", "runtime": "claude", "model": "sonnet", "effort": "medium"}
+  ],
+  "files": ["internal/parser/"],
+  "tasks": [{"title": "write the parser", "class": "implement", "files": ["internal/parser/parse.go"]}]
+}
+```
+
+`team propose --from PLAN.json` reads it strictly (every key known) and
+renders squad.yaml in canonical form (`team.RenderPlan`): `schema`,
+`session`, `lead`, and per seat `handle`, `role` (the handle when empty),
+`runtime`, `model` and `effort`, nothing else:
+
+```yaml
+schema: 1
+session: parser
+lead: lead
+seats:
+  - handle: lead
+    role: lead
+    runtime: pi
+  - handle: impl-1
+    role: implementer
+    runtime: claude
+    model: sonnet
+    effort: medium
+```
+
+That text is then parsed against the owner grant like any squad.yaml draft,
+and planned with the team rules and the pointer stubs into one digest. The
+goal, the files and the tasks are printed with the plan and are not
+squad.yaml keys. The one write is the proposal, beside the confirmation
+records under the solo lead's AMQ root
+(`~/.amq-squad/solo/<dir>-<digest>/root/extensions/amq-squad/confirm/proposed/`).
+`team apply --digest D` of that proposal needs the owner's confirmation
+(R55): a record for D, younger than 30 minutes, written at one of three
+doors: `/squad confirm <prefix>` in the lead's pane, `amq-squad team confirm
+D` from the owner's shell, or the owner's signed Buzz DM `yes <prefix>`
+(the prefix is the first 16 hex of the content digest). Under the solo lead
+the apply starts the team in the lead's process; from the owner's shell it
+writes the files and the owner starts the team with `amq-squad up`. The
+flag form below (`--roles`, or a squad.yaml `--from`) stays the owner's
+manual flow.
+
 ## Changing it
 
 A change lands through the digest flow above and no other way: `team
