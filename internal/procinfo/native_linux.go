@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // readArgsNative reads pid's full command line from /proc/<pid>/cmdline — no
@@ -78,4 +80,18 @@ func readArgvNative(pid int) ([]string, bool) {
 		return nil, false
 	}
 	return parseProcCmdlineArgv(buf)
+}
+
+// readEnvironNative reads pid's initial environment from /proc/<pid>/environ.
+func readEnvironNative(pid int) ([]string, bool) {
+	buf, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
+	if err != nil {
+		return nil, false
+	}
+	return parseProcEnviron(buf)
+}
+
+func readSessionNative(pid int) (int, bool) {
+	sid, err := unix.Getsid(pid)
+	return sid, err == nil
 }
