@@ -249,6 +249,9 @@ run("the extension's allowlist not the table's (up added)",
 run("any amq-squad verb allowed by the guard's second layer",
  [('internal/cli/hook_guard.go','	return slices.Contains(soloAmqSquadAllow, one) ||','\treturn one != "\\x00" ||')],
  C+"TestTheGuardRefusesTheSoloLeads")
+run("the plan block still naming the dropped shell door",
+ [('pi/extensions/lib/team.ts','  (or the signed Buzz DM','  (or amq-squad team confirm ${p.digest} in your shell, or the signed Buzz DM')],
+ P+"test/team.test.ts")
 run("the team tools and /squad confirm given to the team lead too",
  [('pi/extensions/amq-squad.ts','\telse if (cfg.solo) installSoloTeam(pi, cfg);','\tif (cfg.lead || cfg.solo) installSoloTeam(pi, cfg);')],
  P+"test/keys.test.ts")
