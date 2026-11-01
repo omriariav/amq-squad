@@ -37,14 +37,20 @@ const Rule = "----------"
 // longer title ends with an ellipsis.
 const TitleMax = 80
 
+const (
+	pathLinkMaxPairs = 64
+	pathLinkMaxBytes = 1024
+)
+
 // Facts are what a raiser read from its own records for the question's plain
 // lines, beyond the target: the pull request's or the task's title (shown
 // quoted on its own line), and the branch: a merge's base branch, or the
 // branch the release prepare found the tag's commit on.
 type Facts struct {
-	Title  string     `json:"title,omitempty"`
-	Branch string     `json:"branch,omitempty"`
-	Links  []PathLink `json:"resolved_paths,omitempty"`
+	Title     string     `json:"title,omitempty"`
+	Branch    string     `json:"branch,omitempty"`
+	Links     []PathLink `json:"resolved_paths,omitempty"`
+	LinksMore int        `json:"resolved_paths_more,omitempty"`
 }
 
 // PathLink records the spelling that resolved to a file named by a growth
@@ -61,7 +67,7 @@ var branchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 // The title is stored redacted (redact.Block): the record, `gate status`
 // and every reader see only the redacted text.
 func (f *Facts) normalize() *Facts {
-	if f == nil || (f.Title == "" && f.Branch == "" && len(f.Links) == 0) {
+	if f == nil || (f.Title == "" && f.Branch == "" && len(f.Links) == 0 && f.LinksMore == 0) {
 		return nil
 	}
 	c := *f
@@ -77,7 +83,7 @@ func (f *Facts) validate() error {
 	if f == nil {
 		return nil
 	}
-	if f.Title == "" && f.Branch == "" && len(f.Links) == 0 {
+	if f.Title == "" && f.Branch == "" && len(f.Links) == 0 && f.LinksMore == 0 {
 		return errors.New("gate facts are empty (omit them)")
 	}
 	if f.Title != "" {
@@ -94,11 +100,14 @@ func (f *Facts) validate() error {
 	if f.Branch != "" && (!branchRe.MatchString(f.Branch) || strings.Contains(f.Branch, "..")) {
 		return fmt.Errorf("gate facts branch %q is not a branch name", f.Branch)
 	}
-	if len(f.Links) > 64 {
-		return errors.New("gate facts have more than 64 resolved paths")
+	if len(f.Links) > pathLinkMaxPairs {
+		return fmt.Errorf("gate facts have more than %d resolved paths", pathLinkMaxPairs)
+	}
+	if f.LinksMore < 0 {
+		return errors.New("gate facts have a negative resolved path remainder")
 	}
 	for _, l := range f.Links {
-		if l.Path == "" || l.Alias == "" || l.Path == l.Alias || len(l.Path)+len(l.Alias) > 1024 {
+		if l.Path == "" || l.Alias == "" || l.Path == l.Alias || len(l.Path)+len(l.Alias) > pathLinkMaxBytes {
 			return errors.New("gate facts contain an invalid resolved path link")
 		}
 		if operatorauth.ValidateCanonicalSingleLineField("resolved path", l.Path, true) != nil || operatorauth.ValidateCanonicalSingleLineField("link alias", l.Alias, true) != nil {
@@ -118,15 +127,23 @@ func SafeFacts(title, branch string) *Facts {
 // SafeFactsWithLinks is SafeFacts plus resolved-path spellings for the
 // immutable record below the question's rule.
 func SafeFactsWithLinks(title, branch string, links []PathLink) *Facts {
-	f := Facts{Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch: branch, Links: links}
+	f := Facts{Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch: branch}
 	if (&Facts{Title: f.Title}).validate() != nil {
 		f.Title = ""
 	}
 	if (&Facts{Branch: f.Branch}).validate() != nil {
 		f.Branch = ""
 	}
-	if (&Facts{Links: f.Links}).validate() != nil {
-		f.Links = nil
+	for _, link := range links {
+		link.Path, link.Alias = redact.Block(link.Path), redact.Block(link.Alias)
+		if len(f.Links) >= pathLinkMaxPairs || len(link.Path)+len(link.Alias) > pathLinkMaxBytes {
+			f.LinksMore++
+			continue
+		}
+		if (&Facts{Links: []PathLink{link}}).validate() != nil {
+			continue
+		}
+		f.Links = append(f.Links, link)
 	}
 	return f.normalize()
 }
@@ -143,10 +160,16 @@ var ClassWords = []string{"tag", "GitHub release", "package release", "message o
 // It is a function of the record's fields, so Validate's re-render agrees.
 func TextOf(r Record) string {
 	var links []PathLink
+	more := 0
 	if r.Facts != nil {
 		links = r.Facts.Links
+		more = r.Facts.LinksMore
 	}
-	return redact.Block(strings.Join(append(PlainLines(r), "", Rule, identifiers(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest, links...)), "\n"))
+	ids := identifiers(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest, links...)
+	if more > 0 {
+		ids = strings.Replace(ids, "\ndigest: ", fmt.Sprintf("\nand %d more resolved path links\ndigest: ", more), 1)
+	}
+	return redact.Block(strings.Join(append(PlainLines(r), "", Rule, ids), "\n"))
 }
 
 // identifiers are the lines below the rule: the gate id, the squad, the

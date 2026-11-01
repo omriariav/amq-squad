@@ -200,9 +200,18 @@ func TestCommitRefusesARetargetedLinkInsteadOfFollowingItsWidenedTarget(t *testi
 	if err := os.Symlink("cmd/root.go", filepath.Join(f.wt, "source-link")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	os.Remove(filepath.Join(f.wt, "source-link"))
-	os.Symlink("CLAUDE.md", filepath.Join(f.wt, "source-link"))
-	res := f.run(f.reported("cmd/root.go"))
+	tk := f.reported("cmd/root.go")
+	tk, err := f.store.Widen(tk.ID, "lead", `exact-path resolution: "source-link" resolves to "cmd/root.go"`, []string{"source-link"}, time.Hour, f.now)
+	if err != nil || len(tk.ScopeChanges) != 1 || strings.Join(tk.DeclaredFiles, ",") != "cmd/root.go,source-link" {
+		t.Fatalf("record original link widen = %+v, %v", tk, err)
+	}
+	if err := os.Remove(filepath.Join(f.wt, "source-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("CLAUDE.md", filepath.Join(f.wt, "source-link")); err != nil {
+		t.Fatal(err)
+	}
+	res := f.run(tk)
 	if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "source-link") || !strings.Contains(res.Detail, "CLAUDE.md") {
 		t.Fatalf("retargeted link commit = %+v", res)
 	}
