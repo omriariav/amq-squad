@@ -9,3 +9,7 @@
 - The main join is PR #842 (branch main-310), after the tag. The owner's order of 10-30 puts the join before the tag; this release ran it after, as the reviewer's order and the rc notes said. It is harmless once #842 lands, since the marketplace then serves 3.1.0.
 - The widen key moved to 3.1.1.
 - The gate questions in plain words are draft #838, landing after the tag.
+
+## The published body
+
+Checked after publish with `gh release view --json body`: the published release body is the notes file byte for byte (sha256 `71f2077744aa45369279e2d61a93cb5cf42d6869e09f530e1acd2129ba08b7b0`) followed by two blank lines and the release flow's own marker line `<!-- amq-squad-release-nonce: ... -->`, which `releaseflow.NonceMarker` appends so a draft can be found again. Nothing else differs.

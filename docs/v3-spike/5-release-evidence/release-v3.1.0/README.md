@@ -8,3 +8,7 @@
 - The widen key moved to 3.1.1.
 - The gate questions in plain words are draft #838 (3.1.1-1), landing after the tag; it was still open at the time of writing.
 - Not in the records: the gate-note text itself (only the notes file's sha256 is kept, in notes-body.sha256), and whether `gh release edit` set the body byte-equal to the file.
+
+## The published body
+
+Checked after publish with `gh release view --json body`: the published release body is the notes file byte for byte (sha256 `e69047ec2ca78da9155127bfb81c6a81a404ddfaaa58193ab66e8d64db0724e6`) followed by two blank lines and the release flow's own marker line `<!-- amq-squad-release-nonce: ... -->`, which `releaseflow.NonceMarker` appends so a draft can be found again. Nothing else differs.
