@@ -11,8 +11,10 @@ is never authority; the host line on the first turn and on change), and
 Codex's static pass at `6188663d` added five more (items 2, 3, 5, 6 and
 7; its items 1 and 4 are closed by the reviewer's first change). Codex's
 re-check at `22e9b93b` added four (the lead's proof to its pi, one budget
-for the host commands, the restart offer's working steps, the host key).
-This note describes the branch after all three rounds.
+for the host commands, the restart offer's working steps, the host key),
+and its narrow pass at `fcfa85e7` four more (the proof's fields
+length-prefixed, the apply's proof checked first, the sweep's kept groups,
+the tests' git). This note describes the branch after all four rounds.
 
 ## 1. What pi 1.3.0 allows
 
@@ -76,12 +78,17 @@ marker is a record nobody reads for authority; a restart comes up solo.
   confirm) carries a fresh 16-byte challenge, and so does the start's
   request, which `amq_team_apply` passes through `team apply
   --challenge`. The lead answers with `proof`, HMAC-SHA256 keyed by the
-  nonce over the tag, the challenge, the outcome, the digest and the team
-  identity's fields (`leadProof`, the same message in Go and in
+  nonce over the tag (`amq-squad.lead-proof.v2`), the challenge, the
+  outcome, the digest and the team identity's fields, each field encoded
+  as its byte length, a colon, the bytes and a comma (`proofMessage`, a
+  netstring), so a newline inside a repository path cannot make two
+  identities sign alike (`leadProof`, the same message in Go and in
   pi/extensions/lib/team.ts, tied by a fixed vector both rows check). pi
-  acts on a reply only when the proof checks; otherwise it is
-  `lead_unproved` and pi stays solo. A lead of an earlier spawn holds
-  another nonce, so its replies fail the check too.
+  checks the proof before it reads any field of a reply; an unproved
+  reply's only outcome is `lead_unproved` (for the apply: no owner steps
+  shown, no "team started" set, the phase solo), and pi stays solo. A
+  lead of an earlier spawn holds another nonce, so its replies fail the
+  check too.
 - **A session started again in the same lead** (pi's `/new`, a resume)
   asks the lead over the same socket (`amq-squad.phase.v1`). The lead
   answers only a caller its peer proof places under it (`callerChain`, as
@@ -206,11 +213,13 @@ branch and tip from git, and the installed amq's `--version`, each empty
 when it cannot be read. The commands share one 3 second budget for the
 whole read: each runs under what remains of it, in its own process group,
 which is killed with everything it started before the reap when the
-budget runs out; a command after the budget is spent does not start. When
-the read ends, for any reason, every group it started is killed (a child
-that outlived its leader included; the sweep runs right after the last
-reap, while a surviving member still holds the group's id, so it reaches
-only those). Output is capped at 4 KiB. A timeout or a flood reads
+budget runs out; a command after the budget is spent does not start. A
+command's group is kept for the read's final sweep only when a member
+outlived its leader's reap (a child left behind); when the read ends, for
+any reason, the sweep kills the kept groups. A group whose leader was
+reaped with no member left is never kept, so its id, free for reuse, is
+never signalled; a kept group's id cannot be taken while a member lives,
+and the sweep runs right after the read's last reap. Output is capped at 4 KiB. A timeout or a flood reads
 missing. The extension gives `context --host` 10 seconds
 (`CONTEXT_HOST_TIMEOUT_MS`), above Go's budget and the verb's own work, so
 Go always finishes its own cleanup before the extension would kill it.
@@ -246,6 +255,8 @@ field changed).
   the turn: either source alone covers a case the other may miss (the
   message's end arriving late; a sequential batch, whose later calls are
   prepared only after the apply runs).
+- The proof's fields are netstrings rather than JSON: the same few lines
+  in Go and TS with no canonical-encoding rules to keep in step.
 - The lead's proof is an HMAC, not an echo of the nonce: if pi sent the
   nonce in its query, a server on the socket path would learn it from that
   query and echo it back. With a challenge and an HMAC the nonce never
@@ -283,9 +294,9 @@ field changed).
 | 2a, a planted marker | pi "R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back" (a marker carrying the lead's own pid and stamp, with a reply that carries no team, switches nothing; a session start switches only on the lead's proved `team` answer; the offer is given once with its exact text, both working paths and why the old plan cannot be confirmed); cli `TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile` (a planted marker: the lead answers `solo`; after its own start, `team` with the root and digest) |
 | 2c, the record | cli `TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches` (phase.json a directory: started, the reply carries the identity, a `phase_record_failed` decision, the lead answers team); `TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts` (`team_identity`, no squad.yaml, no lock); pi "R53: the owner's yes switches ..." (phase.json a directory before the apply; the switch happens) |
 | 2d, apply alone | pi "R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run after the switch refuses phase_team" (apply batched with a shell call before it, after it, or with a read while the message's end goes unseen: `apply_not_alone` with the retry line, no apply verb run, the tools unchanged; alone it switches; the apply is a sequential tool; a propose prepared while solo and run after a switch refuses `phase_team`) |
-| 2e, the lead's proof | pi "R53: the nonce's descriptor is closed before the extension's first registration" (a stand-in pi checks the descriptor at its first handler, tool or command registration); pi "R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply" (the descriptor is closed and its variable gone after load; a server that holds no nonce, and a lead of an earlier spawn, answer team and pi stays solo; a start reply proved under an earlier spawn's nonce, or not at all, switches nothing and says `lead_unproved`; a pi with no nonce believes no reply; the fixed vector); "R53: a planted marker switches nothing ..." (the phase query carries a challenge and not the nonce; the lead that spawned it switches it); cli `TestTheLeadAnswersItsPisChallengeWithItsProof` (the fixed vector; a proof only under a nonce and a well-formed challenge; the challenge rides through `team apply`), `TestRunProcessHandsTheNonceOverDescriptorThreeNotTheEnvironment`, `TestTheSoloLeadServesTheStartSocketToItsPi` (the spawn's nonce is the starter's, the environment names only fd 3) |
+| 2e, the lead's proof | pi team.test "amq_team_apply acts on nothing of an unproved reply: lead_unproved, no owner steps, no team started" (an unproved refusal and one proved under another nonce show `lead_unproved` and none of the reply's text; an unproved success leaves the plan block without a team started and the phase solo); the colliding pair (a newline join made `/a\n/b`+`/c` and `/a`+`/b\n/c` one; they sign differently) in both fixed-vector rows; pi "R53: the nonce's descriptor is closed before the extension's first registration" (a stand-in pi checks the descriptor at its first handler, tool or command registration); pi "R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply" (the descriptor is closed and its variable gone after load; a server that holds no nonce, and a lead of an earlier spawn, answer team and pi stays solo; a start reply proved under an earlier spawn's nonce, or not at all, switches nothing and says `lead_unproved`; a pi with no nonce believes no reply; the fixed vector); "R53: a planted marker switches nothing ..." (the phase query carries a challenge and not the nonce; the lead that spawned it switches it); cli `TestTheLeadAnswersItsPisChallengeWithItsProof` (the fixed vector; a proof only under a nonce and a well-formed challenge; the challenge rides through `team apply`), `TestRunProcessHandsTheNonceOverDescriptorThreeNotTheEnvironment`, `TestTheSoloLeadServesTheStartSocketToItsPi` (the spawn's nonce is the starter's, the environment names only fd 3) |
 | 2b, the restart | cli `TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing` (a planted marker with this pid and the real stamp: the solo environment, no scheduler start, no lead lock, the offer on stderr with both working paths; another repository's marker: no offer); `TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux` (the start's reply carries the team identity; the record is written; a second start refuses `lead_running`) |
-| 4 | pi "the team lead's first turn carries the host facts from status and context, not the model" (the first turn carries the line; the second with nothing changed carries none and runs no verb; after a task change the line comes again with the new facts; a key change with the same facts sends nothing; a missing fact reads missing; a canary in a branch name that reached the extension is redacted); cli `TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty` (a canary in a branch name leaves as `<redacted>`), `TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing` (a git that hangs with a child holding its output: the command returns with no fact, and its child is dead before the read's sweep runs), `TestContextHostRefusesAFloodingCommand`, `TestContextHostSharesOneBudgetAndLeavesNoProcessBehind` (a git that returns leaving a child, then a git that hangs: the read ends within one budget, and no process it started is left); pi "context --host's timeout is above Go's host budget"; pi "the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable" (a real linked worktree: a commit, and the branch moved from the main checkout, refresh; a file under answers/; a gate's not_after passing; the launch record; the AMQ executable; the amq-squad binary; nothing changed runs nothing) |
+| 4 | pi "the team lead's first turn carries the host facts from status and context, not the model" (the first turn carries the line; the second with nothing changed carries none and runs no verb; after a task change the line comes again with the new facts; a key change with the same facts sends nothing; a missing fact reads missing; a canary in a branch name that reached the extension is redacted); cli `TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty` (a canary in a branch name leaves as `<redacted>`), `TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing` (a git that hangs with a child holding its output: the command returns with no fact, and its child is dead before the read's sweep runs), `TestContextHostRefusesAFloodingCommand`, `TestTheHostSweepSignalsNoReapedGroupsReusedID` (a group reaped with no member is not kept, and its id taken again, a stand-in says, gets no signal; a group with a survivor is kept and its survivor killed), `TestContextHostSharesOneBudgetAndLeavesNoProcessBehind` (a git that returns leaving a child, then a git that hangs: the read ends within one budget, and no process it started is left); pi "context --host's timeout is above Go's host budget"; pi "the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable" (a real linked worktree, every git through the file's one helper with a scratch HOME, an empty global config, no system config, no signing and no hooks: a commit, and the branch moved from the main checkout, refresh; a file under answers/; a gate's not_after passing; the launch record; the AMQ executable; the amq-squad binary; nothing changed runs nothing); pi "gitExec is the only process exec in the phase tests" |
 | 5 | pi "R53: the owner's yes switches ..." (the declared list in team phase equals the thirteen exactly; no gate-answer or confirm tool), "R53: lead --team is team phase from its first turn with exactly the thirteen" |
 
 No test reaches the network, the real HOME, tmux, AMQ or Buzz: the Go rows
@@ -312,29 +323,29 @@ REVERT the branch not read from git: fails (the row catches it)
    --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
    --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (4.01s)
 REVERT the host commands with no deadline: fails (the row catches it)
-   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (60.77s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (60.75s)
 REVERT the hanging command killed alone, not its group: fails (the row catches it)
-   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (7.02s)
+   --- FAIL: TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing (7.01s)
 REVERT the host commands' output not capped: fails (the row catches it)
-   --- FAIL: TestContextHostRefusesAFloodingCommand (0.19s)
+   --- FAIL: TestContextHostRefusesAFloodingCommand (0.20s)
 REVERT a host fact leaving context --host unredacted: fails (the row catches it)
    --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
 REVERT the AMQ version not read: fails (the row catches it)
    --- FAIL: TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty (0.00s)
 REVERT the yes writing no phase marker (the record): fails (the row catches it)
-   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.09s)
+   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.08s)
 REVERT a failed record not logged phase_record_failed: fails (the row catches it)
-   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.07s)
+   --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.08s)
 REVERT a failed record withholding the team identity from the reply: fails (the row catches it)
    --- FAIL: TestAStartWhosePhaseRecordCannotBeWrittenStillSwitches (0.07s)
 REVERT the identity not resolved before the start (no team_identity refusal): fails (the row catches it)
-   --- FAIL: TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts (0.02s)
+   --- FAIL: TestAConfirmedSquadWithNoLeadRefusesBeforeAnythingStarts (0.03s)
 REVERT the start's reply without the team identity: fails (the row catches it)
-   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.08s)
+   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.09s)
 REVERT the phase query answering team before the start: fails (the row catches it)
    --- FAIL: TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile (0.03s)
 REVERT a restarted solo lead not saying the offer: fails (the row catches it)
-   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.01s)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
 REVERT a marker for another repository read: fails (the row catches it)
    --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
 REVERT the team tools declared before the yes: fails (the row catches it)
@@ -350,7 +361,6 @@ REVERT the lead's identity not switched to the squad's: fails (the row catches i
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
 REVERT the switch riding the marker file, not the lead's reply: fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
-   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
 REVERT amq_team_apply's success not switching: fails (the row catches it)
    not ok 1 - R53: the owner's yes switches the lead's tools to exactly the team lead's thirteen and refuses the solo set phase_team
    not ok 3 - R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run after the switch refuses phase_team
@@ -402,10 +412,8 @@ REVERT the challenge not passed through team apply: fails (the row catches it)
 REVERT no nonce handed to pi at the spawn: fails (the row catches it)
    --- FAIL: TestRunProcessHandsTheNonceOverDescriptorThreeNotTheEnvironment (0.01s)
 REVERT the nonce put in pi's environment: fails (the row catches it)
-   --- FAIL: TestTheSoloLeadServesTheStartSocketToItsPi (0.01s)
+   --- FAIL: TestTheSoloLeadServesTheStartSocketToItsPi (0.02s)
 REVERT pi taking an unproved reply: fails (the row catches it)
-   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
-REVERT the apply switching on an unproved start reply: fails (the row catches it)
    not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
 REVERT the phase query's reply taken unproved: fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
@@ -418,13 +426,13 @@ REVERT the nonce's descriptor left open: fails (the row catches it)
    not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
    not ok 5 - R53: the nonce's descriptor is closed before the extension's first registration
 REVERT each host command given its own deadline: fails (the row catches it)
-   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (8.45s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (8.44s)
 REVERT the started groups not swept when the read ends: fails (the row catches it)
-   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (9.29s)
+   --- FAIL: TestContextHostSharesOneBudgetAndLeavesNoProcessBehind (9.02s)
 REVERT the extension's context --host timeout at the hook timeout: fails (the row catches it)
    not ok 8 - context --host's timeout is above Go's host budget
 REVERT the restart offer's old steps (Go): fails (the row catches it)
-   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.79s)
+   --- FAIL: TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing (0.02s)
 REVERT the restart offer's old steps (pi): fails (the row catches it)
    not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
 REVERT the .git directory assumed (no git rev-parse): fails (the row catches it)
@@ -441,7 +449,24 @@ REVERT the AMQ executable not keyed: fails (the row catches it)
    not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
 REVERT the amq-squad binary not keyed: fails (the row catches it)
    not ok 9 - the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable
-62 runs, 62 caught, 0 missed
+REVERT the proof's fields joined with a newline (Go): fails (the row catches it)
+   --- FAIL: TestTheLeadAnswersItsPisChallengeWithItsProof (0.00s)
+REVERT the proof's fields joined with a newline (pi): fails (the row catches it)
+   not ok 1 - R53: the owner's yes switches the lead's tools to exactly the team lead's thirteen and refuses the solo set phase_team
+   not ok 2 - R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back
+   not ok 3 - R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run after the switch refuses phase_team
+   not ok 4 - R53: only the lead that spawned this pi is believed (lead_unproved), at a session start and at the apply
+REVERT the apply reading the reply before its proof: fails (the row catches it)
+   not ok 3 - amq_team_apply acts on nothing of an unproved reply: lead_unproved, no owner steps, no team started
+REVERT every started group kept for the sweep: fails (the row catches it)
+   --- FAIL: TestTheHostSweepSignalsNoReapedGroupsReusedID (0.01s)
+REVERT a direct git exec in the phase tests: fails (the row catches it)
+   not ok 10 - gitExec is the only process exec in the phase tests
+REVERT the tests' git under the system config: fails (the row catches it)
+   not ok 10 - gitExec is the only process exec in the phase tests
+REVERT the tests' git with hooks: fails (the row catches it)
+   not ok 10 - gitExec is the only process exec in the phase tests
+68 runs, 68 caught, 0 missed
 ```
 
 ## 5. The owner-run rows
