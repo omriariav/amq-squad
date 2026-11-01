@@ -190,7 +190,9 @@ func realRunScope(req mergetrain.Request) error {
 }
 
 // fillDeclaredFiles takes a PR's declared files from the session's task
-// store when the request names a task and no files (the commit step's set).
+// store when the request names a task and no files (the commit step's set),
+// and, for a PR named with neither, its task from the harness binding as the
+// real run reads it (mergetrain.BindUnnamed).
 func fillDeclaredFiles(root string, req *mergetrain.Request) error {
 	var store *task.Store
 	for i := range req.PRs {
@@ -210,6 +212,23 @@ func fillDeclaredFiles(root string, req *mergetrain.Request) error {
 			return fmt.Errorf("merge-train: PR #%d task %s: %w", it.Number, it.Task, err)
 		}
 		it.DeclaredFiles = tk.DeclaredFiles
+	}
+	// A PR named with no task and no files: the binding the harness commit
+	// step wrote, read as the real run reads it (brief 3.1.1-2 item 6).
+	for _, it := range req.PRs {
+		if it.Task == "" && len(it.DeclaredFiles) == 0 {
+			if store == nil {
+				s, err := task.Open(root)
+				if err != nil {
+					return fmt.Errorf("merge-train: task store: %w", err)
+				}
+				store = &s
+			}
+			if err := mergetrain.BindUnnamed(*store, req.Repository, req); err != nil {
+				return fmt.Errorf("merge-train: %w", err)
+			}
+			break
+		}
 	}
 	return nil
 }

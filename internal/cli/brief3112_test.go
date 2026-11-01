@@ -2,10 +2,14 @@ package cli
 
 import (
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -44,5 +48,45 @@ func TestReleaseGateVerifierFailsClosedWithoutTheBinding(t *testing.T) {
 	err = releaseGateVerifier(contextResolution{Root: root, ProjectDir: "/p", Profile: "default"})("v310", store, gatestore.Record{GateID: "rel-tag"})
 	if err == nil || !strings.Contains(err.Error(), "gate binding") {
 		t.Fatalf("without the binding: %v", err)
+	}
+}
+
+// Brief 3.1.1-2 item 6: a dry run of a request naming the PR only refused
+// task_scope "declares no files", while the real run read the task from the
+// harness binding (pr_number, pr_head) and merged. The dry run reads the
+// binding the same way: the item it plans is the real run's.
+func TestMergeTrainDryRunReadsTheBindingOfAPROnlyRequest(t *testing.T) {
+	root := t.TempDir()
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 1, 22, 0, 0, 0, time.UTC)
+	tk, err := store.Add(task.AddInput{Title: "t28", Class: "implement", DeclaredFiles: []string{"internal/cli/task_widen.go"}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Repeat("2a", 20)
+	if _, err := store.BindPR(tk.ID, "owner/app", 844, head, now); err != nil {
+		t.Fatal(err)
+	}
+	req := func() mergetrain.Request {
+		return mergetrain.Request{Schema: 1, Repository: "owner/app", Base: "v3", PRs: []mergetrain.Item{{Number: 844}, {Number: 845}}}
+	}
+	dry, real := req(), req()
+	if err := fillDeclaredFiles(root, &dry); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergetrain.BindTasks(store, "owner/app", &real); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(dry, real) {
+		t.Fatalf("the dry run plans %+v, the real run checks %+v", dry, real)
+	}
+	if it := dry.PRs[0]; it.Task != tk.ID || !slices.Equal(it.DeclaredFiles, tk.DeclaredFiles) || it.BoundHead != head {
+		t.Fatalf("the bound PR: %+v", it)
+	}
+	if dry.PRs[1].Unbound == "" {
+		t.Fatalf("an unbound PR: %+v", dry.PRs[1])
 	}
 }
