@@ -92,7 +92,7 @@ run("the kernel check blind to an ancestor's AM_ME",
  [('internal/cli/team_confirm.go','ok && amqIdentityEnv(env) {','ok && false && amqIdentityEnv(env) {')],
  C+"'TestTheShellDoorIsWitnessed|TestTheOwnersApplyIsTheConfirmation'")
 run("the kernel check without the peer's terminal",
- [('internal/cli/team_confirm.go','\tcase !has:\n','\tcase false:\n')],
+ [('internal/cli/team_confirm.go','\tcase !has:\n','\tcase has && false:\n')],
  C+"'TestTheShellDoorIsWitnessed|TestTheOwnersApplyIsTheConfirmation'")
 run("the kernel check passing an orphaned chain",
  [('internal/cli/team_confirm.go','\tif !leader {','\tif false && !leader {')],
@@ -161,8 +161,8 @@ run("the socket taking any process (no caller chain)",
 run("the caller's stamps not re-read before the act",
  [('internal/cli/lead_start.go','\t\tif err := restamp(chain); err != nil {\n\t\t\treply.Refusal','\t\tif err := restamp(chain); false && err != nil {\n\t\t\treply.Refusal')],
  C+"TestTheStartSocketProves")
-run("the caller's chain not re-read mid-hop",
- [('internal/cli/lead_start.go','\t\tif err := restamp(chain[len(chain)-1:]); err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tchain = append(chain, stampedPID{parent, stamp})','\t\tchain = append(chain, stampedPID{parent, stamp})')],
+run("the caller's reparent mid-hop not checked",
+ [('internal/cli/lead_start.go','\t\tif again, ok := confirmParent(p); !ok || again != parent {\n\t\t\treturn nil, fmt.Errorf("%s: pid %d was reparented while the lead read it"','\t\tif again, ok := confirmParent(p); false && (!ok || again != parent) {\n\t\t\treturn nil, fmt.Errorf("%s: pid %d was reparented while the lead read it"')],
  C+"TestTheStartSocketProves")
 run("the lead taking another repository's request",
  [('internal/cli/lead_start.go','\tif filepath.Clean(req.Project) != s.project {','\tif false && filepath.Clean(req.Project) != s.project {')],

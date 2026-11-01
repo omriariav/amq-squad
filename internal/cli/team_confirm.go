@@ -293,8 +293,8 @@ func amqIdentityEnv(env []string) bool {
 // lead's pid, 0 for none), and holds no amq-squad lead or seat process (by
 // argv) and no process carrying an AMQ identity (by its initial
 // environment). Every pid's start stamp is read when the pid is first read,
-// the child's parent and stamp again after each hop, and every stamp again
-// at the end (caller_unproved on a change: a reused pid). An ancestor whose
+// the child's parent again after each hop (a reparent), and every stamp
+// again at the end (caller_unproved on a change: a reused pid). An ancestor whose
 // argv cannot be read (another user's: login, sshd) is passed over; the lead
 // and its seats are the owner's own processes, always readable. It returns
 // the chain as read, pid first.
@@ -336,9 +336,6 @@ func ownerAncestry(pid, lead int) ([]confirmHop, error) {
 		}
 		if again, ok := confirmParent(p); !ok || again != parent {
 			return nil, fmt.Errorf("%s: pid %d was reparented while it was read", ReasonCallerUnproved, p)
-		}
-		if err := restampHops(chain[len(chain)-1:]); err != nil {
-			return nil, err
 		}
 		hop := confirmHop{PID: parent, Stamp: stamp}
 		if parent == lead {

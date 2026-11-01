@@ -307,10 +307,10 @@ func TestTheShellDoorIsWitnessedByTheLeadFromTheKernel(t *testing.T) {
 			t.Fatalf("%s: witnessed", name)
 		}
 	}
-	// the peer's pid reused after the walk: its third read, the final
+	// the peer's pid reused after the walk: its second read, the final
 	// re-read of the chain, is caller_unproved
 	reused := ownerShellTree()
-	reused.reuseAt = [2]int{500, 3}
+	reused.reuseAt = [2]int{500, 2}
 	reused.install(t)
 	if err := confirm(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
 		t.Fatalf("a pid reused after the walk = %v", err)

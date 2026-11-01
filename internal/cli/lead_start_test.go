@@ -402,10 +402,26 @@ func TestTheStartSocketProvesItsCallerWithStartStamps(t *testing.T) {
 	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonConfirmMissing+":") {
 		t.Fatalf("a proved caller = %v, want the start's own refusal", err)
 	}
-	reads, flipAt = map[int]int{}, func(p, n int) bool { return p == 600 && n == 2 } // seen at its mid-hop read only
+	reads, flipAt = map[int]int{}, func(p, n int) bool { return p == 600 && n >= 2 }
 	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
 		t.Fatalf("a stamp changed during the walk = %v", err)
 	}
+	// a reparent while the lead reads the hop: the second read of 700's
+	// parent names another process
+	reads, flipAt = map[int]int{}, nil
+	parentReads := 0
+	confirmParent = func(p int) (int, bool) {
+		if p == 700 {
+			if parentReads++; parentReads == 2 {
+				return 650, true
+			}
+		}
+		return map[int]int{700: 600, 600: self, 650: self}[p], true
+	}
+	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") || !strings.Contains(err.Error(), "reparented") {
+		t.Fatalf("a reparent mid-hop = %v", err)
+	}
+	confirmParent = func(p int) (int, bool) { return map[int]int{700: 600, 600: self}[p], true }
 	flipped := false
 	reads, flipAt = map[int]int{}, func(p, _ int) bool { return p == 700 && flipped }
 	leadStartBeforeAct = func() { flipped = true }
@@ -497,7 +513,7 @@ func TestTheTUIDoorIsWitnessedOnlyFromTheLeadsOwnPi(t *testing.T) {
 		}
 		return r
 	}
-	peer, stamp = 4243, "st-child"
+	peer, stamp = 4243, "st-pi" // a child of pi; its stamp is not what refuses it
 	if r := send(); r.Refusal != ReasonPeerNotLeadPi {
 		t.Fatalf("a child of pi = %+v", r)
 	}

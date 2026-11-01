@@ -377,9 +377,10 @@ var confirmStamp = procinfo.StartToken
 
 // callerChain proves pid descends from anc, the pattern of
 // panechain.Reaches: every pid's start stamp is read when the pid is first
-// read; at each hop the child's parent and stamp are read again after the
-// parent's stamp (a reparent or a reuse mid-hop breaks it); at the end every
-// stamp is read again. Any change is caller_unproved; a chain that ends at
+// read; at each hop the child's parent is read again after the parent's
+// stamp (a reparent mid-hop breaks it); at the end every stamp is read again
+// (a reused pid never carries its old stamp again, so the end's read sees
+// any reuse during the walk). Any change is caller_unproved; a chain that ends at
 // pid 1 without anc is origin_not_lead. It returns the chain, anc included.
 func callerChain(pid, anc int) ([]stampedPID, error) {
 	first, ok := confirmStamp(pid)
@@ -404,9 +405,6 @@ func callerChain(pid, anc int) ([]stampedPID, error) {
 		}
 		if again, ok := confirmParent(p); !ok || again != parent {
 			return nil, fmt.Errorf("%s: pid %d was reparented while the lead read it", ReasonCallerUnproved, p)
-		}
-		if err := restamp(chain[len(chain)-1:]); err != nil {
-			return nil, err
 		}
 		chain = append(chain, stampedPID{parent, stamp})
 		p = parent
