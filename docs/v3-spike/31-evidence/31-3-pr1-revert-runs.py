@@ -89,7 +89,7 @@ run("no lead-start.json (the shell apply cannot see the running lead)",
  [('internal/cli/lead_start.go','\tif err := atomicfile.Write(filepath.Join(s.root, "extensions", "amq-squad", leadStartRecordName), append(rec, \'\\n\'), 0o600); err != nil {','\tif err := atomicfile.Write(filepath.Join(s.root, "extensions", "amq-squad", "elsewhere.json"), append(rec, \'\\n\'), 0o600); err != nil {')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the shell apply with no lead check",
- [('internal/cli/team.go','\tif err := noLeadHolds(dir, proposalSession(prop.SquadYAML), strings.TrimSpace(digest)); err != nil {\n\t\treturn err\n\t}\n','')],
+ [('internal/cli/team.go','\tif err := withNoLead(dir, strings.TrimSpace(digest), func() error { return b.plan.Apply(strings.TrimSpace(digest)) }); err != nil {','\tif err := b.plan.Apply(strings.TrimSpace(digest)); err != nil {')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the shell apply ignoring a running solo lead",
  [('internal/cli/team_confirm.go','\tif c, derr := dialLead(root); derr == nil {','\tif c, derr := dialLead(root); false && derr == nil {')],
@@ -131,7 +131,7 @@ run("the supervising lead not passed over",
  [('internal/cli/lead_start.go','\t\tif (skipParent && i == 0) || hop.PID <= 1 {','\t\tif (skipParent && i < 0) || hop.PID <= 1 {')],
  C+"TestUpRefusesUnderASoloLead")
 run("the plan-file apply with no lead check",
- [('internal/cli/team.go','\t\tif err := noLeadHolds(p.ProjectDir, plan.Session, *o.digest); err != nil {\n\t\t\treturn err\n\t\t}\n','')],
+ [('internal/cli/team.go','\t\t\tif err := withNoLead(p.ProjectDir, *o.digest, write); err != nil {','\t\t\tif err := write(); err != nil {')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the socket accepting the dropped confirm-shell kind",
  [('internal/cli/lead_start.go','\tcase req.Kind == confirmShellKind:\n','\tcase false && req.Kind == confirmShellKind:\n')],
