@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,14 +20,17 @@ import (
 const contextUsage = `amq-squad context - the seat's role, rules digest, current task and open gates
 
 Usage:
-  amq-squad context --me HANDLE [--root DIR] [--session S] [--project DIR] [--json]
+  amq-squad context --me HANDLE [--root DIR] [--session S] [--project DIR] [--host] [--json]
 
 Reads only and never renews a lease; identity comes from AM_ME, AM_ROOT and
 AM_SESSION (a flag may fill an unset variable, never contradict a set one).
 Rules: $AMQ_SQUAD_RULES_PATH, else team-rules.md under the launch record's team
 home (or --project). Task: the task whose lease the seat holds in the store
 under the session root (<root>/extensions/amq-squad/tasks/). Exit 2 on a usage
-or identity error.
+or identity error. --host adds the host facts the team lead's first turn
+carries (brief 31-3, section 5): the repository ($AMQ_SQUAD_PROJECT, else the
+repository of the working directory), its branch and tip, and the installed
+AMQ's version; a fact that cannot be read is empty, never guessed.
 
 Examples:
   amq-squad context --me cto
@@ -62,6 +66,54 @@ type hookContextData struct {
 	// the repository, not the seat's tree.
 	Worktree string   `json:"worktree,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+	// Host is the host facts (context --host): absent without the flag.
+	Host *hookHost `json:"host,omitempty"`
+}
+
+// hookHost is the host facts of context --host: each "" when it cannot be
+// read (the extension shows it as missing).
+type hookHost struct {
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
+	Tip        string `json:"tip"`
+	AMQVersion string `json:"amq_version"`
+}
+
+// contextHostRun runs one command for the host facts (a test seam).
+var contextHostRun = func(dir, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// hostFacts reads the host facts: the repository, its branch and tip from
+// git, and the installed amq's version ($AMQ_SQUAD_AMQ, else amq on PATH).
+func hostFacts() *hookHost {
+	h := &hookHost{Repository: os.Getenv("AMQ_SQUAD_PROJECT")}
+	if h.Repository == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			h.Repository = projectTop(cwd)
+		}
+	}
+	if h.Repository != "" {
+		if out, err := contextHostRun(h.Repository, "git", "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+			h.Branch = out
+		}
+		if out, err := contextHostRun(h.Repository, "git", "rev-parse", "--short=12", "HEAD"); err == nil {
+			h.Tip = out
+		}
+	}
+	amq := os.Getenv("AMQ_SQUAD_AMQ")
+	if !filepath.IsAbs(amq) {
+		amq, _ = exec.LookPath("amq")
+	}
+	if amq != "" {
+		if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil {
+			h.AMQVersion, _, _ = strings.Cut(out, "\n")
+		}
+	}
+	return h
 }
 
 // recordHookReport is the hook's evidence of its own run (P1-10): every
@@ -84,6 +136,7 @@ func recordHookReport(id hookIdentity, now time.Time) {
 func runContext(args []string) error {
 	h := newHookFlags("context", contextUsage)
 	project := h.fs.String("project", "", "team home of the rules file (default: launch record)")
+	host := h.fs.Bool("host", false, "add the host facts (repository, branch, tip, AMQ version)")
 	if err := h.parse(args); err != nil {
 		return err
 	}
@@ -92,6 +145,9 @@ func runContext(args []string) error {
 		return err
 	}
 	d := buildHookContext(id, *project, hookNow())
+	if *host {
+		d.Host = hostFacts()
+	}
 	if *h.jsonOut {
 		return printJSONEnvelope("context", d)
 	}
