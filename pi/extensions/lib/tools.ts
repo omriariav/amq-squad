@@ -255,7 +255,10 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 		reg({
 			name: "amq_status",
 			label: "Squad status",
-			description: "The squad's status as JSON (amq-squad status --json): seats, tasks with their evidence and state, the attention queue and gates. Read-only.",
+			description:
+				"The squad's status as JSON (amq-squad status --json, docs/status-contract.md): each seat's runtime, model, worktree, branch, state, launch outcome, " +
+				"launch timing (start to seat live and to its first message) and warnings; each task's state, lease, block reason, evidence and PR; the lead and the " +
+				"scheduler (pid, start); the newest decisions; the merge train's runs and alerts; the attention queue and gates. Read-only.",
 			promptSnippet: "amq_status: the squad's seats, tasks and gates",
 			parameters: Type.Object({}),
 			async execute(_id, _p, signal) {

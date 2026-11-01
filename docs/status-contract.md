@@ -39,8 +39,11 @@ anywhere else, or a null document, fails the check.
 | `attention[]` | the attention queue |
 | `gates[]` | gate records of the gate store |
 | `actions.new_task` | the "new task" action |
-| `scheduler` | `max_seats`, `live_seats`, `usage_limit_since`, `usage_limit_until` |
+| `scheduler` | `max_seats`, `live_seats`, `usage_limit_since`, `usage_limit_until`; and from the scheduler's launch record (brief 31-1): `pid`, `started_at` (its own admission, null before a scheduler ran), `launch_start` (the squad launch's start, `AMQ_SQUAD_START`: the launch budget's first mark; null when the scheduler was started by hand), `live` (its pid answers) |
 | `warnings[]` | read problems, one line each; a partial status is still valid |
+| `lead` | the holder of the root's lead lock, from `lead.json` (brief 31-1), null when no lead took it: `handle`, `pid`, `start` (its raw start stamp), `pane` (its tmux pane, empty outside tmux), `recorded_at`, `live` (the pid answers with its recorded start stamp), `attach` (`tmux attach -t <pane>`, empty without a pane) |
+| `decisions[]` | the scheduler's decisions log, its last 30 lines oldest first: `at`, `kind`, `seat`, `task_id`, `reason`, `reason_code`, `stage`. Refusals are among them (`exit_refused`, `roster_launch_failed`, `seat_not_up`, `commit_refused`, `up_stopped_lead`, ...) |
+| `train` | the merge train's audit log: `runs[]`, its last two runs newest first (`run`, `started_at`, `last_at`, `last_kind`, `repository`, `base`, `prs`, `merged`, `refusal`, the run's newest refusal or stop, `done`: it stopped, it was a plan, or every PR of its batch merged, `dry_run`); `alerts[]`, the owner alerts (`id`, `kind`, `detail`, `gate_id`, `at`) |
 
 Seat row: `handle`, `role`, `runtime`, `model`, `effort`, `state`, `live`
 (true when the seat's session is up or its lease is live, whatever its state
@@ -54,13 +57,43 @@ seat warning, brief 31-1: `claude_hooks_silent`, a Claude seat that ran
 with no hook report since its launch; `claude_allow_rules_present`, its
 worktree's Claude allow rules; `claude_external_includes_pending`, a
 CLAUDE.md it loads that imports a file outside its worktree; each was a
-launch refusal before 3.1 and is a line, never a refusal, now).
+launch refusal before 3.1 and is a line, never a refusal, now; and from the
+second PR: `launch_budget_exceeded`, a seat over the launch ceiling, naming
+its slowest segment up to seat live; `wake_off`, a seat whose admitted wake
+is off, with AMQ's audit reason (a Codex seat without AMQ's dialog hook, a
+pi seat); `seat_stalled_at_dialog`, a seat at an open harness dialog (AMQ's
+`.wake.dialog` marker in its mailbox); `pi_provider_key_missing`, a pi seat
+whose `PROVIDER/ID` model has no key in its env needs or its pi login).
+Brief 31-1 adds `worktree` and `branch` (from its launch record, empty
+before one) and `launch`, its last launch, null without a staged record:
+`launch_id`; `outcome` (`staged`, `applied`, `apply_failed`,
+`exec_refused`, `proof_expired`, `live`: its accepted proof) with
+`reason_code`; `wake`, AMQ's admitted wake (`mode`, `require_wake`,
+`injector`, `audit_reason`), null when none was recorded; and `timing`, the
+launch budget:
+
+| `timing` field | meaning |
+| --- | --- |
+| `start` | the start of the seat's own launch (its `marks.json`, beside its staged record: the squad launch's `AMQ_SQUAD_START`, which `amq-squad up` sets), null when its launch recorded none or its proof predates it (an adopted seat keeps its own launch's start) |
+| `seat_live` | the accepted proof's stamp (`proof.json`'s `at`): the pane runs the provider with its bootstrap delivered |
+| `first_message` | the seat's first AMQ message since this launch (the message's own `created`, recorded in the seat's `marks.json` by the scheduler, which also logs `seat_first_message`), null before one |
+| `to_seat_live_ms`, `to_first_message_ms` | the start to each mark, null when either end is missing |
+| `ceiling_ms` | 10000: the ceiling binds the start to seat live; the first message has none |
+| `over_ceiling` | `to_seat_live_ms` is over the ceiling (the seat also carries `launch_budget_exceeded`) |
+| `slowest_segment` | the longest of the segments |
+| `segments[]` | `name` and `ms` (null when a record bounding it is missing), in order: `prepare` (the start to the staged record's `started_at`), `mint` (to the proof ticket's `issued_at`), `apply` (to AMQ's apply outcome), `seat_exec` (to the accepted proof) |
 
 Task row: `id`, `title`, `class`, `task_state` (the store state), `state`,
 `reason_code`, `bucket`, `bucket_marker`, `pool` (`{runtime, model,
 effort}` or null), `lease_holder`, `lease_expires_at`, `lease_claimed`,
 `attempt`, `wait_reason`, `block_reason`, `depends_on`, `project_path`,
-`created_at`, `updated_at`.
+`created_at`, `updated_at`; and (brief 31-1) `evidence`, `pr_repository`,
+`pr_number`, `pr_head` (the PR the commit step, or the train's rebase,
+bound to it; empty and 0 when none); `wait_holders`, for a pending task
+whose `wait_reason` is `file_lock`, the ids of the tasks holding the lock by
+the task store's rule (in progress or blocked, declared files overlapping),
+`[]` otherwise; empty under `file_lock` means no task holds it any more (a
+stale wait).
 
 Attention item: `id` (stable across runs for the same condition), `kind`,
 `severity` (`high`, `medium`, `low`), `subject`, `since`, `seat`, `task_id`,
@@ -157,6 +190,19 @@ field (one per seat row and on `operator`); neither replaces the other: the
 lead's presence is its seat row's `live`, found by `lead_handle`.
 
 ## Recorded limits
+
+- Every free-text field (seat message bodies, warnings, wake audit
+  reasons, task titles, evidence, block and wait reasons with the reason
+  codes and attention ids that copy them, attention subjects, decision
+  reasons, the train's refusals and alert details) passes `redact.Block`
+  before it is serialized: the document feeds the screen and the lead's
+  model.
+- The status read takes no lock (brief 31-1): `lead.live` reads the pid and
+  its start stamp, never the lead lock, and `scheduler.live` signals the
+  recorded pid only.
+- A roster relaunch (`scheduler relaunch`) within one scheduler incarnation
+  records the same start (the `up` that launched the squad), so its marks
+  are not a cold launch's.
 
 - `live` from a launch record is the recorded `AgentPID` answering signal-0
   (`status.Collect`); the binary and the process birth time are not checked,

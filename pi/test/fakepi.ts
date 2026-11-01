@@ -19,8 +19,12 @@ export class FakePi {
 		this.handlers.set(name, list);
 		return () => undefined;
 	}
+	commands = new Map<string, any>();
 	registerTool(def: any): void {
 		this.tools.set(def.name, def);
+	}
+	registerCommand(name: string, def: any): void {
+		this.commands.set(name, def);
 	}
 	sendUserMessage(text: string, opts: unknown): void {
 		this.sent.push({ text, opts });
@@ -43,6 +47,7 @@ export class FakePi {
 
 export function fakeCtx(over: Record<string, unknown> = {}): any {
 	const statuses: Record<string, string | undefined> = {};
+	const widgets: Record<string, { lines: string[] | undefined; placement?: string }> = {};
 	return {
 		mode: "json",
 		hasUI: false,
@@ -60,8 +65,12 @@ export function fakeCtx(over: Record<string, unknown> = {}): any {
 			},
 			confirm: async () => false,
 			select: async () => undefined,
+			setWidget: (k: string, lines: string[] | undefined, opts?: { placement?: string }) => {
+				widgets[k] = { lines, placement: opts?.placement };
+			},
 		},
 		statuses,
+		widgets,
 		...over,
 	};
 }

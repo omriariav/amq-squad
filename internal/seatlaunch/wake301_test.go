@@ -3,6 +3,8 @@ package seatlaunch
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -180,15 +183,25 @@ func TestLaunchRecordsAWakeAMQAdmittedDifferently(t *testing.T) {
 					tc.edit(p)
 				}
 			}), 50*time.Millisecond
+			o.Start = time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
 			res, err := Launch(context.Background(), q, o)
 			if err != nil || res.Stage != "applied" || f.applied == nil {
 				t.Fatalf("refused: %v (stage %s)", err, res.Stage)
 			}
 			res.proof.close()
+			// the seat's own launch start, recorded with the launch (Codex P2 6)
+			if m, err := ReadSeatMarks(q.SessionRoot(), "dev"); err != nil || m.LaunchID != res.LaunchID || m.Start == nil || !m.Start.Equal(o.Start) || m.FirstMessage != nil {
+				t.Fatalf("marks %+v (%v)", m, err)
+			}
 			for _, st := range res.Seats {
 				if st.Handle == "dev" && !tc.want(st.Wake) {
 					t.Fatalf("dev wake facts %+v", st.Wake)
 				}
+			}
+			// Brief 31-1's second PR: the admitted wake is recorded beside
+			// the staged record with the launch id, where status reads it.
+			if w, err := ReadSeatWake(q.SessionRoot(), "dev"); err != nil || w.LaunchID != res.LaunchID || !tc.want(w.Wake) {
+				t.Fatalf("recorded wake %+v (%v), launch %s", w, err, res.LaunchID)
 			}
 		})
 	}
@@ -258,5 +271,34 @@ func TestLaunchReadsTheCodexDialogHook(t *testing.T) {
 	}
 	if _, err := Launch(context.Background(), q, o); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The first message is recorded once, for the launch the staged record
+// names (Codex P2 7: status reads it there, not from the decisions log).
+func TestRecordFirstMessageIsOncePerLaunch(t *testing.T) {
+	root := t.TempDir()
+	write := func(launchID string) {
+		rec := launch.Record{Handle: "dev", Root: root, Session: "s", LaunchID: launchID}
+		if err := os.MkdirAll(launch.StagedDir(root, "dev"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := launch.WriteFile(filepath.Join(launch.StagedDir(root, "dev"), launch.FileName), rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Date(2026, 11, 1, 9, 1, 0, 0, time.UTC)
+	write("L1")
+	if err := RecordFirstMessage(root, "dev", at); err != nil {
+		t.Fatal(err)
+	}
+	_ = RecordFirstMessage(root, "dev", at.Add(time.Minute)) // a later message changes nothing
+	if m, _ := ReadSeatMarks(root, "dev"); m.LaunchID != "L1" || m.FirstMessage == nil || !m.FirstMessage.Equal(at) {
+		t.Fatalf("marks %+v", m)
+	}
+	write("L2") // a relaunch: the mark belongs to the new launch
+	_ = RecordFirstMessage(root, "dev", at.Add(time.Hour))
+	if m, _ := ReadSeatMarks(root, "dev"); m.LaunchID != "L2" || !m.FirstMessage.Equal(at.Add(time.Hour)) {
+		t.Fatalf("marks after a relaunch %+v", m)
 	}
 }

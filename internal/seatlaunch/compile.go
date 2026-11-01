@@ -8,6 +8,7 @@ package seatlaunch
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -187,6 +188,117 @@ type SeatWakeFacts struct {
 	Injector    string `json:"injector,omitempty"` // raw | paste | auto | none | claude-native
 	AuditReason string `json:"audit_reason,omitempty"`
 	Source      string `json:"source"` // always "amq_prepare_preview"
+}
+
+// WakeFileName is a seat's admitted wake beside its staged record
+// (launch.StagedDir): AMQ's Prepare echo of the seat's wake, written at each
+// launch with its launch id, so status shows the wake a seat runs with
+// (brief 31-1: SeatState.Wake reaches only Launch's caller).
+const WakeFileName = "wake.json"
+
+// SeatWakeRecord is the content of WakeFileName: Wake is nil when AMQ's
+// preview carried no execution options for the seat.
+type SeatWakeRecord struct {
+	LaunchID string         `json:"launch_id"`
+	Wake     *SeatWakeFacts `json:"wake"`
+}
+
+// writeWakes records each staged seat's admitted wake (best effort: a seat
+// whose record cannot be written shows no wake in status, nothing else).
+func writeWakes(c Compiled, launchID string, wakes map[string]*SeatWakeFacts) {
+	for _, rec := range c.Records {
+		b, err := json.Marshal(SeatWakeRecord{LaunchID: launchID, Wake: wakes[rec.Handle]})
+		if err != nil {
+			continue
+		}
+		_ = writeAtomic(filepath.Join(launch.StagedDir(rec.Root, rec.Handle), WakeFileName), append(b, '\n'))
+	}
+}
+
+// ReadSeatWake reads a seat's admitted wake record (os.ErrNotExist before
+// its first launch).
+func ReadSeatWake(root, handle string) (SeatWakeRecord, error) {
+	var r SeatWakeRecord
+	b, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), WakeFileName))
+	if err != nil {
+		return r, err
+	}
+	return r, json.Unmarshal(b, &r)
+}
+
+// MarksFileName holds a seat's launch budget marks beside its staged record
+// (brief 31-1): the squad launch's start, written with each launch, and
+// the seat's first AMQ message, written once by the scheduler. Status reads
+// a seat's marks from here, its own launch's, never a later scheduler's
+// start or a decisions log that scrolls.
+const MarksFileName = "marks.json"
+
+// SeatMarks is the content of MarksFileName.
+type SeatMarks struct {
+	LaunchID     string     `json:"launch_id"`
+	Start        *time.Time `json:"start"`
+	FirstMessage *time.Time `json:"first_message"`
+}
+
+func marksPath(root, handle string) string {
+	return filepath.Join(launch.StagedDir(root, handle), MarksFileName)
+}
+
+// writeMarks records each staged seat's launch start (best effort, like
+// the wake record).
+func writeMarks(c Compiled, launchID string, start time.Time) {
+	for _, rec := range c.Records {
+		m := SeatMarks{LaunchID: launchID}
+		if !start.IsZero() {
+			t := start.UTC()
+			m.Start = &t
+		}
+		if b, err := json.Marshal(m); err == nil {
+			_ = writeAtomic(marksPath(rec.Root, rec.Handle), append(b, '\n'))
+		}
+	}
+}
+
+// ReadSeatMarks reads a seat's marks (os.ErrNotExist before a launch that
+// wrote them).
+func ReadSeatMarks(root, handle string) (SeatMarks, error) {
+	var m SeatMarks
+	b, err := os.ReadFile(marksPath(root, handle))
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal(b, &m)
+}
+
+// RecordFirstMessage writes a seat's first AMQ message into its marks, once,
+// for the launch its staged record names (a mark of another launch, or one
+// already set, is left as it is).
+func RecordFirstMessage(root, handle string, at time.Time) error {
+	staged, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return err
+	}
+	rec, err := launch.Decode(staged)
+	if err != nil {
+		return err
+	}
+	m, err := ReadSeatMarks(root, handle)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if m.LaunchID != rec.LaunchID {
+		m = SeatMarks{LaunchID: rec.LaunchID}
+	}
+	if m.FirstMessage != nil {
+		return nil
+	}
+	t := at.UTC()
+	m.FirstMessage = &t
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(marksPath(root, handle), append(b, '\n'))
 }
 
 // admittedWakes reads each participant's admitted wake from the Prepare
@@ -483,13 +595,11 @@ func overrideAllowed(overrides []launchapi.ConfigOverrideCapabilityV1, key, valu
 }
 
 // Stage writes each seat's record and role.md into launch.StagedDir under
-// the session root (0700 directories, 0600 files). The session root must
-// exist: AMQ never creates an unknown session.
+// the session root (0700 directories, 0600 files). The session is created
+// before a launch (brief 31-1: `amq-squad up`, and scheduler run on an
+// absent session root), so Stage no longer refuses one that is missing.
 func Stage(c Compiled) error {
 	for i, rec := range c.Records {
-		if st, err := os.Stat(rec.Root); err != nil || !st.IsDir() {
-			return fmt.Errorf("session root %s does not exist; create the session first (amq session create %s --root %s --me <operator>)", rec.Root, rec.Session, rec.BaseRoot)
-		}
 		dir := launch.StagedDir(rec.Root, rec.Handle)
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err

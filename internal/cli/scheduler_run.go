@@ -55,7 +55,9 @@ ended attempt's outcome row is written; a done report runs the harness commit
 step (seat commit); a refusal is recorded, then the lead is told by AMQ
 message; the usage-limit detector stops new seats after the first event in
 the window. One process per squad: a second one is refused before it
-touches anything. The exit check (the sealed ledger's evidence) runs on
+touches anything. An absent AMQ root or session is created first (amq coop
+init, amq session create; a session_created decision), as amq-squad up
+does. The exit check (the sealed ledger's evidence) runs on
 every terminal path of a seat (done, failed, gone, expired); a seat whose claimed
 lease expired is closed through the launcher before it is cleaned or
 dispatched to again. The lead's widening arrives as the lead's AMQ message
@@ -163,8 +165,17 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("scheduler run: %w", err)
 	}
 	root := q.SessionRoot()
-	if st, err := os.Stat(root); err != nil || !st.IsDir() {
-		return fmt.Errorf("scheduler run: session root %s does not exist; create the session first (amq session create %s --root %s --me %s)", root, q.Session, q.BaseRoot, q.Operator)
+	// An absent AMQ root or session is created the way `up` creates it
+	// (brief 31-1, item 7: the missing-session refusal gave way to it).
+	handles := []string{leadHandle}
+	for _, s := range q.Seats {
+		handles = append(handles, s.Handle)
+	}
+	if done, err := ensureSquadSession(ctx, q.AMQPath, q, handles); err != nil {
+		return fmt.Errorf("scheduler run: create the session: %w", err)
+	} else if len(done) > 0 {
+		fmt.Fprintf(out, "scheduler run: created the session: %s\n", strings.Join(done, "; "))
+		_ = schedproc.AppendDecision(root, time.Now(), scheduler.Decision{Kind: KindSessionCreated, Reason: "scheduler run: " + strings.Join(done, "; ")})
 	}
 	g, gerr := grants.Load(q.ProjectRoot)
 	if gerr != nil {
@@ -199,7 +210,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if len(roster) == 0 {
 		return fmt.Errorf("scheduler run: %s has no seat but the lead", team.SquadPath(q.ProjectRoot))
 	}
-	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target}
+	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target, Start: launchStart()}
 	var amqLauncher scheduler.SeatLauncher
 	var real *seatlaunch.Launcher
 	if schedulerAMQLauncher != nil {
@@ -277,8 +288,11 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Committer: committer,
 		Preparer:  &schedproc.CleanSeats{Root: root},
 		Limits:    limits,
-		Config:    scheduler.Config{MaxSeats: seatCap, Lead: *lead, Roster: roster},
-		Tick:      *tick,
+		Config: scheduler.Config{MaxSeats: seatCap, Lead: *lead, Roster: roster,
+			// the launch budget's second mark (brief 31-1): each launched
+			// seat's first AMQ message, from its outbox
+			FirstMessage: firstMessageMark(root)},
+		Tick: *tick,
 		Started: func(s *scheduler.Scheduler) {
 			sched = s // before the first tick: the router's seat view
 			if real != nil {
@@ -321,6 +335,22 @@ func rosterPools(roster []scheduler.RosterSeat) []task.Pool {
 		out = append(out, rs.Pool)
 	}
 	return out
+}
+
+// firstMessageMark finds a launched seat's first AMQ message in its outbox
+// and records it in the seat's marks (seatlaunch.RecordFirstMessage), where
+// status reads it; the scheduler logs seat_first_message once it is found.
+func firstMessageMark(root string) func(string, time.Time) (time.Time, bool) {
+	find := scheduler.OutboxFirstMessage(root)
+	return func(handle string, since time.Time) (time.Time, bool) {
+		at, ok := find(handle, since)
+		if ok {
+			if err := seatlaunch.RecordFirstMessage(root, handle, at); err != nil {
+				return time.Time{}, false // asked again next tick
+			}
+		}
+		return at, ok
+	}
 }
 
 // launchStart is the start of this squad's launch from AMQ_SQUAD_START

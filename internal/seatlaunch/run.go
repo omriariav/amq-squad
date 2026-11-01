@@ -49,6 +49,9 @@ type AMQRunner func(ctx context.Context, amq string, args []string, stdin []byte
 
 // Options are the inputs of one launch.
 type Options struct {
+	// Start is the squad launch's start (AMQ_SQUAD_START, brief 31-1),
+	// recorded per seat with its launch (marks.json); zero records none.
+	Start     time.Time
 	Decisions map[string]string // ACTION_ID -> CHOICE, explicit operator answers
 	DryRun    bool              // Prepare only
 	Wait      time.Duration     // how long to wait for the seats to come up
@@ -266,6 +269,8 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		srv.close()
 		return res, err
 	}
+	writeWakes(c, launchID, wakes)
+	writeMarks(c, launchID, o.Start)
 	// The commit step's diff base is the core's observation of each seat
 	// worktree before the seat runs (internal/seatcommit ledger). A worktree
 	// that is not a git checkout records nothing; its commit step refuses
