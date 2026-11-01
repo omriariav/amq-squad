@@ -40,7 +40,15 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 	ask := func(yes, post nostr.Event, forHex string) leadStartReply {
 		return s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: yes.Marshal(), Post: post.Marshal(), PlanFor: forHex})
 	}
-	plan := sign(f.body, "re q-0123456789ab\nProposed team: lead, two implementers.")
+	dm := strings.Repeat("d4", 32) // the owner's phone request the plan post replies to
+	plan := sign(f.body, "re q-0123456789ab\nProposed team: lead, two implementers.", []string{"e", dm, "", "reply"})
+	// a gate question in the lead's own root (Codex P1 on #838)
+	gstore := gatestore.Store{Root: root}
+	if _, _, err := gstore.Raise(gatestore.Spec{GateID: "rel-lead", Action: "tag", Target: "git tag v9", RaisedBy: "lead"},
+		gatestore.Identity{OwnerPubKey: f.owner.PublicHex(), IssuerKeyID: "ed25519-sha256:" + strings.Repeat("b2", 32)}, now, hookTestSender{}); err != nil {
+		t.Fatal(err)
+	}
+	gq := strings.Repeat("c3", 32) // hookTestSender's question id
 	other := sign(f.body, "re q-0123456789ab\nShall I start it?")
 	stranger, _ := nostr.NewSecretKey()
 	forged := sign(stranger, plan.Content)
@@ -50,8 +58,11 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 		forHex    string
 		refusal   string
 	}{
-		{"the yes replies elsewhere", sign(f.owner, "yes", []string{"e", other.ID, "", "reply"}), plan, planFor, gateverify.RejectThread},
-		{"the yes names the plan only as its root", sign(f.owner, "yes", []string{"e", plan.ID, "", "root"}, []string{"e", other.ID, "", "reply"}), plan, planFor, gateverify.RejectThread},
+		{"the yes replies elsewhere", sign(f.owner, "yes", []string{"e", other.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
+		{"the yes names the plan only as its root", sign(f.owner, "yes", []string{"e", plan.ID, "", "root"}, []string{"e", other.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
+		{"the yes names the plan and another event", sign(f.owner, "yes", []string{"e", strings.Repeat("e5", 32), "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
+		{"the yes names a gate question and the plan", sign(f.owner, "yes", []string{"e", gq, "", "root"}, []string{"e", plan.ID, "", "reply"}), plan, planFor, ReasonConflictingThread},
+		{"the yes names the plan in a gate question's thread (unmarked)", sign(f.owner, "yes", []string{"e", gq}, []string{"e", plan.ID}), plan, planFor, ReasonConflictingThread},
 		{"the yes replies to nothing", sign(f.owner, "yes"), plan, planFor, gateverify.RejectThread},
 		{"a post another key signed", sign(f.owner, "yes", []string{"e", forged.ID, "", "reply"}), forged, planFor, gateverify.RejectWrongPubkey},
 		{"a plan for no recent proposal", sign(f.owner, "yes", []string{"e", plan.ID, "", "reply"}), plan, strings.Repeat("ab", 32), ReasonNoProposal},
@@ -74,7 +85,12 @@ func TestTheLeadWitnessesABareYesRepliedToThePlanPost(t *testing.T) {
 	if _, err := s.witnessFor(digest); err == nil {
 		t.Fatal("witnessed before the owner's yes to the plan")
 	}
-	yes := sign(f.owner, "Yes.", []string{"e", plan.ID, "", "reply"})
+	// the prefix form in a gate question's thread is refused by the lead too
+	if r := s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: sign(f.owner, "yes "+digest[7:23], []string{"e", gq, "", "reply"}).Marshal()}); r.Refusal != ReasonConflictingThread {
+		t.Fatalf("a yes <prefix> in a gate question's thread: %+v", r)
+	}
+	// the plan post's own thread (the owner's DM as root) is the one anchor
+	yes := sign(f.owner, "Yes.", []string{"e", dm, "", "root"}, []string{"e", plan.ID, "", "reply"})
 	if r := ask(yes, plan, planFor); r.Outcome != "witnessed" || r.Digest != digest {
 		t.Fatalf("the owner's yes to the plan: %+v", r)
 	}

@@ -182,6 +182,12 @@ run("the attachment hands the lead the yes without the post and the plan", [(TC,
 run("the lead's process sends the plan reply without its label", [(TT,'"--id", replyTo, "--labels", `${TEAM_PLAN_LABEL}${hex}`, "--json"','"--id", replyTo, "--json"')],
     PI+"test/team.test.ts")
 
+# Codex P1 on #838: the lead refuses conflicting thread references
+run("the lead takes a confirmation in a gate question's thread", [(LS,'if anchors := s.gateAnchors(); slices.ContainsFunc(refs,','if anchors := s.gateAnchors(); false && slices.ContainsFunc(refs,')],
+    CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
+run("the lead takes a yes naming more than the plan's thread", [(LS,'\t\tcase slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(nostr.ThreadRefs(p), r) }):\n','\t\tcase false:\n')],
+    CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
+
 # Rows 1 and 5 at the raisers: what the question's lines read
 run("the release prepare raises without the branch it checked", [(RF,'\t\t\tspec.Facts = gatestore.SafeFacts("", *branch)\n','\t\t\tspec.Facts = nil\n')],
     CL+"'TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote'")

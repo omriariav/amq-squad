@@ -338,6 +338,13 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	case e.CreatedAt < now.Add(-buzz.RouteWindow).Unix() || e.CreatedAt > now.Add(buzz.FutureSkew).Unix():
 		return refusedAs(gateverify.RejectWindow, "event %s was created at %d", e.ID[:12], e.CreatedAt)
 	}
+	// Codex P1 on #838: a confirmation never rides in a gate's thread, and
+	// its references never conflict; the handler's gate-thread exclusion is
+	// the first layer, this the lead's own (the bytes may reach it straight)
+	refs := nostr.ThreadRefs(e)
+	if anchors := s.gateAnchors(); slices.ContainsFunc(refs, func(r string) bool { return anchors[r] }) {
+		return refusedAs(ReasonConflictingThread, "event %s replies in a gate question's thread", e.ID[:12])
+	}
 	prefix, typed := gateverify.ParseTeamYes(e.Content)
 	switch verb, bare := gatestore.ParseBare(e.Content); {
 	case typed && req.Post == nil && req.PlanFor == "":
@@ -359,6 +366,10 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 			return refusedAs(gateverify.RejectBadSignature, "post %s", p.ID[:12])
 		case p.Kind != buzz.KindDM || !slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}):
 			return refusedAs(gateverify.RejectWrongChannel, "post %s is not a DM in the owner's channel", p.ID[:12])
+		case slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(nostr.ThreadRefs(p), r) }):
+			// one anchor: every reference is the plan post or the post's own
+			// thread (the owner's DM it replies to), nothing else
+			return refusedAs(ReasonConflictingThread, "event %s names %v besides the plan post %s and its thread", e.ID[:12], refs, p.ID[:12])
 		case parent != p.ID:
 			return refusedAs(gateverify.RejectThread, "event %s does not reply to the plan post %s", e.ID[:12], p.ID[:12])
 		}
@@ -390,6 +401,28 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	}
 	s.seen[e.ID] = true
 	return s.witnessLocked(confirmRecord{Digest: prop.Digest, Door: DoorBuzz, At: now.UTC(), By: "owner key " + e.PubKey, Proof: confirmProof{EventID: e.ID}})
+}
+
+// ReasonConflictingThread is a Buzz confirmation whose thread references name
+// a gate question or re-ask, or anything besides the plan post and its own
+// thread (brief 3.1.1-1, Codex P1 on #838).
+const ReasonConflictingThread = "conflicting_thread"
+
+// gateAnchors are the event ids of every gate question and re-ask in this
+// lead's root (read only; a root with no gate store has none).
+func (s *leadStarter) gateAnchors() map[string]bool {
+	out := map[string]bool{}
+	store := gatestore.Store{Root: s.root}
+	ids, _ := store.IDs()
+	for _, id := range ids {
+		if q, _ := store.Question(id); q != nil {
+			out[q.EventID] = true
+		}
+		if r, _ := store.ReadReask(id); r != nil {
+			out[r.EventID] = true
+		}
+	}
+	return out
 }
 
 // leadStartBeforeAct runs between the request's read and the last proof of
