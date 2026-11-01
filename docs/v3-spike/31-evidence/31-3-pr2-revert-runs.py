@@ -110,10 +110,10 @@ run("the lead's identity not switched to the squad's",
  [('pi/extensions/lib/team.ts','\t\tObject.assign(process.env, { AM_ROOT: m.root,','\t\tObject.assign({}, { AM_ROOT: m.root,')],
  P+"test/phase.test.ts")
 run("the switch riding the marker file, not the lead's reply",
- [('pi/extensions/lib/team.ts','\t\tif (d.team && ok) this.switchToTeam(d.team);\n','\t\tthis.switchToTeam(d.team ?? JSON.parse(fs.readFileSync(path.join(this.soloRoot, "extensions", "amq-squad", "phase.json"), "utf8")));\n')],
+ [('pi/extensions/lib/team.ts','\t\tif (d.team) this.switchToTeam(d.team);\n','\t\tthis.switchToTeam(d.team ?? JSON.parse(fs.readFileSync(path.join(this.soloRoot, "extensions", "amq-squad", "phase.json"), "utf8")));\n')],
  P+"test/phase.test.ts")
 run("amq_team_apply's success not switching",
- [('pi/extensions/lib/team.ts','\t\tif (d.team && ok) this.switchToTeam(d.team);\n','\t\tif (d.team && false) this.switchToTeam(d.team);\n')],
+ [('pi/extensions/lib/team.ts','\t\tif (d.team) this.switchToTeam(d.team);\n','\t\tif (d.team && false) this.switchToTeam(d.team);\n')],
  P+"test/phase.test.ts")
 run("a session started after the yes not switching on the lead's answer",
  [('pi/extensions/lib/team.ts','\t\tif (t) team.switchToTeam(t);\n','\t\tif (t && false) team.switchToTeam(t);\n')],
@@ -190,9 +190,6 @@ run("the nonce put in pi's environment",
 run("pi taking an unproved reply",
  [('pi/extensions/lib/team.ts','\tif (!nonce || typeof r.proof !== "string" || !/^[0-9a-f]{64}$/.test(r.proof)) return false;','\treturn true;')],
  P+"test/phase.test.ts")
-run("the apply switching on an unproved start reply",
- [('pi/extensions/lib/team.ts','\t\tif (d.team && ok) this.switchToTeam(d.team);\n','\t\tif (d.team) this.switchToTeam(d.team);\n')],
- P+"test/phase.test.ts")
 run("the phase query's reply taken unproved",
  [('pi/extensions/lib/team.ts','const r = await askLeadProved(this.socket, { kind: PHASE_KIND }, this.nonce);','const r = (await askLead(this.socket, { kind: PHASE_KIND })) as LeadReply & { team?: TeamIdentity };')],
  P+"test/phase.test.ts")
@@ -244,5 +241,27 @@ run("the AMQ executable not keyed",
  P+"test/phase.test.ts")
 run("the amq-squad binary not keyed",
  [('pi/extensions/lib/firstturn.ts','\t\tif (path.isAbsolute(this.cfg.bin)) parts.push(st(this.cfg.bin));\n','')],
+ P+"test/phase.test.ts")
+# Codex's pass 3 on #837
+run("the proof's fields joined with a newline (Go)",
+ [('internal/cli/lead_start.go','\t\tfmt.Fprintf(&b, "%d:%s,", len(f), f)\n','\t\tb.WriteString(f + "\\n")\n')],
+ C+"TestTheLeadAnswersItsPis")
+run("the proof's fields joined with a newline (pi)",
+ [('pi/extensions/lib/team.ts','\treturn fields.map((f) => `${Buffer.byteLength(f, "utf8")}:${f},`).join("");','\treturn fields.join("\\n");')],
+ P+"test/phase.test.ts")
+run("the apply reading the reply before its proof",
+ [('pi/extensions/lib/team.ts','\t\tif (!proved(this.nonce, challenge, d)) {\n','\t\tif (false) {\n')],
+ P+"test/team.test.ts")
+run("every started group kept for the sweep",
+ [('internal/cli/hook_context.go','\tif hostGroupAlive(cmd) {\n\t\tc.cmds = append(c.cmds, cmd)\n\t}\n','\tc.cmds = append(c.cmds, cmd)\n')],
+ C+"TestTheHostSweep")
+run("a direct git exec in the phase tests",
+ [('pi/test/phase.test.ts','const moved = git(repo, "commit-tree", "wtb^{tree}", "-p", "wtb", "-m", "three").trim();','const moved = execFileSync("git", ["-C", repo, "commit-tree", "wtb^{tree}", "-p", "wtb", "-m", "three"], { env: { ...process.env, ...gitEnv(home) } }).toString().trim();')],
+ P+"test/phase.test.ts")
+run("the tests' git under the system config",
+ [('pi/test/phase.test.ts','\t\tGIT_CONFIG_NOSYSTEM: "1",\n','')],
+ P+"test/phase.test.ts")
+run("the tests' git with hooks",
+ [('pi/test/phase.test.ts','"-c", "core.hooksPath=/dev/null", "-C", cwd, ...args]','"-C", cwd, ...args]')],
  P+"test/phase.test.ts")
 print(f"{RUNS[0]} runs, {RUNS[1]} caught, {RUNS[0]-RUNS[1]} missed")
