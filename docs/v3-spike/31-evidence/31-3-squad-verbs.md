@@ -95,7 +95,9 @@ scheduler.
   authority: a row plants and edits it and the start is unchanged. The one
   read of it is for refusal: the Buzz event ids the lead witnessed
   (`confirm/events/<event id>.json`) refuse a replay, across a restart too;
-  nothing in it ever grants. The
+  nothing in it ever grants. The log line is written before the witness, so
+  a crash between the two leaves that event spent: the owner's next yes is a
+  new event and a new witness, the right side to fail on. The
   guard's refusal of writes into it stays as a cheap second layer that
   decides nothing.
 - **The socket's address.** The lead writes
