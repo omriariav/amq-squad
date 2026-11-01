@@ -44,8 +44,8 @@ Everything: [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) lists
 the release by phase. 3.0.1 is the first fix release, from the first squad run
 on this repository: [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md).
 3.0.2 is the second, from the second day of that run and the 3.0.1 release:
-[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). 3.1.0-rc.1 is the
-first candidate of 3.1, which puts launch speed and the lead's screen first:
+[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). 3.1.0 is the
+release of 3.1, which puts launch speed and the lead's screen first:
 [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md). In short:
 
 - `squad.yaml` schema 1 replaces the v2 profile, through `team propose` and
@@ -65,7 +65,7 @@ first candidate of 3.1, which puts launch speed and the lead's screen first:
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.0-rc.1
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.0
 amq-squad version
 ```
 
