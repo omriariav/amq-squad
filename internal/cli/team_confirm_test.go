@@ -130,6 +130,8 @@ type fakeTree struct {
 	env       map[int][]string
 	stamp     map[int]string
 	notty     map[int]bool
+	// reuseAt: the pid whose stamp reads "reused" at its read number n
+	reuseAt [2]int
 }
 
 func (f fakeTree) install(t *testing.T) {
@@ -150,7 +152,12 @@ func (f fakeTree) install(t *testing.T) {
 	confirmEnviron = func(p int) ([]string, bool) { e, ok := f.env[p]; return e, ok }
 	confirmSession = func(int) (int, bool) { return f.sid, true }
 	confirmHasTTY = func(p int) (bool, bool) { return !f.notty[p], true }
+	reads := map[int]int{}
 	confirmStamp = func(p int) (string, bool) {
+		reads[p]++
+		if f.reuseAt[0] == p && f.reuseAt[1] == reads[p] {
+			return "reused", true
+		}
 		if s, ok := f.stamp[p]; ok {
 			return s, true
 		}
@@ -300,6 +307,14 @@ func TestTheShellDoorIsWitnessedByTheLeadFromTheKernel(t *testing.T) {
 			t.Fatalf("%s: witnessed", name)
 		}
 	}
+	// the peer's pid reused after the walk: its third read, the final
+	// re-read of the chain, is caller_unproved
+	reused := ownerShellTree()
+	reused.reuseAt = [2]int{500, 3}
+	reused.install(t)
+	if err := confirm(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
+		t.Fatalf("a pid reused after the walk = %v", err)
+	}
 	ownerShellTree().install(t)
 	if err := confirm(); err != nil {
 		t.Fatalf("the owner's shell: %v", err)
@@ -325,8 +340,9 @@ func TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventItFetched(t *testing.T) {
 	ask := func(id string) leadStartReply {
 		return s.witnessBuzz(context.Background(), leadStartRequest{Kind: confirmBuzzKind, EventID: id})
 	}
+	created := time.Now()
 	publish := func(key nostr.SecretKey, content string) string {
-		e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", "dm-chan"}}, Content: content}
+		e := nostr.Event{CreatedAt: created.Unix(), Kind: 9, Tags: [][]string{{"h", "dm-chan"}}, Content: content}
 		if err := key.Sign(&e); err != nil {
 			t.Fatal(err)
 		}
@@ -343,6 +359,11 @@ func TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventItFetched(t *testing.T) {
 	if r := ask(publish(f.owner, "yes 0000000000000000")); r.Refusal != ReasonNoProposal {
 		t.Fatalf("no proposal = %+v", r)
 	}
+	created = time.Now().Add(-time.Hour)
+	if r := ask(publish(f.owner, "yes "+team.DigestPrefix(digest))); r.Refusal != gateverify.RejectWindow {
+		t.Fatalf("an hour-old yes = %+v", r)
+	}
+	created = time.Now()
 	if _, err := s.witnessFor(digest); err == nil {
 		t.Fatal("witnessed before the owner's yes")
 	}

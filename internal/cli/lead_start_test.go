@@ -301,8 +301,20 @@ func TestTheSoloLeadServesTheStartSocketToItsPi(t *testing.T) {
 	prev := serveLeadStart
 	t.Cleanup(func() { serveLeadStart = prev })
 	serveLeadStart = func(s *leadStarter) (string, error) { served = s; return "/tmp/lead-start.sock", nil }
+	// pi's spawn as runProcess reports it
+	fakeRun := piRun
+	t.Cleanup(func() { piRun = fakeRun })
+	piRun = func(path string, argv, env []string) (int, error) {
+		if piStartedHook != nil {
+			piStartedHook(os.Getpid())
+		}
+		return fakeRun(path, argv, env)
+	}
 	if _, _, err := captureOutput(t, func() error { return runLead(nil) }); err != nil {
 		t.Fatal(err)
+	}
+	if served == nil || served.piPID != os.Getpid() || served.piStamp == "" {
+		t.Fatalf("the solo lead did not record its pi: %+v", served)
 	}
 	if served == nil || served.project != dir || served.root != call.getenv("AM_ROOT") || served.self != os.Getpid() {
 		t.Fatalf("starter %+v", served)
@@ -390,7 +402,7 @@ func TestTheStartSocketProvesItsCallerWithStartStamps(t *testing.T) {
 	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonConfirmMissing+":") {
 		t.Fatalf("a proved caller = %v, want the start's own refusal", err)
 	}
-	reads, flipAt = map[int]int{}, func(p, n int) bool { return p == 600 && n >= 2 }
+	reads, flipAt = map[int]int{}, func(p, n int) bool { return p == 600 && n == 2 } // seen at its mid-hop read only
 	if err := apply(); err == nil || !strings.HasPrefix(err.Error(), ReasonCallerUnproved+":") {
 		t.Fatalf("a stamp changed during the walk = %v", err)
 	}
@@ -433,9 +445,11 @@ func TestTheStartAcceptsOnlyAWitnessedFreshConfirmation(t *testing.T) {
 	s.witness(confirmRecord{Digest: digest, Door: DoorShell, At: time.Now().Add(-31 * time.Minute), By: "x", Proof: confirmProof{PIDChain: []confirmHop{{PID: 500}}}})
 	doors(start(), ReasonConfirmStale)
 	before := sharedSnapshot()
+	// a fresh witness of another digest is no confirmation of this one
+	s.unwitness(digest)
 	other := "sha256:" + strings.Repeat("ab", 32) + "@absent"
 	s.witness(confirmRecord{Digest: other, Door: DoorTUI, At: time.Now(), By: "x", Proof: confirmProof{PID: 4242}})
-	doors(start(), ReasonConfirmStale)
+	doors(start(), ReasonConfirmMissing)
 	if len(sharedDelta(before)) != 0 {
 		t.Fatalf("steps ran: %v", sharedDelta(before))
 	}
