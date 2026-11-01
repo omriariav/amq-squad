@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -587,5 +588,54 @@ func TestTheShellApplyEnumeratesSessionsLiterallyAndFailsClosed(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(base, 0o755) })
 	if err := noLeadHolds(proj, digest); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") || !strings.Contains(err.Error(), base) {
 		t.Fatalf("an unreadable .agent-mail = %v", err)
+	}
+}
+
+// Codex's narrow pass on #834, P2: the discovery record is read without
+// following a link or blocking. A record that is a symlink (to a FIFO with
+// no writer), or a FIFO itself, neither hangs the apply that holds the
+// apply lock nor is followed: each is a stale record, removed with a
+// discovery_stale decision naming why, and the probe goes on as no lead.
+func TestADiscoveryRecordThatIsALinkOrAFIFODoesNotHangTheApply(t *testing.T) {
+	proj, root := soloProject(t)
+	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
+	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	probe := func(why string) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- noLeadHolds(proj, digest) }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("%s: %v", why, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the probe hung", why)
+		}
+		if _, err := os.Lstat(rec); err == nil {
+			t.Fatalf("%s: the record was not removed", why)
+		}
+		found := false
+		for _, d := range decisionKinds(t, root) {
+			found = found || (d.Kind == KindDiscoveryStale && strings.Contains(d.Reason, "not a regular file"))
+		}
+		if !found {
+			t.Fatalf("%s: no discovery_stale decision names it", why)
+		}
+	}
+	if err := os.Symlink(fifo, rec); err != nil {
+		t.Fatal(err)
+	}
+	probe("a record that is a symlink to a FIFO")
+	if err := syscall.Mkfifo(rec, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	probe("a record that is a FIFO")
+	if _, err := os.Stat(fifo); err != nil {
+		t.Fatalf("the link's target was touched: %v", err)
 	}
 }

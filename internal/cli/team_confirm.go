@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
@@ -404,16 +405,20 @@ func soloLeadProbe(project string) error {
 		return err
 	}
 	rec := filepath.Join(root, "extensions", "amq-squad", leadStartRecordName)
-	raw, err := os.ReadFile(rec)
+	raw, err := readDiscoveryRecord(rec)
+	why := "it is malformed"
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return nil
+	case errors.Is(err, errDiscoveryNotRegular):
+		// a symlink, a FIFO or anything but a regular file is no lead's
+		// record (the lead writes a regular file): stale
+		why, raw = err.Error(), nil
 	case err != nil:
 		return fmt.Errorf("%s: %s cannot be read (%v)", ReasonLeadUnreachable, rec, err)
 	}
 	var r leadStartRecord
-	why := "it is malformed"
-	if json.Unmarshal(raw, &r) == nil && r.PID > 1 && r.Start != "" {
+	if raw != nil && json.Unmarshal(raw, &r) == nil && r.PID > 1 && r.Start != "" {
 		st, detail := schedproc.LeadState(r.PID, r.Start, confirmStamp, discoveryAlive)
 		switch st {
 		case schedproc.LeadAlive:
@@ -437,9 +442,49 @@ func soloLeadProbe(project string) error {
 	return nil
 }
 
+// discoveryRecordMax bounds a discovery record's read.
+const discoveryRecordMax = 4 << 10
+
+// errDiscoveryNotRegular is a discovery record that is not a regular file.
+var errDiscoveryNotRegular = errors.New("it is not a regular file")
+
+// readDiscoveryRecord reads a discovery record without following a link or
+// blocking: Lstat must show a regular file, the open is O_NOFOLLOW and
+// O_NONBLOCK (a FIFO swapped in after the Lstat neither hangs nor is
+// followed), the open file must still be regular, and at most
+// discoveryRecordMax bytes are read (a larger record is malformed).
+func readDiscoveryRecord(path string) ([]byte, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, errDiscoveryNotRegular
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ELOOP) {
+		return nil, errDiscoveryNotRegular
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return nil, errDiscoveryNotRegular
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, discoveryRecordMax+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > discoveryRecordMax {
+		return []byte("{}"), nil // malformed: no pid, no stamp
+	}
+	return raw, nil
+}
+
 // dialLead connects to the solo lead of root: no_lead when none serves it.
 func dialLead(root string) (io.ReadWriteCloser, error) {
-	raw, err := os.ReadFile(filepath.Join(root, "extensions", "amq-squad", leadStartRecordName))
+	raw, err := readDiscoveryRecord(filepath.Join(root, "extensions", "amq-squad", leadStartRecordName))
 	var rec leadStartRecord
 	if err != nil || json.Unmarshal(raw, &rec) != nil || rec.Socket == "" {
 		return nil, fmt.Errorf("%s: no solo lead serves %s", ReasonNoLead, root)
