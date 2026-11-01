@@ -97,6 +97,12 @@ bindings is the smallest diff: the command and its UI path exist and are
 testable with the stand-in pi; a `registerShortcut` binding can be added
 later without changing any verb.
 
+A cancel at any dialog aborts the key with one line, `cancelled, nothing
+run`, and no verb runs (Codex P2 2 on #831): pi's dialogs return nothing
+on a cancel, and a cancelled files or pool dialog is never read as an
+empty value. A typed pool left empty at reset also aborts, since a reset
+with the old pool would return the task to dispatch.
+
 After a key, the screen shows its outcome as one line at its foot (`key
 <name>: ...`, or `key <name> refused: <the verb's line>`), then reads status
 again at once. The foot also lists the keys. Collapsed, the outcome is a
@@ -191,6 +197,7 @@ target and prefix for each of the five typed actions (pi/test/keys.test.ts,
 | 5 | PR 2 (the widen key waits for t26) |
 | 6 | pi `reset: task reset, --pool for a picked pool, and a refusal by name` (`repin_after_attempt` and `reset refused` shown as the verb printed them) |
 | 7 | pi `clear: the acknowledgement names the warning and the launch; the line leaves the screen; the seat's state does not`; status `TestAClearedWarningLeavesTheScreenForItsLaunchOnly` (acknowledged, state, reason code, bucket, live and outcome unchanged, another seat untouched, the next launch's same condition a warning again, a clear of the earlier launch refused); Codex P2 1: schedproc `TestRecordClearAcceptsOnlyAWarningShowingOnTheCurrentLaunch` (`clear_not_a_warning` for refusal codes, `clear_not_showing`, stale, malformed), status `TestAWarningCannotBeClearedBeforeItShows`, `TestTheClearableCodesAreStatusSeatWarnings`; cli `TestClearKeyIsProvedFromTheLeadsDescendant` runs the socket as `decisionOptions` wires it |
+| Codex P2 2 | pi `a cancel at any dialog aborts the key and runs no verb` (add cancelled at each of its four dialogs, reset at the pool dialog and at the typed pool, clear and answer at their pick: no verb runs) |
 | 8 | Q7 no: pi `answer, Q7 no: an unposted question is posted over Buzz; a gate answered over Buzz is closed and refused`; the model cannot write an answer (row 2) |
 | 9 | Q7 no: pi `answer, Q7 no: every typed gate kind waits on Buzz and no terminal answer is written` (tag, github_release, external_send, credential_change, spawn) |
 

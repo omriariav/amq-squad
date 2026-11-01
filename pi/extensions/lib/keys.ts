@@ -31,6 +31,9 @@ export type KeyName = (typeof KEYS)[number];
 
 const CLASSES = ["implement", "extract", "summarize", "script", "plan", "review"];
 const KEEP_POOL = "keep its pool";
+// CANCELLED is a key aborted at any dialog (Codex P2 2 on #831): pi's
+// dialogs return undefined on a cancel, and a cancelled key runs no verb.
+const CANCELLED = "cancelled, nothing run";
 const TYPE_POOL = "type a pool (runtime:model:effort)";
 
 // KeyOutcome is what the key leaves on the screen: its line, and whether
@@ -117,11 +120,15 @@ export class Keys {
 	async add(ctx: ExtensionContext): Promise<KeyOutcome> {
 		const k = "add";
 		const title = (await ctx.ui.input("add task: title"))?.trim();
-		if (!title) return { key: k, refused: false, line: "cancelled" };
+		if (!title) return { key: k, refused: false, line: CANCELLED };
 		const cls = await ctx.ui.select("add task: class", CLASSES);
-		if (!cls) return { key: k, refused: false, line: "cancelled" };
-		const files = splitList(await ctx.ui.input("add task: declared files (comma-separated)"));
-		const pool = (await ctx.ui.input("add task: pool runtime:model:effort (empty: the router picks)"))?.trim();
+		if (!cls) return { key: k, refused: false, line: CANCELLED };
+		const filesIn = await ctx.ui.input("add task: declared files (comma-separated)");
+		if (filesIn === undefined) return { key: k, refused: false, line: CANCELLED };
+		const files = splitList(filesIn);
+		const poolIn = await ctx.ui.input("add task: pool runtime:model:effort (empty: the router picks)");
+		if (poolIn === undefined) return { key: k, refused: false, line: CANCELLED };
+		const pool = poolIn.trim();
 		const argv = [...toolArgv.taskAdd(this.cfg, { title, class: cls, files, pool: pool || undefined }), "--json"];
 		const r = await this.verb(argv);
 		if (failed(r)) return { key: k, refused: true, line: refusal(r) };
@@ -137,13 +144,18 @@ export class Keys {
 		if (!blocked.length) return { key: k, refused: true, line: "no blocked task" };
 		const labels = blocked.map((t) => `${t.id}  ${t.block_reason || "blocked"}`);
 		const pick = await ctx.ui.select("reset: which blocked task", labels);
-		if (!pick) return { key: k, refused: false, line: "cancelled" };
+		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const t = blocked[labels.indexOf(pick)];
 		const pools = [...new Set(st.seats.filter((s) => s.runtime && s.model).map((s) => [s.runtime, s.model, s.effort].filter(Boolean).join(":")))];
 		const choice = await ctx.ui.select(`reset ${t.id}: pool`, [KEEP_POOL, ...pools, TYPE_POOL]);
-		if (!choice) return { key: k, refused: false, line: "cancelled" };
+		if (!choice) return { key: k, refused: false, line: CANCELLED };
 		let pool = choice === KEEP_POOL ? "" : choice;
-		if (choice === TYPE_POOL) pool = (await ctx.ui.input(`reset ${t.id}: pool runtime:model:effort`))?.trim() ?? "";
+		if (choice === TYPE_POOL) {
+			// a cancelled (or empty) typed pool aborts: a reset with the old
+			// pool would return the task to dispatch, which was not asked
+			pool = (await ctx.ui.input(`reset ${t.id}: pool runtime:model:effort`))?.trim() ?? "";
+			if (!pool) return { key: k, refused: false, line: CANCELLED };
+		}
 		const argv = toolArgv.taskReset(this.cfg, { id: t.id });
 		if (pool) argv.push("--pool", pool);
 		argv.push("--json");
@@ -167,7 +179,7 @@ export class Keys {
 		}
 		if (!lines.length) return { key: k, refused: true, line: "no warning line to clear" };
 		const pick = await ctx.ui.select("clear: acknowledge which warning line (never a gate; the seat's state does not change)", lines.map((l) => l.label));
-		if (!pick) return { key: k, refused: false, line: "cancelled" };
+		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const l = lines.find((x) => x.label === pick)!;
 		const r = await this.verb(["scheduler", "clear", "--seat", l.seat, "--warning", l.code, "--launch", l.launch, "--json"]);
 		if (failed(r)) return { key: k, refused: true, line: `${l.seat} ${l.code}: ${refusal(r)}` };
@@ -184,7 +196,7 @@ export class Keys {
 		if (!open.length) return { key: k, refused: true, line: "no open gate" };
 		const labels = open.map((g) => `${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}`);
 		const pick = await ctx.ui.select("answer: which gate (the terminal door is not built: Buzz answers it)", labels);
-		if (!pick) return { key: k, refused: false, line: "cancelled" };
+		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const id = open[labels.indexOf(pick)].id;
 		const s = await this.verb(["gate", "status", "--gate", id, "--json"]);
 		if (failed(s)) return { key: k, refused: true, line: `${id}: ${refusal(s)}` };

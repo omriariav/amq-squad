@@ -172,6 +172,39 @@ test("reset: task reset, --pool for a picked pool, and a refusal by name", async
 	assert.equal(none.calls.length, 0);
 });
 
+const gateDocForCancel: ScreenStatus = { ...fixture, gates: [{ id: "g1", action_class: "tag", target_digest: "sha256:8502aa0011223344", state: "open", raised_by: "qa" }] };
+
+// Codex P2 2 on #831: a cancel at any dialog aborts the key with one
+// "cancelled, nothing run" line and runs no verb. The add key cancelled at
+// each of its four dialogs (title, class, files, pool) runs nothing; the
+// reset key cancelled at the pool dialog, or at the typed pool, runs
+// nothing (a reset with the old pool would return the task to dispatch).
+// Reverted (a cancelled files or pool dialog read as empty), task add or
+// task reset runs.
+test("a cancel at any dialog aborts the key and runs no verb", async () => {
+	const addAnswers: (string | undefined)[][] = [
+		[undefined],
+		["Parser", undefined],
+		["Parser", "implement", undefined],
+		["Parser", "implement", "src/parse.go", undefined],
+	];
+	for (const answers of addAnswers) {
+		const r = rig(() => res(0, envelope("task_add", { task: { id: "t9", state: "pending" } })), answers);
+		assert.equal(keyLine(await r.press("add")), "  key add: cancelled, nothing run", JSON.stringify(answers));
+		assert.equal(r.calls.length, 0, JSON.stringify(answers));
+	}
+	for (const answers of [["t1  outside_declared_files", undefined], ["t1  outside_declared_files", "type a pool (runtime:model:effort)", undefined], [undefined]]) {
+		const r = rig(() => res(0, envelope("task_reset", {})), answers);
+		assert.equal(keyLine(await r.press("reset")), "  key reset: cancelled, nothing run", JSON.stringify(answers));
+		assert.equal(r.calls.length, 0, JSON.stringify(answers));
+	}
+	for (const key of ["clear", "answer"]) {
+		const r = rig(() => res(0, ""), [undefined], () => gateDocForCancel);
+		assert.equal(keyLine(await r.press(key)), `  key ${key}: cancelled, nothing run`);
+		assert.equal(r.calls.length, 0);
+	}
+});
+
 // Row 7 (the extension's half): the clear key on a warning line runs
 // `scheduler clear` naming the seat, the warning's code and the seat's
 // launch; the screen reads status again at once, and the line is gone
