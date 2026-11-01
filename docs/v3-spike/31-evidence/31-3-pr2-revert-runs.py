@@ -67,7 +67,7 @@ run("a host fact leaving context --host unredacted",
  [('internal/cli/hook_context.go','\t\t*f = redact.Block(*f)\n','\t\t*f, _ = strings.Clone(*f), redact.Block\n')],
  C+"TestContextHostCarries")
 run("the AMQ version not read",
- [('internal/cli/hook_context.go','if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil {','if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil && false {')],
+ [('internal/cli/hook_context.go','if out, err := contextHostRun(c, h.Repository, amq, "--version"); err == nil {','if out, err := contextHostRun(c, h.Repository, amq, "--version"); err == nil && false {')],
  C+"TestContextHost")
 # section 4: the phase marker
 run("the yes writing no phase marker (the record)",
@@ -110,10 +110,10 @@ run("the lead's identity not switched to the squad's",
  [('pi/extensions/lib/team.ts','\t\tObject.assign(process.env, { AM_ROOT: m.root,','\t\tObject.assign({}, { AM_ROOT: m.root,')],
  P+"test/phase.test.ts")
 run("the switch riding the marker file, not the lead's reply",
- [('pi/extensions/lib/team.ts','\t\tif (d.team) this.switchToTeam(d.team);\n','\t\tthis.switchToTeam(d.team ?? JSON.parse(fs.readFileSync(path.join(this.soloRoot, "extensions", "amq-squad", "phase.json"), "utf8")));\n')],
+ [('pi/extensions/lib/team.ts','\t\tif (d.team && ok) this.switchToTeam(d.team);\n','\t\tthis.switchToTeam(d.team ?? JSON.parse(fs.readFileSync(path.join(this.soloRoot, "extensions", "amq-squad", "phase.json"), "utf8")));\n')],
  P+"test/phase.test.ts")
 run("amq_team_apply's success not switching",
- [('pi/extensions/lib/team.ts','\t\tif (d.team) this.switchToTeam(d.team);\n','\t\tif (d.team && false) this.switchToTeam(d.team);\n')],
+ [('pi/extensions/lib/team.ts','\t\tif (d.team && ok) this.switchToTeam(d.team);\n','\t\tif (d.team && false) this.switchToTeam(d.team);\n')],
  P+"test/phase.test.ts")
 run("a session started after the yes not switching on the lead's answer",
  [('pi/extensions/lib/team.ts','\t\tif (t) team.switchToTeam(t);\n','\t\tif (t && false) team.switchToTeam(t);\n')],
@@ -173,5 +173,73 @@ run("a host fact interpolated unredacted in the extension",
  P+"test/phase.test.ts")
 run("a missing fact left blank, not named missing",
  [('pi/extensions/lib/firstturn.ts','const MISSING = "missing";','const MISSING = "";')],
+ P+"test/phase.test.ts")
+# Codex's re-check on #837, item 1: the lead proves its replies to its pi
+run("the lead proving no reply",
+ [('internal/cli/lead_start.go','\t\treply.Proof = leadProof(nonce, req.Challenge, reply)\n','\t\t_ = nonce\n')],
+ C+"TestTheLeadAnswersItsPis")
+run("the challenge not passed through team apply",
+ [('internal/cli/lead_start.go','Project: project, Challenge: challenge})','Project: project})')],
+ C+"TestTheLeadAnswersItsPis")
+run("no nonce handed to pi at the spawn",
+ [('internal/cli/pi_exec_unix.go','\tif piSpawnNonce != "" {','\tif false {')],
+ C+"TestRunProcessHands")
+run("the nonce put in pi's environment",
+ [('internal/cli/pi_lead.go','\t\tsolo[leadNonceFDEnv] = "3"','\t\tsolo[leadNonceFDEnv] = nonce')],
+ C+"TestTheSoloLeadServes")
+run("pi taking an unproved reply",
+ [('pi/extensions/lib/team.ts','\tif (!nonce || typeof r.proof !== "string" || !/^[0-9a-f]{64}$/.test(r.proof)) return false;','\treturn true;')],
+ P+"test/phase.test.ts")
+run("the apply switching on an unproved start reply",
+ [('pi/extensions/lib/team.ts','\t\tif (d.team && ok) this.switchToTeam(d.team);\n','\t\tif (d.team) this.switchToTeam(d.team);\n')],
+ P+"test/phase.test.ts")
+run("the phase query's reply taken unproved",
+ [('pi/extensions/lib/team.ts','const r = await askLeadProved(this.socket, { kind: PHASE_KIND }, this.nonce);','const r = (await askLead(this.socket, { kind: PHASE_KIND })) as LeadReply & { team?: TeamIdentity };')],
+ P+"test/phase.test.ts")
+run("the nonce sent over the socket",
+ [('pi/extensions/lib/team.ts','await askLead(socket, { ...req, challenge }, timeoutMs)','await askLead(socket, { ...req, challenge, nonce }, timeoutMs)')],
+ P+"test/phase.test.ts")
+run("the nonce's descriptor left open",
+ [('pi/extensions/lib/team.ts','\t\t\tfs.closeSync(fd);\n','\t\t\tvoid fd;\n')],
+ P+"test/phase.test.ts")
+# item 2: one budget, every group swept, the extension's timeout above it
+run("each host command given its own deadline",
+ [('internal/cli/hook_context.go','\tif err := c.ctx.Err(); err != nil {\n\t\treturn "", fmt.Errorf("%s not run','\tif err := c.ctx.Err(); err != nil && false {\n\t\treturn "", fmt.Errorf("%s not run'),
+  ('internal/cli/hook_context.go','\tctx, cancel := context.WithCancel(c.ctx)\n','\tctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)\n')],
+ C+"TestContextHostShares")
+run("the started groups not swept when the read ends",
+ [('internal/cli/hook_context.go','\t\tcancel()\n\t\tc.sweep()\n','\t\tcancel()\n')],
+ C+"TestContextHostShares")
+run("the extension's context --host timeout at the hook timeout",
+ [('pi/extensions/lib/hooks.ts','const timeoutMs = host ? Math.max(cfg.hookTimeoutMs, CONTEXT_HOST_TIMEOUT_MS) : cfg.hookTimeoutMs;','const timeoutMs = cfg.hookTimeoutMs;')],
+ P+"test/phase.test.ts")
+# item 3: the offer's steps work as written
+run("the restart offer's old steps (Go)",
+ [('internal/cli/lead_start.go','"To resume it: quit this lead and run `amq-squad up`. "+','"Run `amq-squad up` to resume it. "+')],
+ C+"TestASoloLeadRestartedInAMarked")
+run("the restart offer's old steps (pi)",
+ [('pi/extensions/lib/team.ts','"To resume it: quit this lead and run `amq-squad up`. " +','"Run `amq-squad up` to resume it. " +')],
+ P+"test/phase.test.ts")
+# item 4: the host key follows the real changes
+run("the .git directory assumed (no git rev-parse)",
+ [('pi/extensions/lib/firstturn.ts','\t\tconst git = await this.gitDirs(project);\n','\t\tconst git = project ? { dir: path.join(project, ".git"), common: path.join(project, ".git") } : undefined;\n')],
+ P+"test/phase.test.ts")
+run("the ref HEAD names not keyed",
+ [('pi/extensions/lib/firstturn.ts','\t\t\tif (ref) parts.push(st(path.join(git.common, ref)));\n','\t\t\tvoid ref;\n')],
+ P+"test/phase.test.ts")
+run("answers/ not keyed",
+ [('pi/extensions/lib/firstturn.ts','const GATE_DIRS = ["gates", "answers", "denials",','const GATE_DIRS = ["gates", "denials",')],
+ P+"test/phase.test.ts")
+run("an expired gate not keyed",
+ [('pi/extensions/lib/firstturn.ts','\t\tparts.push(`expired:${expiredGates(path.join(ext, "gates"), this.now())}`);\n','')],
+ P+"test/phase.test.ts")
+run("the launch record not keyed",
+ [('pi/extensions/lib/firstturn.ts','\tif (me) paths.push(path.join(ext, "launch", me, "launch.json"));\n','')],
+ P+"test/phase.test.ts")
+run("the AMQ executable not keyed",
+ [('pi/extensions/lib/firstturn.ts','\t\tif (amq) parts.push(st(amq));\n','\t\tvoid amq;\n')],
+ P+"test/phase.test.ts")
+run("the amq-squad binary not keyed",
+ [('pi/extensions/lib/firstturn.ts','\t\tif (path.isAbsolute(this.cfg.bin)) parts.push(st(this.cfg.bin));\n','')],
  P+"test/phase.test.ts")
 print(f"{RUNS[0]} runs, {RUNS[1]} caught, {RUNS[0]-RUNS[1]} missed")
