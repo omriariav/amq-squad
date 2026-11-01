@@ -669,6 +669,49 @@ func TestAFailingRecordStorePostsNothing(t *testing.T) {
 	}
 }
 
+// flakyPoster fails the publishes whose call numbers are in fail.
+type flakyPoster struct {
+	inner Poster
+	calls int
+	fail  map[int]bool
+}
+
+func (f *flakyPoster) Post(ctx context.Context, text, replyTo string) (string, error) {
+	f.calls++
+	if f.fail[f.calls] {
+		return "", errors.New("relay closed the connection")
+	}
+	return f.inner.Post(ctx, text, replyTo)
+}
+
+// Codex P2-5: a later part's failure loses nothing. Part two fails once;
+// the next tick posts it from the record, part one is not posted again,
+// and the reply is handled only then.
+func TestAFailedPartPostsNextTickWithoutRepeatingTheFirst(t *testing.T) {
+	pf := newPhoneFixture(t)
+	flaky := &flakyPoster{inner: pf.h.Poster, fail: map[int]bool{2: true}}
+	pf.h.Poster = flaky
+	_, rid := pf.ask(t, "send the full log", "")
+	long := strings.TrimSpace(strings.Repeat(strings.Repeat("word ", 300)+"\n\n", 4))
+	reply := pf.threads.reply("lead-a", CockpitThread(rid), long, "")
+	if _, err := pf.h.RelayStep(context.Background()); err == nil {
+		t.Fatal("the failed part reported no error")
+	}
+	rec := pf.record(t, rid)
+	if len(pf.relayPosts()) != 1 || rec.Posting == nil || len(rec.Posting.Events) != 1 || slices.Contains(rec.Seen, reply) {
+		t.Fatalf("after part two failed: %d posts, record %+v", len(pf.relayPosts()), rec.Posting)
+	}
+	got := pf.relay(t)
+	posts := pf.relayPosts()
+	if len(got) != 1 || got[0].Outcome != "posted" || len(got[0].Events) != 2 || len(posts) != 2 ||
+		!strings.HasPrefix(posts[0].Content, "re "+rid+" (1/2)") || !strings.HasPrefix(posts[1].Content, "re "+rid+" (2/2)") {
+		t.Fatalf("the next tick: %+v, %d posts", got, len(posts))
+	}
+	if rec := pf.record(t, rid); rec.Posting != nil || !slices.Contains(rec.Seen, reply) || len(rec.Posts) != 1 {
+		t.Fatalf("the record after both parts: %+v", rec)
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.
