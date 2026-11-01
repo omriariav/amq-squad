@@ -119,6 +119,12 @@ reason and runs `task widen ID --path ... --reason ... --json` over the
 socket, as `amq_task_widen` does. With no typed block there is no widen
 key; `/squad widen` is refused as an unknown key today.
 
+The widen key's motivating case is t26 itself, on day 3: the task that
+builds the typed widen route was blocked by the free-text route
+(`scope_widen_needed`, with six files named in prose), and the decision
+waited for the owner because R4 makes a widening the lead's pane's. That
+block is the typed widen block's first live case.
+
 ### 3.3 Where the clear decision lives
 
 internal/schedproc/clear.go. The clear is a fourth request kind on the
@@ -287,5 +293,13 @@ tmux attach -t "$(tmux list-sessions -F '#{session_name}' | grep '^squad-lead-' 
   no terminal door there is no second answer to refuse; the key reads the
   gate fresh and refuses a gate that is not open by its state.
 - **Row 4** is section 5.
+- **The day-3 rule on the lead handle (plan reviewer), for a later PR.**
+  No file a seat reads names the lead handle as a literal: the handle comes
+  from squad.yaml through roleText at launch. On day 3,
+  .amq-squad/team-rules.md lines 15 and 57 said "The lead is `cto`" while
+  the lead ran as "lead" (no `--lead` was passed on 3.0.2), and the
+  reviewer seat on t26 reported "lead inactive/unregistered". A row that
+  greps the compiled seat texts for a literal lead handle belongs to a
+  later PR; this PR adds no seat text.
 - **The commit trailer** names the model this session ran on (Opus 5.5);
   the brief's template named Fable 5.1.
