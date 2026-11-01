@@ -172,7 +172,7 @@ run("marks (Mn, Me) not stripped (Codex re-check #3)", [(R,'case unicode.In(r, u
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 run("no confusables fold (Codex re-check #3)", [(R,'if l, ok := confusables[r]; ok {','if l, ok := confusables[r]; ok && false {')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
-run("status shows every historical refusal (Codex re-check #7)", [('internal/status/relay.go','if f.ClearedAt == nil && !f.At.Before(since) {','if f.ClearedAt == nil {')],
+run("status shows every historical refusal (Codex re-check #7)", [('internal/status/relay.go','if f.ClearedAt == nil && !f.At.Before(since) {','if f.ClearedAt == nil && (true || !f.At.Before(since)) {')],
     G+"./internal/status/ -run TestStatusShowsThePhoneRequests")
 run("an undelivered turn is kept (Codex re-check #5)", [(R,'if r, did, err := recoverUndelivered(dir, rec, now); did {','if r, did, err := recoverUndelivered(dir, rec, now); did && false {')],
     B+"TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed")
