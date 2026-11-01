@@ -44,7 +44,9 @@ Everything: [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) lists
 the release by phase. 3.0.1 is the first fix release, from the first squad run
 on this repository: [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md).
 3.0.2 is the second, from the second day of that run and the 3.0.1 release:
-[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). In short:
+[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). 3.1.0-rc.1 is the
+first candidate of 3.1, which puts launch speed and the lead's screen first:
+[docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md). In short:
 
 - `squad.yaml` schema 1 replaces the v2 profile, through `team propose` and
   `team apply` ([docs/squad-yaml.md](docs/squad-yaml.md)).
@@ -63,7 +65,7 @@ on this repository: [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md)
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.2
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.0-rc.1
 amq-squad version
 ```
 
@@ -513,7 +515,7 @@ amq-squad migrate .amq-squad/team.json
 | The 3.0 plan, its rulings, phases and recorded limits | [docs/v3-plan.md](docs/v3-plan.md) |
 | The phase briefs and their rulings | [docs/v3-phase2-briefs.md](docs/v3-phase2-briefs.md) |
 | Execution logs and evidence per brief | [docs/v3-spike/](docs/v3-spike/) |
-| Release notes | [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
+| Release notes | [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
 | squad.yaml schema 1 | [docs/squad-yaml.md](docs/squad-yaml.md) |
 | Status contract, schema 1 | [docs/status-contract.md](docs/status-contract.md) |
 | Claude Code seat hooks | [docs/claude-hooks.md](docs/claude-hooks.md) |
