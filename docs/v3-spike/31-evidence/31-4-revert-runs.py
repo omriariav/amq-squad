@@ -149,7 +149,7 @@ run("no normalization (Codex P2-4)", [(R,'func normalizeLine(s string) string {\
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 run("the DM marked handled although its record failed (Codex P2-6)", [(I,'\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\treturn','\t\th.final(ctx, hd, "refused - "+RelayRecordFailed)\n\t\t_ = h.seen.put(id, "-", now)\n\t\treturn')],
     B+"TestTheRecordComesBeforeTheQuestion")
-run("a failed delivery keeps its record (Codex P2-6)", [(I,'\t\tundo()\n','')],
+run("a failed delivery keeps its record (Codex P2-6)", [(I,'\t\tundo()\n','\t\t_ = undo\n')],
     B+"TestTheRecordComesBeforeTheQuestion")
 run("the helper without AMQ_NO_UPDATE_CHECK (Codex P2-7)", [('internal/buzz/helpers_test.go',', "AMQ_NO_UPDATE_CHECK": "1"}','}')],
     B+"TestTestsExecAMQOnlyThroughTheHelper")
