@@ -321,23 +321,26 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	if !ok {
 		return refusedAs(ReasonEventUnverified, "event %s is not yes <16 hex>", e.ID[:12])
 	}
+	// once-only, restart-proof and atomic: the check and the mark under one
+	// lock; the event ids this lead or an earlier one witnessed are in the
+	// lead's log, read here to refuse a replay and for nothing else
 	s.wmu.Lock()
-	replayed := s.seen[e.ID]
-	s.wmu.Unlock()
-	if replayed {
+	defer s.wmu.Unlock()
+	if s.seen[e.ID] || eventLogged(s.root, e.ID) {
 		return refusedAs(gatestore.RejectReplayed, "event %s was witnessed already", e.ID[:12])
 	}
 	prop, err := proposalByPrefix(s.root, prefix, now)
 	if err != nil {
 		return refusedBy(err)
 	}
-	s.wmu.Lock()
+	if err := logEvent(s.root, e.ID, prop.Digest, now); err != nil {
+		return refusedAs("event_unrecorded", "event %s could not be logged as witnessed, so it is not witnessed: %v", e.ID[:12], err)
+	}
 	if s.seen == nil {
 		s.seen = map[string]bool{}
 	}
 	s.seen[e.ID] = true
-	s.wmu.Unlock()
-	return s.witness(confirmRecord{Digest: prop.Digest, Door: DoorBuzz, At: now.UTC(), By: "owner key " + e.PubKey, Proof: confirmProof{EventID: e.ID}})
+	return s.witnessLocked(confirmRecord{Digest: prop.Digest, Door: DoorBuzz, At: now.UTC(), By: "owner key " + e.PubKey, Proof: confirmProof{EventID: e.ID}})
 }
 
 // leadStartBeforeAct runs between the request's read and the last proof of

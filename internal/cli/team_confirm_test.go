@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -270,6 +271,48 @@ func TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified(t *testing.T
 	}
 	if r := ask(genuine.Marshal()); r.Refusal != gatestore.RejectReplayed {
 		t.Fatalf("a replay = %+v", r)
+	}
+	// a restarted lead (a new process on the same root) refuses the replay
+	// too: the witnessed event ids are in the lead's log, read for refusal
+	restarted := newLeadStarter(root, proj, "test", nil)
+	if r := restarted.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: genuine.Marshal()}); r.Refusal != gatestore.RejectReplayed {
+		t.Fatalf("a replay to a restarted lead = %+v", r)
+	}
+	if _, err := restarted.witnessFor(digest); err == nil {
+		t.Fatal("the restarted lead witnessed the replayed event")
+	}
+}
+
+// Row 1d, once-only and atomic: sixteen concurrent submissions of one
+// owner-signed event yield exactly one witness; the check and the mark sit
+// under one lock.
+func TestTheBuzzDoorWitnessesOneEventOnceUnderConcurrency(t *testing.T) {
+	f := newGateCLIFixture(t)
+	proj, root := soloProject(t)
+	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
+	s := newLeadStarter(root, proj, "test", nil)
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", "dm-chan"}}, Content: "yes " + team.DigestPrefix(digest)}
+	if err := f.owner.Sign(&e); err != nil {
+		t.Fatal(err)
+	}
+	raw := e.Marshal()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	witnessed := 0
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if r := s.witnessBuzz(leadStartRequest{Kind: confirmBuzzKind, Event: raw}); r.Outcome == "witnessed" {
+				mu.Lock()
+				witnessed++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if witnessed != 1 {
+		t.Fatalf("%d witnesses of one event", witnessed)
 	}
 }
 
