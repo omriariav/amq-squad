@@ -1,0 +1,643 @@
+# 3.1.1-1: the gate question in plain words, answered with a bare yes or no
+
+Brief: docs/v3-spike/briefs/brief-311-gate-language.md (copied verbatim in
+this PR). Authority: the owner, 2026-11-01, after answering the rc.1 gates
+on the phone ("simple language, not these hash and unclear language"; "Why
+adding a code? It's Buzz and it's authenticated and safe."), with the plan
+reviewer's shape: no code of any kind, the thread reply plus the signature
+is the binding. Branch v3-311-gate, from origin/v3 `6191a997` (#835: the
+two-way phone and the squad verbs merged), with origin/v3 merged in once
+when it moved to `ca35fd3b` (#836).
+
+**This is 3.1.1's first item.** It lands only after the v3.1.0 tag exists:
+R54 cuts 3.1.0 with the installed binary, so the 3.1.0 gates read the old
+way whatever merges.
+
+## 1. What the tip had, before any code
+
+- **The question text** was one renderer, `gatestore.TextFor`: the gate id,
+  the squad, `class: release (tag)`, the target line (`git tag v3.1.0-rc.1
+  4852f761... on omriariav/amq-squad`), the full digest, then "Reply in this
+  thread with one line:" and the two typed tuples to copy. The record holds
+  that text, and `Record.Validate` requires it to be the rendering of the
+  record's own fields. Every raiser (the release flow, the merge train's
+  escalator, the widen's growth gate, the guard's `gate raise`) goes through
+  it; none of them had its own text.
+- **The answer** was the tuple only (`gatestore.ParseAnswer`): `approve|deny
+  <gate id> <class> <16+ hex>`. The core took the gate id from the tuple;
+  `Verify` then checked the thread (every e tag names this gate's question
+  or re-ask) and the signature under the pinned owner key. So the thread and
+  the signature already bound the answer; the tuple was a second binding.
+- **The re-ask** (`ReaskText`) and the history re-ask asked for the tuple
+  again, "with one line".
+- **The screen's gates block** (pi/extensions/lib/screen.ts) showed `id
+  action prefix age waiting on Buzz` from `status --json`, whose gate rows
+  carried no text; **the answer key** (keys.ts) showed `id class (typed)
+  target prefix <16 hex>` from `gate status`.
+- **The team confirmation over Buzz** (brief 31-3) was `yes <16 hex>` in a
+  DM; brief 31-4's relay posts the lead's replies to the owner's DM as the
+  share body. 31-3's note named the 3.1.1 seam: the handler's `teamYes` and
+  `confirmByPrefix`.
+- **No relaunch gate exists.** A relaunch is a screen key and a scheduler
+  request (internal/schedproc, `RelaunchRequestKind`); it raises no owner
+  gate, so there is no relaunch question to compose (section 8).
+- **The PR's title was read nowhere.** The forge's `gh pr view` asked for
+  number, state, draft, base, heads, mergeable and merge commit only.
+
+## 2. The change
+
+1. **Three plain lines above a rule** (internal/gatestore/plain.go).
+   `TextOf` is now the one renderer: what is asked (a question), the quoted
+   title when the raiser read one, why now, and what yes and no do; a blank
+   line; the rule `----------`; the identifiers for the record, unchanged
+   for the verifier (the gate id, the squad, the class and action, the
+   target line, the full digest, whose first 16 hex are the typed form's
+   prefix). Each target shape of internal/gatetarget's table has its
+   sentence frame, the class in words from one fixed list (`ClassWords`: a
+   tag, a GitHub release, a package release, an outside message, a
+   credential change, growth past the grant, a task widen, a merge). A field
+   value shown above the rule has any hex run of 8 or more cut to 7 and an
+   ellipsis; a title is quoted on its own line and cut at 80 characters with
+   an ellipsis.
+2. **The second line states only what a record says.** `Record.Facts` is a
+   new additive field, the values a raiser read from its own records: the
+   release prepare's branch (prepare raises its two gates only after
+   `Flow.CheckCommit` found the commit on the branch: "The prepare found its
+   commit on v3."), the merge train's PR title (now read with `gh pr view
+   --json ...,title,...`) and base, the widen's task title. The train's
+   refused rules are in the target already: "The train refused it: its
+   checks are not green and it changes files outside its task." A widen's
+   refusal is its target's limit: "The grant refused the widen at
+   docs/** and 1 more." With no recorded fact (a seat's gated command, the
+   squad's growth by seats) the line names the raiser: "Asked by lead-a."
+   The record's text stays the rendering of its own fields (facts included),
+   so a record whose facts were edited no longer validates. `SafeFacts`
+   leaves out a value that would not validate, so what a raiser read never
+   stops its gate. A record raised by 3.1.0 (the old text, no facts) still
+   validates and verifies.
+3. **The bare answer** (`gatestore.ParseBare`, gateverify). `yes`, `no`,
+   `approve`, `deny` alone, case and trailing punctuation ignored. `Verify`
+   takes it as the record's own answer (`Record.BareAnswer`) and then checks
+   the thread exactly as for a tuple: every thread reference must name this
+   gate's question or re-ask. The core finds the gate a bare answer is for by
+   its thread (`Core.bareGate`): the one gate whose question or re-ask the
+   references name. A bare answer with no reference goes to the one open
+   gate, where `Verify` refuses it as not in the thread and the core re-asks
+   there; with no open gate, or several, it names none and is refused
+   `not_in_gate_thread` with no re-ask. A reference to two gates, or to
+   something that is no gate's, is `wrong_gate_thread`. The tuple form keeps
+   verifying; no row of it changed.
+4. **The plain re-ask.** "Reply yes or no to this message." above the rule,
+   the gate id below. The history re-ask shows the question as raised and
+   the same line; neither carries a tuple.
+5. **The Buzz handler** sends a bare yes or no that continues no request to
+   the gate path (`isGateAnswer`), never to a lead as a phone request, and
+   to the squad whose question its thread names (`bareCore`; outside every
+   thread, the one squad with an open gate; with two, `ambiguous_gate`).
+6. **The screen and the key.** `status --json` gains `gates[].question`,
+   additive: the question's plain lines (`gatestore.Plain`, the text above
+   the rule; `""` for a 3.1.0 gate). The gates block shows them verbatim,
+   then the identifiers line indented below. The answer key shows the
+   record's text above the rule verbatim (from `gate status`'s `text`), then
+   the identifiers, and says to reply yes or no in the question's Buzz
+   thread.
+7. **The team confirmation, a bare yes replied to the relayed plan post.**
+   When a bare yes replies (parent, else root) to one of the relay's own
+   posts (by the relay records), the handler fetches that post on the
+   verifier's connection, checks it is the body's kind 9 in the DM channel
+   and names a digest-shaped word (`gateverify.PlanPrefixes`), and hands the
+   confirmer the yes and the post's bytes. `confirmByPrefix` finds the solo
+   root whose recent proposal the post names; a post naming none is
+   `gateverify.ErrNotAPlan`, and the handler goes on as for any reply to
+   that post (it continues the request). The lead verifies both sets of
+   bytes itself, with no connection and no key: the yes as before (the
+   owner's pinned key, the id recomputed, kind, channel, window, once-only)
+   and the post (the share body's pinned key, its id recomputed, a DM in the
+   channel, the yes naming it in its thread, the proposal its content names).
+   So the attachment can withhold a yes but cannot move it to another
+   proposal. The refusal's doors text and the plan block now say "reply yes
+   to the lead's Buzz post that relays this plan with its digest"; the
+   prefix form keeps verifying, and no text asks for it.
+
+### 2.1 Choices where the brief left one (the smallest diff)
+
+- The rule is ten hyphens: shorter than the relay's 16-character question
+  line match (`buzz.MinQuestionLine`), so a lead reply with a markdown rule
+  is never refused for it, and set off by a blank line, so a markdown
+  renderer never reads the third line as a heading.
+- Facts are a record field, not text the raiser passes, because the record's
+  text must stay the rendering of the record's own fields (`Validate`).
+- A bare answer outside every thread is re-asked only when exactly one gate
+  is open; the brief did not say which gate a threadless yes is for.
+- The answer key's gate picker keeps its labels (id, action, prefix); the
+  line the key shows after the pick carries the question.
+- The merge and release yes/no lines say what the approval lets happen: "Yes
+  lets the train merge it." (the approval lifts the refusal; the train
+  merges on its run), "Yes creates the tag." (the brief's words).
+- The status field is additive and always present (`""` for a 3.1.0 gate),
+  so the golden fixtures carry it.
+
+## 3. The text of each gate class, before and after
+
+Composed by the code for the sample targets of gatestore's row (the squad and digest lines are each sample's own). Every target shape of internal/gatetarget's table is in the row; one per class and raiser here.
+
+### tag (the release flow)
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-tag-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (tag)
+target: git tag v3.1.0-rc.1 4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d on omriariav/amq-squad
+digest: sha256:f6a51dd34f46edebc69c9b727bbb850189b63dfd326ffd4dbab5d62d80d71fe5
+Reply in this thread with one line:
+approve rel-tag-0 release f6a51dd34f46edeb
+deny rel-tag-0 release f6a51dd34f46edeb
+```
+
+After (3.1.1):
+
+```text
+Create a tag for v3.1.0-rc.1 in omriariav/amq-squad?
+The prepare found its commit on v3.
+Yes creates the tag. No does nothing.
+
+----------
+amq-squad gate rel-tag-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (tag)
+target: git tag v3.1.0-rc.1 4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d on omriariav/amq-squad
+digest: sha256:f6a51dd34f46edebc69c9b727bbb850189b63dfd326ffd4dbab5d62d80d71fe5
+```
+
+### GitHub release (the release flow)
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-github-release-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (github_release)
+target: gh release create v3.1.0-rc.1 on omriariav/amq-squad
+digest: sha256:0ab60a1e35035211dbb92fdc81fb45ac6ed11bd96fe1553232ca9014be570698
+Reply in this thread with one line:
+approve rel-github-release-0 release 0ab60a1e35035211
+deny rel-github-release-0 release 0ab60a1e35035211
+```
+
+After (3.1.1):
+
+```text
+Publish a GitHub release for v3.1.0-rc.1 in omriariav/amq-squad?
+The prepare found its commit on v3.
+Yes creates the release. No does nothing.
+
+----------
+amq-squad gate rel-github-release-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (github_release)
+target: gh release create v3.1.0-rc.1 on omriariav/amq-squad
+digest: sha256:0ab60a1e35035211dbb92fdc81fb45ac6ed11bd96fe1553232ca9014be570698
+```
+
+### tag (a seat's git tag)
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-tag-2
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (tag)
+target: git tag v1.2.0
+digest: sha256:c71e53c9e17862bc992180544d0a0931b42bdc37d03e0154ce925468d02a5af3
+Reply in this thread with one line:
+approve rel-tag-2 release c71e53c9e17862bc
+deny rel-tag-2 release c71e53c9e17862bc
+```
+
+After (3.1.1):
+
+```text
+Create a tag named v1.2.0?
+Asked by lead-a.
+Yes lets it run. No stops it.
+
+----------
+amq-squad gate rel-tag-2
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (tag)
+target: git tag v1.2.0
+digest: sha256:c71e53c9e17862bc992180544d0a0931b42bdc37d03e0154ce925468d02a5af3
+```
+
+### package release
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-package-publish-1
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (package_publish)
+target: npm publish @scope/pkg
+digest: sha256:72435ede734eb86d2fbbf627401890ed066ed3d167558777b62b5ca448905124
+Reply in this thread with one line:
+approve rel-package-publish-1 release 72435ede734eb86d
+deny rel-package-publish-1 release 72435ede734eb86d
+```
+
+After (3.1.1):
+
+```text
+Publish a package release of @scope/pkg with npm?
+Asked by lead-a.
+Yes lets it run. No stops it.
+
+----------
+amq-squad gate rel-package-publish-1
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: release (package_publish)
+target: npm publish @scope/pkg
+digest: sha256:72435ede734eb86d2fbbf627401890ed066ed3d167558777b62b5ca448905124
+```
+
+### external send
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-external-send-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: send (external_send)
+target: mcp__slack__send_message C1
+digest: sha256:51270c5c6a6a4fcbdfae84e0a6e870495d1e79dd43c868027ef3525b9b89caf0
+Reply in this thread with one line:
+approve rel-external-send-0 send 51270c5c6a6a4fcb
+deny rel-external-send-0 send 51270c5c6a6a4fcb
+```
+
+After (3.1.1):
+
+```text
+Send an outside message with mcp__slack__send_message to C1?
+Asked by lead-a.
+Yes lets it run. No stops it.
+
+----------
+amq-squad gate rel-external-send-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: send (external_send)
+target: mcp__slack__send_message C1
+digest: sha256:51270c5c6a6a4fcbdfae84e0a6e870495d1e79dd43c868027ef3525b9b89caf0
+```
+
+### credential change
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-credential-change-1
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: credential (credential_change)
+target: git config credential.helper
+digest: sha256:b7176979a6478f79ed9cf435fb75a92eebaf0ca3592d62d4cedb8618ece91446
+Reply in this thread with one line:
+approve rel-credential-change-1 credential b7176979a6478f79
+deny rel-credential-change-1 credential b7176979a6478f79
+```
+
+After (3.1.1):
+
+```text
+Make a credential change to git setting credential.helper?
+Asked by lead-a.
+Yes lets it run. No stops it.
+
+----------
+amq-squad gate rel-credential-change-1
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: credential (credential_change)
+target: git config credential.helper
+digest: sha256:b7176979a6478f79ed9cf435fb75a92eebaf0ca3592d62d4cedb8618ece91446
+```
+
+### growth beyond the grant (seats)
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-spawn-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow /r/s1 seats=13
+digest: sha256:fb08c49d1ac220a4c75ab9de6802347dee6e26ccb301ee8f9916edb4dff42fec
+Reply in this thread with one line:
+approve rel-spawn-0 grow fb08c49d1ac220a4
+deny rel-spawn-0 grow fb08c49d1ac220a4
+```
+
+After (3.1.1):
+
+```text
+Allow growth past the grant to 13 seats?
+Asked by lead-a.
+Yes lets the squad grow. No keeps the grant.
+
+----------
+amq-squad gate rel-spawn-0
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow /r/s1 seats=13
+digest: sha256:fb08c49d1ac220a4c75ab9de6802347dee6e26ccb301ee8f9916edb4dff42fec
+```
+
+### widen's growth gate (protected paths)
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-spawn-2
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow /r/s1 task=t3 protected_paths=["docs/**","internal/x/**"]
+digest: sha256:f4c6e08997f261386b97f3002ac460431b6b4fb089d3974dbd9f4441fdd84661
+Reply in this thread with one line:
+approve rel-spawn-2 grow f4c6e08997f26138
+deny rel-spawn-2 grow f4c6e08997f26138
+```
+
+After (3.1.1):
+
+```text
+Allow a task widen of t3 onto protected paths?
+"Ship the plain gate questions"
+The grant refused the widen at docs/** and 1 more.
+Yes widens the task. No leaves it as it is.
+
+----------
+amq-squad gate rel-spawn-2
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow /r/s1 task=t3 protected_paths=["docs/**","internal/x/**"]
+digest: sha256:f4c6e08997f261386b97f3002ac460431b6b4fb089d3974dbd9f4441fdd84661
+```
+
+### widen's growth gate (size cap)
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-spawn-3
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow /r/s1 task=t4 size_cap={"lines":900,"files":30}
+digest: sha256:c7a5a83b0176851ec47439fd028df0db176f327d95b036dc14e67519900dc484
+Reply in this thread with one line:
+approve rel-spawn-3 grow c7a5a83b0176851e
+deny rel-spawn-3 grow c7a5a83b0176851e
+```
+
+After (3.1.1):
+
+```text
+Allow a task widen of t4 past the size cap?
+"Refactor the relay"
+The grant refused 900 lines in 30 files.
+Yes widens the task. No leaves it as it is.
+
+----------
+amq-squad gate rel-spawn-3
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow /r/s1 task=t4 size_cap={"lines":900,"files":30}
+digest: sha256:c7a5a83b0176851ec47439fd028df0db176f327d95b036dc14e67519900dc484
+```
+
+### merge outside the grant
+
+Before (3.1.0):
+
+```text
+amq-squad gate rel-spawn-4
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow merge omriariav/amq-squad#834 head=4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d rules=ci_green,task_scope
+digest: sha256:8fa1bec46f1304e5aa33eaf72008d00463ab012f1b3dcc9a1014440c34e61545
+Reply in this thread with one line:
+approve rel-spawn-4 grow 8fa1bec46f1304e5
+deny rel-spawn-4 grow 8fa1bec46f1304e5
+```
+
+After (3.1.1):
+
+```text
+Allow a merge of pull request #834 into v3?
+"gate: the question in plain words, answered with a bare yes or no replied in its…"
+The train refused it: its checks are not green and it changes files outside its task.
+Yes lets the train merge it. No leaves it open.
+
+----------
+amq-squad gate rel-spawn-4
+squad: root-sha256:1a5db0a23fc4555ae8493c0339d945b8ca5da0d73dbfaef44e28ebd270a0c3f8
+class: grow (spawn)
+target: grow merge omriariav/amq-squad#834 head=4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d rules=ci_green,task_scope
+digest: sha256:8fa1bec46f1304e5aa33eaf72008d00463ab012f1b3dcc9a1014440c34e61545
+```
+
+## 4. Rows
+
+| Brief row | Test |
+| --- | --- |
+| 1. Each class's question composes as three plain lines above a rule and the identifiers below; the plain-language check passes on all of them and fails on the old text | gatestore `TestEveryClassTheCatalogRaisesAsksInPlainWords` (the classes read from `operatorauth.ActionCapabilities()`: every human-only action the gate store raises needs samples, one per target shape; a human-only action it does not raise, destructive_filesystem, must stay unrenderable; the check: three plain lines, a question mark ending the first, `Yes` and `No` starting the third's sentences, no sentence over 20 words, the class in words from `ClassWords`, no hex run of 8 or more, no gate id and no identifier above the rule, the gate id, target and digest below; `legacyText` fails it), `TestRenderAndValidate`; at the raisers: mergetrain `TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead` (in process and through the gh subprocess), cli `TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote` (prepare's two questions), `TestSeatCommitAndWidenThroughTheGrowthGate` (the widen's) |
+| 2. A bare yes replied in the thread, signed by the pinned key, is accepted for its gate; a bare no refuses; `Yes.` and `yes` are the same; a bare yes outside the thread gets the plain re-ask; a bare yes in another gate's thread is refused for this gate | gateverify `TestABareYesOrNoInTheThreadIsTheAnswer` (yes, Yes., YES!, approve; no, No., deny; the answer file verifies with `VerifyAnswerFile`; a seat's bare yes `wrong_pubkey`; "yes please" `bad_tuple`), `TestABareYesOutsideTheThreadGetsThePlainReask` (the re-ask's text, in the thread; the yes replied to it is the answer; two open gates: refused, no re-ask), `TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes` (`Verify` refuses B's thread for A `wrong_gate_thread`; the core decides B, A stays open; a yes naming both threads binds neither); gatestore `TestParseBare`; buzz `TestABareYesIsAGateAnswerAtTheHandler`, `TestABareYesGoesToTheSquadWhoseThreadItNames` |
+| 3. The tuple form still verifies (unchanged rows), and no composed text contains "with one line" or a tuple | gatestore `TestNoQuestionAsksForATuple`; gateverify `TestNoReaskAsksForATuple` (the re-ask and the history re-ask; the tuple in the thread still approves) and every tuple row of core_test.go unchanged; cli `TestTheDoorsTextAsksForNoPrefix`; pi "brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, never yes <prefix>" |
+| 4. The screen's gates block and the answer key show the question's text above the rule verbatim | pi "brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim"; cli `TestSeatCommitAndWidenThroughTheGrowthGate` (status's `gates[].question` is `gatestore.Plain` of the record's text); status `TestGoldenRoundTripAdditiveBothWays`, `TestFleetGoldenIsTheSquadGoldenWrapped`, `TestThePiScreensFixtureIsAStatusDocument` (the field in the goldens and the screen's fixture) |
+| 5. Every word of the three lines traces to a field the composer read; a quoted title is exempt from the sentence count and cut at 80 characters with an ellipsis | gatestore `TestEveryWordOfThePlainLinesTracesToAField` (every word is the composer's fixed glue, which holds no claim, a word of a field it read (the target and the values in it, the raiser, the facts, the refused rules in words) or a count; the second line names a recorded fact; "Its checks passed on the train." and "The reviewer accepted it." fail), `TestAQuotedTitleIsCutAt80WithAnEllipsis`, `TestTheOldTextStillValidatesAndFactsAreSafe` |
+| 6. The team confirmation: a bare yes replied to the relayed plan post confirms the proposal; the same yes replied elsewhere confirms nothing; the prefix form still verifies | buzz `TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam` (the confirmer gets the yes and the post's bytes; outside the thread it is a gate answer; to a relay post with no digest, to one naming no proposal, it continues the request; to a body-signed post the relay never posted, nothing; a bare no, nothing), `TestPlanPrefixes`; cli `TestTheLeadWitnessesABareYesRepliedToThePlanPost` (the yes replying elsewhere or to nothing `not_in_gate_thread`, a post another key signed `wrong_pubkey`, an altered post `id_mismatch`, a post naming no proposal `no_proposal`, a bare no, a yes the attachment signed; the owner's `Yes.` witnessed with its event id; a replay refused), `TestTheAttachmentRoutesABareYesByThePostsProposal` (a post naming no proposal `not_a_plan`, no lead call; the plan's post reaches the serving lead, witnessed); the prefix form: `TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes`, `TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified`, `TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead`, `TestATeamYesIsAConfirmationNotAPhoneRequest`, unchanged but for the confirmer's added parameter |
+
+Tests that pinned the old text were moved to the new one, each on the same
+point: gatestore `TestRenderAndValidate`, gateverify `TestThreadReask` and
+`TestReview7ReaskPublishedOnceAcrossRetries` (the re-ask), buzz
+`TestHandlerGatesAndRouting`, `TestOwnerScriptDryRun` and the rehearsal (the
+question's third line in place of "Reply in this thread"), cli
+`TestTheStartAcceptsOnlyAWitnessedFreshConfirmation` and
+`TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot` (the doors text),
+pi's screen row (the identifiers line now sits under the question).
+
+## 5. Revert runs
+
+Each run reverts one change, runs the rows that must catch it, and restores every touched file (docs/v3-spike/311-evidence/311-revert-runs.py, try/finally, refuses a dirty tree). Every revert compiles, so each failure is its row's.
+
+```text
+REVERT the 3.0 text (Render writes the identifiers and the typed lines): fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+   --- FAIL: TestNoQuestionAsksForATuple (0.00s)
+   --- FAIL: TestRenderAndValidate (0.00s)
+REVERT a hash above the rule (a field's hex run shown whole): fails (the row catches it)
+   --- FAIL: TestAQuotedTitleIsCutAt80WithAnEllipsis (0.00s)
+REVERT the title not cut at 80 characters: fails (the row catches it)
+   --- FAIL: TestAQuotedTitleIsCutAt80WithAnEllipsis (0.00s)
+REVERT an unrecorded claim (the merge's second line says its checks passed): fails (the row catches it)
+   --- FAIL: TestEveryWordOfThePlainLinesTracesToAField (0.00s)
+REVERT a sentence over 20 words (every refused rule listed): fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT the gate id above the rule: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT no class in words (a tag named without saying tag): fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT the identifiers below the rule lose the target line: fails (the row catches it)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
+REVERT the facts dropped at Render: fails (the row catches it)
+   --- FAIL: TestAQuotedTitleIsCutAt80WithAnEllipsis (0.00s)
+REVERT a 3.1.0 record no longer validates (only the new text): fails (the row catches it)
+   --- FAIL: TestTheOldTextStillValidatesAndFactsAreSafe (0.00s)
+REVERT SafeFacts keeps a branch that does not validate: fails (the row catches it)
+   --- FAIL: TestTheOldTextStillValidatesAndFactsAreSafe (0.00s)
+REVERT Verify refuses the bare form: fails (the row catches it)
+   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.06s)
+REVERT the core binds a bare answer to no gate: fails (the row catches it)
+   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.06s)
+REVERT a bare yes outside the thread is not re-asked in the one open gate: fails (the row catches it)
+   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.06s)
+REVERT a bare answer bound to every gate (not the thread it names): fails (the row catches it)
+   --- FAIL: TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes (0.08s)
+REVERT the re-ask asks for the tuple (the 3.0 text): fails (the row catches it)
+   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.08s)
+   --- FAIL: TestNoReaskAsksForATuple (0.11s)
+   --- FAIL: TestThreadReask (0.07s)
+REVERT the history re-ask asks for the tuple: fails (the row catches it)
+   --- FAIL: TestNoReaskAsksForATuple (0.11s)
+REVERT the doors text asks for yes <prefix>: fails (the row catches it)
+   --- FAIL: TestTheDoorsTextAsksForNoPrefix (0.00s)
+REVERT the plan block asks for yes <prefix>: fails (the row catches it)
+   not ok 1 - brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, never yes <prefix>
+REVERT a bare yes routed to the lead as a phone request: fails (the row catches it)
+   --- FAIL: TestABareYesIsAGateAnswerAtTheHandler (0.07s)
+REVERT a bare yes goes to the primary squad whatever its thread: fails (the row catches it)
+   --- FAIL: TestABareYesGoesToTheSquadWhoseThreadItNames (0.12s)
+REVERT the handler's team door ignores a bare yes to the plan: fails (the row catches it)
+   --- FAIL: TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam (0.07s)
+REVERT a post the relay never posted taken as the plan post: fails (the row catches it)
+   --- FAIL: TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam (0.14s)
+REVERT a yes to a post naming no proposal refused, not continued: fails (the row catches it)
+   --- FAIL: TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam (0.12s)
+REVERT the lead takes a plan post another key signed: fails (the row catches it)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.06s)
+REVERT the lead takes a yes that replies elsewhere: fails (the row catches it)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.08s)
+REVERT the lead takes an altered plan post: fails (the row catches it)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.06s)
+REVERT the lead takes a bare no as the confirmation: fails (the row catches it)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.06s)
+REVERT the attachment refuses a post naming no proposal instead of not_a_plan: fails (the row catches it)
+   --- FAIL: TestTheAttachmentRoutesABareYesByThePostsProposal (0.05s)
+REVERT the attachment hands the lead the yes without the post: fails (the row catches it)
+   --- FAIL: TestTheAttachmentRoutesABareYesByThePostsProposal (0.05s)
+REVERT the release prepare raises without the branch it checked: fails (the row catches it)
+   --- FAIL: TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote (0.64s)
+REVERT the merge gate without the PR's title and base: fails (the row catches it)
+   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.50s)
+REVERT gh pr view does not ask for the title: fails (the row catches it)
+   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.49s)
+REVERT the widen's growth gate without the task's title: fails (the row catches it)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.46s)
+REVERT status gates without the question: fails (the row catches it)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.45s)
+REVERT status gates carry the whole text, not the lines above the rule: fails (the row catches it)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.44s)
+REVERT the gates block shows the identifiers only: fails (the row catches it)
+   not ok 1 - brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim
+REVERT the answer key shows the identifiers only: fails (the row catches it)
+   not ok 1 - brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim
+REVERT the answer key finds no rule in the text: fails (the row catches it)
+   not ok 1 - brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim
+
+39 of 39 reverts fail their rows
+```
+
+## 6. The gates
+
+GATE_TAILS_PLACEHOLDER
+
+## 7. The owner-run row: a release gate read on the phone, answered with a bare yes
+
+Not run here (no real Buzz, AMQ or tmux from this worktree). After the
+v3.1.0 tag, with this branch merged and installed:
+
+1. `make install` from the merged v3 and check `amq-squad version` names
+   the 3.1.1 build. The Buzz attachment runs (`amq-squad remote attach`,
+   the enrolled share) and the owner's DM with the body is open on the
+   phone.
+2. In the repository, raise the release gates with the installed binary:
+   `amq-squad release prepare --repository omriariav/amq-squad --tag
+   v3.1.1-rc.1 --commit <the v3 tip SHA> --branch v3 --notes-file
+   <notes.md> --project . --session <session> --json`.
+3. On the phone, read the two questions. Each shows three plain lines
+   ("Create a tag for v3.1.1-rc.1 in omriariav/amq-squad?" / "The prepare
+   found its commit on v3." / "Yes creates the tag. No does nothing.";
+   the GitHub release's likewise), a rule, and the identifiers. Record the
+   text as the phone shows it; no hex run of 8 or more and no gate id above
+   the rule.
+4. In the lead's pane, `/squad`: the gates block shows the same three lines
+   for each open gate, then its identifiers. Record the block.
+5. Reply `yes` in the tag question's thread. The result row under the reply
+   says `accepted rel-tag-... tag`.
+6. Send a bare `yes` in the DM, not in a thread. The result row says
+   `refused rel-gh-... not_in_gate_thread`, and the GitHub release
+   question's thread gets "Reply yes or no to this message." Reply `Yes.`
+   to that re-ask: `accepted rel-gh-... github_release`.
+7. `amq-squad gate status --project . --session <session> --json`: both
+   gates `accepted`. `amq-squad release publish ...` (same flags) runs the
+   tag and the release under the owner's gh.
+8. The team door, same phone: ask the solo lead for a team; the lead's
+   relayed post carries the plan and its digest; reply `yes` to that post.
+   The result row says `confirmed team`, and the lead's screen shows the
+   plan confirmed at the Buzz door. A `yes` sent outside that thread
+   confirms nothing.
+
+## 8. Where the brief did not match the code
+
+- **There is no relaunch gate.** The brief lists "a relaunch" among the
+  gates to phrase, and the lead's message points at "the widen and relaunch
+  question text in internal/cli and internal/schedproc". A relaunch is a
+  screen key and a scheduler request; it raises no owner gate and composes
+  no question. Nothing was built for it.
+- **The merge gate's example claims what the record does not say.** A
+  merge gate is raised only when the train refused the PR, so "Its checks
+  passed on the train" is false whenever the refused rule is `ci_green`,
+  and true otherwise only by inference. The second line names the refused
+  rules in words, the record's own field. "Yes merges it" is also more than
+  an approval does: it lifts the refusal and the train merges on its run,
+  so the line says "Yes lets the train merge it."
+- **"From the tip of v3" is not what the prepare checks.** `CheckCommit`
+  proves the commit is on the branch, not that it is the tip; the line says
+  "The prepare found its commit on v3." The example also joins the tag and
+  the release in one question; they are two gates, so two questions.
+- **The PR's title was recorded nowhere.** The train now asks `gh pr view`
+  for it (internal/mergetrain/gh.go, forge.go, train.go), and the fake gh
+  prints only the fields `--json` names, so the row catches its removal.
+- **"The relay record maps the post to the proposal."** The relay record
+  holds no message text and no proposal. The record proves the post is the
+  relay's; the post's own signed bytes name the digest; the lead verifies
+  those bytes under the share body's pinned key. The plan's digest has to
+  be in the lead's relayed reply, which the doors text now says.
+- **"The verifier binds by the thread exactly as today"** holds for
+  `Verify`, but the core took the gate id from the tuple. A bare answer
+  names none, so the core finds the gate by the thread (`bareGate`), the
+  verification change the brief allows for accepting the bare form.
+- **Files outside the declared list.** internal/status (schema.go,
+  classify.go and the two golden fixtures): the screen is fed by `status
+  --json` and nothing else, so the gates block can show the question only
+  through an additive `gates[].question`. internal/cli/lead_start.go,
+  team_confirm.go and team.go: the team door's seams that 31-3's note
+  named. docs/v3-spike/briefs/: the brief copied, as the lead asked.
+- **"Never merge."** The brief forbids it; the lead's message allows `git
+  merge origin/v3` when the tip moves. It moved once (#836) and was merged.
+
+## 9. For the 3.1.1 release notes
+
+Gate questions on the phone are now three plain lines (what is asked, why
+now, what yes and no do) with the identifiers below a rule; answer with a
+bare `yes` or `no` replied in the question's thread, and confirm a proposed
+team by replying `yes` to the lead's post of the plan. The 3.0 typed line
+still verifies; nothing asks for it.
