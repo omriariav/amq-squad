@@ -107,13 +107,13 @@ run("the relay carries gate-shaped replies", [(R,'g.refuse(p); bad {','g.refuse(
 run("a lead relay tool added", [('pi/extensions/lib/tools.ts','\tif (cfg.lead) {\n','\tif (cfg.lead) {\n\t\tnames.push("amq_relay_post");\n')],
     P+"test/tools.test.ts")
 # Row 8: the conversation
-run("no continuation (every DM a new request)", [(I,'\tcont := h.continuation(e)\n','\tvar cont *status.RelayRecord\n')],
+run("no continuation (every DM a new request)", [(I,'\tcont := h.continuation(vctx, e, relay)\n','\tvar cont *status.RelayRecord\n')],
     B+"TestThePhoneConversation")
 run("an answer form in the conversation goes to the gate path", [(I,'if cont == nil && isGateAnswer(content) {','if isGateAnswer(content) {')],
     B+"TestThePhoneConversation")
 run("a continuation does not follow the request's lead", [(I,'rid, via = cont.RequestID, &Route{Lead: cont.Route}','rid = cont.RequestID')],
     B+"TestThePhoneConversation")
-run("a gate-thread answer that names a relay post leaves the gate path", [(R,'\t\tif g.threads[ref] {\n\t\t\treturn nil\n\t\t}','\t\tif false && g.threads[ref] {\n\t\t\treturn nil\n\t\t}')],
+run("a gate-thread answer that names a relay post leaves the gate path", [(R,'\tif inGate(refs) {\n\t\treturn nil\n\t}','\tif false && inGate(refs) {\n\t\treturn nil\n\t}')],
     B+"TestAnAnswerInTheGateThreadStaysOnTheGatePath")
 # The split, the AMQ thread flag, the attach wiring
 run("no split of a long post", [(R,'if len(head)+1+len(body) <= DMLimit {','if true {')],
