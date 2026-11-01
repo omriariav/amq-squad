@@ -460,6 +460,9 @@ func readDir(dir string) ([]Task, error) {
 		if err := json.Unmarshal(raw, &t); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
 		}
+		if err := validateExactFileRecord(t.RefusedPaths); err != nil {
+			return nil, fmt.Errorf("parse %s: refused_paths: %w", e.Name(), err)
+		}
 		out = append(out, t)
 		if snapshotFileHook != nil {
 			snapshotFileHook(e.Name())

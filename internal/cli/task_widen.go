@@ -190,10 +190,18 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	if err != nil {
 		return data, err
 	}
-	if err := validateBlockedWiden(t, req.Files); err != nil {
+	exact, err := validateBlockedWiden(t, req.Files)
+	if err != nil {
 		return data, err
 	}
 	g, gerr := grants.Load(t.ProjectPath)
+	if gerr == nil && len(exact) > 0 {
+		aliases, err := seatcommit.ExactProtectedAliases(g.Grants, sel.root, t.ProjectPath, "", exact)
+		if err != nil {
+			return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+		}
+		g.ProtectedPaths = append(append([]string(nil), g.ProtectedPaths...), aliases...)
+	}
 	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: req.Files, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
@@ -242,40 +250,43 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 // validateBlockedWiden limits a lead decision on a blocked task to the exact
 // paths recorded by the commit refusal or the seat's typed widen request.
 // Non-blocked widening keeps its legacy behavior.
-func validateBlockedWiden(t task.Task, requested []string) error {
+func validateBlockedWiden(t task.Task, requested []string) ([]string, error) {
 	if t.State != task.StateBlocked {
-		return nil
+		return nil, nil
 	}
 	// Keep the established growth-gate retry: a harness refusal for a
 	// protected path retains its done report while the same lead decision is
 	// checked, escalated, and retried after the owner accepts the gate.
 	if t.Report != nil && (t.BlockReason == seatcommit.ReasonProtected || t.BlockReason == seatcommit.ReasonGrowthGate) {
-		return nil
+		return nil, nil
 	}
 	if t.BlockReason != seatcommit.ReasonOutside && !typedWidenRequest(t) {
-		return &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set (state %s, reason %s); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)", t.ID, t.State, t.BlockReason, t.ID)}
+		return nil, &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set (state %s, reason %s); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)", t.ID, t.State, t.BlockReason, t.ID)}
 	}
 	if len(t.RefusedPaths) == 0 {
-		return &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded no refused paths", t.ID)}
+		return nil, &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded no refused paths", t.ID)}
 	}
-	allowed := make(map[string]bool, len(t.RefusedPaths))
+	allowed := make(map[string]string, len(t.RefusedPaths))
 	for _, p := range t.RefusedPaths {
 		g, err := task.LiteralGlob(p)
 		if err != nil {
-			return &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded an invalid refused path %q", t.ID, p)}
+			return nil, &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded an invalid refused path %q", t.ID, p)}
 		}
-		allowed[g] = true
+		allowed[g] = p
 	}
 	normalized, err := task.CleanDeclaredFiles(requested)
 	if err != nil {
-		return &widenRefused{code: "widen_paths_mismatch", msg: err.Error()}
+		return nil, &widenRefused{code: "widen_paths_mismatch", msg: err.Error()}
 	}
+	var exact []string
 	for _, p := range normalized {
-		if !allowed[p] {
-			return &widenRefused{code: "widen_paths_mismatch", msg: fmt.Sprintf("%q is not an exact path recorded by task %s", p, t.ID)}
+		raw, ok := allowed[p]
+		if !ok {
+			return nil, &widenRefused{code: "widen_paths_mismatch", msg: fmt.Sprintf("%q is not an exact path recorded by task %s", p, t.ID)}
 		}
+		exact = append(exact, raw)
 	}
-	return nil
+	return exact, nil
 }
 
 func typedWidenRequest(t task.Task) bool {
