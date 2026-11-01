@@ -25,3 +25,21 @@ func TestTypedWidenPathsSurviveEscalationAndApprovedRetry(t *testing.T) {
 		t.Fatalf("approved retry = %+v, %v", got, err)
 	}
 }
+
+func TestRelabelledReportlessBlockIsNotRearmedAsATypedRequest(t *testing.T) {
+	s := newStore(t)
+	tk := mustAdd(t, s, AddInput{Title: "typed", DeclaredFiles: []string{"a.go"}})
+	if _, err := s.Claim(tk.ID, "seat", nil, time.Minute, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BlockWithPaths(tk.ID, "seat", ReasonWidenRequested, "", RouteLead, []string{"b.go"}, t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Escalate(tk.ID, "outside_declared_files", "relabelled", t0.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.WidenGated(tk.ID, "lead", "not a typed retry", []string{"b.go"}, nil, time.Minute, t0.Add(3*time.Second))
+	if err != nil || got.State != StateBlocked || got.BlockReason != "outside_declared_files" || len(got.RefusedPaths) != 1 {
+		t.Fatalf("relabelled widen = %+v, %v", got, err)
+	}
+}
