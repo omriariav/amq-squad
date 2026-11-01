@@ -212,6 +212,52 @@ type Scheduler struct {
 	// goneQueued are the gone attempts (handle#request) whose exit check
 	// was queued: one check per attempt (3.0.1 t17).
 	goneQueued map[string]bool
+	// routeWaits are the tasks of the last dispatch pass that wait
+	// no_roster_seat, with the pool no roster seat serves (brief 3.1.1-2).
+	routeWaits map[string]task.Pool
+	// seatBackoff is each task and pool's backoff after a failed seat
+	// request (brief 3.1.1-2): logged once per step, retried after it.
+	seatBackoff map[string]*seatBackoff
+}
+
+// WaitNoRosterSeat is the wait of a pending task whose route names a pool
+// no roster seat serves (brief 3.1.1-2 item 1: t27's claude:opus:high on
+// 2026-11-01). Status names the pool beside it and the screen's task line
+// says "waits: no seat serves POOL"; nothing is logged per tick.
+const WaitNoRosterSeat = "no_roster_seat"
+
+// The backoff of a failed seat request (brief 3.1.1-2 item 1): the first
+// retry after SeatRequestBackoffMin, doubling to SeatRequestBackoffMax, and
+// back to the start on any change to the roster, the task or the grant.
+const (
+	SeatRequestBackoffMin = 2 * time.Second
+	SeatRequestBackoffMax = 5 * time.Minute
+)
+
+type seatBackoff struct {
+	key   string // the roster, the task and the grant it was set under
+	delay time.Duration
+	next  time.Time
+}
+
+// backoffKey is what resets a seat request's backoff when it changes: the
+// roster (its seats and pools, and the seats the scheduler holds), the task
+// (any store mutation moves updated_at) and the grant's part the scheduler
+// holds (the seat cap; a new grant is a new scheduler process, which starts
+// with no backoff).
+func (s *Scheduler) backoffKey(t task.Task, cfg Config) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s|%d|%d|", t.UpdatedAt.UTC().Format(time.RFC3339Nano), t.Attempt, cfg.MaxSeats)
+	for _, rs := range cfg.Roster {
+		b.WriteString(rs.Handle + "=" + rs.Pool.Key() + ",")
+	}
+	handles := make([]string, 0, len(s.seats))
+	for h := range s.seats {
+		handles = append(handles, h)
+	}
+	sort.Strings(handles)
+	b.WriteString("|" + strings.Join(handles, ","))
+	return b.String()
 }
 
 // Options configure a production scheduler (New).
@@ -739,6 +785,10 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 		}
 	}
 	s.requests = kept
+	s.routeWaits = map[string]task.Pool{}
+	if s.seatBackoff == nil {
+		s.seatBackoff = map[string]*seatBackoff{}
+	}
 	order := append([]task.Task(nil), list...)
 	task.DispatchOrder(order)
 	waitingFor := map[task.Pool]int{} // tasks this tick that wait on a requested seat
@@ -863,14 +913,29 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				return err
 			}
 		default:
+			// A failed request is logged once and retried after a backoff
+			// that doubles per failure, never every tick (brief 3.1.1-2).
+			bk, bkey := t.ID+"|"+r.Pool.Key(), s.backoffKey(t, cfg)
+			if b := s.seatBackoff[bk]; b != nil && b.key == bkey && now.Before(b.next) {
+				continue
+			}
 			s.requested++
 			req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: *r.Pool, TaskID: t.ID}
 			if s.Launcher != nil {
 				if err := s.Launcher.RequestSeat(req); err != nil {
-					log(Decision{Kind: "seat_request_failed", TaskID: t.ID, Pool: r.Pool.Key(), Reason: err.Error()})
+					b := s.seatBackoff[bk]
+					if b == nil || b.key != bkey {
+						b = &seatBackoff{key: bkey, delay: SeatRequestBackoffMin}
+					} else {
+						b.delay = min(2*b.delay, SeatRequestBackoffMax)
+					}
+					b.next = now.Add(b.delay)
+					s.seatBackoff[bk] = b
+					log(Decision{Kind: "seat_request_failed", TaskID: t.ID, Pool: r.Pool.Key(), Reason: fmt.Sprintf("%s (next request in %s)", err.Error(), b.delay)})
 					continue
 				}
 			}
+			delete(s.seatBackoff, bk)
 			s.requests = append(s.requests, request{req: req, at: now})
 			waitingFor[*r.Pool]++
 			log(Decision{Kind: "seat_requested", TaskID: t.ID, Pool: r.Pool.Key()})
@@ -1002,6 +1067,16 @@ type State struct {
 	// LaunchBlocked are the tasks blocked on a repeated launch failure:
 	// restored at a restart with LaunchFailures (RestoreLaunchFailures).
 	LaunchBlocked []LaunchBlockedTask `json:"launch_blocked,omitempty"`
+	// RouteWaits are the tasks that wait no_roster_seat, with the pool no
+	// roster seat serves (brief 3.1.1-2): status names it on the task row.
+	RouteWaits []RouteWait `json:"route_waits,omitempty"`
+}
+
+// RouteWait is one task's named route wait.
+type RouteWait struct {
+	TaskID string    `json:"task_id"`
+	Reason string    `json:"reason"`
+	Pool   task.Pool `json:"pool"`
 }
 
 // RefusedUnmanaged is the refusal reason of a SeatUp without a request id.
@@ -1100,6 +1175,10 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	sort.Slice(st.Seats, func(i, j int) bool { return st.Seats[i].Handle < st.Seats[j].Handle })
 	st.LaunchFailures = s.launchFailureList()
 	st.LaunchBlocked = s.launchBlockedList()
+	for id, p := range s.routeWaits {
+		st.RouteWaits = append(st.RouteWaits, RouteWait{TaskID: id, Reason: WaitNoRosterSeat, Pool: p})
+	}
+	sort.Slice(st.RouteWaits, func(i, j int) bool { return st.RouteWaits[i].TaskID < st.RouteWaits[j].TaskID })
 	raw, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err

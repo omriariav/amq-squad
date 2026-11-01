@@ -250,9 +250,9 @@ func TestRosterSeatNotUpAndALauncherWithoutRoster(t *testing.T) {
 	}
 }
 
-// t16: a pool no roster seat serves is refused as an on-demand request was
-// (no free seat in the seat list), and a pi seat with no model serves any
-// pi model.
+// t16: a pool no roster seat serves is a named wait, no_roster_seat (brief
+// 3.1.1-2 item 1; it was a seat_request_failed line every tick), and a pi
+// seat with no model serves any pi model.
 func TestRosterPoolRules(t *testing.T) {
 	h, _ := newRosterHarness(t, Config{MaxSeats: 2}, RosterSeat{Handle: "p1", Pool: task.Pool{Runtime: "pi"}})
 	h.tick()
@@ -262,8 +262,8 @@ func TestRosterPoolRules(t *testing.T) {
 	if !has(ds, "dispatched", a.ID, "p1") {
 		t.Fatalf("a modelless pi seat: %+v", ds)
 	}
-	if !has(ds, "seat_request_failed", c.ID, "") || !strings.Contains(ds[len(ds)-1].Reason, "no free seat in the squad's seat list") {
-		t.Fatalf("a pool with no roster seat: %+v", ds)
+	if has(ds, "seat_request_failed", c.ID, "") || h.get(c.ID).WaitReason != WaitNoRosterSeat {
+		t.Fatalf("a pool with no roster seat: %+v; %+v", ds, h.get(c.ID))
 	}
 	if !PoolServes(task.Pool{Runtime: "pi", Model: "m"}, task.Pool{Runtime: "pi", Model: "m", Effort: "low"}) || PoolServes(sonnet, task.Pool{Runtime: "claude", Model: "sonnet", Effort: "high"}) {
 		t.Fatal("PoolServes")

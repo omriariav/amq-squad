@@ -38,7 +38,9 @@ type SeatRow = {
 	acknowledged_warnings?: string[];
 	launch: { launch_id?: string; outcome: string; reason_code: string; timing: Timing } | null;
 };
-type TaskRow = { id: string; task_state: string; lease_holder: string; block_reason: string; wait_reason: string; wait_holders?: string[]; pr_number: number; updated_at: string };
+// wait_pool: for a task waiting no_roster_seat, the pool its route names
+// and no roster seat serves (brief 3.1.1-2)
+type TaskRow = { id: string; task_state: string; lease_holder: string; block_reason: string; wait_reason: string; wait_holders?: string[]; wait_pool?: string; pr_number: number; updated_at: string };
 // question is the gate question's plain lines, the text above its rule, as
 // the owner reads it on the phone (brief 3.1.1-1); "" for a gate raised
 // before 3.1.1.
@@ -56,7 +58,10 @@ export type ScreenStatus = {
 	lead_handle: string | null;
 	lead: { handle: string; pid: number; pane: string; live: boolean } | null;
 	counts: { needs_you: number; working: number; ready: number; inactive: number };
+	// seats is the running roster; stale_records (an earlier session's or
+	// launch's handles under the root) are never seat lines (brief 3.1.1-2)
 	seats: SeatRow[];
+	stale_records?: { handle: string; session: string; launch_id: string }[];
 	tasks: TaskRow[];
 	gates: GateRow[];
 	attention: Attention[];
@@ -139,6 +144,10 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 			// the tasks holding its file lock; none left means a stale wait
 			const holders = t.wait_holders ?? [];
 			why = holders.length ? `  waiting on ${holders.join(", ")}` : "  waiting on a file lock no task holds (stale)";
+		}
+		if (t.task_state === "pending" && t.wait_reason === "no_roster_seat") {
+			// a route no roster seat serves: a named wait, not a log line
+			why = `  waits: no seat serves ${t.wait_pool || "its pool"}`;
 		}
 		out.push(`  ${t.id}  ${t.task_state}  ${t.lease_holder || "-"}  ${pr}${why}`);
 	}
