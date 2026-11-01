@@ -168,6 +168,16 @@ The first run is a conversation with the lead, in the repository:
    it refuses `lead_running`, or `lead_unreachable` when the lead's process
    is alive but its socket does not answer. A record a dead lead left is
    removed for you.
+5. Then the lead is the team's lead for the rest of the conversation. Its
+   tools switch from the solo set (read, bash, edit, write and the two team
+   tools) to the team lead's: mail, the task store, the repository read
+   and list, status, the relaunch and the widening. The old tools are no
+   longer offered, and a call to one is refused `phase_team`. Each turn
+   opens with the host facts read from `status` and `context`: the
+   repository, the branch and tip, the AMQ and amq-squad versions, the
+   roster, the open tasks and the open gates. Quit the lead and run
+   `amq-squad lead` again in the repository and it starts as the team's
+   lead (`amq-squad lead --team`).
 
 The solo lead's shell refuses `tmux` and every `amq-squad` verb but the
 read-only ones (status, context, doctor, version, task show, task list, team
