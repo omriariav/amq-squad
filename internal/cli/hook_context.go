@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -79,12 +81,38 @@ type hookHost struct {
 	AMQVersion string `json:"amq_version"`
 }
 
+// contextHostDeadline bounds each host-fact command (Codex on #837, item
+// 5): git and amq run under it, in their own process group, which is
+// killed with everything it started when the deadline passes; the fact
+// then reads missing. A test seam.
+var contextHostDeadline = 3 * time.Second
+
+// contextHostOutputCap bounds a host-fact command's output: more is no
+// fact (the group is killed and the fact reads missing).
+const contextHostOutputCap = 4 << 10
+
 // contextHostRun runs one command for the host facts (a test seam).
 var contextHostRun = func(dir, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err
+	guardGroup(cmd)
+	// the group is killed before Wait returns (never after the reap, when
+	// its id can be reused): on the deadline, or when the output passes
+	// the cap
+	cmd.Cancel = func() error { killGuardGroup(cmd); return nil }
+	cmd.WaitDelay = time.Second
+	out := &cappedBuffer{max: contextHostOutputCap, over: cancel}
+	cmd.Stdout = out
+	err := cmd.Run()
+	switch {
+	case out.hit:
+		return "", fmt.Errorf("%s printed more than %d bytes", name, contextHostOutputCap)
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return "", fmt.Errorf("%s did not finish within %s", name, contextHostDeadline)
+	}
+	return strings.TrimSpace(out.buf.String()), err
 }
 
 // hostFacts reads the host facts: the repository, its branch and tip from
