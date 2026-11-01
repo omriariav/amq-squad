@@ -174,15 +174,24 @@ whether a model runs at all: the shell apply proceeds only when **no lead
 holds the repository** (`noLeadHolds`, internal/cli/team_confirm.go). After
 Codex's third pass the probe fails closed and is held through the write:
 
-- a solo lead's discovery record (`lead-start.json`) that exists is
-  `lead_running` when its socket answers and `lead_unreachable` on any
-  other outcome (unreadable, malformed, a connect that fails), naming the
-  record; the lead removes its record on a clean exit, so a record left by
-  a crash refuses until the owner removes it;
+- the solo lead's discovery record (`lead-start.json`) carries the lead's
+  pid and start stamp and is read by the lead lock's liveness rule
+  (`soloLeadProbe`, the plan reviewer: no file is ever the owner's to
+  delete by hand): a record whose pid is alive with its stamp is
+  `lead_running` when its socket answers, and `lead_unreachable` when it
+  does not, the one case that needs a human (a pid whose state cannot be
+  read is `lead_unreachable` too); a record that is malformed, whose pid is
+  dead, or whose pid carries another start stamp is stale: it is removed
+  with a `discovery_stale` decision naming it, and the path goes on as no
+  lead. The lead removes its record on a clean exit. `up` reads the record
+  the same way in its lead step;
 - every session's lead lock under the repository's `.agent-mail` is read,
   not only the proposed session's: one held is `lead_running` naming that
   session;
-- "no lead" is only no discovery record and no held lead lock at all;
+- "no lead" is no live lead's record and no held lead lock;
+- the shell apply also takes `up`'s check of its own process tree
+  (`under_solo_lead`, 2.7): a stale-looking record is no way in for the
+  model, whose shell runs under the lead's pi;
 - the probe and the squad.yaml write run under the repository's apply
   lock (`<solo root>/extensions/amq-squad/apply.lock`), which the lead lock
   step (`UpLeadLock`) also takes around the lead lock, so a lead starting
@@ -322,7 +331,10 @@ counter over `up`, over `lead --team` and over the start.
   (`underSoloLead`, internal/cli/lead_start.go), by the plan reviewer's
   rule: `up` and `lead --team` refuse `under_solo_lead` when their parent
   chain (read from the kernel, each pid with its start stamp) holds an
-  amq-squad lead or the lead's pi, naming it, since neither is ever
+  amq-squad lead or the lead's pi, naming it (the pi that refuses carries
+  AMQ's identity in its environment, read with `procinfo.Environ`: `AM_ME`,
+  or the lead's start socket path, which the lead gives its pi; the
+  owner's own pi editor carries neither and does not refuse), since neither is ever
   legitimately a lead's child (the confirmed start runs the shared
   functions in-process, not the up verb); `scheduler run` refuses only
   under the lead's pi, never for a lead, since `lead --team` starts it; `up`,
@@ -399,13 +411,13 @@ docs/status-contract.md is unchanged: no status field changed.
 | row | test |
 |---|---|
 | 1a | cli `TestTheStartAcceptsOnlyAWitnessedFreshConfirmation` (none, a planted log entry, an expired witness, a witness of another digest: refused naming the two doors; an edited log after a witness changes nothing), `TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants` (the same refusal over the socket) |
-| 1b | cli `TestGuardRefusesTheOwnersVerbsFromASeat`, `TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot` (with the solo lead serving or a team lead holding the root, the shell apply and the plan-file apply refuse `lead_running` naming the two doors; with none the apply writes and prints the owner's `up`; a planted record changes nothing), `TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite` (a malformed discovery record and one whose socket does not answer refuse `lead_unreachable`; a team lead on another session refuses naming it; a lead starting between the probe and the write is refused `apply_busy` while the write goes on alone) |
+| 1b | cli `TestGuardRefusesTheOwnersVerbsFromASeat`, `TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot` (with the solo lead serving or a team lead holding the root, the shell apply and the plan-file apply refuse `lead_running` naming the two doors; with none the apply writes and prints the owner's `up`; a planted record changes nothing), `TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite` (a malformed record, one whose pid carries another stamp, and one whose pid is dead are removed with a `discovery_stale` decision and the apply proceeds; a live pid with its stamp and a silent socket refuses `lead_unreachable`; a team lead on another session refuses naming it; a lead starting between the probe and the write is refused `apply_busy` while the write goes on alone) |
 | 1c | cli `TestTheTUIDoorIsWitnessedOnlyFromTheLeadsOwnPi` (a child of pi and pi's pid with another stamp refused `peer_not_lead_pi`; pi witnessed with its pid, stamp and pane; `runProcess` reports pi's pid), `TestTheSoloLeadServesTheStartSocketToItsPi` (the lead records its pi); pi `team.test.ts` "/squad confirm with the printed prefix asks the lead to witness it", "a model message containing /squad confirm reaches no lead; the confirm is a command, never a tool" |
 | 1d | buzz `TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes` (the handler's typed path, the confirmer given the fetched bytes); cli `TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified` (no connection opened; an event the attachment altered by one byte `bad_id`, an event the attachment signed with its own key `wrong_pubkey`, no proposal, an hour-old yes outside the window, bytes that are no event `event_unverified`, the owner's yes witnessed once, its replay refused, and refused again by a restarted lead), `TestTheBuzzDoorWitnessesOneEventOnceUnderConcurrency` (sixteen concurrent submissions, one witness), `TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead` (end to end through the test relay and `remote attach --once`) |
 | 1e | cli `TestTheShellDoorIsGone` (`amq-squad team confirm` is an unknown verb; the socket refuses confirm-shell by name, `shell_door_removed`) |
 | 1f | pi `team.test.ts` "the solo lead's shell refuses tmux and the owner's verbs by argv[0] and by token", "the solo lead's shell sees through quoting, expansions and eval" (the shared table's refused and running forms, and its amq-squad allowlist equal to the extension's: up, lead, scheduler run, launch, team apply, task reset and bare amq-squad refused; status, task list and the other read-only verbs run); cli `TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer` (the same table and allowlist); what each door records is the lead's own read (rows 1c, 1d) |
 | 3 | cli `TestTeamProposeFromAPlanPrintsThePlanAndDigestAndWritesOnlyTheProposal`, `TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux`, `TestTheStartRefusesAPlanThatChangedSinceTheConfirmation`, `TestTheMayorsChecksRefuseByNameOnTheStartsPath` (a repository outside the grant, a cost cap, no fleet grant); team `TestThePlanRendersTheDocumentedSquadYAML`; pi "amq_team_propose prints the plan and digest; amq_team_apply returns the roster line", "amq_team_apply without a confirmation carries the lead's refusal naming the doors" |
-| 6 | cli `TestTheStartRefusesLeadRunningWhileATeamLeadHoldsTheRoot`, `TestUpAndTheLeadTeamCountOnTheSameSharedSteps`, `TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux` (the counter, no install, no tmux), `TestTheStartSocketProvesItsCallerWithStartStamps` (stamps at first sight, a reparent mid-hop, a reuse before the act), `TestTheSoloLeadServesTheStartSocketToItsPi`, `TestASoloLeadIsALeadParentOfItsScheduler`, `TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName` (`up` under a solo lead, a bare solo lead or the lead's pi, and with `AM_ME`, refuses `under_solo_lead` as a preflight step; from a plain shell it runs its seven steps; `lead --team` under a lead refuses; the scheduler `lead --team` starts passes; `up` and `scheduler run` under the lead's pi refuse) |
+| 6 | cli `TestTheStartRefusesLeadRunningWhileATeamLeadHoldsTheRoot`, `TestUpAndTheLeadTeamCountOnTheSameSharedSteps`, `TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux` (the counter, no install, no tmux), `TestTheStartSocketProvesItsCallerWithStartStamps` (stamps at first sight, a reparent mid-hop, a reuse before the act), `TestTheSoloLeadServesTheStartSocketToItsPi`, `TestASoloLeadIsALeadParentOfItsScheduler`, `TestUpReadsTheSoloLeadsDiscoveryRecordByItsLiveness` (a live solo lead refuses up's lead step `lead_running`; a stale record is removed and up goes on), `TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName` (`up` under a solo lead, a bare solo lead or the lead's pi, and with `AM_ME`, refuses `under_solo_lead` as a preflight step; from a plain shell, and under the owner's own pi (no AMQ identity), it runs its seven steps; a shell apply under the lead's pi refuses; `lead --team` under a lead refuses; the scheduler `lead --team` starts passes; `up` and `scheduler run` under the lead's pi refuse) |
 
 No test reaches the network, the real HOME (TestMain's temp HOME; the pi
 tests use temp roots), tmux, AMQ or Buzz (the fake amq and tmux of `up`'s
@@ -421,7 +433,7 @@ The output, verbatim:
 
 ```
 REVERT a plan read as a squad.yaml draft (no plan branch): fails (the row catches it)
-   --- FAIL: TestTeamProposeFromAPlanPrintsThePlanAndDigestAndWritesOnlyTheProposal (0.01s)
+   --- FAIL: TestTeamProposeFromAPlanPrintsThePlanAndDigestAndWritesOnlyTheProposal (0.00s)
 REVERT the plan's effort dropped from squad.yaml: fails (the row catches it)
    --- FAIL: TestThePlanRendersTheDocumentedSquadYAML (0.00s)
 REVERT the plan read leniently (unknown keys kept quiet): fails (the row catches it)
@@ -429,12 +441,12 @@ REVERT the plan read leniently (unknown keys kept quiet): fails (the row catches
 REVERT the proposal not recorded: fails (the row catches it)
    --- FAIL: TestTeamProposeFromAPlanPrintsThePlanAndDigestAndWritesOnlyTheProposal (0.00s)
 REVERT the start without the witness: fails (the row catches it)
-   --- FAIL: TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants (0.09s)
+   --- FAIL: TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants (0.08s)
    --- FAIL: TestTheStartAcceptsOnlyAWitnessedFreshConfirmation (0.07s)
 REVERT no 30-minute bound on the witness: fails (the row catches it)
    --- FAIL: TestTheStartAcceptsOnlyAWitnessedFreshConfirmation (0.09s)
 REVERT a witness of another digest taken for this one: fails (the row catches it)
-   --- FAIL: TestTheStartAcceptsOnlyAWitnessedFreshConfirmation (0.09s)
+   --- FAIL: TestTheStartAcceptsOnlyAWitnessedFreshConfirmation (0.10s)
 REVERT the lead's log read for authority: fails (the row catches it)
    --- FAIL: TestTheStartAcceptsOnlyAWitnessedFreshConfirmation (0.07s)
 REVERT the refusal naming one door (no Buzz door): fails (the row catches it)
@@ -446,17 +458,27 @@ REVERT the TUI door ignoring pi's start stamp: fails (the row catches it)
 REVERT pi's pid not reported at the spawn: fails (the row catches it)
    --- FAIL: TestTheTUIDoorIsWitnessedOnlyFromTheLeadsOwnPi (0.04s)
 REVERT the solo lead not recording its pi: fails (the row catches it)
-   --- FAIL: TestTheSoloLeadServesTheStartSocketToItsPi (0.01s)
+   --- FAIL: TestTheSoloLeadServesTheStartSocketToItsPi (0.02s)
 REVERT no lead-start.json (the shell apply cannot see the running lead): fails (the row catches it)
-   --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.06s)
-REVERT the shell apply with no lead check: fails (the row catches it)
    --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.07s)
+REVERT the shell apply with no lead check: fails (the row catches it)
+   --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.05s)
 REVERT the shell apply ignoring a running solo lead: fails (the row catches it)
    --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.06s)
 REVERT the shell apply ignoring a team lead's lock: fails (the row catches it)
+   --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.07s)
+REVERT a stale discovery record refused instead of removed: fails (the row catches it)
+   --- FAIL: TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite (0.01s)
+REVERT the stale record's decision not named discovery_stale: fails (the row catches it)
+   --- FAIL: TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite (0.01s)
+REVERT a live lead's silent socket read as a stale record: fails (the row catches it)
+   --- FAIL: TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite (0.05s)
+REVERT the record's start stamp not compared: fails (the row catches it)
+   --- FAIL: TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite (0.01s)
+REVERT the discovery record written without the lead's stamp: fails (the row catches it)
    --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.06s)
-REVERT the shell apply's probe failing open on an unreachable record: fails (the row catches it)
-   --- FAIL: TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite (0.04s)
+REVERT up not reading the solo lead's discovery record: fails (the row catches it)
+   --- FAIL: TestUpReadsTheSoloLeadsDiscoveryRecordByItsLiveness (0.02s)
 REVERT the shell apply probing only the proposed session's lock: fails (the row catches it)
    --- FAIL: TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite (0.05s)
 REVERT the lead lock step not taking the apply lock: fails (the row catches it)
@@ -464,7 +486,7 @@ REVERT the lead lock step not taking the apply lock: fails (the row catches it)
 REVERT the shell apply not holding the apply lock through the write: fails (the row catches it)
    --- FAIL: TestTheShellApplyProbeFailsClosedAndHoldsThroughTheWrite (0.05s)
 REVERT the discovery record left after a clean exit: fails (the row catches it)
-   --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.03s)
+   --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.04s)
 REVERT up without the under-a-lead check: fails (the row catches it)
    --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.01s)
 REVERT up not reading AM_ME: fails (the row catches it)
@@ -474,31 +496,43 @@ REVERT up not refusing a lead ancestor: fails (the row catches it)
 REVERT lead --team without the under-a-lead check: fails (the row catches it)
    --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.03s)
 REVERT lead --team not refusing a lead ancestor: fails (the row catches it)
-   --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.03s)
+   --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.04s)
 REVERT scheduler run without the under-a-lead check: fails (the row catches it)
-   --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.71s)
+   --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.30s)
+REVERT any pi refusing, not only one carrying AMQ's identity: fails (the row catches it)
+   --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.25s)
+REVERT the start socket path not read as AMQ's identity: fails (the row catches it)
+   --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.29s)
+REVERT the shell apply without the under-a-lead check: fails (the row catches it)
+   --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.26s)
+REVERT the environment read stopping at argv: fails (the row catches it)
+   --- FAIL: TestEnvironReadsTheInitialEnvironment (0.00s)
 REVERT the lead's pi not recognized: fails (the row catches it)
    --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.01s)
 REVERT scheduler run refusing for a lead ancestor (the scheduler lead --team starts): fails (the row catches it)
    --- FAIL: TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName (0.01s)
 REVERT the plan-file apply with no lead check: fails (the row catches it)
-   --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.06s)
+   --- FAIL: TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot (0.07s)
 REVERT the socket accepting the dropped confirm-shell kind: fails (the row catches it)
    --- FAIL: TestTheShellDoorIsGone (0.02s)
 REVERT the lead not recomputing the event id from the bytes: fails (the row catches it)
    --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.05s)
 REVERT the lead taking another key's yes: fails (the row catches it)
-   --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.06s)
+   --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.05s)
 REVERT the lead taking an hour-old yes (no window): fails (the row catches it)
    --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.06s)
 REVERT the lead witnessing a replayed event (no once-only): fails (the row catches it)
-   --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.07s)
+   --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.08s)
 REVERT the once-only not kept across a restart (no event log read): fails (the row catches it)
    --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.07s)
 REVERT the once-only's check and mark not under one lock: fails (the row catches it)
+   --- FAIL: TestTheBuzzDoorWitnessesOneEventOnceUnderConcurrency (0.08s)
+   --- FAIL: TestTheBuzzDoorWitnessesOneEventOnceUnderConcurrency (0.23s)
+   --- FAIL: TestTheBuzzDoorWitnessesOneEventOnceUnderConcurrency (0.26s)
+   --- FAIL: TestTheBuzzDoorWitnessesOneEventOnceUnderConcurrency (0.24s)
 REVERT the Buzz door's witness without the event id: fails (the row catches it)
    --- FAIL: TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified (0.06s)
-   --- FAIL: TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead (0.07s)
+   --- FAIL: TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead (0.06s)
 REVERT the guard letting a seat run team confirm and apply: fails (the row catches it)
    --- FAIL: TestGuardRefusesTheOwnersVerbsFromASeat (0.00s)
 REVERT the guard letting a write into the records: fails (the row catches it)
@@ -512,23 +546,23 @@ REVERT the yes confirmed before the owner's signature is checked: fails (the row
    --- FAIL: TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes/signed_by_another_key (0.00s)
    --- FAIL: TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes/a_broken_signature (0.00s)
 REVERT a redelivered yes confirmed again (no once-only mark): fails (the row catches it)
-   --- FAIL: TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes (0.02s)
+   --- FAIL: TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes (0.01s)
    --- FAIL: TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes/signed_by_the_owner (0.01s)
 REVERT the yes parsed loosely: fails (the row catches it)
    --- FAIL: TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes (0.02s)
 REVERT remote attach's handler without the confirmer: fails (the row catches it)
-   --- FAIL: TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead (0.21s)
+   --- FAIL: TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead (0.53s)
 REVERT the socket taking any process (no caller chain): fails (the row catches it)
-   --- FAIL: TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants (0.04s)
+   --- FAIL: TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants (0.03s)
 REVERT the caller's stamps not re-read before the act: fails (the row catches it)
-   --- FAIL: TestTheStartSocketProvesItsCallerWithStartStamps (0.04s)
+   --- FAIL: TestTheStartSocketProvesItsCallerWithStartStamps (0.03s)
 REVERT the caller's reparent mid-hop not checked: fails (the row catches it)
    --- FAIL: TestTheStartSocketProvesItsCallerWithStartStamps (0.03s)
 REVERT the lead taking another repository's request: fails (the row catches it)
    --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.08s)
 REVERT the mayor's checks not applied (a grant that lets everything): fails (the row catches it)
    --- FAIL: TestTheMayorsChecksRefuseByNameOnTheStartsPath (0.22s)
-   --- FAIL: TestTheMayorsChecksRefuseByNameOnTheStartsPath/a_repository_outside_the_grant (0.08s)
+   --- FAIL: TestTheMayorsChecksRefuseByNameOnTheStartsPath/a_repository_outside_the_grant (0.07s)
    --- FAIL: TestTheMayorsChecksRefuseByNameOnTheStartsPath/a_cost_cap (0.07s)
    --- FAIL: TestTheMayorsChecksRefuseByNameOnTheStartsPath/no_fleet_grant (0.07s)
 REVERT no R40 fallback (the lead proposes, the owner starts): fails (the row catches it)
@@ -536,11 +570,11 @@ REVERT no R40 fallback (the lead proposes, the owner starts): fails (the row cat
    --- FAIL: TestTheMayorsChecksRefuseByNameOnTheStartsPath/a_repository_outside_the_grant (0.02s)
    --- FAIL: TestTheMayorsChecksRefuseByNameOnTheStartsPath/no_fleet_grant (0.02s)
 REVERT the start writing a digest the owner did not confirm: fails (the row catches it)
-   --- FAIL: TestTheStartRefusesAPlanThatChangedSinceTheConfirmation (0.08s)
+   --- FAIL: TestTheStartRefusesAPlanThatChangedSinceTheConfirmation (0.07s)
 REVERT the squad files planned over the mayor's spelling of the checkout: fails (the row catches it)
-   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.04s)
+   --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.03s)
 REVERT the start ignoring a held lead lock: fails (the row catches it)
-   --- FAIL: TestTheStartRefusesLeadRunningWhileATeamLeadHoldsTheRoot (0.07s)
+   --- FAIL: TestTheStartRefusesLeadRunningWhileATeamLeadHoldsTheRoot (0.08s)
 REVERT the launch budget not starting at the confirmation: fails (the row catches it)
    --- FAIL: TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux (0.07s)
 REVERT a second start in the same lead: fails (the row catches it)
@@ -595,7 +629,7 @@ REVERT the plan block still naming the dropped shell door: fails (the row catche
    not ok 1 - amq_team_propose prints the plan and digest; amq_team_apply returns the roster line
 REVERT the team tools and /squad confirm given to the team lead too: fails (the row catches it)
    not ok 2 - the lead's model tool list carries no key verb and no gate-answer verb
-80 runs, 80 caught, 0 missed
+89 runs, 89 caught, 0 missed
 ```
 
 ## 5. The owner-run rows

@@ -479,9 +479,9 @@ lead proposes, you start. Run the two commands the refusal prints,
 and then <code>amq-squad up</code>. From your own shell that apply is
 itself the confirmation (the digest is in front of you), and it runs
 only after the lead has quit: while any lead holds the repository it
-refuses <code>lead_running</code> (and <code>lead_unreachable</code>
-when a lead's record is left but its socket does not answer: remove the
-record it names).</p></li>
+refuses <code>lead_running</code>, or <code>lead_unreachable</code> when
+the lead's process is alive but its socket does not answer. A record a
+dead lead left is removed for you.</p></li>
 </ol>
 <p>The solo lead's shell refuses <code>tmux</code> and every
 <code>amq-squad</code> verb but the read-only ones (status, context,

@@ -165,8 +165,9 @@ The first run is a conversation with the lead, in the repository:
    <digest> --project .` and then `amq-squad up`. From your own shell that
    apply is itself the confirmation (the digest is in front of you), and it
    runs only after the lead has quit: while any lead holds the repository
-   it refuses `lead_running` (and `lead_unreachable` when a lead's record
-   is left but its socket does not answer: remove the record it names).
+   it refuses `lead_running`, or `lead_unreachable` when the lead's process
+   is alive but its socket does not answer. A record a dead lead left is
+   removed for you.
 
 The solo lead's shell refuses `tmux` and every `amq-squad` verb but the
 read-only ones (status, context, doctor, version, task show, task list, team
