@@ -172,12 +172,16 @@ The first run is a conversation with the lead, in the repository:
    tools switch from the solo set (read, bash, edit, write and the two team
    tools) to the team lead's: mail, the task store, the repository read
    and list, status, the relaunch and the widening. The old tools are no
-   longer offered, and a call to one is refused `phase_team`. Each turn
-   opens with the host facts read from `status` and `context`: the
+   longer offered, and a call to one is refused `phase_team`. The lead
+   applies the team in a turn of its own: an apply batched with any other
+   tool call is refused `apply_not_alone` and starts nothing. The first
+   turn carries the host facts read from `status` and `context`: the
    repository, the branch and tip, the AMQ and amq-squad versions, the
-   roster, the open tasks and the open gates. Quit the lead and run
-   `amq-squad lead` again in the repository and it starts as the team's
-   lead (`amq-squad lead --team`).
+   roster, the open tasks and the open gates. They come again only when
+   one changes. Quit the lead and run `amq-squad lead` again in the
+   repository and it comes up solo: it says when the team was started and
+   with which digest, and offers `amq-squad up` to resume it or a fresh
+   yes at the pane or over Buzz. It starts nothing on its own.
 
 The solo lead's shell refuses `tmux` and every `amq-squad` verb but the
 read-only ones (status, context, doctor, version, task show, task list, team
