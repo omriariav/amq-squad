@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -199,6 +200,35 @@ func TestTypedWidenResolvesASymlinkIntoAProtectedPath(t *testing.T) {
 	want = seatcommit.ProtectedTarget(root, tk.ID, []string{"CLAUDE.md"})
 	if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || data.Decision.Crossings[0].Target != want {
 		t.Fatalf("managed alias widen = %+v, %v; want target %q", data, err, want)
+	}
+}
+
+func TestEveryWidenBranchRoutesLiteralPathsThroughResolution(t *testing.T) {
+	repo := t.TempDir()
+	mustWrite(t, filepath.Join(repo, "real", "file.go"), "package real\n")
+	if err := os.Symlink(filepath.Join("real", "file.go"), filepath.Join(repo, "source-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	literal, _ := task.LiteralGlob("source-link")
+	for name, tk := range map[string]task.Task{
+		"nonblocked":            {State: task.StatePending},
+		"protected report":      {State: task.StateBlocked, BlockReason: seatcommit.ReasonProtected, Report: &task.Report{By: "seat"}},
+		"growth-gate report":    {State: task.StateBlocked, BlockReason: seatcommit.ReasonGrowthGate, Report: &task.Report{By: "seat"}},
+		"typed widen_requested": {State: task.StateBlocked, BlockReason: task.ReasonWidenRequested, RefusedPaths: []string{"source-link"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			exact, err := validateBlockedWiden(tk, []string{literal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(exact) == 0 {
+				exact = literalWidenFiles([]string{literal})
+			}
+			got, err := seatcommit.ResolveExactFiles(grants.Defaults(), t.TempDir(), repo, t.TempDir(), exact)
+			if err != nil || len(got) != 1 || got[0].Path != "real/file.go" {
+				t.Fatalf("resolved branch = %+v, %v", got, err)
+			}
+		})
 	}
 }
 

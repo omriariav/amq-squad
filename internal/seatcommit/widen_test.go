@@ -10,8 +10,9 @@ import (
 
 func TestResolvedProtectedWidenGateNamesTheTarget(t *testing.T) {
 	root, repo := t.TempDir(), t.TempDir()
-	resolved, _ := task.LiteralGlob(".claude/settings.json")
-	d := CheckWiden(WidenOptions{Root: root, Task: task.Task{ID: "t1"}, Added: []string{resolved}, ProtectedAdded: []string{resolved}, Grants: grants.Resolved{Grants: grants.Defaults()}, RepoRoot: repo})
+	home := t.TempDir()
+	resolved, _ := task.LiteralGlob("ordinary/custom.txt")
+	d := CheckWiden(WidenOptions{Root: root, Task: task.Task{ID: "t1"}, Added: []string{resolved}, ProtectedAdded: []string{resolved}, Grants: grants.Resolved{Grants: grants.Defaults()}, RepoRoot: repo, Home: home})
 	want := ProtectedTarget(root, "t1", []string{resolved})
 	if d.Allowed || d.ReasonCode != ReasonGrowthGate || len(d.Crossings) != 1 || d.Crossings[0].Target != want || strings.Contains(d.Crossings[0].Target, "settings-link") {
 		t.Fatalf("resolved protected widen = %+v, want target %q", d, want)
