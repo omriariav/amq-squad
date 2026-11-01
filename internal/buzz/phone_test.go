@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -348,7 +352,7 @@ func TestTheLeadSideHoldsNoKeyPathNorPoster(t *testing.T) {
 	for _, p := range lead {
 		args = append(args, "github.com/omriariav/amq-squad/v3/internal/"+p)
 	}
-	cmd := exec.Command(goBin, args...)
+	cmd := exec.Command(goBin, args...) // exec: not amq (the go tool)
 	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=readonly", "GOPROXY=off", "GOWORK=off")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -853,19 +857,71 @@ func TestTheRecordComesBeforeTheQuestion(t *testing.T) {
 	}
 }
 
-// Codex P2-7: every amq a buzz test runs goes through amqCmd (a scratch
-// HOME and XDG directories, AMQ_NO_UPDATE_CHECK=1); no test file execs amq
-// another way.
+// Codex P2-7 and its re-check #6: every amq a buzz test runs goes through
+// amqCmd (a scratch HOME and XDG directories, AMQ_NO_UPDATE_CHECK=1). The
+// guard parses every test file: an exec whose program is a literal must not
+// name amq by its basename (or the installed amq's resolved path), and an
+// exec whose program is computed must say on its line why it is not amq
+// ("exec: not amq"); only amqCmd itself execs amq.
 func TestTestsExecAMQOnlyThroughTheHelper(t *testing.T) {
-	direct := regexp.MustCompile(`exec\.Command(Context)?\((ctx, |[a-zA-Z]+Ctx, |context\.Background\(\), )?"amq"`)
+	resolved := ""
+	if p, err := exec.LookPath("amq"); err == nil {
+		resolved, _ = filepath.EvalSymlinks(p)
+	}
 	files, _ := filepath.Glob("*_test.go")
 	for _, f := range files {
-		raw, _ := os.ReadFile(f)
-		for i, line := range strings.Split(string(raw), "\n") {
-			if direct.MatchString(line) && !(f == "helpers_test.go" && strings.Contains(line, "exec.CommandContext(ctx, \"amq\", args...)")) {
-				t.Errorf("%s:%d execs amq outside amqCmd: %s", f, i+1, strings.TrimSpace(line))
-			}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
 		}
+		lines := strings.Split(string(src), "\n")
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f, src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inHelper := func(pos token.Pos) bool {
+			for _, d := range file.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == "amqCmd" && f == "helpers_test.go" && pos >= fd.Pos() && pos <= fd.End() {
+					return true
+				}
+			}
+			return false
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel == nil || (sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext") {
+				return true
+			}
+			if id, ok := sel.X.(*ast.Ident); !ok || id.Name != "exec" {
+				return true
+			}
+			i := 0
+			if sel.Sel.Name == "CommandContext" {
+				i = 1
+			}
+			if len(call.Args) <= i {
+				return true
+			}
+			line := fset.Position(call.Pos()).Line
+			where := fmt.Sprintf("%s:%d", f, line)
+			if lit, ok := call.Args[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				prog, _ := strconv.Unquote(lit.Value)
+				r, _ := filepath.EvalSymlinks(prog)
+				if (filepath.Base(prog) == "amq" || (resolved != "" && r == resolved)) && !inHelper(call.Pos()) {
+					t.Errorf("%s execs amq outside amqCmd", where)
+				}
+				return true
+			}
+			if !strings.Contains(lines[line-1], "exec: not amq") && !inHelper(call.Pos()) {
+				t.Errorf("%s execs a computed program without saying it is not amq", where)
+			}
+			return true
+		})
 	}
 	env := amqEnv(t, nil)
 	got := map[string]string{}

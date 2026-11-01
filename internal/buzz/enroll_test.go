@@ -646,10 +646,20 @@ func amqBinaries(t *testing.T) {
 		if err != nil {
 			t.Skipf("%s not installed", bin)
 		}
-		out, _ := exec.Command(p, "--version").CombinedOutput()
+		args := []string{"--version"}
 		if bin == "amq-remote" {
-			out, _ = exec.Command(p, "version").CombinedOutput()
+			args = []string{"version"}
 		}
+		// amq through the scratch-HOME helper; the other two get its
+		// environment (this runs before the test changes HOME)
+		var cmd *exec.Cmd
+		if filepath.Base(p) == "amq" {
+			cmd = amqCmd(context.Background(), t, nil, args...)
+		} else {
+			cmd = exec.Command(p, args...) // exec: not amq (amq-remote, amq-owner-sign)
+			cmd.Env = amqEnv(t, nil)
+		}
+		out, _ := cmd.CombinedOutput()
 		v := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(out)), "amq-remote"))
 		t.Logf("AMQ binary %s: %s (%s)", bin, v, p)
 		if bin == "amq-remote" && semverLess(v, AMQFloor) {
