@@ -190,6 +190,9 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	if err != nil {
 		return data, err
 	}
+	if err := validateBlockedWiden(t, req.Files); err != nil {
+		return data, err
+	}
 	g, gerr := grants.Load(t.ProjectPath)
 	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: req.Files, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
@@ -230,4 +233,43 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	}
 	data.Task = &after
 	return data, nil
+}
+
+// validateBlockedWiden limits a lead decision on a blocked task to the exact
+// paths recorded by the commit refusal or the seat's typed widen request.
+// Non-blocked widening keeps its legacy behavior.
+func validateBlockedWiden(t task.Task, requested []string) error {
+	if t.State != task.StateBlocked {
+		return nil
+	}
+	// Keep the established growth-gate retry: a harness refusal for a
+	// protected path retains its done report while the same lead decision is
+	// checked, escalated, and retried after the owner accepts the gate.
+	if t.Report != nil && (t.BlockReason == seatcommit.ReasonProtected || t.BlockReason == seatcommit.ReasonGrowthGate) {
+		return nil
+	}
+	if t.BlockReason != seatcommit.ReasonOutside && t.BlockReason != task.ReasonWidenRequested {
+		return &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set (state %s, reason %s); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)", t.ID, t.State, t.BlockReason, t.ID)}
+	}
+	if len(t.RefusedPaths) == 0 {
+		return &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded no refused paths", t.ID)}
+	}
+	allowed := make(map[string]bool, len(t.RefusedPaths))
+	for _, p := range t.RefusedPaths {
+		g, err := task.LiteralGlob(p)
+		if err != nil {
+			return &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded an invalid refused path %q", t.ID, p)}
+		}
+		allowed[g] = true
+	}
+	normalized, err := task.CleanDeclaredFiles(requested)
+	if err != nil {
+		return &widenRefused{code: "widen_paths_mismatch", msg: err.Error()}
+	}
+	for _, p := range normalized {
+		if !allowed[p] {
+			return &widenRefused{code: "widen_paths_mismatch", msg: fmt.Sprintf("%q is not an exact path recorded by task %s", p, t.ID)}
+		}
+	}
+	return nil
 }

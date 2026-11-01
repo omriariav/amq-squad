@@ -159,6 +159,49 @@ func TestTaskWidenIsAcceptedOnlyFromTheLeadsPane(t *testing.T) {
 	}
 }
 
+func TestLeadWidenOnBlockedTaskUsesOnlyItsRecordedExactPaths(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	proj, _ := filepath.EvalSymlinks(t.TempDir())
+	s, _ := task.Open(root)
+	sel := storeSelection{store: s, root: root, release: func() {}}
+	addBlocked := func(reason string, paths []string) task.Task {
+		t.Helper()
+		tk, err := s.Add(task.AddInput{Title: reason, Class: "implement", ProjectPath: proj}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Claim(tk.ID, "seat", nil, time.Minute, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.BlockWithPaths(tk.ID, "seat", reason, "", task.RouteLead, paths, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		return tk
+	}
+
+	tk := addBlocked(task.ReasonWidenRequested, []string{"src/*.go", "docs/a, b.md"})
+	literal, _ := task.LiteralGlob("src/*.go")
+	data, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{literal}, Reason: "belongs"})
+	if err != nil || data.Task == nil || data.Task.State != task.StatePending || len(data.Task.RefusedPaths) != 0 {
+		t.Fatalf("exact subset widen: %+v %v", data, err)
+	}
+
+	tk = addBlocked(task.ReasonWidenRequested, []string{"src/*.go"})
+	if _, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{"src/*.go"}, Reason: "too broad"}); err == nil || !strings.Contains(err.Error(), "widen_paths_mismatch") {
+		t.Fatalf("glob broadened an exact path: %v", err)
+	}
+
+	tk = addBlocked("needs_decision", nil)
+	if _, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{"b.go"}, Reason: "no request"}); err == nil || !strings.Contains(err.Error(), "widen_not_requested") || !strings.Contains(err.Error(), "task reset "+tk.ID+" --pool") {
+		t.Fatalf("other block reason: %v", err)
+	}
+
+	tk = addBlocked("outside_declared_files", nil)
+	if _, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{"b.go"}, Reason: "missing record"}); err == nil || !strings.Contains(err.Error(), "widen_paths_missing") {
+		t.Fatalf("pathless block: %v", err)
+	}
+}
+
 // writeOwnerKeys writes the core's issuer key and the owner's trust store
 // under HOME/.amq-squad (what amq-squad remote enrolls).
 func writeOwnerKeys(t *testing.T, home string) {

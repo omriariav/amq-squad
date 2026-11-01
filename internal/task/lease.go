@@ -428,6 +428,26 @@ func (s Store) Fail(id, holder, reason string, now time.Time) (Task, error) {
 // Block stops a pending or in-progress task for a decision. On an
 // in-progress task only the holder may block it.
 func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Task, error) {
+	return s.BlockWithPaths(id, actor, reason, detail, route, nil, now)
+}
+
+// BlockWithPaths blocks like Block and, for widen_requested only, records
+// the normalized exact paths the seat asks the lead to add.
+func (s Store) BlockWithPaths(id, actor, reason, detail, route string, paths []string, now time.Time) (Task, error) {
+	reason = strings.TrimSpace(reason)
+	var refused []string
+	var err error
+	if reason == ReasonWidenRequested {
+		refused, err = CleanDeclaredFiles(paths)
+		if err != nil {
+			return Task{}, fmt.Errorf("widen requested paths: %w", err)
+		}
+		if len(refused) == 0 {
+			return Task{}, fmt.Errorf("a %s block needs at least one path", ReasonWidenRequested)
+		}
+	} else if len(paths) > 0 {
+		return Task{}, fmt.Errorf("block paths are only valid with reason %s", ReasonWidenRequested)
+	}
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		switch t.State {
 		case StateInProgress:
@@ -440,7 +460,11 @@ func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Ta
 		default:
 			return fmt.Errorf("task %s is %s; only pending or in-progress tasks block", t.ID, t.State)
 		}
-		return block(t, reason, detail+byActor(actor), route)
+		if err := block(t, reason, detail+byActor(actor), route); err != nil {
+			return err
+		}
+		t.RefusedPaths = refused
+		return nil
 	})
 }
 
