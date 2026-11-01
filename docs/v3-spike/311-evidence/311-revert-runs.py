@@ -192,6 +192,14 @@ run("the lead takes a confirmation in a gate question's thread", [(LS,'if anchor
 run("the lead takes a yes naming more than the plan's thread", [(LS,'\t\tcase slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(nostr.ThreadRefs(p), r) }):\n','\t\tcase false:\n')],
     CL+"'TestTheLeadWitnessesABareYesRepliedToThePlanPost'")
 
+# Codex re-check on #838, the second layer: no shell sets a team-plan label
+run("the solo shell runs a command string with a team-plan label", [(TT,'\tif (tokens.some((t) => t.includes(TEAM_PLAN_LABEL))) return "a team-plan label";\n','')],
+    "cd pi && node --test --test-name-pattern 'sees through quoting' test/team.test.ts")
+run("the solo shell runs an argv form with a team-plan label", [(TT,'\t\tif (words.some((w) => w.includes(TEAM_PLAN_LABEL))) return refusalText("a team-plan label");\n','')],
+    PI+"test/team.test.ts")
+run("the guard's second layer runs a team-plan label", [('internal/cli/hook_guard.go','\tif slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, gateverify.TeamPlanLabel) }) {\n\t\treturn "a team-plan label"\n\t}\n','\t_ = gateverify.TeamPlanLabel\n')],
+    CL+"'TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer'")
+
 # Rows 1 and 5 at the raisers: what the question's lines read
 run("the release prepare raises without the branch it checked", [(RF,'\t\t\tspec.Facts = gatestore.SafeFacts("", *branch)\n','\t\t\tspec.Facts = nil\n')],
     CL+"'TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote'")

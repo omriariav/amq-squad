@@ -318,3 +318,11 @@ test("brief 3.1.1-1: amq_team_propose with reply_to records the plan with the le
 		lead.close();
 	}
 });
+
+// Codex re-check on #838, the second layer: the solo lead's shell refuses a
+// team-plan label in an argv form too (the command-string forms are in
+// solo-shell-forms.json, read by the guard's layer as well).
+test("brief 3.1.1-1: the solo shell refuses a team-plan label in an argv form", () => {
+	assert.match(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "team-plan:" + "ab".repeat(32), "--body", "-"] }) ?? "", /^owner_only: .*a team-plan label/);
+	assert.equal(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "progress", "--body", "-"] }), undefined);
+});

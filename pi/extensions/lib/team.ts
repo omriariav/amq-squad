@@ -116,6 +116,9 @@ export function lineRefusal(line: string): string | undefined {
 	const d = dequote(line);
 	const tokens = d.split(/[\s;&|()<>{}]+/).filter(Boolean);
 	if (tokens.some((t) => t.includes("tmux"))) return "tmux";
+	// brief 3.1.1-1, Codex on #838: the team-plan label is the lead
+	// process's (amq_team_propose), never a shell's amq reply or amq send
+	if (tokens.some((t) => t.includes(TEAM_PLAN_LABEL))) return "a team-plan label";
 	for (let i = 0; i < tokens.length; i++) {
 		if (base(tokens[i]).includes("amq-squad") && !amqSquadAllowed(tokens.slice(i + 1))) return ("amq-squad " + tokens.slice(i + 1, i + 3).join(" ")).trim();
 	}
@@ -140,6 +143,7 @@ export function soloShellRefusal(toolName: string, input: unknown): string | und
 		const words = argv.map((w) => String(w).toLowerCase());
 		const cmd = base(words[0] ?? "");
 		if (cmd.includes("tmux")) return refusalText("tmux");
+		if (words.some((w) => w.includes(TEAM_PLAN_LABEL))) return refusalText("a team-plan label");
 		if (cmd.includes("amq-squad") && !amqSquadAllowed(words.slice(1))) return refusalText(("amq-squad " + words.slice(1, 3).join(" ")).trim());
 		const inner = LINE_RUNNERS.has(cmd) ? lineRefusal(words.slice(1).join(" ")) : undefined;
 		return inner ? refusalText(inner) : undefined;
