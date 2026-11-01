@@ -25,7 +25,7 @@ func raiseRel(t *testing.T, c *gateverify.Core, id string) (gatestore.Record, ga
 }
 
 // 5-amq-B acceptance 4, 5 and 6 (in process): serve delivers, the handler
-// replies once per message; the gate question says "reply in this thread";
+// replies once per message; the gate question says what yes and no do;
 // a plain answer is re-asked with a pointer at the thread; a phone message
 // is routed; a thread answer is accepted and its answer file verifies; a
 // malformed answer goes to the core, never to a lead.
@@ -33,7 +33,7 @@ func TestHandlerGatesAndRouting(t *testing.T) {
 	hf := newHandlerFixture(t)
 	rec, q, answer := raiseRel(t, hf.core, "rel-1")
 	posted := hf.mem.events(9, hf.body.PublicHex())
-	if len(posted) != 1 || posted[0].ID != q.EventID || !strings.Contains(strings.ToLower(posted[0].Content), "reply in this thread") {
+	if len(posted) != 1 || posted[0].ID != q.EventID || !strings.Contains(posted[0].Content, "\nYes lets it run. No stops it.\n") {
 		t.Fatalf("question on the relay = %+v", posted)
 	}
 	_, plainMsg := hf.dm(t, answer, "")

@@ -72,6 +72,14 @@ type leadStartRequest struct {
 	Project string `json:"project,omitempty"`
 	Pane    string `json:"pane,omitempty"`  // the TUI door's pane
 	Event   []byte `json:"event,omitempty"` // the Buzz door's raw event bytes, as the attachment fetched them
+	// Post is the relayed post a bare yes directly replies to (brief
+	// 3.1.1-1), its raw bytes as the attachment fetched them; nil for `yes
+	// <prefix>`. No digest travels with it: the lead proves which plan the
+	// post carries from the text it recorded (planSentKind).
+	Post []byte `json:"post,omitempty"`
+	// Body is the plan text the lead's pi sent as its plan reply
+	// (planSentKind).
+	Body string `json:"body,omitempty"`
 	// Challenge is the lead's pi's fresh challenge (Codex's re-check on
 	// #837, item 1): the lead answers it with Proof
 	Challenge string `json:"challenge,omitempty"`
@@ -83,6 +91,11 @@ const (
 	confirmShellKind = "amq-squad.confirm-shell.v1" // dropped: refused by name
 	phaseKind        = "amq-squad.phase.v1"         // R53: the lead's pi asks whether the team started
 	confirmBuzzKind  = "amq-squad.confirm-buzz.v1"
+	// planSentKind: the lead's own pi records the exact text it sends as
+	// the plan reply for a digest (amq_team_propose's reply_to), before it
+	// sends it; accepted only from that pi (Codex P1 on #838: the lead
+	// process is the authority for which post is its plan).
+	planSentKind = "amq-squad.plan-sent.v1"
 )
 
 // leadStartReply is the lead's answer.
@@ -142,7 +155,36 @@ type leadStarter struct {
 	piStamp   string
 	nonce     string // the per-spawn nonce handed to pi over fd 3 (leadNonce)
 	witnessed map[string]confirmRecord
-	seen      map[string]bool // Buzz event ids witnessed (once-only)
+	seen      map[string]bool     // Buzz event ids witnessed (once-only)
+	plans     map[string]sentPlan // the plan texts its pi sent, by digest (memory only)
+}
+
+// sentPlan is the plan reply the lead's pi sent for one digest, recorded
+// before it was sent: its body as the relay posts it under the header
+// (redacted once, here), whether it fits one post, and when the record
+// expires (its proposal's 30-minute window).
+type sentPlan struct {
+	Relayed string
+	Fits    bool
+	At      time.Time
+	Expires time.Time
+}
+
+// MaxSentPlans bounds the lead's plan records; the oldest is evicted.
+const MaxSentPlans = 8
+
+// planProbeID is a request id of the relay's fixed shape: the header's
+// length does not depend on the id, so the body as relayed is computed once.
+const planProbeID = "q-000000000000"
+
+// prunePlansLocked drops the records whose proposal window has passed. The
+// caller holds wmu.
+func (s *leadStarter) prunePlansLocked(now time.Time) {
+	for d, sp := range s.plans {
+		if now.After(sp.Expires) {
+			delete(s.plans, d)
+		}
+	}
 }
 
 // setPi records the pi process the lead spawned, with its start stamp read
@@ -261,9 +303,11 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	case req.Kind == confirmShellKind:
 		// the shell door was dropped (no kernel read tells the owner's shell
 		// from a tree the model built); its kind is refused by name
-		reply.Refusal, reply.Detail = ReasonShellDoorRemoved, "the shell door was dropped: under one uid, no kernel read tells the owner's shell from a tree the model built; confirm at the lead's pane (/squad confirm) or over Buzz (yes <prefix>)"
+		reply.Refusal, reply.Detail = ReasonShellDoorRemoved, "the shell door was dropped: under one uid, no kernel read tells the owner's shell from a tree the model built; confirm at the lead's pane (/squad confirm) or over Buzz (reply yes to the lead's post of the plan)"
 	case req.Kind == confirmBuzzKind:
 		reply = s.witnessBuzz(req)
+	case req.Kind == planSentKind:
+		reply = s.recordPlan(pid, req)
 	default:
 		reply.Refusal, reply.Detail = "request_malformed", "an unknown request kind"
 	}
@@ -435,9 +479,46 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	case e.CreatedAt < now.Add(-buzz.RouteWindow).Unix() || e.CreatedAt > now.Add(buzz.FutureSkew).Unix():
 		return refusedAs(gateverify.RejectWindow, "event %s was created at %d", e.ID[:12], e.CreatedAt)
 	}
-	prefix, ok := gateverify.ParseTeamYes(e.Content)
-	if !ok {
-		return refusedAs(ReasonEventUnverified, "event %s is not yes <16 hex>", e.ID[:12])
+	// Codex P1 on #838: a confirmation never rides in a gate's thread, and
+	// its references never conflict; the handler's gate-thread exclusion is
+	// the first layer, this the lead's own (the bytes may reach it straight)
+	refs := gateverify.EventRefs(e) // every e, E and q tag, whatever its marker
+	if anchors := s.gateAnchors(); slices.ContainsFunc(refs, func(r string) bool { return anchors[r] }) {
+		return refusedAs(ReasonConflictingThread, "event %s replies in a gate question's thread", e.ID[:12])
+	}
+	prefix, typed := gateverify.ParseTeamYes(e.Content)
+	var post nostr.Event
+	switch verb, bare := gatestore.ParseBare(e.Content); {
+	case typed && req.Post == nil:
+	case bare && verb == "approve" && req.Post != nil:
+		// brief 3.1.1-1: a bare yes replied to the lead's plan post. Its
+		// direct reply target binds it: the post is the share body's own
+		// signed kind 9 in the owner's DM channel (the model cannot sign as
+		// the body), the yes replies to it, and its content carries the plan
+		// text this lead's pi recorded (below, under the lock)
+		p, err := nostr.ParseEvent(req.Post)
+		post = p
+		parent, _ := buzz.ThreadParent(e)
+		switch {
+		case err != nil:
+			return refusedAs(ReasonEventUnverified, "the plan post bytes are not an event: %v", err)
+		case !p.CheckID():
+			return refusedAs(gateverify.RejectBadID, "the plan post's id does not recompute from its bytes")
+		case p.PubKey != pin.Body:
+			return refusedAs(gateverify.RejectWrongPubkey, "post %s is not signed by the share body's pinned key", p.ID[:12])
+		case p.VerifySignature() != nil:
+			return refusedAs(gateverify.RejectBadSignature, "post %s", p.ID[:12])
+		case p.Kind != buzz.KindDM || !slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}):
+			return refusedAs(gateverify.RejectWrongChannel, "post %s is not a DM in the owner's channel", p.ID[:12])
+		case slices.ContainsFunc(refs, func(r string) bool { return r != p.ID && !slices.Contains(gateverify.EventRefs(p), r) }):
+			// one anchor: every reference is the plan post or the post's own
+			// thread (the owner's DM it replies to), nothing else
+			return refusedAs(ReasonConflictingThread, "event %s names %v besides the plan post %s and its thread", e.ID[:12], refs, p.ID[:12])
+		case parent != p.ID:
+			return refusedAs(gateverify.RejectThread, "event %s does not reply to the plan post %s", e.ID[:12], p.ID[:12])
+		}
+	default:
+		return refusedAs(ReasonEventUnverified, "event %s is not a bare yes replied to the plan post (or yes <16 hex>)", e.ID[:12])
 	}
 	// once-only, restart-proof and atomic: the check and the mark under one
 	// lock; the event ids this lead or an earlier one witnessed are in the
@@ -447,7 +528,12 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	if s.seen[e.ID] || eventLogged(s.root, e.ID) {
 		return refusedAs(gatestore.RejectReplayed, "event %s was witnessed already", e.ID[:12])
 	}
-	prop, err := proposalByPrefix(s.root, prefix, now)
+	var prop teamProposal
+	if req.Post != nil {
+		prop, err = s.provenPlanLocked(post, now)
+	} else {
+		prop, err = proposalByPrefix(s.root, prefix, now)
+	}
 	if err != nil {
 		return refusedBy(err)
 	}
@@ -459,6 +545,135 @@ func (s *leadStarter) witnessBuzz(req leadStartRequest) leadStartReply {
 	}
 	s.seen[e.ID] = true
 	return s.witnessLocked(confirmRecord{Digest: prop.Digest, Door: DoorBuzz, At: now.UTC(), By: "owner key " + e.PubKey, Proof: confirmProof{EventID: e.ID}})
+}
+
+// ReasonPlanUnproved is a bare yes whose post does not carry a plan text
+// this lead's pi recorded for one recent proposal (Codex P1 on #838).
+const ReasonPlanUnproved = "plan_post_unproved"
+
+// recordPlan is planSentKind: from the pi process the lead spawned only (its
+// pid and the start stamp read at the spawn, as the TUI door), the exact
+// text pi is about to send as the plan reply for a recent proposal of this
+// root. The lead keeps it in memory; a restart forgets it.
+func (s *leadStarter) recordPlan(pid int, req leadStartRequest) leadStartReply {
+	h, err := digestHex(req.Digest)
+	if err != nil {
+		return refusedBy(err)
+	}
+	s.wmu.Lock()
+	piPID, piStamp := s.piPID, s.piStamp
+	s.wmu.Unlock()
+	if piPID <= 1 || pid != piPID {
+		return leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); only amq_team_propose records a plan", pid, piPID)}
+	}
+	if now, ok := confirmStamp(pid); !ok || now != piStamp {
+		return leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d does not carry the start stamp the lead read when it spawned pi", pid)}
+	}
+	return s.recordPlanFrom(h, req)
+}
+
+// recordPlanFrom records a plan text after the peer is proved.
+func (s *leadStarter) recordPlanFrom(hexDigest string, req leadStartRequest) leadStartReply {
+	now := confirmNow()
+	prop, err := proposalByHex(s.root, hexDigest, now)
+	if err != nil || prop.Digest != strings.TrimSpace(req.Digest) {
+		return leadStartReply{Outcome: "refused", Refusal: ReasonNoProposal, Detail: fmt.Sprintf("no recent proposal %s to record a plan reply for", req.Digest)}
+	}
+	if len(planLines(req.Body)) == 0 || len(req.Body) > 16<<10 {
+		return leadStartReply{Outcome: "refused", Refusal: "request_malformed", Detail: "the plan text is empty or longer than 16 KiB"}
+	}
+	relayed, fits := buzz.RelayedText(planProbeID, req.Body)
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if s.plans == nil {
+		s.plans = map[string]sentPlan{}
+	}
+	s.prunePlansLocked(now)
+	if _, again := s.plans[prop.Digest]; !again && len(s.plans) >= MaxSentPlans {
+		oldest := ""
+		for d, sp := range s.plans {
+			if oldest == "" || sp.At.Before(s.plans[oldest].At) {
+				oldest = d
+			}
+		}
+		delete(s.plans, oldest)
+	}
+	s.plans[prop.Digest] = sentPlan{Relayed: strings.TrimRight(strings.TrimPrefix(relayed, "re "+planProbeID+"\n"), " \t\r\n"), Fits: fits,
+		At: now, Expires: prop.At.Add(ConfirmTTL)}
+	return leadStartReply{Outcome: "recorded", Digest: prop.Digest}
+}
+
+// planLines are a plan text's non-blank lines (a record with none is
+// refused).
+func planLines(text string) []string {
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// relayHeaderRe is the relay's one decoration of a single-part post: its
+// first line, `re <request id>` (buzz.splitPost); a multi-part mark (i/n)
+// does not match.
+var relayHeaderRe = regexp.MustCompile(`^re (q-[0-9a-f]{12})$`)
+
+// provenPlanLocked is the one recent proposal whose recorded plan text the
+// post IS (Codex's third pass on #838): the post's content is exactly the
+// relay's one header line `re <request id>`, then the text as the relay
+// posts it (buzz.RelayedText, computed once when recorded: trimmed and
+// redacted), only trailing whitespace tolerated; no line before, between
+// or after; a multi-part post proves nothing. Expired records are dropped
+// first. Anything else is plan_post_unproved. The caller holds wmu.
+func (s *leadStarter) provenPlanLocked(post nostr.Event, now time.Time) (teamProposal, error) {
+	s.prunePlansLocked(now)
+	header, body, _ := strings.Cut(post.Content, "\n")
+	m := relayHeaderRe.FindStringSubmatch(header)
+	body = strings.TrimRight(body, " \t\r\n")
+	var found []teamProposal
+	for digest, sp := range s.plans {
+		if m == nil {
+			break
+		}
+		if !sp.Fits || body != sp.Relayed {
+			continue
+		}
+		h, err := digestHex(digest)
+		if err != nil {
+			continue
+		}
+		if p, err := proposalByHex(s.root, h, now); err == nil {
+			found = append(found, p)
+		}
+	}
+	if len(found) != 1 {
+		return teamProposal{}, fmt.Errorf("%s: post %s is not exactly the relayed plan text this lead's pi recorded for one recent proposal (%d match)", ReasonPlanUnproved, post.ID[:12], len(found))
+	}
+	return found[0], nil
+}
+
+// ReasonConflictingThread is a Buzz confirmation whose thread references name
+// a gate question or re-ask, or anything besides the plan post and its own
+// thread (brief 3.1.1-1, Codex P1 on #838).
+const ReasonConflictingThread = "conflicting_thread"
+
+// gateAnchors are the event ids of every gate question and re-ask in this
+// lead's root (read only; a root with no gate store has none).
+func (s *leadStarter) gateAnchors() map[string]bool {
+	out := map[string]bool{}
+	store := gatestore.Store{Root: s.root}
+	ids, _ := store.IDs()
+	for _, id := range ids {
+		if q, _ := store.Question(id); q != nil {
+			out[q.EventID] = true
+		}
+		if r, _ := store.ReadReask(id); r != nil {
+			out[r.EventID] = true
+		}
+	}
+	return out
 }
 
 // leadStartBeforeAct runs between the request's read and the last proof of

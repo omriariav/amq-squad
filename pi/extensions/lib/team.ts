@@ -30,6 +30,11 @@ export const PLAN_KEY = "amq-squad-plan";
 export const CONFIRM_TTL_MS = 30 * 60 * 1000;
 const APPLY_TIMEOUT_MS = 11 * 60 * 1000;
 const DIGEST = /^sha256:([0-9a-f]{64})@([0-9a-f]{64}|absent)$/;
+// TEAM_PLAN_LABEL is gateverify.TeamPlanLabel: the label on the cockpit
+// reply that carries the team plan.
+export const TEAM_PLAN_LABEL = "team-plan:";
+// PLAN_KIND is the start socket's planSentKind (internal/cli/lead_start.go).
+export const PLAN_KIND = "amq-squad.plan-sent.v1";
 
 type Proposal = { digest: string; prefix: string; plan: string[]; project_dir: string };
 // TeamIdentity is the team lead's identity the lead's process returns
@@ -217,6 +222,9 @@ export function lineRefusal(line: string): string | undefined {
 	const d = dequote(line);
 	const tokens = d.split(/[\s;&|()<>{}]+/).filter(Boolean);
 	if (tokens.some((t) => t.includes("tmux"))) return "tmux";
+	// brief 3.1.1-1, Codex on #838: the team-plan label is the lead
+	// process's (amq_team_propose), never a shell's amq reply or amq send
+	if (tokens.some((t) => t.includes(TEAM_PLAN_LABEL))) return "a team-plan label";
 	for (let i = 0; i < tokens.length; i++) {
 		if (base(tokens[i]).includes("amq-squad") && !amqSquadAllowed(tokens.slice(i + 1))) return ("amq-squad " + tokens.slice(i + 1, i + 3).join(" ")).trim();
 	}
@@ -241,6 +249,7 @@ export function soloShellRefusal(toolName: string, input: unknown): string | und
 		const words = argv.map((w) => String(w).toLowerCase());
 		const cmd = base(words[0] ?? "");
 		if (cmd.includes("tmux")) return refusalText("tmux");
+		if (words.some((w) => w.includes(TEAM_PLAN_LABEL))) return refusalText("a team-plan label");
 		if (cmd.includes("amq-squad") && !amqSquadAllowed(words.slice(1))) return refusalText(("amq-squad " + words.slice(1, 3).join(" ")).trim());
 		const inner = LINE_RUNNERS.has(cmd) ? lineRefusal(words.slice(1).join(" ")) : undefined;
 		return inner ? refusalText(inner) : undefined;
@@ -374,7 +383,7 @@ export class SoloTeam {
 		if (!p) return [];
 		const out = ["amq-squad: proposed team", ...p.plan.map((l) => "  " + l), `  digest ${p.digest}`, `  prefix ${p.prefix}`];
 		if (this.confirmed) out.push(`  confirmed at ${this.confirmed.at.toISOString()} (door tui, witnessed by the lead); the lead applies it with amq_team_apply`);
-		else out.push(`  confirm: /squad confirm ${p.prefix}  (or the signed Buzz DM "yes ${p.prefix}")`);
+		else out.push(`  confirm: /squad confirm ${p.prefix}  (or on the phone: reply yes to the lead's Buzz post of this plan)`);
 		if (this.line) out.push(`  ${this.line}`);
 		return out;
 	}
@@ -389,7 +398,16 @@ export class SoloTeam {
 		}
 	}
 
-	async propose(plan: unknown, signal?: AbortSignal): Promise<string> {
+	// propose records the plan; with replyTo (the owner's phone request, an
+	// AMQ message id) this process also sends the plan as the reply there
+	// (brief 3.1.1-1, Codex's rounds on #838). First it records the exact
+	// text with the lead over the start socket (PLAN_KIND, accepted from
+	// this pi only): the lead proves the owner's yes against that text. Then
+	// it sends the reply labelled team-plan:<content digest>, which the relay
+	// records for routing. The label and the text come from the propose's
+	// own output, never from the model.
+	async propose(input: unknown, signal?: AbortSignal): Promise<string> {
+		const { reply_to: replyTo, ...plan } = (input ?? {}) as Record<string, unknown>;
 		const r = await this.runner(this.cfg.bin, ["team", "propose", "--from", "/dev/stdin", "--project", this.project(), "--json"], { stdin: JSON.stringify(plan), timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000), signal });
 		if (r.spawnError || r.timedOut || r.code !== 0) throw new Error(`team propose refused (${describe(r, 30000)})${r.stdout.trim() ? `: ${r.stdout.trim().slice(0, 2000)}` : ""}`);
 		const d = envelopeData<Proposal & { doors: string }>(r.stdout);
@@ -398,7 +416,20 @@ export class SoloTeam {
 		this.confirmed = undefined;
 		this.line = "";
 		this.render();
-		return [...(d.plan ?? []), `digest ${d.digest}`, `prefix ${d.prefix}`, d.doors].join("\n");
+		const text = [...(d.plan ?? []), `digest ${d.digest}`, `prefix ${d.prefix}`, d.doors].join("\n");
+		if (typeof replyTo !== "string" || !replyTo) return text;
+		const hex = DIGEST.exec(d.digest)?.[1] ?? "";
+		if (replyTo.startsWith("-") || !this.cfg.amq) return `${text}\nthe plan was not sent as the reply to ${replyTo}: ${this.cfg.amq ? "a bad message id" : "no amq binary"}`;
+		let rec: LeadReply;
+		try {
+			rec = await askLeadProved(this.socket, { kind: PLAN_KIND, digest: d.digest, body: text }, this.nonce);
+		} catch (err) {
+			return `${text}\nthe plan was not sent as the reply to ${replyTo}: the lead did not record it (${String((err as Error).message ?? err)})`;
+		}
+		if (rec.outcome !== "recorded") return `${text}\nthe plan was not sent as the reply to ${replyTo}: the lead did not record it (${rec.refusal ?? "refused"}: ${rec.detail ?? ""})`;
+		const s = await this.runner(this.cfg.amq, ["reply", "--me", this.cfg.me, "--id", replyTo, "--labels", `${TEAM_PLAN_LABEL}${hex}`, "--json", "--body", "-"], { stdin: text, timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000), signal });
+		if (s.spawnError || s.timedOut || s.code !== 0) return `${text}\nthe plan was not sent as the reply to ${replyTo} (${describe(s, 30000)})`;
+		return `${text}\nsent as the reply to ${replyTo}, marked as the team plan: the owner's yes to it on the phone confirms it`;
 	}
 
 	async apply(digest: string, signal?: AbortSignal): Promise<string> {
@@ -500,7 +531,8 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 		description:
 			"Propose a team for this repository from your plan: the goal, the session name, the lead (one of the seats), the seats (handle, role, runtime, model, effort), " +
 			"the files the work touches and the first tasks. It renders squad.yaml, checks it against the owner's grant, and returns the plan with its digest and prefix. " +
-			"Nothing is written but the proposal. The owner confirms it (you cannot); then call amq_team_apply with the digest.",
+			"Nothing is written but the proposal. The owner confirms it (you cannot); then call amq_team_apply with the digest. " +
+			"When the plan answers the owner's phone request, give reply_to (that message's id from amq_drain): the plan is sent as your reply there, marked as the team plan, and the owner's yes to it on the phone confirms it.",
 		promptSnippet: "amq_team_propose: propose a team (plan in, digest out)",
 		parameters: Type.Object({
 			goal: Type.String(),
@@ -517,6 +549,7 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 			),
 			files: Type.Optional(Type.Array(Type.String())),
 			tasks: Type.Optional(Type.Array(Type.Object({ title: Type.String(), class: Type.Optional(Type.String()), files: Type.Optional(Type.Array(Type.String())) }))),
+			reply_to: Type.Optional(Type.String({ description: "the owner's phone request message id (amq_drain) this plan answers" })),
 		}),
 		async execute(_id, p, signal) {
 			const refused = team.phaseRefusal("amq_team_propose");

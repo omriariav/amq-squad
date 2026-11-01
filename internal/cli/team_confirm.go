@@ -17,6 +17,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
@@ -38,11 +39,14 @@ import (
 //	tui:   `/squad confirm <prefix>`: the extension sends the digest and its
 //	       pane over the start socket; the lead accepts it only from the pi
 //	       process it spawned (its pid and the start stamp read at spawn).
-//	buzz:  the attachment fetches the owner's signed `yes <prefix>` on its
-//	       own connection and hands the lead the raw event bytes; the lead,
+//	buzz:  the attachment fetches the owner's signed bare yes, replied to
+//	       the lead's relayed post of the plan (brief 3.1.1-1; the 3.1.0
+//	       form `yes <prefix>` keeps verifying), on its own connection and
+//	       hands the lead the raw event bytes and the post's; the lead,
 //	       which holds no key and opens no connection, verifies them itself
 //	       (the id recomputed, the pinned owner's signature, kind, channel,
-//	       window, once-only, the prefix).
+//	       window, once-only, the post the share body's and the yes in its
+//	       thread, the proposal the post names).
 //
 // The shell door (`amq-squad team confirm`) was dropped: under one uid, no
 // kernel read tells the owner's shell from a tree the model built (a helper
@@ -179,7 +183,7 @@ func writeConfirmLog(root string, rec confirmRecord) (string, error) {
 // doorsText names the two doors for a refusal.
 func doorsText(digest string) string {
 	prefix := team.DigestPrefix(digest)
-	return fmt.Sprintf("confirm it at one of the two doors: (1) type /squad confirm %s in the lead's pane; (2) send the signed Buzz DM \"yes %s\" (digest %s)", prefix, prefix, digest)
+	return fmt.Sprintf("confirm it at one of the two doors: (1) type /squad confirm %s in the lead's pane; (2) on the phone, reply yes to the lead's Buzz post that relays this plan with its digest %s", prefix, digest)
 }
 
 // eventsDir is where the lead logs the Buzz event ids it witnessed.
@@ -367,6 +371,27 @@ func proposalByPrefix(root, prefix string, at time.Time) (teamProposal, error) {
 	return teamProposal{}, fmt.Errorf("%s: %d proposals start with %s; confirm at the lead's pane or the shell door with the full digest", ReasonProposalAmbig, len(hits), prefix)
 }
 
+// proposalByHex is root's recent proposal whose content digest is hexDigest
+// (the relay record's plan_for), no_proposal when none or an older one.
+func proposalByHex(root, hexDigest string, at time.Time) (teamProposal, error) {
+	none := fmt.Errorf("%s: no proposal younger than %s has the digest %s", ReasonNoProposal, ConfirmTTL, hexDigest)
+	if !nostr.IsHex64(hexDigest) {
+		return teamProposal{}, none
+	}
+	raw, err := os.ReadFile(proposalPath(root, hexDigest))
+	if err != nil || len(raw) > confirmProposalMaxSize {
+		return teamProposal{}, none
+	}
+	var p teamProposal
+	if json.Unmarshal(raw, &p) != nil || at.Sub(p.At) > ConfirmTTL {
+		return teamProposal{}, none
+	}
+	if h, err := digestHex(p.Digest); err != nil || h != hexDigest {
+		return teamProposal{}, none
+	}
+	return p, nil
+}
+
 // confirmParent reads a pid's parent from the kernel (a test seam; the
 // start socket's caller chain walks it).
 var confirmParent = procinfo.ParentPID
@@ -526,10 +551,12 @@ func teamProjectDir(project string) (string, error) {
 // confirmByPrefix is the attachment's half of the Buzz door (wired into the
 // mailbox handler, after the handler fetched the event on its own connection
 // and verified the owner's signature): it finds the solo root whose recent
-// proposal the prefix names and hands that root's lead the raw event bytes;
-// the lead verifies them itself, with no connection and no key, and
-// witnesses the confirmation. It returns the confirmed digest.
-func confirmByPrefix(prefix string, raw []byte) (string, error) {
+// proposal the prefix names, or, for a bare yes (brief 3.1.1-1), the one
+// the relay record marks the plan post with, and hands that root's lead the
+// raw event bytes (and the post's, and the plan's digest); the lead
+// verifies them itself, with no connection and no key, and witnesses the
+// confirmation. It returns the confirmed digest.
+func confirmByPrefix(prefix string, raw []byte, plan *gateverify.PlanPost) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -543,23 +570,36 @@ func confirmByPrefix(prefix string, raw []byte) (string, error) {
 	sort.Strings(roots)
 	var found []string
 	for _, root := range roots {
-		if _, err := proposalByPrefix(root, prefix, at); err == nil {
+		var err error
+		if plan != nil {
+			_, err = proposalByHex(root, plan.For, at)
+		} else {
+			_, err = proposalByPrefix(root, prefix, at)
+		}
+		if err == nil {
 			found = append(found, root)
 		}
 	}
-	switch len(found) {
-	case 0:
+	switch {
+	case len(found) == 0 && plan != nil:
+		return "", fmt.Errorf("%s: no proposal younger than %s has the plan's digest %s", ReasonNoProposal, ConfirmTTL, plan.For)
+	case len(found) == 0:
 		return "", fmt.Errorf("%s: no proposal younger than %s starts with %s", ReasonNoProposal, ConfirmTTL, prefix)
-	case 1:
-	default:
-		return "", fmt.Errorf("%s: proposals in %d repositories start with %s", ReasonProposalAmbig, len(found), prefix)
+	case len(found) > 1:
+		return "", fmt.Errorf("%s: proposals in %d repositories match", ReasonProposalAmbig, len(found))
+	}
+	// the relay record's plan_for routed the yes to this root; the lead is
+	// handed only the bytes and proves the plan from its own record
+	req := leadStartRequest{Kind: confirmBuzzKind, Event: raw}
+	if plan != nil {
+		req.Post = plan.Raw
 	}
 	c, err := dialLead(found[0])
 	if err != nil {
 		return "", err
 	}
 	defer c.Close()
-	reply, err := askLead(c, leadStartRequest{Kind: confirmBuzzKind, Event: raw})
+	reply, err := askLead(c, req)
 	if err != nil {
 		return "", err
 	}

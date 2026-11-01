@@ -243,8 +243,19 @@ func (h *Handler) handle(ctx context.Context, m Prompt) Handled {
 	// confirmation, never a phone request or a continuation (brief 31-4)
 	if prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil {
 		closeOnce()
-		h.teamYes(ctx, &hd, e, raw, prefix)
+		h.teamYes(ctx, &hd, e, raw, prefix, nil)
 		return hd
+	}
+	// brief 3.1.1-1: a bare yes whose direct reply target is the post the
+	// relay record marks as the lead's plan is the team confirmation; a yes
+	// replied anywhere else confirms nothing (a gate thread keeps it, any
+	// other relay post continues its request, whatever its text says)
+	if verb, ok := gatestore.ParseBare(content); ok && verb == "approve" && h.Confirm != nil {
+		if plan := h.planPost(vctx, e, relay); plan != nil {
+			closeOnce()
+			h.teamYes(ctx, &hd, e, raw, "", plan)
+			return hd
+		}
 	}
 	// a reply to a relayed post or to the request's receipt continues its
 	// request (brief 31-4): it reaches the lead as text, whatever its shape;
@@ -358,10 +369,11 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 // teamYes is the Buzz door of R55 on an owner-signed event: inside the
 // routing window, the confirmer hands the event's raw bytes (fetched on this
 // handler's own connection) to the lead, which verifies them itself and
-// witnesses the confirmation; the event is then handled once.
-// The reply names the outcome only, never the prefix (no reply carries an
-// answer's digest prefix).
-func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw []byte, prefix string) {
+// witnesses the confirmation; the event is then handled once. For a bare
+// yes, plan is the recorded plan post it replies to (prefix ""), which the
+// lead verifies too. The reply names the outcome only, never the prefix (no
+// reply carries an answer's digest prefix).
+func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw []byte, prefix string, plan *gateverify.PlanPost) {
 	hd.Kind = "team_confirm"
 	now := h.now()
 	if e.CreatedAt < now.Add(-RouteWindow).Unix() || e.CreatedAt > now.Add(FutureSkew).Unix() {
@@ -369,8 +381,7 @@ func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw [
 		h.final(ctx, hd, "refused team "+gateverify.RejectWindow)
 		return
 	}
-	_, err := h.Confirm(prefix, raw)
-	if err != nil {
+	if _, err := h.Confirm(prefix, raw, plan); err != nil {
 		hd.Error = err.Error()
 		code, _, _ := strings.Cut(err.Error(), ":")
 		h.final(ctx, hd, "refused team "+code)
@@ -380,6 +391,47 @@ func (h *Handler) teamYes(ctx context.Context, hd *Handled, e nostr.Event, raw [
 		hd.Error = "once-only record: " + err.Error()
 	}
 	h.final(ctx, hd, "confirmed team")
+}
+
+// planPost is the recorded plan post a bare yes replies to (brief
+// 3.1.1-1): its direct reply target (the NIP-10 parent, never the root) is
+// a post the relay records mark plan_for a proposal, and no thread
+// reference names a gate question or re-ask. The post is fetched on the
+// verifier's connection and must verify as the share body's kind 9 in the
+// DM channel. nil otherwise: no post text is read to decide it.
+func (h *Handler) planPost(ctx context.Context, e nostr.Event, relay gateverify.Relay) *gateverify.PlanPost {
+	parent, _ := threadParent(e)
+	if parent == "" || relay == nil {
+		return nil
+	}
+	g, err := h.gateView(h.now())
+	// every event the yes names, whatever the tag's marker (a "mention" of a
+	// gate question cannot hide)
+	if err != nil || slices.ContainsFunc(gateverify.EventRefs(e), func(id string) bool { return g.threads[id] }) {
+		return nil
+	}
+	planFor := ""
+	recs, _ := loadRelayRecords(status.RelayDir(h.Target.Root))
+	for _, r := range recs {
+		for _, p := range r.Posts {
+			if p.PlanFor != "" && slices.Contains(p.Events, parent) {
+				planFor = p.PlanFor
+			}
+		}
+	}
+	if planFor == "" {
+		return nil
+	}
+	raw, err := gateverify.FetchEvent(ctx, relay, parent)
+	if err != nil {
+		return nil
+	}
+	pin := h.Core.Pin
+	p, err := nostr.ParseEvent(raw)
+	if err != nil || p.PubKey != pin.Body || p.VerifySignature() != nil || p.Kind != KindDM || !slices.Equal(nostr.TagValues(p, "h"), []string{pin.Channel}) {
+		return nil
+	}
+	return &gateverify.PlanPost{Raw: raw, For: planFor}
 }
 
 // reaskLine points the owner at the gate thread by the id prefix of the
@@ -502,6 +554,9 @@ func errText(err error) string {
 func (h *Handler) coreFor(e nostr.Event) (*gateverify.Core, []string) {
 	a, err := gatestore.ParseAnswer(strings.TrimSpace(e.Content))
 	if err != nil {
+		if _, ok := gatestore.ParseBare(e.Content); ok {
+			return h.bareCore(e)
+		}
 		return h.Core, nil
 	}
 	var holders []*gateverify.Core
@@ -533,6 +588,43 @@ func (h *Handler) coreFor(e nostr.Event) (*gateverify.Core, []string) {
 	return nil, names
 }
 
+// bareCore is the core a bare yes or no goes to (brief 3.1.1-1): the one
+// store whose stored question or re-ask its thread names; with no thread
+// reference, the one store with an open gate (whose core re-asks it in that
+// gate's thread). Core when no store matches (it refuses); nil and the
+// names when several do.
+func (h *Handler) bareCore(e nostr.Event) (*gateverify.Core, []string) {
+	refs := nostr.ThreadRefs(e)
+	now := h.now()
+	var match []*gateverify.Core
+	var names []string
+	for _, c := range append([]*gateverify.Core{h.Core}, h.Cores...) {
+		ids, _ := c.Store.IDs()
+		hit := false
+		for _, id := range ids {
+			q, _ := c.Store.Question(id)
+			if len(refs) == 0 {
+				rec, err := c.Store.Load(id)
+				hit = hit || (err == nil && q != nil && c.Store.State(rec, now) == gatestore.StateOpen)
+				continue
+			}
+			r, _ := c.Store.ReadReask(id)
+			hit = hit || (q != nil && slices.Contains(refs, q.EventID)) || (r != nil && slices.Contains(refs, r.EventID))
+		}
+		if hit {
+			match = append(match, c)
+			names = append(names, squadName(c))
+		}
+	}
+	switch len(match) {
+	case 0:
+		return h.Core, nil
+	case 1:
+		return match[0], nil
+	}
+	return nil, names
+}
+
 // squadName names a core's squad for the owner: the project directory's
 // base name and the session.
 func squadName(c *gateverify.Core) string {
@@ -545,9 +637,15 @@ func squadName(c *gateverify.Core) string {
 // isGateAnswer reports whether a message is meant as a gate answer; the core
 // decides everything else about it, on the event it fetched itself.
 // A message whose first word is approve or deny always goes to the core, so
-// a malformed answer is refused there (bad_tuple) and never routed to a lead.
+// a malformed answer is refused there (bad_tuple) and never routed to a lead;
+// so does a bare yes or no that continues no request.
 func isGateAnswer(content string) bool {
 	if _, err := gatestore.ParseAnswer(content); err == nil {
+		return true
+	}
+	// a bare yes or no (brief 3.1.1-1) that continues no request: the core
+	// binds it by its thread, or re-asks it in the one open gate's thread
+	if _, ok := gatestore.ParseBare(content); ok {
 		return true
 	}
 	first, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(content)), " ")

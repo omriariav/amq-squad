@@ -145,9 +145,14 @@ The first run is a conversation with the lead, in the repository:
    - type `/squad confirm <prefix>` in the lead's pane. pi hands the
      command to the extension, never to the model, and the lead accepts it
      only from its own pi;
-   - or send the signed Buzz DM `yes <prefix>`. The Buzz attachment hands
-     the lead the event as it fetched it, and the lead, which holds no key,
-     verifies the owner's signature itself.
+   - or, on the phone, reply `yes` to the lead's Buzz post of the plan. The
+     lead sends the plan as its answer to your phone request
+     (`amq_team_propose` with `reply_to`); its own process records the
+     exact text first. The Buzz attachment hands the lead your reply and
+     that post as it fetched them, and the lead, which holds no key,
+     verifies both itself: your signature, the post as the share's own,
+     your reply to it directly, and the plan text it recorded in the post.
+     A `yes` to any other post, or anywhere else, confirms nothing.
 
    There is no shell door: under one uid, no kernel read tells your shell
    from one the lead's model built, so a confirmation from a shell would
@@ -357,10 +362,11 @@ proved like the lead's own tools. The model's tools gain nothing.
 - `/squad clear` acknowledges a seat's warning line through `scheduler
   clear`. The line leaves the screen for that launch only, and the seat's
   state does not change.
-- `/squad answer` shows an open typed gate with its kind, target and
-  16-hex typed prefix. It posts the question over Buzz when it has not
-  reached Buzz, and says the gate is waiting there. Buzz is the one door
-  for the four typed gates; the terminal door is not built yet.
+- `/squad answer` shows an open typed gate's question as the phone shows
+  it, then its kind, target and 16-hex prefix. It posts the question over
+  Buzz when it has not reached Buzz, and says the gate is waiting there.
+  Buzz is the one door for the four typed gates; the terminal door is not
+  built yet. The gates block shows each open gate the same way.
 
 A key's refusal shows on the screen as the verb printed it.
 
@@ -517,10 +523,28 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   (`relay_refused_gate_shape`) and a sha256 of the line, and shows in the
   lead's `/squad` screen and in `status` under `requests`. The lead never
   holds a key: the body key stays in the attachment.
-- **The gates.** A typed gate's question goes to the owner's DM with its reply
-  thread; the owner answers in that thread, and the core of the squad that
-  raised it fetches and verifies the signed event itself. An answer outside the
-  thread is refused with one re-ask.
+- **The gates.** A typed gate's question goes to the owner's DM in plain
+  words: what is asked, why now, and what yes and no do, then a rule and the
+  identifiers for the record (the gate id, the target, the digest). For a
+  release:
+
+  ```text
+  Publish a GitHub release for v3.1.1 in amq-squad?
+  The prepare found its commit on v3.
+  Yes creates the release. No does nothing.
+
+  ----------
+  amq-squad gate rel-gh-...
+  ```
+
+  Answer with a bare `yes` or `no` replied in the question's thread (case
+  and a trailing `.` or `!` do not matter). The thread and your signature
+  bind the answer to its gate; there is nothing else to type. The core of
+  the squad that raised it fetches and verifies the signed event itself. A
+  `yes` or `no` outside the thread gets one re-ask in the thread, "Reply yes
+  or no to this message."; a `yes` in another gate's thread answers that
+  gate only. The 3.0 typed line (`approve <gate> <class> <prefix>`) still
+  verifies, but no question asks for it.
 
 ```sh
 # skill-invocation-check:skip — exits 1 until fleet.yaml names the operator session (or --lead names a launched lead)

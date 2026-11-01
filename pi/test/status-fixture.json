@@ -73,8 +73,8 @@
     { "id": "gate:g1", "kind": "gate", "severity": "high", "subject": "gate g1: tag 8502aa", "since": "2026-11-01T08:59:00Z", "seat": "qa", "task_id": "", "gate_id": "g1", "bucket": "needs_you", "action": null }
   ],
   "gates": [
-    { "id": "g1", "action_class": "tag", "target_digest": "sha256:8502aa0011223344", "state": "open", "raised_by": "qa" },
-    { "id": "g0", "action_class": "merge", "target_digest": "sha256:aa", "state": "accepted", "raised_by": "qa" }
+    { "id": "g1", "action_class": "tag", "target_digest": "sha256:8502aa0011223344", "state": "open", "raised_by": "qa", "question": "Create a tag named v1?\nAsked by qa.\nYes lets it run. No stops it." },
+    { "id": "g0", "action_class": "merge", "target_digest": "sha256:aa", "state": "accepted", "raised_by": "qa", "question": "" }
   ],
   "actions": { "new_task": { "id": "task.new", "label": "new task", "argv": ["amq-squad"], "inputs": [] } },
   "scheduler": { "max_seats": 3, "live_seats": 3, "usage_limit_since": null, "usage_limit_until": null, "pid": 4321, "started_at": "2026-11-01T09:00:01.100Z", "launch_start": "2026-11-01T09:00:00Z", "live": true },

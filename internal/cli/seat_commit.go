@@ -259,7 +259,8 @@ func (c storeGateChecker) Accepted(target string) bool {
 // raises it; the question goes out when a transport is attached). An
 // existing record for the same id is the same request. It returns the gate
 // id.
-func raiseGrowthGate(sel storeSelection, raisedBy, taskID, target string) (string, error) {
+// The task's title is the question's quoted title (brief 3.1.1-1).
+func raiseGrowthGate(sel storeSelection, raisedBy, taskID, title, target string) (string, error) {
 	sum := sha256.Sum256([]byte(target))
 	id := "widen-" + taskID + "-" + hex.EncodeToString(sum[:])[:12]
 	if sel.ctx == nil {
@@ -273,7 +274,7 @@ func raiseGrowthGate(sel storeSelection, raisedBy, taskID, target string) (strin
 	if core == nil {
 		return id, err
 	}
-	spec := gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: raisedBy, Window: gatestore.DefaultWindow}
+	spec := gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: raisedBy, Window: gatestore.DefaultWindow, Facts: gatestore.SafeFacts(title, "")}
 	if err == nil {
 		_, _, err = core.Raise(ctx, spec)
 		return id, err

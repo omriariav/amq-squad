@@ -27,7 +27,10 @@
     "amq-squad task reset t1",
     "amq-squad",
     "sh -c 'amq-squad up --skip-install'",
-    "env A=1 /usr/local/bin/amq-squad lead"
+    "env A=1 /usr/local/bin/amq-squad lead",
+    "amq reply --me lead --id m-1 --labels team-plan:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --body -",
+    "amq send --to attach --thread cockpit/q-0123456789ab --labels=progress,team-plan:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --body x",
+    "sh -c 'amq reply --id m-1 --labels \"team-plan:abc\"'"
   ],
   "runs": [
     "echo \"hello world\"",

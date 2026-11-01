@@ -37,7 +37,7 @@ anywhere else, or a null document, fails the check.
 | `seats[]` | seat rows |
 | `tasks[]` | task rows |
 | `attention[]` | the attention queue |
-| `gates[]` | gate records of the gate store |
+| `gates[]` | gate records of the gate store: `id`, `action_class` (the operatorauth action), `target_digest`, `state` (`open`, `accepted`, `denied`, `expired`), `raised_by`, `question` (additive, brief 3.1.1-1: the question's plain lines, the text above its rule as the owner reads it on the phone, lines joined by `\n`; `""` for a gate raised before 3.1.1; the lead's screen shows it verbatim) |
 | `actions.new_task` | the "new task" action |
 | `scheduler` | `max_seats`, `live_seats`, `usage_limit_since`, `usage_limit_until`; and from the scheduler's launch record (brief 31-1): `pid`, `started_at` (its own admission, null before a scheduler ran), `launch_start` (the squad launch's start, `AMQ_SQUAD_START`: the launch budget's first mark; null when the scheduler was started by hand), `live` (its pid answers) |
 | `warnings[]` | read problems, one line each; a partial status is still valid |

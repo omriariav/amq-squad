@@ -104,7 +104,8 @@ func buildStatusContract(root, project, version string, now time.Time) status.St
 		if info, statErr := os.Stat(hookExtPath(root, "gates", g.GateID+".json")); statErr == nil {
 			since = info.ModTime().UTC()
 		}
-		gates = append(gates, status.GateInput{ID: g.GateID, Class: g.Class, Digest: g.Digest, State: g.State, RaisedBy: g.RaisedBy, Since: since})
+		gates = append(gates, status.GateInput{ID: g.GateID, Class: g.Class, Digest: g.Digest, State: g.State, RaisedBy: g.RaisedBy, Since: since,
+			Question: gatestore.Plain(g.Text)})
 	}
 	in := status.Collect(status.CollectOptions{
 		Root: root, Session: filepath.Base(root), ProjectPath: project, ProducerVersion: version,

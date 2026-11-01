@@ -351,7 +351,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	questions := relay.mem.events(9, body)
-	if len(questions) == 0 || questions[len(questions)-1].ID != q.EventID || !strings.Contains(questions[len(questions)-1].Content, "Reply in this thread") {
+	if len(questions) == 0 || questions[len(questions)-1].ID != q.EventID || !strings.Contains(questions[len(questions)-1].Content, "\nYes lets it run. No stops it.\n") {
 		t.Fatalf("gate question on the relay: %+v", questions)
 	}
 	t.Logf("gate question text:\n%s", questions[len(questions)-1].Content)
@@ -405,7 +405,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	tRow := time.Since(tAnswer)
 	for _, k := range []int{9, 40003} {
 		for _, e := range relay.mem.events(k, body) {
-			if strings.Contains(e.Content, "rel-dry") && !strings.Contains(e.Content, "Reply in this thread") {
+			if strings.Contains(e.Content, "rel-dry") && !strings.Contains(e.Content, "\nYes lets it run. No stops it.\n") {
 				t.Logf("RECORDED (scratch-built amq-remote): serve's result row kind %d tags %v content %q", e.Kind, e.Tags, e.Content)
 			}
 		}

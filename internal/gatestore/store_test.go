@@ -54,7 +54,9 @@ func TestRenderAndValidate(t *testing.T) {
 		r.Digest != gatetarget.Digest("tag", "git tag v1") || r.NotAfter != testNow.Add(30*time.Minute).Format(time.RFC3339) {
 		t.Fatalf("record = %+v", r)
 	}
-	if !strings.Contains(r.Text, "Reply in this thread") || !strings.Contains(r.Text, "approve g1 release "+strings.TrimPrefix(r.Digest, "sha256:")[:16]) {
+	// brief 3.1.1-1: three plain lines above the rule, no tuple to type
+	if !strings.HasPrefix(r.Text, "Create a tag named v1?\nAsked by lead.\nYes lets it run. No stops it.\n\n"+Rule+"\namq-squad gate g1\n") ||
+		strings.Contains(r.Text, "approve g1 release") || Plain(r.Text) != "Create a tag named v1?\nAsked by lead.\nYes lets it run. No stops it." {
 		t.Fatalf("text = %q", r.Text)
 	}
 	if err := r.Validate(); err != nil {

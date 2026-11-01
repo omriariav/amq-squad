@@ -139,6 +139,17 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	if err != nil || rec.Class != "spawn" || rec.Target != target || rec.RaisedBy != "lead" {
 		t.Fatalf("growth gate record = %+v, %v", rec, err)
 	}
+	// brief 3.1.1-1: the widen's question quotes the task's title, and the
+	// status document's gate row carries the question's plain lines (the
+	// screen's gates block shows them verbatim)
+	if lines := gatestore.PlainLines(rec); len(lines) != 4 || lines[0] != "Let task "+tk.ID+" change protected files?" || lines[1] != `"tune settings"` ||
+		lines[2] != "The grant refused its widen onto 1 protected path." {
+		t.Fatalf("growth gate question = %q", lines)
+	}
+	st := buildStatusContract(f.root, repo, "test", time.Now())
+	if len(st.Gates) != 1 || st.Gates[0].Question != gatestore.Plain(rec.Text) || st.Gates[0].Question == "" {
+		t.Fatalf("status gates = %+v, want the question %q", st.Gates, gatestore.Plain(rec.Text))
+	}
 	got, _ = s.Get(tk.ID)
 	if got.BlockRoute != task.RouteOwner || got.BlockReason != seatcommit.ReasonGrowthGate {
 		t.Fatalf("the task did not go to the owner: %+v", got)

@@ -199,7 +199,7 @@ func TestThreadReask(t *testing.T) {
 	}
 	reask, _ := f.store.ReadReask(rec.GateID)
 	re, _ := nostr.ParseEvent([]byte(reask.RawEvent))
-	if re.PubKey != f.body.PublicHex() || !strings.Contains(re.Content, "Reply here to confirm") || !strings.Contains(re.Content, tuple("approve", rec)) {
+	if re.PubKey != f.body.PublicHex() || re.Content != "Reply yes or no to this message.\n\n"+gatestore.Rule+"\namq-squad gate "+rec.GateID || strings.Contains(re.Content, tuple("approve", rec)) {
 		t.Fatalf("re-ask = %+v", re)
 	}
 	if refs := nostr.ThreadRefs(re); len(refs) != 1 || refs[0] != q.EventID {

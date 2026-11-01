@@ -269,7 +269,8 @@
       "action_class": "tag",
       "target_digest": "sha256:8502aa",
       "state": "open",
-      "raised_by": "impl-1"
+      "raised_by": "impl-1",
+      "question": "Create a tag named v1?\nAsked by impl-1.\nYes lets it run. No stops it."
     }
   ],
   "actions": {

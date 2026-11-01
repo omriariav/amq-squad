@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "../extensions/lib/hooks.ts";
-import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
+import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, PLAN_KIND, SoloTeam, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
 import * as net from "node:net";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
@@ -311,4 +311,70 @@ test("the solo lead's shell sees through quoting, expansions and eval", () => {
 	assert.match(soloShellRefusal("exec_command", { cmd: ["sh", "-c", 't""mux ls'] }) ?? "", /^owner_only: /, "an argv sh -c line");
 	assert.match(soloShellRefusal("exec_command", { cmd: ["/usr/bin/TMUX", "ls"] }) ?? "", /^owner_only: /, "an argv TMUX");
 	assert.equal(soloShellRefusal("exec_command", { cmd: ["echo", "hello world"] }), undefined);
+});
+
+// Brief 3.1.1-1, row 3: the plan block asks for no typed prefix over Buzz:
+// on the phone the owner replies yes to the lead's post of the plan (the
+// `yes <prefix>` form keeps verifying, but no text asks for it).
+test("brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, never yes <prefix>", () => {
+	const team = new SoloTeam(cfg(tmpdir()), async () => res(0, ""));
+	team.proposal = { digest: DIGEST, prefix: PREFIX, plan: ["lead  pi"], project_dir: PROJECT };
+	const text = team.planLines().join("\n");
+	assert.doesNotMatch(text, /yes [0-9a-f]{16}/);
+	assert.match(text, /reply yes to the lead's Buzz post of this plan/);
+});
+
+// Codex's rounds on #838: the lead process is the authority for which post
+// is its plan. With reply_to, amq_team_propose first records the exact text
+// with the lead over the start socket (plan-sent), then sends it as the
+// reply to the owner's phone request labelled team-plan:<content digest>
+// (routing for the relay); reply_to never reaches team propose; a lead that
+// does not record it means nothing is sent; without reply_to nothing is.
+test("brief 3.1.1-1: amq_team_propose with reply_to records the plan with the lead, then sends it labelled", async () => {
+	const calls: { bin: string; args: string[]; stdin?: string }[] = [];
+	const runner = async (bin: string, args: string[], o: RunOptions): Promise<RunResult> => {
+		calls.push({ bin, args, stdin: o.stdin });
+		return args[1] === "propose" ? res(0, proposed) : res(0, envelope("reply", { id: "r-1" }));
+	};
+	let answer: any = { outcome: "recorded", digest: DIGEST };
+	const lead = await fakeLead(() => answer);
+	try {
+		const team = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner, () => new Date("2026-11-01T10:00:00Z"), lead.socket, [], undefined, NONCE);
+		const out = await team.propose({ ...plan, reply_to: "m-phone-1" });
+		assert.deepEqual(JSON.parse(calls[0].stdin ?? ""), plan, "reply_to reached team propose");
+		assert.equal(lead.got.length, 1);
+		assert.equal(lead.got[0].kind, PLAN_KIND);
+		assert.equal(lead.got[0].digest, DIGEST);
+		assert.equal(calls.length, 2);
+		assert.equal(calls[1].bin, "/opt/amq");
+		assert.deepEqual(calls[1].args, ["reply", "--me", "lead", "--id", "m-phone-1", "--labels", "team-plan:" + "0123456789abcdef".repeat(4), "--json", "--body", "-"]);
+		assert.equal(calls[1].stdin, lead.got[0].body, "the text sent is the text the lead recorded");
+		assert.match(out, /sent as the reply to m-phone-1, marked as the team plan/);
+		calls.length = 0;
+		answer = { outcome: "refused", refusal: "peer_not_lead_pi", detail: "x" };
+		const refused = await team.propose({ ...plan, reply_to: "m-phone-2" });
+		assert.equal(calls.length, 1, "a plan the lead did not record was sent");
+		assert.match(refused, /not sent as the reply to m-phone-2: the lead did not record it \(peer_not_lead_pi/);
+		calls.length = 0;
+		await team.propose(plan);
+		assert.equal(calls.length, 1, "no reply without reply_to");
+		// with PR 2's proof (#837): a recorded reply the lead did not prove
+		// under this pi's nonce sends nothing
+		answer = { outcome: "recorded", digest: DIGEST };
+		calls.length = 0;
+		const other = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner, () => new Date("2026-11-01T10:00:00Z"), lead.socket, [], undefined, "test-other-nonce");
+		const unproved = await other.propose({ ...plan, reply_to: "m-phone-3" });
+		assert.equal(calls.length, 1, "a plan record the lead did not prove led to a send");
+		assert.match(unproved, /not sent as the reply to m-phone-3: the lead did not record it \(lead_unproved/);
+	} finally {
+		lead.close();
+	}
+});
+
+// Codex re-check on #838, the second layer: the solo lead's shell refuses a
+// team-plan label in an argv form too (the command-string forms are in
+// solo-shell-forms.json, read by the guard's layer as well).
+test("brief 3.1.1-1: the solo shell refuses a team-plan label in an argv form", () => {
+	assert.match(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "team-plan:" + "ab".repeat(32), "--body", "-"] }) ?? "", /^owner_only: .*a team-plan label/);
+	assert.equal(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "progress", "--body", "-"] }), undefined);
 });

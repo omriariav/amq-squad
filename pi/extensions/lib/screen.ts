@@ -39,7 +39,10 @@ type SeatRow = {
 	launch: { launch_id?: string; outcome: string; reason_code: string; timing: Timing } | null;
 };
 type TaskRow = { id: string; task_state: string; lease_holder: string; block_reason: string; wait_reason: string; wait_holders?: string[]; pr_number: number; updated_at: string };
-type GateRow = { id: string; action_class: string; target_digest: string; state: string };
+// question is the gate question's plain lines, the text above its rule, as
+// the owner reads it on the phone (brief 3.1.1-1); "" for a gate raised
+// before 3.1.1.
+type GateRow = { id: string; action_class: string; target_digest: string; state: string; question?: string };
 type Attention = { kind: string; subject: string; gate_id: string; since: string };
 type DecisionRow = { at: string; kind: string; seat: string; task_id: string; reason: string; reason_code: string };
 // brief 31-4: a phone request of the lead reply relay
@@ -162,9 +165,13 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 	out.push(`gates (${open.length} open)`);
 	for (const g of open) {
 		const since = st.attention.find((a) => a.kind === "gate" && a.gate_id === g.id)?.since ?? "";
-		// the 16-hex typed prefix (R32); the terminal door is not built (Q7 of
-		// brief 31-2), so an open typed gate waits on Buzz
-		out.push(`  ${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}  age ${age(since, now)}  waiting on Buzz`);
+		// brief 3.1.1-1: the question's plain lines as the phone shows them,
+		// verbatim, then the identifiers for the record (the gate id, the
+		// action and the digest prefix); the terminal door is not built (Q7
+		// of brief 31-2), so an open typed gate waits on Buzz
+		const plain = (g.question ?? "").split("\n").filter((l) => l.trim() !== "");
+		for (const l of plain) out.push(`  ${l}`);
+		out.push(`${plain.length ? "    " : "  "}${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}  age ${age(since, now)}  waiting on Buzz`);
 	}
 	const gateAlert = [...st.attention].reverse().find((a) => a.gate_id && a.kind !== "gate");
 	const gateWarn = st.warnings.find((w) => w.startsWith("gate store:"));

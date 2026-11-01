@@ -386,6 +386,10 @@ type Gate struct {
 	TargetDigest string `json:"target_digest"`
 	State        string `json:"state"` // open | accepted | expired
 	RaisedBy     string `json:"raised_by"`
+	// Question is the question's plain lines, the text above its rule, as
+	// the owner reads it on the phone (brief 3.1.1-1); "" for a gate raised
+	// before 3.1.1. The screen's gates block shows it verbatim.
+	Question string `json:"question"`
 }
 
 // Actions are document-level actions.

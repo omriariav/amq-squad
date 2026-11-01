@@ -14,6 +14,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -349,6 +350,11 @@ func soloLeadShellRefusal(line string) string {
 	}
 	if slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, "tmux") }) {
 		return "tmux"
+	}
+	// brief 3.1.1-1, Codex on #838: the team-plan label is the lead
+	// process's (amq_team_propose), never a shell's amq reply or amq send
+	if slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, gateverify.TeamPlanLabel) }) {
+		return "a team-plan label"
 	}
 	for i, t := range tokens {
 		if strings.Contains(filepath.Base(t), "amq-squad") && !soloAmqSquadAllowed(tokens[i+1:]) {

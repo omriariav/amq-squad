@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 
@@ -115,6 +116,24 @@ func TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote(t *testing.T) {
 	}
 	if _, _, err := captureOutput(t, func() error { return runRelease(args("prepare", notesFile)) }); err != nil {
 		t.Fatalf("prepare: %v", err)
+	}
+	// brief 3.1.1-1: prepare raised both gates after it found the commit on
+	// the branch, and each question says so in plain words
+	gstore, _ := gatestore.Open(f.root)
+	ids, _ := gstore.IDs()
+	if len(ids) != 2 {
+		t.Fatalf("prepare raised %v", ids)
+	}
+	for _, id := range ids {
+		rec, err := gstore.Load(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := gatestore.PlainLines(rec)
+		want := map[string]string{"tag": "Create a tag for v1.2.0 in fixture?", "github_release": "Publish a GitHub release for v1.2.0 in fixture?"}[rec.Class]
+		if len(lines) != 3 || lines[0] != want || lines[1] != "The prepare found its commit on main." {
+			t.Fatalf("%s question = %q", rec.Class, lines)
+		}
 	}
 	want := "the gate note release body sha256:" + releaseflow.BodyDigest(content)
 	recorded := false

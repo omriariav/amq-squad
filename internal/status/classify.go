@@ -46,6 +46,7 @@ type SeatInput struct {
 type GateInput struct {
 	ID, Class, Digest, State, RaisedBy string
 	Since                              time.Time
+	Question                           string // the question's plain lines (brief 3.1.1-1)
 }
 
 // ThreadInput is one AMQ thread that waits on the owner (the thread triage
@@ -129,7 +130,7 @@ func Build(in Input) Status {
 	openGateBy := map[string]GateInput{}
 	openGates := map[string]bool{}
 	for _, g := range sortedGates(in.Gates) {
-		s.Gates = append(s.Gates, Gate{ID: g.ID, ActionClass: g.Class, TargetDigest: g.Digest, State: g.State, RaisedBy: g.RaisedBy})
+		s.Gates = append(s.Gates, Gate{ID: g.ID, ActionClass: g.Class, TargetDigest: g.Digest, State: g.State, RaisedBy: g.RaisedBy, Question: g.Question})
 		if g.State == "open" {
 			openGates[g.ID] = true
 			if _, seen := openGateBy[g.RaisedBy]; !seen {
@@ -372,6 +373,12 @@ func redactDocument(s *Status) {
 	}
 	for i := range s.Train.Alerts {
 		s.Train.Alerts[i].Detail = redact.Block(s.Train.Alerts[i].Detail)
+	}
+	for i := range s.Gates {
+		// the question's plain lines are free text (a title the raiser read):
+		// redacted at composition, and again here for a record status reads
+		// without validating (brief 3.1.1-1, Codex P1 on #838)
+		s.Gates[i].Question = redact.Block(s.Gates[i].Question)
 	}
 	for i := range s.Requests {
 		// ids and names only (brief 31-4); a hand-edited record carries no
