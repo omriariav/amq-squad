@@ -635,23 +635,43 @@ func (g gateView) gateShaped(line string) bool {
 	return false
 }
 
-// normalizeLine is the one normalization of the three checks (Codex P2-4),
-// applied to the candidate line and to the gate ids and question lines it
-// is compared with: NFKC, then every format character (Unicode Cf: zero
-// width spaces, joiners, bidi controls) removed and every other control
-// made a space, then case folding.
+// normalizeLine is the one normalization of the three checks (Codex P2-4
+// and its re-check #3), applied to the candidate line and to the gate ids
+// and question lines it is compared with: NFKC; every format character
+// (Unicode Cf: zero-width spaces, joiners, bidi controls) and every
+// nonspacing or enclosing mark (Mn, Me: variation selectors, combining
+// marks) removed, every other control made a space; case folding; then the
+// confusables fold below.
 func normalizeLine(s string) string {
 	s = norm.NFKC.String(s)
 	s = strings.Map(func(r rune) rune {
 		switch {
-		case unicode.Is(unicode.Cf, r):
+		case unicode.In(r, unicode.Cf, unicode.Mn, unicode.Me):
 			return -1
 		case unicode.IsControl(r):
 			return ' '
 		}
 		return r
 	}, s)
-	return cases.Fold().String(s)
+	return strings.Map(func(r rune) rune {
+		if l, ok := confusables[r]; ok {
+			return l
+		}
+		return r
+	}, cases.Fold().String(s))
+}
+
+// confusables folds the Cyrillic and Greek lowercase letters that read as
+// Latin letters to those letters (a hand list for the letters of the answer
+// words and gate ids: a c e o p s x y i k h n m t v u; after case folding,
+// so the capitals are covered). Applied on both sides of every comparison.
+var confusables = map[rune]rune{
+	// Cyrillic
+	'а': 'a', 'с': 'c', 'е': 'e', 'о': 'o', 'р': 'p', 'ѕ': 's', 'х': 'x', 'у': 'y', 'і': 'i', 'ј': 'j',
+	'к': 'k', 'һ': 'h', 'п': 'n', 'м': 'm', 'т': 't', 'ѵ': 'v', 'ԁ': 'd', 'ԛ': 'q', 'ԝ': 'w',
+	// Greek
+	'α': 'a', 'ϲ': 'c', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'χ': 'x', 'γ': 'y', 'ι': 'i', 'κ': 'k',
+	'η': 'n', 'τ': 't', 'ν': 'v', 'υ': 'u', 'μ': 'u',
 }
 
 var (

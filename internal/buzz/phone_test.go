@@ -789,9 +789,12 @@ func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 	}
 	digest := "digest: " + rec.Digest
 	forms := map[string][]string{
-		"whole-line answer form":  {"yes\u200b", "\u200bNo\u2060.", "ｙｅｓ", "app\u200drove", "deny\u202e rel-x"},
-		"an open gate's id":       {"I raised rel-\u200bnorm for you", "see REL-NORM\u200c now", "ｒｅｌ－ｎｏｒｍ waits"},
-		"an open gate's question": {strings.Replace(digest, "sha256:", "sha\u200b256:", 1), strings.ToUpper(digest[:9]) + digest[9:], "\u2066" + digest + "\u2069"},
+		"whole-line answer form": {"yes\u200b", "\u200bNo\u2060.", "ｙｅｓ", "app\u200drove", "deny\u202e rel-x",
+			"yes\ufe0f", "уes", "YЕS", "аpprove", "dеny rel-x", "nο"},
+		"an open gate's id": {"I raised rel-\u200bnorm for you", "see REL-NORM\u200c now", "ｒｅｌ－ｎｏｒｍ waits",
+			"rel-norm\ufe0f waits", "rel\ufe0f-norm waits", "rеl-nоrm waits"},
+		"an open gate's question": {strings.Replace(digest, "sha256:", "sha\u200b256:", 1), strings.ToUpper(digest[:9]) + digest[9:], "\u2066" + digest + "\u2069",
+			strings.Replace(digest, "digest", "digest\ufe0f", 1), strings.Replace(digest, "digest", "dіgеst", 1)},
 	}
 	for name, lines := range forms {
 		t.Run(name, func(t *testing.T) {
