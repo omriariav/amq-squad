@@ -96,6 +96,32 @@ is a stored gate question's or re-ask's (`relay_refused_gate_thread`). A DM
 whose thread names a gate question is never a continuation, so the gate
 path keeps every answer in a gate thread as before.
 
+## 2a. Two rules (the plan reviewer, the Codex round)
+
+**Every check runs on the bytes that leave.** The three refusal forms and
+`redact.Block` run on the whole assembled post, per part, after the split:
+the `re <id>` header, the `(i/n)` marks and the closing line included. They
+never run on an input the post is built from (the lead's body, a record
+field) and trust the assembly. A part is checked, redacted, and checked
+again, and the redacted part is exactly what is published. This one rule
+is what closes P1-1 (record text in the header), P1-2 (a split that starts
+a part with `yes`) and P2-4 (characters that make two strings compare
+unequal while they read the same: the checks compare after one
+normalization of the outgoing line and of what it is compared with).
+
+**The intent record's semantics (P1-3).** Before each publish the relay
+writes a durable intent: the reply id, each part's sha256, the event ids
+confirmed so far, and the tries of the next part. A failed write publishes
+nothing. After the publish it writes the event id. A crash between the
+publish and the event-id write is a named state, not a duplicate: the
+restart publishes that part once more at most, and if the event id is
+still not written after that one retry, the reply becomes
+`relay_post_unconfirmed` in status and stays unconfirmed. No later tick
+publishes it again on its own, since the owner may have received the
+first attempt. The owner's next turn on that request clears the state
+(`cleared_at` on the refusal; status no longer shows it) and the
+continuation proceeds normally.
+
 ## 3. Rows
 
 Every row is in `go test ./...` or `npm test`.
@@ -120,7 +146,7 @@ Every row is in `go test ./...` or `npm test`.
 | Codex P1-1: every record field its exact shape | internal/status `TestARelayRecordIsCheckedFieldByField` |
 | Codex P1-1: a planted record (newline id, non-hex id, a canary in a field) is refused, nothing posts | internal/buzz `TestAPlantedRecordIsRefusedAndNothingPosts` |
 | Codex P1-2: the padded ` yes` reply is refused whole; an ordinary long reply posts in parts | internal/buzz `TestASplitNeverStartsAPartWithAnAnswerForm` |
-| Codex P1-3: a crash between publish and record gives at most one extra post, then `relay_post_unconfirmed` in status | internal/buzz `TestACrashBetweenPublishAndRecordPostsAtMostOnceMore` |
+| Codex P1-3: a crash between publish and the event-id write is a named state: at most one extra post, then `relay_post_unconfirmed` in status, no tick publishes it again, the owner's next turn clears it | internal/buzz `TestACrashBetweenPublishAndEventWriteIsANamedState` |
 | Codex P1-3: a failing record store posts nothing | internal/buzz `TestAFailingRecordStorePostsNothing` |
 | Codex P2-4: zero-width, joiner, bidi and full-width forms, per check | internal/buzz `TestTheChecksSeeThroughInvisibleCharacters` |
 | Codex P2-5: part two fails once, posts next tick, part one not repeated | internal/buzz `TestAFailedPartPostsNextTickWithoutRepeatingTheFirst` |

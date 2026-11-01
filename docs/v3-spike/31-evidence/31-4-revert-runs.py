@@ -140,9 +140,9 @@ run("the checks on the body, not the assembled parts (Codex P1-2)", [(R,'\t\tif 
     (R,'\tparts := splitPost(requestID, thread, body)\n','\tif line, bad := g.refuse(body); bad {\n\t\treturn nil, line, true\n\t}\n\tparts := splitPost(requestID, thread, body)\n')],
     B+"TestASplitNeverStartsAPartWithAnAnswerForm")
 run("the publish before the intent (Codex P1-3)", [(R,'if err := save(); err != nil {\n\t\t\treturn r, fmt.Errorf("the intent for','if err := error(nil); err != nil {\n\t\t\treturn r, fmt.Errorf("the intent for')],
-    B+"'TestAFailingRecordStorePostsNothing|TestACrashBetweenPublishAndRecordPostsAtMostOnceMore'")
+    B+"'TestAFailingRecordStorePostsNothing|TestACrashBetweenPublishAndEventWriteIsANamedState'")
 run("an unconfirmed intent retried forever (Codex P1-3)", [(R,'\t\tif p.Tries >= 2 {','\t\tif false && p.Tries >= 2 {')],
-    B+"TestACrashBetweenPublishAndRecordPostsAtMostOnceMore")
+    B+"TestACrashBetweenPublishAndEventWriteIsANamedState")
 run("a failed later part ends the reply (Codex P2-5)", [(R,'\t\t\tp.Tries-- // the publish failed: nothing went out\n','\t\t\tp.Tries--\n\t\t\tif len(p.Events) > 0 {\n\t\t\t\tparts = parts[:i]\n\t\t\t\tbreak\n\t\t\t}\n')],
     B+"TestAFailedPartPostsNextTickWithoutRepeatingTheFirst")
 run("no normalization (Codex P2-4)", [(R,'func normalizeLine(s string) string {\n','func normalizeLine(s string) string {\n\tif true {\n\t\treturn strings.ToLower(s)\n\t}\n')],
@@ -155,5 +155,9 @@ run("the helper without AMQ_NO_UPDATE_CHECK (Codex P2-7)", [('internal/buzz/help
     B+"TestTestsExecAMQOnlyThroughTheHelper")
 run("a test execs amq directly (Codex P2-7)", [('internal/buzz/zz_revert_amq_test.go',None,'package buzz\n\nimport "os/exec"\n\nvar _ = exec.Command("amq", "version")\n')],
     B+"TestTestsExecAMQOnlyThroughTheHelper")
+run("the owner's next turn does not clear an unconfirmed post", [(R,'\t\t\trec.Refusals[i].ClearedAt = timePtr(now)\n','\t\t\t_ = timePtr\n')],
+    B+"TestACrashBetweenPublishAndEventWriteIsANamedState")
+run("status shows a cleared unconfirmed post", [('internal/status/relay.go','\t\t\tif f.ClearedAt == nil {','\t\t\tif true {')],
+    B+"TestACrashBetweenPublishAndEventWriteIsANamedState")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)
