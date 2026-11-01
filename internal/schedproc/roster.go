@@ -167,6 +167,28 @@ const RefusedSquadInvalid = "squad_invalid"
 // RefusedRelaunchMalformed: the relaunch's start is not an RFC3339 stamp.
 const RefusedRelaunchMalformed = "relaunch_malformed"
 
+// RefusedStartOutOfRange: the relaunch's start (the key press) is in the
+// future beyond StartSkew, or older than the scheduler's own launch start;
+// nothing drains (Codex P2 1 on 31-2 PR 2).
+const RefusedStartOutOfRange = "start_out_of_range"
+
+// StartSkew is how far in the future a relaunch's start may lie (clocks of
+// the lead's process and the scheduler's are the same host's).
+const StartSkew = 5 * time.Second
+
+// CheckRelaunchStart bounds a relaunch's start: not after now plus
+// StartSkew, and not before the scheduler's launch start (zero: no lower
+// bound, a scheduler started by hand). "" is in range.
+func CheckRelaunchStart(start, launchStart, now time.Time) string {
+	switch {
+	case start.After(now.Add(StartSkew)):
+		return fmt.Sprintf("the relaunch's start %s is %s in the future (at most %s)", start.UTC().Format(time.RFC3339Nano), start.Sub(now).Round(time.Millisecond), StartSkew)
+	case !launchStart.IsZero() && start.Before(launchStart):
+		return fmt.Sprintf("the relaunch's start %s is before the scheduler's launch start %s", start.UTC().Format(time.RFC3339Nano), launchStart.UTC().Format(time.RFC3339Nano))
+	}
+	return ""
+}
+
 // RosterPools is the router's side of a reload: its roster pools, replaced
 // under its lock (routing.Router.SetRosterPools, RosterPools).
 type RosterPools interface {
@@ -271,13 +293,20 @@ func faultAt(step string) error {
 // squad.yaml that does not compile refuses the relaunch squad_invalid and
 // leaves the running roster as it is. The request's start (the key press)
 // goes with it.
-func relaunchDecision(s *scheduler.Scheduler, reload *Reload) func(string, RelaunchRequest) DecideReply {
+func relaunchDecision(s *scheduler.Scheduler, reload *Reload, launchStart time.Time) func(string, RelaunchRequest) DecideReply {
 	return func(lead string, req RelaunchRequest) DecideReply {
 		var start time.Time
 		if req.Start != "" {
 			t, err := time.Parse(time.RFC3339Nano, req.Start)
 			if err != nil {
 				return DecideReply{Code: RefusedRelaunchMalformed, Detail: fmt.Sprintf("the relaunch's start %q is not an RFC3339 stamp; nothing drains", req.Start)}
+			}
+			now := time.Now()
+			if s.Now != nil {
+				now = s.Now()
+			}
+			if why := CheckRelaunchStart(t, launchStart, now); why != "" {
+				return DecideReply{Code: RefusedStartOutOfRange, Detail: why + "; nothing drains"}
 			}
 			start = t
 		}

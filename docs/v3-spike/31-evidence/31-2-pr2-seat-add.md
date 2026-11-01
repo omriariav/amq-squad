@@ -51,7 +51,12 @@ could not start by a roster relaunch:
 
 `RelaunchRequest` gains `Start` (RFC3339Nano). `scheduler relaunch --start
 STAMP` passes it (internal/cli/scheduler_run.go); a malformed stamp is a
-usage error at the verb and `relaunch_malformed` at the socket.
+usage error at the verb and `relaunch_malformed` at the socket. The stamp
+is bounded (Codex P2 1 on 5d20b5ff; `schedproc.CheckRelaunchStart`): more
+than 5 s in the future (`StartSkew`), or before the scheduler's own launch
+start (the launch record's `start`; no lower bound for a scheduler started
+by hand), it is refused `start_out_of_range` by name, at the verb with
+nothing sent and again at the socket before anything drains.
 
 The reload seam is `schedproc.Reload` (internal/schedproc/roster.go):
 `Compile` reads squad.yaml again exactly as `scheduler run` does at its
@@ -238,6 +243,7 @@ Each row fails with its change reverted (section 4).
 | C | scheduler `TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress` (s-b, removed from squad.yaml, keeps its lease and is not closed while it holds it; nothing swaps; once it finishes it closes with `roster_relaunch`, never another reason, and is not launched again; s-a's changed line, sonnet to opus, launches on its new pool in the relaunch's apply) |
 | D | seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the key press 11 s before seat live and the relaunch's decision 2 s before: the mark is the press, so the seat is over the 10 s ceiling counted from the press though under it from the decision) |
 | E | pi `the lead's model tool list carries no key verb and no gate-answer verb` (PR 1's row, unchanged: the exact thirteen tools) |
+| Start bound (Codex P2 1) | schedproc `TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain` (a stamp a minute ahead and one before the launch start: `start_out_of_range`, no `roster_relaunch_requested`, no launch, squad, pools and roster unchanged; an in-range stamp relaunches); cli `TestSchedulerRelaunchBoundsItsStart` (the verb refuses both with nothing sent; an in-range stamp is sent in UTC) |
 | Drain | status `TestARelaunchedSeatsBudgetNamesTheDrain` (a key press, 30 s of drain, then the launch: segments drain, prepare, mint, apply, seat_exec; drain 30000 ms, prepare 200 ms; the slowest is drain and the warning says `slowest segment drain 30.000 s`; a seat without a drain end keeps four segments); seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` (the added seat's `drain_end` lies between the key press and seat live; the existing seat has none) |
 | Cap | scheduler `TestAReloadRecomputesTheLeaseCap` (the lead's row: two roster seats under a cap of 2 add a third; under a recomputed cap of 3 it gets a lease while the other two hold theirs; under a cap of 2 it launches, `roster_over_cap` is logged and its task waits `seat_cap`); cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` (through the verbs, squad.yaml's max_seats 4 over lead and impl-1: rev-1 and rev-2 added, three tasks leased at once, `at most 4 leases`); cli `TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns` (under `--max-seats 2`: every added seat launches, `roster_over_cap`, two leases and the third `seat_cap`, the state's 3 live seats over max_seats 2); pi `over the lease cap: a warning line in the seats block, never a refusal`; cli `TestTeamAddSeatAppendsOneSeatThroughTheDigest` (a seat past squad.yaml's max_seats refused at propose); schedproc rows: the cap travels with the reload, a cap of none is `squad_invalid` before the drain, a failed swap leaves the cap |
 

@@ -164,3 +164,38 @@ func TestARelaunchAfterASquadYAMLEditLaunchesTheNewSeatAndAdmitsItsPool(t *testi
 		t.Fatalf("the slots' squad after the reload: %+v", fake.sl.Squad.Seats)
 	}
 }
+
+// Codex P2 1 on 31-2 PR 2, the verb's half: `scheduler relaunch --start`
+// refuses start_out_of_range by name, with nothing sent to the socket, for
+// a stamp more than 5 s in the future or older than the launch record's
+// start; an in-range stamp is sent, normalized to UTC. Reverted (the stamp
+// only parsed), both are sent.
+func TestSchedulerRelaunchBoundsItsStart(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("AM_ROOT", root)
+	var sent []schedproc.RelaunchRequest
+	prev := schedulerRelaunchSend
+	t.Cleanup(func() { schedulerRelaunchSend = prev })
+	schedulerRelaunchSend = func(_, _ string, req schedproc.RelaunchRequest) (schedproc.DecideReply, error) {
+		sent = append(sent, req)
+		return schedproc.DecideReply{OK: true, Detail: "accepted"}, nil
+	}
+	launch := time.Now().Add(-time.Hour).UTC()
+	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "lead", Root: root, PID: 1, StartedAt: launch, Start: &launch, DecisionSocket: "/sock"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []time.Time{time.Now().Add(time.Minute), launch.Add(-time.Second)} {
+		_, _, err := captureOutput(t, func() error {
+			return runScheduler([]string{"relaunch", "--start", bad.Format(time.RFC3339Nano)})
+		})
+		if ExitCode(err) != ExitCommitRefused || !strings.Contains(err.Error(), schedproc.RefusedStartOutOfRange) || len(sent) != 0 {
+			t.Fatalf("start %s: %v, sent %+v", bad, err, sent)
+		}
+	}
+	ok := time.Now().Add(-time.Second).In(time.FixedZone("x", 3600))
+	if _, _, err := captureOutput(t, func() error {
+		return runScheduler([]string{"relaunch", "--start", ok.Format(time.RFC3339Nano)})
+	}); err != nil || len(sent) != 1 || sent[0].Start != ok.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("an in-range start: %v, sent %+v", err, sent)
+	}
+}

@@ -120,7 +120,9 @@ compiles squad.yaml again as `scheduler run` does at its start:
 - `scheduler relaunch --start STAMP` (RFC3339) carries the key press: a seat
   the reload adds writes it as its `marks.json` start, so the launch budget's
   10 s ceiling binds that seat from the press. Every other seat keeps the
-  squad's start. The lead's screen runs propose, apply and the relaunch with
+  squad's start. A start more than 5 s in the future, or before the
+  scheduler's own launch start, is refused `start_out_of_range` before
+  anything drains. The lead's screen runs propose, apply and the relaunch with
   `/squad add`, `seat`, and one confirmation, and stamps the confirmation.
 - The lease cap (the leases held at once: the grant's `max_seats`, bounded
   by the squad's seat count, narrowed by `scheduler run --max-seats`) is

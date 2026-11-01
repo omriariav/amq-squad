@@ -100,7 +100,9 @@ compile refuses the relaunch squad_invalid before anything drains (as does
 one that changes the session or the lead). --start STAMP (RFC3339) is the
 key press that asked for it: a seat the reload adds takes it as its
 marks.json start, so the launch budget's 10 s ceiling counts from it;
-every other seat keeps the squad's start.
+every other seat keeps the squad's start. A start more than 5 s in the
+future, or before the scheduler's own launch start, is refused
+start_out_of_range before anything drains.
 
 scheduler clear is the screen's clear key (brief 31-2): the owner's
 acknowledgement of a seat's warning line (its code, the text before the
@@ -609,6 +611,17 @@ func runSchedulerRelaunch(args []string, out io.Writer) error {
 	rec, err := schedproc.ReadLaunchRecord(root)
 	if err != nil {
 		return fmt.Errorf("scheduler relaunch: no running scheduler for %s (the relaunch is the scheduler's to run): %v", root, err)
+	}
+	if stamp != "" {
+		// bounded here and again at the socket (Codex P2 1 on 31-2 PR 2)
+		t, _ := time.Parse(time.RFC3339Nano, stamp)
+		var launchStart time.Time
+		if rec.Start != nil {
+			launchStart = *rec.Start
+		}
+		if why := schedproc.CheckRelaunchStart(t, launchStart, time.Now()); why != "" {
+			return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("scheduler relaunch refused (%s): %s; nothing was sent", schedproc.RefusedStartOutOfRange, why)}
+		}
 	}
 	var reply schedproc.DecideReply
 	if rec.DecisionSocket == "" {

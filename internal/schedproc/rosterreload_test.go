@@ -60,13 +60,19 @@ func seatHandles(q seatlaunch.Squad) string {
 // the process stopped (when until reports done).
 func reloadRun(t *testing.T, reload *Reload, start string, until func(*rosterLauncher, []scheduler.Decision) bool) (DecideReply, string, *scheduler.Scheduler, *rosterLauncher) {
 	t.Helper()
+	return reloadRunAt(t, time.Time{}, reload, start, until)
+}
+
+// reloadRunAt is reloadRun for a scheduler whose launch start is launch.
+func reloadRunAt(t *testing.T, launch time.Time, reload *Reload, start string, until func(*rosterLauncher, []scheduler.Decision) bool) (DecideReply, string, *scheduler.Scheduler, *rosterLauncher) {
+	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	l, log := &rosterLauncher{}, &lockedBuf{}
 	lead := panechain.Pane{Shell: 80, Start: "s80", Agent: "lead"}
 	var once sync.Once
 	replies := make(chan DecideReply, 1)
 	var got DecideReply
-	err := runUntil(t, Options{Root: root, Launcher: l, Log: log,
+	err := runUntil(t, Options{Root: root, Launcher: l, Log: log, Start: launch,
 		Config: scheduler.Config{MaxSeats: 2, Lead: "lead", Roster: []scheduler.RosterSeat{{Handle: "c1", Pool: sonnet, Worktree: "/w/c1"}, {Handle: "x1", Pool: gptPool, Worktree: "/w/x1"}}},
 		Decisions: &DecideOptions{Apply: func(string, WidenRequest) DecideReply { return DecideReply{OK: true} }, Reload: reload,
 			LeadPane:   func(string, string) (panechain.Pane, error) { return lead, nil },
@@ -110,7 +116,7 @@ func TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat(t *testing.T) {
 	slots := &Slots{Squad: reloadSquad()}
 	pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
 	added := reloadSquad(seatlaunch.Seat{Handle: "n1", Runtime: "claude", Model: "opus", Effort: "high", Worktree: "/w/n1"})
-	keyPress := time.Date(2026, 11, 1, 9, 0, 0, 123456789, time.UTC)
+	keyPress := time.Now().Add(-3 * time.Second).UTC() // in range: at most StartSkew ahead
 	capOf := func(q seatlaunch.Squad) (int, error) { return len(q.Seats) - 1, nil } // one lease per roster seat
 	reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Cap: capOf, Slots: slots, Pools: pools, Lead: "lead"},
 		keyPress.Format(time.RFC3339Nano), func(l *rosterLauncher, ds []scheduler.Decision) bool { return l.launched() == 2 })
@@ -213,6 +219,46 @@ func TestAHalfAppliedReloadIsNeverObserved(t *testing.T) {
 			defer l.mu.Unlock()
 			if second := l.launches[1]; len(second) != 2 || second[0].Handle != "c1" || second[1].Handle != "x1" {
 				t.Fatalf("the relaunch after the failure: %+v", second)
+			}
+		})
+	}
+}
+
+// Codex P2 1 on 31-2 PR 2: the relaunch's start is bounded at the socket. A
+// stamp more than 5 s in the future, or older than the scheduler's own
+// launch start, refuses start_out_of_range by name before any drain: no
+// relaunch is requested, nothing closes or launches, and squad, pools and
+// roster are as they were; a stamp within the bounds is accepted. Reverted
+// (the stamp only parsed), both out-of-range stamps drain.
+func TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain(t *testing.T) {
+	launch := time.Now().Add(-time.Hour).UTC()
+	for _, tc := range []struct {
+		name  string
+		start time.Time
+		ok    bool
+	}{
+		{"in the future", time.Now().Add(time.Minute), false},
+		{"before the launch start", launch.Add(-time.Second), false},
+		{"in range", time.Now().Add(-time.Second), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slots := &Slots{Squad: reloadSquad()}
+			pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
+			added := reloadSquad(seatlaunch.Seat{Handle: "n1", Runtime: "claude", Model: "opus", Effort: "high", Worktree: "/w/n1"})
+			ticks := 0
+			reply, text, s, l := reloadRunAt(t, launch, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Slots: slots, Pools: pools, Lead: "lead"},
+				tc.start.Format(time.RFC3339Nano), func(l *rosterLauncher, _ []scheduler.Decision) bool { ticks++; return l.launched() == 2 || ticks > 5 })
+			if tc.ok {
+				if !reply.OK || l.launched() != 2 {
+					t.Fatalf("an in-range start: %+v, launches %d", reply, l.launched())
+				}
+				return
+			}
+			if reply.OK || reply.Code != RefusedStartOutOfRange {
+				t.Fatalf("reply %+v", reply)
+			}
+			if strings.Contains(text, "roster_relaunch_requested") || l.launched() != 1 || seatHandles(slots.Squad) != "lead,c1,x1" || len(pools.RosterPools()) != 2 || len(s.Config.Roster) != 2 {
+				t.Fatalf("the refused relaunch drained or swapped: launches %d, slots %s\n%s", l.launched(), seatHandles(slots.Squad), text)
 			}
 		})
 	}
