@@ -212,19 +212,30 @@ func noLeadHolds(project, digest string) error {
 	if err := soloLeadProbe(project); err != nil {
 		return fmt.Errorf("%w; %s", err, doorsText(digest))
 	}
-	locks, err := filepath.Glob(filepath.Join(project, ".agent-mail", "*", "extensions", "amq-squad", "scheduler", schedproc.LeadLockName))
-	if err != nil {
-		return err
+	// the session directories, enumerated literally (no glob: a repository
+	// path may hold glob characters), every read error failing closed
+	base := filepath.Join(project, ".agent-mail")
+	entries, err := os.ReadDir(base)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("%s: %s cannot be read (%v), so a team lead holding a session cannot be ruled out; %s", ReasonLeadUnreachable, base, err, doorsText(digest))
 	}
-	sort.Strings(locks)
-	for _, lock := range locks {
-		held, err := lockHeld(lock)
-		if err != nil {
-			return err
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
 		}
-		if held {
-			session := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(lock)))))
-			return fmt.Errorf("%s: a team lead holds session %s (%s); %s", schedproc.ReasonLeadRunning, session, lock, doorsText(digest))
+		lock := filepath.Join(schedproc.Dir(filepath.Join(base, e.Name())), schedproc.LeadLockName)
+		held, err := lockHeld(lock)
+		var named *upRefusal
+		switch {
+		case errors.As(err, &named):
+			return named
+		case err != nil:
+			return fmt.Errorf("%s: %s cannot be probed (%v), so a team lead holding session %s cannot be ruled out; %s", ReasonLeadUnreachable, lock, err, e.Name(), doorsText(digest))
+		case held:
+			return fmt.Errorf("%s: a team lead holds session %s (%s); %s", schedproc.ReasonLeadRunning, e.Name(), lock, doorsText(digest))
 		}
 	}
 	return nil

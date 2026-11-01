@@ -553,3 +553,39 @@ func TestASoloLeadStartingInTheApplyWindowWaitsForTheWrite(t *testing.T) {
 		t.Fatalf("the next probe after the lead started = %v", err)
 	}
 }
+
+// Codex's narrow pass on #834, P1: the sessions are enumerated literally. A
+// repository whose path holds glob characters (repo[1]) still has its
+// held lead lock found; a session directory the probe cannot read refuses
+// lead_unreachable naming the path, never "no lead".
+func TestTheShellApplyEnumeratesSessionsLiterallyAndFailsClosed(t *testing.T) {
+	parent, _ := filepath.EvalSymlinks(t.TempDir())
+	proj := filepath.Join(parent, "repo[1]")
+	mustMkdir(t, filepath.Join(proj, ".git"))
+	mustMkdir(t, filepath.Join(parent, "repo1", ".agent-mail")) // what the glob would have matched
+	mustWrite(t, team.CustomRolePath(proj, "implementer"), "# Role: implementer\n\nYou implement.\n")
+	t.Setenv(leadStartSocketEnv, "")
+	digest := proposeSoloPlan(t, proj, soloTeamPlan())["digest"].(string)
+	held := holdLock(t, filepath.Join(schedproc.Dir(filepath.Join(proj, ".agent-mail", "s1")), schedproc.LeadLockName))
+	if err := noLeadHolds(proj, digest); err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") || !strings.Contains(err.Error(), "session s1") {
+		t.Fatalf("a held lock in repo[1] = %v", err)
+	}
+	held.Close()
+	ext := filepath.Join(proj, ".agent-mail", "s1", "extensions")
+	if err := os.Chmod(ext, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ext, 0o755) })
+	if err := noLeadHolds(proj, digest); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") || !strings.Contains(err.Error(), "session s1") {
+		t.Fatalf("an unreadable session dir = %v", err)
+	}
+	_ = os.Chmod(ext, 0o755)
+	base := filepath.Join(proj, ".agent-mail")
+	if err := os.Chmod(base, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(base, 0o755) })
+	if err := noLeadHolds(proj, digest); err == nil || !strings.HasPrefix(err.Error(), ReasonLeadUnreachable+":") || !strings.Contains(err.Error(), base) {
+		t.Fatalf("an unreadable .agent-mail = %v", err)
+	}
+}
