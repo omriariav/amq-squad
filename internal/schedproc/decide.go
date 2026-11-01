@@ -93,6 +93,9 @@ type DecideOptions struct {
 	// Relaunch takes the lead's relaunch of the roster (3.0.1 t16); nil
 	// refuses it (relaunch_unsupported: the scheduler runs no roster).
 	Relaunch func(lead string, req RelaunchRequest) DecideReply
+	// Reload compiles squad.yaml again for each relaunch (brief 31-2 PR 2);
+	// nil relaunches the running roster as it is.
+	Reload *Reload
 	// Warnings reads a seat's current launch and the warnings status shows
 	// for it (status.CurrentSeatWarnings), for the clear (brief 31-2); nil
 	// refuses every clear.
@@ -375,6 +378,12 @@ const RefusedRelaunchUnsupported = "relaunch_unsupported"
 type RelaunchRequest struct {
 	Kind   string `json:"kind"`
 	Reason string `json:"reason,omitempty"`
+	// Start is the key press that asked for the relaunch, RFC3339Nano
+	// (brief 31-2 PR 2: `scheduler relaunch --start`): a seat the reload
+	// adds takes it as its marks.json start, and the launch budget's 10 s
+	// ceiling binds that seat from it. Empty: no seat takes a start of its
+	// own.
+	Start string `json:"start,omitempty"`
 }
 
 func sendDecision(root, path string, req any) (DecideReply, error) {

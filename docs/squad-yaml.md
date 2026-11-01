@@ -90,6 +90,41 @@ final form. What a hand edit produces:
 - An edit by a seat is the protected-path crossing described under "Who
   reads it".
 
+### Adding a seat live
+
+`team propose --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT` plans the
+squad.yaml on disk with one seat appended, and `team apply --digest D
+--add-seat ...` writes it (brief 31-2 PR 2). The role left empty is the
+handle; the model and the effort may be empty, and the model may hold colons
+(an Ollama tag), so the effort is the text after the last colon. The file is
+rendered in canonical form (comments are not kept) and parsed strictly
+against the owner grant, so a repeated handle, an unpermitted runtime or a
+seat over `max_seats` is refused. The team rules the owner approved are kept
+as they are; `team propose` without `--add-seat` re-renders them.
+`--add-seat` is refused with `--from` or `--roles`.
+
+A running scheduler starts the seat at its next `scheduler relaunch`, which
+compiles squad.yaml again as `scheduler run` does at its start:
+
+- The new roster, the slots' squad and the router's roster pools change in
+  one step at the relaunch's drain's end, after every seat finished what it
+  holds and closed, and before the roster launches; a failure inside that
+  step leaves all three as they were (`roster_reload_failed`), and the
+  running roster relaunches unchanged. A squad.yaml that does not compile,
+  or that names another session or lead, refuses the relaunch
+  `squad_invalid` before anything drains.
+- The reload only adds. It stops no seat: a seat removed from squad.yaml
+  while live finishes what it holds and leaves at the relaunch's close, and
+  is not launched again. A changed line for a live seat (model, effort,
+  role) applies at that seat's launch in the same apply, never by a kill.
+- `scheduler relaunch --start STAMP` (RFC3339) carries the key press: a seat
+  the reload adds writes it as its `marks.json` start, so the launch budget's
+  10 s ceiling binds that seat from the press. Every other seat keeps the
+  squad's start. The lead's screen runs propose, apply and the relaunch with
+  `/squad add`, `seat`, and one confirmation, and stamps the confirmation.
+- The grant's lease cap (`max_seats`, at most the squad's seat count) is
+  fixed at the scheduler's start; a seat added live shares it.
+
 ## Format
 
 The strict YAML subset of `internal/yamlsub` (the same reader as the owner

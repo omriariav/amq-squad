@@ -160,12 +160,125 @@ func orDash(s string) string {
 	return s
 }
 
+// RefusedSquadInvalid: the relaunch's reload could not compile squad.yaml;
+// nothing drains and the running roster is untouched (brief 31-2 PR 2).
+const RefusedSquadInvalid = "squad_invalid"
+
+// RefusedRelaunchMalformed: the relaunch's start is not an RFC3339 stamp.
+const RefusedRelaunchMalformed = "relaunch_malformed"
+
+// RosterPools is the router's side of a reload: its roster pools, replaced
+// under its lock (routing.Router.SetRosterPools, RosterPools).
+type RosterPools interface {
+	SetRosterPools([]task.Pool)
+	RosterPools() []task.Pool
+}
+
+// Reload is the relaunch's reload seam (brief 31-2 PR 2): Compile reads
+// squad.yaml again as scheduler run reads it at its start (team.LoadSquad,
+// Squad.LaunchSeats, roleText; the running squad's wrapper and amq path),
+// and the swap writes the result into Slots and Pools at the relaunch's
+// drain's end, with the scheduler's roster. Lead is squad.yaml's lead,
+// never in the roster.
+type Reload struct {
+	Compile func() (seatlaunch.Squad, error)
+	Slots   *Slots
+	Pools   RosterPools
+	Lead    string
+}
+
+// reloadFault is a test seam: an error injected at a named step between
+// the swap's writes ("pools", after the slots' squad; "roster", after the
+// router's pools), which the swap must undo.
+var reloadFault func(step string) error
+
+// prepare compiles squad.yaml and returns the reload the scheduler swaps
+// in at the drain's end; an error is squad_invalid, before any drain.
+func (r *Reload) prepare() (*scheduler.RosterReload, error) {
+	if r.Compile == nil || r.Slots == nil {
+		return nil, fmt.Errorf("the scheduler has no reload")
+	}
+	q, err := r.Compile()
+	if err != nil {
+		return nil, err
+	}
+	roster, _ := (&Slots{Squad: q}).Roster(r.Lead)
+	if len(roster) == 0 {
+		return nil, fmt.Errorf("squad.yaml has no seat but the lead")
+	}
+	return &scheduler.RosterReload{Roster: roster, Swap: func() error { return r.swap(q, roster) }}, nil
+}
+
+// swap writes the slots' squad (under Slots.mu) and the router's roster
+// pools, the reload's two halves the scheduler does not hold; the scheduler
+// writes its roster only once this returns nil. A failure at any step
+// restores what was written, so a half-applied reload is never observed.
+func (r *Reload) swap(q seatlaunch.Squad, roster []scheduler.RosterSeat) error {
+	r.Slots.mu.Lock()
+	oldSquad := r.Slots.Squad
+	r.Slots.Squad = q
+	r.Slots.mu.Unlock()
+	undoSquad := func() {
+		r.Slots.mu.Lock()
+		r.Slots.Squad = oldSquad
+		r.Slots.mu.Unlock()
+	}
+	if err := faultAt("pools"); err != nil {
+		undoSquad()
+		return err
+	}
+	var oldPools []task.Pool
+	if r.Pools != nil {
+		oldPools = r.Pools.RosterPools()
+		pools := make([]task.Pool, 0, len(roster))
+		for _, rs := range roster {
+			pools = append(pools, rs.Pool)
+		}
+		r.Pools.SetRosterPools(pools)
+	}
+	if err := faultAt("roster"); err != nil {
+		if r.Pools != nil {
+			r.Pools.SetRosterPools(oldPools)
+		}
+		undoSquad()
+		return err
+	}
+	return nil
+}
+
+func faultAt(step string) error {
+	if reloadFault == nil {
+		return nil
+	}
+	return reloadFault(step)
+}
+
 // relaunchDecision takes the lead's proved relaunch: the scheduler applies
 // it at its next tick (it drains, closes and relaunches over several ticks,
 // so the reply is the acceptance; the decisions log carries the outcome).
-func relaunchDecision(s *scheduler.Scheduler) func(string, RelaunchRequest) DecideReply {
+// With a reload, squad.yaml is compiled here, before anything drains: a
+// squad.yaml that does not compile refuses the relaunch squad_invalid and
+// leaves the running roster as it is. The request's start (the key press)
+// goes with it.
+func relaunchDecision(s *scheduler.Scheduler, reload *Reload) func(string, RelaunchRequest) DecideReply {
 	return func(lead string, req RelaunchRequest) DecideReply {
-		s.RequestRelaunch(req.Reason)
+		var start time.Time
+		if req.Start != "" {
+			t, err := time.Parse(time.RFC3339Nano, req.Start)
+			if err != nil {
+				return DecideReply{Code: RefusedRelaunchMalformed, Detail: fmt.Sprintf("the relaunch's start %q is not an RFC3339 stamp; nothing drains", req.Start)}
+			}
+			start = t
+		}
+		var next *scheduler.RosterReload
+		if reload != nil {
+			got, err := reload.prepare()
+			if err != nil {
+				return DecideReply{Code: RefusedSquadInvalid, Detail: "squad.yaml does not compile: " + err.Error() + "; nothing drains, and the running roster is untouched"}
+			}
+			next = got
+		}
+		s.RequestRelaunchReload(req.Reason, start, next)
 		return DecideReply{OK: true, Detail: "accepted: the seats finish what they hold, then every seat closes and the roster relaunches in one apply; the outcome is in the decisions log (roster_launched or roster_launch_failed)"}
 	}
 }

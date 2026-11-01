@@ -1,0 +1,118 @@
+package scheduler
+
+import (
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+var opus = task.Pool{Runtime: "claude", Model: "opus", Effort: "high"}
+
+func rosterHandles(r []RosterSeat) string {
+	var hs []string
+	for _, rs := range r {
+		hs = append(hs, rs.Handle+"="+rs.Pool.Key())
+	}
+	return strings.Join(hs, ",")
+}
+
+// Brief 31-2 PR 2, changes 2, 3 and 4 (rows A, C and 4, the scheduler's
+// half). A relaunch carrying a reload and the key press:
+//   - swaps nothing while a seat still holds work: the roster, and the
+//     reload's other halves (Swap), stay as they were, and no seat closes;
+//     s-b, removed from squad.yaml, keeps its lease and stays live (row C);
+//   - at the drain's end, after every seat closed (s-b at its own close
+//     once it finished, with the relaunch's reason, never a kill), swaps
+//     once, then launches the new roster: s-c, the added seat, carries the
+//     key press as its start; s-a, whose line changed (sonnet to opus),
+//     launches on its new pool with no start of its own; s-b is not
+//     launched again (rows A, C, 4);
+//   - the key press is the added seat's first launch only: a later relaunch
+//     carries no start.
+//
+// Reverted to a swap at the request (change 2), Swap runs while s-b holds
+// its lease; without the start (change 4), s-c's request carries none.
+func TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress(t *testing.T) {
+	h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute}, rosterAB...)
+	h.tick()
+	busy := h.add("busy", &gpt)
+	h.tick()
+	if got := h.get(busy.ID); got.Lease == nil || got.Lease.Holder != "s-b" {
+		t.Fatalf("busy: %+v", got)
+	}
+	next := []RosterSeat{{Handle: "s-a", Pool: opus}, {Handle: "s-c", Pool: sonnet}}
+	swaps := 0
+	var closedAtSwap []string
+	reload := &RosterReload{Roster: next, Swap: func() error {
+		swaps++
+		closedAtSwap = slices.Clone(h.l.closed)
+		return nil
+	}}
+	keyPress := t0.Add(-3 * time.Second)
+	h.s.RequestRelaunchReload("add s-c", keyPress, reload)
+	ds := h.tick()
+	if !has(ds, "roster_relaunch_requested", "", "") || swaps != 0 || len(h.l.closed) != 0 || rosterHandles(h.s.Config.Roster) != rosterHandles(rosterAB) || len(fr.launches) != 1 {
+		t.Fatalf("while s-b holds its lease: swaps %d, closed %v, roster %s, launches %d; %+v", swaps, h.l.closed, rosterHandles(h.s.Config.Roster), len(fr.launches), ds)
+	}
+	if got := h.get(busy.ID); got.Lease == nil || got.Lease.Holder != "s-b" {
+		t.Fatalf("the removed seat lost its lease to the reload: %+v", got)
+	}
+	if _, err := h.store.Release(busy.ID, "lead", "finished", h.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ds = h.tick()
+	if swaps != 1 || !slices.Contains(closedAtSwap, "s-a") || !slices.Contains(closedAtSwap, "s-b") {
+		t.Fatalf("the swap: %d swaps; closed at the swap %v", swaps, closedAtSwap)
+	}
+	for _, d := range ds {
+		if d.Kind == "seat_closed" && d.Reason != closeRelaunch {
+			t.Fatalf("a seat closed for another reason than the relaunch: %+v", d)
+		}
+	}
+	if !has(ds, "seat_closed", "", "s-b") || !has(ds, "roster_reloaded", "", "s-c") || !has(ds, "roster_launched", "", "") || rosterHandles(h.s.Config.Roster) != rosterHandles(next) {
+		t.Fatalf("after the drain: roster %s; %+v", rosterHandles(h.s.Config.Roster), ds)
+	}
+	if len(fr.launches) != 2 {
+		t.Fatalf("launches %d", len(fr.launches))
+	}
+	got := fr.launches[1]
+	if len(got) != 2 || got[0].Handle != "s-a" || got[0].Pool != opus || !got[0].Start.IsZero() || got[1].Handle != "s-c" || !got[1].Start.Equal(keyPress) {
+		t.Fatalf("the relaunch's requests: %+v", got)
+	}
+	h.s.RequestRelaunch("again")
+	h.tick()
+	if len(fr.launches) != 3 || !fr.launches[2][1].Start.IsZero() {
+		t.Fatalf("a later relaunch carried the key press: %+v", fr.launches)
+	}
+}
+
+// Brief 31-2 PR 2, change 2 (row B, the scheduler's half): a swap that
+// fails leaves the roster as it was, and the relaunch launches the running
+// roster unchanged, with no start of the key press; the failure is a
+// decision. Reverted (the roster written before Swap, or regardless of its
+// error), the roster is the reload's after the failure.
+func TestAFailedSwapRelaunchesTheRunningRosterUnchanged(t *testing.T) {
+	h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute}, rosterAB...)
+	h.tick()
+	h.s.RequestRelaunchReload("add s-c", t0, &RosterReload{Roster: []RosterSeat{{Handle: "s-a", Pool: sonnet}, {Handle: "s-b", Pool: gpt}, {Handle: "s-c", Pool: opus}},
+		Swap: func() error { return errors.New("injected between the writes") }})
+	ds := h.tick()
+	if !has(ds, "roster_reload_failed", "", "") || has(ds, "roster_reloaded", "", "") || rosterHandles(h.s.Config.Roster) != rosterHandles(rosterAB) {
+		t.Fatalf("after a failed swap: roster %s; %+v", rosterHandles(h.s.Config.Roster), ds)
+	}
+	if len(fr.launches) != 2 || rosterHandles(asRoster(fr.launches[1])) != rosterHandles(rosterAB) || !fr.launches[1][0].Start.IsZero() || !fr.launches[1][1].Start.IsZero() {
+		t.Fatalf("the relaunch after a failed swap: %+v", fr.launches)
+	}
+}
+
+func asRoster(reqs []SeatRequest) []RosterSeat {
+	var out []RosterSeat
+	for _, r := range reqs {
+		out = append(out, RosterSeat{Handle: r.Handle, Pool: r.Pool})
+	}
+	return out
+}

@@ -153,9 +153,10 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	pending []Event
-	// relaunchAsk is the lead's relaunch decision (its reason) waiting for
-	// the next tick (RequestRelaunch); set under mu.
-	relaunchAsk *string
+	// relaunchAsk is the lead's relaunch decision (its reason, the key
+	// press and the reload) waiting for the next tick (RequestRelaunch,
+	// RequestRelaunchReload); set under mu.
+	relaunchAsk *relaunchAsk
 
 	seats       map[string]*seat
 	requests    []request
@@ -186,6 +187,12 @@ type Scheduler struct {
 	rosterOwed  bool
 	relaunching bool
 	heldReason  string
+	// reload is the relaunch's re-compiled squad.yaml, swapped in at the
+	// drain's end (brief 31-2 PR 2); seatStart the key press for the seats
+	// that swap added, carried by their next roster launch's requests.
+	reload    *RosterReload
+	reloadAt  time.Time
+	seatStart map[string]time.Time
 	// Launch failures (3.0.1 t17): the last failure per pool, the tasks
 	// blocked on a repeated one (task id -> the pool and the failure's
 	// sequence number), the requests whose failure was noted while a failed
@@ -523,7 +530,12 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			log(Decision{Kind: "roster_relaunch_refused", Reason: "the scheduler runs no roster"})
 		case !s.relaunching:
 			s.relaunching = true
-			log(Decision{Kind: "roster_relaunch_requested", Reason: firstNonEmpty(*ask, "the lead's decision")})
+			s.reload, s.reloadAt = ask.reload, ask.start
+			log(Decision{Kind: "roster_relaunch_requested", Reason: firstNonEmpty(ask.reason, "the lead's decision")})
+		case ask.reload != nil:
+			// a relaunch already draining: its swap takes the later
+			// squad.yaml and key press (the swap is still to come)
+			s.reload, s.reloadAt = ask.reload, ask.start
 		}
 	}
 	return nil

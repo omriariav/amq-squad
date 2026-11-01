@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +71,18 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 	l.mu.Unlock()
 	opts := l.Options
 	opts.BeforeApply = l.resourcesGone(q.SessionRoot(), reqs)
+	// A request's own start (brief 31-2 PR 2: the add key's press for a
+	// seat the relaunch's reload added) overrides the launch's for that
+	// seat's marks; every other seat keeps the launch's start.
+	opts.SeatStart = maps.Clone(l.Options.SeatStart)
+	for _, r := range reqs {
+		if !r.Start.IsZero() {
+			if opts.SeatStart == nil {
+				opts.SeatStart = map[string]time.Time{}
+			}
+			opts.SeatStart[r.Handle] = r.Start
+		}
+	}
 	res, err := Launch(context.Background(), q, opts)
 	l.settleAll(rs, res, err)
 	return rosterOutcome(res, err)

@@ -1,6 +1,10 @@
 package scheduler
 
-import "github.com/omriariav/amq-squad/v3/internal/task"
+import (
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
 
 // The hooks the scheduler calls. Each is an interface that a later brief
 // implements; the defaults here keep the scheduler usable on its own.
@@ -16,6 +20,11 @@ type SeatRequest struct {
 	// Handle names the roster seat of a roster launch's request (3.0.1 t16);
 	// empty on an on-demand request, where the slots pick the seat.
 	Handle string `json:"handle,omitempty"`
+	// Start is this request's own launch start (brief 31-2 PR 2): the key
+	// press of the add key for a seat a relaunch's reload added, written as
+	// the seat's marks.json start in place of the launch's; zero keeps the
+	// launch's start (seatlaunch.Options.Start).
+	Start time.Time `json:"start,omitzero"`
 }
 
 // SeatLauncher starts and stops seats (2b-2). RequestSeat is asynchronous:

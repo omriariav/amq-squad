@@ -140,9 +140,89 @@ func (s *Scheduler) AdoptUpRequest(handle, requestID string, pool task.Pool, at 
 // RequestRelaunch is the lead's relaunch decision, posted from any
 // goroutine (the decision socket); the next tick applies it.
 func (s *Scheduler) RequestRelaunch(reason string) {
+	s.RequestRelaunchReload(reason, time.Time{}, nil)
+}
+
+// RosterReload is a relaunch's squad.yaml compiled again (brief 31-2 PR 2):
+// its roster, and Swap, which writes the reload's other halves (the slots'
+// squad and the router's roster pools). The scheduler swaps at the drain's
+// end, after every seat closed and before the roster launches: Swap first,
+// then Config.Roster, so the three change in one step or none. Swap leaves
+// both of its halves as they were when it returns an error, and the
+// running roster then relaunches unchanged.
+type RosterReload struct {
+	Roster []RosterSeat
+	Swap   func() error
+}
+
+type relaunchAsk struct {
+	reason string
+	start  time.Time
+	reload *RosterReload
+}
+
+// RequestRelaunchReload is the lead's relaunch carrying the key press
+// (start, zero for none) and squad.yaml compiled again (reload, nil keeps
+// the running roster), posted from any goroutine; the next tick applies
+// it. The reload only adds: it stops no seat. Every seat finishes what it
+// holds and closes in the relaunch's drain, as without a reload; a seat
+// removed from squad.yaml leaves at that close and is not launched again,
+// and a changed line applies at that seat's launch in the same apply.
+func (s *Scheduler) RequestRelaunchReload(reason string, start time.Time, reload *RosterReload) {
 	s.mu.Lock()
-	s.relaunchAsk = &reason
+	s.relaunchAsk = &relaunchAsk{reason: reason, start: start, reload: reload}
 	s.mu.Unlock()
+}
+
+// swapReload is the reload's one step at the drain's end: the slots' squad
+// and the router's pools (Swap), then the roster; a failed Swap leaves all
+// three as they were. The seats it adds carry the key press into their
+// launch (seatStart).
+func (s *Scheduler) swapReload(log func(Decision)) {
+	r, start := s.reload, s.reloadAt
+	s.reload, s.reloadAt = nil, time.Time{}
+	if r == nil {
+		return
+	}
+	if r.Swap != nil {
+		if err := r.Swap(); err != nil {
+			log(Decision{Kind: "roster_reload_failed", Reason: "the running roster relaunches unchanged: " + err.Error()})
+			return
+		}
+	}
+	had := map[string]bool{}
+	for _, rs := range s.Config.Roster {
+		had[rs.Handle] = true
+	}
+	now := map[string]bool{}
+	var added, removed []string
+	for _, rs := range r.Roster {
+		now[rs.Handle] = true
+		if !had[rs.Handle] {
+			added = append(added, rs.Handle)
+		}
+	}
+	for _, rs := range s.Config.Roster {
+		if !now[rs.Handle] {
+			removed = append(removed, rs.Handle)
+		}
+	}
+	s.Config.Roster = r.Roster
+	s.seatStart = nil
+	if !start.IsZero() {
+		for _, h := range added {
+			if s.seatStart == nil {
+				s.seatStart = map[string]time.Time{}
+			}
+			s.seatStart[h] = start
+		}
+	}
+	why := fmt.Sprintf("squad.yaml compiled again at the relaunch's drain: a roster of %d seats; added %s; removed %s (each closed in the drain, not launched again)",
+		len(r.Roster), firstNonEmpty(strings.Join(added, ","), "none"), firstNonEmpty(strings.Join(removed, ","), "none"))
+	if !start.IsZero() && len(added) > 0 {
+		why += "; the added seats' launch start is the key press " + start.UTC().Format(time.RFC3339Nano)
+	}
+	log(Decision{Kind: "roster_reloaded", Seat: strings.Join(added, ","), Reason: why})
 }
 
 // holdOnce logs dispatch_held when its reason changes.
@@ -186,6 +266,7 @@ func (s *Scheduler) rosterStep(list []task.Task, now time.Time, cfg Config, log 
 			return true, nil
 		}
 		s.relaunching, s.rosterOwed = false, true
+		s.swapReload(log)
 	}
 	if !s.rosterOwed {
 		return false, nil
@@ -226,10 +307,11 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	reqs := make([]SeatRequest, 0, len(s.Config.Roster))
 	for _, rs := range s.Config.Roster {
 		s.requested++
-		req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: rs.Pool, Handle: rs.Handle}
+		req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: rs.Pool, Handle: rs.Handle, Start: s.seatStart[rs.Handle]}
 		reqs = append(reqs, req)
 		s.requests = append(s.requests, request{req: req, at: now})
 	}
+	s.seatStart = nil // the key press is the added seats' first launch only
 	out := rl.LaunchRoster(reqs)
 	if out.Stage != RosterApplied {
 		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}

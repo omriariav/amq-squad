@@ -46,6 +46,7 @@ type TrainRun = { run: string; last_kind: string; last_at: string; prs: number[]
 export type ScreenStatus = {
 	root: string;
 	session: string;
+	project_path?: string;
 	lead_handle: string | null;
 	lead: { handle: string; pid: number; pane: string; live: boolean } | null;
 	counts: { needs_you: number; working: number; ready: number; inactive: number };

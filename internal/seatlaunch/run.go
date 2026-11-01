@@ -51,7 +51,11 @@ type AMQRunner func(ctx context.Context, amq string, args []string, stdin []byte
 type Options struct {
 	// Start is the squad launch's start (AMQ_SQUAD_START, brief 31-1),
 	// recorded per seat with its launch (marks.json); zero records none.
-	Start     time.Time
+	Start time.Time
+	// SeatStart overrides Start per handle for this launch (brief 31-2 PR
+	// 2): a seat a relaunch's reload added records the add key's press as
+	// its marks.json start. LaunchRoster fills it from the requests.
+	SeatStart map[string]time.Time
 	Decisions map[string]string // ACTION_ID -> CHOICE, explicit operator answers
 	DryRun    bool              // Prepare only
 	Wait      time.Duration     // how long to wait for the seats to come up
@@ -270,7 +274,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		return res, err
 	}
 	writeWakes(c, launchID, wakes)
-	writeMarks(c, launchID, o.Start)
+	writeMarks(c, launchID, o.Start, o.SeatStart)
 	// The commit step's diff base is the core's observation of each seat
 	// worktree before the seat runs (internal/seatcommit ledger). A worktree
 	// that is not a git checkout records nothing; its commit step refuses

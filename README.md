@@ -217,6 +217,25 @@ A per-seat flag takes one comma list: `--worktree a=x,b=y`, never the flag
 twice (a repeated per-seat flag is refused). A custom role is staged first with
 `amq-squad role draft researcher --purpose "Investigate ambiguous behavior"`.
 
+Adding a seat to a running squad: `--add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT`
+appends one seat to the squad.yaml on disk through the same digest (the team
+rules stay as they are), and the next `scheduler relaunch` reads squad.yaml
+again and launches it with the roster. The lead's screen does all three with
+`/squad add`, then `seat`, and one confirmation (every seat relaunches):
+
+```sh
+amq-squad team propose --project . --add-seat rev-1:implementer:codex:gpt-5.4:high
+amq-squad team apply --digest <digest> --project . --add-seat rev-1:implementer:codex:gpt-5.4:high
+amq-squad scheduler relaunch --reason "add rev-1" --start 2026-11-01T09:00:00Z
+```
+
+The relaunch swaps the roster in one step after every seat finished what it
+holds and closed. It stops no seat itself: a seat removed from squad.yaml
+leaves at that close and is not launched again, and a changed line applies at
+that seat's launch. A squad.yaml that does not compile refuses the relaunch
+`squad_invalid` before anything drains. `--start` is the key press: the added
+seat's launch budget counts from it.
+
 **9. The brief.** The workstream's goal, at `.amq-squad/briefs/<session>.md`:
 
 ```sh
@@ -352,7 +371,8 @@ amq-squad gate status --project . --session issue-96 --json
   binding is present, so a gone seat is not replaced on its own: its pool's
   next task blocks for the lead (`seat_replacement_needs_relaunch`), and the
   lead's `amq-squad scheduler relaunch` lets the other seats finish, closes
-  them and launches the roster again. The lead and the scheduler run outside
+  them and launches the roster again, as squad.yaml reads at that moment (a
+  seat added since the start launches with it). The lead and the scheduler run outside
   the roster's tmux session (the lead's own seat is never in the roster). A
   restarted scheduler adopts the live seats. A roster launch that AMQ refuses stops the scheduler with the stage,
   AMQ's reason and the detail in its decisions log, and the lead's

@@ -246,11 +246,15 @@ func marksPath(root, handle string) string {
 
 // writeMarks records each staged seat's launch start (best effort, like
 // the wake record).
-func writeMarks(c Compiled, launchID string, start time.Time) {
+func writeMarks(c Compiled, launchID string, start time.Time, seatStart map[string]time.Time) {
 	for _, rec := range c.Records {
 		m := SeatMarks{LaunchID: launchID}
-		if !start.IsZero() {
-			t := start.UTC()
+		at := start
+		if own, ok := seatStart[rec.Handle]; ok && !own.IsZero() {
+			at = own // the key press of the add key (brief 31-2 PR 2)
+		}
+		if !at.IsZero() {
+			t := at.UTC()
 			m.Start = &t
 		}
 		if b, err := json.Marshal(m); err == nil {

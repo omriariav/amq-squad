@@ -33,7 +33,7 @@ const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 
 Usage:
   amq-squad scheduler run --project DIR [--lead-pool r:m:e]... [--tick 2s] [--max-seats N] [--base-branch B] [--no-open-pr]
-  amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--json]
+  amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--start STAMP] [--json]
   amq-squad scheduler clear --seat H --warning CODE --launch ID [--root DIR] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
@@ -89,6 +89,18 @@ scheduler relaunch is the lead's decision to relaunch the roster, sent over
 the scheduler's decision socket (proved like task widen): the seats finish
 what they hold, every seat closes, the roster launches again in one apply,
 and the tasks blocked seat_replacement_needs_relaunch return to pending.
+The relaunch reads squad.yaml again (brief 31-2 PR 2): a seat added since
+the scheduler started launches with the roster, and its pool is the
+router's from then on. The new roster replaces the old one in one step at
+the drain's end, after every seat closed; the reload stops no seat itself:
+a seat removed from squad.yaml finishes what it holds, closes with the
+others and is not launched again, and a changed line (model, effort, role)
+applies at that seat's launch in the same apply. A squad.yaml that does not
+compile refuses the relaunch squad_invalid before anything drains (as does
+one that changes the session or the lead). --start STAMP (RFC3339) is the
+key press that asked for it: a seat the reload adds takes it as its
+marks.json start, so the launch budget's 10 s ceiling counts from it;
+every other seat keeps the squad's start.
 
 scheduler clear is the screen's clear key (brief 31-2): the owner's
 acknowledgement of a seat's warning line (its code, the text before the
@@ -240,7 +252,13 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	// Every runtime goes to the AMQ launcher (brief 31-1): which runtimes
 	// exist is AMQ's adapters' to say, at Prepare.
+	// Every runtime squad.yaml takes, not only the ones the squad starts
+	// with: a seat the relaunch's reload adds may bring a new one (brief
+	// 31-2 PR 2).
 	byRuntime := map[string]scheduler.SeatLauncher{}
+	for _, rt := range team.Runtimes {
+		byRuntime[rt] = amqLauncher
+	}
 	for _, s := range q.Seats {
 		byRuntime[s.Runtime] = amqLauncher
 	}
@@ -281,6 +299,9 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	// A team-mode start (3.0.1 t16): the lead is this process's parent, its
 	// incarnation recorded now; the scheduler exits when it is gone.
 	decisions := decisionOptions(sel, q.ProjectRoot)
+	// brief 31-2 PR 2: each relaunch compiles squad.yaml again; the swap
+	// writes the slots' squad and the router's roster pools with the roster
+	decisions.Reload = &schedproc.Reload{Compile: reloadSquad(q, leadHandle), Slots: slots, Pools: router, Lead: leadHandle}
 	leadGone, err := teamModeLead(decisions)
 	if err != nil {
 		return err
@@ -369,6 +390,26 @@ func firstMessageMark(root string) func(string, time.Time) (time.Time, bool) {
 			}
 		}
 		return at, ok
+	}
+}
+
+// reloadSquad is the relaunch's reload seam (brief 31-2 PR 2): squad.yaml
+// compiled again exactly as at the start (squadOfProject: team.LoadSquad,
+// Squad.LaunchSeats, roleText), with the running squad's wrapper and amq.
+// A squad.yaml that names another session or lead is refused: the session
+// and the lead are the scheduler's for its life.
+func reloadSquad(running seatlaunch.Squad, lead string) func() (seatlaunch.Squad, error) {
+	return func() (seatlaunch.Squad, error) {
+		q, l, err := squadOfProject(running.ProjectRoot)
+		if err != nil {
+			return seatlaunch.Squad{}, err
+		}
+		if q.Session != running.Session || l != lead {
+			return seatlaunch.Squad{}, fmt.Errorf("%s names session %s and lead %s; the running scheduler's are %s and %s (a relaunch keeps both: restart the squad to change them)",
+				team.SquadPath(running.ProjectRoot), q.Session, l, running.Session, lead)
+		}
+		q.Wrapper, q.AMQPath = running.Wrapper, running.AMQPath
+		return q.Normalize()
 	}
 }
 
@@ -517,11 +558,20 @@ func runSchedulerRelaunch(args []string, out io.Writer) error {
 	f := newStoreFlags("scheduler relaunch")
 	f.fs.Usage = func() { fmt.Fprint(os.Stderr, schedulerUsage) }
 	reason := f.fs.String("reason", "", "why the lead relaunches the roster")
+	start := f.fs.String("start", "", "the key press that asked for the relaunch (RFC3339): a seat the reload adds counts its launch budget from it")
 	if err := parseFlags(f.fs, args); err != nil {
 		return err
 	}
 	if f.fs.NArg() > 0 {
 		return usageErrorf("scheduler relaunch: takes no arguments")
+	}
+	stamp := strings.TrimSpace(*start)
+	if stamp != "" {
+		t, err := time.Parse(time.RFC3339Nano, stamp)
+		if err != nil {
+			return usageErrorf("scheduler relaunch --start: %q is not an RFC3339 stamp", stamp)
+		}
+		stamp = t.UTC().Format(time.RFC3339Nano)
 	}
 	if flagWasSet(f.fs, "me") {
 		return usageErrorf("scheduler relaunch: takes no --me; the scheduler proves the lead from the process, never from a flag")
@@ -538,7 +588,7 @@ func runSchedulerRelaunch(args []string, out io.Writer) error {
 	var reply schedproc.DecideReply
 	if rec.DecisionSocket == "" {
 		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting, Detail: "the scheduler is starting: its decision socket opens once the exits ledger is loaded and every seat of the previous incarnation is closed and confirmed gone"}
-	} else if reply, err = schedulerRelaunchSend(root, rec.DecisionSocket, schedproc.RelaunchRequest{Reason: strings.TrimSpace(*reason)}); err != nil {
+	} else if reply, err = schedulerRelaunchSend(root, rec.DecisionSocket, schedproc.RelaunchRequest{Reason: strings.TrimSpace(*reason), Start: stamp}); err != nil {
 		return fmt.Errorf("scheduler relaunch: the scheduler's decision socket: %w", err)
 	}
 	if *f.jsonOut {
