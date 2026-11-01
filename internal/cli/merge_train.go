@@ -119,6 +119,7 @@ func runMergeTrain(args []string) error {
 	}
 	if gs, err := gatestore.Open(sel.Root); err == nil {
 		t.ReleaseGates, t.Root = &gs, sel.Root // the tag and release drift check, every run
+		t.VerifyGate = releaseGateVerifier(sel)
 	}
 	ctx := context.Background()
 	if !*dry {
@@ -234,6 +235,31 @@ func attachMergeGates(ctx context.Context, t *mergetrain.Train, sel contextResol
 	t.Gates = mergetrain.InSquad(mergetrain.SquadOf(sel.Root), func(action, target string) (gatestore.Record, bool) {
 		return v.AcceptedFor(core.Store, action, target)
 	})
+}
+
+// releaseGateVerifier is the drift check's acceptance of a release gate
+// (brief 3.1.1-2 item 5): the full owner check (gateverify.Verifier.Accepted:
+// the accepted decision and its approval's owner signature, issuer and
+// namespace) under the namespace of the session whose store holds the gate,
+// this squad's project and profile with that session. A release is cut in
+// its own fresh session, so its gate verifies under that session's name.
+// Without the owner's gate binding or trust store nothing verifies, and
+// every tag or release since the baseline stays an alert.
+func releaseGateVerifier(sel contextResolution) mergetrain.GateVerifier {
+	_, pin, err := gateverify.LoadBinding(gateBindingPath())
+	if err != nil {
+		return func(string, gatestore.Store, gatestore.Record) error { return fmt.Errorf("gate binding: %w", err) }
+	}
+	trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())
+	if err != nil {
+		return func(string, gatestore.Store, gatestore.Record) error {
+			return fmt.Errorf("authorization trust store: %w", err)
+		}
+	}
+	return func(session string, store gatestore.Store, rec gatestore.Record) error {
+		ns := gateNamespace(sel.ProjectDir, sel.Profile, session, sel.NamespaceGeneration)
+		return gateverify.Verifier{Trust: trust, Pin: pin, Namespace: ns}.Accepted(store, rec)
+	}
 }
 
 // confirmMerge is manual mode's per-merge stop: one "y" line on a terminal

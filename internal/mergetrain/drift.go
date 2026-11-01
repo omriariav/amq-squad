@@ -67,20 +67,34 @@ type baseline struct {
 	Releases   []Release `json:"releases"`
 }
 
-// Drift compares the repository's tags and releases against the session's
-// gate store. The first run on a repository records the existing set as its
-// baseline (what was there before the squad); after that every tag or
+// GateVerifier is the owner-signed acceptance of one gate record held in
+// the named session's gate store: gateverify.Verifier.Accepted under that
+// session's namespace (the owner's BIP-340 signature re-verified, never a
+// file's presence). nil verifies nothing, so no gate clears an alert.
+type GateVerifier func(session string, store gatestore.Store, rec gatestore.Record) error
+
+// Drift compares the repository's tags and releases against the gate
+// stores of every session under the AMQ root (brief 3.1.1-2 item 5: each
+// release is cut in its own fresh session, so the squad's own store never
+// holds its gates). The first run on a repository records the existing set
+// as its baseline (what was there before the squad); after that every tag or
 // release outside the baseline needs an accepted gate for it: the release
-// flow's targets (gatetarget.ReleaseTag, ReleaseCreate) or a seat's gated
-// command (git tag <name>, git push refs/tags/<name>, gh release create
-// <name>). Tags compare by name and commit, releases by id, and one accepted
-// gate covers one object: the first tag commit or release id it is seen
-// covering is bound to it (alerts/covered-<gate>.json), so a tag moved to
-// another commit or a release deleted and recreated under the same tag needs
-// a new gate. Each uncovered one is written once as an alert and returned.
+// flow's targets (gatetarget.ReleaseTag, ReleaseCreate) or, in this squad's
+// own session, a seat's gated command (git tag <name>, git push
+// refs/tags/<name>, gh release create <name>). Another session's gate clears
+// only through a target that names the tag and its commit
+// (gatetarget.ReleaseTag), or the release's tag (ReleaseCreate). A gate
+// clears only when verify accepts it. Tags compare by name and commit,
+// releases by id, and one accepted gate covers one object: the first tag
+// commit or release id it is seen covering is bound to it
+// (alerts/covered-<gate>.json, covered-<session>--<gate>.json for another
+// session's), so a tag moved to another commit or a release deleted and
+// recreated under the same tag needs a new gate. Each uncovered one is
+// written once as an alert and returned; a gate store that cannot be read
+// is an alert of its own (gate_store_unreadable), never a clearance.
 // Recorded limit: what exists at the first run is the baseline, so the
 // owner's first run is the baseline review.
-func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, repository string, now time.Time) ([]Alert, error) {
+func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repository string, now time.Time) ([]Alert, error) {
 	tags, err := l.Tags(ctx, repository)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
@@ -102,28 +116,40 @@ func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, re
 	if err != nil {
 		return nil, err
 	}
-	accepted := acceptedTargets(gates, SquadOf(root))
 	var alerts []Alert
-	raise := func(kind, name, sha, object string, targets ...string) error {
-		for _, t := range targets {
-			if id, ok := accepted[t]; ok && bindCovered(dir, id, object) {
-				return nil
-			}
-		}
-		sum := sha256.Sum256([]byte(repository + "\x00" + kind + "\x00" + name + "\x00" + sha))
-		a := Alert{ID: "ungated-" + kind + "-" + hex.EncodeToString(sum[:6]), Repository: repository, Kind: kind, Name: name, SHA: sha,
-			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("%s %s on %s has no accepted owner gate", kind, name, repository)}
+	alert := func(a Alert) error {
 		if err := writeOnceJSON(filepath.Join(dir, a.ID+".json"), a); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err
 		}
 		alerts = append(alerts, a)
 		return nil
 	}
+	accepted, unreadable := sessionTargets(root, verify)
+	for _, u := range unreadable {
+		sum := sha256.Sum256([]byte(u.path))
+		if err := alert(Alert{ID: "gate-store-unreadable-" + hex.EncodeToString(sum[:6]), Repository: repository, Kind: "gate_store_unreadable", Name: u.path,
+			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("the gate store %s could not be read (%v); no gate in it clears an alert", u.path, u.err)}); err != nil {
+			return alerts, err
+		}
+	}
+	raise := func(kind, name, sha, object string, own []string, other ...string) error {
+		for _, t := range append(own, other...) {
+			for _, g := range accepted[t] {
+				if (g.own || slices.Contains(other, t)) && bindCovered(dir, g.bindKey, object) {
+					return nil
+				}
+			}
+		}
+		sum := sha256.Sum256([]byte(repository + "\x00" + kind + "\x00" + name + "\x00" + sha))
+		return alert(Alert{ID: "ungated-" + kind + "-" + hex.EncodeToString(sum[:6]), Repository: repository, Kind: kind, Name: name, SHA: sha,
+			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("%s %s on %s has no accepted owner gate", kind, name, repository)})
+	}
 	for _, t := range tags {
 		if slices.Contains(base.Tags, t) {
 			continue
 		}
-		if err := raise("tag", t.Name, t.SHA, "tag "+t.Name+"@"+t.SHA, gatetarget.ReleaseTag(repository, t.Name, t.SHA), gatetarget.Command("git tag", t.Name), gatetarget.TagPush("refs/tags/"+t.Name)); err != nil {
+		own := []string{gatetarget.Command("git tag", t.Name), gatetarget.TagPush("refs/tags/" + t.Name)}
+		if err := raise("tag", t.Name, t.SHA, "tag "+t.Name+"@"+t.SHA, own, gatetarget.ReleaseTag(repository, t.Name, t.SHA)); err != nil {
 			return alerts, err
 		}
 	}
@@ -131,25 +157,78 @@ func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, re
 		if slices.Contains(base.Releases, r) {
 			continue
 		}
-		if err := raise("release", r.Tag, "", "release "+strconv.FormatInt(r.ID, 10), gatetarget.ReleaseCreate(repository, r.Tag), gatetarget.Command("gh release create", r.Tag)); err != nil {
+		own := []string{gatetarget.Command("gh release create", r.Tag)}
+		if err := raise("release", r.Tag, "", "release "+strconv.FormatInt(r.ID, 10), own, gatetarget.ReleaseCreate(repository, r.Tag)); err != nil {
 			return alerts, err
 		}
 	}
 	return alerts, nil
 }
 
-// acceptedTargets maps the targets of the store's tag and release gates with
-// an accepted decision to their gate ids.
-func acceptedTargets(gates gatestore.Store, squad string) map[string]string {
-	out := map[string]string{}
-	ids, _ := gates.IDs()
-	for _, id := range ids {
-		rec, err := gates.Load(id)
-		if err == nil && gatetarget.Class(rec.Class) == gatetarget.ClassRelease && SameSquad(rec, squad) && gates.Decision(id) == gatestore.StateAccepted {
-			out[rec.Target] = id
+// acceptedGate is a verified release gate: the key its coverage binds under
+// and whether it is this squad's own session's.
+type acceptedGate struct {
+	bindKey string
+	own     bool
+}
+
+type unreadableStore struct {
+	path string
+	err  error
+}
+
+// sessionTargets maps the targets of every verified tag and release gate in
+// the gate stores of the sessions under the AMQ root (root's parent) to the
+// gates that accept them. The sessions are the root's parent's directory
+// entries, read with os.ReadDir and taken literally (no glob, no symlink
+// followed); one with no gate store is skipped. A record counts only when
+// it was raised in the session whose store holds it (its squad identity)
+// and verify accepts it. A store whose gate list cannot be read is returned
+// as unreadable.
+func sessionTargets(root string, verify GateVerifier) (map[string][]acceptedGate, []unreadableStore) {
+	out := map[string][]acceptedGate{}
+	var bad []unreadableStore
+	parent := filepath.Dir(filepath.Clean(root))
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return out, []unreadableStore{{path: parent, err: err}}
+	}
+	ownName := filepath.Base(filepath.Clean(root))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionRoot := filepath.Join(parent, e.Name())
+		store, err := gatestore.Open(sessionRoot)
+		if err != nil {
+			bad = append(bad, unreadableStore{path: sessionRoot, err: err})
+			continue
+		}
+		if _, err := os.Lstat(store.Dir("gates")); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		ids, err := store.IDs()
+		if err != nil {
+			bad = append(bad, unreadableStore{path: store.Dir("gates"), err: err})
+			continue
+		}
+		own := e.Name() == ownName
+		for _, id := range ids {
+			rec, err := store.Load(id)
+			if err != nil || gatetarget.Class(rec.Class) != gatetarget.ClassRelease || !SameSquad(rec, store.Squad()) {
+				continue
+			}
+			if verify == nil || verify(e.Name(), store, rec) != nil {
+				continue
+			}
+			key := id
+			if !own {
+				key = e.Name() + "--" + id
+			}
+			out[rec.Target] = append(out[rec.Target], acceptedGate{bindKey: key, own: own})
 		}
 	}
-	return out
+	return out, bad
 }
 
 // bindCovered binds an accepted gate to the first object it covers and

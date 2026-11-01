@@ -28,17 +28,17 @@ func (f *fakeReleaseLister) Releases(context.Context, string) ([]mergetrain.Rele
 func TestDoctorReleaseDriftFailsOnAnUngatedTag(t *testing.T) {
 	root := t.TempDir()
 	g := grants.Defaults()
-	if checks := doctorReleaseDrift(root, g, &fakeReleaseLister{}, time.Now()); checks != nil {
+	if checks := doctorReleaseDrift(root, g, &fakeReleaseLister{}, nil, time.Now()); checks != nil {
 		t.Fatalf("no merge grant, no check: %+v", checks)
 	}
 	g.Merge = []grants.Merge{{Repository: "o/r", BaseBranch: "main"}}
 	l := &fakeReleaseLister{tags: []mergetrain.Tag{{Name: "v1", SHA: "a1"}}}
-	if c := doctorReleaseDrift(root, g, l, time.Now()); len(c) != 1 || c[0].Status != doctorOK {
+	if c := doctorReleaseDrift(root, g, l, nil, time.Now()); len(c) != 1 || c[0].Status != doctorOK {
 		t.Fatalf("baseline run: %+v", c)
 	}
 	l.tags = append(l.tags, mergetrain.Tag{Name: "v2", SHA: "b2"})
 	l.releases = []mergetrain.Release{{ID: 2, Tag: "v2"}}
-	c := doctorReleaseDrift(root, g, l, time.Now())
+	c := doctorReleaseDrift(root, g, l, nil, time.Now())
 	if len(c) != 1 || c[0].Status != doctorFail || !strings.Contains(c[0].Detail, "tag v2") || !strings.Contains(c[0].Detail, "release v2") {
 		t.Fatalf("ungated tag and release: %+v", c)
 	}

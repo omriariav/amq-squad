@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -24,5 +26,23 @@ func TestWidenRefusalNamesTheTypedWidenRequest(t *testing.T) {
 	}
 	if strings.Contains(msg, "t20") || strings.Contains(msg, "until the typed block") {
 		t.Errorf("the refusal still points at t20: %s", msg)
+	}
+}
+
+// Brief 3.1.1-2 item 5: the drift check's verifier is the owner check, and
+// without the owner's gate binding it verifies nothing (every release since
+// the baseline stays an alert), never a file's presence.
+func TestReleaseGateVerifierFailsClosedWithoutTheBinding(t *testing.T) {
+	saved := gateBindingPath
+	gateBindingPath = func() string { return filepath.Join(t.TempDir(), "no-binding.json") }
+	defer func() { gateBindingPath = saved }()
+	root := filepath.Join(t.TempDir(), "v310")
+	store, err := gatestore.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = releaseGateVerifier(contextResolution{Root: root, ProjectDir: "/p", Profile: "default"})("v310", store, gatestore.Record{GateID: "rel-tag"})
+	if err == nil || !strings.Contains(err.Error(), "gate binding") {
+		t.Fatalf("without the binding: %v", err)
 	}
 }

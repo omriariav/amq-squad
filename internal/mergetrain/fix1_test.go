@@ -117,6 +117,7 @@ func TestDriftBindsAGateToOneReleaseAndOneTagCommit(t *testing.T) {
 	f := newFixture(t)
 	root := filepath.Join(f.dir, "root")
 	f.train.ReleaseGates, f.train.Root, f.train.DryRun = &f.store, root, true
+	f.train.VerifyGate = decisionAccepted // the binding rules; the signature check has its own rows (brief3112_test.go)
 	f.req.PRs = f.req.PRs[:1]
 	run := func() []Alert {
 		t.Helper()

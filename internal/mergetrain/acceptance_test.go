@@ -491,6 +491,7 @@ func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
 	f := newSubprocessFixture(t) // subprocess row: gh through the real exec path
 	mustGit(t, f.bare, "tag", "v0", "main")
 	f.train.ReleaseGates, f.train.Root = &f.store, filepath.Join(f.dir, "root")
+	f.train.VerifyGate = decisionAccepted // the binding rules; the signature check has its own rows (brief3112_test.go)
 	f.train.DryRun = true
 	f.req.PRs = f.req.PRs[:1]
 	if res, err := f.train.Run(context.Background(), f.req); err != nil || len(res.Alerts) != 0 {

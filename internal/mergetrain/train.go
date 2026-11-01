@@ -125,7 +125,11 @@ type Train struct {
 	InSeat bool
 	// ReleaseGates and Root, when set, run the tag and release drift check at
 	// every run (Drift): an ungated tag or release becomes an owner alert.
+	// The check reads the gate store of every session under the AMQ root
+	// (Root's parent); VerifyGate is the owner-signed acceptance a gate must
+	// pass to clear one (nil: none clears).
 	ReleaseGates *gatestore.Store
+	VerifyGate   GateVerifier
 	// Binder re-binds a task to the head the train's own rebase pushed (lead
 	// ruling, P1-4): the binding stays the one source of truth for pr_head.
 	// Tasks is the store the binding is read back from at merge time. A bound
@@ -256,7 +260,7 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		return res, err
 	}
 	if l, ok := t.Forge.(ReleaseLister); ok && t.ReleaseGates != nil && t.Root != "" {
-		alerts, derr := Drift(ctx, l, *t.ReleaseGates, t.Root, req.Repository, t.now())
+		alerts, derr := Drift(ctx, l, t.VerifyGate, t.Root, req.Repository, t.now())
 		res.Alerts = alerts
 		for _, a := range alerts {
 			_ = entry(Entry{Kind: "alert", Detail: a.Detail, GateID: a.ID})
