@@ -247,6 +247,11 @@ Each change was reverted alone and its rows run; each reverted run failed
 | the relaunch without `--start` | pi `add, seat: team apply with the digest, ...` |
 | the confirmation skipped | pi `add, seat: team apply with the digest, ...` and the declined row |
 | a tool added to the lead (row E) | pi `the lead's model tool list ...` |
+| the swap keeping the start's lease cap | scheduler `TestAReloadRecomputesTheLeaseCap/cap_3`, schedproc `TestARelaunchReloadsSquadYAML...`, cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` |
+| `scheduler run` wiring no cap (`Reload.Cap` returning none) | cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` |
+| no `roster_over_cap` decision | scheduler `TestAReloadRecomputesTheLeaseCap/cap_2`, cli `TestAReloadOverTheLeaseCap...` |
+| the screen showing no over-cap line | pi `over the lease cap: ...` |
+| the cap written before `Swap` (outside the one step) | schedproc `TestAHalfAppliedReloadIsNeverObserved` (both injection points) |
 
 ## 5. The owner-run row: the launch budget from the add key
 

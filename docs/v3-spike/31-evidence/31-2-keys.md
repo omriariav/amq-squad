@@ -288,7 +288,7 @@ tmux attach -t "$(tmux list-sessions -F '#{session_name}' | grep '^squad-lead-' 
    a Codex seat's `wake_off`): `/squad clear`, pick the line. Then
 
    ```sh
-   amq-squad status --json | jq '.data.seats[] | {handle, launch: .launch.launch_id, warnings, acknowledged_warnings, state}'
+   amq-squad status --json | jq '.seats[] | {handle, launch: .launch.launch_id, warnings, acknowledged_warnings, state}'
    tail -n 2 .agent-mail/*/extensions/amq-squad/scheduler/clears.jsonl
    grep warning_cleared .agent-mail/*/extensions/amq-squad/scheduler/decisions.jsonl | tail -n 1
    ```
