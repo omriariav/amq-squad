@@ -88,6 +88,20 @@ run("a 3.1.0 record no longer validates (only the new text)", [(RE,'case r.Text 
 run("SafeFacts keeps a branch that does not validate", [(PL,'\tif (&Facts{Branch: f.Branch}).validate() != nil {\n','\tif false {\n')],
     GS+"'TestTheOldTextStillValidatesAndFactsAreSafe'")
 
+# The review on #838: no token above the rule
+run("the external send names its tool and channel id above the rule", [(PL,'q.ask = "Send a message outside the squad" + sendWhere(w) + "?"','q.ask = "Send an outside message with " + strings.Join(w, " ") + "?"')],
+    GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
+run("the credential change names its git setting above the rule", [(PL,'\t\t\treturn "Change which program git uses for credentials?"\n','\t\t\treturn "Make a credential change to git setting " + w[2] + "?"\n')],
+    GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
+run("a credentials write names its path above the rule", [(PL,'\t\treturn "Write a credentials file?"\n','\t\treturn "Write a credentials file at " + strings.TrimPrefix(t, "write ") + "?"\n')],
+    GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
+run("the widen names its protected globs above the rule", [(PL,'\t\t\t\twhat := "a protected path"\n','\t\t\t\twhat := globs[0]\n')],
+    GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
+run("a repository named owner/name above the rule", [(PL,'\treturn plain(name)\n}','\t_ = name\n\treturn plain(repo)\n}')],
+    GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
+run("a generic question names the whole target", [(PL,'\tvar out []string\n\tfor _, w := range strings.Fields(t) {\n\t\tif IsToken(w) {','\tvar out []string\n\tfor _, w := range strings.Fields(t) {\n\t\tif false && IsToken(w) {')],
+    GS+"'TestEveryClassTheCatalogRaisesAsksInPlainWords'")
+
 # Row 2: the bare yes or no, bound by the thread
 run("Verify refuses the bare form", [(VE,'\t\tverb, ok := gatestore.ParseBare(e.Content)\n\t\tif !ok {\n\t\t\treturn Outcome{}, reject(RejectBadTuple','\t\tverb, ok := "", false\n\t\tif !ok {\n\t\t\treturn Outcome{}, reject(RejectBadTuple')],
     GV+"'TestABareYesOrNoInTheThreadIsTheAnswer'")
