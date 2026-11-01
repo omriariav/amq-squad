@@ -151,10 +151,12 @@ func TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux(t *testing
 	if os.Getenv(leadStartEnv) != rec.At.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("launch start %q, want the confirmation's moment %s", os.Getenv(leadStartEnv), rec.At)
 	}
-	// R53: the yes writes the phase marker in the lead's own root, naming
-	// the team lead's identity as lead --team resolves it
-	m, ok := teamMarked(s.root, f.proj)
-	if !ok || m.Root != f.root || m.Session != "s1" || m.Handle != "lead" || m.Digest != digest || m.PID != os.Getpid() {
+	// R53: the yes's reply carries the team lead's identity (the lead's pi
+	// switches on it), and the marker is written for the record
+	if r.Team == nil || r.Team.Root != f.root || r.Team.Session != "s1" || r.Team.Handle != "lead" || r.Team.Digest != digest {
+		t.Fatalf("the start's team %+v", r.Team)
+	}
+	if m, ok := markerInfo(s.root, f.proj); !ok || m.Root != f.root || m.Digest != digest || m.PID != os.Getpid() {
 		t.Fatalf("phase marker %+v %v", m, ok)
 	}
 	if again := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj}); again.Refusal != schedproc.ReasonLeadRunning {
@@ -682,37 +684,71 @@ func TestUpReadsTheSoloLeadsDiscoveryRecordByItsLiveness(t *testing.T) {
 	}
 }
 
-// Row 2 (brief 31-3 PR 2, R53): a solo lead restarted in a repository whose
-// lead switched to team phase starts in team phase: as lead --team (the
-// team role and tools, the lead lock, the scheduler over squad.yaml's
-// identity), with no flag; without the marker it starts solo.
-func TestASoloLeadRestartedInATeamMarkedRepositoryStartsAsTheTeamLead(t *testing.T) {
+// Row 2 after the plan reviewer (the marker is never authority): a solo
+// lead restarted in a marked repository, the marker planted with any
+// content (the lead's own pid and start stamp copied in), comes up solo:
+// no lead lock, no scheduler, the solo tools; it says the offer (the team's
+// date and digest, amq-squad up to resume, or a fresh yes at either door).
+func TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing(t *testing.T) {
 	call, starts, project, root := teamLeadFixture(t)
 	prev := serveLeadStart
 	t.Cleanup(func() { serveLeadStart = prev })
 	serveLeadStart = func(*leadStarter) (string, error) { return "/tmp/lead-start.sock", nil }
-	if _, _, err := captureOutput(t, func() error { return runLead(nil) }); err != nil {
-		t.Fatal(err)
-	}
-	if len(*starts) != 0 || call.getenv("AMQ_SQUAD_SOLO_LEAD") != "1" || call.getenv("AMQ_SQUAD_LEAD") != "" {
-		t.Fatalf("no marker: scheduler starts %d, solo %q, lead %q", len(*starts), call.getenv("AMQ_SQUAD_SOLO_LEAD"), call.getenv("AMQ_SQUAD_LEAD"))
-	}
 	soloRoot, err := soloRootOf(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: root, Session: "v31", Handle: "cto", At: time.Now()})
+	stamp, _ := procinfo.StartToken(os.Getpid())
+	digest := "sha256:" + strings.Repeat("cd", 32) + "@absent"
+	m, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: root, Session: "v31", Handle: "cto", Digest: digest, At: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC), PID: os.Getpid(), Start: stamp})
 	mustWrite(t, phaseMarkerPath(soloRoot), string(m))
-	if _, _, err := captureOutput(t, func() error { return runLead(nil) }); err != nil {
+	_, stderr, err := captureOutput(t, func() error { return runLead(nil) })
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(*starts) != 1 || call.getenv("AMQ_SQUAD_LEAD") != "1" || call.getenv("AMQ_SQUAD_SOLO_LEAD") != "" || call.getenv("AM_ME") != "cto" || call.getenv("AM_ROOT") != root {
-		t.Fatalf("a team-marked restart: scheduler starts %d, lead %q, solo %q, AM_ME %q, AM_ROOT %q", len(*starts), call.getenv("AMQ_SQUAD_LEAD"), call.getenv("AMQ_SQUAD_SOLO_LEAD"), call.getenv("AM_ME"), call.getenv("AM_ROOT"))
+	if len(*starts) != 0 || call.getenv("AMQ_SQUAD_SOLO_LEAD") != "1" || call.getenv("AMQ_SQUAD_LEAD") != "" {
+		t.Fatalf("a marked restart: scheduler starts %d, solo %q, lead %q", len(*starts), call.getenv("AMQ_SQUAD_SOLO_LEAD"), call.getenv("AMQ_SQUAD_LEAD"))
 	}
-	// a marker for another repository is no switch
-	other, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: "/elsewhere", At: time.Now()})
-	mustWrite(t, phaseMarkerPath(soloRoot), string(other))
-	if _, ok := teamMarked(soloRoot, project); ok {
-		t.Fatal("another repository's marker switched this one")
+	for _, want := range []string{"started on 2026-11-01T09:00:00Z with digest " + digest, "run `amq-squad up` to resume it", "confirm it again at your pane (/squad confirm) or over Buzz"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("the offer lacks %q:\n%s", want, stderr)
+		}
+	}
+	if h, _ := lockHeld(filepath.Join(schedproc.Dir(root), schedproc.LeadLockName)); h {
+		t.Fatal("a marked restart took the lead lock")
+	}
+}
+
+// R53's in-life switch rides the lead's own answer: a phase query on the
+// start socket answers solo before this lead's start and team (with the
+// identity) after it; a marker written by another process changes neither.
+func TestThePhaseQueryAnswersFromTheLeadsOwnStartNotAFile(t *testing.T) {
+	f, s, digest := startWorld(t, autoFleet(0), "owner/app")
+	if _, err := s.serve(); err != nil {
+		t.Fatal(err)
+	}
+	ask := func() leadStartReply {
+		t.Helper()
+		c, err := dialLead(s.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		r, err := askLead(c, leadStartRequest{Kind: phaseKind})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	planted, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: f.proj, Root: "/planted", Handle: "x", PID: os.Getpid()})
+	mustWrite(t, phaseMarkerPath(s.root), string(planted))
+	if r := ask(); r.Outcome != "solo" || r.Team != nil {
+		t.Fatalf("before the start, with a planted marker = %+v", r)
+	}
+	if r := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj}); r.Outcome != "started" {
+		t.Fatalf("start = %+v", r)
+	}
+	if r := ask(); r.Outcome != "team" || r.Team == nil || r.Team.Root != f.root || r.Team.Digest != digest {
+		t.Fatalf("after the start = %+v", r)
 	}
 }

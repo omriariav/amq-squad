@@ -95,14 +95,14 @@ func runLead(args []string) error {
 		fmt.Fprintf(os.Stderr, "amq-squad lead: model %s (%s)\n", model, src)
 	}
 	if !*team {
-		// R53 (brief 31-3 PR 2): a solo lead restarted in a repository whose
-		// lead switched to team phase starts in team phase, as lead --team
+		// R53 after the plan reviewer: a marked repository never starts a
+		// team by itself; the solo lead comes up solo and offers the two ways
+		// back (its pi says it again on the first turn)
 		if cwd, err := os.Getwd(); err == nil {
 			project := projectTop(cwd)
-			if root, err := soloRootOf(project); err == nil && squadPresent(project) {
-				if m, ok := teamMarked(root, project); ok {
-					*team = true
-					fmt.Fprintf(os.Stderr, "amq-squad lead: %s switched to team phase at %s (%s); starting as amq-squad lead --team\n", project, m.At.Format(time.RFC3339), phaseMarkerPath(root))
+			if root, err := soloRootOf(project); err == nil {
+				if m, ok := markerInfo(root, project); ok {
+					fmt.Fprintf(os.Stderr, "amq-squad lead: %s\n", resumeOffer(m))
 				}
 			}
 		}

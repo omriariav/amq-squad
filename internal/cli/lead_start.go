@@ -71,18 +71,23 @@ type leadStartRequest struct {
 const (
 	confirmTUIKind   = "amq-squad.confirm-tui.v1"
 	confirmShellKind = "amq-squad.confirm-shell.v1" // dropped: refused by name
+	phaseKind        = "amq-squad.phase.v1"         // R53: the lead's pi asks whether the team started
 	confirmBuzzKind  = "amq-squad.confirm-buzz.v1"
 )
 
 // leadStartReply is the lead's answer.
 type leadStartReply struct {
-	Outcome    string     `json:"outcome"` // started | witnessed | refused
+	Outcome    string     `json:"outcome"` // started | witnessed | refused | team | solo
 	Digest     string     `json:"digest,omitempty"`
 	Refusal    string     `json:"refusal,omitempty"`
 	Detail     string     `json:"detail,omitempty"`
 	Steps      []upStep   `json:"steps,omitempty"`
 	Roster     []string   `json:"roster,omitempty"`
 	OwnerSteps [][]string `json:"owner_steps,omitempty"` // R40's fallback: what the owner runs
+	// Team is the team lead's identity and the confirmed digest, in the
+	// reply of a start that succeeded and of a phase query after it (R53,
+	// brief 31-3 PR 2): the lead's pi switches on this reply, never on a file
+	Team *leadTeam `json:"team,omitempty"`
 }
 
 // Seams of the start for tests: the grant the mayor loads, the fleet
@@ -117,6 +122,7 @@ type leadStarter struct {
 	// the witness (R55 after the plan reviewer's ruling): the pi process the
 	// lead spawned, and the confirmations it witnessed, in memory only
 	wmu       sync.Mutex
+	team      *leadTeam // set when this lead's start succeeded (R53)
 	piPID     int
 	piStamp   string
 	witnessed map[string]confirmRecord
@@ -220,6 +226,20 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 		}
 		conn.SetDeadline(time.Time{}) // the start is the lead's own work
 		reply = s.start(context.Background(), req)
+	case req.Kind == phaseKind:
+		// R53: the lead's pi asks, at a session start, whether this lead
+		// started its team; only a descendant of the lead is answered
+		if _, err := callerChain(pid, s.self); err != nil {
+			reply = refusedBy(err)
+			break
+		}
+		s.wmu.Lock()
+		team := s.team
+		s.wmu.Unlock()
+		reply = leadStartReply{Outcome: "solo"}
+		if team != nil {
+			reply = leadStartReply{Outcome: "team", Team: team}
+		}
 	case req.Kind == confirmTUIKind:
 		reply = s.witnessTUI(pid, req)
 	case req.Kind == confirmShellKind:
@@ -486,10 +506,13 @@ func (s *leadStarter) start(ctx context.Context, req leadStartRequest) leadStart
 		// phase; the marker tells its pi (the tool list and the squad's
 		// identity) and a restarted lead (which starts as lead --team)
 		detail := l.outcome
-		if err := writePhaseMarker(s.root, s.project, req.Digest, s.self); err != nil {
-			detail += "; the phase marker was not written: " + err.Error()
+		team, err := s.teamOf(req.Digest)
+		if err != nil {
+			detail += "; the team lead's identity could not be resolved, so the lead stays in the solo phase: " + err.Error()
+		} else if err := writePhaseMarker(s.root, s.project, team, s.self); err != nil {
+			detail += "; the phase marker (a record only) was not written: " + err.Error()
 		}
-		return leadStartReply{Outcome: "started", Detail: detail, Steps: s.steps, Roster: l.roster}
+		return leadStartReply{Outcome: "started", Detail: detail, Steps: s.steps, Roster: l.roster, Team: team}
 	case slices.Contains(r40Fallback, res.Reason):
 		r := refused(res.Reason, "%s; the lead proposes, the owner starts: from your own shell run the two commands below", res.Detail)
 		r.OwnerSteps = [][]string{{"amq-squad", "team", "apply", "--digest", req.Digest, "--project", s.project}, {"amq-squad", "up", "--project", s.project}}
@@ -799,17 +822,38 @@ func underSoloLead(verb string, leadRefuses, checkEnv bool) error {
 	return restamp(chain)
 }
 
-// The phase marker (brief 31-3 PR 2, R53): the solo lead's process writes
-// it in its own AMQ root (<root>/extensions/amq-squad/phase.json) when the
-// start of a confirmed team succeeds. It names the team lead's identity as
-// `lead --team` resolves it from squad.yaml (resolveTeamLeadIdentity): the
-// squad's session root, base root, session and lead handle. The lead's pi
-// reads it after amq_team_apply returns (and at a session start in the same
-// lead process) and switches its tool list and its identity; a solo lead
-// restarted in the repository reads it and starts as lead --team. It grants
-// nothing the owner's own `amq-squad lead --team` would not: the
-// confirmation was witnessed before it was written, and squad.yaml is the
-// owner's.
+// leadTeam is the team lead's identity as lead --team resolves it from
+// squad.yaml (resolveTeamLeadIdentity), with the confirmed digest.
+type leadTeam struct {
+	Root     string `json:"root"`
+	BaseRoot string `json:"base_root"`
+	Session  string `json:"session"`
+	Handle   string `json:"handle"`
+	Digest   string `json:"digest"`
+}
+
+// teamOf resolves the team lead's identity after a start and records it as
+// this lead's phase (the answer to a later phase query).
+func (s *leadStarter) teamOf(digest string) (*leadTeam, error) {
+	id, err := resolveTeamLeadIdentity(s.project)
+	if err != nil {
+		return nil, err
+	}
+	t := &leadTeam{Root: id.Root, BaseRoot: id.BaseRoot, Session: id.Session, Handle: id.Handle, Digest: digest}
+	s.wmu.Lock()
+	s.team = t
+	s.wmu.Unlock()
+	return t, nil
+}
+
+// The phase marker (brief 31-3 PR 2, R53, after the plan reviewer: the
+// marker is never authority). The solo lead's process writes it in its own
+// AMQ root (<root>/extensions/amq-squad/phase.json) when the start of a
+// confirmed team succeeds, for the record only: the lead's pi switches on
+// the lead's reply over its start socket, and a solo lead restarted in a
+// marked repository comes up solo and offers the two ways back (the owner's
+// amq-squad up, or a fresh yes at either door). Nobody reads it to grant
+// anything: under one uid a model with write could plant it.
 const phaseMarkerName = "phase.json"
 
 // PhaseTeam is the one phase a marker records.
@@ -833,15 +877,12 @@ func phaseMarkerPath(soloRoot string) string {
 	return filepath.Join(soloRoot, "extensions", "amq-squad", phaseMarkerName)
 }
 
-// writePhaseMarker writes the team phase marker of project's solo root.
-func writePhaseMarker(soloRoot, project, digest string, pid int) error {
-	id, err := resolveTeamLeadIdentity(project)
-	if err != nil {
-		return err
-	}
+// writePhaseMarker writes the record of a team started from project's solo
+// lead.
+func writePhaseMarker(soloRoot, project string, t *leadTeam, pid int) error {
 	start, _ := confirmStamp(pid)
-	m := phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: id.Root, BaseRoot: id.BaseRoot, Session: id.Session, Handle: id.Handle,
-		Digest: digest, At: confirmNow().UTC(), PID: pid, Start: start}
+	m := phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: t.Root, BaseRoot: t.BaseRoot, Session: t.Session, Handle: t.Handle,
+		Digest: t.Digest, At: confirmNow().UTC(), PID: pid, Start: start}
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -849,14 +890,20 @@ func writePhaseMarker(soloRoot, project, digest string, pid int) error {
 	return atomicfile.Write(phaseMarkerPath(soloRoot), append(b, '\n'), 0o600)
 }
 
-// teamMarked reports whether project's solo lead switched to team phase:
-// its marker, a regular file read without following a link, says team for
-// this project.
-func teamMarked(soloRoot, project string) (phaseMarker, bool) {
+// markerInfo reads the marker as information only (a regular file, not
+// followed, for this project): what the restarted lead offers the owner.
+func markerInfo(soloRoot, project string) (phaseMarker, bool) {
 	var m phaseMarker
 	raw, err := readDiscoveryRecord(phaseMarkerPath(soloRoot))
 	if err != nil || json.Unmarshal(raw, &m) != nil {
 		return m, false
 	}
 	return m, m.Schema == 1 && m.Phase == PhaseTeam && m.Project == project
+}
+
+// resumeOffer is what a solo lead restarted in a marked repository says:
+// the team it started, and the two ways back, the owner's up (the resume by
+// the act) or a fresh yes at either door (the witness path).
+func resumeOffer(m phaseMarker) string {
+	return fmt.Sprintf("this session's team was started on %s with digest %s; run `amq-squad up` to resume it, or confirm it again at your pane (/squad confirm) or over Buzz", m.At.UTC().Format(time.RFC3339), m.Digest)
 }

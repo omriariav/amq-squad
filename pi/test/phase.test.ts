@@ -72,21 +72,27 @@ function soloWorld() {
 	fs.mkdirSync(path.join(soloRoot, "extensions", "amq-squad"), { recursive: true });
 	const files = { FAKE_PROPOSE: path.join(dir, "propose.json"), FAKE_APPLY: path.join(dir, "apply.json"), FAKE_STATUS: path.join(dir, "status.json"), FAKE_CONTEXT: path.join(dir, "context.json") };
 	fs.writeFileSync(files.FAKE_PROPOSE, envelope("team_propose", { project_dir: "/repo", plan: ["goal: x"], digest: DIGEST, prefix: "0123456789abcdef", doors: "doors" }));
-	fs.writeFileSync(files.FAKE_APPLY, envelope("team_apply", { outcome: "started", detail: "roster_launched: launch L1", roster: ["seat dev codex/gpt-5.6-sol live"] }));
+	const team = { root: squadRoot, base_root: path.dirname(squadRoot), session: "s1", handle: "cto", digest: DIGEST };
+	const applyReply = (withTeam: boolean) =>
+		fs.writeFileSync(files.FAKE_APPLY, envelope("team_apply", { outcome: "started", detail: "roster_launched: launch L1", roster: ["seat dev codex/gpt-5.6-sol live"], ...(withTeam ? { team } : {}) }));
+	applyReply(true);
 	fs.writeFileSync(files.FAKE_STATUS, JSON.stringify({ root: squadRoot, session: "s1", seats: [], tasks: [], gates: [] }));
 	fs.writeFileSync(files.FAKE_CONTEXT, envelope("context", { seat: { handle: "cto" } }));
-	const marker = (pid: number) =>
+	// a marker with any content: here the lead's own identity, this pi's
+	// parent pid, the team's root, everything a real one carries
+	const marker = () =>
 		fs.writeFileSync(
 			path.join(soloRoot, "extensions", "amq-squad", "phase.json"),
-			JSON.stringify({ schema: 1, phase: "team", project: "/repo", root: squadRoot, base_root: path.dirname(squadRoot), session: "s1", handle: "cto", pid }),
+			JSON.stringify({ schema: 1, phase: "team", project: "/repo", root: squadRoot, base_root: path.dirname(squadRoot), session: "s1", handle: "cto", digest: DIGEST, at: "2026-11-01T09:00:00.123Z", pid: process.ppid, start: "darwin-tv:1.1" }),
 		);
-	const env = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", ...files };
-	return { dir, soloRoot, squadRoot, marker, env };
+	const env: Record<string, string> = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", ...files };
+	return { dir, soloRoot, squadRoot, team, applyReply, marker, env };
 }
 
 // Rows 2 and 5: before the owner's yes the solo tools answer and the team
-// tools are registered but not declared; amq_team_apply's success, with the
-// phase marker the lead wrote, switches by mechanism: the tool list
+// tools are registered but not declared; amq_team_apply's success, on the
+// lead's reply carrying the team identity (no file is read), switches by
+// mechanism: the tool list
 // declared to the model becomes exactly the thirteen team tools
 // (pi.setActiveTools: read, bash, edit, write, amq_team_propose and
 // amq_team_apply are gone), the lead's identity becomes the squad's, every
@@ -102,7 +108,7 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 		for (const t of ["amq_task_add", "amq_status", "amq_scheduler_relaunch", "amq_task_widen"]) assert.ok(!before.includes(t), `${t} is declared before the yes`);
 		const proposed = await pi.tools.get("amq_team_propose").execute("c1", { goal: "x", session: "s1", lead: "cto", seats: [{ handle: "cto", runtime: "pi" }] }, undefined);
 		assert.match(proposed.content[0].text, /prefix 0123456789abcdef/);
-		w.marker(process.ppid);
+		assert.ok(!fs.existsSync(path.join(w.soloRoot, "extensions", "amq-squad", "phase.json")), "a marker in the world");
 		const applied = await pi.tools.get("amq_team_apply").execute("c2", { digest: DIGEST }, undefined);
 		assert.match(applied.content[0].text, /team phase: your tools are now the team lead's/);
 		assert.deepEqual(pi.getActiveTools().sort(), TEAM13);
@@ -125,24 +131,64 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 	});
 });
 
-// Row 2: a marker an earlier lead left (its pid is not this pi's parent) is
-// no switch in this process (a restart starts as lead --team instead), and
-// a session started again in the same lead after the yes is team phase from
-// its start.
-test("R53: only this lead's marker switches; a session started again after the yes is team phase", async () => {
+// fakeLead is a stand-in for the lead's start socket answering a phase
+// query with answer.
+async function fakeLead(dir: string, answer: unknown): Promise<{ socket: string; got: any[]; close: () => void }> {
+	const net = await import("node:net");
+	const socket = path.join(dir, "lead.sock");
+	const got: any[] = [];
+	const server = net.createServer((c) => {
+		let buf = "";
+		c.on("data", (d) => {
+			buf += d.toString("utf8");
+			const i = buf.indexOf("\n");
+			if (i < 0) return;
+			got.push(JSON.parse(buf.slice(0, i)));
+			c.end(JSON.stringify(answer) + "\n");
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(socket, resolve));
+	return { socket, got, close: () => server.close() };
+}
+
+// Row 2 after the plan reviewer (the marker is never authority): a planted
+// marker (any content: the lead's own identity, this pi's parent pid) and a
+// start reply without the team identity switch nothing; a session started
+// again in the same lead switches on the lead's answer to a phase query,
+// not on the file; a solo lead restarted in a marked repository offers, once
+// on its first turn, the team's date and digest and the two ways back, and
+// stays solo.
+test("R53: a planted marker switches nothing; the switch rides the lead's answers; a restart offers the way back", async () => {
 	const w = soloWorld();
+	w.marker();
+	w.applyReply(false);
 	await withEnv(w.env, async (pi) => {
 		await pi.emit("session_start", {}, fakeCtx());
-		w.marker(1);
+		assert.ok(pi.getActiveTools().includes("bash"), "the planted marker switched at the session start");
+		const offers = (await pi.emitAll("before_agent_start", { systemPromptOptions: { sections: {} } }, fakeCtx())).filter((r) => r?.message?.customType === "amq-squad-resume");
+		assert.equal(offers.length, 1);
+		assert.equal(offers[0].message.content, `This session's team was started on 2026-11-01T09:00:00Z with digest ${DIGEST}; run \`amq-squad up\` to resume it, or confirm it again at your pane (/squad confirm) or over Buzz.`);
+		const again = (await pi.emitAll("before_agent_start", { systemPromptOptions: { sections: {} } }, fakeCtx())).filter((r) => r?.message?.customType === "amq-squad-resume");
+		assert.equal(again.length, 0, "the offer said twice");
 		const applied = await pi.tools.get("amq_team_apply").execute("c", { digest: DIGEST }, undefined);
-		assert.match(applied.content[0].text, /the phase marker was not found/);
-		assert.ok(pi.getActiveTools().includes("bash"));
+		assert.match(applied.content[0].text, /the lead's reply carried no team identity/);
+		assert.ok(pi.getActiveTools().includes("bash"), "the planted marker switched at the apply");
+		assert.equal(process.env.AM_ROOT, w.soloRoot);
 	});
-	w.marker(process.ppid);
-	await withEnv(w.env, async (pi) => {
+	const solo = await fakeLead(w.dir, { outcome: "solo" });
+	await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: solo.socket }, async (pi) => {
+		await pi.emit("session_start", {}, fakeCtx());
+		assert.deepEqual(solo.got, [{ kind: "amq-squad.phase.v1" }]);
+		assert.ok(pi.getActiveTools().includes("bash"), "a solo answer switched");
+	});
+	solo.close();
+	const team = await fakeLead(w.dir, { outcome: "team", team: w.team });
+	await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: team.socket }, async (pi) => {
 		await pi.emit("session_start", {}, fakeCtx());
 		assert.deepEqual(pi.getActiveTools().sort(), TEAM13);
+		assert.equal(process.env.AM_ROOT, w.squadRoot);
 	});
+	team.close();
 });
 
 // Row 5 for the lead up starts (lead --team): team phase from its first

@@ -31,9 +31,16 @@ const APPLY_TIMEOUT_MS = 11 * 60 * 1000;
 const DIGEST = /^sha256:([0-9a-f]{64})@([0-9a-f]{64}|absent)$/;
 
 type Proposal = { digest: string; prefix: string; plan: string[]; project_dir: string };
-// PhaseMarker is the lead's phase marker (internal/cli/lead_start.go).
-export type PhaseMarker = { schema: number; phase: string; project: string; root: string; base_root?: string; session?: string; handle: string; pid: number };
-type StartReply = { outcome: string; refusal?: string; detail?: string; roster?: string[]; owner_steps?: string[][]; steps?: { name: string; outcome: string; refusal?: string; detail?: string }[] };
+// TeamIdentity is the team lead's identity the lead's process returns
+// (internal/cli/lead_start.go leadTeam): in a start's reply and a phase
+// query's.
+export type TeamIdentity = { root: string; base_root?: string; session?: string; handle: string; digest?: string };
+
+// PHASE_KIND asks the lead whether it started its team.
+export const PHASE_KIND = "amq-squad.phase.v1";
+// RESUME_MESSAGE is the restarted lead's offer, said once on the first turn.
+export const RESUME_MESSAGE = "amq-squad-resume";
+type StartReply = { outcome: string; refusal?: string; detail?: string; roster?: string[]; owner_steps?: string[][]; team?: TeamIdentity; steps?: { name: string; outcome: string; refusal?: string; detail?: string }[] };
 
 // digestPrefix is the 16-hex prefix the owner types (R32's length).
 export function digestPrefix(digest: string): string {
@@ -188,30 +195,43 @@ export class SoloTeam {
 		this.pi = pi;
 	}
 
-	// readMarker is the lead's phase marker, accepted only when this pi's
-	// parent wrote it (the lead process that spawned this pi; a marker left
-	// by an earlier lead is the restart's, which starts as lead --team), and
-	// read as a regular file without following a link.
-	readMarker(): PhaseMarker | undefined {
+	// markerInfo reads the lead's phase marker as information only (the
+	// plan reviewer: the marker is never authority, a model with write can
+	// plant it): a regular file for this project, read for the restart's
+	// offer and nothing else.
+	markerInfo(): { at: string; digest: string } | undefined {
 		const p = path.join(this.soloRoot, "extensions", "amq-squad", "phase.json");
 		try {
 			if (!fs.lstatSync(p).isFile()) return undefined;
-			const m = JSON.parse(fs.readFileSync(p, "utf8")) as PhaseMarker;
-			if (m.schema !== 1 || m.phase !== "team" || m.pid !== process.ppid || !path.isAbsolute(m.root ?? "") || !m.handle) return undefined;
-			return m;
+			const m = JSON.parse(fs.readFileSync(p, "utf8")) as { schema?: number; phase?: string; project?: string; at?: string; digest?: string };
+			if (m.schema !== 1 || m.phase !== "team" || m.project !== this.project()) return undefined;
+			return { at: String(m.at ?? "").replace(/\.\d+Z$/, "Z"), digest: String(m.digest ?? "") };
 		} catch {
 			return undefined;
 		}
 	}
 
-	// switchToTeam is R53 by mechanism: the lead's identity becomes the
-	// squad's (AM_ROOT, AM_BASE_ROOT, AM_SESSION, AM_ME, for this process
+	// askPhase asks the lead over its start socket whether it started its
+	// team (a session started again in the same lead after the yes).
+	async askPhase(): Promise<TeamIdentity | undefined> {
+		if (!this.socket) return undefined;
+		try {
+			const r = (await askLead(this.socket, { kind: PHASE_KIND })) as LeadReply & { team?: TeamIdentity };
+			return r.outcome === "team" ? r.team : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	// switchToTeam is R53 by mechanism, on the lead's own reply over its
+	// start socket (the start's, or a phase query's), never on a file: the
+	// lead's identity becomes the squad's (AM_ROOT, AM_BASE_ROOT, AM_SESSION, AM_ME, for this process
 	// and every verb it runs), and the tool list declared to the model
 	// becomes the team lead's (pi.setActiveTools): the solo set (read, bash,
 	// edit, write, amq_team_propose, amq_team_apply) is no longer declared
 	// or callable, and the tool_call hook refuses any of it phase_team.
-	switchToTeam(m: PhaseMarker): void {
-		if (this.phase === "team") return;
+	switchToTeam(m: TeamIdentity): void {
+		if (this.phase === "team" || !path.isAbsolute(m.root ?? "") || !m.handle) return;
 		Object.assign(process.env, { AM_ROOT: m.root, AM_BASE_ROOT: m.base_root ?? path.dirname(m.root), AM_SESSION: m.session ?? "", AM_ME: m.handle, AMQ_SQUAD_LEAD: "1" });
 		delete process.env.AMQ_SQUAD_SOLO_LEAD;
 		Object.assign(this.cfg, { root: m.root, me: m.handle, session: m.session ?? "", lead: true, solo: false });
@@ -270,10 +290,10 @@ export class SoloTeam {
 			throw new Error([`${d.refusal ?? "refused"}: ${d.detail ?? ""}`, ...lines, ...owner].join("\n"));
 		}
 		this.line = `team started: ${d.detail ?? ""}`;
-		const m = this.readMarker();
-		if (m) this.switchToTeam(m);
+		// the lead's reply carries the team identity: the switch rides it
+		if (d.team) this.switchToTeam(d.team);
 		this.render();
-		const phase = this.phase === "team" ? "team phase: your tools are now the team lead's (dispatch through the task store; no shell, no edit)" : "the phase marker was not found; the tools stay as they are";
+		const phase = this.phase === "team" ? "team phase: your tools are now the team lead's (dispatch through the task store; no shell, no edit)" : "the lead's reply carried no team identity; the tools stay as they are";
 		return [...lines, ...(d.roster ?? []), `team started: ${d.detail ?? ""}`, phase].join("\n");
 	}
 
@@ -305,12 +325,23 @@ export class SoloTeam {
 // the /squad command (confirm).
 export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string, teamTools: string[] = []): SoloTeam {
 	const team = new SoloTeam(cfg, runner, now, socket ?? process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools, pi);
-	pi.on("session_start", (_e, ctx) => {
+	pi.on("session_start", async (_e, ctx) => {
 		team.ctx = ctx;
-		// a session started again in the same lead process after the yes
-		const m = team.readMarker();
-		if (m) team.switchToTeam(m);
+		// a session started again in the same lead process after the yes:
+		// the lead answers whether it started its team
+		const t = await team.askPhase();
+		if (t) team.switchToTeam(t);
 		team.render();
+	});
+	// a solo lead restarted in a marked repository says, once, on its first
+	// turn, the team it started and the two ways back; it starts nothing
+	let offered = false;
+	pi.on("before_agent_start", async () => {
+		if (offered || team.phase === "team") return undefined;
+		offered = true;
+		const m = team.markerInfo();
+		if (!m) return undefined;
+		return { message: { customType: RESUME_MESSAGE, display: true, content: `This session's team was started on ${m.at} with digest ${m.digest}; run \`amq-squad up\` to resume it, or confirm it again at your pane (/squad confirm) or over Buzz.` } };
 	});
 	pi.registerTool({
 		name: "amq_team_propose",

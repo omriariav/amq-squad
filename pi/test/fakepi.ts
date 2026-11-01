@@ -49,6 +49,16 @@ export class FakePi {
 		this.model = m;
 		return true;
 	}
+	// emitAll runs every handler in order and returns every defined result
+	// (pi's runner collects each before_agent_start handler's message).
+	async emitAll(name: string, event: any, ctx: any): Promise<any[]> {
+		const out: any[] = [];
+		for (const h of this.handlers.get(name) ?? []) {
+			const r = await h(event, ctx);
+			if (r !== undefined) out.push(r);
+		}
+		return out;
+	}
 	// emit runs every handler in order like pi's runner and returns the
 	// last defined result.
 	async emit(name: string, event: any, ctx: any): Promise<any> {
