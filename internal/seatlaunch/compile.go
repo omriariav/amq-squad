@@ -8,6 +8,7 @@ package seatlaunch
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,10 +20,8 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
-	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/launchintent"
-	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -77,28 +76,22 @@ type Squad struct {
 	// Wrapper is the absolute amq-squad executable; AMQPath the real amq (R51).
 	Wrapper string `json:"-"`
 	AMQPath string `json:"-"`
-	// ClaudePins is the registry's claude pin of each Claude seat, by
-	// handle, resolved by the launch: a Claude seat's executable is its pin,
-	// never a provider path (the narrow pass's HIGH: the probe certifies the
-	// bytes the seat runs).
-	ClaudePins map[string]registry.Pin `json:"-"`
 	// PiShim is the pi launch shim (piruntime.EnsureShim) the launch wrote
 	// for this binary: every pi seat's executable, the file AMQ's pi adapter
 	// probes; seat-exec runs the verified embedded runtime in its place.
 	PiShim string `json:"-"`
-	// WakeConditions are the launch's reads of each seat's wake conditions
-	// (3.0.1), by handle. Never from the seat file; a seat with no entry
-	// has none met, so its wake stays off.
-	WakeConditions map[string]SeatWakeConditions `json:"-"`
+	// CodexHookMissing is why AMQ's Codex dialog hook is not on the host,
+	// "" when it is (the launch reads it once for a squad with a Codex
+	// seat): a Codex seat's wake needs it (Q3 of brief 31-1). Never from
+	// the seat file.
+	CodexHookMissing string `json:"-"`
 }
 
-// ReasonProviderNotPinned refuses a Claude seat whose provider is not the
-// file the registry pins.
-const ReasonProviderNotPinned = "provider_not_pinned"
-
-// Runtimes the compiler knows. pi admits no provider arguments (amendment
-// 23 (b)); its model restriction stays on the registry side (R16).
-var Runtimes = []string{"claude", "codex", "pi"}
+// Runtimes the compiler knows: the providers AMQ v0.116.2's launch adapters
+// serve (internal/launch/adapter.go:21-36 there; brief 31-1, Q4). pi admits
+// no provider arguments (amendment 23 (b)); its model reaches the embedded
+// runtime's launcher (seatexec.PiLauncherArgv).
+var Runtimes = []string{"claude", "codex", "cursor-agent", "grok", "pi"}
 
 // ReasonPiShimMissing refuses a pi seat when the launch named no pi shim, or
 // a provider that is not the shim (R2: never a pi from PATH).
@@ -133,178 +126,54 @@ const WakeRule = "amq-squad 3.0.1: the scheduler's doorbell is the seat's next t
 // a doorbell could answer pi's folder-trust or an extension prompt.
 const PiWakeAuditReason = "amq-squad 3.0.1: a pi seat has no AMQ wake until its embedded runtime loads AMQ's pi extension (the doorbell's dialog guard)"
 
-// SeatWakeConditions are the fail-closed conditions of a seat's AMQ wake
-// (3.0.1, the reviewer's ruling), read by the launch. The zero value meets
-// none of them. Each Why names the unmet condition by file and key only.
-type SeatWakeConditions struct {
-	// Claude Code: the seat's config dir runs the guard that denies
-	// AskUserQuestion and ExitPlanMode (seatexec.ClaudeDialogGuardWired) ...
-	ClaudeGuardWired bool
-	ClaudeGuardWhy   string
-	// ... and rules out every first-run screen
-	// (claudeseat.StartupScreensClosed: true for the dir claudeseat.Write
-	// seeds since 3.0.1 t6, from what Write seeds only).
-	ClaudeScreensClosed bool
-	ClaudeScreensWhy    string
-	// Codex: AMQ's Codex dialog hook entries are on the host
-	// (seatexec.ReadCodexDialogHook) ...
-	CodexHookReady bool
-	CodexHookWhy   string
-	// ... and the Codex config trusts the seat's worktree
-	// ([projects."<worktree>"] trust_level = "trusted", hostcheck).
-	CodexTrusted  bool
-	CodexTrustWhy string
-}
+// CodexNoWake begins a Codex seat's disabled-wake audit reason.
+const CodexNoWake = "amq-squad: no AMQ wake for this Codex seat: "
 
-// ClaudeNoWake and CodexNoWake begin a Claude Code or Codex seat's
-// disabled-wake audit reason; the unmet condition follows.
-const (
-	ClaudeNoWake = "amq-squad 3.0.1: no AMQ wake for this Claude Code seat: "
-	CodexNoWake  = "amq-squad 3.0.1: no AMQ wake for this Codex seat: "
-)
-
-// SeatWake is a seat's AMQ wake policy (3.0.1). Raw typing into a pane
-// means a doorbell that lands on a prompt or a dialog answers it
-// unattended, so the wake is required only when every condition of the
-// seat's runtime holds; an unmet condition keeps the wake off with the
-// named audit reason, never a launch failure (the seat runs and is kicked
-// by hand, as in 3.0):
-//   - Claude Code: permission mode dontAsk (no permission prompt); the
-//     guard denies AskUserQuestion and ExitPlanMode in the seat's config
-//     dir; the startup screens are closed (claudeseat, t6).
-//   - Codex: AMQ's Codex dialog hook on the host (it holds the doorbell at
-//     an approval prompt); the Codex config trusts the seat's worktree.
-//   - pi: off (PiWakeAuditReason).
-//
-// An enabled wake is the one amq coop exec starts beside the provider
-// (internal/launch/commands.go:135-150 maps it to --require-wake and
-// --wake-inject-mode), typing raw: AMQ's own choice for both harnesses,
-// whose Ink input drops a bracketed-paste Enter
-// (internal/harness/harness.go:61-64, 81-82). claude-native is not open to
-// a seat: it refuses a wrapper and a custom CLAUDE_CONFIG_DIR
-// (internal/cli/wake_claude_native_unix.go:56-60), and every seat runs
-// behind seat-exec.
-func SeatWake(runtime, permissionMode string, c SeatWakeConditions) (require bool, injector *launchapi.InjectorOptionsV1, auditReason string) {
+// SeatWake is a seat's AMQ wake policy (brief 31-1): on for Claude Code; on
+// for Codex when AMQ's Codex dialog hook is on the host (codexHookMissing
+// is ""), because a doorbell at a Codex approval prompt cancels the pending
+// command (AMQ docs/wake-operations.md:460-461 at v0.116.2), else off with
+// the reason; off for pi (PiWakeAuditReason) and for any other runtime. The wake never refuses a
+// launch: a seat without one idles after its first turn, a line on the
+// screen. An enabled wake is the one amq coop exec
+// starts beside the provider (internal/launch/commands.go:135-150 at
+// v0.116.2 maps it to --require-wake and --wake-inject-mode), typing raw:
+// AMQ's own choice for both harnesses, whose Ink input drops a
+// bracketed-paste Enter (internal/harness/harness.go:61-64, 81-82).
+// claude-native is not open to a seat: it refuses a wrapper and a custom
+// CLAUDE_CONFIG_DIR (internal/cli/wake_claude_native_unix.go:56-60), and
+// every seat runs behind seat-exec. A Claude seat rung at a dialog under
+// dontAsk can stall there: a stalled seat is a status line with its state,
+// never a refusal (plan 7.2 (b) item 5).
+func SeatWake(runtime, codexHookMissing string) (require bool, injector *launchapi.InjectorOptionsV1, auditReason string) {
 	raw := &launchapi.InjectorOptionsV1{Mode: launchapi.InjectorRaw}
 	switch runtime {
 	case "claude":
-		switch {
-		case permissionMode != "dontAsk":
-			return false, nil, ClaudeNoWake + "permission mode " + permissionMode + " can prompt, and the seat's config dir carries no AMQ dialog hook"
-		case !c.ClaudeGuardWired:
-			return false, nil, ClaudeNoWake + "the guard does not deny AskUserQuestion and ExitPlanMode in the seat's config dir (" + c.ClaudeGuardWhy + ")"
-		case !c.ClaudeScreensClosed:
-			return false, nil, ClaudeNoWake + "the startup screens are not verified closed (" + c.ClaudeScreensWhy + ")"
-		}
 		return true, raw, ""
 	case "codex":
-		switch {
-		case !c.CodexHookReady:
-			return false, nil, CodexNoWake + "AMQ's Codex dialog hook is not on the host (" + c.CodexHookWhy + "); fix: " + seatexec.CodexDialogHookFix
-		case !c.CodexTrusted:
-			return false, nil, CodexNoWake + "the Codex config does not trust the seat's worktree (" + c.CodexTrustWhy + ")"
+		if codexHookMissing != "" {
+			return false, nil, CodexNoWake + "AMQ's Codex dialog hook is not on the host (" + codexHookMissing + "); fix: " + seatexec.CodexDialogHookFix
 		}
 		return true, raw, ""
+	case "pi":
+		return false, nil, PiWakeAuditReason
 	}
-	return false, nil, PiWakeAuditReason
+	return false, nil, "amq-squad: no AMQ wake for a " + runtime + " seat (amq-squad wakes Claude Code and Codex seats only)"
 }
 
-// readWakeConditions reads every seat's wake conditions through the launch's
-// read seams. The Codex reads run once, only for a squad with a Codex seat,
-// on the Codex home the seats read ($CODEX_HOME of the launch environment,
-// else <home>/.codex; seat-exec overrides neither).
-func readWakeConditions(q Squad, o Options) map[string]SeatWakeConditions {
-	out := map[string]SeatWakeConditions{}
-	var hook *seatexec.CodexDialogHook
-	var trust *hostcheck.CodexTrust
-	var trustErr error
-	codexDir := seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))
-	for _, s := range q.Seats {
-		var c SeatWakeConditions
-		switch s.Runtime {
-		case "claude":
-			c = o.ClaudeWakeConditions(permissionMode(s.Runtime), s.Worktree)
-		case "codex":
-			if hook == nil {
-				h := o.CodexDialogHook(codexDir)
-				hook = &h
-				t, err := o.CodexTrust(filepath.Join(codexDir, "config.toml"))
-				trust, trustErr = &t, err
-			}
-			c.CodexHookReady, c.CodexHookWhy = hook.Ready(), codexHookWhy(*hook)
-			c.CodexTrusted, c.CodexTrustWhy = codexTrusts(*trust, trustErr, filepath.Join(codexDir, "config.toml"), s.Worktree)
-		}
-		out[s.Handle] = c
-	}
-	return out
-}
-
-// codexHookWhy names what the hook read found missing (names only).
+// codexHookWhy names what the hook read found missing (names only), "" when
+// the hook is ready.
 func codexHookWhy(h seatexec.CodexDialogHook) string {
 	switch {
+	case h.Ready():
+		return ""
 	case len(h.HooksOff) > 0:
 		return strings.Join(h.HooksOff, " and ") + " is false in " + h.ConfigPath
 	case h.Unreadable != "":
 		return h.HooksPath + ": " + h.Unreadable
-	case len(h.Missing) > 0:
-		return "no AMQ_DIALOG_HOOK entry for " + strings.Join(h.Missing, ", ") + " in " + h.HooksPath
 	}
-	return ""
+	return "no AMQ_DIALOG_HOOK entry for " + strings.Join(h.Missing, ", ") + " in " + h.HooksPath
 }
-
-// codexTrusts reports whether the Codex config has the trusted entry for the
-// worktree (as given, or with symlinks resolved), the read doctor's "codex
-// trust" row makes; key names only.
-func codexTrusts(ct hostcheck.CodexTrust, err error, configPath, worktree string) (bool, string) {
-	if err != nil {
-		return false, "cannot read " + configPath
-	}
-	roots := []string{filepath.Clean(worktree)}
-	if real, rerr := filepath.EvalSymlinks(worktree); rerr == nil && real != roots[0] {
-		roots = append(roots, real)
-	}
-	for _, r := range roots {
-		if len(ct.UntrustedRoots([]string{r})) == 0 {
-			return true, ""
-		}
-	}
-	return false, "no [projects.\"" + roots[0] + "\"] trust_level = \"trusted\" in " + configPath + "; 'amq-squad trust " + roots[0] + "' prints the owner's steps"
-}
-
-// scratchClaudeWakeConditions writes the config dir claudeseat.Write
-// produces for a seat into a scratch directory, reads the Claude wake
-// conditions there, and removes it. The conditions depend only on Write's
-// inputs (mode, plugin files, seed), so the seat's own dir, written after
-// Prepare, carries the same answer; the scratch copy keeps a dry run and a
-// launch stopped at its decisions from staging anything. The scratch dir is
-// a fresh os.MkdirTemp directory, which Go creates mode 0700, and the
-// deferred RemoveAll right after its creation removes it on every path:
-// success, an unmet condition, a Write error, a panic. Because the real dir
-// is written later, while the wake is already compiled into Prepare,
-// seat-exec re-checks the guard deny on the real dir before exec for a seat
-// whose record says WakeRequired (ClaudeDialogGuardMissing).
-func scratchClaudeWakeConditions(permissionMode, worktree string) SeatWakeConditions {
-	var c SeatWakeConditions
-	tmp, err := os.MkdirTemp("", "amq-squad-claude-wake-")
-	if err != nil {
-		c.ClaudeGuardWhy, c.ClaudeScreensWhy = "scratch config dir: "+err.Error(), "scratch config dir: "+err.Error()
-		return c
-	}
-	defer os.RemoveAll(tmp)
-	dir := filepath.Join(tmp, "config")
-	if _, err := claudeseat.Write(dir, permissionMode, worktree, time.Unix(0, 0)); err != nil {
-		c.ClaudeGuardWhy, c.ClaudeScreensWhy = "scratch config dir: "+err.Error(), "scratch config dir: "+err.Error()
-		return c
-	}
-	c.ClaudeGuardWired, c.ClaudeGuardWhy = seatexec.ClaudeDialogGuardWired(dir)
-	c.ClaudeScreensClosed, c.ClaudeScreensWhy = claudeseat.StartupScreensClosed(dir)
-	return c
-}
-
-// ReasonWakeNotAdmitted refuses a launch whose Prepare preview shows a seat
-// with another wake than the one compiled: a Claude Code or Codex seat
-// without its wake idles after its first turn (WakeRule).
-const ReasonWakeNotAdmitted = "wake_not_admitted"
 
 // SeatWakeFacts is a seat's wake as AMQ reports it: Prepare's echo of the
 // participant's execution options (launchapi/prepare.go:200-203,
@@ -321,52 +190,163 @@ type SeatWakeFacts struct {
 	Source      string `json:"source"` // always "amq_prepare_preview"
 }
 
-// admittedWakes reads each runnable seat's wake from the Prepare preview and
-// checks it against the compiled request. Every seat needs that evidence: a
-// seat the preview does not list, or lists without execution options, or
-// whose admitted wake differs from the compiled one, refuses the launch
-// before Apply.
-func admittedWakes(req launchapi.PrepareRequestV1, preview launchapi.PreviewV1) (map[string]*SeatWakeFacts, error) {
-	want := map[string]*launchapi.ExecutionOptionsV1{}
-	var order []string
-	for _, p := range req.Intent.Participants {
-		if p.Runnable && p.Execution != nil {
-			want[p.Handle] = p.Execution
-			order = append(order, p.Handle)
-		}
-	}
-	out := map[string]*SeatWakeFacts{}
-	for _, p := range preview.Participants {
-		w, ok := want[p.Handle]
-		if !ok {
+// WakeFileName is a seat's admitted wake beside its staged record
+// (launch.StagedDir): AMQ's Prepare echo of the seat's wake, written at each
+// launch with its launch id, so status shows the wake a seat runs with
+// (brief 31-1: SeatState.Wake reaches only Launch's caller).
+const WakeFileName = "wake.json"
+
+// SeatWakeRecord is the content of WakeFileName: Wake is nil when AMQ's
+// preview carried no execution options for the seat.
+type SeatWakeRecord struct {
+	LaunchID string         `json:"launch_id"`
+	Wake     *SeatWakeFacts `json:"wake"`
+}
+
+// writeWakes records each staged seat's admitted wake (best effort: a seat
+// whose record cannot be written shows no wake in status, nothing else).
+func writeWakes(c Compiled, launchID string, wakes map[string]*SeatWakeFacts) {
+	for _, rec := range c.Records {
+		b, err := json.Marshal(SeatWakeRecord{LaunchID: launchID, Wake: wakes[rec.Handle]})
+		if err != nil {
 			continue
 		}
-		// The pinned AMQ echoes execution options for every runnable
-		// participant (launchapi/prepare.go:200-203); none is no evidence.
+		_ = writeAtomic(filepath.Join(launch.StagedDir(rec.Root, rec.Handle), WakeFileName), append(b, '\n'))
+	}
+}
+
+// ReadSeatWake reads a seat's admitted wake record (os.ErrNotExist before
+// its first launch).
+func ReadSeatWake(root, handle string) (SeatWakeRecord, error) {
+	var r SeatWakeRecord
+	b, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), WakeFileName))
+	if err != nil {
+		return r, err
+	}
+	return r, json.Unmarshal(b, &r)
+}
+
+// MarksFileName holds a seat's launch budget marks beside its staged record
+// (brief 31-1): the squad launch's start, written with each launch, and
+// the seat's first AMQ message, written once by the scheduler. Status reads
+// a seat's marks from here, its own launch's, never a later scheduler's
+// start or a decisions log that scrolls.
+const MarksFileName = "marks.json"
+
+// SeatMarks is the content of MarksFileName.
+type SeatMarks struct {
+	LaunchID     string     `json:"launch_id"`
+	Start        *time.Time `json:"start"`
+	FirstMessage *time.Time `json:"first_message"`
+	// DrainEnd is when the relaunch that launched this seat finished its
+	// drain and began the launch (brief 31-2 PR 2), set for every seat a
+	// relaunch launched (its start is the relaunch's own): status names the
+	// segment from the start to it "drain".
+	DrainEnd *time.Time `json:"drain_end,omitempty"`
+	// AddedAt is the add key's press that added this seat to squad.yaml
+	// (brief 31-2 PR 2): written at the launch the press caused and carried
+	// into every later launch's marks, the record of why the seat exists.
+	// It is never a later launch's start.
+	AddedAt *time.Time `json:"added_at,omitempty"`
+}
+
+func marksPath(root, handle string) string {
+	return filepath.Join(launch.StagedDir(root, handle), MarksFileName)
+}
+
+// writeMarks records each staged seat's launch start (best effort, like
+// the wake record).
+func writeMarks(c Compiled, launchID string, start time.Time, seatStart, seatAddedAt map[string]time.Time, drainEnd time.Time) {
+	for _, rec := range c.Records {
+		m := SeatMarks{LaunchID: launchID}
+		at := start
+		if prev, err := ReadSeatMarks(rec.Root, rec.Handle); err == nil {
+			m.AddedAt = prev.AddedAt // the record of why the seat exists
+		}
+		if press, ok := seatAddedAt[rec.Handle]; ok && !press.IsZero() {
+			added := press.UTC() // the add key's press: the seat's added_at from now on
+			m.AddedAt = &added
+		}
+		if own, ok := seatStart[rec.Handle]; ok && !own.IsZero() {
+			// a relaunch's own start (brief 31-2 PR 2): its decision's time,
+			// or the add key's press for a seat it added; the drain is inside
+			// that window for every seat of the relaunch
+			at = own
+			if !drainEnd.IsZero() && !drainEnd.Before(own) {
+				d := drainEnd.UTC()
+				m.DrainEnd = &d
+			}
+		}
+		if !at.IsZero() {
+			t := at.UTC()
+			m.Start = &t
+		}
+		if b, err := json.Marshal(m); err == nil {
+			_ = writeAtomic(marksPath(rec.Root, rec.Handle), append(b, '\n'))
+		}
+	}
+}
+
+// ReadSeatMarks reads a seat's marks (os.ErrNotExist before a launch that
+// wrote them).
+func ReadSeatMarks(root, handle string) (SeatMarks, error) {
+	var m SeatMarks
+	b, err := os.ReadFile(marksPath(root, handle))
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal(b, &m)
+}
+
+// RecordFirstMessage writes a seat's first AMQ message into its marks, once,
+// for the launch its staged record names (a mark of another launch, or one
+// already set, is left as it is).
+func RecordFirstMessage(root, handle string, at time.Time) error {
+	staged, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return err
+	}
+	rec, err := launch.Decode(staged)
+	if err != nil {
+		return err
+	}
+	m, err := ReadSeatMarks(root, handle)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if m.LaunchID != rec.LaunchID {
+		m = SeatMarks{LaunchID: rec.LaunchID}
+	}
+	if m.FirstMessage != nil {
+		return nil
+	}
+	t := at.UTC()
+	m.FirstMessage = &t
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(marksPath(root, handle), append(b, '\n'))
+}
+
+// admittedWakes reads each participant's admitted wake from the Prepare
+// preview, as a fact: a seat the preview lists without execution options,
+// or whose admitted wake differs from the compiled one, is recorded as AMQ
+// admitted it, never refused (brief 31-1).
+func admittedWakes(preview launchapi.PreviewV1) map[string]*SeatWakeFacts {
+	out := map[string]*SeatWakeFacts{}
+	for _, p := range preview.Participants {
 		if p.Execution == nil {
-			return nil, fmt.Errorf("seat %s: %s: AMQ's Prepare preview carries no execution options for the seat, so its wake is unverified (%s)", p.Handle, ReasonWakeNotAdmitted, WakeRule)
+			continue
 		}
 		got := p.Execution
 		facts := &SeatWakeFacts{RequireWake: got.RequireWake, Mode: string(got.Wake.Mode), AuditReason: got.Wake.AuditReason, Source: "amq_prepare_preview"}
 		if got.Wake.Injector != nil {
 			facts.Injector = string(got.Wake.Injector.Mode)
 		}
-		wantInjector := ""
-		if w.Wake.Injector != nil {
-			wantInjector = string(w.Wake.Injector.Mode)
-		}
-		if facts.RequireWake != w.RequireWake || facts.Mode != string(w.Wake.Mode) || facts.Injector != wantInjector {
-			return nil, fmt.Errorf("seat %s: %s: AMQ admitted wake mode %q, require_wake %t, injector %q; the launch compiled mode %q, require_wake %t, injector %q (%s)",
-				p.Handle, ReasonWakeNotAdmitted, facts.Mode, facts.RequireWake, orNone(facts.Injector), w.Wake.Mode, w.RequireWake, orNone(wantInjector), WakeRule)
-		}
 		out[p.Handle] = facts
 	}
-	for _, h := range order {
-		if out[h] == nil {
-			return nil, fmt.Errorf("seat %s: %s: AMQ's Prepare preview lists no participant for the seat, so its wake is unverified (%s)", h, ReasonWakeNotAdmitted, WakeRule)
-		}
-	}
-	return out, nil
+	return out
 }
 
 // RolePointer is the whole of the role's part in initial_input: a pointer.
@@ -376,7 +356,10 @@ var handlePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // ProviderArgs returns the provider arguments of a seat: model and effort
 // (and Codex's sandbox and approval flags and its two sandbox pins) for
-// Claude and Codex, none for pi.
+// Claude and Codex; --model and --effort for grok and --model for
+// cursor-agent, the forms AMQ v0.116.2's adapters admit
+// (internal/launch/adapter_grok.go:133-134, adapter_cursor.go:135 there;
+// CheckArgumentForms checks them against the advertisement); none for pi.
 func ProviderArgs(s Seat) []string {
 	var args []string
 	switch s.Runtime {
@@ -400,6 +383,17 @@ func ProviderArgs(s Seat) []string {
 		// keys, upstream ask 17), so admission and the trust digest cover
 		// them; seat-exec checks them and adds none (brief 5-amq-A).
 		args = append(args, seatexec.CodexSandboxPins(slices.Contains(s.EnvNeeds, seatexec.CodexNetworkNeed))...)
+	case "grok":
+		if s.Model != "" {
+			args = append(args, "--model", s.Model)
+		}
+		if s.Effort != "" {
+			args = append(args, "--effort", s.Effort)
+		}
+	case "cursor-agent":
+		if s.Model != "" {
+			args = append(args, "--model", s.Model)
+		}
 	}
 	return args
 }
@@ -520,22 +514,6 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			}
 			provider = q.PiShim
 		}
-		if s.Runtime == "claude" {
-			pin, ok := q.ClaudePins[s.Handle]
-			if !ok || pin.Path == "" {
-				return out, fmt.Errorf("seat %s: %s: the registry pins no claude (registry.yaml pins: name claude, its real path and sha256)", s.Handle, registry.PinMissing)
-			}
-			if filepath.Base(pin.Path) != "claude" {
-				// AMQ selects the provider by the executable's file name, and
-				// seat-exec checks it: pin a hard link named claude to the
-				// versioned binary (a symlink is refused by the pin's walk).
-				return out, fmt.Errorf("seat %s: %s: the pinned claude %s must have the file name claude (pin a hard link named claude)", s.Handle, registry.PinMissing, pin.Path)
-			}
-			if provider != "" && !sameFile(provider, pin.Path) {
-				return out, fmt.Errorf("seat %s: %s: the provider %s is not the pinned claude %s", s.Handle, ReasonProviderNotPinned, provider, pin.Path)
-			}
-			provider = pin.Path
-		}
 		if provider == "" {
 			p, err := lookPath(s.Runtime)
 			if err != nil {
@@ -554,7 +532,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		if s.Resume {
 			policy = launchapi.ResumePolicyResume
 		}
-		requireWake, injector, wakeReason := SeatWake(s.Runtime, permissionMode(s.Runtime), q.WakeConditions[s.Handle])
+		requireWake, injector, wakeReason := SeatWake(s.Runtime, q.CodexHookMissing)
 		seats = append(seats, launchintent.SeatFacts{
 			Handle: s.Handle, Executable: provider, Args: ProviderArgs(s),
 			Wrapper:         &launchapi.WrapperV1{Executable: q.Wrapper, Args: []string{"seat-exec", "--seat", s.Handle}},
@@ -598,13 +576,6 @@ func piShimFor(s Seat, q Squad) string {
 		return q.PiShim
 	}
 	return ""
-}
-
-// sameFile reports whether two paths name one file (device and inode).
-func sameFile(a, b string) bool {
-	fa, errA := os.Stat(a)
-	fb, errB := os.Stat(b)
-	return errA == nil && errB == nil && os.SameFile(fa, fb)
 }
 
 // CheckArgumentForms checks every seat's provider arguments against the
@@ -652,13 +623,11 @@ func overrideAllowed(overrides []launchapi.ConfigOverrideCapabilityV1, key, valu
 }
 
 // Stage writes each seat's record and role.md into launch.StagedDir under
-// the session root (0700 directories, 0600 files). The session root must
-// exist: AMQ never creates an unknown session.
+// the session root (0700 directories, 0600 files). The session is created
+// before a launch (brief 31-1: `amq-squad up`, and scheduler run on an
+// absent session root), so Stage no longer refuses one that is missing.
 func Stage(c Compiled) error {
 	for i, rec := range c.Records {
-		if st, err := os.Stat(rec.Root); err != nil || !st.IsDir() {
-			return fmt.Errorf("session root %s does not exist; create the session first (amq session create %s --root %s --me <operator>)", rec.Root, rec.Session, rec.BaseRoot)
-		}
 		dir := launch.StagedDir(rec.Root, rec.Handle)
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err

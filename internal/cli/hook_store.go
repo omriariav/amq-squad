@@ -71,6 +71,9 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 		if err != nil || json.Unmarshal(raw, &g) != nil || g.GateID+".json" != name || g.Class == "" || g.Digest == "" {
 			continue // not a gate record; the core's validator owns the error
 		}
+		if gatestore.LegacyKind(g.Class) {
+			continue // a kind the catalog no longer carries (brief 31-1); status names it
+		}
 		g.State = "open"
 		loadTrust := func() operatorauth.AuthorizationTrustStore {
 			if trust == nil {

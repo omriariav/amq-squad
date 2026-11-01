@@ -1,6 +1,10 @@
 package scheduler
 
-import "github.com/omriariav/amq-squad/v3/internal/task"
+import (
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
 
 // The hooks the scheduler calls. Each is an interface that a later brief
 // implements; the defaults here keep the scheduler usable on its own.
@@ -16,6 +20,15 @@ type SeatRequest struct {
 	// Handle names the roster seat of a roster launch's request (3.0.1 t16);
 	// empty on an on-demand request, where the slots pick the seat.
 	Handle string `json:"handle,omitempty"`
+	// Start is this request's own launch start (brief 31-2 PR 2), written as
+	// the seat's marks.json start in place of seatlaunch.Options.Start: a
+	// relaunch stamps every seat it launches with the relaunch decision's
+	// time, and a seat its reload added with the add key's press. Zero (the
+	// launch at scheduler run) keeps Options.Start, AMQ_SQUAD_START.
+	Start time.Time `json:"start,omitzero"`
+	// AddedAt is the add key's press for a seat the relaunch's reload added
+	// (its marks' added_at); zero for every other seat.
+	AddedAt time.Time `json:"added_at,omitzero"`
 }
 
 // SeatLauncher starts and stops seats (2b-2). RequestSeat is asynchronous:
@@ -122,10 +135,6 @@ type CommitResult struct {
 	// Running is a step still running off the tick (Detail names its state:
 	// running, waiting for a verifier slot); the next tick asks again.
 	Running bool
-	// Quarantine: the refusal quarantines the seat (global_config_changed):
-	// the store refuses it any new lease until the owner clears it, and the
-	// scheduler closes it.
-	Quarantine bool
 	// PRNumber and PRHead: the PR the commit step opened (0 when none) and
 	// the head it pushed; the scheduler binds them to the task (3-2).
 	PRRepository string

@@ -21,7 +21,7 @@ prints.
 | `task renew: no lease held` | Your lease expired or was never granted | `task list`; claim again if the task is back in the pool |
 | `task add: depends-on task "ID" does not exist` | A dependency names a task the store has not got | Add the dependency first, then the dependent task |
 | `task widen: takes no --me` | Widening is proved from the lead's process, not a flag | Run it from the lead's seat without `--me` |
-| `task widen: no running scheduler for <root>` | The widening is the scheduler's to apply | Start the squad's scheduler (`lead --team --scheduler-seats FILE`) |
+| `task widen: no running scheduler for <root>` | The widening is the scheduler's to apply | Start the squad's scheduler (`lead --team` in the repository) |
 | A done task stays waiting | Declared files: the harness commit step runs after `done` | Expected; a refusal comes back as a block routed to the lead |
 
 ## Gates and evidence

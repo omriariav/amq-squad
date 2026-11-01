@@ -50,8 +50,7 @@ const TokenRotation = 30 * 24 * time.Hour
 // permissionMode "default" and warns "Permission mode forced to default"),
 // which defeats dontAsk. The seat's settings.json carries no env block, and
 // the token's visibility to the seat's Bash children is the recorded limit
-// of R33. The launch probes the effective permission mode of the installed
-// Claude Code against the seat's settings (ProbeMode).
+// of R33.
 
 // TokenPath is ~/.amq-squad/claude-token.
 func TokenPath(home string) string { return filepath.Join(home, ".amq-squad", "claude-token") }

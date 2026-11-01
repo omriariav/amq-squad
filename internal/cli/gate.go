@@ -123,9 +123,6 @@ Examples:
 	if err != nil {
 		return usageErrorf("gate raise: %v", err)
 	}
-	if operatorauth.Reserved(*actionFlag) {
-		return usageErrorf("gate raise: %s: %s is raised only by the owner's seat clear, after the pty proof", operatorauth.ReasonActionReserved, *actionFlag)
-	}
 	typed := false
 	if action, err := operatorauth.CanonicalAction(*actionFlag); err == nil && typedGateAction(action) {
 		typed = true

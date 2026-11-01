@@ -210,8 +210,13 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskDone(cfg, p), undefined, cfg, signal);
 		},
 	});
-	if (cfg.lead) {
-		reg({
+	// The team lead's tools: active for the team lead; registered inactive
+	// for the solo lead, whose tool list switches to them on the owner's yes
+	// (R53, brief 31-3 PR 2: lib/team.ts switchToTeam, pi.setActiveTools)
+	if (cfg.lead || cfg.solo) {
+		const inactive = !cfg.lead;
+		const leadReg = (def: Parameters<ExtensionAPI["registerTool"]>[0]) => reg(inactive ? { ...def, defaultActive: false } : def);
+		leadReg({
 			name: "amq_task_add",
 			label: "Task add",
 			description:
@@ -232,7 +237,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			},
 		});
 		const root = process.env.AMQ_SQUAD_PROJECT || process.cwd();
-		reg({
+		leadReg({
 			name: "amq_repo_read",
 			label: "Read (repository)",
 			description: "Read a file of the repository (read-only, inside the repository root). Optional 1-based line offset and line limit.",
@@ -242,7 +247,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 				return ok(repoRead(root, p.path, p.offset, p.limit));
 			},
 		});
-		reg({
+		leadReg({
 			name: "amq_repo_list",
 			label: "List (repository)",
 			description: "List a directory of the repository (read-only, inside the repository root); directories end with /.",
@@ -252,17 +257,20 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 				return ok(repoList(root, p.path));
 			},
 		});
-		reg({
+		leadReg({
 			name: "amq_status",
 			label: "Squad status",
-			description: "The squad's status as JSON (amq-squad status --json): seats, tasks with their evidence and state, the attention queue and gates. Read-only.",
+			description:
+				"The squad's status as JSON (amq-squad status --json, docs/status-contract.md): each seat's runtime, model, worktree, branch, state, launch outcome, " +
+				"launch timing (start to seat live and to its first message) and warnings; each task's state, lease, block reason, evidence and PR; the lead and the " +
+				"scheduler (pid, start); the newest decisions; the merge train's runs and alerts; the attention queue and gates. Read-only.",
 			promptSnippet: "amq_status: the squad's seats, tasks and gates",
 			parameters: Type.Object({}),
 			async execute(_id, _p, signal) {
 				return call(runner, cfg.bin, ["status", "--json"], undefined, cfg, signal);
 			},
 		});
-		reg({
+		leadReg({
 			name: "amq_scheduler_relaunch",
 			label: "Relaunch the roster",
 			description:
@@ -274,7 +282,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 				return call(runner, cfg.bin, toolArgv.schedulerRelaunch(cfg, p), undefined, cfg, signal);
 			},
 		});
-		reg({
+		leadReg({
 			name: "amq_task_widen",
 			label: "Task widen",
 			description:
@@ -298,7 +306,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 				return call(runner, cfg.bin, toolArgv.taskWiden(cfg, p, refusedPaths(t)), undefined, cfg, signal);
 			},
 		});
-		reg({
+		leadReg({
 			name: "amq_task_reset",
 			label: "Task reset",
 			description:

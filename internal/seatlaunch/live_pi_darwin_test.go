@@ -3,7 +3,6 @@
 package seatlaunch
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -92,9 +91,7 @@ func TestLivePiSeatThroughTheAdapter(t *testing.T) {
 	start = time.Now()
 	res, err := Launch(context.Background(), q, opts)
 	timings["prepare_ms"] = ms(time.Since(start))
-	var report bytes.Buffer
-	Report(&report, res)
-	t.Logf("first pass:\n%s", report.String())
+	t.Logf("first pass:\n%s", reportOf(res))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,9 +103,7 @@ func TestLivePiSeatThroughTheAdapter(t *testing.T) {
 		start = time.Now()
 		res, err = Launch(context.Background(), q, opts)
 		timings["launch_to_up_ms"] = ms(time.Since(start))
-		report.Reset()
-		Report(&report, res)
-		t.Logf("apply pass:\n%s", report.String())
+		t.Logf("apply pass:\n%s", reportOf(res))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -44,7 +44,9 @@ Everything: [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) lists
 the release by phase. 3.0.1 is the first fix release, from the first squad run
 on this repository: [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md).
 3.0.2 is the second, from the second day of that run and the 3.0.1 release:
-[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). In short:
+[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). 3.1.0 is the
+release of 3.1, which puts launch speed and the lead's screen first:
+[docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md). In short:
 
 - `squad.yaml` schema 1 replaces the v2 profile, through `team propose` and
   `team apply` ([docs/squad-yaml.md](docs/squad-yaml.md)).
@@ -63,7 +65,7 @@ on this repository: [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md)
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.0.2
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.0
 amq-squad version
 ```
 
@@ -125,9 +127,72 @@ Linux seats are 3.1 work.
 
 ## First run
 
-Each step below is the owner's, at the owner's own terminal. amq-squad never
-writes the owner's Claude or Codex configuration and never answers a trust
-prompt for you.
+The first run is a conversation with the lead, in the repository:
+
+1. Start the lead: `amq-squad lead` (or a bare `amq-squad` on a terminal).
+   With no squad.yaml it is the solo lead; its state lives under
+   `~/.amq-squad/solo/` and nothing is written in the repository.
+2. Say what you want. The lead writes a plan (the goal, the seats with
+   their runtime, model and effort, the files, the first tasks) and
+   proposes it with its `amq_team_propose` tool. `team propose --from
+   PLAN.json` renders squad.yaml from it, checks it against your grant and
+   prints the plan with one digest and its 16-hex prefix. The plan block
+   below the editor shows them. Nothing is written but the proposal.
+3. Confirm it at one of the two doors. The lead's own process witnesses
+   the confirmation, checks the door's proof itself and holds it for 30
+   minutes in memory; no file is a confirmation, and a lead restart forgets
+   it, so you confirm again:
+   - type `/squad confirm <prefix>` in the lead's pane. pi hands the
+     command to the extension, never to the model, and the lead accepts it
+     only from its own pi;
+   - or send the signed Buzz DM `yes <prefix>`. The Buzz attachment hands
+     the lead the event as it fetched it, and the lead, which holds no key,
+     verifies the owner's signature itself.
+
+   There is no shell door: under one uid, no kernel read tells your shell
+   from one the lead's model built, so a confirmation from a shell would
+   need a key or another user.
+4. The lead applies it with its `amq_team_apply` tool. The lead's own
+   process writes squad.yaml through the digest flow and starts the team
+   through `up`'s steps: the session, the doctor, the lead lock, the
+   scheduler and the roster's outcome. The roster comes back in the
+   conversation. An apply with no confirmation, or a stale one, is refused
+   naming the two doors. The start runs the mayor's checks of your fleet
+   grant: the permitted repositories, the maximum squads and the cost cap,
+   which refuses while no meter can read it. A repository outside a fleet
+   grant in auto mode gets R40's fallback: the lead proposes, you start.
+   Run the two commands the refusal prints, `amq-squad team apply --digest
+   <digest> --project .` and then `amq-squad up`. From your own shell that
+   apply is itself the confirmation (the digest is in front of you), and it
+   runs only after the lead has quit: while any lead holds the repository
+   it refuses `lead_running`, or `lead_unreachable` when the lead's process
+   is alive but its socket does not answer. A record a dead lead left is
+   removed for you.
+5. Then the lead is the team's lead for the rest of the conversation. Its
+   tools switch from the solo set (read, bash, edit, write and the two team
+   tools) to the team lead's: mail, the task store, the repository read
+   and list, status, the relaunch and the widening. The old tools are no
+   longer offered, and a call to one is refused `phase_team`. The lead
+   applies the team in a turn of its own: an apply batched with any other
+   tool call is refused `apply_not_alone` and starts nothing. The first
+   turn carries the host facts read from `status` and `context`: the
+   repository, the branch and tip, the AMQ and amq-squad versions, the
+   roster, the open tasks and the open gates. They come again only when
+   one changes. Quit the lead and run `amq-squad lead` again in the
+   repository and it comes up solo: it says when the team was started and
+   with which digest, and offers the two ways back. Quit it and run
+   `amq-squad up` to resume the team, or ask it to propose the team again
+   and confirm the new plan at the pane or over Buzz. It starts nothing
+   on its own.
+
+The solo lead's shell refuses `tmux` and every `amq-squad` verb but the
+read-only ones (status, context, doctor, version, task show, task list, team
+propose), so it cannot type into its own pane or start a team. The limit of that refusal is written in
+[the execution note](docs/v3-spike/31-evidence/31-3-squad-verbs.md).
+
+Before the first run, set up the host. Each step below is the owner's, at
+the owner's own terminal. amq-squad never writes the owner's Claude or
+Codex configuration and never answers a trust prompt for you.
 
 **1. The AMQ root.** The repository needs an AMQ queue first: run `amq coop
 init` once inside it (AMQ's verb; it writes `.amqrc` and `.agent-mail/`).
@@ -150,23 +215,15 @@ probe: inside a seat `doctor --probe` and `doctor --write-registry` refuse
 (`seat_owner_state_refused`), and the owner runs `amq-squad doctor --probe`
 from their own terminal.
 
-**4. The pins.** Seats never run a tool from `PATH`. The registry's `pins:`
-list names each harness tool by absolute path and sha256, and every launch
-re-hashes it (`tool_unpinned` or `tool_pin_mismatch` refuse the launch):
-
-- **claude:** a hard link named `claude` to the versioned Claude Code binary
-  on the same filesystem (a symlink is refused), for example
-  `ln ~/.local/share/claude/versions/<version> ~/.amq-squad/bin/claude`, then
-  its path and `shasum -a 256` in the pin. Re-pin after every Claude Code
-  update. Without it a launch with a Claude seat is refused.
-- **gh:** the same for gh, needed for an HTTPS push target. doctor's `gh pin`
-  row prints the exact entry to add.
+**4. The gh pin.** A seat's provider (claude, codex, grok, cursor-agent)
+resolves on `PATH`; nothing is pinned or probed before a seat starts. The one
+pin is gh, needed for an HTTPS push target: the registry's `pins:` list names
+it by absolute path and sha256, and the commit step re-hashes it before the
+push (`tool_unpinned` or `tool_pin_mismatch` refuse that push, never the
+launch). doctor's `gh pin` row prints the exact entry to add.
 
 ```yaml
 pins:
-  - name: claude
-    path: /Users/you/.amq-squad/bin/claude
-    sha256: <64 hex>
   - name: gh
     path: /opt/homebrew/bin/gh
     sha256: <64 hex>
@@ -206,7 +263,8 @@ Codex notify fan-out line:
 amq-squad trust .
 ```
 
-**8. The squad.** `team propose` prints every file the squad needs
+**8. The squad.** The lead proposes it from the conversation (above). By
+hand, `team propose` prints every file the squad needs
 (`squad.yaml`, `.amq-squad/team-rules.md`, the `CLAUDE.md` and `AGENTS.md`
 pointer stubs) with one digest, and writes nothing. `team apply` with that
 digest and the same options writes them; a changed option
@@ -225,6 +283,25 @@ A per-seat flag takes one comma list: `--worktree a=x,b=y`, never the flag
 twice (a repeated per-seat flag is refused). A custom role is staged first with
 `amq-squad role draft researcher --purpose "Investigate ambiguous behavior"`.
 
+Adding a seat to a running squad: `--add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT`
+appends one seat to the squad.yaml on disk through the same digest (the team
+rules stay as they are), and the next `scheduler relaunch` reads squad.yaml
+again and launches it with the roster. The lead's screen does all three with
+`/squad add`, then `seat`, and one confirmation (every seat relaunches):
+
+```sh
+amq-squad team propose --project . --add-seat rev-1:implementer:codex:gpt-5.4:high
+amq-squad team apply --digest <digest> --project . --add-seat rev-1:implementer:codex:gpt-5.4:high
+amq-squad scheduler relaunch --reason "add rev-1" --start 2026-11-01T09:00:00Z
+```
+
+The relaunch swaps the roster in one step after every seat finished what it
+holds and closed. It stops no seat itself: a seat removed from squad.yaml
+leaves at that close and is not launched again, and a changed line applies at
+that seat's launch. A squad.yaml that does not compile refuses the relaunch
+`squad_invalid` before anything drains. `--start` is the key press: the added
+seat's launch budget counts from it.
+
 **9. The brief.** The workstream's goal, at `.amq-squad/briefs/<session>.md`:
 
 ```sh
@@ -232,30 +309,83 @@ amq-squad brief --goal "fix issue 96" --session issue-96 --dry-run
 amq-squad brief --seed-from file:./prompt.md --session issue-96
 ```
 
-**10. Launch.** Three entry points, each one AMQ launch request with every seat
-behind `seat-exec`:
+**10. Launch.** squad.yaml is the one source: each seat's handle, role,
+runtime (the binary), model and effort, the session and the lead's handle
+(`lead:`). A seat's worktree is derived per handle under
+`<repo>/.worktrees/<handle>`, never the repository root. The first run is
+one command, in the repository:
 
-- `amq-squad launch --seats seats.json`: the typed seat list (JSON; the format
-  is in `amq-squad launch --help`). A required action such as AMQ's trust
-  confirmation stops the launch with exit 10 and is never answered for you.
-- the pi lead in team mode with the scheduler beside it; the lead never edits
-  code, it dispatches through the task store, and the scheduler launches the
-  squad's roster at start:
+```sh
+amq-squad up
+```
+
+`up` runs seven steps in order and refuses at the first that fails, by
+name: it compiles squad.yaml (before anything is installed or created);
+installs the tagged pi build (`scripts/build-pi-runtime.sh` at a tag,
+`build/pi/amq-squad` or `--binary PATH`) next to the `amq-squad` on PATH
+under a temporary name and renames it over it (`--skip-install` keeps an
+installed binary that already reports a tag); creates the AMQ root and the
+session when absent; runs that binary's doctor in the root; checks the
+recorded lead (a lead whose pid is alive and whose tmux pane
+exists is never stopped: `lead_running`, with its pid, its pane and the
+attach command; tmux that cannot be asked is `tmux_unavailable`, and both
+stop nothing; a dead one, and a scheduler serving it, are stopped by their
+recorded identity and recorded as decisions); starts the lead in its own tmux session,
+`squad-lead-<repo>-<sha5>`; and waits for the roster's outcome in the
+decisions log, then prints the roster and `tmux attach -t <session>`.
+`up --json` prints the steps and their outcomes. Each seat's launch budget
+is in status: the start (`up`'s own) to seat live, its accepted proof,
+within a 10 s ceiling, and to its first AMQ message, with no ceiling; a seat
+over the ceiling carries a warning naming its slowest segment.
+
+In the lead's pi, the squad screen sits below the editor: the lead handle
+and the root, then seats (runtime and model, state, launch outcome and
+budget, warnings), tasks (state, seat, PR, block reason), the merge train
+(the current and last runs, alerts) and open gates, each block closed by
+its newest refusal. It refreshes when the task store or the scheduler
+state changes; `/squad` collapses it to one footer line of counts.
+
+The screen has four keys, typed in the lead's pi as `/squad <key>`. pi
+hands a command to the extension, never to the model, and each key runs its
+verb from the lead's own process, so a key that is a scheduler decision is
+proved like the lead's own tools. The model's tools gain nothing.
+
+- `/squad add` adds a task: the title, the class, the declared files and
+  the pool go to `task add`.
+- `/squad reset` resets a blocked task through `task reset`, onto another
+  pool when you pick one (`--pool`).
+- `/squad clear` acknowledges a seat's warning line through `scheduler
+  clear`. The line leaves the screen for that launch only, and the seat's
+  state does not change.
+- `/squad answer` shows an open typed gate with its kind, target and
+  16-hex typed prefix. It posts the question over Buzz when it has not
+  reached Buzz, and says the gate is waiting there. Buzz is the one door
+  for the four typed gates; the terminal door is not built yet.
+
+A key's refusal shows on the screen as the verb printed it.
+
+Two entry points, each one AMQ launch request with every seat behind
+`seat-exec`:
+
+- the pi lead in team mode with the scheduler beside it, run in the
+  repository (what `up` starts in its tmux session); the lead never edits
+  code, it dispatches through the task store, and the scheduler launches
+  every seat but the lead at start:
 
   ```sh
-  amq-squad lead --team --scheduler-seats seats.json --dry-run
+  amq-squad lead --team --dry-run
   ```
 
-  (drop `--dry-run` to start it; a pi-runtime build only). The lead takes
-  the seats file's AMQ identity (its session root, the `--lead` handle); an
+  (drop `--dry-run` to start it; a pi-runtime build only). `scheduler run`
+  creates an absent AMQ root and session the way `up` does. The lead takes
+  squad.yaml's AMQ identity (its session root, its `lead:` handle); an
   `AM_ME`/`AM_ROOT` already in the environment must match it or it refuses.
+  One lead per root: a second `lead --team` on the same root is refused
+  `lead_running`, naming the first lead's pid and tmux pane. Every launch
+  carries the owner's standing answer to AMQ's trust confirmation.
 - the mayor inside the owner's fleet grant: `operator start-squad` writes the
   squad.yaml through the same digest flow and launches it; in manual mode it
   returns a proposal instead.
-
-```sh
-amq-squad launch --seats seats.json --dry-run
-```
 
 In a directory with no AMQ identity, `amq-squad lead` (or a bare `amq-squad`
 on a terminal) starts the pi lead in solo mode: its state lives under
@@ -274,8 +404,11 @@ amq-squad gate status --project . --session issue-96 --json
 ```
 
 - **Status** is the versioned contract of [docs/status-contract.md](docs/status-contract.md):
-  four buckets (Needs you, Working, Ready, Inactive), seats, tasks, the
-  attention queue and gates, with argv actions. amq-noc renders it for the
+  four buckets (Needs you, Working, Ready, Inactive), seats (with each
+  seat's worktree, branch, launch outcome, launch budget and admitted
+  wake), tasks (with evidence and PR), the attention queue and gates, with
+  argv actions; the lead and the scheduler (pid, start), the decisions
+  log's tail and the merge train's runs. amq-noc renders it for the
   fleet; `amq-squad status --fleet --json` reads every squad of
   `~/.amq-squad/fleet.yaml`.
 - **The commit step.** On a seat's done report the scheduler runs
@@ -292,8 +425,8 @@ amq-squad gate status --project . --session issue-96 --json
   commits on its own branch, `seat/<handle>-<task id>`, from the remote base
   tip fetched when it is granted, with its own draft PR; between tasks the
   seat's worktree rests on `seat/<handle>` at the launch's base.
-- **The roster.** The scheduler launches every seat of the seat list that has
-  a worktree of its own in one AMQ launch at start; a seat with no lease is
+- **The roster.** The scheduler launches every seat of squad.yaml but the
+  lead in one AMQ launch at start; a seat with no lease is
   parked and gets the next task of its pool. At every launch, the roster's
   included, a seat's worktree and its `seat/<handle>` branch start from the
   base branch's tip fetched from the grant's push URL, the launch record
@@ -304,13 +437,13 @@ amq-squad gate status --project . --session issue-96 --json
   binding is present, so a gone seat is not replaced on its own: its pool's
   next task blocks for the lead (`seat_replacement_needs_relaunch`), and the
   lead's `amq-squad scheduler relaunch` lets the other seats finish, closes
-  them and launches the roster again. The lead and the scheduler run outside
+  them and launches the roster again, as squad.yaml reads at that moment (a
+  seat added since the start launches with it). The lead and the scheduler run outside
   the roster's tmux session (the lead's own seat is never in the roster). A
   restarted scheduler adopts the live seats. A roster launch that AMQ refuses stops the scheduler with the stage,
   AMQ's reason and the detail in its decisions log, and the lead's
-  supervisor does not restart it; `amq-squad lead --team --scheduler-seats
-  seats.json --trust` is the owner's standing answer to AMQ's trust
-  confirmation for that session. A seat launch that fails or never resolves
+  supervisor does not restart it, nor a scheduler refused because another
+  holds the squad's lock. A seat launch that fails or never resolves
   is a `seat_launch_failed` decision with its stage, AMQ's reason code and the
   redacted detail; status shows that reason on the seat's row in place of
   `seat_starting`, and a second failure of the pool with the same reason
@@ -323,9 +456,17 @@ amq-squad gate status --project . --session issue-96 --json
   outside any seat. Seats never merge.
 - **Release.** `release prepare` raises the `tag` and `github_release` gates;
   `release publish` runs each only with its verified owner answer.
-- **Quarantine.** A seat that changed the owner's global agent config is
-  quarantined; only the owner clears it, with `seat clear` from the owner's own
-  terminal.
+- **Seat warnings.** What used to stop a seat at launch is a warning on its
+  status row: a Claude seat whose hook made no report since its launch
+  (`claude_hooks_silent`), its worktree's Claude allow rules
+  (`claude_allow_rules_present`), a CLAUDE.md importing a file outside its
+  worktree (`claude_external_includes_pending`). The seat starts; nothing is
+  quarantined. seat-exec still denies a seat's write to the owner's global
+  agent config. So are a seat over the launch ceiling
+  (`launch_budget_exceeded`), a seat whose wake is off with AMQ's reason
+  (`wake_off`: a Codex seat without AMQ's dialog hook, a pi seat), a seat at
+  an open harness dialog (`seat_stalled_at_dialog`) and a pi seat with no key
+  for its provider (`pi_provider_key_missing`).
 
 Check whether an action is approved, and the evidence of a merge or a release:
 
@@ -353,8 +494,29 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   `~/.amq-squad/gate-binding.json` (no secret in it).
 - **The mailbox adapter.** `amq-remote serve` delivers each DM from the owner
   into the share's mailbox; `remote attach` answers each once (`accepted`,
-  `refused`, `routed`), and serve posts the reply under the message. A message
+  `refused`), and serve posts the reply under the message. A message
   starting with `@<lead>` is routed to that squad lead.
+- **Ask from the phone, get the answer there (two-way).** A question gets
+  `accepted <request id> routed <lead>` at once, and goes to the lead on the
+  request's AMQ thread, `cockpit/<request id>`. The lead replies on that
+  thread as it replies to any message (`amq reply`, or `amq_reply` in pi).
+  The attachment follows the thread and posts each reply to your DM as a post
+  that starts with `re <request id>`. Reply to that post to continue the same
+  request; a DM that is not a reply opens a new one. A reply marked progress
+  (`--kind status` or `--labels progress`) posts at most once per 2 minutes,
+  the newest one winning; answers and the result (`--labels result` or
+  `--kind decision`, which also closes the request) post at once. A reply
+  over one DM is split into at most three parts (`(1/3)`).
+- **What the relay never carries.** Only the lead's own text reaches your DM,
+  after `redact.Block`; the attachment never writes a line of its own from
+  status. It refuses a reply with a line that is, as a whole, a gate answer
+  (`yes`, `no`, `approve`, `deny`, alone or with a gate id or the typed
+  tuple), a line naming an open gate's id, or a line of an open gate's
+  question. It never posts into a gate question's thread. A sentence like
+  "No, the build is green" posts. A refusal is recorded by name
+  (`relay_refused_gate_shape`) and a sha256 of the line, and shows in the
+  lead's `/squad` screen and in `status` under `requests`. The lead never
+  holds a key: the body key stays in the attachment.
 - **The gates.** A typed gate's question goes to the owner's DM with its reply
   thread; the owner answers in that thread, and the core of the squad that
   raised it fetches and verifies the signed event itself. An answer outside the
@@ -372,8 +534,8 @@ amq-squad remote status
 | Area | Verbs |
 | --- | --- |
 | Host and setup | `doctor`, `trust`, `roles`, `role draft`, `team propose/apply/show/check/draft-rules`, `brief`, `migrate`, `uninstall`, `version` |
-| Launch | `launch`, `lead`, `scheduler run/relaunch`, `seat-exec` (AMQ runs it), `pi run/verify/path` |
-| Work | `task add/list/show/claim/renew/done/fail/block/release/reset/set/cancel/widen/reconcile`, `dispatch`, `seat commit`, `seat clear`, `worktree` |
+| Launch | `lead`, `scheduler run/relaunch`, `seat-exec` (AMQ runs it), `pi run/verify/path` |
+| Work | `task add/list/show/claim/renew/done/fail/block/release/reset/set/cancel/widen/reconcile`, `dispatch`, `seat commit`, `worktree` |
 | Hook verbs | `context`, `guard`, `evidence ingest`, `evidence list` |
 | Gates and landing | `gate raise/answer/status/post/close`, `verify action/authorization/merge/release/release-plan/rebind`, `merge-train`, `release prepare/publish` |
 | Fleet and owner | `status`, `status --fleet`, `fleet list/add/remove/operator`, `operator inbox/answer/start-squad`, `remote bind/attach/status`, `routing report --week`, `amq env/route` |
@@ -400,14 +562,10 @@ These are the recorded limits of 3.0. The full list, with its reasoning, is in
   merge train. Codex, Grok Build and Cursor seats have no hooks.
 - **One owner DM at a time.** The mailbox adapter answers a second DM `busy`
   while one is open; wait for each result row.
-- **No seats-file compiler.** `launch --seats` and `lead --scheduler-seats`
-  take a hand-written typed seat list; only the mayor's `operator start-squad`
-  compiles squad.yaml into the launch itself.
 - **The pi runtime is darwin arm64 only** and is not in a `go install` build.
 - **Open acceptance rows at the tag** (plan 16.4): the Claude live rows wait on
   the owner's token file, the first real merge-train run on a harness-bound PR,
-  the pi launch through `amq launch` on the installed AMQ, amq-noc 1.0, and the
-  signed `seat clear` live row.
+  the pi launch through `amq launch` on the installed AMQ, and amq-noc 1.0.
 - No v2 verb survives: `init`, `start`, `plan`, `resume`, `down`, `wizard`,
   `goal`, `team init/sync` and the pane drivers are gone, with no aliases.
 
@@ -442,7 +600,7 @@ amq-squad migrate .amq-squad/team.json
 | The 3.0 plan, its rulings, phases and recorded limits | [docs/v3-plan.md](docs/v3-plan.md) |
 | The phase briefs and their rulings | [docs/v3-phase2-briefs.md](docs/v3-phase2-briefs.md) |
 | Execution logs and evidence per brief | [docs/v3-spike/](docs/v3-spike/) |
-| Release notes | [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
+| Release notes | [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
 | squad.yaml schema 1 | [docs/squad-yaml.md](docs/squad-yaml.md) |
 | Status contract, schema 1 | [docs/status-contract.md](docs/status-contract.md) |
 | Claude Code seat hooks | [docs/claude-hooks.md](docs/claude-hooks.md) |

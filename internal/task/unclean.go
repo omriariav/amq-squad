@@ -68,12 +68,8 @@ func SeatHandle(h string) (string, error) {
 	return h, nil
 }
 
-// seatLeasable is the one check a new lease of a seat passes: not
-// quarantined, not unclean.
+// seatLeasable is the one check a new lease of a seat passes: not unclean.
 func seatLeasable(dir, holder string) error {
-	if err := quarantined(dir, holder); err != nil {
-		return err
-	}
 	return unclean(dir, holder)
 }
 
@@ -115,7 +111,7 @@ func unclean(dir, holder string) error {
 }
 
 // ReserveSeat is CleanSeat's first take of the store lock: the state read
-// (the seat holds nothing and is not quarantined) and the unclean marker,
+// (the seat holds nothing) and the unclean marker,
 // with a fresh nonce, which the caller's ReleaseSeat must present. A fresh
 // marker of another cleaner refuses (seat_cleaning); one older than
 // SeatReservationTTL, or a malformed one, is taken over; one that cannot be
@@ -134,9 +130,6 @@ func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, string, error)
 		}
 		if held := HeldBy(handle, list); held != nil {
 			return fmt.Errorf("seat %s holds task %s; its worktree is cleaned only between leases", handle, held.ID)
-		}
-		if err := quarantined(s.Dir, handle); err != nil {
-			return err
 		}
 		m, merr := readMarker(s.Dir, handle)
 		if merr != nil {

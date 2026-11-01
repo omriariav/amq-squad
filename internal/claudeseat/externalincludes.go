@@ -13,9 +13,9 @@ import (
 // ExternalIncludesPending: a CLAUDE.md that Claude Code loads at the seat's
 // start imports a file outside the seat's worktree, and nothing approves
 // it, so 2.1.314 opens ClaudeMdExternalIncludesDialog in the pane (3.0.1
-// t6, fifth commit). The launch never seeds the approval; how one is
-// granted is a 3.0.x item, and until then such a seat's wake stays off and
-// seat-exec refuses it before exec (it would stop at the dialog).
+// t6, fifth commit). The launch never seeds the approval. Since brief 31-1
+// such a seat starts, and status shows this code as a seat warning (the seat
+// may stall at the dialog, a screen line, never a refusal).
 const ExternalIncludesPending = "claude_external_includes_pending"
 
 // The 2.1.314 rule, from its strings:

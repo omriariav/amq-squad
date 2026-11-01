@@ -11,7 +11,6 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
-	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 )
 
@@ -82,9 +81,9 @@ func lookPath(name string) (string, error) { return "/usr/local/bin/" + name, ni
 func TestSquadCompilesToOneLaunchRequest(t *testing.T) {
 	q, base := compileSquad(t, threeRuntimeSquad)
 	want := []seatlaunch.Seat{
-		{Handle: "lead", Runtime: "claude", Model: "opus", Effort: "high", Role: "# Role: cto\n\nThe cto seat of this squad.\n", RoleName: "cto", Worktree: filepath.Join(base, "repo")},
+		{Handle: "lead", Runtime: "claude", Model: "opus", Effort: "high", Role: "# Role: cto\n\nThe cto seat of this squad.\n", RoleName: "cto", Worktree: filepath.Join(base, "repo", ".worktrees", "lead")},
 		{Handle: "dev", Runtime: "codex", Model: "gpt-5.5", Effort: "medium", Role: "# Role: fullstack\n\nThe fullstack seat of this squad.\n", RoleName: "fullstack", Worktree: filepath.Join(base, "dev-wt")},
-		{Handle: "scout", Runtime: "pi", Role: "# Role: researcher\n\nThe researcher seat of this squad.\n", RoleName: "researcher", Worktree: filepath.Join(base, "repo")},
+		{Handle: "scout", Runtime: "pi", Role: "# Role: researcher\n\nThe researcher seat of this squad.\n", RoleName: "researcher", Worktree: filepath.Join(base, "repo", ".worktrees", "scout")},
 	}
 	if !reflect.DeepEqual(q.Seats, want) {
 		t.Fatalf("seats = %+v", q.Seats)
@@ -95,9 +94,6 @@ func TestSquadCompilesToOneLaunchRequest(t *testing.T) {
 	if err := seatlaunch.CheckArgumentForms(q, fixtureCaps()); err != nil {
 		t.Fatalf("advertised forms refused: %v", err)
 	}
-	// A Claude seat's executable is the registry's claude pin (the launch
-	// resolves it; the phase 5 re-pass's HIGH).
-	q.ClaudePins = map[string]registry.Pin{"lead": {Name: "claude", Path: "/usr/local/bin/claude", SHA256: "test"}}
 	q.PiShim = "/home/u/.amq-squad/pi-launch/pi"
 	c, err := seatlaunch.Compile(q, "", lookPath, time.Unix(1, 0))
 	if err != nil {

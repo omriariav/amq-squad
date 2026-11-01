@@ -19,10 +19,6 @@ import (
 type CleanSeats struct {
 	Root string
 	Git  string
-	// Clear verifies the owner's signed clear of a quarantine (the owner's
-	// trust store); a quarantined seat without a verified clear is never
-	// cleaned or dispatched to.
-	Clear seatcommit.ClearVerifier
 
 	log io.Writer
 	now func() time.Time
@@ -44,7 +40,7 @@ func (c *CleanSeats) PrepareSeat(handle string) error {
 	} else if err != nil {
 		return fmt.Errorf("the commit ledger of seat %s: %w", handle, err)
 	}
-	discarded, err := seatcommit.CleanSeat(c.Root, handle, c.Git, nil, c.Clear, now())
+	discarded, err := seatcommit.CleanSeat(c.Root, handle, c.Git, nil, now())
 	if err == nil && discarded && c.log != nil {
 		logLine(c.log, now(), scheduler.Decision{Kind: "seat_cleaned", Seat: handle, Reason: "an earlier attempt's uncommitted diff kept on the ledger and removed from the worktree"})
 	}

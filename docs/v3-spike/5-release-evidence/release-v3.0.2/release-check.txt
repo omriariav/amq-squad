@@ -1,0 +1,2 @@
+release metadata matches v3.0.2
+current docs and generated team rules route to wizard/cli/orchestrator

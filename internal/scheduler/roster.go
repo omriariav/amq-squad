@@ -140,10 +140,149 @@ func (s *Scheduler) AdoptUpRequest(handle, requestID string, pool task.Pool, at 
 // RequestRelaunch is the lead's relaunch decision, posted from any
 // goroutine (the decision socket); the next tick applies it.
 func (s *Scheduler) RequestRelaunch(reason string) {
+	s.RequestRelaunchReload(reason, time.Time{}, nil)
+}
+
+// RosterReload is a relaunch's squad.yaml compiled again (brief 31-2 PR 2):
+// its roster, and Swap, which writes the reload's other halves (the slots'
+// squad and the router's roster pools). The scheduler swaps at the drain's
+// end, after every seat closed and before the roster launches: Swap first,
+// then Config.Roster, so the three change in one step or none. Swap leaves
+// both of its halves as they were when it returns an error, and the
+// running roster then relaunches unchanged.
+type RosterReload struct {
+	Roster []RosterSeat
+	Swap   func() error
+	// MaxSeats is the lease cap recomputed from the new squad (the grant's
+	// max_seats bounding the new seat count, and any narrowing); written
+	// with the roster in the same step. Zero keeps the running cap.
+	MaxSeats int
+	// Cap, when set, recomputes MaxSeats at the drain's end, inside the
+	// swap's step (the grant read again: a grant lowered during a long
+	// drain is the one installed; Codex re-check on 31-2 PR 2). An error
+	// fails the swap before anything is written.
+	Cap func() (int, error)
+}
+
+type relaunchAsk struct {
+	reason string
+	start  time.Time
+	at     time.Time // the relaunch decision's time; zero: the tick's
+	reload *RosterReload
+}
+
+// RequestRelaunchReload is the lead's relaunch carrying the key press
+// (start, zero for none) and squad.yaml compiled again (reload, nil keeps
+// the running roster), posted from any goroutine; the next tick applies
+// it. The reload only adds: it stops no seat. Every seat finishes what it
+// holds and closes in the relaunch's drain, as without a reload; a seat
+// removed from squad.yaml leaves at that close and is not launched again,
+// and a changed line applies at that seat's launch in the same apply.
+func (s *Scheduler) RequestRelaunchReload(reason string, start time.Time, reload *RosterReload) {
+	s.RequestRelaunchAt(reason, start, time.Time{}, reload)
+}
+
+// RequestRelaunchAt is RequestRelaunchReload stamped with the relaunch
+// decision's time (at; zero stamps it at the tick that takes it): the
+// relaunch's own start, written as every launched seat's marks.json start
+// (the plan reviewer's settled reading on 31-2 PR 2), the added seats'
+// key press excepted.
+func (s *Scheduler) RequestRelaunchAt(reason string, start, at time.Time, reload *RosterReload) {
 	s.mu.Lock()
-	s.relaunchAsk = &reason
+	s.relaunchAsk = &relaunchAsk{reason: reason, start: start, at: at, reload: reload}
 	s.mu.Unlock()
 }
+
+// LastRelaunchAt is the start of the last relaunch's launch (zero before
+// one): a relaunch's key press older than it is start_out_of_range.
+func (s *Scheduler) LastRelaunchAt() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastRelaunchAt
+}
+
+// swapReload is the reload's one step at the drain's end: the slots' squad
+// and the router's pools (Swap), then the roster; a failed Swap leaves all
+// three as they were. The seats it adds carry the key press into their
+// launch (seatStart).
+func (s *Scheduler) swapReload(log func(Decision)) {
+	r, start := s.reload, s.reloadAt
+	s.reload, s.reloadAt = nil, time.Time{}
+	if r == nil {
+		return
+	}
+	maxSeats := r.MaxSeats
+	if r.Cap != nil {
+		c, err := r.Cap()
+		if err != nil {
+			log(Decision{Kind: "roster_reload_failed", Reason: "the running roster relaunches unchanged: the lease cap: " + err.Error()})
+			return
+		}
+		maxSeats = c
+	}
+	if r.Swap != nil {
+		if err := r.Swap(); err != nil {
+			log(Decision{Kind: "roster_reload_failed", Reason: "the running roster relaunches unchanged: " + err.Error()})
+			return
+		}
+	}
+	had := map[string]bool{}
+	for _, rs := range s.Config.Roster {
+		had[rs.Handle] = true
+	}
+	now := map[string]bool{}
+	var added, removed []string
+	for _, rs := range r.Roster {
+		now[rs.Handle] = true
+		if !had[rs.Handle] {
+			added = append(added, rs.Handle)
+		}
+	}
+	for _, rs := range s.Config.Roster {
+		if !now[rs.Handle] {
+			removed = append(removed, rs.Handle)
+		}
+	}
+	s.Config.Roster = r.Roster
+	if maxSeats > 0 {
+		s.Config.MaxSeats = maxSeats
+	}
+	// The key press is the start of the launch it caused only (the plan
+	// reviewer before the merge): from its next relaunch on an added seat is
+	// an existing seat, which starts from that launch's own start; the press
+	// stays in its marks as added_at (seatlaunch).
+	s.seatStart = nil
+	if !start.IsZero() {
+		for _, h := range added {
+			if s.seatStart == nil {
+				s.seatStart = map[string]time.Time{}
+			}
+			s.seatStart[h] = start
+		}
+	}
+	why := fmt.Sprintf("squad.yaml compiled again at the relaunch's drain: a roster of %d seats; added %s; removed %s (each closed in the drain, not launched again)",
+		len(r.Roster), firstNonEmpty(strings.Join(added, ","), "none"), firstNonEmpty(strings.Join(removed, ","), "none"))
+	if !start.IsZero() && len(added) > 0 {
+		why += "; the added seats' launch start is the key press " + start.UTC().Format(time.RFC3339Nano)
+	}
+	why += fmt.Sprintf("; at most %d leases at once", s.Config.MaxSeats)
+	log(Decision{Kind: "roster_reloaded", Seat: strings.Join(added, ","), Reason: why})
+	if cap := s.Config.MaxSeats; len(r.Roster) > cap {
+		// 3.0.1's rule for --max-seats (the plan reviewer's settled reading):
+		// max_seats caps the leases held at once, not the seats launched, so
+		// every seat launches and the ones beyond the cap wait for a lease
+		var beyond []string
+		for _, rs := range r.Roster[cap:] {
+			beyond = append(beyond, rs.Handle)
+		}
+		log(Decision{Kind: RosterOverCap, Seat: strings.Join(beyond, ","), Reason: fmt.Sprintf("%d roster seats over max_seats %d: %s launched, leases capped at %d", len(r.Roster), cap, strings.Join(beyond, ", "), cap)})
+	}
+}
+
+// RosterOverCap is the decision of a reload whose roster has more seats than
+// the lease cap (scheduler run's --max-seats): every seat launches, and the
+// leases held at once stay capped; a warning on the screen, never a refusal.
+const RosterOverCap = "roster_over_cap"
 
 // holdOnce logs dispatch_held when its reason changes.
 func (s *Scheduler) holdOnce(reason string, log func(Decision)) {
@@ -186,6 +325,7 @@ func (s *Scheduler) rosterStep(list []task.Task, now time.Time, cfg Config, log 
 			return true, nil
 		}
 		s.relaunching, s.rosterOwed = false, true
+		s.swapReload(log)
 	}
 	if !s.rosterOwed {
 		return false, nil
@@ -226,10 +366,20 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	reqs := make([]SeatRequest, 0, len(s.Config.Roster))
 	for _, rs := range s.Config.Roster {
 		s.requested++
-		req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: rs.Pool, Handle: rs.Handle}
+		req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: rs.Pool, Handle: rs.Handle, Start: s.relaunchAt}
+		if press, ok := s.seatStart[rs.Handle]; ok {
+			req.Start, req.AddedAt = press, press // the add key's press: its own launch's start
+		}
 		reqs = append(reqs, req)
 		s.requests = append(s.requests, request{req: req, at: now})
 	}
+	if !s.relaunchAt.IsZero() {
+		s.mu.Lock()
+		s.lastRelaunchAt = s.relaunchAt
+		s.mu.Unlock()
+	}
+	// the press and the relaunch's stamp are this launch's only
+	s.seatStart, s.relaunchAt = nil, time.Time{}
 	out := rl.LaunchRoster(reqs)
 	if out.Stage != RosterApplied {
 		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}

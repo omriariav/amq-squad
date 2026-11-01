@@ -55,6 +55,62 @@ only when the digest is equal; the pointer stubs are refused if they
 changed since the plan. The Go form is `team.NewPlan` and `Plan.Apply`
 (`internal/team/digest.go`); the pi lead of 4-1 uses the same function.
 
+### The propose-rendered form (the lead's plan)
+
+The lead proposes a team from the conversation as a plan, a JSON object
+(brief 31-3; `team.LeadPlan` in `internal/team/plan.go`):
+
+```json
+{
+  "goal": "ship the parser",
+  "session": "parser",
+  "lead": "lead",
+  "seats": [
+    {"handle": "lead", "role": "lead", "runtime": "pi"},
+    {"handle": "impl-1", "role": "implementer", "runtime": "claude", "model": "sonnet", "effort": "medium"}
+  ],
+  "files": ["internal/parser/"],
+  "tasks": [{"title": "write the parser", "class": "implement", "files": ["internal/parser/parse.go"]}]
+}
+```
+
+`team propose --from PLAN.json` reads it strictly (every key known) and
+renders squad.yaml in canonical form (`team.RenderPlan`): `schema`,
+`session`, `lead`, and per seat `handle`, `role` (the handle when empty),
+`runtime`, `model` and `effort`, nothing else:
+
+```yaml
+schema: 1
+session: parser
+lead: lead
+seats:
+  - handle: lead
+    role: lead
+    runtime: pi
+  - handle: impl-1
+    role: implementer
+    runtime: claude
+    model: sonnet
+    effort: medium
+```
+
+That text is then parsed against the owner grant like any squad.yaml draft,
+and planned with the team rules and the pointer stubs into one digest. The
+goal, the files and the tasks are printed with the plan and are not
+squad.yaml keys. The one write is the proposal, under the solo lead's AMQ
+root (`~/.amq-squad/solo/<dir>-<digest>/root/extensions/amq-squad/confirm/proposed/`);
+it is an index, never a confirmation. Under the solo lead, `team apply
+--digest D` of that proposal starts the team only on the owner's
+confirmation (R55) of D that the lead's own process witnessed within the
+last 30 minutes, at one of two doors: `/squad confirm <prefix>` in the
+lead's pane, or the owner's signed Buzz DM `yes <prefix>` (the prefix is
+the first 16 hex of the content digest). No file is a confirmation, and a
+lead restart forgets them. From a shell, while no lead holds the
+repository, the apply is the owner's confirmation by the act: it writes the
+files and the owner starts the team with `amq-squad up`; with a lead
+running it refuses `lead_running`. The flag form below (`--roles`, or a squad.yaml
+`--from`) stays the owner's manual flow.
+
 ## Changing it
 
 A change lands through the digest flow above and no other way: `team
@@ -89,6 +145,59 @@ final form. What a hand edit produces:
   may do.
 - An edit by a seat is the protected-path crossing described under "Who
   reads it".
+
+### Adding a seat live
+
+`team propose --add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT` plans the
+squad.yaml on disk with one seat appended, and `team apply --digest D
+--add-seat ...` writes it (brief 31-2 PR 2). The role left empty is the
+handle; the model and the effort may be empty, and the model may hold colons
+(an Ollama tag), so the effort is the text after the last colon. The file is
+rendered in canonical form (comments are not kept) and parsed strictly
+against the owner grant, so a repeated handle, an unpermitted runtime or a
+seat over `max_seats` is refused. The team rules the owner approved are kept
+as they are; `team propose` without `--add-seat` re-renders them.
+`--add-seat` is refused with `--from` or `--roles`.
+
+A running scheduler starts the seat at its next `scheduler relaunch`, which
+compiles squad.yaml again as `scheduler run` does at its start:
+
+- The new roster, the slots' squad and the router's roster pools change in
+  one step at the relaunch's drain's end, after every seat finished what it
+  holds and closed, and before the roster launches; a failure inside that
+  step leaves all three as they were (`roster_reload_failed`), and the
+  running roster relaunches unchanged. A squad.yaml that does not compile,
+  or that names another session or lead, refuses the relaunch
+  `squad_invalid` before anything drains.
+- The reload only adds. It stops no seat: a seat removed from squad.yaml
+  while live finishes what it holds and leaves at the relaunch's close, and
+  is not launched again. A changed line for a live seat (model, effort,
+  role) applies at that seat's launch in the same apply, never by a kill.
+- Each launch's start is that launch's. A relaunch stamps every seat it
+  launches with the relaunch decision's time (`marks.json` start), so the
+  launch budget's 10 s ceiling binds every relaunch from its own mark; the
+  squad's `AMQ_SQUAD_START` is the start of the launch at `scheduler run`
+  only. `scheduler relaunch --start STAMP` (RFC3339) carries the key press:
+  a seat the reload adds starts from it for that relaunch, and keeps it as
+  `added_at` (status's `launch.added_at`); from its next relaunch on it
+  takes that relaunch's stamp like every seat. A start more than 5 s after
+  the relaunch decision, or before the start of the launch running now
+  (the last relaunch's, else the scheduler's), is refused
+  `start_out_of_range` before anything drains. The lead's screen runs propose, apply and the relaunch with
+  `/squad add`, `seat`, and one confirmation, and stamps the confirmation.
+- The lease cap (the leases held at once: the grant's `max_seats`, bounded
+  by the squad's seat count, narrowed by `scheduler run --max-seats`) is
+  recomputed from the new squad in the same step, with the grant read again
+  at the drain's end (the check at the relaunch's acceptance is the early
+  refusal),
+  so a seat added live gets a lease; the owner's grant is never exceeded.
+  `team propose` already refuses a squad.yaml with more seats than
+  `max_seats`; only the `--max-seats` narrowing can leave more seats up than
+  the cap. Then, as at the start (3.0.1's rule: `max_seats` caps leases,
+  not the seats launched), every seat still launches, a seat beyond the cap
+  waits for a lease (`seat_cap`), the reload logs `roster_over_cap` naming
+  those seats as "launched, leases capped at N", and the lead's screen
+  shows one warning line in its seats block, never a refusal.
 
 ## Format
 
@@ -129,23 +238,35 @@ required version key (`schema: 1`); a file without it is refused.
 | `merge_size_cap_lines` | integer, at least 1 | the owner's | narrow |
 | `merge_size_cap_files` | integer, at least 1 | the owner's | narrow |
 | `verifier_classes` | list of verifier classes | the owner's | add |
-| `defaults.runtime` | `claude`, `codex` or `pi` | none | plain |
+| `defaults.runtime` | `claude`, `codex`, `cursor-agent`, `grok` or `pi` | none | plain |
 | `defaults.model` | token | none | plain |
 | `defaults.effort` | token | none | plain |
 | `defaults.tools` | `minimal`, `coding`, `browser`, `data` or `full` | `full` | plain |
 | `seats[].handle` | `[a-z0-9][a-z0-9_-]*`, unique, not the operator's `user` | none, required | plain |
 | `seats[].role` | catalog or staged custom role id | the handle | plain |
-| `seats[].runtime` | `claude`, `codex` or `pi` | `defaults.runtime` | plain |
-| `seats[].model` | token; a pi seat takes none | `defaults.model` | plain |
-| `seats[].effort` | token; a pi seat takes none | `defaults.effort` | plain |
-| `seats[].worktree` | repo-relative or absolute path | the repository root | plain |
+| `seats[].runtime` | `claude`, `codex`, `cursor-agent`, `grok` or `pi` | `defaults.runtime` | plain |
+| `seats[].model` | token; a pi seat's is PROVIDER/ID | `defaults.model` (not for pi) | plain |
+| `seats[].effort` | token; a cursor-agent seat takes none | `defaults.effort` (not for pi or cursor-agent) | plain |
+| `seats[].worktree` | repo-relative or absolute path, never the repository root | `.worktrees/<handle>` | plain |
 | `seats[].tools` | `minimal`, `coding`, `browser`, `data` or `full` | `defaults.tools` | plain |
 | `seats[].actor_mode` | `implementation` or `review` | derived from the lead and lead mode | plain |
 
-A seat's fields are the typed seat list of the 2b-2 launch compiler. Model
-and effort travel as provider arguments for Claude and Codex seats only;
-pi admits none (plan 4.3, amendment 23), so a pi seat with a model or effort
-is a parse error. The argument forms are the ones AMQ advertises
+squad.yaml is the one source of a launch (brief 31-1): `amq-squad lead
+--team` in the repository and `scheduler run --project` read it, with no
+seats file beside it. The lead's handle is `lead` (required for a launch),
+the AMQ session is `session` (required for a launch), and every seat but the
+lead is in the roster. A seat's worktree is derived per handle under
+`<repo>/.worktrees/<handle>` unless the seat names one; a worktree that
+names the repository root is a parse error (the commit step moves a seat's
+branch). The runtimes are the providers AMQ v0.116.2's launch adapters serve.
+
+A seat's fields are the typed seat list of the launch compiler. Model and
+effort travel as provider arguments: `--model` and the effort for Claude,
+Codex and grok, `--model` alone for cursor-agent (its adapter maps no
+effort, so a cursor-agent seat with an effort is a parse error). pi admits
+no provider argument (plan 4.3, amendment 23): a pi seat's model is a
+PROVIDER/ID that seat-exec hands the embedded runtime's launcher. A roster
+seat's own pool needs no registry entry. The argument forms are the ones AMQ advertises
 (`ProviderCapabilitiesV1.AllowedArgumentForms`, amendment 20 (b)); amq-squad
 keeps no list of its own, and a form AMQ does not list is refused before the
 launch. Quota and concurrency pools are registry entries (plan 5), not
@@ -167,8 +288,6 @@ per key.
 | `merge.local_push_ack` | grants.yaml: the owner's acknowledgement of a local push target |
 | `push_url` | grants.yaml: the push target (merge.push_url) |
 | `local_push_ack` | grants.yaml: merge.local_push_ack |
-| `clear` | grants.yaml: how a seat quarantine's clear is signed |
-| `clear.signature` | grants.yaml: the clear signature mode |
 | `verifiers` | grants.yaml: the verifier command per class |
 | `verifier_goproxy` | grants.yaml: the verifier's GOPROXY |
 | `verifier_timeout` | grants.yaml: the verifier's wall time |
@@ -296,5 +415,5 @@ seats:
     tools: coding
   - handle: scout
     role: researcher
-    runtime: pi                # pi takes no model or effort (plan 4.3)
+    runtime: pi                # a pi model, when named, is PROVIDER/ID
 ```

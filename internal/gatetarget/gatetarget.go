@@ -13,7 +13,6 @@
 //	package_publish  npm publish [<spec>] (and pnpm, yarn, cargo, gem push, twine upload, goreleaser release)
 //	external_send    <mcp tool> <recipient> | gws <service> <verb> | mail|mailx|sendmail|msmtp [<recipient>]
 //	credential_change  gh auth login ... | git config <credential key> | write <absolute path> | ssh-keygen ...
-//	quarantine_clear clear <handle> nonce=<hex> incarnation=<task>@<unix nanos> config=<sha256:hex> (the Buzz-signed seat clear, phase 5)
 //	spawn            grow <session root> seats=<N> | grow <session root> <limit>=<N>
 //	                 | grow merge <owner/repo>#<pr> head=<sha> rules=<code,...> (a merge outside the grant, 3-2)
 //
@@ -41,9 +40,6 @@ const (
 	ClassSend       = "send"
 	ClassCredential = "credential"
 	ClassGrow       = "grow"
-	// ClassClear is the fifth typed class (phase 5): the owner's signed
-	// answer that lifts a seat's config-change quarantine.
-	ClassClear = "clear"
 )
 
 // classOf maps each typed-gate action to its plan class. Merge is not a typed
@@ -53,7 +49,6 @@ var classOf = map[string]string{
 	"external_send":     ClassSend,
 	"credential_change": ClassCredential,
 	"spawn":             ClassGrow,
-	"quarantine_clear":  ClassClear,
 }
 
 // Class returns the plan class of a typed-gate action, "" for any other.
@@ -61,7 +56,7 @@ func Class(action string) string { return classOf[action] }
 
 // Actions lists the typed-gate actions.
 func Actions() []string {
-	return []string{"credential_change", "external_send", "github_release", "package_publish", "quarantine_clear", "spawn", "tag"}
+	return []string{"credential_change", "external_send", "github_release", "package_publish", "spawn", "tag"}
 }
 
 // Digest is the target digest of an action and its target string.
@@ -158,29 +153,4 @@ func ReleaseCreate(repository, tag string) string {
 // that cross the grant's protected paths; size_cap: {"lines":N,"files":M}).
 func GrowTask(root, taskID, limit, value string) string {
 	return fmt.Sprintf("grow %s task=%s %s=%s", root, taskID, limit, value)
-}
-
-// QuarantineClear is the target of a seat's clear request: the handle, the
-// request nonce, the seat incarnation (the quarantined task and the
-// quarantine's time) and the digest of the quarantine's config diff, so an
-// approval lifts exactly this quarantine of exactly this seat, once.
-func QuarantineClear(handle, nonce, incarnation, configDigest string) string {
-	return fmt.Sprintf("clear %s nonce=%s incarnation=%s config=%s", handle, nonce, incarnation, configDigest)
-}
-
-// ParseQuarantineClear splits a QuarantineClear target.
-func ParseQuarantineClear(target string) (handle, nonce, incarnation, configDigest string, ok bool) {
-	f := strings.Fields(target)
-	if len(f) != 5 || f[0] != "clear" {
-		return "", "", "", "", false
-	}
-	var got [3]string
-	for i, key := range []string{"nonce=", "incarnation=", "config="} {
-		v, found := strings.CutPrefix(f[2+i], key)
-		if !found || v == "" {
-			return "", "", "", "", false
-		}
-		got[i] = v
-	}
-	return f[1], got[0], got[1], got[2], QuarantineClear(f[1], got[0], got[1], got[2]) == target
 }

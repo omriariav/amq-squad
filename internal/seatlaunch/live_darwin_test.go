@@ -3,7 +3,6 @@
 package seatlaunch
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -107,9 +106,7 @@ func TestLiveTmuxLaunchWithInstalledAMQ(t *testing.T) {
 	fakeLook := func(name string) (string, error) { return filepath.Join(bin, name), nil }
 	opts := Options{Env: append(env, "AM_ME=lead"), Home: home, Wait: 20 * time.Second, LookPath: fakeLook}
 	res, err := Launch(context.Background(), q, opts)
-	var report bytes.Buffer
-	Report(&report, res)
-	t.Logf("first pass:\n%s", report.String())
+	t.Logf("first pass:\n%s", reportOf(res))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,9 +120,7 @@ func TestLiveTmuxLaunchWithInstalledAMQ(t *testing.T) {
 		}
 		started := time.Now()
 		res, err = Launch(context.Background(), q, opts)
-		report.Reset()
-		Report(&report, res)
-		t.Logf("apply pass (%s):\n%s", time.Since(started).Round(time.Millisecond), report.String())
+		t.Logf("apply pass (%s):\n%s", time.Since(started).Round(time.Millisecond), reportOf(res))
 		if err != nil {
 			t.Fatal(err)
 		}

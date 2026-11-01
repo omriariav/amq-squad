@@ -53,9 +53,15 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	t.Helper()
 	var runs []run
 	sh := func(name string, argv ...string) run {
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+		var cmd *exec.Cmd
+		if filepath.Base(argv[0]) == "amq" {
+			cmd = amqCmd(ctx, t, env, argv[1:]...)
+		} else {
+			cmd = exec.CommandContext(ctx, argv[0], argv[1:]...) // exec: not amq (amq goes to amqCmd)
+			cmd.Env = env
+		}
 		tree := guardTree(cmd)
-		cmd.Env, cmd.Dir = env, home
+		cmd.Dir = home
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e
 		err := cmd.Run()
@@ -120,7 +126,8 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	}
 	// 4.1, 4.2 the operator session runs, attach (no --lead: the operator)
 	presence("active")
-	attach := exec.CommandContext(ctx, amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
+	attach := exec.CommandContext(ctx, amqSquad, "remote", // exec: not amq (the amq-squad binary)
+		"attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
 	attach.Env, attach.Dir = env, home
 	attachTree := guardTree(attach) // the budget TERMs attach and the endpoint it starts
 	aout, aerr := syncBuffer{bell: &relay.bell}, syncBuffer{}

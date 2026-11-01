@@ -261,17 +261,21 @@ func TestLeadsRelaunchReachesTheSchedulerOverItsSocket(t *testing.T) {
 	}
 }
 
-// t16 rule 1: the roster is every seat of the seat list with a worktree of
-// its own (a repository-root seat is named and left out); the roster plan
-// takes each request's seat by handle, creates its worktree and carries
-// its request id; a handle outside the seat list or a pool the seat does not
-// serve is refused.
+// t16 rule 1, after brief 31-1: the roster is every seat of the seat list
+// (squad.yaml derives each worktree, so no seat is left out for one); the
+// roster plan takes each request's seat by handle, creates its worktree and
+// carries its request id; a seat whose worktree is the repository root is
+// still never planned (ensureWorktree's own refusal), and a handle outside
+// the seat list or a pool the seat does not serve is refused.
 func TestSlotsRosterAndItsPlan(t *testing.T) {
 	q := squadFixture(t)
 	s := &Slots{Squad: q}
 	roster, excluded := s.Roster("")
-	if len(roster) != 2 || roster[0].Handle != "c1" || roster[1].Handle != "p1" || roster[0].Pool != sonnet || len(excluded) != 1 || !strings.Contains(excluded[0], "seat root has no worktree of its own") {
+	if len(roster) != 3 || roster[0].Handle != "c1" || roster[1].Handle != "p1" || roster[2].Handle != "root" || roster[0].Pool != sonnet || len(excluded) != 0 {
 		t.Fatalf("roster %+v excluded %v", roster, excluded)
+	}
+	if _, err := s.PlanRoster([]scheduler.SeatRequest{{ID: "r0", Handle: "root", Pool: roster[2].Pool}}); err == nil || !strings.Contains(err.Error(), "seat root has no worktree of its own") {
+		t.Fatalf("the repository-root seat was planned: %v", err)
 	}
 	got, err := s.PlanRoster([]scheduler.SeatRequest{{ID: "r1", Handle: "c1", Pool: roster[0].Pool}, {ID: "r2", Handle: "p1", Pool: roster[1].Pool}})
 	if err != nil || len(got.Seats) != 2 || got.Seats[0].RequestID != "r1" || got.Seats[1].RequestID != "r2" || got.Seats[1].Handle != "p1" {

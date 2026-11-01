@@ -3,7 +3,6 @@
 package seatlaunch
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -341,9 +340,7 @@ func TestAmqFailureDetailIsRedactedWhereItIsRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out bytes.Buffer
-	Report(&out, res)
-	for name, text := range map[string]string{"staged record": string(raw), "report": out.String(), "result": res.FailureDetail} {
+	for name, text := range map[string]string{"staged record": string(raw), "result": res.FailureDetail} {
 		if strings.Contains(text, "t16canaryvalue0044") || strings.Contains(text, "t16canaryvalue0045") {
 			t.Errorf("the %s carries a credential value:\n%s", name, text)
 		}

@@ -93,6 +93,13 @@ type DecideOptions struct {
 	// Relaunch takes the lead's relaunch of the roster (3.0.1 t16); nil
 	// refuses it (relaunch_unsupported: the scheduler runs no roster).
 	Relaunch func(lead string, req RelaunchRequest) DecideReply
+	// Reload compiles squad.yaml again for each relaunch (brief 31-2 PR 2);
+	// nil relaunches the running roster as it is.
+	Reload *Reload
+	// Warnings reads a seat's current launch and the warnings status shows
+	// for it (status.CurrentSeatWarnings), for the clear (brief 31-2); nil
+	// refuses every clear.
+	Warnings CurrentWarnings
 	// Seams for tests: the lead's recorded pane, the chain walk, a pid's
 	// start stamp and the kernel peer of a connection.
 	LeadPane   func(root, lead string) (panechain.Pane, error)
@@ -269,7 +276,7 @@ func (s *DecisionServer) serve() {
 				var kind struct {
 					Kind string `json:"kind"`
 				}
-				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind) {
+				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind) {
 					// The fourth pass: the ledger is read again and the
 					// sender proved again after the request is read; a lead
 					// record replaced meanwhile refuses it.
@@ -291,6 +298,10 @@ func (s *DecisionServer) serve() {
 // apply runs a proved decision of a known kind.
 func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
 	switch kind {
+	case ClearRequestKind:
+		// brief 31-2: the owner's clear of a warning line, recorded here; it
+		// changes no seat's state, so it needs no hook of the scheduler's.
+		return applyClear(s.o.Root, s.o.Lead, line, s.o.Warnings)
 	case RelaunchRequestKind:
 		var req RelaunchRequest
 		if json.Unmarshal(line, &req) != nil {
@@ -367,6 +378,12 @@ const RefusedRelaunchUnsupported = "relaunch_unsupported"
 type RelaunchRequest struct {
 	Kind   string `json:"kind"`
 	Reason string `json:"reason,omitempty"`
+	// Start is the key press that asked for the relaunch, RFC3339Nano
+	// (brief 31-2 PR 2: `scheduler relaunch --start`): a seat the reload
+	// adds takes it as its marks.json start, and the launch budget's 10 s
+	// ceiling binds that seat from it. Empty: no seat takes a start of its
+	// own.
+	Start string `json:"start,omitempty"`
 }
 
 func sendDecision(root, path string, req any) (DecideReply, error) {

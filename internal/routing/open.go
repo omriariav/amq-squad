@@ -42,6 +42,8 @@ type StartOptions struct {
 	// (Options): what a concurrency cap counts.
 	Seats     func() []scheduler.SeatView
 	LeadPools []task.Pool
+	// RosterPools are the roster seats' pools (Options.RosterPools).
+	RosterPools []task.Pool
 }
 
 // Open is the scheduler process's start step: it loads the effective table
@@ -53,5 +55,5 @@ func Open(o StartOptions) (*Router, error) {
 		return nil, &InvalidError{Err: err}
 	}
 	return New(Options{Table: tbl, Registry: o.Registry, Grants: o.Grants, Root: o.Root, RepoRoot: o.RepoRoot,
-		Tasks: o.Tasks, Now: o.Now, Seats: o.Seats, LeadPools: o.LeadPools})
+		Tasks: o.Tasks, Now: o.Now, Seats: o.Seats, LeadPools: o.LeadPools, RosterPools: o.RosterPools})
 }

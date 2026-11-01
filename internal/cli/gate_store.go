@@ -87,9 +87,6 @@ func gateCore(ctx context.Context, sel contextResolution, withTransport bool) (*
 // transport is attached.
 func storeGateRaise(sel contextResolution, gate, action, target string, window time.Duration, jsonOut bool, out io.Writer) error {
 	id := strings.TrimPrefix(gate, "gate/")
-	if operatorauth.Reserved(action) {
-		return usageErrorf("gate raise: %s: %s is raised only by the owner's seat clear, after the pty proof", operatorauth.ReasonActionReserved, action)
-	}
 	if err := gatetarget.Validate(action, target); err != nil {
 		return usageErrorf("gate raise: %v", err)
 	}
@@ -335,6 +332,12 @@ func runGateStatus(args []string) error {
 	now := hookNow()
 	for _, id := range ids {
 		rec, err := store.Load(id)
+		if kind, legacy := store.Legacy(id); err != nil && legacy {
+			// a kind the catalog no longer carries (brief 31-1): listed and
+			// skipped, never a refusal, with --gate too
+			fmt.Fprintln(os.Stderr, "gate status: "+gatestore.LegacyLine(id, kind))
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("gate status: %w", err)
 		}

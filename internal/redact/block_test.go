@@ -1,9 +1,9 @@
 package redact
 
 import (
+	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 // longLine is n bytes (rounded down to whole pairs) of repeated name=value
@@ -11,63 +11,94 @@ import (
 // value, never a credential-shaped literal.
 func longLine(n int) string { return strings.Repeat("password"+"=x ", n/11) }
 
-// timed is one timing of Block on line, and its output.
-func timed(line string) (time.Duration, string) {
-	start := time.Now()
-	out := Block(line)
-	return time.Since(start), out
-}
-
-// v3-5-verifier, item 4 of the third round: redaction is linear in a line,
-// however many values it holds. The proof is a ratio measured in one
-// process (3.0.1 t7, the reviewer ruling of 2026-10-30), not a wall-clock
-// bound: the 1 MiB line holds 16x the 64 KiB line's values and must take no
-// more than 64x its time (a generous linear factor; a quadratic scan takes
-// about 256x). One warm-up call on the small line comes first. The two
-// sizes are then timed in three interleaved pairs (small, then large), and
-// the best of each size counts. Interleaving spreads a load change that
-// lasts across the run over both sizes. It does not cancel a burst that
-// lands on one timing, so a ratio over the limit gets one more interleaved
-// pair before the test fails, and the log line records the retry.
-//
-// Before (the absolute bound, gate host, 2026-10-30): 1 MiB in 241 ms, and
-// 4.922 s under -race (bounds 2 s and 20 s).
-// After (this ratio, interleaved, same host): 64 KiB 13 ms, 1 MiB 213 ms,
-// 16.5x; under -race 64 KiB 315 ms, 1 MiB 5.058 s, 16.0x.
+// v3-5-verifier, item 4 of the third round; 3.1 plan task t2: redaction is
+// linear in a line, however many values it holds. The row measures work, not
+// time (wall-clock ratios flaked on shared CI runners, twice on 2026-10-31).
+// Two deterministic measures: the units of work Block reports through
+// workHook (bytes scanned, matches and entries handled), and the bytes it
+// allocates (runtime.MemStats.TotalAlloc). The 1 MiB line holds 16x the
+// 64 KiB line's values, so each measure must grow by no more than 24x; a
+// quadratic Block grows by about 256x.
+// Real counts (2026-10-31), 64 KiB to 1 MiB: assign line 16.0x work, 20.9x
+// bytes; mixed line (YAML flow, JSON, provider token) 16.5x, 21.7x; mixed
+// block (YAML blocks, a quoted scalar across lines, JSON) 16.0x, 16.4x. The
+// limits are 24x and 40x. Mutations that fail it: a per-match string copy
+// (236.6x bytes only; work stays 16.0x), a prefix rescan reported to the hook
+// (255.8x work only; bytes 20.9x), and an insertion sort that finds its place
+// from the head (253.2x work only; bytes 21.0x), so the two measures catch
+// different shapes.
+// Limit of the row: a quadratic loop that neither calls the work hook nor
+// allocates (a strings.Index rescan, say) slips through; the shapes it
+// catches are a quadratic copy and a regex rescan.
 func TestBlockIsLinearOnALongLine(t *testing.T) {
-	const limit = 64
-	small, big := longLine(1<<16), longLine(1<<20)
-	Block(small) // warm-up: first-call costs stay out of the small timing
-	var smallBest, bigBest time.Duration
-	var out string
-	pair := func(first bool) {
-		s, _ := timed(small)
-		b, o := timed(big)
-		out = o
-		if first || s < smallBest {
-			smallBest = s
+	const limit = 24
+	const allocLimit = 40 // builder and slice growth leave bytes a little over linear
+	// Canaries are built at run time and match no RealCredentialShapes.
+	c1, c2, c3, c4, c5 := "Ab9"+"xY7q1", "Ab9"+"xY7q2", "Ab9"+"xY7q3", "Ab9"+"xY7q4", "Ab9"+"xY7q5"
+	c6, c7 := "Zq9"+"xV7mP2wL4", "Zq9"+"xV7mP2wL5"
+	fixtures := []struct {
+		name     string
+		build    func(n int) string
+		canaries []string
+	}{
+		{"assign", longLine, []string{"=x "}},
+		// One long line: YAML flow, JSON and provider-token paths.
+		{"mixed line", func(n int) string {
+			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz err: see api_key: " + c6 + " now API_KEY:" + c7 + " "
+			return strings.Repeat(unit, n/len(unit))
+		}, []string{c1, c2, c3, c6, c7}},
+		// Growing indentation, then repeated colon-form values: the line-start
+		// prefix is classified once, not per match.
+		{"indented colon forms", func(n int) string {
+			unit := " api_key: " + c6 + " API_KEY:" + c7 + " "
+			return strings.Repeat(" ", n/2) + "err: see" + strings.Repeat(unit, n/2/len(unit))
+		}, []string{c6, c7}},
+		// Adjacent keys: the inner credential key wins, and a long chain of plain
+		// keys costs a constant per match.
+		{"adjacent keys", func(n int) string {
+			unit := "err: api_key: " + c6 + " warn:token:" + c7 + " msg: password: " + c1 + " "
+			return strings.Repeat(unit, n/2/len(unit)) + strings.Repeat("a: ", n/2/3)
+		}, []string{c6, c7, c1}},
+		// Many lines: YAML blocks, a quoted scalar across lines, JSON.
+		{"mixed block", func(n int) string {
+			unit := "password:\n  '" + c4 + "\n  " + c5 + "'\nnext: kept\n{\"password\":\n \"" + c2 + "\"}\npassword:\n  " + c1 + "\n"
+			return strings.Repeat(unit, n/len(unit))
+		}, []string{c4, c5, c2, c1}},
+	}
+	measure := func(line string) (units int, alloc uint64, out string) {
+		workHook = func(n int) { units += n }
+		defer func() { workHook = nil }()
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		out = Block(line)
+		runtime.ReadMemStats(&after)
+		return units, after.TotalAlloc - before.TotalAlloc, out
+	}
+	for _, f := range fixtures {
+		small, big := f.build(1<<16), f.build(1<<20)
+		measure(small) // warm-up: one-time allocations stay out of the sizes
+		su, sa, sout := measure(small)
+		bu, ba, bout := measure(big)
+		for _, o := range []string{sout, bout} {
+			for _, c := range f.canaries {
+				if strings.Contains(o, c) {
+					t.Fatalf("%s: a value of the long input was not redacted (%q survived)", f.name, c)
+				}
+			}
 		}
-		if first || b < bigBest {
-			bigBest = b
+		if su == 0 || sa == 0 {
+			t.Fatalf("%s: nothing measured (units %d, bytes %d): the hook or the counter is dead", f.name, su, sa)
 		}
-	}
-	for i := 0; i < 3; i++ {
-		pair(i == 0)
-	}
-	retried := false
-	if bigBest > limit*smallBest {
-		pair(false)
-		retried = true
-	}
-	if strings.Contains(out, "=x ") {
-		t.Fatal("a value of the long line was not redacted")
-	}
-	ratio := float64(bigBest) / float64(smallBest)
-	t.Logf("64 KiB, %d values: %s; 1 MiB, %d values: %s; ratio %.1fx (limit %dx); retried %v",
-		strings.Count(small, "="), smallBest.Round(time.Millisecond),
-		strings.Count(big, "="), bigBest.Round(time.Millisecond), ratio, limit, retried)
-	if bigBest > limit*smallBest {
-		t.Fatalf("16x the input took %.1fx the time (over %dx, after one retry): Block is not linear in a line", ratio, limit)
+		uRatio, aRatio := float64(bu)/float64(su), float64(ba)/float64(sa)
+		t.Logf("%s: 64 KiB %d units, %d bytes; 1 MiB %d units, %d bytes; ratios %.1fx units, %.1fx bytes (limits %dx units, %dx bytes)",
+			f.name, su, sa, bu, ba, uRatio, aRatio, limit, allocLimit)
+		if uRatio > limit {
+			t.Fatalf("%s: 16x the input did %.1fx the work (over %dx): Block is not linear in a line", f.name, uRatio, limit)
+		}
+		if aRatio > allocLimit {
+			t.Fatalf("%s: 16x the input allocated %.1fx the bytes (over %dx): Block is not linear in a line", f.name, aRatio, allocLimit)
+		}
 	}
 }
 

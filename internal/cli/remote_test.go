@@ -211,7 +211,7 @@ func TestRemoteAttachOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach 2: %v\n%s", err, stdout)
 	}
-	if ep.starts != 1 || ep.stops != 1 || !strings.Contains(stdout, `"action":"started"`) || !strings.Contains(stdout, `"reply":"routed cto"`) {
+	if ep.starts != 1 || ep.stops != 1 || !strings.Contains(stdout, `"action":"started"`) || !strings.Contains(stdout, `"reply":"accepted q-`) || !strings.Contains(stdout, ` routed cto"`) {
 		t.Fatalf("attach with a live lead: starts %d stops %d\n%s", ep.starts, ep.stops, stdout)
 	}
 	if len(mailer.sent) != 3 {

@@ -71,8 +71,7 @@ func TestClaudeSeatRefusesWithoutASecureTokenFile(t *testing.T) {
 // Reviewer condition 2: the token value never appears in the launch record,
 // the ledger, the evidence or any output: a canary runs through a full
 // fake-provider seat launch, and every file written under the fixture (the
-// session root, the seat's published record and snapshots, the preflight
-// copies, the worktree) and every output is searched for it. It is only in
+// session root, the seat's published record and snapshots, the worktree) and every output is searched for it. It is only in
 // the provider's environment.
 func TestClaudeTokenCanaryAppearsNowhereButTheProviderEnv(t *testing.T) {
 	f := newFixture(t, "claude")

@@ -255,96 +255,6 @@ func TestHarnessGitRunsNoHooks(t *testing.T) {
 	}
 }
 
-// Amendment 28: the owner's global agent config is diffed against the
-// preflight copy at every seat exit; a change fails the task, routed to
-// the owner, before anything is committed.
-func TestGlobalConfigChangeFailsTheTask(t *testing.T) {
-	f := newFixture(t)
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// x\n")
-	tk := f.reported("cmd/")
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1,"hooks":{}}`)
-	res := f.run(tk)
-	if res.ReasonCode != ReasonGlobalConfig || res.Route != task.RouteOwner || len(res.Config) != 1 || res.Commit != "" {
-		t.Fatalf("want %s to the owner, got %+v", ReasonGlobalConfig, res)
-	}
-	if f.originBranch() != "" {
-		t.Fatal("pushed despite a global config change")
-	}
-}
-
-// Reviewer conditions on the global_config_changed block: it comes before
-// the commit step; the seat's tree is kept on the ledger (tree, diff digest,
-// the config diff as evidence), nothing is committed or pushed, and a re-run
-// stays refused until the owner clears; after the clear exactly that tree
-// commits, and a tree changed since is refused.
-func TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing(t *testing.T) {
-	f := newFixture(t)
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
-	tk := f.reported("cmd/")
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
-	res := f.run(tk)
-	if res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || res.Commit != "" || res.Tree == "" {
-		t.Fatalf("quarantine: %+v", res)
-	}
-	l, err := ReadLedger(f.root, f.handle)
-	if err != nil || l.Quarantine == nil || l.Quarantine.Tree != res.Tree || l.Quarantine.DiffDigest == "" || l.Quarantine.Task != tk.ID ||
-		len(l.Quarantine.Config) != 1 || !strings.HasSuffix(l.Quarantine.Config[0].File, filepath.Join(".claude", "settings.json")) || l.Head != "" {
-		t.Fatalf("ledger evidence: %+v %v", l.Quarantine, err)
-	}
-	if got := sh(t, f.wt, "rev-parse", "refs/heads/"+f.branch); got != f.base || f.originBranch() != "" {
-		t.Fatalf("the seat branch moved (%s) or something was pushed (%q)", got, f.originBranch())
-	}
-	if got := sh(t, f.wt, "cat-file", "-t", l.Quarantine.Tree); got != "tree" {
-		t.Fatalf("the kept tree is not in the object store: %q", got)
-	}
-	// The config is restored by the owner, but the seat stays quarantined
-	// until the owner clears it.
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
-	if res := f.run(tk); res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || f.originBranch() != "" {
-		t.Fatalf("an uncleared quarantine committed: %+v", res)
-	}
-	if _, err := ClearQuarantine(f.root, f.handle, f.signer, f.now); err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// changed after the quarantine\n")
-	if res := f.run(tk); res.ReasonCode != ReasonQuarantineTree {
-		t.Fatalf("a tree changed after the quarantine: %+v", res)
-	}
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
-	res = f.run(tk)
-	if !res.OK || res.Tree != l.Quarantine.Tree || !res.Pushed {
-		t.Fatalf("after the clear: %+v", res)
-	}
-	if l2, _ := ReadLedger(f.root, f.handle); l2.Quarantine != nil {
-		t.Fatalf("the cleared quarantine stayed: %+v", l2.Quarantine)
-	}
-}
-
-// codex-cli's own last_updated rewrite of its config is not a change; any
-// other byte is.
-func TestPreflightDiffIgnoresOnlyCodexSelfRewrite(t *testing.T) {
-	f := newFixture(t)
-	orig := "model = \"x\"\n[marketplaces.main]\nlast_updated = \"2026-10-01\"\nurl = \"u\"\n"
-	write(t, filepath.Join(f.home, ".codex", "config.toml"), strings.Replace(orig, "2026-10-01", "2026-10-24", 1))
-	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "codex-config.toml"), orig)
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// y\n")
-	if res := f.run(f.reported("cmd/")); !res.OK {
-		t.Fatalf("codex's own rewrite failed the task: %+v", res)
-	}
-	write(t, filepath.Join(f.home, ".codex", "config.toml"), orig+"approval_policy = \"never\"\n")
-	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// z\n")
-	if _, err := f.store.Complete("t1", f.now); err != nil {
-		t.Fatal(err)
-	}
-	if res := f.run(f.reported("cmd/")); res.ReasonCode != ReasonGlobalConfig {
-		t.Fatalf("a real codex config change passed: %+v", res)
-	}
-}
-
 // The size cap: a diff over the grant's cap is refused; the check uses an
 // explicit small cap (the default is unmeasured, ruling 5).
 func TestSizeCapRefuses(t *testing.T) {
@@ -474,7 +384,7 @@ func TestRerunAfterCommitIsIdempotent(t *testing.T) {
 // its own change. A clean worktree is left alone.
 func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	f := newFixture(t)
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil || d {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || d {
 		t.Fatalf("a clean worktree: %v %v", d, err)
 	}
 	write(t, filepath.Join(f.wt, "README.md"), "outside\n")
@@ -491,7 +401,7 @@ func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
 		t.Fatal(err)
 	}
-	d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now)
+	d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
 	if err != nil || !d {
 		t.Fatalf("clean: %v %v", d, err)
 	}
@@ -524,7 +434,7 @@ func TestCleanSeatNeverRunsMidTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work in progress\n")
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || d || !strings.Contains(err.Error(), "holds task "+tk.ID) {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || d || !strings.Contains(err.Error(), "holds task "+tk.ID) {
 		t.Fatalf("mid-task clean: %v %v", d, err)
 	}
 	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); !strings.Contains(string(raw), "work in progress") {

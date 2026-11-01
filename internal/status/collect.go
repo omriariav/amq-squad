@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/activity"
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/state"
@@ -35,6 +37,10 @@ type CollectOptions struct {
 	Now                                         time.Time
 	Gates                                       []GateInput
 	PIDAlive                                    func(int) bool // default procinfo.Alive
+	// StartToken reads a pid's raw start stamp (default
+	// procinfo.StartToken): the lead record's pid is live only with its
+	// recorded stamp.
+	StartToken func(int) (string, bool)
 }
 
 // Freshness windows for the seat liveness inputs.
@@ -52,6 +58,9 @@ func Collect(o CollectOptions) Input {
 	}
 	if o.PIDAlive == nil {
 		o.PIDAlive = procinfo.Alive
+	}
+	if o.StartToken == nil {
+		o.StartToken = procinfo.StartToken
 	}
 	in := Input{Root: o.Root, Session: o.Session, ProjectPath: o.ProjectPath, ProducerVersion: o.ProducerVersion, Now: o.Now, Gates: o.Gates}
 	warn := func(format string, args ...any) { in.Warnings = append(in.Warnings, fmt.Sprintf(format, args...)) }
@@ -95,6 +104,12 @@ func Collect(o CollectOptions) Input {
 		in.NeedsYou = append(in.NeedsYou, ThreadInput{ID: th.ID, Seat: seat, Subject: th.Subject, Since: th.LastEventAt})
 	}
 	in.Alerts = collectAlerts(o.Root, warn)
+	// brief 31-1: the lead and the scheduler process, the decisions tail,
+	// the merge train's runs, and each seat's launch budget
+	collectProcesses(o, &in, warn)
+	collectDecisions(o, &in, warn)
+	collectTrain(o, &in, warn)
+	in.Requests = collectRequests(o.Root, warn)
 	entries, err := os.ReadDir(filepath.Join(o.Root, "agents"))
 	if err != nil && !os.IsNotExist(err) {
 		warn("agents: %v", err)
@@ -121,10 +136,18 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 	// The seat's role, runtime, model and effort join from its launch record
 	// (2b-2): the published one, else the core's staged one (before seat-exec
 	// publishes). Only the published record is a liveness signal.
-	if raw, err := os.ReadFile(filepath.Join(launch.StagedDir(o.Root, handle), launch.FileName)); err == nil {
-		if staged, err := launch.Decode(raw); err == nil {
-			joinLaunchRecord(&seat, staged)
+	if staged, sl, warnings, ok := seatLaunchState(o.Root, handle, o.Now); ok {
+		joinLaunchRecord(&seat, staged)
+		// brief 31-1: the seat's worktree, branch and last launch, and the
+		// warnings of its launch
+		seat.Worktree, seat.Branch, seat.Launch = staged.Worktree, staged.Branch, sl
+		// brief 31-2: a warning the owner cleared for this launch moves to
+		// the acknowledged list
+		clears, err := schedproc.ReadClears(o.Root)
+		if err != nil {
+			warn("clears: %v", err)
 		}
+		seat.Warnings, seat.AcknowledgedWarnings = splitCleared(warnings, clears[handle], staged.LaunchID)
 	}
 	rec, err := launch.Read(dir)
 	switch {
@@ -177,6 +200,39 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 		}
 	}
 	return seat, led.tokens
+}
+
+// seatWarnings are a Claude seat's warnings from its core-staged launch
+// record (brief 31-1: what used to refuse the seat is a line here): a seat
+// that ran (its accepted proof in the launch ledger) with no hook report
+// since, its worktree's Claude allow rules, and a CLAUDE.md that imports a
+// file outside the worktree. Lock-free reads only.
+func seatWarnings(root, handle string) []string {
+	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return nil
+	}
+	rec, err := launch.Decode(raw)
+	if err != nil || rec.Runtime != "claude" {
+		return nil
+	}
+	var out []string
+	if proof, err := launch.ReadProof(root, handle); err == nil && proof.PID > 0 && proof.LaunchID == rec.LaunchID {
+		if n, err := claudeseat.ReportsSince(root, handle, proof.At); err == nil && n == 0 {
+			out = append(out, claudeseat.HooksSilent+": no hook report since the seat's launch at "+proof.At.UTC().Format(time.RFC3339))
+		}
+	}
+	worktree := firstNonEmpty(rec.Worktree, rec.CWD)
+	if worktree == "" {
+		return out
+	}
+	if rules := claudeseat.WorktreeAllowRules(worktree); len(rules) > 0 {
+		out = append(out, claudeseat.AllowRulesPresent+": "+strings.Join(rules, "; "))
+	}
+	if ext := claudeseat.ExternalIncludes(worktree); len(ext) > 0 {
+		out = append(out, claudeseat.ExternalIncludesPending+": "+strings.Join(ext, "; "))
+	}
+	return out
 }
 
 // joinLaunchRecord fills the seat row's identity fields from a launch record;
@@ -452,4 +508,46 @@ func pushURLMissing(root string) []string {
 		}
 	}
 	return out
+}
+
+// seatLaunchState is a seat's staged launch record, its last launch and
+// the warnings of that launch before any clear: the one computation status
+// shows and the clear key's check reads (CurrentSeatWarnings). ok is false
+// without a readable staged record, and then the seat has no warnings.
+func seatLaunchState(root, handle string, now time.Time) (staged launch.Record, sl *SeatLaunch, warnings []string, ok bool) {
+	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return launch.Record{}, nil, nil, false
+	}
+	if staged, err = launch.Decode(raw); err != nil {
+		return launch.Record{}, nil, nil, false
+	}
+	sl = seatLaunch(root, handle, staged)
+	warnings = append(seatWarnings(root, handle), launchWarnings(root, handle, staged, sl, now)...)
+	return staged, sl, warnings, true
+}
+
+// CurrentSeatWarnings is the seat's current launch id and the warnings
+// status computes for that launch now, before any clear (brief 31-2): the
+// scheduler accepts a clear only for a warning this returns.
+func CurrentSeatWarnings(root, handle string) (string, []string, error) {
+	staged, _, warnings, ok := seatLaunchState(root, handle, time.Now())
+	if !ok {
+		return "", nil, fmt.Errorf("seat %s has no readable launch record", handle)
+	}
+	return staged.LaunchID, warnings, nil
+}
+
+// splitCleared moves each warning the owner cleared for this launch out of
+// the warnings (brief 31-2): a clear names the warning's code and the
+// launch, so a later launch's same condition stays a warning.
+func splitCleared(warnings []string, clears []schedproc.ClearLine, launchID string) (kept, acknowledged []string) {
+	for _, w := range warnings {
+		if schedproc.Cleared(clears, schedproc.WarningCode(w), launchID) {
+			acknowledged = append(acknowledged, w)
+		} else {
+			kept = append(kept, w)
+		}
+	}
+	return kept, acknowledged
 }

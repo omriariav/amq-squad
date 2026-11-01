@@ -14,18 +14,28 @@ import (
 // Returns ok=false on a malformed/short buffer. Platform-neutral (no syscalls)
 // so it is unit-testable on any OS.
 func parseKernProcArgs2(buf []byte) (string, bool) {
-	if len(buf) < 4 {
+	args, ok := parseKernProcArgs2Argv(buf)
+	if !ok {
 		return "", false
+	}
+	return strings.Join(args, " "), true
+}
+
+// parseKernProcArgs2Argv is parseKernProcArgs2's argv as its own strings
+// (an argument holding a space stays one argument).
+func parseKernProcArgs2Argv(buf []byte) ([]string, bool) {
+	if len(buf) < 4 {
+		return nil, false
 	}
 	argc := int(binary.LittleEndian.Uint32(buf[:4])) // darwin is little-endian
 	if argc <= 0 {
-		return "", false
+		return nil, false
 	}
 	p := buf[4:]
 	// Skip the exec path up to its NUL, then the run of NUL padding before argv.
 	i := bytes.IndexByte(p, 0)
 	if i < 0 {
-		return "", false
+		return nil, false
 	}
 	p = p[i:]
 	for len(p) > 0 && p[0] == 0 {
@@ -42,9 +52,9 @@ func parseKernProcArgs2(buf []byte) (string, bool) {
 		p = p[j+1:]
 	}
 	if len(args) == 0 {
-		return "", false
+		return nil, false
 	}
-	return strings.Join(args, " "), true
+	return args, true
 }
 
 // parseProcCmdline parses a linux /proc/<pid>/cmdline buffer (NUL-separated
@@ -59,4 +69,13 @@ func parseProcCmdline(buf []byte) (string, bool) {
 		return "", false
 	}
 	return out, true
+}
+
+// parseProcCmdlineArgv is a linux /proc/<pid>/cmdline buffer as its argv.
+func parseProcCmdlineArgv(buf []byte) ([]string, bool) {
+	trimmed := strings.TrimRight(string(buf), "\x00")
+	if trimmed == "" {
+		return nil, false
+	}
+	return strings.Split(trimmed, "\x00"), true
 }

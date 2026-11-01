@@ -24,8 +24,8 @@ func TestWriteLaysOutTheSeatConfigDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := os.Stat(dir); st.Mode().Perm() != 0o700 || !strings.HasPrefix(w.Digest, "sha256:") {
-		t.Fatalf("dir mode %v, digest %q", st.Mode().Perm(), w.Digest)
+	if st, _ := os.Stat(dir); st.Mode().Perm() != 0o700 || w.Dir != dir {
+		t.Fatalf("dir mode %v, dir %q", st.Mode().Perm(), w.Dir)
 	}
 	var s struct {
 		Permissions struct {
@@ -47,9 +47,6 @@ func TestWriteLaysOutTheSeatConfigDir(t *testing.T) {
 	if st, _ := os.Stat(matches[0]); string(got) != string(want) || st.Mode().Perm() != 0o700 {
 		t.Fatalf("the installed hook script is not the embedded one (mode %v)", st.Mode().Perm())
 	}
-	if code, detail := Check(dir, os.Getuid(), w.Digest, "dontAsk"); code != "" {
-		t.Fatalf("check: %s %s", code, detail)
-	}
 	if _, err := Write(dir, "dontAsk", "/wt/c1", t0); err == nil {
 		t.Fatal("a launch's config dir was written twice")
 	}
@@ -59,30 +56,6 @@ func TestWriteLaysOutTheSeatConfigDir(t *testing.T) {
 	}
 	if _, err := Write(planted, "dontAsk", "/wt/c1", t0); err == nil {
 		t.Fatal("a dir that already existed (not created by this launch) was used")
-	}
-}
-
-// The digest covers settings.json, the plugin files and the first-run facts
-// only: Claude Code's own state (projects, session files, the rest of
-// .claude.json) does not move it; a managed byte does.
-func TestDigestCoversOnlyTheManagedFiles(t *testing.T) {
-	dir := Dir(t.TempDir(), "c1", "l")
-	w, err := Write(dir, "dontAsk", "/wt", t0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"numStartups":3,"userID":"u","hasCompletedOnboarding":true,"projects":{"/wt":{"hasTrustDialogAccepted":true,"lastCost":1},"/repo":{"allowedTools":[]}}}`), 0o644)
-	for _, p := range []string{"projects/-wt/session.jsonl", "todos/x.json", "statsig/y"} {
-		full := filepath.Join(dir, filepath.FromSlash(p))
-		os.MkdirAll(filepath.Dir(full), 0o700)
-		os.WriteFile(full, []byte("claude state"), 0o600)
-	}
-	if d, _ := Digest(dir); d != w.Digest {
-		t.Fatal("Claude's own state moved the digest")
-	}
-	os.WriteFile(filepath.Join(dir, "plugins", "installed_plugins.json"), []byte("{}"), 0o600)
-	if d, _ := Digest(dir); d == w.Digest {
-		t.Fatal("a managed file changed and the digest did not")
 	}
 }
 
@@ -98,26 +71,5 @@ func TestWorktreeAllowRules(t *testing.T) {
 	got := WorktreeAllowRules(wt)
 	if len(got) != 2 || !strings.Contains(got[0], "Bash(git:*)") || !strings.Contains(got[1], "unreadable") {
 		t.Fatalf("rules: %v", got)
-	}
-}
-
-// P1-10: the digest reads through descriptors with no symlink followed: a
-// managed file swapped for a symlink to identical bytes fails, where a
-// path-based hash would have matched.
-func TestDigestRefusesASymlinkedManagedFile(t *testing.T) {
-	base, _ := filepath.EvalSymlinks(t.TempDir())
-	dir := filepath.Join(base, "cfg")
-	if _, err := Write(dir, "dontAsk", base, time.Unix(1, 0)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Digest(dir); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
-	os.WriteFile(filepath.Join(base, "copy.json"), raw, 0o600)
-	os.Remove(filepath.Join(dir, "settings.json"))
-	os.Symlink(filepath.Join(base, "copy.json"), filepath.Join(dir, "settings.json"))
-	if _, err := Digest(dir); err == nil {
-		t.Fatal("a symlinked settings.json was hashed")
 	}
 }

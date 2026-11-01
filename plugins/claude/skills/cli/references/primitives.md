@@ -67,6 +67,6 @@ ever sees it.
 The v2 runtime-control and lifecycle verbs are gone: there is no `start`, `resume`,
 `down`, `send`, `focus`, `agent`, `init` or `wizard` verb, and no `team member`,
 `team sync` or `team shared-cwd-exception`. Seats start through the AMQ launch API
-(`amq-squad launch`, or the scheduler on demand), a stopped seat is the scheduler's
+(the scheduler beside `amq-squad lead --team`, from squad.yaml), a stopped seat is the scheduler's
 to restart, and the squad is `squad.yaml`, changed only through `team propose` and
 `team apply`. `amq-squad migrate` converts a v2 profile once.

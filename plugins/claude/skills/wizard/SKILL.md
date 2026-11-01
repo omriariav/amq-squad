@@ -1,7 +1,7 @@
 ---
 name: "wizard"
 description: "Goal-first squad setup and launch for amq-squad 3.0 through the squad.yaml digest flow. Use when creating a squad for a repository, writing the workstream brief, previewing the files a squad needs, approving that exact digest, or launching the seats. Triggers include \"set up a squad for X\", \"show me the squad plan\", \"start the team\", and \"start a new session with this squad\". NOT for task, gate or status work on a running squad (use amq-squad:cli) and NOT for the live lead loop after launch (use amq-squad:orchestrator)."
-version: "3.0.2"  # x-release-please-version
+version: "3.1.0"  # x-release-please-version
 allowed-tools: "Bash, Read, Write, Edit, MultiEdit, Glob, Grep, WebFetch"
 argument-hint: "[goal | roles | propose | apply | brief | launch]"
 user-invocable: true
@@ -27,7 +27,7 @@ amq-squad roles
 with their logins, the registry, codex-cli trust and the owner files; it writes
 nothing by default. `trust` prints the lines the owner adds to `~/.codex/config.toml`
 for a Codex seat's repository; amq-squad never writes that file. The owner setup
-items (the claude pin, the gh pin, the token file, the Codex notify line) are the
+items (the gh pin, the token file, the Codex notify line) are the
 owner's, listed in MIGRATION.md "Moving to 3.0". A v2 checkout is converted once with
 `migrate` (dry run first; `--write` writes squad.yaml only when absent).
 
@@ -104,24 +104,22 @@ without a drafter. `--dry-run` prints the candidate without writing; without
 ## 5. Launch
 
 Seats start through one AMQ launch request; every seat runs behind the `seat-exec`
-wrapper, which sets the seat's identity from the launch record. Three entry points:
+wrapper, which sets the seat's identity from the launch record. squad.yaml is the one
+source: each seat's handle, role, runtime, model and effort, the session and the lead
+handle; a seat's worktree is derived under `.worktrees/<handle>`. Two entry points:
 
-- `launch --seats FILE`: the typed seat list (JSON, shown in `amq-squad launch
-  --help`: `project_root`, `session`, `rules_path` and one entry per seat with
-  `handle`, `runtime`, `model`, `effort`, `role_file`, `worktree`, `branch`). Preview
-  with `--dry-run`. A required action, such as AMQ's trust confirmation, is never
-  answered for you: the launch stops, prints the action ids and exits 10; rerun with
-  `--decision ACTION_ID=CHOICE` only on the owner's answer.
-- `lead --team --scheduler-seats FILE`: the lead on the built-in pi in team mode,
-  with the squad's scheduler started beside it; the scheduler starts seats on demand
-  from the same seat list.
+- `lead --team` in the repository: the lead on the built-in pi in team mode (its
+  handle is squad.yaml's `lead`), with the squad's scheduler started beside it; the
+  scheduler launches every seat but the lead in one apply. A second lead on the same
+  root is refused `lead_running`, naming the first's pid and pane. Every launch
+  carries the owner's standing answer to AMQ's trust confirmation.
 - `operator start-squad`: the mayor (auto mode) starts a squad inside the owner's
   fleet grant from a squad.yaml through the digest flow and registers it in
   `fleet.yaml`; manual mode gives a proposal instead of a launch.
 
 ```sh
-# skill-invocation-check:skip — a launch reaches the installed amq and starts processes
-amq-squad launch --seats FILE --dry-run --json
+# skill-invocation-check:skip — the lead starts the scheduler, which launches the seats
+amq-squad lead --team
 ```
 
 A seat is reported up only after seat-exec proved its identity. Then read

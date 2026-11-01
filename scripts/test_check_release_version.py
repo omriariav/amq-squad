@@ -157,6 +157,24 @@ class RequireReleaseNotesTest(unittest.TestCase):
 
         self.assertIsNone(CHECK_RELEASE_VERSION.skill_frontmatter_version(body))
 
+    def test_release_candidate_form_is_accepted_and_reads_the_base_notes(self) -> None:
+        self.assertEqual(
+            CHECK_RELEASE_VERSION.VERSION_RE.match("v3.1.0-rc.1").group(1), "3.1.0-rc.1"
+        )
+        self.assertIsNone(CHECK_RELEASE_VERSION.VERSION_RE.match("v3.1.0-beta.1"))
+        for malformed in ("3.1.0-rc.1-beta.2", "3.1.0-rc.1+meta", "3.1.0-rc.1.2"):
+            body = f'---\nname: cli\nversion: "{malformed}"  # x-release-please-version\n---\n'
+            self.assertIsNone(CHECK_RELEASE_VERSION.skill_frontmatter_version(body), malformed)
+        body = '---\nname: cli\nversion: "3.1.0-rc.1"  # x-release-please-version\n---\n'
+        self.assertEqual(CHECK_RELEASE_VERSION.skill_frontmatter_version(body), "3.1.0-rc.1")
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "docs"))
+            with open(os.path.join(root, "docs", "v3.1.0-release-notes.md"), "w", encoding="utf-8") as f:
+                f.write("# amq-squad v3.1.0-rc.1\n")
+            failures: list[str] = []
+            CHECK_RELEASE_VERSION.require_release_notes(root, "v3.1.0-rc.1", failures)
+            self.assertEqual(failures, [])
+
     def test_matching_canonical_release_notes_passes(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             docs = os.path.join(root, "docs")

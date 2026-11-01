@@ -17,9 +17,11 @@ MANIFESTS = (
     "plugins/codex/.codex-plugin/plugin.json",
 )
 VERSION_SOURCE = "plugins/codex/.codex-plugin/plugin.json"
-VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
+# A release candidate is x.y.z-rc.N (3.1.0-rc.1); no other prerelease form,
+# as scripts/check-release-version.py reads it.
+VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+(?:-rc\.\d+)?)$")
 RELEASE_BRANCH_VERSION_RE = re.compile(
-    r"^release/v?(\d+\.\d+\.\d+)(?:[-/].*)?$"
+    r"^release/v?(\d+\.\d+\.\d+(?:-rc\.\d+)?)(?:[-/].*)?$"
 )
 
 

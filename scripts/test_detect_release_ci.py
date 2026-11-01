@@ -36,6 +36,26 @@ class DetectReleaseCITest(unittest.TestCase):
         )
         self.assertEqual(got, (True, "v2.29.3", "release_branch"))
 
+    def test_release_candidate_bump_runs_check_with_the_candidate_version(self) -> None:
+        got = DETECT_RELEASE_CI.decide_release(
+            "v3-31-rc1",
+            versions("3.0.2", "3.0.2"),
+            versions("3.1.0-rc.1", "3.1.0-rc.1"),
+        )
+        self.assertEqual(got, (True, "v3.1.0-rc.1", "manifest_version_bump"))
+        got = DETECT_RELEASE_CI.decide_release(
+            "release/v3.1.0-rc.1",
+            versions("3.0.2", "3.0.2"),
+            versions("3.0.2", "3.0.2"),
+        )
+        self.assertEqual(got, (True, "v3.1.0-rc.1", "release_branch"))
+        self.assertEqual(
+            DETECT_RELEASE_CI.manifest_version('{"version": "3.1.0-rc.1"}', "m"), "3.1.0-rc.1"
+        )
+        for malformed in ("3.1.0-beta.1", "3.1.0-rc.1-beta.2", "3.1.0-rc.1+meta"):
+            with self.assertRaises(ValueError, msg=malformed):
+                DETECT_RELEASE_CI.manifest_version('{"version": "%s"}' % malformed, "m")
+
     def test_non_release_pr_is_unaffected(self) -> None:
         got = DETECT_RELEASE_CI.decide_release(
             "fix/send-resolver",

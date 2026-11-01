@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,11 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 			return fail("a roster request needs an id and a handle (%q, %q)", r.ID, r.Handle)
 		}
 	}
+	// The drain is over: the scheduler launches now. Stamped before the
+	// roster plan, which ensures the worktrees and fetches the base tips,
+	// so a slow fetch counts as prepare, never as drain (Codex re-check on
+	// 31-2 PR 2).
+	drainEnd := time.Now()
 	q, err := l.PlanRoster(reqs)
 	if err != nil {
 		return fail("plan the roster: %v", err)
@@ -70,6 +76,25 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 	l.mu.Unlock()
 	opts := l.Options
 	opts.BeforeApply = l.resourcesGone(q.SessionRoot(), reqs)
+	// A request's own start (brief 31-2 PR 2: a relaunch's own stamp, or
+	// the add key's press for a seat its reload added) overrides the
+	// launch's for that seat's marks; the press is also its added_at.
+	opts.SeatStart, opts.SeatAddedAt = maps.Clone(l.Options.SeatStart), maps.Clone(l.Options.SeatAddedAt)
+	opts.DrainEnd = drainEnd
+	for _, r := range reqs {
+		if !r.Start.IsZero() {
+			if opts.SeatStart == nil {
+				opts.SeatStart = map[string]time.Time{}
+			}
+			opts.SeatStart[r.Handle] = r.Start
+		}
+		if !r.AddedAt.IsZero() {
+			if opts.SeatAddedAt == nil {
+				opts.SeatAddedAt = map[string]time.Time{}
+			}
+			opts.SeatAddedAt[r.Handle] = r.AddedAt
+		}
+	}
 	res, err := Launch(context.Background(), q, opts)
 	l.settleAll(rs, res, err)
 	return rosterOutcome(res, err)

@@ -1,7 +1,7 @@
 ---
 name: "orchestrator"
 description: "Live amq-squad 3.0 lead protocol after the squad is launched. Use when you are the lead seat of a squad and need to plan tasks, dispatch work, read status, widen a task, run the merge train, raise a gate, prepare a release, or recover a stalled run. Triggers include \"watch the squad\", \"what should I do next\", \"dispatch this task\", \"the run is stuck\", \"who is blocked\". NOT for preparing or launching a squad (use amq-squad:wizard) or for one-off status and inspection commands (use amq-squad:cli)."
-version: "3.0.2"  # x-release-please-version
+version: "3.1.0"  # x-release-please-version
 allowed-tools: "Bash, Read, Write, Edit, Glob, Grep"
 argument-hint: "[status | plan | dispatch | widen | merge-train | gate | release | recover]"
 user-invocable: true
@@ -196,9 +196,9 @@ the owner answers it. See `amq-squad:wizard` for the squad.yaml keys.
 | The owner never saw a blocker | It surfaced only in a seat pane or worker thread | Raise the typed gate and confirm it appears in `gate status` and `status` |
 | A seat's done task never reaches review | The commit step refused a path | Read the block's reason code; widen with `task widen` or send the seat back |
 | `task widen: takes no --me` | The scheduler proves the lead from the process | Drop `--me`; run it from your own seat |
-| `task widen: no running scheduler` | The scheduler is not running for this root | It runs beside the lead (`lead --team --scheduler-seats FILE`) |
+| `task widen: no running scheduler` | The scheduler is not running for this root | It runs beside the lead (`lead --team` in the repository) |
 | `merge-train` refuses a PR with `task_unbound` | No task was bound to that PR | Run the commit step with `--open-pr` for that task |
-| A seat is quarantined after a run | Its global agent config changed (`global_config_changed`) | Only the owner clears it, with `seat clear` from the owner's own terminal |
+| A seat carries a warning in status (`claude_hooks_silent`, `claude_allow_rules_present`) | A Claude seat's hook made no report, or its worktree carries allow rules | A warning, not a stop: tell the owner if it matters to the task |
 
 ## Recovery
 
