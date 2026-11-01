@@ -155,6 +155,10 @@ type Status struct {
 	// Train is the merge train's last runs (its audit log) and the owner
 	// alerts.
 	Train Train `json:"train"`
+	// Requests are the phone requests of the lead reply relay (brief
+	// 31-4), newest first: whether the lead's answer reached the owner's
+	// DM (relayed_at) or what the relay refused, by name.
+	Requests []Request `json:"requests"`
 }
 
 // DecisionsTail is how many decisions the document carries.
