@@ -919,6 +919,13 @@ func markerInfo(soloRoot, project string) (phaseMarker, bool) {
 // resumeOffer is what a solo lead restarted in a marked repository says:
 // the team it started, and the two ways back, the owner's up (the resume by
 // the act) or a fresh yes at either door (the witness path).
+// The steps work as written (Codex on #837): `amq-squad up` only once this
+// lead has quit (a live solo lead is lead_running to it), and a fresh
+// proposal, since a restarted lead holds none and a confirmation lapses.
 func resumeOffer(m phaseMarker) string {
-	return fmt.Sprintf("this session's team was started on %s with digest %s; run `amq-squad up` to resume it, or confirm it again at your pane (/squad confirm) or over Buzz", m.At.UTC().Format(time.RFC3339), m.Digest)
+	return fmt.Sprintf("This repository's team was started on %s with digest %s and this lead was restarted. "+
+		"To resume it: quit this lead and run `amq-squad up`. "+
+		"To start it again from here: ask me to propose the team again and confirm the new plan at your pane or over Buzz. "+
+		"The old plan cannot be confirmed again: a restarted lead holds no proposal, and a confirmation stands for %d minutes.",
+		m.At.UTC().Format(time.RFC3339), m.Digest, int(ConfirmTTL.Minutes()))
 }

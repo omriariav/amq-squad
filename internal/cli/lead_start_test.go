@@ -715,7 +715,12 @@ func TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing(t
 	if len(*starts) != 0 || call.getenv("AMQ_SQUAD_SOLO_LEAD") != "1" || call.getenv("AMQ_SQUAD_LEAD") != "" {
 		t.Fatalf("a marked restart: scheduler starts %d, solo %q, lead %q", len(*starts), call.getenv("AMQ_SQUAD_SOLO_LEAD"), call.getenv("AMQ_SQUAD_LEAD"))
 	}
-	for _, want := range []string{"started on 2026-11-01T09:00:00Z with digest " + digest, "run `amq-squad up` to resume it", "confirm it again at your pane (/squad confirm) or over Buzz"} {
+	// the offer's steps work as written: up after this lead quits (a live
+	// solo lead is lead_running to it), and a fresh proposal confirmed
+	// anew (a restarted lead holds no proposal; a confirmation lapses)
+	for _, want := range []string{"started on 2026-11-01T09:00:00Z with digest " + digest + " and this lead was restarted", "To resume it: quit this lead and run `amq-squad up`.",
+		"To start it again from here: ask me to propose the team again and confirm the new plan at your pane or over Buzz.",
+		"a restarted lead holds no proposal, and a confirmation stands for 30 minutes"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("the offer lacks %q:\n%s", want, stderr)
 		}
@@ -726,7 +731,7 @@ func TestASoloLeadRestartedInAMarkedRepositoryOffersTheWayBackAndStartsNothing(t
 	// a marker naming another repository offers nothing
 	other, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: "/elsewhere", Digest: digest, At: time.Now()})
 	mustWrite(t, phaseMarkerPath(soloRoot), string(other))
-	if _, stderr, err := captureOutput(t, func() error { return runLead(nil) }); err != nil || strings.Contains(stderr, "run `amq-squad up` to resume it") {
+	if _, stderr, err := captureOutput(t, func() error { return runLead(nil) }); err != nil || strings.Contains(stderr, "To resume it") {
 		t.Fatalf("another repository's marker: %v\n%s", err, stderr)
 	}
 }

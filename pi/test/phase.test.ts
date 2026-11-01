@@ -181,7 +181,15 @@ test("R53: a planted marker switches nothing; the switch rides the lead's answer
 		assert.ok(pi.getActiveTools().includes("bash"), "the planted marker switched at the session start");
 		const offers = (await pi.emitAll("before_agent_start", { systemPromptOptions: { sections: {} } }, fakeCtx())).filter((r) => r?.message?.customType === "amq-squad-resume");
 		assert.equal(offers.length, 1);
-		assert.equal(offers[0].message.content, `This session's team was started on 2026-11-01T09:00:00Z with digest ${DIGEST}; run \`amq-squad up\` to resume it, or confirm it again at your pane (/squad confirm) or over Buzz.`);
+		// both working paths (up after quitting; a fresh proposal) and why
+		// the old plan cannot be confirmed (no proposal; the 30 minutes)
+		assert.equal(
+			offers[0].message.content,
+			`This repository's team was started on 2026-11-01T09:00:00Z with digest ${DIGEST} and this lead was restarted. ` +
+				"To resume it: quit this lead and run `amq-squad up`. " +
+				"To start it again from here: ask me to propose the team again and confirm the new plan at your pane or over Buzz. " +
+				"The old plan cannot be confirmed again: a restarted lead holds no proposal, and a confirmation stands for 30 minutes.",
+		);
 		const again = (await pi.emitAll("before_agent_start", { systemPromptOptions: { sections: {} } }, fakeCtx())).filter((r) => r?.message?.customType === "amq-squad-resume");
 		assert.equal(again.length, 0, "the offer said twice");
 		const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], fakeCtx());

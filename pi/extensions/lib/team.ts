@@ -40,6 +40,20 @@ export type TeamIdentity = { root: string; base_root?: string; session?: string;
 export const PHASE_KIND = "amq-squad.phase.v1";
 // RESUME_MESSAGE is the restarted lead's offer, said once on the first turn.
 export const RESUME_MESSAGE = "amq-squad-resume";
+
+// resumeOffer is the restarted lead's offer, in steps that work as written
+// (Codex on #837): amq-squad up only after this lead quits (a live solo
+// lead is lead_running to it), and a fresh proposal, since a restarted lead
+// holds none and a confirmation stands for 30 minutes. The same text as
+// internal/cli/lead_start.go resumeOffer.
+export function resumeOffer(at: string, digest: string): string {
+	return (
+		`This repository's team was started on ${at} with digest ${digest} and this lead was restarted. ` +
+		"To resume it: quit this lead and run `amq-squad up`. " +
+		"To start it again from here: ask me to propose the team again and confirm the new plan at your pane or over Buzz. " +
+		"The old plan cannot be confirmed again: a restarted lead holds no proposal, and a confirmation stands for 30 minutes."
+	);
+}
 type StartReply = { outcome: string; refusal?: string; detail?: string; roster?: string[]; owner_steps?: string[][]; team?: TeamIdentity; steps?: { name: string; outcome: string; refusal?: string; detail?: string }[] };
 
 // digestPrefix is the 16-hex prefix the owner types (R32's length).
@@ -378,7 +392,7 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 		offered = true;
 		const m = team.markerInfo();
 		if (!m) return undefined;
-		return { message: { customType: RESUME_MESSAGE, display: true, content: `This session's team was started on ${m.at} with digest ${m.digest}; run \`amq-squad up\` to resume it, or confirm it again at your pane (/squad confirm) or over Buzz.` } };
+		return { message: { customType: RESUME_MESSAGE, display: true, content: resumeOffer(m.at, m.digest) } };
 	});
 	pi.registerTool({
 		name: "amq_team_propose",
