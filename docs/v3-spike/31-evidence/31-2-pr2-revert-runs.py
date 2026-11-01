@@ -121,7 +121,7 @@ run("no drain segment in status",
  [('internal/status/screen.go','\tif drainEnd != nil && start != nil && !drainEnd.Before(*start) {','\tif false && drainEnd != nil && start != nil && !drainEnd.Before(*start) {')],
  G+"-run TestARelaunchedSeatsBudgetNamesTheDrain ./internal/status/")
 run("no drain end recorded by the roster launch",
- [('internal/seatlaunch/roster.go','\topts.DrainEnd = time.Now() //','\t_ = time.Now() //')],
+ [('internal/seatlaunch/roster.go','\topts.DrainEnd = drainEnd\n','\t_ = drainEnd\n')],
  G+"-run 'TestTheAddedSeatsMarksStart|TestAnAddedSeatKeepsItsStart' ./internal/seatlaunch/")
 run("the socket only parsing the start",
  [('internal/schedproc/roster.go','if why := CheckRelaunchStart(t, RunningLaunchStart(launchStart, s.LastRelaunchAt()), now); why != "" {','if why := CheckRelaunchStart(t, RunningLaunchStart(launchStart, s.LastRelaunchAt()), now); false && why != "" {')],
@@ -145,7 +145,7 @@ run("no roster_over_cap decision",
  [('internal/scheduler/roster.go','\tif cap := s.Config.MaxSeats; len(r.Roster) > cap {','\tif cap := s.Config.MaxSeats; false && len(r.Roster) > cap {')],
  both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns ./internal/cli/"))
 run("the roster trimmed to the cap at a reload (seats beyond it unlaunched)",
- [('internal/schedproc/roster.go','\treturn &scheduler.RosterReload{Roster: roster,','\tif maxSeats > 0 && len(roster) > maxSeats {\n\t\troster = roster[:maxSeats]\n\t}\n\treturn &scheduler.RosterReload{Roster: roster,')],
+ [('internal/schedproc/roster.go','\tnext := &scheduler.RosterReload{Roster: roster,','\tif maxSeats > 0 && len(roster) > maxSeats {\n\t\troster = roster[:maxSeats]\n\t}\n\tnext := &scheduler.RosterReload{Roster: roster,')],
  both(G+"-run TestAReloadOverTheCapLaunchesEverySeatAndCapsTheLeases ./internal/schedproc/", G+"-run TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns ./internal/cli/"))
 run("the screen showing no over-cap line",
  [('pi/extensions/lib/screen.ts','if (sch && sch.max_seats > 0 && sch.live_seats > sch.max_seats) {','if (false && sch) {')],
