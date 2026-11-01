@@ -92,7 +92,7 @@ run("the shell apply with no lead check",
  [('internal/cli/team.go','\tif err := withNoLead(dir, strings.TrimSpace(digest), func() error { return b.plan.Apply(strings.TrimSpace(digest)) }); err != nil {','\tif err := b.plan.Apply(strings.TrimSpace(digest)); err != nil {')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the shell apply ignoring a running solo lead",
- [('internal/cli/team_confirm.go','\tif c, derr := dialLead(root); derr == nil {','\tif c, derr := dialLead(root); false && derr == nil {')],
+ [('internal/cli/team_confirm.go','\t\tc.Close()\n\t\treturn fmt.Errorf("%s: the solo lead of %s is running','\t\tc.Close()\n\t\tif true {\n\t\t\tbreak\n\t\t}\n\t\treturn fmt.Errorf("%s: the solo lead of %s is running')],
  C+"TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot")
 run("the shell apply ignoring a team lead's lock",
  [('internal/cli/team_confirm.go','\tif held {','\tif false && held {')],
@@ -208,7 +208,7 @@ run("the squad files planned over the mayor's spelling of the checkout",
  [('internal/cli/lead_start.go','\td, err := w.teamSquadWriter.Propose(w.project, text)','\td, err := w.teamSquadWriter.Propose(projectPath, text)'),('internal/cli/lead_start.go','func (w *confirmedSquadWriter) Propose(_ string, text string) (string, error) {','func (w *confirmedSquadWriter) Propose(projectPath string, text string) (string, error) {')],
  C+"TestTheStartOfAConfirmedTeam")
 run("the start ignoring a held lead lock",
- [('internal/cli/lead_start.go','\t\t\tlock, err := UpLeadLock(root)\n\t\t\tif err != nil {','\t\t\tlock, err := UpLeadLock(root)\n\t\t\tif err != nil && false {')],
+ [('internal/cli/lead_start.go','\t\t\tlock, err := UpLeadLock(s.project, root)\n\t\t\tif err != nil {','\t\t\tlock, err := UpLeadLock(s.project, root)\n\t\t\tif err != nil && false {')],
  C+"TestTheStartRefusesLeadRunning")
 run("the launch budget not starting at the confirmation",
  [('internal/cli/lead_start.go','\t\tos.Setenv(leadStartEnv, l.at.UTC().Format(time.RFC3339Nano))\n','')],
@@ -221,7 +221,7 @@ run("the session step uncounted (up's and the apply's path not shared)",
  [('internal/cli/up.go','\tcountShared("session")\n','')],
  C+"'TestUpAndTheLeadTeam|TestTheStartOfAConfirmedTeam'")
 run("lead --team taking the lead lock outside the shared function",
- [('internal/cli/pi_lead.go','\t\tlock, err := UpLeadLock(teamIdentity.Root)','\t\tlock, err := takeLeadLock(teamIdentity.Root)')],
+ [('internal/cli/pi_lead.go','\t\tlock, err := UpLeadLock(teamProject, teamIdentity.Root)','\t\tlock, err := takeLeadLock(teamIdentity.Root)')],
  C+"TestUpAndTheLeadTeam")
 run("lead --team starting the scheduler outside the shared function",
  [('internal/cli/pi_lead.go','\t\tsup, err := UpScheduler(teamProject,','\t\tsup, err := startLeadScheduler(teamProject,')],
