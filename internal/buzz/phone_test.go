@@ -1006,6 +1006,35 @@ func TestAnUndeliveredTurnIsTakenBackAndARollbackFailureIsNamed(t *testing.T) {
 	}
 }
 
+// Codex re-check #4: the record names the real lead, with the turn's
+// delivered mark, before the DM is marked handled. If that write fails
+// after the forward, the DM stays unhandled (serve's redelivery is
+// accepted and records the real lead) and the refusal is named.
+func TestTheRealLeadIsRecordedBeforeTheDMIsHandled(t *testing.T) {
+	pf := newPhoneFixture(t)
+	failStoreOn(t, 2) // 1: the record with the bound mailbox, 2: the real lead
+	ev, msg := pf.dm(t, "@lead-b what is left for 3.1?", "")
+	pf.step(t)
+	if res, _ := pf.serve.result(msg); res != "refused - "+RelayRecordFailed {
+		t.Fatalf("the failed lead write: %q", res)
+	}
+	relayRecordWrite = nil
+	pf.relay(t) // the undelivered turn is taken back
+	again := pf.serve.deliver(ev, pf.core.Pin.Channel, "@lead-b what is left for 3.1?")
+	pf.step(t)
+	if res, _ := pf.serve.result(again); !routedTo(res, "lead-b") {
+		t.Fatalf("the redelivery: %q", res)
+	}
+	rec := pf.record(t, RequestID(ev))
+	if rec.Lead != "lead-b" || rec.Route != "lead-b" || len(rec.Turns) != 1 || !rec.Turns[0].Delivered {
+		t.Fatalf("the record: lead %q route %q turns %+v", rec.Lead, rec.Route, rec.Turns)
+	}
+	pf.threads.reply("lead-b", CockpitThread(RequestID(ev)), "t26 and the notes.", "")
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "posted" {
+		t.Fatalf("the real lead's reply: %+v", got)
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

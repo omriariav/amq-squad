@@ -389,11 +389,16 @@ func (h *Handler) route(ctx context.Context, hd *Handled, e nostr.Event, content
 		return
 	}
 	hd.Delivery = &d
+	// the real lead and the delivered mark before the DM is marked handled
+	// (Codex re-check #4): if that write fails, the DM stays unhandled so
+	// serve's redelivery works, and the relay takes the turn back
+	if err := h.finishTurn(rec, cont == nil, d, now); err != nil {
+		hd.Kind, hd.Error = "error", "relay record: "+err.Error()
+		h.final(ctx, hd, "refused - "+RelayRecordFailed)
+		return
+	}
 	if err := h.seen.put(id, "-", now); err != nil {
 		hd.Error = "once-only record: " + err.Error()
-	}
-	if err := h.finishTurn(rec, cont == nil, d, now); err != nil {
-		hd.Error = joinErr(hd.Error, "relay record: "+err.Error())
 	}
 	dest := d.Mailbox
 	if d.Lead != "" {
