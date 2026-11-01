@@ -269,32 +269,124 @@ with a scripted runner.
 
 ## 4. The revert runs
 
-Each change was reverted alone and its rows run; each reverted run failed
-(the restored tree passes):
+Each change was reverted alone in the working tree, its rows were run, and
+the file was restored from git. The script is
+docs/v3-spike/31-evidence/31-2-pr2-revert-runs.py (it refuses a dirty
+tree). Its output at the head that carries the Codex P2 fixes, verbatim
+(the pi lines are node's `not ok` lines):
 
-| Reverted change | Failing row |
-| --- | --- |
-| the router's pools fixed at open (`SetRosterPools` a no-op) | routing `TestARosterSeatAddedByAReload...`, cli `TestARelaunchAfterASquadYAMLEdit...` |
-| the swap at the request instead of the drain's end | scheduler `TestAReloadSwapsAtTheDrainsEnd...` |
-| the roster written although `Swap` failed | scheduler `TestAFailedSwap...` |
-| a compile error ignored (the relaunch drains) | schedproc `TestARelaunchWhoseSquadDoesNotCompile...` (both squad_invalid cases) |
-| no undo between the swap's writes | schedproc `TestAHalfAppliedReloadIsNeverObserved` (both injection points) |
-| the relaunch without the reload (process.go) | schedproc `TestARelaunchReloadsSquadYAML...` |
-| `scheduler run` wiring no reload | cli `TestARelaunchAfterASquadYAMLEdit...` |
-| no per-request start in the roster launch | scheduler `TestAReloadSwapsAtTheDrainsEnd...` |
-| `marks.json` with the launch's start for every seat | seatlaunch `TestTheAddedSeatsMarksStartIsTheKeyPress` |
-| `relaunch --start` not passed to the request | cli `TestARelaunchAfterASquadYAMLEdit...` |
-| `--add-seat` ignored | cli `TestTeamAddSeat...` |
-| `--add-seat` re-rendering the team rules | cli `TestTeamAddSeat...` |
-| the add key adding tasks only | pi `add, seat: ...` (all three) |
-| the relaunch without `--start` | pi `add, seat: team apply with the digest, ...` |
-| the confirmation skipped | pi `add, seat: team apply with the digest, ...` and the declined row |
-| a tool added to the lead (row E) | pi `the lead's model tool list ...` |
-| the swap keeping the start's lease cap | scheduler `TestAReloadRecomputesTheLeaseCap/cap_3`, schedproc `TestARelaunchReloadsSquadYAML...`, cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` |
-| `scheduler run` wiring no cap (`Reload.Cap` returning none) | cli `TestAReloadRecomputesTheLeaseCapFromTheNewSquad` |
-| no `roster_over_cap` decision | scheduler `TestAReloadRecomputesTheLeaseCap/cap_2`, cli `TestAReloadOverTheLeaseCap...` |
-| the screen showing no over-cap line | pi `over the lease cap: ...` |
-| the cap written before `Swap` (outside the one step) | schedproc `TestAHalfAppliedReloadIsNeverObserved` (both injection points) |
+```text
+REVERT router pools fixed at open (SetRosterPools a no-op): fails (the row catches it)
+   --- FAIL: TestARosterSeatAddedByAReloadIsAdmittedAfterTheSwapAndNotBefore (0.00s)
+   --- FAIL: TestARelaunchAfterASquadYAMLEditLaunchesTheNewSeatAndAdmitsItsPool (10.23s)
+REVERT the swap at the request, not the drain's end: fails (the row catches it)
+   --- FAIL: TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress (0.05s)
+REVERT the roster written although Swap failed: fails (the row catches it)
+   --- FAIL: TestAFailedSwapRelaunchesTheRunningRosterUnchanged (0.00s)
+REVERT a compile error ignored (the relaunch drains): fails (the row catches it)
+   --- FAIL: TestARelaunchWhoseSquadDoesNotCompileIsRefusedBeforeTheDrain (0.31s)
+   --- FAIL: TestARelaunchWhoseSquadDoesNotCompileIsRefusedBeforeTheDrain/squad_invalid (0.08s)
+   --- FAIL: TestARelaunchWhoseSquadDoesNotCompileIsRefusedBeforeTheDrain/no_seat_but_the_lead (0.08s)
+   --- FAIL: TestARelaunchWhoseSquadDoesNotCompileIsRefusedBeforeTheDrain/no_cap (0.08s)
+REVERT no undo between the swap's writes: fails (the row catches it)
+   --- FAIL: TestAHalfAppliedReloadIsNeverObserved (0.05s)
+   --- FAIL: TestAHalfAppliedReloadIsNeverObserved/pools (0.03s)
+   --- FAIL: TestAHalfAppliedReloadIsNeverObserved/roster (0.03s)
+REVERT the relaunch without the reload (process.go): fails (the row catches it)
+   --- FAIL: TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat (0.02s)
+REVERT scheduler run wiring no reload: fails (the row catches it)
+   --- FAIL: TestARelaunchAfterASquadYAMLEditLaunchesTheNewSeatAndAdmitsItsPool (10.15s)
+REVERT no per-request start in the roster launch: fails (the row catches it)
+   --- FAIL: TestAReloadSwapsAtTheDrainsEndAndOnlyTheAddedSeatStartsFromTheKeyPress (0.07s)
+   --- FAIL: TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat (0.03s)
+REVERT marks.json with the launch's start for every seat: fails (the row catches it)
+   --- FAIL: TestTheAddedSeatsMarksStartIsTheKeyPress (0.10s)
+REVERT relaunch --start not passed to the request: fails (the row catches it)
+   --- FAIL: TestARelaunchAfterASquadYAMLEditLaunchesTheNewSeatAndAdmitsItsPool (0.24s)
+REVERT --add-seat ignored: fails (the row catches it)
+   --- FAIL: TestTeamAddSeatAppendsOneSeatThroughTheDigest (0.00s)
+REVERT --add-seat re-rendering the team rules: fails (the row catches it)
+   --- FAIL: TestTeamAddSeatAppendsOneSeatThroughTheDigest (0.00s)
+REVERT the add key adding tasks only: fails (the row catches it)
+   not ok 1 - add, seat: team apply with the digest, one confirmation, one relaunch carrying the key press
+   not ok 2 - add, seat: squad_invalid and the relaunch's refusal by name; a declined confirmation writes nothing
+   not ok 3 - add, seat: a cancel at any dialog runs no verb
+REVERT the add key's relaunch without --start: fails (the row catches it)
+   not ok 1 - add, seat: team apply with the digest, one confirmation, one relaunch carrying the key press
+REVERT the add key's confirmation skipped: fails (the row catches it)
+   not ok 1 - add, seat: team apply with the digest, one confirmation, one relaunch carrying the key press
+   not ok 2 - add, seat: squad_invalid and the relaunch's refusal by name; a declined confirmation writes nothing
+REVERT a tool added to the lead (row E): fails (the row catches it)
+   not ok 2 - the lead's model tool list carries no key verb and no gate-answer verb
+REVERT the swap keeping the start's lease cap: fails (the row catches it)
+   --- FAIL: TestAReloadRecomputesTheLeaseCap (0.14s)
+   --- FAIL: TestAReloadRecomputesTheLeaseCap/cap_3 (0.00s)
+   --- FAIL: TestARelaunchReloadsSquadYAMLAndLaunchesTheAddedSeat (0.02s)
+   --- FAIL: TestAReloadRecomputesTheLeaseCapFromTheNewSquad (0.11s)
+REVERT scheduler run wiring no cap (Reload.Cap returning none): fails (the row catches it)
+   --- FAIL: TestAReloadRecomputesTheLeaseCapFromTheNewSquad (0.10s)
+REVERT no roster_over_cap decision: fails (the row catches it)
+   --- FAIL: TestAReloadRecomputesTheLeaseCap (0.14s)
+   --- FAIL: TestAReloadRecomputesTheLeaseCap/cap_2 (0.00s)
+   --- FAIL: TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns (0.11s)
+REVERT the screen showing no over-cap line: fails (the row catches it)
+   not ok 4 - over the lease cap: a warning line in the seats block, never a refusal
+REVERT the cap written before Swap (outside the one step): fails (the row catches it)
+   --- FAIL: TestAHalfAppliedReloadIsNeverObserved (0.05s)
+   --- FAIL: TestAHalfAppliedReloadIsNeverObserved/pools (0.02s)
+   --- FAIL: TestAHalfAppliedReloadIsNeverObserved/roster (0.03s)
+REVERT no drain segment in status: fails (the row catches it)
+   --- FAIL: TestARelaunchedSeatsBudgetNamesTheDrain (0.04s)
+REVERT no drain end recorded by the roster launch: fails (the row catches it)
+   --- FAIL: TestTheAddedSeatsMarksStartIsTheKeyPress (0.09s)
+   --- FAIL: TestAnAddedSeatKeepsItsStartAcrossRelaunches (0.09s)
+REVERT the socket only parsing the start: fails (the row catches it)
+   --- FAIL: TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain (0.08s)
+   --- FAIL: TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain/in_the_future (0.02s)
+   --- FAIL: TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain/before_the_launch_start (0.03s)
+REVERT the verb only parsing the start: fails (the row catches it)
+   --- FAIL: TestSchedulerRelaunchBoundsItsStart (0.00s)
+REVERT the added seats' starts cleared after each launch: fails (the row catches it)
+   --- FAIL: TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster (0.00s)
+REVERT a removed seat's start kept: fails (the row catches it)
+   --- FAIL: TestAnAddedSeatsStartIsKeptUntilItLeavesTheRoster (0.00s)
+REVERT a drain end written again on a later launch: fails (the row catches it)
+   --- FAIL: TestAnAddedSeatKeepsItsStartAcrossRelaunches (0.20s)
+REVERT the tick's state written from the config captured before the swap: fails (the row catches it)
+   --- FAIL: TestTheStateWrittenInTheRelaunchsTickNamesTheNewRoster (0.00s)
+```
+
+Every revert fails its rows; none passes.
+
+Two earlier runs needed redoing, recorded here so the record is whole:
+
+- **The half-applied revert first failed at build.** Its first form
+  dropped the undo calls and left `undoSquad` unused, so the package did not
+  compile:
+
+  ```text
+  change 2 (row B, half-applied): no undo between the writes: FAILS (good)
+      FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc [build failed]
+  ```
+
+  A build failure proves nothing about the row. The redo keeps the
+  variable (`_ = undoSquad`) and fails on the assertions, at both injection
+  points:
+
+  ```text
+      --- FAIL: TestAHalfAppliedReloadIsNeverObserved (0.05s)
+      --- FAIL: TestAHalfAppliedReloadIsNeverObserved/pools (0.03s)
+      --- FAIL: TestAHalfAppliedReloadIsNeverObserved/roster (0.03s)
+  ```
+
+  The redo's summary line then read "PASSES (bad)" only because the command
+  was piped through grep, which exited 0; the lines above are its output. The
+  script above runs no command through a pipe.
+- **The first cap revert pass ran on uncommitted edits.** Restoring a
+  reverted file from git dropped the cap edits not yet committed, and a later
+  revert then failed at build for that reason. The edits were reapplied and
+  committed, and every cap revert was run again on the commit; the output
+  above is from a clean tree.
 
 ## 5. The owner-run row: the launch budget from the add key
 
