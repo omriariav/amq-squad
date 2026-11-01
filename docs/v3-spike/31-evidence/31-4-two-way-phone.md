@@ -336,12 +336,14 @@ avivsinai/agent-message-queue:
 
 ## 10. Gate
 
-Run on e3993144965fc9a682569bc7b6f72cd24353fd05 (the code head; later commits on the branch are this note only):
+Run on 05043519 after the Codex round (later commits on the branch are this
+note only):
 
 ```text
 go build ./... && go vet ./... && go test -count=1 ./...   exit 0: 56 packages ok, 0 FAIL
 cd pi && npm ci --offline --ignore-scripts && npm test    exit 0: tests 60; pass 60; fail 0
 PATH=<pyvenv>/bin:$PATH make ci                         exit 0
+revert runs                                               41 of 41 caught, none by a build error
 ```
 
 ## 11. A line for the 3.1 release notes
