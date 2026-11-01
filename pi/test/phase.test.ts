@@ -32,13 +32,14 @@ const TEAM13 = [
 
 const envelope = (kind: string, data: unknown) => JSON.stringify({ schema_version: 1, kind, data });
 
-// fakeBin is a fake amq-squad answering from files: FAKE_<VERB> paths.
+// fakeBin is a fake amq-squad answering from files: FAKE_<VERB> paths;
+// context gives its host facts only when asked with --host.
 function fakeBin(dir: string): string {
 	return script(
 		dir,
 		"amq-squad",
 		`case "$1" in
-  context) cat "$FAKE_CONTEXT" ;;
+  context) case " $* " in *" --host "*) cat "$FAKE_CONTEXT" ;; *) echo '{"data":{"seat":{"handle":"cto"}}}' ;; esac ;;
   status) [ -n "$FAKE_STATUS_FAIL" ] && exit 1; cat "$FAKE_STATUS" ;;
   team) case "$2" in propose) cat "$FAKE_PROPOSE" ;; apply) cat "$FAKE_APPLY" ;; esac ;;
   guard) echo '{"verdict":"allow"}' ;;
