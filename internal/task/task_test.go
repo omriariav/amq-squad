@@ -1,6 +1,7 @@
 package task
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -167,18 +168,19 @@ func TestBlockWithPathsRecordsAndRearmsTypedWidenRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, err := s.BlockWithPaths(a.ID, "impl-1", ReasonWidenRequested, "need generated files", RouteLead,
-		[]string{"./docs/z.md", "src/b.go", "docs/z.md"}, t0.Add(time.Second))
+		[]string{"./docs/z.md", "src/[b].go", "docs/z.md"}, t0.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.State != StateBlocked || b.BlockReason != ReasonWidenRequested || strings.Join(b.RefusedPaths, ",") != "docs/z.md,src/b.go" || b.Lease != nil || b.Report != nil {
+	if b.State != StateBlocked || b.BlockReason != ReasonWidenRequested || strings.Join(b.RefusedPaths, ",") != "docs/z.md,src/[b].go" || b.Lease != nil || b.Report != nil {
 		t.Fatalf("typed block: %+v", b)
 	}
-	w, err := s.Widen(a.ID, "lead", "paths belong", []string{"docs/z.md", "src/b.go"}, time.Minute, t0.Add(2*time.Second))
+	literal, _ := LiteralGlob("src/[b].go")
+	w, err := s.Widen(a.ID, "lead", "paths belong", []string{"docs/z.md", literal}, time.Minute, t0.Add(2*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w.State != StatePending || w.BlockReason != "" || len(w.RefusedPaths) != 0 || w.Lease != nil || w.Report != nil || strings.Join(w.DeclaredFiles, ",") != "docs/z.md,src/a.go,src/b.go" || len(w.ScopeChanges) != 1 {
+	if w.State != StatePending || w.BlockReason != "" || len(w.RefusedPaths) != 0 || w.Lease != nil || w.Report != nil || strings.Join(w.DeclaredFiles, ",") != "docs/z.md,src/[[]b].go,src/a.go" || len(w.ScopeChanges) != 1 {
 		t.Fatalf("rearmed task: %+v", w)
 	}
 
@@ -189,6 +191,7 @@ func TestBlockWithPathsRecordsAndRearmsTypedWidenRequest(t *testing.T) {
 		"missing":      {ReasonWidenRequested, nil},
 		"wrong reason": {"needs_decision", []string{"b.go"}},
 		"invalid":      {ReasonWidenRequested, []string{"../b.go"}},
+		"directory":    {ReasonWidenRequested, []string{"src/"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s2 := newStore(t)
@@ -197,6 +200,38 @@ func TestBlockWithPathsRecordsAndRearmsTypedWidenRequest(t *testing.T) {
 				t.Fatal("invalid typed block was accepted")
 			}
 		})
+	}
+}
+
+func TestLoadRefusesInvalidRefusedPathsByName(t *testing.T) {
+	for _, bad := range []string{"/abs.go", "../escape.go", "./not-canonical.go", "src/"} {
+		t.Run(strings.ReplaceAll(bad, "/", "_"), func(t *testing.T) {
+			s := newStore(t)
+			if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(Task{Schema: Schema, ID: "t1", Class: "implement", State: StateBlocked, RefusedPaths: []string{bad}})
+			if err := os.WriteFile(filepath.Join(s.Dir, "t1.json"), raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.List(); err == nil || !strings.Contains(err.Error(), "t1.json") || !strings.Contains(err.Error(), "refused_paths") || !strings.Contains(err.Error(), bad) {
+				t.Fatalf("load %q: %v", bad, err)
+			}
+		})
+	}
+}
+
+func TestSnapshotRefusesInvalidRefusedPathsInJournal(t *testing.T) {
+	s := newStore(t)
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(journal{Schema: 1, ID: "bad", Tasks: []Task{{Schema: Schema, ID: "t1", RefusedPaths: []string{"../escape.go"}}}})
+	if err := os.WriteFile(filepath.Join(s.Dir, journalName), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Snapshot(s.Dir); err == nil || !strings.Contains(err.Error(), journalName) || !strings.Contains(err.Error(), "../escape.go") {
+		t.Fatalf("invalid journal refused_paths: %v", err)
 	}
 }
 

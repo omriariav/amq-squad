@@ -42,8 +42,16 @@ const TitleMax = 80
 // quoted on its own line), and the branch: a merge's base branch, or the
 // branch the release prepare found the tag's commit on.
 type Facts struct {
-	Title  string `json:"title,omitempty"`
-	Branch string `json:"branch,omitempty"`
+	Title  string     `json:"title,omitempty"`
+	Branch string     `json:"branch,omitempty"`
+	Links  []PathLink `json:"resolved_paths,omitempty"`
+}
+
+// PathLink records the spelling that resolved to a file named by a growth
+// gate. It is rendered only below the rule; paths never enter the question.
+type PathLink struct {
+	Path  string `json:"path"`
+	Alias string `json:"via_link"`
 }
 
 var branchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
@@ -53,11 +61,15 @@ var branchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 // The title is stored redacted (redact.Block): the record, `gate status`
 // and every reader see only the redacted text.
 func (f *Facts) normalize() *Facts {
-	if f == nil || (f.Title == "" && f.Branch == "") {
+	if f == nil || (f.Title == "" && f.Branch == "" && len(f.Links) == 0) {
 		return nil
 	}
 	c := *f
 	c.Title = redact.Block(c.Title)
+	c.Links = append([]PathLink(nil), c.Links...)
+	for i := range c.Links {
+		c.Links[i].Path, c.Links[i].Alias = redact.Block(c.Links[i].Path), redact.Block(c.Links[i].Alias)
+	}
 	return &c
 }
 
@@ -65,7 +77,7 @@ func (f *Facts) validate() error {
 	if f == nil {
 		return nil
 	}
-	if f.Title == "" && f.Branch == "" {
+	if f.Title == "" && f.Branch == "" && len(f.Links) == 0 {
 		return errors.New("gate facts are empty (omit them)")
 	}
 	if f.Title != "" {
@@ -82,6 +94,17 @@ func (f *Facts) validate() error {
 	if f.Branch != "" && (!branchRe.MatchString(f.Branch) || strings.Contains(f.Branch, "..")) {
 		return fmt.Errorf("gate facts branch %q is not a branch name", f.Branch)
 	}
+	if len(f.Links) > 64 {
+		return errors.New("gate facts have more than 64 resolved paths")
+	}
+	for _, l := range f.Links {
+		if l.Path == "" || l.Alias == "" || l.Path == l.Alias || len(l.Path)+len(l.Alias) > 1024 {
+			return errors.New("gate facts contain an invalid resolved path link")
+		}
+		if operatorauth.ValidateCanonicalSingleLineField("resolved path", l.Path, true) != nil || operatorauth.ValidateCanonicalSingleLineField("link alias", l.Alias, true) != nil {
+			return errors.New("gate facts contain an invalid resolved path link")
+		}
+	}
 	return nil
 }
 
@@ -89,12 +112,21 @@ func (f *Facts) validate() error {
 // left out (runs of blanks in a title made one space): what a raiser read
 // never stops its gate. nil when none is left.
 func SafeFacts(title, branch string) *Facts {
-	f := Facts{Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch: branch}
+	return SafeFactsWithLinks(title, branch, nil)
+}
+
+// SafeFactsWithLinks is SafeFacts plus resolved-path spellings for the
+// immutable record below the question's rule.
+func SafeFactsWithLinks(title, branch string, links []PathLink) *Facts {
+	f := Facts{Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch: branch, Links: links}
 	if (&Facts{Title: f.Title}).validate() != nil {
 		f.Title = ""
 	}
 	if (&Facts{Branch: f.Branch}).validate() != nil {
 		f.Branch = ""
+	}
+	if (&Facts{Links: f.Links}).validate() != nil {
+		f.Links = nil
 	}
 	return f.normalize()
 }
@@ -110,18 +142,26 @@ var ClassWords = []string{"tag", "GitHub release", "package release", "message o
 // target never reaches the question, its record, status or either display.
 // It is a function of the record's fields, so Validate's re-render agrees.
 func TextOf(r Record) string {
-	return redact.Block(strings.Join(append(PlainLines(r), "", Rule, identifiers(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest)), "\n"))
+	var links []PathLink
+	if r.Facts != nil {
+		links = r.Facts.Links
+	}
+	return redact.Block(strings.Join(append(PlainLines(r), "", Rule, identifiers(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest, links...)), "\n"))
 }
 
 // identifiers are the lines below the rule: the gate id, the squad, the
 // class and action, the target line and the full digest (whose first 16 hex
 // are the prefix the typed form names).
-func identifiers(squad, id, typedClass, action, target, digest string) string {
+func identifiers(squad, id, typedClass, action, target, digest string, links ...PathLink) string {
 	head := []string{"amq-squad gate " + id}
 	if squad != "" {
 		head = append(head, "squad: "+squad)
 	}
-	return strings.Join(append(head, "class: "+typedClass+" ("+action+")", "target: "+target, "digest: "+digest), "\n")
+	head = append(head, "class: "+typedClass+" ("+action+")", "target: "+target)
+	for _, l := range links {
+		head = append(head, l.Path+" via link "+l.Alias)
+	}
+	return strings.Join(append(head, "digest: "+digest), "\n")
 }
 
 // Plain is the text above the rule of a gate text (its plain lines), "" for

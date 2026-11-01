@@ -13,6 +13,8 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/task"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // The checks of the harness commit step (plan 4.3, 7.2, amendment 21): every
@@ -154,9 +156,9 @@ func inside(root, p string) (string, bool) {
 // directory) and is conservative: an entry covers a path when it matches the
 // path or any ancestor directory of it.
 func (ps protectedSet) match(p string) (string, bool) {
-	lp := strings.ToLower(p)
+	lp := foldPath(p)
 	for _, e := range ps.rel {
-		le := strings.ToLower(strings.TrimSuffix(e, "/"))
+		le := foldPath(strings.TrimSuffix(e, "/"))
 		if le == "**" {
 			return e, true
 		}
@@ -184,9 +186,9 @@ func parent(p string) string {
 // managedName returns the managed: entry name that covers a path's file
 // name (case folded), "" when none does.
 func (ps protectedSet) managedName(p string) string {
-	base := strings.ToLower(path.Base(p))
+	base := foldPath(path.Base(p))
 	for _, m := range ps.managed {
-		if strings.ToLower(m) == base {
+		if foldPath(m) == base {
 			return m
 		}
 	}
@@ -196,17 +198,116 @@ func (ps protectedSet) managedName(p string) string {
 // overlaps reports the widened globs that may match a protected path (the
 // widening check; task.FilesOverlap is conservative, case folded here).
 func (ps protectedSet) overlaps(globs []string) []string {
-	var lowerRel []string
+	var foldedRel []string
 	for _, e := range ps.rel {
-		lowerRel = append(lowerRel, strings.ToLower(e))
+		foldedRel = append(foldedRel, foldPath(e))
 	}
 	var out []string
 	for _, g := range globs {
-		if task.FilesOverlap([]string{strings.ToLower(g)}, lowerRel) {
+		if task.FilesOverlap([]string{foldPath(g)}, foldedRel) {
 			out = append(out, g)
 		}
 	}
 	return out
+}
+
+var pathFold = cases.Fold()
+
+func foldPath(s string) string { return pathFold.String(norm.NFC.String(s)) }
+
+// ResolvedExact is one typed file name and the real repository-relative file
+// that widening must declare. Protected also covers managed file names.
+type ResolvedExact struct {
+	Alias     string
+	Path      string
+	Protected bool
+}
+
+// ResolveExactFiles resolves every existing symlink in an exact path,
+// including chains and parent directories. A missing ordinary suffix remains
+// a valid future file; an unresolved symlink, cycle, outside target, or
+// existing directory is refused by the alias that named it.
+func ResolveExactFiles(g grants.Grants, root, repoRoot, home string, files []string) ([]ResolvedExact, error) {
+	exact, err := task.CleanExactFiles(files)
+	if err != nil {
+		return nil, err
+	}
+	if home == "" {
+		home = homeDir()
+	}
+	ps := protectedFor(g, repoRoot, home, filepath.Join(root, "extensions", "amq-squad")+"/", "~/.amq-squad/")
+	realRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository root %q: %w", repoRoot, err)
+	}
+	var out []ResolvedExact
+	for _, alias := range exact {
+		real, destination, err := resolveExactPath(filepath.Join(repoRoot, filepath.FromSlash(alias)))
+		if err != nil {
+			if destination != "" {
+				if _, ok := inside(realRoot, destination); !ok {
+					return nil, fmt.Errorf("exact file %q resolves outside the repository to %q: %w", alias, destination, err)
+				}
+				return nil, fmt.Errorf("exact file %q has an unresolved symlink to %q: %w", alias, destination, err)
+			}
+			return nil, fmt.Errorf("exact file %q cannot be resolved: %w", alias, err)
+		}
+		rel, ok := inside(realRoot, real)
+		if !ok {
+			return nil, fmt.Errorf("exact file %q resolves outside the repository to %q", alias, real)
+		}
+		if info, err := os.Stat(real); err == nil && info.IsDir() {
+			return nil, fmt.Errorf("exact file %q resolves to existing directory %q", alias, rel)
+		} else if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("exact file %q cannot be inspected at %q: %w", alias, rel, err)
+		}
+		_, protected := ps.match(rel)
+		out = append(out, ResolvedExact{Alias: alias, Path: rel, Protected: protected || ps.managedName(rel) != ""})
+	}
+	return out, nil
+}
+
+// resolveExactPath resolves the longest existing prefix and preserves only a
+// missing ordinary suffix. If the unresolved prefix is itself a symlink, the
+// returned destination identifies the dangling/broken target for the refusal.
+func resolveExactPath(p string) (real, destination string, err error) {
+	cur := filepath.Clean(p)
+	var suffix []string
+	for {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				real = filepath.Join(real, suffix[i])
+			}
+			return filepath.Clean(real), "", nil
+		} else if !os.IsNotExist(err) {
+			return "", "", err
+		} else if info, lerr := os.Lstat(cur); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			link, rerr := os.Readlink(cur)
+			if rerr != nil {
+				return "", "", rerr
+			}
+			if !filepath.IsAbs(link) {
+				link = filepath.Join(filepath.Dir(cur), link)
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				link = filepath.Join(link, suffix[i])
+			}
+			if target, nested, _ := resolveExactPath(link); nested != "" {
+				link = nested
+			} else if target != "" {
+				link = target
+			}
+			return "", filepath.Clean(link), err
+		} else if lerr != nil && !os.IsNotExist(lerr) {
+			return "", "", lerr
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", "", err
+		}
+		suffix = append(suffix, filepath.Base(cur))
+		cur = parent
+	}
 }
 
 // ManagedShape is every amq-squad managed block of a text, in order, with

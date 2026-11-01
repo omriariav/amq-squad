@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -190,15 +191,62 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	if err != nil {
 		return data, err
 	}
-	if err := validateBlockedWiden(t, req.Files); err != nil {
+	exact, err := validateBlockedWiden(t, req.Files)
+	if err != nil {
 		return data, err
 	}
 	g, gerr := grants.Load(t.ProjectPath)
-	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: req.Files, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
+	if len(exact) == 0 {
+		exact = literalWidenFiles(req.Files)
+	}
+	added := append([]string(nil), req.Files...)
+	var protected, resolutions []string
+	var links []gatestore.PathLink
+	if gerr == nil && len(exact) > 0 {
+		resolved, err := seatcommit.ResolveExactFiles(g.Grants, sel.root, t.ProjectPath, "", exact)
+		if err != nil {
+			return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+		}
+		replacements := make(map[string]string, len(resolved))
+		for _, r := range resolved {
+			literal, err := task.LiteralGlob(r.Path)
+			if err != nil {
+				return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+			}
+			alias, _ := task.LiteralGlob(r.Alias)
+			replacements[alias] = literal
+			if r.Protected {
+				protected = append(protected, literal)
+			}
+			if r.Alias != r.Path {
+				resolutions = append(resolutions, fmt.Sprintf("%q resolves to %q", r.Alias, r.Path))
+				links = append(links, gatestore.PathLink{Path: r.Path, Alias: r.Alias})
+			}
+		}
+		for i, p := range added {
+			if resolved, ok := replacements[p]; ok {
+				added[i] = resolved
+			}
+		}
+	}
+	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: added, ProtectedAdded: protected, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
+	} else if typedWidenRequest(t) && len(t.Attempts) > 0 {
+		// A typed block ends the seat's attempt and clears its report, but its
+		// current diff remains the proof for the size-cap dry run.
+		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Attempts[len(t.Attempts)-1].Holder, Now: taskNow}
 	}
 	d := seatcommit.CheckWiden(wo)
+	widenReason := req.Reason
+	if len(resolutions) > 0 {
+		note := "exact-path resolution: " + strings.Join(resolutions, "; ")
+		d.Notes = append(d.Notes, note)
+		widenReason += "; " + note
+		if d.ReasonCode == seatcommit.ReasonGrowthGate {
+			d.Detail += "; " + note
+		}
+	}
 	data.Decision = d
 	if !d.Allowed {
 		if d.ReasonCode == seatcommit.ReasonGrowthGate {
@@ -207,7 +255,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 				if c.Accepted {
 					continue
 				}
-				gid, err := raiseGrowthGate(sel, lead, t.ID, t.Title, c.Target)
+				gid, err := raiseGrowthGate(sel, lead, t.ID, t.Title, c.Target, links)
 				data.GateIDs = append(data.GateIDs, gid)
 				raised = append(raised, gid+" "+c.Target)
 				if err != nil {
@@ -222,7 +270,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		}
 		return data, &widenRefused{code: d.ReasonCode, msg: d.Detail}
 	}
-	after, err := sel.store.WidenGated(t.ID, lead, req.Reason, wo.Added, d.Gates, taskLeaseDuration, taskNow())
+	after, err := sel.store.WidenGated(t.ID, lead, widenReason, wo.Added, d.Gates, taskLeaseDuration, taskNow())
 	var wr *task.WidenRefusal
 	if errors.As(err, &wr) {
 		data.Decision.ReasonCode, data.Decision.Detail = wr.ReasonCode, wr.Error()
@@ -235,41 +283,84 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	return data, nil
 }
 
+// literalWidenFiles recovers exact names from LiteralGlob output while
+// leaving --files patterns alone. Re-encoding is the proof that a candidate
+// is one literal path rather than a broader glob.
+func literalWidenFiles(globs []string) []string {
+	var out []string
+	for _, g := range globs {
+		var b strings.Builder
+		literal := true
+		for i := 0; i < len(g); {
+			switch {
+			case strings.HasPrefix(g[i:], "[[]"):
+				b.WriteByte('[')
+				i += 3
+			case strings.HasPrefix(g[i:], "[*]"):
+				b.WriteByte('*')
+				i += 3
+			case strings.HasPrefix(g[i:], "[?]"):
+				b.WriteByte('?')
+				i += 3
+			case strings.ContainsRune("*?[", rune(g[i])):
+				literal = false
+				i = len(g)
+			default:
+				b.WriteByte(g[i])
+				i++
+			}
+		}
+		p := b.String()
+		if encoded, err := task.LiteralGlob(p); literal && err == nil && encoded == g {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // validateBlockedWiden limits a lead decision on a blocked task to the exact
 // paths recorded by the commit refusal or the seat's typed widen request.
 // Non-blocked widening keeps its legacy behavior.
-func validateBlockedWiden(t task.Task, requested []string) error {
+func validateBlockedWiden(t task.Task, requested []string) ([]string, error) {
 	if t.State != task.StateBlocked {
-		return nil
+		return nil, nil
 	}
 	// Keep the established growth-gate retry: a harness refusal for a
 	// protected path retains its done report while the same lead decision is
 	// checked, escalated, and retried after the owner accepts the gate.
 	if t.Report != nil && (t.BlockReason == seatcommit.ReasonProtected || t.BlockReason == seatcommit.ReasonGrowthGate) {
-		return nil
+		return nil, nil
 	}
-	if t.BlockReason != seatcommit.ReasonOutside && t.BlockReason != task.ReasonWidenRequested {
-		return &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set or by a seat's widen request (state %s, reason %s); there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT", t.ID, t.State, t.BlockReason, t.ID)}
+	if t.BlockReason != seatcommit.ReasonOutside && !typedWidenRequest(t) {
+		return nil, &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set or by a seat's widen request (state %s, reason %s); there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT", t.ID, t.State, t.BlockReason, t.ID)}
 	}
 	if len(t.RefusedPaths) == 0 {
-		return &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded no refused paths", t.ID)}
+		return nil, &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded no refused paths", t.ID)}
 	}
-	allowed := make(map[string]bool, len(t.RefusedPaths))
+	allowed := make(map[string]string, len(t.RefusedPaths))
 	for _, p := range t.RefusedPaths {
 		g, err := task.LiteralGlob(p)
 		if err != nil {
-			return &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded an invalid refused path %q", t.ID, p)}
+			return nil, &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded an invalid refused path %q", t.ID, p)}
 		}
-		allowed[g] = true
+		allowed[g] = p
 	}
 	normalized, err := task.CleanDeclaredFiles(requested)
 	if err != nil {
-		return &widenRefused{code: "widen_paths_mismatch", msg: err.Error()}
+		return nil, &widenRefused{code: "widen_paths_mismatch", msg: err.Error()}
 	}
+	var exact []string
 	for _, p := range normalized {
-		if !allowed[p] {
-			return &widenRefused{code: "widen_paths_mismatch", msg: fmt.Sprintf("%q is not an exact path recorded by task %s", p, t.ID)}
+		raw, ok := allowed[p]
+		if !ok {
+			return nil, &widenRefused{code: "widen_paths_mismatch", msg: fmt.Sprintf("%q is not an exact path recorded by task %s", p, t.ID)}
 		}
+		exact = append(exact, raw)
 	}
-	return nil
+	return exact, nil
+}
+
+func typedWidenRequest(t task.Task) bool {
+	return t.Report == nil && len(t.RefusedPaths) > 0 &&
+		(t.BlockReason == task.ReasonWidenRequested || t.BlockReason == seatcommit.ReasonGrowthGate)
 }

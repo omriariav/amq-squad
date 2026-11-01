@@ -305,6 +305,11 @@ func snapshotOnce(dir string) ([]Task, error) {
 	if err := json.Unmarshal(raw, &j); err != nil {
 		return list, nil // a torn journal never crossed the commit point
 	}
+	for _, t := range j.Tasks {
+		if err := validateExactFileRecord(t.RefusedPaths); err != nil {
+			return nil, fmt.Errorf("parse %s task %s: refused_paths: %w", journalName, t.ID, err)
+		}
+	}
 	byID := map[string]int{}
 	for i, t := range list {
 		byID[t.ID] = i
@@ -459,6 +464,9 @@ func readDir(dir string) ([]Task, error) {
 		var t Task
 		if err := json.Unmarshal(raw, &t); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
+		}
+		if err := validateExactFileRecord(t.RefusedPaths); err != nil {
+			return nil, fmt.Errorf("parse %s: refused_paths: %w", e.Name(), err)
 		}
 		out = append(out, t)
 		if snapshotFileHook != nil {

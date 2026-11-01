@@ -72,7 +72,7 @@ var samples = map[string][]sample{
 		{"growth: seats", gatetarget.Grow("/r/s1", 13), nil},
 		{"growth: files", gatetarget.GrowLimit("/r/s1", "files", 40), nil},
 		{"widen: protected paths", gatetarget.GrowTask("/r/s1", "t3", "protected_paths", `["docs/**","internal/x/**"]`), &Facts{Title: "Ship the plain gate questions"}},
-		{"widen: one protected path", gatetarget.GrowTask("/r/s1", "t5", "protected_paths", `[".claude/settings.json"]`), &Facts{Title: "tune settings"}},
+		{"widen: one protected path", gatetarget.GrowTask("/r/s1", "t5", "protected_paths", `[".claude/settings.json"]`), &Facts{Title: "tune settings", Links: []PathLink{{Path: ".claude/settings.json", Alias: "settings-link"}}}},
 		{"widen: size cap", gatetarget.GrowTask("/r/s1", "t4", "size_cap", `{"lines":900,"files":30}`), &Facts{Title: "Refactor the relay"}},
 		{"merge outside the grant", gatetarget.MergeBeyond("omriariav/amq-squad", 834, "4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d", []string{"ci_green", "task_scope"}),
 			&Facts{Title: "gate: the question in plain words, answered with a bare yes or no replied in its thread, and the team confirmation", Branch: "v3"}},
@@ -156,6 +156,19 @@ func checkPlain(text string, rec Record) error {
 		}
 	}
 	return nil
+}
+
+func TestResolvedPathLinkIsOnlyBelowTheGateRule(t *testing.T) {
+	target := gatetarget.GrowTask("/r/s1", "t5", "protected_paths", `["real/settings.json"]`)
+	rec, err := Render(Spec{GateID: "widen-t5", Action: "spawn", Target: target, RaisedBy: "lead-a", Facts: SafeFactsWithLinks("tune settings", "", []PathLink{{Path: "real/settings.json", Alias: "settings-link"}})}, testNow, testIdent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	above, below, _ := strings.Cut(rec.Text, "\n\n"+Rule+"\n")
+	want := "real/settings.json via link settings-link"
+	if strings.Contains(above, "real/settings.json") || strings.Contains(above, "settings-link") || !strings.Contains(below, want) || rec.Validate() != nil {
+		t.Fatalf("resolved link placement:\n%s", rec.Text)
+	}
 }
 
 var (

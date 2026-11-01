@@ -18,7 +18,7 @@ import (
 // else names both widenable blocks, keeps the reset pointer, and no longer
 // points at t20.
 func TestWidenRefusalNamesTheTypedWidenRequest(t *testing.T) {
-	err := validateBlockedWiden(task.Task{ID: "t9", State: task.StateBlocked, BlockReason: "needs_decision"}, []string{"b.go"})
+	_, err := validateBlockedWiden(task.Task{ID: "t9", State: task.StateBlocked, BlockReason: "needs_decision"}, []string{"b.go"})
 	if err == nil {
 		t.Fatal("a widen of a task blocked needs_decision was not refused")
 	}

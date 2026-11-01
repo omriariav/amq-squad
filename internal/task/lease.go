@@ -3,6 +3,7 @@ package task
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -382,6 +383,10 @@ func (s Store) RefuseCommit(id, reasonCode, detail, route string, now time.Time)
 // refusal found outside the declared files (RefusedPaths), in the same
 // transaction as the block.
 func (s Store) RefuseCommitPaths(id, reasonCode, detail, route string, paths []string, now time.Time) (Task, error) {
+	refused, err := CleanExactFiles(paths)
+	if err != nil {
+		return Task{}, fmt.Errorf("refused paths: %w", err)
+	}
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		if t.State != StateInProgress || t.Report == nil {
 			return fmt.Errorf("task %s has no done report awaiting the commit step", t.ID)
@@ -390,8 +395,8 @@ func (s Store) RefuseCommitPaths(id, reasonCode, detail, route string, paths []s
 		if err := block(t, reasonCode, detail, route); err != nil {
 			return err
 		}
-		if len(paths) > 0 {
-			t.RefusedPaths = append([]string(nil), paths...)
+		if len(refused) > 0 {
+			t.RefusedPaths = refused
 		}
 		return nil
 	})
@@ -438,13 +443,14 @@ func (s Store) BlockWithPaths(id, actor, reason, detail, route string, paths []s
 	var refused []string
 	var err error
 	if reason == ReasonWidenRequested {
-		refused, err = CleanDeclaredFiles(paths)
+		refused, err = CleanExactFiles(paths)
 		if err != nil {
 			return Task{}, fmt.Errorf("widen requested paths: %w", err)
 		}
 		if len(refused) == 0 {
 			return Task{}, fmt.Errorf("a %s block needs at least one path", ReasonWidenRequested)
 		}
+		sort.Strings(refused)
 	} else if len(paths) > 0 {
 		return Task{}, fmt.Errorf("block paths are only valid with reason %s", ReasonWidenRequested)
 	}
