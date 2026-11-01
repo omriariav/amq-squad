@@ -53,13 +53,37 @@ run("context --host ignored",
 run("the branch not read from git",
  [('internal/cli/hook_context.go','\t\t\th.Branch = out\n','\t\t\t_ = out\n')],
  C+"TestContextHost")
+# Codex on #837, items 5 and 6: the host commands bounded, the facts redacted
+run("the host commands with no deadline",
+ [('internal/cli/hook_context.go','ctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)','ctx, cancel := context.WithCancel(context.Background())')],
+ C+"TestContextHostKills")
+run("the hanging command killed alone, not its group",
+ [('internal/cli/hook_context.go','cmd.Cancel = func() error { killGuardGroup(cmd); return nil }','cmd.Cancel = func() error { return cmd.Process.Kill() }')],
+ C+"TestContextHostKills")
+run("the host commands' output not capped",
+ [('internal/cli/hook_context.go','out := &cappedBuffer{max: contextHostOutputCap, over: cancel}','out := &cappedBuffer{max: 1 << 30, over: cancel}')],
+ C+"TestContextHostKills")
+run("a host fact leaving context --host unredacted",
+ [('internal/cli/hook_context.go','\t\t*f = redact.Block(*f)\n','\t\t*f, _ = strings.Clone(*f), redact.Block\n')],
+ C+"TestContextHostCarries")
 run("the AMQ version not read",
  [('internal/cli/hook_context.go','if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil {','if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil && false {')],
  C+"TestContextHost")
 # section 4: the phase marker
 run("the yes writing no phase marker (the record)",
- [('internal/cli/lead_start.go','\t\t} else if err := writePhaseMarker(s.root, s.project, team, s.self); err != nil {','\t\t} else if err := error(nil); err != nil {')],
+ [('internal/cli/lead_start.go','\t\tif err := writePhaseMarker(s.root, s.project, team, s.self); err != nil {','\t\tif err := error(nil); err != nil {')],
  C+"TestTheStartOfAConfirmedTeam")
+# Codex on #837, item 2: the switch rides the reply whatever happened to the record
+run("a failed record not logged phase_record_failed",
+ [('internal/cli/lead_start.go','\t\t\t_ = schedproc.AppendDecision(s.root, confirmNow(), scheduler.Decision{Kind: KindPhaseRecordFailed,','\t\t\t_ = scheduler.Decision{Kind: KindPhaseRecordFailed,'),
+  ('internal/cli/lead_start.go','Reason: phaseMarkerPath(s.root) + ": " + err.Error()})\n','Reason: phaseMarkerPath(s.root) + ": " + err.Error()}\n')],
+ C+"TestAStartWhosePhaseRecord")
+run("a failed record withholding the team identity from the reply",
+ [('internal/cli/lead_start.go','Reason: phaseMarkerPath(s.root) + ": " + err.Error()})\n','Reason: phaseMarkerPath(s.root) + ": " + err.Error()})\n\t\t\tteam = nil\n')],
+ C+"TestAStartWhosePhaseRecord")
+run("the identity not resolved before the start (no team_identity refusal)",
+ [('internal/cli/lead_start.go','\tif err != nil {\n\t\treturn refused(ReasonTeamIdentity,','\tif err != nil && false {\n\t\treturn refused(ReasonTeamIdentity,')],
+ C+"TestAConfirmedSquadWithNoLead")
 run("the start's reply without the team identity",
  [('internal/cli/lead_start.go','Roster: l.roster, Team: team}','Roster: l.roster}')],
  C+"TestTheStartOfAConfirmedTeam")
@@ -94,6 +118,28 @@ run("amq_team_apply's success not switching",
 run("a session started after the yes not switching on the lead's answer",
  [('pi/extensions/lib/team.ts','\t\tif (t) team.switchToTeam(t);\n','\t\tif (t && false) team.switchToTeam(t);\n')],
  P+"test/phase.test.ts")
+# Codex on #837, item 3: amq_team_apply runs alone; the solo tools recheck at run time
+run("amq_team_apply run beside other calls (no apply_not_alone)",
+ [('pi/extensions/lib/team.ts','const refused = team.phaseRefusal("amq_team_apply") ?? team.notAlone(id);','const refused = team.phaseRefusal("amq_team_apply");')],
+ P+"test/phase.test.ts")
+run("the assistant message's calls not in the batch",
+ [('pi/extensions/lib/team.ts','\t\tfor (const c of e.message.content) if (c?.type === "toolCall" && typeof c.id === "string") team.batch.set(c.id, String(c.name));\n','')],
+ P+"test/phase.test.ts")
+run("the hooks' prepared calls not in the batch",
+ [('pi/extensions/lib/team.ts','\t\tteam.batch.set(e.toolCallId, e.toolName);\n','')],
+ P+"test/phase.test.ts")
+run("the batch not reset at a turn's start",
+ [('pi/extensions/lib/team.ts','\t\tteam.batch.clear();\n','')],
+ P+"test/phase.test.ts")
+run("amq_team_apply not a sequential tool",
+ [('pi/extensions/lib/team.ts','\t\texecutionMode: "sequential",\n','')],
+ P+"test/phase.test.ts")
+run("the refusal not telling the model to call apply alone next turn",
+ [('pi/extensions/lib/team.ts',' Call amq_team_apply again on your next turn with nothing else in the batch.`','`')],
+ P+"test/phase.test.ts")
+run("a solo tool's execute not rechecking the phase",
+ [('pi/extensions/lib/team.ts','\t\t\tconst refused = team.phaseRefusal("amq_team_propose");\n\t\t\tif (refused) throw new Error(refused);\n','')],
+ P+"test/phase.test.ts")
 run("the restart's offer not said",
  [('pi/extensions/lib/team.ts','\t\tif (offered || team.phase === "team") return undefined;','\t\tif (true) return undefined;')],
  P+"test/phase.test.ts")
@@ -121,6 +167,9 @@ run("closed tasks shown as open",
  P+"test/phase.test.ts")
 run("answered gates shown as open",
  [('pi/extensions/lib/firstturn.ts','st.gates.filter((g) => g.state === "open")','st.gates')],
+ P+"test/phase.test.ts")
+run("a host fact interpolated unredacted in the extension",
+ [('pi/extensions/lib/firstturn.ts','return v && v.trim() ? redactFact(v.trim()) : MISSING;','return v && v.trim() ? v.trim() : MISSING;')],
  P+"test/phase.test.ts")
 run("a missing fact left blank, not named missing",
  [('pi/extensions/lib/firstturn.ts','const MISSING = "missing";','const MISSING = "";')],
