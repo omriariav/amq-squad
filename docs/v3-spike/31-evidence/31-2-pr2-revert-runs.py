@@ -36,7 +36,7 @@ run("router pools fixed at open (SetRosterPools a no-op)",
  [('internal/routing/router.go','\tr.o.RosterPools = slices.Clone(pools)\n','\t_ = pools\n')],
  both(G+"-run TestARosterSeatAddedByAReload ./internal/routing/", G+"-run TestARelaunchAfterASquadYAMLEdit ./internal/cli/"))
 run("the swap at the request, not the drain's end",
- [('internal/scheduler/scheduler.go','\t\t\ts.reload, s.reloadAt = ask.reload, ask.start\n\t\t\tlog(Decision{Kind: "roster_relaunch_requested"','\t\t\ts.reload, s.reloadAt = ask.reload, ask.start\n\t\t\ts.swapReload(log)\n\t\t\tlog(Decision{Kind: "roster_relaunch_requested"')],
+ [('internal/scheduler/scheduler.go','\t\t\tlog(Decision{Kind: "roster_relaunch_requested"','\t\t\ts.swapReload(log)\n\t\t\tlog(Decision{Kind: "roster_relaunch_requested"')],
  G+"-run TestAReloadSwapsAtTheDrainsEnd ./internal/scheduler/")
 run("the roster written although Swap failed",
  [('internal/scheduler/roster.go','''			log(Decision{Kind: "roster_reload_failed", Reason: "the running roster relaunches unchanged: " + err.Error()})
@@ -67,8 +67,8 @@ run("the relaunch without the reload (process.go)",
 run("scheduler run wiring no reload",
  [('internal/cli/scheduler_run.go','\tdecisions.Reload = &schedproc.Reload{','\t_ = &schedproc.Reload{')],
  G+"-run TestARelaunchAfterASquadYAMLEdit ./internal/cli/")
-run("no per-request start in the roster launch",
- [('internal/scheduler/roster.go',', Handle: rs.Handle, Start: s.seatStart[rs.Handle]}',', Handle: rs.Handle}')],
+run("no key press start for the added seat in the roster launch",
+ [('internal/scheduler/roster.go','\t\t\treq.Start, req.AddedAt = press, press','\t\t\treq.AddedAt = press')],
  both(G+"-run TestAReloadSwapsAtTheDrainsEnd ./internal/scheduler/", G+"-run TestARelaunchReloadsSquadYAML ./internal/schedproc/"))
 run("marks.json with the launch's start for every seat",
  [('internal/seatlaunch/compile.go','\t\t\tat = own\n','\t\t\t_ = at\n')],
@@ -110,32 +110,14 @@ run("no drain end recorded by the roster launch",
  [('internal/seatlaunch/roster.go','\topts.DrainEnd = time.Now() //','\t_ = time.Now() //')],
  G+"-run 'TestTheAddedSeatsMarksStart|TestAnAddedSeatKeepsItsStart' ./internal/seatlaunch/")
 run("the socket only parsing the start",
- [('internal/schedproc/roster.go','if why := CheckRelaunchStart(t, launchStart, now); why != "" {','if why := CheckRelaunchStart(t, launchStart, now); false && why != "" {')],
+ [('internal/schedproc/roster.go','if why := CheckRelaunchStart(t, RunningLaunchStart(launchStart, s.LastRelaunchAt()), now); why != "" {','if why := CheckRelaunchStart(t, RunningLaunchStart(launchStart, s.LastRelaunchAt()), now); false && why != "" {')],
  G+"-run TestARelaunchStartOutOfRange ./internal/schedproc/")
 run("the verb only parsing the start",
- [('internal/cli/scheduler_run.go','if why := schedproc.CheckRelaunchStart(t, launchStart, time.Now()); why != "" {','if why := schedproc.CheckRelaunchStart(t, launchStart, time.Now()); false && why != "" {')],
+ [('internal/cli/scheduler_run.go','if why := schedproc.CheckRelaunchStart(t, schedproc.RunningLaunchStart(launchStart, lastRelaunch), time.Now()); why != "" {','if why := schedproc.CheckRelaunchStart(t, schedproc.RunningLaunchStart(launchStart, lastRelaunch), time.Now()); false && why != "" {')],
  G+"-run TestSchedulerRelaunchBoundsItsStart ./internal/cli/")
 run("the tick's state written from the config captured before the swap",
  [('internal/scheduler/scheduler.go','\tcfg = s.cfg()\n\tif err != nil {','\tif err != nil {')],
  G+"-run TestTheStateWritten ./internal/scheduler/")
-run("seats beyond the cap launched at a reload (no trim)",
- [('internal/schedproc/roster.go','\tif maxSeats > 0 && len(roster) > maxSeats {','\tif false && maxSeats > 0 && len(roster) > maxSeats {')],
- both(G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsInSquadOrder ./internal/schedproc/", G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/"))
-run("no roster_over_cap decision",
- [('internal/scheduler/roster.go','\tif len(r.Unlaunched) > 0 {','\tif false && len(r.Unlaunched) > 0 {')],
- both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/"))
-run("the unlaunched seats not written to the state",
- [('internal/scheduler/scheduler.go','\tst.Unlaunched = append([]string(nil), s.unlaunched...)','\t_ = s.unlaunched')],
- both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/"))
-run("status dropping the unlaunched seats",
- [('internal/status/classify.go','UnlaunchedSeats: append([]string{}, in.Scheduler.Unlaunched...)},','UnlaunchedSeats: []string{}},')],
- G+"-run TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest ./internal/cli/")
-run("the screen showing no unlaunched line",
- [('pi/extensions/lib/screen.ts','for (const h of st.scheduler?.unlaunched_seats ?? []) {','for (const h of [] as string[]) {')],
- P+"test/keys-seat.test.ts")
-run("the key press kept as a later launch's start",
- [('internal/scheduler/roster.go','\ts.seatStart = nil // the press is the start of this launch only\n','')],
- G+"-run TestTheKeyPressIsTheStartOfTheLaunchItCausedOnly ./internal/scheduler/")
 run("added_at not carried into later marks",
  [('internal/seatlaunch/compile.go','\t\t\tm.AddedAt = prev.AddedAt // the record','\t\t\t_ = prev.AddedAt // the record')],
  G+"-run TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart ./internal/seatlaunch/")
@@ -145,3 +127,27 @@ run("added_at not written at the press's launch",
 run("status not showing added_at",
  [('internal/status/screen.go','\t\tsl.AddedAt = m.AddedAt\n','\t\t_ = m.AddedAt\n')],
  G+"-run TestARelaunchedSeatsBudgetNamesTheDrain ./internal/status/")
+run("no roster_over_cap decision",
+ [('internal/scheduler/roster.go','\tif cap := s.Config.MaxSeats; len(r.Roster) > cap {','\tif cap := s.Config.MaxSeats; false && len(r.Roster) > cap {')],
+ both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns ./internal/cli/"))
+run("the roster trimmed to the cap at a reload (seats beyond it unlaunched)",
+ [('internal/schedproc/roster.go','\treturn &scheduler.RosterReload{Roster: roster,','\tif maxSeats > 0 && len(roster) > maxSeats {\n\t\troster = roster[:maxSeats]\n\t}\n\treturn &scheduler.RosterReload{Roster: roster,')],
+ both(G+"-run TestAReloadOverTheCapLaunchesEverySeatAndCapsTheLeases ./internal/schedproc/", G+"-run TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns ./internal/cli/"))
+run("the screen showing no over-cap line",
+ [('pi/extensions/lib/screen.ts','if (sch && sch.max_seats > 0 && sch.live_seats > sch.max_seats) {','if (false && sch) {')],
+ P+"test/keys-seat.test.ts")
+run("a relaunch carrying no stamp of its own (the squad's start for its seats)",
+ [('internal/scheduler/roster.go',', Handle: rs.Handle, Start: s.relaunchAt}',', Handle: rs.Handle}')],
+ both(G+"-run TestEveryRelaunchStampsItsOwnStart ./internal/scheduler/", G+"-run TestARelaunchReloadsSquadYAML ./internal/schedproc/", G+"-run TestARelaunchAfterASquadYAMLEdit ./internal/cli/"))
+run("the key press kept as a later launch's start",
+ [('internal/scheduler/roster.go','\ts.seatStart, s.relaunchAt = nil, time.Time{}','\ts.relaunchAt = time.Time{}')],
+ G+"-run TestEveryRelaunchStampsItsOwnStart ./internal/scheduler/")
+run("drain_end for the added seat only",
+ [('internal/seatlaunch/compile.go','\t\t\tif !drainEnd.IsZero() && !drainEnd.Before(own) {','\t\t\tif _, added := seatAddedAt[rec.Handle]; added && !drainEnd.IsZero() && !drainEnd.Before(own) {')],
+ G+"-run TestAnAddedSeatKeepsAddedAtAndTakesEachLaunchsStart ./internal/seatlaunch/")
+run("the socket's floor the scheduler's launch start, not the last relaunch",
+ [('internal/schedproc/roster.go','RunningLaunchStart(launchStart, s.LastRelaunchAt())','RunningLaunchStart(launchStart, time.Time{})')],
+ G+"-run TestARelaunchStartBeforeTheLastRelaunchIsRefused ./internal/schedproc/")
+run("the verb's floor the launch record's start, not the last relaunch",
+ [('internal/cli/scheduler_run.go','\t\t\tlastRelaunch = *st.LastRelaunchAt\n','\t\t\t_ = st.LastRelaunchAt\n')],
+ G+"-run TestSchedulerRelaunchStartFloorIsTheLastRelaunch ./internal/cli/")
