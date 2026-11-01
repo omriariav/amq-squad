@@ -160,6 +160,9 @@ run("lead --team starting the scheduler outside the shared function",
 run("the solo lead not a lead parent of its scheduler",
  [('internal/cli/lead_scheduler.go','\treturn len(f) == 1 && filepath.Base(f[0]) == "amq-squad" || len(f) > 1','\treturn len(f) > 1'),('internal/cli/lead_scheduler.go','f[1] == "lead"\n}','f[1] == "lead" && slices.Contains(f, "--team")\n}'),('internal/cli/lead_scheduler.go','\t"path/filepath"\n','\t"path/filepath"\n\t"slices"\n')],
  C+"TestASoloLeadIsALeadParent")
+run("the lead check widened to the binary (any amq-squad parent)",
+ [('internal/cli/lead_scheduler.go','filepath.Base(f[0]) == "amq-squad" && f[1] == "lead"','filepath.Base(f[0]) == "amq-squad"')],
+ C+"TestASoloLeadIsALeadParent")
 run("the solo lead's pi without the solo flag",
  [('internal/cli/pi_lead.go','\t\tsolo["AMQ_SQUAD_SOLO_LEAD"] = "1"\n','')],
  C+"TestTheSoloLeadServes")

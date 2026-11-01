@@ -310,11 +310,33 @@ func TestTheSoloLeadServesTheStartSocketToItsPi(t *testing.T) {
 }
 
 // The scheduler a solo lead starts accepts the lead's pools and proves the
-// lead's decisions by its parent, as for `lead --team`.
+// lead's decisions by its parent, as for `lead --team`. The widening is
+// exactly the lead, not the binary: the parents accepted are `amq-squad
+// lead` with or without `--team` (and its other flags) and bare
+// `amq-squad` (runBare: the solo lead on a terminal, else the usage and an
+// exit); every other amq-squad verb as a parent is refused (the plan
+// reviewer on #834).
 func TestASoloLeadIsALeadParentOfItsScheduler(t *testing.T) {
 	for args, want := range map[string]bool{
-		"/usr/local/bin/amq-squad lead --team": true, "amq-squad lead": true, "amq-squad": true,
-		"amq-squad up": false, "bash -c amq-squad": false, "amq-squad seat-exec --seat x": false,
+		"/usr/local/bin/amq-squad lead --team":          true,
+		"amq-squad lead --team --model ollama/qwen3:8b": true,
+		"amq-squad lead":                                true,
+		"/opt/homebrew/bin/amq-squad lead":              true,
+		"amq-squad":                                     true,
+		"/usr/local/bin/amq-squad":                      true,
+		"amq-squad up":                                  false,
+		"amq-squad up --project /r":                     false,
+		"amq-squad seat-exec --seat impl-1 -- claude":   false,
+		"amq-squad scheduler run --project /r":          false,
+		"amq-squad remote attach --project /r --me cto": false,
+		"amq-squad pi run --seat x":                     false,
+		"amq-squad team apply --digest d":               false,
+		"amq-squad leader":                              false,
+		"amq-squad --team lead":                         false,
+		"amq-squad-dev lead":                            false,
+		"bash -c amq-squad":                             false,
+		"node /rt/pi/cli.js":                            false,
+		"":                                              false,
 	} {
 		if leadParentArgs(args) != want {
 			t.Errorf("leadParentArgs(%q) = %v, want %v", args, !want, want)

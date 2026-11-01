@@ -180,7 +180,17 @@ lead's decisions by its parent, so `startedByLeadTeam` now accepts a parent
 `amq-squad lead` with or without `--team`, and a bare `amq-squad` (the solo
 lead). The argument for it is unchanged: only a lead's direct child has it
 as parent (the lead starts its pi and its scheduler; its tools' commands run
-under pi).
+under pi). The widening is exactly the lead, not the binary: the parents
+accepted are `amq-squad lead` with or without `--team` (and its other
+flags) and bare `amq-squad`; `amq-squad up`, `seat-exec`, `scheduler run`,
+`remote attach`, `pi run`, `team apply`, `leader` and every other verb as a
+parent are refused (`TestASoloLeadIsALeadParentOfItsScheduler`). Bare
+`amq-squad` is the solo lead and nothing else, as verified in
+internal/cli/cli.go:84-88: a bare invocation (`len(args) == 0`) runs
+`runBare` (internal/cli/pi_lead.go:320), which with the embedded pi and a
+terminal on stdin calls `runLead(nil)`, the solo lead, and otherwise prints
+the usage and a one-line hint and returns, so the process exits at once.
+A long-lived bare `amq-squad` parent is therefore the solo lead.
 
 From the owner's shell (no socket in the environment) `team apply --digest
 D` checks the record, writes the files through the digest flow, and prints
@@ -243,6 +253,16 @@ docs/status-contract.md is unchanged: no status field changed.
 - **The first turn.** The team lead's `before_agent_start` hook
   (pi/extensions/amq-squad.ts) is where the host facts from `status --json`
   and `context --json` go.
+- **3.1.1: the Buzz door reads like the other two.** The Buzz door's
+  `yes <prefix>` is the form the owner has asked to retire for gates (his
+  ruling of 2026-11-01: a bare yes or no replied in the question's thread,
+  the signature plus the thread being the binding). When the two-way relay
+  (brief 31-4) lands, the plan goes to the owner's DM as the lead's reply,
+  and the confirm becomes a bare `yes` in that thread through the same
+  thread binding, so the three doors read alike. Not built in this PR: the
+  seam is the handler's `teamYes` dispatch (internal/buzz/inbound.go) and
+  `confirmByPrefix` (internal/cli/team_confirm.go), which would take the
+  proposal from the thread's root event instead of the prefix.
 
 ### 2.10 Choices where the brief left one
 
