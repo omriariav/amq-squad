@@ -7,7 +7,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -71,5 +73,46 @@ func TestSchedulerRunOnAnAbsentSessionRootCreatesIt(t *testing.T) {
 	lines, _ := schedproc.ReadDecisionsTail(root)
 	if len(lines) < 2 || lines[0].Kind != KindSessionCreated || !strings.Contains(lines[0].Reason, "scheduler run: ") {
 		t.Fatalf("decisions %+v", lines)
+	}
+}
+
+// Codex re-check on #829: the producer side of the launch budget's marks.
+// scheduler run hands AMQ_SQUAD_START to every launch (seatlaunch.Options.
+// Start, which writes each seat's marks.json), and its first-message hook
+// records a seat's first message in the seat's marks.
+func TestSchedulerRunHandsTheStartToLaunchesAndRecordsFirstMessages(t *testing.T) {
+	_, root, proj := schedulerFixture(t)
+	t.Setenv(leadStartEnv, "2026-11-01T09:00:00.25Z")
+	var got time.Time
+	prev := []any{schedulerAMQLauncher, schedulerStarted}
+	t.Cleanup(func() {
+		schedulerAMQLauncher = prev[0].(func(*schedproc.Slots, string, seatlaunch.Options) scheduler.SeatLauncher)
+		schedulerStarted = prev[1].(func(*scheduler.Scheduler))
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	schedulerAMQLauncher = func(sl *schedproc.Slots, _ string, o seatlaunch.Options) scheduler.SeatLauncher {
+		got = o.Start
+		return &cliFakeLauncher{sl: sl}
+	}
+	schedulerStarted = func(*scheduler.Scheduler) { cancel() }
+	if _, _, err := captureOutput(t, func() error {
+		return runSchedulerRun(ctx, []string{"--project", proj, "--tick", "20ms"}, os.Stdout)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 11, 1, 9, 0, 0, 250000000, time.UTC); !got.Equal(want) {
+		t.Fatalf("the launches' start %v, want %v", got, want)
+	}
+	// the first-message hook: the seat's outbox message lands in its marks
+	mustWrite(t, filepath.Join(launch.StagedDir(root, "impl-1"), launch.FileName), `{"schema":1,"handle":"impl-1","launch_id":"L9"}`)
+	created := time.Date(2026, 11, 1, 9, 1, 0, 0, time.UTC)
+	msg := filepath.Join(root, "agents", "impl-1", "outbox", "sent", "m1.md")
+	mustWrite(t, msg, "---json\n{\"id\":\"m1\",\"created\":\""+created.Format(time.RFC3339Nano)+"\"}\n---\nhello\n")
+	_ = os.Chtimes(msg, created, created)
+	if at, ok := firstMessageMark(root)("impl-1", created.Add(-time.Minute)); !ok || !at.Equal(created) {
+		t.Fatalf("hook %v %v", at, ok)
+	}
+	if m, err := seatlaunch.ReadSeatMarks(root, "impl-1"); err != nil || m.LaunchID != "L9" || m.FirstMessage == nil || !m.FirstMessage.Equal(created) {
+		t.Fatalf("marks %+v %v", m, err)
 	}
 }

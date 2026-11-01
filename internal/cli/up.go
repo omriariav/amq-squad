@@ -120,11 +120,15 @@ var (
 	upLookPath               = exec.LookPath
 	upPIDAlive               = procinfo.Alive
 	upStartToken             = procinfo.StartToken
-	upProcArgs               = procinfo.Args
+	upProcArgv               = procinfo.Argv
 	upSignal                 = func(pid int, sig syscall.Signal) error { return syscall.Kill(pid, sig) }
 	upNow                    = time.Now
 	upPoll                   = 200 * time.Millisecond
 	upStopWait               = 15 * time.Second
+	// test hooks: before each signal's identity check, and after the lead's
+	// tmux session started (the window before the new lead takes its lock)
+	upBeforeSignal   func(pid int, sig syscall.Signal)
+	upAfterLeadStart func()
 )
 
 // amqChildEnv is the environment of an amq child: no AMQ identity of the
@@ -540,7 +544,7 @@ const (
 	tmuxUnavailable                  // tmux could not be asked: no tmux, no server, an error, an unparseable reply
 )
 
-var paneLineRE = regexp.MustCompile(`^[^\t]+\t%[0-9]+$`)
+var paneIDRE = regexp.MustCompile(`^%[0-9]+$`)
 
 // leadPane asks tmux for every pane of its server (list-panes -a) and
 // places the recorded pane. "Gone" is only an answer that lists the lead's
@@ -549,16 +553,26 @@ var paneLineRE = regexp.MustCompile(`^[^\t]+\t%[0-9]+$`)
 // neither is paneUnknown. Only paneGone lets up stop a lead.
 func (u *upRun) leadPane(pane, session string) (paneState, string) {
 	out, err := squadRun(u.ctx, u.report.Project, os.Environ(), "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}")
-	text := strings.TrimSpace(string(out))
 	if err != nil {
-		return tmuxUnavailable, fmt.Sprintf("tmux list-panes -a: %v: %s", err, firstNonEmptyStr(lastLine(text), "(no output)"))
+		return tmuxUnavailable, fmt.Sprintf("tmux list-panes -a: %v: %s", err, firstNonEmptyStr(lastLine(string(out)), "(no output)"))
+	}
+	// Line by line, nothing trimmed: a row is exactly "<session>\t<pane>",
+	// so a leading tab or a wrong field count is unparseable, never a
+	// shifted field read as the lead's session (Codex P1 on #829).
+	lines := strings.Split(string(out), "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1] // the reply's final newline
+	}
+	if len(lines) == 0 {
+		return tmuxUnavailable, "tmux list-panes -a: an empty reply"
 	}
 	sessionListed := false
-	for _, ln := range strings.Split(text, "\n") {
-		if !paneLineRE.MatchString(ln) {
+	for _, ln := range lines {
+		fields := strings.Split(ln, "\t")
+		if len(fields) != 2 || fields[0] == "" || !paneIDRE.MatchString(fields[1]) {
 			return tmuxUnavailable, fmt.Sprintf("tmux list-panes -a: unparseable reply line %q", ln)
 		}
-		name, id, _ := strings.Cut(ln, "\t")
+		name, id := fields[0], fields[1]
 		if id == pane {
 			return paneListed, ""
 		}
@@ -576,17 +590,32 @@ func (u *upRun) tmuxSessionExists(name string) bool {
 	return err == nil
 }
 
-// stopProcess stops the recorded process at pid: same rechecks its identity
-// before each signal; SIGTERM, a grace for held (the lock it holds) to
-// free, then SIGKILL only when the same identity still holds. A changed
-// identity is never signalled.
+// signalSame sends sig to pid only if same() holds, checked immediately
+// before the kill in one call. The window that remains, a pid ending and
+// being reused between the check and the kill, is inherent to Unix
+// signals; the recorded start stamp in same() bounds it to the same
+// process incarnation up decided on.
+func signalSame(pid int, sig syscall.Signal, same func() bool) error {
+	if upBeforeSignal != nil {
+		upBeforeSignal(pid, sig)
+	}
+	if !same() {
+		return fmt.Errorf("pid %d is no longer the recorded process; not sent %s", pid, sig)
+	}
+	if err := upSignal(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("signal %d to pid %d: %w", sig, pid, err)
+	}
+	return nil
+}
+
+// stopProcess stops the recorded process at pid: SIGTERM, a grace for held
+// (the lock it holds) to free, then SIGKILL; each signal goes through
+// signalSame, so a changed identity is never signalled and SIGKILL follows
+// only when the same identity still holds after the grace.
 func stopProcess(pid int, same func() bool, held func() bool) error {
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
-		if !same() {
-			return fmt.Errorf("pid %d is no longer the recorded process; not sent %s", pid, sig)
-		}
-		if err := upSignal(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return fmt.Errorf("signal %d to pid %d: %w", sig, pid, err)
+		if err := signalSame(pid, sig, same); err != nil {
+			return err
 		}
 		for deadline := upNow().Add(upStopWait); upNow().Before(deadline); time.Sleep(upPoll) {
 			if !held() {
@@ -616,23 +645,25 @@ func takeLock(path string) (*flock.Exclusive, error) {
 	return l, nil
 }
 
-// schedulerArgvRuns reports whether a command line is amq-squad's
-// `scheduler run --project <project>` for exactly this project.
-func schedulerArgvRuns(args, project string) bool {
-	f := strings.Fields(args)
-	if len(f) == 0 || filepath.Base(f[0]) != "amq-squad" {
+// schedulerArgvIs reports whether argv is exactly the scheduler the lead's
+// team mode starts for this project (leadSchedulerCommand): amq-squad
+// scheduler run --project <project>, then only --lead-pool pairs. Each
+// argument is compared whole (procinfo.Argv), so a path with a space, a
+// second --project or a reordered argv does not match.
+func schedulerArgvIs(argv []string, project string) bool {
+	if len(argv) < 5 || filepath.Base(argv[0]) != "amq-squad" || !slices.Equal(argv[1:5], []string{"scheduler", "run", "--project", project}) {
 		return false
 	}
-	for i := 1; i+1 < len(f); i++ {
-		if f[i] == "scheduler" && f[i+1] == "run" {
-			for j := i + 2; j+1 < len(f); j++ {
-				if f[j] == "--project" && f[j+1] == project {
-					return true
-				}
-			}
+	rest := argv[5:]
+	if len(rest)%2 != 0 {
+		return false
+	}
+	for i := 0; i < len(rest); i += 2 {
+		if rest[i] != "--lead-pool" {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // lead is step 5, under the one rule of brief 31-1 section 4. One up per
@@ -758,8 +789,8 @@ func (u *upRun) lead() (string, error) {
 		}
 		same := func() bool {
 			stamp, ok := upStartToken(lr.PID)
-			args, aok := upProcArgs(lr.PID)
-			return upPIDAlive(lr.PID) && ok && stamp == lr.ProcessStart && aok && schedulerArgvRuns(args, u.report.Project)
+			argv, aok := upProcArgv(lr.PID)
+			return upPIDAlive(lr.PID) && ok && stamp == lr.ProcessStart && aok && schedulerArgvIs(argv, u.report.Project)
 		}
 		if !same() {
 			return "", refuse("scheduler_unknown", "the scheduler lock is held but pid %d is not the recorded scheduler of %s (its start stamp and its scheduler run --project argv must match); nothing was stopped", lr.PID, u.report.Project)
@@ -823,6 +854,9 @@ func (u *upRun) tmux() (string, error) {
 	if out, err := squadRun(u.ctx, u.report.Project, os.Environ(), "tmux", args...); err != nil {
 		text := strings.TrimSpace(string(out))
 		return "", refuse(firstNonEmptyStr(namedRefusal(text), "tmux_failed"), "tmux new-session: %v: %s", err, text)
+	}
+	if upAfterLeadStart != nil {
+		upAfterLeadStart()
 	}
 	return fmt.Sprintf("tmux session %s runs %s lead --team in %s", name, u.installed, u.report.Project), nil
 }
