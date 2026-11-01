@@ -73,7 +73,8 @@ const DIGEST = "sha256:" + "0123456789abcdef".repeat(4) + "@absent";
 const BUILTINS = ["read", "bash", "edit", "write"];
 // The team lead's tool list: TeamLeadTools' eleven
 // (internal/piruntime/launch.go), one list (brief 3.1.1-2 item 4);
-// amq_task_claim and amq_task_done are a seat's, never a lead's.
+// amq_task_claim, amq_task_done and amq_task_block are a seat's, never a
+// lead's.
 const TEAM11 = [
 	"amq_drain",
 	"amq_reply",
@@ -193,9 +194,9 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 		assert.equal(process.env.AMQ_SQUAD_LEAD, "1");
 		// a model that names the solo tools anyway (pi's turn list could
 		// still carry them) meets the hook: each refuses phase_team
-		// a seat's claim and done too (brief 3.1.1-2 item 4): a lead holding
-		// them could take a lease itself
-		pi.active = new Set([...pi.active, ...BUILTINS, "amq_team_apply", "amq_team_propose", "amq_task_claim", "amq_task_done"]);
+		// a seat's claim, done and block too (brief 3.1.1-2 item 4): a lead
+		// holding them could take a lease itself or request its own widen
+		pi.active = new Set([...pi.active, ...BUILTINS, "amq_team_apply", "amq_team_propose", "amq_task_claim", "amq_task_done", "amq_task_block"]);
 		const solo = await pi.batch(
 			[
 				{ toolName: "bash", input: { command: "ls" } },
@@ -204,6 +205,7 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 				{ toolName: "amq_team_propose", input: {} },
 				{ toolName: "amq_task_claim", input: {} },
 				{ toolName: "amq_task_done", input: { id: "t1", evidence: "x" } },
+				{ toolName: "amq_task_block", input: { id: "t1", reason: "widen_requested", paths: ["x.go"] } },
 			],
 			ctx,
 		);

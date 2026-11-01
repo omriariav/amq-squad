@@ -115,6 +115,41 @@ func TestTaskCLIRefusals(t *testing.T) {
 	}
 }
 
+func TestTaskCLIBlockCarriesTypedWidenPaths(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	if _, err := taskCLI(t, "add", "--title", "x", "--class", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "block", "t1", "--me", "seat", "--reason", task.ReasonWidenRequested,
+		"--path", "src/*.go", "--path", "docs/a, b.md", "--paths", "./src/new.go,docs/z.md"); err != nil {
+		t.Fatal(err)
+	}
+	shown, err := taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if strings.Join(got.RefusedPaths, "|") != "docs/a, b.md|docs/z.md|src/*.go|src/new.go" {
+		t.Fatalf("refused paths = %q", got.RefusedPaths)
+	}
+
+	if _, err := taskCLI(t, "add", "--title", "y", "--class", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "block", "t2", "--me", "lead", "--reason", task.ReasonWidenRequested); err == nil || !strings.Contains(err.Error(), "at least one path") {
+		t.Fatalf("pathless widen request: %v", err)
+	}
+	if _, err := taskCLI(t, "block", "t2", "--me", "lead", "--reason", "decision", "--path", "x.go"); err == nil || !strings.Contains(err.Error(), "only valid") {
+		t.Fatalf("paths with another reason: %v", err)
+	}
+}
+
 // task set re-pins a task until its first attempt is granted; after the
 // grant it prints the refusal code and ends with the way forward, which works.
 func TestTaskCLISetRepinBoundary(t *testing.T) {

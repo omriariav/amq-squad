@@ -22,6 +22,10 @@ import (
 // Schema is the task file schema version.
 const Schema = 1
 
+// ReasonWidenRequested is a seat's typed request for the lead to add the
+// exact paths recorded in RefusedPaths to the task's declared files.
+const ReasonWidenRequested = "widen_requested"
+
 // DefaultLeaseDuration is the proposed lease length (brief 2b-1 ruling 3;
 // measured in docs/v3-spike/2b1-execution.md).
 const DefaultLeaseDuration = 10 * time.Minute
@@ -53,10 +57,9 @@ type Task struct {
 	BlockRoute    string    `json:"block_route,omitempty"`
 	BlockDetail   string    `json:"block_detail,omitempty"`
 	// RefusedPaths are the exact paths a commit refusal found outside the
-	// declared files (outside_declared_files), as the commit step listed
-	// them, untruncated (3.0.1 t16 round 7): the lead's widening reads this
-	// list, never BlockDetail's display text. Set with the block, cleared
-	// with it.
+	// declared files (outside_declared_files), or a seat named in its typed
+	// widen_requested block. The lead's widening reads this normalized list,
+	// never BlockDetail's display text. Set with the block, cleared with it.
 	RefusedPaths []string      `json:"refused_paths,omitempty"`
 	Report       *Report       `json:"report"`
 	Evidence     string        `json:"evidence,omitempty"`

@@ -160,6 +160,46 @@ func TestDoneWithDeclaredFilesWaitsForTheCommitStep(t *testing.T) {
 	}
 }
 
+func TestBlockWithPathsRecordsAndRearmsTypedWidenRequest(t *testing.T) {
+	s := newStore(t)
+	a := mustAdd(t, s, AddInput{Title: "a", DeclaredFiles: []string{"src/a.go"}})
+	if _, err := s.Claim(a.ID, "impl-1", nil, time.Minute, t0); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.BlockWithPaths(a.ID, "impl-1", ReasonWidenRequested, "need generated files", RouteLead,
+		[]string{"./docs/z.md", "src/b.go", "docs/z.md"}, t0.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.State != StateBlocked || b.BlockReason != ReasonWidenRequested || strings.Join(b.RefusedPaths, ",") != "docs/z.md,src/b.go" || b.Lease != nil || b.Report != nil {
+		t.Fatalf("typed block: %+v", b)
+	}
+	w, err := s.Widen(a.ID, "lead", "paths belong", []string{"docs/z.md", "src/b.go"}, time.Minute, t0.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.State != StatePending || w.BlockReason != "" || len(w.RefusedPaths) != 0 || w.Lease != nil || w.Report != nil || strings.Join(w.DeclaredFiles, ",") != "docs/z.md,src/a.go,src/b.go" || len(w.ScopeChanges) != 1 {
+		t.Fatalf("rearmed task: %+v", w)
+	}
+
+	for name, tc := range map[string]struct {
+		reason string
+		paths  []string
+	}{
+		"missing":      {ReasonWidenRequested, nil},
+		"wrong reason": {"needs_decision", []string{"b.go"}},
+		"invalid":      {ReasonWidenRequested, []string{"../b.go"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s2 := newStore(t)
+			tk := mustAdd(t, s2, AddInput{Title: "x"})
+			if _, err := s2.BlockWithPaths(tk.ID, "lead", tc.reason, "", RouteLead, tc.paths, t0); err == nil {
+				t.Fatal("invalid typed block was accepted")
+			}
+		})
+	}
+}
+
 func TestDependenciesGateTheLease(t *testing.T) {
 	s := newStore(t)
 	a := mustAdd(t, s, AddInput{Title: "a"})
