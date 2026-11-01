@@ -313,6 +313,12 @@ type Seat struct {
 	// pi seat with no key for its provider (pi_provider_key_missing). None
 	// is a refusal.
 	Warnings []string `json:"warnings,omitempty"`
+	// AcknowledgedWarnings (brief 31-2) are the seat's warnings the owner
+	// cleared with the screen's clear key for the seat's current launch,
+	// absent when none. A cleared warning is listed here instead of in
+	// Warnings; the same condition on a later launch is in Warnings again.
+	// A clear never changes the seat's state.
+	AcknowledgedWarnings []string `json:"acknowledged_warnings,omitempty"`
 }
 
 // Task is one task row, joined to its lease holder.

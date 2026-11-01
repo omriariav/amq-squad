@@ -258,8 +258,26 @@ and the root, then seats (runtime and model, state, launch outcome and
 budget, warnings), tasks (state, seat, PR, block reason), the merge train
 (the current and last runs, alerts) and open gates, each block closed by
 its newest refusal. It refreshes when the task store or the scheduler
-state changes; `/squad` collapses it to one footer line of counts. It is
-read-only.
+state changes; `/squad` collapses it to one footer line of counts.
+
+The screen has four keys, typed in the lead's pi as `/squad <key>`. pi
+hands a command to the extension, never to the model, and each key runs its
+verb from the lead's own process, so a key that is a scheduler decision is
+proved like the lead's own tools. The model's tools gain nothing.
+
+- `/squad add` adds a task: the title, the class, the declared files and
+  the pool go to `task add`.
+- `/squad reset` resets a blocked task through `task reset`, onto another
+  pool when you pick one (`--pool`).
+- `/squad clear` acknowledges a seat's warning line through `scheduler
+  clear`. The line leaves the screen for that launch only, and the seat's
+  state does not change.
+- `/squad answer` shows an open typed gate with its kind, target and
+  16-hex typed prefix. It posts the question over Buzz when it has not
+  reached Buzz, and says the gate is waiting there. Buzz is the one door
+  for the four typed gates; the terminal door is not built yet.
+
+A key's refusal shows on the screen as the verb printed it.
 
 Two entry points, each one AMQ launch request with every seat behind
 `seat-exec`:

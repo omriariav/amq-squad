@@ -16,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/state"
@@ -134,16 +135,18 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 	// The seat's role, runtime, model and effort join from its launch record
 	// (2b-2): the published one, else the core's staged one (before seat-exec
 	// publishes). Only the published record is a liveness signal.
-	seat.Warnings = seatWarnings(o.Root, handle)
-	if raw, err := os.ReadFile(filepath.Join(launch.StagedDir(o.Root, handle), launch.FileName)); err == nil {
-		if staged, err := launch.Decode(raw); err == nil {
-			joinLaunchRecord(&seat, staged)
-			// brief 31-1: the seat's worktree, branch and last launch, and
-			// the warnings of its launch
-			seat.Worktree, seat.Branch = staged.Worktree, staged.Branch
-			seat.Launch = seatLaunch(o.Root, handle, staged)
-			seat.Warnings = append(seat.Warnings, launchWarnings(o.Root, handle, staged, seat.Launch, o.Now)...)
+	if staged, sl, warnings, ok := seatLaunchState(o.Root, handle, o.Now); ok {
+		joinLaunchRecord(&seat, staged)
+		// brief 31-1: the seat's worktree, branch and last launch, and the
+		// warnings of its launch
+		seat.Worktree, seat.Branch, seat.Launch = staged.Worktree, staged.Branch, sl
+		// brief 31-2: a warning the owner cleared for this launch moves to
+		// the acknowledged list
+		clears, err := schedproc.ReadClears(o.Root)
+		if err != nil {
+			warn("clears: %v", err)
 		}
+		seat.Warnings, seat.AcknowledgedWarnings = splitCleared(warnings, clears[handle], staged.LaunchID)
 	}
 	rec, err := launch.Read(dir)
 	switch {
@@ -504,4 +507,46 @@ func pushURLMissing(root string) []string {
 		}
 	}
 	return out
+}
+
+// seatLaunchState is a seat's staged launch record, its last launch and
+// the warnings of that launch before any clear: the one computation status
+// shows and the clear key's check reads (CurrentSeatWarnings). ok is false
+// without a readable staged record, and then the seat has no warnings.
+func seatLaunchState(root, handle string, now time.Time) (staged launch.Record, sl *SeatLaunch, warnings []string, ok bool) {
+	raw, err := os.ReadFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName))
+	if err != nil {
+		return launch.Record{}, nil, nil, false
+	}
+	if staged, err = launch.Decode(raw); err != nil {
+		return launch.Record{}, nil, nil, false
+	}
+	sl = seatLaunch(root, handle, staged)
+	warnings = append(seatWarnings(root, handle), launchWarnings(root, handle, staged, sl, now)...)
+	return staged, sl, warnings, true
+}
+
+// CurrentSeatWarnings is the seat's current launch id and the warnings
+// status computes for that launch now, before any clear (brief 31-2): the
+// scheduler accepts a clear only for a warning this returns.
+func CurrentSeatWarnings(root, handle string) (string, []string, error) {
+	staged, _, warnings, ok := seatLaunchState(root, handle, time.Now())
+	if !ok {
+		return "", nil, fmt.Errorf("seat %s has no readable launch record", handle)
+	}
+	return staged.LaunchID, warnings, nil
+}
+
+// splitCleared moves each warning the owner cleared for this launch out of
+// the warnings (brief 31-2): a clear names the warning's code and the
+// launch, so a later launch's same condition stays a warning.
+func splitCleared(warnings []string, clears []schedproc.ClearLine, launchID string) (kept, acknowledged []string) {
+	for _, w := range warnings {
+		if schedproc.Cleared(clears, schedproc.WarningCode(w), launchID) {
+			acknowledged = append(acknowledged, w)
+		} else {
+			kept = append(kept, w)
+		}
+	}
+	return kept, acknowledged
 }

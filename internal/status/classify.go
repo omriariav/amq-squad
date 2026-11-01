@@ -32,6 +32,10 @@ type SeatInput struct {
 	// Warnings are the seat warnings that replace the deleted launch
 	// refusals (brief 31-1), one "<code>: <detail>" line each.
 	Warnings []string
+	// AcknowledgedWarnings are the warnings the owner cleared at the
+	// screen for the seat's current launch (brief 31-2), kept out of
+	// Warnings.
+	AcknowledgedWarnings []string
 	// Worktree, Branch and Launch come from the seat's staged launch record
 	// (brief 31-1); Launch is nil without one.
 	Worktree, Branch string
@@ -394,7 +398,7 @@ func classifySeat(in SeatInput, tasks []task.Task, gates map[string]GateInput, a
 		// the redaction (Codex P2 10 on #829)
 		LastActivityAt: in.LastActivity, LastMessageAt: in.LastMessageAt, LastMessage: truncate(redact.Block(in.LastMessage), lastMessageLimit),
 		PromptState: firstNonEmpty(in.PromptState, "unknown"), TokensIn: in.TokensIn, TokensOut: in.TokensOut,
-		Warnings: redactAll(in.Warnings), Worktree: in.Worktree, Branch: in.Branch, Launch: redactLaunch(in.Launch),
+		Warnings: redactAll(in.Warnings), AcknowledgedWarnings: redactAll(in.AcknowledgedWarnings), Worktree: in.Worktree, Branch: in.Branch, Launch: redactLaunch(in.Launch),
 	}
 	held := task.HeldBy(in.Handle, tasks)
 	// live is set before the state: a gate or a block overrides liveness in

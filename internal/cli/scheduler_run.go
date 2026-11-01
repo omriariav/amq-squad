@@ -23,6 +23,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
@@ -33,6 +34,7 @@ const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 Usage:
   amq-squad scheduler run --project DIR [--lead-pool r:m:e]... [--tick 2s] [--max-seats N] [--base-branch B] [--no-open-pr]
   amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--json]
+  amq-squad scheduler clear --seat H --warning CODE --launch ID [--root DIR] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
@@ -87,6 +89,21 @@ scheduler relaunch is the lead's decision to relaunch the roster, sent over
 the scheduler's decision socket (proved like task widen): the seats finish
 what they hold, every seat closes, the roster launches again in one apply,
 and the tasks blocked seat_replacement_needs_relaunch return to pending.
+
+scheduler clear is the screen's clear key (brief 31-2): the owner's
+acknowledgement of a seat's warning line (its code, the text before the
+colon) on the seat's current launch, sent over the same socket and proved
+the same way. It is recorded as a warning_cleared decision and in the
+scheduler directory's clears.jsonl; status then lists that warning under
+the seat's acknowledged_warnings for that launch only. A clear is never a
+gate and never changes a seat's state, and it is accepted only for a seat
+warning that status shows for that seat on that launch now. Refusals:
+clear_not_a_warning (the code is not a seat warning: a refusal is never
+cleared), clear_not_showing (status does not show that warning for the
+seat now), clear_launch_stale (the seat's current launch is not the one
+named), clear_malformed; and the socket's: not_lead (the sender does not
+descend from the lead), origin_unknown (the sender's origin cannot be read
+or proved).
 `
 
 func runScheduler(args []string) error {
@@ -101,8 +118,10 @@ func runScheduler(args []string) error {
 		return runSchedulerRun(ctx, args[1:], os.Stdout)
 	case "relaunch":
 		return runSchedulerRelaunch(args[1:], os.Stdout)
+	case "clear":
+		return runSchedulerClear(args[1:], os.Stdout)
 	default:
-		return unknownSubcommandError("scheduler", args[0], "run", "relaunch")
+		return unknownSubcommandError("scheduler", args[0], "run", "relaunch", "clear")
 	}
 }
 
@@ -461,7 +480,7 @@ var schedulerLeadParent = func() (int, string, bool) {
 func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
 	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
 		return widenDecision(sel, projectRoot, lead, req)
-	}}
+	}, Warnings: status.CurrentSeatWarnings} // brief 31-2: a clear names a warning status shows
 	if schedulerDecideSeams != nil {
 		schedulerDecideSeams(d)
 	}

@@ -554,7 +554,28 @@ outcome and budget, warnings), tasks (state, seat, PR, block reason),
 the merge train (the current and last runs, alerts) and open gates, each
 block closed by its newest refusal. It refreshes when the task store or
 the scheduler state changes; <code>/squad</code> collapses it to one
-footer line of counts. It is read-only.</p>
+footer line of counts.</p>
+<p>The screen has four keys, typed in the lead's pi as
+<code>/squad &lt;key&gt;</code>. pi hands a command to the extension,
+never to the model, and each key runs its verb from the lead's own
+process, so a key that is a scheduler decision is proved like the lead's
+own tools. The model's tools gain nothing.</p>
+<ul>
+<li><code>/squad add</code> adds a task: the title, the class, the
+declared files and the pool go to <code>task add</code>.</li>
+<li><code>/squad reset</code> resets a blocked task through
+<code>task reset</code>, onto another pool when you pick one
+(<code>--pool</code>).</li>
+<li><code>/squad clear</code> acknowledges a seat's warning line through
+<code>scheduler clear</code>. The line leaves the screen for that launch
+only, and the seat's state does not change.</li>
+<li><code>/squad answer</code> shows an open typed gate with its kind,
+target and 16-hex typed prefix. It posts the question over Buzz when it
+has not reached Buzz, and says the gate is waiting there. Buzz is the
+one door for the four typed gates; the terminal door is not built
+yet.</li>
+</ul>
+<p>A key's refusal shows on the screen as the verb printed it.</p>
 <p>Two entry points, each one AMQ launch request with every seat behind
 <code>seat-exec</code>:</p>
 <ul>
