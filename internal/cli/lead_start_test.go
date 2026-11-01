@@ -151,6 +151,12 @@ func TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux(t *testing
 	if os.Getenv(leadStartEnv) != rec.At.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("launch start %q, want the confirmation's moment %s", os.Getenv(leadStartEnv), rec.At)
 	}
+	// R53: the yes writes the phase marker in the lead's own root, naming
+	// the team lead's identity as lead --team resolves it
+	m, ok := teamMarked(s.root, f.proj)
+	if !ok || m.Root != f.root || m.Session != "s1" || m.Handle != "lead" || m.Digest != digest || m.PID != os.Getpid() {
+		t.Fatalf("phase marker %+v %v", m, ok)
+	}
 	if again := s.start(context.Background(), leadStartRequest{Kind: leadStartKind, Digest: digest, Project: f.proj}); again.Refusal != schedproc.ReasonLeadRunning {
 		t.Fatalf("a second start = %+v", again)
 	}
@@ -673,5 +679,40 @@ func TestUpReadsTheSoloLeadsDiscoveryRecordByItsLiveness(t *testing.T) {
 	}
 	if _, err := os.Stat(rec); err == nil {
 		t.Fatal("up left the stale record")
+	}
+}
+
+// Row 2 (brief 31-3 PR 2, R53): a solo lead restarted in a repository whose
+// lead switched to team phase starts in team phase: as lead --team (the
+// team role and tools, the lead lock, the scheduler over squad.yaml's
+// identity), with no flag; without the marker it starts solo.
+func TestASoloLeadRestartedInATeamMarkedRepositoryStartsAsTheTeamLead(t *testing.T) {
+	call, starts, project, root := teamLeadFixture(t)
+	prev := serveLeadStart
+	t.Cleanup(func() { serveLeadStart = prev })
+	serveLeadStart = func(*leadStarter) (string, error) { return "/tmp/lead-start.sock", nil }
+	if _, _, err := captureOutput(t, func() error { return runLead(nil) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(*starts) != 0 || call.getenv("AMQ_SQUAD_SOLO_LEAD") != "1" || call.getenv("AMQ_SQUAD_LEAD") != "" {
+		t.Fatalf("no marker: scheduler starts %d, solo %q, lead %q", len(*starts), call.getenv("AMQ_SQUAD_SOLO_LEAD"), call.getenv("AMQ_SQUAD_LEAD"))
+	}
+	soloRoot, err := soloRootOf(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: root, Session: "v31", Handle: "cto", At: time.Now()})
+	mustWrite(t, phaseMarkerPath(soloRoot), string(m))
+	if _, _, err := captureOutput(t, func() error { return runLead(nil) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(*starts) != 1 || call.getenv("AMQ_SQUAD_LEAD") != "1" || call.getenv("AMQ_SQUAD_SOLO_LEAD") != "" || call.getenv("AM_ME") != "cto" || call.getenv("AM_ROOT") != root {
+		t.Fatalf("a team-marked restart: scheduler starts %d, lead %q, solo %q, AM_ME %q, AM_ROOT %q", len(*starts), call.getenv("AMQ_SQUAD_LEAD"), call.getenv("AMQ_SQUAD_SOLO_LEAD"), call.getenv("AM_ME"), call.getenv("AM_ROOT"))
+	}
+	// a marker for another repository is no switch
+	other, _ := json.Marshal(phaseMarker{Schema: 1, Phase: PhaseTeam, Project: "/elsewhere", At: time.Now()})
+	mustWrite(t, phaseMarkerPath(soloRoot), string(other))
+	if _, ok := teamMarked(soloRoot, project); ok {
+		t.Fatal("another repository's marker switched this one")
 	}
 }

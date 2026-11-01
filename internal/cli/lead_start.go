@@ -482,7 +482,14 @@ func (s *leadStarter) start(ctx context.Context, req leadStartRequest) leadStart
 	}
 	switch {
 	case res.Outcome == fleet.OutcomeStarted:
-		return leadStartReply{Outcome: "started", Detail: l.outcome, Steps: s.steps, Roster: l.roster}
+		// R53 (brief 31-3 PR 2): the owner's yes switches this lead to team
+		// phase; the marker tells its pi (the tool list and the squad's
+		// identity) and a restarted lead (which starts as lead --team)
+		detail := l.outcome
+		if err := writePhaseMarker(s.root, s.project, req.Digest, s.self); err != nil {
+			detail += "; the phase marker was not written: " + err.Error()
+		}
+		return leadStartReply{Outcome: "started", Detail: detail, Steps: s.steps, Roster: l.roster}
 	case slices.Contains(r40Fallback, res.Reason):
 		r := refused(res.Reason, "%s; the lead proposes, the owner starts: from your own shell run the two commands below", res.Detail)
 		r.OwnerSteps = [][]string{{"amq-squad", "team", "apply", "--digest", req.Digest, "--project", s.project}, {"amq-squad", "up", "--project", s.project}}
@@ -790,4 +797,66 @@ func underSoloLead(verb string, leadRefuses, checkEnv bool) error {
 		}
 	}
 	return restamp(chain)
+}
+
+// The phase marker (brief 31-3 PR 2, R53): the solo lead's process writes
+// it in its own AMQ root (<root>/extensions/amq-squad/phase.json) when the
+// start of a confirmed team succeeds. It names the team lead's identity as
+// `lead --team` resolves it from squad.yaml (resolveTeamLeadIdentity): the
+// squad's session root, base root, session and lead handle. The lead's pi
+// reads it after amq_team_apply returns (and at a session start in the same
+// lead process) and switches its tool list and its identity; a solo lead
+// restarted in the repository reads it and starts as lead --team. It grants
+// nothing the owner's own `amq-squad lead --team` would not: the
+// confirmation was witnessed before it was written, and squad.yaml is the
+// owner's.
+const phaseMarkerName = "phase.json"
+
+// PhaseTeam is the one phase a marker records.
+const PhaseTeam = "team"
+
+type phaseMarker struct {
+	Schema   int       `json:"schema"`
+	Phase    string    `json:"phase"`
+	Project  string    `json:"project"`
+	Root     string    `json:"root"`
+	BaseRoot string    `json:"base_root"`
+	Session  string    `json:"session"`
+	Handle   string    `json:"handle"`
+	Digest   string    `json:"digest"`
+	At       time.Time `json:"at"`
+	PID      int       `json:"pid"`
+	Start    string    `json:"start"`
+}
+
+func phaseMarkerPath(soloRoot string) string {
+	return filepath.Join(soloRoot, "extensions", "amq-squad", phaseMarkerName)
+}
+
+// writePhaseMarker writes the team phase marker of project's solo root.
+func writePhaseMarker(soloRoot, project, digest string, pid int) error {
+	id, err := resolveTeamLeadIdentity(project)
+	if err != nil {
+		return err
+	}
+	start, _ := confirmStamp(pid)
+	m := phaseMarker{Schema: 1, Phase: PhaseTeam, Project: project, Root: id.Root, BaseRoot: id.BaseRoot, Session: id.Session, Handle: id.Handle,
+		Digest: digest, At: confirmNow().UTC(), PID: pid, Start: start}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(phaseMarkerPath(soloRoot), append(b, '\n'), 0o600)
+}
+
+// teamMarked reports whether project's solo lead switched to team phase:
+// its marker, a regular file read without following a link, says team for
+// this project.
+func teamMarked(soloRoot, project string) (phaseMarker, bool) {
+	var m phaseMarker
+	raw, err := readDiscoveryRecord(phaseMarkerPath(soloRoot))
+	if err != nil || json.Unmarshal(raw, &m) != nil {
+		return m, false
+	}
+	return m, m.Schema == 1 && m.Phase == PhaseTeam && m.Project == project
 }

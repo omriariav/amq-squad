@@ -94,6 +94,19 @@ func runLead(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "amq-squad lead: model %s (%s)\n", model, src)
 	}
+	if !*team {
+		// R53 (brief 31-3 PR 2): a solo lead restarted in a repository whose
+		// lead switched to team phase starts in team phase, as lead --team
+		if cwd, err := os.Getwd(); err == nil {
+			project := projectTop(cwd)
+			if root, err := soloRootOf(project); err == nil && squadPresent(project) {
+				if m, ok := teamMarked(root, project); ok {
+					*team = true
+					fmt.Fprintf(os.Stderr, "amq-squad lead: %s switched to team phase at %s (%s); starting as amq-squad lead --team\n", project, m.At.Format(time.RFC3339), phaseMarkerPath(root))
+				}
+			}
+		}
+	}
 	f.lead = *team
 	// The team lead's tool set (amendment 26) is applied by piLaunch for
 	// every lead launch, here and under an AMQ launch.
