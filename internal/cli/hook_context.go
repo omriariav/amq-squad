@@ -114,13 +114,12 @@ var (
 
 // sweep kills the groups the read kept (Codex's pass 3 on #837): a group
 // whose leader was reaped with no member left was never kept, so its id,
-// free for reuse, is never signalled; a kept group is signalled only while
-// it still has a member, and while one lives no process can take its id.
+// free for reuse, is never signalled. A kept group had a member at the
+// reap, and while a member lives no process can take the group's id; the
+// sweep runs right after the read's last reap.
 func (c *hostCall) sweep() {
 	for _, cmd := range c.cmds {
-		if hostGroupAlive(cmd) {
-			hostGroupKill(cmd)
-		}
+		hostGroupKill(cmd)
 	}
 	c.cmds = nil
 }
