@@ -108,30 +108,40 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 		const before = pi.getActiveTools();
 		for (const t of [...BUILTINS, "amq_team_propose", "amq_team_apply"]) assert.ok(before.includes(t), `${t} is not declared before the yes`);
 		for (const t of ["amq_task_add", "amq_status", "amq_scheduler_relaunch", "amq_task_widen"]) assert.ok(!before.includes(t), `${t} is declared before the yes`);
-		const proposed = await pi.tools.get("amq_team_propose").execute("c1", { goal: "x", session: "s1", lead: "cto", seats: [{ handle: "cto", runtime: "pi" }] }, undefined);
-		assert.match(proposed.content[0].text, /prefix 0123456789abcdef/);
+		// every call goes through pi's batch: prepared by the hooks, then run
+		const [proposed] = await pi.batch([{ toolName: "amq_team_propose", input: { goal: "x", session: "s1", lead: "cto", seats: [{ handle: "cto", runtime: "pi" }] } }], ctx);
+		assert.equal(proposed.outcome, "ran", proposed.reason);
+		assert.match(proposed.text ?? "", /prefix 0123456789abcdef/);
 		// the model made phase.json a directory before the yes: the record
 		// cannot be written, and the switch, riding the reply, happens anyway
 		fs.mkdirSync(path.join(w.soloRoot, "extensions", "amq-squad", "phase.json"));
-		const applied = await pi.tools.get("amq_team_apply").execute("c2", { digest: DIGEST }, undefined);
-		assert.match(applied.content[0].text, /team phase: your tools are now the team lead's/);
+		const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], ctx);
+		assert.equal(applied.outcome, "ran", applied.reason);
+		assert.match(applied.text ?? "", /team phase: your tools are now the team lead's/);
 		assert.deepEqual(pi.getActiveTools().sort(), TEAM13);
 		assert.ok(!pi.getActiveTools().some((t) => /gate|answer|confirm/.test(t)), "a gate-answer or confirm tool in team phase");
 		assert.equal(process.env.AM_ROOT, w.squadRoot);
 		assert.equal(process.env.AM_ME, "cto");
 		assert.equal(process.env.AMQ_SQUAD_LEAD, "1");
-		for (const call of [
-			{ toolName: "bash", input: { command: "ls" } },
-			{ toolName: "edit", input: { path: "a" } },
-			{ toolName: "amq_team_apply", input: { digest: DIGEST } },
-			{ toolName: "amq_team_propose", input: {} },
-		]) {
-			const out = await pi.emit("tool_call", { ...call, toolCallId: "t" }, ctx);
-			assert.equal(out?.block, true, call.toolName);
-			assert.match(out.reason, /^phase_team: /, call.toolName);
+		// a model that names the solo tools anyway (pi's turn list could
+		// still carry them) meets the hook: each refuses phase_team
+		pi.active = new Set([...pi.active, ...BUILTINS, "amq_team_apply", "amq_team_propose"]);
+		const solo = await pi.batch(
+			[
+				{ toolName: "bash", input: { command: "ls" } },
+				{ toolName: "edit", input: { path: "a" } },
+				{ toolName: "amq_team_apply", input: { digest: DIGEST } },
+				{ toolName: "amq_team_propose", input: {} },
+			],
+			ctx,
+		);
+		for (const r of solo) {
+			assert.equal(r.outcome, "blocked", r.toolName);
+			assert.match(r.reason ?? "", /^phase_team: /, r.toolName);
 		}
-		const st = await pi.tools.get("amq_status").execute("c3", {}, undefined);
-		assert.match(st.content[0].text, /"session":"s1"/);
+		pi.setActiveTools(TEAM13);
+		const [st] = await pi.batch([{ toolName: "amq_status" }], ctx);
+		assert.match(st.text ?? "", /"session":"s1"/);
 	});
 });
 
@@ -174,8 +184,8 @@ test("R53: a planted marker switches nothing; the switch rides the lead's answer
 		assert.equal(offers[0].message.content, `This session's team was started on 2026-11-01T09:00:00Z with digest ${DIGEST}; run \`amq-squad up\` to resume it, or confirm it again at your pane (/squad confirm) or over Buzz.`);
 		const again = (await pi.emitAll("before_agent_start", { systemPromptOptions: { sections: {} } }, fakeCtx())).filter((r) => r?.message?.customType === "amq-squad-resume");
 		assert.equal(again.length, 0, "the offer said twice");
-		const applied = await pi.tools.get("amq_team_apply").execute("c", { digest: DIGEST }, undefined);
-		assert.match(applied.content[0].text, /the lead's reply carried no team identity/);
+		const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], fakeCtx());
+		assert.match(applied.text ?? "", /the lead's reply carried no team identity/);
 		assert.ok(pi.getActiveTools().includes("bash"), "the planted marker switched at the apply");
 		assert.equal(process.env.AM_ROOT, w.soloRoot);
 	});

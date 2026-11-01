@@ -49,6 +49,57 @@ export class FakePi {
 		this.model = m;
 		return true;
 	}
+	// batch runs one assistant message's tool calls as pi 1.3.0's agent loop
+	// does (pi-agent-core dist/agent-loop.js, executeToolCalls): turn_start,
+	// the assistant message's end, then, unless a call's tool is
+	// sequential, every call prepared (the tool_call hooks, in order) before
+	// any runs, and the admitted ones run together; with a sequential tool
+	// in the batch each call is prepared and run before the next. A call to
+	// a tool not active when the batch began is not found (pi checks the
+	// turn's tool list). between runs after the preparing and before the
+	// running (a test's way to change the world in that gap); noMessageEnd
+	// leaves the message's end unseen.
+	async batch(calls: { toolName: string; input?: any; toolCallId?: string }[], ctx: any, opts: { between?: () => Promise<void>; noMessageEnd?: boolean } = {}): Promise<BatchResult[]> {
+		const list = calls.map((c, i) => ({ toolName: c.toolName, input: c.input ?? {}, toolCallId: c.toolCallId ?? `b${++this.calls}-${i}` }));
+		const declared = new Set(this.active);
+		await this.emit("turn_start", { type: "turn_start", turnIndex: this.calls, timestamp: 0 }, ctx);
+		if (!opts.noMessageEnd)
+			await this.emit("message_end", { type: "message_end", message: { role: "assistant", content: list.map((c) => ({ type: "toolCall", id: c.toolCallId, name: c.toolName, arguments: c.input })) } }, ctx);
+		const prepare = async (c: (typeof list)[number]): Promise<BatchResult | undefined> => {
+			if (!declared.has(c.toolName)) return { toolName: c.toolName, toolCallId: c.toolCallId, outcome: "not_found", reason: `Tool ${c.toolName} not found` };
+			const out = await this.emit("tool_call", { type: "tool_call", toolCallId: c.toolCallId, toolName: c.toolName, input: c.input }, ctx);
+			if (out?.block) return { toolName: c.toolName, toolCallId: c.toolCallId, outcome: "blocked", reason: out.reason };
+			return undefined;
+		};
+		const runOne = async (c: (typeof list)[number]): Promise<BatchResult> => {
+			const def = this.tools.get(c.toolName);
+			if (!def) {
+				this.ran.push(c.toolName);
+				return { toolName: c.toolName, toolCallId: c.toolCallId, outcome: "ran", text: `${c.toolName} ran` };
+			}
+			try {
+				const r = await def.execute(c.toolCallId, c.input, undefined, undefined, ctx);
+				this.ran.push(c.toolName);
+				return { toolName: c.toolName, toolCallId: c.toolCallId, outcome: "ran", text: r?.content?.[0]?.text ?? "" };
+			} catch (e) {
+				return { toolName: c.toolName, toolCallId: c.toolCallId, outcome: "error", reason: (e as Error).message };
+			}
+		};
+		const sequential = list.some((c) => this.tools.get(c.toolName)?.executionMode === "sequential");
+		const results: BatchResult[] = [];
+		if (sequential) {
+			for (const c of list) results.push((await prepare(c)) ?? (await runOne(c)));
+			return results;
+		}
+		const prepared: (BatchResult | undefined)[] = [];
+		for (const c of list) prepared.push(await prepare(c));
+		if (opts.between) await opts.between();
+		return Promise.all(list.map((c, i) => (prepared[i] ? Promise.resolve(prepared[i] as BatchResult) : runOne(c))));
+	}
+	calls = 0;
+	// ran names every tool whose execute (or, for a builtin, its stand-in)
+	// ran, in order
+	ran: string[] = [];
 	// emitAll runs every handler in order and returns every defined result
 	// (pi's runner collects each before_agent_start handler's message).
 	async emitAll(name: string, event: any, ctx: any): Promise<any[]> {
@@ -70,6 +121,8 @@ export class FakePi {
 		return out;
 	}
 }
+
+export type BatchResult = { toolName: string; toolCallId: string; outcome: "ran" | "blocked" | "error" | "not_found"; reason?: string; text?: string };
 
 export function fakeCtx(over: Record<string, unknown> = {}): any {
 	const statuses: Record<string, string | undefined> = {};
