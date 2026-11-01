@@ -583,7 +583,7 @@ func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
 	for name, lead := range map[string][]string{
 		"the solo lead":      {"/usr/local/bin/amq-squad", "lead"},
 		"the bare solo lead": {"amq-squad"},
-		"the lead's pi":      {"/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/node", "/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/cli.js"},
+		"the lead's pi":      {filepath.Join(piRuntimeDir(), "pi-1.3.0-ab12", "node"), filepath.Join(piRuntimeDir(), "pi-1.3.0-ab12", "cli.js")},
 	} {
 		fakeAncestors(t, underLead, map[int][]string{90: bash, 80: lead}, map[int][]string{80: {"AM_ME=lead"}})
 		if _, err := runUpJSON(t, f.proj); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": up runs under pid 80") {
@@ -614,7 +614,7 @@ func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
 	if err := runSchedulerRun(context.Background(), []string{"--project", f.proj, "--tick", "1ms"}, io.Discard); err != nil && strings.Contains(err.Error(), ReasonUnderSoloLead) {
 		t.Fatalf("the scheduler lead --team starts = %v", err)
 	}
-	pi := []string{"/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/node", "/Users/o/.amq-squad/runtime/pi-1.3.0-ab12/cli.js"}
+	pi := []string{filepath.Join(piRuntimeDir(), "pi-1.3.0-ab12", "node"), filepath.Join(piRuntimeDir(), "pi-1.3.0-ab12", "cli.js")}
 	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 80, 80: 1}, map[int][]string{90: bash, 85: pi, 80: {"amq-squad", "lead"}}, map[int][]string{85: {"PATH=/bin", leadStartSocketEnv + "=/r/lead-start.sock"}})
 	if err := runSchedulerRun(context.Background(), []string{"--project", f.proj}, io.Discard); err == nil || !strings.Contains(err.Error(), ReasonUnderSoloLead+": scheduler run runs under pid 85") {
 		t.Fatalf("scheduler run under the lead's pi = %v", err)
@@ -626,6 +626,16 @@ func TestUpRefusesUnderASoloLeadByItsProcessTreeNotItsName(t *testing.T) {
 	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 1}, map[int][]string{90: {"-zsh"}, 85: pi}, map[int][]string{85: {"PATH=/bin", "HOME=/Users/o"}})
 	if r, err := runUpJSON(t, f.proj); err != nil && strings.Contains(err.Error(), ReasonUnderSoloLead) {
 		t.Fatalf("up under the owner's plain pi = %v %s", err, stepNames(r))
+	}
+	// no argv substring decides: an editor whose argument names a runtime
+	// path (vim /tmp/.amq-squad/runtime/pi-notes, then :shell), and a node
+	// under a look-alike runtime path outside the user's own, are not pi,
+	// even carrying AMQ's identity
+	for _, notPi := range [][]string{{"vim", "/tmp/.amq-squad/runtime/pi-notes"}, {"/tmp/.amq-squad/runtime/pi-1.3.0-ab12/node", "cli.js"}} {
+		fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 1}, map[int][]string{90: {"/bin/sh"}, 85: notPi}, map[int][]string{85: {"AM_ME=lead"}})
+		if r, err := runUpJSON(t, f.proj); err != nil && strings.Contains(err.Error(), ReasonUnderSoloLead) {
+			t.Fatalf("up under %v = %v %s", notPi, err, stepNames(r))
+		}
 	}
 	// a shell apply under the lead's pi is refused by the process tree too
 	fakeAncestors(t, map[int]int{100: 90, 90: 85, 85: 1}, map[int][]string{90: bash, 85: pi}, map[int][]string{85: {"AM_ME=lead"}})

@@ -717,17 +717,32 @@ func leadArgv(argv []string) bool {
 	return len(argv) > 0 && filepath.Base(argv[0]) == "amq-squad" && (len(argv) == 1 || argv[1] == "lead")
 }
 
-// piArgv reports whether argv is the lead's pi: node (or its launcher) run
-// from the unpacked runtime under ~/.amq-squad/runtime/pi-*, by its
-// executable or its script path, never a later argument (a shell whose
-// command text names the path is not pi).
-func piArgv(argv []string) bool {
-	for _, a := range argv[:min(2, len(argv))] {
-		if strings.Contains(a, "/.amq-squad/runtime/pi-") {
-			return true
-		}
+// piRuntimeDir is the user's unpacked pi runtimes, ~/.amq-squad/runtime (a
+// test seam).
+var piRuntimeDir = func() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
 	}
-	return false
+	return filepath.Join(home, ".amq-squad", "runtime")
+}
+
+// piArgv reports whether argv is a pi process by its executable alone
+// (Codex's narrow pass on #834: no substring of any argument decides):
+// argv[0]'s base name is exactly pi, or argv[0] is an absolute path inside
+// the user's own pi runtimes (the runtime's node, which PiArgv puts first).
+// Whether that pi refuses is decided by AMQ's identity in its environment
+// (amqIdentityEnv), never by its argv.
+func piArgv(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	exe := filepath.Clean(argv[0])
+	if filepath.Base(exe) == "pi" {
+		return true
+	}
+	dir := piRuntimeDir()
+	return dir != "" && filepath.IsAbs(exe) && strings.HasPrefix(exe, dir+string(filepath.Separator))
 }
 
 // underSoloLead is the in-binary refusal of the renamed-binary residual
