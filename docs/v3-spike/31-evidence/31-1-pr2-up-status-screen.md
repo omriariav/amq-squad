@@ -321,8 +321,8 @@ launch `0de97c89…`):
 
 | Seat | Runtime and model | Baseline to seat live | Day 4 to seat live | Day 4 to first message | Slowest segment |
 | --- | --- | --- | --- | --- | --- |
-| dev | codex gpt-5.6-terra | 4.485 s | 4.198 s | none yet (idle roster) | prepare 3.621 s |
-| reviewer | codex gpt-5.6-sol | 4.419 s | 4.236 s | none yet (idle roster) | prepare 3.621 s |
+| dev | codex gpt-5.6-terra | 4.485 s | 4.198 s | pending t27 | prepare 3.621 s |
+| reviewer | codex gpt-5.6-sol | 4.419 s | 4.236 s | pending t27 | prepare 3.621 s |
 | scribe | claude sonnet | 4.666 s | not in the roster that ran | | |
 
 The day-4 run, 2026-11-01, on v3.1.0-rc.1 (the tag build at
