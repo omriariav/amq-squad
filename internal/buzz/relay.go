@@ -841,16 +841,17 @@ func writeRelayRecord(dir string, r *status.RelayRecord, now time.Time) error {
 	return atomicfile.Write(relayRecordPath(dir, r.RequestID), append(raw, '\n'), 0o600)
 }
 
-// continuation is the request a DM continues: the record one of whose
-// relay posts the event replies to, or whose receipt it replies to. The
+// continuation is the request a DM continues: the request one of whose
+// relay posts or delivered owner DMs the DM replies to, or whose receipt it
+// replies to. The DM's direct reply target (its parent, the e tag marked
+// reply) decides; its thread root is used only when it names no parent. The
 // receipt (`accepted <request id>`) is serve's row, a body-signed kind 9
-// that replies to the owner's DM; its event id is serve's, never the
-// attachment's, so the mapping goes through the row's own thread tags: a
-// reply naming a delivered turn's DM (Buzz names the thread root) maps
-// directly, and a reply naming only the row has the row read on the
-// verifier's connection, its signature checked as the body's in the
-// channel, and its replied-to DM mapped. A DM in a gate question's thread
-// is never a continuation (the gate path keeps it, as today).
+// replying to the owner's DM; its event id is serve's, never the
+// attachment's, so a parent that maps to no record is read on the
+// verifier's connection and, when it verifies as the body's kind 9 in the
+// channel, the DM it replies to (its own parent, never its root) is
+// mapped. A DM in a gate question's thread is never a continuation (the
+// gate path keeps it, as today).
 func (h *Handler) continuation(ctx context.Context, e nostr.Event, relay gateverify.Relay) *status.RelayRecord {
 	refs := nostr.ThreadRefs(e)
 	if len(refs) == 0 {
@@ -866,42 +867,78 @@ func (h *Handler) continuation(ctx context.Context, e nostr.Event, relay gatever
 	if inGate(refs) {
 		return nil
 	}
+	// each relay post and each delivered owner DM belongs to exactly one
+	// request
+	index := map[string]*status.RelayRecord{}
 	recs, _ := loadRelayRecords(status.RelayDir(h.Target.Root))
-	match := func(ids []string) *status.RelayRecord {
-		for _, r := range recs {
-			for _, ref := range ids {
-				if slices.ContainsFunc(r.Posts, func(p status.RelayPost) bool { return slices.Contains(p.Events, ref) }) ||
-					slices.ContainsFunc(r.Turns, func(t status.RelayTurn) bool { return t.Delivered && t.Event == ref }) {
-					return r
-				}
+	for _, r := range recs {
+		for _, p := range r.Posts {
+			for _, id := range p.Events {
+				index[id] = r
 			}
 		}
+		for _, t := range r.Turns {
+			if t.Delivered {
+				index[t.Event] = r
+			}
+		}
+	}
+	parent, root := threadParent(e)
+	target := parent
+	if target == "" {
+		target = root
+	}
+	if target == "" {
 		return nil
 	}
-	if r := match(refs); r != nil {
+	if r := index[target]; r != nil {
 		return r
 	}
 	if relay == nil {
 		return nil
 	}
+	raw, err := gateverify.FetchEvent(ctx, relay, target)
+	if err != nil {
+		return nil
+	}
 	pin := h.Core.Pin
-	for _, ref := range refs {
-		raw, err := gateverify.FetchEvent(ctx, relay, ref)
-		if err != nil {
-			continue
-		}
-		row, err := nostr.ParseEvent(raw)
-		if err != nil || row.PubKey != pin.Body || row.VerifySignature() != nil || row.Kind != KindDM ||
-			!slices.Equal(nostr.TagValues(row, "h"), []string{pin.Channel}) {
-			continue
-		}
-		if rowRefs := nostr.ThreadRefs(row); !inGate(rowRefs) {
-			if r := match(rowRefs); r != nil {
-				return r
-			}
-		}
+	row, err := nostr.ParseEvent(raw)
+	if err != nil || row.PubKey != pin.Body || row.VerifySignature() != nil || row.Kind != KindDM ||
+		!slices.Equal(nostr.TagValues(row, "h"), []string{pin.Channel}) || inGate(nostr.ThreadRefs(row)) {
+		return nil
+	}
+	if rp, _ := threadParent(row); rp != "" {
+		return index[rp]
 	}
 	return nil
+}
+
+// threadParent is an event's direct reply target and its thread root
+// (NIP-10): the e tags marked reply and root; with no markers, the legacy
+// positional form (one e tag is the parent; with several, the first is the
+// root and the last the parent).
+func threadParent(e nostr.Event) (parent, root string) {
+	var unmarked []string
+	for _, t := range e.Tags {
+		if len(t) < 2 || t[0] != "e" || !nostr.IsHex64(t[1]) {
+			continue
+		}
+		switch {
+		case len(t) >= 4 && t[3] == "reply":
+			parent = t[1]
+		case len(t) >= 4 && t[3] == "root":
+			root = t[1]
+		case len(t) < 4 || t[3] == "":
+			unmarked = append(unmarked, t[1])
+		}
+	}
+	if parent == "" && root == "" && len(unmarked) > 0 {
+		parent = unmarked[len(unmarked)-1]
+		if len(unmarked) > 1 {
+			root = unmarked[0]
+		}
+	}
+	return parent, root
 }
 
 // RelayTurnUndelivered names a turn the relay took back on its step: its
