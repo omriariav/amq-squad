@@ -46,6 +46,8 @@ func TestBlockKeepsProseNearAColonKey(t *testing.T) {
 		"api_key: " + Placeholder,
 		"error: see api_key:" + Placeholder,
 		"api_key:null",
+		"see Credential:sourceV2(rt)", // a call expression, not a value
+		"see api_key: sourceV2(rt) now",
 		"error: see api_key: ab12cd now", // under the length of a secret
 		"see api_key:ab12cd",
 		"  token: Zq9xV7mP2wL4 and more", // the yamlValue inner-space rule stays at a line start

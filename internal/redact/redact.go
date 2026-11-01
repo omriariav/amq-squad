@@ -258,6 +258,9 @@ func spans(line string) (out [][2]int, found []Finding) {
 			continue
 		}
 		val := line[m[8]:m[9]]
+		if m[9] < len(line) && line[m[9]] == '(' {
+			continue // a call expression (sourceV2(rt)), not a value
+		}
 		inner := strings.Trim(val, `"'`)
 		if len(inner) < minSecretLen || !yamlValue(val) || !letterAndDigit(inner) || pointerRE.MatchString(inner) {
 			continue // prose, a flag, a switch: not credential-shaped
