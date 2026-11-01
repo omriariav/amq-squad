@@ -182,5 +182,12 @@ run("the DM marked handled before the real lead is recorded (Codex re-check #4)"
     B+"TestTheRealLeadIsRecordedBeforeTheDMIsHandled")
 run("a computed exec without its not-amq line (Codex re-check #6)", [('internal/buzz/phone_test.go',' // exec: not amq (the go tool)','')],
     B+"TestTestsExecAMQOnlyThroughTheHelper")
+# The receipt as a continuation anchor (the lead's addition)
+run("a reply naming only the receipt row is not read", [(R,'\tif relay == nil {\n\t\treturn nil\n\t}\n\tpin := h.Core.Pin','\tif relay == nil || true {\n\t\treturn nil\n\t}\n\tpin := h.Core.Pin')],
+    B+"TestAReplyToTheReceiptContinuesTheRequest")
+run("a receipt row not checked as the body's", [(R,'if err != nil || row.PubKey != pin.Body || row.VerifySignature() != nil','if err != nil || row.VerifySignature() != nil')],
+    B+"TestAReplyToTheReceiptContinuesTheRequest")
+run("a reply naming the thread root does not map", [(R,' ||\n\t\t\t\t\tslices.ContainsFunc(r.Turns, func(t status.RelayTurn) bool { return t.Delivered && t.Event == ref })','')],
+    B+"TestAReplyToTheReceiptContinuesTheRequest")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)
