@@ -157,6 +157,10 @@ type RosterReload struct {
 	// max_seats bounding the new seat count, and any narrowing); written
 	// with the roster in the same step. Zero keeps the running cap.
 	MaxSeats int
+	// Unlaunched are the squad.yaml seats beyond MaxSeats, in squad.yaml
+	// order, left out of Roster: the grant is the owner's cap on seats, so
+	// they are not launched (the plan reviewer on 31-2 PR 2).
+	Unlaunched []string
 }
 
 type relaunchAsk struct {
@@ -199,6 +203,9 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 		had[rs.Handle] = true
 	}
 	now := map[string]bool{}
+	for _, h := range r.Unlaunched {
+		now[h] = true // in squad.yaml, over the cap: not removed, not launched
+	}
 	var added, removed []string
 	for _, rs := range r.Roster {
 		now[rs.Handle] = true
@@ -215,6 +222,7 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 	if r.MaxSeats > 0 {
 		s.Config.MaxSeats = r.MaxSeats
 	}
+	s.unlaunched = append([]string(nil), r.Unlaunched...)
 	// Each added seat keeps its key press for every later relaunch, until
 	// it leaves the roster (Codex P2 2 on 31-2 PR 2): its marks never fall
 	// back to the squad's start.
@@ -236,15 +244,16 @@ func (s *Scheduler) swapReload(log func(Decision)) {
 	}
 	why += fmt.Sprintf("; at most %d leases at once", s.Config.MaxSeats)
 	log(Decision{Kind: "roster_reloaded", Seat: strings.Join(added, ","), Reason: why})
-	if len(r.Roster) > s.Config.MaxSeats {
-		// a warning, never a refusal: every seat launches, and a seat beyond
-		// the cap waits for a lease (seat_cap) while the others hold theirs
-		log(Decision{Kind: RosterOverCap, Seat: strings.Join(added, ","), Reason: fmt.Sprintf("%d roster seats over the lease cap of %d (max_seats): every seat launches; one beyond the cap waits for a lease while the others hold theirs", len(r.Roster), s.Config.MaxSeats)})
+	if len(r.Unlaunched) > 0 {
+		// the seats beyond the cap are not launched; the screen names each
+		// with its cure; the relaunch itself is not refused
+		log(Decision{Kind: RosterOverCap, Seat: strings.Join(r.Unlaunched, ","), Reason: fmt.Sprintf("squad.yaml has %d seats beyond max_seats %d, not launched: %s; widen the grant or remove the seat", len(r.Unlaunched), s.Config.MaxSeats, strings.Join(r.Unlaunched, ", "))})
 	}
 }
 
-// RosterOverCap is the decision of a reload whose roster has more seats than
-// the lease cap: a warning on the screen, never a refusal of the add.
+// RosterOverCap is the decision of a reload whose squad.yaml has seats
+// beyond the cap: those seats are not launched (the grant is the owner's
+// cap on seats), and the screen shows one line for each.
 const RosterOverCap = "roster_over_cap"
 
 // holdOnce logs dispatch_held when its reason changes.

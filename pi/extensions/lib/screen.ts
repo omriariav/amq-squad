@@ -47,7 +47,7 @@ export type ScreenStatus = {
 	root: string;
 	session: string;
 	project_path?: string;
-	scheduler?: { max_seats: number; live_seats: number } | null;
+	scheduler?: { max_seats: number; live_seats: number; unlaunched_seats?: string[] } | null;
 	lead_handle: string | null;
 	lead: { handle: string; pid: number; pane: string; live: boolean } | null;
 	counts: { needs_you: number; working: number; ready: number; inactive: number };
@@ -117,11 +117,10 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		out.push(`  ${s.handle}  ${rt}  ${s.state}/${s.reason_code}  ${l ? l.outcome : "no launch"}  ${budget}`.trimEnd());
 		for (const w of s.warnings ?? []) out.push(`    ! ${short(w)}`);
 	}
-	const sch = st.scheduler;
-	if (sch && sch.max_seats > 0 && sch.live_seats > sch.max_seats) {
-		// brief 31-2 PR 2: more roster seats up than the lease cap (a seat
-		// added past max_seats); a warning, never a refusal of the add
-		out.push(`  ! over the lease cap: ${sch.live_seats} seats up, max_seats ${sch.max_seats}: a seat beyond the cap waits for a lease (seat_cap) while the others hold theirs`);
+	// brief 31-2 PR 2: a squad.yaml seat beyond max_seats is not launched
+	// (the grant is the owner's cap on seats); one line each, with the cure
+	for (const h of st.scheduler?.unlaunched_seats ?? []) {
+		out.push(`  ! ${h} not launched: over max_seats ${st.scheduler!.max_seats}; widen the grant or remove the seat`);
 	}
 	out.push(refusalLine(newestDecision(st, SEAT_REFUSALS, "seat", (d) => d.kind === "scheduler_stopped" && d.reason !== "")));
 

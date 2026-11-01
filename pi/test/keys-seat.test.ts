@@ -141,19 +141,21 @@ test("add, seat: a cancel at any dialog runs no verb", async () => {
 	}
 });
 
-// The lease cap on the screen (the lead's gate on 5d20b5ff): when the
-// roster has more seats up than the lease cap (a seat added past it under
-// scheduler run --max-seats; cli TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns
-// shows the state status reads), the seats block carries one warning line,
-// and no refusal line; at or under the cap there is none. Reverted, the
-// screen says nothing while a seat waits for a lease.
-test("over the lease cap: a warning line in the seats block, never a refusal", () => {
-	const over = renderScreen({ ...fixture, scheduler: { max_seats: 2, live_seats: 3 } });
-	const line = "  ! over the lease cap: 3 seats up, max_seats 2: a seat beyond the cap waits for a lease (seat_cap) while the others hold theirs";
-	assert.ok(over.includes(line), over.join("\n"));
-	assert.ok(over.indexOf(line) < over.indexOf("tasks (" + fixture.tasks.length + ")"), "the line is in the seats block");
-	assert.ok(!over.some((l) => l.startsWith("  refusal:") && l.includes("lease cap")));
-	for (const sch of [{ max_seats: 3, live_seats: 3 }, { max_seats: 4, live_seats: 3 }, null]) {
-		assert.ok(!renderScreen({ ...fixture, scheduler: sch }).some((l) => l.includes("over the lease cap")), JSON.stringify(sch));
+// Over the cap on the screen (the plan reviewer before the merge): a
+// squad.yaml seat beyond max_seats is not launched, and the seats block
+// carries one line per unlaunched seat naming max_seats and the cure; it is
+// never a refusal line. With none unlaunched there is no such line (cli
+// TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest puts rev-2 in
+// status's unlaunched_seats). Reverted, the screen says nothing.
+test("unlaunched seats: one line each in the seats block, naming max_seats and the cure", () => {
+	const over = renderScreen({ ...fixture, scheduler: { max_seats: 2, live_seats: 2, unlaunched_seats: ["rev-2", "rev-3"] } });
+	const lines = ["  ! rev-2 not launched: over max_seats 2; widen the grant or remove the seat", "  ! rev-3 not launched: over max_seats 2; widen the grant or remove the seat"];
+	for (const line of lines) {
+		assert.ok(over.includes(line), over.join("\n"));
+		assert.ok(over.indexOf(line) < over.indexOf("tasks (" + fixture.tasks.length + ")"), "the line is in the seats block");
+	}
+	assert.ok(!over.some((l) => l.startsWith("  refusal:") && l.includes("not launched")));
+	for (const sch of [{ max_seats: 3, live_seats: 3, unlaunched_seats: [] }, { max_seats: 2, live_seats: 3 }, null]) {
+		assert.ok(!renderScreen({ ...fixture, scheduler: sch }).some((l) => l.includes("not launched")), JSON.stringify(sch));
 	}
 });

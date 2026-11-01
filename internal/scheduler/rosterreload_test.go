@@ -154,32 +154,47 @@ func asRoster(reqs []SeatRequest) []RosterSeat {
 	return out
 }
 
-// Brief 31-2 PR 2, the lease cap (the lead's gate on 5d20b5ff): a squad of
-// two roster seats under a cap of 2 adds a third through a reload whose
-// recomputed cap is 3; after the relaunch the third seat gets a lease while
-// the other two hold theirs. Under a recomputed cap of 2 the third seat
-// still launches (never a refusal of the add), roster_over_cap is logged
-// for the screen, and its task waits seat_cap while the two others hold
-// leases. Reverted (the cap fixed at the start), the third task waits under
-// the cap of 3 too.
+// Brief 31-2 PR 2, the lease cap (the lead's gate on 5d20b5ff; the plan
+// reviewer's ruling before the merge): a squad of two roster seats under a
+// cap of 2 adds a third through a reload whose recomputed cap is 3; after
+// the relaunch the third seat gets a lease while the other two hold
+// theirs. Under a recomputed cap of 2 the reload (schedproc trims it, in
+// squad.yaml order) launches the first two seats only: s-c is not
+// launched, roster_over_cap names it with the cure, the state status reads
+// lists it as unlaunched, and its task gets no lease. Reverted (the cap
+// fixed at the start), the third task waits under the cap of 3 too.
 func TestAReloadRecomputesTheLeaseCap(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		cap    int
-		leased int
-		over   bool
-	}{{"cap 3", 3, 3, false}, {"cap 2", 2, 2, true}} {
+		name       string
+		cap        int
+		roster     []RosterSeat
+		unlaunched []string
+		leased     int
+	}{
+		{"cap 3", 3, append(slices.Clone(rosterAB), RosterSeat{Handle: "s-c", Pool: opus}), nil, 3},
+		{"cap 2", 2, slices.Clone(rosterAB), []string{"s-c"}, 2},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute}, rosterAB...)
+			path := filepath.Join(t.TempDir(), "scheduler.json")
+			h, fr := newRosterHarness(t, Config{MaxSeats: 2, IdleTimeout: time.Hour, SeatStartTimeout: time.Minute, StatePath: path}, rosterAB...)
 			h.tick()
-			next := append(slices.Clone(rosterAB), RosterSeat{Handle: "s-c", Pool: opus})
-			h.s.RequestRelaunchReload("add s-c", t0, &RosterReload{Roster: next, MaxSeats: tc.cap})
+			h.s.RequestRelaunchReload("add s-c", t0, &RosterReload{Roster: tc.roster, MaxSeats: tc.cap, Unlaunched: tc.unlaunched})
 			ds := h.tick()
-			if len(fr.launches) != 2 || len(fr.launches[1]) != 3 || fr.launches[1][2].Handle != "s-c" || h.s.Config.MaxSeats != tc.cap {
-				t.Fatalf("the relaunch: launches %+v, cap %d", fr.launches, h.s.Config.MaxSeats)
+			launched := asRoster(fr.launches[len(fr.launches)-1])
+			if len(fr.launches) != 2 || rosterHandles(launched) != rosterHandles(tc.roster) || h.s.Config.MaxSeats != tc.cap {
+				t.Fatalf("the relaunch: launched %s, cap %d", rosterHandles(launched), h.s.Config.MaxSeats)
 			}
-			if has(ds, RosterOverCap, "", "s-c") != tc.over {
-				t.Fatalf("roster_over_cap logged %v, want %v: %+v", !tc.over, tc.over, ds)
+			over := has(ds, RosterOverCap, "", "s-c")
+			if over != (tc.unlaunched != nil) {
+				t.Fatalf("roster_over_cap logged %v: %+v", over, ds)
+			}
+			for _, d := range ds {
+				if d.Kind == RosterOverCap && (!strings.Contains(d.Reason, "max_seats 2") || !strings.Contains(d.Reason, "widen the grant or remove the seat")) {
+					t.Fatalf("the decision: %+v", d)
+				}
+			}
+			if st, err := ReadState(path); err != nil || strings.Join(st.Unlaunched, ",") != strings.Join(tc.unlaunched, ",") {
+				t.Fatalf("the state's unlaunched seats: %v (%v)", st.Unlaunched, err)
 			}
 			var ids []string
 			for _, p := range []*task.Pool{&sonnet, &gpt, &opus} {
@@ -194,7 +209,7 @@ func TestAReloadRecomputesTheLeaseCap(t *testing.T) {
 				}
 			}
 			third := h.get(ids[2])
-			if leased != tc.leased || (tc.over && (third.Lease != nil || third.WaitReason != task.WaitSeatCap)) || (!tc.over && (third.Lease == nil || third.Lease.Holder != "s-c")) {
+			if leased != tc.leased || (tc.unlaunched != nil && third.Lease != nil) || (tc.unlaunched == nil && (third.Lease == nil || third.Lease.Holder != "s-c")) {
 				t.Fatalf("leased %d, want %d; the third task %+v", leased, tc.leased, third)
 			}
 		})

@@ -263,3 +263,32 @@ func TestARelaunchStartOutOfRangeIsRefusedBeforeTheDrain(t *testing.T) {
 		})
 	}
 }
+
+// The plan reviewer before the merge (the cap): the grant is the owner's
+// cap on seats, so a reload whose squad.yaml has more roster seats than the
+// recomputed cap launches the first ones in squad.yaml order only. Here the
+// cap is 3 and squad.yaml gains n1 and n2: c1, x1 and n1 launch, n2 is not
+// launched and roster_over_cap names it, and the router's pools never
+// admit n2's pool. Reverted (the whole roster swapped in), n2 launches.
+func TestAReloadOverTheCapLaunchesTheFirstSeatsInSquadOrder(t *testing.T) {
+	slots := &Slots{Squad: reloadSquad()}
+	pools := &fakePools{pools: []task.Pool{sonnet, gptPool}}
+	n2Pool := task.Pool{Runtime: "codex", Model: "gpt-9-nova", Effort: "high"}
+	added := reloadSquad(seatlaunch.Seat{Handle: "n1", Runtime: "claude", Model: "opus", Effort: "high", Worktree: "/w/n1"},
+		seatlaunch.Seat{Handle: "n2", Runtime: "codex", Model: "gpt-9-nova", Effort: "high", Worktree: "/w/n2"})
+	reply, text, s, l := reloadRun(t, &Reload{Compile: func() (seatlaunch.Squad, error) { return added, nil }, Cap: func(seatlaunch.Squad) (int, error) { return 3, nil }, Slots: slots, Pools: pools, Lead: "lead"}, "",
+		func(l *rosterLauncher, _ []scheduler.Decision) bool { return l.launched() == 2 })
+	if !reply.OK || !strings.Contains(text, `"kind":"roster_over_cap","seat":"n2"`) {
+		t.Fatalf("reply %+v\n%s", reply, text)
+	}
+	l.mu.Lock()
+	second := l.launches[1]
+	l.mu.Unlock()
+	var hs []string
+	for _, r := range second {
+		hs = append(hs, r.Handle)
+	}
+	if strings.Join(hs, ",") != "c1,x1,n1" || len(s.Config.Roster) != 3 || slices.Contains(pools.RosterPools(), n2Pool) {
+		t.Fatalf("launched %v; roster %+v; pools %+v", hs, s.Config.Roster, pools.RosterPools())
+	}
+}

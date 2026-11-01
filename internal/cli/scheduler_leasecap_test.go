@@ -14,6 +14,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -174,16 +175,18 @@ func TestAReloadRecomputesTheLeaseCapFromTheNewSquad(t *testing.T) {
 	}
 }
 
-// Brief 31-2 PR 2, over the cap: the same add under `scheduler run
-// --max-seats 2` (the narrowing the reload keeps). Every seat launches
-// (the add is never refused), roster_over_cap is logged, and the state
-// status reads carries 3 live seats over max_seats 2, which the screen
-// shows as a warning line (pi screen.test.ts "over the lease cap"); two
-// tasks hold leases and the third waits seat_cap.
-func TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns(t *testing.T) {
+// Brief 31-2 PR 2, over the cap (the plan reviewer before the merge: the
+// grant is the owner's cap on seats): the same add under `scheduler run
+// --max-seats 2`, the narrowing the reload keeps. The reload launches the
+// first two seats in squad.yaml order (impl-1, rev-1); rev-2 is not
+// launched, roster_over_cap names it, the state and the status document
+// list it under unlaunched_seats (the screen's line, pi keys-seat.test.ts),
+// and its task gets no lease while impl-1's and rev-1's do. Reverted (every
+// seat launched), rev-2 is launched.
+func TestAReloadOverTheCapLaunchesTheFirstSeatsAndNamesTheRest(t *testing.T) {
 	root, store, fake, reloaded := leaseCapRun(t, "--max-seats", "2")
-	if !slices.ContainsFunc(reloaded, func(d scheduler.Decision) bool { return d.Kind == scheduler.RosterOverCap }) {
-		t.Fatalf("no roster_over_cap: %+v", reloaded)
+	if !slices.ContainsFunc(reloaded, func(d scheduler.Decision) bool { return d.Kind == scheduler.RosterOverCap && d.Seat == "rev-2" }) {
+		t.Fatalf("no roster_over_cap for rev-2: %+v", reloaded)
 	}
 	var ids []string
 	for _, p := range []task.Pool{capImpl, capRev1, capRev2} {
@@ -193,12 +196,12 @@ func TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns(t *testing.T) {
 		}
 		ids = append(ids, x.ID)
 	}
-	if got := leasedHolders(t, store, ids, 2); len(got) != 2 {
-		t.Fatalf("leases at once: %v", got)
+	if got := leasedHolders(t, store, ids, 2); got[ids[0]] != "impl-1" || got[ids[1]] != "rev-1" {
+		t.Fatalf("leases: %v", got)
 	}
-	time.Sleep(100 * time.Millisecond) // a few more ticks: the third still waits
-	if third, _ := store.Get(ids[2]); third.Lease != nil || third.WaitReason != task.WaitSeatCap {
-		t.Fatalf("the third task: %+v", third)
+	time.Sleep(100 * time.Millisecond) // a few more ticks: rev-2's task still has no lease
+	if third, _ := store.Get(ids[2]); third.Lease != nil {
+		t.Fatalf("rev-2's task: %+v", third)
 	}
 	fake.mu.Lock()
 	launched := map[string]bool{}
@@ -206,11 +209,15 @@ func TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns(t *testing.T) {
 		launched[r.Handle] = true
 	}
 	fake.mu.Unlock()
-	if !launched["rev-1"] || !launched["rev-2"] {
-		t.Fatalf("an added seat did not launch: %v", launched)
+	if !launched["impl-1"] || !launched["rev-1"] || launched["rev-2"] {
+		t.Fatalf("launched %v: want impl-1 and rev-1, not rev-2", launched)
 	}
 	st, err := scheduler.ReadState(scheduler.StatePathFor(root))
-	if err != nil || st.MaxSeats != 2 || st.LiveSeats != 3 {
-		t.Fatalf("the state status reads: max %d, live %d (%v)", st.MaxSeats, st.LiveSeats, err)
+	if err != nil || st.MaxSeats != 2 || strings.Join(st.Unlaunched, ",") != "rev-2" || strings.Join(st.Roster, ",") != "impl-1,rev-1" {
+		t.Fatalf("the state: max %d, roster %v, unlaunched %v (%v)", st.MaxSeats, st.Roster, st.Unlaunched, err)
+	}
+	doc := status.Build(status.Collect(status.CollectOptions{Root: root, Now: time.Now(), PIDAlive: func(int) bool { return false }}))
+	if strings.Join(doc.Scheduler.UnlaunchedSeats, ",") != "rev-2" {
+		t.Fatalf("status's unlaunched_seats: %v", doc.Scheduler.UnlaunchedSeats)
 	}
 }

@@ -312,6 +312,7 @@
     "pid": 4321,
     "started_at": "2026-10-24T11:38:01.120Z",
     "launch_start": "2026-10-24T11:38:00Z",
+    "unlaunched_seats": [],
     "live": true
   },
   "warnings": [],

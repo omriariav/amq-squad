@@ -39,7 +39,7 @@ anywhere else, or a null document, fails the check.
 | `attention[]` | the attention queue |
 | `gates[]` | gate records of the gate store |
 | `actions.new_task` | the "new task" action |
-| `scheduler` | `max_seats`, `live_seats`, `usage_limit_since`, `usage_limit_until`; and from the scheduler's launch record (brief 31-1): `pid`, `started_at` (its own admission, null before a scheduler ran), `launch_start` (the squad launch's start, `AMQ_SQUAD_START`: the launch budget's first mark; null when the scheduler was started by hand), `live` (its pid answers) |
+| `scheduler` | `max_seats`, `live_seats`, `usage_limit_since`, `usage_limit_until`; and from the scheduler's launch record (brief 31-1): `pid`, `started_at` (its own admission, null before a scheduler ran), `launch_start` (the squad launch's start, `AMQ_SQUAD_START`: the launch budget's first mark; null when the scheduler was started by hand), `live` (its pid answers); and `unlaunched_seats` (brief 31-2 PR 2): squad.yaml's seats beyond `max_seats` that the last relaunch did not launch, in squad.yaml order, `[]` when none |
 | `warnings[]` | read problems, one line each; a partial status is still valid |
 | `lead` | the holder of the root's lead lock, from `lead.json` (brief 31-1), null when no lead took it: `handle`, `pid`, `start` (its raw start stamp), `pane` (its tmux pane, empty outside tmux), `recorded_at`, `live` (the pid answers with its recorded start stamp), `attach` (`tmux attach -t <pane>`, empty without a pane) |
 | `decisions[]` | the scheduler's decisions log, its last 30 lines oldest first: `at`, `kind`, `seat`, `task_id`, `reason`, `reason_code`, `stage`. Refusals are among them (`exit_refused`, `roster_launch_failed`, `seat_not_up`, `commit_refused`, `up_stopped_lead`, ...) |

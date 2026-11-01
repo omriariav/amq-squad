@@ -239,7 +239,17 @@ func (r *Reload) prepare() (*scheduler.RosterReload, error) {
 			return nil, err
 		}
 	}
-	return &scheduler.RosterReload{Roster: roster, MaxSeats: maxSeats, Swap: func() error { return r.swap(q, roster) }}, nil
+	// The grant is the owner's cap on seats (the plan reviewer on 31-2 PR
+	// 2): the seats beyond the cap, in squad.yaml order, are not launched,
+	// and the router never admits their pools.
+	var unlaunched []string
+	if maxSeats > 0 && len(roster) > maxSeats {
+		for _, rs := range roster[maxSeats:] {
+			unlaunched = append(unlaunched, rs.Handle)
+		}
+		roster = roster[:maxSeats]
+	}
+	return &scheduler.RosterReload{Roster: roster, MaxSeats: maxSeats, Unlaunched: unlaunched, Swap: func() error { return r.swap(q, roster) }}, nil
 }
 
 // swap writes the slots' squad (under Slots.mu) and the router's roster
