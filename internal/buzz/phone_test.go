@@ -794,11 +794,17 @@ func TestTheChecksSeeThroughInvisibleCharacters(t *testing.T) {
 	digest := "digest: " + rec.Digest
 	forms := map[string][]string{
 		"whole-line answer form": {"yes\u200b", "\u200bNo\u2060.", "ｙｅｓ", "app\u200drove", "deny\u202e rel-x",
-			"yes\ufe0f", "уes", "YЕS", "аpprove", "dеny rel-x", "nο"},
+			"yes\ufe0f", "уes", "YЕS", "аpprove", "dеny rel-x", "nο",
+			// Codex pass 3: an accent (composed and decomposed), the Hangul
+			// fillers, the soft hyphen, the grapheme joiner, Armenian
+			"yés", "ye\u0301s", "yes\u115f", "yes\u3164", "y\u00ades", "ye\u034fs", "yes\uffa0", "nօ", "dеnу\u1160"},
 		"an open gate's id": {"I raised rel-\u200bnorm for you", "see REL-NORM\u200c now", "ｒｅｌ－ｎｏｒｍ waits",
-			"rel-norm\ufe0f waits", "rel\ufe0f-norm waits", "rеl-nоrm waits"},
+			"rel-norm\ufe0f waits", "rel\ufe0f-norm waits", "rеl-nоrm waits",
+			"rél-norm waits", "rel-nօrm waits", "rel-norm\u1160 waits"},
 		"an open gate's question": {strings.Replace(digest, "sha256:", "sha\u200b256:", 1), strings.ToUpper(digest[:9]) + digest[9:], "\u2066" + digest + "\u2069",
-			strings.Replace(digest, "digest", "digest\ufe0f", 1), strings.Replace(digest, "digest", "dіgеst", 1)},
+			strings.Replace(digest, "digest", "digest\ufe0f", 1), strings.Replace(digest, "digest", "dіgеst", 1),
+			// the lunate sigma (NFKC and folding make it σ) in the class line
+			"\u03f2lass: release (tag)", "dígest: " + rec.Digest},
 	}
 	for name, lines := range forms {
 		t.Run(name, func(t *testing.T) {

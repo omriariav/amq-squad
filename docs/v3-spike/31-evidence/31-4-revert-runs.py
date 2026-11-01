@@ -168,7 +168,7 @@ run("no minimum question-line length", [(R,'utf8.RuneCountInString(q) >= MinQues
     B+"TestAShortQuestionLineDoesNotRefuseOrdinaryReplies")
 run("redaction only after the split (Codex re-check #2)", [(R,'\tparts := splitPost(requestID, thread, redact.Block(body))\n','\tparts := splitPost(requestID, thread, body)\n')],
     B+"TestACanaryAcrossTheSplitBoundaryIsRedacted")
-run("marks (Mn, Me) not stripped (Codex re-check #3)", [(R,'case unicode.In(r, unicode.Cf, unicode.Mn, unicode.Me):','case unicode.In(r, unicode.Cf):')],
+run("marks (Mn, Me) not stripped (Codex re-check #3)", [(R,'unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, ','unicode.In(r, unicode.Cf, ')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
 run("no confusables fold (Codex re-check #3)", [(R,'if l, ok := confusables[r]; ok {','if l, ok := confusables[r]; ok && false {')],
     B+"TestTheChecksSeeThroughInvisibleCharacters")
@@ -189,5 +189,14 @@ run("a receipt row not checked as the body's", [(R,'if err != nil || row.PubKey 
     B+"TestAReplyToTheReceiptContinuesTheRequest")
 run("a reply naming the thread root does not map", [(R,' ||\n\t\t\t\t\tslices.ContainsFunc(r.Turns, func(t status.RelayTurn) bool { return t.Delivered && t.Event == ref })','')],
     B+"TestAReplyToTheReceiptContinuesTheRequest")
+# Codex pass 3 on the normalization
+run("NFKC before the mark strip (accents survive)", [(R,'s = strip(norm.NFKC.String(strip(norm.NFD.String(s))))','s = strip(norm.NFKC.String(s))')],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
+run("default-ignorable code points not stripped", [(R,'unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point)','unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf)')],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
+run("σ and ς not lookalikes of c (the lunate sigma passes)", [(R,"'ϲ': 'c', 'σ': 'c', 'ς': 'c', ","'ϲ': 'c', ")],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
+run("no Armenian lookalikes", [(R,"\t'ս': 'u', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',\n","")],
+    B+"TestTheChecksSeeThroughInvisibleCharacters")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)

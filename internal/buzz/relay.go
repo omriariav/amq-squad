@@ -648,43 +648,61 @@ func (g gateView) gateShaped(line string) bool {
 	return false
 }
 
-// normalizeLine is the one normalization of the three checks (Codex P2-4
-// and its re-check #3), applied to the candidate line and to the gate ids
-// and question lines it is compared with: NFKC; every format character
-// (Unicode Cf: zero-width spaces, joiners, bidi controls) and every
-// nonspacing or enclosing mark (Mn, Me: variation selectors, combining
-// marks) removed, every other control made a space; case folding; then the
-// confusables fold below.
+// normalizeLine is the one normalization of the three checks (Codex P2-4,
+// its re-check #3 and its third pass), applied identically to the candidate
+// line and to the gate ids and question lines it is compared with:
+//
+//  1. NFD, so an accent is a mark apart from its letter;
+//  2. every nonspacing or enclosing mark (Mn, Me) and every default-ignorable
+//     code point removed: format characters (Cf, the soft hyphen and the
+//     bidi controls among them), variation selectors and the rest of
+//     Unicode's Other_Default_Ignorable_Code_Point (the Hangul fillers
+//     U+115F, U+1160, U+3164, U+FFA0, the combining grapheme joiner);
+//  3. NFKC, then the same strip again (a compatibility mapping can yield one);
+//  4. the lookalike table, then case folding, then the table again (case
+//     folding turns lookalikes such as the lunate sigma into σ);
+//  5. every other control made a space.
 func normalizeLine(s string) string {
-	s = norm.NFKC.String(s)
-	s = strings.Map(func(r rune) rune {
-		switch {
-		case unicode.In(r, unicode.Cf, unicode.Mn, unicode.Me):
-			return -1
-		case unicode.IsControl(r):
+	strip := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) {
+				return -1
+			}
+			return r
+		}, s)
+	}
+	fold := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if l, ok := confusables[r]; ok {
+				return l
+			}
+			return r
+		}, s)
+	}
+	s = strip(norm.NFKC.String(strip(norm.NFD.String(s))))
+	s = fold(cases.Fold().String(fold(s)))
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
 			return ' '
 		}
 		return r
 	}, s)
-	return strings.Map(func(r rune) rune {
-		if l, ok := confusables[r]; ok {
-			return l
-		}
-		return r
-	}, cases.Fold().String(s))
 }
 
-// confusables folds the Cyrillic and Greek lowercase letters that read as
-// Latin letters to those letters (a hand list for the letters of the answer
-// words and gate ids: a c e o p s x y i k h n m t v u; after case folding,
-// so the capitals are covered). Applied on both sides of every comparison.
+// confusables folds the letters of other scripts that read as Latin letters
+// to those letters: a hand list for the letters of the answer words and gate
+// ids, not the full Unicode confusables data (scripts outside the table are
+// the residual). Every legitimate target is ASCII, so a letter is mapped
+// even where its script's own text would read otherwise.
 var confusables = map[rune]rune{
 	// Cyrillic
 	'а': 'a', 'с': 'c', 'е': 'e', 'о': 'o', 'р': 'p', 'ѕ': 's', 'х': 'x', 'у': 'y', 'і': 'i', 'ј': 'j',
 	'к': 'k', 'һ': 'h', 'п': 'n', 'м': 'm', 'т': 't', 'ѵ': 'v', 'ԁ': 'd', 'ԛ': 'q', 'ԝ': 'w',
-	// Greek
-	'α': 'a', 'ϲ': 'c', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'χ': 'x', 'γ': 'y', 'ι': 'i', 'κ': 'k',
-	'η': 'n', 'τ': 't', 'ν': 'v', 'υ': 'u', 'μ': 'u',
+	// Greek (σ and ς too: the lunate sigma ϲ becomes them under NFKC and folding)
+	'α': 'a', 'ϲ': 'c', 'σ': 'c', 'ς': 'c', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'χ': 'x', 'γ': 'y', 'ι': 'i',
+	'κ': 'k', 'η': 'n', 'τ': 't', 'ν': 'v', 'υ': 'u', 'μ': 'u',
+	// Armenian (by glyph, as in Unicode's confusables data: ս reads as u)
+	'ս': 'u', 'օ': 'o', 'ո': 'n', 'ց': 'g', 'հ': 'h', 'զ': 'q',
 }
 
 var (
