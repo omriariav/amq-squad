@@ -57,6 +57,7 @@ const proposed = envelope("team_propose", {
 async function fakeLead(answer: (req: any) => any): Promise<{ socket: string; got: any[]; close: () => void }> {
 	const socket = path.join(tmpdir(), "lead.sock");
 	const got: any[] = [];
+	const phase: any[] = [];
 	const server = net.createServer((c) => {
 		let buf = "";
 		c.on("data", (d) => {
@@ -64,7 +65,8 @@ async function fakeLead(answer: (req: any) => any): Promise<{ socket: string; go
 			const i = buf.indexOf("\n");
 			if (i < 0) return;
 			const req = JSON.parse(buf.slice(0, i));
-			got.push(req);
+			// the session start's phase query (R53, PR 2) is not a confirm
+			(req.kind === "amq-squad.phase.v1" ? phase : got).push(req);
 			c.end(JSON.stringify(answer(req)) + "\n");
 		});
 	});
