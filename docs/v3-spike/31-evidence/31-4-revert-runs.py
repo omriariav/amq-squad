@@ -80,7 +80,7 @@ run("a result does not close the request", [(R,'\t\t\tif kind == "result" {\n\t\
 # Row 3: the gate-shaped refusal, per form, and the thread guard
 run("no whole-line answer form", [(R,'\tif answerForm(t, g.known) {','\tif false && answerForm(t, g.known) {')],
     B+"'TestRelayRefusesGateShapedLines/whole-line'")
-run("the refusal eats the sentence (any line starting with the word)", [(R,'\trest := w[1:]\n','\tif len(w) > 0 {\n\t\treturn true\n\t}\n\trest := w[1:]\n')],
+run("the refusal not narrowed (any line containing the word)", [(R,'\tif len(w) == 0 || len(w) > 4 || !answerVerbs[w[0]] {','\tif slices.ContainsFunc(w, func(x string) bool { return answerVerbs[x] }) {\n\t\treturn true\n\t}\n\tif len(w) == 0 || len(w) > 4 || !answerVerbs[w[0]] {')],
     B+"'TestRelayRefusesGateShapedLines/sentences'")
 run("no open gate id refusal", [(R,'\t\tif g.open[tok] {','\t\tif false && g.open[tok] {')],
     B+"'TestRelayRefusesGateShapedLines/an_open_gate.s_id'")
