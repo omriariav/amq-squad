@@ -109,13 +109,13 @@ run("a tool added to the lead (row E)",
  [('pi/extensions/lib/tools.ts','name: "amq_scheduler_relaunch",','name: "amq_scheduler_relaunch_x",')],
  P+"test/keys.test.ts")
 run("the swap keeping the start's lease cap",
- [('internal/scheduler/roster.go','\t\ts.Config.MaxSeats = r.MaxSeats\n','\t\t_ = r.MaxSeats\n')],
+ [('internal/scheduler/roster.go','\t\ts.Config.MaxSeats = maxSeats\n','\t\t_ = maxSeats\n')],
  both(G+"-run TestAReloadRecomputesTheLeaseCap ./internal/scheduler/", G+"-run TestARelaunchReloadsSquadYAML ./internal/schedproc/", G+"-run TestAReloadRecomputesTheLeaseCapFromTheNewSquad ./internal/cli/"))
 run("scheduler run wiring no cap (Reload.Cap returning none)",
  [('internal/cli/scheduler_run.go','Cap: reloadCap(*maxSeats), ','Cap: func(seatlaunch.Squad) (int, error) { return 0, nil }, ')],
  G+"-run TestAReloadRecomputesTheLeaseCapFromTheNewSquad ./internal/cli/")
 run("the cap written before Swap (outside the one step)",
- [('internal/scheduler/roster.go',"\tif r.Swap != nil {\n\t\tif err := r.Swap(); err != nil {","\tif r.MaxSeats > 0 {\n\t\ts.Config.MaxSeats = r.MaxSeats\n\t}\n\tif r.Swap != nil {\n\t\tif err := r.Swap(); err != nil {")],
+ [('internal/scheduler/roster.go',"\tif r.Swap != nil {\n\t\tif err := r.Swap(); err != nil {","\tif maxSeats > 0 {\n\t\ts.Config.MaxSeats = maxSeats\n\t}\n\tif r.Swap != nil {\n\t\tif err := r.Swap(); err != nil {")],
  G+"-run TestAHalfAppliedReload ./internal/schedproc/")
 run("no drain segment in status",
  [('internal/status/screen.go','\tif drainEnd != nil && start != nil && !drainEnd.Before(*start) {','\tif false && drainEnd != nil && start != nil && !drainEnd.Before(*start) {')],
