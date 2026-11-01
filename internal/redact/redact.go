@@ -562,8 +562,13 @@ var (
 	yamlLineRE = regexp.MustCompile(`(?:^|[\s{,])(?:- )?(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)(['"]?)[ \t]*:[ \t]+('(?:[^'\n]|'')*'|"(?:[^"\\\n]|\\.)*"|[^\s'"#,{}\[\]][^\n,{}]*)`)
 	// colonKeyRE closes two forms yamlLineRE misses: a credential key with no
 	// space after its colon (API_KEY:Zq9xV7mP2wL4) and one after prose on the
-	// same line (error: see api_key: Zq9xV7mP2wL4 now), where the earlier
-	// match consumed the key. The key follows a blank, a quote, a comma, a
+	// same line with text between the colon and the key (error: see api_key:
+	// Zq9xV7mP2wL4 now: the one-line YAML rule's value "see api_key: ..." took
+	// the span, but this rule matches the key itself). It does not own the key
+	// that follows another key's colon at once (err: api_key: Zq9xV7mP2wL4):
+	// there the preceding match, the YAML rule's value or this rule's own
+	// token "api_key:", had already claimed the key, so no match can start at
+	// it. innerCredential owns that form. The key follows a blank, a quote, a comma, a
 	// semicolon, a parenthesis or a bracket; the value is one token of the
 	// equals rule's value class, whole or not at all. Groups
 	// 1 and 3 are the key's quotes, group 2 the name, group 4 the value.
