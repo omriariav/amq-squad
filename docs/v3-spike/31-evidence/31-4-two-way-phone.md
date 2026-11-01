@@ -38,8 +38,11 @@ state was touched, and no key material exists in any test.
   after every reply handled). It holds the thread, the lead, the owner's
   first DM, the event posts reply to, the turns, every lead reply handled,
   the posts with their event ids and sha256, the refusals with a sha256 of
-  the refused line, the held progress reply's id, and `relayed_at`. It holds
-  no message text.
+  the refused line, the held progress reply's id, the reply in flight
+  (`posting`: each part's sha256, the event ids confirmed, the tries of the
+  next part), and `relayed_at`. It holds no message text. It decodes
+  strictly and every field must be its exact shape (Codex round, section
+  12); anything else is `relay_record_invalid` and refused whole.
 - **The lead side.** `status --json` gains `requests[]` (the newest 20:
   `request_id`, `thread`, `lead`, `turns`, `posts`, `relayed_at`, `refused`
   by name, `closed`, `updated_at`), in the golden fixture, the fleet golden
@@ -65,8 +68,13 @@ most three parts at paragraph boundaries; those parts are one post of one
 reply, so "no fan-out" holds per reply. The relay never composes a line
 from status.
 
-**Gate-shaped refusal.** Every line of a lead reply is checked; one match
-refuses the whole reply and nothing reaches the DM.
+**Gate-shaped refusal.** The post is split first; then every line of every
+part, the `re <id>` header and the marks included, is checked, the part
+passes `redact.Block`, and it is checked again. One match refuses the whole
+reply and nothing reaches the DM. Every check compares after one
+normalization, applied to the line and to the gate ids and question lines:
+NFKC, Unicode format characters (Cf) removed, other controls made spaces,
+case folded.
 
 1. A line that is, as a whole, an answer form: gateverify's inbound parser
    (`gatestore.ParseAnswer`) accepts it, or, after trimming punctuation and
@@ -108,7 +116,16 @@ Every row is in `go test ./...` or `npm test`.
 | The record decodes strictly as `status.RelayRecord`, mode 0600 | internal/buzz `TestARelayRecordIsAStatusRelayRecord` |
 | `amq send --thread` and `amq thread` through the installed amq in a scratch root | internal/buzz `TestAMQThreadsThroughTheCLI` |
 | The attach loop relays, signed by the share body over the core's transport | internal/cli `TestRemoteAttachRelaysTheLeadsReply` |
-| `status` shows the requests, redacted, nullable `relayed_at`, golden-valid | internal/status `TestStatusShowsThePhoneRequests` |
+| `status` shows the requests, redacted, nullable `relayed_at`, golden-valid, an invalid record named | internal/status `TestStatusShowsThePhoneRequests` |
+| Codex P1-1: every record field its exact shape | internal/status `TestARelayRecordIsCheckedFieldByField` |
+| Codex P1-1: a planted record (newline id, non-hex id, a canary in a field) is refused, nothing posts | internal/buzz `TestAPlantedRecordIsRefusedAndNothingPosts` |
+| Codex P1-2: the padded ` yes` reply is refused whole; an ordinary long reply posts in parts | internal/buzz `TestASplitNeverStartsAPartWithAnAnswerForm` |
+| Codex P1-3: a crash between publish and record gives at most one extra post, then `relay_post_unconfirmed` in status | internal/buzz `TestACrashBetweenPublishAndRecordPostsAtMostOnceMore` |
+| Codex P1-3: a failing record store posts nothing | internal/buzz `TestAFailingRecordStorePostsNothing` |
+| Codex P2-4: zero-width, joiner, bidi and full-width forms, per check | internal/buzz `TestTheChecksSeeThroughInvisibleCharacters` |
+| Codex P2-5: part two fails once, posts next tick, part one not repeated | internal/buzz `TestAFailedPartPostsNextTickWithoutRepeatingTheFirst` |
+| Codex P2-6: no record, no question, the DM unhandled; a failed delivery leaves no record | internal/buzz `TestTheRecordComesBeforeTheQuestion` |
+| Codex P2-7: every amq a test runs goes through the scratch-HOME helper | internal/buzz `TestTestsExecAMQOnlyThroughTheHelper` |
 | The screen's requests block | pi/test/screen.test.ts |
 
 Row 4 lists the dependencies of internal/status, schedproc, task,
@@ -124,61 +141,63 @@ expectations in internal/buzz (handler, fixround2, enroll) and internal/cli
 
 `python3 docs/v3-spike/31-evidence/31-4-revert-runs.py` from a clean
 checkout. Each run reverts one change, runs the rows that must catch it,
-and restores the tree.
+and restores the tree. Every run fails by an assertion; none by a build
+error (the redact run replaces `redact.Block` with an identity that
+compiles, Codex P2-8).
 
 ```text
-REVERT the post without redact.Block: fails (the row catches it)
-   FAIL	github.com/omriariav/amq-squad/v3/internal/buzz [build failed]
+REVERT the post without redact.Block (an identity in its place): fails (the row catches it)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.05s)
 REVERT the post without its re <request id> line: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.03s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.05s)
 REVERT the receipt is routed, not accepted <request id>: fails (the row catches it)
    --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.02s)
 REVERT the question post off the cockpit thread: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.02s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.03s)
 REVERT the post not in the request's DM conversation: fails (the row catches it)
-   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.04s)
+   --- FAIL: TestRelayPostsTheLeadsReplyToTheOwnersDM (0.05s)
 REVERT no progress rate bound: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.06s)
+   --- FAIL: TestRelayProgressRateBound (0.16s)
 REVERT the held progress never posts: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.06s)
-REVERT kind status is not progress: fails (the row catches it)
-   --- FAIL: TestRelayProgressRateBound (0.06s)
-REVERT a result does not close the request: fails (the row catches it)
    --- FAIL: TestRelayProgressRateBound (0.09s)
+REVERT kind status is not progress: fails (the row catches it)
+   --- FAIL: TestRelayProgressRateBound (0.10s)
+REVERT a result does not close the request: fails (the row catches it)
+   --- FAIL: TestRelayProgressRateBound (0.20s)
 REVERT no whole-line answer form: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.07s)
-   --- FAIL: TestRelayRefusesGateShapedLines/whole-line_answer_forms (0.07s)
-REVERT the refusal not narrowed (any line containing the word): fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.07s)
-   --- FAIL: TestRelayRefusesGateShapedLines/sentences_with_the_word_post_unchanged (0.07s)
-REVERT no open gate id refusal: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.08s)
-   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_id (0.08s)
-REVERT no open gate question text refusal: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.08s)
-   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_question_text (0.08s)
-REVERT the poster's gate-thread guard gone: fails (the row catches it)
    --- FAIL: TestRelayRefusesGateShapedLines (0.09s)
-   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.09s)
+   --- FAIL: TestRelayRefusesGateShapedLines/whole-line_answer_forms (0.09s)
+REVERT the refusal not narrowed (any line containing the word): fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.08s)
+   --- FAIL: TestRelayRefusesGateShapedLines/sentences_with_the_word_post_unchanged (0.08s)
+REVERT no open gate id refusal: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
+   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_id (0.10s)
+REVERT no open gate question text refusal: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.10s)
+   --- FAIL: TestRelayRefusesGateShapedLines/an_open_gate's_question_text (0.10s)
+REVERT the poster's gate-thread guard gone: fails (the row catches it)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.12s)
+   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.12s)
 REVERT a request opened in a gate thread posts into it: fails (the row catches it)
-   --- FAIL: TestRelayRefusesGateShapedLines (0.06s)
-   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.06s)
+   --- FAIL: TestRelayRefusesGateShapedLines (0.07s)
+   --- FAIL: TestRelayRefusesGateShapedLines/never_into_a_gate_question's_thread (0.07s)
 REVERT a lead-side package imports the key path: fails (the row catches it)
-   --- FAIL: TestTheLeadSideHoldsNoKeyPathNorPoster (0.05s)
+   --- FAIL: TestTheLeadSideHoldsNoKeyPathNorPoster (0.04s)
 REVERT handled replies not recorded (a restart posts again): fails (the row catches it)
-   --- FAIL: TestARestartedAttachmentNeitherRepostsNorSkips (0.06s)
+   --- FAIL: TestARestartedAttachmentNeitherRepostsNorSkips (0.13s)
 REVERT the relay carries gate-shaped replies: fails (the row catches it)
-   --- FAIL: TestAGateQuestionGoesByItsOwnPathOnce (0.12s)
+   --- FAIL: TestAGateQuestionGoesByItsOwnPathOnce (0.16s)
 REVERT a lead relay tool added: fails (the row catches it)
    not ok 7 - the lead's tool list is unchanged by the two-way phone: the exact thirteen
 REVERT no continuation (every DM a new request): fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.08s)
+   --- FAIL: TestThePhoneConversation (0.12s)
 REVERT an answer form in the conversation goes to the gate path: fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.09s)
+   --- FAIL: TestThePhoneConversation (0.16s)
 REVERT a continuation does not follow the request's lead: fails (the row catches it)
-   --- FAIL: TestThePhoneConversation (0.11s)
+   --- FAIL: TestThePhoneConversation (0.17s)
 REVERT a gate-thread answer that names a relay post leaves the gate path: fails (the row catches it)
-   --- FAIL: TestAnAnswerInTheGateThreadStaysOnTheGatePath (0.08s)
+   --- FAIL: TestAnAnswerInTheGateThreadStaysOnTheGatePath (0.11s)
 REVERT no split of a long post: fails (the row catches it)
    --- FAIL: TestALongReplyIsSplitIntoAtMostThreeParts (0.00s)
 REVERT amq send without --thread: fails (the row catches it)
@@ -193,7 +212,33 @@ REVERT request fields not redacted: fails (the row catches it)
    --- FAIL: TestStatusShowsThePhoneRequests (0.00s)
 REVERT the screen without the requests block: fails (the row catches it)
    not ok 2 - the requests block marks each phone request relayed or refused, by name
-30 of 30 reverts caught
+REVERT records not validated (load and write): fails (the row catches it)
+   --- FAIL: TestAPlantedRecordIsRefusedAndNothingPosts (0.11s)
+REVERT record fields not checked (status): fails (the row catches it)
+   --- FAIL: TestARelayRecordIsCheckedFieldByField (0.00s)
+REVERT the checks on the body, not the assembled parts (Codex P1-2): fails (the row catches it)
+   --- FAIL: TestASplitNeverStartsAPartWithAnAnswerForm (0.07s)
+REVERT the publish before the intent (Codex P1-3): fails (the row catches it)
+   --- FAIL: TestACrashBetweenPublishAndRecordPostsAtMostOnceMore (0.04s)
+   --- FAIL: TestAFailingRecordStorePostsNothing (0.02s)
+REVERT an unconfirmed intent retried forever (Codex P1-3): fails (the row catches it)
+   --- FAIL: TestACrashBetweenPublishAndRecordPostsAtMostOnceMore (0.04s)
+REVERT a failed later part ends the reply (Codex P2-5): fails (the row catches it)
+   --- FAIL: TestAFailedPartPostsNextTickWithoutRepeatingTheFirst (0.06s)
+REVERT no normalization (Codex P2-4): fails (the row catches it)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters (0.09s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_question (0.00s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/whole-line_answer_form (0.00s)
+   --- FAIL: TestTheChecksSeeThroughInvisibleCharacters/an_open_gate's_id (0.00s)
+REVERT the DM marked handled although its record failed (Codex P2-6): fails (the row catches it)
+   --- FAIL: TestTheRecordComesBeforeTheQuestion (0.01s)
+REVERT a failed delivery keeps its record (Codex P2-6): fails (the row catches it)
+   --- FAIL: TestTheRecordComesBeforeTheQuestion (0.04s)
+REVERT the helper without AMQ_NO_UPDATE_CHECK (Codex P2-7): fails (the row catches it)
+   --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.00s)
+REVERT a test execs amq directly (Codex P2-7): fails (the row catches it)
+   --- FAIL: TestTestsExecAMQOnlyThroughTheHelper (0.00s)
+41 of 41 reverts caught
 ```
 
 ## 5. The owner-run row (not run; the owner runs it)
@@ -260,8 +305,12 @@ avivsinai/agent-message-queue:
   question is multi-line, so a single line can never carry all of it).
 - A follow window of 24 hours after a request's newest owner turn; a closed
   request is not read again until a continuation opens it.
-- A post that fails is retried next tick. If a later part of a split post
-  fails, the parts already posted are recorded and not posted again.
+- Before every publish the intent is written; a failed write publishes
+  nothing. A part whose intent was tried and never confirmed is published
+  once more at most, then recorded `relay_post_unconfirmed`. A failed
+  publish keeps the parts already posted and resumes the rest from the
+  record next tick; the reply is handled only when every part has its
+  event id.
 
 ## 9. Where the brief was wrong
 
@@ -303,3 +352,29 @@ PATH=<pyvenv>/bin:$PATH make ci                         exit 0
   relay posts only the lead's own text, redacted and rate-bounded. It never
   carries a gate answer's shape or posts into a gate thread. It retires with
   upstream ask 19.
+
+## 12. The Codex round on PR #835
+
+Codex's static pass on a29d9eb2, each item a commit with its row:
+
+- **P1-1, planted record text.** Records decode strictly and every field is
+  checked against its exact shape (`status.DecodeRelayRecord`, also before
+  every write); anything else is `relay_record_invalid`, refused whole and
+  named in status. The checks and `redact.Block` run over every assembled
+  part, header included.
+- **P1-2, the split.** Covered by P1-1's per-part checks: a part that would
+  start or end with an answer-form line refuses the whole reply.
+- **P1-3, publish before record.** The intent is written before every
+  publish; a crash leaves at most one extra post, then
+  `relay_post_unconfirmed`; a failing record store publishes nothing.
+- **P2-4, invisible characters.** One normalization for all three checks.
+- **P2-5, a later part's failure.** The reply is handled only when every
+  part has its event id; the rest resumes from the record.
+- **P2-6, seen before the record.** The record is written before the
+  question goes to the lead and before the DM is marked handled; a failure
+  replies `refused - relay_record_failed` and leaves the DM unhandled.
+- **P2-7, the installed-amq tests.** One helper gives every amq a scratch
+  HOME, XDG directories and `AMQ_NO_UPDATE_CHECK=1`; a row fails on any
+  other exec of amq in the package's tests.
+- **P2-8, the redact revert run.** It now compiles and fails by the canary.
+
