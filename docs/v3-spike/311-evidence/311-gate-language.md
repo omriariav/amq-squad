@@ -105,28 +105,36 @@ way whatever merges.
    record's text above the rule verbatim (from `gate status`'s `text`), then
    the identifiers, and says to reply yes or no in the question's Buzz
    thread.
-7. **The team confirmation, a bare yes replied to the recorded plan post**
-   (as revised after Codex's round on #838). The lead's process sends its
-   plan as the reply to the owner's phone request, labelled
-   `team-plan:<the proposal's content digest>`: `amq_team_propose` takes
-   `reply_to` (the request's AMQ message id) and sets the label from the
-   digest the propose printed, never from the model. The relay records
-   `plan_for` on that post (status.RelayPost, additive in the relay
-   record). A bare yes is a team confirmation only when its direct reply
-   target (the NIP-10 parent, never the root) is a recorded plan post and
-   no reference names a gate question or re-ask; the handler fetches the
-   post on the verifier's connection, checks it is the body's kind 9 in
-   the channel, and hands the confirmer the yes, the post and the recorded
-   digest. A yes to any other post, whatever its text names, continues
-   that request. No post text is read for the proposal. The lead verifies
-   the yes as before (the owner's pinned key, the id recomputed, kind,
-   channel, window, once-only), its direct reply target the post, the
-   post (the share body's pinned key, its id recomputed, a DM in the
-   channel) and the recorded digest as one of its own recent proposals; it
-   refuses `conflicting_thread` any confirmation, either form, whose
-   references name a gate question or re-ask in its root, and a bare yes
-   naming anything besides the plan post and the post's own thread. The
-   refusal's doors text and the plan block say "reply yes to the lead's
+7. **The team confirmation, a bare yes replied to the lead's plan post**
+   (as revised after Codex's two rounds on #838). **The lead process is the
+   authority for which post is its plan.** `amq_team_propose` takes
+   `reply_to` (the phone request's AMQ message id). Before it sends
+   anything, the lead's pi records the exact plan text with the lead over
+   the start socket (`amq-squad.plan-sent.v1`, accepted only from the pi
+   process the lead spawned, its pid and start stamp, as the TUI door); the
+   lead keeps it in memory, by digest, for a recent proposal only. Then pi
+   sends the text as the reply labelled `team-plan:<content digest>`. The
+   relay records `plan_for` from that label (status.RelayPost, additive),
+   for routing only. A bare yes goes to the team door only when its direct
+   reply target (the NIP-10 parent) is a post the relay records as a plan
+   and no event it names, whatever the tag's marker, is a gate question or
+   re-ask. The attachment hands the lead the owner's yes and the raw post;
+   no digest travels with them. The lead verifies the yes as before (the
+   owner's pinned key, the id recomputed, kind, channel, window,
+   once-only), the post (its id recomputed, the share body's pinned key,
+   kind, channel: the model cannot sign as the body), the yes's direct
+   reply target equals the post, and **the post's content carries every
+   line of a plan text its pi recorded, redacted and trimmed as the relay
+   posts it** (line containment: the relay adds its `re <request id>`
+   header; a plan split over several posts proves nothing) for exactly one
+   recent proposal; anything else is `plan_post_unproved`. It reads every
+   e, E and q tag (`gateverify.EventRefs`) and refuses
+   `conflicting_thread` when one names a gate question or re-ask in its
+   root (either form) or, for a bare yes, anything beyond the plan post and
+   the post's own thread. A lead restart forgets the recorded texts (and
+   the confirmations), so the owner proposes again. The solo lead's shell
+   and the guard's second layer refuse a `team-plan:` label in any shell
+   command. The doors text and the plan block say "reply yes to the lead's
    Buzz post of this plan"; the prefix form keeps verifying, and no text
    asks for it.
 8. **Redaction and the title** (Codex's round). The whole question, its
@@ -505,7 +513,7 @@ add-generic-password?"); the generic fallbacks do the same.
 | 4. The screen's gates block and the answer key show the question's text above the rule verbatim | pi "brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim"; cli `TestSeatCommitAndWidenThroughTheGrowthGate` (status's `gates[].question` is `gatestore.Plain` of the record's text); status `TestGoldenRoundTripAdditiveBothWays`, `TestFleetGoldenIsTheSquadGoldenWrapped`, `TestThePiScreensFixtureIsAStatusDocument` (the field in the goldens and the screen's fixture) |
 | Codex P2 and P1: no hash in either case and no token in a title; the question redacted | gatestore `TestATitleCarriesNoHashOrTokenAboveTheRule` ("Fix DEADBEEF", a title with a path, one with a double underscore), `TestACanaryInATitleIsRedactedAtComposition`; cli `TestACanaryInATitleReachesNoQuestionStatusOrKey` (absent from the question, `gate status` and status, a hand-written record redacted by status) |
 | 5. Every word of the three lines traces to a field the composer read; a quoted title is exempt from the sentence count and cut at 80 characters with an ellipsis | gatestore `TestEveryWordOfThePlainLinesTracesToAField` (every word is the composer's fixed glue, which holds no claim, a word of a field it read (the target and the values in it, the raiser, the facts, the refused rules in words) or a count; the second line names a recorded fact; "Its checks passed on the train." and "The reviewer accepted it." fail), `TestAQuotedTitleIsCutAt80WithAnEllipsis`, `TestTheOldTextStillValidatesAndFactsAreSafe` |
-| 6. The team confirmation: a bare yes replied to the recorded plan post confirms the proposal; the same yes replied elsewhere confirms nothing; the prefix form still verifies (Codex P1: the plan post is the one the relay record marks; the lead refuses conflicting references) | buzz `TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam` (the relay records plan_for from the label only; a yes to a post whose text names the live digest continues the request and confirms nothing; a yes to the recorded plan post confirms with the post and its digest; outside the thread a gate answer; rooted at the plan but replying elsewhere, nothing; a body post the relay never posted, nothing; a bare no, nothing; a malformed plan_for fails the record), `TestTheRelayReadsThePlanFromItsLabelOnly`; cli `TestTheLeadWitnessesABareYesRepliedToThePlanPost` (refs naming another event, a gate question in the lead's root, marked or unmarked: `conflicting_thread`; a yes <prefix> in a gate question's thread: `conflicting_thread`; replying to nothing `not_in_gate_thread`; a post another key signed, an altered post, a plan for no recent proposal, no plan digest, a bare no, a yes the attachment signed; the owner's `Yes.` rooted at the post's own thread witnessed; a replay refused), `TestTheAttachmentRoutesABareYesByTheRecordedPlan`; pi "brief 3.1.1-1: amq_team_propose with reply_to sends the plan as the labelled reply"; the prefix form's rows unchanged. First round, superseded: | buzz `TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam` (the confirmer gets the yes and the post's bytes; outside the thread it is a gate answer; to a relay post with no digest, to one naming no proposal, it continues the request; to a body-signed post the relay never posted, nothing; a bare no, nothing), `TestPlanPrefixes`; cli `TestTheLeadWitnessesABareYesRepliedToThePlanPost` (the yes replying elsewhere or to nothing `not_in_gate_thread`, a post another key signed `wrong_pubkey`, an altered post `id_mismatch`, a post naming no proposal `no_proposal`, a bare no, a yes the attachment signed; the owner's `Yes.` witnessed with its event id; a replay refused), `TestTheAttachmentRoutesABareYesByThePostsProposal` (a post naming no proposal `not_a_plan`, no lead call; the plan's post reaches the serving lead, witnessed); the prefix form: `TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes`, `TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified`, `TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead`, `TestATeamYesIsAConfirmationNotAPhoneRequest`, unchanged but for the confirmer's added parameter |
+| 6. The team confirmation (Codex's re-check: the lead proves its plan from the text its pi recorded; every reference read) | cli `TestTheLeadWitnessesABareYesRepliedToThePlanPost` (a plan recorded by a child of pi `peer_not_lead_pi`, for no proposal `no_proposal`; a yes before pi recorded the plan, a shell-labelled post with the live digest, a real yes to an ordinary post as a local socket caller, a post with part of the plan: `plan_post_unproved`; a gate question marked mention or quoted with a q tag beside the plan, another event marked mention, a yes <prefix> mentioning a gate question: `conflicting_thread`; the lead's own plan post with the owner's yes as a direct reply witnessed), `TestTheAttachmentRoutesABareYesByTheRecordedPlan` (an ordinary post routed by a stray label `plan_post_unproved`); buzz `TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam` (a yes to the plan mentioning a gate question is no team confirmation); pi "amq_team_propose with reply_to records the plan with the lead, then sends it labelled" (the text sent is the text recorded; a lead that refuses means nothing is sent), "the solo shell refuses a team-plan label in an argv form", and three command-string forms in solo-shell-forms.json (both layers); gateverify `TestABareYesVerifiesAgainstARedactedQuestion` (a bare yes to a question composed from a canary title approves, the answer file verifies, the target, its digest and the text's digest bound unchanged). Before the re-check: | buzz `TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam` (the relay records plan_for from the label only; a yes to a post whose text names the live digest continues the request and confirms nothing; a yes to the recorded plan post confirms with the post and its digest; outside the thread a gate answer; rooted at the plan but replying elsewhere, nothing; a body post the relay never posted, nothing; a bare no, nothing; a malformed plan_for fails the record), `TestTheRelayReadsThePlanFromItsLabelOnly`; cli `TestTheLeadWitnessesABareYesRepliedToThePlanPost` (refs naming another event, a gate question in the lead's root, marked or unmarked: `conflicting_thread`; a yes <prefix> in a gate question's thread: `conflicting_thread`; replying to nothing `not_in_gate_thread`; a post another key signed, an altered post, a plan for no recent proposal, no plan digest, a bare no, a yes the attachment signed; the owner's `Yes.` rooted at the post's own thread witnessed; a replay refused), `TestTheAttachmentRoutesABareYesByTheRecordedPlan`; pi "brief 3.1.1-1: amq_team_propose with reply_to sends the plan as the labelled reply"; the prefix form's rows unchanged. First round, superseded: | buzz `TestABareYesRepliedToTheRelayedPlanConfirmsTheTeam` (the confirmer gets the yes and the post's bytes; outside the thread it is a gate answer; to a relay post with no digest, to one naming no proposal, it continues the request; to a body-signed post the relay never posted, nothing; a bare no, nothing), `TestPlanPrefixes`; cli `TestTheLeadWitnessesABareYesRepliedToThePlanPost` (the yes replying elsewhere or to nothing `not_in_gate_thread`, a post another key signed `wrong_pubkey`, an altered post `id_mismatch`, a post naming no proposal `no_proposal`, a bare no, a yes the attachment signed; the owner's `Yes.` witnessed with its event id; a replay refused), `TestTheAttachmentRoutesABareYesByThePostsProposal` (a post naming no proposal `not_a_plan`, no lead call; the plan's post reaches the serving lead, witnessed); the prefix form: `TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes`, `TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified`, `TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead`, `TestATeamYesIsAConfirmationNotAPhoneRequest`, unchanged but for the confirmer's added parameter |
 
 Tests that pinned the old text were moved to the new one, each on the same
 point: gatestore `TestRenderAndValidate`, gateverify `TestThreadReask` and
@@ -563,6 +571,8 @@ REVERT a token in a title reaches the quoted line: fails (the row catches it)
    --- FAIL: TestATitleCarriesNoHashOrTokenAboveTheRule (0.00s)
 REVERT the question, its lines and its title not redacted at composition: fails (the row catches it)
    --- FAIL: TestACanaryInATitleIsRedactedAtComposition (0.00s)
+REVERT the stored title not redacted, seen by the verifier's row: fails (the row catches it)
+   --- FAIL: TestABareYesVerifiesAgainstARedactedQuestion (0.06s)
 REVERT the stored title not redacted (the question is): fails (the row catches it)
    --- FAIL: TestACanaryInATitleReachesNoQuestionStatusOrKey (0.05s)
 REVERT status does not redact gates[].question: fails (the row catches it)
@@ -570,17 +580,17 @@ REVERT status does not redact gates[].question: fails (the row catches it)
 REVERT Verify refuses the bare form: fails (the row catches it)
    --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.06s)
 REVERT the core binds a bare answer to no gate: fails (the row catches it)
-   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.05s)
+   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.06s)
 REVERT a bare yes outside the thread is not re-asked in the one open gate: fails (the row catches it)
    --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.06s)
 REVERT a bare answer bound to every gate (not the thread it names): fails (the row catches it)
    --- FAIL: TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes (0.08s)
 REVERT the re-ask asks for the tuple (the 3.0 text): fails (the row catches it)
-   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.07s)
-   --- FAIL: TestNoReaskAsksForATuple (0.11s)
-   --- FAIL: TestThreadReask (0.06s)
+   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.08s)
+   --- FAIL: TestNoReaskAsksForATuple (0.12s)
+   --- FAIL: TestThreadReask (0.09s)
 REVERT the history re-ask asks for the tuple: fails (the row catches it)
-   --- FAIL: TestNoReaskAsksForATuple (0.11s)
+   --- FAIL: TestNoReaskAsksForATuple (0.12s)
 REVERT the doors text asks for yes <prefix>: fails (the row catches it)
    --- FAIL: TestTheDoorsTextAsksForNoPrefix (0.00s)
 REVERT the plan block asks for yes <prefix>: fails (the row catches it)
@@ -588,48 +598,63 @@ REVERT the plan block asks for yes <prefix>: fails (the row catches it)
 REVERT a bare yes routed to the lead as a phone request: fails (the row catches it)
    --- FAIL: TestABareYesIsAGateAnswerAtTheHandler (0.07s)
 REVERT a bare yes goes to the primary squad whatever its thread: fails (the row catches it)
-   --- FAIL: TestABareYesGoesToTheSquadWhoseThreadItNames (0.12s)
+   --- FAIL: TestABareYesGoesToTheSquadWhoseThreadItNames (0.13s)
 REVERT the handler's team door ignores a bare yes to the plan: fails (the row catches it)
-   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.13s)
+   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.11s)
 REVERT any relay post taken as the plan post (its text decides): fails (the row catches it)
    --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.08s)
 REVERT the relay ignores the lead's team-plan label: fails (the row catches it)
-   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.07s)
+   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.08s)
    --- FAIL: TestTheRelayReadsThePlanFromItsLabelOnly (0.00s)
 REVERT the relay record drops plan_for when the post is published: fails (the row catches it)
    --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.08s)
 REVERT the relay record takes a malformed plan_for: fails (the row catches it)
-   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.08s)
+   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.09s)
 REVERT the lead takes a plan post another key signed: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.10s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
 REVERT the lead takes a yes whose direct reply target is not the plan post: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.10s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
 REVERT the lead takes an altered plan post: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.10s)
 REVERT the lead takes a bare no as the confirmation: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.10s)
-REVERT the lead reads the proposal by prefix, not the recorded plan: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.08s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
+REVERT the lead takes a post without its recorded plan text (Codex re-check): fails (the row catches it)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.14s)
+   --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.07s)
+REVERT the lead records a plan text from any peer: fails (the row catches it)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.04s)
+REVERT pi sends the plan reply the lead did not record: fails (the row catches it)
+   not ok 2 - brief 3.1.1-1: amq_team_propose with reply_to records the plan with the lead, then sends it labelled
 REVERT the attachment routes a plan yes by prefix: fails (the row catches it)
    --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.05s)
-REVERT the attachment hands the lead the yes without the post and the plan: fails (the row catches it)
+REVERT the attachment hands the lead the yes without the post: fails (the row catches it)
    --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.05s)
 REVERT the lead's process sends the plan reply without its label: fails (the row catches it)
-   not ok 2 - brief 3.1.1-1: amq_team_propose with reply_to sends the plan as the labelled reply
+   not ok 2 - brief 3.1.1-1: amq_team_propose with reply_to records the plan with the lead, then sends it labelled
 REVERT the lead takes a confirmation in a gate question's thread: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.10s)
 REVERT the lead takes a yes naming more than the plan's thread: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.12s)
+REVERT the solo shell runs a command string with a team-plan label: fails (the row catches it)
+   not ok 1 - the solo lead's shell sees through quoting, expansions and eval
+REVERT the solo shell runs an argv form with a team-plan label: fails (the row catches it)
+   not ok 3 - brief 3.1.1-1: the solo shell refuses a team-plan label in an argv form
+REVERT the guard's second layer runs a team-plan label: fails (the row catches it)
+   --- FAIL: TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer (0.00s)
+REVERT the lead reads only reply, root and unmarked references: fails (the row catches it)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.16s)
+REVERT the handler's first layer reads only reply, root and unmarked references: fails (the row catches it)
+   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.16s)
 REVERT the release prepare raises without the branch it checked: fails (the row catches it)
-   --- FAIL: TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote (0.73s)
+   --- FAIL: TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote (0.55s)
 REVERT the merge gate without the PR's title and base: fails (the row catches it)
-   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.58s)
+   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.50s)
 REVERT gh pr view does not ask for the title: fails (the row catches it)
    --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.50s)
 REVERT the widen's growth gate without the task's title: fails (the row catches it)
-   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.44s)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.46s)
 REVERT status gates without the question: fails (the row catches it)
-   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.44s)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.47s)
 REVERT status gates carry the whole text, not the lines above the rule: fails (the row catches it)
    --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.46s)
 REVERT the gates block shows the identifiers only: fails (the row catches it)
@@ -639,7 +664,7 @@ REVERT the answer key shows the identifiers only: fails (the row catches it)
 REVERT the answer key finds no rule in the text: fails (the row catches it)
    not ok 1 - brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim
 
-56 of 56 reverts fail their rows
+64 of 64 reverts fail their rows
 ```
 
 ## 6. The gates
@@ -740,12 +765,12 @@ v3.1.0 tag, with this branch merged and installed:
 - **"Never merge."** The brief forbids it; the lead's message allows `git
   merge origin/v3` when the tip moves. It moved once (#836) and was merged.
 
-- **The plan post's mapping rests on the relay record.** After Codex's
-  round no post text is read: the relay records `plan_for` from the label
-  the lead's process set, and the lead trusts that record's digest (it
-  checks the post is the share body's and that the yes replies to it
-  directly). The attachment, which holds the body key, is trusted to write
-  the record, as it is trusted to post.
+- **The plan post is the lead's to prove.** After Codex's re-check the
+  relay's `plan_for` only routes; the lead witnesses a post only when the
+  share body signed it and its content carries a plan text the lead's own
+  pi recorded before sending. A shell that copies the exact plan text
+  under the label would post the real plan, which the owner reads before
+  answering; the shell label is refused anyway.
 - **Residuals of the token rule.** A branch or tag name with a slash
   (`release/3.1`) would show above the rule; the samples and this
   repository's branches have none. An email address is a destination as the

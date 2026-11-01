@@ -146,13 +146,13 @@ The first run is a conversation with the lead, in the repository:
      command to the extension, never to the model, and the lead accepts it
      only from its own pi;
    - or, on the phone, reply `yes` to the lead's Buzz post of the plan. The
-     lead sends the plan as its answer to your phone request, marked as the
-     plan (`amq_team_propose` with `reply_to`), and the relay records that
-     post as the plan for its digest. The Buzz attachment hands the lead
-     your reply and that post as it fetched them, and the lead, which holds
-     no key, verifies both itself: your signature, the post as the share's
-     own, and your reply to it directly. A `yes` to any other post, or
-     anywhere else, confirms nothing.
+     lead sends the plan as its answer to your phone request
+     (`amq_team_propose` with `reply_to`); its own process records the
+     exact text first. The Buzz attachment hands the lead your reply and
+     that post as it fetched them, and the lead, which holds no key,
+     verifies both itself: your signature, the post as the share's own,
+     your reply to it directly, and the plan text it recorded in the post.
+     A `yes` to any other post, or anywhere else, confirms nothing.
 
    There is no shell door: under one uid, no kernel read tells your shell
    from one the lead's model built, so a confirmation from a shell would
