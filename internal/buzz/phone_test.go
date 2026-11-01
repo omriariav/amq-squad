@@ -1250,9 +1250,24 @@ func TestATeamYesIsAConfirmationNotAPhoneRequest(t *testing.T) {
 	var confirmed []string
 	pf.h.Confirm = func(p string, raw, _ []byte) (string, error) {
 		confirmed = append(confirmed, p)
+		if p != prefix {
+			return "", errors.New("no_proposal: no recent proposal starts with it")
+		}
 		return "sha256:" + prefix, nil
 	}
 	dir := status.RelayDir(pf.h.Target.Root)
+	// the plan reviewer: the paths split on the form, not on the outcome. A
+	// yes <16 hex> the lead refuses (no proposal open) gets the refusal's
+	// name and never falls through to the phone path
+	evNo, msgNo := pf.dm(t, "yes fedcba9876543210", "")
+	pf.step(t)
+	if res, n := pf.serve.result(msgNo); res != "refused team no_proposal" || n != 1 || len(pf.mail.sent) != 0 {
+		t.Fatalf("a refused team yes: %q (%d replies), sent %d", res, n, len(pf.mail.sent))
+	}
+	if _, err := os.Stat(relayRecordPath(dir, RequestID(evNo))); !os.IsNotExist(err) {
+		t.Fatalf("a refused team yes opened a request: %v", err)
+	}
+	confirmed = nil
 	ev, msg := pf.dm(t, "yes "+prefix, "")
 	pf.step(t)
 	if res, _ := pf.serve.result(msg); res != "confirmed team" || len(confirmed) != 1 || len(pf.mail.sent) != 0 {

@@ -247,5 +247,7 @@ run("a team yes taken as a phone request (continuation before the team door)", [
     B+"TestATeamYesIsAConfirmationNotAPhoneRequest")
 run("the relay carries a team yes", [(R,"\tif _, ok := gateverify.ParseTeamYes(t); ok {\n\t\treturn true\n\t}\n","")],
     B+"TestATeamYesIsAConfirmationNotAPhoneRequest")
+run("a refused team yes falls through to the phone path (split on the outcome)", [(I,"\t\th.teamYes(ctx, &hd, e, raw, prefix)\n\t\treturn hd\n","\t\th.teamYes(ctx, &hd, e, raw, prefix)\n\t\tif hd.Error == \"\" {\n\t\t\treturn hd\n\t\t}\n")],
+    B+"TestATeamYesIsAConfirmationNotAPhoneRequest")
 print(f"{RUNS[1]} of {RUNS[0]} reverts caught")
 sys.exit(0 if RUNS[0]==RUNS[1] else 1)
