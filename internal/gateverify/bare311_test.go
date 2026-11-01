@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 )
 
 // Brief 3.1.1-1, row 2: a bare yes replied in the gate question's thread,
@@ -138,5 +140,56 @@ func TestNoReaskAsksForATuple(t *testing.T) {
 	rec2, _ := f.store.Load("g-tup2")
 	if r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec2), q.EventID, testNow.Add(time.Minute))); r.Outcome != "approved" {
 		t.Fatalf("the tuple form: %+v", r)
+	}
+}
+
+// Codex re-check on #838 (a test gap): a bare yes replied to a question
+// composed from a title carrying a canary verifies for its gate. The stored
+// question is redacted; the verifier's bound fields are the record's own and
+// unchanged: the target and its digest (of the raw target), the text's
+// digest (of the redacted text the question carries), and the answer file's
+// envelope binds them.
+func TestABareYesVerifiesAgainstARedactedQuestion(t *testing.T) {
+	const secret = "zebra311verifyvalue"
+	canary := "GH_TOKEN=" + secret
+	for _, re := range redact.RealCredentialShapes {
+		if re.MatchString(canary) {
+			t.Fatalf("the canary matches a real credential shape %s", re)
+		}
+	}
+	f := newFixture(t)
+	at := testNow.Add(time.Minute)
+	f.clock = at
+	target := gatetarget.MergeBeyond("omriariav/amq-squad", 7, "4852f761aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d", []string{"ci_green"})
+	rec, q, err := f.core.Raise(ctx, gatestore.Spec{GateID: "merge-canary", Action: "spawn", Target: target, RaisedBy: "lead", Facts: gatestore.SafeFacts("Fix "+canary, "v3")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qe, _ := nostr.ParseEvent([]byte(q.RawEvent))
+	if strings.Contains(rec.Text, secret) || strings.Contains(qe.Content, secret) || strings.Contains(rec.Facts.Title, secret) || !strings.Contains(rec.Text, redact.Placeholder) {
+		t.Fatalf("the canary reached the question:\n%s", qe.Content)
+	}
+	if rec.Target != target || rec.Digest != gatetarget.Digest("spawn", target) || qe.Content != rec.Text {
+		t.Fatalf("the bound fields changed: target %q digest %s", rec.Target, rec.Digest)
+	}
+	r := f.core.HandleEvent(ctx, f.answer(f.owner, "yes", q.EventID, at))
+	if r.Outcome != "approved" || r.GateID != rec.GateID {
+		t.Fatalf("a bare yes to the redacted question: %+v", r)
+	}
+	ans, err := f.store.ReadAnswer(rec.GateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyAnswerFile(*ans, f.trust, f.core.Pin, rec, &q, nil, f.core.Namespace); err != nil {
+		t.Fatalf("the answer file does not verify: %v", err)
+	}
+	p := ans.Envelope.Payload
+	if p.Target != rec.Digest || p.Action != "spawn" || p.Gate != "gate/"+rec.GateID {
+		t.Fatalf("the envelope binds %s %s %s", p.Target, p.Action, p.Gate)
+	}
+	for _, ev := range p.Evidence {
+		if ev.Kind == EvidenceKindGate && ev.SHA256 != rec.TextSHA256 {
+			t.Fatalf("the gate-text evidence %s is not the record's %s", ev.SHA256, rec.TextSHA256)
+		}
 	}
 }

@@ -116,7 +116,11 @@ run("the question, its lines and its title not redacted at composition", [
     (PL,'\tc.Title = redact.Block(c.Title)\n','\t_ = redact.Block\n'),
     (PL,'\t\tif f.Title != redact.Block(f.Title) {\n','\t\tif false {\n'),
     (PL,'Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch','Title: strings.Join(strings.Fields(title), " "), Branch')],
-    GS+"'TestACanaryInATitleIsRedactedAtComposition' && "+CL+"'TestACanaryInATitleReachesNoQuestionStatusOrKey'")
+    GS+"'TestACanaryInATitleIsRedactedAtComposition' && "+CL+"'TestACanaryInATitleReachesNoQuestionStatusOrKey' && "+GV+"'TestABareYesVerifiesAgainstARedactedQuestion'")
+run("the stored title not redacted, seen by the verifier's row", [(PL,'\tc.Title = redact.Block(c.Title)\n','\t_ = redact.Block\n'),
+    (PL,'\t\tif f.Title != redact.Block(f.Title) {\n','\t\tif false {\n'),
+    (PL,'Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch','Title: strings.Join(strings.Fields(title), " "), Branch')],
+    GV+"'TestABareYesVerifiesAgainstARedactedQuestion'")
 run("the stored title not redacted (the question is)", [(PL,'\tc.Title = redact.Block(c.Title)\n','\t_ = redact.Block\n'),
     (PL,'\t\tif f.Title != redact.Block(f.Title) {\n','\t\tif false {\n'),
     (PL,'Title: redact.Block(strings.Join(strings.Fields(title), " ")), Branch','Title: strings.Join(strings.Fields(title), " "), Branch')],
