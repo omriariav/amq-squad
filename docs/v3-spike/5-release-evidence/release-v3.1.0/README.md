@@ -1,0 +1,14 @@
+# amq-squad v3.1.0 release evidence (2026-11-01)
+
+- Tag: v3.1.0 -> 5914ab9f1533be02d467f40617a042b80e4f9a7c, the v3 tip after PR #841 (the bump and the final 3.1.0 notes). Cut by the installed 3.1.0-rc.1 binary (R54).
+- Release: https://github.com/omriariav/amq-squad/releases/tag/v3.1.0, published 2026-11-01T19:29:38Z (release-publish.json; `gh release view`: publishedAt 2026-11-01T19:29:38Z, isPrerelease false; `gh api releases/latest`: v3.1.0, so it is the latest release).
+- The series (session v310): the session root was created before prepare ran, so the gate records carry the live root identity, `/Users/omri/code/amq-squad/.agent-mail/v310 root-sha256:a1712b1158ea1dfa40760b380cd3da2a84f7c45200041426e60ef356231cc034` (squadid-expected.txt). Prepare used `--branch v3`, the notes file as the body, and its sha256 in the gate note (notes-body.sha256: e69047ec2ca78da9155127bfb81c6a81a404ddfaaa58193ab66e8d64db0724e6). release-prepare.json: release id release-v1-91168fb00cc184a55eaa7246760a6348f52b4d02cb89d51270ee9e59151285ad; gates rel-tag-296232202db0e5cd913f ("git tag v3.1.0 5914ab9f1533be02d467f40617a042b80e4f9a7c on omriariav/amq-squad") and rel-gh-eac313186352ec472124 ("gh release create v3.1.0 on omriariav/amq-squad").
+- One attach on the mailbox "user", attached 19:27:26Z. The owner's answers, each verified by the attach (attach.jsonl): rel-tag approved at 19:28:50Z ("accepted rel-tag-296232202db0e5cd913f tag", event 93da33a820b5aa22f070eaea3cdf06d932b646f124a82f1fb9403ba5302a9be3) and rel-gh approved at 19:28:57Z ("accepted rel-gh-eac313186352ec472124 github_release", event 3b4548572a5d3f8abeaa25ca2db6c52cafe54a576a78cc62bf605679b3fdc9fc). The attach detached at 19:30:07Z. release-publish.json: both steps ran, the tag step's result 5914ab9f1533be02d467f40617a042b80e4f9a7c and the release step's result the release URL.
+- The main join is PR #842 (branch main-310), after the tag, as for the rc. At the time of writing #842 was still open; the owner's order of 10-30 puts the join before the tag, and the marketplace serves 3.1.0 only once #842 lands.
+- The widen key moved to 3.1.1.
+- The gate questions in plain words are draft #838 (3.1.1-1), landing after the tag; it was still open at the time of writing.
+- Not in the records: the gate-note text itself (only the notes file's sha256 is kept, in notes-body.sha256), and whether `gh release edit` set the body byte-equal to the file.
+
+## The published body
+
+Checked after publish with `gh release view --json body`: the published release body is the notes file byte for byte (sha256 `e69047ec2ca78da9155127bfb81c6a81a404ddfaaa58193ab66e8d64db0724e6`) followed by two blank lines and the release flow's own marker line `<!-- amq-squad-release-nonce: ... -->`, which `releaseflow.NonceMarker` appends so a draft can be found again. Nothing else differs.
