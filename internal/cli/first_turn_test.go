@@ -21,7 +21,7 @@ func TestContextHostCarriesTheHostFactsAndLeavesAMissingOneEmpty(t *testing.T) {
 	t.Cleanup(func() { contextHostRun = prev })
 	gitOK := true
 	branch := "v3-31-3b"
-	contextHostRun = func(dir, name string, args ...string) (string, error) {
+	contextHostRun = func(_ *hostCall, dir, name string, args ...string) (string, error) {
 		ran = append(ran, dir+" "+name+" "+strings.Join(args, " "))
 		switch {
 		case name == "git" && !gitOK:

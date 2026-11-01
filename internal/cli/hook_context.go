@@ -82,19 +82,44 @@ type hookHost struct {
 	AMQVersion string `json:"amq_version"`
 }
 
-// contextHostDeadline bounds each host-fact command (Codex on #837, item
-// 5): git and amq run under it, in their own process group, which is
-// killed with everything it started when the deadline passes; the fact
-// then reads missing. A test seam.
+// contextHostDeadline bounds the whole host-fact read (Codex on #837, item
+// 5, and its re-check, item 2): git and amq run one after another, each
+// under what remains of this one budget, each in its own process group,
+// which is killed with everything it started when the budget runs out; the
+// fact then reads missing. When the read ends, for any reason, every group
+// it started is killed (a child that outlived its leader included). The
+// extension's timeout for context --host is above this budget
+// (pi/extensions/lib/hooks.ts CONTEXT_HOST_TIMEOUT_MS), so this process
+// always finishes its own cleanup. A test seam.
 var contextHostDeadline = 3 * time.Second
 
 // contextHostOutputCap bounds a host-fact command's output: more is no
 // fact (the group is killed and the fact reads missing).
 const contextHostOutputCap = 4 << 10
 
-// contextHostRun runs one command for the host facts (a test seam).
-var contextHostRun = func(dir, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)
+// hostCall is one host-fact read: its shared deadline and every command it
+// started.
+type hostCall struct {
+	ctx  context.Context
+	cmds []*exec.Cmd
+}
+
+// sweep kills the process group of every command the read started. It runs
+// right after the last reap, so a group's id is still held by any member
+// that outlived its leader (the only processes it can reach).
+func (c *hostCall) sweep() {
+	for _, cmd := range c.cmds {
+		killGuardGroup(cmd)
+	}
+}
+
+// contextHostRun runs one command for the host facts under the read's
+// shared deadline (a test seam).
+var contextHostRun = func(c *hostCall, dir, name string, args ...string) (string, error) {
+	if err := c.ctx.Err(); err != nil {
+		return "", fmt.Errorf("%s not run: the host facts' %s budget is spent", name, contextHostDeadline)
+	}
+	ctx, cancel := context.WithCancel(c.ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
@@ -106,12 +131,16 @@ var contextHostRun = func(dir, name string, args ...string) (string, error) {
 	cmd.WaitDelay = time.Second
 	out := &cappedBuffer{max: contextHostOutputCap, over: cancel}
 	cmd.Stdout = out
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	c.cmds = append(c.cmds, cmd)
+	err := cmd.Wait()
 	switch {
 	case out.hit:
 		return "", fmt.Errorf("%s printed more than %d bytes", name, contextHostOutputCap)
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return "", fmt.Errorf("%s did not finish within %s", name, contextHostDeadline)
+	case errors.Is(c.ctx.Err(), context.DeadlineExceeded):
+		return "", fmt.Errorf("%s did not finish within the host facts' %s budget", name, contextHostDeadline)
 	}
 	return strings.TrimSpace(out.buf.String()), err
 }
@@ -119,6 +148,12 @@ var contextHostRun = func(dir, name string, args ...string) (string, error) {
 // hostFacts reads the host facts: the repository, its branch and tip from
 // git, and the installed amq's version ($AMQ_SQUAD_AMQ, else amq on PATH).
 func hostFacts() *hookHost {
+	ctx, cancel := context.WithTimeout(context.Background(), contextHostDeadline)
+	c := &hostCall{ctx: ctx}
+	defer func() {
+		cancel()
+		c.sweep()
+	}()
 	h := &hookHost{Repository: os.Getenv("AMQ_SQUAD_PROJECT")}
 	if h.Repository == "" {
 		if cwd, err := os.Getwd(); err == nil {
@@ -126,10 +161,10 @@ func hostFacts() *hookHost {
 		}
 	}
 	if h.Repository != "" {
-		if out, err := contextHostRun(h.Repository, "git", "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		if out, err := contextHostRun(c, h.Repository, "git", "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 			h.Branch = out
 		}
-		if out, err := contextHostRun(h.Repository, "git", "rev-parse", "--short=12", "HEAD"); err == nil {
+		if out, err := contextHostRun(c, h.Repository, "git", "rev-parse", "--short=12", "HEAD"); err == nil {
 			h.Tip = out
 		}
 	}
@@ -138,7 +173,7 @@ func hostFacts() *hookHost {
 		amq, _ = exec.LookPath("amq")
 	}
 	if amq != "" {
-		if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil {
+		if out, err := contextHostRun(c, h.Repository, amq, "--version"); err == nil {
 			h.AMQVersion, _, _ = strings.Cut(out, "\n")
 		}
 	}

@@ -372,3 +372,22 @@ test("the team lead's first turn carries the host facts from status and context,
 		assert.ok(redacted.includes("branch feature/api_key=<redacted> at missing;"), redacted);
 	});
 });
+
+// Codex's re-check on #837, item 2: the extension gives context --host more
+// time than Go's one budget for all its host commands (3 s) plus the verb's
+// own work, so Go always kills its command groups before the extension
+// kills it; a plain context keeps the hook timeout.
+test("context --host's timeout is above Go's host budget", async () => {
+	const { contextOf } = await import("../extensions/lib/hooks.ts");
+	const seen: { args: string[]; timeoutMs?: number }[] = [];
+	const runner = async (_bin: string, args: string[], opts: { timeoutMs?: number }) => {
+		seen.push({ args, timeoutMs: opts.timeoutMs });
+		return { code: 0, stdout: "{}", stderr: "", timedOut: false } as any;
+	};
+	const cfg = { bin: "/x/amq-squad", me: "cto", hookTimeoutMs: 5000 } as any;
+	await contextOf(cfg, runner as any, true);
+	await contextOf(cfg, runner as any, false);
+	assert.ok(seen[0].args.includes("--host"));
+	assert.ok((seen[0].timeoutMs ?? 0) >= 3000 + 5000, `context --host timeout ${seen[0].timeoutMs}`);
+	assert.equal(seen[1].timeoutMs, 5000);
+});
