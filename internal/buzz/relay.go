@@ -233,10 +233,10 @@ func replyKind(e ThreadEntry) string {
 }
 
 func (h *Handler) relayRecord(ctx context.Context, rec *status.RelayRecord, g gateView, now time.Time) ([]Relayed, error) {
-	if rec.Closed && rec.Pending == "" {
+	if rec.Closed && rec.Pending == "" && rec.Posting == nil {
 		return nil, nil
 	}
-	if n := len(rec.Turns); n > 0 && now.Sub(rec.Turns[n-1].At) > FollowWindow {
+	if n := len(rec.Turns); n > 0 && now.Sub(rec.Turns[n-1].At) > FollowWindow && rec.Posting == nil {
 		return nil, nil
 	}
 	entries, err := h.Threads.Thread(ctx, h.Target.Root, rec.Thread)
@@ -244,10 +244,24 @@ func (h *Handler) relayRecord(ctx context.Context, rec *status.RelayRecord, g ga
 		return nil, err
 	}
 	dir := status.RelayDir(h.Target.Root)
+	// every change is written before the relay goes on; a write that fails
+	// stops this request until the next one succeeds (no durable intent, no
+	// publish)
+	save := func() error { return writeRelayRecord(dir, rec, now) }
 	var out []Relayed
 	byID := map[string]ThreadEntry{}
 	for _, e := range entries {
 		byID[e.ID] = e
+	}
+	// a reply left in flight (a crash, a failed part) resumes first
+	if rec.Posting != nil {
+		r, err := h.resume(ctx, rec, byID, g, now, save)
+		out = append(out, r)
+		if err != nil {
+			return out, err
+		}
+	}
+	for _, e := range entries {
 		if e.From != rec.Lead || slices.Contains(rec.Seen, e.ID) {
 			continue
 		}
@@ -258,48 +272,44 @@ func (h *Handler) relayRecord(ctx context.Context, rec *status.RelayRecord, g ga
 				out = append(out, Relayed{RequestID: rec.RequestID, ReplyID: rec.Pending, Kind: "progress", Outcome: "superseded"})
 			}
 			rec.Pending = e.ID
+			markSeen(rec, e.ID)
+			if err := save(); err != nil {
+				return out, err
+			}
 			out = append(out, Relayed{RequestID: rec.RequestID, ReplyID: e.ID, Kind: kind, Outcome: "held"})
-		} else {
-			if kind != "progress" && rec.Pending != "" {
-				// an answer or a result is newer than the held progress
-				out = append(out, Relayed{RequestID: rec.RequestID, ReplyID: rec.Pending, Kind: "progress", Outcome: "superseded"})
-				rec.Pending = ""
-			}
-			r, err := h.relayReply(ctx, rec, e, kind, g, now)
-			if err != nil {
-				return out, err // not marked: the next step retries it
-			}
-			out = append(out, r)
-			if kind == "progress" && r.Outcome == "posted" {
-				rec.Pending, rec.ProgressAt = "", timePtr(now)
-			}
-			if kind == "result" {
-				rec.Closed = true
-			}
+			continue
 		}
-		rec.Seen = append(rec.Seen, e.ID)
-		rec.LastReply = e.ID
-		if err := writeRelayRecord(dir, rec, now); err != nil {
-			return out, err
+		if kind != "progress" && rec.Pending != "" {
+			// an answer or a result is newer than the held progress
+			out = append(out, Relayed{RequestID: rec.RequestID, ReplyID: rec.Pending, Kind: "progress", Outcome: "superseded"})
+			rec.Pending = ""
+		}
+		r, err := h.relayReply(ctx, rec, e, kind, g, now, save)
+		out = append(out, r)
+		if err != nil {
+			return out, err // not marked: the next step resumes it from the record
 		}
 	}
 	if rec.Pending != "" && (rec.ProgressAt == nil || now.Sub(*rec.ProgressAt) >= ProgressBound) {
-		if e, ok := byID[rec.Pending]; ok {
-			r, err := h.relayReply(ctx, rec, e, "progress", g, now)
-			if err != nil {
-				return out, err
-			}
-			out = append(out, r)
-			if r.Outcome == "posted" {
-				rec.ProgressAt = timePtr(now)
-			}
+		e, ok := byID[rec.Pending]
+		if !ok {
+			rec.Pending = ""
+			return out, save()
 		}
-		rec.Pending = ""
-		if err := writeRelayRecord(dir, rec, now); err != nil {
+		r, err := h.relayReply(ctx, rec, e, "progress", g, now, save)
+		out = append(out, r)
+		if err != nil {
 			return out, err
 		}
 	}
 	return out, nil
+}
+
+func markSeen(rec *status.RelayRecord, id string) {
+	if !slices.Contains(rec.Seen, id) {
+		rec.Seen = append(rec.Seen, id)
+	}
+	rec.LastReply = id
 }
 
 func timePtr(t time.Time) *time.Time {
@@ -307,40 +317,120 @@ func timePtr(t time.Time) *time.Time {
 	return &u
 }
 
+// relayAfterPublish and relayRecordWrite are test seams: a crash between a
+// publish and its record, a record store that fails.
+var (
+	relayAfterPublish func() error
+	relayRecordWrite  func() error
+)
+
+// refused records a reply the relay does not post (by name, the sha256 of
+// the line or part that caused it) and marks it handled.
+func refused(rec *status.RelayRecord, r Relayed, reason, text string, now time.Time, save func() error) (Relayed, error) {
+	rec.Refusals = append(rec.Refusals, status.RelayRefusal{ReplyID: r.ReplyID, Reason: reason, SHA256: sha256Hex(text), At: now.UTC()})
+	rec.Posting = nil
+	if rec.Pending == r.ReplyID {
+		rec.Pending = ""
+	}
+	markSeen(rec, r.ReplyID)
+	r.Outcome, r.Reason = "refused", reason
+	return r, save()
+}
+
 // relayReply posts one lead reply, or refuses it and records why.
-func (h *Handler) relayReply(ctx context.Context, rec *status.RelayRecord, e ThreadEntry, kind string, g gateView, now time.Time) (Relayed, error) {
+func (h *Handler) relayReply(ctx context.Context, rec *status.RelayRecord, e ThreadEntry, kind string, g gateView, now time.Time, save func() error) (Relayed, error) {
 	r := Relayed{RequestID: rec.RequestID, ReplyID: e.ID, Kind: kind}
 	body := strings.TrimSpace(e.Body)
-	refuse := func(reason, line string) (Relayed, error) {
-		rec.Refusals = append(rec.Refusals, status.RelayRefusal{ReplyID: e.ID, Reason: reason, SHA256: sha256Hex(line), At: now.UTC()})
-		r.Outcome, r.Reason = "refused", reason
-		return r, nil
-	}
 	if g.threads[rec.PostTo] {
-		return refuse(RefusedGateThread, body)
+		return refused(rec, r, RefusedGateThread, body, now, save)
 	}
 	parts, line, bad := g.assemble(rec.RequestID, rec.Thread, body)
 	if bad {
-		return refuse(RefusedGateShape, line)
+		return refused(rec, r, RefusedGateShape, line, now, save)
 	}
-	var events []string
-	for i, p := range parts {
-		id, err := h.Poster.Post(ctx, p, rec.PostTo)
-		if err != nil {
-			if len(events) == 0 {
-				return r, fmt.Errorf("post %s: %w", e.ID, err)
-			}
-			// the parts already posted stay posted: never posted twice
-			r.Error = fmt.Sprintf("part %d of %d not posted: %v", i+1, len(parts), err)
-			parts = parts[:i]
-			break
+	p := &status.RelayPosting{ReplyID: e.ID, Kind: kind, Events: []string{}}
+	for _, x := range parts {
+		p.Parts = append(p.Parts, sha256Hex(x))
+	}
+	rec.Posting = p
+	return h.publish(ctx, rec, parts, now, save)
+}
+
+// resume continues the reply in flight from the record: the parts are
+// assembled again from the thread and must be the ones the intent names.
+func (h *Handler) resume(ctx context.Context, rec *status.RelayRecord, byID map[string]ThreadEntry, g gateView, now time.Time, save func() error) (Relayed, error) {
+	p := rec.Posting
+	r := Relayed{RequestID: rec.RequestID, ReplyID: p.ReplyID, Kind: p.Kind}
+	next := p.Parts[min(len(p.Events), len(p.Parts)-1)]
+	e, ok := byID[p.ReplyID]
+	if !ok {
+		return refused(rec, r, status.RelayPostUnconfirmed, next, now, save)
+	}
+	if g.threads[rec.PostTo] {
+		return refused(rec, r, RefusedGateThread, strings.TrimSpace(e.Body), now, save)
+	}
+	parts, line, bad := g.assemble(rec.RequestID, rec.Thread, strings.TrimSpace(e.Body))
+	if bad {
+		return refused(rec, r, RefusedGateShape, line, now, save)
+	}
+	same := len(parts) == len(p.Parts)
+	for i := 0; same && i < len(parts); i++ {
+		same = sha256Hex(parts[i]) == p.Parts[i]
+	}
+	if !same {
+		return refused(rec, r, status.RelayPostUnconfirmed, next, now, save)
+	}
+	return h.publish(ctx, rec, parts, now, save)
+}
+
+// publish posts the parts of the reply in flight not yet confirmed. Before
+// each publish the intent is written (a write that fails publishes
+// nothing); after it, the event id. A part whose intent was already tried
+// (a crash between publish and record) is published once more at most,
+// then recorded relay_post_unconfirmed and never tried again. The reply is
+// handled only when every part has its event id.
+func (h *Handler) publish(ctx context.Context, rec *status.RelayRecord, parts []string, now time.Time, save func() error) (Relayed, error) {
+	p := rec.Posting
+	r := Relayed{RequestID: rec.RequestID, ReplyID: p.ReplyID, Kind: p.Kind}
+	for i := len(p.Events); i < len(parts); i++ {
+		if p.Tries >= 2 {
+			return refused(rec, r, status.RelayPostUnconfirmed, p.Parts[i], now, save)
 		}
-		events = append(events, id)
+		p.Tries++
+		if err := save(); err != nil {
+			return r, fmt.Errorf("the intent for %s part %d of %d is not recorded, nothing published: %w", p.ReplyID, i+1, len(parts), err)
+		}
+		id, err := h.Poster.Post(ctx, parts[i], rec.PostTo)
+		if err != nil {
+			p.Tries-- // the publish failed: nothing went out
+			_ = save()
+			return r, fmt.Errorf("post %s part %d of %d: %w", p.ReplyID, i+1, len(parts), err)
+		}
+		if relayAfterPublish != nil {
+			if err := relayAfterPublish(); err != nil {
+				return r, err
+			}
+		}
+		p.Events, p.Tries = append(p.Events, id), 0
+		if err := save(); err != nil {
+			return r, err
+		}
 	}
-	rec.Posts = append(rec.Posts, status.RelayPost{ReplyID: e.ID, Kind: kind, Events: events, SHA256: sha256Hex(strings.Join(parts, "\n")), At: now.UTC()})
+	rec.Posts = append(rec.Posts, status.RelayPost{ReplyID: p.ReplyID, Kind: p.Kind, Events: p.Events, SHA256: sha256Hex(strings.Join(parts, "\n")), At: now.UTC()})
 	rec.RelayedAt = timePtr(now)
-	r.Outcome, r.Events = "posted", events
-	return r, nil
+	rec.Posting = nil
+	markSeen(rec, p.ReplyID)
+	switch p.Kind {
+	case "progress":
+		rec.ProgressAt = timePtr(now)
+		if rec.Pending == p.ReplyID {
+			rec.Pending = ""
+		}
+	case "result":
+		rec.Closed = true
+	}
+	r.Outcome, r.Events = "posted", p.Events
+	return r, save()
 }
 
 func sha256Hex(s string) string {
@@ -621,6 +711,11 @@ func writeRelayRecord(dir string, r *status.RelayRecord, now time.Time) error {
 	}
 	if err := r.Validate(r.RequestID); err != nil {
 		return err
+	}
+	if relayRecordWrite != nil {
+		if err := relayRecordWrite(); err != nil {
+			return err
+		}
 	}
 	raw, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {

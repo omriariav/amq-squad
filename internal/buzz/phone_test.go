@@ -3,6 +3,7 @@ package buzz
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -589,6 +590,82 @@ func TestASplitNeverStartsAPartWithAnAnswerForm(t *testing.T) {
 	got = pf.relay(t)
 	if posts := pf.relayPosts(); len(got) != 1 || got[0].Outcome != "posted" || len(posts) != 2 || !strings.HasPrefix(posts[1].Content, head+" (2/2)\n") {
 		t.Fatalf("an ordinary long reply: %+v, %d posts", got, len(posts))
+	}
+}
+
+// Codex P1-3: the intent is written before the publish. A crash between
+// a publish and its record gives at most one extra post after a restart;
+// a second crash there records relay_post_unconfirmed (named in status)
+// and the reply is never published again.
+func TestACrashBetweenPublishAndRecordPostsAtMostOnceMore(t *testing.T) {
+	pf := newPhoneFixture(t)
+	_, rid := pf.ask(t, "is the build green?", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Green.", "")
+	crash := errors.New("the attachment died after the publish")
+	relayAfterPublish = func() error { return crash }
+	t.Cleanup(func() { relayAfterPublish = nil })
+	if _, err := pf.h.RelayStep(context.Background()); !errors.Is(err, crash) && (err == nil || !strings.Contains(err.Error(), crash.Error())) {
+		t.Fatalf("the crash: %v", err)
+	}
+	if n := len(pf.relayPosts()); n != 1 {
+		t.Fatalf("%d posts before the restart", n)
+	}
+	// the restart crashes at the same place again: one more post, then never
+	restarted := func() *Handler {
+		return &Handler{Core: pf.core, Dial: pf.dial.dial, Inbox: pf.serve, Mail: pf.mail, Target: pf.h.Target, Now: pf.h.Now,
+			Poster: BodyPoster{Dial: pf.dial.dial, Pin: pf.core.Pin, Now: pf.h.Now}, Threads: pf.threads}
+	}
+	_, _ = restarted().RelayStep(context.Background())
+	relayAfterPublish = nil
+	got, err := restarted().RelayStep(context.Background())
+	if err != nil || len(got) != 1 || got[0].Outcome != "refused" || got[0].Reason != status.RelayPostUnconfirmed {
+		t.Fatalf("the second restart: %+v %v", got, err)
+	}
+	for i := 0; i < 3; i++ {
+		_, _ = restarted().RelayStep(context.Background())
+	}
+	if n := len(pf.relayPosts()); n != 2 {
+		t.Fatalf("%d posts of one reply, want at most one extra", n)
+	}
+	in := status.Collect(status.CollectOptions{Root: pf.h.Target.Root, Session: "s", Now: time.Now()})
+	if len(in.Requests) != 1 || !slices.Contains(in.Requests[0].Refused, status.RelayPostUnconfirmed) {
+		t.Fatalf("status does not name the unconfirmed post: %+v", in.Requests)
+	}
+	// one crash only: the restart publishes once more and records it
+	pf2 := newPhoneFixture(t)
+	_, rid2 := pf2.ask(t, "and now?", "")
+	pf2.threads.reply("lead-a", CockpitThread(rid2), "Still green.", "")
+	relayAfterPublish = func() error { return crash }
+	_, _ = pf2.h.RelayStep(context.Background())
+	relayAfterPublish = nil
+	got, err = pf2.h.RelayStep(context.Background())
+	if err != nil || len(got) != 1 || got[0].Outcome != "posted" || len(pf2.relayPosts()) != 2 {
+		t.Fatalf("one crash: %+v %v, %d posts", got, err, len(pf2.relayPosts()))
+	}
+	if again := pf2.relay(t); len(again) != 0 || len(pf2.relayPosts()) != 2 {
+		t.Fatalf("posted again after the record: %+v", again)
+	}
+}
+
+// Codex P1-3: a record store that fails publishes nothing (no durable
+// intent, no publish); once it writes again, the reply posts once.
+func TestAFailingRecordStorePostsNothing(t *testing.T) {
+	pf := newPhoneFixture(t)
+	_, rid := pf.ask(t, "is the build green?", "")
+	pf.threads.reply("lead-a", CockpitThread(rid), "Green.", "")
+	relayRecordWrite = func() error { return errors.New("disk full") }
+	t.Cleanup(func() { relayRecordWrite = nil })
+	for i := 0; i < 3; i++ {
+		if _, err := pf.h.RelayStep(context.Background()); err == nil {
+			t.Fatal("a failing record store reported no error")
+		}
+	}
+	if n := len(pf.relayPosts()); n != 0 {
+		t.Fatalf("%d posts with a failing record store", n)
+	}
+	relayRecordWrite = nil
+	if got := pf.relay(t); len(got) != 1 || got[0].Outcome != "posted" || len(pf.relayPosts()) != 1 {
+		t.Fatalf("after the store recovered: %+v", got)
 	}
 }
 

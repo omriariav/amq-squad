@@ -112,6 +112,16 @@ func (r *RelayRecord) Validate(requestID string) error {
 		check(messageIDRe.MatchString(f.ReplyID) && relayReasons[f.Reason] && shaRe.MatchString(f.SHA256) && !f.At.IsZero(), "refusals[]")
 	}
 	check(optional(messageIDRe, r.Pending), "pending_progress")
+	if p := r.Posting; p != nil {
+		ok := messageIDRe.MatchString(p.ReplyID) && relayKind(p.Kind) && len(p.Parts) >= 1 && len(p.Parts) <= 3 && len(p.Events) <= len(p.Parts) && p.Tries >= 0 && p.Tries <= 2
+		for _, x := range p.Parts {
+			ok = ok && shaRe.MatchString(x)
+		}
+		for _, e := range p.Events {
+			ok = ok && eventIDRe.MatchString(e)
+		}
+		check(ok, "posting")
+	}
 	check(!r.UpdatedAt.IsZero(), "updated_at")
 	if len(bad) > 0 {
 		return fmt.Errorf("%s: %s: %s", requestID, RelayRecordInvalid, strings.Join(bad, ", "))
@@ -146,11 +156,26 @@ type RelayRecord struct {
 	Refusals  []RelayRefusal `json:"refusals"`
 	// Pending is the newest progress reply held by the rate bound (its id
 	// only: the text is read from the thread when it posts).
-	Pending    string     `json:"pending_progress,omitempty"`
-	ProgressAt *time.Time `json:"progress_at,omitempty"`
-	RelayedAt  *time.Time `json:"relayed_at"`
-	Closed     bool       `json:"closed"` // a result reply closed it; a continuation opens it again
-	UpdatedAt  time.Time  `json:"updated_at"`
+	Pending string `json:"pending_progress,omitempty"`
+	// Posting is the reply being published, written before every publish
+	// (the intent): the sha256 of each of its parts, the event ids of the
+	// parts confirmed, and the publishes of the next part whose outcome is
+	// unknown. A restarted relay retries such a part once, then records
+	// relay_post_unconfirmed and never retries it again.
+	Posting    *RelayPosting `json:"posting,omitempty"`
+	ProgressAt *time.Time    `json:"progress_at,omitempty"`
+	RelayedAt  *time.Time    `json:"relayed_at"`
+	Closed     bool          `json:"closed"` // a result reply closed it; a continuation opens it again
+	UpdatedAt  time.Time     `json:"updated_at"`
+}
+
+// RelayPosting is a reply in flight.
+type RelayPosting struct {
+	ReplyID string   `json:"reply_id"`
+	Kind    string   `json:"kind"`
+	Parts   []string `json:"parts"`  // sha256 of each part, in order
+	Events  []string `json:"events"` // the event ids of the parts confirmed (all of them: done, its post not yet recorded)
+	Tries   int      `json:"tries"`  // publishes of part len(events) not confirmed
 }
 
 // RelayTurn is one owner DM of the request and the AMQ message that took it
