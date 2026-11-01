@@ -44,7 +44,7 @@ func TestBlockIsLinearOnALongLine(t *testing.T) {
 		{"assign", longLine, []string{"=x "}},
 		// One long line: YAML flow, JSON and provider-token paths.
 		{"mixed line", func(n int) string {
-			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz "
+			unit := "password: '" + c1 + "', {\"password\": \"" + c2 + "\"} token sk-" + c3 + "zz err: see api_key: " + c6 + " now API_KEY:" + c7 + " "
 			return strings.Repeat(unit, n/len(unit))
 		}, []string{c1, c2, c3, c6, c7}},
 		// Many lines: YAML blocks, a quoted scalar across lines, JSON.
