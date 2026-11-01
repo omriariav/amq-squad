@@ -55,6 +55,11 @@ const (
 	// at paragraph boundaries into at most MaxParts parts.
 	DMLimit  = 4000
 	MaxParts = 3
+	// MinQuestionLine is the shortest normalized line of an open gate's
+	// question the substring check matches (16 characters): a short line
+	// ("v3", a bare tag) would refuse ordinary replies, and the gate id and
+	// the typed tuple carry the binding anyway.
+	MinQuestionLine = 16
 	// FollowWindow is how long after its newest owner turn a cockpit
 	// thread is followed.
 	FollowWindow = 24 * time.Hour
@@ -621,7 +626,7 @@ func (g gateView) gateShaped(line string) bool {
 		}
 	}
 	for _, q := range g.lines {
-		if strings.Contains(t, q) {
+		if utf8.RuneCountInString(q) >= MinQuestionLine && strings.Contains(t, q) {
 			return true
 		}
 	}

@@ -876,6 +876,28 @@ func TestTestsExecAMQOnlyThroughTheHelper(t *testing.T) {
 	}
 }
 
+// The plan reviewer: the question-text check skips a question line shorter
+// than MinQuestionLine, so a reply with a short common word of an open
+// question posts, while a reply carrying a full question line is refused.
+func TestAShortQuestionLineDoesNotRefuseOrdinaryReplies(t *testing.T) {
+	pf := newPhoneFixture(t)
+	rec, _, _ := raiseRel(t, pf.core, "rel-short")
+	g, err := pf.h.gateView(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a question line as short as a bare tag, as a gate target can be
+	g.lines = append(g.lines, normalizeLine("v3.1"), normalizeLine("yes or no"))
+	for _, ok := range []string{"we ship v3.1 today", "answer yes or no later, no rush"} {
+		if g.gateShaped(ok) {
+			t.Errorf("%q is refused by a short question line", ok)
+		}
+	}
+	if !g.gateShaped("pasted: digest: " + rec.Digest) {
+		t.Error("a full question line passes")
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.
