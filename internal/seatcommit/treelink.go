@@ -87,7 +87,6 @@ func (s *treeLinkSnapshot) resolve(alias string) (string, error) {
 		current = strings.Split(dir, "/")
 	}
 	remaining := strings.Split(target, "/")
-	seen := map[string]bool{alias: true}
 	followed := 0
 	for len(remaining) > 0 {
 		part := remaining[0]
@@ -110,12 +109,8 @@ func (s *treeLinkSnapshot) resolve(alias string) (string, error) {
 		if e.Mode == "120000" {
 			followed++
 			if followed > treeLinkMaxDepth {
-				return "", fmt.Errorf("%w: link %q target %q exceeds the depth limit %d", errLinkTargetRefused, alias, target, treeLinkMaxDepth)
+				return "", fmt.Errorf("%w: link %q target %q exceeds the depth limit %d (a cycle or a chain too long)", errLinkTargetRefused, alias, target, treeLinkMaxDepth)
 			}
-			if seen[candidate] {
-				return "", fmt.Errorf("%w: link %q target %q has a cycle at %q", errLinkTargetRefused, alias, target, candidate)
-			}
-			seen[candidate] = true
 			next := s.links[candidate]
 			if path.IsAbs(next) {
 				return "", fmt.Errorf("%w: link %q target %q reaches absolute target %q", errLinkTargetRefused, alias, target, next)
@@ -134,7 +129,7 @@ func (s *treeLinkSnapshot) resolve(alias string) (string, error) {
 func changedLinkPaths(entries []rawEntry) []string {
 	var paths []string
 	for _, e := range entries {
-		if e.NewMode == "120000" && e.NewOID != e.OldOID {
+		if e.NewMode == "120000" && (e.OldMode != "120000" || e.NewOID != e.OldOID) {
 			paths = append(paths, e.Path)
 		}
 	}

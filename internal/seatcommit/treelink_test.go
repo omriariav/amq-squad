@@ -12,6 +12,21 @@ type fakeTreeObjects struct {
 	blobs   map[string][]byte
 }
 
+type panicOnFilesystemRead struct{ fakeTreeObjects }
+
+func (f panicOnFilesystemRead) TreeEntries(tree string) ([]treeObjectEntry, error) {
+	if strings.Contains(tree, "/") {
+		panic("filesystem read")
+	}
+	return f.fakeTreeObjects.TreeEntries(tree)
+}
+func (f panicOnFilesystemRead) Blob(oid string) ([]byte, error) {
+	if strings.Contains(oid, "/") {
+		panic("filesystem read")
+	}
+	return f.fakeTreeObjects.Blob(oid)
+}
+
 func (f fakeTreeObjects) TreeEntries(string) ([]treeObjectEntry, error) {
 	return f.entries, nil
 }
@@ -43,7 +58,8 @@ func TestTreeLinkResolverUsesOnlyTreeObjects(t *testing.T) {
 		{name: "absolute", links: map[string]string{"link": "/etc/passwd"}, alias: "link", refuse: "absolute"},
 		{name: "outside", links: map[string]string{"dir/link": "../../outside"}, alias: "dir/link", refuse: "leaves the repository"},
 		{name: "unclean dangling", links: map[string]string{"link": "missing/../cmd/root.go"}, files: []string{"cmd/root.go"}, alias: "link", refuse: `dangling at "missing"`},
-		{name: "cycle", links: map[string]string{"a": "b", "b": "a"}, alias: "a", refuse: "cycle"},
+		{name: "cycle", links: map[string]string{"a": "b", "b": "a"}, alias: "a", refuse: "cycle or a chain too long"},
+		{name: "finite revisit", links: map[string]string{"d": "real", "link": "d/../d/file"}, files: []string{"real/file"}, alias: "link", want: "real/file"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,9 +101,12 @@ func TestTreeLinkPolicyChecksOnlyChangedLinks(t *testing.T) {
 	entries := []rawEntry{
 		{OldMode: "120000", NewMode: "120000", OldOID: "same", NewOID: "same", Path: "old"},
 		{OldMode: "000000", NewMode: "120000", OldOID: "zero", NewOID: "new", Path: "new"},
+		{OldMode: "100644", NewMode: "120000", OldOID: "same", NewOID: "same", Path: "mode-flip"},
 	}
+	source.entries = append(source.entries, treeObjectEntry{Mode: "120000", OID: "mode", Path: "mode-flip"})
+	source.blobs["mode"] = []byte("missing")
 	refused, err := treeLinkRefusals(source, "tree", entries, protectedSet{managed: []string{"CLAUDE.md"}})
-	if err != nil || len(refused) != 1 || !strings.Contains(refused[0], `link "new"`) || strings.Contains(refused[0], `link "old"`) {
+	if err != nil || len(refused) != 2 || !strings.Contains(strings.Join(refused, " "), `link "mode-flip"`) {
 		t.Fatalf("refusals = %q, %v", refused, err)
 	}
 	if refused, err := treeLinkRefusals(source, "tree", entries[:1], protectedSet{}); err != nil || len(refused) != 0 {
