@@ -53,15 +53,21 @@ run("the AMQ version not read",
  [('internal/cli/hook_context.go','if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil {','if out, err := contextHostRun(h.Repository, amq, "--version"); err == nil && false {')],
  C+"TestContextHost")
 # section 4: the phase marker
-run("the yes writing no phase marker",
- [('internal/cli/lead_start.go','\t\tif err := writePhaseMarker(s.root, s.project, req.Digest, s.self); err != nil {','\t\tif err := error(nil); err != nil {')],
+run("the yes writing no phase marker (the record)",
+ [('internal/cli/lead_start.go','\t\t} else if err := writePhaseMarker(s.root, s.project, team, s.self); err != nil {','\t\t} else if err := error(nil); err != nil {')],
  C+"TestTheStartOfAConfirmedTeam")
-run("a restarted solo lead not reading the marker",
- [('internal/cli/pi_lead.go','\t\t\t\tif m, ok := teamMarked(root, project); ok {','\t\t\t\tif m, ok := teamMarked(root, project); ok && false {')],
- C+"TestASoloLeadRestartedInATeamMarked")
-run("a marker for another repository taken",
+run("the start's reply without the team identity",
+ [('internal/cli/lead_start.go','Roster: l.roster, Team: team}','Roster: l.roster}')],
+ C+"TestTheStartOfAConfirmedTeam")
+run("the phase query answering team before the start",
+ [('internal/cli/lead_start.go','\t\tif team != nil {\n\t\t\treply = leadStartReply{Outcome: "team", Team: team}','\t\tif true {\n\t\t\treply = leadStartReply{Outcome: "team", Team: team}')],
+ C+"TestThePhaseQuery")
+run("a restarted solo lead not saying the offer",
+ [('internal/cli/pi_lead.go','\t\t\t\t\tfmt.Fprintf(os.Stderr, "amq-squad lead: %s\\n", resumeOffer(m))\n','\t\t\t\t\t_ = m\n')],
+ C+"TestASoloLeadRestartedInAMarked")
+run("a marker for another repository read",
  [('internal/cli/lead_start.go','m.Phase == PhaseTeam && m.Project == project','m.Phase == PhaseTeam')],
- C+"TestASoloLeadRestartedInATeamMarked")
+ C+"TestASoloLeadRestartedInAMarked")
 # section 4: the switch in the extension
 run("the team tools declared before the yes",
  [('pi/extensions/lib/tools.ts','\t\tconst inactive = !cfg.lead;','\t\tconst inactive = false;')],
@@ -75,21 +81,36 @@ run("no phase_team refusal of the solo set",
 run("the lead's identity not switched to the squad's",
  [('pi/extensions/lib/team.ts','\t\tObject.assign(process.env, { AM_ROOT: m.root,','\t\tObject.assign({}, { AM_ROOT: m.root,')],
  P+"test/phase.test.ts")
-run("an earlier lead's marker taken (no pid check)",
- [('pi/extensions/lib/team.ts','m.pid !== process.ppid || ','')],
+run("the switch riding the marker file, not the lead's reply",
+ [('pi/extensions/lib/team.ts','\t\tif (d.team) this.switchToTeam(d.team);\n','\t\tthis.switchToTeam(d.team ?? JSON.parse(fs.readFileSync(path.join(this.soloRoot, "extensions", "amq-squad", "phase.json"), "utf8")));\n')],
  P+"test/phase.test.ts")
 run("amq_team_apply's success not switching",
- [('pi/extensions/lib/team.ts','\t\tif (m) this.switchToTeam(m);\n','\t\tif (m && false) this.switchToTeam(m);\n')],
+ [('pi/extensions/lib/team.ts','\t\tif (d.team) this.switchToTeam(d.team);\n','\t\tif (d.team && false) this.switchToTeam(d.team);\n')],
  P+"test/phase.test.ts")
-run("a session started after the yes not switching",
- [('pi/extensions/lib/team.ts','\t\tif (m) team.switchToTeam(m);\n','\t\tif (m && false) team.switchToTeam(m);\n')],
+run("a session started after the yes not switching on the lead's answer",
+ [('pi/extensions/lib/team.ts','\t\tif (t) team.switchToTeam(t);\n','\t\tif (t && false) team.switchToTeam(t);\n')],
+ P+"test/phase.test.ts")
+run("the restart's offer not said",
+ [('pi/extensions/lib/team.ts','\t\tif (offered || team.phase === "team") return undefined;','\t\tif (true) return undefined;')],
+ P+"test/phase.test.ts")
+run("the restart's offer said every turn",
+ [('pi/extensions/lib/team.ts','\t\toffered = true;\n','')],
  P+"test/phase.test.ts")
 # section 5: the first turn
 run("no host line",
- [('pi/extensions/amq-squad.ts','\t\tif (cfg.lead) sections["amq-squad-host"] = hostLine(','\t\tif (false) sections["amq-squad-host"] = hostLine(')],
+ [('pi/extensions/amq-squad.ts','\t\tif (!cfg.lead) return undefined;\n\t\tconst line = await host.next();','\t\tif (true) return undefined;\n\t\tconst line = await host.next();')],
+ P+"test/phase.test.ts")
+run("the verbs run every turn (no key)",
+ [('pi/extensions/lib/firstturn.ts','\t\tif (key === this.lastKey) return undefined;\n','')],
+ P+"test/phase.test.ts")
+run("an unchanged host line sent again",
+ [('pi/extensions/lib/firstturn.ts','\t\tif (line === this.lastLine) return undefined;\n','')],
+ P+"test/phase.test.ts")
+run("the task store not in the host key",
+ [('pi/extensions/lib/firstturn.ts','const paths = [path.join(ext, "tasks", ".generation"), ','const paths = [')],
  P+"test/phase.test.ts")
 run("context asked without --host",
- [('pi/extensions/amq-squad.ts','const c = await contextOf(cfg, run, cfg.lead);','const c = await contextOf(cfg, run, false);')],
+ [('pi/extensions/lib/firstturn.ts','hostOf(await contextOf(this.cfg, this.runner, true))','hostOf(await contextOf(this.cfg, this.runner, false))')],
  P+"test/phase.test.ts")
 run("closed tasks shown as open",
  [('pi/extensions/lib/firstturn.ts','st.tasks.filter((t) => !CLOSED_TASKS.has(t.task_state ?? ""))','st.tasks')],
