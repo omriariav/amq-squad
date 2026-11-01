@@ -143,7 +143,7 @@ run("the handler routing the yes (no Buzz door)",
  [('internal/buzz/inbound.go','\tif prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil {','\tif prefix, ok := gateverify.ParseTeamYes(content); false && ok && h.Confirm != nil {')],
  G+"-run TestTheBuzzDoor ./internal/buzz/")
 run("the yes confirmed before the owner's signature is checked",
- [('internal/buzz/inbound.go','\tif code := h.ownerEvent(e); code != "" {','\tif prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil {\n\t\th.teamYes(ctx, &hd, e, prefix)\n\t\treturn hd\n\t}\n\tif code := h.ownerEvent(e); code != "" {')],
+ [('internal/buzz/inbound.go','\tif code := h.ownerEvent(e); code != "" {','\tif prefix, ok := gateverify.ParseTeamYes(content); ok && h.Confirm != nil {\n\t\th.teamYes(ctx, &hd, e, raw, prefix)\n\t\treturn hd\n\t}\n\tif code := h.ownerEvent(e); code != "" {')],
  G+"-run TestTheBuzzDoor ./internal/buzz/")
 run("a redelivered yes confirmed again (no once-only mark)",
  [('internal/buzz/inbound.go','\tif err := h.seen.put(e.ID, "team", now); err != nil {','\tif err := error(nil); err != nil {')],
