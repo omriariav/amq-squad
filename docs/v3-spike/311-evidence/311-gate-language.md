@@ -682,7 +682,7 @@ REVERT the answer key finds no rule in the text: fails (the row catches it)
 
 ## 6. The gates
 
-Run on `f1f6a0d3` (after Codex's re-check on #838; the tree of this note's commit but for this section).
+Run on `9be8bfe8` (after Codex's third pass on #838; the tree of this note's commit but for this section).
 
 ```text
 $ go build ./... && go vet ./... && go test -count=1 ./...
@@ -697,8 +697,11 @@ Ran 19 tests in 12.850s
 
 OK
 context injection: last run 16.8 ms
-PERF pre-tool allow in a seat: p50 22.3 ms, p95 23.5 ms
-PERF outside a seat: 60 runs, p50 6.0 ms, p95 6.5 ms, max 6.9 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 24.2 ms, p95 43.2 ms
+PERF outside a seat: 60 runs, p50 11.2 ms, p95 39.3 ms, max 75.8 ms (budget p95 < 20 ms: NOT met)
+$ make claude-hooks-test   # rerun: the PERF rows report and never gate; the host load average was 8
+PERF pre-tool allow in a seat: p50 20.6 ms, p95 21.9 ms
+PERF outside a seat: 60 runs, p50 5.8 ms, p95 9.1 ms, max 9.8 ms (budget p95 < 20 ms: met)
 ```
 
 ## 7. The owner-run row: a release gate read on the phone, answered with a bare yes
