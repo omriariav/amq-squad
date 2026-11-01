@@ -19,6 +19,7 @@ import { blockReason, callKey, DEFAULT_CAP, hold, manifestHash, RetryCap, type D
 import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, outsideDeclared, roleMessage, type Config, type ContextData, type Verdict } from "./lib/hooks.ts";
 import { restrictModels } from "./lib/models.ts";
 import { installScreen } from "./lib/screen.ts";
+import { installSoloTeam, soloShellRefusal } from "./lib/team.ts";
 import { registerTools } from "./lib/tools.ts";
 import { run } from "./lib/verbs.ts";
 
@@ -43,6 +44,10 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// The team lead's read-only screen (brief 31-1): a widget below the
 	// editor, fed by status --json on the .generation/updated_at poll.
 	if (cfg.lead) installScreen(pi, cfg);
+	// The solo lead proposes a team and, on the owner's confirmation at one
+	// of R55's doors, applies it (brief 31-3): two tools, the plan block and
+	// /squad confirm, the TUI door.
+	else if (cfg.solo) installSoloTeam(pi, cfg);
 	restrictModels(pi, cfg.models, note);
 	const approveTools = new Set((process.env.AMQ_SQUAD_APPROVE_TOOLS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 	let cap = new RetryCap(DEFAULT_CAP);
@@ -76,6 +81,12 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// R36: guard before every tool call; any guard failure blocks.
 	pi.on("tool_call", async (event, ctx) => {
 		const call = { toolName: event.toolName, input: event.input, toolCallId: event.toolCallId, cwd: ctx.cwd };
+		// 3b (ii): the solo lead's shell refuses tmux and the owner's verbs
+		const owner = cfg.solo ? soloShellRefusal(event.toolName, event.input) : undefined;
+		if (owner) {
+			await record(cfg, ctx, { type: "owner_only_block", toolName: call.toolName, toolCallId: call.toolCallId, reason: owner });
+			return { block: true, reason: owner };
+		}
 		const scope = outsideDeclared(task, event.toolName, event.input, ctx.cwd);
 		if (scope) {
 			await record(cfg, ctx, { type: "scope_block", toolName: call.toolName, toolCallId: call.toolCallId, reason: scope });
