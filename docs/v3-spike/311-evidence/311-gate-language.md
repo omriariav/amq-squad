@@ -537,7 +537,7 @@ Each run reverts one change, runs the rows that must catch it, and restores ever
 
 ```text
 REVERT the 3.0 text (Render writes the identifiers and the typed lines): fails (the row catches it)
-   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.01s)
+   --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.00s)
    --- FAIL: TestNoQuestionAsksForATuple (0.00s)
    --- FAIL: TestRenderAndValidate (0.00s)
 REVERT a hash above the rule (a field's hex run shown whole): fails (the row catches it)
@@ -545,7 +545,7 @@ REVERT a hash above the rule (a field's hex run shown whole): fails (the row cat
 REVERT the title not cut at 80 characters: fails (the row catches it)
    --- FAIL: TestAQuotedTitleIsCutAt80WithAnEllipsis (0.00s)
 REVERT an unrecorded claim (the merge's second line says its checks passed): fails (the row catches it)
-   --- FAIL: TestEveryWordOfThePlainLinesTracesToAField (0.01s)
+   --- FAIL: TestEveryWordOfThePlainLinesTracesToAField (0.00s)
 REVERT a sentence over 20 words (every refused rule listed): fails (the row catches it)
    --- FAIL: TestEveryClassTheCatalogRaisesAsksInPlainWords (0.01s)
 REVERT the gate id above the rule: fails (the row catches it)
@@ -579,35 +579,35 @@ REVERT a token in a title reaches the quoted line: fails (the row catches it)
 REVERT the question, its lines and its title not redacted at composition: fails (the row catches it)
    --- FAIL: TestACanaryInATitleIsRedactedAtComposition (0.00s)
 REVERT the stored title not redacted, seen by the verifier's row: fails (the row catches it)
-   --- FAIL: TestABareYesVerifiesAgainstARedactedQuestion (0.06s)
+   --- FAIL: TestABareYesVerifiesAgainstARedactedQuestion (0.14s)
 REVERT the stored title not redacted (the question is): fails (the row catches it)
-   --- FAIL: TestACanaryInATitleReachesNoQuestionStatusOrKey (0.05s)
+   --- FAIL: TestACanaryInATitleReachesNoQuestionStatusOrKey (0.11s)
 REVERT status does not redact gates[].question: fails (the row catches it)
-   --- FAIL: TestACanaryInATitleReachesNoQuestionStatusOrKey (0.05s)
+   --- FAIL: TestACanaryInATitleReachesNoQuestionStatusOrKey (0.14s)
 REVERT Verify refuses the bare form: fails (the row catches it)
-   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.06s)
+   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.10s)
 REVERT the core binds a bare answer to no gate: fails (the row catches it)
-   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.07s)
+   --- FAIL: TestABareYesOrNoInTheThreadIsTheAnswer (0.09s)
 REVERT a bare yes outside the thread is not re-asked in the one open gate: fails (the row catches it)
-   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.06s)
+   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.12s)
 REVERT a bare answer bound to every gate (not the thread it names): fails (the row catches it)
-   --- FAIL: TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes (0.08s)
+   --- FAIL: TestABareYesInAnotherGatesThreadIsThatGatesNeverThisOnes (0.12s)
 REVERT the re-ask asks for the tuple (the 3.0 text): fails (the row catches it)
-   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.07s)
+   --- FAIL: TestABareYesOutsideTheThreadGetsThePlainReask (0.11s)
    --- FAIL: TestNoReaskAsksForATuple (0.11s)
    --- FAIL: TestThreadReask (0.07s)
 REVERT the history re-ask asks for the tuple: fails (the row catches it)
-   --- FAIL: TestNoReaskAsksForATuple (0.11s)
+   --- FAIL: TestNoReaskAsksForATuple (0.18s)
 REVERT the doors text asks for yes <prefix>: fails (the row catches it)
    --- FAIL: TestTheDoorsTextAsksForNoPrefix (0.00s)
 REVERT the plan block asks for yes <prefix>: fails (the row catches it)
    not ok 1 - brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, never yes <prefix>
 REVERT a bare yes routed to the lead as a phone request: fails (the row catches it)
-   --- FAIL: TestABareYesIsAGateAnswerAtTheHandler (0.07s)
+   --- FAIL: TestABareYesIsAGateAnswerAtTheHandler (0.10s)
 REVERT a bare yes goes to the primary squad whatever its thread: fails (the row catches it)
-   --- FAIL: TestABareYesGoesToTheSquadWhoseThreadItNames (0.13s)
+   --- FAIL: TestABareYesGoesToTheSquadWhoseThreadItNames (0.18s)
 REVERT the handler's team door ignores a bare yes to the plan: fails (the row catches it)
-   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.11s)
+   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.17s)
 REVERT any relay post taken as the plan post (its text decides): fails (the row catches it)
    --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.08s)
 REVERT the relay ignores the lead's team-plan label: fails (the row catches it)
@@ -616,38 +616,40 @@ REVERT the relay ignores the lead's team-plan label: fails (the row catches it)
 REVERT the relay record drops plan_for when the post is published: fails (the row catches it)
    --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.08s)
 REVERT the relay record takes a malformed plan_for: fails (the row catches it)
-   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.07s)
+   --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.08s)
 REVERT the lead takes a plan post another key signed: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.12s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
 REVERT the lead takes a yes whose direct reply target is not the plan post: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.10s)
 REVERT the lead takes an altered plan post: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
 REVERT the lead takes a bare no as the confirmation: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.09s)
 REVERT the lead takes a post carrying the plan text with other lines (containment, not equality): fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.12s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.14s)
 REVERT the lead takes a post without its recorded plan text: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.19s)
-   --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.06s)
+   --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.07s)
 REVERT the lead records a plan text from any peer: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.04s)
 REVERT pi sends the plan reply the lead did not record: fails (the row catches it)
    not ok 2 - brief 3.1.1-1: amq_team_propose with reply_to records the plan with the lead, then sends it labelled
 REVERT the attachment routes a plan yes by prefix: fails (the row catches it)
-   --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.05s)
+   --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.06s)
 REVERT the attachment hands the lead the yes without the post: fails (the row catches it)
-   --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.05s)
+   --- FAIL: TestTheAttachmentRoutesABareYesByTheRecordedPlan (0.06s)
 REVERT the lead's process sends the plan reply without its label: fails (the row catches it)
    not ok 2 - brief 3.1.1-1: amq_team_propose with reply_to records the plan with the lead, then sends it labelled
 REVERT the lead takes a confirmation in a gate question's thread: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.10s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.11s)
 REVERT the lead takes a yes naming more than the plan's thread: fails (the row catches it)
    --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.12s)
 REVERT the plan records never expire: fails (the row catches it)
    --- FAIL: TestThePlanRecordsExpireAndAreBounded (0.03s)
 REVERT the plan records are not capped: fails (the row catches it)
    --- FAIL: TestThePlanRecordsExpireAndAreBounded (0.03s)
+REVERT pi acts on a plan record the lead did not prove: fails (the row catches it)
+   not ok 2 - brief 3.1.1-1: amq_team_propose with reply_to records the plan with the lead, then sends it labelled
 REVERT the solo shell runs a command string with a team-plan label: fails (the row catches it)
    not ok 1 - the solo lead's shell sees through quoting, expansions and eval
 REVERT the solo shell runs an argv form with a team-plan label: fails (the row catches it)
@@ -655,21 +657,21 @@ REVERT the solo shell runs an argv form with a team-plan label: fails (the row c
 REVERT the guard's second layer runs a team-plan label: fails (the row catches it)
    --- FAIL: TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer (0.00s)
 REVERT the lead reads only reply, root and unmarked references: fails (the row catches it)
-   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.15s)
+   --- FAIL: TestTheLeadWitnessesABareYesRepliedToThePlanPost (0.16s)
 REVERT the handler's first layer reads only reply, root and unmarked references: fails (the row catches it)
    --- FAIL: TestABareYesRepliedToTheRecordedPlanPostConfirmsTheTeam (0.15s)
 REVERT the release prepare raises without the branch it checked: fails (the row catches it)
-   --- FAIL: TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote (0.56s)
+   --- FAIL: TestReleaseVerbPassesTheFileAsTheBodyAndNotesAsTheGateNote (0.57s)
 REVERT the merge gate without the PR's title and base: fails (the row catches it)
-   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.55s)
+   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.50s)
 REVERT gh pr view does not ask for the title: fails (the row catches it)
-   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.52s)
+   --- FAIL: TestTheMergeGateAsksInPlainWordsFromWhatTheTrainRead (0.51s)
 REVERT the widen's growth gate without the task's title: fails (the row catches it)
-   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.46s)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.45s)
 REVERT status gates without the question: fails (the row catches it)
    --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.47s)
 REVERT status gates carry the whole text, not the lines above the rule: fails (the row catches it)
-   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.50s)
+   --- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (0.47s)
 REVERT the gates block shows the identifiers only: fails (the row catches it)
    not ok 1 - brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim
 REVERT the answer key shows the identifiers only: fails (the row catches it)
@@ -677,19 +679,19 @@ REVERT the answer key shows the identifiers only: fails (the row catches it)
 REVERT the answer key finds no rule in the text: fails (the row catches it)
    not ok 1 - brief 3.1.1-1: the gates block and the answer key show the question above the rule verbatim
 
-67 of 67 reverts fail their rows
+68 of 68 reverts fail their rows
 ```
 
 ## 6. The gates
 
-Run on `9be8bfe8` (after Codex's third pass on #838; the tree of this note's commit but for this section).
+Run on `764f6b87`, the merge with origin/v3 at `07de45eb` (#837, brief 31-3 PR 2); the tree of this note's commit but for this section.
 
 ```text
 $ go build ./... && go vet ./... && go test -count=1 ./...
 go exit 0: 56 packages ok, none failing
 $ cd pi && npm ci --offline --ignore-scripts && npm test
-ℹ tests 70
-ℹ pass 70
+ℹ tests 81
+ℹ pass 81
 ℹ fail 0
 $ PATH=<pyvenv>/bin:$PATH make ci
 make ci exit 0
@@ -697,11 +699,8 @@ Ran 19 tests in 12.850s
 
 OK
 context injection: last run 16.8 ms
-PERF pre-tool allow in a seat: p50 24.2 ms, p95 43.2 ms
-PERF outside a seat: 60 runs, p50 11.2 ms, p95 39.3 ms, max 75.8 ms (budget p95 < 20 ms: NOT met)
-$ make claude-hooks-test   # rerun: the PERF rows report and never gate; the host load average was 8
-PERF pre-tool allow in a seat: p50 20.6 ms, p95 21.9 ms
-PERF outside a seat: 60 runs, p50 5.8 ms, p95 9.1 ms, max 9.8 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 21.8 ms, p95 24.5 ms
+PERF outside a seat: 60 runs, p50 5.9 ms, p95 6.3 ms, max 7.5 ms (budget p95 < 20 ms: met)
 ```
 
 ## 7. The owner-run row: a release gate read on the phone, answered with a bare yes
@@ -779,7 +778,15 @@ v3.1.0 tag, with this branch merged and installed:
   team_confirm.go and team.go: the team door's seams that 31-3's note
   named. docs/v3-spike/briefs/: the brief copied, as the lead asked.
 - **"Never merge."** The brief forbids it; the lead's message allows `git
-  merge origin/v3` when the tip moves. It moved once (#836) and was merged.
+  merge origin/v3` when the tip moves. It moved twice and was merged each
+  time: #836, then #837 (brief 31-3 PR 2). The second merge's one conflict
+  (the start socket's request) kept both sides: this PR's `Post` and
+  `Body` beside PR 2's `Challenge`. PR 2 proves every socket reply pi acts
+  on with the nonce HMAC; the plan-sent reply is one, so pi asks it with
+  `askLeadProved` and sends nothing on an unproved record (`lead_unproved`;
+  its row in "amq_team_propose with reply_to records the plan with the
+  lead, then sends it labelled" and its revert run). The Buzz witness
+  reply goes to the attachment, not pi, and carries no challenge.
 
 - **The plan post is the lead's to prove.** After Codex's re-check the
   relay's `plan_for` only routes; the lead witnesses a post only when the
