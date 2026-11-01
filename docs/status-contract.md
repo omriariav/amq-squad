@@ -192,9 +192,11 @@ lead's presence is its seat row's `live`, found by `lead_handle`.
 ## Recorded limits
 
 - Every free-text field (seat message bodies, warnings, wake audit
-  reasons, task titles and evidence, attention subjects, decision reasons,
-  the train's refusals and alert details) passes `redact.Block` before it
-  is serialized: the document feeds the screen and the lead's model.
+  reasons, task titles, evidence, block and wait reasons with the reason
+  codes and attention ids that copy them, attention subjects, decision
+  reasons, the train's refusals and alert details) passes `redact.Block`
+  before it is serialized: the document feeds the screen and the lead's
+  model.
 - The status read takes no lock (brief 31-1): `lead.live` reads the pid and
   its start stamp, never the lead lock, and `scheduler.live` signals the
   recorded pid only.

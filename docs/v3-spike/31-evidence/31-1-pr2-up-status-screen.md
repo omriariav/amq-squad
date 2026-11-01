@@ -60,7 +60,8 @@ and item 7 of section 1; PR 1's note (31-1-launch-and-screen.md), section 5
   `redact.Block` before it is serialized: seat message bodies (before they
   are cut), warnings, AMQ's wake audit reasons, task titles and evidence,
   attention subjects, decision reasons, the train's refusals and alert
-  details.
+  details, and (Codex re-check) task block reasons with the task and seat
+  reason codes, wait reasons and attention ids that copy them.
 
 ### 1.2 Status (internal/status, docs/status-contract.md)
 
@@ -132,13 +133,22 @@ root and session exist before doctor runs (Codex P2 4, 5; section 5).
    1, 2, 3):
    - One up per root: `up.lock` beside `lead.lock`, held from this step to
      the roster's outcome; a second up refuses `up_running`.
-   - The lead lock is held across each decision and its stop: taken when
-     free; when held, the recorded lead is stopped first and the lock then
-     taken. `lead.json` is re-read before every signal.
+   - The lead lock: when it is free, up takes it and holds it across the
+     leftover-session decision, its kill and the scheduler's stop. When a
+     live lead holds it, up cannot: the lead holds its own lock. Then up
+     re-reads `lead.json` in the same call as each signal, immediately
+     before it (`signalSame`), and takes the lock only after that lead has
+     ended. The window that remains, a pid ending and being reused between
+     that check and the kill, is inherent to Unix signals; the recorded
+     start stamp in the check bounds it to the process incarnation up
+     decided on.
    - A held lead lock: no readable record is `lead_running` ("starting");
      a record with no pane (a lead outside tmux) is `lead_running` and is
      never stopped, since its pane cannot be gone. Otherwise tmux is asked,
-     `tmux list-panes -a -F '#{session_name}\t#{pane_id}'`: the pane listed
+     `tmux list-panes -a -F '#{session_name}\t#{pane_id}'`, its reply parsed
+     line by line with nothing trimmed and exactly two tab-separated fields
+     per row (a leading tab or a third field is unparseable; session names
+     compared whole): the pane listed
      is `lead_running` with the pid, the pane and `tmux attach -t <pane>`;
      tmux that cannot be asked (no tmux, no server, a wrong socket, an
      unparseable reply) is `tmux_unavailable`, naming the probe failure;
@@ -153,9 +163,10 @@ root and session exist before doctor runs (Codex P2 4, 5; section 5).
      `lead_record_unreadable`, nothing killed.
    - A scheduler still holding `run.lock` whose lead check (`LeadState` on
      lead.json) reports gone is stopped only as its recorded identity: the
-     pid, its raw start stamp (launch.json's new `process_start`) and this
-     project in its `scheduler run --project` argv, rechecked before each
-     signal; SIGKILL only if that identity still holds after SIGTERM's
+     pid, its raw start stamp (launch.json's new `process_start`) and its
+     exact argv (`procinfo.Argv`, each argument whole) equal to the lead's
+     team-mode form, `amq-squad scheduler run --project <repo>` then only
+     `--lead-pool` pairs, rechecked in the signalling call; SIGKILL only if that identity still holds after SIGTERM's
      grace. No readable lead record is `lead_record_unreadable`; a lead not
      gone is `scheduler_running` (ErrRunning); another identity is
      `scheduler_unknown`.
@@ -265,6 +276,7 @@ function `up` uses) and logs `session_created`
 | 20 | cli `TestSchedulerRunOnAnAbsentSessionRootCreatesIt` |
 | symlinked roots | cli `TestUpRefusesASymlinkedAMQRootOrSession` |
 | no advisory locks | cli `TestUpRefusesLockUnsupportedNamingTheLock` (each of up.lock, lead.lock, run.lock) |
+| Codex re-check | cli `TestUpParsesTmuxsPaneListingExactly` (a leading tab, a third field, a prefix-named session, the probe's argv), `TestSchedulerArgvIsExact` (a path with a space, a second --project, a reordered argv, through up), `TestUpSendsNoSignalWhenTheLeadRecordChangedBeforeIt`, `TestTwoUpsRacingOneProceedsAndNoLiveLeadDies` (the handoff window forced; fails without up.lock), `TestSchedulerRunHandsTheStartToLaunchesAndRecordsFirstMessages` (the marks' producer side), `TestUpInstallRefusesAnUntaggedOrUnembeddedBuildByName` (pi path's JSON with no runtime and its wrong kind); procinfo `TestArgvKeepsEachArgumentWhole`; status `TestStatusRedactsEveryFreeTextField` (block and wait reasons, a credential crossing the 200-byte cut) |
 | redaction | status `TestStatusRedactsEveryFreeTextField` |
 | day 3: a file-lock wait names its holders | status `TestAFileLockWaitNamesItsHolders` (`wait_holders`); pi `a pending task waiting on a file lock names its holder tasks` |
 
