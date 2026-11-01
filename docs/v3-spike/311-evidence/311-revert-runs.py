@@ -61,7 +61,7 @@ CF='internal/status/classify.go'
 TR='internal/mergetrain/train.go'
 GH='internal/mergetrain/gh.go'
 SCR='pi/extensions/lib/screen.ts'
-KEY='pi/extensions/lib/keys.ts'
+KS='pi/extensions/lib/keys.ts'
 TEAM='pi/extensions/lib/team.ts'
 
 # Rows 1 and 5: the question in three plain lines above a rule
@@ -151,9 +151,9 @@ run("status gates carry the whole text, not the lines above the rule", [(ST,'Que
     CL+"'TestSeatCommitAndWidenThroughTheGrowthGate'")
 run("the gates block shows the identifiers only", [(SCR,'\t\tfor (const l of plain) out.push(`  ${l}`);\n','')],
     PI+"test/keys.test.ts")
-run("the answer key shows the identifiers only", [(KEY,'\t\tconst shown = plain ? `${plain}\\n${ids}` : ids;\n','\t\tconst shown = ids;\n')],
+run("the answer key shows the identifiers only", [(KS,'\t\tconst shown = plain ? `${plain}\\n${ids}` : ids;\n','\t\tconst shown = ids;\n')],
     PI+"test/keys.test.ts")
-run("the answer key finds no rule in the text", [(KEY,'\tconst at = (text ?? "").indexOf(`\\n\\n${RULE}\\n`);\n','\tconst at = -1;\n')],
+run("the answer key finds no rule in the text", [(KS,'\tconst at = (text ?? "").indexOf(`\\n\\n${RULE}\\n`);\n','\tconst at = -1;\n')],
     PI+"test/keys.test.ts")
 
 print(f"\n{RUNS[1]} of {RUNS[0]} reverts fail their rows")
