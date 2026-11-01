@@ -462,8 +462,9 @@ accepts it only from its own pi;</li>
 own shell while the lead runs. The lead reads that process from the
 kernel and refuses <code>lead_descendant</code> when a lead or a seat is
 its ancestor;</li>
-<li>or send the signed Buzz DM <code>yes &lt;prefix&gt;</code>. The lead
-fetches the event and verifies the owner's signature itself.</li>
+<li>or send the signed Buzz DM <code>yes &lt;prefix&gt;</code>. The Buzz
+attachment hands the lead the event as it fetched it, and the lead,
+which holds no key, verifies the owner's signature itself.</li>
 </ul></li>
 <li>The lead applies it with its <code>amq_team_apply</code> tool. The
 lead's own process writes squad.yaml through the digest flow and starts

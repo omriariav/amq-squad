@@ -148,8 +148,9 @@ The first run is a conversation with the lead, in the repository:
    - or run `amq-squad team confirm <digest>` from your own shell while the
      lead runs. The lead reads that process from the kernel and refuses
      `lead_descendant` when a lead or a seat is its ancestor;
-   - or send the signed Buzz DM `yes <prefix>`. The lead fetches the event
-     and verifies the owner's signature itself.
+   - or send the signed Buzz DM `yes <prefix>`. The Buzz attachment hands
+     the lead the event as it fetched it, and the lead, which holds no key,
+     verifies the owner's signature itself.
 4. The lead applies it with its `amq_team_apply` tool. The lead's own
    process writes squad.yaml through the digest flow and starts the team
    through `up`'s steps: the session, the doctor, the lead lock, the

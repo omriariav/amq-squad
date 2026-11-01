@@ -87,7 +87,9 @@ scheduler.
   the three doors with the prefix and the full digest. **A lead restart
   forgets every confirmation, and the owner confirms again.**
 - **The log.** `<root>/extensions/amq-squad/confirm/<content hex>.json` is
-  the lead's log, written by the lead alone (atomicfile, 0600): one entry
+  the lead's log, written by the lead alone through atomicfile (an
+  exclusive create of a random temp name beside it, `os.CreateTemp`, its
+  mode set to 0600, then a rename): one entry
   per witnessed confirmation with the door and what the lead read (the pi
   pid and stamp; the peer's chain; the event id). Nothing reads it for
   authority: a row plants and edits it and the start is unchanged. The
@@ -109,7 +111,7 @@ scheduler.
 |---|---|---|---|
 | tui | `/squad confirm <prefix>`: the digest and its pane over the start socket | the peer is exactly the pi process it spawned: its pid, with the start stamp read at the spawn | the pi pid and stamp, the pane |
 | shell | `amq-squad team confirm D` over the start socket | the peer from the kernel: no lead or seat ancestor, a controlling terminal, the chain through its session leader, every pid with its stamp | the peer's chain as it read it |
-| buzz | the attachment hands it the event id only | it fetches the event by that id and runs the typed path: the owner's pinned key, the DM kind, the pinned channel, the window, once-only, the prefix against its own proposals | the event id it verified |
+| buzz | the attachment hands it the raw event bytes it fetched on its own connection | with no connection and no key: the id recomputed from the bytes and matched, the signature under the pinned owner key, the DM kind, the pinned channel, the window, once-only per event id, the prefix against its own proposals | the event id it verified |
 
 - **(c) the TUI door.** `/squad confirm` is a pi command registered by the
   extension for the solo lead (`installSoloTeam`), never a tool: pi hands a
@@ -142,18 +144,24 @@ scheduler.
   login, sshd) is passed over; the lead and its seats are the owner's own,
   always readable, and a process cannot rewrite an ancestor's records.
 - **(b) the Buzz door.** The mailbox handler (internal/buzz/inbound.go)
-  still verifies the owner's signed `yes <16 hex>` on the typed path first.
-  Its confirmer (`confirmByPrefix`, wired in `remote attach`) then finds the
-  solo root whose recent proposal the prefix names and hands that root's
-  lead the event id, over the lead's start socket (no attach-to-lead
-  channel existed). The lead fetches the event by that id itself and runs
-  the typed path's checks (`witnessBuzz`), and its own once-only set and
-  prefix lookup. Its read connection is the verifier's
-  (`gateTransport`, production `buzz.GateTransport`: the share's body signs
-  the connection in for that one read and the connection closes; the lead
-  keeps no key and holds no connection between verifications). The
-  handler's reply names the team only (`confirmed team`, `refused team
-  <code>`), since no handler reply carries an answer's digest prefix.
+  fetches the event by its id on its own connection and verifies the
+  owner's signed `yes <16 hex>` on the typed path first, as it does for a
+  gate answer. Its confirmer (`confirmByPrefix`, wired in `remote attach`)
+  finds the solo root whose recent proposal the prefix names and hands that
+  root's lead the raw event bytes, over the lead's start socket (no
+  attach-to-lead channel existed). The lead never holds a key and signs in
+  with nothing, ever (the plan reviewer's ruling: `gateTransport`'s callers
+  are harness processes, not a lead with a model under it), so it opens no
+  connection: it verifies the bytes itself (`witnessBuzz`): the event id
+  recomputed from the bytes and matched, the signature under the pinned
+  owner key (from the owner's gate binding, a pin, not a key), the DM kind,
+  the pinned channel, the routing window, `yes <prefix>` against its own
+  recent proposals, once-only per event id; only then is the confirmation
+  witnessed, with the event id it verified. The attachment can withhold an
+  event but cannot alter one (the id stops recomputing) or forge one (the
+  owner's signature). The handler's reply names the team only (`confirmed
+  team`, `refused team <code>`), since no handler reply carries an answer's
+  digest prefix.
 
 ### 2.4 Which apply needs a confirmation, and the no-lead case
 
@@ -276,7 +284,8 @@ counter over `up`, over `lead --team` and over the start.
   its shell cannot reach the doors: the TUI door accepts only pi itself
   (the model's commands are pi's children), the shell door and the owner's
   apply refuse a process descending from the lead or pi, and the Buzz door
-  needs the owner's signature. The one path left is a model typing into its
+  needs bytes whose id recomputes and that the owner's pinned key signed,
+  which the lead checks itself with no connection and no key. The one path left is a model typing into its
   own pane: a keystroke into the pane where the owner types `/squad
   confirm` reaches pi as the owner's would. The shell's refusals stop the
   direct ways (tmux in any spelling the split can read); a program the
@@ -345,7 +354,7 @@ docs/status-contract.md is unchanged: no status field changed.
 | 1a | cli `TestTheStartAcceptsOnlyAWitnessedFreshConfirmation` (none, a planted log entry, an expired witness, a witness of another digest: refused naming the three doors; an edited log after a witness changes nothing), `TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants` (the same refusal over the socket) |
 | 1b | cli `TestGuardRefusesTheOwnersVerbsFromASeat`, `TestTheOwnersApplyIsTheConfirmationByTheAct` (the no-lead apply refused from a lead or seat descendant, with no terminal, orphaned, a planted record changing nothing; the owner's shell applies) |
 | 1c | cli `TestTheTUIDoorIsWitnessedOnlyFromTheLeadsOwnPi` (a child of pi and pi's pid with another stamp refused `peer_not_lead_pi`; pi witnessed with its pid, stamp and pane; `runProcess` reports pi's pid), `TestTheSoloLeadServesTheStartSocketToItsPi` (the lead records its pi); pi `team.test.ts` "/squad confirm with the printed prefix asks the lead to witness it", "a model message containing /squad confirm reaches no lead; the confirm is a command, never a tool" |
-| 1d | buzz `TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes` (the handler's typed path); cli `TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventItFetched` (a made-up id `event_unverified`, another key `wrong_pubkey`, no proposal, an hour-old yes outside the window, the owner's yes witnessed once and its replay refused), `TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead` (end to end through the test relay and `remote attach --once`) |
+| 1d | buzz `TestTheBuzzDoorConfirmsOnlyTheOwnersSignedYes` (the handler's typed path, the confirmer given the fetched bytes); cli `TestTheBuzzDoorIsWitnessedByTheLeadFromTheEventBytesItVerified` (no connection opened; an event the attachment altered by one byte `bad_id`, an event the attachment signed with its own key `wrong_pubkey`, no proposal, an hour-old yes outside the window, bytes that are no event `event_unverified`, the owner's yes witnessed once and its replay refused), `TestTheOwnersSignedYesOverBuzzIsWitnessedByTheLead` (end to end through the test relay and `remote attach --once`) |
 | 1e | cli `TestTheShellDoorIsWitnessedByTheLeadFromTheKernel` (no lead `no_lead`; a descendant of the lead's pid, an amq-squad lead, the lead's pi, a seat `lead_descendant`; no terminal; orphaned; a pid reused after the walk `caller_unproved`; the owner's shell witnessed with the chain the lead read); procinfo `TestEnvironReadsTheInitialEnvironment`, `TestHasTTYReadsTheKernelsTerminal` |
 | 1f | pi `team.test.ts` "the solo lead's shell refuses tmux and the owner's verbs by argv[0] and by token", "the solo lead's shell sees through quoting, expansions and eval"; cli `TestTheGuardRefusesTheSoloLeadsQuotedTmuxAsASecondLayer`; what each door records is the lead's own read (rows 1c, 1d, 1e) |
 | 3 | cli `TestTeamProposeFromAPlanPrintsThePlanAndDigestAndWritesOnlyTheProposal`, `TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux`, `TestTheStartRefusesAPlanThatChangedSinceTheConfirmation`, `TestTheMayorsChecksRefuseByNameOnTheStartsPath` (a repository outside the grant, a cost cap, no fleet grant); team `TestThePlanRendersTheDocumentedSquadYAML`; pi "amq_team_propose prints the plan and digest; amq_team_apply returns the roster line", "amq_team_apply without a confirmation carries the lead's refusal naming the doors" |

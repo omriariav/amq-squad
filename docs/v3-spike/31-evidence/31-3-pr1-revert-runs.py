@@ -115,9 +115,9 @@ run("the owner's apply without the kernel check (the act)",
 run("the plan-file apply without the kernel check",
  [('internal/cli/team.go','\t\tif _, err := ownerAncestry(confirmSelf(), 0); err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n\tif apply {','\t}\n\tif apply {')],
  C+"TestTheOwnersApplyIsTheConfirmation")
-# the Buzz door, verified by the lead from the event it fetched
-run("the lead taking an event it could not fetch",
- [('internal/cli/lead_start.go','\traw, err := gateverify.FetchEvent(vctx, relay, req.EventID)\n\tif err != nil {','\traw, err := gateverify.FetchEvent(vctx, relay, req.EventID)\n\tif false && err != nil {')],
+# the Buzz door, verified by the lead from the event bytes, with no connection
+run("the lead not recomputing the event id from the bytes",
+ [('internal/cli/lead_start.go','\tcase !e.CheckID():\n','\tcase false:\n')],
  C+"TestTheBuzzDoorIsWitnessed")
 run("the lead taking another key's yes",
  [('internal/cli/lead_start.go','\tcase e.PubKey != pin.Owner:','\tcase false:')],
