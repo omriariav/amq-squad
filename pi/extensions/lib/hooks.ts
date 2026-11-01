@@ -129,8 +129,10 @@ export type ContextData = {
 	worktree?: string;
 };
 
-export async function contextOf(cfg: Config, runner: Runner = run): Promise<{ ok: true; data: ContextData } | { ok: false; why: string }> {
-	const r = await runner(cfg.bin, ["context", "--me", cfg.me, "--json"], { timeoutMs: cfg.hookTimeoutMs });
+export async function contextOf(cfg: Config, runner: Runner = run, host = false): Promise<{ ok: true; data: ContextData } | { ok: false; why: string }> {
+	const args = ["context", "--me", cfg.me, "--json"];
+	if (host) args.push("--host"); // the team lead's host facts (brief 31-3 PR 2)
+	const r = await runner(cfg.bin, args, { timeoutMs: cfg.hookTimeoutMs });
 	if (r.spawnError || r.timedOut || r.code !== 0) return { ok: false, why: describe(r, cfg.hookTimeoutMs) };
 	try {
 		const env = JSON.parse(r.stdout);

@@ -17,7 +17,9 @@
 //     over the dequoted line (3b (ii)): the shell in the lead's pane must not
 //     type into its own pane, nor run the owner's verbs.
 // The switch to the team lead's tools on the owner's yes (R53) is PR 2.
+import * as fs from "node:fs";
 import * as net from "node:net";
+import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
@@ -29,6 +31,8 @@ const APPLY_TIMEOUT_MS = 11 * 60 * 1000;
 const DIGEST = /^sha256:([0-9a-f]{64})@([0-9a-f]{64}|absent)$/;
 
 type Proposal = { digest: string; prefix: string; plan: string[]; project_dir: string };
+// PhaseMarker is the lead's phase marker (internal/cli/lead_start.go).
+export type PhaseMarker = { schema: number; phase: string; project: string; root: string; base_root?: string; session?: string; handle: string; pid: number };
 type StartReply = { outcome: string; refusal?: string; detail?: string; roster?: string[]; owner_steps?: string[][]; steps?: { name: string; outcome: string; refusal?: string; detail?: string }[] };
 
 // digestPrefix is the 16-hex prefix the owner types (R32's length).
@@ -167,12 +171,54 @@ export class SoloTeam {
 	socket: string;
 	line = "";
 	ctx: ExtensionContext | undefined;
+	// R53 (brief 31-3 PR 2): the phase, the team lead's tool list the switch
+	// activates, and the solo root the lead writes its phase marker in
+	phase: "solo" | "team" = "solo";
+	teamTools: string[];
+	soloRoot: string;
+	pi: ExtensionAPI | undefined;
 
-	constructor(cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket: string = process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "") {
+	constructor(cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket: string = process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools: string[] = [], pi?: ExtensionAPI) {
 		this.cfg = cfg;
 		this.socket = socket;
 		this.runner = runner;
 		this.now = now;
+		this.teamTools = teamTools;
+		this.soloRoot = cfg.root;
+		this.pi = pi;
+	}
+
+	// readMarker is the lead's phase marker, accepted only when this pi's
+	// parent wrote it (the lead process that spawned this pi; a marker left
+	// by an earlier lead is the restart's, which starts as lead --team), and
+	// read as a regular file without following a link.
+	readMarker(): PhaseMarker | undefined {
+		const p = path.join(this.soloRoot, "extensions", "amq-squad", "phase.json");
+		try {
+			if (!fs.lstatSync(p).isFile()) return undefined;
+			const m = JSON.parse(fs.readFileSync(p, "utf8")) as PhaseMarker;
+			if (m.schema !== 1 || m.phase !== "team" || m.pid !== process.ppid || !path.isAbsolute(m.root ?? "") || !m.handle) return undefined;
+			return m;
+		} catch {
+			return undefined;
+		}
+	}
+
+	// switchToTeam is R53 by mechanism: the lead's identity becomes the
+	// squad's (AM_ROOT, AM_BASE_ROOT, AM_SESSION, AM_ME, for this process
+	// and every verb it runs), and the tool list declared to the model
+	// becomes the team lead's (pi.setActiveTools): the solo set (read, bash,
+	// edit, write, amq_team_propose, amq_team_apply) is no longer declared
+	// or callable, and the tool_call hook refuses any of it phase_team.
+	switchToTeam(m: PhaseMarker): void {
+		if (this.phase === "team") return;
+		Object.assign(process.env, { AM_ROOT: m.root, AM_BASE_ROOT: m.base_root ?? path.dirname(m.root), AM_SESSION: m.session ?? "", AM_ME: m.handle, AMQ_SQUAD_LEAD: "1" });
+		delete process.env.AMQ_SQUAD_SOLO_LEAD;
+		Object.assign(this.cfg, { root: m.root, me: m.handle, session: m.session ?? "", lead: true, solo: false });
+		this.phase = "team";
+		this.pi?.setActiveTools([...this.teamTools]);
+		this.line = `team phase: the lead is ${m.handle} of ${m.root}; its tools are the team lead's`;
+		this.render();
 	}
 
 	project(): string {
@@ -224,8 +270,11 @@ export class SoloTeam {
 			throw new Error([`${d.refusal ?? "refused"}: ${d.detail ?? ""}`, ...lines, ...owner].join("\n"));
 		}
 		this.line = `team started: ${d.detail ?? ""}`;
+		const m = this.readMarker();
+		if (m) this.switchToTeam(m);
 		this.render();
-		return [...lines, ...(d.roster ?? []), `team started: ${d.detail ?? ""}`].join("\n");
+		const phase = this.phase === "team" ? "team phase: your tools are now the team lead's (dispatch through the task store; no shell, no edit)" : "the phase marker was not found; the tools stay as they are";
+		return [...lines, ...(d.roster ?? []), `team started: ${d.detail ?? ""}`, phase].join("\n");
 	}
 
 	// confirm is the TUI door: the owner's typed prefix against the printed
@@ -254,10 +303,13 @@ export class SoloTeam {
 
 // installSoloTeam gives the solo lead the two tools, the plan block and
 // the /squad command (confirm).
-export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string): SoloTeam {
-	const team = new SoloTeam(cfg, runner, now, socket);
+export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string, teamTools: string[] = []): SoloTeam {
+	const team = new SoloTeam(cfg, runner, now, socket ?? process.env.AMQ_SQUAD_LEAD_START_SOCKET ?? "", teamTools, pi);
 	pi.on("session_start", (_e, ctx) => {
 		team.ctx = ctx;
+		// a session started again in the same lead process after the yes
+		const m = team.readMarker();
+		if (m) team.switchToTeam(m);
 		team.render();
 	});
 	pi.registerTool({

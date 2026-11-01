@@ -18,8 +18,9 @@ import amqPiBridge, { raiseApproval, APPROVE_OPTION, REJECT_OPTION } from "./lib
 import { blockReason, callKey, DEFAULT_CAP, hold, manifestHash, RetryCap, type Decider, type Decision } from "./lib/hold.ts";
 import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, outsideDeclared, roleMessage, type Config, type ContextData, type Verdict } from "./lib/hooks.ts";
 import { restrictModels } from "./lib/models.ts";
+import { hostLine, hostOf, readStatus } from "./lib/firstturn.ts";
 import { installScreen } from "./lib/screen.ts";
-import { installSoloTeam, soloShellRefusal } from "./lib/team.ts";
+import { installSoloTeam, soloShellRefusal, type SoloTeam } from "./lib/team.ts";
 import { registerTools } from "./lib/tools.ts";
 import { run } from "./lib/verbs.ts";
 
@@ -40,14 +41,16 @@ export default function amqSquad(pi: ExtensionAPI): void {
 		return;
 	}
 	amqPiBridge(pi);
-	registerTools(pi, cfg);
+	const teamTools = registerTools(pi, cfg);
 	// The team lead's read-only screen (brief 31-1): a widget below the
 	// editor, fed by status --json on the .generation/updated_at poll.
+	let solo: SoloTeam | undefined;
 	if (cfg.lead) installScreen(pi, cfg);
 	// The solo lead proposes a team and, on the owner's confirmation at one
 	// of R55's doors, applies it (brief 31-3): two tools, the plan block and
-	// /squad confirm, the TUI door.
-	else if (cfg.solo) installSoloTeam(pi, cfg);
+	// /squad confirm, the TUI door; on the yes its tools switch to the team
+	// lead's (R53), the ones registerTools registered.
+	else if (cfg.solo) solo = installSoloTeam(pi, cfg, run, undefined, undefined, teamTools);
 	restrictModels(pi, cfg.models, note);
 	const approveTools = new Set((process.env.AMQ_SQUAD_APPROVE_TOOLS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 	let cap = new RetryCap(DEFAULT_CAP);
@@ -65,13 +68,16 @@ export default function amqSquad(pi: ExtensionAPI): void {
 
 	// R35: role and rules every turn; the role also as the first message.
 	pi.on("before_agent_start", async (event, ctx) => {
-		const c = await contextOf(cfg);
+		const c = await contextOf(cfg, run, cfg.lead);
 		task = c.ok ? (c.data.task ?? null) : null;
 		let roleText = c.ok ? (c.data.role_text ?? "") : "";
 		if (!roleText) roleText = readRole();
 		const sections = event.systemPromptOptions.sections;
 		if (roleText) sections["amq-squad-role"] = roleText.trim();
 		sections["amq-squad"] = c.ok ? contextSection(cfg, c.data) : `You are seat ${cfg.me}.\n${AMQ_DEFINITION}\namq-squad context is unavailable (${c.why}).`;
+		// the team lead's host facts, from status and context, every turn
+		// (brief 31-3 PR 2, section 5): never a model guess
+		if (cfg.lead) sections["amq-squad-host"] = hostLine(await readStatus(cfg, run), hostOf(c));
 		if (!c.ok) status(ctx, `context unavailable: ${c.why}`);
 		if (roleDelivered || !roleText) return undefined;
 		roleDelivered = true;
@@ -81,6 +87,12 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// R36: guard before every tool call; any guard failure blocks.
 	pi.on("tool_call", async (event, ctx) => {
 		const call = { toolName: event.toolName, input: event.input, toolCallId: event.toolCallId, cwd: ctx.cwd };
+		// R53: in team phase a tool outside the team lead's list refuses
+		if (solo?.phase === "team" && !solo.teamTools.includes(event.toolName)) {
+			const reason = `phase_team: ${event.toolName} is not a team lead's tool; after the owner's yes the lead dispatches through the task store (${solo.teamTools.join(", ")})`;
+			await record(cfg, ctx, { type: "phase_team_block", toolName: call.toolName, toolCallId: call.toolCallId, reason });
+			return { block: true, reason };
+		}
 		// 3b (ii): the solo lead's shell refuses tmux and the owner's verbs
 		const owner = cfg.solo ? soloShellRefusal(event.toolName, event.input) : undefined;
 		if (owner) {

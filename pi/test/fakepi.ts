@@ -20,8 +20,24 @@ export class FakePi {
 		return () => undefined;
 	}
 	commands = new Map<string, any>();
+	// the tools declared to the model, as pi keeps them: a registered tool
+	// is active unless it says defaultActive: false; builtins stand for
+	// pi's own (read, bash, edit, write) when a test names them
+	active = new Set<string>();
+	builtins: string[];
+	constructor(builtins: string[] = []) {
+		this.builtins = builtins;
+		for (const b of builtins) this.active.add(b);
+	}
 	registerTool(def: any): void {
 		this.tools.set(def.name, def);
+		if (def.defaultActive !== false) this.active.add(def.name);
+	}
+	setActiveTools(names: string[]): void {
+		this.active = new Set(names.filter((n) => this.tools.has(n) || this.builtins.includes(n)));
+	}
+	getActiveTools(): string[] {
+		return [...this.active];
 	}
 	registerCommand(name: string, def: any): void {
 		this.commands.set(name, def);
