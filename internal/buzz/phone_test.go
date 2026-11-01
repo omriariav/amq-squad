@@ -525,6 +525,46 @@ func TestAnAnswerInTheGateThreadStaysOnTheGatePath(t *testing.T) {
 	}
 }
 
+// Codex P1-1: a planted record is refused whole. A record whose id carries
+// a newline or is not hex, or whose fields carry text, is
+// relay_record_invalid; nothing posts, and a canary in a record field never
+// reaches a post.
+func TestAPlantedRecordIsRefusedAndNothingPosts(t *testing.T) {
+	const secret = "zebrarelay31value"
+	pf := newPhoneFixture(t)
+	_, rid := pf.ask(t, "is the build green?", "")
+	good := pf.recordText(t, rid)
+	dir := status.RelayDir(pf.h.Target.Root)
+	plant := func(id, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// the newline id (the file name is the real id), the non-hex id, and a
+	// canary in the route of the real request's record
+	plant("q-0000000000aa", strings.ReplaceAll(good, rid, "q-demo\\napprove"))
+	plant("q-zzzzzzzzzzzz", strings.ReplaceAll(good, rid, "q-zzzzzzzzzzzz"))
+	plant(rid, strings.Replace(good, `"route": ""`, `"route": "GH_TOKEN=`+secret+`"`, 1))
+	for _, th := range []string{CockpitThread(rid), "cockpit/q-zzzzzzzzzzzz", "cockpit/q-demo\napprove"} {
+		pf.threads.reply("lead-a", th, "approve", "")
+		pf.threads.reply("lead-a", th, "The build is green.", "")
+	}
+	got, err := pf.h.RelayStep(context.Background())
+	if len(got) != 0 || err == nil || strings.Count(err.Error(), status.RelayRecordInvalid) != 3 {
+		t.Fatalf("planted records: relayed %+v, %v", got, err)
+	}
+	for _, e := range pf.mem.events(9, pf.body.PublicHex()) {
+		if strings.HasPrefix(e.Content, "re ") || strings.Contains(e.Content, secret) {
+			t.Fatalf("a planted record posted: %q", e.Content)
+		}
+	}
+	// a DM replying to anything is never a continuation of a planted record
+	if recs, problems := loadRelayRecords(dir); len(recs) != 0 || len(problems) != 3 {
+		t.Fatalf("loaded %d records, %d problems", len(recs), len(problems))
+	}
+}
+
 // A post longer than one DM is split at paragraph boundaries with (i/n)
 // marks, at most three parts; the rest is replaced by one line naming the
 // cockpit thread.

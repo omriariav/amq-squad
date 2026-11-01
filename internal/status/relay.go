@@ -1,10 +1,16 @@
 package status
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -22,6 +28,98 @@ func RelayDir(root string) string {
 
 // RelayRecordSchema is the relay record's schema.
 const RelayRecordSchema = 1
+
+// The names the relay records and status show (never a line of text).
+const (
+	// RelayRefusedGateShape: a reply with a line shaped like a gate answer
+	// or naming an open gate; RelayRefusedGateThread: a post whose thread is
+	// a gate question's; RelayPostUnconfirmed: a post whose publish was
+	// retried once after a crash and never confirmed (never retried again).
+	RelayRefusedGateShape  = "relay_refused_gate_shape"
+	RelayRefusedGateThread = "relay_refused_gate_thread"
+	RelayPostUnconfirmed   = "relay_post_unconfirmed"
+	// RelayRecordInvalid: a record that does not decode strictly or whose
+	// fields are not their exact shapes; the relay refuses it whole.
+	RelayRecordInvalid = "relay_record_invalid"
+)
+
+var relayReasons = map[string]bool{RelayRefusedGateShape: true, RelayRefusedGateThread: true, RelayPostUnconfirmed: true}
+
+var (
+	requestIDRe = regexp.MustCompile(`^q-[0-9a-f]{12}$`)
+	eventIDRe   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	shaRe       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// an AMQ message id (its file name grammar)
+	messageIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	relayHandle = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	relayRoute  = regexp.MustCompile(`^([a-z0-9][a-z0-9._-]{0,63}/)?[a-z0-9][a-z0-9_-]{0,63}$`)
+)
+
+// ValidRequestID reports whether id is a request id: q- and 12 hex.
+func ValidRequestID(id string) bool { return requestIDRe.MatchString(id) }
+
+// DecodeRelayRecord decodes one relay record strictly (no unknown field,
+// one JSON value) and validates every field against its exact shape;
+// requestID is the record's file name without .json.
+func DecodeRelayRecord(raw []byte, requestID string) (*RelayRecord, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var r RelayRecord
+	if err := dec.Decode(&r); err != nil {
+		return nil, fmt.Errorf("%s: %s: %v", requestID, RelayRecordInvalid, err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s: %s: data after the record", requestID, RelayRecordInvalid)
+	}
+	if err := r.Validate(requestID); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// Validate checks every field of the record against its exact shape.
+func (r *RelayRecord) Validate(requestID string) error {
+	var bad []string
+	check := func(ok bool, field string) {
+		if !ok {
+			bad = append(bad, field)
+		}
+	}
+	optional := func(re *regexp.Regexp, v string) bool { return v == "" || re.MatchString(v) }
+	check(r.Schema == RelayRecordSchema, "schema")
+	check(requestIDRe.MatchString(r.RequestID) && r.RequestID == requestID, "request_id")
+	check(r.Thread == "cockpit/"+r.RequestID, "thread")
+	check(relayHandle.MatchString(r.Lead), "lead")
+	check(optional(relayRoute, r.Route), "route")
+	check(eventIDRe.MatchString(r.RootEvent), "root_event")
+	check(optional(eventIDRe, r.PostTo), "post_to")
+	check(len(r.Turns) > 0, "turns")
+	for _, t := range r.Turns {
+		check(eventIDRe.MatchString(t.Event) && optional(messageIDRe, t.MessageID) && !t.At.IsZero(), "turns[]")
+	}
+	check(optional(messageIDRe, r.LastReply), "last_reply")
+	for _, id := range r.Seen {
+		check(messageIDRe.MatchString(id), "seen[]")
+	}
+	for _, p := range r.Posts {
+		ok := messageIDRe.MatchString(p.ReplyID) && relayKind(p.Kind) && len(p.Events) > 0 && shaRe.MatchString(p.SHA256) && !p.At.IsZero()
+		for _, e := range p.Events {
+			ok = ok && eventIDRe.MatchString(e)
+		}
+		check(ok, "posts[]")
+	}
+	for _, f := range r.Refusals {
+		check(messageIDRe.MatchString(f.ReplyID) && relayReasons[f.Reason] && shaRe.MatchString(f.SHA256) && !f.At.IsZero(), "refusals[]")
+	}
+	check(optional(messageIDRe, r.Pending), "pending_progress")
+	check(!r.UpdatedAt.IsZero(), "updated_at")
+	if len(bad) > 0 {
+		return fmt.Errorf("%s: %s: %s", requestID, RelayRecordInvalid, strings.Join(bad, ", "))
+	}
+	return nil
+}
+
+func relayKind(k string) bool { return k == "answer" || k == "progress" || k == "result" }
 
 // RelayRecord is one phone request: <root>/extensions/amq-squad/relay/<request id>.json.
 type RelayRecord struct {
@@ -105,13 +203,23 @@ func collectRequests(root string, warn func(string, ...any)) []Request {
 	paths, _ := filepath.Glob(filepath.Join(RelayDir(root), "*.json"))
 	out := []Request{}
 	for _, p := range paths {
+		id := strings.TrimSuffix(filepath.Base(p), ".json")
 		raw, err := os.ReadFile(p)
-		var r RelayRecord
+		var r *RelayRecord
 		if err == nil {
-			err = json.Unmarshal(raw, &r)
+			r, err = DecodeRelayRecord(raw, id)
 		}
-		if err != nil || r.RequestID == "" || r.RequestID+".json" != filepath.Base(p) {
-			warn("relay record %s unreadable", filepath.Base(p))
+		if err != nil {
+			// the relay refuses the record whole; the row names it when the
+			// file name is a request id, the warning either way
+			warn("relay record %s unreadable (%s)", filepath.Base(p), RelayRecordInvalid)
+			if requestIDRe.MatchString(id) {
+				var at time.Time
+				if fi, err := os.Stat(p); err == nil {
+					at = fi.ModTime().UTC()
+				}
+				out = append(out, Request{RequestID: id, Thread: "cockpit/" + id, Refused: []string{RelayRecordInvalid}, UpdatedAt: at})
+			}
 			continue
 		}
 		row := Request{RequestID: r.RequestID, Thread: r.Thread, Lead: r.Lead, Turns: len(r.Turns), Posts: len(r.Posts),

@@ -64,8 +64,8 @@ const (
 	// RefusedGateShape is a lead reply with a line shaped like a gate
 	// answer or naming an open gate; RefusedGateThread a post whose
 	// thread is a gate question's.
-	RefusedGateShape  = "relay_refused_gate_shape"
-	RefusedGateThread = "relay_refused_gate_thread"
+	RefusedGateShape  = status.RelayRefusedGateShape
+	RefusedGateThread = status.RelayRefusedGateThread
 )
 
 // RequestID names the request an owner DM opens: q- and the first 12 hex of
@@ -316,13 +316,13 @@ func (h *Handler) relayReply(ctx context.Context, rec *status.RelayRecord, e Thr
 		r.Outcome, r.Reason = "refused", reason
 		return r, nil
 	}
-	if line, bad := g.refuse(body); bad {
-		return refuse(RefusedGateShape, line)
-	}
 	if g.threads[rec.PostTo] {
 		return refuse(RefusedGateThread, body)
 	}
-	parts := splitPost(rec.RequestID, rec.Thread, redact.Block(body))
+	parts, line, bad := g.assemble(rec.RequestID, rec.Thread, body)
+	if bad {
+		return refuse(RefusedGateShape, line)
+	}
 	var events []string
 	for i, p := range parts {
 		id, err := h.Poster.Post(ctx, p, rec.PostTo)
@@ -346,6 +346,25 @@ func (h *Handler) relayReply(ctx context.Context, rec *status.RelayRecord, e Thr
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// assemble is the reply's post parts as they will be published: split
+// first, then every part, header and marks included, passes the three
+// refusal checks, redact.Block, and the checks again. One refused line in
+// any part refuses the whole reply (a split that would start or end a part
+// with an answer-form line is refused, never re-split around it).
+func (g gateView) assemble(requestID, thread, body string) ([]string, string, bool) {
+	parts := splitPost(requestID, thread, body)
+	for i, p := range parts {
+		if line, bad := g.refuse(p); bad {
+			return nil, line, true
+		}
+		parts[i] = redact.Block(p)
+		if line, bad := g.refuse(parts[i]); bad {
+			return nil, line, true
+		}
+	}
+	return parts, "", false
 }
 
 // splitPost is the post's text: the first line `re <request id>`, then the
@@ -560,20 +579,19 @@ func idTokens(line string) []string {
 
 func relayRecordPath(dir, requestID string) string { return filepath.Join(dir, requestID+".json") }
 
+// readRelayRecord reads one record strictly: every field its exact shape
+// (status.DecodeRelayRecord); anything else is relay_record_invalid and the
+// relay refuses the record whole.
 func readRelayRecord(dir, requestID string) (*status.RelayRecord, error) {
 	raw, err := os.ReadFile(relayRecordPath(dir, requestID))
 	if err != nil {
 		return nil, err
 	}
-	var r status.RelayRecord
-	if err := json.Unmarshal(raw, &r); err != nil || r.RequestID != requestID {
-		return nil, fmt.Errorf("relay record %s is unreadable", requestID)
-	}
-	return &r, nil
+	return status.DecodeRelayRecord(raw, requestID)
 }
 
 func loadRelayRecords(dir string) ([]*status.RelayRecord, []string) {
-	paths, _ := filepath.Glob(filepath.Join(dir, "q-*.json"))
+	paths, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 	var out []*status.RelayRecord
 	var problems []string
 	for _, p := range paths {
@@ -600,6 +618,9 @@ func writeRelayRecord(dir string, r *status.RelayRecord, now time.Time) error {
 	}
 	if r.Refusals == nil {
 		r.Refusals = []status.RelayRefusal{}
+	}
+	if err := r.Validate(r.RequestID); err != nil {
+		return err
 	}
 	raw, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
