@@ -79,11 +79,12 @@ type GateVerifier func(session string, store gatestore.Store, rec gatestore.Reco
 // holds its gates). The first run on a repository records the existing set
 // as its baseline (what was there before the squad); after that every tag or
 // release outside the baseline needs an accepted gate for it: the release
-// flow's targets (gatetarget.ReleaseTag, ReleaseCreate) or, in this squad's
-// own session, a seat's gated command (git tag <name>, git push
-// refs/tags/<name>, gh release create <name>). Another session's gate clears
-// only through a target that names the tag and its commit
-// (gatetarget.ReleaseTag), or the release's tag (ReleaseCreate). A gate
+// flow's targets (gatetarget.ReleaseTag, ReleaseCreate) or, for a release
+// in this squad's own session, a seat's gated command (gh release create
+// <name>). A tag clears only through a target that names it and its commit
+// (gatetarget.ReleaseTag), from any session: a seat's gated `git tag
+// <name>` or tag push names no commit. Another session's release clears
+// through ReleaseCreate. A gate
 // clears only when verify accepts it. Tags compare by name and commit,
 // releases by id, and one accepted gate covers one object: the first tag
 // commit or release id it is seen covering is bound to it
@@ -148,8 +149,10 @@ func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repo
 		if slices.Contains(base.Tags, t) {
 			continue
 		}
-		own := []string{gatetarget.Command("git tag", t.Name), gatetarget.TagPush("refs/tags/" + t.Name)}
-		if err := raise("tag", t.Name, t.SHA, "tag "+t.Name+"@"+t.SHA, own, gatetarget.ReleaseTag(repository, t.Name, t.SHA)); err != nil {
+		// a tag clears only through a target naming its commit (Codex P2 3 on
+		// #854): a seat's gated `git tag NAME` or tag push names none, so it
+		// cannot say which commit the owner meant
+		if err := raise("tag", t.Name, t.SHA, "tag "+t.Name+"@"+t.SHA, nil, gatetarget.ReleaseTag(repository, t.Name, t.SHA)); err != nil {
 			return alerts, err
 		}
 	}

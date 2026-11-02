@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -507,8 +508,10 @@ func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
 	if got := ReadAlerts(f.train.Root); len(got) != 2 {
 		t.Fatalf("alerts on disk %+v", got)
 	}
-	// an accepted gate for the tag covers it; the release stays an alert
-	rec, err := gatestore.Render(gatestore.Spec{GateID: "rel-v1", Action: "tag", Target: "git tag v1", RaisedBy: "seat", Squad: SquadOf(f.train.Root)}, time.Now(), gateIdentity())
+	// an accepted gate for the tag at its commit covers it (a seat's gated
+	// `git tag v1` names no commit and covers nothing, Codex P2 3 on #854);
+	// the release stays an alert
+	rec, err := gatestore.Render(gatestore.Spec{GateID: "rel-v1", Action: "tag", Target: gatetarget.ReleaseTag(fixtureRepo, "v1", head), RaisedBy: "seat", Squad: SquadOf(f.train.Root)}, time.Now(), gateIdentity())
 	if err != nil || f.store.Create(rec) != nil {
 		t.Fatal(err)
 	}

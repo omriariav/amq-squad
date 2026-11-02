@@ -147,3 +147,30 @@ func TestDriftNamesAnUnreadableGateStore(t *testing.T) {
 		t.Fatalf("alerts on disk %+v", got)
 	}
 }
+
+// Codex P2 3 on #854: a gate accepted for a tag in this squad's own session
+// clears only the commit its target names. A seat's gated `git tag NAME`
+// (no commit) cleared the first NAME@SHA the check saw, whatever commit the
+// owner meant; a release-flow gate for NAME at commit A does not clear NAME
+// at commit B.
+func TestDriftBindsATagGateToTheCommitItsTargetNames(t *testing.T) {
+	const repo = "owner/app"
+	base := t.TempDir()
+	squad := filepath.Join(base, "v31")
+	_ = os.MkdirAll(squad, 0o700)
+	l := &listed{}
+	now := time.Date(2026, 11, 1, 22, 0, 0, 0, time.UTC)
+	_, _ = Drift(context.Background(), l, decisionAccepted, squad, repo, now)
+	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	l.tags = []Tag{{Name: "v9", SHA: b}}
+	gateIn(t, squad, "own-cmd", "tag", gatetarget.Command("git tag", "v9"), true)
+	gateIn(t, squad, "own-push", "tag", gatetarget.TagPush("refs/tags/v9"), true)
+	gateIn(t, squad, "own-a", "tag", gatetarget.ReleaseTag(repo, "v9", a), true)
+	if got, err := Drift(context.Background(), l, decisionAccepted, squad, repo, now); err != nil || len(got) != 1 || got[0].Kind != "tag" || got[0].SHA != b {
+		t.Fatalf("v9 at B with gates for no commit and for A: %v %+v", err, got)
+	}
+	gateIn(t, squad, "own-b", "tag", gatetarget.ReleaseTag(repo, "v9", b), true)
+	if got, err := Drift(context.Background(), l, decisionAccepted, squad, repo, now); err != nil || len(got) != 0 {
+		t.Fatalf("v9 at B with B's gate: %v %+v", err, got)
+	}
+}

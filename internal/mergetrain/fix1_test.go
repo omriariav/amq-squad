@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 )
 
 // P1-1: a required check counts only from the app its rule pins and only
@@ -130,7 +131,8 @@ func TestDriftBindsAGateToOneReleaseAndOneTagCommit(t *testing.T) {
 	run() // baseline
 	mustGit(t, f.bare, "tag", "v1", "main")
 	f.edit(func(s *fakeState) { s.Releases = []Release{{ID: 11, Tag: "v1"}} })
-	for i, g := range []gatestore.Spec{{GateID: "g-tag", Action: "tag", Target: "git tag v1"}, {GateID: "g-rel", Action: "github_release", Target: "gh release create v1"}} {
+	tagged := f.head("main")
+	for i, g := range []gatestore.Spec{{GateID: "g-tag", Action: "tag", Target: gatetarget.ReleaseTag(fixtureRepo, "v1", tagged)}, {GateID: "g-rel", Action: "github_release", Target: "gh release create v1"}} {
 		g.RaisedBy, g.Squad = "seat", SquadOf(root)
 		rec, err := gatestore.Render(g, time.Now(), gateIdentity())
 		if err != nil || f.store.Create(rec) != nil {

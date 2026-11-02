@@ -146,6 +146,9 @@ CASES = [
  ("R4e no fallback to the session's latest launch (Codex P2 2 on #854)", "internal/status/classify.go",
   "\tcase in.Scheduler.UpdatedAt.IsZero():\n", "\tcase false:\n",
   GO("internal/status", "TestStatusSeatsAreTheRunningRoster")),
+ ("R9f a seat's commit-less tag gate clears the first commit seen (Codex P2 3 on #854)", "internal/mergetrain/drift.go",
+  "t.SHA, nil, gatetarget.ReleaseTag(", "t.SHA, []string{gatetarget.Command(\"git tag\", t.Name), gatetarget.TagPush(\"refs/tags/\" + t.Name)}, gatetarget.ReleaseTag(",
+  GO("internal/mergetrain", "TestDriftBindsATagGateToTheCommitItsTargetNames")),
 ]
 
 originals = {}
