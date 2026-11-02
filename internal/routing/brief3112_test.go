@@ -440,3 +440,19 @@ func declaredConsts(t *testing.T, dir, prefix string) []string {
 	}
 	return out
 }
+
+// The plan reviewer on Codex P2 1: a row that breaks on exactly the removal
+// of verdict_missing's one classification. A done report of a gated class
+// with no harness verdict is a failed attempt of the work; without the entry
+// a missing verdict would stop counting toward MaxAttempts.
+func TestVerdictMissingStaysAWorkFailure(t *testing.T) {
+	if work, ok := RefusalWorkFailure[task.BlockVerdictMissing]; !ok || !work {
+		t.Fatalf("verdict_missing is classified %v (present %v), want a work failure", work, ok)
+	}
+	tk := newTask("t1", "implement", "a.go")
+	tk.Attempt = 1
+	tk.Attempts = []task.Attempt{{N: 1, Outcome: task.OutcomeBlocked, Detail: task.BlockVerdictMissing}}
+	if !failure(tk.Attempts[0]) {
+		t.Fatal("a verdict_missing block is not a failed attempt")
+	}
+}

@@ -142,7 +142,7 @@ CASES = [
   GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified")),
  ("R1j verdict_missing missing from the table (Codex P2 1 on #854)", "internal/routing/refusal.go",
   "\ttask.BlockVerdictMissing:         true,\n", "",
-  GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified")),
+  GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified|TestVerdictMissingStaysAWorkFailure")),
  ("R4e no fallback to the session's latest launch (Codex P2 2 on #854)", "internal/status/classify.go",
   "\tcase in.Scheduler.UpdatedAt.IsZero():\n", "\tcase false:\n",
   GO("internal/status", "TestStatusSeatsAreTheRunningRoster")),
@@ -155,6 +155,9 @@ CASES = [
  ("R9h a covered alert stays on disk (Codex P2 5 on #854)", "internal/mergetrain/drift.go",
   "\t\t\t\t_ = os.Remove(filepath.Join(dir, id+\".json\"))\n", "",
   GO("internal/mergetrain", "TestDriftResolvesAnAlertAVerifiedGateLaterCovers")),
+ ("R1k the same removal, the mutation row alone (the plan reviewer)", "internal/routing/refusal.go",
+  "\ttask.BlockVerdictMissing:         true,\n", "",
+  GO("internal/routing", "TestVerdictMissingStaysAWorkFailure")),
 ]
 
 originals = {}
