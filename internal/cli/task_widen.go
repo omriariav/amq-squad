@@ -182,6 +182,21 @@ type widenRefused struct{ code, msg string }
 
 func (e *widenRefused) Error() string { return fmt.Sprintf("widen refused (%s): %s", e.code, e.msg) }
 
+var archiveWidenAttempt = seatcommit.ArchiveAttempt
+
+// archiveMissingTypedWiden closes the one-tick window between a typed block
+// and scanAttempts. The decision socket runs in the scheduler process, so it
+// uses the same sealed, first-writer-wins archive as the tick and CleanSeat.
+func archiveMissingTypedWiden(sel storeSelection, t task.Task, wo seatcommit.WidenOptions, d seatcommit.WidenDecision) (seatcommit.WidenDecision, error) {
+	if d.ReasonCode != seatcommit.ReasonWidenSnapshotMissing || !typedWidenRequest(t) || wo.Commit == nil || wo.Commit.SnapshotAttempt != t.BlockAttempt {
+		return d, nil
+	}
+	if _, err := archiveWidenAttempt(sel.root, wo.Commit.Handle, "", nil, t.ID, wo.Commit.SnapshotAttempt, taskNow()); err != nil {
+		return d, fmt.Errorf("archive typed widen snapshot for task %s attempt %d: %w", t.ID, wo.Commit.SnapshotAttempt, err)
+	}
+	return seatcommit.CheckWiden(wo), nil
+}
+
 // applyLeadWiden applies a verified lead decision: the grant checks
 // (seatcommit.CheckWiden), the growth gate when a limit is crossed, then
 // the store's widening (file lock, self widen).
@@ -250,6 +265,10 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		}
 	}
 	d := seatcommit.CheckWiden(wo)
+	d, err = archiveMissingTypedWiden(sel, t, wo, d)
+	if err != nil {
+		return data, err
+	}
 	widenReason := req.Reason
 	if len(resolutions) > 0 {
 		note := "exact-path resolution: " + strings.Join(resolutions, "; ")
