@@ -174,3 +174,22 @@ func TestDriftBindsATagGateToTheCommitItsTargetNames(t *testing.T) {
 		t.Fatalf("v9 at B with B's gate: %v %+v", err, got)
 	}
 }
+
+// Codex P2 4 on #854: a gate record that does not load is an alert of its
+// own, naming the record, as a store whose list cannot be read is; it was
+// skipped silently.
+func TestDriftNamesAGateRecordThatDoesNotLoad(t *testing.T) {
+	const repo = "owner/app"
+	base := t.TempDir()
+	squad := filepath.Join(base, "v31")
+	_ = os.MkdirAll(squad, 0o700)
+	bad := filepath.Join(base, "v310", "extensions", "amq-squad", "gates", "rel-torn.json")
+	writeFile(t, bad, `{"gate_id": "rel-torn", "class": `)
+	l := &listed{}
+	now := time.Date(2026, 11, 1, 22, 0, 0, 0, time.UTC)
+	_, _ = Drift(context.Background(), l, decisionAccepted, squad, repo, now)
+	a, err := Drift(context.Background(), l, decisionAccepted, squad, repo, now)
+	if err != nil || len(a) != 1 || a[0].Kind != "gate_store_unreadable" || a[0].Name != bad {
+		t.Fatalf("a torn gate record: %v %+v", err, a)
+	}
+}

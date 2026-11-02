@@ -149,6 +149,9 @@ CASES = [
  ("R9f a seat's commit-less tag gate clears the first commit seen (Codex P2 3 on #854)", "internal/mergetrain/drift.go",
   "t.SHA, nil, gatetarget.ReleaseTag(", "t.SHA, []string{gatetarget.Command(\"git tag\", t.Name), gatetarget.TagPush(\"refs/tags/\" + t.Name)}, gatetarget.ReleaseTag(",
   GO("internal/mergetrain", "TestDriftBindsATagGateToTheCommitItsTargetNames")),
+ ("R9g a gate record that does not load is skipped (Codex P2 4 on #854)", "internal/mergetrain/drift.go",
+  "\t\t\t\tbad = append(bad, unreadableStore{path: filepath.Join(store.Dir(\"gates\"), id+\".json\"), err: err})\n", "",
+  GO("internal/mergetrain", "TestDriftNamesAGateRecordThatDoesNotLoad")),
 ]
 
 originals = {}

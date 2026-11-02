@@ -186,8 +186,8 @@ type unreadableStore struct {
 // entries, read with os.ReadDir and taken literally (no glob, no symlink
 // followed); one with no gate store is skipped. A record counts only when
 // it was raised in the session whose store holds it (its squad identity)
-// and verify accepts it. A store whose gate list cannot be read is returned
-// as unreadable.
+// and verify accepts it. A store whose gate list cannot be read, or a record
+// in it that does not load, is returned as unreadable.
 func sessionTargets(root string, verify GateVerifier) (map[string][]acceptedGate, []unreadableStore) {
 	out := map[string][]acceptedGate{}
 	var bad []unreadableStore
@@ -218,7 +218,13 @@ func sessionTargets(root string, verify GateVerifier) (map[string][]acceptedGate
 		own := e.Name() == ownName
 		for _, id := range ids {
 			rec, err := store.Load(id)
-			if err != nil || gatetarget.Class(rec.Class) != gatetarget.ClassRelease || !SameSquad(rec, store.Squad()) {
+			if err != nil {
+				// a record that does not load is named, never skipped
+				// silently (Codex P2 4 on #854)
+				bad = append(bad, unreadableStore{path: filepath.Join(store.Dir("gates"), id+".json"), err: err})
+				continue
+			}
+			if gatetarget.Class(rec.Class) != gatetarget.ClassRelease || !SameSquad(rec, store.Squad()) {
 				continue
 			}
 			if verify == nil || verify(e.Name(), store, rec) != nil {
