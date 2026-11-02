@@ -163,11 +163,14 @@ func seatcommitCodes(t *testing.T) []string {
 	// variables it passes on: each with every value it can carry.
 	foreign := map[string][]string{
 		"task.BlockVerdictFailed":       {task.BlockVerdictFailed},
+		"task.BlockVerdictMissing":      {task.BlockVerdictMissing},
 		"task.ReasonGrowthGateRequired": {task.ReasonGrowthGateRequired},
 		"task.BlockVerdictTreeMismatch": {task.BlockVerdictTreeMismatch},
 		"registry.PinMismatch":          {registry.PinMismatch},
-		// planVerifier's code: the grant's, or registry.OpenPinned's
-		"code": {seatcommit.ReasonGrants, registry.PinMissing, registry.PinMismatch},
+		// planVerifier's code: its own returns are scanned below; through it
+		// registry.OpenPinned's codes reach a refusal too
+		"code":                {registry.PinMissing, registry.PinMismatch},
+		"registry.PinMissing": {registry.PinMissing},
 		// the first violation's reason: a Violation literal's, scanned below
 		"v.Reason": nil,
 		// a widening's copy of its dry run's code, scanned as the step's
@@ -185,6 +188,9 @@ func seatcommitCodes(t *testing.T) []string {
 	for _, v := range consts {
 		codes = append(codes, v)
 	}
+	// every block code the task package declares: the verifier returns them
+	// through its plan and the store's completion gate ends attempts with them
+	codes = append(codes, declaredConsts(t, filepath.Join("..", "task"), "Block")...)
 	var resolve func(e ast.Expr)
 	resolve = func(e ast.Expr) {
 		pos := fset.Position(e.Pos())
@@ -225,6 +231,22 @@ func seatcommitCodes(t *testing.T) []string {
 			case *ast.CallExpr:
 				if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "refuse" && len(x.Args) > 0 {
 					resolve(x.Args[0])
+				}
+			case *ast.ReturnStmt:
+				// a refusal code returned through a variable (planVerifier's
+				// code): every Reason or task, registry code a return names
+				for _, r := range x.Results {
+					switch v := r.(type) {
+					case *ast.Ident:
+						if strings.HasPrefix(v.Name, "Reason") {
+							resolve(v)
+						}
+					case *ast.SelectorExpr:
+						if id, ok := v.X.(*ast.Ident); ok && (id.Name == "task" || id.Name == "registry") &&
+							(strings.HasPrefix(v.Sel.Name, "Block") || strings.HasPrefix(v.Sel.Name, "Reason") || strings.HasPrefix(v.Sel.Name, "Pin")) {
+							resolve(v)
+						}
+					}
 				}
 			case *ast.AssignStmt:
 				for i, l := range x.Lhs {
@@ -376,4 +398,45 @@ func TestWidenRequestedBlockIsNotAFailedAttempt(t *testing.T) {
 	if d := f.decide(tk); d.UsedTier != up(first.UsedTier) {
 		t.Fatalf("a seat's own block: %+v", d)
 	}
+}
+
+// declaredConsts reads the string constants named prefix* of a package's
+// non-test source.
+func declaredConsts(t *testing.T, dir, prefix string) []string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("%s source: %v", dir, err)
+	}
+	var out []string
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			g, ok := d.(*ast.GenDecl)
+			if !ok || g.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range g.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, n := range vs.Names {
+					if i < len(vs.Values) && strings.HasPrefix(n.Name, prefix) {
+						if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							v, _ := strconv.Unquote(lit.Value)
+							out = append(out, v)
+						}
+					}
+				}
+			}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no %s* constants in %s: the scan is broken", prefix, dir)
+	}
+	return out
 }

@@ -140,6 +140,9 @@ CASES = [
  ("R1i the scan does not resolve a constant aliased from another package", "internal/routing/brief3112_test.go",
   "\t\tconsts[name] = vs[0]\n", "\t\t_ = vs\n",
   GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified")),
+ ("R1j verdict_missing missing from the table (Codex P2 1 on #854)", "internal/routing/refusal.go",
+  "\ttask.BlockVerdictMissing:         true,\n", "",
+  GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified")),
 ]
 
 originals = {}
