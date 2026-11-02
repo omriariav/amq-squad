@@ -85,7 +85,8 @@ func TestEveryCommitRefusalCodeIsClassified(t *testing.T) {
 		t.Fatalf("commit refusal codes no row of RefusalWorkFailure classifies: %v", missing)
 	}
 	for _, c := range []string{seatcommit.ReasonSizeCap, seatcommit.ReasonOutside, seatcommit.ReasonProtected, seatcommit.ReasonGrowthGate,
-		seatcommit.ReasonPRPending, seatcommit.ReasonPRBoundElsewhere, seatcommit.ReasonWorktree, seatcommit.ReasonRecordedDiffMismatch} {
+		seatcommit.ReasonPRPending, seatcommit.ReasonPRBoundElsewhere, seatcommit.ReasonWorktree, seatcommit.ReasonRecordedDiffMismatch,
+		seatcommit.ReasonLinkTarget, seatcommit.ReasonWidenSnapshotMissing, seatcommit.ReasonWidenSnapshotMismatch} {
 		if RefusalWorkFailure[c] {
 			t.Errorf("%s is classified a work failure", c)
 		}
@@ -120,6 +121,7 @@ func seatcommitCodes(t *testing.T) []string {
 	fset := token.NewFileSet()
 	var parsed []*ast.File
 	consts := map[string]string{}
+	aliases := map[string]string{} // Reason* constants defined as another package's constant
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -142,8 +144,15 @@ func seatcommitCodes(t *testing.T) []string {
 				vs := spec.(*ast.ValueSpec)
 				for i, n := range vs.Names {
 					if i < len(vs.Values) && strings.HasPrefix(n.Name, "Reason") {
-						if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							consts[n.Name], _ = strconv.Unquote(lit.Value)
+						switch v := vs.Values[i].(type) {
+						case *ast.BasicLit:
+							if v.Kind == token.STRING {
+								consts[n.Name], _ = strconv.Unquote(v.Value)
+							}
+						case *ast.SelectorExpr:
+							if id, ok := v.X.(*ast.Ident); ok {
+								aliases[n.Name] = id.Name + "." + v.Sel.Name
+							}
 						}
 					}
 				}
@@ -154,6 +163,7 @@ func seatcommitCodes(t *testing.T) []string {
 	// variables it passes on: each with every value it can carry.
 	foreign := map[string][]string{
 		"task.BlockVerdictFailed":       {task.BlockVerdictFailed},
+		"task.ReasonGrowthGateRequired": {task.ReasonGrowthGateRequired},
 		"task.BlockVerdictTreeMismatch": {task.BlockVerdictTreeMismatch},
 		"registry.PinMismatch":          {registry.PinMismatch},
 		// planVerifier's code: the grant's, or registry.OpenPinned's
@@ -162,6 +172,14 @@ func seatcommitCodes(t *testing.T) []string {
 		"v.Reason": nil,
 		// a widening's copy of its dry run's code, scanned as the step's
 		"res.ReasonCode": nil,
+	}
+	for name, sel := range aliases {
+		vs, ok := foreign[sel]
+		if !ok || len(vs) != 1 {
+			t.Errorf("seatcommit.%s = %s: a constant of another package this row does not know (classify it and name it here)", name, sel)
+			continue
+		}
+		consts[name] = vs[0]
 	}
 	var codes []string
 	for _, v := range consts {

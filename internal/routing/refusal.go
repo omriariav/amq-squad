@@ -24,6 +24,7 @@ var RefusalWorkFailure = map[string]bool{
 	seatcommit.ReasonProtected:  false,
 	seatcommit.ReasonGrowthGate: false,
 	seatcommit.ReasonNested:     false,
+	seatcommit.ReasonLinkTarget: false, // a changed symlink's tree destination is refused (#851)
 	// The binding deferrals and refusals.
 	seatcommit.ReasonPRPending:        false,
 	seatcommit.ReasonPRBoundElsewhere: false,
@@ -36,6 +37,10 @@ var RefusalWorkFailure = map[string]bool{
 	seatcommit.ReasonPushTargetUnacknowledged: false,
 	seatcommit.ReasonEvidenceRefSymbolic:      false,
 	task.BlockVerdictTreeMismatch:             false,
+	// The typed widen's size dry run found no sealed snapshot of the stopped
+	// attempt, or one of another attempt (#853): the harness's data.
+	seatcommit.ReasonWidenSnapshotMissing:  false,
+	seatcommit.ReasonWidenSnapshotMismatch: false,
 	// The grant, the remote, the step and the verifier's own harness.
 	seatcommit.ReasonGrants:              false,
 	registry.PinMissing:                  false,
