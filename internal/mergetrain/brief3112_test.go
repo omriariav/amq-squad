@@ -80,10 +80,12 @@ func TestDriftReadsTheGateStoresOfEverySession(t *testing.T) {
 		slices.Sort(out)
 		return out
 	}
-	// a gate whose target names another commit clears nothing; nor does
-	// another session's gated command, which names no commit
+	// a gate whose target names another commit clears nothing; nor do
+	// another session's gated commands (a tag's names no commit; a seat's
+	// release command is its own session's)
 	gateIn(t, release, "rel-tag-other", "tag", gatetarget.ReleaseTag(repo, "v3.1.0", other), true)
 	gateIn(t, release, "rel-cmd", "tag", gatetarget.Command("git tag", "v3.1.0"), true)
+	gateIn(t, release, "rel-gh-cmd", "github_release", gatetarget.Command("gh release create", "v3.1.0"), true)
 	if a, err := Drift(context.Background(), l, decisionAccepted, squad, repo, now); err != nil || !slices.Equal(kinds(a), []string{"release", "tag"}) {
 		t.Fatalf("a gate naming another commit: %v %+v", err, a)
 	}
