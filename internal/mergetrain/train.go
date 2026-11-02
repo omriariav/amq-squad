@@ -564,6 +564,11 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		sha, detail = got, "reconciled: the server merged the pinned head; its response was lost ("+err.Error()+")"
 	}
 	p.Status, p.Merged = "merged", sha
+	if bound {
+		if err := t.recordTaskMerge(it.Task, req.Repository, p.Number, sha); err != nil {
+			return err
+		}
+	}
 	for _, f := range p.Files {
 		merged[f] = p.Number
 	}
@@ -603,11 +608,21 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		switch {
 		case !ok:
 		case e.Kind == "merge":
+			if it.BoundHead != "" {
+				if err := t.recordTaskMerge(it.Task, req.Repository, it.Number, e.Merged); err != nil {
+					return nil, err
+				}
+			}
 			out[it.Number] = e.Merged
 		default:
 			sha, merged := t.mergedAt(ctx, req.Repository, it.Number, e.Head)
 			if !merged {
 				continue // not merged: the PR is checked again and a new intent journaled
+			}
+			if it.BoundHead != "" {
+				if err := t.recordTaskMerge(it.Task, req.Repository, it.Number, sha); err != nil {
+					return nil, err
+				}
 			}
 			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: e.Task, Head: e.Head, Merged: sha, Digest: e.Digest,
 				Detail: "reconciled at the next run: the server merged the journaled head (intent of run " + e.Run + ")"}); err != nil {
@@ -617,6 +632,16 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		}
 	}
 	return out, nil
+}
+
+func (t *Train) recordTaskMerge(taskID, repository string, pr int, commit string) error {
+	if t.Binder == nil {
+		return fmt.Errorf("%w: no task store to record the merge of #%d", ErrBindingFailed, pr)
+	}
+	if err := t.Binder.RecordPRMerge(taskID, repository, pr, commit); err != nil {
+		return fmt.Errorf("%w: record task %s merge %s: %v", ErrBindingFailed, taskID, short(commit), err)
+	}
+	return nil
 }
 
 // waitCI polls the required checks at a new head until none is pending or

@@ -39,3 +39,57 @@ func TestBindPRSurvivesMutations(t *testing.T) {
 		}
 	}
 }
+
+func TestBoundDependencyWaitsForItsRecordedMerge(t *testing.T) {
+	s := newStore(t)
+	dep := mustAdd(t, s, AddInput{Title: "dependency"})
+	head, merged := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	if _, err := s.BindPR(dep.ID, "o/r", 7, head, t0); err != nil {
+		t.Fatal(err)
+	}
+	child := mustAdd(t, s, AddInput{Title: "child", DependsOn: []string{dep.ID}})
+	if _, err := s.Claim(dep.ID, "impl-1", nil, time.Minute, t0); err != nil {
+		t.Fatal(err)
+	}
+	harnessPass(t, s, dep.ID, t0)
+	if _, err := s.Done(dep.ID, "impl-1", "done", head, t0); err != nil {
+		t.Fatal(err)
+	}
+	want := "waiting for t1's PR #7 to merge"
+	all, _ := s.List()
+	if got := Blocker(child, all); got != want {
+		t.Fatalf("completed bound dependency blocker = %q, want %q", got, want)
+	}
+	if _, err := s.RecordPRMerge(dep.ID, "o/r", 7, merged, t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	all, _ = s.List()
+	if got := Blocker(child, all); got != "" {
+		t.Fatalf("recorded merge did not release dependent: %q", got)
+	}
+	if _, err := s.RecordPRMerge(dep.ID, "o/r", 7, strings.Repeat("c", 40), t0); err == nil {
+		t.Fatal("a conflicting merge commit replaced the recorded fact")
+	}
+	if _, err := s.BindPR(dep.ID, "o/r", 7, strings.Repeat("d", 40), t0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(dep.ID); got.PRMergeCommit != "" {
+		t.Fatalf("a changed binding retained stale merge proof: %+v", got)
+	}
+}
+
+func TestCancelledBoundDependencyStaysWaiting(t *testing.T) {
+	s := newStore(t)
+	dep := mustAdd(t, s, AddInput{Title: "dependency"})
+	if _, err := s.BindPR(dep.ID, "o/r", 12, strings.Repeat("a", 40), t0); err != nil {
+		t.Fatal(err)
+	}
+	child := mustAdd(t, s, AddInput{Title: "child", DependsOn: []string{dep.ID}})
+	if _, err := s.Cancel(dep.ID, "lead", "abandoned", t0); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := s.List()
+	if got, want := Blocker(child, all), "waiting for t1's PR #12 to merge"; got != want {
+		t.Fatalf("cancelled bound dependency blocker = %q, want %q", got, want)
+	}
+}

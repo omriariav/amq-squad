@@ -37,6 +37,28 @@ func bindPR(t *Task, all *tasks, repository string, pr int, head string) error {
 	if err := prFree(t, all, repository, pr); err != nil {
 		return err
 	}
+	if t.PRRepository != repository || t.PRNumber != pr || t.PRHead != head {
+		t.PRMergeCommit = ""
+	}
 	t.PRRepository, t.PRNumber, t.PRHead = repository, pr, head
 	return nil
+}
+
+// RecordPRMerge records the merge train's proof that the task's currently
+// bound PR merged. The binding must still name the same repository and PR.
+func (s Store) RecordPRMerge(id, repository string, pr int, commit string, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		repository, commit = strings.TrimSpace(repository), strings.TrimSpace(commit)
+		if !bindRepoRe.MatchString(repository) || pr < 1 || !bindHeadRe.MatchString(commit) {
+			return fmt.Errorf("record PR merge: need owner/name, a PR number and a full lowercase merge SHA (got %q #%d %q)", repository, pr, commit)
+		}
+		if !strings.EqualFold(t.PRRepository, repository) || t.PRNumber != pr {
+			return fmt.Errorf("record PR merge: task %s is bound to %s#%d, not %s#%d", t.ID, t.PRRepository, t.PRNumber, repository, pr)
+		}
+		if t.PRMergeCommit != "" && t.PRMergeCommit != commit {
+			return fmt.Errorf("record PR merge: task %s already records %s", t.ID, t.PRMergeCommit)
+		}
+		t.PRMergeCommit = commit
+		return nil
+	})
 }

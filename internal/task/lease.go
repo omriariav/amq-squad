@@ -21,7 +21,17 @@ func Blocker(t Task, all []Task) string {
 		byID[o.ID] = o
 	}
 	for _, d := range t.DependsOn {
-		if byID[d].State != StateCompleted {
+		dep, ok := byID[d]
+		if !ok {
+			return WaitDependencies
+		}
+		if dep.PRNumber > 0 {
+			if dep.PRMergeCommit == "" {
+				return DependencyMergeWait(dep.ID, dep.PRNumber)
+			}
+			continue
+		}
+		if dep.State != StateCompleted {
 			return WaitDependencies
 		}
 	}

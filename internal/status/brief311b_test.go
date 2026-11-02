@@ -403,6 +403,18 @@ func TestAFileLockWaitNamesItsHolders(t *testing.T) {
 	}
 }
 
+func TestDependencyMergeWaitIsPlainAndAutoResolving(t *testing.T) {
+	now := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	wait := task.DependencyMergeWait("t8", 44)
+	row := classifyTask(task.Task{ID: "t9", Title: "dependent", Class: "implement", State: task.StatePending, WaitReason: wait, CreatedAt: now, UpdatedAt: now}, now)
+	if row.WaitReason != wait || row.ReasonCode != wait {
+		t.Fatalf("plain wait was changed: %+v", row)
+	}
+	if waitNeedsAttention(wait) {
+		t.Fatalf("auto-resolving merge wait produced attention: %q", wait)
+	}
+}
+
 // Codex P2 (6) and (7) on #829: each seat's marks are its own launch's.
 // A seat adopted by a later scheduler incarnation keeps the start of the
 // launch that started it (not the later scheduler's), a seat whose proof
