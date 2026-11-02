@@ -26,6 +26,10 @@ const Schema = 1
 // exact paths recorded in RefusedPaths to the task's declared files.
 const ReasonWidenRequested = "widen_requested"
 
+// ReasonGrowthGateRequired is a typed widen request escalated for the
+// owner's growth decision. It retains the request's exact refused paths.
+const ReasonGrowthGateRequired = "growth_gate_required"
+
 // DefaultLeaseDuration is the proposed lease length (brief 2b-1 ruling 3;
 // measured in docs/v3-spike/2b1-execution.md).
 const DefaultLeaseDuration = 10 * time.Minute

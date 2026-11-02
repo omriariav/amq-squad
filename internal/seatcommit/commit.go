@@ -54,6 +54,9 @@ type Options struct {
 	// DryRun computes the diff and the checks only: no preflight diff, no
 	// commit, push or ledger write (the widening check).
 	DryRun bool
+	// SnapshotAttempt makes a dry run evaluate CleanSeat's archived tree for
+	// this ended attempt, rather than the seat's reusable live worktree.
+	SnapshotAttempt int
 	// Declared replaces the task's declared_files (a proposed widening, dry
 	// run only).
 	Declared []string
@@ -143,6 +146,9 @@ func (r Result) defer_(detail string) Result {
 // ledger write of any kind comes before the binding check passes.
 func Run(o Options) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
+	if o.SnapshotAttempt > 0 && !o.DryRun {
+		return res.refuse(ReasonWorktree, task.RouteLead, "an archived attempt snapshot is valid only for a widening dry run")
+	}
 	// A dry run also takes a task blocked by a refusal (the widening check).
 	awaiting := o.Task.State == task.StateInProgress || (o.DryRun && o.Task.State == task.StateBlocked)
 	if o.Task.Report == nil || o.Task.Report.By != o.Handle || !awaiting {
@@ -165,6 +171,11 @@ func Run(o Options) Result {
 // ReasonStepCancelled is the deferral of a step whose task was cancelled
 // while it ran (its result is discarded).
 const ReasonStepCancelled = "commit_cancelled"
+
+const (
+	ReasonWidenSnapshotMissing  = "widen_snapshot_missing"
+	ReasonWidenSnapshotMismatch = "widen_snapshot_attempt_mismatch"
+)
 
 func (o Options) cancelled() bool { return o.Ctx != nil && o.Ctx.Err() != nil }
 
@@ -257,14 +268,24 @@ func run(o Options, res Result) Result {
 	// One branch per task (3.0.2 t23): the task's own branch and the commit
 	// its worktree started on, never the seat's previous task.
 	branch, parent, base, why := ledger.taskStart(o.Handle, o.Task.ID)
-	if why != "" {
+	if o.SnapshotAttempt == 0 && why != "" {
 		return res.refuse(ReasonLeaseTaskMismatch, task.RouteLead, why)
 	}
 	res.Branch = branch
 	env := harnessEnv(o.Env)
-	rp, repoRoot, why := checkWorktree(rec, o.Task.ProjectPath, rec.Branch, branch)
-	if why != "" {
-		return res.refuse(ReasonWorktree, task.RouteLead, why)
+	var rp repoPaths
+	var repoRoot string
+	if o.SnapshotAttempt > 0 {
+		rp, err = worktreePaths(rec.Worktree)
+		repoRoot = o.Task.ProjectPath
+		if err != nil {
+			return res.refuse(ReasonWorktree, task.RouteLead, err.Error())
+		}
+	} else {
+		rp, repoRoot, why = checkWorktree(rec, o.Task.ProjectPath, rec.Branch, branch)
+		if why != "" {
+			return res.refuse(ReasonWorktree, task.RouteLead, why)
+		}
 	}
 	sh, err := newShadow(o.Git, env, rp)
 	if err != nil {
@@ -272,11 +293,33 @@ func run(o Options, res Result) Result {
 	}
 	defer sh.close()
 	g := sh.g
-	res.Parent = parent
-	tree, err := snapshot(sh, parent)
-	if err != nil {
-		return res.defer_("snapshot of the worktree: " + err.Error())
+	var tree string
+	if o.SnapshotAttempt > 0 {
+		var sameTask bool
+		for i := len(ledger.Discarded) - 1; i >= 0; i-- {
+			d := ledger.Discarded[i]
+			if d.TaskID != o.Task.ID {
+				continue
+			}
+			sameTask = true
+			if d.Attempt == o.SnapshotAttempt {
+				parent, tree = d.Parent, d.Tree
+				break
+			}
+		}
+		if tree == "" {
+			if sameTask {
+				return res.refuse(ReasonWidenSnapshotMismatch, task.RouteLead, fmt.Sprintf("typed widen snapshot for task %s does not match stopped attempt %d", o.Task.ID, o.SnapshotAttempt))
+			}
+			return res.refuse(ReasonWidenSnapshotMissing, task.RouteLead, fmt.Sprintf("typed widen snapshot for task %s attempt %d is missing", o.Task.ID, o.SnapshotAttempt))
+		}
+	} else {
+		tree, err = snapshot(sh, parent)
+		if err != nil {
+			return res.defer_("snapshot of the worktree: " + err.Error())
+		}
 	}
+	res.Parent = parent
 	if o.AfterSnapshot != nil {
 		o.AfterSnapshot(tree)
 	}
@@ -287,10 +330,12 @@ func run(o Options, res Result) Result {
 	// grant in force now, its digest recomputed and compared with the
 	// recorded one (Codex passes on 2477f10f and c09a8887), and on to the
 	// push and the binding; "nothing to commit" is never an early OK there.
-	if i := ledger.taskCommitAt(o.Task.ID, branch); i >= 0 && (ledger.Lease == nil || ledger.Commits[i].Commit == parent) {
-		if pt, err := g.line("rev-parse", parent+"^{tree}"); err == nil && pt == tree {
-			parent, tree = ledger.Commits[i].Parent, ledger.Commits[i].Tree
-			res.Parent = parent
+	if o.SnapshotAttempt == 0 {
+		if i := ledger.taskCommitAt(o.Task.ID, branch); i >= 0 && (ledger.Lease == nil || ledger.Commits[i].Commit == parent) {
+			if pt, err := g.line("rev-parse", parent+"^{tree}"); err == nil && pt == tree {
+				parent, tree = ledger.Commits[i].Parent, ledger.Commits[i].Tree
+				res.Parent = parent
+			}
 		}
 	}
 	res.Tree = tree
@@ -507,13 +552,13 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	discarded := tree != parentTree && l.recordedAt(parent, tree) < 0
 	if discarded {
 		raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
-		taskID, last := lastAttempt(list, handle)
+		taskID, attempt, last := lastAttempt(list, handle)
 		expireEvidence(repo, &l, now)
 		ref, err := anchorEvidence(repo, &l, taskID, tree, now)
 		if err != nil {
 			return false, fmt.Errorf("anchor the discarded tree: %w", err)
 		}
-		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
+		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
 		if err := writeLedger(root, l); err != nil {
 			return false, err
 		}
@@ -801,20 +846,20 @@ func expireEvidence(repo git, l *Ledger, now time.Time) {
 
 // lastAttempt is the seat's most recently ended attempt: its task and why it
 // ended ("commit_refused: outside_declared_files", "failed: tests red", ...).
-func lastAttempt(list []task.Task, handle string) (string, string) {
+func lastAttempt(list []task.Task, handle string) (string, int, string) {
 	var at time.Time
-	id, why := "", "no ended attempt of this seat in the store"
+	id, attempt, why := "", 0, "no ended attempt of this seat in the store"
 	for _, t := range list {
 		for _, a := range t.Attempts {
 			if a.Holder == handle && a.EndedAt.After(at) {
-				at, id, why = a.EndedAt, t.ID, a.Outcome
+				at, id, attempt, why = a.EndedAt, t.ID, a.N, a.Outcome
 				if a.Detail != "" {
 					why += ": " + a.Detail
 				}
 			}
 		}
 	}
-	return id, why
+	return id, attempt, why
 }
 
 // StagedSeat is the seat's staged launch record (worktree and branch).

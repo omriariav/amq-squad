@@ -197,6 +197,7 @@ type LedgerDiscard struct {
 	// it ended (for a refusal, commit_refused and the refusal's reason code),
 	// so the refused work stays inspectable.
 	TaskID     string    `json:"task_id,omitempty"`
+	Attempt    int       `json:"attempt,omitempty"`
 	Reason     string    `json:"reason"`
 	Parent     string    `json:"parent"`
 	Tree       string    `json:"tree"`

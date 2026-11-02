@@ -233,6 +233,15 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{".claude/settings.json"}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
+		if discarded, err := seatcommit.CleanSeat(f.root, "s1", "", nil, time.Now()); err != nil || !discarded {
+			t.Fatalf("archive stopped attempt: discarded=%v err=%v", discarded, err)
+		}
+		other, _ := s.Add(task.AddInput{Title: "reused seat", Class: "implement", DeclaredFiles: []string{"other/"}, ProjectPath: repo}, time.Now())
+		other, _ = s.Claim(other.ID, "s1", nil, time.Hour, time.Now())
+		if err := seatcommit.StartTask(f.root, "s1", "", nil, other, "", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, "other", "live.go"), "package other\n")
 		sel := scopedSelection(t, []string{"--project", f.project, "--session", "s"})
 		literal, _ := task.LiteralGlob(".claude/settings.json")
 		req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{literal}, Reason: "needed"}
@@ -271,6 +280,15 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
+		if discarded, err := seatcommit.CleanSeat(f.root, "s1", "", nil, time.Now()); err != nil || !discarded {
+			t.Fatalf("archive stopped attempt: discarded=%v err=%v", discarded, err)
+		}
+		other, _ := s.Add(task.AddInput{Title: "reused seat", Class: "implement", DeclaredFiles: []string{"other/"}, ProjectPath: repo}, time.Now())
+		other, _ = s.Claim(other.ID, "s1", nil, time.Hour, time.Now())
+		if err := seatcommit.StartTask(f.root, "s1", "", nil, other, "", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, "other", "live.go"), "package other\n")
 		sel := scopedSelection(t, []string{"--project", f.project, "--session", "s"})
 		literal, _ := task.LiteralGlob("extra.go")
 		data, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{literal}, Reason: "needed"})

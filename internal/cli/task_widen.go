@@ -240,9 +240,10 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
 	} else if typedWidenRequest(t) && len(t.Attempts) > 0 {
-		// A typed block ends the seat's attempt and clears its report, but its
-		// current diff remains the proof for the size-cap dry run.
-		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Attempts[len(t.Attempts)-1].Holder, Now: taskNow}
+		// CleanSeat archives the stopped attempt before this reusable seat can
+		// take another lease. Select that immutable tree by attempt number.
+		attempt := t.Attempts[len(t.Attempts)-1]
+		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: attempt.Holder, SnapshotAttempt: attempt.N, Now: taskNow}
 	}
 	d := seatcommit.CheckWiden(wo)
 	widenReason := req.Reason
