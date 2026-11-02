@@ -119,6 +119,7 @@ func runMergeTrain(args []string) error {
 	}
 	if gs, err := gatestore.Open(sel.Root); err == nil {
 		t.ReleaseGates, t.Root = &gs, sel.Root // the tag and release drift check, every run
+		t.VerifyGate = releaseGateVerifier(sel)
 	}
 	ctx := context.Background()
 	if !*dry {
@@ -189,7 +190,9 @@ func realRunScope(req mergetrain.Request) error {
 }
 
 // fillDeclaredFiles takes a PR's declared files from the session's task
-// store when the request names a task and no files (the commit step's set).
+// store when the request names a task and no files (the commit step's set),
+// and, for a PR named with neither, its task from the harness binding as the
+// real run reads it (mergetrain.BindUnnamed).
 func fillDeclaredFiles(root string, req *mergetrain.Request) error {
 	var store *task.Store
 	for i := range req.PRs {
@@ -209,6 +212,23 @@ func fillDeclaredFiles(root string, req *mergetrain.Request) error {
 			return fmt.Errorf("merge-train: PR #%d task %s: %w", it.Number, it.Task, err)
 		}
 		it.DeclaredFiles = tk.DeclaredFiles
+	}
+	// A PR named with no task and no files: the binding the harness commit
+	// step wrote, read as the real run reads it (brief 3.1.1-2 item 6).
+	for _, it := range req.PRs {
+		if it.Task == "" && len(it.DeclaredFiles) == 0 {
+			if store == nil {
+				s, err := task.Open(root)
+				if err != nil {
+					return fmt.Errorf("merge-train: task store: %w", err)
+				}
+				store = &s
+			}
+			if err := mergetrain.BindUnnamed(*store, req.Repository, req); err != nil {
+				return fmt.Errorf("merge-train: %w", err)
+			}
+			break
+		}
 	}
 	return nil
 }
@@ -234,6 +254,31 @@ func attachMergeGates(ctx context.Context, t *mergetrain.Train, sel contextResol
 	t.Gates = mergetrain.InSquad(mergetrain.SquadOf(sel.Root), func(action, target string) (gatestore.Record, bool) {
 		return v.AcceptedFor(core.Store, action, target)
 	})
+}
+
+// releaseGateVerifier is the drift check's acceptance of a release gate
+// (brief 3.1.1-2 item 5): the full owner check (gateverify.Verifier.Accepted:
+// the accepted decision and its approval's owner signature, issuer and
+// namespace) under the namespace of the session whose store holds the gate,
+// this squad's project and profile with that session. A release is cut in
+// its own fresh session, so its gate verifies under that session's name.
+// Without the owner's gate binding or trust store nothing verifies, and
+// every tag or release since the baseline stays an alert.
+func releaseGateVerifier(sel contextResolution) mergetrain.GateVerifier {
+	_, pin, err := gateverify.LoadBinding(gateBindingPath())
+	if err != nil {
+		return func(string, gatestore.Store, gatestore.Record) error { return fmt.Errorf("gate binding: %w", err) }
+	}
+	trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())
+	if err != nil {
+		return func(string, gatestore.Store, gatestore.Record) error {
+			return fmt.Errorf("authorization trust store: %w", err)
+		}
+	}
+	return func(session string, store gatestore.Store, rec gatestore.Record) error {
+		ns := gateNamespace(sel.ProjectDir, sel.Profile, session, sel.NamespaceGeneration)
+		return gateverify.Verifier{Trust: trust, Pin: pin, Namespace: ns}.Accepted(store, rec)
+	}
 }
 
 // confirmMerge is manual mode's per-merge stop: one "y" line on a terminal

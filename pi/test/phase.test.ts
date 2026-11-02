@@ -71,11 +71,11 @@ const nonceFds: number[] = [];
 
 const DIGEST = "sha256:" + "0123456789abcdef".repeat(4) + "@absent";
 const BUILTINS = ["read", "bash", "edit", "write"];
-// The team lead's tool list as the pi lead registers it: TeamLeadTools'
-// eleven (internal/piruntime/launch.go) plus amq_task_claim,
-// amq_task_done, and the seat-visible typed block tool (the row names the registered list until
-// the one-list follow-up lands).
-const TEAM14 = [
+// The team lead's tool list: TeamLeadTools' eleven
+// (internal/piruntime/launch.go), one list (brief 3.1.1-2 item 4);
+// amq_task_claim, amq_task_done and amq_task_block are a seat's, never a
+// lead's.
+const TEAM11 = [
 	"amq_drain",
 	"amq_reply",
 	"amq_repo_list",
@@ -84,9 +84,6 @@ const TEAM14 = [
 	"amq_send",
 	"amq_status",
 	"amq_task_add",
-	"amq_task_block",
-	"amq_task_claim",
-	"amq_task_done",
 	"amq_task_list",
 	"amq_task_reset",
 	"amq_task_widen",
@@ -167,12 +164,12 @@ function soloWorld() {
 // lead's reply carrying the team identity (no file is read; phase.json is
 // even a directory), switches by
 // mechanism: the tool list
-// declared to the model becomes exactly the fourteen team tools
+// declared to the model becomes exactly the eleven team tools
 // (pi.setActiveTools: read, bash, edit, write, amq_team_propose and
 // amq_team_apply are gone), the lead's identity becomes the squad's, every
 // solo tool call refuses phase_team (a shell call; a second apply) and the
 // team tools answer. No gate-answer verb, no confirm tool.
-test("R53: the owner's yes switches the lead's tools to exactly the team lead's fourteen and refuses the solo set phase_team", async () => {
+test("R53: the owner's yes switches the lead's tools to exactly the team lead's eleven and refuses the solo set phase_team", async () => {
 	const w = soloWorld();
 	await withEnv(w.env, async (pi) => {
 		const ctx = fakeCtx();
@@ -190,20 +187,25 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 		const [applied] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], ctx);
 		assert.equal(applied.outcome, "ran", applied.reason);
 		assert.match(applied.text ?? "", /team phase: your tools are now the team lead's/);
-		assert.deepEqual(pi.getActiveTools().sort(), TEAM14);
+		assert.deepEqual(pi.getActiveTools().sort(), TEAM11);
 		assert.ok(!pi.getActiveTools().some((t) => /gate|answer|confirm/.test(t)), "a gate-answer or confirm tool in team phase");
 		assert.equal(process.env.AM_ROOT, w.squadRoot);
 		assert.equal(process.env.AM_ME, "cto");
 		assert.equal(process.env.AMQ_SQUAD_LEAD, "1");
 		// a model that names the solo tools anyway (pi's turn list could
 		// still carry them) meets the hook: each refuses phase_team
-		pi.active = new Set([...pi.active, ...BUILTINS, "amq_team_apply", "amq_team_propose"]);
+		// a seat's claim, done and block too (brief 3.1.1-2 item 4): a lead
+		// holding them could take a lease itself or request its own widen
+		pi.active = new Set([...pi.active, ...BUILTINS, "amq_team_apply", "amq_team_propose", "amq_task_claim", "amq_task_done", "amq_task_block"]);
 		const solo = await pi.batch(
 			[
 				{ toolName: "bash", input: { command: "ls" } },
 				{ toolName: "edit", input: { path: "a" } },
 				{ toolName: "amq_team_apply", input: { digest: DIGEST } },
 				{ toolName: "amq_team_propose", input: {} },
+				{ toolName: "amq_task_claim", input: {} },
+				{ toolName: "amq_task_done", input: { id: "t1", evidence: "x" } },
+				{ toolName: "amq_task_block", input: { id: "t1", reason: "widen_requested", paths: ["x.go"] } },
 			],
 			ctx,
 		);
@@ -211,7 +213,7 @@ test("R53: the owner's yes switches the lead's tools to exactly the team lead's 
 			assert.equal(r.outcome, "blocked", r.toolName);
 			assert.match(r.reason ?? "", /^phase_team: /, r.toolName);
 		}
-		pi.setActiveTools(TEAM14);
+		pi.setActiveTools(TEAM11);
 		const [st] = await pi.batch([{ toolName: "amq_status" }], ctx);
 		assert.match(st.text ?? "", /"session":"s1"/);
 	});
@@ -290,7 +292,7 @@ test("R53: a planted marker switches nothing; the switch rides the lead's answer
 	try {
 		await withEnv({ ...w.env, AMQ_SQUAD_LEAD_START_SOCKET: team.socket }, async (pi) => {
 			await pi.emit("session_start", {}, fakeCtx());
-			assert.deepEqual(pi.getActiveTools().sort(), TEAM14);
+			assert.deepEqual(pi.getActiveTools().sort(), TEAM11);
 			assert.equal(process.env.AM_ROOT, w.squadRoot);
 		});
 	} finally {
@@ -331,7 +333,7 @@ test("R53: amq_team_apply runs alone (apply_not_alone), and a solo tool run afte
 		}
 		const [alone] = await pi.batch([{ toolName: "amq_team_apply", input: { digest: DIGEST } }], ctx);
 		assert.equal(alone.outcome, "ran", alone.reason);
-		assert.deepEqual(pi.getActiveTools().sort(), TEAM14);
+		assert.deepEqual(pi.getActiveTools().sort(), TEAM11);
 	});
 	// a propose admitted while solo, the switch landing between the
 	// preparing and the running (here a session start the lead answers
@@ -474,14 +476,14 @@ test("R53: the nonce's descriptor is closed before the extension's first registr
 });
 
 // Row 5 for the lead up starts (lead --team): team phase from its first
-// turn with no marker: the fourteen team tools, active, and no solo tool.
-test("R53: lead --team is team phase from its first turn with exactly the fourteen", async () => {
+// turn with no marker: the eleven team tools, active, and no solo tool.
+test("R53: lead --team is team phase from its first turn with exactly the eleven", async () => {
 	const w = soloWorld();
 	const env: Record<string, string> = { ...w.env, AMQ_SQUAD_LEAD: "1", AM_ME: "cto", AM_ROOT: w.squadRoot };
 	delete env.AMQ_SQUAD_SOLO_LEAD;
 	await withEnv(env, async (pi) => {
 		const mine = pi.getActiveTools().filter((t) => !BUILTINS.includes(t));
-		assert.deepEqual(mine.sort(), TEAM14);
+		assert.deepEqual(mine.sort(), TEAM11);
 		assert.ok(!pi.tools.has("amq_team_propose") && !pi.tools.has("amq_team_apply"));
 	});
 });

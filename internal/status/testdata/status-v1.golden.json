@@ -178,6 +178,13 @@
       ]
     }
   ],
+  "stale_records": [
+    {
+      "handle": "senior-dev",
+      "session": "squad",
+      "launch_id": "5f0c2a9e41d37b68"
+    }
+  ],
   "tasks": [
     {
       "id": "t1",
@@ -209,7 +216,8 @@
       "pr_repository": "",
       "pr_number": 0,
       "pr_head": "",
-      "wait_holders": []
+      "wait_holders": [],
+      "wait_pool": ""
     },
     {
       "id": "t2",
@@ -235,7 +243,8 @@
       "pr_repository": "owner/app",
       "pr_number": 42,
       "pr_head": "4f1c2a9",
-      "wait_holders": []
+      "wait_holders": [],
+      "wait_pool": ""
     }
   ],
   "attention": [

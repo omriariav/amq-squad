@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,13 +19,9 @@ import (
 // no accepted owner gate is written as an owner alert (status shows it under
 // needs_you) and fails the check. The first run on a repository records its
 // existing tags and releases as the baseline.
-func doctorReleaseDrift(root string, g grants.Grants, lister mergetrain.ReleaseLister, now time.Time) []doctorCheck {
+func doctorReleaseDrift(root string, g grants.Grants, lister mergetrain.ReleaseLister, verify mergetrain.GateVerifier, now time.Time) []doctorCheck {
 	if root == "" || len(g.Merge) == 0 {
 		return nil
-	}
-	gates, err := gatestore.Open(root)
-	if err != nil {
-		return []doctorCheck{{Name: "release drift", Status: doctorWarn, Detail: err.Error()}}
 	}
 	var out []doctorCheck
 	seen := map[string]bool{}
@@ -35,7 +32,7 @@ func doctorReleaseDrift(root string, g grants.Grants, lister mergetrain.ReleaseL
 		}
 		seen[repo] = true
 		check := doctorCheck{Name: "release drift " + m.Repository, Status: doctorOK, Detail: "every tag and release since the baseline has an accepted owner gate"}
-		alerts, err := mergetrain.Drift(context.Background(), lister, gates, root, m.Repository, now)
+		alerts, err := mergetrain.Drift(context.Background(), lister, verify, root, m.Repository, now)
 		switch {
 		case errors.Is(err, mergetrain.ErrBaselineInvalid):
 			check.Status, check.Detail = doctorFail, err.Error()
@@ -60,7 +57,23 @@ func doctorReleaseDriftHook(root string) func() []doctorCheck {
 	if err != nil || owner.Insecure {
 		return nil
 	}
-	return func() []doctorCheck { return doctorReleaseDrift(root, owner.Grants, doctorReleaseLister(), time.Now()) }
+	return func() []doctorCheck {
+		return doctorReleaseDrift(root, owner.Grants, doctorReleaseLister(), doctorGateVerifier(root), time.Now())
+	}
+}
+
+// doctorGateVerifier is the merge train's release gate verifier
+// (releaseGateVerifier) for doctor's root: the squad context resolved as a
+// command resolves it, when its root is doctor's; else nothing verifies, so
+// no gate clears an alert (brief 3.1.1-2 item 5).
+func doctorGateVerifier(root string) mergetrain.GateVerifier {
+	sel, err := resolveCanonicalContext(contextResolveOptions{})
+	if err != nil || filepath.Clean(sel.Root) != filepath.Clean(root) {
+		return func(string, gatestore.Store, gatestore.Record) error {
+			return fmt.Errorf("no squad context for %s: no gate verifies", root)
+		}
+	}
+	return releaseGateVerifier(sel)
 }
 
 // doctorReleaseLister is the drift check's tag and release source, gh (a

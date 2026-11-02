@@ -25,17 +25,38 @@ import (
 // (task_unbound).
 func BindTasks(store task.Store, repository string, req *Request) error {
 	for i := range req.PRs {
-		it := &req.PRs[i]
-		b, why, err := boundTask(store, repository, it.Number)
-		if err != nil {
+		if err := bindItem(store, repository, &req.PRs[i]); err != nil {
 			return err
 		}
-		if why != "" {
-			it.Unbound = why
-			continue
-		}
-		it.Task, it.DeclaredFiles, it.BoundHead = b.ID, b.DeclaredFiles, b.PRHead
 	}
+	return nil
+}
+
+// BindUnnamed is BindTasks for the items that name no task and no declared
+// files (brief 3.1.1-2 item 6): a dry run reads their binding as the real
+// run does, so a request naming only the PR plans what the real run checks.
+// An item that names its task or its files is left as it is.
+func BindUnnamed(store task.Store, repository string, req *Request) error {
+	for i := range req.PRs {
+		if it := &req.PRs[i]; it.Task == "" && len(it.DeclaredFiles) == 0 {
+			if err := bindItem(store, repository, it); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func bindItem(store task.Store, repository string, it *Item) error {
+	b, why, err := boundTask(store, repository, it.Number)
+	if err != nil {
+		return err
+	}
+	if why != "" {
+		it.Unbound = why
+		return nil
+	}
+	it.Task, it.DeclaredFiles, it.BoundHead = b.ID, b.DeclaredFiles, b.PRHead
 	return nil
 }
 

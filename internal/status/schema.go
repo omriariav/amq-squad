@@ -140,12 +140,16 @@ type Status struct {
 	Buckets      []BucketInfo `json:"buckets"`
 	Counts       Counts       `json:"counts"`
 	Seats        []Seat       `json:"seats"`
-	Tasks        []Task       `json:"tasks"`
-	Attention    []Attention  `json:"attention"`
-	Gates        []Gate       `json:"gates"`
-	Actions      Actions      `json:"actions"`
-	Scheduler    Scheduler    `json:"scheduler"`
-	Warnings     []string     `json:"warnings"`
+	// StaleRecords are the seat records under the root that are not the
+	// running roster's (brief 3.1.1-2 item 2): an earlier session's or
+	// launch's handles, apart from seats[], which holds only the roster.
+	StaleRecords []StaleRecord `json:"stale_records"`
+	Tasks        []Task        `json:"tasks"`
+	Attention    []Attention   `json:"attention"`
+	Gates        []Gate        `json:"gates"`
+	Actions      Actions       `json:"actions"`
+	Scheduler    Scheduler     `json:"scheduler"`
+	Warnings     []string      `json:"warnings"`
 	// Lead is the root's lead from its lead record (brief 31-1: lead.json
 	// beside the lead lock), null when no lead has taken the lock.
 	Lead *Lead `json:"lead"`
@@ -362,6 +366,19 @@ type Task struct {
 	// lock rule), [] otherwise. Empty under file_lock means no task holds
 	// the lock any more: the wait reason is stale.
 	WaitHolders []string `json:"wait_holders"`
+	// WaitPool is, for a pending task waiting no_roster_seat, the pool
+	// (runtime:model:effort) its route names and no roster seat serves
+	// (brief 3.1.1-2 item 1), "" otherwise.
+	WaitPool string `json:"wait_pool"`
+}
+
+// StaleRecord is a seat record under the root outside the running roster:
+// its handle, the AMQ session its launch record names and its launch id
+// ("" when unknown).
+type StaleRecord struct {
+	Handle   string `json:"handle"`
+	Session  string `json:"session"`
+	LaunchID string `json:"launch_id"`
 }
 
 // Attention is one item of the attention queue: a stable id, what kind of

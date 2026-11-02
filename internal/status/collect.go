@@ -140,7 +140,7 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 		joinLaunchRecord(&seat, staged)
 		// brief 31-1: the seat's worktree, branch and last launch, and the
 		// warnings of its launch
-		seat.Worktree, seat.Branch, seat.Launch = staged.Worktree, staged.Branch, sl
+		seat.Worktree, seat.Branch, seat.Launch, seat.Session = staged.Worktree, staged.Branch, sl, staged.Session
 		// brief 31-2: a warning the owner cleared for this launch moves to
 		// the acknowledged list
 		clears, err := schedproc.ReadClears(o.Root)

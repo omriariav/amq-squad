@@ -18,10 +18,13 @@ MANIFESTS = (
 )
 VERSION_SOURCE = "plugins/codex/.codex-plugin/plugin.json"
 # A release candidate is x.y.z-rc.N (3.1.0-rc.1); no other prerelease form,
-# as scripts/check-release-version.py reads it.
-VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+(?:-rc\.\d+)?)$")
+# as scripts/check-release-version.py reads it. ASCII digits only, as there:
+# Python's \d also takes any Unicode digit (brief 3.1.1-2 item 3;
+# scripts/test_release_version_forms.py holds the three scripts to one
+# grammar).
+VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)$")
 RELEASE_BRANCH_VERSION_RE = re.compile(
-    r"^release/v?(\d+\.\d+\.\d+(?:-rc\.\d+)?)(?:[-/].*)?$"
+    r"^release/v?([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)(?:[-/].*)?$"
 )
 
 
@@ -86,14 +89,44 @@ def read_base_versions(root: pathlib.Path, base_sha: str) -> dict[str, str]:
     return versions
 
 
+def check_version(root: pathlib.Path, version: str) -> list[str]:
+    """This script's own parse of VERSION and of the head manifests, as CI
+    runs it: `make release-check` calls it, so a version form this script
+    refuses fails the local check too (brief 3.1.1-2 item 3, #833)."""
+    match = VERSION_RE.fullmatch(version.strip())
+    if not match:
+        return [f"VERSION {version!r} is not x.y.z or x.y.z-rc.N"]
+    try:
+        head = read_head_versions(root)
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    return [
+        f"{path}: version {got!r} != {match.group(1)!r}"
+        for path, got in head.items()
+        if got != match.group(1)
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", required=True, help="pull request base commit SHA")
-    parser.add_argument("--head-ref", required=True, help="pull request head branch")
+    parser.add_argument("--base", help="pull request base commit SHA")
+    parser.add_argument("--head-ref", help="pull request head branch")
     parser.add_argument("--repo", default=".", help="repository root")
+    parser.add_argument(
+        "--check-version",
+        metavar="VERSION",
+        help="check VERSION and the head manifests with this script's parse (make release-check)",
+    )
     args = parser.parse_args()
 
     root = pathlib.Path(args.repo).resolve()
+    if args.check_version is not None:
+        errors = check_version(root, args.check_version)
+        for err in errors:
+            sys.stderr.write(f"release CI version parse failed: {err}\n")
+        return 1 if errors else 0
+    if not args.base or not args.head_ref:
+        parser.error("--base and --head-ref are required")
     try:
         head_versions = read_head_versions(root)
         base_versions = read_base_versions(root, args.base)
