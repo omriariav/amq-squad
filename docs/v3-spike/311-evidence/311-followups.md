@@ -378,3 +378,7 @@ On `c331bb07` (origin/v3 `b67df349` merged), 2026-11-02:
   gate; a store it cannot read is an alert of its own. A dry run of a
   request that names only the PR reads the task from the harness binding,
   as the real run does.
+
+## The one asymmetry, on purpose (the plan reviewer)
+
+An unnamed seat block still counts as a failed attempt. A seat's free-text block can be a real "I cannot do this", and counting it keeps a seat from dodging MaxAttempts by blocking. Tonight's free-text `declared_files_missing` blocks fell under it; the typed `widen_requested` block that /widen brings is classified as no failure, so the asymmetry fades once seats use it. An unnamed commit refusal, by contrast, never counts, and nothing that does not count re-dispatches by itself, so no misclassification can loop a seat; it can only spare it an escalation.
