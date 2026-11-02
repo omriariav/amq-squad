@@ -244,11 +244,42 @@ real run's `bindItem`); a PR with no binding is `task_unbound` in both. Row:
 TestMergeTrainDryRunReadsTheBindingOfAPROnlyRequest: the dry run's request
 equals the real run's after `BindTasks`, for a bound PR and an unbound one.
 
+## 7a. Codex's pass on #854: five P2, each with a row
+
+1. **The completeness row missed `verdict_missing`.** `planVerifier` returns
+   `task.BlockVerdictMissing` through its `code` variable, which the row's
+   hard-coded list omitted. The row now adds every `Block*` constant the task
+   package declares and every Reason, task or registry code a `return` in
+   seatcommit names; removing `verdict_missing`'s classification fails it
+   (R1j).
+2. **No scheduler state listed every handle.** With no scheduler state at
+   all, the roster is now this session's latest launch: the staged records
+   sharing the newest compile's launch id (a roster launches in one
+   compile), with the lead. A record with no launch id or compile time
+   cannot be ordered and stays a seat row; a scheduler running seats on
+   demand (state, no roster) lists every record, as before. The roster row
+   covers the fallback and the on-demand case (R4e).
+3. **A commit-less tag gate cleared the first commit seen.** A seat's gated
+   `git tag NAME` or tag push names no commit, so a tag now clears only
+   through a target that names it and its commit (`gatetarget.ReleaseTag`),
+   from any session. The two older drift rows use the release flow's
+   target. Row: a gate for NAME at commit A, or for no commit, does not
+   clear NAME at B (R9f).
+4. **A record that does not load was skipped.** It is now a
+   `gate_store_unreadable` alert naming the record (R9g).
+5. **A covered alert stayed.** Once a verified gate covers the object, its
+   alert file is removed, so status stops showing it; an alert the same run
+   raised again for another object of that name (a recreated release)
+   stays (R9h). Fixing its row showed the unsigned-gate row had passed on
+   the squad identity of a release root that did not exist yet when the
+   gate was written; that row now creates the root first, so only the
+   signature refuses the gate.
+
 ## 8. Revert runs
 
 `docs/v3-spike/311-evidence/311-followups-revert-runs.py`: each case
 rewrites one change in the tree, runs its row, expects a failure, and
-restores every touched file in a `finally`. 39 runs, 39 caught on the
+restores every touched file in a `finally`. 44 runs, 44 caught on the
 merged tree; the tree was clean after.
 
 | Run | Reverted | Row that failed |
@@ -292,6 +323,11 @@ merged tree; the tree was clean after.
 | R10 | the dry run ignores the binding (the tip) | TestMergeTrainDryRunReadsTheBindingOfAPROnlyRequest |
 | R1h | `link_target_refused` missing from the table | TestEveryCommitRefusalCodeIsClassified |
 | R1i | the scan does not resolve a constant aliased from another package | TestEveryCommitRefusalCodeIsClassified |
+| R1j | `verdict_missing` missing from the table | TestEveryCommitRefusalCodeIsClassified |
+| R4e | no fallback to the session's latest launch | TestStatusSeatsAreTheRunningRoster |
+| R9f | a seat's commit-less tag gate clears the first commit seen | TestDriftBindsATagGateToTheCommitItsTargetNames |
+| R9g | a gate record that does not load is skipped | TestDriftNamesAGateRecordThatDoesNotLoad |
+| R9h | a covered alert stays on disk | TestDriftResolvesAnAlertAVerifiedGateLaterCovers |
 
 The no-self-re-dispatch row (TestPolicyRefusedTaskIsNotRedispatchedWithoutTheLead)
 is a pin: the store's block already gave it, and no change here sits behind
@@ -351,10 +387,10 @@ On `c331bb07` (origin/v3 `b67df349` merged), 2026-11-02:
   alerts, never fewer); the verifier's own fallback has a row (R9e). No row
   signs a gate end to end through `releaseGateVerifier`: the per-session
   namespace is read from the code, not exercised by a signed fixture.
-- **The own session keeps its seat-gated commands.** The brief's rule (a
-  target naming the tag and its commit) is applied to other sessions'
-  gates; the squad's own session keeps the seat-gated command targets it
-  had, which carry no commit, each bound to the first commit it covers.
+- **Seat-gated tag commands no longer clear a tag** (Codex P2 3): a tag
+  clears only through a target naming its commit, in every session. The
+  squad's own session keeps a seat's gated `gh release create <name>` for a
+  release, bound to the first release id it covers.
 
 ## 11. For the 3.1.1 release notes
 
