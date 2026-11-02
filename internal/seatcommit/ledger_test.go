@@ -48,3 +48,32 @@ func TestTypedWidenSnapshotIsKeyedByStoppedAttempt(t *testing.T) {
 		t.Fatalf("archived snapshot size = %+v", d)
 	}
 }
+
+func TestCleanSeatArchiveWinsBeforeLaterAttemptArchives(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newFixture(t)
+	tk := f.leased("cmd/")
+	write(t, filepath.Join(f.wt, "first.go"), "package first\n")
+	blocked, err := f.store.BlockWithPaths(tk.ID, f.handle, task.ReasonWidenRequested, "", task.RouteLead, []string{"first.go"}, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := blocked.BlockAttempt
+	if discarded, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || !discarded {
+		t.Fatalf("CleanSeat first = %v, %v", discarded, err)
+	}
+	first, err := ReadLedger(f.root, f.handle)
+	if err != nil || len(first.Discarded) != 1 {
+		t.Fatalf("first archive = %+v, %v", first.Discarded, err)
+	}
+	write(t, filepath.Join(f.wt, "second.go"), "package second\n// changed after cleanup\n")
+	for _, writer := range []string{"scheduler", "on-demand"} {
+		if archived, err := ArchiveAttempt(f.root, f.handle, gitBin(t), nil, tk.ID, attempt, f.now.Add(time.Second)); err != nil || archived {
+			t.Fatalf("%s archive = %v, %v", writer, archived, err)
+		}
+	}
+	after, err := ReadLedger(f.root, f.handle)
+	if err != nil || len(after.Discarded) != 1 || after.Discarded[0].Tree != first.Discarded[0].Tree || after.Discarded[0].Parent != first.Discarded[0].Parent {
+		t.Fatalf("first writer changed: before=%+v after=%+v err=%v", first.Discarded, after.Discarded, err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -286,9 +287,6 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if archived, err := seatcommit.ArchiveAttempt(f.root, "s1", "", nil, tk.ID, blocked.BlockAttempt, time.Now()); err != nil || !archived {
-			t.Fatalf("archive stopped attempt: archived=%v err=%v", archived, err)
-		}
 		sel := scopedSelection(t, []string{"--project", f.project, "--session", "s"})
 		literal, _ := task.LiteralGlob("extra.go")
 		data, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{literal}, Reason: "needed"})
@@ -297,6 +295,66 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		}
 		if len(data.Decision.Crossings) != 1 || data.Decision.Crossings[0].Limit != seatcommit.LimitSize {
 			t.Fatalf("size crossing = %+v", data.Decision.Crossings)
+		}
+		ledger, err := seatcommit.ReadLedger(f.root, "s1")
+		if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].Attempt != blocked.BlockAttempt {
+			t.Fatalf("on-demand archive = %+v, %v", ledger.Discarded, err)
+		}
+	})
+
+	t.Run("on demand keeps a concurrent first archive", func(t *testing.T) {
+		f := newGateCLIFixture(t)
+		repo, wt := seatRepo(t, f.root)
+		grant := filepath.Join(f.home, ".amq-squad", "grants.yaml")
+		raw, err := os.ReadFile(grant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(grant, []byte(strings.Replace(string(raw), "size_cap_lines: 300", "size_cap_lines: 1", 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s, _ := task.Open(f.root)
+		tk, _ := s.Add(task.AddInput{Title: "raced typed size", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n1\n2\n3\n")
+		blocked, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		prev := archiveWidenAttempt
+		t.Cleanup(func() { archiveWidenAttempt = prev })
+		archiveWidenAttempt = func(root, handle, gitBin string, env []string, taskID string, attempt int, now time.Time) (bool, error) {
+			if discarded, err := seatcommit.CleanSeat(root, handle, gitBin, env, now); err != nil || !discarded {
+				return false, fmt.Errorf("CleanSeat first: discarded=%v: %w", discarded, err)
+			}
+			mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n")
+			return seatcommit.ArchiveAttempt(root, handle, gitBin, env, taskID, attempt, now)
+		}
+		literal, _ := task.LiteralGlob("extra.go")
+		data, err := applyLeadWiden(scopedSelection(t, []string{"--project", f.project, "--session", "s"}), "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+		if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || data.Decision.DryRun == nil || data.Decision.DryRun.Lines <= 1 {
+			t.Fatalf("first archive decision = %+v, %v", data, err)
+		}
+		ledger, err := seatcommit.ReadLedger(f.root, "s1")
+		if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].Attempt != blocked.BlockAttempt {
+			t.Fatalf("raced archive = %+v, %v", ledger.Discarded, err)
+		}
+	})
+
+	t.Run("missing snapshot without typed block stays refused", func(t *testing.T) {
+		prev := archiveWidenAttempt
+		t.Cleanup(func() { archiveWidenAttempt = prev })
+		called := false
+		archiveWidenAttempt = func(string, string, string, []string, string, int, time.Time) (bool, error) {
+			called = true
+			return true, nil
+		}
+		missing := seatcommit.WidenDecision{ReasonCode: seatcommit.ReasonWidenSnapshotMissing, Detail: "snapshot is missing"}
+		got, err := archiveMissingTypedWiden(storeSelection{}, task.Task{ID: "t1"}, seatcommit.WidenOptions{Commit: &seatcommit.Options{SnapshotAttempt: 1}}, missing)
+		if err != nil || called || got.ReasonCode != seatcommit.ReasonWidenSnapshotMissing {
+			t.Fatalf("unrecorded attempt = %+v, called=%v, err=%v", got, called, err)
 		}
 	})
 
