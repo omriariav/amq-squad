@@ -21,7 +21,7 @@ import (
 
 // ReasonGrowthGate is the reason code of a widening that crosses a grant
 // limit; the task goes to the owner (block_route owner).
-const ReasonGrowthGate = "growth_gate_required"
+const ReasonGrowthGate = task.ReasonGrowthGateRequired
 
 // WidenOptions are the inputs of the widening check.
 type WidenOptions struct {

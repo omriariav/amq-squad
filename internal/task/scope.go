@@ -51,7 +51,8 @@ func (s Store) WidenGated(id, actor, reason string, paths, gates []string, dur t
 	}
 	actor = strings.TrimSpace(actor)
 	return s.mutate(id, now, func(t *Task, all *tasks) error {
-		typedRequest := t.State == StateBlocked && t.Report == nil && len(t.RefusedPaths) > 0
+		typedRequest := t.State == StateBlocked && t.Report == nil && len(t.RefusedPaths) > 0 &&
+			(t.BlockReason == ReasonWidenRequested || t.BlockReason == ReasonGrowthGateRequired)
 		if Terminal(t.State) || len(added) == 0 || strings.TrimSpace(reason) == "" || actor == "" {
 			return fmt.Errorf("widen needs a non-terminal task, paths, an actor and a reason")
 		}

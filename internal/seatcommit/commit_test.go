@@ -1,6 +1,7 @@
 package seatcommit
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,15 +79,140 @@ func TestCommitOutsideDeclaredFilesIsRefused(t *testing.T) {
 	}
 }
 
+func TestCommitJudgesChangedLinksFromTheSnapshotTree(t *testing.T) {
+	t.Run("added protected", func(t *testing.T) {
+		f := newFixture(t)
+		f.grants.ProtectedPaths = append(f.grants.ProtectedPaths, ".github/workflows/")
+		if err := os.Symlink(".github/workflows/ci.yml", filepath.Join(f.wt, "link")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		res := f.run(f.reported("link"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "link") || !strings.Contains(res.Detail, ".github/workflows/ci.yml") {
+			t.Fatalf("protected link = %+v", res)
+		}
+	})
+	t.Run("real retarget", func(t *testing.T) {
+		f := newFixtureWithBaseLink(t, "base-link", "cmd/root.go")
+		if err := os.Remove(filepath.Join(f.wt, "base-link")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("CLAUDE.md", filepath.Join(f.wt, "base-link")); err != nil {
+			t.Fatal(err)
+		}
+		res := f.run(f.reported("base-link"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "base-link") || !strings.Contains(res.Detail, "CLAUDE.md") {
+			t.Fatalf("retarget = %+v", res)
+		}
+	})
+	for name, tc := range map[string]struct{ target, want string }{
+		"absolute":         {"/etc/passwd", "absolute"},
+		"outside":          {"../outside", "leaves the repository"},
+		"unclean dangling": {"missing/../cmd/root.go", "dangling"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			if err := os.Symlink(tc.target, filepath.Join(f.wt, "link")); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			res := f.run(f.reported("link"))
+			if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, tc.target) || !strings.Contains(res.Detail, tc.want) {
+				t.Fatalf("%s = %+v", name, res)
+			}
+		})
+	}
+	t.Run("target exists only in worktree", func(t *testing.T) {
+		f := newFixture(t)
+		write(t, filepath.Join(f.wt, ".gitignore"), "only-worktree\n")
+		write(t, filepath.Join(f.wt, "only-worktree"), "not in tree\n")
+		os.Symlink("only-worktree", filepath.Join(f.wt, "link"))
+		res := f.run(f.reported("link", ".gitignore"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "only-worktree") {
+			t.Fatalf("worktree-only target = %+v", res)
+		}
+	})
+	t.Run("ordinary declared destination", func(t *testing.T) {
+		f := newFixture(t)
+		os.Symlink("cmd/root.go", filepath.Join(f.wt, "link"))
+		res := f.run(f.reported("link", "cmd/root.go"))
+		if !res.OK {
+			t.Fatalf("ordinary link = %+v", res)
+		}
+	})
+	t.Run("unchanged dangling base link", func(t *testing.T) {
+		f := newFixtureWithBaseLink(t, "old-dangling", "missing")
+		write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// unrelated\n")
+		if res := f.run(f.reported("cmd/root.go")); !res.OK {
+			t.Fatalf("unchanged dangling link = %+v", res)
+		}
+	})
+	t.Run("mode-only file to link", func(t *testing.T) {
+		f := newFixture(t)
+		os.Remove(filepath.Join(f.wt, "README.md"))
+		os.Symlink("readme\n", filepath.Join(f.wt, "README.md"))
+		res := f.run(f.reported("README.md"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "dangling") {
+			t.Fatalf("mode-only link = %+v", res)
+		}
+	})
+	t.Run("depth limit", func(t *testing.T) {
+		f := newFixture(t)
+		for i := 0; i <= treeLinkMaxDepth; i++ {
+			os.Symlink(fmt.Sprintf("l%02d", i+1), filepath.Join(f.wt, fmt.Sprintf("l%02d", i)))
+		}
+		os.Symlink("README.md", filepath.Join(f.wt, fmt.Sprintf("l%02d", treeLinkMaxDepth+1)))
+		res := f.run(f.reported("l*"))
+		if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "depth limit 40") {
+			t.Fatalf("depth link = %+v", res)
+		}
+	})
+	t.Run("finite revisit", func(t *testing.T) {
+		f := newFixture(t)
+		write(t, filepath.Join(f.wt, "real", "file"), "safe\n")
+		os.Symlink("real", filepath.Join(f.wt, "d"))
+		os.Symlink("d/../d/file", filepath.Join(f.wt, "link"))
+		if res := f.run(f.reported("d", "link", "real/file")); !res.OK {
+			t.Fatalf("finite revisit = %+v", res)
+		}
+	})
+	t.Run("worktree swap after snapshot", func(t *testing.T) {
+		f := newFixture(t)
+		os.Symlink("cmd/root.go", filepath.Join(f.wt, "link"))
+		tk := f.reported("link", "cmd/root.go")
+		opts := f.opts(tk)
+		opts.TreeObjects = panicOnFilesystemRead{fakeTree(map[string]string{"link": "cmd/root.go"}, "cmd/root.go")}
+		opts.AfterSnapshot = func(string) {
+			if err := os.Remove(filepath.Join(f.wt, "link")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("CLAUDE.md", filepath.Join(f.wt, "link")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := Run(opts)
+		if !res.OK || sh(t, f.wt, "show", res.Commit+":link") != "cmd/root.go" {
+			t.Fatalf("snapshot decision = %+v", res)
+		}
+	})
+}
+
 func TestCommitRefusesARetargetedLinkInsteadOfFollowingItsWidenedTarget(t *testing.T) {
 	f := newFixture(t)
 	if err := os.Symlink("cmd/root.go", filepath.Join(f.wt, "source-link")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	os.Remove(filepath.Join(f.wt, "source-link"))
-	os.Symlink("CLAUDE.md", filepath.Join(f.wt, "source-link"))
-	res := f.run(f.reported("cmd/root.go"))
-	if res.OK || res.ReasonCode != ReasonOutside || !strings.Contains(res.Detail, "source-link") {
+	tk := f.reported("cmd/root.go")
+	tk, err := f.store.Widen(tk.ID, "lead", `exact-path resolution: "source-link" resolves to "cmd/root.go"`, []string{"source-link"}, time.Hour, f.now)
+	if err != nil || len(tk.ScopeChanges) != 1 || strings.Join(tk.DeclaredFiles, ",") != "cmd/root.go,source-link" {
+		t.Fatalf("record original link widen = %+v, %v", tk, err)
+	}
+	if err := os.Remove(filepath.Join(f.wt, "source-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("CLAUDE.md", filepath.Join(f.wt, "source-link")); err != nil {
+		t.Fatal(err)
+	}
+	res := f.run(tk)
+	if res.OK || res.ReasonCode != ReasonLinkTarget || !strings.Contains(res.Detail, "source-link") || !strings.Contains(res.Detail, "CLAUDE.md") {
 		t.Fatalf("retargeted link commit = %+v", res)
 	}
 }
