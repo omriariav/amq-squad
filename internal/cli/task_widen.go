@@ -184,12 +184,23 @@ func (e *widenRefused) Error() string { return fmt.Sprintf("widen refused (%s): 
 
 var archiveWidenAttempt = seatcommit.ArchiveAttempt
 
-// archiveMissingTypedWiden closes the one-tick window between a typed block
-// and scanAttempts. The decision socket runs in the scheduler process, so it
-// uses the same sealed, first-writer-wins archive as the tick and CleanSeat.
-func archiveMissingTypedWiden(sel storeSelection, t task.Task, wo seatcommit.WidenOptions, d seatcommit.WidenDecision) (seatcommit.WidenDecision, error) {
-	if d.ReasonCode != seatcommit.ReasonWidenSnapshotMissing || !typedWidenRequest(t) || wo.Commit == nil || wo.Commit.SnapshotAttempt != t.BlockAttempt {
+// archiveTypedWidenAttempt closes the one-tick window between a typed block
+// and scanAttempts. It identifies the missing snapshot by its durable task and
+// attempt key, not by a CheckWiden refusal code. The decision socket runs in
+// the scheduler process, so it uses the same sealed, first-writer-wins archive
+// as the tick and CleanSeat.
+func archiveTypedWidenAttempt(sel storeSelection, t task.Task, wo seatcommit.WidenOptions, d seatcommit.WidenDecision) (seatcommit.WidenDecision, error) {
+	if !typedWidenRequest(t) || wo.Commit == nil || wo.Commit.SnapshotAttempt != t.BlockAttempt {
 		return d, nil
+	}
+	ledger, err := seatcommit.ReadLedger(sel.root, wo.Commit.Handle)
+	if err != nil {
+		return d, fmt.Errorf("read typed widen archive for task %s attempt %d: %w", t.ID, wo.Commit.SnapshotAttempt, err)
+	}
+	for _, discarded := range ledger.Discarded {
+		if discarded.TaskID == t.ID && discarded.Attempt == wo.Commit.SnapshotAttempt {
+			return d, nil
+		}
 	}
 	if _, err := archiveWidenAttempt(sel.root, wo.Commit.Handle, "", nil, t.ID, wo.Commit.SnapshotAttempt, taskNow()); err != nil {
 		return d, fmt.Errorf("archive typed widen snapshot for task %s attempt %d: %w", t.ID, wo.Commit.SnapshotAttempt, err)
@@ -265,7 +276,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		}
 	}
 	d := seatcommit.CheckWiden(wo)
-	d, err = archiveMissingTypedWiden(sel, t, wo, d)
+	d, err = archiveTypedWidenAttempt(sel, t, wo, d)
 	if err != nil {
 		return data, err
 	}

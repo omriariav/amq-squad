@@ -7,11 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -352,7 +354,7 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 			return true, nil
 		}
 		missing := seatcommit.WidenDecision{ReasonCode: seatcommit.ReasonWidenSnapshotMissing, Detail: "snapshot is missing"}
-		got, err := archiveMissingTypedWiden(storeSelection{}, task.Task{ID: "t1"}, seatcommit.WidenOptions{Commit: &seatcommit.Options{SnapshotAttempt: 1}}, missing)
+		got, err := archiveTypedWidenAttempt(storeSelection{}, task.Task{ID: "t1"}, seatcommit.WidenOptions{Commit: &seatcommit.Options{SnapshotAttempt: 1}}, missing)
 		if err != nil || called || got.ReasonCode != seatcommit.ReasonWidenSnapshotMissing {
 			t.Fatalf("unrecorded attempt = %+v, called=%v, err=%v", got, called, err)
 		}
@@ -387,6 +389,108 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 			t.Fatalf("post-reset widen = %+v, %v", data, err)
 		}
 	})
+}
+
+// A previous attempt's discard must not make the next typed block wait for
+// scanAttempts: CheckWiden calls that a mismatch, but the task/attempt key is
+// new and must be archived on demand.
+func TestTypedWidenArchivesARetriedAttemptOnDemand(t *testing.T) {
+	f := newGateCLIFixture(t)
+	repo, wt := seatRepo(t, f.root)
+	grant := filepath.Join(f.home, ".amq-squad", "grants.yaml")
+	raw, err := os.ReadFile(grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(grant, []byte(strings.Replace(string(raw), "size_cap_lines: 300", "size_cap_lines: 1", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := task.Open(f.root)
+	tk, _ := s.Add(task.AddInput{Title: "retried typed size", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo, CreatedBy: "lead"}, time.Now())
+	if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n1\n2\n3\n")
+	first, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived, err := seatcommit.ArchiveAttempt(f.root, "s1", "", nil, tk.ID, first.BlockAttempt, time.Now()); err != nil || !archived {
+		t.Fatalf("first archive = %v, %v", archived, err)
+	}
+	if _, err := s.ResetBy(tk.ID, "lead", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n1\n2\n3\n// second attempt\n")
+	second, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	literal, _ := task.LiteralGlob("extra.go")
+	data, err := applyLeadWiden(scopedSelection(t, []string{"--project", f.project, "--session", "s"}), "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+	if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || data.Decision.DryRun == nil {
+		t.Fatalf("retried widen = %+v, %v", data, err)
+	}
+	ledger, err := seatcommit.ReadLedger(f.root, "s1")
+	if err != nil || len(ledger.Discarded) != 2 || ledger.Discarded[0].Attempt != first.BlockAttempt || ledger.Discarded[1].Attempt != second.BlockAttempt || ledger.Discarded[0].Tree == ledger.Discarded[1].Tree || data.Decision.DryRun.Parent != ledger.Discarded[1].Parent || data.Decision.DryRun.Tree != ledger.Discarded[1].Tree {
+		t.Fatalf("retried ledger or dry run = %+v, decision=%+v, err=%v", ledger.Discarded, data.Decision.DryRun, err)
+	}
+}
+
+// CleanSeat and the on-demand archive take the same ledger lock. Release them
+// together repeatedly so race builds exercise the first-writer-wins path, not
+// the old sequential seam.
+func TestTypedWidenArchiveContendsWithCleanSeat(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		t.Run(fmt.Sprintf("attempt-%d", i), func(t *testing.T) {
+			f := newGateCLIFixture(t)
+			repo, wt := seatRepo(t, f.root)
+			s, _ := task.Open(f.root)
+			tk, _ := s.Add(task.AddInput{Title: "contended archive", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
+			if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n// contended\n")
+			blocked, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			expectedParent := gitT(t, wt, "rev-parse", "HEAD")
+			gitT(t, wt, "add", "-A")
+			expectedTree := gitT(t, wt, "write-tree")
+			start := make(chan struct{})
+			results := make(chan error, 2)
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, err := seatcommit.CleanSeat(f.root, "s1", "", nil, time.Now())
+				results <- err
+			}()
+			go func() {
+				defer wg.Done()
+				<-start
+				_, err := seatcommit.ArchiveAttempt(f.root, "s1", "", nil, tk.ID, blocked.BlockAttempt, time.Now())
+				results <- err
+			}()
+			close(start)
+			wg.Wait()
+			close(results)
+			for err := range results {
+				if err != nil && !errors.Is(err, seatcommit.ErrLedgerBusy) {
+					t.Fatalf("contended archive: %v", err)
+				}
+			}
+			ledger, err := seatcommit.ReadLedger(f.root, "s1")
+			if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].TaskID != tk.ID || ledger.Discarded[0].Attempt != blocked.BlockAttempt || ledger.Discarded[0].Parent != expectedParent || ledger.Discarded[0].Tree != expectedTree {
+				t.Fatalf("contended ledger = %+v, %v", ledger.Discarded, err)
+			}
+		})
+	}
 }
 
 // writeOwnerKeys writes the core's issuer key and the owner's trust store
