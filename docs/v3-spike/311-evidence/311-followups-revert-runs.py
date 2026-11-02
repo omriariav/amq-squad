@@ -152,6 +152,9 @@ CASES = [
  ("R9g a gate record that does not load is skipped (Codex P2 4 on #854)", "internal/mergetrain/drift.go",
   "\t\t\t\tbad = append(bad, unreadableStore{path: filepath.Join(store.Dir(\"gates\"), id+\".json\"), err: err})\n", "",
   GO("internal/mergetrain", "TestDriftNamesAGateRecordThatDoesNotLoad")),
+ ("R9h a covered alert stays on disk (Codex P2 5 on #854)", "internal/mergetrain/drift.go",
+  "\t\t\t\t_ = os.Remove(filepath.Join(dir, id+\".json\"))\n", "",
+  GO("internal/mergetrain", "TestDriftResolvesAnAlertAVerifiedGateLaterCovers")),
 ]
 
 originals = {}

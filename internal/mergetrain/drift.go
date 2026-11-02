@@ -91,7 +91,8 @@ type GateVerifier func(session string, store gatestore.Store, rec gatestore.Reco
 // (alerts/covered-<gate>.json, covered-<session>--<gate>.json for another
 // session's), so a tag moved to another commit or a release deleted and
 // recreated under the same tag needs a new gate. Each uncovered one is
-// written once as an alert and returned; a gate store that cannot be read
+// written once as an alert and returned, and removed once a verified gate
+// covers it; a gate store that cannot be read
 // is an alert of its own (gate_store_unreadable), never a clearance.
 // Recorded limit: what exists at the first run is the baseline, so the
 // owner's first run is the baseline review.
@@ -133,18 +134,32 @@ func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repo
 			return alerts, err
 		}
 	}
+	raised, covered := map[string]bool{}, map[string]bool{}
 	raise := func(kind, name, sha, object string, own []string, other ...string) error {
+		sum := sha256.Sum256([]byte(repository + "\x00" + kind + "\x00" + name + "\x00" + sha))
+		id := "ungated-" + kind + "-" + hex.EncodeToString(sum[:6])
 		for _, t := range append(own, other...) {
 			for _, g := range accepted[t] {
 				if (g.own || slices.Contains(other, t)) && bindCovered(dir, g.bindKey, object) {
+					covered[id] = true
 					return nil
 				}
 			}
 		}
-		sum := sha256.Sum256([]byte(repository + "\x00" + kind + "\x00" + name + "\x00" + sha))
-		return alert(Alert{ID: "ungated-" + kind + "-" + hex.EncodeToString(sum[:6]), Repository: repository, Kind: kind, Name: name, SHA: sha,
+		raised[id] = true
+		return alert(Alert{ID: id, Repository: repository, Kind: kind, Name: name, SHA: sha,
 			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("%s %s on %s has no accepted owner gate", kind, name, repository)})
 	}
+	// An alert a verified gate now covers is resolved: its file goes, so
+	// status stops showing it (Codex P2 5 on #854). One that this run raised
+	// again for another object of the same name (a recreated release) stays.
+	defer func() {
+		for id := range covered {
+			if !raised[id] {
+				_ = os.Remove(filepath.Join(dir, id+".json"))
+			}
+		}
+	}()
 	for _, t := range tags {
 		if slices.Contains(base.Tags, t) {
 			continue

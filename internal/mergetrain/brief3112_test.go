@@ -113,6 +113,7 @@ func TestDriftClearsOnlyOnTheOwnerSignedAcceptance(t *testing.T) {
 	base := t.TempDir()
 	squad, release := filepath.Join(base, "v31"), filepath.Join(base, "v310")
 	_ = os.MkdirAll(squad, 0o700)
+	_ = os.MkdirAll(release, 0o700) // so only the signature can refuse it
 	l := &listed{}
 	now := time.Date(2026, 11, 1, 22, 0, 0, 0, time.UTC)
 	_, _ = Drift(context.Background(), l, nil, squad, repo, now)
@@ -191,5 +192,32 @@ func TestDriftNamesAGateRecordThatDoesNotLoad(t *testing.T) {
 	a, err := Drift(context.Background(), l, decisionAccepted, squad, repo, now)
 	if err != nil || len(a) != 1 || a[0].Kind != "gate_store_unreadable" || a[0].Name != bad {
 		t.Fatalf("a torn gate record: %v %+v", err, a)
+	}
+}
+
+// Codex P2 5 on #854: an ungated alert stayed after a verified gate later
+// covered its tag and release, and status kept showing it. The alert is
+// resolved: once the gate covers the object, the alert file is gone.
+func TestDriftResolvesAnAlertAVerifiedGateLaterCovers(t *testing.T) {
+	const repo = "owner/app"
+	base := t.TempDir()
+	squad, release := filepath.Join(base, "v31"), filepath.Join(base, "v310")
+	_ = os.MkdirAll(squad, 0o700)
+	_ = os.MkdirAll(release, 0o700) // the squad identity is the existing root's
+	l := &listed{}
+	now := time.Date(2026, 11, 1, 22, 0, 0, 0, time.UTC)
+	_, _ = Drift(context.Background(), l, decisionAccepted, squad, repo, now)
+	sha := strings.Repeat("4", 40)
+	l.tags, l.releases = []Tag{{Name: "v3.1.0", SHA: sha}}, []Release{{ID: 31, Tag: "v3.1.0"}}
+	if a, _ := Drift(context.Background(), l, decisionAccepted, squad, repo, now); len(a) != 2 || len(ReadAlerts(squad)) != 2 {
+		t.Fatalf("before the gates: %+v, on disk %+v", a, ReadAlerts(squad))
+	}
+	gateIn(t, release, "rel-tag", "tag", gatetarget.ReleaseTag(repo, "v3.1.0", sha), true)
+	gateIn(t, release, "rel-gh", "github_release", gatetarget.ReleaseCreate(repo, "v3.1.0"), true)
+	if a, err := Drift(context.Background(), l, decisionAccepted, squad, repo, now); err != nil || len(a) != 0 {
+		t.Fatalf("after the gates: %v %+v", err, a)
+	}
+	if got := ReadAlerts(squad); len(got) != 0 {
+		t.Fatalf("the covered alerts stay on disk, so status shows them: %+v", got)
 	}
 }
