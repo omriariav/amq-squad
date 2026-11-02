@@ -143,6 +143,9 @@ CASES = [
  ("R1j verdict_missing missing from the table (Codex P2 1 on #854)", "internal/routing/refusal.go",
   "\ttask.BlockVerdictMissing:         true,\n", "",
   GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified")),
+ ("R4e no fallback to the session's latest launch (Codex P2 2 on #854)", "internal/status/classify.go",
+  "\tcase in.Scheduler.UpdatedAt.IsZero():\n", "\tcase false:\n",
+  GO("internal/status", "TestStatusSeatsAreTheRunningRoster")),
 ]
 
 originals = {}

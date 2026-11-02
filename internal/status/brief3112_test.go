@@ -21,22 +21,25 @@ import (
 func TestStatusSeatsAreTheRunningRoster(t *testing.T) {
 	now := time.Date(2026, 11, 1, 19, 0, 0, 0, time.UTC)
 	root := filepath.Join(t.TempDir(), "root")
-	seat := func(handle, session, launchID string) {
+	seat := func(handle, session, launchID string, compiled time.Time) {
 		for _, d := range []string{filepath.Join(root, "agents", handle), launch.StagedDir(root, handle)} {
 			if err := os.MkdirAll(d, 0o700); err != nil {
 				t.Fatal(err)
 			}
 		}
-		rec := launch.Record{Handle: handle, Root: root, Session: session, Runtime: "codex", LaunchID: launchID}
+		rec := launch.Record{Handle: handle, Root: root, Session: session, Runtime: "codex", LaunchID: launchID, StartedAt: compiled}
 		if err := launch.WriteFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName), rec); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, h := range []string{"lead", "qa", "scribe", "senior-dev"} {
-		seat(h, "v30", "old-"+h)
+	// the earlier records: session v30's and one of v31's own earlier launch
+	for _, h := range []string{"lead", "qa", "scribe"} {
+		seat(h, "v30", "old-"+h, now.Add(-48*time.Hour))
 	}
+	seat("senior-dev", "v31", "old-senior-dev", now.Add(-24*time.Hour))
+	// the roster's launch: one compile, one launch id
 	for _, h := range []string{"cto", "dev", "reviewer"} {
-		seat(h, "v31", "c811afa6-"+h)
+		seat(h, "v31", "c811afa6", now.Add(-time.Hour))
 	}
 	write(t, scheduler.StatePathFor(root), `{"lead":"cto","max_seats":2,"live_seats":2,"seats":[],"roster":["dev","reviewer"]}`)
 	s := Build(Collect(CollectOptions{Root: root, Session: "v31", Now: now, PIDAlive: func(int) bool { return false }}))
@@ -47,19 +50,30 @@ func TestStatusSeatsAreTheRunningRoster(t *testing.T) {
 	if !slices.Equal(seats, []string{"cto", "dev", "reviewer"}) {
 		t.Fatalf("seats %v, want the running roster with its lead", seats)
 	}
-	want := []StaleRecord{{"lead", "v30", "old-lead"}, {"qa", "v30", "old-qa"}, {"scribe", "v30", "old-scribe"}, {"senior-dev", "v30", "old-senior-dev"}}
+	want := []StaleRecord{{"lead", "v30", "old-lead"}, {"qa", "v30", "old-qa"}, {"scribe", "v30", "old-scribe"}, {"senior-dev", "v31", "old-senior-dev"}}
 	if !slices.Equal(s.StaleRecords, want) {
 		t.Fatalf("stale_records %+v, want %+v", s.StaleRecords, want)
 	}
 	if s.Counts.All != 3 {
 		t.Fatalf("a stale record is counted: %+v", s.Counts)
 	}
-	// No roster known (seats on demand, no scheduler state): every record
-	// is a seat row, as before, and stale_records is [].
+	// No scheduler state (Codex P2 2 on #854): the session's latest launch
+	// record, the roster's one compile, is the roster.
 	_ = os.Remove(scheduler.StatePathFor(root))
 	s = Build(Collect(CollectOptions{Root: root, Session: "v31", Now: now, PIDAlive: func(int) bool { return false }}))
+	seats = nil
+	for _, st := range s.Seats {
+		seats = append(seats, st.Handle)
+	}
+	if !slices.Equal(seats, []string{"cto", "dev", "reviewer"}) || !slices.Equal(s.StaleRecords, want) {
+		t.Fatalf("without scheduler state: seats %v, stale_records %+v", seats, s.StaleRecords)
+	}
+	// A scheduler running seats on demand (state, no roster): every record
+	// is a seat row, as before, and stale_records is [].
+	write(t, scheduler.StatePathFor(root), `{"updated_at":"2026-11-01T18:00:00Z","max_seats":2,"live_seats":0,"seats":[]}`)
+	s = Build(Collect(CollectOptions{Root: root, Session: "v31", Now: now, PIDAlive: func(int) bool { return false }}))
 	if len(s.Seats) != 7 || s.StaleRecords == nil || len(s.StaleRecords) != 0 {
-		t.Fatalf("without a roster: %d seats, stale_records %v", len(s.Seats), s.StaleRecords)
+		t.Fatalf("seats on demand: %d seats, stale_records %v", len(s.Seats), s.StaleRecords)
 	}
 }
 

@@ -34,7 +34,7 @@ anywhere else, or a null document, fails the check.
 | `capabilities[]` | what this producer fills; see below |
 | `buckets[]` | the four buckets in display order: `id`, `label`, `rule` |
 | `counts` | rows per bucket: `all`, `needs_you`, `working`, `ready`, `inactive`; a row is a task, or a seat that holds no task |
-| `seats[]` | seat rows: the running squad's roster (brief 3.1.1-2), the seats of squad.yaml as the scheduler compiled it (its state file's roster, the last one it wrote) with the lead; with no roster known (seats on demand, or no scheduler state yet) every seat record under the root, as before. The row's shape is unchanged; the meaning narrows |
+| `seats[]` | seat rows: the running squad's roster (brief 3.1.1-2), the seats of squad.yaml as the scheduler compiled it (its state file's roster, the last one it wrote) with the lead; with no scheduler state at all, the seats of this session's latest launch (the staged records sharing the newest compile's launch id; a record with no launch id or compile time cannot be ordered and stays a seat row) with the lead; with a scheduler running seats on demand (state, no roster) every seat record under the root, as before. The row's shape is unchanged; the meaning narrows |
 | `stale_records[]` | (additive, brief 3.1.1-2) every seat record under the root that is not the running roster's, an earlier session's or launch's handle: `handle`, `session` (the AMQ session its launch record names), `launch_id` (empty when unknown). Never a seat row, never counted, no attention item; `[]` when there is none or no roster is known |
 | `tasks[]` | task rows |
 | `attention[]` | the attention queue |

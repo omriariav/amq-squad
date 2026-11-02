@@ -41,8 +41,11 @@ type SeatInput struct {
 	Worktree, Branch string
 	Launch           *SeatLaunch
 	// Session is the AMQ session its staged launch record names (brief
-	// 3.1.1-2: a stale record's row carries it).
-	Session string
+	// 3.1.1-2: a stale record's row carries it), LaunchStartedAt the
+	// record's compile time (the session's latest launch, the roster's
+	// fallback).
+	Session         string
+	LaunchStartedAt time.Time
 }
 
 // GateInput is one gate record (verified by the caller against its answer).
@@ -523,16 +526,44 @@ func routeWaitPool(t task.Task, waits []scheduler.RouteWait) string {
 
 // runningRoster is the running squad's seats (brief 3.1.1-2 item 2): the
 // roster the scheduler compiled from squad.yaml and wrote to its state
-// file, with the lead (the scheduler's, and its launch record's). nil when
-// no roster is known (no scheduler state, or seats on demand): every
-// record under the root is a seat row, as before.
+// file, with the lead (the scheduler's, and its launch record's). With no
+// scheduler state at all, the seats of this session's latest launch (the
+// staged records of the session sharing the newest compile's launch id: a
+// roster launches in one compile) with the lead (Codex P2 2 on #854); a
+// record with no launch id or compile time cannot be ordered and stays. nil
+// when neither is known (a scheduler running seats on demand, or no launch
+// record of this session): every record under the root is a seat row.
 func runningRoster(in Input) map[string]bool {
-	if len(in.Scheduler.Roster) == 0 {
-		return nil
-	}
 	out := map[string]bool{}
-	for _, h := range in.Scheduler.Roster {
-		out[h] = true
+	switch {
+	case len(in.Scheduler.Roster) > 0:
+		for _, h := range in.Scheduler.Roster {
+			out[h] = true
+		}
+	case in.Scheduler.UpdatedAt.IsZero():
+		var latest *SeatInput
+		for i := range in.Seats {
+			s := &in.Seats[i]
+			if s.Launch == nil || s.Launch.LaunchID == "" || s.LaunchStartedAt.IsZero() || (in.Session != "" && s.Session != in.Session) {
+				continue
+			}
+			if latest == nil || s.LaunchStartedAt.After(latest.LaunchStartedAt) {
+				latest = s
+			}
+		}
+		if latest == nil {
+			return nil
+		}
+		for _, s := range in.Seats {
+			// a record with no launch id or compile time cannot be ordered
+			// against the latest launch: it stays a seat row
+			unordered := s.Launch == nil || s.Launch.LaunchID == "" || s.LaunchStartedAt.IsZero()
+			if unordered || s.Launch.LaunchID == latest.Launch.LaunchID && (in.Session == "" || s.Session == in.Session) {
+				out[s.Handle] = true
+			}
+		}
+	default:
+		return nil
 	}
 	if in.Scheduler.Lead != "" {
 		out[in.Scheduler.Lead] = true
