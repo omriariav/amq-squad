@@ -299,7 +299,17 @@ it to revert.
 
 ## 9. Gates
 
-GATE_TAILS
+On `c331bb07` (origin/v3 `b67df349` merged), 2026-11-02:
+
+- `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0; 56
+  packages `ok`, none failing; the tail is `ok .../scripts`,
+  `ok .../scripts/pipack`, then three packages with no test files.
+- `cd pi && npm ci --offline --ignore-scripts && npm test`: exit 0; tests 84,
+  pass 84, fail 0.
+- `make ci` (PyYAML venv on PATH): exit 0; the tail is the hook budget line
+  `PERF outside a seat: 60 runs, p50 5.6 ms, p95 6.1 ms, max 6.5 ms (budget
+  p95 < 20 ms: met)`.
+- The revert script: 39 runs, 39 caught, the tree clean after.
 
 ## 10. Where the brief and the code disagreed
 
