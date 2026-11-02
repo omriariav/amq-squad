@@ -11,6 +11,7 @@ import (
 )
 
 func TestTypedWidenSnapshotIsKeyedByStoppedAttempt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	f := newFixture(t)
 	f.grants.Merge = []grants.Merge{f.merge(1, 0)}
 	tk := f.leased("cmd/")
@@ -26,6 +27,12 @@ func TestTypedWidenSnapshotIsKeyedByStoppedAttempt(t *testing.T) {
 	}
 	if d := check(attempt); d.ReasonCode != ReasonWidenSnapshotMissing || !strings.Contains(d.Detail, "is missing") {
 		t.Fatalf("missing snapshot = %+v", d)
+	}
+	if archived, err := ArchiveAttempt(f.root, f.handle, gitBin(t), nil, tk.ID, attempt, f.now); err != nil || !archived {
+		t.Fatalf("scheduler archive = %v, %v", archived, err)
+	}
+	if archived, err := ArchiveAttempt(f.root, f.handle, gitBin(t), nil, tk.ID, attempt, f.now); err != nil || archived {
+		t.Fatalf("duplicate scheduler archive = %v, %v", archived, err)
 	}
 	if discarded, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || !discarded {
 		t.Fatalf("CleanSeat = %v, %v", discarded, err)

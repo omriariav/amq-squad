@@ -88,14 +88,14 @@ func (s Store) WidenGated(id, actor, reason string, paths, gates []string, dur t
 				dur = DefaultLeaseDuration
 			}
 			at := now
-			t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.Attempt = StateInProgress, "", "", "", nil, t.Attempt+1
+			t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.BlockAttempt, t.Attempt = StateInProgress, "", "", "", nil, 0, t.Attempt+1
 			t.Lease = &Lease{Holder: t.Report.By, GrantedAt: now, ExpiresAt: now.Add(dur), ClaimedAt: &at, RenewedAt: &at}
 		} else if typedRequest {
 			// A seat's own widen request has no done report to retry. Return it
 			// to the pool after the lead adds the requested paths so the
 			// scheduler can dispatch a fresh attempt.
 			t.State, t.WaitReason = StatePending, ""
-			t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = "", "", "", nil
+			t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.BlockAttempt = "", "", "", nil, 0
 			t.Lease, t.Report = nil, nil
 		}
 		return nil
@@ -157,12 +157,14 @@ func (s Store) Escalate(id, reasonCode, detail string, now time.Time) (Task, err
 		// A typed widen request has no report. Its exact paths are the only
 		// durable binding for the owner's gate and the accepted retry.
 		paths := append([]string(nil), t.RefusedPaths...)
+		attempt := t.BlockAttempt
 		preserve := t.Report == nil && len(paths) > 0
 		if err := block(t, reasonCode, detail, RouteOwner); err != nil {
 			return err
 		}
 		if preserve {
 			t.RefusedPaths = paths
+			t.BlockAttempt = attempt
 		}
 		return nil
 	})
