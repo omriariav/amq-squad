@@ -346,7 +346,9 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	// R3: the exit check on every terminal path that is not a done report.
 	s.loadExits()
 	if s.exitsLoaded {
-		s.scanAttempts(list, now)
+		if err := s.scanAttempts(list, now); err != nil {
+			return out, err
+		}
 		if err := s.runExits(now, log); err != nil {
 			return out, err
 		}

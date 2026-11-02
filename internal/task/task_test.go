@@ -172,7 +172,7 @@ func TestBlockWithPathsRecordsAndRearmsTypedWidenRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.State != StateBlocked || b.BlockReason != ReasonWidenRequested || strings.Join(b.RefusedPaths, ",") != "docs/z.md,src/[b].go" || b.Lease != nil || b.Report != nil {
+	if b.State != StateBlocked || b.BlockReason != ReasonWidenRequested || b.BlockAttempt != 1 || strings.Join(b.RefusedPaths, ",") != "docs/z.md,src/[b].go" || b.Lease != nil || b.Report != nil {
 		t.Fatalf("typed block: %+v", b)
 	}
 	literal, _ := LiteralGlob("src/[b].go")
@@ -182,6 +182,14 @@ func TestBlockWithPathsRecordsAndRearmsTypedWidenRequest(t *testing.T) {
 	}
 	if w.State != StatePending || w.BlockReason != "" || len(w.RefusedPaths) != 0 || w.Lease != nil || w.Report != nil || strings.Join(w.DeclaredFiles, ",") != "docs/z.md,src/[[]b].go,src/a.go" || len(w.ScopeChanges) != 1 {
 		t.Fatalf("rearmed task: %+v", w)
+	}
+
+	pending := mustAdd(t, s, AddInput{Title: "pending"})
+	if _, err := s.BlockWithPaths(pending.ID, "lead", ReasonWidenRequested, "", RouteLead, []string{"b.go"}, t0); err == nil || !strings.Contains(err.Error(), ReasonWidenRequested) {
+		t.Fatalf("pending typed widen request: %v", err)
+	}
+	if held, err := s.Block(pending.ID, "lead", "hold", "wait", RouteLead, t0); err != nil || held.State != StateBlocked || held.BlockReason != "hold" {
+		t.Fatalf("pending hold = %+v, %v", held, err)
 	}
 
 	for name, tc := range map[string]struct {

@@ -153,9 +153,9 @@ func TestTaskCLIBlockCarriesTypedWidenPaths(t *testing.T) {
 }
 
 func TestTypedWidenResolvesASymlinkIntoAProtectedPath(t *testing.T) {
-	home, root, project := t.TempDir(), t.TempDir(), t.TempDir()
+	home, root := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
-	ownerGrant(t, filepath.Join(home, "origin.git"))
+	project, _ := seatRepo(t, root)
 	mustWrite(t, filepath.Join(project, ".claude", "settings.json"), "{}\n")
 	if err := os.Symlink(filepath.Join(".claude", "settings.json"), filepath.Join(project, "settings-link")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
@@ -165,9 +165,20 @@ func TestTypedWidenResolvesASymlinkIntoAProtectedPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.BlockWithPaths(tk.ID, "seat", task.ReasonWidenRequested, "", task.RouteLead, []string{"settings-link"}, time.Now()); err != nil {
-		t.Fatal(err)
+	blockAndArchive := func(tk task.Task, path string) {
+		t.Helper()
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		blocked, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{path}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if archived, err := seatcommit.ArchiveAttempt(root, "s1", "", nil, tk.ID, blocked.BlockAttempt, time.Now()); err != nil || !archived {
+			t.Fatalf("archive stopped attempt: archived=%v err=%v", archived, err)
+		}
 	}
+	blockAndArchive(tk, "settings-link")
 	literal, _ := task.LiteralGlob("settings-link")
 	data, err := applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
 	resolved, _ := task.LiteralGlob(".claude/settings.json")
@@ -181,7 +192,7 @@ func TestTypedWidenResolvesASymlinkIntoAProtectedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	tk, _ = s.Add(task.AddInput{Title: "ordinary alias", Class: "implement", ProjectPath: project}, time.Now())
-	_, _ = s.BlockWithPaths(tk.ID, "seat", task.ReasonWidenRequested, "", task.RouteLead, []string{"source-link"}, time.Now())
+	blockAndArchive(tk, "source-link")
 	literal, _ = task.LiteralGlob("source-link")
 	data, err = applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
 	if err != nil || data.Task == nil || strings.Join(data.Task.DeclaredFiles, ",") != "src/real.go" || len(data.Task.ScopeChanges) != 1 || !strings.Contains(data.Task.ScopeChanges[0].Reason, "source-link") {
@@ -193,7 +204,7 @@ func TestTypedWidenResolvesASymlinkIntoAProtectedPath(t *testing.T) {
 	}
 	mustWrite(t, filepath.Join(project, "CLAUDE.md"), "managed\n")
 	tk, _ = s.Add(task.AddInput{Title: "managed alias", Class: "implement", ProjectPath: project}, time.Now())
-	_, _ = s.BlockWithPaths(tk.ID, "seat", task.ReasonWidenRequested, "", task.RouteLead, []string{"managed-link"}, time.Now())
+	blockAndArchive(tk, "managed-link")
 	literal, _ = task.LiteralGlob("managed-link")
 	data, err = applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
 	want = seatcommit.ProtectedTarget(root, tk.ID, []string{"CLAUDE.md"})
@@ -228,7 +239,10 @@ func TestEveryWidenBranchRoutesLiteralPathsThroughResolution(t *testing.T) {
 			}
 		},
 		"typed widen_requested": func(t *testing.T, s task.Store, tk task.Task, now time.Time) {
-			if _, err := s.BlockWithPaths(tk.ID, "seat", task.ReasonWidenRequested, "", task.RouteLead, []string{"source-link"}, now); err != nil {
+			if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"source-link"}, now); err != nil {
 				t.Fatal(err)
 			}
 		},
@@ -251,6 +265,15 @@ func TestEveryWidenBranchRoutesLiteralPathsThroughResolution(t *testing.T) {
 				t.Fatal(err)
 			}
 			prepare(t, s, tk, now)
+			current, err := s.Get(tk.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.BlockAttempt > 0 {
+				if archived, err := seatcommit.ArchiveAttempt(root, "s1", "", nil, tk.ID, current.BlockAttempt, now); err != nil || !archived {
+					t.Fatalf("archive stopped attempt: archived=%v err=%v", archived, err)
+				}
+			}
 			data, err := applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{
 				Task: tk.ID, Files: []string{"./source-link"}, Reason: "needed",
 			})

@@ -239,11 +239,15 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: added, ProtectedAdded: protected, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
-	} else if typedWidenRequest(t) && len(t.Attempts) > 0 {
-		// CleanSeat archives the stopped attempt before this reusable seat can
-		// take another lease. Select that immutable tree by attempt number.
-		attempt := t.Attempts[len(t.Attempts)-1]
-		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: attempt.Holder, SnapshotAttempt: attempt.N, Now: taskNow}
+	} else if typedWidenRequest(t) {
+		// The scheduler archives the stopped attempt when it observes the typed
+		// block. Select that immutable tree by the block's explicit attempt.
+		for _, attempt := range t.Attempts {
+			if attempt.N == t.BlockAttempt {
+				wo.Commit = &seatcommit.Options{Root: sel.root, Handle: attempt.Holder, SnapshotAttempt: attempt.N, Now: taskNow}
+				break
+			}
+		}
 	}
 	d := seatcommit.CheckWiden(wo)
 	widenReason := req.Reason
@@ -369,6 +373,6 @@ func validateBlockedWiden(t task.Task, requested []string) ([]string, error) {
 }
 
 func typedWidenRequest(t task.Task) bool {
-	return t.Report == nil && len(t.RefusedPaths) > 0 &&
+	return t.Report == nil && t.BlockAttempt > 0 && len(t.RefusedPaths) > 0 &&
 		(t.BlockReason == task.ReasonWidenRequested || t.BlockReason == seatcommit.ReasonGrowthGate)
 }

@@ -501,6 +501,67 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discar
 	return discarded, err
 }
 
+// ArchiveAttempt seals the current worktree snapshot for one stopped typed
+// widen attempt without cleaning or otherwise changing the seat. It is the
+// scheduler-side half of CleanSeat's discard record and is idempotent by task
+// and attempt.
+func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, attempt int, now time.Time) (archived bool, err error) {
+	if gitBin == "" {
+		if gitBin, err = exec.LookPath("git"); err != nil {
+			return false, err
+		}
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	err = withLedgerTryLock(root, handle, func() error {
+		rec, err := stagedRecord(root, handle)
+		if err != nil {
+			return err
+		}
+		l, err := ReadLedger(root, handle)
+		if err != nil {
+			return err
+		}
+		for _, d := range l.Discarded {
+			if d.TaskID == taskID && d.Attempt == attempt {
+				return nil
+			}
+		}
+		rp, err := worktreePaths(rec.Worktree)
+		if err != nil {
+			return err
+		}
+		sh, err := newShadow(gitBin, harnessEnv(env), rp)
+		if err != nil {
+			return err
+		}
+		defer sh.close()
+		parent := l.Parent()
+		tree, err := snapshot(sh, parent)
+		if err != nil {
+			return err
+		}
+		raw, err := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
+		if err != nil {
+			return err
+		}
+		repo := seatRepo(gitBin, harnessEnv(env), rp)
+		expireEvidence(repo, &l, now)
+		ref, err := anchorEvidence(repo, &l, taskID, tree, now)
+		if err != nil {
+			return err
+		}
+		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: "blocked: " + task.ReasonWidenRequested, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
+		if err := writeLedger(root, l); err != nil {
+			return err
+		}
+		archived = true
+		return nil
+	})
+	return archived, err
+}
+
 // beforeReset is a test seam: it runs inside CleanSeat between the check
 // and the reset.
 var beforeReset func()
@@ -553,14 +614,20 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	if discarded {
 		raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 		taskID, attempt, last := lastAttempt(list, handle)
-		expireEvidence(repo, &l, now)
-		ref, err := anchorEvidence(repo, &l, taskID, tree, now)
-		if err != nil {
-			return false, fmt.Errorf("anchor the discarded tree: %w", err)
+		already := false
+		for _, d := range l.Discarded {
+			already = already || d.TaskID == taskID && d.Attempt == attempt
 		}
-		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
-		if err := writeLedger(root, l); err != nil {
-			return false, err
+		if !already {
+			expireEvidence(repo, &l, now)
+			ref, err := anchorEvidence(repo, &l, taskID, tree, now)
+			if err != nil {
+				return false, fmt.Errorf("anchor the discarded tree: %w", err)
+			}
+			l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
+			if err := writeLedger(root, l); err != nil {
+				return false, err
+			}
 		}
 	}
 	if beforeReset != nil {
