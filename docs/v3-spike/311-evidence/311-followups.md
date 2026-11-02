@@ -5,7 +5,17 @@ branch). Authority: the plan reviewer's follow-up lines of 2026-11-01 and the
 3.1.0 day-4 record (docs/v3-spike/31-evidence/31-1-pr2-up-status-screen.md
 section 4; docs/v3.1.0-release-notes.md "Recorded limits"). Branch
 `v3-311-fu`, from origin/v3 `31bf161c` (#838 merged), with origin/v3 merged
-in once at `2a124ca8` (#844, t28: the typed widen request), never rebased.
+in at `2a124ca8` (#844, t28: the typed widen request), at `745fea9e` (#845
+to #848, the typed widen fixes; one conflict, the widen refusal text in
+internal/cli/task_widen.go: v3's check with this branch's text) and at
+`b67df349` (#850 to #853: the git-objects-only tree resolver,
+link_target_refused, the typed widen's snapshot from the sealed ledger
+archive; no conflict), never rebased. After the last merge the
+completeness row failed on link_target_refused, widen_snapshot_missing and
+widen_snapshot_attempt_mismatch, and on seatcommit.ReasonGrowthGate, now an
+alias of task.ReasonGrowthGateRequired that the scan could not resolve; the
+three are classified as policy and data refusals and the scan resolves an
+alias of a constant it knows.
 The lead added the plan reviewer's three additions on #844's lists and
 items 5 and 6 (the merge train) during the work; sections 5 to 7.
 
@@ -36,7 +46,9 @@ for it. That path (`rosterNoIdleSeat`, internal/scheduler/roster.go) logged
   (`grants_invalid`, `tool_unpinned`, `tool_pin_mismatch`, `push_rejected`,
   `commit_failed`, `commit_cancelled`, `verifier_start_failed`,
   `verifier_interrupted`, `verifier_cancelled`, and a widening's own
-  `widen_invalid`, `widen_check_failed`).
+  `widen_invalid`, `widen_check_failed`). From the merges: `link_target_refused`
+  (policy), `widen_snapshot_missing` and `widen_snapshot_attempt_mismatch`
+  (data).
 - `failure(attempt)` reads the table: failed and expired attempts count; a
   commit refusal or a block counts only when its code is a work failure; a
   commit refusal with a code the table does not name never counts (a new code
@@ -236,8 +248,8 @@ equals the real run's after `BindTasks`, for a bound PR and an unbound one.
 
 `docs/v3-spike/311-evidence/311-followups-revert-runs.py`: each case
 rewrites one change in the tree, runs its row, expects a failure, and
-restores every touched file in a `finally`. 37 runs, 37 caught; the tree
-was clean after.
+restores every touched file in a `finally`. 39 runs, 39 caught on the
+merged tree; the tree was clean after.
 
 | Run | Reverted | Row that failed |
 | --- | --- | --- |
@@ -278,6 +290,8 @@ was clean after.
 | R9d | an unreadable store is skipped | TestDriftNamesAnUnreadableGateStore |
 | R9e | without the binding every gate verifies | TestReleaseGateVerifierFailsClosedWithoutTheBinding |
 | R10 | the dry run ignores the binding (the tip) | TestMergeTrainDryRunReadsTheBindingOfAPROnlyRequest |
+| R1h | `link_target_refused` missing from the table | TestEveryCommitRefusalCodeIsClassified |
+| R1i | the scan does not resolve a constant aliased from another package | TestEveryCommitRefusalCodeIsClassified |
 
 The no-self-re-dispatch row (TestPolicyRefusedTaskIsNotRedispatchedWithoutTheLead)
 is a pin: the store's block already gave it, and no change here sits behind

@@ -134,6 +134,12 @@ CASES = [
  ("R10 the dry run ignores the binding of a PR-only request (the tip)", "internal/cli/merge_train.go",
   "\t\t\tif err := mergetrain.BindUnnamed(*store, req.Repository, req); err != nil {\n", "\t\t\tif err := error(nil); err != nil {\n",
   GO("internal/cli", "TestMergeTrainDryRunReadsTheBindingOfAPROnlyRequest")),
+ ("R1h link_target_refused missing from the table (#851)", "internal/routing/refusal.go",
+  "\tseatcommit.ReasonLinkTarget: false, // a changed symlink's tree destination is refused (#851)\n", "",
+  GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified")),
+ ("R1i the scan does not resolve a constant aliased from another package", "internal/routing/brief3112_test.go",
+  "\t\tconsts[name] = vs[0]\n", "\t\t_ = vs\n",
+  GO("internal/routing", "TestEveryCommitRefusalCodeIsClassified")),
 ]
 
 originals = {}
