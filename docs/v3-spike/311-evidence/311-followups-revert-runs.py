@@ -158,6 +158,9 @@ CASES = [
  ("R1k the same removal, the mutation row alone (the plan reviewer)", "internal/routing/refusal.go",
   "\ttask.BlockVerdictMissing:         true,\n", "",
   GO("internal/routing", "TestVerdictMissingStaysAWorkFailure")),
+ ("R9i the train does not audit an alert's clearing (the plan reviewer)", "internal/mergetrain/train.go",
+  "\t\t\t_ = entry(Entry{Kind: \"alert_cleared\", Detail: a.Detail + \"; a verified owner gate now covers it\", GateID: a.ID})\n", "\t\t\t_ = a\n",
+  GO("internal/mergetrain", "TestTrainAuditKeepsAnAlertAndItsClearing")),
 ]
 
 originals = {}

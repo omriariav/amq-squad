@@ -260,10 +260,14 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		return res, err
 	}
 	if l, ok := t.Forge.(ReleaseLister); ok && t.ReleaseGates != nil && t.Root != "" {
-		alerts, derr := Drift(ctx, l, t.VerifyGate, t.Root, req.Repository, t.now())
+		alerts, resolved, derr := DriftResolved(ctx, l, t.VerifyGate, t.Root, req.Repository, t.now())
 		res.Alerts = alerts
 		for _, a := range alerts {
 			_ = entry(Entry{Kind: "alert", Detail: a.Detail, GateID: a.ID})
+		}
+		for _, a := range resolved {
+			// the alert's entry stays in the log; its clearing is recorded
+			_ = entry(Entry{Kind: "alert_cleared", Detail: a.Detail + "; a verified owner gate now covers it", GateID: a.ID})
 		}
 		if errors.Is(derr, ErrBaselineInvalid) {
 			res.Stopped = derr.Error()

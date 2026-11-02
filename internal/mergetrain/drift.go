@@ -97,28 +97,36 @@ type GateVerifier func(session string, store gatestore.Store, rec gatestore.Reco
 // Recorded limit: what exists at the first run is the baseline, so the
 // owner's first run is the baseline review.
 func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repository string, now time.Time) ([]Alert, error) {
+	alerts, _, err := DriftResolved(ctx, l, verify, root, repository, now)
+	return alerts, err
+}
+
+// DriftResolved is Drift that also returns the earlier alerts this run
+// resolved, as they were written (the plan reviewer on Codex P2 5): the
+// train records each clearing in its audit log beside the alert's own
+// entry, so the log keeps both while status stops showing the alert.
+func DriftResolved(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repository string, now time.Time) (alerts, resolved []Alert, err error) {
 	tags, err := l.Tags(ctx, repository)
 	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
+		return nil, nil, fmt.Errorf("list tags: %w", err)
 	}
 	releases, err := l.Releases(ctx, repository)
 	if err != nil {
-		return nil, fmt.Errorf("list releases: %w", err)
+		return nil, nil, fmt.Errorf("list releases: %w", err)
 	}
 	dir := AlertsDir(root)
 	bpath := filepath.Join(dir, "baseline-"+strings.ReplaceAll(repository, "/", "--")+".json")
 	raw, err := os.ReadFile(bpath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, writeOnceJSON(bpath, baseline{Repository: repository, At: now.UTC().Format(time.RFC3339), Tags: tags, Releases: releases})
+		return nil, nil, writeOnceJSON(bpath, baseline{Repository: repository, At: now.UTC().Format(time.RFC3339), Tags: tags, Releases: releases})
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	base, err := readBaseline(bpath, raw, releases)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var alerts []Alert
 	alert := func(a Alert) error {
 		if err := writeOnceJSON(filepath.Join(dir, a.ID+".json"), a); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err
@@ -131,7 +139,7 @@ func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repo
 		sum := sha256.Sum256([]byte(u.path))
 		if err := alert(Alert{ID: "gate-store-unreadable-" + hex.EncodeToString(sum[:6]), Repository: repository, Kind: "gate_store_unreadable", Name: u.path,
 			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("the gate store %s could not be read (%v); no gate in it clears an alert", u.path, u.err)}); err != nil {
-			return alerts, err
+			return alerts, resolved, err
 		}
 	}
 	raised, covered := map[string]bool{}, map[string]bool{}
@@ -154,9 +162,22 @@ func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repo
 	// status stops showing it (Codex P2 5 on #854). One that this run raised
 	// again for another object of the same name (a recreated release) stays.
 	defer func() {
+		ids := make([]string, 0, len(covered))
 		for id := range covered {
-			if !raised[id] {
-				_ = os.Remove(filepath.Join(dir, id+".json"))
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		for _, id := range ids {
+			if raised[id] {
+				continue
+			}
+			path := filepath.Join(dir, id+".json")
+			var a Alert
+			if raw, err := os.ReadFile(path); err != nil || json.Unmarshal(raw, &a) != nil {
+				continue // no earlier alert to resolve
+			}
+			if os.Remove(path) == nil {
+				resolved = append(resolved, a)
 			}
 		}
 	}()
@@ -168,7 +189,7 @@ func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repo
 		// #854): a seat's gated `git tag NAME` or tag push names none, so it
 		// cannot say which commit the owner meant
 		if err := raise("tag", t.Name, t.SHA, "tag "+t.Name+"@"+t.SHA, nil, gatetarget.ReleaseTag(repository, t.Name, t.SHA)); err != nil {
-			return alerts, err
+			return alerts, resolved, err
 		}
 	}
 	for _, r := range releases {
@@ -177,10 +198,10 @@ func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repo
 		}
 		own := []string{gatetarget.Command("gh release create", r.Tag)}
 		if err := raise("release", r.Tag, "", "release "+strconv.FormatInt(r.ID, 10), own, gatetarget.ReleaseCreate(repository, r.Tag)); err != nil {
-			return alerts, err
+			return alerts, resolved, err
 		}
 	}
-	return alerts, nil
+	return alerts, resolved, nil
 }
 
 // acceptedGate is a verified release gate: the key its coverage binds under

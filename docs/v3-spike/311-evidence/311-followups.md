@@ -273,13 +273,21 @@ equals the real run's after `BindTasks`, for a bound PR and an unbound one.
    stays (R9h). Fixing its row showed the unsigned-gate row had passed on
    the squad identity of a release root that did not exist yet when the
    gate was written; that row now creates the root first, so only the
-   signature refuses the gate.
+   signature refuses the gate. The plan reviewer's precision: the train's
+   audit log keeps both records, the alert's `alert` entry and an
+   `alert_cleared` entry under the same id (`DriftResolved` returns the
+   alerts a run resolved); doctor, which has no audit log, only removes the
+   file (R9i).
+
+The plan reviewer's precision on 1: a mutation row,
+TestVerdictMissingStaysAWorkFailure, breaks on exactly the removal of
+`verdict_missing`'s entry (R1k), beside the completeness row.
 
 ## 8. Revert runs
 
 `docs/v3-spike/311-evidence/311-followups-revert-runs.py`: each case
 rewrites one change in the tree, runs its row, expects a failure, and
-restores every touched file in a `finally`. 44 runs, 44 caught on the
+restores every touched file in a `finally`. 46 runs, 46 caught on the
 merged tree; the tree was clean after.
 
 | Run | Reverted | Row that failed |
@@ -317,7 +325,7 @@ merged tree; the tree was clean after.
 | R1g | `widen_requested` missing from the table | TestWidenRequestedBlockIsNotAFailedAttempt |
 | R9a | the drift check reads the squad's own store only (the tip) | TestDriftReadsTheGateStoresOfEverySession |
 | R9b | a gate clears on its decision file, no verifier (the tip) | TestDriftClearsOnlyOnTheOwnerSignedAcceptance, TestDriftReadsTheGateStoresOfEverySession |
-| R9c | another session's gated command clears a tag | TestDriftReadsTheGateStoresOfEverySession |
+| R9c | another session's gated release command clears a release | TestDriftReadsTheGateStoresOfEverySession |
 | R9d | an unreadable store is skipped | TestDriftNamesAnUnreadableGateStore |
 | R9e | without the binding every gate verifies | TestReleaseGateVerifierFailsClosedWithoutTheBinding |
 | R10 | the dry run ignores the binding (the tip) | TestMergeTrainDryRunReadsTheBindingOfAPROnlyRequest |
@@ -328,6 +336,8 @@ merged tree; the tree was clean after.
 | R9f | a seat's commit-less tag gate clears the first commit seen | TestDriftBindsATagGateToTheCommitItsTargetNames |
 | R9g | a gate record that does not load is skipped | TestDriftNamesAGateRecordThatDoesNotLoad |
 | R9h | a covered alert stays on disk | TestDriftResolvesAnAlertAVerifiedGateLaterCovers |
+| R1k | the same removal as R1j, the mutation row alone | TestVerdictMissingStaysAWorkFailure |
+| R9i | the train does not audit an alert's clearing | TestTrainAuditKeepsAnAlertAndItsClearing |
 
 The no-self-re-dispatch row (TestPolicyRefusedTaskIsNotRedispatchedWithoutTheLead)
 is a pin: the store's block already gave it, and no change here sits behind

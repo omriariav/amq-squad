@@ -223,3 +223,48 @@ func TestDriftResolvesAnAlertAVerifiedGateLaterCovers(t *testing.T) {
 		t.Fatalf("the covered alerts stay on disk, so status shows them: %+v", got)
 	}
 }
+
+// The plan reviewer on Codex P2 5: when a verified gate clears an earlier
+// ungated alert, status stops showing it and the train's audit log keeps
+// both records, the alert's and its clearing's, under the alert's id.
+func TestTrainAuditKeepsAnAlertAndItsClearing(t *testing.T) {
+	f := newFixture(t)
+	root := filepath.Join(f.dir, "root")
+	release := filepath.Join(f.dir, "v310")
+	_ = os.MkdirAll(release, 0o700)
+	f.train.ReleaseGates, f.train.Root, f.train.DryRun, f.train.VerifyGate = &f.store, root, true, decisionAccepted
+	f.req.PRs = f.req.PRs[:1]
+	run := func() []Alert {
+		t.Helper()
+		res, err := f.train.Run(context.Background(), f.req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Alerts
+	}
+	run() // baseline
+	mustGit(t, f.bare, "tag", "v1", "main")
+	head := f.head("main")
+	a := run()
+	if len(a) != 1 || a[0].Kind != "tag" {
+		t.Fatalf("the ungated tag: %+v", a)
+	}
+	id := a[0].ID
+	gateIn(t, release, "rel-v1", "tag", gatetarget.ReleaseTag(fixtureRepo, "v1", head), true)
+	if a := run(); len(a) != 0 || len(ReadAlerts(root)) != 0 {
+		t.Fatalf("after the release session's gate: %+v, on disk %+v", a, ReadAlerts(root))
+	}
+	entries, err := f.train.Audit.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, e := range entries {
+		if e.GateID == id {
+			kinds = append(kinds, e.Kind)
+		}
+	}
+	if !slices.Equal(kinds, []string{"alert", "alert_cleared"}) {
+		t.Fatalf("audit entries of %s: %v", id, kinds)
+	}
+}
