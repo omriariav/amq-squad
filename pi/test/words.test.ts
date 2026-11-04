@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { decisionKind, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -205,6 +205,84 @@ test("row 7: a launch failure's code as a wait or block reason reads in words", 
 	assert.equal(blocked, "  t9 blocked: its seat's launch failed twice, its proof came after its token expired; fix the cause, then /reset it (or relaunch the roster)");
 });
 
+// The decision kinds Go writes to the decision log: every Decision{Kind:
+// ...} in the non-test files of its three writers (internal/scheduler, the
+// scheduler's own; internal/schedproc, the scheduler process's;
+// internal/cli, which appends through schedproc.AppendDecision), a literal
+// or a constant of those packages, and up.go's stopped(KIND, ...) helper's
+// call sites. An identifier the scan cannot resolve fails, except that
+// helper's own parameter.
+function goDecisionKinds(): { kinds: string[]; unresolved: string[] } {
+	const pkgs = ["internal/scheduler", "internal/schedproc", "internal/cli"];
+	const consts = new Map<string, string>();
+	for (const f of pkgs.flatMap(goFiles)) for (const m of go(f).matchAll(/^\s*(?:const\s+)?(\w+)(?:\s+[\w.]+)?\s*=\s*"([a-z][a-z0-9_]*)"/gm)) consts.set(m[1], m[2]);
+	const kinds: string[] = [];
+	const unresolved: string[] = [];
+	for (const f of pkgs.flatMap(goFiles)) {
+		const src = go(f);
+		for (const m of src.matchAll(/Decision\{[^{}]*?\bKind:\s*([A-Za-z_][\w.]*|"[a-z][a-z0-9_]*")/g)) {
+			const k = m[1];
+			if (k.startsWith('"')) kinds.push(k.slice(1, -1));
+			else if (consts.has(k.split(".").pop()!)) kinds.push(consts.get(k.split(".").pop()!)!);
+			else if (!(f === "internal/cli/up.go" && k === "kind")) unresolved.push(`${f}: Kind: ${k}`);
+		}
+		for (const m of src.matchAll(/\bstopped\(\s*([A-Za-z_]\w*|"[a-z][a-z0-9_]*")/g)) {
+			const k = m[1];
+			if (k.startsWith('"')) kinds.push(k.slice(1, -1));
+			else if (consts.has(k)) kinds.push(consts.get(k)!);
+			else unresolved.push(`${f}: stopped(${k})`);
+		}
+	}
+	return { kinds: [...new Set(kinds)].sort(), unresolved };
+}
+
+// The plan reviewer's ruling on Codex's last finding on #863: every decision
+// kind Go writes is a stop with words (DECISION_WORDS) or a routine record
+// (ROUTINE_DECISIONS); a new kind in neither fails here, by name, so a new
+// stop decision is never hidden from the screen with every row passing.
+test("row 7: every decision kind Go writes is a stop with words or a routine record", () => {
+	const { kinds, unresolved } = goDecisionKinds();
+	assert.deepEqual(unresolved, [], "a decision kind the scan cannot resolve");
+	assert.ok(kinds.length >= 68, `the decision kinds were not found: ${kinds}`);
+	assert.ok(kinds.includes("legacy_merge_head_missing") && kinds.includes("seat_launch_failed") && kinds.includes("up_stopped_lead"), kinds.join(" "));
+	for (const k of kinds) assert.notEqual(decisionKind(k), "unknown", `decision kind ${k} is neither a stop with words nor routine`);
+	for (const k of Object.keys(ROUTINE_DECISIONS)) assert.ok(!Object.hasOwn(DECISION_WORDS, k), `${k} is both a stop and routine`);
+	// every stop's words are plain and say what to do
+	for (const k of Object.keys(DECISION_WORDS)) {
+		const l = decisionWords({ kind: k, seat: "dev", reason: "x" });
+		assert.equal(codeIn(l), "", `${k}: ${l}`);
+		assert.ok(l.includes("; "), `${k} says no what to do: ${l}`);
+	}
+});
+
+// The ruling, the run-time half: the seats block never hides a decision
+// kind it does not know. The newest such decision shows "the scheduler
+// stopped something" (a kind whose name reads as a failure) or "the
+// scheduler recorded something", its kind below the rule; a routine record
+// newer than a stop does not hide the stop; each stop kind shows its words.
+test("row 7: an unknown decision kind shows, its kind below the rule; routine records hide no stop", () => {
+	const at = "2026-11-01T09:04:00Z";
+	const dec = (kind: string, reason = "x") => ({ at, kind, seat: "dev", task_id: "", reason, reason_code: "" });
+	const seats = (decisions: any[]) => {
+		const lines = renderScreen({ ...fixture, decisions }, now);
+		return { lines, block: lines.slice(lines.findIndex((l) => l.startsWith("seats (")), lines.findIndex((l) => l.startsWith("tasks ("))), rec: lines.slice(lines.indexOf(RULE)) };
+	};
+	const failed = seats([dec("exit_refused", "ledger_tampered at gone"), dec("made_up_failed")]);
+	assert.ok(failed.block.includes("  the scheduler stopped something; its kind is below the line"), failed.block.join("\n"));
+	assert.ok(failed.rec.includes("  made_up_failed: dev x"), failed.rec.join("\n"));
+	const noted = seats([dec("made_up_note")]);
+	assert.ok(noted.block.includes("  the scheduler recorded something; its kind is below the line"), noted.block.join("\n"));
+	assert.ok(noted.rec.includes("  made_up_note: dev x"), noted.rec.join("\n"));
+	// a routine record newer than a stop hides nothing
+	const routine = seats([dec("exit_refused", "ledger_tampered at gone"), dec("dispatched"), dec("lease_renewed")]);
+	assert.ok(routine.block.some((l) => l.startsWith("  seat dev did not stop cleanly")), routine.block.join("\n"));
+	// each stop kind, the newest decision, shows its words
+	for (const k of Object.keys(DECISION_WORDS)) {
+		const one = seats([dec(k, "a reason")]);
+		assert.ok(one.block.includes(`  ${decisionWords(dec(k, "a reason"))}`), `${k}:\n${one.block.join("\n")}`);
+	}
+});
+
 // Row 7 (Codex on b4df9475): a task still blocked on a launch failure's
 // AMQ code reads the launch guidance from its own record (task show's
 // block_detail, which blockOnLaunchFailure writes and which lasts as long as
@@ -254,7 +332,7 @@ test("row 7: a reason named constructor or __proto__ renders the fallback line",
 		assert.ok(lines.some((l) => /^ {2}the merge train stopped(?: at PR #9)?; its (?:rule|refusal) is below the line$/.test(l)), r);
 		assert.ok(lines.some((l) => l.includes("the relay refused a reply")), r);
 		assert.equal(seatDoing({ handle: "x", state: "online", reason_code: r }, undefined).text, "waiting", r);
-		assert.equal(decisionWords({ kind: r, seat: "x" }), "a seat stopped; the record is below the line", r);
+		assert.equal(decisionWords({ kind: r, seat: "x" }), "the scheduler recorded something; its kind is below the line", r);
 		assert.equal(trainRunWords(r), "its last step is below the line", r);
 	}
 });

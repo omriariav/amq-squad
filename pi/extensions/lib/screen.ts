@@ -17,7 +17,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Config, Runner } from "./hooks.ts";
 import { commandsLine } from "./commands.ts";
 import { gateLabel, Keys, typedPrefix, type KeyOutcome } from "./keys.ts";
-import { blockNeedsRecord, blockWords, clean, decisionWords, RULE, requestWords, seatDoing, trainRunWords, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
+import { blockNeedsRecord, blockWords, clean, decisionKind, decisionWords, RULE, requestWords, seatDoing, trainRunWords, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
 import { run } from "./verbs.ts";
 
 export const SCREEN_KEY = "amq-squad-screen";
@@ -78,8 +78,8 @@ export type ScreenStatus = {
 	warnings: string[];
 };
 
-// The decisions that stopped a seat (the seats block's last-stop line).
-const SEAT_REFUSALS = new Set(["roster_launch_failed", "seat_not_up", "seat_launch_failed", "seat_prepare_failed", "seat_request_failed", "seat_refused", "exit_refused", "seat_close_failed", "ledger_tampered"]);
+// Which decisions the seats block shows is words.ts decisionKind's: a stop,
+// or a kind no table knows.
 
 // The block reasons whose words read the task's own record (`task show
 // --json`'s block_detail) are words.ts blockNeedsRecord's: the size cap's
@@ -128,9 +128,13 @@ function newestSeatStop(st: ScreenStatus): { line: string; record: string } | un
 	const ds = st.decisions ?? [];
 	for (let i = ds.length - 1; i >= 0; i--) {
 		const d = ds[i];
-		if (!(SEAT_REFUSALS.has(d.kind) || (d.kind === "scheduler_stopped" && d.reason !== ""))) continue;
+		// a stop, or a kind no table knows (never hidden); a clean scheduler
+		// stop (no reason) is routine
+		const k = decisionKind(d.kind);
+		if (k === "routine" || (d.kind === "scheduler_stopped" && !d.reason)) continue;
 		const who = d.seat || d.task_id;
-		return { line: decisionWords(d), record: `${d.reason_code || d.kind}: ${short([who, d.reason].filter(Boolean).join(" "))}` };
+		const code = k === "unknown" ? d.kind : d.reason_code || d.kind;
+		return { line: decisionWords(d), record: `${code}: ${short([who, d.reason].filter(Boolean).join(" "))}` };
 	}
 	return undefined;
 }

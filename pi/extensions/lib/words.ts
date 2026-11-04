@@ -378,7 +378,56 @@ export const DECISION_WORDS: Record<string, (who: string) => [string, string]> =
 	seat_close_failed: (w) => [`seat ${w} could not be closed`, "close its pane by hand"],
 	ledger_tampered: () => ["the ledger does not verify", "ask the owner to inspect it"],
 	scheduler_stopped: () => ["the scheduler stopped", "start the team again with amq-squad up"],
+	// the stops the plan reviewer's ruling on Codex's last finding on #863
+	// added: every decision kind Go writes is a stop (here) or routine
+	// (ROUTINE_DECISIONS), words.test.ts checks
+	roster_reload_failed: () => ["the roster could not be read again from squad.yaml", "fix squad.yaml, then ask the lead to relaunch"],
+	roster_relaunch_refused: () => ["the roster relaunch was refused", "ask the lead; its reason is below the line"],
+	roster_incomplete: () => ["the roster came up without every seat", "ask the lead to relaunch the roster"],
+	seat_gone: (w) => [`seat ${w}'s process is gone`, "ask the lead to relaunch the roster"],
+	seat_liveness_unknown: (w) => [`seat ${w}'s liveness cannot be read`, "look at its pane"],
+	seat_request_expired: (w) => [`the request for seat ${w} expired before it came up`, "ask the lead to relaunch the roster"],
+	seat_replacement_needs_relaunch: (w) => [`every seat of a pool is gone${w ? ` (${w})` : ""}`, "ask the lead to relaunch the roster"],
+	exits_ledger_unwritable: () => ["the scheduler cannot write its exits ledger", "free the disk or fix its permissions, then start the team again"],
+	doorbell_failed: (w) => [`seat ${w} could not be rung for its task`, "ring it by hand"],
+	lead_notice_failed: () => ["the lead could not be told of a decision", "read the record below the line"],
+	launch_failures_unread: () => ["the scheduler could not read its launch failures", "nothing to do unless launches keep failing"],
+	lead_unknown: () => ["the scheduler does not know its lead", "start the team again with amq-squad up"],
+	routing_flush_failed: () => ["the router could not write its records", "free the disk or fix its permissions"],
+	phase_record_failed: () => ["the lead could not write its phase record", "nothing to do now; a restarted lead comes up solo"],
+	tick_error: () => ["a scheduler tick failed", "nothing to do unless it repeats; the next tick retries"],
+	up_stopped_lead: () => ["amq-squad up stopped a lead", "read the record below the line"],
+	up_stopped_scheduler: () => ["amq-squad up stopped a scheduler", "read the record below the line"],
 };
+
+// ROUTINE_DECISIONS are the decision kinds that need no look from the lead
+// (a dispatch, a lease, a seat that came up or closed as asked, a commit
+// step's progress, a task's own block, which its task line shows): the
+// seats block shows none of them. Every kind Go writes to the decision log
+// is here or in DECISION_WORDS (words.test.ts reads them from Go); a kind
+// in neither shows, so a new one is never hidden.
+export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
+	[
+		"blocked", "commit_adopted", "commit_cancelled", "commit_cancelling", "commit_deferred", "commit_refused", "commit_running", "completed",
+		"decision_socket_open", "discovery_stale", "dispatch_held", "dispatched", "exit_check_deferred", "exit_check_duplicate", "launch_failures_restored",
+		"lease_expired", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
+		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
+		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
+		"task_reset", "usage_limit", "warning_cleared",
+	].map((k) => [k, true]),
+) as Record<string, true>;
+
+// decisionKind is a decision kind's class: a stop the seats block shows
+// with its words, a routine record it does not, or a kind no table knows,
+// which it shows.
+export function decisionKind(kind: string): "stop" | "routine" | "unknown" {
+	if (own(DECISION_WORDS, kind)) return "stop";
+	if (own(ROUTINE_DECISIONS, kind)) return "routine";
+	return "unknown";
+}
+
+// UNKNOWN_STOP is a kind no table knows whose name reads as a failure.
+const UNKNOWN_STOP = /_(?:failed|refused|error|unwritable|unreadable|missing|expired|gone|unknown|tampered|invalid|lost)$/;
 
 // decisionWords is a stop decision's line: "<what happened>: <the reason's
 // words>; <what to do>" when the decision's reason code (its reason_code,
@@ -388,7 +437,10 @@ export const DECISION_WORDS: Record<string, (who: string) => [string, string]> =
 // decision's own what to do>".
 export function decisionWords(d: { kind: string; seat?: string; task_id?: string; reason?: string; reason_code?: string; stage?: string }): string {
 	const who = d.seat || d.task_id || "";
-	const [happened, todo] = own(DECISION_WORDS, d.kind)?.(who) ?? ["a seat stopped", "the record is below the line"];
+	const words = own(DECISION_WORDS, d.kind);
+	// a kind no table knows: said, never hidden, its kind below the rule
+	if (!words) return UNKNOWN_STOP.test(d.kind) ? "the scheduler stopped something; its kind is below the line" : "the scheduler recorded something; its kind is below the line";
+	const [happened, todo] = words(who);
 	const code = d.reason_code || (d.reason ?? "").trim().split(/[\s:]+/)[0] || "";
 	const f = own(BLOCK_WORDS, code);
 	// a launch decision: its reason code, else its stage, in the launch table
