@@ -21,7 +21,7 @@ GO = "go test -count=1 -run '%s' ./%s/"
 L = "pi/extensions/lib/"
 R = [
  ("A", "a stop kind dropped from the table (seat_gone)", L+"words.ts",
-  "	seat_gone: (w) => [`seat ${w}'s process is gone`, \"ask the lead to relaunch the roster\"],\n", '', PIN("words", "every decision kind Go writes")),
+  "	seat_gone: (d) => [`${seatOf(d)}'s process is gone`, \"ask the lead to relaunch the roster\"],\n", '', PIN("words", "every decision kind Go writes")),
  ("A", "a routine kind dropped from the table (legacy_merge_head_missing)", L+"words.ts",
   '"lease_expired", "lease_renewed", "legacy_merge_head_missing",', '"lease_expired", "lease_renewed",', PIN("words", "every decision kind Go writes")),
  ("B", "the selector shows only the stops it knows (an unknown kind hidden)", L+"screen.ts",
@@ -35,7 +35,7 @@ R = [
  ("C", "no clearing: a resolved stop still shows", L+"screen.ts",
   '		if (resolved(ds, i)) continue;', '', PIN("words", "followed by its resolving decision")),
  ("C", "another seat's seat_up clears a seat's stop", L+"words.ts",
-  '(!rule.sameSeat || d.kind === "roster_launched" || d.seat === ds[i].seat)', 'true', PIN("words", "followed by its resolving decision")),
+  '		return rule.match === "seat" ? d.seat === stop.seat : d.task_id === stop.task_id;', '		return true;', PIN("words", "followed by its resolving decision")),
  ("C", "the scheduler starting again does not clear its stop", L+"words.ts",
   '	scheduler_stopped: SCHEDULER_RESOLVED,\n', '', PIN("words", "followed by its resolving decision")),
  ("C", "a resolved newest stop hides the older unresolved one", L+"screen.ts",
