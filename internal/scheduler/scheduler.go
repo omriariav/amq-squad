@@ -853,6 +853,10 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			}
 			list = replace(list, got)
 			delete(s.launchBlocked, t.ID)
+			if deps := legacyMergeDependencies(t, list); len(deps) > 0 {
+				log(Decision{Kind: "legacy_merge_head_missing", TaskID: t.ID, Seat: handle,
+					Reason: fmt.Sprintf("dependency %s: its merge record has no head (written before 3.1.1)", strings.Join(deps, ", "))})
+			}
 			log(Decision{Kind: "dispatched", TaskID: t.ID, Seat: handle, Pool: r.Pool.Key()})
 			if s.Doorbell != nil {
 				if err := s.Doorbell.Ring(handle, got); err != nil {
@@ -947,6 +951,21 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 		}
 	}
 	return nil
+}
+
+func legacyMergeDependencies(t task.Task, list []task.Task) []string {
+	byID := make(map[string]task.Task, len(list))
+	for _, candidate := range list {
+		byID[candidate.ID] = candidate
+	}
+	var out []string
+	for _, id := range t.DependsOn {
+		dep := byID[id]
+		if dep.PRNumber > 0 && dep.PRMergeCommit != "" && dep.PRMergeHead == "" {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // idleSeat is the first seat (by handle) of the pool that holds nothing,

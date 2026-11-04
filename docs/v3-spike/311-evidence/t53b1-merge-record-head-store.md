@@ -1,0 +1,29 @@
+# t53b1 merge-record-head store evidence
+
+## Acceptance rows
+
+1. RecordPRMerge refuses a merge at another head: `TestBoundDependencyWaitsForItsRecordedMerge` (`internal/task/bind_test.go`) reports "merge at another head was accepted" when the `t.PRHead != head` clause is reverted; the check precedes any stored merge fact, so the revert reaches the binding guard and returns nil.
+2. WaitDependencies waits when the stored head differs from the current PRHead: `TestBoundDependencyWaitsForItsRecordedMerge` (`internal/task/bind_test.go`) reports "a merge fact for a stale head released the dependent" when the head comparison in `internal/task/lease.go` is reverted.
+3. Idempotence, an identical fact does not rewrite the task: `TestBoundDependencyWaitsForItsRecordedMerge` (`internal/task/bind_test.go`) reports "identical merge fact rewrote the task" when the early return is reverted.
+4. A changed binding clears the fact: `TestBoundDependencyWaitsForItsRecordedMerge` (`internal/task/bind_test.go`) reports "a changed binding retained stale merge proof" when the clear in `bindPR` is reverted.
+5. Compatibility pin, no revert: existing `TestDependenciesGateTheLease` (`internal/task/task_test.go`) proves a PR-less dependency still releases on completion.
+6. RecordPRMerge callers pass the merged head: extended `TestRealRunReadsTheTaskBoundToThePR` (`internal/mergetrain/fix2_test.go`) proves one train merge records its head and commit.
+7. A legacy record with a commit and no head releases its dependent: `TestLegacyCommitOnlyMergeRecordReleasesDependency` (`internal/task/bind_test.go`) reports "legacy commit-only merge did not release dependent" when that acceptance is reverted.
+8. The grant of that dependent writes one decision naming the task, dependency, and missing legacy head: `TestLegacyCommitOnlyMergeRecordIsAuditedAtGrant` (`internal/scheduler/merge_record_head_test.go`) reports "legacy merge release audit missing" when the decision write is reverted.
+9. Reconciliation keeps base behavior across both journal outcomes: `TestReconcileKeepsBoundHeadAndContinues` (`internal/mergetrain/repass_test.go`) proves a journal head A plus binding B records B and continues to the next PR; passing A instead reports "reconcile aborted before the next PR".
+
+## Recorded revert runs
+
+Every command ran with all live `AMQ_*` seat variables removed, `HOME=/private/tmp/amq-squad-reviewer-home`, `GOCACHE=/private/tmp/amq-squad-reviewer-go-cache`, `GOPATH=/Users/omri/go`, and `GOMODCACHE=/Users/omri/go/pkg/mod`.
+
+1. Command: `go test ./internal/task -run TestBoundDependencyWaitsForItsRecordedMerge -count=1`. Reverted line: `if !strings.EqualFold(t.PRRepository, repository) || t.PRNumber != pr || t.PRHead != head {` to old text `if !strings.EqualFold(t.PRRepository, repository) || t.PRNumber != pr {`. First failure: `bind_test.go:65: merge at another head was accepted: <nil>`.
+2. Command: `go test ./internal/task -run TestBoundDependencyWaitsForItsRecordedMerge -count=1`. Reverted line: `if dep.PRMergeCommit == "" || dep.PRMergeHead != "" && dep.PRMergeHead != dep.PRHead {` to old text `if dep.PRMergeCommit == "" {`. First failure: `bind_test.go:97: a merge fact for a stale head released the dependent: ""`.
+3. Command: `go test ./internal/task -run TestBoundDependencyWaitsForItsRecordedMerge -count=1`. Reverted lines: removed `if t.PRMergeHead == head && t.PRMergeCommit == commit { out = *t; return nil }`. First failure: `bind_test.go:75: identical merge fact rewrote the task: <nil> {Schema:1 ID:t1 ... UpdatedAt:2026-10-24 12:00:02 +0000 UTC ...}`.
+4. Command: `go test ./internal/task -run TestBoundDependencyWaitsForItsRecordedMerge -count=1`. Reverted line: `t.PRMergeHead, t.PRMergeCommit = "", ""` to old text `t.PRMergeCommit = ""`. First failure: `bind_test.go:88: a changed binding retained stale merge proof: {Schema:1 ID:t1 ... PRHead:dddddddddddddddddddddddddddddddddddddddd PRMergeHead:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa PRMergeCommit: ...}`.
+5. Command: `go test ./internal/task -run TestDependenciesGateTheLease -count=1`. It passed. This unchanged compatibility pin has no production revert.
+6. Command: `go test ./internal/mergetrain -run TestRealRunReadsTheTaskBoundToThePR -count=1`. Reverted call to the base form `t.recordTaskMerge(it.Task, req.Repository, p.Number, sha)`, omitting the new head argument. First failure: `internal/mergetrain/train.go:576:66: not enough arguments in call to t.recordTaskMerge`.
+7. Command: `go test ./internal/task -run TestLegacyCommitOnlyMergeRecordReleasesDependency -count=1`. Reverted line: `if dep.PRMergeCommit == "" || dep.PRMergeHead != "" && dep.PRMergeHead != dep.PRHead {` to old text `if dep.PRMergeCommit == "" || dep.PRMergeHead != dep.PRHead {`. First failure: `bind_test.go:116: legacy commit-only merge did not release dependent: "waiting for t1's PR #7 to merge"`.
+8. Command: `go test ./internal/scheduler -run TestLegacyCommitOnlyMergeRecordIsAuditedAtGrant -count=1`. Reverted the grant-time `legacy_merge_head_missing` decision write. First failure: `merge_record_head_test.go:50: legacy merge release audit missing: [{Kind:seat_up ...} {Kind:dispatched TaskID:t2 Seat:seat-a ...}]`.
+9. Command: `go test ./internal/mergetrain -run TestReconcileKeepsBoundHeadAndContinues -count=1`. Reverted both reconcile calls from `it.BoundHead` to old text `e.Head`. First failure: `repass_test.go:149: reconcile aborted before the next PR: binding_failed: record task t1 merge ...: PR binding mismatch: record PR merge: task t1 is bound to owner/fixture#1 at bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, not owner/fixture#1 at ... []`.
+
+Part 1b intentionally preserves the base reconciliation behavior of recording at the currently bound head and continuing. That is the skip-and-audit bug fixed by part 2; this temporary gap is acceptable only because both parts are on the 3.1.1 cut list.
