@@ -182,6 +182,21 @@ type widenRefused struct{ code, msg string }
 
 func (e *widenRefused) Error() string { return fmt.Sprintf("widen refused (%s): %s", e.code, e.msg) }
 
+var archiveWidenAttempt = seatcommit.ArchiveAttempt
+
+// archiveMissingTypedWiden closes the one-tick window between a typed block
+// and scanAttempts. The decision socket runs in the scheduler process, so it
+// uses the same sealed, first-writer-wins archive as the tick and CleanSeat.
+func archiveMissingTypedWiden(sel storeSelection, t task.Task, wo seatcommit.WidenOptions, d seatcommit.WidenDecision) (seatcommit.WidenDecision, error) {
+	if d.ReasonCode != seatcommit.ReasonWidenSnapshotMissing || !typedWidenRequest(t) || wo.Commit == nil || wo.Commit.SnapshotAttempt != t.BlockAttempt {
+		return d, nil
+	}
+	if _, err := archiveWidenAttempt(sel.root, wo.Commit.Handle, "", nil, t.ID, wo.Commit.SnapshotAttempt, taskNow()); err != nil {
+		return d, fmt.Errorf("archive typed widen snapshot for task %s attempt %d: %w", t.ID, wo.Commit.SnapshotAttempt, err)
+	}
+	return seatcommit.CheckWiden(wo), nil
+}
+
 // applyLeadWiden applies a verified lead decision: the grant checks
 // (seatcommit.CheckWiden), the growth gate when a limit is crossed, then
 // the store's widening (file lock, self widen).
@@ -239,13 +254,21 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: added, ProtectedAdded: protected, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
-	} else if typedWidenRequest(t) && len(t.Attempts) > 0 {
-		// CleanSeat archives the stopped attempt before this reusable seat can
-		// take another lease. Select that immutable tree by attempt number.
-		attempt := t.Attempts[len(t.Attempts)-1]
-		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: attempt.Holder, SnapshotAttempt: attempt.N, Now: taskNow}
+	} else if typedWidenRequest(t) {
+		// The scheduler archives the stopped attempt when it observes the typed
+		// block. Select that immutable tree by the block's explicit attempt.
+		for _, attempt := range t.Attempts {
+			if attempt.N == t.BlockAttempt {
+				wo.Commit = &seatcommit.Options{Root: sel.root, Handle: attempt.Holder, SnapshotAttempt: attempt.N, Now: taskNow}
+				break
+			}
+		}
 	}
 	d := seatcommit.CheckWiden(wo)
+	d, err = archiveMissingTypedWiden(sel, t, wo, d)
+	if err != nil {
+		return data, err
+	}
 	widenReason := req.Reason
 	if len(resolutions) > 0 {
 		note := "exact-path resolution: " + strings.Join(resolutions, "; ")
@@ -369,6 +392,6 @@ func validateBlockedWiden(t task.Task, requested []string) ([]string, error) {
 }
 
 func typedWidenRequest(t task.Task) bool {
-	return t.Report == nil && len(t.RefusedPaths) > 0 &&
+	return t.Report == nil && t.BlockAttempt > 0 && len(t.RefusedPaths) > 0 &&
 		(t.BlockReason == task.ReasonWidenRequested || t.BlockReason == seatcommit.ReasonGrowthGate)
 }

@@ -338,7 +338,7 @@ func (s Store) complete(t *Task, now time.Time) {
 	t.Evidence = t.Report.Evidence
 	s.endAttempt(t, OutcomeCompleted, "", now)
 	at := now
-	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = StateCompleted, &at, "", "", "", nil
+	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.BlockAttempt = StateCompleted, &at, "", "", "", nil, 0
 }
 
 // verifierRequired says whether the task's class needs the harness's
@@ -413,7 +413,7 @@ func block(t *Task, reason, detail, route string) error {
 		return fmt.Errorf("a block needs a reason code")
 	}
 	t.State, t.WaitReason = StateBlocked, ""
-	t.BlockReason, t.BlockDetail, t.BlockRoute, t.RefusedPaths = strings.TrimSpace(reason), strings.TrimSpace(detail), route, nil
+	t.BlockReason, t.BlockDetail, t.BlockRoute, t.RefusedPaths, t.BlockAttempt = strings.TrimSpace(reason), strings.TrimSpace(detail), route, nil, 0
 	return nil
 }
 
@@ -463,6 +463,9 @@ func (s Store) BlockWithPaths(id, actor, reason, detail, route string, paths []s
 			s.endAttempt(t, OutcomeBlocked, reason, now)
 			t.Report = nil
 		case StatePending:
+			if reason == ReasonWidenRequested {
+				return fmt.Errorf("%s: a typed widen request requires the holder of a live attempt", ReasonWidenRequested)
+			}
 		default:
 			return fmt.Errorf("task %s is %s; only pending or in-progress tasks block", t.ID, t.State)
 		}
@@ -470,6 +473,9 @@ func (s Store) BlockWithPaths(id, actor, reason, detail, route string, paths []s
 			return err
 		}
 		t.RefusedPaths = refused
+		if reason == ReasonWidenRequested {
+			t.BlockAttempt = t.Attempt
+		}
 		return nil
 	})
 }
@@ -503,7 +509,7 @@ func (s Store) Reset(id string, pool *Pool, now time.Time) (Task, error) {
 		if t.State != StateBlocked {
 			return fmt.Errorf("task %s is %s; reset takes a blocked task", t.ID, t.State)
 		}
-		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = StatePending, nil, "", "", "", nil
+		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.BlockAttempt = StatePending, nil, "", "", "", nil, 0
 		if pool != nil {
 			p := *pool
 			t.Pool = &p

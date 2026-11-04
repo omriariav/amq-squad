@@ -40,6 +40,12 @@ type ExitChecker interface {
 	CheckExit(handle, taskID, why string) ExitResult
 }
 
+// AttemptArchiver is the optional scheduler-side snapshot hook for a typed
+// widen block. The scheduler calls it after the store ended the attempt.
+type AttemptArchiver interface {
+	ArchiveAttempt(handle string, t task.Task, attempt task.Attempt) error
+}
+
 // SeatExitRefusedNotifier is a LeadNotifier that also tells the lead about
 // a refusal at a seat exit (a hint; the decisions log is the record).
 type SeatExitRefusedNotifier interface {
@@ -302,21 +308,33 @@ func (s *Scheduler) exitPendingItem(it exitItem) bool {
 // scanAttempts queues the exit check for every attempt that ended failed,
 // expired or unclaimed and was not checked yet by this scheduler (a restart
 // checks the store's history once).
-func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) {
-	if s.Exits == nil {
-		return
-	}
+func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
 	if s.exitSeen == nil {
 		s.exitSeen = map[string]bool{}
 	}
 	for _, t := range list {
 		for _, a := range t.Attempts {
+			key := fmt.Sprintf("%s#%d#%s", t.ID, a.N, a.Holder)
+			if a.Outcome == task.OutcomeBlocked && t.BlockAttempt == a.N &&
+				(t.BlockReason == task.ReasonWidenRequested || t.BlockReason == task.ReasonGrowthGateRequired) {
+				if !s.exitSeen[key] {
+					if archiver, ok := s.Preparer.(AttemptArchiver); ok {
+						if err := archiver.ArchiveAttempt(a.Holder, t, a); err != nil {
+							return err
+						}
+					}
+					s.exitSeen[key] = true
+				}
+				continue
+			}
+			if s.Exits == nil {
+				continue
+			}
 			switch a.Outcome {
 			case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeUnclaimed:
 			default:
 				continue
 			}
-			key := fmt.Sprintf("%s#%d#%s", t.ID, a.N, a.Holder)
 			if s.exitSeen[key] {
 				continue
 			}
@@ -327,6 +345,7 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) {
 			}
 		}
 	}
+	return nil
 }
 
 // runExits runs the queued exit checks; a deferred one stays queued (and

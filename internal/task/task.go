@@ -60,6 +60,9 @@ type Task struct {
 	BlockReason   string    `json:"block_reason,omitempty"`
 	BlockRoute    string    `json:"block_route,omitempty"`
 	BlockDetail   string    `json:"block_detail,omitempty"`
+	// BlockAttempt binds a typed widen request to the live attempt that made
+	// it. Pending tasks cannot manufacture this binding from old history.
+	BlockAttempt int `json:"block_attempt,omitempty"`
 	// RefusedPaths are the exact paths a commit refusal found outside the
 	// declared files (outside_declared_files), or a seat named in its typed
 	// widen_requested block. The lead's widening reads this normalized list,
