@@ -149,9 +149,8 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 			mergeable = "CONFLICTING"
 		}
 		n, _ := strconv.Atoi(args[2])
-		mb, _ := gitOut(s.Bare, "merge-base", base, head)
 		view := map[string]any{"number": n, "title": p.Title, "state": p.State, "isDraft": p.Draft, "baseRefName": p.Base,
-			"baseRefOid": mb, "headRefOid": head, "mergeable": mergeable, "mergeCommit": nil}
+			"baseRefOid": base, "headRefOid": head, "mergeable": mergeable, "mergeCommit": nil}
 		if p.MergeCommit != "" {
 			view["mergeCommit"] = map[string]string{"oid": p.MergeCommit}
 		}
@@ -276,6 +275,11 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		switch {
 		case parts[0] == "compare" && len(parts) == 2:
 			base, head, _ := strings.Cut(parts[1], "...")
+			if slices.Contains(args, ".behind_by") {
+				behind, _ := gitOut(s.Bare, "rev-list", "--count", head+".."+base)
+				fmt.Fprintln(stdout, behind)
+				break
+			}
 			numstat, _ := gitOut(s.Bare, "diff", "--numstat", "-M", base+"..."+head)
 			status, _ := gitOut(s.Bare, "diff", "--name-status", "-M", base+"..."+head)
 			st := strings.Split(status, "\n")

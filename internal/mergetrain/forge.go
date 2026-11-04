@@ -64,6 +64,7 @@ type Protection struct {
 	Checks            []RequiredCheck `json:"required_checks"`
 	DirectPushRefused bool            `json:"direct_push_refused"`
 	ForcePushRefused  bool            `json:"force_push_refused"`
+	Strict            bool            `json:"strict_required_status_checks_policy"`
 	Sources           []string        `json:"sources,omitempty"` // ruleset ids, "classic"
 	Notes             []string        `json:"notes,omitempty"`   // why something does not count
 }
@@ -80,6 +81,8 @@ type Forge interface {
 	// Diff is the change from base to head (three-dot, from their merge base)
 	// at those exact SHAs.
 	Diff(ctx context.Context, repository, base, head string) ([]FileChange, error)
+	// Behind reports whether head lacks commits from the exact pinned base.
+	Behind(ctx context.Context, repository, base, head string) (bool, error)
 	Checks(ctx context.Context, repository, sha string) ([]CheckRun, error)
 	BranchHead(ctx context.Context, repository, branch string) (string, error)
 	Protection(ctx context.Context, repository, branch string) (Protection, error)
