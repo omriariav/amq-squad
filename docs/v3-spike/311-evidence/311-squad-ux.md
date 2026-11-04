@@ -121,6 +121,34 @@ below the line)", the code below the rule. The seat stop line of a launch
 decision names its stage in words ("seat rev-1's launch failed: AMQ's apply
 failed; ask the lead to relaunch the roster").
 
+**A launch failure's block, from the task's own record (Codex on
+`b4df9475`).** Status carries only the last 30 decisions (`DecisionsTail`,
+internal/status schema.go) of the decision log's last MiB
+(`schedproc.ReadDecisionsTail`), so an AMQ code learned from the decision
+tail ages out while the task stays blocked. A launch failure's block marks
+itself in the task's record: `blockOnLaunchFailure` writes "the launch of
+seat S (pool P) failed N times in a row with reason R at stage T: ..." as
+its `block_detail`, which lasts as long as the block. The screen reads that
+record (`task show --json`, once per change of the task, as for the size
+cap's numbers) for every block reason no table maps, and a detail naming
+the same reason reads "t9 blocked: its seat's launch failed twice, AMQ's
+apply failed (AMQ's reason is below the line); fix the cause, then /reset it
+(or relaunch the roster)" with no decision at all. A pending task's wait has
+no such field (its record carries only `wait_reason`): it still learns an
+AMQ code from the decision tail; that limit is in section 10.
+
+**The train's last step in words (Codex on `b4df9475`).** A run's
+`last_kind` was shown raw ("current: r2 refusal ..."), and while a merge was
+pending after the train journals `merge_intent` that code sat above the
+rule. `TRAIN_KIND_WORDS` maps each Entry kind internal/mergetrain journals
+(`merge_intent`, `merge`, `refusal`, `rebase`, `rebind`, `batch`, `plan`,
+`protection`, `alert`, `alert_cleared`, `stop`), checked against Go's
+`Entry{Kind: ...}` literals at test time: "running: merging a PR (the merge
+is pending), 5m ago; PRs #9; 0 merged". The run id (`mt-<stamp>-<8 hex>`,
+whose tail is a hex run) and the kind go below the rule. internal/releaseflow
+writes `draft_*` and `release_mismatch` entries to its own journal
+(releases/<id>/audit.jsonl), which status does not read as the train's.
+
 **Every lookup is an own-property lookup (Codex on `ed3d1e65`).** The
 tables are plain objects, and a reason named `constructor` found Object's
 own property: the destructuring threw, the render's catch swallowed it and
@@ -318,9 +346,9 @@ amq-squad: proposed team
 
 ### After
 
-At `29ab4513` (unchanged since `1d2ad62a`, the plan reviewer's two changes). The fixture's train
-refusal now names a real rule (`ci_green`; it said `checks`, which is no
-rule), so the before capture keeps the old text.
+At `c9effd44`. The fixture's train refusal names a real rule (`ci_green`;
+it said `checks`, which is no rule), so the before capture keeps the old
+text.
 
 ```
 === team phase: the lead's screen ===
@@ -339,43 +367,29 @@ tasks (3)
   t2 in progress on scribe: Write the notes  PR #812
   t26 waiting: t20, t23 hold its files
 train
-  current: r2 refusal 82h ago, PRs #811,#812, merged 1
-  last: r1 merge 83h ago, PRs #810, merged 1
+  running: refused a PR, 83h ago; PRs #811, #812; 1 merged
+  last run: merged a PR, 84h ago; PRs #810; 1 merged
     ! tag v1.2.0 has no accepted gate
   the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again
 waiting on you (1)
   Create a tag named v1?  (answer on the phone; /answer shows it)
 phone requests (2)
   a phone request to cto, not answered yet: the relay held back a reply shaped like a gate answer; the lead answers again in words
-  a phone request to cto, answered 82h ago
+  a phone request to cto, answered 83h ago
 ----------
   qa: launch_budget_exceeded: 12.400 s from the start to seat live, over the 10s ceiling; slowest segment seat_exec 8.059 s
   qa: wake_off: amq-squad: no AMQ wake for this Codex seat: AMQ's Codex dialog hook is not on the host; the seat idles after each turn until it is rung by hand
   scribe: seat_stalled_at_dialog: a harness dialog has been open since 2026-11-01T09:02:00Z (3m0s); the seat waits at it and AMQ holds its doorbell
   pi-dev: pi_provider_key_missing: model anthropic/claude-sonnet-5 needs one of ANTHROPIC_API_KEY, ANTHROPIC_OAUTH_TOKEN, ANTHROPIC_AUTH_TOKEN, and none is in the seat's env needs or its pi login; th...
   exit_refused: old-dev ledger_tampered at gone
+  train running: r2 refusal
+  train last run: r1 merge
   ungated_tag
   train r2: refusal PR #812 ci_green: a required check failed
-  g1  tag  8502aa0011223344  age 82h  waiting on Buzz
+  g1  tag  8502aa0011223344  age 83h  waiting on Buzz
   q-7c41d09e2a55  cto  not relayed  refused: relay_refused_gate_shape
-  q-3f2a9c1e7b04  cto  relayed 82h ago
+  q-3f2a9c1e7b04  cto  relayed 83h ago
 /add  /reset  /dismiss  /answer  /widen  /team hide
-=== solo phase, no plan yet: the plan block ===
-amq-squad: solo lead
-  No team yet. Tell me what you want built and I will propose a plan.
-/plan  /confirm  /team hide
-=== solo phase, a plan proposed: the plan block ===
-amq-squad: proposed team
-  goal: ship the parser
-  session s1, lead lead
-  seat lead (lead) pi
-  seat impl-1 (implementer) claude/sonnet/medium
-  files: internal/parser/
-  task 1: write the parser [implement]
-  Confirm it with /confirm (a dialog quotes the plan; there is nothing to type), or on the phone reply yes to the lead's Buzz post of this plan.
-----------
-  digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@absent
-/plan  /confirm  /team hide
 ```
 
 ### A failed launch, a reason named constructor and a /widen (after)
@@ -446,7 +460,7 @@ Yes adds exactly these paths to the task's files; No changes nothing.
 | 4 | no refusal or outcome line above its rule carries a snake_case code or a hex run; the code is below it: the screen over every reason and seat code, every seat warning code, every stop kind, the train's rules and the relay's names, every key's refusals, the plan block, a verb's own below-rule code; each warning in words with its code below; the stop lines with what happened and what to do; tools.ts:143; the three Go lines | pi/test/words.test.ts "row 4" (four tests); pi/test/keys.test.ts "dismiss" (by seat); pi/test/keys.test.ts (widen refusal record; a widening's paths below the rule); internal/cli/task_widen_test.go `TestTheWidenRefusalPutsItsCodeBelowTheRule`, `TestTheWidenVerbsRefusalPutsItsCodeBelowTheRule` (both through the verb), `TestTheGrowthGateLineSaysWhatTheRaiseDid` (through applyLeadWiden, the raise stubbed to fail); internal/mergetrain/drift_test.go `TestTheGateStoreUnreadableAlertPutsThePathBelowTheRule` |
 | 5 | `/confirm`'s yes confirms the digest the dialog showed; a re-propose while it is open changes nothing; a no or a cancel confirms nothing; two proposals: select, then the dialog; plans with the same goal: the label picked confirms that plan; a goal with a canary and ESC[2K shows redacted and stripped on the block, the dialog and the label, and the dialog gives the plan's size; a model message containing "/confirm" invokes nothing (the 31-3 row kept) | pi/test/team.test.ts "/confirm" (four tests), "a model message containing /confirm" |
 | 6 | the lead's team tools are Go's eleven; no command is a tool | pi/test/commands.test.ts "row 6"; pi/test/phase.test.ts (unchanged) |
-| 7 | every wait and block reason in Go's sources (read at test time, the scan below), every launch code, seat code, train rule and relay refusal name maps to words in one table; a failed launch's code reads as a launch failure, AMQ's through the decision log; a reason named `constructor` or `__proto__` renders the fallback; an unmapped reason falls back with its code below the rule; the size cap's numbers from the record; the dependency-merge wait verbatim; a title with a canary and a control character redacted and stripped; each empty block one plain line | pi/test/words.test.ts "row 7" (seven tests) |
+| 7 | every wait and block reason in Go's sources (read at test time, the scan below), every launch code, seat code, train rule and relay refusal name maps to words in one table; a failed launch's code reads as a launch failure, AMQ's through the decision log, and a launch failure's block from the task's own record; each train entry kind maps to words; a reason named `constructor` or `__proto__` renders the fallback; an unmapped reason falls back with its code below the rule; the size cap's numbers from the record; the dependency-merge wait verbatim; a title with a canary and a control character redacted and stripped; each empty block one plain line | pi/test/words.test.ts "row 7" (eight tests) |
 | 8 | `/widen` shows the requested paths and the seat's reason from the task's record, runs `task widen` only on the dialog's yes, picks among several, and refuses in plain words when no task is blocked with a widen request | pi/test/keys.test.ts "widen" |
 
 What the row 7 scan covers (Codex on `ed3d1e65`: it read only constants
@@ -477,7 +491,8 @@ file not listed passed silently). It reads the Go sources at test time:
   stages `applied` and `up`, and `none`, roster.go's message placeholder.
 - **Seat codes:** `classifySeat`'s reason codes (internal/status). **Seat
   warnings:** `schedproc.ClearableWarnings`. **Train rules:**
-  internal/mergetrain checks.go `Rule*`. **Relay names:** internal/status
+  internal/mergetrain checks.go `Rule*`. **Train entry kinds:** every
+  `Entry{Kind: "..."}` in internal/mergetrain's non-test files. **Relay names:** internal/status
   relay.go and internal/buzz relay.go `Relay*`.
 
 The wider scan found three codes the table lacked: `repin_after_attempt`
@@ -490,13 +505,16 @@ codes read as launch failures through the decision log (above).
 ## 8. Revert runs
 
 `python3 docs/v3-spike/311-evidence/311-squad-ux-revert-runs.py` from a
-clean checkout, at code head `00ccfcda`: 56 runs, 56 caught. Every case
+clean checkout, at code head `c9effd44`: 60 runs, 60 caught. Every case
 reverts production code only and runs the row that must catch it. The
 history: 32 at `c7105890`; 12 for the plan reviewer's warning, stop and
 request rows (cases 16 to 27); six for Codex's gaps on `ed3d1e65` (cases 28
 to 33); six for the plan reviewer's three fixes on #863 (cases 34 to 39:
 each of the three raw plan-line places, unnumbered labels, the dialog's
-size line, the growth gate's line). Case 13 was redone for Codex: it now
+size line, the growth gate's line); four for Codex's two leftovers on
+`b4df9475` (cases 40 to 43: a train entry kind dropped, the run line with
+its kind and id above the rule, a launch block not read from its record,
+no record read for an unmapped block reason). Case 13 was redone for Codex: it now
 reverts only the call in `runTaskWiden`. Two runs missed before their row
 was strengthened, both recorded: at `c7105890` row 8 offered `/widen` only
 tasks blocked for something (the row has had a task blocked for another
@@ -516,11 +534,11 @@ described: "f is not a function or its return value is not iterable".
 | 6 | 2 | the plan block without the commands line | caught | `not ok 2 - row 2: the screen's last line lists exactly the current phase's commands` |
 | 7 | 3 | the seat line's state/reason_code (3.1.0) | caught | `not ok 1 - row 3: a seat says what it is doing, a task why it waits or what stopped it and what to do` |
 | 8 | 3 | a blocked task's line by its code | caught | `not ok 1 - row 3: a seat says what it is doing, a task why it waits or what stopped it and what to do` |
-| 9 | 4 | a refusal's verb text above the rule (sentence without the strip) | caught | `not ok 11 - row 4: no line above the rule carries a snake_case code or a hex run; the code is below it` |
-| 10 | 4 | the gate line with its id and prefix above the rule | caught | `not ok 11 - row 4: no line above the rule carries a snake_case code or a hex run; the code is below it` |
-| 11 | 4 | tools.ts:143, the state and reason first (3.1.1-2 form) | caught | `not ok 12 - row 4: the lead's widen refusal (tools.ts) puts its state and reason below the rule` |
-| 12 | 4 | task_widen.go widenRefused.Error, the `widen refused (%s): %s` form | caught | `--- FAIL: TestTheWidenRefusalPutsItsCodeBelowTheRule (0.15s)` |
-| 13 | 4 | task_widen.go the verb's `refused (%s)` form at its call (runTaskWiden), production only | caught | `--- FAIL: TestTheWidenRefusalPutsItsCodeBelowTheRule (0.14s)` |
+| 9 | 4 | a refusal's verb text above the rule (sentence without the strip) | caught | `not ok 12 - row 4: no line above the rule carries a snake_case code or a hex run; the code is below it` |
+| 10 | 4 | the gate line with its id and prefix above the rule | caught | `not ok 12 - row 4: no line above the rule carries a snake_case code or a hex run; the code is below it` |
+| 11 | 4 | tools.ts:143, the state and reason first (3.1.1-2 form) | caught | `not ok 13 - row 4: the lead's widen refusal (tools.ts) puts its state and reason below the rule` |
+| 12 | 4 | task_widen.go widenRefused.Error, the `widen refused (%s): %s` form | caught | `--- FAIL: TestTheWidenRefusalPutsItsCodeBelowTheRule (0.13s)` |
+| 13 | 4 | task_widen.go the verb's `refused (%s)` form at its call (runTaskWiden), production only | caught | `--- FAIL: TestTheWidenRefusalPutsItsCodeBelowTheRule (0.13s)` |
 | 14 | 4 | drift.go the gate_store_unreadable alert with the path and error in its line | caught | `--- FAIL: TestTheGateStoreUnreadableAlertPutsThePathBelowTheRule (0.01s)` |
 | 15 | 4 | a verb's below-rule code dropped from the record | caught | `not ok 11 - widen: the dialog shows the requested paths and the seat's reason; only its yes runs task widen` |
 | 16 | 4 | a seat warning above the rule as the 3.1.0 line (! code: detail) | caught | `not ok 1 - row 4: every seat warning code in Go's list has plain words; the code is below the rule` |
@@ -546,24 +564,28 @@ described: "f is not a function or its return value is not iterable".
 | 36 | 5 | the select's goal label raw (no clean) | caught | `not ok 1 - /confirm: a goal with a canary and ESC[2K shows redacted and stripped on the block, the dialog and the label` |
 | 37 | 5 | the select's labels unnumbered (two plans with one goal share a label) | caught | `not ok 1 - /confirm: plans with the same goal: the label picked confirms that plan` |
 | 38 | 5 | the dialog without the plan's size line | caught | `not ok 1 - /confirm: a goal with a canary and ESC[2K shows redacted and stripped on the block, the dialog and the label` |
-| 39 | 4 | the growth gate's line claims the raise whatever GateErrs says | caught | `--- FAIL: TestTheGrowthGateLineSaysWhatTheRaiseDid (0.83s)` |
-| 40 | 5 | the confirm reads the newest plan after the dialog | caught | `not ok 5 - /confirm: a re-propose while the dialog is open does not change what is confirmed; two plans: select, then the dialog` |
-| 41 | 5 | the dialog's no confirms anyway | caught | `not ok 4 - /confirm: the dialog's yes asks the lead to witness the plan it showed; a no sends nothing` |
-| 42 | 5 | two live plans: no select, the newest confirmed | caught | `not ok 5 - /confirm: a re-propose while the dialog is open does not change what is confirmed; two plans: select, then the dialog` |
-| 43 | 5 | a confirm tool beside the command (a model message could confirm) | caught | `not ok 6 - a model message containing /confirm reaches no lead; the confirm is a command, never a tool` |
-| 44 | 6 | an action registered as a tool too | caught | `not ok 4 - row 6: the team lead's tools are Go's eleven and no command is a tool` |
-| 45 | 7 | a block reason dropped from the table (verdict_failed) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
-| 46 | 7 | a wait reason dropped from the table (seat_cap) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
-| 47 | 7 | a seat code dropped from the table (idle) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
-| 48 | 7 | the size cap's numbers guessed away (no detail read) | caught | `not ok 4 - row 7: the size cap's numbers come from the recorded detail through task show` |
-| 49 | 7 | the screen reads no task record (no detail fetch) | caught | `not ok 4 - row 7: the size cap's numbers come from the recorded detail through task show` |
-| 50 | 7 | a title without the redaction | caught | `not ok 7 - row 7: a title with a canary and a control character shows redacted and stripped` |
-| 51 | 7 | a title without the control-character strip | caught | `not ok 7 - row 7: a title with a canary and a control character shows redacted and stripped` |
-| 52 | 7 | an empty seats block shows nothing | caught | `not ok 8 - row 7: each empty block says so in one plain line` |
-| 53 | 7 | the hold not mapped (held by the lead) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
-| 54 | 8 | /widen runs task widen whatever the dialog answers | caught | `not ok 11 - widen: the dialog shows the requested paths and the seat's reason; only its yes runs task widen` |
-| 55 | 8 | the dialog without the seat's reason | caught | `not ok 11 - widen: the dialog shows the requested paths and the seat's reason; only its yes runs task widen` |
-| 56 | 8 | /widen offers every blocked task, not only a widen request | caught | `not ok 11 - widen: the dialog shows the requested paths and the seat's reason; only its yes runs task widen` |
+| 39 | 4 | the growth gate's line claims the raise whatever GateErrs says | caught | `--- FAIL: TestTheGrowthGateLineSaysWhatTheRaiseDid (0.81s)` |
+| 40 | 7 | a train entry kind dropped from the table (merge_intent) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
+| 41 | 4 | the run line with the journal's kind and the run id above the rule | caught | `not ok 1 - row 4: no line above the rule carries a snake_case code or a hex run; the code is below it` |
+| 42 | 7 | a launch failure's block not read from the task's own record | caught | `not ok 1 - row 4: a seat's stop and the train's stop say what happened and what to do` (read from a run by hand; the script's parse missed the line) `` |
+| 43 | 7 | the screen reads no record for an unmapped block reason | caught | `not ok 1 - row 4: a seat's stop and the train's stop say what happened and what to do` (read from a run by hand; the script's parse missed the line) `` |
+| 44 | 5 | the confirm reads the newest plan after the dialog | caught | `not ok 5 - /confirm: a re-propose while the dialog is open does not change what is confirmed; two plans: select, then the dialog` |
+| 45 | 5 | the dialog's no confirms anyway | caught | `not ok 4 - /confirm: the dialog's yes asks the lead to witness the plan it showed; a no sends nothing` |
+| 46 | 5 | two live plans: no select, the newest confirmed | caught | `not ok 5 - /confirm: a re-propose while the dialog is open does not change what is confirmed; two plans: select, then the dialog` |
+| 47 | 5 | a confirm tool beside the command (a model message could confirm) | caught | `not ok 6 - a model message containing /confirm reaches no lead; the confirm is a command, never a tool` |
+| 48 | 6 | an action registered as a tool too | caught | `not ok 4 - row 6: the team lead's tools are Go's eleven and no command is a tool` |
+| 49 | 7 | a block reason dropped from the table (verdict_failed) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
+| 50 | 7 | a wait reason dropped from the table (seat_cap) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
+| 51 | 7 | a seat code dropped from the table (idle) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
+| 52 | 7 | the size cap's numbers guessed away (no detail read) | caught | `not ok 5 - row 7: the size cap's numbers come from the recorded detail through task show` |
+| 53 | 7 | the screen reads no task record (no detail fetch) | caught | `not ok 3 - row 7: a launch failure's block reads its guidance from the task's own record` |
+| 54 | 7 | a title without the redaction | caught | `not ok 8 - row 7: a title with a canary and a control character shows redacted and stripped` |
+| 55 | 7 | a title without the control-character strip | caught | `not ok 8 - row 7: a title with a canary and a control character shows redacted and stripped` |
+| 56 | 7 | an empty seats block shows nothing | caught | `not ok 9 - row 7: each empty block says so in one plain line` |
+| 57 | 7 | the hold not mapped (held by the lead) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
+| 58 | 8 | /widen runs task widen whatever the dialog answers | caught | `not ok 11 - widen: the dialog shows the requested paths and the seat's reason; only its yes runs task widen` |
+| 59 | 8 | the dialog without the seat's reason | caught | `not ok 11 - widen: the dialog shows the requested paths and the seat's reason; only its yes runs task widen` |
+| 60 | 8 | /widen offers every blocked task, not only a widen request | caught | `not ok 11 - widen: the dialog shows the requested paths and the seat's reason; only its yes runs task widen` |
 
 ## 9. Owner-run row
 
@@ -607,6 +629,15 @@ tmux, AMQ and Buzz.
 - The brief names the answer key's verb `gate show`; the verb is `gate
   status` (and `gate post`), unchanged.
 
+- A pending task whose wait reason is AMQ's own launch code reads as a
+  launch failure only while the failed launch's decision is in the status
+  document's decisions: the last 30 (`DecisionsTail`) read from the last
+  MiB of the decision log. After that it reads "<id> waiting", its code
+  below the rule. The task's record has no field that marks a launch wait
+  (only `wait_reason`); the scheduler keeps its launch failures in
+  scheduler.json, which status does not expose. A blocked task does not have
+  the limit (section 3).
+
 ## 11. For the 3.1.1 release notes
 
 - After a failed seat launch, a waiting or blocked task says why in words
@@ -624,9 +655,9 @@ tmux, AMQ and Buzz.
 
 ## 12. Gates
 
-At code head `00ccfcda`, after the merge of origin/v3 at `52a8bc1c` (#854
+At code head `c9effd44`, after the merge of origin/v3 at `52a8bc1c` (#854
 landed; merge `b4df9475`, no conflict); the commits after it change docs
-only:
+only. `git diff --check origin/v3...HEAD` is clean.
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0, 56 packages ok, 0 FAIL lines. Tail:
 
@@ -640,21 +671,21 @@ exit 0
 - `cd pi && npm ci --offline --ignore-scripts && npm test`: exit 0. Tail:
 
 ```
-ℹ tests 104
+ℹ tests 105
 ℹ suites 0
-ℹ pass 104
+ℹ pass 105
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 15171.873292
+ℹ duration_ms 15358.380125
 exit 0
 ```
 
 - `make ci` (PyYAML venv on PATH): exit 0. Tail:
 
 ```
-PERF pre-tool allow in a seat: p50 21.5 ms, p95 22.9 ms
-PERF outside a seat: 60 runs, p50 5.7 ms, p95 6.3 ms, max 6.6 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 21.2 ms, p95 23.0 ms
+PERF outside a seat: 60 runs, p50 5.6 ms, p95 6.3 ms, max 6.4 ms (budget p95 < 20 ms: met)
 exit 0
 ```
