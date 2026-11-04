@@ -47,6 +47,43 @@ func BindUnnamed(store task.Store, repository string, req *Request) error {
 	return nil
 }
 
+// BindDryRun fills task data for the dry-run request forms. Named items keep
+// their requested task id, but read the binding by repository and PR exactly
+// as a real run does, so both paths check the same pushed head.
+func BindDryRun(store task.Store, repository string, req *Request) error {
+	for i := range req.PRs {
+		it := &req.PRs[i]
+		if it.Task == "" && len(it.DeclaredFiles) == 0 {
+			if err := bindItem(store, repository, it); err != nil {
+				return err
+			}
+			continue
+		}
+		if it.Task == "" || len(it.DeclaredFiles) > 0 {
+			continue
+		}
+		requested := it.Task
+		tk, err := store.Get(requested)
+		if err != nil {
+			return fmt.Errorf("PR #%d task %s: %w", it.Number, requested, err)
+		}
+		it.DeclaredFiles = tk.DeclaredFiles
+		bound, why, err := boundTask(store, repository, it.Number)
+		if err != nil {
+			return err
+		}
+		switch {
+		case why != "":
+			it.Unbound = why
+		case bound.ID != requested:
+			it.Unbound = fmt.Sprintf("task %s is named, but task %s is bound to %s#%d", requested, bound.ID, repository, it.Number)
+		default:
+			it.BoundHead = bound.PRHead
+		}
+	}
+	return nil
+}
+
 func bindItem(store task.Store, repository string, it *Item) error {
 	b, why, err := boundTask(store, repository, it.Number)
 	if err != nil {
