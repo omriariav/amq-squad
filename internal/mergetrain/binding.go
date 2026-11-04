@@ -67,6 +67,7 @@ var ErrBindingFailed = errors.New("binding_failed")
 // Binder writes a task's PR binding.
 type Binder interface {
 	BindPR(taskID, repository string, pr int, head string) error
+	RecordPRMerge(taskID, repository string, pr int, commit string) error
 }
 
 // StoreBinder binds through task.Store.BindPR.
@@ -81,5 +82,14 @@ func (b StoreBinder) BindPR(taskID, repository string, pr int, head string) erro
 		now = b.Now()
 	}
 	_, err := b.Store.BindPR(taskID, repository, pr, head, now)
+	return err
+}
+
+func (b StoreBinder) RecordPRMerge(taskID, repository string, pr int, commit string) error {
+	now := time.Now()
+	if b.Now != nil {
+		now = b.Now()
+	}
+	_, err := b.Store.RecordPRMerge(taskID, repository, pr, commit, now)
 	return err
 }

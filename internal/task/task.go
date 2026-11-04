@@ -75,13 +75,16 @@ type Task struct {
 	// The PR binding (3-2 fix 4, milestone B's field names): the harness
 	// commit step, and the merge train after its own rebase, write it through
 	// BindPR; it survives every mutation like any other field.
-	PRRepository string     `json:"pr_repository,omitempty"`
-	PRNumber     int        `json:"pr_number,omitempty"`
-	PRHead       string     `json:"pr_head,omitempty"`
-	CreatedBy    string     `json:"created_by,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	ClosedAt     *time.Time `json:"closed_at"`
+	PRRepository string `json:"pr_repository,omitempty"`
+	PRNumber     int    `json:"pr_number,omitempty"`
+	PRHead       string `json:"pr_head,omitempty"`
+	// PRMergeCommit is the merge train's durable proof that the bound PR
+	// merged. Dependency gating reads this fact, not task completion.
+	PRMergeCommit string     `json:"pr_merge_commit,omitempty"`
+	CreatedBy     string     `json:"created_by,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	ClosedAt      *time.Time `json:"closed_at"`
 }
 
 // Lease is the current holder's lease. An unclaimed lease (ClaimedAt nil)
