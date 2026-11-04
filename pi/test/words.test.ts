@@ -369,6 +369,7 @@ test("row 4: every seat warning code in Go's list has plain words; the code is b
 // rule. The train's line likewise.
 test("row 4: a seat's stop and the train's stop say what happened and what to do", () => {
 	assert.equal(decisionWords({ kind: "exit_refused", seat: "old-dev", reason: "ledger_tampered at gone" }), "seat old-dev did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits");
+	assert.equal(decisionWords({ kind: "seat_launch_failed", seat: "rev-1", reason: "x", reason_code: "version_probe_failed", stage: "apply_failed" }), "seat rev-1's launch failed: AMQ's apply failed; ask the lead to relaunch the roster");
 	for (const kind of Object.keys(DECISION_WORDS)) {
 		const l = decisionWords({ kind, seat: "dev", reason: "made_up_reason: x" });
 		assert.equal(codeIn(l), "", `${kind}: ${l}`);

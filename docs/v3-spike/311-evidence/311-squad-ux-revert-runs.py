@@ -92,6 +92,8 @@ R = [
   "	if (c.launch?.has(r)) return { line: `${t.id} waiting:", "	if (false) return { line: `${t.id} waiting:", PIN("words", "row 7: a launch failure")),
  ("7", "a table lookup that finds an inherited property (no own-property check)", L+"words.ts",
   '	return key !== undefined && Object.hasOwn(table, key) ? table[key] : undefined;', '	return key !== undefined ? table[key] : undefined;', PIN("words", "row 7: a reason named constructor")),
+ ("4", "a launch decision's stage not read for the stop line", L+"words.ts",
+  '	const l = own(LAUNCH_WORDS, code) ?? own(LAUNCH_WORDS, d.stage);', '	const l = undefined;', PIN("words", "row 4: a seat's stop")),
  ("4", "a successful /widen lists its paths above the rule", L+"keys.ts",
   '		return { key: k, refused: false, line: `${t.id} widened: ${paths.length} ${paths.length === 1 ? "path" : "paths"} added (listed below the line).`,', '		return { key: k, refused: false, line: `${t.id} widened by ${paths.join(", ")}.`,', PIN("words", "row 4: no line")),
  # row 5

@@ -355,13 +355,18 @@ export const DECISION_WORDS: Record<string, (who: string) => [string, string]> =
 
 // decisionWords is a stop decision's line: "<what happened>: <the reason's
 // words>; <what to do>" when the decision's reason code (its reason_code,
-// else its reason's first word) is in the block table, else "<what
-// happened>; <the decision's own what to do>".
-export function decisionWords(d: { kind: string; seat?: string; task_id?: string; reason?: string; reason_code?: string }): string {
+// else its reason's first word) is in the block table; "<what happened>:
+// <the launch words>; <the decision's what to do>" when the code, else the
+// decision's stage, is in the launch table; else "<what happened>; <the
+// decision's own what to do>".
+export function decisionWords(d: { kind: string; seat?: string; task_id?: string; reason?: string; reason_code?: string; stage?: string }): string {
 	const who = d.seat || d.task_id || "";
 	const [happened, todo] = own(DECISION_WORDS, d.kind)?.(who) ?? ["a seat stopped", "the record is below the line"];
 	const code = d.reason_code || (d.reason ?? "").trim().split(/[\s:]+/)[0] || "";
 	const f = own(BLOCK_WORDS, code);
+	// a launch decision: its reason code, else its stage, in the launch table
+	const l = own(LAUNCH_WORDS, code) ?? own(LAUNCH_WORDS, d.stage);
+	if (!f && l) return `${happened}: ${l}; ${todo}`;
 	if (!f) return `${happened}; ${todo}`;
 	const [why, then] = f({});
 	return `${happened}: ${why}; ${then}`;
