@@ -109,6 +109,15 @@ R = [
   '	return [...lines, size, "",', '	return [...lines, "",', PIN("team", "a goal with a canary")),
  ("4", "the growth gate's line claims the raise whatever GateErrs says", "internal/cli/task_widen.go",
   '			if len(data.GateErrs) > 0 {\n				refused.plain =', '			if false {\n				refused.plain =', GO % ("TestTheGrowthGateLineSaysWhatTheRaiseDid", "internal/cli")),
+ # Codex's two leftovers on b4df9475
+ ("7", "a train entry kind dropped from the table (merge_intent)", L+"words.ts",
+  '	merge_intent: "merging a PR (the merge is pending)",', '', PIN("words", "row 7: every wait")),
+ ("4", "the run line with the journal's kind and the run id above the rule", L+"screen.ts",
+  '		`  ${label}: ${trainRunWords(r.last_kind)}, ${age(r.last_at, now)} ago;', '		`  ${label}: ${r.run} ${r.last_kind}, ${age(r.last_at, now)} ago;', PIN("words", "row 4: no line")),
+ ("7", "a launch failure's block not read from the task's own record", L+"words.ts",
+  '	const rec = launchBlock(d.block_detail, r);', '	const rec = undefined as { stage: string } | undefined;', PIN("words", "a launch failure's block reads")),
+ ("7", "the screen reads no record for an unmapped block reason", L+"words.ts",
+  '	return reason === "size_cap_exceeded" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));', '	return reason === "size_cap_exceeded";', PIN("words", "a launch failure's block reads")),
  # row 5
  ("5", "the confirm reads the newest plan after the dialog", L+"team.ts",
   '		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };\n		let r: LeadReply;', '		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };\n		p = this.proposal ?? p;\n		let r: LeadReply;', PI % "team"),
@@ -148,7 +157,7 @@ R = [
  ("8", "/widen offers every blocked task, not only a widen request", L+"keys.ts",
   '		const blocked = st.tasks.filter((t) => t.task_state === "blocked" && WIDENABLE.includes(t.block_reason));', '		const blocked = st.tasks.filter((t) => t.task_state === "blocked");', PI % "keys"),
 ]
-only = sys.argv[1:] 
+only = sys.argv[1:]
 out = []
 for i, (row, what, f, old, new, cmd) in enumerate(R, 1):
     if only and str(i) not in only: continue
