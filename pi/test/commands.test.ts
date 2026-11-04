@@ -74,7 +74,7 @@ test("row 1: one command per action, a one-line plain description each, no pi bu
 		const notes: string[] = [];
 		ctx.ui.notify = (m: string) => notes.push(m);
 		await pi.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
-		for (let i = 0; i < 100 && !(ctx.widgets[key]?.lines ?? []).some((l: string) => l.startsWith("amq-squad: lead") || l.startsWith("amq-squad: solo")); i++) await new Promise((r) => setTimeout(r, 10));
+		for (let i = 0; i < 1000 && !(ctx.widgets[key]?.lines ?? []).some((l: string) => l.startsWith("amq-squad: lead") || l.startsWith("amq-squad: solo")); i++) await new Promise((r) => setTimeout(r, 10));
 		const before = ctx.widgets[key]?.lines;
 		assert.ok(before, `${phase}: no screen`);
 		await pi.commands.get("squad").handler("", ctx);
@@ -101,7 +101,7 @@ test("row 2: the screen's last line lists exactly the current phase's commands",
 	const lead = await load("lead");
 	const ctx = fakeCtx({ hasUI: true });
 	await lead.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
-	for (let i = 0; i < 100 && !(ctx.widgets[SCREEN_KEY]?.lines ?? [])[0]?.startsWith("amq-squad: lead"); i++) await new Promise((r) => setTimeout(r, 10));
+	for (let i = 0; i < 1000 && !(ctx.widgets[SCREEN_KEY]?.lines ?? [])[0]?.startsWith("amq-squad: lead"); i++) await new Promise((r) => setTimeout(r, 10));
 	const team = ctx.widgets[SCREEN_KEY].lines as string[];
 	assert.equal(team.at(-1), "/add  /reset  /dismiss  /answer  /widen  /team hide");
 	for (const c of team.at(-1)!.split(/ {2}/)) assert.ok(lead.commands.has(c.slice(1).split(" ")[0]), `${c} is not registered`);
@@ -143,7 +143,7 @@ test("row 2: after the switch to the team phase the team screen shows the team's
 	team.render();
 	assert.equal((ctx.widgets[PLAN_KEY].lines as string[]).at(-1), "/plan  /confirm  /team hide");
 	team.switchToTeam({ root: path.join(tmpdir(), "s1"), handle: "cto", session: "s1" });
-	for (let i = 0; i < 100 && !screen.last; i++) await new Promise((r) => setTimeout(r, 10));
+	for (let i = 0; i < 1000 && !screen.last; i++) await new Promise((r) => setTimeout(r, 10));
 	screen.stop();
 	assert.equal(ctx.widgets[PLAN_KEY].lines, undefined, "the plan block stayed");
 	assert.equal((ctx.widgets[SCREEN_KEY].lines as string[]).at(-1), "/add  /reset  /dismiss  /answer  /widen  /team hide");

@@ -450,7 +450,9 @@ test("widen: the dialog shows the requested paths and the seat's reason; only it
 	assert.deepEqual(empty.calls.map((c) => c.args[1]), ["show"]);
 	assert.equal(empty.confirms.length, 0);
 	// the verb's refusal: in words, its text below the rule
-	const refused = rig((args) => (args[1] === "show" ? res(0, showOf("t5", ["src/helper.go"], "r")) : res(15, "", "error: task widen t5 was refused: the widened set overlaps another active task's files\n")), [], () => one, true);
+	const refused = rig((args) => (args[1] === "show" ? res(0, showOf("t5", ["src/helper.go"], "r")) : res(15, "", "error: task widen t5 was refused: the widened set overlaps another active task's files\n\n----------\nrefused (file_lock_conflict): src/helper.go is t7's\n")), [], () => one, true);
 	const refusedLines = await refused.press("widen");
 	assert.equal(keyLine(refusedLines), "  /widen: t5 was not widened: task widen t5 was refused: the widened set overlaps another active task's files");
+	// the verb's code, printed below its own rule, is below the screen's
+	assert.equal(recLine(refusedLines), "  /widen: t5: task widen t5 was refused: the widened set overlaps another active task's files (refused (file_lock_conflict): src/helper.go is t7's)");
 });

@@ -92,6 +92,16 @@ export function refusal(r: RunResult): string {
 	return line.replace(/^error:\s*/, "") || `exit ${r.code}`;
 }
 
+// refusalRecord is a refusal for the record below the screen's rule: the
+// verb's first line and, when the verb printed its own rule (brief
+// 3.1.1-3: task widen's refusal), the codes below it.
+export function refusalRecord(r: RunResult): string {
+	const text = r.stderr || r.stdout;
+	const at = text.indexOf(`\n\n${RULE}\n`);
+	const below = at < 0 ? "" : text.slice(at + RULE.length + 3).split("\n").map((l) => l.trim()).filter(Boolean).join("; ");
+	return below ? `${refusal(r)} (${below})` : refusal(r);
+}
+
 function failed(r: RunResult): boolean {
 	return Boolean(r.spawnError) || r.timedOut || r.code !== 0;
 }
@@ -200,16 +210,16 @@ export class Keys {
 		const spec = [handle, role.trim(), runtime, model.trim(), effort.trim()].join(":");
 		const seatArgs = ["--project", project, "--add-seat", spec, "--json"];
 		const p = await this.verb(["team", "propose", ...seatArgs]);
-		if (failed(p)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} was not added, squad.yaml does not take it`, refusal(p)), record: `squad_invalid: ${refusal(p)}` };
+		if (failed(p)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} was not added, squad.yaml does not take it`, refusal(p)), record: `squad_invalid: ${refusalRecord(p)}` };
 		const digest = data<{ digest: string }>(p.stdout)?.digest;
 		if (!digest) return { key: k, refused: true, line: `Seat ${clean(handle, 30)} was not added: the proposal printed no digest.`, record: "squad_invalid: team propose returned no digest" };
 		const ok = await ctx.ui.confirm(`add seat ${handle} (${spec})`, "this relaunches every seat; continue?");
 		if (!ok) return { key: k, refused: false, line: "Cancelled; nothing was written." };
 		const pressed = new Date().toISOString(); // the key press: the launch budget's start
 		const a = await this.verb(["team", "apply", "--digest", digest, ...seatArgs]);
-		if (failed(a)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} was not added`, refusal(a)), record: `seat ${handle}: ${refusal(a)}` };
+		if (failed(a)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} was not added`, refusal(a)), record: `seat ${handle}: ${refusalRecord(a)}` };
 		const r = await this.verb(["scheduler", "relaunch", "--reason", `add seat ${handle} (the screen's add key)`, "--start", pressed, "--json"]);
-		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} is in squad.yaml, but the roster did not relaunch`, refusal(r)), record: `seat ${handle} is in squad.yaml; ${refusal(r)}` };
+		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} is in squad.yaml, but the roster did not relaunch`, refusal(r)), record: `seat ${handle} is in squad.yaml; ${refusalRecord(r)}` };
 		return { key: k, refused: false, line: `Seat ${clean(handle, 30)} added; the roster relaunches with it (every seat finishes what it holds first); its launch budget counts from ${pressed}.` };
 	}
 
@@ -237,7 +247,7 @@ export class Keys {
 		if (pool) argv.push("--pool", pool);
 		argv.push("--json");
 		const r = await this.verb(argv);
-		if (failed(r)) return { key: k, refused: true, line: sentence(`${t.id} was not reset`, refusal(r)), record: `${t.id}: ${refusal(r)}` };
+		if (failed(r)) return { key: k, refused: true, line: sentence(`${t.id} was not reset`, refusal(r)), record: `${t.id}: ${refusalRecord(r)}` };
 		return { key: k, refused: false, line: `${t.id} reset${pool ? ` onto ${pool}` : ""}; it goes back to the queue.` };
 	}
 
@@ -263,7 +273,7 @@ export class Keys {
 		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const l = lines.find((x) => x.label === pick)!;
 		const r = await this.verb(["scheduler", "clear", "--seat", l.seat, "--warning", l.code, "--launch", l.launch, "--json"]);
-		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${l.seat}'s warning was not dismissed`, refusal(r)), record: `${l.seat} ${l.code}: ${refusal(r)}` };
+		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${l.seat}'s warning was not dismissed`, refusal(r)), record: `${l.seat} ${l.code}: ${refusalRecord(r)}` };
 		return { key: k, refused: false, line: `Seat ${l.seat}'s warning is dismissed for its current launch; the seat itself does not change.`, record: `${l.seat} ${l.code} acknowledged for launch ${l.launch}` };
 	}
 
@@ -281,7 +291,7 @@ export class Keys {
 		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const id = open[labels.indexOf(pick)].id;
 		const s = await this.verb(["gate", "status", "--gate", id, "--json"]);
-		if (failed(s)) return { key: k, refused: true, line: sentence("The gate could not be read", refusal(s)), record: `${id}: ${refusal(s)}` };
+		if (failed(s)) return { key: k, refused: true, line: sentence("The gate could not be read", refusal(s)), record: `${id}: ${refusalRecord(s)}` };
 		const g = data<GateStatusRow[]>(s.stdout)?.[0];
 		if (!g) return { key: k, refused: true, line: "The gate could not be read: its status came back empty.", record: `${id}: gate status returned no gate` };
 		if (g.state !== "open") {
@@ -295,7 +305,7 @@ export class Keys {
 		let posted = "";
 		if (!g.question_sent) {
 			const p = await this.verb(["gate", "post", "--gate", id, "--json"]);
-			if (failed(p)) return { key: k, refused: true, line: sentence(`The question "${first}" did not reach the phone`, refusal(p)), record: `${ids}: the question was not posted over Buzz: ${refusal(p)}` };
+			if (failed(p)) return { key: k, refused: true, line: sentence(`The question "${first}" did not reach the phone`, refusal(p)), record: `${ids}: the question was not posted over Buzz: ${refusalRecord(p)}` };
 			posted = "the question was posted over Buzz; ";
 		}
 		const todo = "reply yes or no in the question's Buzz thread; the terminal cannot answer a typed gate";
@@ -326,7 +336,7 @@ export class Keys {
 			t = blocked[labels.indexOf(pick)];
 		}
 		const shown = await this.verb(["task", "show", t.id, "--json"]);
-		if (failed(shown)) return { key: k, refused: true, line: sentence(`${t.id}'s record could not be read`, refusal(shown)), record: `${t.id}: ${refusal(shown)}` };
+		if (failed(shown)) return { key: k, refused: true, line: sentence(`${t.id}'s record could not be read`, refusal(shown)), record: `${t.id}: ${refusalRecord(shown)}` };
 		const rec = data<{ task: { id?: string; title?: string; state?: string; block_reason?: string; block_detail?: string; refused_paths?: unknown } }>(shown.stdout)?.task;
 		if (!rec) return { key: k, refused: true, line: `${t.id}'s record could not be read: task show returned no task.`, record: `${t.id}: task show returned no task` };
 		let paths: string[];
@@ -348,7 +358,7 @@ export class Keys {
 		const yes = await ctx.ui.confirm(`widen ${t.id}?`, msg.join("\n"));
 		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was widened." };
 		const r = await this.verb(toolArgv.taskWiden(this.cfg, { id: t.id, reason: WIDEN_REASON }, paths));
-		if (failed(r)) return { key: k, refused: true, line: sentence(`${t.id} was not widened`, refusal(r)), record: `${t.id}: ${refusal(r)}` };
+		if (failed(r)) return { key: k, refused: true, line: sentence(`${t.id} was not widened`, refusal(r)), record: `${t.id}: ${refusalRecord(r)}` };
 		return { key: k, refused: false, line: `${t.id} widened by ${paths.length} ${paths.length === 1 ? "path" : "paths"}: ${paths.join(", ")}.`, record: `${t.id} widened: ${WIDEN_REASON}` };
 	}
 }
