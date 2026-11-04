@@ -258,7 +258,14 @@ equals the real run's after `BindTasks`, for a bound PR and an unbound one.
    compile), with the lead. A record with no launch id or compile time
    cannot be ordered and stays a seat row; a scheduler running seats on
    demand (state, no roster) lists every record, as before. The roster row
-   covers the fallback and the on-demand case (R4e).
+   covers the fallback and the on-demand case (R4e). Codex's next round
+   found a regression: a seat that is live but was launched on its own in
+   this session (an older launch id) fell into `stale_records` and out of
+   the counts, which the roster row could not see since it marks every
+   process dead. A live seat is now a seat row whatever its launch id; the
+   launch-id rule orders only the dead and unknown records. Row:
+   TestALiveSeatOfAnOlderLaunchStaysASeat, two live seats of one session
+   with different launch ids and a dead record of an older launch (R4f).
 3. **A commit-less tag gate cleared the first commit seen.** A seat's gated
    `git tag NAME` or tag push names no commit, so a tag now clears only
    through a target that names it and its commit (`gatetarget.ReleaseTag`),
@@ -287,7 +294,7 @@ TestVerdictMissingStaysAWorkFailure, breaks on exactly the removal of
 
 `docs/v3-spike/311-evidence/311-followups-revert-runs.py`: each case
 rewrites one change in the tree, runs its row, expects a failure, and
-restores every touched file in a `finally`. 46 runs, 46 caught on the
+restores every touched file in a `finally`. 47 runs, 47 caught on the
 merged tree; the tree was clean after.
 
 | Run | Reverted | Row that failed |
@@ -338,6 +345,7 @@ merged tree; the tree was clean after.
 | R9h | a covered alert stays on disk | TestDriftResolvesAnAlertAVerifiedGateLaterCovers |
 | R1k | the same removal as R1j, the mutation row alone | TestVerdictMissingStaysAWorkFailure |
 | R9i | the train does not audit an alert's clearing | TestTrainAuditKeepsAnAlertAndItsClearing |
+| R4f | a live seat of an older launch is a stale record | TestALiveSeatOfAnOlderLaunchStaysASeat |
 
 The no-self-re-dispatch row (TestPolicyRefusedTaskIsNotRedispatchedWithoutTheLead)
 is a pin: the store's block already gave it, and no change here sits behind
@@ -401,6 +409,13 @@ On `c331bb07` (origin/v3 `b67df349` merged), 2026-11-02:
   clears only through a target naming its commit, in every session. The
   squad's own session keeps a seat's gated `gh release create <name>` for a
   release, bound to the first release id it covers.
+
+- **Known limits kept.** doctor's drift path
+  (internal/cli/doctor_release_drift.go) removes a covered alert with no
+  `alert_cleared` entry, since doctor has no audit log. The merge train
+  fixture's git subprocesses inherit the real HOME
+  (internal/mergetrain/fakegh_test.go), pre-existing and on the follow-ups
+  list.
 
 ## 11. For the 3.1.1 release notes
 

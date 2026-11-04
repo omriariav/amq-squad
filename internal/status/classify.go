@@ -529,8 +529,9 @@ func routeWaitPool(t task.Task, waits []scheduler.RouteWait) string {
 // file, with the lead (the scheduler's, and its launch record's). With no
 // scheduler state at all, the seats of this session's latest launch (the
 // staged records of the session sharing the newest compile's launch id: a
-// roster launches in one compile) with the lead (Codex P2 2 on #854); a
-// record with no launch id or compile time cannot be ordered and stays. nil
+// roster launches in one compile) with the lead (Codex P2 2 on #854); a live
+// seat stays whatever its launch id, and a record with no launch id or
+// compile time cannot be ordered and stays. nil
 // when neither is known (a scheduler running seats on demand, or no launch
 // record of this session): every record under the root is a seat row.
 func runningRoster(in Input) map[string]bool {
@@ -555,10 +556,13 @@ func runningRoster(in Input) map[string]bool {
 			return nil
 		}
 		for _, s := range in.Seats {
-			// a record with no launch id or compile time cannot be ordered
+			// a live seat is a seat row whatever its launch id (one launched
+			// on its own in this session, Codex on #854's fix round); the
+			// launch-id rule orders only the dead and unknown records, and a
+			// record with no launch id or compile time cannot be ordered
 			// against the latest launch: it stays a seat row
 			unordered := s.Launch == nil || s.Launch.LaunchID == "" || s.LaunchStartedAt.IsZero()
-			if unordered || s.Launch.LaunchID == latest.Launch.LaunchID && (in.Session == "" || s.Session == in.Session) {
+			if s.Live || unordered || s.Launch.LaunchID == latest.Launch.LaunchID && (in.Session == "" || s.Session == in.Session) {
 				out[s.Handle] = true
 			}
 		}

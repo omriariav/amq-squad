@@ -109,3 +109,46 @@ func TestNoRosterSeatWaitNamesThePool(t *testing.T) {
 		t.Fatalf("attention %+v", s.Attention)
 	}
 }
+
+// Codex on #854's fix round (P2-2): with no scheduler state, a seat that is
+// live but was launched on its own in this session (an older launch id) is
+// a seat row; the launch-id rule orders only the dead and unknown records.
+// Two live seats of one session with different launch ids are both seats,
+// and a dead record of an older launch is a stale record. Reverted (the
+// launch id alone), the older live seat fell into stale_records and out of
+// the counts.
+func TestALiveSeatOfAnOlderLaunchStaysASeat(t *testing.T) {
+	now := time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC)
+	root := filepath.Join(t.TempDir(), "root")
+	seat := func(handle, launchID string, compiled time.Time, live bool) {
+		for _, d := range []string{filepath.Join(root, "agents", handle), launch.StagedDir(root, handle)} {
+			if err := os.MkdirAll(d, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rec := launch.Record{Handle: handle, Root: root, Session: "v31", Runtime: "codex", LaunchID: launchID, StartedAt: compiled}
+		if err := launch.WriteFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName), rec); err != nil {
+			t.Fatal(err)
+		}
+		if live {
+			write(t, filepath.Join(root, "agents", handle, "presence.json"), `{"status":"active","last_seen":"`+now.Add(-10*time.Second).Format(time.RFC3339)+`"}`)
+		}
+	}
+	seat("dev", "launch-new", now.Add(-time.Hour), true)
+	seat("reviewer", "launch-own", now.Add(-3*time.Hour), true) // launched on its own, earlier
+	seat("scribe", "launch-old", now.Add(-5*time.Hour), false)
+	s := Build(Collect(CollectOptions{Root: root, Session: "v31", Now: now, PIDAlive: func(int) bool { return false }}))
+	var seats []string
+	for _, st := range s.Seats {
+		seats = append(seats, st.Handle)
+	}
+	if !slices.Equal(seats, []string{"dev", "reviewer"}) {
+		t.Fatalf("seats %v, want both live seats", seats)
+	}
+	if want := []StaleRecord{{"scribe", "v31", "launch-old"}}; !slices.Equal(s.StaleRecords, want) {
+		t.Fatalf("stale_records %+v, want %+v", s.StaleRecords, want)
+	}
+	if s.Counts.All != 2 {
+		t.Fatalf("counts %+v", s.Counts)
+	}
+}

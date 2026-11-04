@@ -161,6 +161,9 @@ CASES = [
  ("R9i the train does not audit an alert's clearing (the plan reviewer)", "internal/mergetrain/train.go",
   "\t\t\t_ = entry(Entry{Kind: \"alert_cleared\", Detail: a.Detail + \"; a verified owner gate now covers it\", GateID: a.ID})\n", "\t\t\t_ = a\n",
   GO("internal/mergetrain", "TestTrainAuditKeepsAnAlertAndItsClearing")),
+ ("R4f a live seat of an older launch is a stale record (Codex on #854's fix round)", "internal/status/classify.go",
+  "\t\t\tif s.Live || unordered || s.Launch.LaunchID", "\t\t\tif unordered || s.Launch.LaunchID",
+  GO("internal/status", "TestALiveSeatOfAnOlderLaunchStaysASeat")),
 ]
 
 originals = {}
