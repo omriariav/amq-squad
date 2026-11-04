@@ -52,9 +52,11 @@ pi/extensions/lib/commands.ts registers every command in one table
   `block_detail`), shows both in pi's confirm dialog, and runs `task widen`
   with exactly those paths, each as one `--path` (the lead's
   `amq_task_widen` argv), only on the dialog's yes; several requests open
-  pi's select first. A successful widening says "t5 widened: 2 paths added
-  (listed below the line)": the paths are the seat's free text and can carry
-  a long hex run, so they go below the rule (Codex on `ed3d1e65`). It offers the tasks blocked `widen_requested` or
+  pi's select first. A successful widening says "added 2 files to t5; its
+  commit step runs again", the count and the id from the record (the plan
+  reviewer's wording): the paths are the seat's free text and can carry a
+  long hex run, so they go below the rule (Codex on `ed3d1e65`), and the
+  dialog showed them to the owner before the yes. It offers the tasks blocked `widen_requested` or
   `outside_declared_files`, the two blocks the verb accepts. The lead's
   recorded reason is fixed: "the owner accepted the seat's widen request at
   the lead's screen (/widen)".
@@ -297,7 +299,7 @@ amq-squad: proposed team
 
 ### After
 
-At `e22b3403` (unchanged since `1d2ad62a`, the plan reviewer's two changes). The fixture's train
+At `29ab4513` (unchanged since `1d2ad62a`, the plan reviewer's two changes). The fixture's train
 refusal now names a real rule (`ci_green`; it said `checks`, which is no
 rule), so the before capture keeps the old text.
 
@@ -359,7 +361,7 @@ amq-squad: proposed team
 
 ### A failed launch, a reason named constructor and a /widen (after)
 
-At `e22b3403`, the fixture with launch failure waits and blocks, AMQ's own
+At `29ab4513`, the fixture with launch failure waits and blocks, AMQ's own
 code recorded by the decision log, a block reason named `constructor`, and
 a successful `/widen` as the last outcome:
 
@@ -379,7 +381,7 @@ train
   No merge train has run yet.
 waiting on you (0)
   Nothing is waiting on you.
-  /widen: t5 widened: 2 paths added (listed below the line).
+  /widen: added 2 files to t5; its commit step runs again
 ----------
   version_probe_failed: rev-1 AMQ refused the apply
   t31 waits: version_probe_failed
@@ -466,7 +468,7 @@ codes read as launch failures through the decision log (above).
 ## 8. Revert runs
 
 `python3 docs/v3-spike/311-evidence/311-squad-ux-revert-runs.py` from a
-clean checkout, at code head `e22b3403`: 50 runs, 50 caught. Every case
+clean checkout, at code head `29ab4513`: 50 runs, 50 caught. Every case
 reverts production code only and runs the row that must catch it. The
 history: 32 at `c7105890`; 12 for the plan reviewer's warning, stop and
 request rows (cases 16 to 27); six for Codex's gaps on `ed3d1e65`
@@ -503,8 +505,8 @@ blocked for something); the row has had that case since `154444eb`.
 | 19 | 4 | a warning's code and detail not kept below the rule | caught | `not ok 1 - row 4: every seat warning code in Go's list has plain words; the code is below the rule` |
 | 20 | 4 | /dismiss without the seat choice | caught | `not ok 1 - dismiss: the acknowledgement names the warning and the launch; the line leaves the screen; the seat's state does not` |
 | 21 | 4 | /dismiss offers a seat's warnings by their codes | caught | `not ok 1 - dismiss: the acknowledgement names the warning and the launch; the line leaves the screen; the seat's state does not` |
-| 22 | 4 | the seat's stop line as the 3.1.0 'last stop' words | caught | `` |
-| 23 | 4 | the seat's stop line without what to do | caught | `` |
+| 22 | 4 | the seat's stop line as the 3.1.0 'last stop' words | caught | `not ok 1 - row 4: a seat's stop and the train's stop say what happened and what to do` (read from a run by hand; the script's parse missed the line) `` |
+| 23 | 4 | the seat's stop line without what to do | caught | `not ok 1 - row 4: a seat's stop and the train's stop say what happened and what to do` (read from a run by hand; the script's parse missed the line) `` |
 | 24 | 4 | the train's stop line as the 3.1.0 refusal text | caught | `not ok 2 - row 4: a seat's stop and the train's stop say what happened and what to do` |
 | 25 | 4 | a phone request's id and refusal names above the rule | caught | `not ok 1 - row 4: no line above the rule carries a snake_case code or a hex run; the code is below it` |
 | 26 | 7 | a train rule dropped from the table (ci_green) | caught | `not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table` |
@@ -513,7 +515,7 @@ blocked for something); the row has had that case since `154444eb`.
 | 29 | 7 | a wait reason that is a launch code not looked up in the launch table | caught | `not ok 1 - row 7: a launch failure's code as a wait or block reason reads in words` |
 | 30 | 7 | AMQ's own launch code not recognized through the decision log | caught | `not ok 1 - row 7: a launch failure's code as a wait or block reason reads in words` |
 | 31 | 7 | a table lookup that finds an inherited property (no own-property check) | caught | `not ok 1 - row 7: a reason named constructor or __proto__ renders the fallback line` |
-| 32 | 4 | a launch decision's stage not read for the stop line | caught | `not ok 1 - row 4: a seat's stop and the train's stop say what happened and what to do` (read from a run by hand; the script's parse missed the line) |
+| 32 | 4 | a launch decision's stage not read for the stop line | caught | `not ok 1 - row 4: a seat's stop and the train's stop say what happened and what to do` (read from a run by hand; the script's parse missed the line) `` |
 | 33 | 4 | a successful /widen lists its paths above the rule | caught | `not ok 1 - row 4: no line above the rule carries a snake_case code or a hex run; the code is below it` |
 | 34 | 5 | the confirm reads the newest plan after the dialog | caught | `not ok 5 - /confirm: a re-propose while the dialog is open does not change what is confirmed; two plans: select, then the dialog` |
 | 35 | 5 | the dialog's no confirms anyway | caught | `not ok 4 - /confirm: the dialog's yes asks the lead to witness the plan it showed; a no sends nothing` |
@@ -589,7 +591,7 @@ tmux, AMQ and Buzz.
 
 ## 12. Gates
 
-At code head `e22b3403` (the commits after it change docs only):
+At code head `29ab4513` (the commits after it change docs only):
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0, 56 packages ok, 0 FAIL lines. Tail:
 
@@ -610,14 +612,14 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 15598.08975
+ℹ duration_ms 16966.260166
 exit 0
 ```
 
 - `make ci` (PyYAML venv on PATH): exit 0. Tail:
 
 ```
-PERF pre-tool allow in a seat: p50 21.3 ms, p95 22.7 ms
-PERF outside a seat: 60 runs, p50 5.6 ms, p95 6.0 ms, max 6.4 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 21.4 ms, p95 22.7 ms
+PERF outside a seat: 60 runs, p50 5.6 ms, p95 6.1 ms, max 6.3 ms (budget p95 < 20 ms: met)
 exit 0
 ```
