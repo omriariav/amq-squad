@@ -104,7 +104,7 @@ R = [
  ("5", "the select's goal label raw (no clean)", L+"team.ts",
   '	return clean(p.plan.find((l) => l.startsWith("goal:")) ?? p.plan[0] ?? "a plan with no goal line", 120);', '	return p.plan.find((l) => l.startsWith("goal:")) ?? p.plan[0] ?? "a plan with no goal line";', PIN("team", "a goal with a canary")),
  ("5", "the select's labels unnumbered (two plans with one goal share a label)", L+"team.ts",
-  '			const labels = newest.map((x, i) => `${i + 1}. ${goalLine(x.p)}', '			const labels = newest.map((x, i) => `${goalLine(x.p)}', PIN("team", "two plans with the same goal")),
+  '			const labels = newest.map((x, i) => `${i + 1}. ${goalLine(x.p)}', '			const labels = newest.map((x, i) => `${goalLine(x.p)}', PIN("team", "plans with the same goal")),
  ("5", "the dialog without the plan's size line", L+"team.ts",
   '	return [...lines, size, "",', '	return [...lines, "",', PIN("team", "a goal with a canary")),
  ("4", "the growth gate's line claims the raise whatever GateErrs says", "internal/cli/task_widen.go",
