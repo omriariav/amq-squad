@@ -39,7 +39,7 @@ R = [
  ("3", "the seat line's state/reason_code (3.1.0)", L+"words.ts",
   '	if (s.state === "blocked" && s.task_id) return', '	return { text: `${s.state}/${s.reason_code}` };\n	if (s.state === "blocked" && s.task_id) return', PIN("words", "row 3")),
  ("3", "a blocked task's line by its code", L+"words.ts",
-  '	const [happened, todo] = f(d);\n	return { line: `${t.id} blocked: ${happened}; ${todo}` };', '	return { line: `${t.id}  blocked  ${r}` };', PIN("words", "row 3")),
+  '	if (f) {\n		const [happened, todo] = f(d);\n		return { line: `${t.id} blocked: ${happened}; ${todo}` };\n	}', '	if (f) return { line: `${t.id}  blocked  ${r}` };', PIN("words", "row 3")),
  # row 4
  ("4", "a refusal's verb text above the rule (sentence without the strip)", L+"words.ts",
   '	const d = plainDetail(detail);', '	const d = detail.trim();', PI % "words"),
