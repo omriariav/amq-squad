@@ -38,27 +38,46 @@ func bindPR(t *Task, all *tasks, repository string, pr int, head string) error {
 		return err
 	}
 	if t.PRRepository != repository || t.PRNumber != pr || t.PRHead != head {
-		t.PRMergeCommit = ""
+		t.PRMergeHead, t.PRMergeCommit = "", ""
 	}
 	t.PRRepository, t.PRNumber, t.PRHead = repository, pr, head
 	return nil
 }
 
 // RecordPRMerge records the merge train's proof that the task's currently
-// bound PR merged. The binding must still name the same repository and PR.
-func (s Store) RecordPRMerge(id, repository string, pr int, commit string, now time.Time) (Task, error) {
-	return s.mutate(id, now, func(t *Task, _ *tasks) error {
-		repository, commit = strings.TrimSpace(repository), strings.TrimSpace(commit)
-		if !bindRepoRe.MatchString(repository) || pr < 1 || !bindHeadRe.MatchString(commit) {
-			return fmt.Errorf("record PR merge: need owner/name, a PR number and a full lowercase merge SHA (got %q #%d %q)", repository, pr, commit)
+// bound PR merged at head. An identical fact is a read-only success.
+func (s Store) RecordPRMerge(id, repository string, pr int, head, commit string, now time.Time) (Task, error) {
+	var out Task
+	wrote := false
+	err := s.update(now, func(all *tasks) error {
+		t := all.get(strings.TrimSpace(id))
+		if t == nil {
+			return fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		if !strings.EqualFold(t.PRRepository, repository) || t.PRNumber != pr {
-			return fmt.Errorf("record PR merge: task %s is bound to %s#%d, not %s#%d", t.ID, t.PRRepository, t.PRNumber, repository, pr)
+		repository, head, commit = strings.TrimSpace(repository), strings.TrimSpace(head), strings.TrimSpace(commit)
+		if !bindRepoRe.MatchString(repository) || pr < 1 || !bindHeadRe.MatchString(head) || !bindHeadRe.MatchString(commit) {
+			return fmt.Errorf("record PR merge: need owner/name, a PR number and full lowercase head and merge SHAs (got %q #%d %q %q)", repository, pr, head, commit)
+		}
+		if !strings.EqualFold(t.PRRepository, repository) || t.PRNumber != pr || t.PRHead != head {
+			return fmt.Errorf("%w: record PR merge: task %s is bound to %s#%d at %s, not %s#%d at %s", ErrPRBindingMismatch, t.ID, t.PRRepository, t.PRNumber, t.PRHead, repository, pr, head)
 		}
 		if t.PRMergeCommit != "" && t.PRMergeCommit != commit {
-			return fmt.Errorf("record PR merge: task %s already records %s", t.ID, t.PRMergeCommit)
+			return fmt.Errorf("record PR merge: task %s already records commit %s", t.ID, t.PRMergeCommit)
 		}
-		t.PRMergeCommit = commit
+		if t.PRMergeHead != "" && t.PRMergeHead != head {
+			return fmt.Errorf("record PR merge: task %s already records head %s", t.ID, t.PRMergeHead)
+		}
+		if t.PRMergeHead == head && t.PRMergeCommit == commit {
+			out = *t
+			return nil
+		}
+		t.PRMergeHead, t.PRMergeCommit = head, commit
+		all.touch(t.ID)
+		out, wrote = *t, true
 		return nil
 	})
+	if wrote {
+		out.UpdatedAt = now
+	}
+	return out, err
 }
