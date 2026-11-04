@@ -157,14 +157,16 @@ type PlanPR struct {
 	GateError string    `json:"gate_error,omitempty"`
 	Lifted    bool      `json:"lifted,omitempty"` // an accepted owner gate opened it
 	After     []int     `json:"after,omitempty"`  // earlier PRs whose files overlap: rebase after them
-	// RebaseForCI: no required check ran at this head and its base is behind;
-	// the real run rebases it (CI then runs) and re-checks.
-	RebaseForCI bool     `json:"rebase_for_ci,omitempty"`
-	Overlap     []string `json:"overlap,omitempty"`
-	Status      string   `json:"status"` // planned | refused | merged | stopped
-	Merged      string   `json:"merged,omitempty"`
-	base        string   // the PR's merge base, for RebaseForCI
-	title       string   // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
+	// RebaseForCI: the real run rebases this behind head, waits for CI and
+	// re-checks it. The reason is CI absence or strict protection.
+	RebaseForCI  bool     `json:"rebase_for_ci,omitempty"`
+	RebaseReason string   `json:"rebase_reason,omitempty"`
+	Overlap      []string `json:"overlap,omitempty"`
+	Status       string   `json:"status"` // planned | refused | merged | stopped
+	Merged       string   `json:"merged,omitempty"`
+	base         string   // the PR's merge base, for RebaseForCI
+	title        string   // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
+	mergeable    string   // server mergeability at the checked head
 }
 
 // ciAbsentOnly: the only refusal is CI with no run at the head.
@@ -321,8 +323,20 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		if err != nil {
 			return res, err
 		}
-		if ciAbsentOnly(p.Refusals) && p.base != res.BaseSHA {
+		behind := p.base != res.BaseSHA
+		if prot.Strict && behind {
+			switch {
+			case p.mergeable == "CONFLICTING", slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }):
+				p.Refusals = append(p.Refusals, Refusal{Rule: RuleStrictUpToDate,
+					Detail: "strict_required_status_checks_policy requires the PR head to be up to date with " + req.Base + ", but this head cannot be safely rebased"})
+			default:
+				p.Refusals = slices.DeleteFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RuleCIGreen })
+				p.RebaseForCI = true
+				p.RebaseReason = "strict_required_status_checks_policy requires the PR head to be up to date with " + req.Base
+			}
+		} else if ciAbsentOnly(p.Refusals) && behind {
 			p.Refusals, p.RebaseForCI = nil, true
+			p.RebaseReason = "required CI is absent on a head behind " + req.Base
 		}
 		if len(p.Refusals) > 0 {
 			t.refuse(req, &p, entry)
@@ -392,7 +406,7 @@ func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, 
 			return PlanPR{}, fmt.Errorf("PR #%d head kept moving while it was checked (%s -> %s)", it.Number, short(pr.HeadSHA), short(again.HeadSHA))
 		}
 	}
-	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", base: pr.BaseSHA, title: pr.Title}
+	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", base: pr.BaseSHA, title: pr.Title, mergeable: pr.Mergeable}
 	p.Refusals = check(checkInput{repository: req.Repository, base: req.Base, item: it, pr: pr, runs: runs, grant: t.Grants,
 		required: ci, trainHeads: t.Audit.trainHeads(req.Repository, it.Number)})
 	return p, nil

@@ -64,6 +64,7 @@ type Protection struct {
 	Checks            []RequiredCheck `json:"required_checks"`
 	DirectPushRefused bool            `json:"direct_push_refused"`
 	ForcePushRefused  bool            `json:"force_push_refused"`
+	Strict            bool            `json:"strict_required_status_checks_policy"`
 	Sources           []string        `json:"sources,omitempty"` // ruleset ids, "classic"
 	Notes             []string        `json:"notes,omitempty"`   // why something does not count
 }

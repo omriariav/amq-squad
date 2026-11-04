@@ -25,6 +25,9 @@ const (
 	RulePRState       = "pr_state"
 	RuleTaskUnbound   = "task_unbound"
 	RulePRHeadMoved   = "pr_head_moved"
+	// RuleStrictUpToDate: strict required status checks require a behind PR
+	// to be rebased, but the train cannot safely do so.
+	RuleStrictUpToDate = "strict_required_status_checks_policy"
 	// RuleHistoryIncomplete: the force-push timeline was not read whole, so
 	// an unauthorized force push could be hidden (5 re-pass, P1-2).
 	RuleHistoryIncomplete = "history_incomplete"

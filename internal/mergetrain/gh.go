@@ -214,7 +214,8 @@ type ruleJSON struct {
 	Type       string `json:"type"`
 	RulesetID  int    `json:"ruleset_id"`
 	Parameters struct {
-		RequiredStatusChecks []struct {
+		StrictRequiredStatusChecksPolicy bool `json:"strict_required_status_checks_policy"`
+		RequiredStatusChecks             []struct {
 			Context       string `json:"context"`
 			IntegrationID int    `json:"integration_id"`
 		} `json:"required_status_checks"`
@@ -224,6 +225,7 @@ type ruleJSON struct {
 // classicJSON is GET /repos/{r}/branches/{b}/protection.
 type classicJSON struct {
 	RequiredStatusChecks *struct {
+		Strict   bool     `json:"strict"`
 		Contexts []string `json:"contexts"`
 		Checks   []struct {
 			Context string `json:"context"`
@@ -312,6 +314,7 @@ func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJS
 				p.Notes = append(p.Notes, src+" has bypass actors: its required checks do not bind the owner")
 				continue
 			}
+			p.Strict = p.Strict || r.Parameters.StrictRequiredStatusChecksPolicy
 			for _, c := range r.Parameters.RequiredStatusChecks {
 				if c.IntegrationID <= 0 {
 					p.Notes = append(p.Notes, "ci_app_unbound: "+src+" requires "+c.Context+" from any app; bind it to its app in the ruleset")
@@ -336,6 +339,7 @@ func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJS
 			if !admins {
 				p.Notes = append(p.Notes, "classic required checks exempt admins (enforce_admins off): they do not bind the owner")
 			} else {
+				p.Strict = p.Strict || c.Strict
 				// contexts is the legacy app-less list beside checks: only
 				// app-bound checks count
 				for _, s := range c.Checks {
