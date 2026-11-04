@@ -440,6 +440,10 @@ test("widen: the dialog shows the requested paths and the seat's reason; only it
 	const none = rig(reply, [], () => ({ ...fixture, tasks: fixture.tasks.filter((t) => t.task_state !== "blocked") }));
 	assert.equal(keyLine(await none.press("widen")), "  /widen: Nothing to widen: no task is blocked with a widen request.");
 	assert.equal(none.calls.length, 0);
+	// a task blocked for another reason is no widen request
+	const other = rig(reply, [], () => ({ ...fixture, tasks: [{ ...fixture.tasks[0], block_reason: "verdict_failed" }] }));
+	assert.equal(keyLine(await other.press("widen")), "  /widen: Nothing to widen: no task is blocked with a widen request.");
+	assert.equal(other.calls.length, 0);
 	// a record with no recorded paths: refused, no widen
 	const empty = rig((args) => (args[1] === "show" ? res(0, showOf("t5", [], "x")) : res(0, "")), [], () => one, true);
 	assert.equal(keyLine(await empty.press("widen")), "  /widen: t5 has no widen request to accept: its block names no paths, or it is no longer blocked for them.");
