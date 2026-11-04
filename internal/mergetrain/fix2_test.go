@@ -96,7 +96,7 @@ func TestRealRunReadsTheTaskBoundToThePR(t *testing.T) {
 	if res.PRs[0].Status != "merged" || !has(res.PRs[1], RuleTaskUnbound) || !has(res.PRs[2], RulePRHeadMoved) {
 		t.Fatalf("PRs %+v", res.PRs)
 	}
-	if got, err := s.Get(mergedTask); err != nil || got.PRMergeCommit != res.PRs[0].Merged {
+	if got, err := s.Get(mergedTask); err != nil || got.PRMergeHead != res.PRs[0].Head || got.PRMergeCommit != res.PRs[0].Merged {
 		t.Fatalf("train did not record task merge %q: %v %+v", res.PRs[0].Merged, err, got)
 	}
 	all, _ = s.List()

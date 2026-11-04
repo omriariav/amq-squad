@@ -126,6 +126,36 @@ func TestRepassLostMergeResponseIsReconciled(t *testing.T) {
 	}
 }
 
+func TestReconcileKeepsBoundHeadAndContinues(t *testing.T) {
+	for _, kind := range []string{"merge", "merge_intent"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t)
+			journalHead, boundHead := f.head("pr1"), strings.Repeat("b", 40)
+			first := f.bindTask(1, boundHead, []string{"pkg/a.go"})
+			f.bindTask(2, f.head("pr2"), []string{"pkg/b.go", "shared.txt"})
+			req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}, {Number: 2}}}
+			f.realRun(&req)
+			merged := f.head("main")
+			if kind == "merge_intent" {
+				f.edit(func(s *fakeState) {
+					s.PRs["1"].State, s.PRs["1"].MergeCommit = "MERGED", merged
+				})
+			}
+			if err := f.train.Audit.Append(Entry{Kind: kind, Repository: fixtureRepo, Base: "main", PR: 1, Task: first, Head: journalHead, Merged: merged}); err != nil {
+				t.Fatal(err)
+			}
+			res, err := f.train.Run(context.Background(), req)
+			if err != nil || len(res.PRs) != 2 || res.PRs[1].Status != "merged" {
+				t.Fatalf("reconcile aborted before the next PR: %v %+v", err, res.PRs)
+			}
+			got, err := f.tasks().Get(first)
+			if err != nil || got.PRMergeHead != boundHead || got.PRMergeCommit != merged {
+				t.Fatalf("reconcile did not record the bound head: %v %+v", err, got)
+			}
+		})
+	}
+}
+
 // P2-6: a torn last line (no newline) is terminated under the append lock
 // before the next entry, so the entry stays whole and Read keeps it.
 func TestRepassAuditTornTailIsRepaired(t *testing.T) {
