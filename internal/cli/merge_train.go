@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
@@ -204,43 +205,20 @@ func realRunScope(req mergetrain.Request) error {
 // fillDeclaredFiles takes a PR's declared files from the session's task
 // store when the request names a task and no files (the commit step's set),
 // and, for a PR named with neither, its task from the harness binding as the
-// real run reads it (mergetrain.BindUnnamed).
+// real run reads it (mergetrain.BindDryRun).
 func fillDeclaredFiles(root string, req *mergetrain.Request) error {
-	var store *task.Store
-	for i := range req.PRs {
-		it := &req.PRs[i]
-		if it.Task == "" || len(it.DeclaredFiles) > 0 {
-			continue
-		}
-		if store == nil {
-			s, err := task.Open(root)
-			if err != nil {
-				return fmt.Errorf("merge-train: task store: %w", err)
-			}
-			store = &s
-		}
-		tk, err := store.Get(it.Task)
-		if err != nil {
-			return fmt.Errorf("merge-train: PR #%d task %s: %w", it.Number, it.Task, err)
-		}
-		it.DeclaredFiles = tk.DeclaredFiles
+	needsStore := slices.ContainsFunc(req.PRs, func(it mergetrain.Item) bool {
+		return len(it.DeclaredFiles) == 0
+	})
+	if !needsStore {
+		return nil
 	}
-	// A PR named with no task and no files: the binding the harness commit
-	// step wrote, read as the real run reads it (brief 3.1.1-2 item 6).
-	for _, it := range req.PRs {
-		if it.Task == "" && len(it.DeclaredFiles) == 0 {
-			if store == nil {
-				s, err := task.Open(root)
-				if err != nil {
-					return fmt.Errorf("merge-train: task store: %w", err)
-				}
-				store = &s
-			}
-			if err := mergetrain.BindUnnamed(*store, req.Repository, req); err != nil {
-				return fmt.Errorf("merge-train: %w", err)
-			}
-			break
-		}
+	store, err := task.Open(root)
+	if err != nil {
+		return fmt.Errorf("merge-train: task store: %w", err)
+	}
+	if err := mergetrain.BindDryRun(store, req.Repository, req); err != nil {
+		return fmt.Errorf("merge-train: %w", err)
 	}
 	return nil
 }
@@ -313,16 +291,29 @@ func printMergeTrain(w io.Writer, r mergetrain.Result) {
 	fmt.Fprintf(w, "merge train %s (%s) on %s %s at %s\n", r.Run, mode, r.Repository, r.Base, r.BaseSHA)
 	fmt.Fprintf(w, "branch protection met: %v (required checks %v, direct push refused %v) %s\n",
 		r.ProtectionMet, r.Protection.Checks, r.Protection.DirectPushRefused, strings.Join(r.Protection.Notes, "; "))
+	if r.DryRun && r.Protection.Strict && len(r.PRs) > 1 {
+		fmt.Fprintf(w, "GitHub requires each branch to be up to date, so every PR after the first is brought up to date and waits for its checks (%d more check runs)\n", len(r.PRs)-1)
+	}
 	for _, p := range r.PRs {
 		line := fmt.Sprintf("#%d\t%s\t%s\t%d lines\t%s", p.Number, orDash(p.Task), shortSHA(p.Head), p.Changed, p.Status)
 		if p.RebaseForCI {
-			line += "\trebase for CI (no required check ran at this head; its base is behind)"
+			if p.RebaseRule == mergetrain.RuleStrictUpToDate {
+				line += "\n\tGitHub requires the branch to be up to date before merging; the train brings it up to date and waits for CI"
+				line += "\n\trule: " + p.RebaseRule + "\n\thead: " + p.Head
+			} else {
+				line += "\trebase for CI (" + p.RebaseReason + ")"
+			}
 		}
 		if len(p.After) > 0 {
 			line += fmt.Sprintf("\tafter %v (%s)", p.After, strings.Join(p.Overlap, ","))
 		}
 		for _, f := range p.Refusals {
-			line += "\n\trefused " + f.Rule + ": " + f.Detail
+			if f.Rule == mergetrain.RuleStrictUpToDate {
+				line += "\n\trefused: " + f.Detail
+				line += "\n\trule: " + f.Rule + "\n\thead: " + p.Head
+			} else {
+				line += "\n\trefused " + f.Rule + ": " + f.Detail
+			}
 		}
 		if p.GateID != "" || p.GateError != "" {
 			line += "\n\tgate " + orDash(p.GateID) + " " + p.GateError
@@ -333,6 +324,13 @@ func printMergeTrain(w io.Writer, r mergetrain.Result) {
 	if r.Stopped != "" {
 		fmt.Fprintln(w, "stopped: "+r.Stopped)
 	}
+}
+
+// FormatMergeTrain renders the same owner text as the command.
+func FormatMergeTrain(r mergetrain.Result) string {
+	var b strings.Builder
+	printMergeTrain(&b, r)
+	return b.String()
 }
 
 func shortSHA(s string) string {

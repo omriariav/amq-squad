@@ -3,6 +3,8 @@ package mergetrain
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -26,7 +28,7 @@ func TestStrictBehindUsesPinnedCompareAndRebases(t *testing.T) {
 	advanceBase(f, map[string]string{"base.txt": "advance\n"})
 	f.train.DryRun = true
 	plan, err := f.train.Run(context.Background(), req)
-	if err != nil || plan.PRs[0].Status != "planned" || !plan.PRs[0].RebaseForCI || !strings.Contains(plan.PRs[0].RebaseReason, RuleStrictUpToDate) {
+	if err != nil || plan.PRs[0].Status != "planned" || !plan.PRs[0].RebaseForCI || plan.PRs[0].RebaseRule != RuleStrictUpToDate || plan.PRs[0].RebaseReason != "GitHub requires the branch to be up to date before merging" {
 		t.Fatalf("strict dry plan: %v %+v", err, plan.PRs)
 	}
 	f.train.DryRun = false
@@ -37,6 +39,84 @@ func TestStrictBehindUsesPinnedCompareAndRebases(t *testing.T) {
 	bound, _ := f.tasks().Get(id)
 	if bound.PRHead != res.PRs[0].Head || strings.Count(f.calls(), "commits/"+res.PRs[0].Head+"/check-runs") < 2 {
 		t.Fatalf("rebind or CI wait missing: task=%+v calls=\n%s", bound, f.calls())
+	}
+}
+
+type failBehindForge struct {
+	Forge
+	calls, failAt int
+}
+
+func (f *failBehindForge) Behind(ctx context.Context, repository, base, head string) (bool, error) {
+	f.calls++
+	if f.calls == f.failAt {
+		return false, errors.New("HTTP 429: compare unavailable")
+	}
+	return f.Forge.Behind(ctx, repository, base, head)
+}
+
+func TestStrictOffDoesNotCallFailingCompare(t *testing.T) {
+	f := newFixture(t)
+	f.req.PRs = f.req.PRs[:1]
+	advanceBase(f, map[string]string{"base.txt": "advance\n"})
+	forge := &failBehindForge{Forge: f.gh, failAt: 1}
+	f.train.Forge = forge
+	res, err := f.train.Run(context.Background(), f.req)
+	if err != nil || res.PRs[0].Status != "merged" || forge.calls != 0 {
+		t.Fatalf("strict-off run called compare: err=%v calls=%d result=%+v", err, forge.calls, res.PRs)
+	}
+}
+
+func TestLaterStrictCompareErrorStopsInWords(t *testing.T) {
+	f := newFixture(t)
+	setStrict(f)
+	f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	f.bindTask(2, f.head("pr2"), []string{"pkg/b.go", "shared.txt"})
+	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}, {Number: 2}}}
+	f.realRun(&req)
+	forge := &failBehindForge{Forge: f.gh, failAt: 4}
+	f.train.Forge = forge
+	res, err := f.train.Run(context.Background(), req)
+	if err == nil || res.PRs[0].Status != "merged" || !strings.HasPrefix(res.Stopped, "#2: the train stopped while comparing PR #2 with the current base\nrule: branch freshness\ncompare error: HTTP 429") {
+		t.Fatalf("later compare stop: err=%v stopped=%q prs=%+v calls=%d", err, res.Stopped, res.PRs, forge.calls)
+	}
+	entries, readErr := f.train.Audit.Read()
+	if readErr != nil || len(entries) == 0 || entries[len(entries)-1].Kind != "stop" || entries[len(entries)-1].Detail != res.Stopped {
+		t.Fatalf("compare stop journal: %v %+v", readErr, entries)
+	}
+}
+
+func TestNamedDryRunBindsTheSameMovedHeadAsRealRun(t *testing.T) {
+	f := newFixture(t)
+	id := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	dry := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1, Task: id}}}
+	real := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
+	store := f.tasks()
+	if err := BindDryRun(store, fixtureRepo, &dry); err != nil {
+		t.Fatal(err)
+	}
+	if err := BindTasks(store, fixtureRepo, &real); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(dry.PRs, real.PRs) || dry.PRs[0].BoundHead == "" {
+		t.Fatalf("dry binding %+v differs from real binding %+v", dry.PRs, real.PRs)
+	}
+	f.branch("moved", "main", map[string]string{"pkg/a.go": "package pkg\n\nfunc MovedA() {}\n"})
+	f.edit(func(s *fakeState) { s.PRs["1"].Head = "moved" })
+	f.train.DryRun = true
+	dryPlan, err := f.train.Run(context.Background(), dry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.train.DryRun = false
+	f.realRun(&real)
+	realRun, err := f.train.Run(context.Background(), real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dryRefusals, realRefusals := dryPlan.PRs[0].Refusals, realRun.PRs[0].Refusals
+	if dryPlan.PRs[0].Status != "refused" || realRun.PRs[0].Status != "refused" || !reflect.DeepEqual(dryRefusals, realRefusals) || !slices.ContainsFunc(dryRefusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }) {
+		t.Fatalf("named dry and PR-only real drift differ: dry=%+v real=%+v", dryPlan.PRs[0], realRun.PRs[0])
 	}
 }
 
@@ -77,7 +157,7 @@ func TestStrictBehindConflictDryRunRefuses(t *testing.T) {
 	f.train.DryRun = true
 	plan, err := f.train.Run(context.Background(), f.req)
 	if err != nil || plan.PRs[0].Status != "refused" || !slices.ContainsFunc(plan.PRs[0].Refusals, func(r Refusal) bool {
-		return r.Rule == RuleStrictUpToDate && strings.Contains(r.Detail, RuleStrictUpToDate)
+		return r.Rule == RuleStrictUpToDate && r.Detail == "the branch is behind and the train cannot bring it up to date: the PR conflicts with the current base" && !strings.Contains(r.Detail, RuleStrictUpToDate)
 	}) {
 		t.Fatalf("strict conflict plan: %v %+v", err, plan.PRs)
 	}

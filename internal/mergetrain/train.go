@@ -160,6 +160,7 @@ type PlanPR struct {
 	// RebaseForCI rebases a behind head, waits for CI and re-checks it. The
 	// reason is either absent CI or strict branch protection.
 	RebaseForCI  bool     `json:"rebase_for_ci,omitempty"`
+	RebaseRule   string   `json:"rebase_rule,omitempty"`
 	RebaseReason string   `json:"rebase_reason,omitempty"`
 	Overlap      []string `json:"overlap,omitempty"`
 	Status       string   `json:"status"` // planned | refused | merged | stopped
@@ -322,11 +323,14 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		if err != nil {
 			return res, err
 		}
-		behind, err := t.Forge.Behind(ctx, req.Repository, res.BaseSHA, p.Head)
-		if err != nil {
-			return res, fmt.Errorf("compare #%d with pinned base: %w", p.Number, err)
+		behind := false
+		if prot.Strict || ciAbsentOnly(p.Refusals) {
+			behind, err = t.Forge.Behind(ctx, req.Repository, res.BaseSHA, p.Head)
+			if err != nil {
+				return res, fmt.Errorf("compare #%d with pinned base: %w", p.Number, err)
+			}
 		}
-		t.applyStrict(&p, prot.Strict && behind, p.mergeable == "CONFLICTING" || slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }), req.Base)
+		t.applyStrict(&p, prot.Strict && behind, strictUnsafe(p))
 		if !prot.Strict && ciAbsentOnly(p.Refusals) && behind {
 			p.Refusals, p.RebaseForCI = nil, true
 			p.RebaseReason = "required CI is absent on a head behind " + req.Base
@@ -405,18 +409,30 @@ func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, 
 	return p, nil
 }
 
-func (t *Train) applyStrict(p *PlanPR, behind, unsafe bool, base string) {
+func strictUnsafe(p PlanPR) string {
+	switch {
+	case p.mergeable == "CONFLICTING":
+		return "the PR conflicts with the current base"
+	case slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }):
+		return "the PR head moved off its task binding"
+	default:
+		return ""
+	}
+}
+
+func (t *Train) applyStrict(p *PlanPR, behind bool, unsafe string) {
 	if !behind {
 		return
 	}
-	if unsafe {
+	if unsafe != "" {
 		p.Refusals = append(p.Refusals, Refusal{Rule: RuleStrictUpToDate,
-			Detail: RuleStrictUpToDate + " requires the PR head to be up to date with " + base + ", but this head cannot be safely rebased"})
+			Detail: "the branch is behind and the train cannot bring it up to date: " + unsafe})
 		return
 	}
 	p.Refusals = slices.DeleteFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RuleCIGreen })
 	p.RebaseForCI = true
-	p.RebaseReason = RuleStrictUpToDate + " requires the PR head to be up to date with " + base
+	p.RebaseRule = RuleStrictUpToDate
+	p.RebaseReason = "GitHub requires the branch to be up to date before merging"
 }
 
 // refuse records a refusal and escalates it: an accepted owner gate for this
@@ -507,9 +523,16 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 	if res.Protection.Strict {
 		behind, err := t.Forge.Behind(ctx, req.Repository, res.BaseSHA, cur.HeadSHA)
 		if err != nil {
-			return fmt.Errorf("re-check #%d against advanced base: %w", p.Number, err)
+			return fmt.Errorf("the train stopped while comparing PR #%d with the current base\nrule: branch freshness\ncompare error: %w", p.Number, err)
 		}
-		t.applyStrict(p, behind, cur.Mergeable == "CONFLICTING" || (it.BoundHead != "" && cur.HeadSHA != it.BoundHead), req.Base)
+		unsafe := ""
+		switch {
+		case cur.Mergeable == "CONFLICTING":
+			unsafe = "the PR conflicts with the current base"
+		case it.BoundHead != "" && cur.HeadSHA != it.BoundHead:
+			unsafe = "the PR head moved off its task binding"
+		}
+		t.applyStrict(p, behind, unsafe)
 		if len(p.Refusals) > 0 {
 			if t.refuse(req, p, entry); p.Status == "refused" {
 				t.digest(res, entry)
