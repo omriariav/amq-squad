@@ -48,6 +48,37 @@ hidden from the screen with every test passing.
   recorded something; its kind is below the line"; below the rule its kind,
   the seat and the reason.
 
+## What clears a shown stop (the plan reviewer on #866)
+
+A shown stop clears when a later decision resolves it (the same seat's
+`seat_up`, or a `roster_launched`, for a seat's stop; a `roster_launched`
+or `roster_reloaded` for a roster's stop; a `scheduler_started` for a
+scheduler's stop), and any other stop clears only when it leaves the status
+document's last 30 decisions; `/dismiss` acts on seat warnings, not on
+decisions, so it clears none.
+
+The rule is `RESOLVED_BY` in pi/extensions/lib/words.ts: the seat stops
+(`seat_not_up`, `seat_launch_failed`, `seat_prepare_failed`,
+`seat_refused`, `seat_gone`, `seat_liveness_unknown`,
+`seat_request_expired`), the roster stops (`roster_launch_failed`,
+`roster_reload_failed`, `roster_relaunch_refused`, `roster_incomplete`,
+`seat_replacement_needs_relaunch`) and the scheduler stops
+(`scheduler_stopped`, `lead_unknown`, `up_stopped_scheduler`). Go logs
+`seat_up` with the seat's handle and `roster_launched` with none, so a
+roster launch resolves every seat's stop. When the newest stop is
+resolved, the seats block shows the newest unresolved one before it.
+
+**Known limit.** The other stops have no resolving record in the log:
+`tick_error` (a successful tick logs nothing), `exit_refused`,
+`ledger_tampered`, `seat_close_failed`, `doorbell_failed`,
+`lead_notice_failed`, `exits_ledger_unwritable`, `launch_failures_unread`,
+`routing_flush_failed`, `phase_record_failed`, `seat_request_failed` and
+`up_stopped_lead`. Each shows until it leaves the last 30 decisions
+(`DecisionsTail`). A morning `tick_error` on a quiet squad can stay all day.
+3.1.1 leaves that as it is: clearing one would need a decision a resolving
+action writes (an owner's acknowledgement of a decision, which
+`scheduler clear` does not take today).
+
 ## The kinds the scan found (68)
 
 Stops (27): `doorbell_failed`, `exit_refused`, `exits_ledger_unwritable`, `launch_failures_unread`, `lead_notice_failed`, `lead_unknown`, `ledger_tampered`, `phase_record_failed`, `roster_incomplete`, `roster_launch_failed`, `roster_relaunch_refused`, `roster_reload_failed`, `routing_flush_failed`, `scheduler_stopped`, `seat_close_failed`, `seat_gone`, `seat_launch_failed`, `seat_liveness_unknown`, `seat_not_up`, `seat_prepare_failed`, `seat_refused`, `seat_replacement_needs_relaunch`, `seat_request_expired`, `seat_request_failed`, `tick_error`, `up_stopped_lead`, `up_stopped_scheduler`.
@@ -59,12 +90,15 @@ Routine (41): `blocked`, `commit_adopted`, `commit_cancelled`, `commit_cancellin
 | row | what | where |
 | --- | --- | --- |
 | A | every decision kind Go writes is a stop with words or a routine record; no kind is both; every stop's words are plain and say what to do | pi/test/words.test.ts "row 7: every decision kind Go writes is a stop with words or a routine record" |
+| C | a stop followed by its resolving decision no longer shows (the same seat's `seat_up`, a roster launch, the scheduler starting again); another seat's `seat_up` clears nothing; a cleared newest stop leaves an older unresolved one showing; a `tick_error` stays; each resolver is a routine record | pi/test/words.test.ts "row 7: a stop followed by its resolving decision no longer shows" |
 | B | an unknown kind shows "stopped something" or "recorded something", its kind below the rule; a routine record newer than a stop hides nothing; each stop kind, the newest decision, shows its words | pi/test/words.test.ts "row 7: an unknown decision kind shows, its kind below the rule; routine records hide no stop" |
 
 ## Revert runs
 
 `python3 docs/v3-spike/311-evidence/311-squad-ux-decisions-revert-runs.py`
-from a clean checkout: 6 runs, 6 caught. Each reverts production code only.
+from a clean checkout, at code head `8645dd47`: 10 runs, 10 caught (the
+first six at `032e0172`; cases 7 to 10 for the clearing rule). Each reverts
+production code only.
 
 | # | row | revert | result | the failing output's first line |
 | --- | --- | --- | --- | --- |
@@ -74,10 +108,14 @@ from a clean checkout: 6 runs, 6 caught. Each reverts production code only.
 | 4 | B | an unknown kind's words as the 3.1.1-3 fallback (no kind below the line) | caught | `not ok 1 - row 7: an unknown decision kind shows, its kind below the rule; routine records hide no stop` |
 | 5 | B | an unknown kind's record without its kind | caught | `not ok 1 - row 7: an unknown decision kind shows, its kind below the rule; routine records hide no stop` |
 | 6 | B | a routine record treated as a stop (it hides the stop before it) | caught | `not ok 1 - row 7: an unknown decision kind shows, its kind below the rule; routine records hide no stop` |
+| 7 | C | no clearing: a resolved stop still shows | caught | `not ok 1 - row 7: a stop followed by its resolving decision no longer shows` |
+| 8 | C | another seat's seat_up clears a seat's stop | caught | `not ok 1 - row 7: a stop followed by its resolving decision no longer shows` |
+| 9 | C | the scheduler starting again does not clear its stop | caught | `not ok 1 - row 7: a stop followed by its resolving decision no longer shows` |
+| 10 | C | a resolved newest stop hides the older unresolved one | caught | `not ok 1 - row 7: a stop followed by its resolving decision no longer shows` |
 
 ## Gates
 
-At code head `032e0172`:
+At code head `8645dd47`:
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0, 56 packages ok, 0 FAIL lines. Tail:
 
@@ -91,21 +129,21 @@ exit 0
 - `cd pi && npm ci --offline --ignore-scripts && npm test`: exit 0. Tail:
 
 ```
-ℹ tests 108
+ℹ tests 109
 ℹ suites 0
-ℹ pass 108
+ℹ pass 109
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 16033.037375
+ℹ duration_ms 44242.981
 exit 0
 ```
 
 - `make ci` (PyYAML venv on PATH): exit 0. Tail:
 
 ```
-PERF pre-tool allow in a seat: p50 22.4 ms, p95 23.6 ms
-PERF outside a seat: 60 runs, p50 6.1 ms, p95 6.7 ms, max 7.3 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 21.6 ms, p95 22.5 ms
+PERF outside a seat: 60 runs, p50 5.7 ms, p95 6.3 ms, max 6.8 ms (budget p95 < 20 ms: met)
 exit 0
 ```
