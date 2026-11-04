@@ -227,6 +227,10 @@ test("/confirm: the dialog's yes asks the lead to witness the plan it showed; a 
 		assert.equal(quoted.title, "Start this team?");
 		for (const l of ["goal: ship the parser", "session s1, lead lead", "seat impl-1 (implementer) claude/sonnet/medium"]) assert.ok(quoted.body.split("\n").includes(l), quoted.body);
 		assert.doesNotMatch(quoted.body, /[0-9a-f]{16}/, "the dialog asks for no prefix");
+		// the plan reviewer: the yes binds the seats (squad.yaml under the
+		// digest), not the goal or the tasks, and the closing line says so
+		assert.equal(quoted.body.split("\n").at(-1), "Yes starts exactly these seats (for 30 minutes). The goal and the tasks are the lead's starting point; it can change them. A plan proposed after this dialog opened is not the one confirmed.");
+		assert.doesNotMatch(quoted.body, /exactly this plan/);
 		r.answer.confirm(async () => true);
 		process.env.TMUX_PANE = "%7";
 		try {

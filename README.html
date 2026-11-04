@@ -462,11 +462,14 @@ forgets it, so you confirm again:</p>
 <li>type <code>/confirm</code> in the lead's pane. There is nothing to
 type after it: pi's confirm dialog quotes the plan's goal, the session
 and lead and the seats with their runtimes and models, and your yes in
-the dialog confirms exactly the plan it showed (with two open plans,
-pi's select over their goal lines comes first). A plan the lead proposes
-while the dialog is open is not the one confirmed; a no or a cancel
-confirms nothing. pi hands the command to the extension, never to the
-model, and the lead accepts it only from its own pi;</li>
+the dialog starts exactly the seats it showed (with two open plans, pi's
+select over their goal lines comes first). The digest covers squad.yaml
+(the session, the lead, each seat's runtime, model and effort), the team
+rules and the pointer files; the goal and the tasks are the lead's
+starting point, which it can change. A plan the lead proposes while the
+dialog is open is not the one confirmed; a no or a cancel confirms
+nothing. pi hands the command to the extension, never to the model, and
+the lead accepts it only from its own pi;</li>
 <li>or, on the phone, reply <code>yes</code> to the lead's Buzz post of
 the plan. The lead sends the plan as its answer to your phone request
 (<code>amq_team_propose</code> with <code>reply_to</code>); its own

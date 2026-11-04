@@ -111,6 +111,8 @@ R = [
   '	return [...lines, size, "",', '	return [...lines, "",', PIN("team", "a goal with a canary")),
  ("4", "the growth gate's line claims the raise whatever GateErrs says", "internal/cli/task_widen.go",
   '			if len(data.GateErrs) > 0 {\n				refused.plain =', '			if false {\n				refused.plain =', GO % ("TestTheGrowthGateLineSaysWhatTheRaiseDid", "internal/cli")),
+ ("5", "the dialog's closing line claims the yes confirms exactly this plan", L+"team.ts",
+  '	return [...lines, size, "", CONFIRM_CLOSING].join("\\n");', '	return [...lines, size, "", "Yes confirms exactly this plan for 30 minutes; the lead then starts the team. A plan proposed after this dialog opened is not the one confirmed."].join("\\n");', PIN("team", "the dialog's yes asks the lead")),
  # Codex's two leftovers on b4df9475
  ("7", "a train entry kind dropped from the table (merge_intent)", L+"words.ts",
   '	merge_intent: "merging a PR (the merge is pending)",', '', PIN("words", "row 7: every wait")),

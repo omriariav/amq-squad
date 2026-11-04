@@ -149,8 +149,11 @@ The first run is a conversation with the lead, in the repository:
    - type `/confirm` in the lead's pane. There is nothing to type after
      it: pi's confirm dialog quotes the plan's goal, the session and lead
      and the seats with their runtimes and models, and your yes in the
-     dialog confirms exactly the plan it showed (with two open plans, pi's
-     select over their goal lines comes first). A plan the lead proposes
+     dialog starts exactly the seats it showed (with two open plans, pi's
+     select over their goal lines comes first). The digest covers
+     squad.yaml (the session, the lead, each seat's runtime, model and
+     effort), the team rules and the pointer files; the goal and the tasks
+     are the lead's starting point, which it can change. A plan the lead proposes
      while the dialog is open is not the one confirmed; a no or a cancel
      confirms nothing. pi hands the command to the extension, never to the
      model, and the lead accepts it only from its own pi;

@@ -580,6 +580,10 @@ export function goalLine(p: Proposal): string {
 	return clean(p.plan.find((l) => l.startsWith("goal:")) ?? p.plan[0] ?? "a plan with no goal line", 120);
 }
 
+// CONFIRM_CLOSING is the confirm dialog's last line: what the owner's yes
+// binds, and what it does not.
+export const CONFIRM_CLOSING = "Yes starts exactly these seats (for 30 minutes). The goal and the tasks are the lead's starting point; it can change them. A plan proposed after this dialog opened is not the one confirmed.";
+
 // PLAN_LINE_MAX is the cut of a plan line on the plan block. The confirm
 // dialog's lines are never cut (Codex on d1a557e1): the dialog is where the
 // owner's yes binds the digest, so every character of every line it quotes
@@ -597,7 +601,10 @@ export function quotePlan(p: Proposal): string {
 	const tasks = p.plan.filter((l) => /^task \d+: /.test(l)).length;
 	const files = (p.plan.find((l) => l.startsWith("files: ")) ?? "").slice(7).split(", ").filter(Boolean).length;
 	const size = `and ${tasks} ${tasks === 1 ? "task" : "tasks"} over ${files} ${files === 1 ? "file" : "files"}`;
-	return [...lines, size, "", "Yes confirms exactly this plan for 30 minutes; the lead then starts the team. A plan proposed after this dialog opened is not the one confirmed."].join("\n");
+	// what the yes binds: the digest covers squad.yaml (the session, the lead,
+	// each seat's runtime, model and effort), team-rules.md and the pointer
+	// files, not the goal, the tasks or the plan's files (the plan reviewer)
+	return [...lines, size, "", CONFIRM_CLOSING].join("\n");
 }
 
 // installSoloTeam gives the solo lead the two tools and the plan block; its
