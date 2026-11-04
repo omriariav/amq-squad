@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
@@ -302,7 +305,7 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		}
 	})
 
-	t.Run("on demand keeps a concurrent first archive", func(t *testing.T) {
+	t.Run("on demand keeps the first archived attempt", func(t *testing.T) {
 		f := newGateCLIFixture(t)
 		repo, wt := seatRepo(t, f.root)
 		grant := filepath.Join(f.home, ".amq-squad", "grants.yaml")
@@ -343,6 +346,90 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		}
 	})
 
+	t.Run("retried attempt archives its own snapshot", func(t *testing.T) {
+		f := newGateCLIFixture(t)
+		repo, wt := seatRepo(t, f.root)
+		grant := filepath.Join(f.home, ".amq-squad", "grants.yaml")
+		raw, err := os.ReadFile(grant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(grant, []byte(strings.Replace(string(raw), "size_cap_lines: 300", "size_cap_lines: 1", 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s, _ := task.Open(f.root)
+		tk, _ := s.Add(task.AddInput{Title: "retried typed size", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n1\n")
+		first, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if archived, err := seatcommit.ArchiveAttempt(f.root, "s1", "", nil, tk.ID, first.BlockAttempt, time.Now()); err != nil || !archived {
+			t.Fatalf("attempt 1 archive = %v, %v", archived, err)
+		}
+		before, _ := seatcommit.ReadLedger(f.root, "s1")
+		firstBytes, _ := json.Marshal(before.Discarded[0])
+		if _, err := s.ResetBy(tk.ID, "lead", nil, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, "extra.go"), "package extra\n1\n2\n3\n")
+		second, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
+		if err != nil || second.BlockAttempt != 2 {
+			t.Fatalf("attempt 2 block = %+v, %v", second, err)
+		}
+		g, gerr := grants.Load(repo)
+		literal, _ := task.LiteralGlob("extra.go")
+		wo := seatcommit.WidenOptions{Root: f.root, Task: second, Added: []string{literal}, Grants: g, GrantsErr: gerr, RepoRoot: repo,
+			Commit: &seatcommit.Options{Root: f.root, Handle: "s1", SnapshotAttempt: 2, Now: time.Now}}
+		if d := seatcommit.CheckWiden(wo); d.ReasonCode != seatcommit.ReasonWidenSnapshotMismatch {
+			t.Fatalf("attempt 2 pre-archive decision = %+v", d)
+		}
+		data, err := applyLeadWiden(scopedSelection(t, []string{"--project", f.project, "--session", "s"}), "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+		if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || data.Decision.DryRun == nil {
+			t.Fatalf("attempt 2 widen = %+v, %v", data, err)
+		}
+		after, err := seatcommit.ReadLedger(f.root, "s1")
+		if err != nil || len(after.Discarded) != 2 || after.Discarded[1].Attempt != 2 || data.Decision.DryRun.Parent != after.Discarded[1].Parent || data.Decision.DryRun.Tree != after.Discarded[1].Tree {
+			t.Fatalf("attempt 2 ledger/dry run = %+v, %+v, %v", after.Discarded, data.Decision.DryRun, err)
+		}
+		gotFirst, _ := json.Marshal(after.Discarded[0])
+		if !bytes.Equal(gotFirst, firstBytes) {
+			t.Fatalf("attempt 1 discard changed: before=%s after=%s", firstBytes, gotFirst)
+		}
+	})
+
+	t.Run("absent ledger preserves the first decision through apply", func(t *testing.T) {
+		f := newGateCLIFixture(t)
+		repo, _ := seatRepo(t, f.root)
+		s, _ := task.Open(f.root)
+		tk, _ := s.Add(task.AddInput{Title: "absent ledger", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		ledgerDir := seatcommit.LedgerDir(f.root)
+		if err := os.Rename(ledgerDir, ledgerDir+".saved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ledgerDir, []byte("not a directory\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		literal, _ := task.LiteralGlob("extra.go")
+		reply := widenDecision(storeSelection{store: s, root: f.root, release: func() {}}, repo, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+		data := replyData(t, reply)
+		if reply.Code == "widen_failed" || reply.Code != data.Decision.ReasonCode || !strings.Contains(reply.Detail, "on-demand archive pending") {
+			t.Fatalf("filesystem archive failure replaced first decision: reply=%+v data=%+v", reply, data)
+		}
+	})
+
 	t.Run("missing snapshot without typed block stays refused", func(t *testing.T) {
 		prev := archiveWidenAttempt
 		t.Cleanup(func() { archiveWidenAttempt = prev })
@@ -352,9 +439,22 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 			return true, nil
 		}
 		missing := seatcommit.WidenDecision{ReasonCode: seatcommit.ReasonWidenSnapshotMissing, Detail: "snapshot is missing"}
-		got, err := archiveMissingTypedWiden(storeSelection{}, task.Task{ID: "t1"}, seatcommit.WidenOptions{Commit: &seatcommit.Options{SnapshotAttempt: 1}}, missing)
-		if err != nil || called || got.ReasonCode != seatcommit.ReasonWidenSnapshotMissing {
-			t.Fatalf("unrecorded attempt = %+v, called=%v, err=%v", got, called, err)
+		got := archiveTypedWidenAttempt(storeSelection{}, task.Task{ID: "t1"}, seatcommit.WidenOptions{Commit: &seatcommit.Options{SnapshotAttempt: 1}}, missing)
+		if called || got.ReasonCode != seatcommit.ReasonWidenSnapshotMissing {
+			t.Fatalf("unrecorded attempt = %+v, called=%v", got, called)
+		}
+	})
+
+	t.Run("archive error preserves the first named refusal", func(t *testing.T) {
+		prev := archiveWidenAttempt
+		t.Cleanup(func() { archiveWidenAttempt = prev })
+		archiveWidenAttempt = func(string, string, string, []string, string, int, time.Time) (bool, error) {
+			return false, errors.New("seat ledger is absent")
+		}
+		first := seatcommit.WidenDecision{ReasonCode: seatcommit.ReasonBaseUnrecorded, Detail: "no core-recorded base"}
+		got := archiveTypedWidenAttempt(storeSelection{}, task.Task{ID: "t1", State: task.StateBlocked, BlockReason: task.ReasonWidenRequested, BlockAttempt: 1, RefusedPaths: []string{"x.go"}}, seatcommit.WidenOptions{Commit: &seatcommit.Options{Handle: "s1", SnapshotAttempt: 1}}, first)
+		if got.ReasonCode != first.ReasonCode || !strings.Contains(got.Detail, first.Detail) || !strings.Contains(got.Detail, "on-demand archive pending: seat ledger is absent") {
+			t.Fatalf("archive error replaced the first decision: %+v", got)
 		}
 	})
 

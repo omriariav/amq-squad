@@ -239,17 +239,20 @@ func widenReplyRefusal(id string, reply schedproc.DecideReply) string {
 
 var archiveWidenAttempt = seatcommit.ArchiveAttempt
 
-// archiveMissingTypedWiden closes the one-tick window between a typed block
-// and scanAttempts. The decision socket runs in the scheduler process, so it
-// uses the same sealed, first-writer-wins archive as the tick and CleanSeat.
-func archiveMissingTypedWiden(sel storeSelection, t task.Task, wo seatcommit.WidenOptions, d seatcommit.WidenDecision) (seatcommit.WidenDecision, error) {
-	if d.ReasonCode != seatcommit.ReasonWidenSnapshotMissing || !typedWidenRequest(t) || wo.Commit == nil || wo.Commit.SnapshotAttempt != t.BlockAttempt {
-		return d, nil
+// archiveTypedWidenAttempt closes the one-tick window between a typed block
+// and scanAttempts. ArchiveAttempt owns the keyed dedup under the ledger lock,
+// so this path must not read that ledger before asking it to archive.
+func archiveTypedWidenAttempt(sel storeSelection, t task.Task, wo seatcommit.WidenOptions, d seatcommit.WidenDecision) seatcommit.WidenDecision {
+	if !typedWidenRequest(t) || wo.Commit == nil || wo.Commit.SnapshotAttempt != t.BlockAttempt {
+		return d
 	}
 	if _, err := archiveWidenAttempt(sel.root, wo.Commit.Handle, "", nil, t.ID, wo.Commit.SnapshotAttempt, taskNow()); err != nil {
-		return d, fmt.Errorf("archive typed widen snapshot for task %s attempt %d: %w", t.ID, wo.Commit.SnapshotAttempt, err)
+		// The decision observed before this best-effort archive remains the
+		// authoritative refusal. The scheduler scan retries the archive.
+		d.Detail = strings.TrimSpace(d.Detail + "; on-demand archive pending: " + err.Error())
+		return d
 	}
-	return seatcommit.CheckWiden(wo), nil
+	return seatcommit.CheckWiden(wo)
 }
 
 // applyLeadWiden applies a verified lead decision: the grant checks
@@ -320,10 +323,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 		}
 	}
 	d := seatcommit.CheckWiden(wo)
-	d, err = archiveMissingTypedWiden(sel, t, wo, d)
-	if err != nil {
-		return data, err
-	}
+	d = archiveTypedWidenAttempt(sel, t, wo, d)
 	widenReason := req.Reason
 	if len(resolutions) > 0 {
 		note := "exact-path resolution: " + strings.Join(resolutions, "; ")

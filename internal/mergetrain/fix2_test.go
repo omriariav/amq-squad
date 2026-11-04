@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 func protectionOf(t *testing.T, rulesJSON, classicJSONText string) Protection {
@@ -67,12 +69,16 @@ func TestClassicPRBypassAllowancesAreUnmet(t *testing.T) {
 func TestRealRunReadsTheTaskBoundToThePR(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	mergedTask := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
 	f.bindTask(3, strings.Repeat("0", 40), []string{"pkg/c.go"}) // the PR's head is not the pushed one
 	f.bindTask(5, "", []string{"pkg/"})                          // pr_number with no pr_head is written below
 	s := f.tasks()
 	all, _ := s.List()
 	if _, err := s.BindPR(all[len(all)-1].ID, "other/repo", 2, f.head("pr2"), time.Now()); err != nil { // another repository's #2
+		t.Fatal(err)
+	}
+	dependent, err := s.Add(task.AddInput{Title: "after #1", Class: "implement", DependsOn: []string{mergedTask}}, time.Now())
+	if err != nil {
 		t.Fatal(err)
 	}
 	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}, {Number: 2}, {Number: 3}}}
@@ -89,6 +95,13 @@ func TestRealRunReadsTheTaskBoundToThePR(t *testing.T) {
 	}
 	if res.PRs[0].Status != "merged" || !has(res.PRs[1], RuleTaskUnbound) || !has(res.PRs[2], RulePRHeadMoved) {
 		t.Fatalf("PRs %+v", res.PRs)
+	}
+	if got, err := s.Get(mergedTask); err != nil || got.PRMergeCommit != res.PRs[0].Merged {
+		t.Fatalf("train did not record task merge %q: %v %+v", res.PRs[0].Merged, err, got)
+	}
+	all, _ = s.List()
+	if got := task.Blocker(dependent, all); got != "" {
+		t.Fatalf("train merge did not release dependent: %q", got)
 	}
 }
 
