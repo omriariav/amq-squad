@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -135,13 +136,24 @@ func runMergeTrain(args []string) error {
 	}
 	switch {
 	case runErr != nil:
-		return fmt.Errorf("merge-train: %w", runErr)
+		return FormatMergeTrainError(runErr)
 	case len(res.Refused()) > 0 && !*dry:
 		return fmt.Errorf("merge-train: %d PR(s) refused: %v (gates raised; the lead decides)", len(res.Refused()), res.Refused())
 	case res.Stopped != "":
 		return fmt.Errorf("merge-train: %s", res.Stopped)
 	}
 	return nil
+}
+
+// FormatMergeTrainError gives a binding mismatch words-first evidence while
+// preserving the ordinary merge-train error form for every other failure.
+func FormatMergeTrainError(err error) error {
+	var mismatch *mergetrain.MergeBindingMismatch
+	if !errors.As(err, &mismatch) {
+		return fmt.Errorf("merge-train: %w", err)
+	}
+	return fmt.Errorf("merge-train: the merged head does not match task %s's bound head\nrule: task binding\nmerged head: %s\nbound head: %s\ncode: binding_failed",
+		mismatch.Task, mismatch.MergeHead, mismatch.BoundHead)
 }
 
 type mergeTrainData struct {

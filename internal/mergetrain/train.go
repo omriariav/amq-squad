@@ -617,19 +617,36 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		case !ok:
 		case e.Kind == "merge":
 			if it.BoundHead != "" {
-				if err := t.recordTaskMerge(it.Task, req.Repository, it.Number, it.BoundHead, e.Merged); err != nil {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, e.Merged, "journaled merge", entry)
+				if err != nil {
 					return nil, err
+				}
+				if !recorded {
+					continue
 				}
 			}
 			out[it.Number] = e.Merged
 		default:
+			if it.BoundHead != "" {
+				matches, err := t.reconcileBinding(it, req.Repository, e.Head, "journaled merge intent", entry)
+				if err != nil {
+					return nil, err
+				}
+				if !matches {
+					continue
+				}
+			}
 			sha, merged := t.mergedAt(ctx, req.Repository, it.Number, e.Head)
 			if !merged {
 				continue // not merged: the PR is checked again and a new intent journaled
 			}
 			if it.BoundHead != "" {
-				if err := t.recordTaskMerge(it.Task, req.Repository, it.Number, it.BoundHead, sha); err != nil {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, sha, "journaled merge intent", entry)
+				if err != nil {
 					return nil, err
+				}
+				if !recorded {
+					continue
 				}
 			}
 			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: e.Task, Head: e.Head, Merged: sha, Digest: e.Digest,
@@ -642,11 +659,72 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 	return out, nil
 }
 
+// reconcileTaskMerge records a replay only while the task still has the
+// journaled binding. A stale replay is audited and skipped, not an abort.
+func (t *Train) reconcileTaskMerge(it Item, repository, head, commit, source string, entry func(Entry) error) (bool, error) {
+	matches, err := t.reconcileBinding(it, repository, head, source, entry)
+	if err != nil || !matches {
+		return false, err
+	}
+	if err := t.recordTaskMerge(it.Task, repository, it.Number, head, commit); err != nil {
+		var mismatch *MergeBindingMismatch
+		if errors.As(err, &mismatch) {
+			return false, t.auditReconcileMismatch(it, head, mismatch.BoundHead, source, entry)
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (t *Train) reconcileBinding(it Item, repository, head, source string, entry func(Entry) error) (bool, error) {
+	boundRepo, boundPR, boundHead := repository, it.Number, it.BoundHead
+	if t.Tasks != nil {
+		bound, err := t.Tasks.Get(it.Task)
+		if err != nil {
+			return false, err
+		}
+		boundRepo, boundPR, boundHead = bound.PRRepository, bound.PRNumber, bound.PRHead
+	}
+	if strings.EqualFold(boundRepo, repository) && boundPR == it.Number && boundHead == head {
+		return true, nil
+	}
+	return false, t.auditReconcileMismatch(it, head, boundHead, source, entry)
+}
+
+func (t *Train) auditReconcileMismatch(it Item, head, boundHead, source string, entry func(Entry) error) error {
+	detail := fmt.Sprintf("the %s does not match task %s's bound head\njournaled head: %s\nbound head: %s\nmerge fact not recorded", source, it.Task, head, boundHead)
+	return entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: head, NewHead: boundHead, Detail: detail})
+}
+
+// MergeBindingMismatch carries the full heads needed for words-first CLI
+// evidence while still matching ErrBindingFailed and its store cause.
+type MergeBindingMismatch struct {
+	Task, MergeHead, BoundHead string
+	Cause                      error
+}
+
+func (e *MergeBindingMismatch) Error() string {
+	return fmt.Sprintf("%s: merged head %s does not match task %s's bound head %s", ErrBindingFailed, e.MergeHead, e.Task, e.BoundHead)
+}
+func (e *MergeBindingMismatch) Unwrap() error { return e.Cause }
+func (e *MergeBindingMismatch) Is(target error) bool {
+	return target == ErrBindingFailed
+}
+
 func (t *Train) recordTaskMerge(taskID, repository string, pr int, head, commit string) error {
 	if t.Binder == nil {
 		return fmt.Errorf("%w: no task store to record the merge of #%d", ErrBindingFailed, pr)
 	}
 	if err := t.Binder.RecordPRMerge(taskID, repository, pr, head, commit); err != nil {
+		if errors.Is(err, task.ErrPRBindingMismatch) {
+			boundHead := ""
+			if t.Tasks != nil {
+				if bound, getErr := t.Tasks.Get(taskID); getErr == nil {
+					boundHead = bound.PRHead
+				}
+			}
+			return &MergeBindingMismatch{Task: taskID, MergeHead: head, BoundHead: boundHead, Cause: err}
+		}
 		return fmt.Errorf("%w: record task %s merge %s: %v", ErrBindingFailed, taskID, short(commit), err)
 	}
 	return nil
