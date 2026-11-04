@@ -141,7 +141,7 @@ func runTaskWiden(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "task widen %s: applied by the scheduler\n", id)
 	}
 	if !reply.OK {
-		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("task widen %s refused (%s): %s", id, reply.Code, reply.Detail)}
+		return &codedExitError{code: ExitCommitRefused, msg: widenReplyRefusal(id, reply)}
 	}
 	return nil
 }
@@ -180,7 +180,62 @@ func evalPath(p string) string {
 // widenRefused is a refused widening with its reason code.
 type widenRefused struct{ code, msg string }
 
-func (e *widenRefused) Error() string { return fmt.Sprintf("widen refused (%s): %s", e.code, e.msg) }
+// Error is the refusal as the 3.1.1 gate questions read (brief 3.1.1-3
+// item 4): what happened and what to do in plain words, then the rule,
+// then the reason code and the detail for the record.
+func (e *widenRefused) Error() string {
+	return fmt.Sprintf("%s\n\n%s\nwiden refused (%s): %s", widenPlain(e.code), gatestore.Rule, e.code, e.msg)
+}
+
+// widenPlain is a widening refusal's plain line, by its reason code.
+func widenPlain(code string) string {
+	switch code {
+	case "widen_invalid":
+		return "the widening's paths are not valid for this task"
+	case "widen_not_requested":
+		return "the task is not blocked by a seat's widen request or for files outside its declared set, so there is nothing to widen; to send it back to a seat, reset it onto a pool"
+	case "widen_paths_missing":
+		return "the task's block recorded no paths to widen by"
+	case "widen_paths_mismatch":
+		return "a path is not one the task's block recorded"
+	case task.RefusalFileLock:
+		return "the widened files overlap another active task's files; widen it once that task is done"
+	case task.ReasonGrowthGateRequired:
+		return "the widening needs the owner's growth gate; the gate is raised and the task waits for the owner's answer"
+	case task.RefusalSelfWiden:
+		return "the seat that holds or reported the task cannot widen it; the lead decides a widening"
+	}
+	return "the widening was refused"
+}
+
+// widenReplyPlain is the plain line of a refusal the scheduler's decision
+// socket gave before the widening was tried.
+func widenReplyPlain(code string) string {
+	switch code {
+	case schedproc.RefusedNotLead:
+		return "the request does not come from the lead's pane"
+	case schedproc.RefusedOriginUnknown:
+		return "the scheduler cannot tell where the request came from"
+	case schedproc.RefusedStarting:
+		return "the scheduler is still starting; try again once it is up"
+	case schedproc.RefusedBusy:
+		return "the scheduler is busy with other decisions; try again"
+	case "not_squad":
+		return "the task is not this squad's"
+	}
+	return "the scheduler refused it"
+}
+
+// widenReplyRefusal is the verb's refusal: the plain line (the widening's
+// own, above the rule of its detail, else the socket's by code), then the
+// rule, then the code and the detail for the record.
+func widenReplyRefusal(id string, reply schedproc.DecideReply) string {
+	plain, record := widenReplyPlain(reply.Code), reply.Detail
+	if at := strings.Index(reply.Detail, "\n\n"+gatestore.Rule+"\n"); at >= 0 {
+		plain, record = reply.Detail[:at], reply.Detail[at+len(gatestore.Rule)+3:]
+	}
+	return fmt.Sprintf("task widen %s was refused: %s\n\n%s\nrefused (%s): %s", id, plain, gatestore.Rule, reply.Code, record)
+}
 
 var archiveWidenAttempt = seatcommit.ArchiveAttempt
 

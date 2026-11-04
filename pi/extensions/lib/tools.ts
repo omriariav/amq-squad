@@ -9,6 +9,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
 import { describe, run } from "./verbs.ts";
+import { RULE } from "./words.ts";
 import { repoList, repoRead } from "./repo.ts";
 
 const KINDS = ["brainstorm", "review_request", "review_response", "question", "answer", "decision", "status", "todo"];
@@ -140,11 +141,15 @@ export const toolArgv = {
 // with ", " or " (" exactly. An empty or missing list is refused.
 export function refusedPaths(t: { id?: string; state?: string; block_reason?: string; refused_paths?: unknown }): string[] {
 	if (t.state !== "blocked" || !["outside_declared_files", "widen_requested"].includes(t.block_reason ?? "")) {
-		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set or by a seat's widen request (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT`);
+		// brief 3.1.1-3: what happened and what to do in words, then the rule,
+		// then the state and the reason code for the record
+		throw new Error(
+			`task ${t.id ?? "?"} is not blocked for files outside its declared set or by a seat's widen request, so there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT\n\n${RULE}\nstate ${t.state ?? "?"}, reason ${t.block_reason || "none"}`,
+		);
 	}
 	const list = t.refused_paths;
 	if (!Array.isArray(list) || !list.length || !list.every((x) => typeof x === "string" && x !== "")) {
-		throw new Error(`task ${t.id ?? "?"}: the refusal recorded no refused paths (refused_paths); widen with amq-squad task widen from the owner's decision`);
+		throw new Error(`task ${t.id ?? "?"}: its block recorded no paths to widen by; widen it with amq-squad task widen from the owner's decision\n\n${RULE}\nrefused_paths empty`);
 	}
 	return list as string[];
 }

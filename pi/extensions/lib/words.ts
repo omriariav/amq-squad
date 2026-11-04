@@ -137,6 +137,10 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	pr_bound_elsewhere: () => ["an open PR on its branch belongs to another task", "close that PR, then /reset it"],
 	recorded_diff_mismatch: () => ["the commits ledger and the commit disagree", "ask the owner to inspect the commits ledger"],
 	lease_task_mismatch: () => ["its seat's lease is for another task", RESET],
+	// two deferrals of the step (commit.go), mapped so a block that ever
+	// carries one still reads in words
+	commit_cancelled: () => ["the task was cancelled while its commit step ran", "nothing to do unless it should run again (/reset)"],
+	pr_pending: () => ["the commit step is waiting for its PR to open", "wait, or /reset it if it stays"],
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],

@@ -138,7 +138,10 @@ func DriftResolved(ctx context.Context, l ReleaseLister, verify GateVerifier, ro
 	for _, u := range unreadable {
 		sum := sha256.Sum256([]byte(u.path))
 		if err := alert(Alert{ID: "gate-store-unreadable-" + hex.EncodeToString(sum[:6]), Repository: repository, Kind: "gate_store_unreadable", Name: u.path,
-			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("the gate store %s could not be read (%v); no gate in it clears an alert", u.path, u.err)}); err != nil {
+			// brief 3.1.1-3 item 4: what happened in words above the rule;
+			// the record's path and error (which can carry long hex ids)
+			// below it
+			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line\n\n%s\nthe gate store %s could not be read (%v)", gatestore.Rule, u.path, u.err)}); err != nil {
 			return alerts, resolved, err
 		}
 	}
