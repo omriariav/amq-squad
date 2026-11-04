@@ -111,7 +111,7 @@ test("argv: the relaunch and the widening are the CLI verbs; the widening takes 
 	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "seat_request" }), /the lead returns the task with amq-squad task reset t3 --pool RUNTIME:MODEL:EFFORT/);
 	// brief 3.1.1-2: the typed widen request exists, so the refusal names it
 	// and no longer points at t20
-	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "seat_request" }), /is not blocked for files outside its declared set or by a seat's widen request \(state blocked, reason seat_request\); there is nothing to widen/);
+	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "seat_request" }), /is not blocked for files outside its declared set or by a seat's widen request, so there is nothing to widen;[^]*\n\n----------\nstate blocked, reason seat_request$/);
 	assert.doesNotThrow(() => {
 		try {
 			refusedPaths({ ...refusedTask, block_reason: "seat_request" });
@@ -119,8 +119,8 @@ test("argv: the relaunch and the widening are the CLI verbs; the widening takes 
 			assert.doesNotMatch(String(e), /t20|until the typed block/);
 		}
 	});
-	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: undefined }), /recorded no refused paths/);
-	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: [] }), /recorded no refused paths/);
+	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: undefined }), /recorded no paths to widen by/);
+	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: [] }), /recorded no paths to widen by/);
 });
 
 test("the lead's widen tool reads the recorded refusal and never widens by a fabricated path", async () => {

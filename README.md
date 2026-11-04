@@ -136,15 +136,27 @@ The first run is a conversation with the lead, in the repository:
    their runtime, model and effort, the files, the first tasks) and
    proposes it with its `amq_team_propose` tool. `team propose --from
    PLAN.json` renders squad.yaml from it, checks it against your grant and
-   prints the plan with one digest and its 16-hex prefix. The plan block
-   below the editor shows them. Nothing is written but the proposal.
+   prints the plan with one digest. The plan block below the editor shows
+   the plan, with the digest below a rule for the record; before any plan
+   it says "No team yet. Tell me what you want built and I will propose a
+   plan." Its last line lists the commands you can use now: `/plan` (the
+   plan again), `/confirm` and `/team hide`. Nothing is written but the
+   proposal.
 3. Confirm it at one of the two doors. The lead's own process witnesses
    the confirmation, checks the door's proof itself and holds it for 30
    minutes in memory; no file is a confirmation, and a lead restart forgets
    it, so you confirm again:
-   - type `/squad confirm <prefix>` in the lead's pane. pi hands the
-     command to the extension, never to the model, and the lead accepts it
-     only from its own pi;
+   - type `/confirm` in the lead's pane. There is nothing to type after
+     it: pi's confirm dialog quotes the plan's goal, the session and lead
+     and the seats with their runtimes and models, and your yes in the
+     dialog starts exactly the seats it showed (with two open plans, pi's
+     select over their goal lines comes first). The digest covers
+     squad.yaml (the session, the lead, each seat's runtime, model and
+     effort), the team rules and the pointer files; the goal and the tasks
+     are the lead's starting point, which it can change. A plan the lead proposes
+     while the dialog is open is not the one confirmed; a no or a cancel
+     confirms nothing. pi hands the command to the extension, never to the
+     model, and the lead accepts it only from its own pi;
    - or, on the phone, reply `yes` to the lead's Buzz post of the plan. The
      lead sends the plan as its answer to your phone request
      (`amq_team_propose` with `reply_to`); its own process records the
@@ -292,7 +304,7 @@ Adding a seat to a running squad: `--add-seat HANDLE:ROLE:RUNTIME:MODEL:EFFORT`
 appends one seat to the squad.yaml on disk through the same digest (the team
 rules stay as they are), and the next `scheduler relaunch` reads squad.yaml
 again and launches it with the roster. The lead's screen does all three with
-`/squad add`, then `seat`, and one confirmation (every seat relaunches):
+`/add seat` and one confirmation (every seat relaunches):
 
 ```sh
 amq-squad team propose --project . --add-seat rev-1:implementer:codex:gpt-5.4:high
@@ -343,32 +355,61 @@ is in status: the start (`up`'s own) to seat live, its accepted proof,
 within a 10 s ceiling, and to its first AMQ message, with no ceiling; a seat
 over the ceiling carries a warning naming its slowest segment.
 
-In the lead's pi, the squad screen sits below the editor: the lead handle
-and the root, then seats (runtime and model, state, launch outcome and
-budget, warnings), tasks (state, seat, PR, block reason), the merge train
-(the current and last runs, alerts) and open gates, each block closed by
-its newest refusal. It refreshes when the task store or the scheduler
-state changes; `/squad` collapses it to one footer line of counts.
+In the lead's pi, the team screen sits below the editor, on by default:
+the lead handle and the root, then the seats, each with its runtime and
+model and what it is doing ("working on t28: <title>", "idle", "starting",
+"waiting: ..." or "stopped", the launch budget at the end) and its
+warnings in words ("it is stopped at a harness dialog open for 3m0s;
+answer the dialog in its pane"), then the newest seat that stopped, with
+what to do ("seat old-dev did not stop cleanly: the commits ledger does not
+verify; ask the owner to inspect the commits ledger before anything
+commits"), the tasks
+("t28 in progress on reviewer: <title>", "t29 waiting: no seat serves
+claude:opus:high", "t27 blocked: the commit step refused it, 16 files over
+the cap of 8; ask the owner to raise the cap or split it", "t9 held by the
+lead"), the merge train (where it stopped and what to do), what is
+waiting on you (each open gate's
+question as the phone shows its first line) and the phone requests. An
+empty block says so in
+one line ("Nothing is waiting on you."). Every line traces to a field of
+status: one table in the extension maps each wait and block reason the
+scheduler and the task store can emit to its words (and each seat warning,
+train rule and relay refusal), and the size cap's
+numbers come from the refusal's own record. The codes, gate ids and digests
+sit below a rule, for the record. It refreshes when the task store or the
+scheduler state changes; `/team hide` collapses it to one footer line of
+counts and `/team` shows it again.
 
-The screen has four keys, typed in the lead's pi as `/squad <key>`. pi
-hands a command to the extension, never to the model, and each key runs its
-verb from the lead's own process, so a key that is a scheduler decision is
-proved like the lead's own tools. The model's tools gain nothing.
+The screen's last line lists the commands you can use now: `/add  /reset
+/dismiss  /answer  /widen  /team hide`. Each is its own pi command, named
+for what it does; pi hands a command to the extension, never to the
+model, and each runs its verb from the lead's own process, so a command
+that is a scheduler decision is proved like the lead's own tools. The
+model's tools gain nothing.
 
-- `/squad add` adds a task: the title, the class, the declared files and
-  the pool go to `task add`.
-- `/squad reset` resets a blocked task through `task reset`, onto another
-  pool when you pick one (`--pool`).
-- `/squad clear` acknowledges a seat's warning line through `scheduler
-  clear`. The line leaves the screen for that launch only, and the seat's
-  state does not change.
-- `/squad answer` shows an open typed gate's question as the phone shows
-  it, then its kind, target and 16-hex prefix. It posts the question over
-  Buzz when it has not reached Buzz, and says the gate is waiting there.
-  Buzz is the one door for the four typed gates; the terminal door is not
-  built yet. The gates block shows each open gate the same way.
+- `/add` adds a task (the title, the class, the declared files and the
+  pool go to `task add`) or a seat (`/add seat`, above); `/add task` skips
+  the choice.
+- `/reset` resets a blocked task through `task reset`, onto another pool
+  when you pick one (`--pool`).
+- `/dismiss` acknowledges a seat's warning line through `scheduler clear`
+  (the 3.1.0 clear key): pick the seat (`/dismiss SEAT` names it), then
+  the warning by its words when it has several. The line leaves the screen
+  for that launch only, and the seat itself does not change.
+- `/answer` shows an open typed gate's question as the phone shows it,
+  its kind, target and digest prefix below the rule. It posts the question
+  over Buzz when it has not reached Buzz, and says the gate is waiting
+  there. Buzz is the one door for the four typed gates; the terminal door
+  is not built yet.
+- `/widen` answers a seat's request to touch files outside its task: it
+  shows the paths the seat asked for and its reason in pi's confirm dialog
+  and runs `task widen` with exactly those paths on your yes (several
+  requests: pick one first).
 
-A key's refusal shows on the screen as the verb printed it.
+A refusal says what happened and what to do in plain words ("Nothing to
+dismiss: no seat has a warning showing."); the verb's own text and its
+code are below the rule. A bare `/squad` prints the commands you can use
+now and changes nothing; it goes in 3.2.
 
 Two entry points, each one AMQ launch request with every seat behind
 `seat-exec`:
@@ -521,7 +562,7 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   question. It never posts into a gate question's thread. A sentence like
   "No, the build is green" posts. A refusal is recorded by name
   (`relay_refused_gate_shape`) and a sha256 of the line, and shows in the
-  lead's `/squad` screen and in `status` under `requests`. The lead never
+  lead's team screen and in `status` under `requests`. The lead never
   holds a key: the body key stays in the attachment.
 - **The gates.** A typed gate's question goes to the owner's DM in plain
   words: what is asked, why now, and what yes and no do, then a rule and the

@@ -91,7 +91,7 @@
   ],
   "train": {
     "runs": [
-      { "run": "r2", "started_at": "2026-11-01T08:50:00Z", "last_at": "2026-11-01T08:52:00Z", "last_kind": "refusal", "repository": "owner/app", "base": "main", "prs": [811, 812], "merged": [811], "refusal": "refusal PR #812 checks: a required check failed", "done": false, "dry_run": false },
+      { "run": "r2", "started_at": "2026-11-01T08:50:00Z", "last_at": "2026-11-01T08:52:00Z", "last_kind": "refusal", "repository": "owner/app", "base": "main", "prs": [811, 812], "merged": [811], "refusal": "refusal PR #812 ci_green: a required check failed", "done": false, "dry_run": false },
       { "run": "r1", "started_at": "2026-11-01T08:00:00Z", "last_at": "2026-11-01T08:03:00Z", "last_kind": "merge", "repository": "owner/app", "base": "main", "prs": [810], "merged": [810], "refusal": "", "done": true, "dry_run": false }
     ],
     "alerts": [ { "id": "a1", "kind": "ungated_tag", "detail": "tag v1.2.0 has no accepted gate", "gate_id": "", "at": "2026-11-01T08:40:00Z" } ]

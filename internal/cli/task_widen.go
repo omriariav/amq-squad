@@ -141,7 +141,7 @@ func runTaskWiden(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "task widen %s: applied by the scheduler\n", id)
 	}
 	if !reply.OK {
-		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("task widen %s refused (%s): %s", id, reply.Code, reply.Detail)}
+		return &codedExitError{code: ExitCommitRefused, msg: widenReplyRefusal(id, reply)}
 	}
 	return nil
 }
@@ -177,10 +177,74 @@ func evalPath(p string) string {
 	return filepath.Clean(p)
 }
 
-// widenRefused is a refused widening with its reason code.
-type widenRefused struct{ code, msg string }
+// widenRefused is a refused widening with its reason code; plain, when
+// set, is its plain line composed from the decision's own record (the
+// growth gate's raise), else the code's (widenPlain).
+type widenRefused struct{ code, msg, plain string }
 
-func (e *widenRefused) Error() string { return fmt.Sprintf("widen refused (%s): %s", e.code, e.msg) }
+// widenRaiseGrowthGate raises a widening's growth gate (a test seam).
+var widenRaiseGrowthGate = raiseGrowthGate
+
+// Error is the refusal as the 3.1.1 gate questions read (brief 3.1.1-3
+// item 4): what happened and what to do in plain words, then the rule,
+// then the reason code and the detail for the record.
+func (e *widenRefused) Error() string {
+	plain := e.plain
+	if plain == "" {
+		plain = widenPlain(e.code)
+	}
+	return fmt.Sprintf("%s\n\n%s\nwiden refused (%s): %s", plain, gatestore.Rule, e.code, e.msg)
+}
+
+// widenPlain is a widening refusal's plain line, by its reason code.
+func widenPlain(code string) string {
+	switch code {
+	case "widen_invalid":
+		return "the widening's paths are not valid for this task"
+	case "widen_not_requested":
+		return "the task is not blocked by a seat's widen request or for files outside its declared set, so there is nothing to widen; to send it back to a seat, reset it onto a pool"
+	case "widen_paths_missing":
+		return "the task's block recorded no paths to widen by"
+	case "widen_paths_mismatch":
+		return "a path is not one the task's block recorded"
+	case task.RefusalFileLock:
+		return "the widened files overlap another active task's files; widen it once that task is done"
+	case task.ReasonGrowthGateRequired:
+		return "the widening needs the owner's growth gate"
+	case task.RefusalSelfWiden:
+		return "the seat that holds or reported the task cannot widen it; the lead decides a widening"
+	}
+	return "the widening was refused"
+}
+
+// widenReplyPlain is the plain line of a refusal the scheduler's decision
+// socket gave before the widening was tried.
+func widenReplyPlain(code string) string {
+	switch code {
+	case schedproc.RefusedNotLead:
+		return "the request does not come from the lead's pane"
+	case schedproc.RefusedOriginUnknown:
+		return "the scheduler cannot tell where the request came from"
+	case schedproc.RefusedStarting:
+		return "the scheduler is still starting; try again once it is up"
+	case schedproc.RefusedBusy:
+		return "the scheduler is busy with other decisions; try again"
+	case "not_squad":
+		return "the task is not this squad's"
+	}
+	return "the scheduler refused it"
+}
+
+// widenReplyRefusal is the verb's refusal: the plain line (the widening's
+// own, above the rule of its detail, else the socket's by code), then the
+// rule, then the code and the detail for the record.
+func widenReplyRefusal(id string, reply schedproc.DecideReply) string {
+	plain, record := widenReplyPlain(reply.Code), reply.Detail
+	if at := strings.Index(reply.Detail, "\n\n"+gatestore.Rule+"\n"); at >= 0 {
+		plain, record = reply.Detail[:at], reply.Detail[at+len(gatestore.Rule)+3:]
+	}
+	return fmt.Sprintf("task widen %s was refused: %s\n\n%s\nrefused (%s): %s", id, plain, gatestore.Rule, reply.Code, record)
+}
 
 var archiveWidenAttempt = seatcommit.ArchiveAttempt
 
@@ -286,7 +350,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 				if c.Accepted {
 					continue
 				}
-				gid, err := raiseGrowthGate(sel, lead, t.ID, t.Title, c.Target, links)
+				gid, err := widenRaiseGrowthGate(sel, lead, t.ID, t.Title, c.Target, links)
 				data.GateIDs = append(data.GateIDs, gid)
 				raised = append(raised, gid+" "+c.Target)
 				if err != nil {
@@ -299,7 +363,18 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 				}
 			}
 		}
-		return data, &widenRefused{code: d.ReasonCode, msg: d.Detail}
+		refused := &widenRefused{code: d.ReasonCode, msg: d.Detail}
+		if d.ReasonCode == seatcommit.ReasonGrowthGate {
+			// brief 3.1.1-3 (the plan reviewer): the plain line says what the
+			// raise did, from GateIDs and GateErrs; a failed raise's error
+			// goes below the rule
+			refused.plain = "the owner's growth gate is raised; the task waits for the answer"
+			if len(data.GateErrs) > 0 {
+				refused.plain = "the widening needs the owner's growth gate, and raising it failed; try /widen again"
+				refused.msg += "; the gate was not raised: " + strings.Join(data.GateErrs, "; ")
+			}
+		}
+		return data, refused
 	}
 	after, err := sel.store.WidenGated(t.ID, lead, widenReason, wo.Added, d.Gates, taskLeaseDuration, taskNow())
 	var wr *task.WidenRefusal
