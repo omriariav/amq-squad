@@ -46,6 +46,12 @@ R = [
   '	return d.seat ? `seat ${d.seat}` : "a seat";', '	return `seat ${d.seat || d.task_id}`;', PIN("words", "every decision kind Go writes")),
  ("D", "a request's stop matched by seat, which it does not record", L+"words.ts",
   '	seat_request_expired: TASK_RESOLVED,', '	seat_request_expired: SEAT_RESOLVED,', PIN("words", "followed by its resolving decision")),
+ ("E", "seat_prepare_failed's sentence drops its task", L+"words.ts",
+  "could not be prepared${d.task_id ? ` for ${d.task_id}` : \"\"}`", "could not be prepared`", PIN("words", "every decision kind Go writes")),
+ ("E", "lead_notice_failed's sentence drops its task", L+"words.ts",
+  "told of a decision${d.task_id ? ` on ${d.task_id}` : \"\"}`", "told of a decision`", PIN("words", "every decision kind Go writes")),
+ ("E", "exit_refused's sentence drops its task", L+"words.ts",
+  "did not stop cleanly${d.task_id ? ` after ${d.task_id}` : \"\"}`", "did not stop cleanly`", PIN("words", "every decision kind Go writes")),
 ]
 only = sys.argv[1:]
 out = []
