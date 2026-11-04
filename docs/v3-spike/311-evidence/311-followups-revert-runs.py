@@ -162,7 +162,10 @@ CASES = [
   "\t\t\t_ = entry(Entry{Kind: \"alert_cleared\", Detail: a.Detail + \"; a verified owner gate now covers it\", GateID: a.ID})\n", "\t\t\t_ = a\n",
   GO("internal/mergetrain", "TestTrainAuditKeepsAnAlertAndItsClearing")),
  ("R4f a live seat of an older launch is a stale record (Codex on #854's fix round)", "internal/status/classify.go",
-  "\t\t\tif s.Live || unordered || s.Launch.LaunchID", "\t\t\tif unordered || s.Launch.LaunchID",
+  "\t\t\tif s.ProcessLive || unordered || s.Launch.LaunchID", "\t\t\tif unordered || s.Launch.LaunchID",
+  GO("internal/status", "TestALiveSeatOfAnOlderLaunchStaysASeat")),
+ ("R4g a pid that answers counts whatever its start stamp (the plan reviewer)", "internal/status/screen.go",
+  "\treturn ok && stamp == start\n", "\treturn ok || stamp == start\n",
   GO("internal/status", "TestALiveSeatOfAnOlderLaunchStaysASeat")),
 ]
 

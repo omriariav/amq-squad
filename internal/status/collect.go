@@ -141,6 +141,11 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 		// brief 31-1: the seat's worktree, branch and last launch, and the
 		// warnings of its launch
 		seat.Worktree, seat.Branch, seat.Launch, seat.Session, seat.LaunchStartedAt = staged.Worktree, staged.Branch, sl, staged.Session, staged.StartedAt
+		// the seat's process by its current launch's proof: pid and start
+		// stamp, the check the lead's record gets (processLive)
+		if proof, err := launch.ReadProof(o.Root, handle); err == nil && staged.LaunchID != "" && proof.LaunchID == staged.LaunchID && proof.ClosedAt == nil {
+			seat.ProcessLive = processLive(o, proof.PID, proof.Start)
+		}
 		// brief 31-2: a warning the owner cleared for this launch moves to
 		// the acknowledged list
 		clears, err := schedproc.ReadClears(o.Root)

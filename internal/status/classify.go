@@ -46,6 +46,9 @@ type SeatInput struct {
 	// fallback).
 	Session         string
 	LaunchStartedAt time.Time
+	// ProcessLive: the seat's process from its current launch's proof
+	// answers with its recorded start stamp (processLive, the lead's check).
+	ProcessLive bool
 }
 
 // GateInput is one gate record (verified by the caller against its answer).
@@ -556,13 +559,14 @@ func runningRoster(in Input) map[string]bool {
 			return nil
 		}
 		for _, s := range in.Seats {
-			// a live seat is a seat row whatever its launch id (one launched
+			// a seat whose process is live (pid and start stamp, the plan
+			// reviewer) is a seat row whatever its launch id (one launched
 			// on its own in this session, Codex on #854's fix round); the
 			// launch-id rule orders only the dead and unknown records, and a
 			// record with no launch id or compile time cannot be ordered
 			// against the latest launch: it stays a seat row
 			unordered := s.Launch == nil || s.Launch.LaunchID == "" || s.LaunchStartedAt.IsZero()
-			if s.Live || unordered || s.Launch.LaunchID == latest.Launch.LaunchID && (in.Session == "" || s.Session == in.Session) {
+			if s.ProcessLive || unordered || s.Launch.LaunchID == latest.Launch.LaunchID && (in.Session == "" || s.Session == in.Session) {
 				out[s.Handle] = true
 			}
 		}

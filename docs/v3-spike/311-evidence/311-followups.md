@@ -262,10 +262,15 @@ equals the real run's after `BindTasks`, for a bound PR and an unbound one.
    found a regression: a seat that is live but was launched on its own in
    this session (an older launch id) fell into `stale_records` and out of
    the counts, which the roster row could not see since it marks every
-   process dead. A live seat is now a seat row whatever its launch id; the
-   launch-id rule orders only the dead and unknown records. Row:
-   TestALiveSeatOfAnOlderLaunchStaysASeat, two live seats of one session
-   with different launch ids and a dead record of an older launch (R4f).
+   process dead. A seat whose process is live is now a seat row whatever
+   its launch id; the launch-id rule orders only the dead and unknown
+   records. Live is the plan reviewer's: the pid and start stamp of the
+   seat's current launch's proof, the one process check status gives the
+   lead's record (`processLive`, internal/status/screen.go), not presence or
+   evidence. Row: TestALiveSeatOfAnOlderLaunchStaysASeat, two live seats of
+   one session with different launch ids, a record of an older launch whose
+   pid is gone (with a fresh presence) and one whose pid answers with
+   another start stamp (R4f, R4g).
 3. **A commit-less tag gate cleared the first commit seen.** A seat's gated
    `git tag NAME` or tag push names no commit, so a tag now clears only
    through a target that names it and its commit (`gatetarget.ReleaseTag`),
@@ -294,7 +299,7 @@ TestVerdictMissingStaysAWorkFailure, breaks on exactly the removal of
 
 `docs/v3-spike/311-evidence/311-followups-revert-runs.py`: each case
 rewrites one change in the tree, runs its row, expects a failure, and
-restores every touched file in a `finally`. 47 runs, 47 caught on the
+restores every touched file in a `finally`. 48 runs, 48 caught on the
 merged tree; the tree was clean after.
 
 | Run | Reverted | Row that failed |
@@ -346,6 +351,7 @@ merged tree; the tree was clean after.
 | R1k | the same removal as R1j, the mutation row alone | TestVerdictMissingStaysAWorkFailure |
 | R9i | the train does not audit an alert's clearing | TestTrainAuditKeepsAnAlertAndItsClearing |
 | R4f | a live seat of an older launch is a stale record | TestALiveSeatOfAnOlderLaunchStaysASeat |
+| R4g | a pid that answers counts, whatever its start stamp | TestALiveSeatOfAnOlderLaunchStaysASeat |
 
 The no-self-re-dispatch row (TestPolicyRefusedTaskIsNotRedispatchedWithoutTheLead)
 is a pin: the store's block already gave it, and no change here sits behind

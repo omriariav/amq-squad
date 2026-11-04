@@ -110,17 +110,21 @@ func TestNoRosterSeatWaitNamesThePool(t *testing.T) {
 	}
 }
 
-// Codex on #854's fix round (P2-2): with no scheduler state, a seat that is
-// live but was launched on its own in this session (an older launch id) is
-// a seat row; the launch-id rule orders only the dead and unknown records.
-// Two live seats of one session with different launch ids are both seats,
-// and a dead record of an older launch is a stale record. Reverted (the
-// launch id alone), the older live seat fell into stale_records and out of
-// the counts.
+// Codex on #854's fix round (P2-2), with the plan reviewer's precision: with
+// no scheduler state, a seat whose process is live (its current launch's
+// proof: the pid answers with its recorded start stamp, status's one process
+// check) is a seat row whatever its launch id; the launch-id rule orders
+// only the dead and unknown records. Two live seats of one session with
+// different launch ids are both seats. A record of an older launch whose
+// pid is gone, or whose pid answers with another start stamp (reused), is a
+// stale record even with a fresh presence: no other liveness notion counts.
+// Reverted (the launch id alone), the older live seat fell into
+// stale_records and out of the counts.
 func TestALiveSeatOfAnOlderLaunchStaysASeat(t *testing.T) {
 	now := time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC)
 	root := filepath.Join(t.TempDir(), "root")
-	seat := func(handle, launchID string, compiled time.Time, live bool) {
+	stamps := map[int]string{4201: "start-4201", 4202: "start-4202", 4204: "start-other"}
+	seat := func(handle, launchID string, compiled time.Time, pid int, start string, presence bool) {
 		for _, d := range []string{filepath.Join(root, "agents", handle), launch.StagedDir(root, handle)} {
 			if err := os.MkdirAll(d, 0o700); err != nil {
 				t.Fatal(err)
@@ -130,14 +134,20 @@ func TestALiveSeatOfAnOlderLaunchStaysASeat(t *testing.T) {
 		if err := launch.WriteFile(filepath.Join(launch.StagedDir(root, handle), launch.FileName), rec); err != nil {
 			t.Fatal(err)
 		}
-		if live {
+		if err := launch.WriteProof(root, launch.ProofEntry{Handle: handle, LaunchID: launchID, PID: pid, Start: start, At: compiled.Add(time.Second)}); err != nil {
+			t.Fatal(err)
+		}
+		if presence {
 			write(t, filepath.Join(root, "agents", handle, "presence.json"), `{"status":"active","last_seen":"`+now.Add(-10*time.Second).Format(time.RFC3339)+`"}`)
 		}
 	}
-	seat("dev", "launch-new", now.Add(-time.Hour), true)
-	seat("reviewer", "launch-own", now.Add(-3*time.Hour), true) // launched on its own, earlier
-	seat("scribe", "launch-old", now.Add(-5*time.Hour), false)
-	s := Build(Collect(CollectOptions{Root: root, Session: "v31", Now: now, PIDAlive: func(int) bool { return false }}))
+	seat("dev", "launch-new", now.Add(-time.Hour), 4201, "start-4201", false)
+	seat("reviewer", "launch-own", now.Add(-3*time.Hour), 4202, "start-4202", false) // launched on its own, earlier
+	seat("scribe", "launch-old", now.Add(-5*time.Hour), 4203, "start-4203", true)    // pid gone; a fresh presence does not count
+	seat("qa", "launch-old2", now.Add(-6*time.Hour), 4204, "start-4204", false)      // pid reused: another start stamp
+	alive := func(pid int) bool { _, ok := stamps[pid]; return ok }
+	token := func(pid int) (string, bool) { v, ok := stamps[pid]; return v, ok }
+	s := Build(Collect(CollectOptions{Root: root, Session: "v31", Now: now, PIDAlive: alive, StartToken: token}))
 	var seats []string
 	for _, st := range s.Seats {
 		seats = append(seats, st.Handle)
@@ -145,7 +155,7 @@ func TestALiveSeatOfAnOlderLaunchStaysASeat(t *testing.T) {
 	if !slices.Equal(seats, []string{"dev", "reviewer"}) {
 		t.Fatalf("seats %v, want both live seats", seats)
 	}
-	if want := []StaleRecord{{"scribe", "v31", "launch-old"}}; !slices.Equal(s.StaleRecords, want) {
+	if want := []StaleRecord{{"qa", "v31", "launch-old2"}, {"scribe", "v31", "launch-old"}}; !slices.Equal(s.StaleRecords, want) {
 		t.Fatalf("stale_records %+v, want %+v", s.StaleRecords, want)
 	}
 	if s.Counts.All != 2 {
