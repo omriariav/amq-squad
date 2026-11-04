@@ -1,4 +1,5 @@
-// Brief 31-2, PR 2: the seat half of the add key, pressed as `/squad add`
+// Brief 31-2, PR 2: the seat half of the add key, pressed as `/add seat`
+// (brief 3.1.1-3: one command per action)
 // against the stand-in pi. Every verb goes through the injected runner;
 // nothing reaches the real binary, AMQ, tmux or Buzz.
 import { test } from "node:test";
@@ -7,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installScreen, renderScreen, type ScreenStatus } from "../extensions/lib/screen.ts";
+import { installCommands } from "../extensions/lib/commands.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx } from "./fakepi.ts";
@@ -48,7 +50,8 @@ function rig(reply: (args: string[]) => RunResult, answers: (string | undefined)
 		return reply(args);
 	};
 	const pi = new FakePi();
-	installScreen(pi as any, cfg(), runner, () => ({ mtimeMs: 1, size: 1 }));
+	const screen = installScreen(pi as any, cfg(), runner, () => ({ mtimeMs: 1, size: 1 }));
+	installCommands(pi as any, { phases: ["team"], phase: () => "team", screen });
 	const queue = [...answers];
 	const confirms: { title: string; message: string; at: number }[] = [];
 	const ctx = fakeCtx({ hasUI: true });
@@ -62,12 +65,15 @@ function rig(reply: (args: string[]) => RunResult, answers: (string | undefined)
 		confirms.push({ title, message, at: Date.now() });
 		return confirm;
 	};
+	let lines: string[] = [];
 	const press = async () => {
-		await pi.commands.get("squad")!.handler("add", ctx);
-		const lines: string[] = ctx.widgets["amq-squad-screen"]?.lines ?? [];
-		return lines.find((l) => l.startsWith("  key ")) ?? `(no key line in\n${lines.join("\n")})`;
+		await pi.commands.get("add")!.handler("", ctx);
+		lines = ctx.widgets["amq-squad-screen"]?.lines ?? [];
+		return lines.find((l) => l.startsWith("  /add: ")) ?? `(no key line in\n${lines.join("\n")})`;
 	};
-	return { calls, confirms, press };
+	// rec is the outcome's record, below the rule
+	const rec = () => lines.find((l) => l.startsWith("  /add: ") && lines.indexOf(l) > lines.indexOf("----------") && lines.includes("----------")) ?? "";
+	return { calls, confirms, press, rec };
 }
 
 const SEAT = ["seat", "rev-1", "implementer", "codex", "gpt-5.4", "high"];
@@ -98,36 +104,40 @@ test("add, seat: team apply with the digest, one confirmation, one relaunch carr
 	const pressed = Date.parse(relaunch[5]);
 	assert.ok(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(relaunch[5]), relaunch[5]);
 	assert.ok(pressed >= r.confirms[0].at && pressed >= before && pressed <= after, `the start ${relaunch[5]} is not the confirmation's press`);
-	assert.equal(line, `  key add: seat rev-1 added; the roster relaunches with it (every seat finishes what it holds first); its launch budget counts from ${relaunch[5]}`);
+	assert.equal(line, `  /add: Seat rev-1 added; the roster relaunches with it (every seat finishes what it holds first); its launch budget counts from ${relaunch[5]}.`);
 	// a pi seat with the role, the model's colon and the effort left empty
 	const pi = rig(verbs(), ["seat", "local-1", "", "pi", "ollama/qwen3:32b", ""]);
 	await pi.press();
 	assert.deepEqual(pi.calls[0], ["team", "propose", "--project", PROJECT, "--add-seat", "local-1::pi:ollama/qwen3:32b:", "--json"]);
 });
 
-// The refusals by name: a squad.yaml that does not take the seat is
-// squad_invalid before any confirmation, and nothing is written or
-// relaunched; a declined confirmation writes nothing; a stale digest at
-// apply shows its code and relaunches nothing; the relaunch's refusal
-// shows as the verb printed it (squad_invalid from the scheduler's reload,
-// or not_lead).
+// The refusals in plain words with the code below the rule: a squad.yaml
+// that does not take the seat is squad_invalid before any confirmation, and
+// nothing is written or relaunched; a declined confirmation writes nothing;
+// a stale digest at apply says so and relaunches nothing; the relaunch's
+// refusal goes below the rule as the verb printed it (squad_invalid from
+// the scheduler's reload, or not_lead).
 test("add, seat: squad_invalid and the relaunch's refusal by name; a declined confirmation writes nothing", async () => {
 	const invalid = rig(verbs({ propose: res(2, "", "error: squad.yaml: seat rev-1: runtime codex is not a permitted runtime\n") }), SEAT);
-	assert.equal(await invalid.press(), "  key add refused: squad_invalid: squad.yaml: seat rev-1: runtime codex is not a permitted runtime");
+	assert.equal(await invalid.press(), "  /add: Seat rev-1 was not added, squad.yaml does not take it: squad.yaml: seat rev-1: runtime codex is not a permitted runtime");
+	assert.equal(invalid.rec(), "  /add: squad_invalid: squad.yaml: seat rev-1: runtime codex is not a permitted runtime");
 	assert.equal(invalid.confirms.length, 0);
 	assert.equal(invalid.calls.length, 1);
 	const declined = rig(verbs(), SEAT, false);
-	assert.equal(await declined.press(), "  key add: cancelled, nothing written");
+	assert.equal(await declined.press(), "  /add: Cancelled; nothing was written.");
 	assert.deepEqual(declined.calls.map((c) => c[1]), ["propose"]);
 	const stale = rig(verbs({ apply: res(1, "", "error: squad_yaml_changed: squad.yaml was proposed over abc and is now def; run team propose again\n") }), SEAT);
-	assert.equal(await stale.press(), "  key add refused: seat rev-1: squad_yaml_changed: squad.yaml was proposed over abc and is now def; run team propose again");
+	assert.equal(await stale.press(), "  /add: Seat rev-1 was not added: squad.yaml was proposed over abc and is now def; run team propose again");
+	assert.equal(stale.rec(), "  /add: seat rev-1: squad_yaml_changed: squad.yaml was proposed over abc and is now def; run team propose again");
 	assert.deepEqual(stale.calls.map((c) => c[1]), ["propose", "apply"]);
 	for (const code of ["squad_invalid", "not_lead"]) {
 		const refused = rig(verbs({ relaunch: res(15, "", `error: scheduler relaunch refused (${code}): the detail\n`) }), SEAT);
-		assert.equal(await refused.press(), `  key add refused: seat rev-1 is in squad.yaml; scheduler relaunch refused (${code}): the detail`);
+		assert.equal(await refused.press(), "  /add: Seat rev-1 is in squad.yaml, but the roster did not relaunch: scheduler relaunch refused: the detail");
+		assert.equal(refused.rec(), `  /add: seat rev-1 is in squad.yaml; scheduler relaunch refused (${code}): the detail`);
 	}
 	const noProject = rig(verbs(), SEAT, true, { ...fixture, project_path: undefined });
-	assert.match(await noProject.press(), /refused: squad_invalid: status names no project/);
+	assert.equal(await noProject.press(), "  /add: There is no squad.yaml to add a seat to: the team's status names no project.");
+	assert.equal(noProject.rec(), "  /add: squad_invalid: status names no project");
 	assert.equal(noProject.calls.length, 0);
 });
 
@@ -136,7 +146,7 @@ test("add, seat: a cancel at any dialog runs no verb", async () => {
 	for (let n = 1; n < SEAT.length; n++) {
 		const answers: (string | undefined)[] = [...SEAT.slice(0, n), undefined];
 		const r = rig(verbs(), answers);
-		assert.equal(await r.press(), "  key add: cancelled, nothing run", JSON.stringify(answers));
+		assert.equal(await r.press(), "  /add: Cancelled; nothing was run.", JSON.stringify(answers));
 		assert.equal(r.calls.length, 0, JSON.stringify(answers));
 	}
 });
@@ -144,16 +154,16 @@ test("add, seat: a cancel at any dialog runs no verb", async () => {
 // The lease cap on the screen (the lead's gate on 5d20b5ff): when the
 // roster has more seats up than the lease cap (a seat added past it under
 // scheduler run --max-seats; cli TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns
-// shows the state status reads), the seats block carries one warning line,
-// and no refusal line; at or under the cap there is none. Reverted, the
+// shows the state status reads), the seats block carries one warning line
+// in plain words, and no last-stop line; at or under the cap there is none. Reverted, the
 // screen says nothing while a seat waits for a lease.
 test("over the lease cap: a warning line in the seats block, never a refusal", () => {
 	const over = renderScreen({ ...fixture, scheduler: { max_seats: 2, live_seats: 3 } });
-	const line = "  ! over the lease cap: 3 seats up, max_seats 2: a seat beyond the cap waits for a lease (seat_cap) while the others hold theirs";
+	const line = "  ! 3 seats are up over the cap of 2: a seat beyond the cap waits for a lease while the others hold theirs";
 	assert.ok(over.includes(line), over.join("\n"));
 	assert.ok(over.indexOf(line) < over.indexOf("tasks (" + fixture.tasks.length + ")"), "the line is in the seats block");
-	assert.ok(!over.some((l) => l.startsWith("  refusal:") && l.includes("lease cap")));
+	assert.ok(!over.some((l) => l.includes("last stop") && l.includes("cap")));
 	for (const sch of [{ max_seats: 3, live_seats: 3 }, { max_seats: 4, live_seats: 3 }, null]) {
-		assert.ok(!renderScreen({ ...fixture, scheduler: sch }).some((l) => l.includes("over the lease cap")), JSON.stringify(sch));
+		assert.ok(!renderScreen({ ...fixture, scheduler: sch }).some((l) => l.includes("over the cap of")), JSON.stringify(sch));
 	}
 });

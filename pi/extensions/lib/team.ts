@@ -3,13 +3,16 @@
 //     `amq-squad team propose --from`, which renders squad.yaml, checks it
 //     against the owner grant and prints the plan with its digest; the plan
 //     block below the editor shows it with the confirm command;
-//   - /squad confirm <prefix>: R55's TUI door. pi hands a slash command to
-//     the extension, never to the model, so only the owner's typed line in
-//     the lead's pane reaches it; the extension matches the typed prefix
-//     against the digest it printed and sends the digest and its pane to
-//     the lead over the start socket. The lead accepts it only from the pi
-//     process it spawned (its pid and start stamp) and witnesses it in its
-//     own memory; no file is written. It is a command, never a tool;
+//   - /confirm: R55's TUI door (brief 3.1.1-3: nothing to type). pi hands a
+//     slash command to the extension, never to the model, so only the
+//     owner's command in the lead's pane reaches it; it opens pi's confirm
+//     dialog quoting the plan (two live plans: pi's select over their goal
+//     lines first) and, only on the owner's yes, sends that plan's digest,
+//     the one the dialog showed, and its pane to the lead over the start
+//     socket; a plan proposed while the dialog was open is not the one
+//     confirmed. The lead accepts it only from the pi process it spawned
+//     (its pid and start stamp) and witnesses it in its own memory; no file
+//     is written. It is a command, never a tool;
 //   - amq_team_apply: `amq-squad team apply --digest D`, which the lead's
 //     process answers over its start socket: a confirmation it witnessed,
 //     the mayor's checks, up's shared steps, the roster line;
@@ -25,9 +28,15 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
 import { describe, run } from "./verbs.ts";
+import type { KeyOutcome } from "./keys.ts";
+import { commandsLine } from "./commands.ts";
+import { RULE, sentence } from "./words.ts";
 
 export const PLAN_KEY = "amq-squad-plan";
 export const CONFIRM_TTL_MS = 30 * 60 * 1000;
+// DOORS is how the owner confirms a plan, as the plan's text says it to the
+// model and on the phone: the pane's /confirm and the Buzz reply.
+export const DOORS = "confirm it at one of the two doors: (1) the owner types /confirm in the lead's pane (a dialog quotes this plan; there is nothing to type); (2) on the phone, the owner replies yes to the lead's Buzz post that relays this plan";
 const APPLY_TIMEOUT_MS = 11 * 60 * 1000;
 const DIGEST = /^sha256:([0-9a-f]{64})@([0-9a-f]{64}|absent)$/;
 // TEAM_PLAN_LABEL is gateverify.TeamPlanLabel: the label on the cockpit
@@ -261,7 +270,7 @@ export function soloShellRefusal(toolName: string, input: unknown): string | und
 }
 
 function refusalText(what: string): string {
-	return `owner_only: the solo lead's shell does not run ${what} (R55): a tmux command can type into the lead's own pane, and only the read-only amq-squad verbs run here (${AMQ_SQUAD_ALLOW.join(", ")}). Propose with amq_team_propose; the owner confirms at /squad confirm or the Buzz DM; then amq_team_apply.`;
+	return `owner_only: the solo lead's shell does not run ${what} (R55): a tmux command can type into the lead's own pane, and only the read-only amq-squad verbs run here (${AMQ_SQUAD_ALLOW.join(", ")}). Propose with amq_team_propose; the owner confirms at /confirm in the lead's pane or the Buzz DM; then amq_team_apply.`;
 }
 
 function envelopeData<T>(stdout: string): T | undefined {
@@ -277,11 +286,32 @@ export class SoloTeam {
 	cfg: Config;
 	runner: Runner;
 	now: () => Date;
-	proposal: Proposal | undefined;
-	confirmed: { at: Date } | undefined;
+	// proposals are this pi's plans, oldest first; a plan is live for the
+	// confirmation's 30 minutes (the lead accepts a digest younger than
+	// that), and /confirm offers the live ones
+	proposals: { p: Proposal; at: Date }[] = [];
+	confirmed: { at: Date; digest: string } | undefined;
 	socket: string;
 	line = "";
+	record = "";
+	expanded = true;
 	ctx: ExtensionContext | undefined;
+	// onTeam starts the team screen once the lead's tools switch (R53)
+	onTeam: (() => void) | undefined;
+
+	// proposal is the newest plan (setting it replaces every plan).
+	get proposal(): Proposal | undefined {
+		return this.proposals.at(-1)?.p;
+	}
+	set proposal(p: Proposal | undefined) {
+		this.proposals = p ? [{ p, at: this.now() }] : [];
+	}
+
+	// live is the plans younger than the confirmation's 30 minutes.
+	live(): { p: Proposal; at: Date }[] {
+		const now = this.now().getTime();
+		return this.proposals.filter((x) => now - x.at.getTime() < CONFIRM_TTL_MS);
+	}
 	// batch is this turn's assistant batch (Codex on #837, item 3): every
 	// tool call of the assistant message (from its end) and every call the
 	// tool_call hooks prepared since the turn began, by id. pi prepares a
@@ -370,21 +400,35 @@ export class SoloTeam {
 		this.pi?.setActiveTools([...this.teamTools]);
 		this.line = `team phase: the lead is ${m.handle} of ${m.root}; its tools are the team lead's`;
 		this.render();
+		this.onTeam?.();
 	}
 
 	project(): string {
 		return this.cfg.project || process.env.AMQ_SQUAD_PROJECT || process.cwd();
 	}
 
-	// planLines is the plan block: the plan, the digest and its prefix, and
-	// the three doors.
+	// planLines is the solo screen (brief 3.1.1-3): the plan in plain lines,
+	// how to confirm it, the last outcome; below the rule the digest and the
+	// codes for the record; the last line the commands available now. With
+	// no plan: one plain line saying what to do.
 	planLines(): string[] {
 		const p = this.proposal;
-		if (!p) return [];
-		const out = ["amq-squad: proposed team", ...p.plan.map((l) => "  " + l), `  digest ${p.digest}`, `  prefix ${p.prefix}`];
-		if (this.confirmed) out.push(`  confirmed at ${this.confirmed.at.toISOString()} (door tui, witnessed by the lead); the lead applies it with amq_team_apply`);
-		else out.push(`  confirm: /squad confirm ${p.prefix}  (or on the phone: reply yes to the lead's Buzz post of this plan)`);
+		const out = [p ? "amq-squad: proposed team" : "amq-squad: solo lead"];
+		const record: string[] = [];
+		if (!p) out.push("  No team yet. Tell me what you want built and I will propose a plan.");
+		else {
+			out.push(...p.plan.map((l) => "  " + l));
+			const confirmed = this.confirmed && this.confirmed.digest === p.digest ? this.confirmed : undefined;
+			if (confirmed) out.push(`  Confirmed at ${confirmed.at.toISOString()} at your pane, witnessed by the lead; the lead starts the team next.`);
+			else out.push("  Confirm it with /confirm (a dialog quotes the plan; there is nothing to type), or on the phone reply yes to the lead's Buzz post of this plan.");
+			const n = this.live().length;
+			if (n > 1) out.push(`  ${n} plans are open; /confirm asks which one.`);
+			record.push(`digest ${p.digest}`);
+		}
 		if (this.line) out.push(`  ${this.line}`);
+		if (this.record) record.push(this.record);
+		if (record.length) out.push(RULE, ...record.map((r) => `  ${r}`));
+		out.push(commandsLine("solo"));
 		return out;
 	}
 
@@ -392,9 +436,32 @@ export class SoloTeam {
 		const ui = this.ctx?.hasUI ? this.ctx.ui : undefined;
 		if (!ui) return;
 		try {
-			ui.setWidget(PLAN_KEY, this.proposal ? this.planLines() : undefined, { placement: "belowEditor" });
+			// the team phase has the team screen; the plan block goes
+			const on = this.phase === "solo" && this.expanded;
+			ui.setWidget(PLAN_KEY, on ? this.planLines() : undefined, { placement: "belowEditor" });
+			ui.setStatus(PLAN_KEY, this.phase === "solo" && !this.expanded ? "amq-squad: the plan block is hidden (/team shows it)" : undefined);
 		} catch {
 			// UI is optional
+		}
+	}
+
+	// setExpanded shows the plan block (/team, /plan) or hides it (/team hide).
+	setExpanded(on: boolean): void {
+		this.expanded = on;
+		this.render();
+	}
+
+	// show leaves a command's outcome on the plan block (its record below
+	// the rule) and says it in a notice.
+	show(o: KeyOutcome, ctx: ExtensionContext): void {
+		this.ctx = ctx;
+		this.line = `/${o.key}: ${o.line}`;
+		this.record = o.record ? `/${o.key}: ${o.record}` : "";
+		this.render();
+		try {
+			if (ctx.hasUI) ctx.ui.notify(this.line, o.refused ? "warning" : "info");
+		} catch {
+			// the line is on the plan block either way
 		}
 	}
 
@@ -412,11 +479,14 @@ export class SoloTeam {
 		if (r.spawnError || r.timedOut || r.code !== 0) throw new Error(`team propose refused (${describe(r, 30000)})${r.stdout.trim() ? `: ${r.stdout.trim().slice(0, 2000)}` : ""}`);
 		const d = envelopeData<Proposal & { doors: string }>(r.stdout);
 		if (!d || !digestPrefix(d.digest)) throw new Error("team propose printed no digest");
-		this.proposal = { digest: d.digest, prefix: d.prefix, plan: d.plan ?? [], project_dir: d.project_dir };
-		this.confirmed = undefined;
+		const proposed = { digest: d.digest, prefix: d.prefix, plan: d.plan ?? [], project_dir: d.project_dir };
+		this.proposals = [...this.live().filter((x) => x.p.digest !== d.digest), { p: proposed, at: this.now() }];
 		this.line = "";
+		this.record = "";
 		this.render();
-		const text = [...(d.plan ?? []), `digest ${d.digest}`, `prefix ${d.prefix}`, d.doors].join("\n");
+		// the doors in this release's words (brief 3.1.1-3): /confirm with
+		// nothing to type, not Go's 3.1.0 "/squad confirm <prefix>"
+		const text = [...(d.plan ?? []), `digest ${d.digest}`, `prefix ${d.prefix}`, DOORS].join("\n");
 		if (typeof replyTo !== "string" || !replyTo) return text;
 		const hex = DIGEST.exec(d.digest)?.[1] ?? "";
 		if (replyTo.startsWith("-") || !this.cfg.amq) return `${text}\nthe plan was not sent as the reply to ${replyTo}: ${this.cfg.amq ? "a bad message id" : "no amq binary"}`;
@@ -463,32 +533,59 @@ export class SoloTeam {
 		return [...lines, ...(d.roster ?? []), `team started: ${d.detail ?? ""}`, phase].join("\n");
 	}
 
-	// confirm is the TUI door: the owner's typed prefix against the printed
-	// digest; a match goes to the lead over its start socket, which accepts
-	// it only from the pi process it spawned and witnesses it. No file is
-	// written.
-	async confirm(typed: string, ctx: ExtensionContext): Promise<{ refused: boolean; line: string }> {
-		const p = this.proposal;
-		if (!p) return { refused: true, line: "no_proposal: the lead has printed no plan to confirm" };
-		let prefix = typed.trim();
-		if (!prefix && ctx.hasUI) prefix = ((await ctx.ui.input(`confirm the team: type the prefix ${p.prefix}`)) ?? "").trim();
-		if (!prefix) return { refused: false, line: "cancelled, nothing sent" };
-		if (prefix.toLowerCase() !== p.prefix) return { refused: true, line: `prefix_mismatch: ${JSON.stringify(prefix)} is not the printed prefix ${p.prefix}; nothing sent` };
+	// confirm is the TUI door with nothing to type (brief 3.1.1-3 item 5):
+	// pi's confirm dialog quotes the plan (two live plans: pi's select over
+	// their goal lines first), and only the owner's yes in that dialog sends
+	// the digest of the plan it showed to the lead over its start socket,
+	// which accepts it only from the pi process it spawned and witnesses it.
+	// A plan proposed while the dialog was open is not the one confirmed; a
+	// no or a cancel sends nothing. No file is written.
+	async confirm(ctx: ExtensionContext): Promise<KeyOutcome> {
+		const k = "confirm";
+		const live = this.live();
+		if (!live.length) return { key: k, refused: true, line: "Nothing to confirm: the lead has proposed no plan in the last 30 minutes. Tell it what you want built and it proposes one.", record: "no_proposal" };
+		if (!ctx.hasUI) return { key: k, refused: true, line: "/confirm needs the lead's interactive pane.", record: "no_ui" };
+		let p = live[live.length - 1].p;
+		if (live.length > 1) {
+			const newest = [...live].reverse();
+			const labels = newest.map((x, i) => `${goalLine(x.p)}  (proposed ${x.at.toISOString().slice(11, 19)}${i === 0 ? ", the newest" : ""})`);
+			const pick = await ctx.ui.select("confirm which plan", labels);
+			if (!pick) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };
+			p = newest[labels.indexOf(pick)].p;
+		}
+		// p is fixed before the dialog opens: what the owner reads is what
+		// the yes confirms
+		const yes = await ctx.ui.confirm("Start this team?", quotePlan(p));
+		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };
 		let r: LeadReply;
 		try {
 			r = await askLeadProved(this.socket, { kind: TUI_KIND, digest: p.digest, pane: process.env.TMUX_PANE ?? "" }, this.nonce);
 		} catch (err) {
-			return { refused: true, line: String((err as Error).message ?? err) };
+			return { key: k, refused: true, line: "The lead did not answer, so nothing was confirmed; try /confirm again.", record: String((err as Error).message ?? err) };
 		}
-		if (r.outcome !== "witnessed") return { refused: true, line: `${r.refusal ?? "refused"}: ${r.detail ?? ""}` };
+		if (r.outcome !== "witnessed") return { key: k, refused: true, line: sentence("The lead did not take the confirmation, so nothing was confirmed", r.detail ?? ""), record: `${r.refusal ?? "refused"}: ${r.detail ?? ""}` };
 		const at = this.now();
-		this.confirmed = { at };
-		return { refused: false, line: `confirmed ${p.prefix} at ${at.toISOString()}, witnessed by the lead; it stands for 30 minutes` };
+		this.confirmed = { at, digest: p.digest };
+		return { key: k, refused: false, line: `Confirmed at ${at.toISOString()}, witnessed by the lead; it stands for 30 minutes and the lead starts the team next.`, record: `confirmed ${p.digest} (door tui)` };
 	}
 }
 
-// installSoloTeam gives the solo lead the two tools, the plan block and
-// the /squad command (confirm).
+// goalLine is a plan's goal line (team.PlanLines' first line).
+export function goalLine(p: Proposal): string {
+	return p.plan.find((l) => l.startsWith("goal:")) ?? p.plan[0] ?? "a plan with no goal line";
+}
+
+// quotePlan is what the confirm dialog quotes: the goal line, the session
+// and lead, the seats with their runtimes and models, and a cost line when
+// the plan has one (team.PlanLines prints none today), then what the yes
+// does.
+export function quotePlan(p: Proposal): string {
+	const lines = p.plan.filter((l) => l.startsWith("goal:") || l.startsWith("session ") || l.startsWith("seat ") || l.startsWith("cost"));
+	return [...lines, "", "Yes confirms exactly this plan for 30 minutes; the lead then starts the team. A plan proposed after this dialog opened is not the one confirmed."].join("\n");
+}
+
+// installSoloTeam gives the solo lead the two tools and the plan block; its
+// commands (/plan, /confirm, /team) are lib/commands.ts's.
 export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = run, now: () => Date = () => new Date(), socket?: string, teamTools: string[] = [], nonce?: string): SoloTeam {
 	// the lead's nonce: the extension's entry read it from fd 3 and closed
 	// the descriptor before registering anything (pi/extensions/amq-squad.ts)
@@ -572,31 +669,6 @@ export function installSoloTeam(pi: ExtensionAPI, cfg: Config, runner: Runner = 
 			const refused = team.phaseRefusal("amq_team_apply") ?? team.notAlone(id);
 			if (refused) throw new Error(refused);
 			return { content: [{ type: "text", text: await team.apply(p.digest, signal) }], details: undefined };
-		},
-	});
-	pi.registerCommand("squad", {
-		description: "The proposed team: /squad shows the plan block; /squad confirm <prefix> is the owner's yes",
-		getArgumentCompletions: (prefix: string) => (["confirm"].filter((k) => k.startsWith(prefix.trim())).map((k) => ({ value: k, label: k }))),
-		handler: async (args, ctx) => {
-			team.ctx = ctx;
-			const [word, ...rest] = args.trim().split(/\s+/);
-			if (!word) {
-				team.render();
-				return;
-			}
-			if (word !== "confirm") {
-				team.line = `unknown key ${JSON.stringify(word)}; the solo lead's key is confirm`;
-				team.render();
-				return;
-			}
-			const r = await team.confirm(rest.join(" "), ctx);
-			team.line = `key confirm${r.refused ? " refused" : ""}: ${r.line}`;
-			team.render();
-			try {
-				if (ctx.hasUI) ctx.ui.notify(team.line, r.refused ? "warning" : "info");
-			} catch {
-				// the line is on the plan block either way
-			}
 		},
 	});
 	return team;

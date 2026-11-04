@@ -1,15 +1,15 @@
-// The keys on the lead's screen (brief 31-2, PR 1): add, reset, clear and
-// answer. The owner presses a key by typing `/squad <key>` in the lead's
-// pi: pi hands a registered command to the extension and never to the
-// model, so the extension's input path reads the key, and the model cannot
-// press one. Each key gathers its input with pi's own dialogs and runs its
-// CLI verb from the lead's process (this pi), exactly as the lead's tools
-// do: a verb that is a scheduler decision is proved under R4 by
-// construction, since its process descends from the proved lead. No key is
-// a tool: the model's tool list gains nothing (row 2).
+// The lead's actions on the team screen (brief 31-2; brief 3.1.1-3 gives
+// each its own command): /add, /reset, /dismiss, /answer and /widen. The
+// owner types the command in the lead's pi: pi hands a registered command
+// to the extension and never to the model, so the extension's input path
+// reads it, and the model cannot press one. Each key gathers its input with
+// pi's own dialogs and runs its CLI verb from the lead's process (this pi),
+// exactly as the lead's tools do: a verb that is a scheduler decision is
+// proved under R4 by construction, since its process descends from the
+// proved lead. No key is a tool: the model's tool list gains nothing.
+// Each outcome is a plain line (what happened, what to do); the verb's own
+// text and the codes go below the rule (brief 3.1.1-3 item 4).
 //
-// The widen key is a later PR of brief 31-2: it appears only on a task
-// whose block carries t26's typed widen reason, and it is not built here.
 // The add key adds a task or a seat (brief 31-2 PR 2, the seat half;
 // docs/v3-spike/31-evidence/31-2-pr2-seat-add.md): a seat is written to
 // squad.yaml through `team propose` and `team apply --add-seat` under the
@@ -22,29 +22,43 @@
 // for the four typed gates is not built, so the key shows the gate, posts
 // its question over Buzz when it has not reached Buzz, and says the gate is
 // waiting there. It never writes an answer.
+//
+// The widen key (brief 31-2 PR 3, folded into 3.1.1-3) answers a seat's
+// typed widen request (#844): it shows the requested paths and the seat's
+// reason in pi's confirm dialog and runs `task widen` only on its yes.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
 import type { ScreenStatus } from "./screen.ts";
-import { toolArgv } from "./tools.ts";
+import { refusedPaths, toolArgv } from "./tools.ts";
 import { firstLine, type RunResult } from "./verbs.ts";
+import { blockHappened, clean, RULE, sentence } from "./words.ts";
 
-export const KEYS = ["add", "reset", "clear", "answer"] as const;
+// KEYS are the team phase's actions, each its own command (brief 3.1.1-3:
+// /add, /reset, /dismiss, /answer, /widen); dismiss is the 3.1.0 clear key,
+// renamed since "clear" reads as wiping.
+export const KEYS = ["add", "reset", "dismiss", "answer", "widen"] as const;
 export type KeyName = (typeof KEYS)[number];
 
 const CLASSES = ["implement", "extract", "summarize", "script", "plan", "review"];
 const KEEP_POOL = "keep its pool";
 // CANCELLED is a key aborted at any dialog (Codex P2 2 on #831): pi's
 // dialogs return undefined on a cancel, and a cancelled key runs no verb.
-const CANCELLED = "cancelled, nothing run";
+const CANCELLED = "Cancelled; nothing was run.";
 const TYPE_POOL = "type a pool (runtime:model:effort)";
-const ADD_KINDS = ["task", "seat"];
+export const ADD_KINDS = ["task", "seat"];
 // The runtimes squad.yaml takes (team.Runtimes).
 const RUNTIMES = ["claude", "codex", "pi", "cursor-agent", "grok"];
+// WIDEN_REASON is the lead's recorded decision when the owner says yes to
+// a seat's widen request at the screen.
+export const WIDEN_REASON = "the owner accepted the seat's widen request at the lead's screen (/widen)";
+// The blocks a widening accepts (the task widen verb's own rule).
+const WIDENABLE = ["widen_requested", "outside_declared_files"];
 
-// KeyOutcome is what the key leaves on the screen: its line, and whether
-// the verb refused (the line then carries the refusal as the verb printed
-// it).
-export type KeyOutcome = { key: string; refused: boolean; line: string };
+// KeyOutcome is what the key leaves on the screen: its line in plain words
+// (what happened and what to do), whether it refused, and the record that
+// goes below the rule (the verb's refusal as it printed it, the codes and
+// ids).
+export type KeyOutcome = { key: string; refused: boolean; line: string; record?: string };
 
 // The `amq-squad gate status --json` row the answer key reads (the gate
 // record and its state).
@@ -52,7 +66,7 @@ type GateStatusRow = { gate_id: string; class: string; typed_class: string; targ
 
 // RULE is the line between a gate question's plain lines and its
 // identifiers (gatestore.Rule).
-export const RULE = "----------";
+export { RULE };
 
 // plainOf is a gate text's plain lines, the text above its rule
 // (gatestore.Plain): "" for a text with no rule (a gate raised before
@@ -112,32 +126,36 @@ export class Keys {
 		return this.runner(this.cfg.bin, args, { timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000) });
 	}
 
-	// press runs one key against the screen's last status document.
-	async press(name: string, ctx: ExtensionContext, st: ScreenStatus | undefined): Promise<KeyOutcome> {
+	// press runs one key against the screen's last status document; arg is
+	// the rest of the command line (/add task, /dismiss SEAT).
+	async press(name: string, ctx: ExtensionContext, st: ScreenStatus | undefined, arg = ""): Promise<KeyOutcome> {
 		const key = name.trim();
 		if (!(KEYS as readonly string[]).includes(key)) {
-			return { key, refused: true, line: `unknown key ${JSON.stringify(key)}; the keys are ${KEYS.join(", ")}` };
+			return { key, refused: true, line: `There is no /${key}. The commands you can use now are listed on the screen's last line.`, record: `unknown_command: ${key}` };
 		}
-		if (!ctx.hasUI) return { key, refused: true, line: "the keys need the lead's interactive screen" };
-		if (!st) return { key, refused: true, line: "no status yet; the screen is still reading it" };
+		if (!ctx.hasUI) return { key, refused: true, line: `/${key} needs the lead's interactive screen; this pi has none.`, record: "no_ui" };
+		if (!st) return { key, refused: true, line: "The screen has not read the team's status yet; try again in a moment.", record: "no_status" };
 		switch (key as KeyName) {
 			case "add":
-				return this.add(ctx, st);
+				return this.add(ctx, st, arg.trim());
 			case "reset":
 				return this.reset(ctx, st);
-			case "clear":
-				return this.clear(ctx, st);
+			case "dismiss":
+				return this.dismiss(ctx, st, arg.trim());
 			case "answer":
 				return this.answer(ctx, st);
+			case "widen":
+				return this.widen(ctx, st);
 		}
 	}
 
-	// add: a task or a seat. For a task the owner types the title, picks
-	// the class, types the declared files and the pool; the key runs
-	// `task add` (the lead's amq_task_add).
-	async add(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
+	// add: a task or a seat ("/add task", "/add seat", or picked). For a task
+	// the owner types the title, picks the class, types the declared files
+	// and the pool; the key runs `task add` (the lead's amq_task_add).
+	async add(ctx: ExtensionContext, st: ScreenStatus, arg = ""): Promise<KeyOutcome> {
 		const k = "add";
-		const kind = await ctx.ui.select("add: a task or a seat", ADD_KINDS);
+		if (arg && !ADD_KINDS.includes(arg)) return { key: k, refused: true, line: `There is no /add ${clean(arg, 30)}: /add takes task or seat.`, record: `add_kind_unknown: ${clean(arg, 60)}` };
+		const kind = arg || (await ctx.ui.select("add: a task or a seat", ADD_KINDS));
 		if (!kind) return { key: k, refused: false, line: CANCELLED };
 		if (kind === "seat") return this.addSeat(ctx, st);
 		const title = (await ctx.ui.input("add task: title"))?.trim();
@@ -152,9 +170,9 @@ export class Keys {
 		const pool = poolIn.trim();
 		const argv = [...toolArgv.taskAdd(this.cfg, { title, class: cls, files, pool: pool || undefined }), "--json"];
 		const r = await this.verb(argv);
-		if (failed(r)) return { key: k, refused: true, line: refusal(r) };
+		if (failed(r)) return { key: k, refused: true, line: sentence("The task was not added", refusal(r)), record: refusal(r) };
 		const t = data<{ task: { id: string; state: string } }>(r.stdout)?.task;
-		return { key: k, refused: false, line: `added ${t?.id ?? "?"} ${JSON.stringify(title)} (${t?.state ?? "?"})` };
+		return { key: k, refused: false, line: `Added ${t?.id ?? "the task"} "${clean(title)}"; it is ${(t?.state ?? "queued").replace(/_/g, " ")}.` };
 	}
 
 	// addSeat: the owner types the handle and the role, picks the runtime,
@@ -163,12 +181,12 @@ export class Keys {
 	// --digest D --add-seat` with the proposal's digest, then `scheduler
 	// relaunch --start STAMP`, STAMP the confirmation's moment (the key
 	// press the seat's launch budget counts from). A squad.yaml that does
-	// not take the seat shows as squad_invalid; the relaunch's refusal
-	// shows by its name as the verb printed it.
+	// not take the seat is refused squad_invalid (below the rule); the
+	// relaunch's refusal goes below the rule as the verb printed it.
 	async addSeat(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
 		const k = "add";
 		const project = st.project_path;
-		if (!project) return { key: k, refused: true, line: "squad_invalid: status names no project, so there is no squad.yaml to add to" };
+		if (!project) return { key: k, refused: true, line: "There is no squad.yaml to add a seat to: the team's status names no project.", record: "squad_invalid: status names no project" };
 		const handle = (await ctx.ui.input("add seat: handle"))?.trim();
 		if (!handle) return { key: k, refused: false, line: CANCELLED };
 		const role = await ctx.ui.input("add seat: role (empty: the handle)");
@@ -182,17 +200,17 @@ export class Keys {
 		const spec = [handle, role.trim(), runtime, model.trim(), effort.trim()].join(":");
 		const seatArgs = ["--project", project, "--add-seat", spec, "--json"];
 		const p = await this.verb(["team", "propose", ...seatArgs]);
-		if (failed(p)) return { key: k, refused: true, line: `squad_invalid: ${refusal(p)}` };
+		if (failed(p)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} was not added, squad.yaml does not take it`, refusal(p)), record: `squad_invalid: ${refusal(p)}` };
 		const digest = data<{ digest: string }>(p.stdout)?.digest;
-		if (!digest) return { key: k, refused: true, line: "squad_invalid: team propose returned no digest" };
+		if (!digest) return { key: k, refused: true, line: `Seat ${clean(handle, 30)} was not added: the proposal printed no digest.`, record: "squad_invalid: team propose returned no digest" };
 		const ok = await ctx.ui.confirm(`add seat ${handle} (${spec})`, "this relaunches every seat; continue?");
-		if (!ok) return { key: k, refused: false, line: "cancelled, nothing written" };
+		if (!ok) return { key: k, refused: false, line: "Cancelled; nothing was written." };
 		const pressed = new Date().toISOString(); // the key press: the launch budget's start
 		const a = await this.verb(["team", "apply", "--digest", digest, ...seatArgs]);
-		if (failed(a)) return { key: k, refused: true, line: `seat ${handle}: ${refusal(a)}` };
+		if (failed(a)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} was not added`, refusal(a)), record: `seat ${handle}: ${refusal(a)}` };
 		const r = await this.verb(["scheduler", "relaunch", "--reason", `add seat ${handle} (the screen's add key)`, "--start", pressed, "--json"]);
-		if (failed(r)) return { key: k, refused: true, line: `seat ${handle} is in squad.yaml; ${refusal(r)}` };
-		return { key: k, refused: false, line: `seat ${handle} added; the roster relaunches with it (every seat finishes what it holds first); its launch budget counts from ${pressed}` };
+		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${clean(handle, 30)} is in squad.yaml, but the roster did not relaunch`, refusal(r)), record: `seat ${handle} is in squad.yaml; ${refusal(r)}` };
+		return { key: k, refused: false, line: `Seat ${clean(handle, 30)} added; the roster relaunches with it (every seat finishes what it holds first); its launch budget counts from ${pressed}.` };
 	}
 
 	// reset: on a blocked task; `task reset`, with --pool when the owner
@@ -200,8 +218,8 @@ export class Keys {
 	async reset(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
 		const k = "reset";
 		const blocked = st.tasks.filter((t) => t.task_state === "blocked");
-		if (!blocked.length) return { key: k, refused: true, line: "no blocked task" };
-		const labels = blocked.map((t) => `${t.id}  ${t.block_reason || "blocked"}`);
+		if (!blocked.length) return { key: k, refused: true, line: "Nothing to reset: no task is blocked.", record: "no_blocked_task" };
+		const labels = blocked.map((t) => `${t.id}: ${blockHappened(t)}`);
 		const pick = await ctx.ui.select("reset: which blocked task", labels);
 		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const t = blocked[labels.indexOf(pick)];
@@ -219,68 +237,125 @@ export class Keys {
 		if (pool) argv.push("--pool", pool);
 		argv.push("--json");
 		const r = await this.verb(argv);
-		if (failed(r)) return { key: k, refused: true, line: `${t.id}: ${refusal(r)}` };
-		return { key: k, refused: false, line: `${t.id} reset${pool ? ` onto ${pool}` : ""}` };
+		if (failed(r)) return { key: k, refused: true, line: sentence(`${t.id} was not reset`, refusal(r)), record: `${t.id}: ${refusal(r)}` };
+		return { key: k, refused: false, line: `${t.id} reset${pool ? ` onto ${pool}` : ""}; it goes back to the queue.` };
 	}
 
-	// clear: on a seat's warning line; the owner's acknowledgement, recorded
-	// by the scheduler as a decision naming the warning and the seat's
-	// launch (`scheduler clear`, over its socket, proved under R4).
-	async clear(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
-		const k = "clear";
+	// dismiss (the 3.1.0 clear key): on a seat's warning line; the owner's
+	// acknowledgement, recorded by the scheduler as a decision naming the
+	// warning and the seat's launch (`scheduler clear`, over its socket,
+	// proved under R4). "/dismiss SEAT" offers that seat's warnings only.
+	async dismiss(ctx: ExtensionContext, st: ScreenStatus, seat = ""): Promise<KeyOutcome> {
+		const k = "dismiss";
 		const lines: { seat: string; code: string; launch: string; label: string }[] = [];
 		for (const s of st.seats) {
-			if (!s.launch?.launch_id) continue;
+			if (!s.launch?.launch_id || (seat && s.handle !== seat)) continue;
 			for (const w of s.warnings ?? []) {
 				const code = w.split(":")[0].trim();
 				lines.push({ seat: s.handle, code, launch: s.launch.launch_id, label: `${s.handle}  ${w.length > 100 ? w.slice(0, 97) + "..." : w}` });
 			}
 		}
-		if (!lines.length) return { key: k, refused: true, line: "no warning line to clear" };
-		const pick = await ctx.ui.select("clear: acknowledge which warning line (never a gate; the seat's state does not change)", lines.map((l) => l.label));
+		if (!lines.length) {
+			const line = seat ? `Nothing to dismiss: seat ${clean(seat, 30)} has no warning showing.` : "Nothing to dismiss: no seat has a warning showing.";
+			return { key: k, refused: true, line, record: "no_warning_line" };
+		}
+		const pick = await ctx.ui.select("dismiss: acknowledge which warning (never a gate; the seat itself does not change)", lines.map((l) => l.label));
 		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const l = lines.find((x) => x.label === pick)!;
 		const r = await this.verb(["scheduler", "clear", "--seat", l.seat, "--warning", l.code, "--launch", l.launch, "--json"]);
-		if (failed(r)) return { key: k, refused: true, line: `${l.seat} ${l.code}: ${refusal(r)}` };
-		return { key: k, refused: false, line: `${l.seat} ${l.code} acknowledged for launch ${l.launch}` };
+		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${l.seat}'s warning was not dismissed`, refusal(r)), record: `${l.seat} ${l.code}: ${refusal(r)}` };
+		return { key: k, refused: false, line: `Seat ${l.seat}'s warning is dismissed for its current launch; the seat itself does not change.`, record: `${l.seat} ${l.code} acknowledged for launch ${l.launch}` };
 	}
 
 	// answer: Q7's fallback. The gate is read fresh, shown with its
-	// question's plain lines, then its kind, target and typed prefix; its question is posted over Buzz when it has
-	// not reached Buzz; the key says the gate waits there. A gate that is not
-	// open (answered over Buzz, denied, expired) is refused by its state.
+	// question's plain lines, then (below the rule) its kind, target and
+	// digest prefix; its question is posted over Buzz when it has not reached
+	// Buzz; the key says the gate waits there. A gate that is not open
+	// (answered over Buzz, denied, expired) is refused by its state.
 	async answer(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
 		const k = "answer";
 		const open = st.gates.filter((g) => g.state === "open");
-		if (!open.length) return { key: k, refused: true, line: "no open gate" };
-		const labels = open.map((g) => `${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}`);
-		const pick = await ctx.ui.select("answer: which gate (the terminal door is not built: Buzz answers it)", labels);
+		if (!open.length) return { key: k, refused: true, line: "Nothing to answer: no owner gate is open.", record: "no_open_gate" };
+		const labels = open.map((g) => gateLabel(g));
+		const pick = await ctx.ui.select("answer: which gate (the phone answers it; the terminal cannot)", labels);
 		if (!pick) return { key: k, refused: false, line: CANCELLED };
 		const id = open[labels.indexOf(pick)].id;
 		const s = await this.verb(["gate", "status", "--gate", id, "--json"]);
-		if (failed(s)) return { key: k, refused: true, line: `${id}: ${refusal(s)}` };
+		if (failed(s)) return { key: k, refused: true, line: sentence("The gate could not be read", refusal(s)), record: `${id}: ${refusal(s)}` };
 		const g = data<GateStatusRow[]>(s.stdout)?.[0];
-		if (!g) return { key: k, refused: true, line: `${id}: gate status returned no gate` };
+		if (!g) return { key: k, refused: true, line: "The gate could not be read: its status came back empty.", record: `${id}: gate status returned no gate` };
 		if (g.state !== "open") {
-			return { key: k, refused: true, line: `${id}: gate_not_open: the gate is ${g.state}; an answer at either door closes it` };
+			return { key: k, refused: true, line: `That gate is no longer open: it is ${g.state}, since an answer at either door closes it.`, record: `${id}: gate_not_open (${g.state})` };
 		}
 		// brief 3.1.1-1: the question's plain lines verbatim, as the phone
 		// shows them, then the identifiers for the record
 		const plain = plainOf(g.text);
 		const ids = `${g.gate_id} ${g.class} (${g.typed_class}) ${g.target} prefix ${typedPrefix(g.digest)}`;
-		const shown = plain ? `${plain}\n${ids}` : ids;
+		const first = plain.split("\n").find((l) => l.trim()) ?? `the ${g.typed_class || g.class} gate`;
 		let posted = "";
 		if (!g.question_sent) {
 			const p = await this.verb(["gate", "post", "--gate", id, "--json"]);
-			if (failed(p)) return { key: k, refused: true, line: `${shown}: the question was not posted over Buzz: ${refusal(p)}` };
-			posted = "question posted over Buzz; ";
+			if (failed(p)) return { key: k, refused: true, line: sentence(`The question "${first}" did not reach the phone`, refusal(p)), record: `${ids}: the question was not posted over Buzz: ${refusal(p)}` };
+			posted = "the question was posted over Buzz; ";
 		}
-		const line = `${shown}: ${posted}waiting on Buzz: the terminal door is not built (Q7); reply yes or no in the question's Buzz thread`;
+		const todo = "reply yes or no in the question's Buzz thread; the terminal cannot answer a typed gate";
 		try {
-			ctx.ui.notify(line, "info");
+			ctx.ui.notify(`${plain ? plain + "\n" : ""}${posted}${todo}\n\n${RULE}\n${ids}`, "info");
 		} catch {
 			// the line is on the screen either way
 		}
-		return { key: k, refused: false, line };
+		return { key: k, refused: false, line: `Waiting on your answer on the phone to "${first}": ${posted}${todo}.`, record: ids };
 	}
+
+	// widen: the owner's yes to a seat's typed widen request (#844), or to
+	// a commit refusal's files outside the task. The key reads the task's
+	// own record (`task show --json`): the paths the block recorded
+	// (refused_paths) and the seat's reason (block_detail); it shows both in
+	// pi's confirm dialog and, only on the dialog's yes, runs `task widen`
+	// with exactly those paths, each as one --path (the lead's
+	// amq_task_widen argv). Several blocked tasks: the owner picks one.
+	async widen(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {
+		const k = "widen";
+		const blocked = st.tasks.filter((t) => t.task_state === "blocked" && WIDENABLE.includes(t.block_reason));
+		if (!blocked.length) return { key: k, refused: true, line: "Nothing to widen: no task is blocked with a widen request.", record: "no_widen_request" };
+		let t = blocked[0];
+		if (blocked.length > 1) {
+			const labels = blocked.map((b) => `${b.id}: ${clean((b as { title?: string }).title) || blockHappened(b)}`);
+			const pick = await ctx.ui.select("widen: which task", labels);
+			if (!pick) return { key: k, refused: false, line: CANCELLED };
+			t = blocked[labels.indexOf(pick)];
+		}
+		const shown = await this.verb(["task", "show", t.id, "--json"]);
+		if (failed(shown)) return { key: k, refused: true, line: sentence(`${t.id}'s record could not be read`, refusal(shown)), record: `${t.id}: ${refusal(shown)}` };
+		const rec = data<{ task: { id?: string; title?: string; state?: string; block_reason?: string; block_detail?: string; refused_paths?: unknown } }>(shown.stdout)?.task;
+		if (!rec) return { key: k, refused: true, line: `${t.id}'s record could not be read: task show returned no task.`, record: `${t.id}: task show returned no task` };
+		let paths: string[];
+		try {
+			paths = refusedPaths(rec);
+		} catch (err) {
+			const why = String((err as Error).message ?? err);
+			return { key: k, refused: true, line: `${t.id} has no widen request to accept: its block names no paths, or it is no longer blocked for them.`, record: `${t.id}: ${why}` };
+		}
+		const typed = rec.block_reason === "widen_requested";
+		const reason = typed ? clean(rec.block_detail, 300) : "";
+		const msg = [
+			`${t.id}: ${clean(rec.title) || "(no title)"}`,
+			typed ? "Its seat asks to touch these files outside its task:" : "The commit step found its seat changed these files outside its task:",
+			...paths.map((p) => `  ${p}`),
+			typed ? `The seat's reason: ${reason || "(none given)"}` : "",
+			"Yes adds exactly these paths to the task's files; No changes nothing.",
+		].filter(Boolean);
+		const yes = await ctx.ui.confirm(`widen ${t.id}?`, msg.join("\n"));
+		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was widened." };
+		const r = await this.verb(toolArgv.taskWiden(this.cfg, { id: t.id, reason: WIDEN_REASON }, paths));
+		if (failed(r)) return { key: k, refused: true, line: sentence(`${t.id} was not widened`, refusal(r)), record: `${t.id}: ${refusal(r)}` };
+		return { key: k, refused: false, line: `${t.id} widened by ${paths.length} ${paths.length === 1 ? "path" : "paths"}: ${paths.join(", ")}.`, record: `${t.id} widened: ${WIDEN_REASON}` };
+	}
+}
+
+// gateLabel is a gate's line in a dialog and on the screen: its plain
+// question's first line; for a gate raised before 3.1.1, its kind in words.
+export function gateLabel(g: { id: string; action_class: string; question?: string }): string {
+	const first = (g.question ?? "").split("\n").find((l) => l.trim() !== "");
+	return first ?? `an owner gate (${g.action_class.replace(/_/g, " ")}) is open`;
 }
