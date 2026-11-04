@@ -124,6 +124,12 @@ release-check:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-check" >&2; exit 1; }
 	@python3 scripts/check-release-version.py "$(VERSION)" $(if $(MARKETPLACE_REF),--marketplace-ref "$(MARKETPLACE_REF)")
 	@python3 scripts/check-current-skill-routing.py
+	@# Every validator CI runs on a version bump runs here too (brief 3.1.1-2,
+	@# #833): detect-release-ci.py's own test and its parse of VERSION and the
+	@# manifests, and the row that holds the three version readers to one grammar.
+	@python3 scripts/test_detect_release_ci.py
+	@python3 scripts/test_release_version_forms.py
+	@python3 scripts/detect-release-ci.py --check-version "$(VERSION)"
 
 go-files-scope-test:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for go-files-scope-test" >&2; exit 1; }
@@ -133,6 +139,7 @@ release-validator-test:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-validator-test" >&2; exit 1; }
 	@python3 scripts/test_check_release_version.py
 	@python3 scripts/test_detect_release_ci.py
+	@python3 scripts/test_release_version_forms.py
 
 # Regenerate the browsable README.html from README.md. Run this whenever
 # README.md changes (the release process bumps README.md, so it runs here).

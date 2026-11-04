@@ -192,7 +192,7 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 			if r.Outcome == task.OutcomeCompleted && r.VerifierResult == VerifierPass {
 				passed[b][id] = true
 			}
-			if failure(r.Outcome) || r.VerifierResult == VerifierFail || r.VerifierResult == VerifierInvalid {
+			if failedOutcome(r.Outcome) || r.VerifierResult == VerifierFail || r.VerifierResult == VerifierInvalid {
 				for _, later := range hist[id] {
 					if later.Attempt <= r.Attempt {
 						continue

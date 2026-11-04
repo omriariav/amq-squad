@@ -168,3 +168,18 @@ test("a pending task waiting on a file lock names its holder tasks", () => {
 	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [] } : t)) };
 	assert.ok(block(renderScreen(stale, now), "tasks").includes("  t26  pending  -  PR -  waiting on a file lock no task holds (stale)"));
 });
+
+// Brief 3.1.1-2: t27 on 2026-11-01 routed to a pool no roster seat served,
+// and the scheduler logged it every two seconds. The task line names the
+// wait and the pool; the seats block is the running roster only, with no
+// line for a stale record under the root.
+test("a task waiting no_roster_seat names the pool, and a stale record is no seat line", () => {
+	const t27 = { ...fixture.tasks[2], id: "t27", wait_reason: "no_roster_seat", wait_holders: [], wait_pool: "claude:opus:high" };
+	const lines = renderScreen({ ...fixture, tasks: [...fixture.tasks, t27] }, now);
+	const tasks = block(lines, "tasks");
+	assert.ok(tasks.includes("  t27  pending  -  PR -  waits: no seat serves claude:opus:high"), tasks.join("\n"));
+	assert.ok((fixture.stale_records ?? []).some((r) => r.handle === "senior-dev"), "the fixture carries a stale record");
+	const seats = block(lines, "seats");
+	assert.equal(seats[0], `seats (${fixture.seats.length})`);
+	assert.ok(!seats.some((l) => l.includes("senior-dev")), seats.join("\n"));
+});

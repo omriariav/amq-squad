@@ -21,7 +21,7 @@ import { restrictModels } from "./lib/models.ts";
 import { HOST_MESSAGE, HostFacts } from "./lib/firstturn.ts";
 import { installScreen } from "./lib/screen.ts";
 import { installSoloTeam, readLeadNonce, soloShellRefusal, type SoloTeam } from "./lib/team.ts";
-import { registerTools } from "./lib/tools.ts";
+import { registerTools, TEAM_LEAD_TOOLS } from "./lib/tools.ts";
 import { run } from "./lib/verbs.ts";
 
 const ROLE_MESSAGE = "amq-squad-role";
@@ -46,7 +46,10 @@ export default function amqSquad(pi: ExtensionAPI): void {
 		return;
 	}
 	amqPiBridge(pi);
-	const teamTools = registerTools(pi, cfg);
+	// the team phase's tools are the team lead's eleven (Go's TeamLeadTools),
+	// never every tool registered: claim and done stay a seat's
+	const registered = registerTools(pi, cfg);
+	const teamTools = TEAM_LEAD_TOOLS.filter((t) => registered.includes(t));
 	// The team lead's read-only screen (brief 31-1): a widget below the
 	// editor, fed by status --json on the .generation/updated_at poll.
 	let solo: SoloTeam | undefined;
@@ -54,7 +57,7 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// The solo lead proposes a team and, on the owner's confirmation at one
 	// of R55's doors, applies it (brief 31-3): two tools, the plan block and
 	// /squad confirm, the TUI door; on the yes its tools switch to the team
-	// lead's (R53), the ones registerTools registered.
+	// lead's (R53): TEAM_LEAD_TOOLS, as registerTools registered them.
 	else if (cfg.solo) solo = installSoloTeam(pi, cfg, run, undefined, undefined, teamTools, leadNonce);
 	restrictModels(pi, cfg.models, note);
 	const approveTools = new Set((process.env.AMQ_SQUAD_APPROVE_TOOLS ?? "").split(",").map((s) => s.trim()).filter(Boolean));

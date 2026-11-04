@@ -140,7 +140,7 @@ export const toolArgv = {
 // with ", " or " (" exactly. An empty or missing list is refused.
 export function refusedPaths(t: { id?: string; state?: string; block_reason?: string; refused_paths?: unknown }): string[] {
 	if (t.state !== "blocked" || !["outside_declared_files", "widen_requested"].includes(t.block_reason ?? "")) {
-		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)`);
+		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set or by a seat's widen request (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT`);
 	}
 	const list = t.refused_paths;
 	if (!Array.isArray(list) || !list.length || !list.every((x) => typeof x === "string" && x !== "")) {
@@ -149,12 +149,38 @@ export function refusedPaths(t: { id?: string; state?: string; block_reason?: st
 	return list as string[];
 }
 
+// TEAM_LEAD_TOOLS is the team lead's whole tool list, one source: Go's
+// piruntime.TeamLeadTools (internal/piruntime/launch.go), the eleven pi
+// enforces for lead --team as --tools (R19 under amendment 26). The solo
+// lead's tools switch to exactly these at the owner's yes. amq_task_claim
+// and amq_task_done are a seat's verbs: a lead holding them could take a
+// lease itself, so they are never a lead's (brief 3.1.1-2 item 4); so is
+// amq_task_block, the holder's verb and a seat's typed widen request (the
+// lead decides widens, it does not request them). A row equates this list
+// with Go's.
+export const TEAM_LEAD_TOOLS: readonly string[] = [
+	"amq_send",
+	"amq_drain",
+	"amq_reply",
+	"amq_task_list",
+	"amq_task_add",
+	"amq_task_reset",
+	"amq_task_widen",
+	"amq_scheduler_relaunch",
+	"amq_repo_read",
+	"amq_repo_list",
+	"amq_status",
+];
+
 export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = run): string[] {
 	const names: string[] = [];
 	const reg = (def: Parameters<ExtensionAPI["registerTool"]>[0]) => {
 		pi.registerTool(def);
 		names.push(def.name);
 	};
+	// a seat's verbs (claim, done, block): active for a seat, registered
+	// inactive for a lead
+	const seatReg = (def: Parameters<ExtensionAPI["registerTool"]>[0]) => reg(cfg.lead || cfg.solo ? { ...def, defaultActive: false } : def);
 	reg({
 		name: "amq_send",
 		label: "AMQ send",
@@ -204,7 +230,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskList(cfg, p), undefined, cfg, signal);
 		},
 	});
-	reg({
+	seatReg({
 		name: "amq_task_claim",
 		label: "Task claim",
 		description: "Claim the task the scheduler leased to you (or a given id). Claim before you start work.",
@@ -213,7 +239,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskClaim(cfg, p), undefined, cfg, signal);
 		},
 	});
-	reg({
+	seatReg({
 		name: "amq_task_done",
 		label: "Task done",
 		description: "Report your task done with evidence (the command you ran and its result). The harness commits the declared files.",
@@ -222,7 +248,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskDone(cfg, p), undefined, cfg, signal);
 		},
 	});
-	reg({
+	seatReg({
 		name: "amq_task_block",
 		label: "Task block",
 		description: "Block your task for a decision. To request more scope, use reason widen_requested and list the exact paths needed.",

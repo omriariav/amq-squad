@@ -34,7 +34,8 @@ anywhere else, or a null document, fails the check.
 | `capabilities[]` | what this producer fills; see below |
 | `buckets[]` | the four buckets in display order: `id`, `label`, `rule` |
 | `counts` | rows per bucket: `all`, `needs_you`, `working`, `ready`, `inactive`; a row is a task, or a seat that holds no task |
-| `seats[]` | seat rows |
+| `seats[]` | seat rows: the running squad's roster (brief 3.1.1-2), the seats of squad.yaml as the scheduler compiled it (its state file's roster, the last one it wrote) with the lead; with no scheduler state at all, the seats of this session's latest launch (the staged records sharing the newest compile's launch id) with the lead, and every seat whose process is live whatever its launch id (its current launch's proof: the pid answers with its recorded start stamp, the check the `lead` record gets; the launch-id rule orders only the dead and unknown records; a record with no launch id or compile time cannot be ordered and stays a seat row); with a scheduler running seats on demand (state, no roster) every seat record under the root, as before. The row's shape is unchanged; the meaning narrows |
+| `stale_records[]` | (additive, brief 3.1.1-2) every seat record under the root that is not the running roster's, an earlier session's or launch's handle: `handle`, `session` (the AMQ session its launch record names), `launch_id` (empty when unknown). Never a seat row, never counted, no attention item; `[]` when there is none or no roster is known |
 | `tasks[]` | task rows |
 | `attention[]` | the attention queue |
 | `gates[]` | gate records of the gate store: `id`, `action_class` (the operatorauth action), `target_digest`, `state` (`open`, `accepted`, `denied`, `expired`), `raised_by`, `question` (additive, brief 3.1.1-1: the question's plain lines, the text above its rule as the owner reads it on the phone, lines joined by `\n`; `""` for a gate raised before 3.1.1; the lead's screen shows it verbatim) |
@@ -105,7 +106,12 @@ bound to it; empty and 0 when none); `wait_holders`, for a pending task
 whose `wait_reason` is `file_lock`, the ids of the tasks holding the lock by
 the task store's rule (in progress or blocked, declared files overlapping),
 `[]` otherwise; empty under `file_lock` means no task holds it any more (a
-stale wait).
+stale wait). Brief 3.1.1-2 adds `wait_pool`: for a pending task whose
+`wait_reason` is `no_roster_seat` (its route names a pool no roster seat
+serves; the scheduler waits it by name instead of logging a
+`seat_request_failed` every tick), that pool as `runtime:model:effort`, from
+the scheduler state's route waits; `""` otherwise. Its attention item reads
+`<id> waits: no seat serves <pool>: <title>`, severity `medium`.
 
 Attention item: `id` (stable across runs for the same condition), `kind`,
 `severity` (`high`, `medium`, `low`), `subject`, `since`, `seat`, `task_id`,
