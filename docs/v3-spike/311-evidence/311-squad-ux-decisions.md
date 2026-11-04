@@ -84,22 +84,33 @@ resolved, the seats block shows the newest unresolved one before it.
 action writes (an owner's acknowledgement of a decision, which
 `scheduler clear` does not take today).
 
-## Each sentence names the field Go records (Codex on #866)
+## Each sentence names every field Go records (Codex on #866)
 
 `seat_request_expired` records the task and no seat (internal/scheduler
 scheduler.go), and its sentence said "the request for seat t9 expired",
-naming the task as a seat. Each stop's words now take the decision's own
-fields: a seat's sentence names `Seat` and reads "a seat" when the record
-has none, never the task's id in its place; `seat_request_expired` and
-`seat_request_failed` name the task ("the seat request for t9 expired before
-a seat came up"); `doorbell_failed` names both ("seat dev could not be rung
-for t9"); `roster_incomplete` and `seat_replacement_needs_relaunch` name the
-seats Go joins into `Seat`. Checked against the Go writers: `seat_gone`,
-`seat_liveness_unknown`, `seat_close_failed`, `seat_refused`, `seat_not_up`,
-`seat_launch_failed` and `exit_refused` record the seat;
-`seat_prepare_failed` and `doorbell_failed` the seat and the task;
-`seat_request_failed`, `seat_request_expired` and `lead_notice_failed` the
-task.
+naming the task as a seat. Codex's re-check found more: five stops recorded
+a task their sentences dropped. Each stop's words now take the decision's
+own fields and name every one Go records: a seat's sentence names `Seat`
+and reads "a seat" when the record has none, never the task's id in its
+place. The fields per kind, read from Go by the scan (each literal's own
+`Seat:` and `TaskID:`):
+
+- the seat: `seat_gone`, `seat_liveness_unknown`, `seat_close_failed`,
+  `seat_refused`, `seat_not_up`; `roster_incomplete` (the seats it lacks,
+  joined);
+- the seat and the task: `seat_launch_failed` ("seat dev's launch failed for
+  t9"), `seat_prepare_failed` ("could not be prepared for t9"),
+  `exit_refused` ("did not stop cleanly after t9"), `doorbell_failed` ("could
+  not be rung for t9"), `seat_replacement_needs_relaunch` ("every seat of
+  t9's pool is gone (dev, qa)");
+- the task: `seat_request_failed`, `seat_request_expired` ("the seat request
+  for t9 expired before a seat came up"), `lead_notice_failed` ("the lead
+  could not be told of a decision on t9");
+- neither: the roster, scheduler and lead stops.
+
+The field row reads those fields from Go at test time and asserts every one
+appears in its kind's sentence, so a new field on a stop's literal fails it
+until its sentence names it.
 
 ## The scan walks braces (Codex on #866)
 
@@ -114,11 +125,15 @@ braces, a comment with a brace and a nested struct's `Kind`.
 ## Handles in the row 4 sweep (Codex on #866)
 
 A seat's handle is a name, not a code: every seat line carries it, so it
-stays above the rule. The sweep allows a token equal to a handle of the
-document's seats (`seats[].handle`), and its fixture has a snake_case handle
-(`senior_dev`) and a hex-looking one (`1deadbeef`), on their seat lines and
-in the stop lines; the same token that is no handle still fails. This is a
-rule of the row, not of the screen, which shows handles as it did.
+stays above the rule. The sweep allows a token only when it is a whole token
+equal to a handle of the document's seats (`seats[].handle`), split on the
+sweep's own separators with codeIn's strip of `.`, a backtick and `*` at a
+token's ends; a substring of a longer token is not allowed (Codex's
+re-check: removing substrings let `senior_dev1` and `a1deadbeef0` through).
+The fixture has a snake_case handle (`senior_dev`) and a hex-looking one
+(`1deadbeef`) on their seat lines and in the stop lines, and the tokens
+`senior_dev1`, `a1deadbeef0` and `not_a_handle` must fail the sweep itself.
+This is a rule of the row, not of the screen, which shows handles as it did.
 
 ## The kinds the scan found (68)
 
@@ -130,7 +145,7 @@ Routine (41): `blocked`, `commit_adopted`, `commit_cancelled`, `commit_cancellin
 
 | row | what | where |
 | --- | --- | --- |
-| A | every decision kind Go writes is a stop with words or a routine record; no kind is both; every stop's words are plain, say what to do and name the field Go records (no task id as a seat) | pi/test/words.test.ts "row 7: every decision kind Go writes is a stop with words or a routine record" |
+| A | every decision kind Go writes is a stop with words or a routine record; no kind is both; every stop's words are plain, say what to do and name every field Go records for the kind (read from Go; no task id as a seat) | pi/test/words.test.ts "row 7: every decision kind Go writes is a stop with words or a routine record" |
 | C | a stop followed by its resolving decision no longer shows (the same seat's `seat_up`, a roster launch, the scheduler starting again; Codex's seat_gone, seat_up, roster_launched); a request's stop clears on its task's `dispatched`, not another task's; another seat's `seat_up` clears nothing; a cleared newest stop leaves an older unresolved one showing; a `tick_error` stays; each resolver is a routine record | pi/test/words.test.ts "row 7: a stop followed by its resolving decision no longer shows" |
 | D | the decision scan reads Kind past a brace in a string, a raw string and a comment, and not a nested struct's | pi/test/words.test.ts "row 7: the decision scan reads Kind past braces in strings" |
 | B | an unknown kind shows "stopped something" or "recorded something", its kind below the rule; a routine record newer than a stop hides nothing; each stop kind, the newest decision, shows its words | pi/test/words.test.ts "row 7: an unknown decision kind shows, its kind below the rule; routine records hide no stop" |
@@ -138,12 +153,35 @@ Routine (41): `blocked`, `commit_adopted`, `commit_cancelled`, `commit_cancellin
 ## Revert runs
 
 `python3 docs/v3-spike/311-evidence/311-squad-ux-decisions-revert-runs.py`
-from a clean checkout, at code head `d7ca3895`: 13 runs, 13 caught. Each
+from a clean checkout, at code head `bcead32a`: 16 runs, 16 caught. Each
 reverts production code only: cases 1 to 6 for the scan and the run time,
-7 to 10 for the clearing rule, 11 to 13 for Codex's field and request fixes.
-The brace-walking scan and the sweep's handle allowance are the rows' own
-code, so their guard is the fixture row and the fixture's handles, not a
+7 to 10 for the clearing rule, 11 to 13 for Codex's field and request fixes,
+14 to 16 for the sentences that dropped a recorded task. The brace-walking
+scan and the sweep's whole-token handle allowance are the rows' own code,
+so their guards are the fixture row and the sweep's failing tokens, not a
 revert of production.
+
+**The runner's environment.** The script inherits its environment and sets
+none of it. These runs were made with the AMQ seat variables unset
+(`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION` and every
+`AMQ_SQUAD_*` the extension reads; none was set in the shell either), a
+temporary HOME made by `mktemp -d`
+(`/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/tmp.YSvEUS5LYW`), the
+Go module cache pinned to the existing one (`GOMODCACHE`, `GOCACHE`,
+`GOPATH`) and `GOPROXY=off`, `GOFLAGS=-mod=readonly`, so nothing read the
+owner's home or the network:
+
+```
+env -u AM_ME -u AM_ROOT -u AM_BASE_ROOT -u AM_SESSION -u AMQ_SQUAD_LEAD \
+  -u AMQ_SQUAD_SOLO_LEAD -u AMQ_SQUAD_BIN -u AMQ_SQUAD_AMQ -u AMQ_SQUAD_ROLE_PATH \
+  -u AMQ_SQUAD_PROJECT -u AMQ_SQUAD_LEAD_START_SOCKET -u AMQ_SQUAD_LEAD_NONCE_FD \
+  HOME="$(mktemp -d)" GOMODCACHE=/Users/omri/go/pkg/mod GOCACHE=/Users/omri/Library/Caches/go-build GOPATH=/Users/omri/go \
+  GOPROXY=off GOFLAGS=-mod=readonly \
+  python3 docs/v3-spike/311-evidence/311-squad-ux-decisions-revert-runs.py
+```
+
+The earlier runs on this branch (13 at `d7ca3895` and before) inherited the
+real HOME, with no AMQ seat variable set.
 
 | # | row | revert | result | the failing output's first line |
 | --- | --- | --- | --- | --- |
@@ -160,10 +198,13 @@ revert of production.
 | 11 | D | seat_request_expired's sentence names the task as a seat | caught | `not ok 1 - row 7: every decision kind Go writes is a stop with words or a routine record` |
 | 12 | D | a seat's sentence falls back to the task's id | caught | `not ok 1 - row 7: every decision kind Go writes is a stop with words or a routine record` |
 | 13 | D | a request's stop matched by seat, which it does not record | caught | `not ok 1 - row 7: a stop followed by its resolving decision no longer shows` |
+| 14 | E | seat_prepare_failed's sentence drops its task | caught | `not ok 1 - row 7: every decision kind Go writes is a stop with words or a routine record` |
+| 15 | E | lead_notice_failed's sentence drops its task | caught | `not ok 1 - row 7: every decision kind Go writes is a stop with words or a routine record` |
+| 16 | E | exit_refused's sentence drops its task | caught | `not ok 1 - row 7: every decision kind Go writes is a stop with words or a routine record` |
 
 ## Gates
 
-At code head `d7ca3895`:
+At code head `bcead32a`:
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0, 56 packages ok, 0 FAIL lines. Tail:
 
@@ -184,14 +225,14 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 15639.287666
+ℹ duration_ms 16271.948
 exit 0
 ```
 
 - `make ci` (PyYAML venv on PATH): exit 0. Tail:
 
 ```
-PERF pre-tool allow in a seat: p50 21.1 ms, p95 21.5 ms
-PERF outside a seat: 60 runs, p50 5.7 ms, p95 6.2 ms, max 6.4 ms (budget p95 < 20 ms: met)
+PERF pre-tool allow in a seat: p50 21.2 ms, p95 23.0 ms
+PERF outside a seat: 60 runs, p50 5.7 ms, p95 6.4 ms, max 6.4 ms (budget p95 < 20 ms: met)
 exit 0
 ```
