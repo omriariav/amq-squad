@@ -9,6 +9,6 @@ Dependency gating uses that durable fact:
 - Until then, including after task completion or cancellation, the dependent waits with `waiting for <id>'s PR #<n> to merge`.
 - Rebinding a task to a different head clears any stale merge fact.
 
-A PR merged by hand outside the merge train does not create the task-store fact. Its dependents intentionally remain waiting until the lead resets or otherwise clears them.
+A PR merged by hand outside the merge train does not create the task-store fact. Its dependents intentionally remain waiting until the lead runs the merge train on the PR.
 
 Verification: `go test ./internal/task ./internal/mergetrain ./internal/scheduler ./internal/status`.
