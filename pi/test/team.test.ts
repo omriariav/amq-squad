@@ -459,12 +459,13 @@ test("brief 3.1.1-1: the solo shell refuses a team-plan label in an argv form", 
 	assert.equal(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "progress", "--body", "-"] }), undefined);
 });
 
-// The plan reviewer on #863, item 2: two live plans with the same goal,
-// proposed in the same second, have two labels (numbered), and the pick
-// maps back by its position: the second label's dialog quotes the second
+// The plan reviewer on #863, item 2: live plans with the same goal,
+// proposed in the same second, have distinct labels (numbered), and the
+// pick maps back by its position: the last label's dialog quotes the oldest
 // plan's seats and its yes sends that plan's digest. Reverted (unnumbered
-// labels), both labels are equal and the newest is confirmed.
-test("/confirm: two plans with the same goal: the second label confirms the second plan", async () => {
+// labels), the two older plans share a label and the pick maps to the
+// first of them.
+test("/confirm: plans with the same goal: the label picked confirms that plan", async () => {
 	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
 	try {
 		const same = (digest: string, seat: string) => envelope("team_propose", { project_dir: PROJECT, plan: ["goal: ship the parser", "session s1, lead lead", seat], digest, prefix: "p", doors: "d" });
@@ -473,16 +474,18 @@ test("/confirm: two plans with the same goal: the second label confirms the seco
 		await propose(r);
 		next = same(DIGEST2, "seat impl-2 (implementer) codex/gpt-5.6-sol/high");
 		await r.pi.tools.get("amq_team_propose").execute("c2", plan, undefined);
-		r.answer.select((options) => options[1]);
+		next = same("sha256:" + "aa".repeat(32) + "@absent", "seat impl-3 (implementer) pi/anthropic/claude-sonnet-5/high");
+		await r.pi.tools.get("amq_team_propose").execute("c3", plan, undefined);
+		r.answer.select((options) => options[2]);
 		r.answer.confirm(async () => true);
 		await r.command("confirm");
 		const sel = r.dialogs.at(-2)!;
 		assert.equal(sel.kind, "select");
 		const labels = sel.body.split("\n");
-		assert.equal(new Set(labels).size, 2, `the labels are not unique: ${labels}`);
-		// the second label is the older plan (the newest is first)
+		assert.equal(new Set(labels).size, 3, `the labels are not unique: ${labels}`);
+		// the last label is the oldest plan (the newest is first)
 		assert.match(r.dialogs.at(-1)!.body, /seat impl-1 \(implementer\) claude\/sonnet\/medium/);
-		assert.doesNotMatch(r.dialogs.at(-1)!.body, /impl-2/);
+		assert.doesNotMatch(r.dialogs.at(-1)!.body, /impl-2|impl-3/);
 		assert.equal(lead.got.at(-1).digest, DIGEST);
 	} finally {
 		lead.close();

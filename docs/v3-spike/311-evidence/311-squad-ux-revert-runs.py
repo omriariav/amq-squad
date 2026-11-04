@@ -49,7 +49,7 @@ R = [
   'so there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT\\n\\n${RULE}\\nstate ${t.state ?? "?"}, reason ${t.block_reason || "none"}`',
   '(state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT`', PI % "words"),
  ("4", "task_widen.go widenRefused.Error, the `widen refused (%s): %s` form", "internal/cli/task_widen.go",
-  '	return fmt.Sprintf("%s\\n\\n%s\\nwiden refused (%s): %s", widenPlain(e.code), gatestore.Rule, e.code, e.msg)', '	return fmt.Sprintf("widen refused (%s): %s", e.code, e.msg)', GO % ("TestTheWidenRefusalPutsItsCodeBelowTheRule", "internal/cli")),
+  '	return fmt.Sprintf("%s\\n\\n%s\\nwiden refused (%s): %s", plain, gatestore.Rule, e.code, e.msg)', '	return fmt.Sprintf("widen refused (%s): %s", e.code, e.msg)', GO % ("TestTheWidenRefusalPutsItsCodeBelowTheRule", "internal/cli")),
  ("4", "task_widen.go the verb's `refused (%s)` form at its call (runTaskWiden), production only", "internal/cli/task_widen.go",
   '		return &codedExitError{code: ExitCommitRefused, msg: widenReplyRefusal(id, reply)}', '		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("task widen %s refused (%s): %s", id, reply.Code, reply.Detail)}',
   GO % ("TestTheWidenVerbsRefusalPutsItsCodeBelowTheRule|TestTheWidenRefusalPutsItsCodeBelowTheRule", "internal/cli")),
