@@ -1,6 +1,7 @@
 package seatcommit
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,6 +47,71 @@ func TestTypedWidenSnapshotIsKeyedByStoppedAttempt(t *testing.T) {
 	}
 	if d := check(attempt); d.ReasonCode != ReasonGrowthGate || d.DryRun == nil || d.DryRun.Lines <= 1 {
 		t.Fatalf("archived snapshot size = %+v", d)
+	}
+}
+
+// The ledger lock makes the first archive decision stand. While the first
+// writer is paused between its read and write, a second writer must not write
+// its distinct snapshot into that window.
+func TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newFixture(t)
+	tk := f.leased("cmd/")
+	write(t, filepath.Join(f.wt, "first.go"), "package first\n")
+	blocked, err := f.store.BlockWithPaths(tk.ID, f.handle, task.ReasonWidenRequested, "", task.RouteLead, []string{"first.go"}, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var firstParent, firstTree string
+	beforeArchiveAttemptWrite = func(parent, tree string) {
+		firstParent, firstTree = parent, tree
+		close(entered)
+		<-release
+	}
+	t.Cleanup(func() { beforeArchiveAttemptWrite = nil })
+	firstDone := make(chan struct {
+		archived bool
+		err      error
+	}, 1)
+	go func() {
+		archived, err := ArchiveAttempt(f.root, f.handle, gitBin(t), nil, tk.ID, blocked.BlockAttempt, f.now)
+		firstDone <- struct {
+			archived bool
+			err      error
+		}{archived, err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first archive did not reach its critical section")
+	}
+	write(t, filepath.Join(f.wt, "second.go"), "package second\n")
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := ArchiveAttempt(f.root, f.handle, gitBin(t), nil, tk.ID, blocked.BlockAttempt, f.now.Add(time.Second))
+		secondDone <- err
+	}()
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, ErrLedgerBusy) {
+			t.Fatalf("second archive entered the first writer's window: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("second archive did not finish")
+	}
+	close(release)
+	select {
+	case got := <-firstDone:
+		if got.err != nil || !got.archived {
+			t.Fatalf("first archive = %+v", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("first archive did not finish")
+	}
+	ledger, err := ReadLedger(f.root, f.handle)
+	if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].Parent != firstParent || ledger.Discarded[0].Tree != firstTree {
+		t.Fatalf("surviving discard = %+v, first=(%s,%s), err=%v", ledger.Discarded, firstParent, firstTree, err)
 	}
 }
 

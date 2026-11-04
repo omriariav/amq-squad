@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -352,9 +353,22 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 			return true, nil
 		}
 		missing := seatcommit.WidenDecision{ReasonCode: seatcommit.ReasonWidenSnapshotMissing, Detail: "snapshot is missing"}
-		got, err := archiveMissingTypedWiden(storeSelection{}, task.Task{ID: "t1"}, seatcommit.WidenOptions{Commit: &seatcommit.Options{SnapshotAttempt: 1}}, missing)
-		if err != nil || called || got.ReasonCode != seatcommit.ReasonWidenSnapshotMissing {
-			t.Fatalf("unrecorded attempt = %+v, called=%v, err=%v", got, called, err)
+		got := archiveTypedWidenAttempt(storeSelection{}, task.Task{ID: "t1"}, seatcommit.WidenOptions{Commit: &seatcommit.Options{SnapshotAttempt: 1}}, missing)
+		if called || got.ReasonCode != seatcommit.ReasonWidenSnapshotMissing {
+			t.Fatalf("unrecorded attempt = %+v, called=%v", got, called)
+		}
+	})
+
+	t.Run("archive error preserves the first named refusal", func(t *testing.T) {
+		prev := archiveWidenAttempt
+		t.Cleanup(func() { archiveWidenAttempt = prev })
+		archiveWidenAttempt = func(string, string, string, []string, string, int, time.Time) (bool, error) {
+			return false, errors.New("seat ledger is absent")
+		}
+		first := seatcommit.WidenDecision{ReasonCode: seatcommit.ReasonBaseUnrecorded, Detail: "no core-recorded base"}
+		got := archiveTypedWidenAttempt(storeSelection{}, task.Task{ID: "t1", State: task.StateBlocked, BlockReason: task.ReasonWidenRequested, BlockAttempt: 1}, seatcommit.WidenOptions{Commit: &seatcommit.Options{Handle: "s1", SnapshotAttempt: 1}}, first)
+		if got.ReasonCode != first.ReasonCode || !strings.Contains(got.Detail, first.Detail) || !strings.Contains(got.Detail, "on-demand archive pending: seat ledger is absent") {
+			t.Fatalf("archive error replaced the first decision: %+v", got)
 		}
 	})
 
