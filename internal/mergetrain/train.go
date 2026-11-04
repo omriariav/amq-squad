@@ -565,7 +565,7 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 	}
 	p.Status, p.Merged = "merged", sha
 	if bound {
-		if err := t.recordTaskMerge(it.Task, req.Repository, p.Number, sha); err != nil {
+		if err := t.recordTaskMerge(it.Task, req.Repository, p.Number, p.Head, sha); err != nil {
 			return err
 		}
 	}
@@ -607,21 +607,63 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		e, ok := last[it.Number]
 		switch {
 		case !ok:
+			if it.BoundHead == "" {
+				continue
+			}
+			cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+			if err != nil {
+				return nil, fmt.Errorf("read PR #%d while reconciling: %w", it.Number, err)
+			}
+			if cur.State != "MERGED" || cur.MergeCommit == "" {
+				continue
+			}
+			if cur.HeadSHA != it.BoundHead {
+				if err := t.reconcileMismatch(it, req.Repository, cur.HeadSHA, "server-reported merged", entry); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			recorded, err := t.reconcileTaskMerge(it, req.Repository, cur.HeadSHA, cur.MergeCommit, "server-reported merged", entry)
+			if err != nil {
+				return nil, err
+			}
+			if !recorded {
+				continue
+			}
+			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: it.Task, Head: cur.HeadSHA, Merged: cur.MergeCommit,
+				Detail: "reconciled: the server already reported the bound head merged"}); err != nil {
+				return nil, err
+			}
+			out[it.Number] = cur.MergeCommit
 		case e.Kind == "merge":
 			if it.BoundHead != "" {
-				if err := t.recordTaskMerge(it.Task, req.Repository, it.Number, e.Merged); err != nil {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, e.Merged, "journaled merge", entry)
+				if err != nil {
 					return nil, err
+				}
+				if !recorded {
+					continue
 				}
 			}
 			out[it.Number] = e.Merged
 		default:
+			if it.BoundHead != "" && e.Head != it.BoundHead {
+				if err := t.reconcileMismatch(it, req.Repository, e.Head, "journaled merge intent", entry); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			sha, merged := t.mergedAt(ctx, req.Repository, it.Number, e.Head)
 			if !merged {
 				continue // not merged: the PR is checked again and a new intent journaled
 			}
 			if it.BoundHead != "" {
-				if err := t.recordTaskMerge(it.Task, req.Repository, it.Number, sha); err != nil {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, sha, "journaled merge intent", entry)
+				if err != nil {
 					return nil, err
+				}
+				if !recorded {
+					continue
 				}
 			}
 			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: e.Task, Head: e.Head, Merged: sha, Digest: e.Digest,
@@ -634,12 +676,61 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 	return out, nil
 }
 
-func (t *Train) recordTaskMerge(taskID, repository string, pr int, commit string) error {
+// reconcileTaskMerge records a replayed merge only while the task still has
+// the exact repository, PR and head binding. A stale binding is evidence to
+// audit and skip, not a reason to abort the other PRs in the request.
+func (t *Train) reconcileTaskMerge(it Item, repository, head, commit, source string, entry func(Entry) error) (bool, error) {
+	boundRepo, boundPR, boundHead := repository, it.Number, it.BoundHead
+	if t.Tasks != nil {
+		b, err := t.Tasks.Get(it.Task)
+		if err != nil {
+			return false, err
+		}
+		boundRepo, boundPR, boundHead = b.PRRepository, b.PRNumber, b.PRHead
+	}
+	if !strings.EqualFold(boundRepo, repository) || boundPR != it.Number || boundHead != head {
+		return false, t.reconcileMismatchAt(it, repository, head, boundRepo, boundPR, boundHead, source, entry)
+	}
+	if err := t.recordTaskMerge(it.Task, repository, it.Number, head, commit); err != nil {
+		if !errors.Is(err, task.ErrPRBindingMismatch) {
+			return false, err
+		}
+		if t.Tasks != nil {
+			b, getErr := t.Tasks.Get(it.Task)
+			if getErr != nil {
+				return false, getErr
+			}
+			boundRepo, boundPR, boundHead = b.PRRepository, b.PRNumber, b.PRHead
+		}
+		return false, t.reconcileMismatchAt(it, repository, head, boundRepo, boundPR, boundHead, source, entry)
+	}
+	return true, nil
+}
+
+func (t *Train) reconcileMismatch(it Item, repository, observedHead, source string, entry func(Entry) error) error {
+	boundRepo, boundPR, boundHead := repository, it.Number, it.BoundHead
+	if t.Tasks != nil {
+		b, err := t.Tasks.Get(it.Task)
+		if err != nil {
+			return err
+		}
+		boundRepo, boundPR, boundHead = b.PRRepository, b.PRNumber, b.PRHead
+	}
+	return t.reconcileMismatchAt(it, repository, observedHead, boundRepo, boundPR, boundHead, source, entry)
+}
+
+func (t *Train) reconcileMismatchAt(it Item, repository, observedHead, boundRepo string, boundPR int, boundHead, source string, entry func(Entry) error) error {
+	detail := fmt.Sprintf("%s head %s does not match task %s's current binding %s#%d at %s; merge fact not recorded",
+		source, observedHead, it.Task, boundRepo, boundPR, boundHead)
+	return entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: observedHead, NewHead: boundHead, Detail: detail})
+}
+
+func (t *Train) recordTaskMerge(taskID, repository string, pr int, head, commit string) error {
 	if t.Binder == nil {
 		return fmt.Errorf("%w: no task store to record the merge of #%d", ErrBindingFailed, pr)
 	}
-	if err := t.Binder.RecordPRMerge(taskID, repository, pr, commit); err != nil {
-		return fmt.Errorf("%w: record task %s merge %s: %v", ErrBindingFailed, taskID, short(commit), err)
+	if err := t.Binder.RecordPRMerge(taskID, repository, pr, head, commit); err != nil {
+		return fmt.Errorf("%w: record task %s head %s merge %s: %w", ErrBindingFailed, taskID, short(head), short(commit), err)
 	}
 	return nil
 }

@@ -40,6 +40,10 @@ var ErrNotFound = errors.New("task not found")
 // ErrNoLease is returned when the handle holds no matching lease.
 var ErrNoLease = errors.New("no lease held")
 
+// ErrPRBindingMismatch is returned when merge evidence does not describe the
+// task's current repository, PR number and head binding.
+var ErrPRBindingMismatch = errors.New("PR binding mismatch")
+
 // Task is one task file (schema 1).
 type Task struct {
 	Schema        int       `json:"schema"`
@@ -78,8 +82,10 @@ type Task struct {
 	PRRepository string `json:"pr_repository,omitempty"`
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRHead       string `json:"pr_head,omitempty"`
-	// PRMergeCommit is the merge train's durable proof that the bound PR
-	// merged. Dependency gating reads this fact, not task completion.
+	// PRMergeHead and PRMergeCommit are the merge train's durable proof that
+	// the currently bound PR head merged. Dependency gating reads this fact,
+	// not task completion.
+	PRMergeHead   string     `json:"pr_merge_head,omitempty"`
 	PRMergeCommit string     `json:"pr_merge_commit,omitempty"`
 	CreatedBy     string     `json:"created_by,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`

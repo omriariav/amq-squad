@@ -13,8 +13,8 @@ import (
 type failingBinder struct{ Binder }
 
 func (failingBinder) BindPR(string, string, int, string) error { return errors.New("disk full") }
-func (b failingBinder) RecordPRMerge(taskID, repository string, pr int, commit string) error {
-	return b.Binder.RecordPRMerge(taskID, repository, pr, commit)
+func (b failingBinder) RecordPRMerge(taskID, repository string, pr int, head, commit string) error {
+	return b.Binder.RecordPRMerge(taskID, repository, pr, head, commit)
 }
 
 // P1-4 (lead rulings on fixes 2 and 4): after its own rebase the train binds

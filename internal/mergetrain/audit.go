@@ -56,7 +56,8 @@ const AuditSchema = "amq-squad-merge-audit/1"
 // Entry is one audit log line. Kind is one of: protection (the branch
 // protection check), batch (the digest of the ordered set about to land,
 // written again after a rebase that changes a head), refusal, rebase, merge,
-// stop (manual mode or an error ended the run), plan (a dry run's result).
+// reconcile (a stale merge fact skipped), stop (manual mode or an error ended
+// the run), plan (a dry run's result).
 type Entry struct {
 	Schema     string   `json:"schema"`
 	At         string   `json:"at"`

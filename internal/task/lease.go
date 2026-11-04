@@ -26,7 +26,7 @@ func Blocker(t Task, all []Task) string {
 			return WaitDependencies
 		}
 		if dep.PRNumber > 0 {
-			if dep.PRMergeCommit == "" {
+			if dep.PRMergeCommit == "" || dep.PRMergeHead != dep.PRHead {
 				return DependencyMergeWait(dep.ID, dep.PRNumber)
 			}
 			continue
