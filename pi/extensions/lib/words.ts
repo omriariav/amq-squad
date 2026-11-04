@@ -367,29 +367,43 @@ export function seatDoing(s: SeatWords, t: TaskWords | undefined): { text: strin
 // DECISION_WORDS maps the scheduler's decisions that stopped a seat (the
 // seats block's stop line) to what happened and, when the decision's
 // reason has no words of its own, what to do.
-export const DECISION_WORDS: Record<string, (who: string) => [string, string]> = {
+// DecisionWho is the fields a decision records who it is about: the seat
+// (Seat) and the task (TaskID), each as Go writes it for the kind.
+export type DecisionWho = { seat?: string; task_id?: string };
+
+// seatOf names a decision's seat, "a seat" when it records none: never the
+// task's id in a seat's place (Codex on #866).
+function seatOf(d: DecisionWho): string {
+	return d.seat ? `seat ${d.seat}` : "a seat";
+}
+
+export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]> = {
 	roster_launch_failed: () => ["the roster launch failed", "ask the lead to relaunch the roster"],
-	seat_not_up: (w) => [`seat ${w} did not come up`, "ask the lead to relaunch the roster"],
-	seat_launch_failed: (w) => [`seat ${w}'s launch failed`, "ask the lead to relaunch the roster"],
-	seat_prepare_failed: (w) => [`seat ${w} could not be prepared`, "ask the lead to relaunch the roster"],
-	seat_request_failed: (w) => [`a seat could not be requested${w ? ` for ${w}` : ""}`, "check the task's pool, or /reset it onto another"],
-	seat_refused: (w) => [`seat ${w} was refused`, "ask the lead why; the record is below the line"],
-	exit_refused: (w) => [`seat ${w} did not stop cleanly`, "ask the owner to inspect it before the seat is relaunched"],
-	seat_close_failed: (w) => [`seat ${w} could not be closed`, "close its pane by hand"],
+	seat_not_up: (d) => [`${seatOf(d)} did not come up`, "ask the lead to relaunch the roster"],
+	seat_launch_failed: (d) => [`${seatOf(d)}'s launch failed`, "ask the lead to relaunch the roster"],
+	seat_prepare_failed: (d) => [`${seatOf(d)} could not be prepared`, "ask the lead to relaunch the roster"],
+	// Go records the task and no seat (scheduler.go): the sentence names it
+	seat_request_failed: (d) => [`a seat could not be requested${d.task_id ? ` for ${d.task_id}` : ""}`, "check the task's pool, or /reset it onto another"],
+	seat_refused: (d) => [`${seatOf(d)} was refused`, "ask the lead why; the record is below the line"],
+	exit_refused: (d) => [`${seatOf(d)} did not stop cleanly`, "ask the owner to inspect it before the seat is relaunched"],
+	seat_close_failed: (d) => [`${seatOf(d)} could not be closed`, "close its pane by hand"],
 	ledger_tampered: () => ["the ledger does not verify", "ask the owner to inspect it"],
 	scheduler_stopped: () => ["the scheduler stopped", "start the team again with amq-squad up"],
 	// the stops the plan reviewer's ruling on Codex's last finding on #863
 	// added: every decision kind Go writes is a stop (here) or routine
-	// (ROUTINE_DECISIONS), words.test.ts checks
+	// (ROUTINE_DECISIONS), words.test.ts checks. Each sentence names the
+	// field Go records for its kind: the seat, the task, or the seats a
+	// roster lacks (Seat holds them joined).
 	roster_reload_failed: () => ["the roster could not be read again from squad.yaml", "fix squad.yaml, then ask the lead to relaunch"],
 	roster_relaunch_refused: () => ["the roster relaunch was refused", "ask the lead; its reason is below the line"],
-	roster_incomplete: () => ["the roster came up without every seat", "ask the lead to relaunch the roster"],
-	seat_gone: (w) => [`seat ${w}'s process is gone`, "ask the lead to relaunch the roster"],
-	seat_liveness_unknown: (w) => [`seat ${w}'s liveness cannot be read`, "look at its pane"],
-	seat_request_expired: (w) => [`the request for seat ${w} expired before it came up`, "ask the lead to relaunch the roster"],
-	seat_replacement_needs_relaunch: (w) => [`every seat of a pool is gone${w ? ` (${w})` : ""}`, "ask the lead to relaunch the roster"],
+	roster_incomplete: (d) => [`the roster came up without ${d.seat ? `seat ${d.seat}` : "every seat"}`, "ask the lead to relaunch the roster"],
+	seat_gone: (d) => [`${seatOf(d)}'s process is gone`, "ask the lead to relaunch the roster"],
+	seat_liveness_unknown: (d) => [`${seatOf(d)}'s liveness cannot be read`, "look at its pane"],
+	// Go records the task and no seat (scheduler.go seat_request_expired)
+	seat_request_expired: (d) => [`the seat request for ${d.task_id || "a task"} expired before a seat came up`, "ask the lead to relaunch the roster"],
+	seat_replacement_needs_relaunch: (d) => [`every seat of a pool is gone${d.seat ? ` (${d.seat})` : ""}`, "ask the lead to relaunch the roster"],
 	exits_ledger_unwritable: () => ["the scheduler cannot write its exits ledger", "free the disk or fix its permissions, then start the team again"],
-	doorbell_failed: (w) => [`seat ${w} could not be rung for its task`, "ring it by hand"],
+	doorbell_failed: (d) => [`${seatOf(d)} could not be rung for ${d.task_id || "its task"}`, "ring it by hand"],
 	lead_notice_failed: () => ["the lead could not be told of a decision", "read the record below the line"],
 	launch_failures_unread: () => ["the scheduler could not read its launch failures", "nothing to do unless launches keep failing"],
 	lead_unknown: () => ["the scheduler does not know its lead", "start the team again with amq-squad up"],
@@ -433,17 +447,20 @@ export function decisionKind(kind: string): "stop" | "routine" | "unknown" {
 // the scheduler starting again. A stop not here (tick_error, exit_refused,
 // ledger_tampered and the other records the owner reads) clears only when it
 // leaves the status document's last 30 decisions.
-const SEAT_RESOLVED = { kinds: ["seat_up", "roster_launched"], sameSeat: true };
-const ROSTER_RESOLVED = { kinds: ["roster_launched", "roster_reloaded"], sameSeat: false };
-const SCHEDULER_RESOLVED = { kinds: ["scheduler_started"], sameSeat: false };
-export const RESOLVED_BY: Record<string, { kinds: string[]; sameSeat: boolean }> = {
+const SEAT_RESOLVED = { kinds: ["seat_up", "roster_launched"], match: "seat" } as const;
+const ROSTER_RESOLVED = { kinds: ["roster_launched", "roster_reloaded"], match: "any" } as const;
+const SCHEDULER_RESOLVED = { kinds: ["scheduler_started"], match: "any" } as const;
+// a request's stop records the task, no seat: the task dispatched, or a
+// roster launch, resolves it
+const TASK_RESOLVED = { kinds: ["dispatched", "roster_launched"], match: "task" } as const;
+export const RESOLVED_BY: Record<string, { kinds: readonly string[]; match: "seat" | "task" | "any" }> = {
 	seat_not_up: SEAT_RESOLVED,
 	seat_launch_failed: SEAT_RESOLVED,
 	seat_prepare_failed: SEAT_RESOLVED,
 	seat_refused: SEAT_RESOLVED,
 	seat_gone: SEAT_RESOLVED,
 	seat_liveness_unknown: SEAT_RESOLVED,
-	seat_request_expired: SEAT_RESOLVED,
+	seat_request_expired: TASK_RESOLVED,
 	roster_launch_failed: ROSTER_RESOLVED,
 	roster_reload_failed: ROSTER_RESOLVED,
 	roster_relaunch_refused: ROSTER_RESOLVED,
@@ -455,12 +472,18 @@ export const RESOLVED_BY: Record<string, { kinds: string[]; sameSeat: boolean }>
 };
 
 // resolved reports whether a later decision resolves the stop at index i:
-// one of its RESOLVED_BY kinds, for the same seat when the rule says so (a
-// roster launch resolves any seat's stop).
-export function resolved(ds: { kind: string; seat?: string }[], i: number): boolean {
+// one of its RESOLVED_BY kinds, for the same seat or the same task when the
+// rule says so (a roster launch, which relaunches every seat, resolves a
+// seat's stop and a request's).
+export function resolved(ds: { kind: string; seat?: string; task_id?: string }[], i: number): boolean {
 	const rule = own(RESOLVED_BY, ds[i].kind);
 	if (!rule) return false;
-	return ds.slice(i + 1).some((d) => rule.kinds.includes(d.kind) && (!rule.sameSeat || d.kind === "roster_launched" || d.seat === ds[i].seat));
+	const stop = ds[i];
+	return ds.slice(i + 1).some((d) => {
+		if (!rule.kinds.includes(d.kind)) return false;
+		if (rule.match === "any" || d.kind === "roster_launched") return true;
+		return rule.match === "seat" ? d.seat === stop.seat : d.task_id === stop.task_id;
+	});
 }
 
 // UNKNOWN_STOP is a kind no table knows whose name reads as a failure.
@@ -473,11 +496,10 @@ const UNKNOWN_STOP = /_(?:failed|refused|error|unwritable|unreadable|missing|exp
 // decision's stage, is in the launch table; else "<what happened>; <the
 // decision's own what to do>".
 export function decisionWords(d: { kind: string; seat?: string; task_id?: string; reason?: string; reason_code?: string; stage?: string }): string {
-	const who = d.seat || d.task_id || "";
 	const words = own(DECISION_WORDS, d.kind);
 	// a kind no table knows: said, never hidden, its kind below the rule
 	if (!words) return UNKNOWN_STOP.test(d.kind) ? "the scheduler stopped something; its kind is below the line" : "the scheduler recorded something; its kind is below the line";
-	const [happened, todo] = words(who);
+	const [happened, todo] = words(d);
 	const code = d.reason_code || (d.reason ?? "").trim().split(/[\s:]+/)[0] || "";
 	const f = own(BLOCK_WORDS, code);
 	// a launch decision: its reason code, else its stage, in the launch table
