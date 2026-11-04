@@ -615,6 +615,30 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		e, ok := last[it.Number]
 		switch {
 		case !ok:
+			if it.BoundHead == "" && it.Unbound == "" {
+				continue // not a real-run item populated by BindTasks
+			}
+			cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+			if err != nil {
+				return nil, fmt.Errorf("read PR #%d while reconciling: %w", it.Number, err)
+			}
+			if cur.State != "MERGED" || cur.MergeCommit == "" {
+				continue
+			}
+			if it.BoundHead != "" {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, cur.HeadSHA, cur.MergeCommit, "server-reported merged head", entry)
+				if err != nil {
+					return nil, err
+				}
+				if !recorded {
+					continue
+				}
+			}
+			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: it.Task, Head: cur.HeadSHA, Merged: cur.MergeCommit,
+				Detail: "reconciled: the server already reported the PR merged"}); err != nil {
+				return nil, err
+			}
+			out[it.Number] = cur.MergeCommit
 		case e.Kind == "merge":
 			if it.BoundHead != "" {
 				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, e.Merged, "journaled merge", entry)
@@ -692,7 +716,11 @@ func (t *Train) reconcileBinding(it Item, repository, head, source string, entry
 }
 
 func (t *Train) auditReconcileMismatch(it Item, head, boundHead, source string, entry func(Entry) error) error {
-	detail := fmt.Sprintf("the %s does not match task %s's bound head\njournaled head: %s\nbound head: %s\nmerge fact not recorded", source, it.Task, head, boundHead)
+	headLabel := "journaled head"
+	if strings.HasPrefix(source, "server-") {
+		headLabel = "server head"
+	}
+	detail := fmt.Sprintf("the %s does not match task %s's bound head\n%s: %s\nbound head: %s\nmerge fact not recorded", source, it.Task, headLabel, head, boundHead)
 	return entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: head, NewHead: boundHead, Detail: detail})
 }
 
