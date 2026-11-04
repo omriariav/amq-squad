@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { decisionKind, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -280,6 +280,38 @@ test("row 7: an unknown decision kind shows, its kind below the rule; routine re
 	for (const k of Object.keys(DECISION_WORDS)) {
 		const one = seats([dec(k, "a reason")]);
 		assert.ok(one.block.includes(`  ${decisionWords(dec(k, "a reason"))}`), `${k}:\n${one.block.join("\n")}`);
+	}
+});
+
+// The plan reviewer on #866: what clears a shown stop. A later decision that
+// resolves it: the same seat's seat_up (or a roster launch) for a seat's
+// stop, a roster launch or reload for a roster's, the scheduler starting
+// again for a scheduler's; another seat's seat_up resolves nothing. Other
+// stops (a tick error, a refused exit) clear only when they leave the status
+// document's last 30 decisions: /dismiss acts on seat warnings, not on
+// decisions.
+test("row 7: a stop followed by its resolving decision no longer shows", () => {
+	const at = "2026-11-01T09:04:00Z";
+	const dec = (kind: string, seat = "dev", reason = "x") => ({ at, kind, seat, task_id: "", reason, reason_code: "" });
+	const stopLine = (decisions: any[]) => {
+		const lines = renderScreen({ ...fixture, decisions }, now);
+		const block = lines.slice(lines.findIndex((l) => l.startsWith("seats (")), lines.findIndex((l) => l.startsWith("tasks (")));
+		return block.filter((l) => /^ {2}\S/.test(l) && !/^ {2}(qa|scribe|pi-dev) /.test(l));
+	};
+	// a seat's stop, then that seat's seat_up: cleared; another seat's: not
+	assert.deepEqual(stopLine([dec("seat_gone"), dec("seat_up")]), []);
+	assert.deepEqual(stopLine([dec("seat_gone"), dec("seat_up", "qa")]), ["  seat dev's process is gone; ask the lead to relaunch the roster"]);
+	// a roster launch resolves any seat's stop and the roster's
+	assert.deepEqual(stopLine([dec("seat_not_up"), dec("roster_incomplete", ""), dec("roster_launched", "")]), []);
+	// the scheduler starting again resolves its stop
+	assert.deepEqual(stopLine([dec("scheduler_stopped", "", "lead_gone: x"), dec("scheduler_started", "")]), []);
+	// a cleared newest stop leaves an older unresolved one showing
+	assert.deepEqual(stopLine([dec("exit_refused", "old", "ledger_tampered at gone"), dec("seat_gone"), dec("seat_up")]), ["  seat old did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits"]);
+	// a tick error has no resolving record: it shows until it leaves the window
+	assert.deepEqual(stopLine([dec("tick_error", ""), dec("dispatched"), dec("seat_up")]), ["  a scheduler tick failed; nothing to do unless it repeats; the next tick retries"]);
+	for (const [k, r] of Object.entries(RESOLVED_BY)) {
+		assert.ok(Object.hasOwn(DECISION_WORDS, k), `${k} resolves but is no stop`);
+		for (const x of r.kinds) assert.equal(decisionKind(x), "routine", `${k}'s resolver ${x} is not a routine record`);
 	}
 });
 

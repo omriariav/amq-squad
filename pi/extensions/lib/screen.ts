@@ -17,7 +17,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Config, Runner } from "./hooks.ts";
 import { commandsLine } from "./commands.ts";
 import { gateLabel, Keys, typedPrefix, type KeyOutcome } from "./keys.ts";
-import { blockNeedsRecord, blockWords, clean, decisionKind, decisionWords, RULE, requestWords, seatDoing, trainRunWords, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
+import { blockNeedsRecord, blockWords, clean, decisionKind, decisionWords, resolved, RULE, requestWords, seatDoing, trainRunWords, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
 import { run } from "./verbs.ts";
 
 export const SCREEN_KEY = "amq-squad-screen";
@@ -132,6 +132,8 @@ function newestSeatStop(st: ScreenStatus): { line: string; record: string } | un
 		// stop (no reason) is routine
 		const k = decisionKind(d.kind);
 		if (k === "routine" || (d.kind === "scheduler_stopped" && !d.reason)) continue;
+		// a stop a later decision resolved (words.ts RESOLVED_BY) is cleared
+		if (resolved(ds, i)) continue;
 		const who = d.seat || d.task_id;
 		const code = k === "unknown" ? d.kind : d.reason_code || d.kind;
 		return { line: decisionWords(d), record: `${code}: ${short([who, d.reason].filter(Boolean).join(" "))}` };

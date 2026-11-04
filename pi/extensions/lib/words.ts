@@ -426,6 +426,43 @@ export function decisionKind(kind: string): "stop" | "routine" | "unknown" {
 	return "unknown";
 }
 
+// RESOLVED_BY maps a stop kind to the later decisions that resolve it (the
+// plan reviewer on #866: a shown stop needs a clearing rule): a seat's stop
+// by that same seat's seat_up, or by a roster launch, which relaunches every
+// seat; a roster's stop by a roster launch or reload; a scheduler's stop by
+// the scheduler starting again. A stop not here (tick_error, exit_refused,
+// ledger_tampered and the other records the owner reads) clears only when it
+// leaves the status document's last 30 decisions.
+const SEAT_RESOLVED = { kinds: ["seat_up", "roster_launched"], sameSeat: true };
+const ROSTER_RESOLVED = { kinds: ["roster_launched", "roster_reloaded"], sameSeat: false };
+const SCHEDULER_RESOLVED = { kinds: ["scheduler_started"], sameSeat: false };
+export const RESOLVED_BY: Record<string, { kinds: string[]; sameSeat: boolean }> = {
+	seat_not_up: SEAT_RESOLVED,
+	seat_launch_failed: SEAT_RESOLVED,
+	seat_prepare_failed: SEAT_RESOLVED,
+	seat_refused: SEAT_RESOLVED,
+	seat_gone: SEAT_RESOLVED,
+	seat_liveness_unknown: SEAT_RESOLVED,
+	seat_request_expired: SEAT_RESOLVED,
+	roster_launch_failed: ROSTER_RESOLVED,
+	roster_reload_failed: ROSTER_RESOLVED,
+	roster_relaunch_refused: ROSTER_RESOLVED,
+	roster_incomplete: ROSTER_RESOLVED,
+	seat_replacement_needs_relaunch: ROSTER_RESOLVED,
+	scheduler_stopped: SCHEDULER_RESOLVED,
+	lead_unknown: SCHEDULER_RESOLVED,
+	up_stopped_scheduler: SCHEDULER_RESOLVED,
+};
+
+// resolved reports whether a later decision resolves the stop at index i:
+// one of its RESOLVED_BY kinds, for the same seat when the rule says so (a
+// roster launch resolves any seat's stop).
+export function resolved(ds: { kind: string; seat?: string }[], i: number): boolean {
+	const rule = own(RESOLVED_BY, ds[i].kind);
+	if (!rule) return false;
+	return ds.slice(i + 1).some((d) => rule.kinds.includes(d.kind) && (!rule.sameSeat || d.kind === "roster_launched" || d.seat === ds[i].seat));
+}
+
 // UNKNOWN_STOP is a kind no table knows whose name reads as a failure.
 const UNKNOWN_STOP = /_(?:failed|refused|error|unwritable|unreadable|missing|expired|gone|unknown|tampered|invalid|lost)$/;
 
