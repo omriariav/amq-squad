@@ -580,8 +580,10 @@ export function goalLine(p: Proposal): string {
 	return clean(p.plan.find((l) => l.startsWith("goal:")) ?? p.plan[0] ?? "a plan with no goal line", 120);
 }
 
-// PLAN_LINE_MAX is the cut of a plan line on the plan block and in the
-// confirm dialog: long enough for a seat line.
+// PLAN_LINE_MAX is the cut of a plan line on the plan block. The confirm
+// dialog's lines are never cut (Codex on d1a557e1): the dialog is where the
+// owner's yes binds the digest, so every character of every line it quotes
+// is shown; they are only cleaned (redaction, the control strip).
 const PLAN_LINE_MAX = 300;
 
 // quotePlan is what the confirm dialog quotes: the goal line, the session
@@ -589,7 +591,7 @@ const PLAN_LINE_MAX = 300;
 // the plan has one (team.PlanLines prints none today), then what the yes
 // does.
 export function quotePlan(p: Proposal): string {
-	const lines = p.plan.filter((l) => l.startsWith("goal:") || l.startsWith("session ") || l.startsWith("seat ") || l.startsWith("cost")).map((l) => clean(l, PLAN_LINE_MAX));
+	const lines = p.plan.filter((l) => l.startsWith("goal:") || l.startsWith("session ") || l.startsWith("seat ") || l.startsWith("cost")).map((l) => clean(l, Number.POSITIVE_INFINITY));
 	// the plan's size, counted from its own lines (team.PlanLines' "task N:"
 	// lines and its "files:" line)
 	const tasks = p.plan.filter((l) => /^task \d+: /.test(l)).length;

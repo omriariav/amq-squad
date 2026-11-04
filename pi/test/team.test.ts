@@ -525,3 +525,25 @@ test("/confirm: a goal with a canary and ESC[2K shows redacted and stripped on t
 		lead.close();
 	}
 });
+
+// Codex on d1a557e1: the confirm dialog is the binding surface, so its
+// lines are cleaned but never cut: a seat line longer than 300 characters (a
+// long model name) shows whole, its tail included. Reverted (the 300 cut),
+// the tail is unseen.
+test("/confirm: a seat line longer than 300 characters shows whole in the dialog", async () => {
+	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
+	try {
+		const model = "provider/" + "very-long-model-name-".repeat(16) + "TAIL-THE-OWNER-MUST-SEE";
+		const seat = `seat impl-1 (implementer) pi/${model}/high`;
+		assert.ok(seat.length > 300, String(seat.length));
+		const r = rig((args) => res(0, args[1] === "propose" ? envelope("team_propose", { project_dir: PROJECT, plan: ["goal: ship it", "session s1, lead lead", seat], digest: DIGEST, prefix: "p", doors: "d" }) : ""), lead.socket);
+		await propose(r);
+		r.answer.confirm(async () => true);
+		await r.command("confirm");
+		const dialog = r.dialogs.at(-1)!.body;
+		assert.ok(dialog.split("\n").includes(seat), `the dialog cut the seat line:\n${dialog}`);
+		assert.ok(dialog.includes("TAIL-THE-OWNER-MUST-SEE"));
+	} finally {
+		lead.close();
+	}
+});
