@@ -31,7 +31,7 @@ import type { Config, Runner } from "./hooks.ts";
 import type { ScreenStatus } from "./screen.ts";
 import { refusedPaths, toolArgv } from "./tools.ts";
 import { firstLine, type RunResult } from "./verbs.ts";
-import { blockHappened, clean, RULE, sentence } from "./words.ts";
+import { blockHappened, clean, RULE, sentence, warningCode, warningWords } from "./words.ts";
 
 // KEYS are the team phase's actions, each its own command (brief 3.1.1-3:
 // /add, /reset, /dismiss, /answer, /widen); dismiss is the 3.1.0 clear key,
@@ -254,27 +254,37 @@ export class Keys {
 	// dismiss (the 3.1.0 clear key): on a seat's warning line; the owner's
 	// acknowledgement, recorded by the scheduler as a decision naming the
 	// warning and the seat's launch (`scheduler clear`, over its socket,
-	// proved under R4). "/dismiss SEAT" offers that seat's warnings only.
+	// proved under R4). The owner picks the seat (pi's select when several
+	// seats have warnings; "/dismiss SEAT" names it), then the warning by its
+	// words when the seat has several; the code the request carries is read
+	// from status's record of the warning, never typed.
 	async dismiss(ctx: ExtensionContext, st: ScreenStatus, seat = ""): Promise<KeyOutcome> {
 		const k = "dismiss";
-		const lines: { seat: string; code: string; launch: string; label: string }[] = [];
-		for (const s of st.seats) {
-			if (!s.launch?.launch_id || (seat && s.handle !== seat)) continue;
-			for (const w of s.warnings ?? []) {
-				const code = w.split(":")[0].trim();
-				lines.push({ seat: s.handle, code, launch: s.launch.launch_id, label: `${s.handle}  ${w.length > 100 ? w.slice(0, 97) + "..." : w}` });
-			}
-		}
-		if (!lines.length) {
+		const warned = st.seats.filter((s) => s.launch?.launch_id && (s.warnings ?? []).length && (!seat || s.handle === seat));
+		if (!warned.length) {
 			const line = seat ? `Nothing to dismiss: seat ${clean(seat, 30)} has no warning showing.` : "Nothing to dismiss: no seat has a warning showing.";
 			return { key: k, refused: true, line, record: "no_warning_line" };
 		}
-		const pick = await ctx.ui.select("dismiss: acknowledge which warning (never a gate; the seat itself does not change)", lines.map((l) => l.label));
-		if (!pick) return { key: k, refused: false, line: CANCELLED };
-		const l = lines.find((x) => x.label === pick)!;
-		const r = await this.verb(["scheduler", "clear", "--seat", l.seat, "--warning", l.code, "--launch", l.launch, "--json"]);
-		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${l.seat}'s warning was not dismissed`, refusal(r)), record: `${l.seat} ${l.code}: ${refusalRecord(r)}` };
-		return { key: k, refused: false, line: `Seat ${l.seat}'s warning is dismissed for its current launch; the seat itself does not change.`, record: `${l.seat} ${l.code} acknowledged for launch ${l.launch}` };
+		let s = warned[0];
+		if (warned.length > 1) {
+			const labels = warned.map((x) => `${x.handle} (${x.warnings!.length} ${x.warnings!.length === 1 ? "warning" : "warnings"})`);
+			const pick = await ctx.ui.select("dismiss: which seat's warning", labels);
+			if (!pick) return { key: k, refused: false, line: CANCELLED };
+			s = warned[labels.indexOf(pick)];
+		}
+		const ws = s.warnings!;
+		let w = ws[0];
+		if (ws.length > 1) {
+			const labels = ws.map((x, i) => `${i + 1}. ${warningWords(s.handle, x, s).line}`);
+			const pick = await ctx.ui.select(`dismiss: which of ${s.handle}'s warnings (never a gate; the seat itself does not change)`, labels);
+			if (!pick) return { key: k, refused: false, line: CANCELLED };
+			w = ws[labels.indexOf(pick)];
+		}
+		const code = warningCode(w);
+		const launch = s.launch!.launch_id!;
+		const r = await this.verb(["scheduler", "clear", "--seat", s.handle, "--warning", code, "--launch", launch, "--json"]);
+		if (failed(r)) return { key: k, refused: true, line: sentence(`Seat ${s.handle}'s warning was not dismissed`, refusal(r)), record: `${s.handle} ${code}: ${refusalRecord(r)}` };
+		return { key: k, refused: false, line: `Seat ${s.handle}'s warning is dismissed for its current launch; the seat itself does not change.`, record: `${s.handle} ${code} acknowledged for launch ${launch}` };
 	}
 
 	// answer: Q7's fallback. The gate is read fresh, shown with its

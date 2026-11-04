@@ -106,7 +106,7 @@ test("each key runs its verb with the lead's own amq-squad binary from the lead'
 	for (const [key, answers] of [
 		["add", ["task", "Parser", "implement", "src/parse.go", ""]],
 		["reset", [T1, "keep its pool"]],
-		["dismiss", [fixture.seats[0].handle + "  " + fixture.seats[0].warnings![0].slice(0, 97) + "..."]],
+		["dismiss", ["scribe (1 warning)"]],
 		["answer", ["Create a tag named v1?"]],
 		["widen", []],
 	] as [string, string[]][]) {
@@ -256,7 +256,7 @@ test("dismiss: the acknowledgement names the warning and the launch; the line le
 			}
 			return res(1, "");
 		},
-		["scribe  " + scribeWarning.slice(0, 97) + "..."],
+		["scribe (1 warning)"],
 		() => doc,
 	);
 	await r.screen.poll();
@@ -266,14 +266,18 @@ test("dismiss: the acknowledgement names the warning and the launch; the line le
 	assert.deepEqual(r.calls.map((c) => c.args), [["scheduler", "clear", "--seat", "scribe", "--warning", "seat_stalled_at_dialog", "--launch", "L1", "--json"]]);
 	assert.equal(keyLine(lines), "  /dismiss: Seat scribe's warning is dismissed for its current launch; the seat itself does not change.");
 	assert.equal(recLine(lines), "  /dismiss: scribe seat_stalled_at_dialog acknowledged for launch L1");
-	assert.ok(!lines.some((l) => l.includes("! seat_stalled_at_dialog")), lines.join("\n"));
+	// the warning is gone from the screen: its words above the rule and its
+	// record below; only the dismissal's own record names the code
+	assert.ok(!lines.some((l) => l.includes("harness dialog")), lines.join("\n"));
+	assert.deepEqual(lines.filter((l) => l.includes("seat_stalled_at_dialog")), ["  /dismiss: scribe seat_stalled_at_dialog acknowledged for launch L1"]);
+	assert.ok(r.asked.some((a) => a === "dismiss: which seat's warning [qa (2 warnings) | scribe (1 warning) | pi-dev (1 warning)]"), r.asked.join("\n"));
 	assert.ok(lines.includes(scribeLine), "the seat's line changed:\n" + lines.join("\n"));
 	// the other seats' lines stay
-	assert.ok(lines.some((l) => l.startsWith("    ! pi_provider_key_missing: ")));
+	assert.ok(lines.some((l) => l.startsWith("    ! its model anthropic/claude-sonnet-5 has no provider key")));
 	// the next launch with the same condition: a new line
 	const relaunched = { ...fixture, seats: fixture.seats.map((s) => (s.handle === "scribe" ? { ...s, launch: { ...s.launch!, launch_id: "L2" } } : s)) };
-	assert.ok(renderScreen(relaunched).some((l) => l.startsWith("    ! seat_stalled_at_dialog: ")));
-	const stale = rig(() => res(15, envelope("scheduler_clear", { ok: false, code: "clear_launch_stale" }), "error: scheduler clear refused (clear_launch_stale): seat scribe's current launch is L2, not L1"), ["scribe  " + scribeWarning.slice(0, 97) + "..."]);
+	assert.ok(renderScreen(relaunched).some((l) => l.startsWith("    ! it is stopped at a harness dialog")));
+	const stale = rig(() => res(15, envelope("scheduler_clear", { ok: false, code: "clear_launch_stale" }), "error: scheduler clear refused (clear_launch_stale): seat scribe's current launch is L2, not L1"), ["scribe (1 warning)"]);
 	const staleLines = await stale.press("dismiss");
 	assert.equal(keyLine(staleLines), "  /dismiss: Seat scribe's warning was not dismissed: scheduler clear refused: seat scribe's current launch is L2, not L1");
 	assert.equal(recLine(staleLines), "  /dismiss: scribe seat_stalled_at_dialog: scheduler clear refused (clear_launch_stale): seat scribe's current launch is L2, not L1");
@@ -281,6 +285,13 @@ test("dismiss: the acknowledgement names the warning and the launch; the line le
 	const quiet = rig(() => res(1, ""), []);
 	assert.equal(keyLine(await quiet.press("dismiss", "pi-dev-2")), "  /dismiss: Nothing to dismiss: seat pi-dev-2 has no warning showing.");
 	assert.equal(quiet.calls.length, 0);
+	// "/dismiss qa": no seat dialog; qa's two warnings offered in words, the
+	// code read from the record
+	const qa = rig(() => res(0, envelope("scheduler_clear", { ok: true })), ["2. AMQ does not ring it when mail arrives, so it idles after each turn; ring it by hand, and /dismiss hides it once you know"]);
+	await qa.press("dismiss", "qa");
+	assert.ok(!qa.asked.some((a) => a.startsWith("dismiss: which seat")), qa.asked.join("\n"));
+	assert.ok(qa.asked.some((a) => a.startsWith("dismiss: which of qa's warnings") && a.includes("1. it came up in 12.4s, over the 10s ceiling")), qa.asked.join("\n"));
+	assert.deepEqual(qa.calls.map((c) => c.args), [["scheduler", "clear", "--seat", "qa", "--warning", "wake_off", "--launch", "L1", "--json"]]);
 });
 
 // The four typed gates (tag and release, raised as tag and github_release;

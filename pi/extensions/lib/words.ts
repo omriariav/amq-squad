@@ -144,7 +144,7 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
-	ledger_tampered: () => ["the commits ledger does not verify", "ask the owner to inspect the commits ledger; nothing commits until then"],
+	ledger_tampered: () => ["the commits ledger does not verify", "ask the owner to inspect the commits ledger before anything commits"],
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
 	verifier_timeout: () => ["its verifier ran past its time limit", `${RESET}, or ask the owner to raise the limit`],
 	verifier_output_exceeded: () => ["its verifier printed more than the limit", `${RESET}, or ask the owner to raise the limit`],
@@ -227,19 +227,142 @@ export function seatDoing(s: SeatWords, t: TaskWords | undefined): { text: strin
 }
 
 // DECISION_WORDS maps the scheduler's decisions that stopped a seat (the
-// seats block's last-stop line) to their words.
-export const DECISION_WORDS: Record<string, (who: string) => string> = {
-	roster_launch_failed: () => "the roster launch failed",
-	seat_not_up: (w) => `seat ${w} did not come up`,
-	seat_launch_failed: (w) => `seat ${w}'s launch failed`,
-	seat_prepare_failed: (w) => `seat ${w} could not be prepared`,
-	seat_request_failed: (w) => `a seat could not be requested${w ? ` for ${w}` : ""}`,
-	seat_refused: (w) => `seat ${w} was refused`,
-	exit_refused: (w) => `seat ${w}'s exit was refused`,
-	seat_close_failed: (w) => `seat ${w} could not be closed`,
-	ledger_tampered: () => "the ledger does not verify",
-	scheduler_stopped: () => "the scheduler stopped",
+// seats block's stop line) to what happened and, when the decision's
+// reason has no words of its own, what to do.
+export const DECISION_WORDS: Record<string, (who: string) => [string, string]> = {
+	roster_launch_failed: () => ["the roster launch failed", "ask the lead to relaunch the roster"],
+	seat_not_up: (w) => [`seat ${w} did not come up`, "ask the lead to relaunch the roster"],
+	seat_launch_failed: (w) => [`seat ${w}'s launch failed`, "ask the lead to relaunch the roster"],
+	seat_prepare_failed: (w) => [`seat ${w} could not be prepared`, "ask the lead to relaunch the roster"],
+	seat_request_failed: (w) => [`a seat could not be requested${w ? ` for ${w}` : ""}`, "check the task's pool, or /reset it onto another"],
+	seat_refused: (w) => [`seat ${w} was refused`, "ask the lead why; the record is below the line"],
+	exit_refused: (w) => [`seat ${w} did not stop cleanly`, "ask the owner to inspect it before the seat is relaunched"],
+	seat_close_failed: (w) => [`seat ${w} could not be closed`, "close its pane by hand"],
+	ledger_tampered: () => ["the ledger does not verify", "ask the owner to inspect it"],
+	scheduler_stopped: () => ["the scheduler stopped", "start the team again with amq-squad up"],
 };
+
+// decisionWords is a stop decision's line: "<what happened>: <the reason's
+// words>; <what to do>" when the decision's reason code (its reason_code,
+// else its reason's first word) is in the block table, else "<what
+// happened>; <the decision's own what to do>".
+export function decisionWords(d: { kind: string; seat?: string; task_id?: string; reason?: string; reason_code?: string }): string {
+	const who = d.seat || d.task_id || "";
+	const [happened, todo] = DECISION_WORDS[d.kind]?.(who) ?? ["a seat stopped", "the record is below the line"];
+	const code = d.reason_code || (d.reason ?? "").trim().split(/[\s:]+/)[0] || "";
+	const f = BLOCK_WORDS[code];
+	if (!f) return `${happened}; ${todo}`;
+	const [why, then] = f({});
+	return `${happened}: ${why}; ${then}`;
+}
+
+// The parts of a status seat row a warning's words read: its launch
+// timing (to seat live, the ceiling, the slowest segment).
+export type WarningSeat = { launch?: { timing?: { to_seat_live_ms?: number | null; ceiling_ms?: number; slowest_segment?: string } } | null };
+
+// SEGMENT_WORDS names a launch segment (status-contract timing.segments).
+const SEGMENT_WORDS: Record<string, string> = {
+	drain: "the old roster's drain",
+	prepare: "preparing the seat",
+	mint: "minting its proof",
+	apply: "AMQ's apply",
+	seat_exec: "the seat's own start",
+};
+
+const DISMISS = "and /dismiss hides it once you know";
+
+// WARNING_WORDS maps each seat warning code status shows (Go's
+// schedproc.ClearableWarnings, the list words.test.ts reads) to what the
+// warning says and what to do, from the warning's recorded fields: the
+// seat's launch timing, and the numbers and names in its detail.
+export const WARNING_WORDS: Record<string, (detail: string, s: WarningSeat) => [string, string]> = {
+	launch_budget_exceeded: (_d, s) => {
+		const t = s.launch?.timing;
+		const up = typeof t?.to_seat_live_ms === "number" ? `it came up in ${(t.to_seat_live_ms / 1000).toFixed(1)}s` : "it came up";
+		const ceiling = t?.ceiling_ms ? `, over the ${t.ceiling_ms / 1000}s ceiling` : ", over the launch ceiling";
+		const slow = t?.slowest_segment ? ` (slowest step: ${SEGMENT_WORDS[t.slowest_segment] ?? "one step"})` : "";
+		return [`${up}${ceiling}${slow}`, `nothing to do unless it repeats, ${DISMISS}`];
+	},
+	wake_off: () => ["AMQ does not ring it when mail arrives, so it idles after each turn", `ring it by hand, ${DISMISS}`],
+	seat_stalled_at_dialog: (d) => {
+		const m = /open since \S+ \(([0-9hms.]+)\)/.exec(d);
+		return [`it is stopped at a harness dialog${m ? ` open for ${m[1]}` : ""}`, "answer the dialog in its pane"];
+	},
+	pi_provider_key_missing: (d) => {
+		const m = /^model (\S+) needs/.exec(d);
+		return [`its model ${m ? m[1] + " " : ""}has no provider key, so it stalls at its first turn`, "add the key to its env needs or its pi login, then relaunch"];
+	},
+	claude_hooks_silent: () => ["it has run with no hook report since its launch", "check that its Claude hooks are installed"],
+	claude_allow_rules_present: () => ["its worktree's Claude settings carry allow rules", "remove the allow rules from the worktree's settings"],
+	claude_external_includes_pending: () => ["a CLAUDE.md it loads imports a file outside its worktree", "approve or remove that import"],
+};
+
+// warningCode is a warning line's code: the text before its first colon.
+export function warningCode(w: string): string {
+	return w.split(":")[0].trim();
+}
+
+// warningWords is a seat warning above the rule, "<what>; <what to do>",
+// and its record below it (the code and the detail verbatim); an unmapped
+// code is "warning; its code is below the line".
+export function warningWords(handle: string, w: string, s: WarningSeat): { line: string; record: string } {
+	const code = warningCode(w);
+	const f = WARNING_WORDS[code];
+	const detail = w.slice(w.indexOf(":") + 1).trim();
+	const record = `${handle}: ${w}`;
+	if (!f) return { line: "warning; its code is below the line", record };
+	const [what, todo] = f(detail, s);
+	return { line: `${what}; ${todo}`, record };
+}
+
+// TRAIN_RULE_WORDS maps each merge train rule (internal/mergetrain
+// checks.go Rule*) to why the train stopped at a PR and what to do.
+export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
+	repository: ["its repository is not one the grant permits", "ask the owner to widen the grant"],
+	base_branch: ["it targets a base branch the grant does not permit", "retarget the PR"],
+	ci_green: ["its CI is not green", "fix the failing check and the train tries again"],
+	size_cap: ["it is over the size cap", "split it or ask the owner to raise the cap"],
+	force_push: ["its branch was force-pushed", "ask the owner, whose gate a force push needs"],
+	protected_path: ["it changes a protected file", "the owner answers its gate on the phone"],
+	task_scope: ["it changes files outside its task", "widen the task or split the PR"],
+	pr_state: ["the PR is not open or not mergeable", "check the PR"],
+	task_unbound: ["no task is bound to it", "bind it through its task"],
+	pr_head_moved: ["its head moved after the check", "nothing to do; the train checks it again"],
+	history_incomplete: ["its push history could not be read whole", "the train tries again; ask the owner if it repeats"],
+};
+
+// trainStop is the train's stop line from a run's refusal ("refusal PR #N
+// RULE[,RULE]: detail", internal/status screen.go): "the merge train
+// stopped at PR #N: <why>; <what to do>" for its first rule; a refusal of
+// another form, or an unmapped rule, says only where it stopped.
+export function trainStop(refusal: string): string {
+	const m = /^refusal PR #(\d+) ([a-z_,]+):/.exec(refusal ?? "");
+	if (!m) return "the merge train stopped; its refusal is below the line";
+	const w = TRAIN_RULE_WORDS[m[2].split(",")[0]];
+	if (!w) return `the merge train stopped at PR #${m[1]}; its rule is below the line`;
+	return `the merge train stopped at PR #${m[1]}: ${w[0]}; ${w[1]}`;
+}
+
+// RELAY_WORDS maps the relay's refusal names of a phone request
+// (status-contract requests[].refused) to words.
+export const RELAY_WORDS: Record<string, string> = {
+	relay_refused_gate_shape: "the relay held back a reply shaped like a gate answer",
+	relay_refused_gate_thread: "the relay held back a reply into a gate question's thread",
+	relay_post_unconfirmed: "the relay could not confirm a post",
+	relay_record_invalid: "the relay's record of it does not read",
+	relay_turn_undelivered: "the owner's turn did not reach the lead",
+	relay_rollback_failed: "the relay could not undo a failed post",
+	relay_record_failed: "the relay could not write its record",
+};
+
+// requestWords is a phone request's plain line: to whom, whether the
+// lead's answer reached the phone, and what the relay refused, in words.
+export function requestWords(r: { lead: string; relayed_at: string | null; refused: string[] }, relayedAgo: string): string {
+	const to = r.lead ? `a phone request to ${r.lead}` : "a phone request";
+	const mark = r.relayed_at ? `answered ${relayedAgo} ago` : "not answered yet";
+	const refused = [...new Set(r.refused)].map((x) => RELAY_WORDS[x] ?? "the relay refused a reply");
+	return `${to}, ${mark}${refused.length ? `: ${[...new Set(refused)].join("; ")}; the lead answers again in words` : ""}`;
+}
 
 // plainDetail is a verb's refusal text with its codes taken out, for the
 // line above the rule: the leading "verb: code: " segments and parenthesized

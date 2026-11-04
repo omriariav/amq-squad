@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { BLOCK_WORDS, blockWords, clean, codeIn, RULE, SEAT_DOING, seatDoing, TITLE_MAX, WAIT_WORDS, waitWords } from "../extensions/lib/words.ts";
+import { BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -74,6 +74,23 @@ function goBlocks(): string[] {
 	];
 }
 
+// The seat warning codes status shows: Go's schedproc.ClearableWarnings,
+// which a status row keeps equal to status's own list.
+function goWarnings(): string[] {
+	const src = go("internal/schedproc/clear.go");
+	const list = src.slice(src.indexOf("var ClearableWarnings = []string{"), src.indexOf("}", src.indexOf("var ClearableWarnings")));
+	return [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+}
+
+// The merge train's rules (internal/mergetrain checks.go Rule*) and the
+// relay's refusal names (internal/status relay.go, internal/buzz relay.go).
+function goTrainRules(): string[] {
+	return constants("internal/mergetrain/checks.go", /^Rule/);
+}
+function goRelayNames(): string[] {
+	return [...constants("internal/status/relay.go", /^Relay/), ...constants("internal/buzz/relay.go", /^Relay/)];
+}
+
 // The seat reason codes (internal/status classifySeat).
 function goSeatCodes(): string[] {
 	const src = go("internal/status/classify.go");
@@ -94,6 +111,12 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	for (const r of waits) assert.ok(r in WAIT_WORDS, `wait reason ${r} has no words`);
 	for (const r of blocks) assert.ok(r in BLOCK_WORDS, `block reason ${r} has no words`);
 	for (const r of seats) assert.ok(r in SEAT_DOING, `seat reason code ${r} has no words`);
+	const rules = goTrainRules();
+	assert.ok(rules.length >= 11, `the train rules were not found: ${rules}`);
+	for (const r of rules) assert.ok(r in TRAIN_RULE_WORDS, `train rule ${r} has no words`);
+	const relay = goRelayNames();
+	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
+	for (const r of relay) assert.ok(r in RELAY_WORDS, `relay refusal ${r} has no words`);
 	// each mapped reason's words are plain: no code, no hex run
 	const t = { id: "t9", task_state: "pending", depends_on: ["t8"], wait_holders: ["t7"], wait_pool: "claude:opus:high" };
 	for (const r of Object.keys(WAIT_WORDS)) assert.equal(codeIn(waitWords({ ...t, wait_reason: r }, { max_seats: 3 }).line), "", r);
@@ -223,14 +246,57 @@ test("row 7: each empty block says so in one plain line", () => {
 	assert.deepEqual(solo.planLines(), ["amq-squad: solo lead", "  No team yet. Tell me what you want built and I will propose a plan.", "/plan  /confirm  /team hide"]);
 });
 
-// plainAbove is a screen's lines above its rule that are refusal, outcome,
-// doing and waiting lines: the header (the lead's root path), a seat's
-// warning lines and the phone request rows are Go's text and ids, quoted.
+// Row 4 (the plan reviewer's addition): every seat warning code the
+// scheduler emits has plain words in the one table, from its recorded
+// fields; above the rule a warning is "<what>; <what to do>", below it the
+// code and the detail verbatim; an unmapped code at run time reads
+// "warning". Reverted (a code dropped, or the 3.1.0 "! <code>: <detail>"
+// line), it fails here by name.
+test("row 4: every seat warning code in Go's list has plain words; the code is below the rule", () => {
+	const codes = goWarnings();
+	assert.equal(codes.length, 7, `Go's warning list: ${codes}`);
+	for (const c of codes) assert.ok(c in WARNING_WORDS, `seat warning ${c} has no words`);
+	const qa = fixture.seats[0];
+	for (const c of codes) {
+		const w = warningWords("qa", `${c}: a detail_with_code 0de97c89a1b2c3d4`, qa);
+		assert.equal(codeIn(w.line), "", `${c}: ${w.line}`);
+		assert.ok(w.line.includes("; "), `${c} says no what to do: ${w.line}`);
+		assert.equal(w.record, `qa: ${c}: a detail_with_code 0de97c89a1b2c3d4`);
+	}
+	assert.deepEqual(warningWords("qa", "made_up_warning: x", qa), { line: "warning; its code is below the line", record: "qa: made_up_warning: x" });
+	// composed from the recorded fields: the launch timing, the detail's
+	// duration and model
+	assert.equal(warningWords("qa", qa.warnings![0], qa).line, "it came up in 12.4s, over the 10s ceiling (slowest step: the seat's own start); nothing to do unless it repeats, and /dismiss hides it once you know");
+	const lines = renderScreen(fixture, now);
+	const rule = lines.indexOf(RULE);
+	for (const s of fixture.seats) for (const w of s.warnings ?? []) assert.ok(lines.slice(rule).includes(`  ${s.handle}: ${w}`.length > 202 ? lines.slice(rule).find((l) => l.startsWith(`  ${s.handle}: ${w.slice(0, 60)}`))! : `  ${s.handle}: ${w}`), `${s.handle}'s ${w.slice(0, 30)} is not below the rule`);
+	assert.ok(!lines.slice(0, rule).some((l) => /^ {4}! [a-z_]+: /.test(l)), lines.join("\n"));
+});
+
+// Row 4 (the plan reviewer's addition): a stop line says what happened and
+// what to do, both from the tables; its record stays verbatim below the
+// rule. The train's line likewise.
+test("row 4: a seat's stop and the train's stop say what happened and what to do", () => {
+	assert.equal(decisionWords({ kind: "exit_refused", seat: "old-dev", reason: "ledger_tampered at gone" }), "seat old-dev did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits");
+	for (const kind of Object.keys(DECISION_WORDS)) {
+		const l = decisionWords({ kind, seat: "dev", reason: "made_up_reason: x" });
+		assert.equal(codeIn(l), "", `${kind}: ${l}`);
+		assert.ok(l.includes("; "), `${kind} says no what to do: ${l}`);
+	}
+	assert.equal(trainStop("refusal PR #812 ci_green: a required check failed"), "the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
+	for (const r of Object.keys(TRAIN_RULE_WORDS)) assert.equal(codeIn(trainStop(`refusal PR #9 ${r}: x`)), "", r);
+	assert.equal(trainStop("refusal PR #9 made_up_rule: x"), "the merge train stopped at PR #9; its rule is below the line");
+	const lines = renderScreen(fixture, now);
+	const rule = lines.indexOf(RULE);
+	assert.ok(lines.slice(rule).includes("  exit_refused: old-dev ledger_tampered at gone"));
+	assert.ok(!lines.some((l) => l.includes("last stop")), "our own term is back");
+});
+
+// plainAbove is a screen's lines above its rule: every line but the header
+// (the lead's root path), warnings and phone requests included.
 function plainAbove(lines: string[]): string[] {
 	const rule = lines.indexOf(RULE);
-	const above = (rule < 0 ? lines.slice(0, -1) : lines.slice(0, rule)).slice(1);
-	const reqAt = above.findIndex((l) => l.startsWith("requests ("));
-	return above.filter((l, i) => !l.startsWith("    ! ") && !(reqAt >= 0 && i > reqAt && /^ {2}q-/.test(l)));
+	return (rule < 0 ? lines.slice(0, -1) : lines.slice(0, rule)).slice(1);
 }
 
 const res = (code: number, stdout: string, stderr = ""): RunResult => ({ code, stdout, stderr, timedOut: false, spawnError: "", ms: 1 });
@@ -249,14 +315,24 @@ test("row 4: no line above the rule carries a snake_case code or a hex run; the 
 		{ ...fixture.tasks[2], id: "wx", wait_reason: "made_up_wait" },
 	];
 	const seats = [...Object.keys(SEAT_DOING), "made_up_code"].map((c, i) => ({ ...fixture.seats[1], handle: `s${i}`, reason_code: c, task_id: "b0", warnings: [] }));
-	const doc: ScreenStatus = { ...fixture, tasks, seats, gates: [{ id: "g1", action_class: "github_release", target_digest: "sha256:8502aa0011223344", state: "open" }], warnings: ["gate store: /r/gates/abcdef0123456789.json: unreadable"] };
+	seats.push({ ...fixture.seats[0], handle: "warned", reason_code: "idle", task_id: "", warnings: [...goWarnings(), "made_up_warning"].map((c) => `${c}: detail_code 0de97c89a1b2c3d4`) });
+	const decisions = [...Object.keys(DECISION_WORDS), "made_up_kind"].map((kind) => ({ at: "2026-11-01T09:00:00Z", kind, seat: "dev", task_id: "t1", reason: "ledger_tampered at gone", reason_code: "" }));
+	const runs = [{ run: "r9", started_at: "", last_at: "2026-11-01T09:00:00Z", last_kind: "refusal", repository: "o/a", base: "main", prs: [9], merged: [], refusal: "refusal PR #9 task_scope,size_cap: src/x_y.go", done: false, dry_run: false }];
+	const requests = Object.keys(RELAY_WORDS).map((r, i) => ({ request_id: `q-0de97c89a1b${i}`, thread: "cockpit/q", lead: "cto", turns: 1, posts: 0, relayed_at: null, refused: [r, "made_up_relay"], closed: false, updated_at: "" }));
+	const doc: ScreenStatus = { ...fixture, tasks, seats, decisions, requests, train: { runs, alerts: [{ kind: "gate_store_unreadable", detail: "a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line\n\n----------\nthe gate store /r/s-0de97c89a1b2/gates could not be read (x_y)" }] }, gates: [{ id: "g1", action_class: "github_release", target_digest: "sha256:8502aa0011223344", state: "open" }], warnings: ["gate store: /r/gates/abcdef0123456789.json: unreadable"] };
 	const sweep = (lines: string[], what: string) => {
 		for (const l of plainAbove(lines)) assert.equal(codeIn(l), "", `${what}: a code above the rule: ${JSON.stringify(l)}\n${lines.join("\n")}`);
 	};
 	const screen = renderScreen(doc, now);
 	sweep(screen, "the screen");
 	const rec = screen.slice(screen.indexOf(RULE));
-	for (const code of ["needs_decision", "made_up_wait", "made_up_code", "8502aa0011223344", "exit_refused", "ungated_tag"]) assert.ok(rec.some((l) => l.includes(code)), `${code} is not below the rule`);
+	for (const code of ["needs_decision", "made_up_wait", "made_up_code", "8502aa0011223344", "launch_budget_exceeded", "made_up_warning", "relay_refused_gate_shape", "task_scope,size_cap", "gate_store_unreadable"]) assert.ok(rec.some((l) => l.includes(code)), `${code} is not below the rule`);
+	// each stop decision kind (the newest shows): its words above, its record below
+	for (const d of decisions.filter((x) => x.kind in DECISION_WORDS)) {
+		const one = renderScreen({ ...doc, decisions: [d] }, now);
+		sweep(one, d.kind);
+		assert.ok(one.slice(one.indexOf(RULE)).some((l) => l.includes("ledger_tampered at gone")), `${d.kind}'s record is not below the rule`);
+	}
 	// every key's refusals and outcomes, from verbs that refuse with a code
 	const coded = res(15, "", "error: task widen t1 refused (widen_not_requested): widen refused (widen_not_requested): task t1 is not blocked (state in_progress, reason needs_decision)\n");
 	const keys = new Keys({ bin: "/b", amq: "", me: "cto", root: "/r", session: "s", hookTimeoutMs: 1, holdTimeoutMs: 1, models: [], lead: true }, async (_b, args) => (args[0] === "gate" && args[1] === "status" ? res(0, JSON.stringify({ data: [{ gate_id: "g1", class: "github_release", typed_class: "release", target: "gh release", digest: "sha256:8502aa0011223344aabbccdd", state: "open", question_sent: false }] })) : args[1] === "show" ? res(0, JSON.stringify({ data: { task: { id: "t1", state: "blocked", block_reason: "widen_requested", block_detail: "needed", refused_paths: ["a.go"] } } })) : args[1] === "propose" ? res(0, JSON.stringify({ data: { digest: "sha256:c0ffee@d15c" } })) : coded));

@@ -50,7 +50,8 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	const seats = block(lines, "seats");
 	assert.ok(seats.includes("  qa  codex gpt-5.6-sol high  idle  · up in 12.4s (over the 10s ceiling), first message 57.4s"), seats.join("\n"));
 	assert.ok(seats.includes("  scribe  claude sonnet medium  working on t2: Write the notes  · up in 4.7s"), seats.join("\n"));
-	assert.equal(seats.at(-1), "  last stop: seat old-dev's exit was refused");
+	assert.equal(seats.at(-1), "  seat old-dev did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits");
+	assert.ok(seats.includes("    ! it came up in 12.4s, over the 10s ceiling (slowest step: the seat's own start); nothing to do unless it repeats, and /dismiss hides it once you know"), seats.join("\n"));
 	const tasks = block(lines, "tasks");
 	assert.ok(tasks.includes("  t1 blocked: the commit step refused it, it changed files outside its task; accept them with /widen or send it back with /reset"), tasks.join("\n"));
 	assert.ok(tasks.includes("  t2 in progress on scribe: Write the notes  PR #812"), tasks.join("\n"));
@@ -58,18 +59,20 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	assert.ok(train.some((l) => l.startsWith("  current: r2 refusal")), train.join("\n"));
 	assert.ok(train.some((l) => l.startsWith("  last: r1 merge")), train.join("\n"));
 	assert.ok(train.includes("    ! tag v1.2.0 has no accepted gate"), train.join("\n"));
-	assert.equal(train.at(-1), "  last stop: the merge train stopped: refusal PR #812 checks: a required check failed");
+	assert.equal(train.at(-1), "  the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
 	const waiting = block(lines, "waiting on you (1)");
 	assert.deepEqual(waiting.slice(1), ["  Create a tag named v1?  (answer on the phone; /answer shows it)"]);
 	// below the rule: the codes and ids for the record
 	const rec = below(lines);
 	assert.ok(rec.includes("  exit_refused: old-dev ledger_tampered at gone"), rec.join("\n"));
 	assert.ok(rec.includes("  ungated_tag"), rec.join("\n"));
+	assert.ok(rec.includes("  train r2: refusal PR #812 ci_green: a required check failed"), rec.join("\n"));
+	assert.ok(rec.some((l) => l.startsWith("  qa: launch_budget_exceeded: 12.400 s from the start to seat live")), rec.join("\n"));
 	assert.ok(rec.includes("  g1  tag  8502aa0011223344  age 6m  waiting on Buzz"), rec.join("\n"));
 	assert.ok(!lines.some((l) => l.includes("g0")), "an accepted gate is not shown");
 	// A document with nothing that stopped an item shows no last-stop line.
 	const quiet = renderScreen({ ...fixture, decisions: [], tasks: [], train: { runs: [], alerts: [] } }, now);
-	assert.deepEqual(quiet.filter((l) => l.includes("last stop")), []);
+	assert.deepEqual(quiet.filter((l) => l.includes("did not stop") || l.includes("train stopped")), []);
 });
 
 // Brief 31-4 (the lead side): per phone request, whether the lead's answer
@@ -77,12 +80,15 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 // is below the rule.
 test("the requests block marks each phone request relayed or refused, the name below the rule", () => {
 	const lines = renderScreen(fixture, now);
-	const i = lines.indexOf("requests (2)");
+	const i = lines.indexOf("phone requests (2)");
 	assert.ok(i > 0, lines.join("\n"));
-	assert.equal(lines[i + 1], "  q-7c41d09e2a55  cto  not relayed, the relay refused it");
-	assert.equal(lines[i + 2], "  q-3f2a9c1e7b04  cto  relayed 2m ago");
-	assert.ok(below(lines).includes("  q-7c41d09e2a55 refused: relay_refused_gate_shape"));
-	assert.ok(!renderScreen({ ...fixture, requests: [] }, now).some((l) => l.startsWith("requests")));
+	assert.equal(lines[i + 1], "  a phone request to cto, not answered yet: the relay held back a reply shaped like a gate answer; the lead answers again in words");
+	assert.equal(lines[i + 2], "  a phone request to cto, answered 2m ago");
+	// the 3.1.0 rows, ids and refusal names, are below the rule
+	assert.ok(below(lines).includes("  q-7c41d09e2a55  cto  not relayed  refused: relay_refused_gate_shape"), below(lines).join("\n"));
+	assert.ok(below(lines).includes("  q-3f2a9c1e7b04  cto  relayed 2m ago"));
+	assert.ok(!lines.slice(0, lines.indexOf("----------")).some((l) => l.includes("q-7c41d09e2a55")));
+	assert.ok(!renderScreen({ ...fixture, requests: [] }, now).some((l) => l.startsWith("phone requests")));
 });
 
 // Row 19 (the screen's half): a Claude seat stalled at a dialog and a pi
@@ -93,11 +99,11 @@ test("a seat stalled at a dialog and a keyless pi seat are screen lines with wha
 	const seats = block(lines, "seats");
 	const scribe = seats.findIndex((l) => l.startsWith("  scribe  claude sonnet medium  working on t2"));
 	assert.ok(scribe >= 0, seats.join("\n"));
-	assert.match(seats[scribe + 1], /^ {4}! seat_stalled_at_dialog: /);
+	assert.equal(seats[scribe + 1], "    ! it is stopped at a harness dialog open for 3m0s; answer the dialog in its pane");
 	const pi = seats.findIndex((l) => l.startsWith("  pi-dev  pi anthropic/claude-sonnet-5 medium  idle"));
 	assert.ok(pi >= 0, seats.join("\n"));
-	assert.match(seats[pi + 1], /^ {4}! pi_provider_key_missing: /);
-	assert.ok(!seats.some((l) => l.includes("last stop")), seats.join("\n"));
+	assert.equal(seats[pi + 1], "    ! its model anthropic/claude-sonnet-5 has no provider key, so it stalls at its first turn; add the key to its env needs or its pi login, then relaunch");
+	assert.ok(!seats.some((l) => l.includes("did not stop")), seats.join("\n"));
 });
 
 // Row 15 (the screen's half): the poll stats .generation and scheduler.json

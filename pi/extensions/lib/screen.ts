@@ -17,7 +17,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Config, Runner } from "./hooks.ts";
 import { commandsLine } from "./commands.ts";
 import { gateLabel, Keys, typedPrefix, type KeyOutcome } from "./keys.ts";
-import { blockWords, clean, DECISION_WORDS, plainDetail, RULE, seatDoing, waitWords, type BlockDetail } from "./words.ts";
+import { blockWords, clean, decisionWords, RULE, requestWords, seatDoing, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
 import { run } from "./verbs.ts";
 
 export const SCREEN_KEY = "amq-squad-screen";
@@ -121,16 +121,16 @@ function launchTiming(l: SeatRow["launch"]): string {
 	return parts.length ? `  · ${parts.join(", ")}` : "";
 }
 
-// newestDecision is the newest decision that stopped a seat: its words
-// (DECISION_WORDS) and its record (the kind, the seat and the reason).
+// newestSeatStop is the newest decision that stopped a seat: what happened
+// and what to do (decisionWords) and its record (the kind, the seat and
+// the reason, verbatim).
 function newestSeatStop(st: ScreenStatus): { line: string; record: string } | undefined {
 	const ds = st.decisions ?? [];
 	for (let i = ds.length - 1; i >= 0; i--) {
 		const d = ds[i];
 		if (!(SEAT_REFUSALS.has(d.kind) || (d.kind === "scheduler_stopped" && d.reason !== ""))) continue;
 		const who = d.seat || d.task_id;
-		const words = DECISION_WORDS[d.kind]?.(who) ?? "a seat stopped";
-		return { line: `last stop: ${words}`, record: `${d.reason_code || d.kind}: ${short([who, d.reason].filter(Boolean).join(" "))}` };
+		return { line: decisionWords(d), record: `${d.reason_code || d.kind}: ${short([who, d.reason].filter(Boolean).join(" "))}` };
 	}
 	return undefined;
 }
@@ -177,7 +177,13 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		const doing = seatDoing(s, held);
 		rec(doing.record);
 		out.push(`  ${s.handle}  ${rt}  ${doing.text}${launchTiming(s.launch)}`);
-		for (const w of s.warnings ?? []) out.push(`    ! ${short(w)}`);
+		// brief 3.1.1-3 (the plan reviewer): each warning in words above the
+		// rule, its code and detail verbatim below it
+		for (const w of s.warnings ?? []) {
+			const ww = warningWords(s.handle, w, s);
+			out.push(`    ! ${short(ww.line, 200)}`);
+			rec(short(ww.record, 200));
+		}
 	}
 	const sch = st.scheduler;
 	if (sch && sch.max_seats > 0 && sch.live_seats > sch.max_seats) {
@@ -219,8 +225,7 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 	}
 	const trainRefusal = [current, last].find((r) => r && r.refusal);
 	if (trainRefusal) {
-		const plain = plainDetail(trainRefusal.refusal);
-		out.push(`  last stop: the merge train stopped${plain ? `: ${short(plain)}` : ""}`);
+		out.push(`  ${short(trainStop(trainRefusal.refusal), 200)}`);
 		rec(`train ${trainRefusal.run}: ${short(trainRefusal.refusal, 200)}`);
 	}
 
@@ -249,11 +254,13 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 	// lead's answer reached the owner's DM) or refused by the relay
 	const reqs = st.requests ?? [];
 	if (reqs.length) {
-		out.push(`requests (${reqs.length})`);
+		out.push(`phone requests (${reqs.length})`);
 		for (const r of reqs.slice(0, 5)) {
+			// the request in words above the rule; its id and the relay's
+			// refusal names below it, as the 3.1.0 row read
 			const mark = r.relayed_at ? `relayed ${age(r.relayed_at, now)} ago` : "not relayed";
-			out.push(`  ${r.request_id}  ${r.lead || "-"}  ${mark}${r.refused.length ? ", the relay refused it" : ""}`);
-			if (r.refused.length) rec(`${r.request_id} refused: ${[...new Set(r.refused)].join(", ")}`);
+			out.push(`  ${requestWords(r, r.relayed_at ? age(r.relayed_at, now) : "")}`);
+			rec(`${r.request_id}  ${r.lead || "-"}  ${mark}${r.refused.length ? `  refused: ${[...new Set(r.refused)].join(", ")}` : ""}`);
 		}
 	}
 	if (key) {
