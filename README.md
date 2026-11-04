@@ -355,15 +355,23 @@ over the ceiling carries a warning naming its slowest segment.
 In the lead's pi, the team screen sits below the editor, on by default:
 the lead handle and the root, then the seats, each with its runtime and
 model and what it is doing ("working on t28: <title>", "idle", "starting",
-"waiting: ..." or "stopped", the launch budget at the end), the tasks
+"waiting: ..." or "stopped", the launch budget at the end) and its
+warnings in words ("it is stopped at a harness dialog open for 3m0s;
+answer the dialog in its pane"), then the newest seat that stopped, with
+what to do ("seat old-dev did not stop cleanly: the commits ledger does not
+verify; ask the owner to inspect the commits ledger before anything
+commits"), the tasks
 ("t28 in progress on reviewer: <title>", "t29 waiting: no seat serves
 claude:opus:high", "t27 blocked: the commit step refused it, 16 files over
 the cap of 8; ask the owner to raise the cap or split it", "t9 held by the
-lead"), the merge train and what is waiting on you (each open gate's
-question as the phone shows its first line). An empty block says so in
+lead"), the merge train (where it stopped and what to do), what is
+waiting on you (each open gate's
+question as the phone shows its first line) and the phone requests. An
+empty block says so in
 one line ("Nothing is waiting on you."). Every line traces to a field of
 status: one table in the extension maps each wait and block reason the
-scheduler and the task store can emit to its words, and the size cap's
+scheduler and the task store can emit to its words (and each seat warning,
+train rule and relay refusal), and the size cap's
 numbers come from the refusal's own record. The codes, gate ids and digests
 sit below a rule, for the record. It refreshes when the task store or the
 scheduler state changes; `/team hide` collapses it to one footer line of
@@ -382,8 +390,9 @@ model's tools gain nothing.
 - `/reset` resets a blocked task through `task reset`, onto another pool
   when you pick one (`--pool`).
 - `/dismiss` acknowledges a seat's warning line through `scheduler clear`
-  (the 3.1.0 clear key). The line leaves the screen for that launch only,
-  and the seat itself does not change.
+  (the 3.1.0 clear key): pick the seat (`/dismiss SEAT` names it), then
+  the warning by its words when it has several. The line leaves the screen
+  for that launch only, and the seat itself does not change.
 - `/answer` shows an open typed gate's question as the phone shows it,
   its kind, target and digest prefix below the rule. It posts the question
   over Buzz when it has not reached Buzz, and says the gate is waiting
