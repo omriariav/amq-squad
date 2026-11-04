@@ -157,14 +157,15 @@ type PlanPR struct {
 	GateError string    `json:"gate_error,omitempty"`
 	Lifted    bool      `json:"lifted,omitempty"` // an accepted owner gate opened it
 	After     []int     `json:"after,omitempty"`  // earlier PRs whose files overlap: rebase after them
-	// RebaseForCI: no required check ran at this head and its base is behind;
-	// the real run rebases it (CI then runs) and re-checks.
-	RebaseForCI bool     `json:"rebase_for_ci,omitempty"`
-	Overlap     []string `json:"overlap,omitempty"`
-	Status      string   `json:"status"` // planned | refused | merged | stopped
-	Merged      string   `json:"merged,omitempty"`
-	base        string   // the PR's merge base, for RebaseForCI
-	title       string   // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
+	// RebaseForCI rebases a behind head, waits for CI and re-checks it. The
+	// reason is either absent CI or strict branch protection.
+	RebaseForCI  bool     `json:"rebase_for_ci,omitempty"`
+	RebaseReason string   `json:"rebase_reason,omitempty"`
+	Overlap      []string `json:"overlap,omitempty"`
+	Status       string   `json:"status"` // planned | refused | merged | stopped
+	Merged       string   `json:"merged,omitempty"`
+	title        string   // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
+	mergeable    string   // server mergeability at the checked head
 }
 
 // ciAbsentOnly: the only refusal is CI with no run at the head.
@@ -321,8 +322,14 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		if err != nil {
 			return res, err
 		}
-		if ciAbsentOnly(p.Refusals) && p.base != res.BaseSHA {
+		behind, err := t.Forge.Behind(ctx, req.Repository, res.BaseSHA, p.Head)
+		if err != nil {
+			return res, fmt.Errorf("compare #%d with pinned base: %w", p.Number, err)
+		}
+		t.applyStrict(&p, prot.Strict && behind, p.mergeable == "CONFLICTING" || slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }), req.Base)
+		if !prot.Strict && ciAbsentOnly(p.Refusals) && behind {
 			p.Refusals, p.RebaseForCI = nil, true
+			p.RebaseReason = "required CI is absent on a head behind " + req.Base
 		}
 		if len(p.Refusals) > 0 {
 			t.refuse(req, &p, entry)
@@ -392,10 +399,24 @@ func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, 
 			return PlanPR{}, fmt.Errorf("PR #%d head kept moving while it was checked (%s -> %s)", it.Number, short(pr.HeadSHA), short(again.HeadSHA))
 		}
 	}
-	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", base: pr.BaseSHA, title: pr.Title}
+	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", title: pr.Title, mergeable: pr.Mergeable}
 	p.Refusals = check(checkInput{repository: req.Repository, base: req.Base, item: it, pr: pr, runs: runs, grant: t.Grants,
 		required: ci, trainHeads: t.Audit.trainHeads(req.Repository, it.Number)})
 	return p, nil
+}
+
+func (t *Train) applyStrict(p *PlanPR, behind, unsafe bool, base string) {
+	if !behind {
+		return
+	}
+	if unsafe {
+		p.Refusals = append(p.Refusals, Refusal{Rule: RuleStrictUpToDate,
+			Detail: RuleStrictUpToDate + " requires the PR head to be up to date with " + base + ", but this head cannot be safely rebased"})
+		return
+	}
+	p.Refusals = slices.DeleteFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RuleCIGreen })
+	p.RebaseForCI = true
+	p.RebaseReason = RuleStrictUpToDate + " requires the PR head to be up to date with " + base
 }
 
 // refuse records a refusal and escalates it: an accepted owner gate for this
@@ -482,6 +503,19 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 	cur, err := t.Forge.PR(ctx, req.Repository, p.Number)
 	if err != nil {
 		return err
+	}
+	if res.Protection.Strict {
+		behind, err := t.Forge.Behind(ctx, req.Repository, res.BaseSHA, cur.HeadSHA)
+		if err != nil {
+			return fmt.Errorf("re-check #%d against advanced base: %w", p.Number, err)
+		}
+		t.applyStrict(p, behind, cur.Mergeable == "CONFLICTING" || (it.BoundHead != "" && cur.HeadSHA != it.BoundHead), req.Base)
+		if len(p.Refusals) > 0 {
+			if t.refuse(req, p, entry); p.Status == "refused" {
+				t.digest(res, entry)
+				return nil
+			}
+		}
 	}
 	rebase := cur.Mergeable == "CONFLICTING" || p.RebaseForCI
 	for _, f := range p.Files {
