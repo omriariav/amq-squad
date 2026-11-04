@@ -585,8 +585,11 @@ func runningRoster(in Input) map[string]bool {
 // waitNeedsAttention: dependencies, file locks and a starting seat resolve
 // by themselves; the other waits need a decision or name a stop.
 func waitNeedsAttention(reason string) bool {
+	if task.IsDependencyWait(reason) {
+		return false
+	}
 	switch reason {
-	case "", task.WaitDependencies, task.WaitFileLock, task.WaitSeatStarting:
+	case "", task.WaitFileLock, task.WaitSeatStarting:
 		return false
 	}
 	return true

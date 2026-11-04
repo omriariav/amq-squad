@@ -120,6 +120,22 @@ const (
 	WaitOutcomeLogUnwritable = "outcome_log_unwritable"
 )
 
+const dependencyMergeWaitPrefix = "waiting for "
+const dependencyMergeWaitSuffix = " to merge"
+
+// DependencyMergeWait is the plain-language reason a dependent task waits
+// for a bound dependency's PR to merge.
+func DependencyMergeWait(id string, pr int) string {
+	return fmt.Sprintf("%s%s's PR #%d%s", dependencyMergeWaitPrefix, id, pr, dependencyMergeWaitSuffix)
+}
+
+// IsDependencyWait reports whether reason is an automatically resolving
+// dependency wait, including the bound-PR form.
+func IsDependencyWait(reason string) bool {
+	return reason == WaitDependencies ||
+		(strings.HasPrefix(reason, dependencyMergeWaitPrefix) && strings.HasSuffix(reason, dependencyMergeWaitSuffix))
+}
+
 // Attempt outcomes (attempts[].outcome).
 const (
 	OutcomeCompleted     = "completed"      // the done report committed

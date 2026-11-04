@@ -10,9 +10,12 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-type failingBinder struct{}
+type failingBinder struct{ Binder }
 
 func (failingBinder) BindPR(string, string, int, string) error { return errors.New("disk full") }
+func (b failingBinder) RecordPRMerge(taskID, repository string, pr int, commit string) error {
+	return b.Binder.RecordPRMerge(taskID, repository, pr, commit)
+}
 
 // P1-4 (lead rulings on fixes 2 and 4): after its own rebase the train binds
 // the SHA its rebase reported, audit entry first; the merge-time check reads
@@ -80,7 +83,7 @@ func TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush(t *testing.T) {
 
 	// a failed re-bind stops the run before the merge
 	h, hreq := setup(t)
-	h.train.Binder = failingBinder{}
+	h.train.Binder = failingBinder{Binder: h.train.Binder}
 	hres, err := h.train.Run(context.Background(), hreq)
 	if !errors.Is(err, ErrBindingFailed) || hres.PRs[1].Status == "merged" || strings.Count(mustGit(t, h.bare, "log", "--format=%s", "main"), "squash") != 1 {
 		t.Fatalf("a failed re-bind did not stop the run: %v %+v", err, hres.PRs)
