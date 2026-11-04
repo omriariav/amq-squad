@@ -273,11 +273,11 @@ test("/confirm: a re-propose while the dialog is open does not change what is co
 		assert.match(r.dialogs.at(-1)!.body, /goal: ship the parser/);
 		// two live plans now: the select over their goal lines, then the dialog
 		r.answer.confirm(async () => true);
-		r.answer.select((options) => options.find((o) => o.startsWith("goal: ship the parser")));
+		r.answer.select((options) => options.find((o) => o.includes("goal: ship the parser")));
 		await r.command("confirm");
 		const sel = r.dialogs.at(-2)!;
 		assert.equal(sel.kind, "select");
-		assert.deepEqual(sel.body.split("\n"), ["goal: ship the lexer  (proposed 10:00:00, the newest)", "goal: ship the parser  (proposed 10:00:00)"]);
+		assert.deepEqual(sel.body.split("\n"), ["1. goal: ship the lexer  (proposed 10:00:00, the newest)", "2. goal: ship the parser  (proposed 10:00:00)"]);
 		assert.match(r.dialogs.at(-1)!.body, /goal: ship the parser/);
 		assert.equal(lead.got.at(-1).digest, DIGEST);
 		r.answer.select((options) => options[0]);
@@ -457,4 +457,68 @@ test("brief 3.1.1-1: amq_team_propose with reply_to records the plan with the le
 test("brief 3.1.1-1: the solo shell refuses a team-plan label in an argv form", () => {
 	assert.match(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "team-plan:" + "ab".repeat(32), "--body", "-"] }) ?? "", /^owner_only: .*a team-plan label/);
 	assert.equal(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "progress", "--body", "-"] }), undefined);
+});
+
+// The plan reviewer on #863, item 2: two live plans with the same goal,
+// proposed in the same second, have two labels (numbered), and the pick
+// maps back by its position: the second label's dialog quotes the second
+// plan's seats and its yes sends that plan's digest. Reverted (unnumbered
+// labels), both labels are equal and the newest is confirmed.
+test("/confirm: two plans with the same goal: the second label confirms the second plan", async () => {
+	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
+	try {
+		const same = (digest: string, seat: string) => envelope("team_propose", { project_dir: PROJECT, plan: ["goal: ship the parser", "session s1, lead lead", seat], digest, prefix: "p", doors: "d" });
+		let next = same(DIGEST, "seat impl-1 (implementer) claude/sonnet/medium");
+		const r = rig((args) => res(0, args[1] === "propose" ? next : ""), lead.socket);
+		await propose(r);
+		next = same(DIGEST2, "seat impl-2 (implementer) codex/gpt-5.6-sol/high");
+		await r.pi.tools.get("amq_team_propose").execute("c2", plan, undefined);
+		r.answer.select((options) => options[1]);
+		r.answer.confirm(async () => true);
+		await r.command("confirm");
+		const sel = r.dialogs.at(-2)!;
+		assert.equal(sel.kind, "select");
+		const labels = sel.body.split("\n");
+		assert.equal(new Set(labels).size, 2, `the labels are not unique: ${labels}`);
+		// the second label is the older plan (the newest is first)
+		assert.match(r.dialogs.at(-1)!.body, /seat impl-1 \(implementer\) claude\/sonnet\/medium/);
+		assert.doesNotMatch(r.dialogs.at(-1)!.body, /impl-2/);
+		assert.equal(lead.got.at(-1).digest, DIGEST);
+	} finally {
+		lead.close();
+	}
+});
+
+// The plan reviewer on #863, item 1: a plan line is the model's free text
+// (Go's oneLine folds only whitespace), so a goal carrying a credential
+// canary and a terminal control sequence (ESC[2K erases the line) shows
+// redacted and stripped on the plan block, in the confirm dialog and in the
+// select's label. Reverted (the lines raw), the ESC reaches the dialog.
+test("/confirm: a goal with a canary and ESC[2K shows redacted and stripped on the block, the dialog and the label", async () => {
+	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
+	try {
+		const canary = "Ab9" + "xY7q1";
+		const goal = `goal: ship it token=${canary} \u001b[2Kall clear`;
+		const dirty = (digest: string) => envelope("team_propose", { project_dir: PROJECT, plan: [goal, "session s1, lead lead", "seat impl-1 (implementer) claude/sonnet/medium\u0007"], digest, prefix: "p", doors: "d" });
+		let next = dirty(DIGEST);
+		const r = rig((args) => res(0, args[1] === "propose" ? next : ""), lead.socket);
+		await propose(r);
+		next = dirty(DIGEST2);
+		await r.pi.tools.get("amq_team_propose").execute("c2", plan, undefined);
+		r.answer.select((options) => options[0]);
+		r.answer.confirm(async () => true);
+		await r.command("confirm");
+		const block = (r.ctx.widgets[PLAN_KEY]?.lines ?? []).join("\n");
+		const label = r.dialogs.at(-2)!.body;
+		const dialog = r.dialogs.at(-1)!.body;
+		for (const [where, text] of [["the plan block", block], ["the select label", label], ["the dialog", dialog]]) {
+			assert.ok(!text.includes(canary), `${where} shows the canary: ${JSON.stringify(text)}`);
+			assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f]/.test(text), `${where} carries a control character: ${JSON.stringify(text)}`);
+			assert.ok(text.includes("goal: ship it token=<redacted> [2Kall clear"), `${where}: ${JSON.stringify(text)}`);
+		}
+		// the dialog quotes the plan's size from its own lines
+		assert.ok(dialog.split("\n").includes("and 0 tasks over 0 files"), dialog);
+	} finally {
+		lead.close();
+	}
 });

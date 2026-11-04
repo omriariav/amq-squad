@@ -11,6 +11,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -131,5 +132,58 @@ func TestTheWidenVerbsRefusalPutsItsCodeBelowTheRule(t *testing.T) {
 	}
 	if !strings.HasPrefix(record, "refused ("+schedproc.RefusedNotLead+"): ") {
 		t.Errorf("the code is not below the rule: %q", record)
+	}
+}
+
+// Brief 3.1.1-3, row 4 (the plan reviewer on #863): the growth gate's plain
+// line says what the raise did, from the decision's GateIDs and GateErrs: a
+// raise that worked says the gate is raised and the task waits; a raise
+// that failed says so and asks for /widen again, the error below the rule.
+// Through applyLeadWiden, the scheduler's apply step the decision socket
+// runs. Reverted (the code's one line whatever the raise did), the failed
+// raise still reads "raised", and this fails.
+func TestTheGrowthGateLineSaysWhatTheRaiseDid(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		f := newGateCLIFixture(t)
+		repo, wt := seatRepo(t, f.root)
+		s, _ := task.Open(f.root)
+		tk, _ := s.Add(task.AddInput{Title: "typed protected", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(wt, ".claude", "settings.json"), "{\"changed\":true}\n")
+		if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{".claude/settings.json"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if discarded, err := seatcommit.CleanSeat(f.root, "s1", "", nil, time.Now()); err != nil || !discarded {
+			t.Fatalf("archive stopped attempt: discarded=%v err=%v", discarded, err)
+		}
+		if fail {
+			prev := widenRaiseGrowthGate
+			widenRaiseGrowthGate = func(storeSelection, string, string, string, string, []gatestore.PathLink) (string, error) {
+				return "grow-0de97c89a1b2", errors.New("gate store unwritable: disk_full")
+			}
+			t.Cleanup(func() { widenRaiseGrowthGate = prev })
+		}
+		sel := scopedSelection(t, []string{"--project", f.project, "--session", "s"})
+		literal, _ := task.LiteralGlob(".claude/settings.json")
+		data, err := applyLeadWiden(sel, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+		if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate {
+			t.Fatalf("widen = %+v, %v", data, err)
+		}
+		plain, record := splitWidenRule(t, err.Error())
+		want := "the owner's growth gate is raised; the task waits for the answer"
+		if fail {
+			want = "the widening needs the owner's growth gate, and raising it failed; try /widen again"
+		}
+		if plain != want {
+			t.Errorf("fail=%v: the plain line is %q, want %q", fail, plain, want)
+		}
+		if code := widenLineCode(plain); code != "" {
+			t.Errorf("a code above the rule (%q): %q", code, plain)
+		}
+		if fail && !strings.Contains(record, "the gate was not raised: grow-0de97c89a1b2: gate store unwritable: disk_full") {
+			t.Errorf("the raise's error is not below the rule: %q", record)
+		}
 	}
 }

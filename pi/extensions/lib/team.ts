@@ -30,7 +30,7 @@ import type { Config, Runner } from "./hooks.ts";
 import { describe, run } from "./verbs.ts";
 import type { KeyOutcome } from "./keys.ts";
 import { commandsLine } from "./commands.ts";
-import { RULE, sentence } from "./words.ts";
+import { clean, RULE, sentence } from "./words.ts";
 
 export const PLAN_KEY = "amq-squad-plan";
 export const CONFIRM_TTL_MS = 30 * 60 * 1000;
@@ -417,7 +417,9 @@ export class SoloTeam {
 		const record: string[] = [];
 		if (!p) out.push("  No team yet. Tell me what you want built and I will propose a plan.");
 		else {
-			out.push(...p.plan.map((l) => "  " + l));
+			// the plan's lines are the model's free text (Go's oneLine folds
+			// only whitespace): redacted and stripped of control characters
+			out.push(...p.plan.map((l) => "  " + clean(l, PLAN_LINE_MAX)));
 			const confirmed = this.confirmed && this.confirmed.digest === p.digest ? this.confirmed : undefined;
 			if (confirmed) out.push(`  Confirmed at ${confirmed.at.toISOString()} at your pane, witnessed by the lead; the lead starts the team next.`);
 			else out.push("  Confirm it with /confirm (a dialog quotes the plan; there is nothing to type), or on the phone reply yes to the lead's Buzz post of this plan.");
@@ -548,10 +550,13 @@ export class SoloTeam {
 		let p = live[live.length - 1].p;
 		if (live.length > 1) {
 			const newest = [...live].reverse();
-			const labels = newest.map((x, i) => `${goalLine(x.p)}  (proposed ${x.at.toISOString().slice(11, 19)}${i === 0 ? ", the newest" : ""})`);
+			// numbered, so two plans with the same goal in the same second
+			// have two labels, and the pick maps back by its position
+			const labels = newest.map((x, i) => `${i + 1}. ${goalLine(x.p)}  (proposed ${x.at.toISOString().slice(11, 19)}${i === 0 ? ", the newest" : ""})`);
 			const pick = await ctx.ui.select("confirm which plan", labels);
-			if (!pick) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };
-			p = newest[labels.indexOf(pick)].p;
+			const at = pick ? labels.indexOf(pick) : -1;
+			if (at < 0) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };
+			p = newest[at].p;
 		}
 		// p is fixed before the dialog opens: what the owner reads is what
 		// the yes confirms
@@ -572,16 +577,25 @@ export class SoloTeam {
 
 // goalLine is a plan's goal line (team.PlanLines' first line).
 export function goalLine(p: Proposal): string {
-	return p.plan.find((l) => l.startsWith("goal:")) ?? p.plan[0] ?? "a plan with no goal line";
+	return clean(p.plan.find((l) => l.startsWith("goal:")) ?? p.plan[0] ?? "a plan with no goal line", 120);
 }
+
+// PLAN_LINE_MAX is the cut of a plan line on the plan block and in the
+// confirm dialog: long enough for a seat line.
+const PLAN_LINE_MAX = 300;
 
 // quotePlan is what the confirm dialog quotes: the goal line, the session
 // and lead, the seats with their runtimes and models, and a cost line when
 // the plan has one (team.PlanLines prints none today), then what the yes
 // does.
 export function quotePlan(p: Proposal): string {
-	const lines = p.plan.filter((l) => l.startsWith("goal:") || l.startsWith("session ") || l.startsWith("seat ") || l.startsWith("cost"));
-	return [...lines, "", "Yes confirms exactly this plan for 30 minutes; the lead then starts the team. A plan proposed after this dialog opened is not the one confirmed."].join("\n");
+	const lines = p.plan.filter((l) => l.startsWith("goal:") || l.startsWith("session ") || l.startsWith("seat ") || l.startsWith("cost")).map((l) => clean(l, PLAN_LINE_MAX));
+	// the plan's size, counted from its own lines (team.PlanLines' "task N:"
+	// lines and its "files:" line)
+	const tasks = p.plan.filter((l) => /^task \d+: /.test(l)).length;
+	const files = (p.plan.find((l) => l.startsWith("files: ")) ?? "").slice(7).split(", ").filter(Boolean).length;
+	const size = `and ${tasks} ${tasks === 1 ? "task" : "tasks"} over ${files} ${files === 1 ? "file" : "files"}`;
+	return [...lines, size, "", "Yes confirms exactly this plan for 30 minutes; the lead then starts the team. A plan proposed after this dialog opened is not the one confirmed."].join("\n");
 }
 
 // installSoloTeam gives the solo lead the two tools and the plan block; its
