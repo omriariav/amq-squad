@@ -17,7 +17,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Config, Runner } from "./hooks.ts";
 import { commandsLine } from "./commands.ts";
 import { gateLabel, Keys, typedPrefix, type KeyOutcome } from "./keys.ts";
-import { blockWords, clean, decisionWords, RULE, requestWords, seatDoing, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
+import { blockNeedsRecord, blockWords, clean, decisionWords, RULE, requestWords, seatDoing, trainRunWords, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
 import { run } from "./verbs.ts";
 
 export const SCREEN_KEY = "amq-squad-screen";
@@ -81,10 +81,10 @@ export type ScreenStatus = {
 // The decisions that stopped a seat (the seats block's last-stop line).
 const SEAT_REFUSALS = new Set(["roster_launch_failed", "seat_not_up", "seat_launch_failed", "seat_prepare_failed", "seat_request_failed", "seat_refused", "exit_refused", "seat_close_failed", "ledger_tampered"]);
 
-// NEEDS_DETAIL are the block reasons whose words read numbers from the
-// task's own record (`task show --json`'s block_detail): the size cap's
-// counts and caps.
-export const NEEDS_DETAIL = new Set(["size_cap_exceeded"]);
+// The block reasons whose words read the task's own record (`task show
+// --json`'s block_detail) are words.ts blockNeedsRecord's: the size cap's
+// counts and caps, and a reason no table maps (a launch failure's AMQ code
+// is marked in its detail).
 
 function sec(ms: number | null | undefined): string {
 	return typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "-";
@@ -158,7 +158,7 @@ function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined): { l
 		case "pending":
 			return waitWords(t, { max_seats: st.scheduler?.max_seats, usage_limit_until: st.scheduler?.usage_limit_until ?? null, launch: launchCodes(st) });
 		case "blocked":
-			return blockWords(t, d, { launch: launchCodes(st) });
+			return blockWords(t, d ?? {}, { launch: launchCodes(st) });
 		case "completed":
 			return { line: `${t.id} done${title ? `: ${title}` : ""}${pr}` };
 		case "cancelled":
@@ -221,12 +221,15 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 	const current = runs.find((r) => !r.done);
 	const last = runs.find((r) => r.done);
 	out.push("train");
+	// the run's last step in words; the run id (its tail is hex) and the
+	// journal's kind go below the rule
 	const runLine = (label: string, r: TrainRun) =>
-		`  ${label}: ${r.run} ${r.last_kind} ${age(r.last_at, now)} ago, PRs ${r.prs.length ? r.prs.map((n) => "#" + n).join(",") : "-"}, merged ${r.merged.length}`;
+		`  ${label}: ${trainRunWords(r.last_kind)}, ${age(r.last_at, now)} ago; PRs ${r.prs.length ? r.prs.map((n) => "#" + n).join(", ") : "none"}; ${r.merged.length} merged`;
 	if (!current && !last) out.push("  No merge train has run yet.");
 	else {
-		out.push(current ? runLine("current", current) : "  current: none");
-		out.push(last ? runLine("last", last) : "  last: none");
+		out.push(current ? runLine("running", current) : "  running: none");
+		out.push(last ? runLine("last run", last) : "  last run: none");
+		for (const [label, r] of [["running", current], ["last run", last]] as const) if (r) rec(`train ${label}: ${r.run} ${r.last_kind}`);
 	}
 	for (const a of st.train?.alerts ?? []) {
 		// the alert's plain part (above its rule); its kind and the rest go
@@ -396,10 +399,10 @@ export class Screen {
 	}
 
 	// readDetails reads `task show --json` for each blocked task whose words
-	// need its recorded numbers (NEEDS_DETAIL), once per change of the task.
+	// need its record (blockNeedsRecord), once per change of the task.
 	async readDetails(st: ScreenStatus): Promise<void> {
 		for (const t of st.tasks) {
-			if (t.task_state !== "blocked" || !NEEDS_DETAIL.has(t.block_reason) || this.details[t.id]?.at === t.updated_at) continue;
+			if (t.task_state !== "blocked" || !blockNeedsRecord(t.block_reason) || this.details[t.id]?.at === t.updated_at) continue;
 			const r = await this.runner(this.cfg.bin, ["task", "show", t.id, "--json"], { timeoutMs: Math.max(this.cfg.hookTimeoutMs, 30000) });
 			let detail = "";
 			try {

@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { LAUNCH_WORDS, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -129,6 +129,11 @@ function goWarnings(): string[] {
 function goTrainRules(): string[] {
 	return constants("internal/mergetrain/checks.go", /^Rule/);
 }
+// The entry kinds the merge train journals (internal/mergetrain's
+// Entry{Kind: ...}): a run's last_kind in status.
+function goTrainKinds(): string[] {
+	return goFiles("internal/mergetrain").flatMap((f) => [...go(f).matchAll(/Entry\{[^}]*?\bKind:\s*"([a-z][a-z0-9_]*)"/g)].map((m) => m[1]));
+}
 function goRelayNames(): string[] {
 	return [...constants("internal/status/relay.go", /^Relay/), ...constants("internal/buzz/relay.go", /^Relay/)];
 }
@@ -161,6 +166,10 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	const rules = goTrainRules();
 	assert.ok(rules.length >= 11, `the train rules were not found: ${rules}`);
 	for (const r of rules) assert.ok(has(TRAIN_RULE_WORDS, r), `train rule ${r} has no words`);
+	const kinds = goTrainKinds();
+	assert.ok(new Set(kinds).size >= 11, `the train's entry kinds were not found: ${kinds}`);
+	for (const k of kinds) assert.ok(has(TRAIN_KIND_WORDS, k), `train entry kind ${k} has no words`);
+	assert.equal(trainRunWords("made_up_kind"), "its last step is below the line");
 	const relay = goRelayNames();
 	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
 	for (const r of relay) assert.ok(has(RELAY_WORDS, r), `relay refusal ${r} has no words`);
@@ -196,6 +205,33 @@ test("row 7: a launch failure's code as a wait or block reason reads in words", 
 	assert.equal(blocked, "  t9 blocked: its seat's launch failed twice, its proof came after its token expired; fix the cause, then /reset it (or relaunch the roster)");
 });
 
+// Row 7 (Codex on b4df9475): a task still blocked on a launch failure's
+// AMQ code reads the launch guidance from its own record (task show's
+// block_detail, which blockOnLaunchFailure writes and which lasts as long as
+// the block), not from the decision log's tail, which status cuts to its last
+// 30 decisions: with no decision at all, the line still names the launch and
+// its stage. The Go format the words read is launchfail.go's own.
+test("row 7: a launch failure's block reads its guidance from the task's own record", async () => {
+	assert.ok(go("internal/scheduler/launchfail.go").includes('"the launch of seat %s (pool %s) failed %d times in a row with reason %s at stage %s: %s; not retried'), "blockOnLaunchFailure's detail changed form");
+	const doc = { ...fixture, decisions: [], tasks: [{ ...fixture.tasks[0], id: "t9", block_reason: "version_probe_failed", updated_at: "2026-11-01T09:04:00Z" }] };
+	const calls: string[][] = [];
+	const runner = async (_b: string, args: string[]): Promise<RunResult> => {
+		calls.push(args);
+		const detail = "the launch of seat rev-1 (pool codex:gpt-5.6-sol:high) failed 2 times in a row with reason version_probe_failed at stage apply_failed: AMQ refused; not retried: the lead's decision (fix the cause, then x)";
+		const out = args[0] === "status" ? JSON.stringify(doc) : JSON.stringify({ data: { task: { id: "t9", block_detail: detail } } });
+		return { code: 0, stdout: out, stderr: "", timedOut: false, spawnError: "", ms: 1 };
+	};
+	const cfg: Config = { bin: "/opt/amq-squad", amq: "", me: "cto", root: "/r", session: "s", hookTimeoutMs: 1000, holdTimeoutMs: 1000, models: [], lead: true };
+	const screen = new Screen(cfg, runner, () => ({ mtimeMs: 1, size: 1 }));
+	await screen.poll();
+	const lines = renderScreen(screen.last!, now, undefined, screen.details);
+	assert.ok(lines.includes("  t9 blocked: its seat's launch failed twice, AMQ's apply failed (AMQ's reason is below the line); fix the cause, then /reset it (or relaunch the roster)"), lines.join("\n"));
+	assert.ok(lines.slice(lines.indexOf(RULE)).includes("  t9 blocked: version_probe_failed at stage apply_failed"));
+	assert.deepEqual(calls[1], ["task", "show", "t9", "--json"]);
+	// a seat's own free-text block: its record names no launch, the fallback
+	assert.equal(blockWords({ id: "t9", task_state: "blocked", block_reason: "needs_decision" }, { block_detail: "the seat needs a decision" }).line, "t9 blocked; its reason is below the line");
+});
+
 // Row 7 (Codex on ed3d1e65): a reason named for an Object property is no
 // entry of any table: "constructor", "__proto__" and their kind render the
 // fallback line, and the screen renders.
@@ -219,6 +255,7 @@ test("row 7: a reason named constructor or __proto__ renders the fallback line",
 		assert.ok(lines.some((l) => l.includes("the relay refused a reply")), r);
 		assert.equal(seatDoing({ handle: "x", state: "online", reason_code: r }, undefined).text, "waiting", r);
 		assert.equal(decisionWords({ kind: r, seat: "x" }), "a seat stopped; the record is below the line", r);
+		assert.equal(trainRunWords(r), "its last step is below the line", r);
 	}
 });
 
@@ -409,7 +446,7 @@ test("row 4: no line above the rule carries a snake_case code or a hex run; the 
 	const seats = [...Object.keys(SEAT_DOING), "made_up_code"].map((c, i) => ({ ...fixture.seats[1], handle: `s${i}`, reason_code: c, task_id: "b0", warnings: [] }));
 	seats.push({ ...fixture.seats[0], handle: "warned", reason_code: "idle", task_id: "", warnings: [...goWarnings(), "made_up_warning"].map((c) => `${c}: detail_code 0de97c89a1b2c3d4`) });
 	const decisions = [...Object.keys(DECISION_WORDS), "made_up_kind"].map((kind) => ({ at: "2026-11-01T09:00:00Z", kind, seat: "dev", task_id: "t1", reason: "ledger_tampered at gone", reason_code: "" }));
-	const runs = [{ run: "r9", started_at: "", last_at: "2026-11-01T09:00:00Z", last_kind: "refusal", repository: "o/a", base: "main", prs: [9], merged: [], refusal: "refusal PR #9 task_scope,size_cap: src/x_y.go", done: false, dry_run: false }];
+	const runs = [{ run: "mt-20261101T090000Z-a1b2c3d4", started_at: "", last_at: "2026-11-01T09:00:00Z", last_kind: "merge_intent", repository: "o/a", base: "main", prs: [9], merged: [], refusal: "refusal PR #9 task_scope,size_cap: src/x_y.go", done: false, dry_run: false }];
 	const requests = Object.keys(RELAY_WORDS).map((r, i) => ({ request_id: `q-0de97c89a1b${i}`, thread: "cockpit/q", lead: "cto", turns: 1, posts: 0, relayed_at: null, refused: [r, "made_up_relay"], closed: false, updated_at: "" }));
 	const doc: ScreenStatus = { ...fixture, tasks, seats, decisions, requests, train: { runs, alerts: [{ kind: "gate_store_unreadable", detail: "a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line\n\n----------\nthe gate store /r/s-0de97c89a1b2/gates could not be read (x_y)" }] }, gates: [{ id: "g1", action_class: "github_release", target_digest: "sha256:8502aa0011223344", state: "open" }], warnings: ["gate store: /r/gates/abcdef0123456789.json: unreadable"] };
 	const sweep = (lines: string[], what: string) => {
@@ -418,7 +455,8 @@ test("row 4: no line above the rule carries a snake_case code or a hex run; the 
 	const screen = renderScreen(doc, now);
 	sweep(screen, "the screen");
 	const rec = screen.slice(screen.indexOf(RULE));
-	for (const code of ["needs_decision", "made_up_wait", "made_up_code", "8502aa0011223344", "launch_budget_exceeded", "made_up_warning", "relay_refused_gate_shape", "task_scope,size_cap", "gate_store_unreadable"]) assert.ok(rec.some((l) => l.includes(code)), `${code} is not below the rule`);
+	for (const code of ["needs_decision", "made_up_wait", "made_up_code", "8502aa0011223344", "launch_budget_exceeded", "made_up_warning", "relay_refused_gate_shape", "task_scope,size_cap", "gate_store_unreadable", "mt-20261101T090000Z-a1b2c3d4 merge_intent"]) assert.ok(rec.some((l) => l.includes(code)), `${code} is not below the rule`);
+	assert.ok(screen.includes("  running: merging a PR (the merge is pending), 5m ago; PRs #9; 0 merged"), screen.join("\n"));
 	// each stop decision kind (the newest shows): its words above, its record below
 	for (const d of decisions.filter((x) => Object.hasOwn(DECISION_WORDS, x.kind))) {
 		const one = renderScreen({ ...doc, decisions: [d] }, now);

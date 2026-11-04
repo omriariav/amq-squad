@@ -293,11 +293,38 @@ export function blockWords(t: TaskWords, d: BlockDetail = {}, c: WaitContext = {
 		const [happened, todo] = f(d);
 		return { line: `${t.id} blocked: ${happened}; ${todo}` };
 	}
+	// the task's own record marks a launch failure's block: Go's
+	// blockOnLaunchFailure writes "the launch of seat ... failed N times in a
+	// row with reason R at stage S: ..." as its block_detail (read from task
+	// show), which lasts as long as the block, unlike the decision log's tail
+	const rec = launchBlock(d.block_detail, r);
+	if (rec && !own(LAUNCH_WORDS, r)) {
+		const at = own(LAUNCH_WORDS, rec.stage);
+		return { line: `${t.id} blocked: its seat's launch failed twice${at ? `, ${at}` : ""} (AMQ's reason is below the line); ${LAUNCH_FIX}`, record: `${t.id} blocked: ${clean(r, 120)} at stage ${clean(rec.stage, 60)}` };
+	}
 	// a repeated launch failure's code (launchfail.go blockOnLaunchFailure)
 	const l = own(LAUNCH_WORDS, r);
 	if (l) return { line: `${t.id} blocked: its seat's launch failed twice, ${l}; ${LAUNCH_FIX}` };
 	if (c.launch?.has(r)) return { line: `${t.id} blocked: its seat's launch failed twice (AMQ's reason is below the line); ${LAUNCH_FIX}`, record: `${t.id} blocked: ${clean(r, 120)}` };
 	return { line: `${t.id} blocked; its reason is below the line`, record: `${t.id} blocked: ${clean(r, 120) || "no reason recorded"}` };
+}
+
+// LAUNCH_BLOCK_DETAIL is blockOnLaunchFailure's block_detail
+// (internal/scheduler launchfail.go): the reason and the stage it names.
+const LAUNCH_BLOCK_DETAIL = /^the launch of seat \S+ \(pool \S+\) failed \d+ times in a row with reason (\S+) at stage (\S+):/;
+
+// launchBlock is the launch failure a block's own record names, when its
+// detail is blockOnLaunchFailure's for that same reason.
+export function launchBlock(detail: string | undefined, reason: string): { stage: string } | undefined {
+	const m = LAUNCH_BLOCK_DETAIL.exec(detail ?? "");
+	return m && m[1] === reason ? { stage: m[2] } : undefined;
+}
+
+// blockNeedsRecord reports whether a block's words read the task's own
+// record (task show's block_detail): the size cap's numbers, and a reason
+// no table maps, which may be a launch failure's AMQ code.
+export function blockNeedsRecord(reason: string): boolean {
+	return reason === "size_cap_exceeded" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
 }
 
 // blockHappened is a block's first half alone (a dialog label).
@@ -446,6 +473,29 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	pr_head_moved: ["its head moved after the check", "nothing to do; the train checks it again"],
 	history_incomplete: ["its push history could not be read whole", "the train tries again; ask the owner if it repeats"],
 };
+
+// TRAIN_KIND_WORDS maps each entry kind the merge train journals
+// (internal/mergetrain's Entry kinds; a run's last_kind in status) to what
+// the run did last.
+export const TRAIN_KIND_WORDS: Record<string, string> = {
+	merge_intent: "merging a PR (the merge is pending)",
+	merge: "merged a PR",
+	refusal: "refused a PR",
+	rebase: "rebased a PR",
+	rebind: "bound a rebased PR to its task again",
+	batch: "planned a batch",
+	plan: "finished a dry run",
+	protection: "read the branch protection",
+	alert: "raised an alert",
+	alert_cleared: "cleared an alert",
+	stop: "stopped",
+};
+
+// trainRunWords is what a run did last, in words; an unmapped kind says
+// only that it is below the line.
+export function trainRunWords(kind: string): string {
+	return own(TRAIN_KIND_WORDS, kind) ?? "its last step is below the line";
+}
 
 // trainStop is the train's stop line from a run's refusal ("refusal PR #N
 // RULE[,RULE]: detail", internal/status screen.go): "the merge train

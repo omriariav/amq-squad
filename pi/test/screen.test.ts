@@ -56,8 +56,8 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	assert.ok(tasks.includes("  t1 blocked: the commit step refused it, it changed files outside its task; accept them with /widen or send it back with /reset"), tasks.join("\n"));
 	assert.ok(tasks.includes("  t2 in progress on scribe: Write the notes  PR #812"), tasks.join("\n"));
 	const train = block(lines, "train");
-	assert.ok(train.some((l) => l.startsWith("  current: r2 refusal")), train.join("\n"));
-	assert.ok(train.some((l) => l.startsWith("  last: r1 merge")), train.join("\n"));
+	assert.ok(train.includes("  running: refused a PR, 13m ago; PRs #811, #812; 1 merged"), train.join("\n"));
+	assert.ok(train.includes("  last run: merged a PR, 62m ago; PRs #810; 1 merged"), train.join("\n"));
 	assert.ok(train.includes("    ! tag v1.2.0 has no accepted gate"), train.join("\n"));
 	assert.equal(train.at(-1), "  the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
 	const waiting = block(lines, "waiting on you (1)");
@@ -67,6 +67,7 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	assert.ok(rec.includes("  exit_refused: old-dev ledger_tampered at gone"), rec.join("\n"));
 	assert.ok(rec.includes("  ungated_tag"), rec.join("\n"));
 	assert.ok(rec.includes("  train r2: refusal PR #812 ci_green: a required check failed"), rec.join("\n"));
+	assert.ok(rec.includes("  train running: r2 refusal") && rec.includes("  train last run: r1 merge"), rec.join("\n"));
 	assert.ok(rec.some((l) => l.startsWith("  qa: launch_budget_exceeded: 12.400 s from the start to seat live")), rec.join("\n"));
 	assert.ok(rec.includes("  g1  tag  8502aa0011223344  age 6m  waiting on Buzz"), rec.join("\n"));
 	assert.ok(!lines.some((l) => l.includes("g0")), "an accepted gate is not shown");
