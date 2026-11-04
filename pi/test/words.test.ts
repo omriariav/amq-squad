@@ -235,6 +235,24 @@ function goDecisionKinds(): { kinds: string[]; unresolved: string[] } {
 	return { kinds: [...new Set(kinds)].sort(), unresolved };
 }
 
+// goDecisionFields is, per decision kind, whether any of its literals in
+// Go records a Seat and a TaskID.
+function goDecisionFields(): Map<string, { seat: boolean; task: boolean }> {
+	const pkgs = ["internal/scheduler", "internal/schedproc", "internal/cli"];
+	const consts = new Map<string, string>();
+	for (const f of pkgs.flatMap(goFiles)) for (const m of go(f).matchAll(/^\s*(?:const\s+)?(\w+)(?:\s+[\w.]+)?\s*=\s*"([a-z][a-z0-9_]*)"/gm)) consts.set(m[1], m[2]);
+	const out = new Map<string, { seat: boolean; task: boolean }>();
+	for (const f of pkgs.flatMap(goFiles)) {
+		for (const d of decisionLiterals(go(f))) {
+			const kind = d.kind.startsWith('"') ? d.kind.slice(1, -1) : consts.get(d.kind.split(".").pop()!);
+			if (!kind) continue;
+			const was = out.get(kind) ?? { seat: false, task: false };
+			out.set(kind, { seat: was.seat || d.seat, task: was.task || d.task });
+		}
+	}
+	return out;
+}
+
 // decisionKindFields is the value of each Decision{...} literal's own Kind
 // field in Go source (Codex on #866: a non-greedy match stopped at a brace
 // inside a string): it walks each literal with the brace depth, skipping
@@ -242,10 +260,19 @@ function goDecisionKinds(): { kinds: string[]; unresolved: string[] } {
 // the literal's own depth only (a nested struct's Kind is not the
 // decision's).
 function decisionKindFields(src: string): string[] {
-	const out: string[] = [];
+	return decisionLiterals(src).map((d) => d.kind);
+}
+
+// decisionLiterals is each Decision{...} literal's own Kind and whether it
+// records a Seat and a TaskID (at the literal's own depth).
+function decisionLiterals(src: string): { kind: string; seat: boolean; task: boolean }[] {
+	const out: { kind: string; seat: boolean; task: boolean }[] = [];
 	for (const m of src.matchAll(/\bDecision\{/g)) {
 		let depth = 1;
 		let i = m.index! + m[0].length;
+		let kind = "";
+		let seat = false;
+		let task = false;
 		while (i < src.length && depth > 0) {
 			const c = src[i];
 			if (c === '"' || c === "'") {
@@ -265,13 +292,17 @@ function decisionKindFields(src: string): string[] {
 				depth--;
 				i++;
 			} else {
-				const k = depth === 1 && /[^\w.]/.test(src[i - 1] ?? " ") ? /^Kind:\s*("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.]*)/.exec(src.slice(i, i + 200)) : null;
+				const own = depth === 1 && /[^\w.]/.test(src[i - 1] ?? " ");
+				const k = own ? /^Kind:\s*("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.]*)/.exec(src.slice(i, i + 200)) : null;
+				if (own && src.startsWith("Seat:", i)) seat = true;
+				if (own && src.startsWith("TaskID:", i)) task = true;
 				if (k) {
-					out.push(k[1]);
+					kind = k[1];
 					i += k[0].length;
 				} else i++;
 			}
 		}
+		if (kind) out.push({ kind, seat, task });
 	}
 	return out;
 }
@@ -299,8 +330,16 @@ test("row 7: every decision kind Go writes is a stop with words or a routine rec
 	assert.ok(kinds.includes("legacy_merge_head_missing") && kinds.includes("seat_launch_failed") && kinds.includes("up_stopped_lead"), kinds.join(" "));
 	for (const k of kinds) assert.notEqual(decisionKind(k), "unknown", `decision kind ${k} is neither a stop with words nor routine`);
 	for (const k of Object.keys(ROUTINE_DECISIONS)) assert.ok(!Object.hasOwn(DECISION_WORDS, k), `${k} is both a stop and routine`);
-	// Codex on #866: each sentence names the field Go records; a task's id
-	// never stands in a seat's place
+	// Codex on #866: each sentence names every field Go records for its kind
+	// (the scan's Seat and TaskID of each literal, read from Go), and a
+	// task's id never stands in a seat's place
+	const recorded = goDecisionFields();
+	for (const k of Object.keys(DECISION_WORDS)) {
+		const f = recorded.get(k) ?? { seat: false, task: false };
+		const l = decisionWords({ kind: k, seat: f.seat ? "seatX" : undefined, task_id: f.task ? "taskY" : undefined });
+		if (f.seat) assert.ok(l.includes("seatX"), `${k} records a seat its sentence drops: ${l}`);
+		if (f.task) assert.ok(l.includes("taskY"), `${k} records a task its sentence drops: ${l}`);
+	}
 	for (const k of Object.keys(DECISION_WORDS)) {
 		const l = decisionWords({ kind: k, task_id: "t9" });
 		assert.doesNotMatch(l, /seat t9/, `${k} names the task as a seat: ${l}`);
@@ -633,17 +672,27 @@ test("row 4: no line above the rule carries a snake_case code or a hex run; the 
 	// allowed above the rule; the fixture's handles include a snake_case one
 	// and a hex-looking one
 	const handlesOf = (d: ScreenStatus) => d.seats.map((x) => x.handle);
+	// a whole token equal to a handle (codeIn's own separators and its strip
+	// of . ` * at a token's ends), never a substring of a longer token
+	const SEP = /([\s,;:()"'[\]{}<>!?]+)/;
 	const sweep = (lines: string[], what: string, handles: string[] = handlesOf(doc)) => {
 		for (const l of plainAbove(lines)) {
-			const masked = handles.reduce((acc, h) => acc.split(h).join("seat"), l);
+			const masked = l
+				.split(SEP)
+				.map((t) => (handles.includes(t.replace(/^[.`*]+|[.`*]+$/g, "")) ? "" : t))
+				.join("");
 			assert.equal(codeIn(masked), "", `${what}: a code above the rule: ${JSON.stringify(l)}\n${lines.join("\n")}`);
 		}
 	};
 	const screen = renderScreen(doc, now);
 	sweep(screen, "the screen");
 	assert.ok(screen.some((l) => l.startsWith("  senior_dev ")) && screen.some((l) => l.startsWith("  1deadbeef ")), "the handles are not on their seat lines");
-	// the allowance is for handles only: the same tokens that are no handle fail
-	assert.notEqual(codeIn("seat senior_dev did not stop cleanly".replace("senior_dev", "not_a_handle")), "");
+	// the allowance is for whole handle tokens only: a longer token that
+	// carries a handle, or a token that is no handle, fails the sweep itself
+	for (const bad of ["seat senior_dev1 did not stop cleanly", "seat a1deadbeef0 did not stop cleanly", "seat not_a_handle did not stop cleanly"]) {
+		assert.throws(() => sweep(["header", `  ${bad}`, "/add"], bad), /a code above the rule/, bad);
+	}
+	sweep(["header", "  seat senior_dev did not stop cleanly; seat 1deadbeef's process is gone", "/add"], "whole handles");
 	const rec = screen.slice(screen.indexOf(RULE));
 	for (const code of ["needs_decision", "made_up_wait", "made_up_code", "8502aa0011223344", "launch_budget_exceeded", "made_up_warning", "relay_refused_gate_shape", "task_scope,size_cap", "gate_store_unreadable", "mt-20261101T090000Z-a1b2c3d4 merge_intent"]) assert.ok(rec.some((l) => l.includes(code)), `${code} is not below the rule`);
 	assert.ok(screen.includes("  running: merging a PR (the merge is pending), 5m ago; PRs #9; 0 merged"), screen.join("\n"));

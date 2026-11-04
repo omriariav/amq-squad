@@ -380,12 +380,12 @@ function seatOf(d: DecisionWho): string {
 export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]> = {
 	roster_launch_failed: () => ["the roster launch failed", "ask the lead to relaunch the roster"],
 	seat_not_up: (d) => [`${seatOf(d)} did not come up`, "ask the lead to relaunch the roster"],
-	seat_launch_failed: (d) => [`${seatOf(d)}'s launch failed`, "ask the lead to relaunch the roster"],
-	seat_prepare_failed: (d) => [`${seatOf(d)} could not be prepared`, "ask the lead to relaunch the roster"],
+	seat_launch_failed: (d) => [`${seatOf(d)}'s launch failed${d.task_id ? ` for ${d.task_id}` : ""}`, "ask the lead to relaunch the roster"],
+	seat_prepare_failed: (d) => [`${seatOf(d)} could not be prepared${d.task_id ? ` for ${d.task_id}` : ""}`, "ask the lead to relaunch the roster"],
 	// Go records the task and no seat (scheduler.go): the sentence names it
 	seat_request_failed: (d) => [`a seat could not be requested${d.task_id ? ` for ${d.task_id}` : ""}`, "check the task's pool, or /reset it onto another"],
 	seat_refused: (d) => [`${seatOf(d)} was refused`, "ask the lead why; the record is below the line"],
-	exit_refused: (d) => [`${seatOf(d)} did not stop cleanly`, "ask the owner to inspect it before the seat is relaunched"],
+	exit_refused: (d) => [`${seatOf(d)} did not stop cleanly${d.task_id ? ` after ${d.task_id}` : ""}`, "ask the owner to inspect it before the seat is relaunched"],
 	seat_close_failed: (d) => [`${seatOf(d)} could not be closed`, "close its pane by hand"],
 	ledger_tampered: () => ["the ledger does not verify", "ask the owner to inspect it"],
 	scheduler_stopped: () => ["the scheduler stopped", "start the team again with amq-squad up"],
@@ -401,10 +401,10 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	seat_liveness_unknown: (d) => [`${seatOf(d)}'s liveness cannot be read`, "look at its pane"],
 	// Go records the task and no seat (scheduler.go seat_request_expired)
 	seat_request_expired: (d) => [`the seat request for ${d.task_id || "a task"} expired before a seat came up`, "ask the lead to relaunch the roster"],
-	seat_replacement_needs_relaunch: (d) => [`every seat of a pool is gone${d.seat ? ` (${d.seat})` : ""}`, "ask the lead to relaunch the roster"],
+	seat_replacement_needs_relaunch: (d) => [`every seat of ${d.task_id ? `${d.task_id}'s pool` : "a pool"} is gone${d.seat ? ` (${d.seat})` : ""}`, "ask the lead to relaunch the roster"],
 	exits_ledger_unwritable: () => ["the scheduler cannot write its exits ledger", "free the disk or fix its permissions, then start the team again"],
 	doorbell_failed: (d) => [`${seatOf(d)} could not be rung for ${d.task_id || "its task"}`, "ring it by hand"],
-	lead_notice_failed: () => ["the lead could not be told of a decision", "read the record below the line"],
+	lead_notice_failed: (d) => [`the lead could not be told of a decision${d.task_id ? ` on ${d.task_id}` : ""}`, "read the record below the line"],
 	launch_failures_unread: () => ["the scheduler could not read its launch failures", "nothing to do unless launches keep failing"],
 	lead_unknown: () => ["the scheduler does not know its lead", "start the team again with amq-squad up"],
 	routing_flush_failed: () => ["the router could not write its records", "free the disk or fix its permissions"],
