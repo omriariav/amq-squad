@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
@@ -43,59 +47,89 @@ func splitWidenRule(t *testing.T, msg string) (string, string) {
 	return plain, record
 }
 
-// Brief 3.1.1-3, row 4 (the widenRefused Error form): a refused widening
-// says what happened and what to do above the rule; the reason code and the
-// detail, which carries the task's state and block reason, go below it.
-// Reverted (the `widen refused (%s): %s` form), the code is the first word.
+// widenThroughTheVerb runs `task widen` for a task of a fresh store, over
+// the scheduler's decision socket (the test's lead server, its sender the
+// lead's pane when fromLead), and returns the verb's refusal. The task is
+// blocked with reason (and, for outside_declared_files, no recorded paths)
+// before the widening. The refusal comes from the production path: the
+// scheduler's widenDecision (applyLeadWiden, widenRefused) and the verb's
+// own refusal of the reply (task_widen.go, runTaskWiden).
+func widenThroughTheVerb(t *testing.T, reason string, fromLead bool) (string, string) {
+	t.Helper()
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	proj, _ := filepath.EvalSymlinks(t.TempDir())
+	s, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, err := s.Add(task.AddInput{Title: "x", Class: "implement", DeclaredFiles: []string{"a.go"}, ProjectPath: proj}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Block(tk.ID, "", reason, "a detail 0de97c89a1b2c3d4", task.RouteLead, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	prev := taskWidenSend
+	taskWidenSend = func(string, []string) ([]byte, error) { return nil, nil }
+	t.Cleanup(func() { taskWidenSend = prev })
+	leadServer(t, storeSelection{store: s, root: root, release: func() {}}, proj, fromLead)
+	_, _, err = captureOutput(t, func() error {
+		return runTaskWiden([]string{tk.ID, "--root", root, "--path", "b.go", "--reason", "r"}, os.Stdout)
+	})
+	var coded *codedExitError
+	if !errors.As(err, &coded) {
+		t.Fatalf("the verb did not refuse with its coded error: %v", err)
+	}
+	return tk.ID, coded.msg
+}
+
+// Brief 3.1.1-3, row 4 (the widenRefused Error form, task_widen.go): a
+// widening the scheduler refuses says what happened and what to do above the
+// rule; the reason code and the detail, which carries the task's state and
+// block reason, go below it. Through the verb: the scheduler's reply detail
+// is widenRefused's text, and the verb keeps its plain line. Reverted (the
+// `widen refused (%s): %s` form), the verb's plain line is the socket's
+// generic one, and this fails.
 func TestTheWidenRefusalPutsItsCodeBelowTheRule(t *testing.T) {
-	_, err := validateBlockedWiden(task.Task{ID: "t9", State: task.StateBlocked, BlockReason: "needs_decision"}, []string{"b.go"})
-	if err == nil {
-		t.Fatal("a widen of a task blocked needs_decision was not refused")
-	}
-	msgs := []string{err.Error()}
-	for _, code := range []string{"widen_invalid", "widen_not_requested", "widen_paths_missing", "widen_paths_mismatch", task.RefusalFileLock, task.ReasonGrowthGateRequired, task.RefusalSelfWiden, "made_up_refusal"} {
-		msgs = append(msgs, (&widenRefused{code: code, msg: "task t9 (state in_progress, reason needs_decision), snapshot 0de97c89a1b2c3d4"}).Error())
-	}
-	for _, msg := range msgs {
+	for _, c := range []struct{ reason, code, plain string }{
+		{"needs_decision", "widen_not_requested", widenPlain("widen_not_requested")},
+		// the commit step's block with no paths recorded
+		{"outside_declared_files", "widen_paths_missing", widenPlain("widen_paths_missing")},
+	} {
+		id, msg := widenThroughTheVerb(t, c.reason, true)
 		plain, record := splitWidenRule(t, msg)
-		if code := widenLineCode(plain); code != "" {
-			t.Errorf("a code above the rule (%q): %q", code, plain)
+		if want := "task widen " + id + " was refused: " + c.plain; plain != want {
+			t.Errorf("%s: the plain line is %q, want %q", c.code, plain, want)
 		}
-		if !strings.HasPrefix(record, "widen refused (") {
-			t.Errorf("the code is not below the rule: %q", record)
+		if code := widenLineCode(plain); code != "" {
+			t.Errorf("%s: a code above the rule (%q): %q", c.code, code, plain)
+		}
+		if !strings.Contains(record, "refused ("+c.code+"): ") || !strings.Contains(record, "widen refused ("+c.code+"): ") {
+			t.Errorf("%s: the codes are not below the rule: %q", c.code, record)
 		}
 	}
-	if !strings.Contains(msgs[0], "(state blocked, reason needs_decision)") {
-		t.Errorf("the record lost the state and the reason: %q", msgs[0])
+	_, msg := widenThroughTheVerb(t, "needs_decision", true)
+	if !strings.Contains(msg, "(state blocked, reason needs_decision)") {
+		t.Errorf("the record lost the state and the reason: %q", msg)
 	}
 }
 
-// Brief 3.1.1-3, row 4 (the socket reply's detail, the verb's refusal): the
-// verb's refusal keeps the widening's plain line above the rule, or names
-// the socket's refusal in words, and puts the code and the detail below.
-// Reverted (`task widen %s refused (%s): %s`), the code is on the first line.
+// Brief 3.1.1-3, row 4 (the verb's refusal of the socket reply,
+// task_widen.go's runTaskWiden): a refusal the socket gives before any
+// widening (the sender is not the lead's pane) is named in words above the
+// rule, with the code and the detail below. Reverted (`task widen %s
+// refused (%s): %s` at the call), the code is on the first line and there is
+// no rule.
 func TestTheWidenVerbsRefusalPutsItsCodeBelowTheRule(t *testing.T) {
-	inner := (&widenRefused{code: "widen_not_requested", msg: "task t9 is not blocked (state blocked, reason needs_decision)"}).Error()
-	for _, reply := range []schedproc.DecideReply{
-		{Code: "widen_not_requested", Detail: inner},
-		{Code: schedproc.RefusedNotLead, Detail: "pid 4242 does not descend from the lead's pane %3 (origin_unknown at hop 2)"},
-		{Code: schedproc.RefusedStarting, Detail: "the scheduler is starting: its decision socket opens once the exits_ledger is loaded"},
-		{Code: "not_squad", Detail: "the task is not in this squad's store: task t9: not_found"},
-		{Code: "widen_failed", Detail: "open /r/tasks/0de97c89a1b2c3d4.json: no such file"},
-	} {
-		msg := widenReplyRefusal("t9", reply)
-		plain, record := splitWidenRule(t, msg)
-		if strings.Contains(plain, "\n") {
-			t.Errorf("the plain part is more than one line: %q", plain)
-		}
-		if !strings.HasPrefix(plain, "task widen t9 was refused: ") {
-			t.Errorf("the plain line does not say what was refused: %q", plain)
-		}
-		if code := widenLineCode(plain); code != "" {
-			t.Errorf("%s: a code above the rule (%q): %q", reply.Code, code, plain)
-		}
-		if !strings.HasPrefix(record, "refused ("+reply.Code+"): ") {
-			t.Errorf("%s: the code is not below the rule: %q", reply.Code, record)
-		}
+	id, msg := widenThroughTheVerb(t, "outside_declared_files", false)
+	plain, record := splitWidenRule(t, msg)
+	if want := "task widen " + id + " was refused: " + widenReplyPlain(schedproc.RefusedNotLead); plain != want {
+		t.Errorf("the plain line is %q, want %q", plain, want)
+	}
+	if code := widenLineCode(plain); code != "" {
+		t.Errorf("a code above the rule (%q): %q", code, plain)
+	}
+	if !strings.HasPrefix(record, "refused ("+schedproc.RefusedNotLead+"): ") {
+		t.Errorf("the code is not below the rule: %q", record)
 	}
 }

@@ -53,7 +53,7 @@ type TaskRow = { id: string; title?: string; task_state: string; lease_holder: s
 // before 3.1.1.
 type GateRow = { id: string; action_class: string; target_digest: string; state: string; question?: string };
 type Attention = { kind: string; subject: string; gate_id: string; since: string };
-type DecisionRow = { at: string; kind: string; seat: string; task_id: string; reason: string; reason_code: string };
+type DecisionRow = { at: string; kind: string; seat: string; task_id: string; reason: string; reason_code: string; stage?: string };
 // brief 31-4: a phone request of the lead reply relay
 type RequestRow = { request_id: string; thread: string; lead: string; turns: number; posts: number; relayed_at: string | null; refused: string[]; closed: boolean; updated_at: string };
 type TrainRun = { run: string; last_kind: string; last_at: string; prs: number[]; merged: number[]; refusal: string; done: boolean };
@@ -137,6 +137,18 @@ function newestSeatStop(st: ScreenStatus): { line: string; record: string } | un
 
 // taskLine is one task in words: in progress on its seat, waiting and on
 // what, blocked with what happened and what to do, held, done or cancelled.
+// launchCodes are the codes the decision log recorded for failed seat
+// launches (seat_launch_failed, and a launch failure's block): a wait or
+// block reason among them reads as a launch failure, AMQ's codes included.
+function launchCodes(st: ScreenStatus): Set<string> {
+	const out = new Set<string>();
+	for (const d of st.decisions ?? []) {
+		if (d.kind !== "seat_launch_failed" && !(d.kind === "blocked" && d.stage)) continue;
+		for (const c of [d.reason_code, d.stage, d.kind === "blocked" ? d.reason : ""]) if (c) out.add(c);
+	}
+	return out;
+}
+
 function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined): { line: string; record?: string } {
 	const pr = t.pr_number ? `  PR #${t.pr_number}` : "";
 	const title = clean(t.title);
@@ -144,9 +156,9 @@ function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined): { l
 		case "in_progress":
 			return { line: `${t.id} in progress on ${t.lease_holder || "a seat"}${title ? `: ${title}` : ""}${pr}` };
 		case "pending":
-			return waitWords(t, { max_seats: st.scheduler?.max_seats, usage_limit_until: st.scheduler?.usage_limit_until ?? null });
+			return waitWords(t, { max_seats: st.scheduler?.max_seats, usage_limit_until: st.scheduler?.usage_limit_until ?? null, launch: launchCodes(st) });
 		case "blocked":
-			return blockWords(t, d);
+			return blockWords(t, d, { launch: launchCodes(st) });
 		case "completed":
 			return { line: `${t.id} done${title ? `: ${title}` : ""}${pr}` };
 		case "cancelled":

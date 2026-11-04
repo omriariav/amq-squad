@@ -44,6 +44,13 @@ export function codeIn(line: string): string {
 	return hex ? hex[0] : "";
 }
 
+// own is a table's entry for a key, never an inherited property (Codex on
+// ed3d1e65: a reason named "constructor" or "__proto__" found Object's own
+// and broke the render); every table lookup goes through it.
+export function own<T>(table: Record<string, T>, key: string | undefined): T | undefined {
+	return key !== undefined && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 // The parts of a status task row the words read.
 export type TaskWords = {
 	id: string;
@@ -60,7 +67,10 @@ export type TaskWords = {
 
 // WaitContext is what a wait's words read beyond the task row: the
 // scheduler's lease cap and usage-limit window (status's scheduler block).
-export type WaitContext = { max_seats?: number; usage_limit_until?: string | null };
+// launch holds the codes the decision log recorded for failed seat launches
+// (seat_launch_failed's reason code and stage): a wait or block reason
+// among them is a launch failure even when it is AMQ's own code.
+export type WaitContext = { max_seats?: number; usage_limit_until?: string | null; launch?: Set<string> };
 
 // The dependency-merge wait (internal/task DependencyMergeWait, #859):
 // status composes it in words from the recorded id and PR number, and the
@@ -92,9 +102,13 @@ export const WAIT_WORDS: Record<string, (t: TaskWords, c: WaitContext) => string
 export function waitWords(t: TaskWords, c: WaitContext = {}): { line: string; record?: string } {
 	const r = t.wait_reason ?? "";
 	if (DEPENDENCY_MERGE.test(r)) return { line: `${t.id} ${r}` };
-	const f = WAIT_WORDS[r];
-	if (!f) return { line: `${t.id} waiting`, record: `${t.id} waits: ${r}` };
-	return { line: `${t.id} waiting: ${f(t, c)}` };
+	const f = own(WAIT_WORDS, r);
+	if (f) return { line: `${t.id} waiting: ${f(t, c)}` };
+	// a launch failure's code (internal/scheduler launchfail.go waitForSeat)
+	const l = own(LAUNCH_WORDS, r);
+	if (l) return { line: `${t.id} waiting: its seat's launch failed, ${l}; ${LAUNCH_RETRY}` };
+	if (c.launch?.has(r)) return { line: `${t.id} waiting: its seat's launch failed (AMQ's reason is below the line); ${LAUNCH_RETRY}`, record: `${t.id} waits: ${clean(r, 120)}` };
+	return { line: `${t.id} waiting`, record: `${t.id} waits: ${clean(r, 120)}` };
 }
 
 // BlockDetail is what a block's words read from the task's own record
@@ -117,7 +131,6 @@ export function sizeCap(detail: string | undefined): string {
 
 const COMMIT = "the commit step refused it";
 const RESET = "send it back with /reset";
-const LAUNCH = "its seat's launch failed";
 
 // BLOCK_WORDS maps each block reason the scheduler, the commit step, the
 // router and the task store write (the table words.test.ts checks against
@@ -137,6 +150,11 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	pr_bound_elsewhere: () => ["an open PR on its branch belongs to another task", "close that PR, then /reset it"],
 	recorded_diff_mismatch: () => ["the commits ledger and the commit disagree", "ask the owner to inspect the commits ledger"],
 	lease_task_mismatch: () => ["its seat's lease is for another task", RESET],
+	evidence_ref_symbolic: () => ["its evidence ref is a symbolic link", "ask the owner to inspect the evidence refs"],
+	// the store's re-pin refusal (task lease.go) and the router's open
+	// refusal (routing open.go)
+	repin_after_attempt: () => ["its pool cannot change after its first attempt", "reset it on its own pool"],
+	routing_invalid: () => ["the routing table could not be read", "ask the owner to fix the routing table"],
 	// two deferrals of the step (commit.go), mapped so a block that ever
 	// carries one still reads in words
 	commit_cancelled: () => ["the task was cancelled while its commit step ran", "nothing to do unless it should run again (/reset)"],
@@ -161,18 +179,103 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	// the scheduler (internal/scheduler hooks.go, roster.go) and the router
 	// (internal/routing)
 	seat_replacement_needs_relaunch: () => ["every seat of its pool is gone", "ask the lead to relaunch the roster"],
-	seat_replacement_resource_present: () => ["a gone seat's pane is still open, so no seat can replace it", "close that pane, then ask the lead to relaunch"],
-	binding_present_without_resumable_conversation: () => ["its seat could not resume its conversation", "ask the lead to relaunch the roster"],
 	task_branch_unprepared: () => ["its seat could not be put on the task's branch", RESET],
 	retries_exhausted: () => ["every retry failed", "/reset it onto another pool"],
 	class_unknown: () => ["its class is not in the routing table", "add it again with a known class"],
 	declared_tree_unchecked: () => ["its declared files could not be checked", RESET],
 	pin_unresolved: () => ["the pool it is pinned to cannot run its class", "/reset it onto another pool"],
 	history_tampered: () => ["the routing history does not verify", "ask the owner to inspect it"],
-	// a repeated launch failure's stage (internal/seatlaunch run.go)
-	prepare_refused: () => [`${LAUNCH} while it was prepared`, RESET],
-	apply_failed: () => [LAUNCH, RESET],
-	launch_error: () => [LAUNCH, RESET],
+};
+
+const LAUNCH_RETRY = "the scheduler tries once more, then blocks it for the lead";
+const LAUNCH_FIX = "fix the cause, then /reset it (or relaunch the roster)";
+
+// LAUNCH_WORDS maps each code amq-squad's own launch path can give a failed
+// seat launch (launchfail.go's LaunchFailure.Code(): the reason code, else
+// the stage), which becomes a pending task's wait reason and, on a repeat,
+// its block reason: the stages (internal/seatlaunch), the launcher's own
+// codes and seat states, seat-exec's refusals (internal/seatexec), the
+// proof server's (seatlaunch proof_unix.go), the Claude and pi checks it
+// runs (internal/claudeseat, internal/piruntime) and the scheduler's roster
+// codes. words.test.ts scans those sources for them. AMQ's own reason codes
+// (launchapi types them as a plain string, an open set) are recognized as
+// launch failures through the decision log (WaitContext.launch).
+export const LAUNCH_WORDS: Record<string, string> = {
+	// stages
+	launch_error: "the launcher could not start it",
+	apply_failed: "AMQ's apply failed",
+	prepare_refused: "AMQ refused to prepare it",
+	prepared: "it stopped after it was prepared",
+	seat_not_up: "the seat did not come up",
+	decisions_pending: "AMQ waits for a decision before it launches",
+	resource_present: "a gone seat's pane is still open",
+	// the launcher's codes and seat states
+	apply_ambiguous: "AMQ saw more than one pane for it",
+	not_observed: "the launch reported nothing for it",
+	no_proof: "it never proved it started",
+	not_started: "it did not start",
+	pending: "it had not proved it started when the launch ended",
+	refused: "its seat-exec refused it",
+	// the scheduler's roster codes
+	seat_replacement_resource_present: "a gone seat's pane is still open, so no seat can replace it",
+	binding_present_without_resumable_conversation: "it could not resume its conversation",
+	// seat-exec's refusals
+	argv_missing: "its command line is missing",
+	codex_approval_missing: "its Codex approval mode is missing",
+	codex_sandbox_missing: "its Codex sandbox is missing",
+	dir_writable_by_others: "a directory on its path is writable by others",
+	env_needs_invalid: "its env needs are not valid",
+	identity_mismatch: "its identity is not the launch's",
+	identity_proof_failed: "it could not prove its identity",
+	identity_proof_timeout: "it ran out of time proving its identity",
+	identity_incomplete: "its AMQ identity is incomplete",
+	mkdir_failed: "a directory for it could not be made",
+	path_invalid: "a path it needs is not valid",
+	proof_expired: "its proof came after its token expired",
+	proof_ticket_consumed: "its proof ticket was already used",
+	proof_ticket_missing: "it has no proof ticket",
+	proof_unacknowledged: "the launcher did not take its proof",
+	proof_refused: "the launcher refused its proof",
+	provider_missing: "its provider's program is not installed",
+	record_invalid: "its launch record does not read",
+	record_missing: "its launch record is missing",
+	role_mismatch: "its role is not the launch's",
+	role_missing: "its role file is missing",
+	mailbox_missing: "its mailbox is missing",
+	root_invalid: "its root is not valid",
+	root_unreadable: "its root cannot be read",
+	rules_mismatch: "its team rules are not the launch's",
+	rules_missing: "its team rules are missing",
+	runtime_mismatch: "its runtime is not the launch's",
+	seat_invalid: "its seat entry is not valid",
+	stat_failed: "a file it needs cannot be read",
+	symlink_in_path: "a link sits on its path",
+	write_failed: "a file for it could not be written",
+	wrong_owner: "a file it needs has the wrong owner",
+	sandbox_pins_missing: "its Codex sandbox pins are missing",
+	// the Claude and pi checks
+	claude_hooks_missing: "its Claude command skips the hooks",
+	claude_permission_mismatch: "its Claude permission mode is not the recorded one",
+	claude_token_insecure: "its Claude token file is not private",
+	pi_not_embedded: "this amq-squad carries no pi runtime",
+	pi_runtime_rejected: "this amq-squad's pi runtime was rejected",
+	runtime_mismatch_in_process: "its pi runtime is not the one this process runs",
+	ledger_unreadable: "its pi session ledger does not read",
+	pi_resume_context_lost: "its pi session lost its context",
+	pi_session_id_invalid: "its pi session id is not valid",
+	pi_session_id_missing: "it has no pi session id",
+	pi_session_unreadable: "its pi session does not read",
+	// the proof server's
+	identity_forged: "a forged proof was sent for it",
+	proof_malformed: "its proof was malformed",
+	proof_origin_unknown: "its proof's sender could not be read",
+	proof_origin: "its proof came from another process",
+	proof_token_invalid: "its proof carried another seat's token",
+	proof_unknown: "the launch has no ticket for it",
+	proof_connections_full: "the proof server was full",
+	proof_ledger_failed: "its proof could not be recorded",
+	proof_marker_failed: "its proof marker could not be written",
+	proof_replayed: "its proof was replayed",
 };
 
 // HOLD is the lead's hold (`task block ID --reason hold --route lead`).
@@ -182,21 +285,29 @@ export const HOLD = "hold";
 // <what to do>", a hold "<id> held by the lead", an unknown reason (a
 // seat's own free-text block, an AMQ launch code) "<id> blocked" with its
 // code for the record.
-export function blockWords(t: TaskWords, d: BlockDetail = {}): { line: string; record?: string } {
+export function blockWords(t: TaskWords, d: BlockDetail = {}, c: WaitContext = {}): { line: string; record?: string } {
 	const r = t.block_reason ?? "";
 	if (r === HOLD) return { line: `${t.id} held by the lead` };
-	const f = BLOCK_WORDS[r];
-	if (!f) return { line: `${t.id} blocked; its reason is below the line`, record: `${t.id} blocked: ${clean(r, 120) || "no reason recorded"}` };
-	const [happened, todo] = f(d);
-	return { line: `${t.id} blocked: ${happened}; ${todo}` };
+	const f = own(BLOCK_WORDS, r);
+	if (f) {
+		const [happened, todo] = f(d);
+		return { line: `${t.id} blocked: ${happened}; ${todo}` };
+	}
+	// a repeated launch failure's code (launchfail.go blockOnLaunchFailure)
+	const l = own(LAUNCH_WORDS, r);
+	if (l) return { line: `${t.id} blocked: its seat's launch failed twice, ${l}; ${LAUNCH_FIX}` };
+	if (c.launch?.has(r)) return { line: `${t.id} blocked: its seat's launch failed twice (AMQ's reason is below the line); ${LAUNCH_FIX}`, record: `${t.id} blocked: ${clean(r, 120)}` };
+	return { line: `${t.id} blocked; its reason is below the line`, record: `${t.id} blocked: ${clean(r, 120) || "no reason recorded"}` };
 }
 
 // blockHappened is a block's first half alone (a dialog label).
 export function blockHappened(t: TaskWords, d: BlockDetail = {}): string {
 	const r = t.block_reason ?? "";
 	if (r === HOLD) return "held by the lead";
-	const f = BLOCK_WORDS[r];
-	return f ? f(d)[0] : "blocked";
+	const f = own(BLOCK_WORDS, r);
+	if (f) return f(d)[0];
+	const l = own(LAUNCH_WORDS, r);
+	return l ? `its seat's launch failed, ${l}` : "blocked";
 }
 
 // The parts of a status seat row the seat's words read.
@@ -221,7 +332,7 @@ export const SEAT_DOING: Record<string, (s: SeatWords, t: TaskWords | undefined)
 // unknown code is "waiting" with the code for the record.
 export function seatDoing(s: SeatWords, t: TaskWords | undefined): { text: string; record?: string } {
 	if (s.state === "blocked" && s.task_id) return { text: `waiting: ${s.task_id} is blocked (its line is below)` };
-	const f = SEAT_DOING[s.reason_code];
+	const f = own(SEAT_DOING, s.reason_code);
 	if (!f) return { text: "waiting", record: `${s.handle}: ${s.reason_code || "no reason code"}` };
 	return { text: f(s, t) };
 }
@@ -248,9 +359,9 @@ export const DECISION_WORDS: Record<string, (who: string) => [string, string]> =
 // happened>; <the decision's own what to do>".
 export function decisionWords(d: { kind: string; seat?: string; task_id?: string; reason?: string; reason_code?: string }): string {
 	const who = d.seat || d.task_id || "";
-	const [happened, todo] = DECISION_WORDS[d.kind]?.(who) ?? ["a seat stopped", "the record is below the line"];
+	const [happened, todo] = own(DECISION_WORDS, d.kind)?.(who) ?? ["a seat stopped", "the record is below the line"];
 	const code = d.reason_code || (d.reason ?? "").trim().split(/[\s:]+/)[0] || "";
-	const f = BLOCK_WORDS[code];
+	const f = own(BLOCK_WORDS, code);
 	if (!f) return `${happened}; ${todo}`;
 	const [why, then] = f({});
 	return `${happened}: ${why}; ${then}`;
@@ -280,7 +391,7 @@ export const WARNING_WORDS: Record<string, (detail: string, s: WarningSeat) => [
 		const t = s.launch?.timing;
 		const up = typeof t?.to_seat_live_ms === "number" ? `it came up in ${(t.to_seat_live_ms / 1000).toFixed(1)}s` : "it came up";
 		const ceiling = t?.ceiling_ms ? `, over the ${t.ceiling_ms / 1000}s ceiling` : ", over the launch ceiling";
-		const slow = t?.slowest_segment ? ` (slowest step: ${SEGMENT_WORDS[t.slowest_segment] ?? "one step"})` : "";
+		const slow = t?.slowest_segment ? ` (slowest step: ${own(SEGMENT_WORDS, t.slowest_segment) ?? "one step"})` : "";
 		return [`${up}${ceiling}${slow}`, `nothing to do unless it repeats, ${DISMISS}`];
 	},
 	wake_off: () => ["AMQ does not ring it when mail arrives, so it idles after each turn", `ring it by hand, ${DISMISS}`],
@@ -307,7 +418,7 @@ export function warningCode(w: string): string {
 // code is "warning; its code is below the line".
 export function warningWords(handle: string, w: string, s: WarningSeat): { line: string; record: string } {
 	const code = warningCode(w);
-	const f = WARNING_WORDS[code];
+	const f = own(WARNING_WORDS, code);
 	const detail = w.slice(w.indexOf(":") + 1).trim();
 	const record = `${handle}: ${w}`;
 	if (!f) return { line: "warning; its code is below the line", record };
@@ -338,7 +449,7 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 export function trainStop(refusal: string): string {
 	const m = /^refusal PR #(\d+) ([a-z_,]+):/.exec(refusal ?? "");
 	if (!m) return "the merge train stopped; its refusal is below the line";
-	const w = TRAIN_RULE_WORDS[m[2].split(",")[0]];
+	const w = own(TRAIN_RULE_WORDS, m[2].split(",")[0]);
 	if (!w) return `the merge train stopped at PR #${m[1]}; its rule is below the line`;
 	return `the merge train stopped at PR #${m[1]}: ${w[0]}; ${w[1]}`;
 }
@@ -360,7 +471,7 @@ export const RELAY_WORDS: Record<string, string> = {
 export function requestWords(r: { lead: string; relayed_at: string | null; refused: string[] }, relayedAgo: string): string {
 	const to = r.lead ? `a phone request to ${r.lead}` : "a phone request";
 	const mark = r.relayed_at ? `answered ${relayedAgo} ago` : "not answered yet";
-	const refused = [...new Set(r.refused)].map((x) => RELAY_WORDS[x] ?? "the relay refused a reply");
+	const refused = [...new Set(r.refused)].map((x) => own(RELAY_WORDS, x) ?? "the relay refused a reply");
 	return `${to}, ${mark}${refused.length ? `: ${[...new Set(refused)].join("; ")}; the lead answers again in words` : ""}`;
 }
 

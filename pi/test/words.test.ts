@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { LAUNCH_WORDS, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -28,50 +28,92 @@ function go(rel: string): string {
 	return fs.readFileSync(path.join(REPO, rel), "utf8");
 }
 
-// constants is every `NAME = "value"` in a Go file whose name matches.
+// goFiles is a Go package's non-test sources.
+function goFiles(pkg: string): string[] {
+	return fs
+		.readdirSync(path.join(REPO, pkg))
+		.filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
+		.map((f) => `${pkg}/${f}`);
+}
+
+// constants is every `NAME = "value"` or `NAME Type = "value"` in a Go file
+// whose name matches: typed or not, in a const block or alone.
 function constants(rel: string, name: RegExp): string[] {
 	const out: string[] = [];
-	for (const m of go(rel).matchAll(/^\s*(?:const\s+)?(\w+)\s*=\s*"([a-z][a-z0-9_]*)"/gm)) if (name.test(m[1])) out.push(m[2]);
+	for (const m of go(rel).matchAll(/^\s*(?:const\s+)?(\w+)(?:\s+[\w.]+)?\s*=\s*"([a-z][a-z0-9_]*)"/gm)) if (name.test(m[1])) out.push(m[2]);
 	return out;
 }
 
-// literals is every `<field>: "value"` (a Route{Block: ...}, a stage) in a
-// Go file.
-function literals(rel: string, field: string): string[] {
-	return [...go(rel).matchAll(new RegExp(`${field}\\s*[:=]\\s*"([a-z][a-z0-9_]*)"`, "g"))].map((m) => m[1]);
+// literals is every snake_case string literal in a Go file at the
+// positions a pattern names (its first group).
+function literals(rel: string, ...patterns: RegExp[]): string[] {
+	const src = go(rel);
+	return patterns.flatMap((re) => [...src.matchAll(re)].flatMap((m) => m.slice(1).filter(Boolean)));
 }
 
-// The wait reasons of a pending task: internal/task's Wait* and the
-// scheduler's no_roster_seat (3.1.1-2).
+// The packages that write a task's wait and block reasons: the task store,
+// the commit step, the scheduler and the router (brief 3.1.1-3, Codex on
+// ed3d1e65: every package file, not a list of files).
+const REASON_PACKAGES = ["internal/task", "internal/seatcommit", "internal/scheduler", "internal/routing"];
+// A wait or block field assigned a literal (a Route{Block: "..."}, a
+// WaitReason or BlockReason, a wait or a block call with a literal reason).
+const REASON_LITERALS = [/\bBlock:\s*"([a-z][a-z0-9_]*)"/g, /\b(?:WaitReason|BlockReason)\s*=\s*"([a-z][a-z0-9_]*)"/g, /\.wait\([^,()]*,\s*"([a-z][a-z0-9_]*)"/g, /\.(?:Block|BlockWithPaths|RefuseCommit|RefuseCommitPaths|Escalate|SetWait)\([^,()]*,(?:\s*[^,()]*,)?\s*"([a-z][a-z0-9_]*)"/g];
+
+// The wait reasons: every Wait* constant of the four packages and every
+// literal wait.
 function goWaits(): string[] {
-	return [...constants("internal/task/class.go", /^Wait/), ...constants("internal/scheduler/scheduler.go", /^WaitNoRosterSeat$/)];
+	return REASON_PACKAGES.flatMap(goFiles).flatMap((f) => [...constants(f, /^Wait/), ...literals(f, /\.wait\([^,()]*,\s*"([a-z][a-z0-9_]*)"/g, /\bWaitReason\s*=\s*"([a-z][a-z0-9_]*)"/g)]);
 }
 
-// The block reasons: the completion gate's (internal/task), the typed widen
-// and growth gate (task.go), grants_invalid (verdict.go), the PR binding
-// (scope.go); the commit step's (internal/seatcommit); the scheduler's
-// (hooks.go, roster.go); the router's (internal/routing, its Route{Block}
-// literals); the pin check (internal/registry); a repeated launch failure's
-// stage (internal/seatlaunch run.go and roster.go, the failed stages; the
-// stages "prepared" and "applied" are successes and never a block).
+// The block reasons: every Reason*, Block* and Refusal* constant of the four
+// packages, typed or not, every literal assigned to a block field, and the
+// pin check's (internal/registry PinMismatch).
+// Not block reasons, and left out by name: the widen refusals of
+// task/scope.go (file_lock_conflict, self_widen: the widen verb's replies,
+// never a task's block), and the scheduler's verbs and kinds that are not
+// codes (RelaunchVerb's text).
+const NOT_BLOCKS = new Set(["file_lock_conflict", "self_widen"]);
 function goBlocks(): string[] {
-	const stages = [...literals("internal/seatlaunch/run.go", "res.Stage"), ...literals("internal/seatlaunch/roster.go", "Stage"), ...literals("internal/scheduler/roster.go", "Stage")].filter((s) => s !== "prepared" && s !== "applied");
 	return [
-		...constants("internal/task/class.go", /^Block/),
-		...constants("internal/task/task.go", /^Reason/),
-		...constants("internal/task/verdict.go", /^Reason/),
-		...constants("internal/task/scope.go", /^RefusalPRBoundElsewhere$/),
-		...["policy.go", "commit.go", "ledger.go", "verifier.go"].flatMap((f) => constants(`internal/seatcommit/${f}`, /^Reason/)),
-		...constants("internal/scheduler/hooks.go", /^Reason/),
-		...constants("internal/scheduler/roster.go", /^(Reason|AMQBindingPresent$)/),
-		...constants("internal/routing/canon.go", /^Block/),
-		...constants("internal/routing/router.go", /^Block/),
-		...constants("internal/routing/outcome.go", /^HistoryTampered$/),
-		...literals("internal/routing/router.go", "Block"),
-		...literals("internal/scheduler/hooks.go", "Block"),
+		...REASON_PACKAGES.flatMap(goFiles).flatMap((f) => [...constants(f, /^(Reason|Block|Refusal)/), ...literals(f, ...REASON_LITERALS)]),
+		...constants("internal/scheduler/roster.go", /^AMQBindingPresent$/),
 		...constants("internal/registry/pins.go", /^PinMismatch$/),
-		...stages,
-	];
+	].filter((r) => !NOT_BLOCKS.has(r));
+}
+
+// The launch path's codes (internal/scheduler launchfail.go: a failed
+// launch's Code(), its reason code else its stage, is the pool's tasks'
+// wait reason and, repeated, their block reason): seat-exec's refusals, the
+// proof server's, the launcher's stages, codes and seat states, the pi and
+// Claude checks, and their constants. The success stages (prepared counts:
+// a launch can stop there) "applied" and "up" are no failure, and "none" is
+// a message's placeholder (roster.go's error text), never a code.
+const LAUNCH_FILES = [
+	...goFiles("internal/seatexec"),
+	...goFiles("internal/seatlaunch"),
+	"internal/scheduler/launchfail.go",
+	"internal/scheduler/roster.go",
+	"internal/piruntime/session.go",
+	"internal/piruntime/refusal.go",
+	"internal/piruntime/launch.go",
+	"internal/claudeseat/claudeseat.go",
+	"internal/claudeseat/token.go",
+];
+const LAUNCH_LITERALS = [
+	/(?:refusef|asRefusal)\(\s*"([a-z][a-z0-9_]*)"/g,
+	/ResumeRefusal\{\s*"([a-z][a-z0-9_]*)"/g,
+	/\bCode:\s*"([a-z][a-z0-9_]*)"/g,
+	/\b(?:forged|reject)\([^"\n]*"([a-z][a-z0-9_]*)"/g,
+	/\.refused(?:,\s*[\w.]+)*\s*=\s*"([a-z][a-z0-9_]*)"/g,
+	/\bStage\s*(?:=|:|==)\s*"([a-z][a-z0-9_]*)"/g,
+	/\bState:\s*"([a-z][a-z0-9_]*)"/g,
+	/State,\s*[\w.\[\]]*ReasonCode(?:,\s*[\w.\[\]]+)*\s*=\s*"([a-z][a-z0-9_]*)",\s*(?:"([a-z][a-z0-9_]*)")?/g,
+	/return\s+"([a-z][a-z0-9_]*)",\s*"([a-z][a-z0-9_]*)"/g,
+	/firstNonEmpty(?:Str)?\([^)"\n]*,\s*"([a-z][a-z0-9_]*)"\)/g,
+];
+const LAUNCH_CONSTS = /^(Reason|PiNotEmbedded$|SandboxPinsMissing$|IdentityIncomplete$|PermissionMismatch$|HooksMissing$|TokenInsecure$|RuntimeMismatchReason$|AMQBindingPresent$)/;
+function goLaunchCodes(): string[] {
+	return LAUNCH_FILES.flatMap((f) => [...literals(f, ...LAUNCH_LITERALS), ...constants(f, LAUNCH_CONSTS)]).filter((c) => !["applied", "up", "none"].includes(c));
 }
 
 // The seat warning codes status shows: Go's schedproc.ClearableWarnings,
@@ -108,15 +150,20 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.ok(waits.length >= 12, `the wait reasons were not found: ${waits}`);
 	assert.ok(blocks.length >= 35, `the block reasons were not found: ${blocks}`);
 	assert.ok(seats.length >= 8, `the seat codes were not found: ${seats}`);
-	for (const r of waits) assert.ok(r in WAIT_WORDS, `wait reason ${r} has no words`);
-	for (const r of blocks) assert.ok(r in BLOCK_WORDS, `block reason ${r} has no words`);
-	for (const r of seats) assert.ok(r in SEAT_DOING, `seat reason code ${r} has no words`);
+	const has = (t: object, k: string) => Object.hasOwn(t, k);
+	const launch = goLaunchCodes();
+	assert.ok(launch.length >= 60, `the launch codes were not found: ${launch}`);
+	for (const r of waits) assert.ok(has(WAIT_WORDS, r), `wait reason ${r} has no words`);
+	for (const r of blocks) assert.ok(has(BLOCK_WORDS, r) || has(LAUNCH_WORDS, r), `block reason ${r} has no words`);
+	// a launch code is a wait reason and, repeated, a block reason
+	for (const r of launch) assert.ok(has(LAUNCH_WORDS, r) || has(BLOCK_WORDS, r) || has(WAIT_WORDS, r), `launch code ${r} has no words`);
+	for (const r of seats) assert.ok(has(SEAT_DOING, r), `seat reason code ${r} has no words`);
 	const rules = goTrainRules();
 	assert.ok(rules.length >= 11, `the train rules were not found: ${rules}`);
-	for (const r of rules) assert.ok(r in TRAIN_RULE_WORDS, `train rule ${r} has no words`);
+	for (const r of rules) assert.ok(has(TRAIN_RULE_WORDS, r), `train rule ${r} has no words`);
 	const relay = goRelayNames();
 	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
-	for (const r of relay) assert.ok(r in RELAY_WORDS, `relay refusal ${r} has no words`);
+	for (const r of relay) assert.ok(has(RELAY_WORDS, r), `relay refusal ${r} has no words`);
 	// each mapped reason's words are plain: no code, no hex run
 	const t = { id: "t9", task_state: "pending", depends_on: ["t8"], wait_holders: ["t7"], wait_pool: "claude:opus:high" };
 	for (const r of Object.keys(WAIT_WORDS)) assert.equal(codeIn(waitWords({ ...t, wait_reason: r }, { max_seats: 3 }).line), "", r);
@@ -129,6 +176,50 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.deepEqual(seatDoing({ handle: "dev", state: "online", reason_code: "made_up_code" }, undefined), { text: "waiting", record: "dev: made_up_code" });
 	// the lead's hold
 	assert.equal(blockWords({ id: "t9", task_state: "blocked", block_reason: "hold" }).line, "t9 held by the lead");
+});
+
+// Row 7 (Codex on ed3d1e65): a failed seat launch's code is the pool's
+// tasks' wait reason (launchfail.go waitForSeat) and, repeated, their block
+// reason; each of amq-squad's own launch codes reads in words, and AMQ's
+// own code, which the decision log records for the failed launch, reads as
+// a launch failure with the code below the rule.
+test("row 7: a launch failure's code as a wait or block reason reads in words", () => {
+	const t = { ...fixture.tasks[2], id: "t9", wait_holders: [] };
+	const wait = (r: string) => renderScreen({ ...fixture, tasks: [{ ...t, wait_reason: r }] }, now).find((l) => l.startsWith("  t9 "));
+	assert.equal(wait("apply_failed"), "  t9 waiting: its seat's launch failed, AMQ's apply failed; the scheduler tries once more, then blocks it for the lead");
+	assert.equal(wait("launch_error"), "  t9 waiting: its seat's launch failed, the launcher could not start it; the scheduler tries once more, then blocks it for the lead");
+	const amq = [{ at: "2026-11-01T09:00:00Z", kind: "seat_launch_failed", seat: "dev", task_id: "t9", reason: "x", reason_code: "version_probe_failed", stage: "apply_failed" }];
+	const lines = renderScreen({ ...fixture, tasks: [{ ...t, wait_reason: "version_probe_failed" }], decisions: amq }, now);
+	assert.ok(lines.includes("  t9 waiting: its seat's launch failed (AMQ's reason is below the line); the scheduler tries once more, then blocks it for the lead"), lines.join("\n"));
+	assert.ok(lines.slice(lines.indexOf(RULE)).includes("  t9 waits: version_probe_failed"));
+	const blocked = renderScreen({ ...fixture, tasks: [{ ...fixture.tasks[0], id: "t9", block_reason: "proof_expired" }] }, now).find((l) => l.startsWith("  t9 "));
+	assert.equal(blocked, "  t9 blocked: its seat's launch failed twice, its proof came after its token expired; fix the cause, then /reset it (or relaunch the roster)");
+});
+
+// Row 7 (Codex on ed3d1e65): a reason named for an Object property is no
+// entry of any table: "constructor", "__proto__" and their kind render the
+// fallback line, and the screen renders.
+test("row 7: a reason named constructor or __proto__ renders the fallback line", () => {
+	for (const r of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+		const doc: ScreenStatus = {
+			...fixture,
+			seats: [{ ...fixture.seats[0], reason_code: r, warnings: [`${r}: x`] }],
+			tasks: [{ ...fixture.tasks[2], id: "t8", wait_reason: r, wait_holders: [] }, { ...fixture.tasks[0], id: "t9", block_reason: r }],
+			decisions: [{ at: "2026-11-01T09:00:00Z", kind: "exit_refused", seat: "old", task_id: "", reason: `${r} at gone`, reason_code: "" }],
+			train: { runs: [{ ...fixture.train!.runs[0], refusal: `refusal PR #9 ${r}: x` }], alerts: [] },
+			requests: [{ ...fixture.requests![0], refused: [r] }],
+		};
+		const lines = renderScreen(doc, now);
+		assert.ok(lines.includes("  t8 waiting"), `${r}: ${lines.join("\n")}`);
+		assert.ok(lines.includes("  t9 blocked; its reason is below the line"), r);
+		assert.ok(lines.includes("    ! warning; its code is below the line"), r);
+		assert.ok(lines.some((l) => /^ {2}qa .* {2}waiting( |$)/.test(l)), r);
+		assert.ok(lines.includes("  seat old did not stop cleanly; ask the owner to inspect it before the seat is relaunched"), r);
+		assert.ok(lines.some((l) => /^ {2}the merge train stopped(?: at PR #9)?; its (?:rule|refusal) is below the line$/.test(l)), r);
+		assert.ok(lines.some((l) => l.includes("the relay refused a reply")), r);
+		assert.equal(seatDoing({ handle: "x", state: "online", reason_code: r }, undefined).text, "waiting", r);
+		assert.equal(decisionWords({ kind: r, seat: "x" }), "a seat stopped; the record is below the line", r);
+	}
 });
 
 // Row 7: the size cap's words are composed from the commit step's recorded
@@ -255,7 +346,7 @@ test("row 7: each empty block says so in one plain line", () => {
 test("row 4: every seat warning code in Go's list has plain words; the code is below the rule", () => {
 	const codes = goWarnings();
 	assert.equal(codes.length, 7, `Go's warning list: ${codes}`);
-	for (const c of codes) assert.ok(c in WARNING_WORDS, `seat warning ${c} has no words`);
+	for (const c of codes) assert.ok(Object.hasOwn(WARNING_WORDS, c), `seat warning ${c} has no words`);
 	const qa = fixture.seats[0];
 	for (const c of codes) {
 		const w = warningWords("qa", `${c}: a detail_with_code 0de97c89a1b2c3d4`, qa);
@@ -328,7 +419,7 @@ test("row 4: no line above the rule carries a snake_case code or a hex run; the 
 	const rec = screen.slice(screen.indexOf(RULE));
 	for (const code of ["needs_decision", "made_up_wait", "made_up_code", "8502aa0011223344", "launch_budget_exceeded", "made_up_warning", "relay_refused_gate_shape", "task_scope,size_cap", "gate_store_unreadable"]) assert.ok(rec.some((l) => l.includes(code)), `${code} is not below the rule`);
 	// each stop decision kind (the newest shows): its words above, its record below
-	for (const d of decisions.filter((x) => x.kind in DECISION_WORDS)) {
+	for (const d of decisions.filter((x) => Object.hasOwn(DECISION_WORDS, x.kind))) {
 		const one = renderScreen({ ...doc, decisions: [d] }, now);
 		sweep(one, d.kind);
 		assert.ok(one.slice(one.indexOf(RULE)).some((l) => l.includes("ledger_tampered at gone")), `${d.kind}'s record is not below the rule`);
@@ -358,6 +449,15 @@ test("row 4: no line above the rule carries a snake_case code or a hex run; the 
 		sweep(renderScreen({ ...fixture, decisions: [] }, now, o), `/${o.key}`);
 	}
 	assert.ok(outcomes.filter((o) => o.refused).length >= 10, "the sweep saw too few refusals");
+	// a successful /widen: the seat's paths (free text, here a long hex run)
+	// are below the rule, the count above it
+	const hexPath = "src/0de97c89a1b2c3d4e5f6a7b8/helper.go";
+	const ok = new Keys({ bin: "/b", amq: "", me: "cto", root: "/r", session: "s", hookTimeoutMs: 1, holdTimeoutMs: 1, models: [], lead: true }, async (_b, args) => (args[1] === "show" ? res(0, JSON.stringify({ data: { task: { id: "t1", state: "blocked", block_reason: "widen_requested", block_detail: "needed", refused_paths: [hexPath, "deadbeef0123456789"] } } })) : res(0, JSON.stringify({ data: { ok: true } }))));
+	const widened = await ok.press("widen", ctx, st);
+	assert.equal(widened.refused, false);
+	const wl = renderScreen({ ...fixture, decisions: [] }, now, widened);
+	sweep(wl, "/widen widened");
+	assert.ok(wl.slice(wl.indexOf(RULE)).some((l) => l.includes(hexPath)), "the widened paths are not below the rule");
 	// the solo plan block: the digest and a refused confirm's code below the rule
 	const team = new SoloTeam({ bin: "/b", amq: "", me: "lead", root: tmpdir(), session: "", hookTimeoutMs: 1, holdTimeoutMs: 1, models: [], lead: false, solo: true });
 	team.proposal = { digest: "sha256:" + "0123456789abcdef".repeat(4) + "@absent", prefix: "0123456789abcdef", plan: ["goal: x", "seat a (b) pi"], project_dir: "/p" };
