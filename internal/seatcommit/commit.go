@@ -546,6 +546,9 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 		if err != nil {
 			return err
 		}
+		if beforeArchiveAttemptWrite != nil {
+			beforeArchiveAttemptWrite(parent, tree)
+		}
 		repo := seatRepo(gitBin, harnessEnv(env), rp)
 		expireEvidence(repo, &l, now)
 		ref, err := anchorEvidence(repo, &l, taskID, tree, now)
@@ -561,6 +564,10 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 	})
 	return archived, err
 }
+
+// beforeArchiveAttemptWrite is a test seam held inside ArchiveAttempt's
+// ledger critical section, after its snapshot and before its ledger write.
+var beforeArchiveAttemptWrite func(parent, tree string)
 
 // beforeReset is a test seam: it runs inside CleanSeat between the check
 // and the reset.
