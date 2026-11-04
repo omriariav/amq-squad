@@ -95,7 +95,7 @@ R = [
  ("4", "a launch decision's stage not read for the stop line", L+"words.ts",
   '	const l = own(LAUNCH_WORDS, code) ?? own(LAUNCH_WORDS, d.stage);', '	const l = undefined;', PIN("words", "row 4: a seat's stop")),
  ("4", "a successful /widen lists its paths above the rule", L+"keys.ts",
-  '		return { key: k, refused: false, line: `${t.id} widened: ${paths.length} ${paths.length === 1 ? "path" : "paths"} added (listed below the line).`,', '		return { key: k, refused: false, line: `${t.id} widened by ${paths.join(", ")}.`,', PIN("words", "row 4: no line")),
+  '		return { key: k, refused: false, line: `added ${paths.length} ${paths.length === 1 ? "file" : "files"} to ${t.id}; its commit step runs again`,', '		return { key: k, refused: false, line: `${t.id} widened by ${paths.join(", ")}.`,', PIN("words", "row 4: no line")),
  # row 5
  ("5", "the confirm reads the newest plan after the dialog", L+"team.ts",
   '		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };\n		let r: LeadReply;', '		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was confirmed." };\n		p = this.proposal ?? p;\n		let r: LeadReply;', PI % "team"),

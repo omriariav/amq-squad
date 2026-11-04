@@ -369,9 +369,10 @@ export class Keys {
 		if (!yes) return { key: k, refused: false, line: "Cancelled; nothing was widened." };
 		const r = await this.verb(toolArgv.taskWiden(this.cfg, { id: t.id, reason: WIDEN_REASON }, paths));
 		if (failed(r)) return { key: k, refused: true, line: sentence(`${t.id} was not widened`, refusal(r)), record: `${t.id}: ${refusalRecord(r)}` };
-		// the paths are the seat's free text: they go below the rule (Codex on
-		// ed3d1e65: a path can carry a long hex run)
-		return { key: k, refused: false, line: `${t.id} widened: ${paths.length} ${paths.length === 1 ? "path" : "paths"} added (listed below the line).`, record: `${t.id} widened by ${paths.join(", ")}: ${WIDEN_REASON}` };
+		// the count and the id above the rule; the paths, the seat's free
+		// text, below it (Codex on ed3d1e65: a path can carry a long hex run;
+		// the plan reviewer: the dialog showed them before the yes)
+		return { key: k, refused: false, line: `added ${paths.length} ${paths.length === 1 ? "file" : "files"} to ${t.id}; its commit step runs again`, record: `${t.id} widened by ${paths.join(", ")}: ${WIDEN_REASON}` };
 	}
 }
 

@@ -436,7 +436,7 @@ test("widen: the dialog shows the requested paths and the seat's reason; only it
 	for (const want of ["t5: The helper", "Its seat asks to touch these files outside its task:", "  src/helper.go", "  docs/a, b.md", "The seat's reason: the parser needs the shared helper"]) {
 		assert.ok(yes.confirms[0].message.split("\n").includes(want), `the dialog lacks ${JSON.stringify(want)}:\n${yes.confirms[0].message}`);
 	}
-	assert.equal(keyLine(lines), "  /widen: t5 widened: 2 paths added (listed below the line).");
+	assert.equal(keyLine(lines), "  /widen: added 2 files to t5; its commit step runs again");
 	assert.equal(recLine(lines), `  /widen: t5 widened by src/helper.go, docs/a, b.md: ${WIDEN_REASON}`);
 	// the dialog's no: task show only, no widen
 	const no = rig(reply, [], () => one, false);
