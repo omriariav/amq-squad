@@ -40,6 +40,12 @@ R = [
   '	scheduler_stopped: SCHEDULER_RESOLVED,\n', '', PIN("words", "followed by its resolving decision")),
  ("C", "a resolved newest stop hides the older unresolved one", L+"screen.ts",
   '		if (resolved(ds, i)) continue;', '		if (resolved(ds, i)) return undefined;', PIN("words", "followed by its resolving decision")),
+ ("D", "seat_request_expired's sentence names the task as a seat", L+"words.ts",
+  '	seat_request_expired: (d) => [`the seat request for ${d.task_id || "a task"} expired before a seat came up`, "ask the lead to relaunch the roster"],', '	seat_request_expired: (d) => [`the request for seat ${d.seat || d.task_id} expired before it came up`, "ask the lead to relaunch the roster"],', PIN("words", "every decision kind Go writes")),
+ ("D", "a seat's sentence falls back to the task's id", L+"words.ts",
+  '	return d.seat ? `seat ${d.seat}` : "a seat";', '	return `seat ${d.seat || d.task_id}`;', PIN("words", "every decision kind Go writes")),
+ ("D", "a request's stop matched by seat, which it does not record", L+"words.ts",
+  '	seat_request_expired: TASK_RESOLVED,', '	seat_request_expired: SEAT_RESOLVED,', PIN("words", "followed by its resolving decision")),
 ]
 only = sys.argv[1:]
 out = []
