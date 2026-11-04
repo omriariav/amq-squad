@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -205,6 +205,222 @@ test("row 7: a launch failure's code as a wait or block reason reads in words", 
 	assert.equal(blocked, "  t9 blocked: its seat's launch failed twice, its proof came after its token expired; fix the cause, then /reset it (or relaunch the roster)");
 });
 
+// The decision kinds Go writes to the decision log: every Decision{Kind:
+// ...} in the non-test files of its three writers (internal/scheduler, the
+// scheduler's own; internal/schedproc, the scheduler process's;
+// internal/cli, which appends through schedproc.AppendDecision), a literal
+// or a constant of those packages, and up.go's stopped(KIND, ...) helper's
+// call sites. An identifier the scan cannot resolve fails, except that
+// helper's own parameter.
+function goDecisionKinds(): { kinds: string[]; unresolved: string[] } {
+	const pkgs = ["internal/scheduler", "internal/schedproc", "internal/cli"];
+	const consts = new Map<string, string>();
+	for (const f of pkgs.flatMap(goFiles)) for (const m of go(f).matchAll(/^\s*(?:const\s+)?(\w+)(?:\s+[\w.]+)?\s*=\s*"([a-z][a-z0-9_]*)"/gm)) consts.set(m[1], m[2]);
+	const kinds: string[] = [];
+	const unresolved: string[] = [];
+	for (const f of pkgs.flatMap(goFiles)) {
+		const src = go(f);
+		for (const k of decisionKindFields(src)) {
+			if (k.startsWith('"')) kinds.push(k.slice(1, -1));
+			else if (consts.has(k.split(".").pop()!)) kinds.push(consts.get(k.split(".").pop()!)!);
+			else if (!(f === "internal/cli/up.go" && k === "kind")) unresolved.push(`${f}: Kind: ${k}`);
+		}
+		for (const m of src.matchAll(/\bstopped\(\s*([A-Za-z_]\w*|"[a-z][a-z0-9_]*")/g)) {
+			const k = m[1];
+			if (k.startsWith('"')) kinds.push(k.slice(1, -1));
+			else if (consts.has(k)) kinds.push(consts.get(k)!);
+			else unresolved.push(`${f}: stopped(${k})`);
+		}
+	}
+	return { kinds: [...new Set(kinds)].sort(), unresolved };
+}
+
+// goDecisionFields is, per decision kind, whether any of its literals in
+// Go records a Seat and a TaskID.
+function goDecisionFields(): Map<string, { seat: boolean; task: boolean }> {
+	const pkgs = ["internal/scheduler", "internal/schedproc", "internal/cli"];
+	const consts = new Map<string, string>();
+	for (const f of pkgs.flatMap(goFiles)) for (const m of go(f).matchAll(/^\s*(?:const\s+)?(\w+)(?:\s+[\w.]+)?\s*=\s*"([a-z][a-z0-9_]*)"/gm)) consts.set(m[1], m[2]);
+	const out = new Map<string, { seat: boolean; task: boolean }>();
+	for (const f of pkgs.flatMap(goFiles)) {
+		for (const d of decisionLiterals(go(f))) {
+			const kind = d.kind.startsWith('"') ? d.kind.slice(1, -1) : consts.get(d.kind.split(".").pop()!);
+			if (!kind) continue;
+			const was = out.get(kind) ?? { seat: false, task: false };
+			out.set(kind, { seat: was.seat || d.seat, task: was.task || d.task });
+		}
+	}
+	return out;
+}
+
+// decisionKindFields is the value of each Decision{...} literal's own Kind
+// field in Go source (Codex on #866: a non-greedy match stopped at a brace
+// inside a string): it walks each literal with the brace depth, skipping
+// interpreted and raw strings, runes and comments, and reads `Kind:` at
+// the literal's own depth only (a nested struct's Kind is not the
+// decision's).
+function decisionKindFields(src: string): string[] {
+	return decisionLiterals(src).map((d) => d.kind);
+}
+
+// decisionLiterals is each Decision{...} literal's own Kind and whether it
+// records a Seat and a TaskID (at the literal's own depth).
+function decisionLiterals(src: string): { kind: string; seat: boolean; task: boolean }[] {
+	const out: { kind: string; seat: boolean; task: boolean }[] = [];
+	for (const m of src.matchAll(/\bDecision\{/g)) {
+		let depth = 1;
+		let i = m.index! + m[0].length;
+		let kind = "";
+		let seat = false;
+		let task = false;
+		while (i < src.length && depth > 0) {
+			const c = src[i];
+			if (c === '"' || c === "'") {
+				i++;
+				while (i < src.length && src[i] !== c) i += src[i] === "\\" ? 2 : 1;
+				i++;
+			} else if (c === "`") {
+				i = src.indexOf("`", i + 1) + 1 || src.length;
+			} else if (src.startsWith("//", i)) {
+				i = src.indexOf("\n", i) + 1 || src.length;
+			} else if (src.startsWith("/*", i)) {
+				i = src.indexOf("*/", i) + 2 || src.length;
+			} else if (c === "{") {
+				depth++;
+				i++;
+			} else if (c === "}") {
+				depth--;
+				i++;
+			} else {
+				const own = depth === 1 && /[^\w.]/.test(src[i - 1] ?? " ");
+				const k = own ? /^Kind:\s*("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.]*)/.exec(src.slice(i, i + 200)) : null;
+				if (own && src.startsWith("Seat:", i)) seat = true;
+				if (own && src.startsWith("TaskID:", i)) task = true;
+				if (k) {
+					kind = k[1];
+					i += k[0].length;
+				} else i++;
+			}
+		}
+		if (kind) out.push({ kind, seat, task });
+	}
+	return out;
+}
+
+// Codex on #866: the scan finds a decision's Kind behind a brace inside a
+// string, a raw string or a comment, and not a nested struct's Kind.
+test("row 7: the decision scan reads Kind past braces in strings, and only the decision's own", () => {
+	const fixture = [
+		'log(Decision{Reason: fmt.Sprintf("{}"), Kind: "new_failed"})',
+		"log(Decision{Reason: `a {raw} string`, Kind: \"raw_failed\"})",
+		"log(Decision{\n\t// a } comment\n\tReason: \"}\", Seat: h,\n\tKind: KindFromConst,\n})",
+		'log(Decision{Pool: Pool{Kind: "not_a_decision"}, Kind: "outer_kind", Reason: \'}\' + "x"})',
+	].join("\n");
+	assert.deepEqual(decisionKindFields(fixture), ['"new_failed"', '"raw_failed"', "KindFromConst", '"outer_kind"']);
+});
+
+// The plan reviewer's ruling on Codex's last finding on #863: every decision
+// kind Go writes is a stop with words (DECISION_WORDS) or a routine record
+// (ROUTINE_DECISIONS); a new kind in neither fails here, by name, so a new
+// stop decision is never hidden from the screen with every row passing.
+test("row 7: every decision kind Go writes is a stop with words or a routine record", () => {
+	const { kinds, unresolved } = goDecisionKinds();
+	assert.deepEqual(unresolved, [], "a decision kind the scan cannot resolve");
+	assert.ok(kinds.length >= 68, `the decision kinds were not found: ${kinds}`);
+	assert.ok(kinds.includes("legacy_merge_head_missing") && kinds.includes("seat_launch_failed") && kinds.includes("up_stopped_lead"), kinds.join(" "));
+	for (const k of kinds) assert.notEqual(decisionKind(k), "unknown", `decision kind ${k} is neither a stop with words nor routine`);
+	for (const k of Object.keys(ROUTINE_DECISIONS)) assert.ok(!Object.hasOwn(DECISION_WORDS, k), `${k} is both a stop and routine`);
+	// Codex on #866: each sentence names every field Go records for its kind
+	// (the scan's Seat and TaskID of each literal, read from Go), and a
+	// task's id never stands in a seat's place
+	const recorded = goDecisionFields();
+	for (const k of Object.keys(DECISION_WORDS)) {
+		const f = recorded.get(k) ?? { seat: false, task: false };
+		const l = decisionWords({ kind: k, seat: f.seat ? "seatX" : undefined, task_id: f.task ? "taskY" : undefined });
+		if (f.seat) assert.ok(l.includes("seatX"), `${k} records a seat its sentence drops: ${l}`);
+		if (f.task) assert.ok(l.includes("taskY"), `${k} records a task its sentence drops: ${l}`);
+	}
+	for (const k of Object.keys(DECISION_WORDS)) {
+		const l = decisionWords({ kind: k, task_id: "t9" });
+		assert.doesNotMatch(l, /seat t9/, `${k} names the task as a seat: ${l}`);
+		assert.doesNotMatch(decisionWords({ kind: k, seat: "dev" }), /undefined/, k);
+	}
+	assert.equal(decisionWords({ kind: "seat_request_expired", task_id: "t9" }), "the seat request for t9 expired before a seat came up; ask the lead to relaunch the roster");
+	assert.equal(decisionWords({ kind: "doorbell_failed", seat: "dev", task_id: "t9" }), "seat dev could not be rung for t9; ring it by hand");
+	// every stop's words are plain and say what to do
+	for (const k of Object.keys(DECISION_WORDS)) {
+		const l = decisionWords({ kind: k, seat: "dev", reason: "x" });
+		assert.equal(codeIn(l), "", `${k}: ${l}`);
+		assert.ok(l.includes("; "), `${k} says no what to do: ${l}`);
+	}
+});
+
+// The ruling, the run-time half: the seats block never hides a decision
+// kind it does not know. The newest such decision shows "the scheduler
+// stopped something" (a kind whose name reads as a failure) or "the
+// scheduler recorded something", its kind below the rule; a routine record
+// newer than a stop does not hide the stop; each stop kind shows its words.
+test("row 7: an unknown decision kind shows, its kind below the rule; routine records hide no stop", () => {
+	const at = "2026-11-01T09:04:00Z";
+	const dec = (kind: string, reason = "x") => ({ at, kind, seat: "dev", task_id: "", reason, reason_code: "" });
+	const seats = (decisions: any[]) => {
+		const lines = renderScreen({ ...fixture, decisions }, now);
+		return { lines, block: lines.slice(lines.findIndex((l) => l.startsWith("seats (")), lines.findIndex((l) => l.startsWith("tasks ("))), rec: lines.slice(lines.indexOf(RULE)) };
+	};
+	const failed = seats([dec("exit_refused", "ledger_tampered at gone"), dec("made_up_failed")]);
+	assert.ok(failed.block.includes("  the scheduler stopped something; its kind is below the line"), failed.block.join("\n"));
+	assert.ok(failed.rec.includes("  made_up_failed: dev x"), failed.rec.join("\n"));
+	const noted = seats([dec("made_up_note")]);
+	assert.ok(noted.block.includes("  the scheduler recorded something; its kind is below the line"), noted.block.join("\n"));
+	assert.ok(noted.rec.includes("  made_up_note: dev x"), noted.rec.join("\n"));
+	// a routine record newer than a stop hides nothing
+	const routine = seats([dec("exit_refused", "ledger_tampered at gone"), dec("dispatched"), dec("lease_renewed")]);
+	assert.ok(routine.block.some((l) => l.startsWith("  seat dev did not stop cleanly")), routine.block.join("\n"));
+	// each stop kind, the newest decision, shows its words
+	for (const k of Object.keys(DECISION_WORDS)) {
+		const one = seats([dec(k, "a reason")]);
+		assert.ok(one.block.includes(`  ${decisionWords(dec(k, "a reason"))}`), `${k}:\n${one.block.join("\n")}`);
+	}
+});
+
+// The plan reviewer on #866: what clears a shown stop. A later decision that
+// resolves it: the same seat's seat_up (or a roster launch) for a seat's
+// stop, a roster launch or reload for a roster's, the scheduler starting
+// again for a scheduler's; another seat's seat_up resolves nothing. Other
+// stops (a tick error, a refused exit) clear only when they leave the status
+// document's last 30 decisions: /dismiss acts on seat warnings, not on
+// decisions.
+test("row 7: a stop followed by its resolving decision no longer shows", () => {
+	const at = "2026-11-01T09:04:00Z";
+	const dec = (kind: string, seat = "dev", reason = "x") => ({ at, kind, seat, task_id: "", reason, reason_code: "" });
+	const stopLine = (decisions: any[]) => {
+		const lines = renderScreen({ ...fixture, decisions }, now);
+		const block = lines.slice(lines.findIndex((l) => l.startsWith("seats (")), lines.findIndex((l) => l.startsWith("tasks (")));
+		return block.filter((l) => /^ {2}\S/.test(l) && !/^ {2}(qa|scribe|pi-dev) /.test(l));
+	};
+	// a seat's stop, then that seat's seat_up: cleared; another seat's: not
+	assert.deepEqual(stopLine([dec("seat_gone"), dec("seat_up")]), []);
+	assert.deepEqual(stopLine([dec("seat_gone"), dec("seat_up", "qa")]), ["  seat dev's process is gone; ask the lead to relaunch the roster"]);
+	// a roster launch resolves any seat's stop and the roster's
+	assert.deepEqual(stopLine([dec("seat_not_up"), dec("roster_incomplete", ""), dec("roster_launched", "")]), []);
+	// the scheduler starting again resolves its stop
+	assert.deepEqual(stopLine([dec("scheduler_stopped", "", "lead_gone: x"), dec("scheduler_started", "")]), []);
+	// a cleared newest stop leaves an older unresolved one showing
+	assert.deepEqual(stopLine([dec("exit_refused", "old", "ledger_tampered at gone"), dec("seat_gone"), dec("seat_up")]), ["  seat old did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits"]);
+	// Codex's sequence on #866: the seat gone, then up, then a roster launch
+	assert.deepEqual(stopLine([dec("seat_gone"), dec("seat_up"), dec("roster_launched", "")]), []);
+	// a request's stop records the task: that task dispatched resolves it
+	const req = (kind: string, task: string) => ({ at, kind, seat: "", task_id: task, reason: "x", reason_code: "" });
+	assert.deepEqual(stopLine([req("seat_request_expired", "t9"), req("dispatched", "t9")]), []);
+	assert.deepEqual(stopLine([req("seat_request_expired", "t9"), req("dispatched", "t8")]), ["  the seat request for t9 expired before a seat came up; ask the lead to relaunch the roster"]);
+	// a tick error has no resolving record: it shows until it leaves the window
+	assert.deepEqual(stopLine([dec("tick_error", ""), dec("dispatched"), dec("seat_up")]), ["  a scheduler tick failed; nothing to do unless it repeats; the next tick retries"]);
+	for (const [k, r] of Object.entries(RESOLVED_BY)) {
+		assert.ok(Object.hasOwn(DECISION_WORDS, k), `${k} resolves but is no stop`);
+		for (const x of r.kinds) assert.equal(decisionKind(x), "routine", `${k}'s resolver ${x} is not a routine record`);
+	}
+});
+
 // Row 7 (Codex on b4df9475): a task still blocked on a launch failure's
 // AMQ code reads the launch guidance from its own record (task show's
 // block_detail, which blockOnLaunchFailure writes and which lasts as long as
@@ -254,7 +470,7 @@ test("row 7: a reason named constructor or __proto__ renders the fallback line",
 		assert.ok(lines.some((l) => /^ {2}the merge train stopped(?: at PR #9)?; its (?:rule|refusal) is below the line$/.test(l)), r);
 		assert.ok(lines.some((l) => l.includes("the relay refused a reply")), r);
 		assert.equal(seatDoing({ handle: "x", state: "online", reason_code: r }, undefined).text, "waiting", r);
-		assert.equal(decisionWords({ kind: r, seat: "x" }), "a seat stopped; the record is below the line", r);
+		assert.equal(decisionWords({ kind: r, seat: "x" }), "the scheduler recorded something; its kind is below the line", r);
 		assert.equal(trainRunWords(r), "its last step is below the line", r);
 	}
 });
@@ -444,16 +660,39 @@ test("row 4: no line above the rule carries a snake_case code or a hex run; the 
 		{ ...fixture.tasks[2], id: "wx", wait_reason: "made_up_wait" },
 	];
 	const seats = [...Object.keys(SEAT_DOING), "made_up_code"].map((c, i) => ({ ...fixture.seats[1], handle: `s${i}`, reason_code: c, task_id: "b0", warnings: [] }));
+	seats.push({ ...fixture.seats[1], handle: "senior_dev", reason_code: "lease_claimed", task_id: "b0", warnings: [] });
+	seats.push({ ...fixture.seats[1], handle: "1deadbeef", reason_code: "idle", task_id: "", warnings: [] });
 	seats.push({ ...fixture.seats[0], handle: "warned", reason_code: "idle", task_id: "", warnings: [...goWarnings(), "made_up_warning"].map((c) => `${c}: detail_code 0de97c89a1b2c3d4`) });
-	const decisions = [...Object.keys(DECISION_WORDS), "made_up_kind"].map((kind) => ({ at: "2026-11-01T09:00:00Z", kind, seat: "dev", task_id: "t1", reason: "ledger_tampered at gone", reason_code: "" }));
+	const decisions = [...Object.keys(DECISION_WORDS), "made_up_kind"].map((kind, i) => ({ at: "2026-11-01T09:00:00Z", kind, seat: i % 2 ? "senior_dev" : "1deadbeef", task_id: "t1", reason: "ledger_tampered at gone", reason_code: "" }));
 	const runs = [{ run: "mt-20261101T090000Z-a1b2c3d4", started_at: "", last_at: "2026-11-01T09:00:00Z", last_kind: "merge_intent", repository: "o/a", base: "main", prs: [9], merged: [], refusal: "refusal PR #9 task_scope,size_cap: src/x_y.go", done: false, dry_run: false }];
 	const requests = Object.keys(RELAY_WORDS).map((r, i) => ({ request_id: `q-0de97c89a1b${i}`, thread: "cockpit/q", lead: "cto", turns: 1, posts: 0, relayed_at: null, refused: [r, "made_up_relay"], closed: false, updated_at: "" }));
 	const doc: ScreenStatus = { ...fixture, tasks, seats, decisions, requests, train: { runs, alerts: [{ kind: "gate_store_unreadable", detail: "a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line\n\n----------\nthe gate store /r/s-0de97c89a1b2/gates could not be read (x_y)" }] }, gates: [{ id: "g1", action_class: "github_release", target_digest: "sha256:8502aa0011223344", state: "open" }], warnings: ["gate store: /r/gates/abcdef0123456789.json: unreadable"] };
-	const sweep = (lines: string[], what: string) => {
-		for (const l of plainAbove(lines)) assert.equal(codeIn(l), "", `${what}: a code above the rule: ${JSON.stringify(l)}\n${lines.join("\n")}`);
+	// a seat's handle is a name, not a code, and every seat line carries it
+	// (Codex on #866): a token equal to a handle of the document's seats is
+	// allowed above the rule; the fixture's handles include a snake_case one
+	// and a hex-looking one
+	const handlesOf = (d: ScreenStatus) => d.seats.map((x) => x.handle);
+	// a whole token equal to a handle (codeIn's own separators and its strip
+	// of . ` * at a token's ends), never a substring of a longer token
+	const SEP = /([\s,;:()"'[\]{}<>!?]+)/;
+	const sweep = (lines: string[], what: string, handles: string[] = handlesOf(doc)) => {
+		for (const l of plainAbove(lines)) {
+			const masked = l
+				.split(SEP)
+				.map((t) => (handles.includes(t.replace(/^[.`*]+|[.`*]+$/g, "")) ? "" : t))
+				.join("");
+			assert.equal(codeIn(masked), "", `${what}: a code above the rule: ${JSON.stringify(l)}\n${lines.join("\n")}`);
+		}
 	};
 	const screen = renderScreen(doc, now);
 	sweep(screen, "the screen");
+	assert.ok(screen.some((l) => l.startsWith("  senior_dev ")) && screen.some((l) => l.startsWith("  1deadbeef ")), "the handles are not on their seat lines");
+	// the allowance is for whole handle tokens only: a longer token that
+	// carries a handle, or a token that is no handle, fails the sweep itself
+	for (const bad of ["seat senior_dev1 did not stop cleanly", "seat a1deadbeef0 did not stop cleanly", "seat not_a_handle did not stop cleanly"]) {
+		assert.throws(() => sweep(["header", `  ${bad}`, "/add"], bad), /a code above the rule/, bad);
+	}
+	sweep(["header", "  seat senior_dev did not stop cleanly; seat 1deadbeef's process is gone", "/add"], "whole handles");
 	const rec = screen.slice(screen.indexOf(RULE));
 	for (const code of ["needs_decision", "made_up_wait", "made_up_code", "8502aa0011223344", "launch_budget_exceeded", "made_up_warning", "relay_refused_gate_shape", "task_scope,size_cap", "gate_store_unreadable", "mt-20261101T090000Z-a1b2c3d4 merge_intent"]) assert.ok(rec.some((l) => l.includes(code)), `${code} is not below the rule`);
 	assert.ok(screen.includes("  running: merging a PR (the merge is pending), 5m ago; PRs #9; 0 merged"), screen.join("\n"));
