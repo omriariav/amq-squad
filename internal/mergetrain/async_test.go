@@ -1,0 +1,432 @@
+package mergetrain
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Brief 3.2.0-3a: GitHub updates a branch asynchronously and answers the
+// updatePullRequestBranch mutation with the head as it was (run ab184d07 on
+// #894: the mutation answered 68792071, the branch moved to 2555d34a five
+// seconds later, and the train bound nothing, refused the moved head and had
+// no path back). These rows run the train against the fake's asynchronous
+// update: R1 binds the head read back, R2 refuses an update that never lands,
+// R3 recovers a branch the train moved without recording the result, and the
+// lead's re-bind decision is proved before anything is written.
+
+// strictBound is a strict fixture with task 1 bound to PR 1 at its head and
+// the base advanced one commit, so the real run must update the branch.
+func strictBound(t *testing.T) (*fixture, string, string, Request) {
+	t.Helper()
+	f := newFixture(t)
+	setStrict(f)
+	old := f.head("pr1")
+	id := f.bindTask(1, old, []string{"pkg/a.go"})
+	advanceBase(f, map[string]string{"base.txt": "advance\n"})
+	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
+	f.realRun(&req)
+	return f, id, old, req
+}
+
+// moveBranch rebases a PR branch onto main by hand in the work clone, as
+// GitHub's update does, with edit applied to the rebased commit first, and
+// force-pushes it; the fake's timeline gets the force push when event is set.
+func moveBranch(f *fixture, branch string, edit func(), event bool) (before, after string) {
+	f.t.Helper()
+	before = f.head(branch)
+	mustGit(f.t, f.work, "fetch", "-q", "origin")
+	mustGit(f.t, f.work, "checkout", "-q", "-B", branch, "origin/"+branch)
+	mustGit(f.t, f.work, "rebase", "-q", "origin/main")
+	if edit != nil {
+		edit()
+	}
+	mustGit(f.t, f.work, "push", "-q", "--force", "origin", branch)
+	after = f.head(branch)
+	if event {
+		f.edit(func(s *fakeState) {
+			n := strings.TrimPrefix(branch, "pr")
+			s.PRs[n].ForcePushes = append(s.PRs[n].ForcePushes, ForcePush{Before: before, After: after, Actor: "owner", At: forcePushAt()})
+		})
+	}
+	return before, after
+}
+
+func kinds(entries []Entry, pr int) []string {
+	var out []string
+	for _, e := range entries {
+		if e.PR == pr || e.Kind == "batch" {
+			out = append(out, e.Kind)
+		}
+	}
+	return out
+}
+
+func boundHead(t *testing.T, f *fixture, id string) string {
+	t.Helper()
+	tk, err := f.tasks().Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tk.PRHead
+}
+
+// R1: against the asynchronous fake (the mutation answers the old head; the
+// branch moves on the second read), a real run binds the head read back:
+// update_requested before the mutation, the rebase entry with the head read
+// back, the proof (first parent the base tip, equal patch ids), the rebind,
+// CI waited at the new head, and the PR merged with the force-push rule
+// quiet. Reverted (the mutation's answer bound, no read-back), the run sees
+// no change, binds nothing and the check refuses pr_head_moved.
+func TestAsyncUpdateBindsTheHeadReadBack(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.edit(func(s *fakeState) { s.AsyncUpdate, s.AsyncViews = []string{"1"}, map[string]int{"1": 2} })
+	var sleeps []time.Duration
+	f.train.Sleep = func(d time.Duration) { sleeps = append(sleeps, d) }
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v %+v", err, res)
+	}
+	p := res.PRs[0]
+	if p.Status != "merged" || p.Head == old || len(p.Refusals) != 0 || p.PatchProof == nil || !p.PatchProof.Match || p.PatchProof.NewHead != p.Head {
+		t.Fatalf("the head read back was not proved and merged: %+v", p)
+	}
+	if got := boundHead(t, f, id); got != p.Head {
+		t.Fatalf("task bound to %s, want the head read back %s", got, p.Head)
+	}
+	entries, _ := f.train.Audit.Read()
+	var requested, rebase, rebind, merge int = -1, -1, -1, -1
+	for i, e := range entries {
+		switch e.Kind {
+		case "update_requested":
+			requested = i
+			if e.Head != old || e.PR != 1 || e.Task != id || e.BaseSHA == "" {
+				t.Fatalf("update_requested names the wrong head or base: %+v", e)
+			}
+		case "rebase":
+			rebase = i
+			if e.Head != old || e.NewHead != p.Head {
+				t.Fatalf("the rebase entry does not name the head read back: %+v", e)
+			}
+		case "rebind":
+			rebind = i
+		case "merge":
+			merge = i
+		}
+	}
+	if requested < 0 || rebase < requested || rebind < rebase || merge < rebind {
+		t.Fatalf("entry order (requested %d, rebase %d, rebind %d, merge %d): %v", requested, rebase, rebind, merge, kinds(entries, 1))
+	}
+	calls := f.calls()
+	if strings.Count(calls, "commits/"+p.Head+"/check-runs") < 2 || !strings.Contains(calls, "commits/"+p.Head+" --jq") {
+		t.Fatalf("CI not waited at the new head, or its parent not read:\n%s", calls)
+	}
+	if !slices.Contains(sleeps, time.Second) {
+		t.Fatalf("no backoff between the read-backs: %v", sleeps)
+	}
+	if st := loadFake(f.state); len(st.Pending) != 0 {
+		t.Fatalf("the update never landed: %+v", st.Pending)
+	}
+}
+
+// R2: an update GitHub rejects asynchronously leaves the head unmoved; the
+// bounded wait (120 s, backoff 1 s doubling to 16 s) ends with a refusal in
+// words that names the limit and the PR, under branch_update_unconfirmed,
+// nothing bound, nothing merged, no gate. Reverted (the wait's end taken for
+// the update's result), the row fails on the refusal.
+func TestUnmovedUpdateIsRefusedInWords(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.edit(func(s *fakeState) { s.AsyncRejected = []string{"1"} })
+	now := time.Now()
+	var sleeps []time.Duration
+	f.train.Now = func() time.Time { return now }
+	f.train.Sleep = func(d time.Duration) { now = now.Add(d); sleeps = append(sleeps, d) }
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v %+v", err, res)
+	}
+	p := res.PRs[0]
+	want := "GitHub did not update the branch of PR #1 within 2m0s"
+	if p.Status != "refused" || len(p.Refusals) != 1 || p.Refusals[0].Rule != RuleUpdateUnconfirmed || !strings.HasPrefix(p.Refusals[0].Detail, want) || p.GateID != "" {
+		t.Fatalf("the unmoved update was not refused in words: %+v", p)
+	}
+	if got := boundHead(t, f, id); got != old {
+		t.Fatalf("the binding moved to %s", got)
+	}
+	if strings.Contains(f.calls(), "-X PUT") || f.head("pr1") != old {
+		t.Fatalf("something merged or moved:\n%s", f.calls())
+	}
+	var total time.Duration
+	for _, d := range sleeps {
+		total += d
+	}
+	if total != 2*time.Minute || len(sleeps) < 5 || sleeps[0] != time.Second || sleeps[1] != 2*time.Second || sleeps[4] != 16*time.Second {
+		t.Fatalf("the wait is not 120 s with the backoff: %v", sleeps)
+	}
+	entries, _ := f.train.Audit.Read()
+	if !slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "update_requested" && e.PR == 1 && e.Head == old }) ||
+		slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "rebase" || e.Kind == "rebind" }) ||
+		!slices.ContainsFunc(entries, func(e Entry) bool {
+			return e.Kind == "refusal" && e.PR == 1 && slices.Equal(e.Rules, []string{RuleUpdateUnconfirmed}) && strings.HasPrefix(e.Detail, want)
+		}) {
+		t.Fatalf("the journal: %v", kinds(entries, 1))
+	}
+}
+
+// R3 (the live shape): an update that lands after the bounded wait is
+// refused unconfirmed by the run that asked for it, and recovered by the next
+// run from the journaled request: the rebase and rebind entries name the
+// recovery, the binding is written, CI is waited at the recovered head, and
+// the PR lands.
+func TestLateUpdateIsRecoveredByTheNextRun(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.edit(func(s *fakeState) { s.AsyncUpdate, s.AsyncViews = []string{"1"}, map[string]int{"1": 1000} })
+	now := time.Now()
+	f.train.Now = func() time.Time { return now }
+	f.train.Sleep = func(d time.Duration) { now = now.Add(d) }
+	first, err := f.train.Run(context.Background(), req)
+	if err != nil || first.PRs[0].Status != "refused" || first.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed {
+		t.Fatalf("the late update was not refused unconfirmed: %v %+v", err, first.PRs)
+	}
+	f.edit(func(s *fakeState) { s.Pending["1"].Views = 1 }) // GitHub's update lands now
+	f.realRun(&req)
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "merged" || res.PRs[0].Head == old || len(res.PRs[0].Refusals) != 0 {
+		t.Fatalf("the moved branch was not recovered and merged: %v %+v", err, res.PRs)
+	}
+	if got := boundHead(t, f, id); got != res.PRs[0].Head {
+		t.Fatalf("task bound to %s, want %s", got, res.PRs[0].Head)
+	}
+	entries, _ := f.train.Audit.Read()
+	ri := slices.IndexFunc(entries, func(e Entry) bool {
+		return e.Kind == "rebase" && e.Run == res.Run && e.Head == old && e.NewHead == res.PRs[0].Head && strings.HasPrefix(e.Detail, "recovered: the update journaled by run "+first.Run)
+	})
+	bi := slices.IndexFunc(entries, func(e Entry) bool {
+		return e.Kind == "rebind" && e.Run == res.Run && e.NewHead == res.PRs[0].Head && strings.HasPrefix(e.Detail, "patch-id: ")
+	})
+	if ri < 0 || bi < ri {
+		t.Fatalf("the recovery's entries (rebase %d, rebind %d): %v", ri, bi, kinds(entries, 1))
+	}
+}
+
+// R3 (the conditions): a PR whose head moved by the train's unrecorded
+// update is re-bound and lands only on the journaled request and the proof;
+// without the request on record, or with a differing patch-id, a second
+// force push, or a parent that is not a base tip, it stays refused and the
+// binding stays. Reverted (each condition), its row merges.
+func TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof(t *testing.T) {
+	journal := func(f *fixture, id, old, base string) {
+		f.t.Helper()
+		if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "update_requested", Repository: fixtureRepo, Base: "main", PR: 1, Task: id, Head: old, BaseSHA: base}); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	type row struct {
+		name    string
+		prepare func(f *fixture, id, old string) // the journal and the move
+		merged  bool
+		why     string // the reconcile entry's words when refused on the proof
+	}
+	rows := []row{
+		{"journaled, one push onto the journaled base tip", func(f *fixture, id, old string) {
+			journal(f, id, old, f.head("main"))
+			moveBranch(f, "pr1", nil, true)
+		}, true, ""},
+		{"journaled, the base moved since: onto the current tip", func(f *fixture, id, old string) {
+			journal(f, id, old, f.head("main"))
+			advanceBase(f, map[string]string{"base2.txt": "again\n"})
+			moveBranch(f, "pr1", nil, true)
+		}, true, ""},
+		{"the same push with no journal entry", func(f *fixture, id, old string) {
+			moveBranch(f, "pr1", nil, true)
+		}, false, ""},
+		{"a differing patch-id", func(f *fixture, id, old string) {
+			journal(f, id, old, f.head("main"))
+			moveBranch(f, "pr1", func() {
+				writeFile(f.t, filepath.Join(f.work, "pkg/a.go"), "package pkg\n\nfunc A() {}\n\nfunc Extra() {}\n")
+				mustGit(f.t, f.work, "commit", "-q", "-a", "--amend", "--no-edit")
+			}, true)
+		}, false, "the change moved during the update"},
+		{"a second force push", func(f *fixture, id, old string) {
+			journal(f, id, old, f.head("main"))
+			moveBranch(f, "pr1", nil, true)
+			moveBranch(f, "pr1", func() {
+				mustGit(f.t, f.work, "commit", "-q", "--amend", "--no-edit", "--date", "2030-01-01T00:00:00Z")
+			}, true)
+		}, false, "2 force pushes after the journaled request"},
+		{"a parent that is not the base tip", func(f *fixture, id, old string) {
+			journal(f, id, old, f.head("main"))
+			moveBranch(f, "pr1", func() {
+				writeFile(f.t, filepath.Join(f.work, "pkg/late.go"), "package pkg\n")
+				mustGit(f.t, f.work, "add", "-A")
+				mustGit(f.t, f.work, "commit", "-q", "-m", "late")
+			}, true)
+		}, false, "first parent"},
+	}
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			f, id, old, req := strictBound(t)
+			r.prepare(f, id, old)
+			moved := f.head("pr1")
+			res, err := f.train.Run(context.Background(), req)
+			if err != nil {
+				t.Fatalf("run: %v %+v", err, res)
+			}
+			p := res.PRs[0]
+			entries, _ := f.train.Audit.Read()
+			bound := boundHead(t, f, id)
+			if r.merged {
+				if p.Status != "merged" || p.Head != moved || bound != moved {
+					t.Fatalf("not recovered and merged: %+v (bound %s, moved %s)", p, bound, moved)
+				}
+				ri := slices.IndexFunc(entries, func(e Entry) bool {
+					return e.Kind == "rebase" && e.Head == old && e.NewHead == moved && strings.HasPrefix(e.Detail, "recovered: the update journaled by run mt-earlier")
+				})
+				bi := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "rebind" && e.NewHead == moved })
+				mi := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "merge" })
+				if ri < 0 || bi < ri || mi < bi {
+					t.Fatalf("the recovery's entries: %v", kinds(entries, 1))
+				}
+				if strings.Contains(r.name, "current tip") && !strings.Contains(entries[ri].Detail, "is the base's current tip") {
+					t.Fatalf("the record does not say the base moved: %q", entries[ri].Detail)
+				}
+				return
+			}
+			if p.Status != "refused" || !slices.ContainsFunc(p.Refusals, func(x Refusal) bool { return x.Rule == RulePRHeadMoved }) || bound != old {
+				t.Fatalf("recovered without the proof: %+v (bound %s)", p, bound)
+			}
+			if slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "rebind" || (e.Kind == "rebase" && e.Run == res.Run) }) || strings.Contains(f.calls(), "-X PUT") {
+				t.Fatalf("something was bound or merged: %v", kinds(entries, 1))
+			}
+			rec := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "reconcile" && e.PR == 1 && e.Run == res.Run })
+			if r.why == "" && rec >= 0 {
+				t.Fatalf("a recovery was attempted with no journal entry: %+v", entries[rec])
+			}
+			if r.why != "" && (rec < 0 || !strings.Contains(entries[rec].Detail, r.why) || !strings.HasSuffix(entries[rec].Detail, "binding not recovered")) {
+				t.Fatalf("the refusal's record does not name the failing part %q: %d %v", r.why, rec, entries)
+			}
+		})
+	}
+}
+
+// Item 6: the lead's re-bind decision is proved by the train before anything
+// is written (one force push from the bound head to the named head, the
+// named head's first parent a base tip the train rebased onto, equal patch
+// ids), then the rebase and rebind entries and the binding; the next run
+// lands the PR with the force-push rule quiet. Each failing part is refused
+// with its code and nothing is written.
+func TestLeadRebindIsProvedBeforeTheBindingIsWritten(t *testing.T) {
+	input := func(f *fixture, pr int, from, to string) RebindInput {
+		s := f.tasks()
+		return RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: StoreBinder{Store: s}, PR: pr, From: from, To: to, Lead: "lead"}
+	}
+	t.Run("proved and bound", func(t *testing.T) {
+		f, id, old, req := strictBound(t)
+		// the old code's record: a real-run batch at the base it rebased onto
+		pinned := f.head("main")
+		if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "batch", Repository: fixtureRepo, Base: "main", BaseSHA: pinned, Pairs: []Pair{{Number: 1, Head: old}}}); err != nil {
+			t.Fatal(err)
+		}
+		_, moved := moveBranch(f, "pr1", nil, true)
+		advanceBase(f, map[string]string{"base2.txt": "after the update\n"}) // the base moved on since
+		res, err := Rebind(context.Background(), input(f, 1, old, moved))
+		if err != nil {
+			t.Fatalf("rebind: %v", err)
+		}
+		if res.Task != id || res.Parent != pinned || res.ParentIs != "the base tip of run mt-earlier's batch" || res.PatchID == "" || !strings.HasPrefix(res.Run, "mt-rebind-") {
+			t.Fatalf("result %+v", res)
+		}
+		if got := boundHead(t, f, id); got != moved {
+			t.Fatalf("task bound to %s, want %s", got, moved)
+		}
+		entries, _ := f.train.Audit.Read()
+		ri := slices.IndexFunc(entries, func(e Entry) bool {
+			return e.Kind == "rebase" && e.Run == res.Run && e.Head == old && e.NewHead == moved && e.BaseSHA == pinned && strings.Contains(e.Detail, "recovered by the lead lead's rebind decision")
+		})
+		bi := slices.IndexFunc(entries, func(e Entry) bool {
+			return e.Kind == "rebind" && e.Run == res.Run && e.Task == id && strings.HasPrefix(e.Detail, "patch-id: "+res.PatchID)
+		})
+		if ri < 0 || bi < ri {
+			t.Fatalf("entries: %v", kinds(entries, 1))
+		}
+		// the next run lands it: the force push is the train's (trainHeads)
+		f.realRun(&req)
+		run, err := f.train.Run(context.Background(), req)
+		if err != nil || run.PRs[0].Status != "merged" {
+			t.Fatalf("the re-bound PR did not land: %v %+v", err, run.PRs)
+		}
+	})
+	t.Run("onto the current tip", func(t *testing.T) {
+		f, id, old, _ := strictBound(t)
+		_, moved := moveBranch(f, "pr1", nil, true)
+		res, err := Rebind(context.Background(), input(f, 1, old, moved))
+		if err != nil || res.ParentIs != "the base's current tip" || boundHead(t, f, id) != moved {
+			t.Fatalf("%v %+v", err, res)
+		}
+	})
+	other := strings.Repeat("a", 40)
+	for _, r := range []struct {
+		name    string
+		prepare func(f *fixture, old string) (from, to string)
+		code    string
+		why     string
+	}{
+		{"not a full sha", func(f *fixture, old string) (string, string) {
+			_, moved := moveBranch(f, "pr1", nil, true)
+			return old[:12], moved
+		}, RefusedRebindInvalid, ""},
+		{"no task bound at the named head", func(f *fixture, old string) (string, string) {
+			_, moved := moveBranch(f, "pr1", nil, true)
+			return other, moved
+		}, RefusedRebindUnbound, "0 tasks are bound to PR #1 at head aaaaaaaaaaaa"},
+		{"the PR head is not the named head", func(f *fixture, old string) (string, string) {
+			moveBranch(f, "pr1", nil, true)
+			return old, other
+		}, RefusedRebindHead, "PR #1's head is"},
+		{"no force push from the bound head", func(f *fixture, old string) (string, string) {
+			_, moved := moveBranch(f, "pr1", nil, false)
+			return old, moved
+		}, RefusedRebindUnproved, "no force push; the bound head"},
+		{"two force pushes", func(f *fixture, old string) (string, string) {
+			moveBranch(f, "pr1", nil, true)
+			_, moved := moveBranch(f, "pr1", func() {
+				mustGit(f.t, f.work, "commit", "-q", "--amend", "--no-edit", "--date", "2030-01-01T00:00:00Z")
+			}, true)
+			return old, moved
+		}, RefusedRebindUnproved, "2 force pushes, one expected"},
+		{"a parent that is not a base tip", func(f *fixture, old string) (string, string) {
+			_, moved := moveBranch(f, "pr1", func() {
+				writeFile(f.t, filepath.Join(f.work, "pkg/late.go"), "package pkg\n")
+				mustGit(f.t, f.work, "add", "-A")
+				mustGit(f.t, f.work, "commit", "-q", "-m", "late")
+			}, true)
+			return old, moved
+		}, RefusedRebindUnproved, "first parent"},
+		{"a differing patch-id", func(f *fixture, old string) (string, string) {
+			_, moved := moveBranch(f, "pr1", func() {
+				writeFile(f.t, filepath.Join(f.work, "pkg/a.go"), "package pkg\n\nfunc A() {}\n\nfunc Extra() {}\n")
+				mustGit(f.t, f.work, "commit", "-q", "-a", "--amend", "--no-edit")
+			}, true)
+			return old, moved
+		}, RefusedRebindUnproved, "the change moved during the update"},
+	} {
+		t.Run(r.name, func(t *testing.T) {
+			f, id, old, _ := strictBound(t)
+			from, to := r.prepare(f, old)
+			before, _ := f.train.Audit.Read()
+			_, err := Rebind(context.Background(), input(f, 1, from, to))
+			var refusal *RebindRefusal
+			if !errors.As(err, &refusal) || refusal.Code != r.code || !strings.Contains(refusal.Detail, r.why) {
+				t.Fatalf("want %s with %q, got %v", r.code, r.why, err)
+			}
+			after, _ := f.train.Audit.Read()
+			if boundHead(t, f, id) != old || len(after) != len(before) {
+				t.Fatalf("something was written: bound %s, %d entries before, %d after", boundHead(t, f, id), len(before), len(after))
+			}
+		})
+	}
+}

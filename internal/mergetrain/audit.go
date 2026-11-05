@@ -55,8 +55,12 @@ const AuditSchema = "amq-squad-merge-audit/1"
 
 // Entry is one audit log line. Kind is one of: protection (the branch
 // protection check), batch (the digest of the ordered set about to land,
-// written again after a rebase that changes a head), refusal, rebase, merge,
-// stop (manual mode or an error ended the run), plan (a dry run's result).
+// written again after a rebase that changes a head), refusal, update_requested
+// (the train is about to ask GitHub to update a branch: the PR, the bound
+// head and the base tip, journaled before the mutation, brief 3.2.0-3a item
+// 0), rebase (the head the update produced, read back), rebind, merge_intent,
+// merge, reconcile, stop (manual mode or an error ended the run), plan (a
+// dry run's result).
 type Entry struct {
 	Schema     string   `json:"schema"`
 	At         string   `json:"at"`
@@ -168,4 +172,18 @@ func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 		}
 	}
 	return out
+}
+
+// lastUpdateRequest is the latest journaled update_requested of a real run
+// for a PR at a bound head: the train asked GitHub to update that branch
+// from that head, and the entry carries the base tip it pinned.
+func lastUpdateRequest(entries []Entry, repository string, pr int, head string) (Entry, bool) {
+	var out Entry
+	found := false
+	for _, e := range entries {
+		if e.Kind == "update_requested" && !e.DryRun && e.Repository == repository && e.PR == pr && e.Head == head {
+			out, found = e, true
+		}
+	}
+	return out, found
 }

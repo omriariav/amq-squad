@@ -140,9 +140,18 @@ type Train struct {
 	Root   string
 	CIWait time.Duration // how long a rebased head may wait for CI (default 20 min)
 	Poll   time.Duration // CI poll interval (default 15 s)
-	Now    func() time.Time
-	Sleep  func(time.Duration)
+	// UpdateWait bounds the read-back after updatePullRequestBranch: GitHub
+	// updates the branch asynchronously, and the train binds the head it
+	// reads back, not the mutation's answer (default DefaultUpdateWait).
+	UpdateWait time.Duration
+	Now        func() time.Time
+	Sleep      func(time.Duration)
 }
+
+// DefaultUpdateWait is how long the train waits for GitHub to move a branch
+// it asked to update before it refuses the PR as branch_update_unconfirmed
+// (brief 3.2.0-3a item 1: 120 s, with a backoff between reads).
+const DefaultUpdateWait = 120 * time.Second
 
 // PlanPR is one PR's line of the plan and of the run.
 type PlanPR struct {
@@ -321,6 +330,9 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	landed := map[int]string{}
 	if !t.DryRun {
 		if err = t.reconcileRebinds(ctx, &req); err != nil {
+			return res, err
+		}
+		if err = t.reconcileUpdates(ctx, &req, res.BaseSHA, res.CIChecks, entry); err != nil {
 			return res, err
 		}
 		if landed, err = t.reconcileMerges(ctx, req, entry); err != nil {
@@ -579,53 +591,86 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			oldPatch, err = t.Forge.PatchID(ctx, req.Repository, beforeBase, p.Head)
 			if errors.Is(err, ErrIncompleteDiff) {
 				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head}
-				return t.refusePatchProof(res, p, entry, "the update could not be proved: GitHub returned an incomplete diff")
+				return t.refuseUpdate(res, p, entry, RuleRebasePatch, "the update could not be proved: GitHub returned an incomplete diff")
 			}
 			if err != nil {
 				return fmt.Errorf("prove the reviewed patch before updating #%d: %w", p.Number, err)
 			}
 		}
-		// The rebase reports the head it produced (pinned to the head the
-		// train checked). The train binds that SHA only, never a read-back: a
-		// push after the rebase leaves the PR head off the binding and is
-		// pr_head_moved at the check below.
-		pushed, err := t.Forge.Rebase(ctx, req.Repository, p.Number, p.Head)
-		if err != nil {
+		// The request is journaled before the mutation (brief 3.2.0-3a item
+		// 0): a run that stops between the mutation and the rebase entry
+		// leaves the branch moved with no record of the train's hand in it,
+		// and the next run recovers from this entry (reconcileUpdates).
+		if err := entry(Entry{Kind: "update_requested", PR: p.Number, Task: it.Task, Head: p.Head, BaseSHA: beforeBase,
+			Detail: "updatePullRequestBranch (REBASE) with the head pinned"}); err != nil {
+			return err
+		}
+		if _, err := t.Forge.Rebase(ctx, req.Repository, p.Number, p.Head); err != nil {
 			return fmt.Errorf("rebase: %w", err)
 		}
-		if pushed != p.Head {
-			if err := entry(Entry{Kind: "rebase", PR: p.Number, Head: p.Head, NewHead: pushed, BaseSHA: res.BaseSHA}); err != nil {
+		// GitHub performs the update asynchronously and answers with the head
+		// as it was (run ab184d07), so the mutation's answer is never bound:
+		// the head is read back until it differs from the pinned one or the
+		// bounded wait ends (item 1). An update GitHub rejected asynchronously
+		// (a conflict) leaves the head unmoved: a refusal, nothing bound.
+		cur, moved, err := t.readUpdatedHead(ctx, req.Repository, p.Number, p.Head)
+		if err != nil {
+			return fmt.Errorf("read #%d after its update: %w", p.Number, err)
+		}
+		if !moved {
+			if bound {
+				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head}
+			}
+			return t.refuseUpdate(res, p, entry, RuleUpdateUnconfirmed, fmt.Sprintf("GitHub did not update the branch of PR #%d within %s (the head did not move); nothing is bound and nothing is merged", p.Number, t.updateWait()))
+		}
+		pushed := cur.HeadSHA
+		// the rebase entry names the head read back, before the proof (item
+		// 2): trainHeads then names it and the force-push rule stays quiet on
+		// the train's own update
+		if err := entry(Entry{Kind: "rebase", PR: p.Number, Head: p.Head, NewHead: pushed, BaseSHA: res.BaseSHA}); err != nil {
+			return err
+		}
+		if bound {
+			afterBase, err := t.Forge.BranchHead(ctx, req.Repository, req.Base)
+			if err != nil {
+				return fmt.Errorf("read %s head after updating #%d: %w", req.Base, p.Number, err)
+			}
+			res.BaseSHA = afterBase
+			// The proof (item 1): the head read back sits on the base tip the
+			// train rebased onto (its first parent; the commit step makes one
+			// commit per task), and its patch-id against that base equals the
+			// bound head's against the old base. A head on anything else is a
+			// push after the update, never the update's result.
+			parent, err := t.Forge.FirstParent(ctx, req.Repository, pushed)
+			if err != nil {
+				return fmt.Errorf("read the first parent of #%d's updated head %s: %w", p.Number, short(pushed), err)
+			}
+			if parent != afterBase && parent != beforeBase {
+				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head, NewHead: pushed, OldID: oldPatch}
+				return t.refuseUpdate(res, p, entry, RulePRHeadMoved, fmt.Sprintf("the head read back after the update, %s, is not the update's result: its first parent %s is not the base tip %s the train rebased onto (a push after the update); nothing is bound; re-bind through the commit step", short(pushed), short(parent), short(afterBase)))
+			}
+			newPatch, err := t.Forge.PatchID(ctx, req.Repository, parent, pushed)
+			p.PatchProof = &PatchProof{Required: true, OldHead: p.Head, NewHead: pushed, OldID: oldPatch, NewID: newPatch, Match: err == nil && oldPatch == newPatch}
+			if errors.Is(err, ErrIncompleteDiff) {
+				p.Head = pushed
+				return t.refuseUpdate(res, p, entry, RuleRebasePatch, "the update could not be proved: GitHub returned an incomplete diff")
+			}
+			if err != nil {
+				return fmt.Errorf("prove the updated patch of #%d: %w", p.Number, err)
+			}
+			if oldPatch != newPatch {
+				p.Head = pushed
+				return t.refuseUpdate(res, p, entry, RuleRebasePatch, "its change moved during the update")
+			}
+			// audit first, then the binding write, both before the check
+			if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed, Detail: "patch-id: " + oldPatch + "\nfirst parent: " + parent}); err != nil {
 				return err
 			}
-			if bound {
-				afterBase, err := t.Forge.BranchHead(ctx, req.Repository, req.Base)
-				if err != nil {
-					return fmt.Errorf("read %s head after updating #%d: %w", req.Base, p.Number, err)
-				}
-				res.BaseSHA = afterBase
-				newPatch, err := t.Forge.PatchID(ctx, req.Repository, afterBase, pushed)
-				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head, NewHead: pushed, OldID: oldPatch, NewID: newPatch, Match: err == nil && oldPatch == newPatch}
-				if errors.Is(err, ErrIncompleteDiff) {
-					p.Head = pushed
-					return t.refusePatchProof(res, p, entry, "the update could not be proved: GitHub returned an incomplete diff")
-				}
-				if err != nil {
-					return fmt.Errorf("prove the updated patch of #%d: %w", p.Number, err)
-				}
-				if oldPatch != newPatch {
-					p.Head = pushed
-					return t.refusePatchProof(res, p, entry, "its change moved during the update")
-				}
-				// audit first, then the binding write, both before the check
-				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed, Detail: "patch-id: " + oldPatch}); err != nil {
-					return err
-				}
-				if err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {
-					return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pushed), err)
-				}
+			if err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {
+				return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pushed), err)
 			}
-			t.waitCI(ctx, req.Repository, pushed, res.CIChecks)
 		}
+		t.waitCI(ctx, req.Repository, pushed, res.CIChecks)
 	}
 	if bound {
 		// the check reads the binding as the task store has it now, never the
@@ -694,13 +739,18 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 	return entry(Entry{Kind: "merge", PR: p.Number, Task: p.Task, Head: p.Head, Merged: sha, Digest: res.Digest, Detail: detail})
 }
 
-func (t *Train) refusePatchProof(res *Result, p *PlanPR, entry func(Entry) error, detail string) error {
-	p.Refusals = append(p.Refusals, Refusal{Rule: RuleRebasePatch, Detail: detail})
+// refuseUpdate refuses a PR on its own update (the proof before the binding,
+// or the update itself): the refusal in words under rule, recorded with the
+// proof's heads and patch ids, no gate raised, nothing bound.
+func (t *Train) refuseUpdate(res *Result, p *PlanPR, entry func(Entry) error, rule, detail string) error {
+	p.Refusals = append(p.Refusals, Refusal{Rule: rule, Detail: detail})
 	p.Status = "refused"
-	e := Entry{Kind: "refusal", PR: p.Number, Task: p.Task, Rules: []string{RuleRebasePatch}, Detail: detail}
+	e := Entry{Kind: "refusal", PR: p.Number, Task: p.Task, Head: p.Head, Rules: []string{rule}, Detail: detail}
 	if proof := p.PatchProof; proof != nil {
 		e.Head, e.NewHead = proof.OldHead, proof.NewHead
-		e.Detail += "\nold patch-id: " + proof.OldID + "\nnew patch-id: " + proof.NewID
+		if proof.OldID != "" || proof.NewID != "" {
+			e.Detail += "\nold patch-id: " + proof.OldID + "\nnew patch-id: " + proof.NewID
+		}
 	}
 	if err := entry(e); err != nil {
 		return err
