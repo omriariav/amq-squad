@@ -368,8 +368,25 @@ func (l Ledger) taskStart(handle, taskID string) (branch, parent, base, why stri
 	return branch, parent, parent, ""
 }
 
-// ReadLedger loads a seat's ledger; os.ErrNotExist when there is none.
-func ReadLedger(root, handle string) (Ledger, error) {
+// ReadLedger loads a seat's ledger; os.ErrNotExist when there is none. A
+// refusal (sealchain.ErrTampered) first copies the refused document and its
+// head into the quarantine (QuarantineDir, 3.2.0-0c-A), and the error names
+// the copy: the evidence of a tamper alarm survives the next writer.
+func ReadLedger(root, handle string) (Ledger, error) { return ReadLedgerAs(root, handle, "read") }
+
+// ReadLedgerAs is ReadLedger with the caller's verb on the quarantine's
+// sidecar (the scheduler's prepare, each writer).
+func ReadLedgerAs(root, handle, verb string) (Ledger, error) {
+	l, err := readLedger(root, handle)
+	if errors.Is(err, sealchain.ErrTampered) {
+		err = quarantine(root, handle, verb, err)
+	}
+	return l, err
+}
+
+// readLedger is the read and the check: the file, its schema and handle,
+// the seal under the session seed and the signed head (sealchain.Check).
+func readLedger(root, handle string) (Ledger, error) {
 	var l Ledger
 	raw, err := os.ReadFile(ledgerPath(root, handle))
 	if err != nil {
@@ -413,9 +430,20 @@ func ReadLedger(root, handle string) (Ledger, error) {
 	return l, nil
 }
 
-func writeLedger(root string, l Ledger) error {
+// writeLedger seals and saves a seat's ledger: the one point every write
+// passes, under the ledger lock (each caller holds it). Before it writes it
+// reads and verifies the document on disk, the check ReadLedgerAs runs
+// (3.2.0-0c-A): a document that fails is refused, nothing is moved, the
+// refused body and head are quarantined, and the error names the copy. The
+// caller's own read is not enough: it happened before the caller's git
+// work, and the incident's refused body was lost to exactly such a re-seal.
+// verb is the writer's name on the quarantine's sidecar.
+func writeLedger(root string, l Ledger, verb string) error {
 	l.Schema = LedgerSchema
 	l.Seal = nil
+	if _, err := ReadLedgerAs(root, l.Handle, verb); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	key, err := sealchain.SessionKey(root)
 	if err != nil {
 		return fmt.Errorf("commit ledger %s: the session seed: %w", l.Handle, err)
@@ -476,16 +504,18 @@ func withLedgerLock(root, handle string, fn func() error) error {
 // the same worktree and branch is kept: a relaunch continues from the last
 // harness commit. It returns the ledger in effect.
 func RecordBase(root, handle, worktree, branch, base string, now time.Time) (Ledger, error) {
-	return recordBase(root, handle, worktree, branch, base, nil, now)
+	return recordBase(root, handle, worktree, branch, base, nil, now, "seat commit --base")
 }
 
-func recordBase(root, handle, worktree, branch, base string, target *Target, now time.Time) (Ledger, error) {
+// recordBase is RecordBase and RecordWorktreeBase; verb names the writer on
+// a quarantine's sidecar.
+func recordBase(root, handle, worktree, branch, base string, target *Target, now time.Time, verb string) (Ledger, error) {
 	if handle == "" || worktree == "" || branch == "" || len(strings.TrimSpace(base)) < 40 {
 		return Ledger{}, fmt.Errorf("record base: handle, worktree, branch and a full commit id are required")
 	}
 	var out Ledger
 	err := withLedgerLock(root, handle, func() error {
-		l, err := ReadLedger(root, handle)
+		l, err := ReadLedgerAs(root, handle, verb)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -497,7 +527,7 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 				l.Target = *target
 			}
 			out = l
-			return writeLedger(root, l)
+			return writeLedger(root, l, verb)
 		}
 		if err != nil || l.Worktree != worktree || l.Branch != branch {
 			l = Ledger{Handle: handle, Worktree: worktree, Branch: branch, Base: strings.TrimSpace(base), Commits: []LedgerCommit{}, At: now.UTC()}
@@ -510,7 +540,7 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 			l.Target = *target
 		}
 		out = l
-		return writeLedger(root, l)
+		return writeLedger(root, l, verb)
 	})
 	return out, err
 }
@@ -518,15 +548,16 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 // RecordTarget records the owner's grant for an existing ledger (seat
 // commit --base, the lead's base decision, records it with the base).
 func RecordTarget(root, handle string, target Target) (Ledger, error) {
+	const verb = "seat commit --base"
 	var out Ledger
 	err := withLedgerLock(root, handle, func() error {
-		l, err := ReadLedger(root, handle)
+		l, err := ReadLedgerAs(root, handle, verb)
 		if err != nil {
 			return err
 		}
 		l.Target = target
 		out = l
-		return writeLedger(root, l)
+		return writeLedger(root, l, verb)
 	})
 	return out, err
 }
@@ -552,5 +583,5 @@ func RecordWorktreeBase(gitBin, root, handle, worktree, branch string, target Ta
 	if err != nil {
 		return Ledger{}, err
 	}
-	return recordBase(root, handle, worktree, branch, head, &target, now)
+	return recordBase(root, handle, worktree, branch, head, &target, now, "launch record base")
 }

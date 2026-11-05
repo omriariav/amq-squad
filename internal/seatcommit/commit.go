@@ -214,7 +214,7 @@ func ExitCheck(o Options, why string) Result {
 	// The exit check runs on the scheduler's tick: it never waits for the
 	// ledger a running commit step holds, it defers (P1-1 of the second pass).
 	err := withLedgerTryLock(o.Root, o.Handle, func() error {
-		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
+		if terr := verifyEvidence(o, "exit check"); errors.Is(terr, sealchain.ErrTampered) {
 			out = res.tamperedRefusal(terr)
 			out.Detail += " (at the seat's exit: " + why + ")"
 			return nil
@@ -235,7 +235,7 @@ func run(o Options, res Result) Result {
 	}
 	// The evidence check at every step, before anything is committed.
 	if !o.DryRun {
-		if terr := verifyEvidence(o); errors.Is(terr, sealchain.ErrTampered) {
+		if terr := verifyEvidence(o, "commit step"); errors.Is(terr, sealchain.ErrTampered) {
 			return res.tamperedRefusal(terr)
 		}
 	}
@@ -247,7 +247,7 @@ func run(o Options, res Result) Result {
 		return res.refuse(ReasonWorktree, task.RouteLead, err.Error())
 	}
 	res.Branch = rec.Branch
-	ledger, err := ReadLedger(o.Root, o.Handle)
+	ledger, err := ReadLedgerAs(o.Root, o.Handle, "commit step")
 	if os.IsNotExist(err) {
 		return res.refuse(ReasonBaseUnrecorded, task.RouteLead, "no core-recorded base for seat "+o.Handle+"; the launch records it (seat commit --base SHA records one as a lead decision)")
 	}
@@ -419,7 +419,7 @@ func run(o Options, res Result) Result {
 // failure is a note: the work is committed, and the next lease boundary's
 // CleanSeat returns the worktree.
 func settle(o Options, sh *shadow, rec launch.Record, res Result) Result {
-	l, err := ReadLedger(o.Root, o.Handle)
+	l, err := ReadLedgerAs(o.Root, o.Handle, "commit step settle")
 	if err != nil {
 		res.Notes = append(res.Notes, "the worktree stays on the task's tree until the next lease boundary: "+err.Error())
 		return res
@@ -434,7 +434,7 @@ func settle(o Options, sh *shadow, rec launch.Record, res Result) Result {
 		return res
 	}
 	l.Rest, l.Lease = rest, nil
-	if err := writeLedger(o.Root, l); err != nil {
+	if err := writeLedger(o.Root, l, "commit step settle"); err != nil {
 		res.Notes = append(res.Notes, "commit ledger: "+err.Error())
 	}
 	return res
@@ -519,7 +519,7 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 		if err != nil {
 			return err
 		}
-		l, err := ReadLedger(root, handle)
+		l, err := ReadLedgerAs(root, handle, "archive attempt")
 		if err != nil {
 			return err
 		}
@@ -556,7 +556,7 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 			return err
 		}
 		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: "blocked: " + task.ReasonWidenRequested, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
-		if err := writeLedger(root, l); err != nil {
+		if err := writeLedger(root, l, "archive attempt"); err != nil {
 			return err
 		}
 		archived = true
@@ -578,7 +578,7 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	if err != nil {
 		return false, err
 	}
-	l, err := ReadLedger(root, handle)
+	l, err := ReadLedgerAs(root, handle, "clean seat")
 	if err != nil {
 		return false, err
 	}
@@ -632,7 +632,7 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 				return false, fmt.Errorf("anchor the discarded tree: %w", err)
 			}
 			l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
-			if err := writeLedger(root, l); err != nil {
+			if err := writeLedger(root, l, "clean seat"); err != nil {
 				return false, err
 			}
 		}
@@ -645,7 +645,7 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	}
 	if l.Rest != rest || l.Lease != nil {
 		l.Rest, l.Lease = rest, nil
-		if err := writeLedger(root, l); err != nil {
+		if err := writeLedger(root, l, "clean seat"); err != nil {
 			return false, err
 		}
 	}
@@ -729,7 +729,7 @@ func StartTask(root, handle, gitBin string, env []string, t task.Task, base stri
 		env = os.Environ()
 	}
 	return withLedgerTryLock(root, handle, func() error {
-		l, err := ReadLedger(root, handle)
+		l, err := ReadLedgerAs(root, handle, "start task")
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -762,7 +762,7 @@ func StartTask(root, handle, gitBin string, env []string, t task.Task, base stri
 		// the record, never the name).
 		if l.Lease == nil {
 			l.Lease = &LedgerLease{Task: t.ID, Branch: branch, Base: base, Start: start, At: now.UTC()}
-			if err := writeLedger(root, l); err != nil {
+			if err := writeLedger(root, l, "start task"); err != nil {
 				return err
 			}
 		}
@@ -847,11 +847,11 @@ func anchorEvidence(repo git, l *Ledger, taskID, tree string, now time.Time) (Ev
 // must still resolve to the tree recorded with it. A ref that is gone or
 // points elsewhere (a same-UID seat can edit its repository's refs) is
 // ledger_tampered (the fix round's item 22).
-func verifyEvidence(o Options) error {
+func verifyEvidence(o Options, verb string) error {
 	if o.Git == "" {
 		return nil // no git binary: the step defers on its own
 	}
-	l, err := ReadLedger(o.Root, o.Handle)
+	l, err := ReadLedgerAs(o.Root, o.Handle, verb)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -1159,7 +1159,7 @@ func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Res
 		l.Commits = append(l.Commits, LedgerCommit{Task: o.Task.ID, Commit: res.Commit, Parent: res.Parent, Tree: res.Tree, At: o.Now().UTC(),
 			DeclaredDigest: res.DeclaredDigest, DiffDigest: res.DiffDigest, Lines: res.Lines, Changes: res.Changes, Branch: res.Branch, Base: base})
 		last = len(l.Commits) - 1
-		if err := writeLedger(o.Root, l); err != nil {
+		if err := writeLedger(o.Root, l, "commit step"); err != nil {
 			return res.defer_("commit ledger: " + err.Error())
 		}
 	}
@@ -1201,7 +1201,7 @@ func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Res
 		return res.defer_("push: " + firstLine(text))
 	}
 	l.Commits[last].Pushed = true
-	if err := writeLedger(o.Root, l); err != nil {
+	if err := writeLedger(o.Root, l, "commit step"); err != nil {
 		return res.defer_("commit ledger: " + err.Error())
 	}
 	res.Pushed, res.OK, res.PRHead = true, true, res.Commit
