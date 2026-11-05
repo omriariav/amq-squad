@@ -143,7 +143,16 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 	// only to a task still bound at its Head, so they bind nothing later.
 	if err := in.Binder.BindPRFrom(tk.ID, repository, in.PR, in.From, in.To); err != nil {
 		if errors.Is(err, task.ErrPRBindingMismatch) {
-			return RebindResult{}, &RebindRefusal{Code: RefusedRebindHead, Detail: fmt.Sprintf("the binding moved while the re-bind was proved: %v; nothing is bound (the proof's entries are journaled under run %s)", err, res.Run)}
+			// The terminal entry (the plan reviewer on #903): the rebase
+			// entry above would otherwise keep the named head in trainHeads,
+			// and a later run would take a push of exactly that head for the
+			// train's own; trainHeads drops a head whose rebase entry is
+			// followed by this one.
+			why := fmt.Sprintf("the binding moved while the re-bind was proved: %v; nothing is bound", err)
+			if aerr := write(Entry{Kind: "rebind_superseded", PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: why}); aerr != nil {
+				return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: why + "; and the audit log refused the superseded entry: " + aerr.Error()}
+			}
+			return RebindResult{}, &RebindRefusal{Code: RefusedRebindHead, Detail: why + " (the proof's entries and the superseded entry are journaled under run " + res.Run + ")"}
 		}
 		return RebindResult{}, &RebindRefusal{Code: "binding_failed", Detail: fmt.Sprintf("task %s to %s: %v", tk.ID, short(in.To), err)}
 	}

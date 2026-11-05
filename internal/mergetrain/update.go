@@ -271,7 +271,7 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		// wait, and a read that started before the deadline completes at
 		// most one poll after it; a push later than that is never the
 		// update's (the plan reviewer on #903)
-		until := requestWindowEnd(requested.At, t.updateWait())
+		until := requestWindowEnd(requested.At, t.updateWait()) // every live request; to narrow it to the ambiguous class: `if ambiguous == "" { until = "" }`
 		bases := []baseCandidate{{requested.BaseSHA, "the journaled base tip"}, {baseTip, "the base's current tip"}}
 		proof, why, err := proveUpdate(ctx, t.Forge, req.Repository, cur, it.BoundHead, cur.HeadSHA, bases, requested.At, until)
 		if err != nil {

@@ -508,8 +508,10 @@ func TestFailedProofLeavesNoRebaseEntry(t *testing.T) {
 // is still bound at --from, under the store's lock. A train run that advanced
 // the binding between the proof and the write (the Binder here stands in for
 // it) keeps its head: the re-bind is refused rebind_head_mismatch and the
-// advanced binding stays. The store's own check: BindPRFrom with the wrong
-// head is ErrPRBindingMismatch and writes nothing.
+// advanced binding stays; the terminal rebind_superseded entry takes the
+// head out of trainHeads and the next run refuses a push of it on
+// force_push. The store's own check: BindPRFrom with the wrong head is
+// ErrPRBindingMismatch and writes nothing.
 func TestRebindRefusesWhenTheBindingMovedMeanwhile(t *testing.T) {
 	f, id, old, _ := strictBound(t)
 	_, moved := moveBranch(f, "pr1", nil, true)
@@ -523,6 +525,24 @@ func TestRebindRefusesWhenTheBindingMovedMeanwhile(t *testing.T) {
 	}
 	if got := boundHead(t, f, id); got != other {
 		t.Fatalf("the advanced binding was overwritten: %s", got)
+	}
+	// the terminal entry (the plan reviewer on #903): the proof's rebase
+	// entry is journaled, the superseded entry follows it, and the head is
+	// not the train's; a following run's check refuses a push of it on
+	// force_push
+	entries, _ := f.train.Audit.Read()
+	ri := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "rebase" && e.PR == 1 && e.NewHead == moved })
+	si := slices.IndexFunc(entries, func(e Entry) bool {
+		return e.Kind == "rebind_superseded" && e.PR == 1 && e.Task == id && e.Head == old && e.NewHead == moved && strings.Contains(e.Detail, "the binding moved while the re-bind was proved")
+	})
+	if ri < 0 || si < ri || entries[si].Run != entries[ri].Run || f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
+		t.Fatalf("the superseded head stays the train's: rebase %d, superseded %d, trainHeads %v", ri, si, f.train.Audit.trainHeads(fixtureRepo, 1))
+	}
+	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
+	f.realRun(&req)
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || !slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
+		t.Fatalf("a push of the superseded head passed as the train's own: %v %+v", err, res.PRs)
 	}
 	if _, err := s.BindPRFrom(id, fixtureRepo, 1, old, moved, time.Now()); !errors.Is(err, task.ErrPRBindingMismatch) || boundHead(t, f, id) != other {
 		t.Fatalf("BindPRFrom with the wrong head: %v (bound %s)", err, boundHead(t, f, id))
