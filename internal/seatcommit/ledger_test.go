@@ -62,18 +62,19 @@ func TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	type snapshot struct{ parent, tree string }
-	once, entered, release := make(chan struct{}, 1), make(chan snapshot, 1), make(chan struct{})
+	expectedParent, expectedFirstTree := expectedArchiveSnapshot(t, f)
+	once, entered, release := make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{})
+	releaseHook := closeOnce(release)
 	once <- struct{}{}
-	beforeArchiveAttemptWrite = func(parent, tree string) {
+	beforeArchiveAttemptWrite = func(string, string) {
 		select {
 		case <-once:
-			entered <- snapshot{parent, tree}
-			<-release
+			entered <- struct{}{}
+			waitForArchiveRelease(release)
 		default:
 		}
 	}
-	t.Cleanup(func() { beforeArchiveAttemptWrite = nil })
+	cleanupArchiveHook(t, releaseHook)
 	firstDone := make(chan struct {
 		archived bool
 		err      error
@@ -85,18 +86,17 @@ func TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection(t *test
 			err      error
 		}{archived, err}
 	}()
-	var first snapshot
 	select {
-	case first = <-entered:
+	case <-entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("first archive did not reach its critical section")
 	}
 	write(t, filepath.Join(f.wt, "second.go"), "package second\n")
 	sh(t, f.wt, "add", "-A")
 	sh(t, f.wt, "commit", "-q", "-m", "different parent")
-	secondParent, secondTree := sh(t, f.wt, "rev-parse", "HEAD"), sh(t, f.wt, "rev-parse", "HEAD^{tree}")
-	if secondParent == first.parent || secondTree == first.tree {
-		t.Fatalf("second snapshot is not distinct: first=(%s,%s) second=(%s,%s)", first.parent, first.tree, secondParent, secondTree)
+	secondTree := sh(t, f.wt, "rev-parse", "HEAD^{tree}")
+	if secondTree == expectedFirstTree {
+		t.Fatalf("second tree equals the independently captured first tree: %s", secondTree)
 	}
 	secondDone := make(chan error, 1)
 	go func() {
@@ -111,7 +111,7 @@ func TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection(t *test
 	case <-time.After(10 * time.Second):
 		t.Fatal("second archive did not finish")
 	}
-	close(release)
+	releaseHook()
 	select {
 	case got := <-firstDone:
 		if got.err != nil || !got.archived {
@@ -121,8 +121,8 @@ func TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection(t *test
 		t.Fatal("first archive did not finish")
 	}
 	ledger, err := ReadLedger(f.root, f.handle)
-	if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].Parent != first.parent || ledger.Discarded[0].Tree != first.tree {
-		t.Fatalf("surviving discard = %+v, first=(%s,%s), err=%v", ledger.Discarded, first.parent, first.tree, err)
+	if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].Parent != expectedParent || ledger.Discarded[0].Tree != expectedFirstTree || ledger.Discarded[0].Tree == secondTree {
+		t.Fatalf("surviving discard = %+v, expected parent/tree=(%s,%s), second tree=%s, err=%v", ledger.Discarded, expectedParent, expectedFirstTree, secondTree, err)
 	}
 }
 

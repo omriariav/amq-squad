@@ -56,8 +56,12 @@ type fakeState struct {
 	AdvanceBaseBeforeRebase []string `json:"advance_base_before_rebase,omitempty"`
 	// TruncateAfterRebase omits a patch marker for the updated head.
 	TruncateAfterRebase []string `json:"truncate_after_rebase,omitempty"`
-	CIName              string   `json:"ci_name"`
-	FailMerge           bool     `json:"fail_merge,omitempty"`
+	// CapCompareAfterRebase reports MaxCompareFiles for the updated head.
+	CapCompareAfterRebase []string `json:"cap_compare_after_rebase,omitempty"`
+	// RejectCompareAfterRebase makes the updated compare metadata return HTTP 422.
+	RejectCompareAfterRebase []string `json:"reject_compare_after_rebase,omitempty"`
+	CIName                   string   `json:"ci_name"`
+	FailMerge                bool     `json:"fail_merge,omitempty"`
 	// LoseMergeResponse: the merge happens on the server, then the
 	// connection fails before the response (5 re-pass, P2-5).
 	LoseMergeResponse bool `json:"lose_merge_response,omitempty"`
@@ -326,15 +330,27 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		case parts[0] == "compare" && len(parts) == 2:
 			base, head, _ := strings.Cut(parts[1], "...")
 			if slices.ContainsFunc(args, func(a string) bool { return strings.Contains(a, "missing_patch") }) {
+				for _, n := range s.RejectCompareAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						return fail("gh: compare result unavailable (HTTP 422)")
+					}
+				}
 				status, _ := gitOut(s.Bare, "diff", "--name-only", base+"..."+head)
-				missing := 0
+				fileCount, missing := len(strings.Fields(status)), 0
 				for _, n := range s.TruncateAfterRebase {
 					pushes := pr(n).ForcePushes
 					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
 						missing = 1
 					}
 				}
-				fmt.Fprintf(stdout, `{"file_count":%d,"missing_patch":%d}`+"\n", len(strings.Fields(status)), missing)
+				for _, n := range s.CapCompareAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						fileCount = MaxCompareFiles
+					}
+				}
+				fmt.Fprintf(stdout, `{"file_count":%d,"missing_patch":%d}`+"\n", fileCount, missing)
 				break
 			}
 			if slices.Contains(args, "Accept: application/vnd.github.diff") {
