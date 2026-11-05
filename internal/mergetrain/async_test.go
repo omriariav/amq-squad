@@ -267,7 +267,7 @@ func TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof(t *testing.T) {
 			moveBranch(f, "pr1", func() {
 				mustGit(f.t, f.work, "commit", "-q", "--amend", "--no-edit", "--date", "2030-01-01T00:00:00Z")
 			}, true)
-		}, false, "2 force pushes after the journaled request"},
+		}, false, "2 force pushes in the journaled request's window"},
 		{"a parent that is not the base tip", func(f *fixture, id, old string) {
 			journal(f, id, old, f.head("main"))
 			moveBranch(f, "pr1", func() {
@@ -595,7 +595,8 @@ func (s *slowForge) PR(ctx context.Context, repository string, number int) (PRIn
 	return s.Forge.PR(ctx, repository, number)
 }
 
-// Codex on #903 (4): a request whose mutation failed is followed by an
+// Codex on #903 (4), the plan reviewer's split: a request GitHub definitely
+// refused (here a GraphQL error naming the refusal) is followed by an
 // update_failed entry and counts for nothing: a seat's own push after it,
 // even with the same patch on the base tip, is not recovered, and the next
 // run refuses it as a force push that is not the train's. (A seat's push
@@ -616,7 +617,7 @@ func TestFailedMutationLeavesNoLiveRequest(t *testing.T) {
 	if ri < 0 || fi < ri {
 		t.Fatalf("no update_failed after the request: %v", kinds(entries, 1))
 	}
-	if _, ok := lastUpdateRequest(entries, fixtureRepo, 1, old); ok {
+	if _, _, ok := lastUpdateRequest(entries, fixtureRepo, 1, old); ok {
 		t.Fatal("the failed request is still live")
 	}
 	f.train.Forge = f.gh
@@ -659,5 +660,144 @@ func TestPushedAfterTakesTheSameSecondAsAfter(t *testing.T) {
 		if got := pushedAfter(c.at, c.since); got != c.want {
 			t.Errorf("pushedAfter(%q, %q) = %v, want %v", c.at, c.since, got, c.want)
 		}
+	}
+}
+
+// ambiguousForge fails the mutation on this side (a transport error) after
+// optionally letting the fake perform it (GitHub completed the update, the
+// answer was lost).
+type ambiguousForge struct {
+	Forge
+	perform bool
+}
+
+func (a *ambiguousForge) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
+	if a.perform {
+		if _, err := a.Forge.Rebase(ctx, repository, number, expect); err != nil {
+			return "", err
+		}
+	}
+	return "", errors.New(`Post "https://api.github.com/graphql": context deadline exceeded`)
+}
+
+// The plan reviewer's split on #903 (4), the ambiguous class: a mutation
+// that fails on this side without a definite refusal (a timeout, a 5xx, a
+// dropped connection) may have been completed by GitHub. The request stays
+// live, stamped update_ambiguous, and the train reads the head back at once:
+// an update that did land is proved, bound and merged in the same run; one
+// that did not ends the bounded wait unconfirmed. At the next run the
+// recovery accepts only a force push inside the request's window (its time
+// to 120 s plus the 16 s last backoff, the same second inclusive): a push
+// inside it is recovered on the proof, a push after it is refused and the
+// reconcile entry says so.
+func TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow(t *testing.T) {
+	t.Run("the update landed and the answer was lost", func(t *testing.T) {
+		f, id, old, req := strictBound(t)
+		f.edit(func(s *fakeState) { s.AsyncUpdate = []string{"1"} })
+		f.train.Forge = &ambiguousForge{Forge: f.gh, perform: true}
+		res, err := f.train.Run(context.Background(), req)
+		if err != nil || res.PRs[0].Status != "merged" || res.PRs[0].Head == old || boundHead(t, f, id) != res.PRs[0].Head {
+			t.Fatalf("the lost answer's update was not read back and merged: %v %+v", err, res.PRs)
+		}
+		entries, _ := f.train.Audit.Read()
+		ai := slices.IndexFunc(entries, func(e Entry) bool {
+			return e.Kind == "update_ambiguous" && e.PR == 1 && e.Head == old && strings.Contains(e.Detail, "context deadline exceeded")
+		})
+		ri := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "rebase" && e.PR == 1 })
+		if ai < 0 || ri < ai {
+			t.Fatalf("no update_ambiguous before the rebase entry: %v", kinds(entries, 1))
+		}
+	})
+	// the update never ran: the first run ends unconfirmed with the request
+	// live and ambiguous; then a push by hand at an offset from the request
+	ambiguousRun := func(t *testing.T) (*fixture, string, string, Request, string) {
+		t.Helper()
+		f, id, old, req := strictBound(t)
+		f.train.Forge = &ambiguousForge{Forge: f.gh}
+		now := time.Now()
+		f.train.Now = func() time.Time { return now }
+		f.train.Sleep = func(d time.Duration) { now = now.Add(d) }
+		first, err := f.train.Run(context.Background(), req)
+		if err != nil || first.PRs[0].Status != "refused" || first.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed {
+			t.Fatalf("the ambiguous failure did not end in the bounded wait: %v %+v", err, first.PRs)
+		}
+		entries, _ := f.train.Audit.Read()
+		requested, ambiguous, ok := lastUpdateRequest(entries, fixtureRepo, 1, old)
+		if !ok || !strings.Contains(ambiguous, "context deadline exceeded") {
+			t.Fatalf("the request is not live and ambiguous: %v %q", ok, ambiguous)
+		}
+		f.train.Forge, f.train.Now, f.train.Sleep = f.gh, nil, nil
+		return f, id, old, req, requested.At
+	}
+	pushAt := func(f *fixture, requestAt string, offset time.Duration) {
+		at, err := time.Parse(time.RFC3339Nano, requestAt)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		moveBranch(f, "pr1", nil, true)
+		f.edit(func(s *fakeState) {
+			s.PRs["1"].ForcePushes[0].At = at.Add(offset).UTC().Format(time.RFC3339)
+		})
+	}
+	t.Run("a push inside the window is recovered", func(t *testing.T) {
+		f, id, old, req, requestAt := ambiguousRun(t)
+		pushAt(f, requestAt, 100*time.Second)
+		f.realRun(&req)
+		res, err := f.train.Run(context.Background(), req)
+		if err != nil || res.PRs[0].Status != "merged" || res.PRs[0].Head == old || boundHead(t, f, id) != res.PRs[0].Head {
+			t.Fatalf("the push inside the window was not recovered: %v %+v", err, res.PRs)
+		}
+		entries, _ := f.train.Audit.Read()
+		if !slices.ContainsFunc(entries, func(e Entry) bool {
+			return e.Kind == "rebase" && e.Run == res.Run && strings.Contains(e.Detail, "inside the request's window") && strings.Contains(e.Detail, "had failed without a definite refusal")
+		}) {
+			t.Fatalf("the recovery's record: %v", kinds(entries, 1))
+		}
+	})
+	t.Run("a push after the window is refused", func(t *testing.T) {
+		f, id, old, req, requestAt := ambiguousRun(t)
+		pushAt(f, requestAt, 200*time.Second) // past 120 s + 16 s
+		f.realRun(&req)
+		res, err := f.train.Run(context.Background(), req)
+		if err != nil || res.PRs[0].Status != "refused" || boundHead(t, f, id) != old ||
+			!slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
+			t.Fatalf("the push after the window was recovered: %v %+v (bound %s)", err, res.PRs, boundHead(t, f, id))
+		}
+		entries, _ := f.train.Audit.Read()
+		rec := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "reconcile" && e.Run == res.Run && e.PR == 1 })
+		if rec < 0 || !strings.Contains(entries[rec].Detail, "1 after the window, which ended at") || !strings.HasSuffix(entries[rec].Detail, "binding not recovered") {
+			t.Fatalf("the refusal's record does not name the window: %d %v", rec, entries)
+		}
+	})
+}
+
+// The classes of a failed mutation as gh reports them (the plan reviewer on
+// #903): a 4xx or a GraphQL refusal is definite; a 5xx, a transport error,
+// a context deadline or a GraphQL "something went wrong" is ambiguous.
+func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
+	for text, want := range map[string]bool{
+		"gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)":              true,
+		"gh api graphql: exit status 1: GraphQL: Pull request is not mergeable (updatePullRequestBranch)":                                           true,
+		"gh api graphql: exit status 1: GraphQL: Resource not accessible by integration (updatePullRequestBranch)":                                  true,
+		"gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)":                                                                           true,
+		"gh api graphql: exit status 1: gh: Forbidden (HTTP 403)":                                                                                   true,
+		"gh api graphql: exit status 1: GraphQL: expected head abc, the head is def":                                                                true,
+		"gh api graphql: exit status 1: gh: Bad Gateway (HTTP 502)":                                                                                 false,
+		"gh api graphql: exit status 1: gh: Internal Server Error (HTTP 500)":                                                                       false,
+		"gh api graphql: exit status 1: GraphQL: Something went wrong while executing your query. Please include `ABCD` when reporting this issue.": false,
+		"gh api graphql: exit status 1: GraphQL: The request timed out (updatePullRequestBranch)":                                                   false,
+		`gh api graphql: exit status 1: Post "https://api.github.com/graphql": context deadline exceeded`:                                           false,
+		"gh api graphql: exit status 1: error connecting to api.github.com: read: connection reset by peer":                                         false,
+		"gh api graphql: signal: killed: ": false,
+	} {
+		if got := definiteRefusal(errors.New(text)); got != want {
+			t.Errorf("definiteRefusal(%q) = %v, want %v", text, got, want)
+		}
+	}
+	if end := requestWindowEnd("2026-11-05T19:23:20.853766Z", 120*time.Second); end != "2026-11-05T19:25:36.853766Z" {
+		t.Errorf("the window's end: %s", end)
+	}
+	if requestWindowEnd("not a time", time.Minute) != "" {
+		t.Error("an unreadable request time has a window")
 	}
 }

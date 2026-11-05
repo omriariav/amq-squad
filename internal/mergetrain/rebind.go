@@ -111,7 +111,7 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 	}
 	bases := journaledBases(entries, repository, in.PR, in.From)
 	bases = append(bases, baseCandidate{tip, "the base's current tip"})
-	proof, why, err := proveUpdate(ctx, in.Forge, repository, cur, in.From, in.To, bases, "")
+	proof, why, err := proveUpdate(ctx, in.Forge, repository, cur, in.From, in.To, bases, "", "")
 	if err != nil {
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: err.Error()}
 	}

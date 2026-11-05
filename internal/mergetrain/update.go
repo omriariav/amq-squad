@@ -76,6 +76,37 @@ func (t *Train) sleepOrDone(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// definiteRefusal classifies a failed updatePullRequestBranch (the plan
+// reviewer on #903). gh prints an HTTP error as `gh: <message> (HTTP <code>)`
+// and a GraphQL error as `GraphQL: <message> (updatePullRequestBranch)`; a
+// 4xx, or a GraphQL error that is a refusal (the expected head mismatch
+// "Head branch was modified", a conflict, not mergeable, forbidden), is
+// definite: GitHub answered and did not take the update. A 5xx, a transport
+// error (a dial, reset, EOF or context deadline), or a GraphQL message that
+// says the request itself failed ("Something went wrong while executing
+// your query", "timed out", "temporarily unavailable") is ambiguous: GitHub
+// may have completed the update.
+func definiteRefusal(err error) bool {
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "(http 4") {
+		return true
+	}
+	if !strings.Contains(err.Error(), "GraphQL:") { // gh's prefix, as printed; the command line's "gh api graphql:" is not it
+		return false
+	}
+	for _, vague := range []string{"something went wrong", "timed out", "timeout", "temporarily unavailable", "try again later"} {
+		if strings.Contains(s, vague) {
+			return false
+		}
+	}
+	return true
+}
+
+// UpdateWindowSlack is added to the bounded wait to close the recovery's
+// window on a journaled request: the last backoff of the read-back, so a
+// read that started before the deadline and completed after it is inside.
+const UpdateWindowSlack = 16 * time.Second
+
 // baseCandidate is a base tip the update may have landed on, with the name
 // the record gives it.
 type baseCandidate struct{ sha, which string }
@@ -94,23 +125,29 @@ type updateProof struct {
 
 // proveUpdate checks that cur's head (to) is the result of the train's
 // update of from (brief 3.2.0-3a items 3 and 6): the force-push timeline
-// read whole; exactly one force push, after since when given (the journaled
-// request's time, compared at second precision as the timeline reports it),
-// and that one from the bound head to the current head; the current head's
+// read whole; exactly one force push, inside the window [since, until] when
+// given (the journaled request's time to the end of its bounded wait plus
+// one poll, compared at second precision as the timeline reports it), and
+// that one from the bound head to the current head; the current head's
 // first parent one of the base candidates; the patch ids equal. A failed
 // part is returned in words (why); a forge failure is an error.
-func proveUpdate(ctx context.Context, forge Forge, repository string, cur PRInfo, from, to string, bases []baseCandidate, since string) (updateProof, string, error) {
+func proveUpdate(ctx context.Context, forge Forge, repository string, cur PRInfo, from, to string, bases []baseCandidate, since, until string) (updateProof, string, error) {
 	proof := updateProof{From: from, To: to}
 	if cur.HistoryIncomplete != "" {
 		return proof, "the force-push timeline could not be read whole: " + cur.HistoryIncomplete, nil
 	}
 	var after []ForcePush
+	late := 0
 	for _, fp := range cur.ForcePushes {
 		if since != "" {
 			if fp.At == "" {
-				return proof, fmt.Sprintf("the force push %s -> %s carries no time, so it cannot be placed after the journaled request", short(fp.Before), short(fp.After)), nil
+				return proof, fmt.Sprintf("the force push %s -> %s carries no time, so it cannot be placed in the journaled request's window", short(fp.Before), short(fp.After)), nil
 			}
 			if !pushedAfter(fp.At, since) {
+				continue
+			}
+			if until != "" && !pushedAfter(until, fp.At) {
+				late++
 				continue
 			}
 		}
@@ -118,7 +155,10 @@ func proveUpdate(ctx context.Context, forge Forge, repository string, cur PRInfo
 	}
 	scope := ""
 	if since != "" {
-		scope = " after the journaled request"
+		scope = " in the journaled request's window"
+		if late > 0 {
+			scope += fmt.Sprintf(" (%d after the window, which ended at %s; a push later than the bounded wait is never the update's)", late, until)
+		}
 	}
 	switch {
 	case len(after) == 0:
@@ -164,9 +204,21 @@ func proveUpdate(ctx context.Context, forge Forge, repository string, cur PRInfo
 	return proof, "", nil
 }
 
+// requestWindowEnd is the end of a journaled request's window: its time
+// plus the bounded wait plus the last backoff (RFC3339, UTC); "" when the
+// request carries no readable time.
+func requestWindowEnd(at string, wait time.Duration) string {
+	t, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil {
+		return ""
+	}
+	return t.Add(wait + UpdateWindowSlack).UTC().Format(time.RFC3339Nano)
+}
+
 // pushedAfter: the force push's time (RFC3339, whole seconds as the timeline
 // reports it) is not before the journaled request's time, compared at
-// second precision.
+// second precision. With the arguments swapped it is "not after": a push
+// inside the window's last second is inside the window.
 func pushedAfter(at, since string) bool {
 	a, err := time.Parse(time.RFC3339Nano, at)
 	if err != nil {
@@ -204,7 +256,7 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		if it.BoundHead == "" {
 			continue
 		}
-		requested, ok := lastUpdateRequest(entries, req.Repository, it.Number, it.BoundHead)
+		requested, ambiguous, ok := lastUpdateRequest(entries, req.Repository, it.Number, it.BoundHead)
 		if !ok {
 			continue
 		}
@@ -215,8 +267,13 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		if cur.HeadSHA == it.BoundHead {
 			continue // the update never landed (or was refused unconfirmed): the check decides
 		}
+		// the request's window: GitHub lands the update inside the bounded
+		// wait, and a read that started before the deadline completes at
+		// most one poll after it; a push later than that is never the
+		// update's (the plan reviewer on #903)
+		until := requestWindowEnd(requested.At, t.updateWait())
 		bases := []baseCandidate{{requested.BaseSHA, "the journaled base tip"}, {baseTip, "the base's current tip"}}
-		proof, why, err := proveUpdate(ctx, t.Forge, req.Repository, cur, it.BoundHead, cur.HeadSHA, bases, requested.At)
+		proof, why, err := proveUpdate(ctx, t.Forge, req.Repository, cur, it.BoundHead, cur.HeadSHA, bases, requested.At, until)
 		if err != nil {
 			return err
 		}
@@ -227,7 +284,10 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 			}
 			continue
 		}
-		detail := fmt.Sprintf("recovered: the update journaled by run %s moved the branch and was not recorded; first parent %s is %s; one force push %s -> %s by %s", requested.Run, short(proof.Parent), proof.ParentIs, short(proof.Push.Before), short(proof.Push.After), orDash(proof.Push.Actor))
+		detail := fmt.Sprintf("recovered: the update journaled by run %s moved the branch and was not recorded; first parent %s is %s; one force push %s -> %s by %s, inside the request's window (to %s)", requested.Run, short(proof.Parent), proof.ParentIs, short(proof.Push.Before), short(proof.Push.After), orDash(proof.Push.Actor), until)
+		if ambiguous != "" {
+			detail += "; the request's mutation had failed without a definite refusal (" + ambiguous + ")"
+		}
 		if err := entry(Entry{Kind: "rebase", PR: it.Number, Task: it.Task, Head: it.BoundHead, NewHead: cur.HeadSHA, BaseSHA: proof.Parent, Detail: detail}); err != nil {
 			return err
 		}

@@ -606,13 +606,25 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			return err
 		}
 		if _, err := t.Forge.Rebase(ctx, req.Repository, p.Number, p.Head); err != nil {
-			// the request counts for nothing (Codex on #903): without this
-			// entry the next run could take a seat's own push for the
-			// update's result
-			if aerr := entry(Entry{Kind: "update_failed", PR: p.Number, Task: it.Task, Head: p.Head, BaseSHA: beforeBase, Detail: "updatePullRequestBranch failed: " + err.Error()}); aerr != nil {
+			// A definite refusal (GitHub answered 4xx, or a GraphQL error
+			// that is a refusal: the head moved, a conflict, forbidden)
+			// retires the request (update_failed): GitHub never took it,
+			// and without this entry the next run could take a seat's own
+			// push for the update's result (Codex on #903). A failure on
+			// this side without a definite refusal (a timeout, a 5xx, a
+			// dropped connection) is ambiguous: GitHub may have completed
+			// the update, so the request stays live (update_ambiguous) and
+			// the train reads the head back as if the mutation had answered
+			// (the plan reviewer on #903).
+			if definiteRefusal(err) {
+				if aerr := entry(Entry{Kind: "update_failed", PR: p.Number, Task: it.Task, Head: p.Head, BaseSHA: beforeBase, Detail: "updatePullRequestBranch refused: " + err.Error()}); aerr != nil {
+					return aerr
+				}
+				return fmt.Errorf("rebase: %w", err)
+			}
+			if aerr := entry(Entry{Kind: "update_ambiguous", PR: p.Number, Task: it.Task, Head: p.Head, BaseSHA: beforeBase, Detail: "updatePullRequestBranch failed without a definite refusal, the request stays live: " + err.Error()}); aerr != nil {
 				return aerr
 			}
-			return fmt.Errorf("rebase: %w", err)
 		}
 		// GitHub performs the update asynchronously and answers with the head
 		// as it was (run ab184d07), so the mutation's answer is never bound:

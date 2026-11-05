@@ -58,8 +58,10 @@ const AuditSchema = "amq-squad-merge-audit/1"
 // written again after a rebase that changes a head), refusal, update_requested
 // (the train is about to ask GitHub to update a branch: the PR, the bound
 // head and the base tip, journaled before the mutation, brief 3.2.0-3a item
-// 0), update_failed (the mutation itself failed, so the request counts for
-// nothing), rebase (the head the update produced, read back), rebind, merge_intent,
+// 0), update_failed (GitHub definitely refused the mutation, so the request
+// counts for nothing), update_ambiguous (the mutation failed on this side
+// without a definite refusal, so the request stays live), rebase (the head
+// the update produced, read back), rebind, merge_intent,
 // merge, reconcile, stop (manual mode or an error ended the run), plan (a
 // dry run's result).
 type Entry struct {
@@ -178,22 +180,28 @@ func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 // lastUpdateRequest is the latest journaled update_requested of a real run
 // for a PR at a bound head: the train asked GitHub to update that branch
 // from that head, and the entry carries the base tip it pinned. A request
-// whose mutation failed is followed by an update_failed entry for the same
-// head (Codex on #903) and counts for nothing: GitHub never took it, so a
-// later move of the branch is not the train's.
-func lastUpdateRequest(entries []Entry, repository string, pr int, head string) (Entry, bool) {
-	var out Entry
-	found := false
+// GitHub definitely refused is followed by an update_failed entry for the
+// same head and counts for nothing: GitHub never took it, so a later move
+// of the branch is not the train's. A request whose mutation failed
+// without a definite refusal (a timeout, a 5xx, a dropped connection: the
+// plan reviewer on #903) is followed by update_ambiguous and stays live,
+// since GitHub may have completed it; ambiguous carries that entry's
+// detail.
+func lastUpdateRequest(entries []Entry, repository string, pr int, head string) (req Entry, ambiguous string, found bool) {
 	for _, e := range entries {
 		if e.DryRun || e.Repository != repository || e.PR != pr || e.Head != head {
 			continue
 		}
 		switch e.Kind {
 		case "update_requested":
-			out, found = e, true
+			req, ambiguous, found = e, "", true
 		case "update_failed":
-			out, found = Entry{}, false
+			req, ambiguous, found = Entry{}, "", false
+		case "update_ambiguous":
+			if found {
+				ambiguous = e.Detail
+			}
 		}
 	}
-	return out, found
+	return req, ambiguous, found
 }
