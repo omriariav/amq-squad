@@ -100,6 +100,10 @@ type DecideOptions struct {
 	// for it (status.CurrentSeatWarnings), for the clear (brief 31-2); nil
 	// refuses every clear.
 	Warnings CurrentWarnings
+	// Rebind applies the lead's merge-train re-bind (brief 3.2.0-3a item 6:
+	// the train proves it, then writes the binding); nil refuses it
+	// (rebind_unsupported).
+	Rebind func(lead string, req RebindRequest) DecideReply
 	// Seams for tests: the lead's recorded pane, the chain walk, a pid's
 	// start stamp and the kernel peer of a connection.
 	LeadPane   func(root, lead string) (panechain.Pane, error)
@@ -276,7 +280,7 @@ func (s *DecisionServer) serve() {
 				var kind struct {
 					Kind string `json:"kind"`
 				}
-				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind) {
+				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind || kind.Kind == RebindRequestKind) {
 					// The fourth pass: the ledger is read again and the
 					// sender proved again after the request is read; a lead
 					// record replaced meanwhile refuses it.
@@ -311,6 +315,15 @@ func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
 			return DecideReply{Code: RefusedRelaunchUnsupported, Detail: "this scheduler runs no roster; there is nothing to relaunch"}
 		}
 		return s.o.Relaunch(s.o.Lead, req)
+	case RebindRequestKind:
+		var req RebindRequest
+		if json.Unmarshal(line, &req) != nil {
+			return DecideReply{Code: "decision_malformed", Detail: "a merge-train re-bind that does not decode"}
+		}
+		if s.o.Rebind == nil {
+			return DecideReply{Code: RefusedRebindUnsupported, Detail: "this scheduler applies no merge-train re-bind"}
+		}
+		return s.o.Rebind(s.o.Lead, req)
 	default:
 		var req WidenRequest
 		if json.Unmarshal(line, &req) != nil {
@@ -367,6 +380,33 @@ func SendRelaunch(root, path string, req RelaunchRequest) (DecideReply, error) {
 
 // RelaunchRequestKind marks the lead's relaunch of the roster.
 const RelaunchRequestKind = "amq-squad.relaunch.v1"
+
+// RebindRequestKind marks the lead's merge-train re-bind (brief 3.2.0-3a
+// item 6): a task's PR binding moved from the bound head to the head the
+// train's unrecorded update produced, proved by the train before it is
+// written. It reaches the scheduler over the decision socket like a
+// widening, so it is proved from the lead's pane (R4); from a seat's process
+// it is not_lead.
+const RebindRequestKind = "amq-squad.mergetrain-rebind.v1"
+
+// RefusedRebindUnsupported: this scheduler applies no re-bind.
+const RefusedRebindUnsupported = "rebind_unsupported"
+
+// RebindRequest is the lead's re-bind decision: the PR, the bound head it
+// moves from and the head it moves to.
+type RebindRequest struct {
+	Kind string `json:"kind"`
+	PR   int    `json:"pr"`
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// SendRebind is the lead's merge-train re-bind over the scheduler's socket,
+// proved and answered like a widening.
+func SendRebind(root, path string, req RebindRequest) (DecideReply, error) {
+	req.Kind = RebindRequestKind
+	return sendDecision(root, path, req)
+}
 
 // RefusedRelaunchUnsupported: the scheduler runs no roster.
 const RefusedRelaunchUnsupported = "relaunch_unsupported"
