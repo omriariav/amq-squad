@@ -554,8 +554,10 @@ func TestCancelledUpdateWaitIsRefusedUnconfirmed(t *testing.T) {
 	f.edit(func(s *fakeState) { s.AsyncRejected = []string{"1"} })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	now := time.Now()
 	sleeps := 0
-	f.train.Sleep = func(time.Duration) { sleeps++; cancel() }
+	f.train.Now = func() time.Time { return now }
+	f.train.Sleep = func(d time.Duration) { now = now.Add(d); sleeps++; cancel() } // the clock runs, so a wait that ignores the cancel ends at 120 s after many sleeps
 	res, err := f.train.Run(ctx, req)
 	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed || sleeps != 1 {
 		t.Fatalf("the cancelled wait: %v %+v (sleeps %d)", err, res.PRs, sleeps)

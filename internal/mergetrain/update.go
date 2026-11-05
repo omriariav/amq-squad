@@ -48,10 +48,10 @@ func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, 
 			return cur, true, nil
 		}
 		remaining := deadline.Sub(t.now())
-		if remaining <= 0 || ctx.Err() != nil {
+		if remaining <= 0 {
 			return cur, false, nil
 		}
-		if !t.sleepOrDone(ctx, min(backoff, remaining)) {
+		if !t.sleepOrDone(ctx, min(backoff, remaining)) { // the one guard on the context: a done context ends the wait here
 			return cur, false, nil
 		}
 		backoff = min(2*backoff, 16*time.Second)
