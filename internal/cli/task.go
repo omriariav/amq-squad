@@ -33,7 +33,7 @@ Usage:
   amq-squad task renew --me H
   amq-squad task done ID --me H [--evidence E] [--final-head SHA]
   amq-squad task fail ID --me H --reason R
-  amq-squad task block ID --me H --reason CODE [--detail TEXT] [--route lead|owner]
+  amq-squad task block ID --me H --reason CODE [--path PATH]... [--paths PATH,...] [--detail TEXT] [--route lead|owner]
   amq-squad task release ID --me H --reason R
   amq-squad task reset ID --me H [--pool runtime:model:effort]
   amq-squad task set ID --me H [--priority N] [--pool runtime:model:effort]
@@ -361,6 +361,9 @@ func runTaskTransition(verb string, args []string) error {
 	route := f.fs.String("route", task.RouteLead, "who owes the decision: lead or owner (block)")
 	poolFlag := f.fs.String("pool", "", "runtime:model:effort (claim, reset, set)")
 	priority := f.fs.String("priority", "", "new priority (set)")
+	paths := f.fs.String("paths", "", "comma-separated exact paths (block with reason widen_requested)")
+	var exactPaths multiFlag
+	f.fs.Var(&exactPaths, "path", "exact path (repeatable; block with reason widen_requested)")
 	if err := parseFlags(f.fs, rest); err != nil {
 		return err
 	}
@@ -400,7 +403,8 @@ func runTaskTransition(verb string, args []string) error {
 	case "fail":
 		t, err = s.Fail(id, me, *reason, now)
 	case "block":
-		t, err = s.Block(id, me, *reason, *detail, *route, now)
+		blockPaths := append(splitList(*paths), exactPaths...)
+		t, err = s.BlockWithPaths(id, me, *reason, *detail, *route, blockPaths, now)
 	case "release":
 		t, err = s.Release(id, me, *reason, now)
 	case "reset":
@@ -438,10 +442,10 @@ func runTaskTransition(verb string, args []string) error {
 func taskRejectInapplicableFlags(verb string, fs *flag.FlagSet) error {
 	allowed := map[string][]string{
 		"show": {}, "claim": {"pool"}, "renew": {}, "done": {"evidence", "final-head"},
-		"fail": {"reason"}, "block": {"reason", "detail", "route"}, "release": {"reason"},
+		"fail": {"reason"}, "block": {"reason", "detail", "route", "path", "paths"}, "release": {"reason"},
 		"reset": {"pool"}, "set": {"priority", "pool"}, "cancel": {"reason"},
 	}[verb]
-	for _, name := range []string{"reason", "evidence", "final-head", "detail", "route", "pool", "priority"} {
+	for _, name := range []string{"reason", "evidence", "final-head", "detail", "route", "pool", "priority", "path", "paths"} {
 		if !flagWasSet(fs, name) {
 			continue
 		}

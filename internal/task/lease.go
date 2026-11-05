@@ -3,6 +3,7 @@ package task
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -20,7 +21,17 @@ func Blocker(t Task, all []Task) string {
 		byID[o.ID] = o
 	}
 	for _, d := range t.DependsOn {
-		if byID[d].State != StateCompleted {
+		dep, ok := byID[d]
+		if !ok {
+			return WaitDependencies
+		}
+		if dep.PRNumber > 0 {
+			if dep.PRMergeCommit == "" || dep.PRMergeHead != "" && dep.PRMergeHead != dep.PRHead {
+				return DependencyMergeWait(dep.ID, dep.PRNumber)
+			}
+			continue
+		}
+		if dep.State != StateCompleted {
 			return WaitDependencies
 		}
 	}
@@ -337,7 +348,7 @@ func (s Store) complete(t *Task, now time.Time) {
 	t.Evidence = t.Report.Evidence
 	s.endAttempt(t, OutcomeCompleted, "", now)
 	at := now
-	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = StateCompleted, &at, "", "", "", nil
+	t.State, t.ClosedAt, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.BlockAttempt = StateCompleted, &at, "", "", "", nil, 0
 }
 
 // verifierRequired says whether the task's class needs the harness's
@@ -382,6 +393,10 @@ func (s Store) RefuseCommit(id, reasonCode, detail, route string, now time.Time)
 // refusal found outside the declared files (RefusedPaths), in the same
 // transaction as the block.
 func (s Store) RefuseCommitPaths(id, reasonCode, detail, route string, paths []string, now time.Time) (Task, error) {
+	refused, err := CleanExactFiles(paths)
+	if err != nil {
+		return Task{}, fmt.Errorf("refused paths: %w", err)
+	}
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		if t.State != StateInProgress || t.Report == nil {
 			return fmt.Errorf("task %s has no done report awaiting the commit step", t.ID)
@@ -390,8 +405,8 @@ func (s Store) RefuseCommitPaths(id, reasonCode, detail, route string, paths []s
 		if err := block(t, reasonCode, detail, route); err != nil {
 			return err
 		}
-		if len(paths) > 0 {
-			t.RefusedPaths = append([]string(nil), paths...)
+		if len(refused) > 0 {
+			t.RefusedPaths = refused
 		}
 		return nil
 	})
@@ -408,7 +423,7 @@ func block(t *Task, reason, detail, route string) error {
 		return fmt.Errorf("a block needs a reason code")
 	}
 	t.State, t.WaitReason = StateBlocked, ""
-	t.BlockReason, t.BlockDetail, t.BlockRoute, t.RefusedPaths = strings.TrimSpace(reason), strings.TrimSpace(detail), route, nil
+	t.BlockReason, t.BlockDetail, t.BlockRoute, t.RefusedPaths, t.BlockAttempt = strings.TrimSpace(reason), strings.TrimSpace(detail), route, nil, 0
 	return nil
 }
 
@@ -428,6 +443,27 @@ func (s Store) Fail(id, holder, reason string, now time.Time) (Task, error) {
 // Block stops a pending or in-progress task for a decision. On an
 // in-progress task only the holder may block it.
 func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Task, error) {
+	return s.BlockWithPaths(id, actor, reason, detail, route, nil, now)
+}
+
+// BlockWithPaths blocks like Block and, for widen_requested only, records
+// the normalized exact paths the seat asks the lead to add.
+func (s Store) BlockWithPaths(id, actor, reason, detail, route string, paths []string, now time.Time) (Task, error) {
+	reason = strings.TrimSpace(reason)
+	var refused []string
+	var err error
+	if reason == ReasonWidenRequested {
+		refused, err = CleanExactFiles(paths)
+		if err != nil {
+			return Task{}, fmt.Errorf("widen requested paths: %w", err)
+		}
+		if len(refused) == 0 {
+			return Task{}, fmt.Errorf("a %s block needs at least one path", ReasonWidenRequested)
+		}
+		sort.Strings(refused)
+	} else if len(paths) > 0 {
+		return Task{}, fmt.Errorf("block paths are only valid with reason %s", ReasonWidenRequested)
+	}
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		switch t.State {
 		case StateInProgress:
@@ -437,10 +473,20 @@ func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Ta
 			s.endAttempt(t, OutcomeBlocked, reason, now)
 			t.Report = nil
 		case StatePending:
+			if reason == ReasonWidenRequested {
+				return fmt.Errorf("%s: a typed widen request requires the holder of a live attempt", ReasonWidenRequested)
+			}
 		default:
 			return fmt.Errorf("task %s is %s; only pending or in-progress tasks block", t.ID, t.State)
 		}
-		return block(t, reason, detail+byActor(actor), route)
+		if err := block(t, reason, detail+byActor(actor), route); err != nil {
+			return err
+		}
+		t.RefusedPaths = refused
+		if reason == ReasonWidenRequested {
+			t.BlockAttempt = t.Attempt
+		}
+		return nil
 	})
 }
 
@@ -473,7 +519,7 @@ func (s Store) Reset(id string, pool *Pool, now time.Time) (Task, error) {
 		if t.State != StateBlocked {
 			return fmt.Errorf("task %s is %s; reset takes a blocked task", t.ID, t.State)
 		}
-		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths = StatePending, nil, "", "", "", nil
+		t.State, t.Report, t.BlockReason, t.BlockRoute, t.BlockDetail, t.RefusedPaths, t.BlockAttempt = StatePending, nil, "", "", "", nil, 0
 		if pool != nil {
 			p := *pool
 			t.Pool = &p

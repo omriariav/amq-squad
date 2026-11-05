@@ -1,6 +1,13 @@
 package mergetrain
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrIncompleteDiff means GitHub did not return the whole compare diff, so a
+// stable patch id cannot prove that an update preserved the seat's work.
+var ErrIncompleteDiff = errors.New("GitHub returned an incomplete diff")
 
 // FileChange is one file of a PR's diff.
 type FileChange struct {
@@ -40,7 +47,8 @@ type ForcePush struct {
 // live files list.
 type PRInfo struct {
 	Number      int          `json:"number"`
-	State       string       `json:"state"` // OPEN, CLOSED, MERGED
+	Title       string       `json:"title,omitempty"` // the gate question's quoted title (brief 3.1.1-1)
+	State       string       `json:"state"`           // OPEN, CLOSED, MERGED
 	Draft       bool         `json:"draft"`
 	Repository  string       `json:"repository"` // the base repository, owner/name
 	BaseRef     string       `json:"base_ref"`
@@ -63,6 +71,7 @@ type Protection struct {
 	Checks            []RequiredCheck `json:"required_checks"`
 	DirectPushRefused bool            `json:"direct_push_refused"`
 	ForcePushRefused  bool            `json:"force_push_refused"`
+	Strict            bool            `json:"strict_required_status_checks_policy"`
 	Sources           []string        `json:"sources,omitempty"` // ruleset ids, "classic"
 	Notes             []string        `json:"notes,omitempty"`   // why something does not count
 }
@@ -79,6 +88,10 @@ type Forge interface {
 	// Diff is the change from base to head (three-dot, from their merge base)
 	// at those exact SHAs.
 	Diff(ctx context.Context, repository, base, head string) ([]FileChange, error)
+	// Behind reports whether head lacks commits from the exact pinned base.
+	Behind(ctx context.Context, repository, base, head string) (bool, error)
+	// PatchID is git patch-id --stable over the change from base to head.
+	PatchID(ctx context.Context, repository, base, head string) (string, error)
 	Checks(ctx context.Context, repository, sha string) ([]CheckRun, error)
 	BranchHead(ctx context.Context, repository, branch string) (string, error)
 	Protection(ctx context.Context, repository, branch string) (Protection, error)

@@ -10,7 +10,9 @@
 //   - holds a call that needs the owner (a typed gate, or a tool the seat must
 //     have approved) until the first decision from any face, with a retry cap;
 //   - runs the AMQ pi bridge at revision 4 (tool approval, session identity);
-//   - gives the team lead the read-only squad screen (/squad toggles it).
+//   - gives the lead its screen and one command per action (lib/commands.ts):
+//     the solo lead /plan and /confirm, the team lead /add, /reset,
+//     /dismiss, /answer and /widen, both /team (and /team hide).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -19,9 +21,10 @@ import { blockReason, callKey, DEFAULT_CAP, hold, manifestHash, RetryCap, type D
 import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, outsideDeclared, roleMessage, type Config, type ContextData, type Verdict } from "./lib/hooks.ts";
 import { restrictModels } from "./lib/models.ts";
 import { HOST_MESSAGE, HostFacts } from "./lib/firstturn.ts";
-import { installScreen } from "./lib/screen.ts";
+import { installCommands } from "./lib/commands.ts";
+import { defaultStat, installScreen } from "./lib/screen.ts";
 import { installSoloTeam, readLeadNonce, soloShellRefusal, type SoloTeam } from "./lib/team.ts";
-import { registerTools } from "./lib/tools.ts";
+import { registerTools, TEAM_LEAD_TOOLS } from "./lib/tools.ts";
 import { run } from "./lib/verbs.ts";
 
 const ROLE_MESSAGE = "amq-squad-role";
@@ -46,16 +49,33 @@ export default function amqSquad(pi: ExtensionAPI): void {
 		return;
 	}
 	amqPiBridge(pi);
-	const teamTools = registerTools(pi, cfg);
-	// The team lead's read-only screen (brief 31-1): a widget below the
-	// editor, fed by status --json on the .generation/updated_at poll.
+	// the team phase's tools are the team lead's eleven (Go's TeamLeadTools),
+	// never every tool registered: claim and done stay a seat's
+	const registered = registerTools(pi, cfg);
+	const teamTools = TEAM_LEAD_TOOLS.filter((t) => registered.includes(t));
+	// The team lead's screen (brief 31-1, 3.1.1-3): a widget below the
+	// editor, fed by status --json on the .generation/updated_at poll, and
+	// its commands, one per action.
 	let solo: SoloTeam | undefined;
-	if (cfg.lead) installScreen(pi, cfg);
+	if (cfg.lead) {
+		const screen = installScreen(pi, cfg);
+		installCommands(pi, { phases: ["team"], phase: () => "team", screen });
+	}
 	// The solo lead proposes a team and, on the owner's confirmation at one
 	// of R55's doors, applies it (brief 31-3): two tools, the plan block and
-	// /squad confirm, the TUI door; on the yes its tools switch to the team
-	// lead's (R53), the ones registerTools registered.
-	else if (cfg.solo) solo = installSoloTeam(pi, cfg, run, undefined, undefined, teamTools, leadNonce);
+	// /confirm, the TUI door; on the yes its tools switch to the team
+	// lead's (R53): TEAM_LEAD_TOOLS, as registerTools registered them, and
+	// the team screen starts with the team phase's commands.
+	else if (cfg.solo) {
+		const s = installSoloTeam(pi, cfg, run, undefined, undefined, teamTools, leadNonce);
+		const screen = installScreen(pi, cfg, run, defaultStat, false);
+		s.onTeam = () => {
+			const ctx = s.ctx ?? screen.ctx;
+			if (ctx?.hasUI) screen.start(ctx);
+		};
+		installCommands(pi, { phases: ["solo", "team"], phase: () => s.phase, screen, solo: s });
+		solo = s;
+	}
 	restrictModels(pi, cfg.models, note);
 	const approveTools = new Set((process.env.AMQ_SQUAD_APPROVE_TOOLS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 	let cap = new RetryCap(DEFAULT_CAP);

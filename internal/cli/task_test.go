@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -113,6 +115,193 @@ func TestTaskCLIRefusals(t *testing.T) {
 	if _, err := taskCLI(t, "list"); err == nil || !strings.Contains(err.Error(), "no store root") {
 		t.Errorf("list without a root: %v", err)
 	}
+}
+
+func TestTaskCLIBlockCarriesTypedWidenPaths(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	if _, err := taskCLI(t, "add", "--title", "x", "--class", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "block", "t1", "--me", "seat", "--reason", task.ReasonWidenRequested,
+		"--path", "src/[name].go", "--path", "docs/a, b.md", "--paths", "./src/new.go,docs/z.md"); err != nil {
+		t.Fatal(err)
+	}
+	shown, err := taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if strings.Join(got.RefusedPaths, "|") != "docs/a, b.md|docs/z.md|src/[name].go|src/new.go" {
+		t.Fatalf("refused paths = %q", got.RefusedPaths)
+	}
+
+	if _, err := taskCLI(t, "add", "--title", "y", "--class", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "block", "t2", "--me", "lead", "--reason", task.ReasonWidenRequested); err == nil || !strings.Contains(err.Error(), "at least one path") {
+		t.Fatalf("pathless widen request: %v", err)
+	}
+	if _, err := taskCLI(t, "block", "t2", "--me", "lead", "--reason", "decision", "--path", "x.go"); err == nil || !strings.Contains(err.Error(), "only valid") {
+		t.Fatalf("paths with another reason: %v", err)
+	}
+}
+
+func TestTypedWidenResolvesASymlinkIntoAProtectedPath(t *testing.T) {
+	home, root := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	project, _ := seatRepo(t, root)
+	mustWrite(t, filepath.Join(project, ".claude", "settings.json"), "{}\n")
+	if err := os.Symlink(filepath.Join(".claude", "settings.json"), filepath.Join(project, "settings-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	s, _ := task.Open(root)
+	tk, err := s.Add(task.AddInput{Title: "protected alias", Class: "implement", ProjectPath: project}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockAndArchive := func(tk task.Task, path string) {
+		t.Helper()
+		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		blocked, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{path}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if archived, err := seatcommit.ArchiveAttempt(root, "s1", "", nil, tk.ID, blocked.BlockAttempt, time.Now()); err != nil || !archived {
+			t.Fatalf("archive stopped attempt: archived=%v err=%v", archived, err)
+		}
+	}
+	blockAndArchive(tk, "settings-link")
+	literal, _ := task.LiteralGlob("settings-link")
+	data, err := applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+	resolved, _ := task.LiteralGlob(".claude/settings.json")
+	want := seatcommit.ProtectedTarget(root, tk.ID, []string{resolved})
+	if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || len(data.Decision.Crossings) != 1 || data.Decision.Crossings[0].Target != want || !strings.Contains(data.Decision.Detail, "settings-link") {
+		t.Fatalf("symlinked protected widen = %+v, %v; want target %q", data, err, want)
+	}
+
+	mustWrite(t, filepath.Join(project, "src", "real.go"), "package src\n")
+	if err := os.Symlink(filepath.Join("src", "real.go"), filepath.Join(project, "source-link")); err != nil {
+		t.Fatal(err)
+	}
+	tk, _ = s.Add(task.AddInput{Title: "ordinary alias", Class: "implement", ProjectPath: project}, time.Now())
+	blockAndArchive(tk, "source-link")
+	literal, _ = task.LiteralGlob("source-link")
+	data, err = applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+	if err != nil || data.Task == nil || strings.Join(data.Task.DeclaredFiles, ",") != "src/real.go" || len(data.Task.ScopeChanges) != 1 || !strings.Contains(data.Task.ScopeChanges[0].Reason, "source-link") {
+		t.Fatalf("ordinary alias widen = %+v, %v", data, err)
+	}
+
+	if err := os.Symlink("CLAUDE.md", filepath.Join(project, "managed-link")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(project, "CLAUDE.md"), "managed\n")
+	tk, _ = s.Add(task.AddInput{Title: "managed alias", Class: "implement", ProjectPath: project}, time.Now())
+	blockAndArchive(tk, "managed-link")
+	literal, _ = task.LiteralGlob("managed-link")
+	data, err = applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+	want = seatcommit.ProtectedTarget(root, tk.ID, []string{"CLAUDE.md"})
+	if err == nil || data.Decision.ReasonCode != seatcommit.ReasonGrowthGate || data.Decision.Crossings[0].Target != want {
+		t.Fatalf("managed alias widen = %+v, %v; want target %q", data, err, want)
+	}
+}
+
+func TestEveryWidenBranchRoutesLiteralPathsThroughResolution(t *testing.T) {
+	for name, prepare := range map[string]func(*testing.T, task.Store, task.Task, time.Time){
+		"nonblocked": func(*testing.T, task.Store, task.Task, time.Time) {},
+		"protected report": func(t *testing.T, s task.Store, tk task.Task, now time.Time) {
+			if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Done(tk.ID, "s1", "ok", "", now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.RefuseCommit(tk.ID, seatcommit.ReasonProtected, "protected", task.RouteLead, now); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"growth-gate report": func(t *testing.T, s task.Store, tk task.Task, now time.Time) {
+			if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Done(tk.ID, "s1", "ok", "", now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.RefuseCommit(tk.ID, seatcommit.ReasonGrowthGate, "growth", task.RouteLead, now); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"typed widen_requested": func(t *testing.T, s task.Store, tk task.Task, now time.Time) {
+			if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"source-link"}, now); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home, root := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			repo, _ := seatRepo(t, root)
+			mustWrite(t, filepath.Join(repo, "real", "file.go"), "package real\n")
+			if err := os.Symlink(filepath.Join("real", "file.go"), filepath.Join(repo, "source-link")); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			s, err := task.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			tk, err := s.Add(task.AddInput{Title: name, Class: "implement", ProjectPath: repo, DeclaredFiles: []string{"seed.go"}}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepare(t, s, tk, now)
+			current, err := s.Get(tk.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.BlockAttempt > 0 {
+				if archived, err := seatcommit.ArchiveAttempt(root, "s1", "", nil, tk.ID, current.BlockAttempt, now); err != nil || !archived {
+					t.Fatalf("archive stopped attempt: archived=%v err=%v", archived, err)
+				}
+			}
+			data, err := applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{
+				Task: tk.ID, Files: []string{"./source-link"}, Reason: "needed",
+			})
+			if err != nil || data.Task == nil || strings.Join(data.Task.DeclaredFiles, ",") != "real/file.go,seed.go" || !strings.Contains(data.Task.ScopeChanges[0].Reason, "source-link") {
+				t.Fatalf("production widen branch = %+v, %v", data, err)
+			}
+		})
+	}
+
+	t.Run("real glob stays unresolved", func(t *testing.T) {
+		home, root, repo := t.TempDir(), t.TempDir(), t.TempDir()
+		t.Setenv("HOME", home)
+		ownerGrant(t, filepath.Join(home, "origin.git"))
+		s, err := task.Open(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tk, err := s.Add(task.AddInput{Title: "glob", Class: "implement", ProjectPath: repo}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := applyLeadWiden(storeSelection{store: s, root: root}, "lead", schedproc.WidenRequest{
+			Task: tk.ID, Files: []string{"[s]ource-link"}, Reason: "needed",
+		})
+		if err != nil || data.Task == nil || strings.Join(data.Task.DeclaredFiles, ",") != "[s]ource-link" || len(data.Task.ScopeChanges) != 1 || strings.Contains(data.Task.ScopeChanges[0].Reason, "exact-path resolution") {
+			t.Fatalf("glob widen = %+v, %v", data, err)
+		}
+	})
 }
 
 // task set re-pins a task until its first attempt is granted; after the

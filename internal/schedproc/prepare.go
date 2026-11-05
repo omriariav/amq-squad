@@ -8,6 +8,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // CleanSeats is the scheduler's SeatPreparer: before an idle seat gets a new
@@ -47,4 +48,16 @@ func (c *CleanSeats) PrepareSeat(handle string) error {
 	return err
 }
 
+// ArchiveAttempt records a typed block's stopped tree immediately, before a
+// lead can widen and before the seat can be cleaned or reused.
+func (c *CleanSeats) ArchiveAttempt(handle string, t task.Task, attempt task.Attempt) error {
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	_, err := seatcommit.ArchiveAttempt(c.Root, handle, c.Git, nil, t.ID, attempt.N, now())
+	return err
+}
+
 var _ scheduler.SeatPreparer = (*CleanSeats)(nil)
+var _ scheduler.AttemptArchiver = (*CleanSeats)(nil)

@@ -170,7 +170,7 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 			} `json:"gate"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(r.out), &raised); err != nil || r.rc != 0 || !raised.Data.QuestionSent || !strings.Contains(raised.Data.Gate.Text, "Reply in this thread") {
+	if err := json.Unmarshal([]byte(r.out), &raised); err != nil || r.rc != 0 || !raised.Data.QuestionSent || !strings.Contains(raised.Data.Gate.Text, "\nYes lets it run. No stops it.\n") {
 		t.Fatalf("gate raise: rc %d %+v %v", r.rc, raised, err)
 	}
 	tRaise := time.Now()

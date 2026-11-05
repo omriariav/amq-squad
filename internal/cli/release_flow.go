@@ -87,7 +87,17 @@ func runRelease(args []string) error {
 	if transportErr == nil {
 		esc.Send = core.QuestionSender(ctx)
 	}
-	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: esc.Raise, Lead: firstOf(sel.Handle, "lead"), Squad: mergetrain.SquadOf(sel.Root),
+	raise := esc.Raise
+	if verb == "prepare" {
+		// brief 3.1.1-1: prepare raises the gates only after it found the
+		// tag's commit on the branch (Flow.CheckCommit), so the question's
+		// second line can say so
+		raise = func(spec gatestore.Spec) (gatestore.Record, error) {
+			spec.Facts = gatestore.SafeFacts("", *branch)
+			return esc.Raise(spec)
+		}
+	}
+	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: raise, Lead: firstOf(sel.Handle, "lead"), Squad: mergetrain.SquadOf(sel.Root),
 		Exec: &releaseflow.GH{Bin: *ghBin}, RepoDir: sel.ProjectDir, Branch: *branch,
 		Accepted: func(rec gatestore.Record) error {
 			trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())

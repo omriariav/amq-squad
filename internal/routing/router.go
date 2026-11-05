@@ -425,10 +425,11 @@ func (r *Router) note(row Row) {
 	}
 }
 
-// failure reports whether an attempt outcome counts as a failed attempt of
-// the work: a retry moves one tier up. Unclaimed and released attempts are
-// seat or lead events and retry on the same tier.
-func failure(outcome string) bool {
+// failedOutcome is the weekly report's failed row: any attempt that ended
+// failed, expired, refused by the commit step or blocked. The router's own
+// count of failed attempts is failure (refusal.go), which classifies the
+// refusal's code.
+func failedOutcome(outcome string) bool {
 	switch outcome {
 	case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeCommitRefused, task.OutcomeBlocked:
 		return true
@@ -488,11 +489,14 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 	if slices.Contains(r.unverified, t.Class) {
 		return nil, scheduler.Route{Block: task.ReasonGrantsInvalid, Detail: (&task.VerifierUnconfiguredError{Class: t.Class}).Error()}
 	}
-	failures := 0
+	failures, escalations := 0, 0
 	used := map[task.Pool]bool{}
 	for _, a := range t.Attempts {
-		if failure(a.Outcome) {
+		if failure(a) {
 			failures++
+		}
+		if escalates(a) {
+			escalations++
 			if a.Pool != nil {
 				used[*a.Pool] = true
 			}
@@ -563,7 +567,7 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 		d.Policy, d.Propensity, base = r.explore(t, tableTier, escalated)
 	}
 	tier := base
-	for i := 0; i < failures; i++ {
+	for i := 0; i < escalations; i++ {
 		tier = up(tier)
 	}
 	chain := slices.Clone(tbl.Tiers[tier].Chain)
@@ -572,7 +576,7 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 			chain = append(chain, p) // a roster seat's own pool the table does not place
 		}
 	}
-	if pin != nil && failures == 0 {
+	if pin != nil && escalations == 0 {
 		chain = []task.Pool{*pin} // the pinned entry, still checked
 	}
 	d.UsedTier = tier
@@ -594,7 +598,7 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 		d.Skipped = append(d.Skipped, r.recordedSkips(t.ID, t.Attempts[k-1].N)...)
 	}
 	for _, a := range t.Attempts {
-		if failure(a.Outcome) && a.Pool != nil && !slices.Contains(chain, *a.Pool) {
+		if escalates(a) && a.Pool != nil && !slices.Contains(chain, *a.Pool) {
 			d.Skipped = addSkip(d.Skipped, Skip{Entry: a.Pool.Key(), Reason: SkipUsedBefore})
 		}
 	}

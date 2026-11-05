@@ -40,12 +40,22 @@ type SeatInput struct {
 	// (brief 31-1); Launch is nil without one.
 	Worktree, Branch string
 	Launch           *SeatLaunch
+	// Session is the AMQ session its staged launch record names (brief
+	// 3.1.1-2: a stale record's row carries it), LaunchStartedAt the
+	// record's compile time (the session's latest launch, the roster's
+	// fallback).
+	Session         string
+	LaunchStartedAt time.Time
+	// ProcessLive: the seat's process from its current launch's proof
+	// answers with its recorded start stamp (processLive, the lead's check).
+	ProcessLive bool
 }
 
 // GateInput is one gate record (verified by the caller against its answer).
 type GateInput struct {
 	ID, Class, Digest, State, RaisedBy string
 	Since                              time.Time
+	Question                           string // the question's plain lines (brief 3.1.1-1)
 }
 
 // ThreadInput is one AMQ thread that waits on the owner (the thread triage
@@ -112,7 +122,7 @@ func Build(in Input) Status {
 		SchemaVersion: SchemaVersion, Producer: "amq-squad", ProducerVersion: in.ProducerVersion,
 		GeneratedAt: in.Now.UTC(), Root: in.Root, Session: in.Session, ProjectPath: in.ProjectPath,
 		Capabilities: append(append([]string{}, BaseCapabilities...), in.Capabilities...),
-		Buckets:      Buckets, Seats: []Seat{}, Tasks: []Task{}, Attention: []Attention{}, Gates: []Gate{},
+		Buckets:      Buckets, Seats: []Seat{}, StaleRecords: []StaleRecord{}, Tasks: []Task{}, Attention: []Attention{}, Gates: []Gate{},
 		Warnings: append([]string{}, in.Warnings...),
 		Actions:  Actions{NewTask: NewTaskAction(in.Root)},
 		Scheduler: Scheduler{MaxSeats: in.Scheduler.MaxSeats, LiveSeats: in.Scheduler.LiveSeats,
@@ -129,7 +139,7 @@ func Build(in Input) Status {
 	openGateBy := map[string]GateInput{}
 	openGates := map[string]bool{}
 	for _, g := range sortedGates(in.Gates) {
-		s.Gates = append(s.Gates, Gate{ID: g.ID, ActionClass: g.Class, TargetDigest: g.Digest, State: g.State, RaisedBy: g.RaisedBy})
+		s.Gates = append(s.Gates, Gate{ID: g.ID, ActionClass: g.Class, TargetDigest: g.Digest, State: g.State, RaisedBy: g.RaisedBy, Question: g.Question})
 		if g.State == "open" {
 			openGates[g.ID] = true
 			if _, seen := openGateBy[g.RaisedBy]; !seen {
@@ -156,13 +166,25 @@ func Build(in Input) Status {
 	for _, t := range tasks {
 		row := classifyTask(t, in.Now)
 		row.WaitHolders = lockHolders(t, in.Tasks)
+		row.WaitPool = routeWaitPool(t, in.Scheduler.RouteWaits)
 		row.Bucket, row.BucketMarker = BucketFor(row.State, t.State == task.StateBlocked && t.BlockRoute == task.RouteOwner, true)
 		s.Tasks = append(s.Tasks, row)
 		if a := taskAttention(t, row, in.Root); a != nil {
 			s.Attention = append(s.Attention, *a)
 		}
 	}
+	roster := runningRoster(in)
 	for _, in2 := range sortedSeats(in.Seats) {
+		if roster != nil && !roster[in2.Handle] {
+			// a record under the root that is not the running roster's
+			// (brief 3.1.1-2 item 2): listed apart, never a seat row
+			sr := StaleRecord{Handle: in2.Handle, Session: in2.Session}
+			if in2.Launch != nil {
+				sr.LaunchID = in2.Launch.LaunchID
+			}
+			s.StaleRecords = append(s.StaleRecords, sr)
+			continue
+		}
 		row, routed := classifySeat(in2, in.Tasks, openGateBy, asked, in.Now)
 		row.Bucket, row.BucketMarker = BucketFor(row.State, routed, row.TaskID != "")
 		s.Seats = append(s.Seats, row)
@@ -360,6 +382,11 @@ func redactDocument(s *Status) {
 	for i := range s.Seats {
 		s.Seats[i].ReasonCode = redact.Block(s.Seats[i].ReasonCode) // a held task's block reason
 	}
+	for i := range s.StaleRecords {
+		// names and ids from files status did not validate
+		r := &s.StaleRecords[i]
+		r.Handle, r.Session, r.LaunchID = redact.Block(r.Handle), redact.Block(r.Session), redact.Block(r.LaunchID)
+	}
 	for i := range s.Attention {
 		// the id embeds a wait reason (task:<id>:wait:<reason>)
 		s.Attention[i].ID, s.Attention[i].Subject = redact.Block(s.Attention[i].ID), redact.Block(s.Attention[i].Subject)
@@ -372,6 +399,12 @@ func redactDocument(s *Status) {
 	}
 	for i := range s.Train.Alerts {
 		s.Train.Alerts[i].Detail = redact.Block(s.Train.Alerts[i].Detail)
+	}
+	for i := range s.Gates {
+		// the question's plain lines are free text (a title the raiser read):
+		// redacted at composition, and again here for a record status reads
+		// without validating (brief 3.1.1-1, Codex P1 on #838)
+		s.Gates[i].Question = redact.Block(s.Gates[i].Question)
 	}
 	for i := range s.Requests {
 		// ids and names only (brief 31-4); a hand-edited record carries no
@@ -470,17 +503,93 @@ func taskAttention(t task.Task, row Task, root string) *Attention {
 			a.Severity = "medium"
 		}
 		a.Subject = t.ID + " waits (" + t.WaitReason + "): " + t.Title
+		if row.WaitPool != "" {
+			// a route no roster seat serves waits for the lead (brief 3.1.1-2)
+			a.Severity, a.Subject = "medium", t.ID+" waits: no seat serves "+row.WaitPool+": "+t.Title
+		}
 	default:
 		return nil
 	}
 	return a
 }
 
+// routeWaitPool is the pool a pending task waiting no_roster_seat names
+// (the scheduler state's route waits, brief 3.1.1-2), "" otherwise.
+func routeWaitPool(t task.Task, waits []scheduler.RouteWait) string {
+	if t.State != task.StatePending || t.WaitReason != scheduler.WaitNoRosterSeat {
+		return ""
+	}
+	for _, w := range waits {
+		if w.TaskID == t.ID {
+			return w.Pool.Key()
+		}
+	}
+	return ""
+}
+
+// runningRoster is the running squad's seats (brief 3.1.1-2 item 2): the
+// roster the scheduler compiled from squad.yaml and wrote to its state
+// file, with the lead (the scheduler's, and its launch record's). With no
+// scheduler state at all, the seats of this session's latest launch (the
+// staged records of the session sharing the newest compile's launch id: a
+// roster launches in one compile) with the lead (Codex P2 2 on #854); a live
+// seat stays whatever its launch id, and a record with no launch id or
+// compile time cannot be ordered and stays. nil
+// when neither is known (a scheduler running seats on demand, or no launch
+// record of this session): every record under the root is a seat row.
+func runningRoster(in Input) map[string]bool {
+	out := map[string]bool{}
+	switch {
+	case len(in.Scheduler.Roster) > 0:
+		for _, h := range in.Scheduler.Roster {
+			out[h] = true
+		}
+	case in.Scheduler.UpdatedAt.IsZero():
+		var latest *SeatInput
+		for i := range in.Seats {
+			s := &in.Seats[i]
+			if s.Launch == nil || s.Launch.LaunchID == "" || s.LaunchStartedAt.IsZero() || (in.Session != "" && s.Session != in.Session) {
+				continue
+			}
+			if latest == nil || s.LaunchStartedAt.After(latest.LaunchStartedAt) {
+				latest = s
+			}
+		}
+		if latest == nil {
+			return nil
+		}
+		for _, s := range in.Seats {
+			// a seat whose process is live (pid and start stamp, the plan
+			// reviewer) is a seat row whatever its launch id (one launched
+			// on its own in this session, Codex on #854's fix round); the
+			// launch-id rule orders only the dead and unknown records, and a
+			// record with no launch id or compile time cannot be ordered
+			// against the latest launch: it stays a seat row
+			unordered := s.Launch == nil || s.Launch.LaunchID == "" || s.LaunchStartedAt.IsZero()
+			if s.ProcessLive || unordered || s.Launch.LaunchID == latest.Launch.LaunchID && (in.Session == "" || s.Session == in.Session) {
+				out[s.Handle] = true
+			}
+		}
+	default:
+		return nil
+	}
+	if in.Scheduler.Lead != "" {
+		out[in.Scheduler.Lead] = true
+	}
+	if in.Lead != nil && in.Lead.Handle != "" {
+		out[in.Lead.Handle] = true
+	}
+	return out
+}
+
 // waitNeedsAttention: dependencies, file locks and a starting seat resolve
 // by themselves; the other waits need a decision or name a stop.
 func waitNeedsAttention(reason string) bool {
+	if task.IsDependencyWait(reason) {
+		return false
+	}
 	switch reason {
-	case "", task.WaitDependencies, task.WaitFileLock, task.WaitSeatStarting:
+	case "", task.WaitFileLock, task.WaitSeatStarting:
 		return false
 	}
 	return true

@@ -3,6 +3,7 @@ package seatcommit
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -145,6 +146,56 @@ func TestVerifierRunsInTheShadowWorktreeAtTheSnapshotTree(t *testing.T) {
 	if l.Payload.Tree != res.Tree || f.lease(tk.ID).Verdict.Tree != res.Tree {
 		t.Fatal("the verdict does not name the snapshot tree")
 	}
+}
+
+func TestVerifierTreeLinkPolicy(t *testing.T) {
+	t.Run("unchanged dangling base link is materialized", func(t *testing.T) {
+		f := newFixtureWithBaseLink(t, "old-link", "missing")
+		write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// unrelated\n")
+		f.verifying(f.script("v", "[ -L old-link ]\n"))
+		res := f.run(f.reportedBare("cmd/root.go"))
+		if !res.OK || res.Verifier == nil || res.Verifier.Result != task.VerdictPass {
+			t.Fatalf("unchanged dangling link = %+v", res)
+		}
+	})
+	t.Run("ordinary changed link verifies", func(t *testing.T) {
+		f := newFixture(t)
+		if err := os.Symlink("cmd/root.go", filepath.Join(f.wt, "link")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		f.verifying(f.script("v", "[ -L link ] && [ -f link ]\n"))
+		res := f.run(f.reportedBare("link", "cmd/root.go"))
+		if !res.OK || res.Verifier == nil || res.Verifier.Result != task.VerdictPass {
+			t.Fatalf("ordinary changed link = %+v", res)
+		}
+	})
+	t.Run("refused link is not materialized and uses injected objects", func(t *testing.T) {
+		f := newFixture(t)
+		if err := os.Symlink("cmd/root.go", filepath.Join(f.wt, "bad-link")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		rp, _ := worktreePaths(f.wt)
+		shadow, err := newShadow(gitBin(t), f.testGitEnv(), rp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer shadow.close()
+		tree, err := snapshot(shadow, f.base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(f.dir, "refused-checkout")
+		os.Mkdir(out, 0o700)
+		o := f.opts(task.Task{})
+		o.TreeObjects = panicOnFilesystemRead{fakeTree(map[string]string{"bad-link": "CLAUDE.md"}, "CLAUDE.md")}
+		err = checkoutTree(o, shadow, f.base, tree, out)
+		if !errors.Is(err, errLinkTargetRefused) || !strings.Contains(err.Error(), "CLAUDE.md") {
+			t.Fatalf("checkout refusal = %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(out, "bad-link")); !os.IsNotExist(err) {
+			t.Fatalf("refused link was materialized: %v", err)
+		}
+	})
 }
 
 // Rule 1, the exit code is the verdict: exit 3 is a fail, exit 0 a pass.

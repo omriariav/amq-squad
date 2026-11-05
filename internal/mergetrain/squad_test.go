@@ -49,6 +49,7 @@ func TestGatesCarryAndMatchTheSquadIdentity(t *testing.T) {
 	g := newFixture(t)
 	groot := filepath.Join(g.dir, "root")
 	g.train.ReleaseGates, g.train.Root, g.train.DryRun = &g.store, groot, true
+	g.train.VerifyGate = decisionAccepted // the binding rules; the signature check has its own rows (brief3112_test.go)
 	g.req.PRs = g.req.PRs[:1]
 	if _, err := g.train.Run(context.Background(), g.req); err != nil { // baseline
 		t.Fatal(err)

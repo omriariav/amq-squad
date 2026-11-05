@@ -14,6 +14,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -258,7 +259,7 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 			return out("deny", "harness_only", a.harness+" is the harness's: the commit step runs the verifier and records the verdict, never a seat (v3-5-verifier rule 2)")
 		}
 		if a.ownerOnly != "" {
-			return out("deny", "owner_only", a.ownerOnly+" is the owner's: a team is confirmed from the owner's own shell, the lead's pane (/squad confirm) or the owner's signed Buzz DM, never by a seat or the lead's tools (R55)")
+			return out("deny", "owner_only", a.ownerOnly+" is the owner's: a team is confirmed from the owner's own shell, the lead's pane (/confirm, a dialog with nothing to type) or the owner's signed bare yes replied to the lead's Buzz post of the plan, never by a seat or the lead's tools (R55)")
 		}
 		for _, w := range a.writes {
 			if confirmRecordPath(w, a.env.cwd) {
@@ -349,6 +350,11 @@ func soloLeadShellRefusal(line string) string {
 	}
 	if slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, "tmux") }) {
 		return "tmux"
+	}
+	// brief 3.1.1-1, Codex on #838: the team-plan label is the lead
+	// process's (amq_team_propose), never a shell's amq reply or amq send
+	if slices.ContainsFunc(tokens, func(t string) bool { return strings.Contains(t, gateverify.TeamPlanLabel) }) {
+		return "a team-plan label"
 	}
 	for i, t := range tokens {
 		if strings.Contains(filepath.Base(t), "amq-squad") && !soloAmqSquadAllowed(tokens[i+1:]) {

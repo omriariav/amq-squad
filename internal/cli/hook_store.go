@@ -46,7 +46,8 @@ type hookGate struct {
 	Digest   string `json:"digest"`
 	NotAfter string `json:"not_after,omitempty"`
 	RaisedBy string `json:"raised_by,omitempty"`
-	State    string `json:"state"` // open | accepted | denied | expired
+	State    string `json:"state"`          // open | accepted | denied | expired
+	Text     string `json:"text,omitempty"` // the question as raised (status shows its plain lines)
 }
 
 func readHookGates(root string, now time.Time) ([]hookGate, error) {

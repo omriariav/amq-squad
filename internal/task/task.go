@@ -22,6 +22,14 @@ import (
 // Schema is the task file schema version.
 const Schema = 1
 
+// ReasonWidenRequested is a seat's typed request for the lead to add the
+// exact paths recorded in RefusedPaths to the task's declared files.
+const ReasonWidenRequested = "widen_requested"
+
+// ReasonGrowthGateRequired is a typed widen request escalated for the
+// owner's growth decision. It retains the request's exact refused paths.
+const ReasonGrowthGateRequired = "growth_gate_required"
+
 // DefaultLeaseDuration is the proposed lease length (brief 2b-1 ruling 3;
 // measured in docs/v3-spike/2b1-execution.md).
 const DefaultLeaseDuration = 10 * time.Minute
@@ -31,6 +39,10 @@ var ErrNotFound = errors.New("task not found")
 
 // ErrNoLease is returned when the handle holds no matching lease.
 var ErrNoLease = errors.New("no lease held")
+
+// ErrPRBindingMismatch is returned when merge evidence does not describe the
+// task's current repository, PR number and head binding.
+var ErrPRBindingMismatch = errors.New("PR binding mismatch")
 
 // Task is one task file (schema 1).
 type Task struct {
@@ -52,11 +64,13 @@ type Task struct {
 	BlockReason   string    `json:"block_reason,omitempty"`
 	BlockRoute    string    `json:"block_route,omitempty"`
 	BlockDetail   string    `json:"block_detail,omitempty"`
+	// BlockAttempt binds a typed widen request to the live attempt that made
+	// it. Pending tasks cannot manufacture this binding from old history.
+	BlockAttempt int `json:"block_attempt,omitempty"`
 	// RefusedPaths are the exact paths a commit refusal found outside the
-	// declared files (outside_declared_files), as the commit step listed
-	// them, untruncated (3.0.1 t16 round 7): the lead's widening reads this
-	// list, never BlockDetail's display text. Set with the block, cleared
-	// with it.
+	// declared files (outside_declared_files), or a seat named in its typed
+	// widen_requested block. The lead's widening reads this normalized list,
+	// never BlockDetail's display text. Set with the block, cleared with it.
 	RefusedPaths []string      `json:"refused_paths,omitempty"`
 	Report       *Report       `json:"report"`
 	Evidence     string        `json:"evidence,omitempty"`
@@ -65,13 +79,19 @@ type Task struct {
 	// The PR binding (3-2 fix 4, milestone B's field names): the harness
 	// commit step, and the merge train after its own rebase, write it through
 	// BindPR; it survives every mutation like any other field.
-	PRRepository string     `json:"pr_repository,omitempty"`
-	PRNumber     int        `json:"pr_number,omitempty"`
-	PRHead       string     `json:"pr_head,omitempty"`
-	CreatedBy    string     `json:"created_by,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	ClosedAt     *time.Time `json:"closed_at"`
+	PRRepository string `json:"pr_repository,omitempty"`
+	PRNumber     int    `json:"pr_number,omitempty"`
+	PRHead       string `json:"pr_head,omitempty"`
+	// PRMergeHead and PRMergeCommit are the merge train's durable proof that
+	// the currently bound PR head merged. Dependency gating reads this fact,
+	// not task completion. A missing PRMergeHead on an existing commit is a
+	// legacy train record written before the head field existed.
+	PRMergeHead   string     `json:"pr_merge_head,omitempty"`
+	PRMergeCommit string     `json:"pr_merge_commit,omitempty"`
+	CreatedBy     string     `json:"created_by,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	ClosedAt      *time.Time `json:"closed_at"`
 }
 
 // Lease is the current holder's lease. An unclaimed lease (ClaimedAt nil)
@@ -302,6 +322,11 @@ func snapshotOnce(dir string) ([]Task, error) {
 	if err := json.Unmarshal(raw, &j); err != nil {
 		return list, nil // a torn journal never crossed the commit point
 	}
+	for _, t := range j.Tasks {
+		if err := validateExactFileRecord(t.RefusedPaths); err != nil {
+			return nil, fmt.Errorf("parse %s task %s: refused_paths: %w", journalName, t.ID, err)
+		}
+	}
 	byID := map[string]int{}
 	for i, t := range list {
 		byID[t.ID] = i
@@ -456,6 +481,9 @@ func readDir(dir string) ([]Task, error) {
 		var t Task
 		if err := json.Unmarshal(raw, &t); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
+		}
+		if err := validateExactFileRecord(t.RefusedPaths); err != nil {
+			return nil, fmt.Errorf("parse %s: refused_paths: %w", e.Name(), err)
 		}
 		out = append(out, t)
 		if snapshotFileHook != nil {

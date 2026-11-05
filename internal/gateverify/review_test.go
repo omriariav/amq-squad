@@ -234,7 +234,7 @@ func TestReview7ReaskPublishedOnceAcrossRetries(t *testing.T) {
 	}
 	n := 0
 	for _, raw := range f.relay.stored {
-		if e, err := nostr.ParseEvent(raw); err == nil && strings.Contains(e.Content, "Reply here to confirm") {
+		if e, err := nostr.ParseEvent(raw); err == nil && strings.Contains(e.Content, "Reply yes or no to this message.") {
 			n++
 		}
 	}
