@@ -71,14 +71,21 @@ type fakeState struct {
 	RateLimitPage int `json:"rate_limit_page,omitempty"`
 	// AsyncUpdate are PR numbers whose updatePullRequestBranch is GitHub's
 	// asynchronous one (brief 3.2.0-3a, run ab184d07): the mutation does the
-	// rebase, answers the head as it was, and the branch moves on a later
-	// pr view (after AsyncViews[n] views, default 1). AsyncRejected are PR
+	// rebase (AlterAfterRebase alters the hunk as in the synchronous path),
+	// answers the head as it was, and the branch moves on a later pr view
+	// (after AsyncViews[n] views, default 1), where PushAfterRebase lands a
+	// competing commit on the rebased head at once. AsyncRejected are PR
 	// numbers whose update GitHub rejected asynchronously: the mutation
 	// answers the head as it was and the branch never moves.
 	AsyncUpdate   []string                  `json:"async_update,omitempty"`
 	AsyncViews    map[string]int            `json:"async_views,omitempty"`
 	AsyncRejected []string                  `json:"async_rejected,omitempty"`
 	Pending       map[string]*pendingUpdate `json:"pending,omitempty"`
+	// AuditPath, when set, is the train's audit log; the mutation records
+	// the entry kinds present the moment it is called (AuditAtMutation), so
+	// a row can assert the request was journaled before the mutation.
+	AuditPath       string   `json:"audit_path,omitempty"`
+	AuditAtMutation []string `json:"audit_at_mutation,omitempty"`
 }
 
 // pendingUpdate is an asynchronous update the fake server has performed
@@ -216,6 +223,17 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 				}
 				p.ForcePushes = append(p.ForcePushes, ForcePush{Before: pend.Before, After: pend.After, Actor: "owner", At: forcePushAt()})
 				delete(s.Pending, args[2])
+				if slices.Contains(s.PushAfterRebase, args[2]) { // a competing push lands on the rebased head before the train reads it back
+					work, _ := os.MkdirTemp("", "fakegh-late-")
+					defer os.RemoveAll(work)
+					gitOut(work, "clone", "-q", s.Bare, "w")
+					w := filepath.Join(work, "w")
+					gitOut(w, "checkout", "-q", p.Head)
+					os.WriteFile(filepath.Join(w, "late.txt"), []byte("late\n"), 0o644)
+					gitOut(w, "add", "-A")
+					gitOut(w, "commit", "-q", "-m", "late push")
+					gitOut(w, "push", "-q", "origin", p.Head)
+				}
 			}
 			s.save(statePath)
 		}
@@ -259,6 +277,12 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		before := rev(p.Head)
 		if before != expect {
 			return fail("GraphQL: expected head %s, the head is %s", expect, before)
+		}
+		if s.AuditPath != "" {
+			s.AuditAtMutation = nil
+			for _, e := range func() []Entry { es, _ := Audit{Path: s.AuditPath}.Read(); return es }() {
+				s.AuditAtMutation = append(s.AuditAtMutation, e.Kind)
+			}
 		}
 		work, _ := os.MkdirTemp("", "fakegh-rebase-")
 		defer os.RemoveAll(work)

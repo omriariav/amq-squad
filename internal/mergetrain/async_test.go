@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // Brief 3.2.0-3a: GitHub updates a branch asynchronously and answers the
@@ -84,7 +86,9 @@ func boundHead(t *testing.T, f *fixture, id string) string {
 // no change, binds nothing and the check refuses pr_head_moved.
 func TestAsyncUpdateBindsTheHeadReadBack(t *testing.T) {
 	f, id, old, req := strictBound(t)
-	f.edit(func(s *fakeState) { s.AsyncUpdate, s.AsyncViews = []string{"1"}, map[string]int{"1": 2} })
+	f.edit(func(s *fakeState) {
+		s.AsyncUpdate, s.AsyncViews, s.AuditPath = []string{"1"}, map[string]int{"1": 2}, f.train.Audit.Path
+	})
 	var sleeps []time.Duration
 	f.train.Sleep = func(d time.Duration) { sleeps = append(sleeps, d) }
 	res, err := f.train.Run(context.Background(), req)
@@ -128,8 +132,14 @@ func TestAsyncUpdateBindsTheHeadReadBack(t *testing.T) {
 	if !slices.Contains(sleeps, time.Second) {
 		t.Fatalf("no backoff between the read-backs: %v", sleeps)
 	}
-	if st := loadFake(f.state); len(st.Pending) != 0 {
+	st := loadFake(f.state)
+	if len(st.Pending) != 0 {
 		t.Fatalf("the update never landed: %+v", st.Pending)
+	}
+	// the request was in the journal when the mutation was called (Codex on
+	// #903: the order of entries alone does not prove it)
+	if !slices.Contains(st.AuditAtMutation, "update_requested") || slices.Contains(st.AuditAtMutation, "rebase") {
+		t.Fatalf("the journal at the mutation: %v", st.AuditAtMutation)
 	}
 }
 
@@ -266,6 +276,11 @@ func TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof(t *testing.T) {
 				mustGit(f.t, f.work, "commit", "-q", "-m", "late")
 			}, true)
 		}, false, "first parent"},
+		{"a force push with no time", func(f *fixture, id, old string) {
+			journal(f, id, old, f.head("main"))
+			moveBranch(f, "pr1", nil, true)
+			f.edit(func(s *fakeState) { s.PRs["1"].ForcePushes[0].At = "" })
+		}, false, "carries no time"},
 	}
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {
@@ -368,6 +383,19 @@ func TestLeadRebindIsProvedBeforeTheBindingIsWritten(t *testing.T) {
 			t.Fatalf("%v %+v", err, res)
 		}
 	})
+	t.Run("a journaled base that is also the current tip is named as journaled", func(t *testing.T) {
+		// Codex on #903 (8): the first match names the parent, so the
+		// journaled base wins over the current tip when they are one commit
+		f, id, old, _ := strictBound(t)
+		if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "batch", Repository: fixtureRepo, Base: "main", BaseSHA: f.head("main"), Pairs: []Pair{{Number: 1, Head: old}}}); err != nil {
+			t.Fatal(err)
+		}
+		_, moved := moveBranch(f, "pr1", nil, true)
+		res, err := Rebind(context.Background(), input(f, 1, old, moved))
+		if err != nil || res.ParentIs != "the base tip of run mt-earlier's batch" || boundHead(t, f, id) != moved {
+			t.Fatalf("%v %+v", err, res)
+		}
+	})
 	other := strings.Repeat("a", 40)
 	for _, r := range []struct {
 		name    string
@@ -433,7 +461,9 @@ func TestLeadRebindIsProvedBeforeTheBindingIsWritten(t *testing.T) {
 
 // The plan reviewer on #903: a failed proof leaves no rebase entry, so
 // trainHeads never names an unproven head and a following run's force-push
-// rule refuses it as a push that is not the train's. The differing patch-id
+// rule refuses it as a push that is not the train's. Over the asynchronous
+// fake (Codex on #903: the update lands between two reads, and the competing
+// head lands with it): the differing patch-id
 // (the fake alters the seat's hunk during the update) and the wrong parent
 // (a push lands on the rebased head before the read-back) both end the first
 // run refused with no rebase entry for the PR, and the next run's check
@@ -444,8 +474,8 @@ func TestFailedProofLeavesNoRebaseEntry(t *testing.T) {
 		edit func(s *fakeState)
 		rule string
 	}{
-		"a differing patch-id":              {func(s *fakeState) { s.AlterAfterRebase = []string{"1"} }, RuleRebasePatch},
-		"a parent that is not the base tip": {func(s *fakeState) { s.PushAfterRebase = []string{"1"} }, RulePRHeadMoved},
+		"a differing patch-id":              {func(s *fakeState) { s.AsyncUpdate, s.AlterAfterRebase = []string{"1"}, []string{"1"} }, RuleRebasePatch},
+		"a parent that is not the base tip": {func(s *fakeState) { s.AsyncUpdate, s.PushAfterRebase = []string{"1"}, []string{"1"} }, RulePRHeadMoved},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, id, old, req := strictBound(t)
@@ -471,5 +501,161 @@ func TestFailedProofLeavesNoRebaseEntry(t *testing.T) {
 				t.Fatal("something merged")
 			}
 		})
+	}
+}
+
+// Codex on #903 (2): the re-bind's binding write holds only while the task
+// is still bound at --from, under the store's lock. A train run that advanced
+// the binding between the proof and the write (the Binder here stands in for
+// it) keeps its head: the re-bind is refused rebind_head_mismatch and the
+// advanced binding stays. The store's own check: BindPRFrom with the wrong
+// head is ErrPRBindingMismatch and writes nothing.
+func TestRebindRefusesWhenTheBindingMovedMeanwhile(t *testing.T) {
+	f, id, old, _ := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	s := f.tasks()
+	other := strings.Repeat("c", 40)
+	in := RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: advancingBinder{StoreBinder{Store: s}, s, id, other}, PR: 1, From: old, To: moved, Lead: "lead"}
+	_, err := Rebind(context.Background(), in)
+	var refusal *RebindRefusal
+	if !errors.As(err, &refusal) || refusal.Code != RefusedRebindHead || !strings.Contains(refusal.Detail, "the binding moved while the re-bind was proved") {
+		t.Fatalf("the stale re-bind was not refused: %v", err)
+	}
+	if got := boundHead(t, f, id); got != other {
+		t.Fatalf("the advanced binding was overwritten: %s", got)
+	}
+	if _, err := s.BindPRFrom(id, fixtureRepo, 1, old, moved, time.Now()); !errors.Is(err, task.ErrPRBindingMismatch) || boundHead(t, f, id) != other {
+		t.Fatalf("BindPRFrom with the wrong head: %v (bound %s)", err, boundHead(t, f, id))
+	}
+	if tk, _ := s.BindPRFrom(id, fixtureRepo, 1, other, moved, time.Now()); tk.PRHead != moved {
+		t.Fatalf("BindPRFrom with the right head: %+v", tk)
+	}
+}
+
+// advancingBinder moves the task's binding to other right before the
+// conditional write, as a concurrent train run would.
+type advancingBinder struct {
+	Binder
+	store     task.Store
+	id, other string
+}
+
+func (b advancingBinder) BindPRFrom(taskID, repository string, pr int, from, head string) error {
+	if _, err := b.store.BindPR(b.id, repository, pr, b.other, time.Now()); err != nil {
+		return err
+	}
+	return b.Binder.BindPRFrom(taskID, repository, pr, from, head)
+}
+
+// Codex on #903 (3): the wait's sleep ends at the context's end, and a
+// cancelled wait is the unconfirmed refusal, nothing bound.
+func TestCancelledUpdateWaitIsRefusedUnconfirmed(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.edit(func(s *fakeState) { s.AsyncRejected = []string{"1"} })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sleeps := 0
+	f.train.Sleep = func(time.Duration) { sleeps++; cancel() }
+	res, err := f.train.Run(ctx, req)
+	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed || sleeps != 1 {
+		t.Fatalf("the cancelled wait: %v %+v (sleeps %d)", err, res.PRs, sleeps)
+	}
+	if boundHead(t, f, id) != old || strings.Contains(f.calls(), "-X PUT") {
+		t.Fatal("something was bound or merged")
+	}
+}
+
+// Codex on #903 (3): the bound is on the waiting, not a cutoff on the read.
+// A read that starts before the deadline and completes after it (each PR
+// read here takes 61 s of the test clock) sees the moved head and the train
+// accepts it.
+func TestPollCrossingTheDeadlineAcceptsAMovedHead(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.edit(func(s *fakeState) { s.AsyncUpdate, s.AsyncViews = []string{"1"}, map[string]int{"1": 2} })
+	now := time.Now()
+	f.train.Now = func() time.Time { return now }
+	f.train.Sleep = func(d time.Duration) { now = now.Add(d) }
+	f.train.Forge = &slowForge{Forge: f.gh, tick: func() { now = now.Add(61 * time.Second) }}
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "merged" || res.PRs[0].Head == old || boundHead(t, f, id) != res.PRs[0].Head {
+		t.Fatalf("the head read past the deadline was not accepted: %v %+v", err, res.PRs)
+	}
+}
+
+// slowForge advances a test clock on every PR read.
+type slowForge struct {
+	Forge
+	tick func()
+}
+
+func (s *slowForge) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
+	s.tick()
+	return s.Forge.PR(ctx, repository, number)
+}
+
+// Codex on #903 (4): a request whose mutation failed is followed by an
+// update_failed entry and counts for nothing: a seat's own push after it,
+// even with the same patch on the base tip, is not recovered, and the next
+// run refuses it as a force push that is not the train's. (A seat's push
+// with a changed patch after a live request is R3's "a differing patch-id"
+// subtest: refused on the patch-id, nothing bound.)
+func TestFailedMutationLeavesNoLiveRequest(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.train.Forge = &failRebaseForge{Forge: f.gh}
+	first, err := f.train.Run(context.Background(), req)
+	if err == nil || !strings.Contains(first.Stopped, "rebase: GraphQL: the update was not taken") {
+		t.Fatalf("the failed mutation did not stop the run: %v %q", err, first.Stopped)
+	}
+	entries, _ := f.train.Audit.Read()
+	ri := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "update_requested" && e.PR == 1 && e.Head == old })
+	fi := slices.IndexFunc(entries, func(e Entry) bool {
+		return e.Kind == "update_failed" && e.PR == 1 && e.Head == old && strings.Contains(e.Detail, "the update was not taken")
+	})
+	if ri < 0 || fi < ri {
+		t.Fatalf("no update_failed after the request: %v", kinds(entries, 1))
+	}
+	if _, ok := lastUpdateRequest(entries, fixtureRepo, 1, old); ok {
+		t.Fatal("the failed request is still live")
+	}
+	f.train.Forge = f.gh
+	moveBranch(f, "pr1", nil, true) // the seat's own push: the same patch, on the base tip
+	f.realRun(&req)
+	second, err := f.train.Run(context.Background(), req)
+	if err != nil || second.PRs[0].Status != "refused" || !slices.ContainsFunc(second.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
+		t.Fatalf("the seat's push after the failed request was recovered: %v %+v", err, second.PRs)
+	}
+	entries, _ = f.train.Audit.Read()
+	if slices.ContainsFunc(entries, func(e Entry) bool {
+		return e.Run == second.Run && (e.Kind == "rebase" || e.Kind == "rebind" || e.Kind == "reconcile")
+	}) || boundHead(t, f, id) != old {
+		t.Fatalf("a recovery was attempted: %v (bound %s)", kinds(entries, 1), boundHead(t, f, id))
+	}
+}
+
+type failRebaseForge struct{ Forge }
+
+func (failRebaseForge) Rebase(context.Context, string, int, string) (string, error) {
+	return "", errors.New("GraphQL: the update was not taken")
+}
+
+// Codex on #903 (6): the force push's time is placed after the journaled
+// request at second precision, the timeline's: the same second is after,
+// the second before is not, and a sub-second request inside the push's
+// second is before it.
+func TestPushedAfterTakesTheSameSecondAsAfter(t *testing.T) {
+	for _, c := range []struct {
+		at, since string
+		want      bool
+	}{
+		{"2026-11-05T19:23:26Z", "2026-11-05T19:23:20.853766Z", true},
+		{"2026-11-05T19:23:20Z", "2026-11-05T19:23:20.853766Z", true},
+		{"2026-11-05T19:23:19Z", "2026-11-05T19:23:20.853766Z", false},
+		{"2026-11-05T19:23:20Z", "2026-11-05T19:23:21.000001Z", false},
+		{"", "2026-11-05T19:23:20Z", false},
+		{"2026-11-05T19:23:20Z", "not a time", false},
+	} {
+		if got := pushedAfter(c.at, c.since); got != c.want {
+			t.Errorf("pushedAfter(%q, %q) = %v, want %v", c.at, c.since, got, c.want)
+		}
 	}
 }

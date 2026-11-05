@@ -125,6 +125,10 @@ var ErrBindingFailed = errors.New("binding_failed")
 // Binder writes a task's PR binding.
 type Binder interface {
 	BindPR(taskID, repository string, pr int, head string) error
+	// BindPRFrom binds only while the task is still bound to from, under
+	// the store's lock (the lead's re-bind; task.ErrPRBindingMismatch
+	// otherwise).
+	BindPRFrom(taskID, repository string, pr int, from, head string) error
 	RecordPRMerge(taskID, repository string, pr int, head, commit string) error
 }
 
@@ -140,6 +144,15 @@ func (b StoreBinder) BindPR(taskID, repository string, pr int, head string) erro
 		now = b.Now()
 	}
 	_, err := b.Store.BindPR(taskID, repository, pr, head, now)
+	return err
+}
+
+func (b StoreBinder) BindPRFrom(taskID, repository string, pr int, from, head string) error {
+	now := time.Now()
+	if b.Now != nil {
+		now = b.Now()
+	}
+	_, err := b.Store.BindPRFrom(taskID, repository, pr, from, head, now)
 	return err
 }
 

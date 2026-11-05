@@ -131,9 +131,13 @@ func rebindDecision(sel storeSelection, lead string, req schedproc.RebindRequest
 		if errors.As(err, &refusal) {
 			code = refusal.Code
 		}
-		_ = schedproc.AppendDecision(sel.root, now, scheduler.Decision{Kind: "merge_train_rebind_refused", Seat: lead, ReasonCode: code,
-			Reason: fmt.Sprintf("PR #%d from %s to %s: %v", req.PR, shortSHA(req.From), shortSHA(req.To), err)})
-		return schedproc.DecideReply{Code: code, Detail: err.Error()}
+		detail := err.Error()
+		if aerr := schedproc.AppendDecision(sel.root, now, scheduler.Decision{Kind: "merge_train_rebind_refused", Seat: lead, ReasonCode: code,
+			Reason: fmt.Sprintf("PR #%d from %s to %s: %v", req.PR, shortSHA(req.From), shortSHA(req.To), err)}); aerr != nil {
+			// the refusal stands and names the failure of its record (Codex on #903)
+			detail += "\nthe decision line was not written: " + aerr.Error()
+		}
+		return schedproc.DecideReply{Code: code, Detail: detail}
 	}
 	raw, _ := json.Marshal(res)
 	if err := schedproc.AppendDecision(sel.root, now, scheduler.Decision{Kind: "merge_train_rebound", TaskID: res.Task, Seat: lead,

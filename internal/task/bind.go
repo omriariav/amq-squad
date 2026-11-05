@@ -28,6 +28,29 @@ func (s Store) BindPR(id, repository string, pr int, head string, now time.Time)
 	})
 }
 
+// BindPRFrom is BindPR only while the task's binding is still (repository,
+// pr, from), checked and written under the store's lock (brief 3.2.0-3a,
+// Codex on #903): the merge train's re-bind moves a binding it read a
+// moment ago, and a train run that advanced the binding (and recorded a
+// merge) in between must not be overwritten by the stale head. A binding
+// elsewhere is ErrPRBindingMismatch.
+func (s Store) BindPRFrom(id, repository string, pr int, from, head string, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, all *tasks) error {
+		repository = strings.TrimSpace(repository)
+		if !strings.EqualFold(t.PRRepository, repository) || t.PRNumber != pr || t.PRHead != strings.TrimSpace(from) {
+			return fmt.Errorf("%w: bind PR from %s: task %s is bound to %s#%d at %s", ErrPRBindingMismatch, short(from), t.ID, t.PRRepository, t.PRNumber, t.PRHead)
+		}
+		return bindPR(t, all, repository, pr, head)
+	})
+}
+
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
 // bindPR validates and writes the binding inside a mutation.
 func bindPR(t *Task, all *tasks, repository string, pr int, head string) error {
 	repository, head = strings.TrimSpace(repository), strings.TrimSpace(head)

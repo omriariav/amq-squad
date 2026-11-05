@@ -606,6 +606,12 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			return err
 		}
 		if _, err := t.Forge.Rebase(ctx, req.Repository, p.Number, p.Head); err != nil {
+			// the request counts for nothing (Codex on #903): without this
+			// entry the next run could take a seat's own push for the
+			// update's result
+			if aerr := entry(Entry{Kind: "update_failed", PR: p.Number, Task: it.Task, Head: p.Head, BaseSHA: beforeBase, Detail: "updatePullRequestBranch failed: " + err.Error()}); aerr != nil {
+				return aerr
+			}
 			return fmt.Errorf("rebase: %w", err)
 		}
 		// GitHub performs the update asynchronously and answers with the head

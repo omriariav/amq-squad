@@ -32,12 +32,12 @@ func (t *Train) updateWait() time.Duration {
 // head differs from the pinned one, with a backoff (1 s doubling to 16 s)
 // bounded by UpdateWait. moved is false when the wait ended with the head
 // still pinned: GitHub did not update the branch (an update it rejected
-// asynchronously leaves the head unmoved).
+// asynchronously leaves the head unmoved), or the context ended (the
+// sleep returns at ctx.Done; a cancelled wait is the same refusal, nothing
+// bound). The bound is on the waiting, not a cutoff on the read: a read
+// that starts before the deadline may complete after it, and a head that
+// moved by then is accepted.
 func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, pinned string) (cur PRInfo, moved bool, err error) {
-	sleep := t.Sleep
-	if sleep == nil {
-		sleep = time.Sleep
-	}
 	deadline := t.now().Add(t.updateWait())
 	backoff := time.Second
 	for {
@@ -51,8 +51,28 @@ func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, 
 		if remaining <= 0 || ctx.Err() != nil {
 			return cur, false, nil
 		}
-		sleep(min(backoff, remaining))
+		if !t.sleepOrDone(ctx, min(backoff, remaining)) {
+			return cur, false, nil
+		}
 		backoff = min(2*backoff, 16*time.Second)
+	}
+}
+
+// sleepOrDone sleeps d or until ctx ends, and reports whether ctx is still
+// live. The Sleep seam, when set, is called for the whole of d (a test
+// clock) and ctx is read after it.
+func (t *Train) sleepOrDone(ctx context.Context, d time.Duration) bool {
+	if t.Sleep != nil {
+		t.Sleep(d)
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -114,9 +134,10 @@ func proveUpdate(ctx context.Context, forge Forge, repository string, cur PRInfo
 		return proof, "", fmt.Errorf("read the first parent of %s: %w", short(to), err)
 	}
 	proof.Parent = parent
-	for _, b := range bases {
+	for _, b := range bases { // the first match names it: a journaled base before the current tip
 		if b.sha != "" && b.sha == parent {
 			proof.ParentIs = b.which
+			break
 		}
 	}
 	if proof.ParentIs == "" {

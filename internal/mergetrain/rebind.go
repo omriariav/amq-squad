@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
@@ -135,7 +136,15 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 	if err := write(Entry{Kind: "rebind", PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: "patch-id: " + proof.OldID + "\nfirst parent: " + proof.Parent + "\n" + detail}); err != nil {
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: "audit log: " + err.Error()}
 	}
-	if err := in.Binder.BindPR(tk.ID, repository, in.PR, in.To); err != nil {
+	// The write holds only while the binding is still at From, checked under
+	// the store's lock (Codex on #903): a train run that advanced the binding
+	// since the snapshot above keeps its head and its merge fact. The two
+	// entries above stay journaled; reconcileRebinds applies a rebind entry
+	// only to a task still bound at its Head, so they bind nothing later.
+	if err := in.Binder.BindPRFrom(tk.ID, repository, in.PR, in.From, in.To); err != nil {
+		if errors.Is(err, task.ErrPRBindingMismatch) {
+			return RebindResult{}, &RebindRefusal{Code: RefusedRebindHead, Detail: fmt.Sprintf("the binding moved while the re-bind was proved: %v; nothing is bound (the proof's entries are journaled under run %s)", err, res.Run)}
+		}
 		return RebindResult{}, &RebindRefusal{Code: "binding_failed", Detail: fmt.Sprintf("task %s to %s: %v", tk.ID, short(in.To), err)}
 	}
 	return res, nil
@@ -187,7 +196,7 @@ func RebindPlain(code string) string {
 	case RefusedRebindUnbound:
 		return "no one task is bound to the PR at the head named as the bound head"
 	case RefusedRebindHead:
-		return "the PR's head is not the head named as the update's result"
+		return "the PR's head, or the task's binding, is not where the re-bind names it"
 	case RefusedRebindUnproved:
 		return "the named head is not proved to be the train's update of the bound head; nothing is bound"
 	case "binding_failed":

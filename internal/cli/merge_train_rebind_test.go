@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -199,5 +200,23 @@ func TestMergeTrainPrintsTheUnconfirmedUpdateInWords(t *testing.T) {
 	}
 	if first := strings.SplitN(out[i:], "\n", 2)[0]; widenLineCode(strings.TrimPrefix(first, "#894 was not merged: ")) != "" {
 		t.Fatalf("a code above the rule: %q", first)
+	}
+}
+
+// Codex on #903 (5): a refusal whose decision line cannot be written names
+// that failure in its detail; the refusal stands.
+func TestMergeTrainRebindNamesAnUnwrittenDecisionLine(t *testing.T) {
+	root, _ := rebindRig(t, true, func(mergetrain.RebindInput) (mergetrain.RebindResult, error) {
+		return mergetrain.RebindResult{}, &mergetrain.RebindRefusal{Code: mergetrain.RefusedRebindUnproved, Detail: "no force push; the bound head was not moved by an update"}
+	})
+	if err := os.MkdirAll(schedproc.DecisionsPath(root), 0o700); err != nil { // the log's path taken by a directory
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runMergeTrain([]string{"rebind", "--root", root, "--pr", "894", "--from", rebindFrom, "--to", rebindTo})
+	})
+	var coded *codedExitError
+	if !errors.As(err, &coded) || !strings.Contains(coded.msg, "refused ("+mergetrain.RefusedRebindUnproved+"): ") || !strings.Contains(coded.msg, "the decision line was not written: ") {
+		t.Fatalf("the refusal does not name the unwritten decision line: %v", err)
 	}
 }
