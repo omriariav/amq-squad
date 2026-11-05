@@ -84,8 +84,13 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 		dur = DefaultLeaseDuration
 	}
 	if pool != nil {
-		p := *pool
-		t.Pool = &p
+		if t.Pool != nil && !PoolServes(*pool, *t.Pool) {
+			return fmt.Errorf("%w: task %s is for %s, not %s", ErrClaimPoolMismatch, t.ID, t.Pool.Key(), pool.Key())
+		}
+		if t.Pool == nil {
+			p := *pool
+			t.Pool = &p
+		}
 	}
 	t.State, t.WaitReason, t.Attempt = StateInProgress, "", t.Attempt+1
 	budget := t.Budget
@@ -101,6 +106,17 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 	t.Lease = &Lease{Holder: holder, GrantedAt: now, ExpiresAt: expires, Attempt: t.Attempt, BudgetEndsAt: budgetEnd}
 	return nil
 }
+
+const (
+	RefusalClaimOfferRequired = "claim_offer_required"
+	RefusalClaimOfferExpired  = "claim_offer_expired"
+	RefusalClaimPoolMismatch  = "claim_pool_mismatch"
+)
+
+var (
+	ErrClaimOfferRequired = errors.New(RefusalClaimOfferRequired)
+	ErrClaimPoolMismatch  = errors.New(RefusalClaimPoolMismatch)
+)
 
 func claim(t *Task, dur time.Duration, now time.Time) {
 	if dur <= 0 {
@@ -229,6 +245,34 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 			if err := grant(t, all, holder, pool, dur, now); err != nil {
 				return err
 			}
+		}
+		claim(t, dur, now)
+		all.touch(t.ID)
+		out = *t
+		return nil
+	})
+	return out, err
+}
+
+// ClaimOffered acknowledges only a live, unclaimed scheduler offer for this
+// holder. It never routes or grants pending work, so the scheduler remains the
+// sole writer of routing decisions and outcome rows.
+func (s Store) ClaimOffered(id, holder string, pool *Pool, dur time.Duration, now time.Time) (Task, error) {
+	holder = strings.TrimSpace(holder)
+	var out Task
+	err := s.update(now, func(all *tasks) error {
+		t := all.get(strings.TrimSpace(id))
+		if t == nil {
+			return fmt.Errorf("%w: %q", ErrNotFound, id)
+		}
+		if t.State != StateInProgress || t.Lease == nil || t.Lease.Holder != holder || t.Lease.ClaimedAt != nil {
+			return fmt.Errorf("%w: task %s has no unclaimed offer for %s", ErrClaimOfferRequired, t.ID, holder)
+		}
+		if pool != nil && t.Pool != nil && !PoolServes(*pool, *t.Pool) {
+			return fmt.Errorf("%w: task %s is for %s, not %s", ErrClaimPoolMismatch, t.ID, t.Pool.Key(), pool.Key())
+		}
+		if err := requireLiveHolder(t, holder, now); err != nil {
+			return err
 		}
 		claim(t, dur, now)
 		all.touch(t.ID)

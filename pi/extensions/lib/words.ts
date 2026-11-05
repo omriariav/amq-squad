@@ -183,6 +183,9 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	retries_exhausted: () => ["every retry failed", "/reset it onto another pool"],
 	class_unknown: () => ["its class is not in the routing table", "add it again with a known class"],
 	declared_tree_unchecked: () => ["its declared files could not be checked", RESET],
+	claim_offer_required: () => ["a seat tried to claim work the scheduler had not offered it", "wait for the scheduler's offer"],
+	claim_offer_expired: () => ["a seat tried to claim an offer after it expired", "wait for the scheduler to offer it again"],
+	claim_pool_mismatch: () => ["a seat tried to claim work for a pool it does not serve", "claim it from a serving seat"],
 	pin_unresolved: () => ["the pool it is pinned to cannot run its class", "/reset it onto another pool"],
 	history_tampered: () => ["the routing history does not verify", "ask the owner to inspect it"],
 };
