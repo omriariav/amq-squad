@@ -84,11 +84,37 @@ gate raised and nothing bound (`refuseUpdate`, the generalization of the old
 words>` and then `rule: branch_update_unconfirmed` and `head:` below it.
 The bound is on the waiting, not a cutoff on the read: a read that starts
 before the deadline may complete up to one poll after it, and a head that
-moved by then is accepted. A mutation that fails outright (`Forge.Rebase`
-returns an error) writes an `update_failed` entry (the PR, the bound head,
-the error) and stops the run; `lastUpdateRequest` drops a request followed
-by it, so a seat's own push after a request GitHub never took is never
-recovered as the train's (Codex on #903).
+moved by then is accepted.
+
+**A failed mutation, two classes** (the plan reviewer's split of Codex's
+item 4 on #903, commit `c26b17cc`). A mutation can fail on this side while
+GitHub completed it, so retiring the request on every failure would leave a
+real update unrecoverable, another #894. `definiteRefusal` reads gh's
+error text (`GH.run` wraps it as `gh api graphql: <exit>: <stderr>`):
+
+- definite, `update_failed`, the request retired (`lastUpdateRequest`
+  drops a request followed by it, so a seat's own push after it is never
+  recovered as the train's): an HTTP 4xx (`gh: <message> (HTTP 4xx)`:
+  422 Validation Failed, 403 Forbidden, 404, 409), or a GraphQL error gh
+  prints as `GraphQL: <message> (updatePullRequestBranch)` that is a
+  refusal: `Head branch was modified. Review and try the update again.`
+  (the pinned `expectedHeadOid` no longer the head), `Pull request is not
+  mergeable` (a conflict), `Resource not accessible` (forbidden), and the
+  fake's `GraphQL: expected head X, the head is Y`. The run stops with
+  `rebase: <error>`.
+- ambiguous, `update_ambiguous`, the request stays live: an HTTP 5xx
+  (`(HTTP 500)`, `(HTTP 502)`, `(HTTP 503)`), a transport error (`Post
+  "https://api.github.com/graphql": context deadline exceeded`, `error
+  connecting to api.github.com`, a reset or EOF), gh killed or exiting
+  with no text, or a GraphQL message that says the request itself failed
+  (`Something went wrong while executing your query`, `timed out`,
+  `temporarily unavailable`, `try again later`). The train then reads the
+  head back at once, as if the mutation had answered: an update GitHub
+  did complete is proved, bound and merged in the same run (the
+  `update_ambiguous` entry before the `rebase` entry); one it did not ends
+  the bounded wait unconfirmed, and the request stays live for the next
+  run's recovery. An answer that cannot be read is no failure at all: the
+  mutation's answer is never used, only the read-back.
 
 The head read back is proved before it is bound: `Forge.FirstParent` (new;
 `gh api repos/{r}/commits/{sha} --jq '.parents[0].sha // ""'`) must be the
@@ -123,10 +149,21 @@ real run after `reconcileRebinds`. For a bound PR with a real-run
 head as the update's result (`proveUpdate`, shared with item 6) and
 requires ALL of:
 
-- exactly one force push after the journaled request (the timeline query
-  now reads each event's `createdAt`, `ForcePush.At`; the comparison is at
-  second precision, the timeline's; an event with no time cannot be placed
-  and refuses), and that one from the bound head to the current head;
+- exactly one force push inside the journaled request's window, and that
+  one from the bound head to the current head. The window runs from the
+  request's time to the end of its bounded wait plus one poll
+  (`UpdateWait` + `UpdateWindowSlack`, 120 s + the 16 s last backoff:
+  `requestWindowEnd`), since GitHub lands the update inside the wait and a
+  read that started before the deadline completes at most one poll after
+  it; the timeline query reads each event's `createdAt` (`ForcePush.At`),
+  the comparison is at second precision, the timeline's, with the equal
+  second inside at both ends (`pushedAfter`); an event with no time cannot
+  be placed and refuses; a push after the window is never the update's,
+  and the reconcile entry says how many and when the window ended. The
+  window applies to every live request, ambiguous or not (the reviewer
+  named it for the ambiguous class; the reasoning is the same for a
+  request whose mutation answered, and the bound only narrows what the
+  recovery accepts);
 - the current head's first parent equal to the journaled base tip, or to
   the base's current tip if the base moved since, and the record says which
   (`first parent X is the journaled base tip` / `is the base's current
@@ -137,7 +174,9 @@ requires ALL of:
 
 Then the `rebase` entry (`recovered: the update journaled by run <run>
 moved the branch and was not recorded; first parent ... ; one force push
-...`), the `rebind` entry, the binding write (`BindPR`), the request item's
+..., inside the request's window (to <end>)`, and for an ambiguous
+request `; the request's mutation had failed without a definite refusal
+(...)`), the `rebind` entry, the binding write (`BindPR`), the request item's
 bound head moved so the plan check sees it, and CI waited at the recovered
 head as after the train's own update. A failing part is one `reconcile`
 entry naming it (`... binding not recovered`), the binding stays, and the
@@ -145,10 +184,12 @@ check refuses as before. A moved head with no request on record is not
 touched: a force push with no train request on record is exactly the event
 `pr_head_moved` exists to stop, and the owner's identity on the push does
 not tell the train's push from the owner's own hand. The converse holds
-too: a journaled request whose mutation never ran (or was rejected),
-followed by a seat's own force push from the bound head, is accepted only
-when the proof holds, which is safe on content, since the patch-id proof
-is what matters, not who pushed; a changed patch in that case is refused
+too: a journaled request whose mutation failed ambiguously (and so may
+or may not have run), followed by a seat's own force push from the bound
+head inside the window, is accepted only when the proof holds, which is
+safe on content, since the patch-id proof is what matters, not who
+pushed; a request GitHub definitely refused is retired and recovers
+nothing; a changed patch in the live case is refused
 (R3's `a differing patch-id` subtest: the journal entry exists, one force
 push from the bound head with a different patch-id, the reconcile entry
 says the head is `not its result`, nothing bound). `pushedAfter` compares
@@ -230,7 +271,11 @@ row comes the first time the new code meets an asynchronous update.
 | stale write | Codex #903 (2): a Binder that advances the task's binding right before the conditional write (a concurrent train run's stand-in): the re-bind is refused `rebind_head_mismatch` naming that the binding moved, the advanced head stays; `BindPRFrom` with the wrong head is `ErrPRBindingMismatch` and writes nothing, with the right head it binds. | `internal/mergetrain` `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 | cancel | Codex #903 (3): the Sleep seam runs the test clock and cancels the context on the first sleep: the wait ends after that one sleep, the PR is refused `branch_update_unconfirmed`, nothing bound or merged (a wait that ignored the cancel would sleep eleven times to the 120 s bound). | `internal/mergetrain` `TestCancelledUpdateWaitIsRefusedUnconfirmed` |
 | past the deadline | Codex #903 (3): every PR read takes 61 s of the test clock; the second read-back starts before the 120 s deadline and completes after it, sees the moved head, and the train proves, binds and merges it. | `internal/mergetrain` `TestPollCrossingTheDeadlineAcceptsAMovedHead` |
-| failed mutation | Codex #903 (4): a Forge whose `Rebase` fails: the run stops with `rebase: ...`, the journal has `update_requested` then `update_failed` (the error in its detail), `lastUpdateRequest` finds no live request; a seat's own force push with the same patch onto the base tip is then not recovered (no reconcile, rebase or rebind entry, the binding unchanged) and the next run refuses it on `force_push`. A seat push with a changed patch after a live request is R3's `a differing patch-id` subtest. | `internal/mergetrain` `TestFailedMutationLeavesNoLiveRequest` |
+| definite refusal | Codex #903 (4), the reviewer's split: a Forge whose `Rebase` fails with a GraphQL refusal: the run stops with `rebase: ...`, the journal has `update_requested` then `update_failed` (the error in its detail), `lastUpdateRequest` finds no live request; a seat's own force push with the same patch onto the base tip is then not recovered (no reconcile, rebase or rebind entry, the binding unchanged) and the next run refuses it on `force_push`. A seat push with a changed patch after a live request is R3's `a differing patch-id` subtest. | `internal/mergetrain` `TestFailedMutationLeavesNoLiveRequest` |
+| ambiguous, landed | The reviewer's split: the fake performs the (asynchronous) update and the Forge returns `context deadline exceeded`: the same run reads the head back, proves, binds and merges it; `update_ambiguous` (the error in its detail) precedes the `rebase` entry. | `internal/mergetrain` `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`the update landed and the answer was lost`) |
+| ambiguous, in the window | The update never ran and the Forge returned the transport error: the run ends unconfirmed with the request live and stamped ambiguous; a force push by hand stamped 100 s after the request is recovered at the next run (the rebase entry names the window and the ambiguous failure), bound and merged. | `internal/mergetrain` `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`a push inside the window is recovered`) |
+| ambiguous, after the window | The same, the push stamped 200 s after the request (past 120 s + 16 s): refused `force_push` and `pr_head_moved`, the binding unchanged, the reconcile entry says `1 after the window, which ended at <time>` and `binding not recovered`. | `internal/mergetrain` `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`a push after the window is refused`) |
+| the classes | gh's error texts map to their class (the 4xx and GraphQL refusals definite; 5xx, transport, context deadline, a killed gh, "Something went wrong" and "timed out" ambiguous); the window's end is the request's time plus 136 s; an unreadable request time has no window. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
 | same second | Codex #903 (6): `pushedAfter` at second precision: a push in the request's own second is after it, the second before is not, a sub-second request past the push's second is after the push; no time or an unparseable time is not after. | `internal/mergetrain` `TestPushedAfterTakesTheSameSecondAsAfter` |
 | no createdAt | Codex #903 (6): R3's `a force push with no time` subtest: the journal entry present, the one force push with an empty time, the reconcile entry says it `carries no time`, `binding not recovered`. | `internal/mergetrain` `TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof` |
 | journal at the mutation | Codex #903 (6): R1 reads the audit kinds the fake saw when the mutation was called: `update_requested` present, no `rebase`. | `internal/mergetrain` `TestAsyncUpdateBindsTheHeadReadBack` |
@@ -667,6 +712,33 @@ async_test.go:396: <nil> {Run:mt-rebind-20261105T212748Z-2ba10090 Task:t1 Reposi
 ```
 restored: `ok ... 7.963s`.
 
+### The reviewer's split of item 4 (three runs, on `c26b17cc`)
+
+`903c ambiguous kept live`: `internal/mergetrain/train.go` (`land`)
+`if definiteRefusal(err) {` to `if definiteRefusal(err) || true {` (every
+failure retires the request);
+`go test -count=1 -timeout 300s -run ^TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow$ ./internal/mergetrain/`;
+```
+async_test.go:700: the lost answer's update was not read back and merged: rebase: Post "https://api.github.com/graphql": context deadline exceeded [{Number:1 Task:t1 Head:eb8091a38cf49c93de120e39bf12d97f9d133840 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:true RebaseRule:strict_required_status_checks_policy RebaseReason:GitHub requires the branch to be up to date before merging PatchProof:0x7797120681e0 Overlap:[] Status:planned Merged: title: mergeable:MERGEABLE}]
+```
+restored: `ok ... 3.653s`.
+
+`903c the window`: `internal/mergetrain/update.go` (`reconcileUpdates`)
+`until := requestWindowEnd(requested.At, t.updateWait())` to `until := ""`
+(no window); the same command (the subtest `a push after the window is refused`);
+```
+async_test.go:764: the push after the window was recovered: <nil> [{Number:1 Task:t1 Head:5ecb480c02228e6d151ee7950e772b3d73d92ba9 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false RebaseRule: RebaseReason: PatchProof:<nil> Overlap:[] Status:merged Merged:9aa706cc35ac0ad1dcabdf866f6b423991f56bb0 title: mergeable:MERGEABLE}] (bound 5ecb480c02228e6d151ee7950e772b3d73d92ba9)
+```
+restored: `ok ... 3.664s`.
+
+`903c the classes`: `internal/mergetrain/update.go` (`definiteRefusal`)
+`if !strings.Contains(err.Error(), "GraphQL:") {` to `... && false {` (every
+failure a refusal); `go test -count=1 -timeout 300s -run ^TestDefiniteRefusalClassesTheGhError$ ./internal/mergetrain/`;
+```
+async_test.go:794: definiteRefusal("gh api graphql: exit status 1: gh: Bad Gateway (HTTP 502)") = true, want false
+```
+restored: `ok ... 0.262s`.
+
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
 
@@ -742,6 +814,12 @@ vet ./...` exit 0; `go test -count=1 ./internal/mergetrain/
 exit 0; `go run ./scripts/redact-evidence -check
 docs/v3-spike/320-3a-train/` on this note: exit 0.
 
+On `c26b17cc` (the reviewer's split of item 4, `internal/mergetrain/`
+only): `go build ./... && go vet ./...` exit 0; `go test -count=1
+./internal/mergetrain/ ./internal/cli/ ./internal/schedproc/
+./internal/task/` all four `ok`, exit 0; `go run ./scripts/redact-evidence
+-check docs/v3-spike/320-3a-train/` on this note: exit 0.
+
 ## Residual risk
 
 - The first-parent check assumes one commit per task on the seat branch,
@@ -759,8 +837,14 @@ docs/v3-spike/320-3a-train/` on this note: exit 0.
   waiting, not the read: a read that starts before the deadline may
   complete up to one poll after it. A run whose process dies inside the
   wait leaves the journaled request, which the next run recovers from or,
-  with the head unmoved, ignores (the check decides); a mutation that
-  failed outright is marked `update_failed` and recovers nothing.
+  with the head unmoved, ignores (the check decides); a mutation GitHub
+  definitely refused is marked `update_failed` and recovers nothing; one
+  that failed ambiguously stays live and recovers only a push inside its
+  window.
+- The classes are read from gh's error text; a message gh changes the
+  wording of falls to the ambiguous class (the request stays live, bounded
+  by its window), never to the definite one, unless it carries `(HTTP 4`
+  or the `GraphQL:` prefix with none of the vague phrases.
 - A stale re-bind refused on the conditional write leaves its `rebase` and
   `rebind` entries journaled under the re-bind's run: the proof held on
   content, the binding was simply elsewhere, and `reconcileRebinds` applies
