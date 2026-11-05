@@ -228,10 +228,12 @@ tampering, it proves the evidence survives whatever the cause.
 
 Rule 18: every row runs under a `t.TempDir` root (the seatcommit
 fixture's `amq/sess`; the schedproc live rig's root), nothing touches a
-real session root, no network. The seatcommit rows (A1 to A15, the A1
-guard, the owner row) each set `HOME` to a temp dir with `t.Setenv`, since the fixture
-runs git; the schedproc row (A4's scheduler half, `newLiveRig`) runs no
-git and leaves `HOME` as it is.
+real session root, no network. The seatcommit fixture rows (A1 to A15 and the
+A1 guard) each set `HOME` to a temp dir with `t.Setenv`, since the fixture
+runs git; the owner row (`quarantine_unix_test.go`) builds `FileInfo`
+values and calls the uid predicate, with no filesystem, git, network or
+session access, and sets nothing; the schedproc row (A4's scheduler half,
+`newLiveRig`) runs no git and leaves `HOME` as it is.
 
 ## Revert runs
 
@@ -701,3 +703,7 @@ vet, the seatcommit and schedproc tests and the redact check).
   once, the recorded recovery and the prepare-loop suppression are part B.
 - `seatcommit.BinaryVersion` is unset until part B threads the CLI's
   version; the sidecar's fallback names the build's vcs revision.
+- For the 3.2.x list, past the threat line above: the fstat check on the
+  staged directory proves a directory owned by the caller, not the inode
+  just created; a same-uid process could substitute another real
+  directory between the mkdir and the open.

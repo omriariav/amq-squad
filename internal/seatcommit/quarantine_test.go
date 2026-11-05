@@ -524,9 +524,10 @@ func TestStagedDirectorySwappedForALinkIsAQuarantineFailure(t *testing.T) {
 }
 
 // A15: the staged directory is fsynced before it is renamed into place
-// (the quarantineTrace seam records every fsync and renameat in order), and
-// the root is fsynced after the rename: a crash after the publish cannot
-// leave a slot missing files.
+// and the root is fsynced after the rename: a crash after the publish
+// cannot leave a slot missing files. The quarantineTrace seam records the
+// directory fsyncs (the staged directory's, the root's) and the renameat,
+// in order; the per-file fsyncs of the staged files are not traced.
 func TestStagedDirectoryIsFsyncedBeforeItsRename(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := newFixture(t)

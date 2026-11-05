@@ -315,7 +315,10 @@ func slotFiles() []string {
 
 // removeSlot drops a temp directory this process made: its known files
 // through the directory's own descriptor, then the directory through the
-// root's; a failure leaves a leftover the next sidecar lists.
+// root's. A failure leaves a leftover on disk, discoverable there; it is
+// listed in a persisted sidecar only when another slot is published, since
+// an identical refusal (quarantineCopy's dedup) discards its new sidecar
+// and returns the existing slot.
 func removeSlot(d slotDir, name string, td slotDir, set slotSet) {
 	for file := range set {
 		_ = td.remove(file, false)
