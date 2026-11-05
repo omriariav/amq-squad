@@ -529,7 +529,7 @@ const DISMISS = "and /dismiss hides it once you know";
 // schedproc.ClearableWarnings, the list words.test.ts reads) to what the
 // warning says and what to do, from the warning's recorded fields: the
 // seat's launch timing, and the numbers and names in its detail.
-export const WARNING_WORDS: Record<string, (detail: string, s: WarningSeat) => [string, string]> = {
+export const WARNING_WORDS: Record<string, (detail: string, s: WarningSeat, handle: string) => [string, string]> = {
 	launch_budget_exceeded: (_d, s) => {
 		const t = s.launch?.timing;
 		const up = typeof t?.to_seat_live_ms === "number" ? `it came up in ${(t.to_seat_live_ms / 1000).toFixed(1)}s` : "it came up";
@@ -538,9 +538,15 @@ export const WARNING_WORDS: Record<string, (detail: string, s: WarningSeat) => [
 		return [`${up}${ceiling}${slow}`, `nothing to do unless it repeats, ${DISMISS}`];
 	},
 	wake_off: () => ["AMQ does not ring it when mail arrives, so it idles after each turn", `ring it by hand, ${DISMISS}`],
-	seat_stalled_at_dialog: (d) => {
+	// the plan reviewer (3.1.1): the warning's field is AMQ's .wake.dialog
+	// marker, which AMQ's Codex hook writes on a PermissionRequest and clears
+	// only on Stop (internal/status screen.go), so it records that the seat
+	// asked for a permission this turn, not that it is stopped; an
+	// auto-approved prompt keeps the marker while the seat works. The words
+	// say what the field holds (the marker's age from the detail)
+	seat_stalled_at_dialog: (d, _s, handle) => {
 		const m = /open since \S+ \(([0-9hms.]+)\)/.exec(d);
-		return [`it is stopped at a harness dialog${m ? ` open for ${m[1]}` : ""}`, "answer the dialog in its pane"];
+		return [`seat ${handle} asked for a permission${m ? ` ${m[1]} ago` : ""} this turn`, "if it is not moving, check its pane"];
 	},
 	pi_provider_key_missing: (d) => {
 		const m = /^model (\S+) needs/.exec(d);
@@ -565,7 +571,7 @@ export function warningWords(handle: string, w: string, s: WarningSeat): { line:
 	const detail = w.slice(w.indexOf(":") + 1).trim();
 	const record = `${handle}: ${w}`;
 	if (!f) return { line: "warning; its code is below the line", record };
-	const [what, todo] = f(detail, s);
+	const [what, todo] = f(detail, s, handle);
 	return { line: `${what}; ${todo}`, record };
 }
 
@@ -583,6 +589,10 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	task_unbound: ["no task is bound to it", "bind it through its task"],
 	pr_head_moved: ["its head moved after the check", "nothing to do; the train checks it again"],
 	history_incomplete: ["its push history could not be read whole", "the train tries again; ask the owner if it repeats"],
+	// #871: the branch protection's strict up-to-date rule (mergetrain
+	// train.go applyStrict). A seat branch is never rebased by hand: the
+	// remedy is the lead's (the plan reviewer on #873)
+	strict_required_status_checks_policy: ["its branch is behind its base", "the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base"],
 };
 
 // TRAIN_KIND_WORDS maps each entry kind the merge train journals
@@ -600,6 +610,11 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	alert: "raised an alert",
 	alert_cleared: "cleared an alert",
 	stop: "stopped",
+	// a merge not recorded because the task's binding no longer matches:
+	// its head, its repository or PR binding with the same SHA, or a merge
+	// the server reported (mergetrain train.go reconcileBinding; Codex on
+	// #873: not only a head mismatch)
+	reconcile: "skipped recording a merge because its task binding no longer matches",
 };
 
 // trainRunWords is what a run did last, in words; an unmapped kind says

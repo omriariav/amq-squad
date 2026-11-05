@@ -268,7 +268,7 @@ test("dismiss: the acknowledgement names the warning and the launch; the line le
 	assert.equal(recLine(lines), "  /dismiss: scribe seat_stalled_at_dialog acknowledged for launch L1");
 	// the warning is gone from the screen: its words above the rule and its
 	// record below; only the dismissal's own record names the code
-	assert.ok(!lines.some((l) => l.includes("harness dialog")), lines.join("\n"));
+	assert.ok(!lines.some((l) => l.includes("asked for a permission")), lines.join("\n"));
 	assert.deepEqual(lines.filter((l) => l.includes("seat_stalled_at_dialog")), ["  /dismiss: scribe seat_stalled_at_dialog acknowledged for launch L1"]);
 	assert.ok(r.asked.some((a) => a === "dismiss: which seat's warning [qa (2 warnings) | scribe (1 warning) | pi-dev (1 warning)]"), r.asked.join("\n"));
 	assert.ok(lines.includes(scribeLine), "the seat's line changed:\n" + lines.join("\n"));
@@ -276,7 +276,7 @@ test("dismiss: the acknowledgement names the warning and the launch; the line le
 	assert.ok(lines.some((l) => l.startsWith("    ! its model anthropic/claude-sonnet-5 has no provider key")));
 	// the next launch with the same condition: a new line
 	const relaunched = { ...fixture, seats: fixture.seats.map((s) => (s.handle === "scribe" ? { ...s, launch: { ...s.launch!, launch_id: "L2" } } : s)) };
-	assert.ok(renderScreen(relaunched).some((l) => l.startsWith("    ! it is stopped at a harness dialog")));
+	assert.ok(renderScreen(relaunched).some((l) => l.startsWith("    ! seat scribe asked for a permission")));
 	const stale = rig(() => res(15, envelope("scheduler_clear", { ok: false, code: "clear_launch_stale" }), "error: scheduler clear refused (clear_launch_stale): seat scribe's current launch is L2, not L1"), ["scribe (1 warning)"]);
 	const staleLines = await stale.press("dismiss");
 	assert.equal(keyLine(staleLines), "  /dismiss: Seat scribe's warning was not dismissed: scheduler clear refused: seat scribe's current launch is L2, not L1");

@@ -170,6 +170,8 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.ok(new Set(kinds).size >= 11, `the train's entry kinds were not found: ${kinds}`);
 	for (const k of kinds) assert.ok(has(TRAIN_KIND_WORDS, k), `train entry kind ${k} has no words`);
 	assert.equal(trainRunWords("made_up_kind"), "its last step is below the line");
+	// Codex on #873: reconcile is written for any binding change, not only a head mismatch
+	assert.equal(trainRunWords("reconcile"), "skipped recording a merge because its task binding no longer matches");
 	const relay = goRelayNames();
 	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
 	for (const r of relay) assert.ok(has(RELAY_WORDS, r), `relay refusal ${r} has no words`);
@@ -629,6 +631,9 @@ test("row 4: a seat's stop and the train's stop say what happened and what to do
 		assert.ok(l.includes("; "), `${kind} says no what to do: ${l}`);
 	}
 	assert.equal(trainStop("refusal PR #812 ci_green: a required check failed"), "the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
+	// the plan reviewer on #873: a seat branch is never rebased by hand; the
+	// strict up-to-date rule's remedy is the lead's
+	assert.equal(trainStop("refusal PR #9 strict_required_status_checks_policy: the branch is behind and the train cannot bring it up to date: x"), "the merge train stopped at PR #9: its branch is behind its base; the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base");
 	for (const r of Object.keys(TRAIN_RULE_WORDS)) assert.equal(codeIn(trainStop(`refusal PR #9 ${r}: x`)), "", r);
 	assert.equal(trainStop("refusal PR #9 made_up_rule: x"), "the merge train stopped at PR #9; its rule is below the line");
 	const lines = renderScreen(fixture, now);
