@@ -292,7 +292,12 @@ func printMergeTrain(w io.Writer, r mergetrain.Result) {
 	fmt.Fprintf(w, "branch protection met: %v (required checks %v, direct push refused %v) %s\n",
 		r.ProtectionMet, r.Protection.Checks, r.Protection.DirectPushRefused, strings.Join(r.Protection.Notes, "; "))
 	if r.DryRun && r.Protection.Strict && len(r.PRs) > 1 {
-		fmt.Fprintf(w, "GitHub requires each branch to be up to date, so every PR after the first is brought up to date and waits for its checks (%d more check runs)\n", len(r.PRs)-1)
+		n := len(r.PRs) - 1
+		suffix := "s"
+		if n == 1 {
+			suffix = ""
+		}
+		fmt.Fprintf(w, "GitHub requires each branch to be up to date, so every PR after the first is brought up to date and waits for its checks (%d more check run%s)\n", n, suffix)
 	}
 	for _, p := range r.PRs {
 		line := fmt.Sprintf("#%d\t%s\t%s\t%d lines\t%s", p.Number, orDash(p.Task), shortSHA(p.Head), p.Changed, p.Status)
@@ -304,11 +309,18 @@ func printMergeTrain(w io.Writer, r mergetrain.Result) {
 				line += "\trebase for CI (" + p.RebaseReason + ")"
 			}
 		}
+		if p.PatchProof != nil && p.PatchProof.Required && p.PatchProof.NewID == "" {
+			line += "\n\tthe train will prove the branch update leaves the seat's work unchanged before re-binding"
+		}
 		if len(p.After) > 0 {
 			line += fmt.Sprintf("\tafter %v (%s)", p.After, strings.Join(p.Overlap, ","))
 		}
 		for _, f := range p.Refusals {
-			if f.Rule == mergetrain.RuleStrictUpToDate {
+			if f.Rule == mergetrain.RuleRebasePatch && p.PatchProof != nil {
+				line += "\n\trefused: " + f.Detail
+				line += "\n\trule: " + f.Rule + "\n\told head: " + p.PatchProof.OldHead + "\n\tnew head: " + p.PatchProof.NewHead
+				line += "\n\told patch-id: " + p.PatchProof.OldID + "\n\tnew patch-id: " + p.PatchProof.NewID
+			} else if f.Rule == mergetrain.RuleStrictUpToDate {
 				line += "\n\trefused: " + f.Detail
 				line += "\n\trule: " + f.Rule + "\n\thead: " + p.Head
 			} else {

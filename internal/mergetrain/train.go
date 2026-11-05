@@ -159,14 +159,26 @@ type PlanPR struct {
 	After     []int     `json:"after,omitempty"`  // earlier PRs whose files overlap: rebase after them
 	// RebaseForCI rebases a behind head, waits for CI and re-checks it. The
 	// reason is either absent CI or strict branch protection.
-	RebaseForCI  bool     `json:"rebase_for_ci,omitempty"`
-	RebaseRule   string   `json:"rebase_rule,omitempty"`
-	RebaseReason string   `json:"rebase_reason,omitempty"`
-	Overlap      []string `json:"overlap,omitempty"`
-	Status       string   `json:"status"` // planned | refused | merged | stopped
-	Merged       string   `json:"merged,omitempty"`
-	title        string   // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
-	mergeable    string   // server mergeability at the checked head
+	RebaseForCI  bool        `json:"rebase_for_ci,omitempty"`
+	RebaseRule   string      `json:"rebase_rule,omitempty"`
+	RebaseReason string      `json:"rebase_reason,omitempty"`
+	PatchProof   *PatchProof `json:"patch_proof,omitempty"`
+	Overlap      []string    `json:"overlap,omitempty"`
+	Status       string      `json:"status"` // planned | refused | merged | stopped
+	Merged       string      `json:"merged,omitempty"`
+	title        string      // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
+	mergeable    string      // server mergeability at the checked head
+}
+
+// PatchProof is the stable patch identity checked before a rebased task is
+// bound to the server's new head. A dry run sets Required but cannot fill IDs.
+type PatchProof struct {
+	Required bool   `json:"required"`
+	OldHead  string `json:"old_head,omitempty"`
+	NewHead  string `json:"new_head,omitempty"`
+	OldID    string `json:"old_patch_id,omitempty"`
+	NewID    string `json:"new_patch_id,omitempty"`
+	Match    bool   `json:"match,omitempty"`
 }
 
 // ciAbsentOnly: the only refusal is CI with no run at the head.
@@ -308,6 +320,9 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	// merged is reported merged, never re-checked and refused.
 	landed := map[int]string{}
 	if !t.DryRun {
+		if err = t.reconcileRebinds(ctx, &req); err != nil {
+			return res, err
+		}
 		if landed, err = t.reconcileMerges(ctx, req, entry); err != nil {
 			return res, err
 		}
@@ -341,6 +356,13 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		res.PRs = append(res.PRs, p)
 	}
 	order(res.PRs)
+	for i := range res.PRs {
+		p := &res.PRs[i]
+		it := item(req, p.Number)
+		if it.BoundHead != "" && (p.RebaseForCI || len(p.After) > 0 || p.mergeable == "CONFLICTING") {
+			p.PatchProof = &PatchProof{Required: true, OldHead: p.Head}
+		}
+	}
 	t.digest(&res, entry)
 	if t.DryRun {
 		return res, entry(Entry{Kind: "plan", BaseSHA: res.BaseSHA, Pairs: res.Pairs, Digest: res.Digest,
@@ -551,6 +573,13 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		return fmt.Errorf("%w: no task store to read and write the binding of #%d", ErrBindingFailed, p.Number)
 	}
 	if rebase {
+		oldPatch := ""
+		if bound {
+			oldPatch, err = t.Forge.PatchID(ctx, req.Repository, res.BaseSHA, p.Head)
+			if err != nil {
+				return fmt.Errorf("prove the reviewed patch before updating #%d: %w", p.Number, err)
+			}
+		}
 		// The rebase reports the head it produced (pinned to the head the
 		// train checked). The train binds that SHA only, never a read-back: a
 		// push after the rebase leaves the PR head off the binding and is
@@ -564,8 +593,24 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 				return err
 			}
 			if bound {
+				newPatch, err := t.Forge.PatchID(ctx, req.Repository, res.BaseSHA, pushed)
+				if err != nil {
+					return fmt.Errorf("prove the updated patch of #%d: %w", p.Number, err)
+				}
+				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head, NewHead: pushed, OldID: oldPatch, NewID: newPatch, Match: oldPatch == newPatch}
+				if oldPatch != newPatch {
+					p.Head = pushed
+					p.Refusals = append(p.Refusals, Refusal{Rule: RuleRebasePatch, Detail: "the branch update changed the seat's work"})
+					p.Status = "refused"
+					if err := entry(Entry{Kind: "refusal", PR: p.Number, Task: p.Task, Head: p.PatchProof.OldHead, NewHead: pushed,
+						Rules: []string{RuleRebasePatch}, Detail: p.Refusals[len(p.Refusals)-1].Detail + "\nold patch-id: " + oldPatch + "\nnew patch-id: " + newPatch}); err != nil {
+						return err
+					}
+					t.digest(res, entry)
+					return nil
+				}
 				// audit first, then the binding write, both before the check
-				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed}); err != nil {
+				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed, Detail: "patch-id: " + oldPatch}); err != nil {
 					return err
 				}
 				if err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {
@@ -589,6 +634,7 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		return err
 	}
 	fresh.After, fresh.Overlap = p.After, p.Overlap
+	fresh.PatchProof = p.PatchProof
 	moved := fresh.Head != p.Head
 	*p = fresh
 	if moved {
@@ -639,6 +685,46 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 	}
 	res.BaseSHA = sha
 	return entry(Entry{Kind: "merge", PR: p.Number, Task: p.Task, Head: p.Head, Merged: sha, Digest: res.Digest, Detail: detail})
+}
+
+// reconcileRebinds finishes a proof-backed binding write when a previous run
+// stopped after journaling it. It emits no reconcile entry: the journaled head
+// and the server head must already be the same.
+func (t *Train) reconcileRebinds(ctx context.Context, req *Request) error {
+	if t.Binder == nil || t.Tasks == nil {
+		return nil
+	}
+	entries, err := t.Audit.Read()
+	if err != nil {
+		return err
+	}
+	for i := range req.PRs {
+		it := &req.PRs[i]
+		if it.BoundHead == "" {
+			continue
+		}
+		var pending Entry
+		for _, e := range entries {
+			if e.Kind == "rebind" && e.Repository == req.Repository && e.PR == it.Number && e.Task == it.Task && e.Head == it.BoundHead && strings.HasPrefix(e.Detail, "patch-id: ") {
+				pending = e
+			}
+		}
+		if pending.NewHead == "" {
+			continue
+		}
+		cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+		if err != nil {
+			return err
+		}
+		if cur.HeadSHA != pending.NewHead {
+			continue
+		}
+		if err := t.Binder.BindPR(it.Task, req.Repository, it.Number, pending.NewHead); err != nil {
+			return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pending.NewHead), err)
+		}
+		it.BoundHead = pending.NewHead
+	}
+	return nil
 }
 
 // mergedAt reads the PR back: its merge commit when the server merged it at

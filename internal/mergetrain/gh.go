@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"slices"
@@ -196,6 +197,25 @@ func (g *GH) Behind(ctx context.Context, repository, base, head string) (bool, e
 		return false, fmt.Errorf("decode compare behind_by: %w", err)
 	}
 	return n > 0, nil
+}
+
+func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string, error) {
+	diff, err := g.run(ctx, "api", "repos/"+repository+"/compare/"+base+"..."+head,
+		"-H", "Accept: application/vnd.github.diff")
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, "git", "patch-id", "--stable")
+	cmd.Stdin = bytes.NewReader(diff)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git patch-id --stable: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return "", errors.New("git patch-id --stable returned no patch id")
+	}
+	return fields[0], nil
 }
 
 func (g *GH) Checks(ctx context.Context, repository, sha string) ([]CheckRun, error) {

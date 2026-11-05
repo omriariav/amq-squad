@@ -83,6 +83,8 @@ type Forge interface {
 	Diff(ctx context.Context, repository, base, head string) ([]FileChange, error)
 	// Behind reports whether head lacks commits from the exact pinned base.
 	Behind(ctx context.Context, repository, base, head string) (bool, error)
+	// PatchID is git patch-id --stable over the change from base to head.
+	PatchID(ctx context.Context, repository, base, head string) (string, error)
 	Checks(ctx context.Context, repository, sha string) ([]CheckRun, error)
 	BranchHead(ctx context.Context, repository, branch string) (string, error)
 	Protection(ctx context.Context, repository, branch string) (Protection, error)

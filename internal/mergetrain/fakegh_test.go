@@ -50,8 +50,10 @@ type fakeState struct {
 	// PushAfterRebase are PR numbers that get a push right after the
 	// server-side rebase reports its head.
 	PushAfterRebase []string `json:"push_after_rebase,omitempty"`
-	CIName          string   `json:"ci_name"`
-	FailMerge       bool     `json:"fail_merge,omitempty"`
+	// AlterAfterRebase makes the fake server change a seat hunk while updating.
+	AlterAfterRebase []string `json:"alter_after_rebase,omitempty"`
+	CIName           string   `json:"ci_name"`
+	FailMerge        bool     `json:"fail_merge,omitempty"`
 	// LoseMergeResponse: the merge happens on the server, then the
 	// connection fails before the response (5 re-pass, P2-5).
 	LoseMergeResponse bool `json:"lose_merge_response,omitempty"`
@@ -196,6 +198,11 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		if out, err := gitOut(w, "rebase", "-q", "origin/"+p.Base); err != nil {
 			return fail("rebase conflict: %s", out)
 		}
+		if slices.Contains(s.AlterAfterRebase, n) {
+			os.WriteFile(filepath.Join(w, "server-change.txt"), []byte("changed during update\n"), 0o644)
+			gitOut(w, "add", "-A")
+			gitOut(w, "commit", "-q", "--amend", "--no-edit")
+		}
 		if out, err := gitOut(w, "push", "-q", "--force", "origin", p.Head); err != nil {
 			return fail("push: %s", out)
 		}
@@ -275,6 +282,11 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		switch {
 		case parts[0] == "compare" && len(parts) == 2:
 			base, head, _ := strings.Cut(parts[1], "...")
+			if slices.Contains(args, "Accept: application/vnd.github.diff") {
+				diff, _ := gitOut(s.Bare, "diff", "--binary", base+"..."+head)
+				fmt.Fprintln(stdout, diff)
+				break
+			}
 			if slices.Contains(args, ".behind_by") {
 				behind, _ := gitOut(s.Bare, "rev-list", "--count", head+".."+base)
 				fmt.Fprintln(stdout, behind)
