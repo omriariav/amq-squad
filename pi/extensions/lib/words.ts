@@ -593,6 +593,11 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	// train.go applyStrict). A seat branch is never rebased by hand: the
 	// remedy is the lead's (the plan reviewer on #873)
 	strict_required_status_checks_policy: ["its branch is behind its base", "the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base"],
+	// #874: the seat's patch changed during the train's update (git
+	// patch-id over the seat's range before and after differs; mergetrain
+	// train.go refusePatchProof). A seat branch is never rebased by hand:
+	// the remedy is the lead's
+	rebase_patch_changed: ["its change moved during the update", "reset the task so a seat redoes it on the current base"],
 };
 
 // TRAIN_KIND_WORDS maps each entry kind the merge train journals
