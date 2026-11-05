@@ -46,15 +46,18 @@ type hookFileDigest struct {
 }
 
 type hookTaskView struct {
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	Status        string    `json:"status"`
-	Class         string    `json:"class"`
-	DeclaredFiles []string  `json:"declared_files"`
-	ExpiresAt     time.Time `json:"lease_expires_at"`
-	Expired       bool      `json:"lease_expired,omitempty"`
-	Claimed       bool      `json:"lease_claimed"`
-	BlockReason   string    `json:"block_reason,omitempty"`
+	ID            string        `json:"id"`
+	Title         string        `json:"title"`
+	Status        string        `json:"status"`
+	Class         string        `json:"class"`
+	DeclaredFiles []string      `json:"declared_files"`
+	ExpiresAt     time.Time     `json:"lease_expires_at"`
+	Budget        time.Duration `json:"budget"`
+	BudgetEndsAt  time.Time     `json:"budget_ends_at"`
+	Attempt       int           `json:"attempt"`
+	Expired       bool          `json:"lease_expired,omitempty"`
+	Claimed       bool          `json:"lease_claimed"`
+	BlockReason   string        `json:"block_reason,omitempty"`
 }
 
 type hookContextData struct {
@@ -351,9 +354,9 @@ func leasedHookTask(dir, handle string, now time.Time) (*hookTaskView, error) {
 	if t == nil {
 		return nil, nil
 	}
-	v := &hookTaskView{ID: t.ID, Title: t.Title, Status: t.State, Class: t.Class, DeclaredFiles: t.DeclaredFiles, BlockReason: t.BlockReason}
+	v := &hookTaskView{ID: t.ID, Title: t.Title, Status: t.State, Class: t.Class, DeclaredFiles: t.DeclaredFiles, BlockReason: t.BlockReason, Budget: t.Budget, Attempt: t.Attempt}
 	if t.Lease != nil {
-		v.ExpiresAt, v.Expired, v.Claimed = t.Lease.ExpiresAt, !now.Before(t.Lease.ExpiresAt), t.Lease.ClaimedAt != nil
+		v.ExpiresAt, v.BudgetEndsAt, v.Expired, v.Claimed = t.Lease.ExpiresAt, t.Lease.BudgetEndsAt, !now.Before(t.Lease.ExpiresAt), t.Lease.ClaimedAt != nil
 	}
 	return v, nil
 }

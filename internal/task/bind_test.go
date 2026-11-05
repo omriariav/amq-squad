@@ -20,10 +20,11 @@ func TestBindPRSurvivesMutations(t *testing.T) {
 	if _, err := s.Grant(a.ID, "impl-1", nil, time.Minute, t0.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Claim(a.ID, "impl-1", nil, time.Minute, t0.Add(2*time.Second)); err != nil {
+	claimed, err := s.Claim(a.ID, "impl-1", nil, time.Minute, t0.Add(2*time.Second))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.Renew("impl-1", time.Minute, 0, t0.Add(3*time.Second)); err != nil {
+	if _, _, err := s.RenewAttempt("impl-1", claimed.Attempt, time.Minute, 0, t0.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Get(a.ID)

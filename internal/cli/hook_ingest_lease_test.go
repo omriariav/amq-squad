@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -45,6 +46,10 @@ func TestEvidenceIngestRenewsTheClaimedLease(t *testing.T) {
 	if got, _ := store.Get("t1"); !got.Lease.ExpiresAt.Equal(f.now.Add(taskstore.DefaultLeaseDuration)) || got.Lease.Renewals != 1 {
 		t.Fatalf("lease after renewal: %+v", got.Lease)
 	}
+	decisions, err := schedproc.ReadDecisionsTail(f.root)
+	if err != nil || len(decisions) != 1 || decisions[0].Kind != "lease_renewed" || decisions[0].TaskID != "t1" {
+		t.Fatalf("first-renewal decisions = %+v, err %v", decisions, err)
+	}
 	if ingestToolResult(t, "cto") {
 		t.Fatal("a second tool result inside the interval wrote the store")
 	}
@@ -57,6 +62,94 @@ func TestEvidenceIngestRenewsTheClaimedLease(t *testing.T) {
 	t.Setenv("AM_ME", "qa")
 	if ingestToolResult(t, "qa") {
 		t.Fatal("ingest renewed an unclaimed lease")
+	}
+}
+
+func TestActivityUsesTheMailboxIdentityAndFiltersNonWorkEvents(t *testing.T) {
+	f := newHookFixture(t)
+	store, _ := taskstore.Open(f.root)
+	for _, title := range []string{"A", "B"} {
+		if _, err := store.Add(taskstore.AddInput{Title: title, Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.root, "agents", "qa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t2", "qa", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	beforeB, _ := store.Get("t2")
+	// Receipt traffic is not proof of work and does not renew either seat.
+	withHookStdin(t, []byte(`{"type":"receipt","handle":"qa","outcome":"drained"}`))
+	out, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest", "--me", "cto", "--json"}, "test") })
+	if err != nil || strings.Contains(out, `"lease_renewed":true`) {
+		t.Fatalf("receipt activity: %v %s", err, out)
+	}
+	if !ingestToolResult(t, "cto") {
+		t.Fatal("the mailbox owner's real tool result did not renew")
+	}
+	afterA, _ := store.Get("t1")
+	afterB, _ := store.Get("t2")
+	if afterA.Lease.Renewals != 1 || afterB.Lease.Renewals != 0 || !afterB.Lease.ExpiresAt.Equal(beforeB.Lease.ExpiresAt) {
+		t.Fatalf("mailbox attribution: A=%+v B=%+v", afterA.Lease, afterB.Lease)
+	}
+	for _, event := range []string{"PermissionRequest", "UserPromptSubmit"} {
+		if isLeaseActivity(hookLedgerLine{Event: event, Outcome: "ok"}) {
+			t.Fatalf("%s counted as work", event)
+		}
+	}
+	for _, line := range []hookLedgerLine{{Event: "receipt", Outcome: "ok"}, {Event: "evidence_post", Outcome: "ok"}} {
+		if isLeaseActivity(line) {
+			t.Fatalf("transport event counted as work: %+v", line)
+		}
+	}
+	for _, line := range []hookLedgerLine{
+		{Event: "PostToolUse", Tool: "Bash", Outcome: "ok"},
+		{Event: "tool_result", Tool: "bash", Outcome: "ok"},
+	} {
+		if !isLeaseActivity(line) {
+			t.Fatalf("runtime work event was not shared activity: %+v", line)
+		}
+	}
+}
+
+func TestEventStampedBeforeAReplacementAttemptCannotRenewIt(t *testing.T) {
+	f := newHookFixture(t)
+	currentNow := f.now
+	hookNow = func() time.Time { return currentNow }
+	store, _ := taskstore.Open(f.root)
+	if _, err := store.Add(taskstore.AddInput{Title: "attempt-bound", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var second taskstore.Task
+	prev := ingestAfterStart
+	ingestAfterStart = func() {
+		if _, err := store.ExpireDue(f.now); err != nil {
+			t.Fatal(err)
+		}
+		second, err = store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(time.Nanosecond))
+		if err != nil || first.Attempt == second.Attempt {
+			t.Fatalf("second attempt: %+v %v", second, err)
+		}
+		currentNow = f.now.Add(2 * time.Minute)
+	}
+	t.Cleanup(func() { ingestAfterStart = prev })
+	withHookStdin(t, []byte(`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":{"stdout":"late"},"attempt":1}`))
+	out, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest", "--me", "cto", "--json"}, "test") })
+	if err != nil || strings.Contains(out, `"lease_renewed":true`) {
+		t.Fatalf("old attempt renewed: %v %s", err, out)
+	}
+	got, _ := store.Get("t1")
+	if got.Lease.Renewals != 0 {
+		t.Fatalf("late attempt changed lease: %+v", got.Lease)
 	}
 }
 

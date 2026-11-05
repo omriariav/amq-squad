@@ -274,6 +274,38 @@ func TestLaunchReadsTheCodexDialogHook(t *testing.T) {
 	}
 }
 
+func TestLaunchAdmitsCodexActivityTrustAndWarnsWithExactCommands(t *testing.T) {
+	q := testSquad(t)
+	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}}
+	o := launchOpts(t, f, map[string]string{"sha256:a1": "trust_exact_subject"})
+	o.Env = append(o.Env, "CODEX_HOME=/fake/codex-home")
+	o.CodexDialogHook = func(string) seatexec.CodexDialogHook { return seatexec.CodexDialogHook{} }
+	o.CodexActivityTrust = func(dir, squadBin, amqBin, home string) seatexec.CodexActivityTrust {
+		if dir != "/fake/codex-home" || squadBin != q.Wrapper || amqBin != q.AMQPath || home != o.Home {
+			t.Fatalf("trust read = %q %q %q %q", dir, squadBin, amqBin, home)
+		}
+		return seatexec.CodexActivityTrust{Missing: []string{"/<session-flags>/config.toml:post_tool_use:0:0"}}
+	}
+	admitted := map[string]bool{}
+	o.CodexActivityAdmission = func(handle string, trusted bool) { admitted[handle] = trusted }
+	var warnings []string
+	o.Warn = func(s string) { warnings = append(warnings, s) }
+	o.RunAMQ, o.Wait = echoWakes(f, nil), 50*time.Millisecond
+	res, err := Launch(context.Background(), q, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.proof.close()
+	if len(admitted) != 1 || admitted["dev"] {
+		t.Fatalf("admission = %v", admitted)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "codex seats will not renew on their own until you trust the amq-squad hooks:") ||
+		!strings.Contains(warnings[0], q.Wrapper+"' evidence ingest") || !strings.Contains(warnings[0], q.AMQPath+"'") ||
+		!strings.Contains(warnings[0], "another path changes the command string and drops that trust") {
+		t.Fatalf("warning = %q", warnings)
+	}
+}
+
 // The first message is recorded once, for the launch the staged record
 // names (Codex P2 7: status reads it there, not from the decisions log).
 func TestRecordFirstMessageIsOncePerLaunch(t *testing.T) {

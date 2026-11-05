@@ -22,6 +22,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -195,9 +196,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("scheduler run: %w", err)
 	}
 	lead := &leadHandle
-	if q.Wrapper, err = os.Executable(); err == nil {
-		q.Wrapper, err = filepath.EvalSymlinks(q.Wrapper)
-	}
+	q.Wrapper, err = seatexec.ResolveExecutable("")
 	if err != nil {
 		return fmt.Errorf("scheduler run: resolve the amq-squad executable: %w", err)
 	}
@@ -250,7 +249,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if len(roster) == 0 {
 		return fmt.Errorf("scheduler run: %s has no seat but the lead", team.SquadPath(q.ProjectRoot))
 	}
-	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target, Start: launchStart()}
+	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target, Start: launchStart(), CodexActivityAdmission: slots.AdmitCodexActivity}
 	var amqLauncher scheduler.SeatLauncher
 	var real *seatlaunch.Launcher
 	if schedulerAMQLauncher != nil {
@@ -330,7 +329,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Launcher: &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		// 3.0.2 t23: each task on its own branch from the base tip fetched at
 		// the grant; the doorbell moves the seat's worktree there first.
-		Doorbell:  schedproc.Doorbell{Sender: sender, Start: slots.TaskStart(root, taskNow)},
+		Doorbell:  schedproc.Doorbell{Sender: sender, Start: slots.TaskStart(root, taskNow), NeedsManualRenew: slots.NeedsManualRenew},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
 		Router:    router, // the process calls its Flush each tick
 		Verifiers: store.Verifiers,
@@ -557,6 +556,9 @@ var schedulerLeadParent = func() (int, string, bool) {
 // team-mode start (schedproc.SupervisingLead, 3.0.1 t16).
 func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
 	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
+		if _, ok := parseTaskExtendDecision(req); ok {
+			return extendBudgetDecision(sel, lead, req)
+		}
 		return widenDecision(sel, projectRoot, lead, req)
 	}, Warnings: status.CurrentSeatWarnings} // brief 31-2: a clear names a warning status shows
 	if schedulerDecideSeams != nil {

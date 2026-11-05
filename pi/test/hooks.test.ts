@@ -65,6 +65,15 @@ test("context section states what AMQ is, the task and gates", () => {
 	assert.match(roleMessage(cfg("x"), "# Role\nDo work."), /Agent Message Queue/);
 });
 
+test("claimed task context says activity renews only within the attempt budget", () => {
+	const s = contextSection(cfg("x"), {
+		task: { id: "t3", title: "Add Max", status: "in_progress", class: "implement", lease_claimed: true, attempt: 2, budget_ends_at: "2026-10-24T11:30:00Z" },
+	});
+	assert.match(s, /attempt 2/);
+	assert.match(s, /Runtime activity renews this attempt's lease automatically/);
+	assert.match(s, /never past its task budget ending 2026-10-24T11:30:00Z/);
+});
+
 // 2b-2 milestone B: a seat starts in its own working tree, never the
 // repository root a task's project_path names (the R12 live finding).
 test("context section names the seat's working tree", () => {

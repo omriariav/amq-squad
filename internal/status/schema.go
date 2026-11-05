@@ -335,25 +335,27 @@ type Seat struct {
 
 // Task is one task row, joined to its lease holder.
 type Task struct {
-	ID             string     `json:"id"`
-	Title          string     `json:"title"`
-	Class          string     `json:"class"`
-	TaskState      string     `json:"task_state"` // the store state: pending | in_progress | blocked | completed | cancelled
-	State          State      `json:"state"`
-	ReasonCode     string     `json:"reason_code"`
-	Bucket         Bucket     `json:"bucket"`
-	BucketMarker   string     `json:"bucket_marker"`
-	Pool           *Pool      `json:"pool"`
-	LeaseHolder    string     `json:"lease_holder"`
-	LeaseExpiresAt *time.Time `json:"lease_expires_at"`
-	LeaseClaimed   bool       `json:"lease_claimed"`
-	Attempt        int        `json:"attempt"`
-	WaitReason     string     `json:"wait_reason"`
-	BlockReason    string     `json:"block_reason"`
-	DependsOn      []string   `json:"depends_on"`
-	ProjectPath    string     `json:"project_path"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID             string        `json:"id"`
+	Title          string        `json:"title"`
+	Class          string        `json:"class"`
+	TaskState      string        `json:"task_state"` // the store state: pending | in_progress | blocked | completed | cancelled
+	State          State         `json:"state"`
+	ReasonCode     string        `json:"reason_code"`
+	Bucket         Bucket        `json:"bucket"`
+	BucketMarker   string        `json:"bucket_marker"`
+	Pool           *Pool         `json:"pool"`
+	LeaseHolder    string        `json:"lease_holder"`
+	LeaseExpiresAt *time.Time    `json:"lease_expires_at"`
+	Budget         time.Duration `json:"budget"`
+	BudgetEndsAt   *time.Time    `json:"budget_ends_at"`
+	LeaseClaimed   bool          `json:"lease_claimed"`
+	Attempt        int           `json:"attempt"`
+	WaitReason     string        `json:"wait_reason"`
+	BlockReason    string        `json:"block_reason"`
+	DependsOn      []string      `json:"depends_on"`
+	ProjectPath    string        `json:"project_path"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
 	// Evidence and the PR binding (brief 31-1): the task's evidence line
 	// and the PR the commit step (or the train's rebase) bound to it.
 	Evidence     string `json:"evidence"`
