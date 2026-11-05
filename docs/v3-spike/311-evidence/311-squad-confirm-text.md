@@ -39,26 +39,42 @@ skill source (`plugins/skills-src/**`). Allowed: the historical notes under
 was true when written. The pattern is built at run time so the test does
 not carry it.
 
-## B. The fixture's git under its own HOME
+## B. The test binary's git under its own HOME
 
-internal/mergetrain/fakegh_test.go's `gitOut` ran git with the process
-environment, so under the owner's real HOME (a standing-rule 18 breach):
-`GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` kept the global
-and system config out, but git still reads the default ignore and attributes
-files under `$XDG_CONFIG_HOME/git/`, else `$HOME/.config/git/`. The
-fixture's git now runs under a temporary HOME made in `TestMain`
-(`os.MkdirTemp`, removed at the end; the fake gh's own run, when the train
-calls it, gets one too) and `XDG_CONFIG_HOME` under it, keeping the author,
-committer and config variables it already set.
+internal/mergetrain's tests ran git under the owner's real HOME (a
+standing-rule 18 breach): `gitOut` (fakegh_test.go, the helper `mustGit`
+and `newFixture` call) set `GIT_CONFIG_GLOBAL=/dev/null` and
+`GIT_CONFIG_NOSYSTEM=1`, which keep the global and system config out, but
+git still reads the default ignore and attributes files under
+`$XDG_CONFIG_HOME/git/`, else `$HOME/.config/git/`; and production's own
+`git patch-id` (gh.go), which a fixture's train runs, inherited the
+environment as it was.
+
+The isolation is set once, in the shared place every mergetrain test runs
+under (the plan reviewer: the shared fixture setup, so a later fixture is
+covered too): `TestMain` in fakegh_test.go makes a temporary HOME
+(`os.MkdirTemp`, removed at exit) and calls `isolateGitHome`, which sets
+`HOME` to it, unsets `XDG_CONFIG_HOME`, and sets `GIT_CONFIG_GLOBAL=/dev/null`
+and `GIT_CONFIG_NOSYSTEM=1` on the process before any test runs. `gitOut`,
+`mustGit`, `newFixture`, production's `git patch-id`, the subprocess fake gh
+(the train starts it with the process environment) and any fixture a later
+test adds inherit it; `gitOut` keeps the author, committer and config
+variables it already set. It is the process and not `newFixture` because
+`t.Setenv` panics in a parallel test, and 22 of the tests that build a
+fixture run in parallel.
 
 **Row.** internal/mergetrain/fixture_home_test.go
-`TestTheFixtureGitDoesNotReadTheRunningHome`: the test process runs under a
-stand-in home whose `.config/git/ignore` hides every `.txt` file; a plain
-git under it hides a new `a.txt` (the stand-in works), and the fixture's
-`gitOut` shows it untracked.
+`TestTheTestBinarysGitDoesNotReadTheRunningHome`: a stand-in for the owner's
+home carries `.config/git/ignore` hiding every `.txt` file; under it a plain
+git hides a new `a.txt` (the stand-in works); after `isolateGitHome`, a plain
+git (as production's `git patch-id` runs) and the fixtures' `gitOut` show it
+untracked. The test restores every variable it touches.
 
 The plan reviewer asked for this fix in the seat's t47-assert task, which is
-mid-flight; doing it here was the lead's call.
+mid-flight; doing it here was the lead's call. The seat PR t68 (touching
+internal/mergetrain's tests) merges first; when this branch takes v3, a
+conflict in fakegh_test.go is taken on this side and the HOME row's revert
+run is made again after that merge.
 
 ## Revert runs
 
@@ -67,11 +83,11 @@ Each reverts production or fixture code only (the row's own test stays):
 | row | revert | result | the failing output's first line |
 | --- | --- | --- | --- |
 | A | the owner_only deny names "(/squad confirm)" again (internal/cli/hook_guard.go) | caught | `--- FAIL: TestNoTextNamesARemovedSquadSubcommand`: `internal/cli/hook_guard.go:262 names a removed subcommand of` `/squad` |
-| B | the fixture's git inherits HOME (the `HOME=` and `XDG_CONFIG_HOME=` line removed from `gitOut`) | caught | `--- FAIL: TestTheFixtureGitDoesNotReadTheRunningHome`: `the fixture's git read the running home: status "", err <nil>` |
+| B | the test binary keeps the running HOME (the `HOME` line removed from `isolateGitHome`) | caught | `--- FAIL: TestTheTestBinarysGitDoesNotReadTheRunningHome`: `a git under the test binary's environment read the running home: status ""` |
 
 ## Gates
 
-At code head `9aba6904`:
+At code head `15cade69`:
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0, 56 packages ok, 0 FAIL lines. Tail:
 
@@ -92,11 +108,11 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 15418.099209
+ℹ duration_ms 15434.255166
 exit 0
 ```
 
-- `make ci` (PyYAML venv on PATH; it now runs the pi suite last): exit 0. Tail:
+- `make ci` (PyYAML venv on PATH; it runs the pi suite last): exit 0. Tail:
 
 ```
 ℹ tests 110
@@ -106,6 +122,6 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 43461.391375
+ℹ duration_ms 44291.588958
 exit 0
 ```
