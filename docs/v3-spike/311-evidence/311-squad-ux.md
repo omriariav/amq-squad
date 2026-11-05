@@ -182,7 +182,13 @@ from its recorded fields (the launch timing's `to_seat_live_ms`,
 `ceiling_ms` and `slowest_segment`; the dialog's open duration and the
 provider model named in the detail). Below the rule each stays verbatim,
 `<seat>: <code>: <detail>`. An unmapped code at run time reads "warning;
-its code is below the line". `/dismiss` picks the seat first (pi's select
+its code is below the line". `seat_stalled_at_dialog` reads "seat X asked
+for a permission 3m0s ago this turn; if it is not moving, check its pane",
+not "it is stopped at a harness dialog": its field is AMQ's `.wake.dialog`
+marker, written on a permission request and cleared only when the turn
+ends, so it records a request this turn, not a stop (the plan reviewer,
+after an auto-approved prompt read as stalled; see
+311-squad-ux-stalled-words.md). `/dismiss` picks the seat first (pi's select
 when several seats have warnings; `/dismiss SEAT` names it), then the
 warning by its words when the seat has several; the code the socket
 request carries is read from status's record of the warning, never typed.

@@ -662,25 +662,25 @@ segment.</p>
 default: the lead handle and the root, then the seats, each with its
 runtime and model and what it is doing ("working on t28: <title>",
 "idle", "starting", "waiting: ..." or "stopped", the launch budget at
-the end) and its warnings in words ("it is stopped at a harness dialog
-open for 3m0s; answer the dialog in its pane"), then the newest seat
-that stopped, with what to do ("seat old-dev did not stop cleanly: the
-commits ledger does not verify; ask the owner to inspect the commits
-ledger before anything commits"), the tasks ("t28 in progress on
-reviewer: <title>", "t29 waiting: no seat serves claude:opus:high", "t27
-blocked: the commit step refused it, 16 files over the cap of 8; ask the
-owner to raise the cap or split it", "t9 held by the lead"), the merge
-train (where it stopped and what to do), what is waiting on you (each
-open gate's question as the phone shows its first line) and the phone
-requests. An empty block says so in one line ("Nothing is waiting on
-you."). Every line traces to a field of status: one table in the
-extension maps each wait and block reason the scheduler and the task
-store can emit to its words (and each seat warning, train rule and relay
-refusal), and the size cap's numbers come from the refusal's own record.
-The codes, gate ids and digests sit below a rule, for the record. It
-refreshes when the task store or the scheduler state changes;
-<code>/team hide</code> collapses it to one footer line of counts and
-<code>/team</code> shows it again.</p>
+the end) and its warnings in words ("seat scribe asked for a permission
+3m0s ago this turn; if it is not moving, check its pane"), then the
+newest seat that stopped, with what to do ("seat old-dev did not stop
+cleanly: the commits ledger does not verify; ask the owner to inspect
+the commits ledger before anything commits"), the tasks ("t28 in
+progress on reviewer: <title>", "t29 waiting: no seat serves
+claude:opus:high", "t27 blocked: the commit step refused it, 16 files
+over the cap of 8; ask the owner to raise the cap or split it", "t9 held
+by the lead"), the merge train (where it stopped and what to do), what
+is waiting on you (each open gate's question as the phone shows its
+first line) and the phone requests. An empty block says so in one line
+("Nothing is waiting on you."). Every line traces to a field of status:
+one table in the extension maps each wait and block reason the scheduler
+and the task store can emit to its words (and each seat warning, train
+rule and relay refusal), and the size cap's numbers come from the
+refusal's own record. The codes, gate ids and digests sit below a rule,
+for the record. It refreshes when the task store or the scheduler state
+changes; <code>/team hide</code> collapses it to one footer line of
+counts and <code>/team</code> shows it again.</p>
 <p>The screen's last line lists the commands you can use now:
 <code>/add  /reset /dismiss  /answer  /widen  /team hide</code>. Each is
 its own pi command, named for what it does; pi hands a command to the
@@ -828,9 +828,10 @@ nothing is quarantined. seat-exec still denies a seat's write to the
 owner's global agent config. So are a seat over the launch ceiling
 (<code>launch_budget_exceeded</code>), a seat whose wake is off with
 AMQ's reason (<code>wake_off</code>: a Codex seat without AMQ's dialog
-hook, a pi seat), a seat at an open harness dialog
-(<code>seat_stalled_at_dialog</code>) and a pi seat with no key for its
-provider (<code>pi_provider_key_missing</code>).</li>
+hook, a pi seat), a seat that asked for a permission this turn
+(<code>seat_stalled_at_dialog</code>, AMQ's dialog marker, which stays
+until the turn ends) and a pi seat with no key for its provider
+(<code>pi_provider_key_missing</code>).</li>
 </ul>
 <p>Check whether an action is approved, and the evidence of a merge or a
 release:</p>

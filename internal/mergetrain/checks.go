@@ -25,6 +25,7 @@ const (
 	RulePRState       = "pr_state"
 	RuleTaskUnbound   = "task_unbound"
 	RulePRHeadMoved   = "pr_head_moved"
+	RuleRebasePatch   = "rebase_patch_changed"
 	// RuleStrictUpToDate means strict protection requires a rebase that the
 	// train cannot safely perform.
 	RuleStrictUpToDate = "strict_required_status_checks_policy"
