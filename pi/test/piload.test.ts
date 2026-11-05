@@ -64,7 +64,9 @@ function startPi(node: string, cli: string, preload?: string): { code: number | 
 	const args = [...(preload ? ["--require", preload] : []), cli, "--offline", "--no-session", "-p", "-e", ext, "hi"];
 	const r = spawnSync(node, args, {
 		cwd,
-		env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: "1" },
+		// JITI_FS_CACHE=false as the launcher sets it (internal/piruntime):
+		// jiti writes no transform cache outside the scratch HOME
+		env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: "1", JITI_FS_CACHE: "false" },
 		encoding: "utf8",
 		timeout: 60_000,
 	});
@@ -83,7 +85,7 @@ test("pi's transform (jiti static, tryNative off) takes every extensions/ .ts", 
 	const { createJiti } = (await import(pathToFileURL(path.join(jitiDir, "lib", "jiti-static.mjs")).href)) as {
 		createJiti: (id: string, o: object) => { transform(o: { source: string; filename: string; ts: boolean }): string };
 	};
-	const jiti = createJiti(import.meta.url, { moduleCache: false, tryNative: false });
+	const jiti = createJiti(import.meta.url, { moduleCache: false, tryNative: false, fsCache: false });
 	const files = walk(path.join(pkgRoot, "extensions"));
 	assert.ok(files.length > 1);
 	const refused = files
@@ -95,13 +97,33 @@ test("pi's transform (jiti static, tryNative off) takes every extensions/ .ts", 
 
 test("pi's loadExtensions loads extensions/amq-squad.ts", async () => {
 	pinnedPi();
-	for (const k of Object.keys(process.env)) if (k === "AM_ME" || k === "AM_ROOT" || k.startsWith("AMQ_SQUAD_")) delete process.env[k];
-	const loader = (await import(pathToFileURL(path.join(piDir, "dist", "core", "extensions", "loader.js")).href)) as {
-		loadExtensions(paths: string[], cwd: string): Promise<{ extensions: unknown[]; errors: { path: string; error: string }[] }>;
+	// pi's agent-dir code reads a scratch HOME and agent dir, jiti writes no
+	// transform cache (as the launcher sets it), and the package is inactive;
+	// every variable is put back after
+	const home = tmpdir();
+	const saved = new Map<string, string | undefined>();
+	const set = (k: string, v: string | undefined) => {
+		if (!saved.has(k)) saved.set(k, process.env[k]);
+		if (v === undefined) delete process.env[k];
+		else process.env[k] = v;
 	};
-	const r = await loader.loadExtensions([ext], tmpdir());
-	assert.deepEqual(r.errors, []);
-	assert.equal(r.extensions.length, 1);
+	set("HOME", home);
+	set("PI_CODING_AGENT_DIR", path.join(home, "agent"));
+	set("JITI_FS_CACHE", "false");
+	for (const k of Object.keys(process.env)) if (k === "AM_ME" || k === "AM_ROOT" || k.startsWith("AMQ_SQUAD_")) set(k, undefined);
+	try {
+		const loader = (await import(pathToFileURL(path.join(piDir, "dist", "core", "extensions", "loader.js")).href)) as {
+			loadExtensions(paths: string[], cwd: string): Promise<{ extensions: unknown[]; errors: { path: string; error: string }[] }>;
+		};
+		const r = await loader.loadExtensions([ext], tmpdir());
+		assert.deepEqual(r.errors, []);
+		assert.equal(r.extensions.length, 1);
+	} finally {
+		for (const [k, v] of saved) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+	}
 });
 
 test("pi's bundled CLI starts with -e amq-squad.ts (offline, stops at no key)", () => {
