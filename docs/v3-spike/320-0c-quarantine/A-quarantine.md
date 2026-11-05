@@ -44,7 +44,12 @@ slot, `commits.<handle>.seq<N>.2.json` with its own `.2.head.json` and
 `.2.txt`, then `.3`, up to 100 slots per seq. The slot's primary file (the
 body; the head when the body is absent) claims it with the exclusive
 create; an existing primary is compared byte for byte, with the head copy
-beside it.
+beside it. In a slot the primary just claimed, a head file already there
+(a crash's leftover, a planted file) is this refusal's only when it is
+byte-identical; with other content the copy is the named failure `the
+quarantine copy failed: <head path> exists with other content` (commit
+`bbaddd49`, the reviewer's re-read of `bf26780d`), so the sidecar never
+names a copy whose digest is not the head's.
 
 A planted link never passes as a copy (the same review): after `MkdirAll`
 (which follows a symlinked directory) the quarantine directory is
@@ -138,6 +143,7 @@ copy); the typed block raised once is part B.
 | A5 | The check runs under the lock. The first writer (`ArchiveAttempt`) is paused inside its critical section after its read and snapshot (the `beforeArchiveAttemptWrite` seam); the edit lands then; a second writer (`RecordTarget`, the blocking lock) does not return within 300 ms and no quarantine directory appears while the lock is held. Released, the first writer's `writeLedger` re-reads the disk, refuses and quarantines (it does not re-seal its stale in-memory copy over the edit); the second then refuses naming the same path; the document and head on disk are the edited ones; one copy (three files). | `internal/seatcommit` `TestWriteCheckRunsUnderTheLedgerLock` |
 | A7 | A planted link never passes as a copy. A symlink at the body path (to a file elsewhere): the refusal is still `ledger_tampered`, its error says `the quarantine copy failed: <body path> is a symlink` and not `quarantined at`, the link's target is unchanged, the directory holds the planted link alone. A symlink where the quarantine directory should be (to a directory elsewhere): the error says `the quarantine copy failed: the quarantine directory <dir> is a symlink`, and the target directory stays empty. | `internal/seatcommit` `TestPlantedSymlinkIsAQuarantineFailureNotACopy` (`body_path`, `directory`) |
 | A8 | A second, different refused body under one head seq takes the next slot: the error names `commits.<h>.seq<N>.2.json`, the first copy (body, head, sidecar) is untouched, the second slot's body is the second refused body, its head copy the head, its sidecar names its own body and digest; the same second body again names the second slot again; six files in all (two copies, not three). | `internal/seatcommit` `TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot` |
+| A9 | A head file planted in an empty slot (the quarantine directory made as the code makes it, 0700; `{"seq": 999}` at `commits.<h>.seq<N>.head.json`, not the head) makes the copy a named failure: the refusal is still `ledger_tampered`, its error says `the quarantine copy failed: <head path> exists with other content` and not `quarantined at`; the planted file is unchanged; no sidecar is written beside it; the body copy (the slot's claim) is there. | `internal/seatcommit` `TestPlantedHeadInAnEmptySlotIsAQuarantineFailure` |
 | A6 | Version skew as the tamper: a document a newer amq-squad wrote. Built from a real ledger with one discard entry: `attempt_note` added to the entry (this binary's `LedgerDiscard` already has 3.1.1's `attempt`, so the row uses a field this binary lacks, built the way `attempt` reached rc.1), sealed with the session's key as the next link over the body with the field (`sealchain.Seal`), the head moved to that link (`sealchain.WriteHead`). The row checks the premise both ways: the link verifies over the body with the field, and does not verify over this binary's decode of the same bytes. `CleanSeat` then refuses with `ledger_tampered: the tag of commits.s1 link <N> fails; the refused document is quarantined at ...`, the body copy is sha256-equal to the skewed bytes, the head copy equals the head, the sidecar carries that error text, the document is unchanged. | `internal/seatcommit` `TestVersionSkewIsQuarantinedLikeATamper` |
 
 A6 in one line: a seat whose ledger a newer amq-squad wrote is blocked on
@@ -389,7 +395,35 @@ restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit
 (A first attempt removed the three lines of the compare; that does not
 compile, `existing` unused, so the flip above is the recorded run.)
 
+### A9
+
+On `bbaddd49`:
+```
+go test -count=1 -run ^TestPlantedHeadInAnEmptySlotIsAQuarantineFailure$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine.go:158` (a pre-existing head
+counts as this refusal's whatever it holds):
+```
+			if !created && !bytes.Equal(existing, sdata) {
+```
+to
+```
+			if !created && existing == nil {
+```
+First failing line:
+```
+quarantine_test.go:274: the error does not say the copy failed ("the quarantine copy failed: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPlantedHeadInAnEmptySlotIsAQuarantineFailure352317724/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1.head.json exists with other content"): commit ledger s1: ledger_tampered: the tag of commits.s1 link 1 fails; the refused document is quarantined at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPlantedHeadInAnEmptySlotIsAQuarantineFailure352317724/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1.json
+```
+`--- FAIL: TestPlantedHeadInAnEmptySlotIsAQuarantineFailure (0.17s)`;
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.445s`.
+
 ## Gates
+
+On `bbaddd49` (the A9 fix; only `internal/seatcommit/` changed since
+`bf26780d`, so the full `make ci` was not run again, as the lead said),
+each exit 0: `go build ./...`; `go vet ./...`; `go test -count=1
+./internal/seatcommit/ ./internal/schedproc/` (both `ok`);
+`go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`.
 
 On `bf26780d` (the #893 fixes: the symlink-safe copy and the per-body
 slots; the head after this note's commit has the same Go tree), each
