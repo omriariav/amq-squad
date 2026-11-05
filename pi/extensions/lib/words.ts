@@ -422,6 +422,10 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	up_stopped_scheduler: () => ["amq-squad up stopped a scheduler", "read the record below the line"],
 	task_budget_warning: (d) => [`${d.task_id || "a task"}'s ${safeBudgetReason(d.reason, BUDGET_ENDS, "budget ends soon")} on ${seatOf(d)}`, "extend it or let it expire"],
 	task_budget_spent: (d) => [`${seatOf(d)}'s lease is no longer renewed${d.task_id ? ` for ${d.task_id}` : ""}`, `its ${safeBudgetReason(d.reason, BUDGET_SPENT, "task budget is spent")}`],
+	// 3.2.0-3a: the lead's merge-train re-bind the train refused on its
+	// proof (cli merge_train_rebind.go rebindDecision; Go records the lead
+	// as the seat and the code)
+	merge_train_rebind_refused: (d) => [`${seatOf(d)}'s merge-train re-bind was refused`, "read the proof's failing part below the line"],
 };
 
 // ROUTINE_DECISIONS are the decision kinds that need no look from the lead
@@ -437,7 +441,7 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		"lease_expired", "lease_normalised", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
 		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
-		"task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
+		"merge_train_rebound", "task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
 	].map((k) => [k, true]),
 ) as Record<string, true>;
 
@@ -610,6 +614,10 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	// train.go refusePatchProof). A seat branch is never rebased by hand:
 	// the remedy is the lead's
 	rebase_patch_changed: ["its change moved during the update", "reset the task so a seat redoes it on the current base"],
+	// 3.2.0-3a: GitHub updates a branch asynchronously; the train waits
+	// 120 s for the head to move and refuses when it does not (mergetrain
+	// train.go land, RuleUpdateUnconfirmed)
+	branch_update_unconfirmed: ["GitHub did not update the branch in time", "run the train again; if it repeats, ask the owner whether the update conflicts"],
 };
 
 // TRAIN_KIND_WORDS maps each entry kind the merge train journals
@@ -621,6 +629,9 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	refusal: "refused a PR",
 	rebase: "rebased a PR",
 	rebind: "bound a rebased PR to its task again",
+	// 3.2.0-3a: journaled before updatePullRequestBranch (mergetrain
+	// train.go land)
+	update_requested: "asked GitHub to bring a PR up to date",
 	batch: "planned a batch",
 	plan: "finished a dry run",
 	protection: "read the branch protection",
