@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockNeedsRecord, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -205,6 +205,12 @@ test("row 7: a launch failure's code as a wait or block reason reads in words", 
 	assert.ok(lines.slice(lines.indexOf(RULE)).includes("  t9 waits: version_probe_failed"));
 	const blocked = renderScreen({ ...fixture, tasks: [{ ...fixture.tasks[0], id: "t9", block_reason: "proof_expired" }] }, now).find((l) => l.startsWith("  t9 "));
 	assert.equal(blocked, "  t9 blocked: its seat's launch failed twice, its proof came after its token expired; fix the cause, then /reset it (or relaunch the roster)");
+});
+
+test("pin_unresolved uses the class-chain detail from task show", () => {
+	const detail = "class plan runs on claude:opus:high, codex:gpt-5.6-sol:high; the pin codex:gpt-5.6-terra:medium is on the task tier (class implement)";
+	assert.equal(blockWords({ id: "t75", task_state: "blocked", block_reason: "pin_unresolved" }, { block_detail: detail }).line, `t75 blocked: ${detail}; /reset it onto another pool`);
+	assert.equal(blockNeedsRecord("pin_unresolved"), true);
 });
 
 // The decision kinds Go writes to the decision log: every Decision{Kind:

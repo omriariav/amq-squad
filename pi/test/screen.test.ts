@@ -197,11 +197,18 @@ test("a seat that is not the team lead gets no screen", async () => {
 // Day 3 (t26 sat four hours on a file lock nobody saw): a pending task
 // waiting on a file lock names the tasks holding it, and a file lock no task
 // holds any more shows as stale.
-test("a pending task waiting on a file lock names its holder tasks", () => {
+test("a pending task waiting on a file lock names its holder and shared declaration", () => {
 	const tasks = block(renderScreen(fixture, now), "tasks");
-	assert.ok(tasks.includes("  t26 waiting: t20, t23 hold its files"), tasks.join("\n"));
-	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [] } : t)) };
+	assert.ok(tasks.includes("  t26 waits for t71: both declare docs/v3-spike/320-evidence/"), tasks.join("\n"));
+	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [], waits_for: [] } : t)) };
 	assert.ok(block(renderScreen(stale, now), "tasks").includes("  t26 waiting: for a file lock no task holds any more (a stale wait)"));
+});
+
+test("a pin outside its class chain names both chains on the screen", () => {
+	const detail = "class plan runs on claude:opus:high, codex:gpt-5.6-sol:high; the pin codex:gpt-5.6-terra:medium is on the task tier (class implement)";
+	const pinned = { ...fixture.tasks[0], id: "t75", block_reason: "pin_unresolved" };
+	const lines = renderScreen({ ...fixture, tasks: [pinned] }, now, undefined, { t75: { block_detail: detail } });
+	assert.ok(lines.includes(`  t75 blocked: ${detail}; /reset it onto another pool`), lines.join("\n"));
 });
 
 // Brief 3.1.1-2: t27 on 2026-11-01 routed to a pool no roster seat served,

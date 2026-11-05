@@ -59,6 +59,7 @@ export type TaskWords = {
 	lease_holder?: string;
 	wait_reason?: string;
 	wait_holders?: string[];
+	waits_for?: { task_id: string; path: string }[];
 	wait_pool?: string;
 	block_reason?: string;
 	depends_on?: string[];
@@ -102,6 +103,9 @@ export const WAIT_WORDS: Record<string, (t: TaskWords, c: WaitContext) => string
 export function waitWords(t: TaskWords, c: WaitContext = {}): { line: string; record?: string } {
 	const r = t.wait_reason ?? "";
 	if (DEPENDENCY_MERGE.test(r)) return { line: `${t.id} ${r}` };
+	if (r === "file_lock" && (t.waits_for ?? []).length) {
+		return { line: (t.waits_for ?? []).map((w) => `${t.id} waits for ${clean(w.task_id, 40)}: both declare ${clean(w.path, 120)}`).join("; ") };
+	}
 	const f = own(WAIT_WORDS, r);
 	if (f) return { line: `${t.id} waiting: ${f(t, c)}` };
 	// a launch failure's code (internal/scheduler launchfail.go waitForSeat)
@@ -183,7 +187,7 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	retries_exhausted: () => ["every retry failed", "/reset it onto another pool"],
 	class_unknown: () => ["its class is not in the routing table", "add it again with a known class"],
 	declared_tree_unchecked: () => ["its declared files could not be checked", RESET],
-	pin_unresolved: () => ["the pool it is pinned to cannot run its class", "/reset it onto another pool"],
+	pin_unresolved: (d) => [clean(d.block_detail, 240) || "the pool it is pinned to cannot run its class", "/reset it onto another pool"],
 	history_tampered: () => ["the routing history does not verify", "ask the owner to inspect it"],
 };
 
@@ -324,7 +328,7 @@ export function launchBlock(detail: string | undefined, reason: string): { stage
 // record (task show's block_detail): the size cap's numbers, and a reason
 // no table maps, which may be a launch failure's AMQ code.
 export function blockNeedsRecord(reason: string): boolean {
-	return reason === "size_cap_exceeded" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+	return reason === "size_cap_exceeded" || reason === "pin_unresolved" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
 }
 
 // blockHappened is a block's first half alone (a dialog label).

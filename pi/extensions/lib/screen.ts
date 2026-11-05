@@ -47,7 +47,7 @@ type SeatRow = {
 };
 // wait_pool: for a task waiting no_roster_seat, the pool its route names
 // and no roster seat serves (brief 3.1.1-2)
-type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; lease_expires_at?: string | null; budget?: number; budget_ends_at?: string | null; block_reason: string; wait_reason: string; wait_holders?: string[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
+type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; lease_expires_at?: string | null; budget?: number; budget_ends_at?: string | null; block_reason: string; wait_reason: string; wait_holders?: string[]; waits_for?: { task_id: string; path: string }[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
 // question is the gate question's plain lines, the text above its rule, as
 // the owner reads it on the phone (brief 3.1.1-1); "" for a gate raised
 // before 3.1.1.
