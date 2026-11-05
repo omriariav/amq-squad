@@ -1,0 +1,1 @@
+/Users/omri/code/amq-squad/.agent-mail/v312 root-sha256:40cdbe00f4023bddc337014fb837a976f522b4f1d9364004d6e3304fccc14c06

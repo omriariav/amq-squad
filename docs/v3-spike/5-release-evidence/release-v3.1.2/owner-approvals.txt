@@ -1,0 +1,1 @@
+2026-11-05T13:46:13Z owner approved (AskUserQuestion in the lead session): "Approve: do the swap now" (stop v31 attach pid 95237, start v312 attach, prepare, publish as the lead step, restore v31) and "Approve the restart" (install 3.1.2 over PATH, up --binary, squad restart as step 6)

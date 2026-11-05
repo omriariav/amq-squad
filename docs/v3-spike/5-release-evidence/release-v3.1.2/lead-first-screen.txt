@@ -1,0 +1,25 @@
+# captured 2026-11-05T13:50:34Z, lead started 13:50:17Z
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set
+ -g extended-keys on` to ~/.tmux.conf and restart tmux.
+
+
+────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+ amq-squad: lead cto (pid 15270, pane %128) · root
+ /Users/omri/code/amq-squad/.agent-mail/v31
+ seats (3)
+   cto  -  stopped
+   dev  codex gpt-5.6-terra medium  idle  · up in 3.7s, first message 80.9s
+   reviewer  codex gpt-5.6-sol high  starting on t71: 3.2.0-1: a seat's lease
+ renews from the seat's own activi...  · up in 3.6s
+   seat reviewer could not be prepared for t71; ask the lead to relaunch the
+ roster
+ tasks (71)
+   t7 cancelled: 3.0.x: redact linearity test as an in-process ratio (no w...
+   t24 cancelled: 3.0.2 blocker: the commit step pushes the seat branch bef...
+   t9 cancelled: 3.0.x: seats are launched with AMQ wake enabled so the sc...
+ ... (widget truncated)
+~/code/amq-squad (v3)
+0.0%/131k (auto)                                            qwen3.6:27b • medium
