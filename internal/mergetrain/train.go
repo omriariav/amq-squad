@@ -624,11 +624,19 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			return t.refuseUpdate(res, p, entry, RuleUpdateUnconfirmed, fmt.Sprintf("GitHub did not update the branch of PR #%d within %s (the head did not move); nothing is bound and nothing is merged", p.Number, t.updateWait()))
 		}
 		pushed := cur.HeadSHA
-		// the rebase entry names the head read back, before the proof (item
-		// 2): trainHeads then names it and the force-push rule stays quiet on
-		// the train's own update
-		if err := entry(Entry{Kind: "rebase", PR: p.Number, Head: p.Head, NewHead: pushed, BaseSHA: res.BaseSHA}); err != nil {
-			return err
+		// The rebase entry names the head read back (item 2): trainHeads then
+		// names it and the force-push rule stays quiet on the train's own
+		// update. For a bound PR it is written only once the proof below has
+		// passed (the plan reviewer on #903): an entry written before the
+		// proof would name an unproven head, and the next run's force-push
+		// rule would take that head for the train's own push.
+		rebaseEntry := Entry{Kind: "rebase", PR: p.Number, Head: p.Head, NewHead: pushed, BaseSHA: res.BaseSHA}
+		if !bound {
+			// no task is bound, so there is no proof to wait for: the entry
+			// names the head read back, as before
+			if err := entry(rebaseEntry); err != nil {
+				return err
+			}
 		}
 		if bound {
 			afterBase, err := t.Forge.BranchHead(ctx, req.Repository, req.Base)
@@ -662,7 +670,11 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 				p.Head = pushed
 				return t.refuseUpdate(res, p, entry, RuleRebasePatch, "its change moved during the update")
 			}
-			// audit first, then the binding write, both before the check
+			// the proof passed: audit first (the rebase entry, then the
+			// rebind), then the binding write, all before the check
+			if err := entry(rebaseEntry); err != nil {
+				return err
+			}
 			if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed, Detail: "patch-id: " + oldPatch + "\nfirst parent: " + parent}); err != nil {
 				return err
 			}

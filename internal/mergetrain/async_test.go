@@ -430,3 +430,46 @@ func TestLeadRebindIsProvedBeforeTheBindingIsWritten(t *testing.T) {
 		})
 	}
 }
+
+// The plan reviewer on #903: a failed proof leaves no rebase entry, so
+// trainHeads never names an unproven head and a following run's force-push
+// rule refuses it as a push that is not the train's. The differing patch-id
+// (the fake alters the seat's hunk during the update) and the wrong parent
+// (a push lands on the rebased head before the read-back) both end the first
+// run refused with no rebase entry for the PR, and the next run's check
+// refuses the head on force_push. Reverted (the entry written before the
+// proof), the entry is there and the next run accepts the force push.
+func TestFailedProofLeavesNoRebaseEntry(t *testing.T) {
+	for name, prep := range map[string]struct {
+		edit func(s *fakeState)
+		rule string
+	}{
+		"a differing patch-id":              {func(s *fakeState) { s.AlterAfterRebase = []string{"1"} }, RuleRebasePatch},
+		"a parent that is not the base tip": {func(s *fakeState) { s.PushAfterRebase = []string{"1"} }, RulePRHeadMoved},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, id, old, req := strictBound(t)
+			f.edit(prep.edit)
+			first, err := f.train.Run(context.Background(), req)
+			if err != nil || first.PRs[0].Status != "refused" || first.PRs[0].Refusals[0].Rule != prep.rule {
+				t.Fatalf("the proof did not refuse: %v %+v", err, first.PRs)
+			}
+			moved := f.head("pr1")
+			entries, _ := f.train.Audit.Read()
+			if slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "rebase" && e.PR == 1 }) || f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
+				t.Fatalf("a rebase entry names the unproven head: %v", kinds(entries, 1))
+			}
+			if boundHead(t, f, id) != old {
+				t.Fatalf("the unproven head was bound")
+			}
+			f.realRun(&req)
+			second, err := f.train.Run(context.Background(), req)
+			if err != nil || second.PRs[0].Status != "refused" || !slices.ContainsFunc(second.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
+				t.Fatalf("the next run took the unproven head for the train's own push: %v %+v", err, second.PRs)
+			}
+			if strings.Contains(f.calls(), "-X PUT") {
+				t.Fatal("something merged")
+			}
+		})
+	}
+}
