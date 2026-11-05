@@ -2,10 +2,12 @@ package scheduler
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -93,13 +95,7 @@ const (
 // pool want: the slot rule (a pi seat without a model serves any pi model;
 // otherwise the model, and for Claude and Codex the effort, match).
 func PoolServes(seat, want task.Pool) bool {
-	if seat.Runtime != want.Runtime {
-		return false
-	}
-	if seat.Runtime == "pi" {
-		return seat.Model == "" || seat.Model == want.Model
-	}
-	return seat.Model == want.Model && seat.Effort == want.Effort
+	return task.PoolServes(seat, want)
 }
 
 func (s *Scheduler) rosterMode() bool { return len(s.Config.Roster) > 0 }
@@ -133,7 +129,15 @@ func (s *Scheduler) AdoptUpRequest(handle, requestID string, pool task.Pool, at 
 		s.seats = map[string]*seat{}
 	}
 	if s.seats[handle] == nil {
-		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, requestID: requestID}
+		joinedAt := at
+		// Adoption is a scheduler restart, not a seat relaunch. Anchor the
+		// lapsed-attempt boundary to the seat's own launch record StartedAt;
+		// using at here would let every scheduler restart erase the exclusion.
+		root := filepath.Clean(filepath.Join(s.Store.Dir, "..", "..", ".."))
+		if rec, err := launch.Read(filepath.Join(root, "agents", handle)); err == nil && !rec.StartedAt.IsZero() {
+			joinedAt = rec.StartedAt
+		}
+		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, joinedAt: joinedAt, requestID: requestID}
 	}
 }
 

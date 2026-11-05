@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -24,6 +27,41 @@ var taskNow = func() time.Time { return time.Now().UTC() }
 
 // taskLeaseDuration is the lease length the task verbs grant and renew.
 var taskLeaseDuration = task.DefaultLeaseDuration
+
+// taskSchedulerLive is the scheduler liveness proof used by task claim: the
+// admitted PID must still be alive with the launch record's start stamp.
+var taskSchedulerLive = func(root string) bool {
+	rec, err := schedproc.ReadLaunchRecord(root)
+	if err != nil || rec.PID <= 0 || rec.ProcessStart == "" || !procinfo.Alive(rec.PID) {
+		return false
+	}
+	stamp, ok := procinfo.StartToken(rec.PID)
+	return ok && stamp == rec.ProcessStart
+}
+
+func taskClaimSeatPool(root, holder string, flag *task.Pool) *task.Pool {
+	rec, err := launch.Read(filepath.Join(root, "agents", holder))
+	if err == nil && rec.Runtime != "" && (rec.Runtime == "pi" || rec.Model != "") {
+		p := task.Pool{Runtime: rec.Runtime, Model: rec.Model, Effort: rec.Effort}
+		return &p
+	}
+	if flag != nil {
+		p := *flag
+		return &p
+	}
+	return nil
+}
+
+func taskClaimRefusal(code, plain, detail string) error {
+	return fmt.Errorf("%s\n\n----------\nrefused (%s): %s", plain, code, detail)
+}
+
+func taskPoolName(p *task.Pool) string {
+	if p == nil {
+		return "an unknown pool"
+	}
+	return p.Key()
+}
 
 var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "extend", "done", "fail", "block", "release", "reset", "set", "cancel", "widen", "reconcile"}
 
@@ -489,7 +527,45 @@ func runTaskTransition(verb string, args []string) error {
 	case "show":
 		t, err = s.Get(id)
 	case "claim":
-		t, err = s.Claim(id, me, pool, taskLeaseDuration, now)
+		seatPool := taskClaimSeatPool(root, me, pool)
+		if taskSchedulerLive(root) {
+			if id == "" {
+				err = taskClaimRefusal(task.RefusalClaimOfferRequired,
+					"the scheduler hands out work; wait for its offer",
+					"task claim without an id is disabled while the scheduler is live")
+				break
+			}
+			current, getErr := s.Get(id)
+			if getErr != nil {
+				err = getErr
+				break
+			}
+			t, err = s.ClaimOffered(id, me, seatPool, taskLeaseDuration, now)
+			if errors.Is(err, task.ErrLeaseExpired) {
+				err = taskClaimRefusal(task.RefusalClaimOfferExpired,
+					fmt.Sprintf("%s's offer to %s has expired; wait for the scheduler to offer it again", id, me),
+					err.Error())
+			} else if errors.Is(err, task.ErrClaimOfferRequired) {
+				err = taskClaimRefusal(task.RefusalClaimOfferRequired,
+					fmt.Sprintf("%s is handed out by the scheduler; it is for %s and %s serves %s", id, taskPoolName(current.Pool), me, taskPoolName(seatPool)),
+					err.Error())
+			} else if errors.Is(err, task.ErrClaimPoolMismatch) {
+				err = taskClaimRefusal(task.RefusalClaimPoolMismatch,
+					fmt.Sprintf("%s is handed out by the scheduler; it is for %s and %s serves %s", id, taskPoolName(current.Pool), me, taskPoolName(seatPool)),
+					err.Error())
+			}
+			break
+		}
+		t, err = s.ClaimServing(id, me, seatPool, taskLeaseDuration, now)
+		if errors.Is(err, task.ErrClaimPoolUnknown) {
+			err = taskClaimRefusal(task.RefusalClaimPoolUnknown,
+				fmt.Sprintf("%s is pinned to %s; claim it with --pool, or let the scheduler hand it out", id, taskPoolName(t.Pool)),
+				err.Error())
+		} else if errors.Is(err, task.ErrClaimPoolMismatch) {
+			err = taskClaimRefusal(task.RefusalClaimPoolMismatch,
+				fmt.Sprintf("%s is for %s and %s serves %s", id, taskPoolName(t.Pool), me, taskPoolName(seatPool)),
+				err.Error())
+		}
 	case "renew":
 		var normalized []task.LeaseNormalization
 		if normalized, err = s.NormalizeLeases(now); err == nil {

@@ -84,8 +84,13 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 		dur = DefaultLeaseDuration
 	}
 	if pool != nil {
-		p := *pool
-		t.Pool = &p
+		if t.Pool != nil && !PoolServes(*pool, *t.Pool) {
+			return fmt.Errorf("%w: task %s is for %s, not %s", ErrClaimPoolMismatch, t.ID, t.Pool.Key(), pool.Key())
+		}
+		if t.Pool == nil {
+			p := *pool
+			t.Pool = &p
+		}
 	}
 	t.State, t.WaitReason, t.Attempt = StateInProgress, "", t.Attempt+1
 	budget := t.Budget
@@ -99,6 +104,35 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 		expires = budgetEnd
 	}
 	t.Lease = &Lease{Holder: holder, GrantedAt: now, ExpiresAt: expires, Attempt: t.Attempt, BudgetEndsAt: budgetEnd}
+	return nil
+}
+
+const (
+	RefusalClaimOfferRequired = "claim_offer_required"
+	RefusalClaimOfferExpired  = "claim_offer_expired"
+	RefusalClaimPoolMismatch  = "claim_pool_mismatch"
+	RefusalClaimPoolUnknown   = "claim_pool_unknown"
+)
+
+var (
+	ErrClaimOfferRequired = errors.New(RefusalClaimOfferRequired)
+	ErrClaimPoolMismatch  = errors.New(RefusalClaimPoolMismatch)
+	ErrClaimPoolUnknown   = errors.New(RefusalClaimPoolUnknown)
+)
+
+// requireServingPool is the compatibility-path admission check. It runs in
+// the same locked store update as the grant/claim, so a concurrent re-pin is
+// either seen here or happens after the attempt makes re-pinning illegal.
+func requireServingPool(t *Task, pool *Pool) error {
+	if t.Pool == nil {
+		return nil
+	}
+	if pool == nil {
+		return fmt.Errorf("%w: task %s is pinned to %s", ErrClaimPoolUnknown, t.ID, t.Pool.Key())
+	}
+	if !PoolServes(*pool, *t.Pool) {
+		return fmt.Errorf("%w: task %s is for %s, not %s", ErrClaimPoolMismatch, t.ID, t.Pool.Key(), pool.Key())
+	}
 	return nil
 }
 
@@ -229,6 +263,99 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 			if err := grant(t, all, holder, pool, dur, now); err != nil {
 				return err
 			}
+		}
+		claim(t, dur, now)
+		all.touch(t.ID)
+		out = *t
+		return nil
+	})
+	return out, err
+}
+
+// ClaimServing is the compatibility path used when no scheduler is live. It
+// claims only work the seat's known pool serves; an unknown pool may claim an
+// unpinned task but fails closed on pinned work. Selection, the pool check,
+// and grant/claim all run under one store lock.
+func (s Store) ClaimServing(id, holder string, pool *Pool, dur time.Duration, now time.Time) (Task, error) {
+	holder = strings.TrimSpace(holder)
+	var out Task
+	err := s.update(now, func(all *tasks) error {
+		var t *Task
+		if id = strings.TrimSpace(id); id != "" {
+			if t = all.get(id); t == nil {
+				return fmt.Errorf("%w: %q", ErrNotFound, id)
+			}
+			out = *t // preserve the checked pool for a caller's refusal words
+			if err := requireServingPool(t, pool); err != nil {
+				return err
+			}
+			if t.State == StatePending {
+				if err := s.dispatchable(*t); err != nil {
+					return err
+				}
+				if err := grant(t, all, holder, pool, dur, now); err != nil {
+					return err
+				}
+			} else if err := requireLiveHolder(t, holder, now); err != nil {
+				return err
+			}
+		} else if held := HeldBy(holder, all.list); held != nil {
+			if held.Lease == nil || held.Lease.ClaimedAt != nil {
+				return fmt.Errorf("seat %s already holds task %s", holder, held.ID)
+			}
+			t = all.get(held.ID)
+			out = *t
+			if err := requireServingPool(t, pool); err != nil {
+				return err
+			}
+			if err := requireLiveHolder(t, holder, now); err != nil {
+				return err
+			}
+		} else {
+			order := append([]Task(nil), all.list...)
+			DispatchOrder(order)
+			for _, c := range order {
+				served := c.Pool == nil || pool != nil && PoolServes(*pool, *c.Pool)
+				if c.State == StatePending && Blocker(c, all.list) == "" && served && s.dispatchable(c) == nil {
+					t = all.get(c.ID)
+					break
+				}
+			}
+			if t == nil {
+				return fmt.Errorf("%w: no eligible pending task for %s", ErrNotFound, holder)
+			}
+			out = *t
+			if err := grant(t, all, holder, pool, dur, now); err != nil {
+				return err
+			}
+		}
+		claim(t, dur, now)
+		all.touch(t.ID)
+		out = *t
+		return nil
+	})
+	return out, err
+}
+
+// ClaimOffered acknowledges only a live, unclaimed scheduler offer for this
+// holder. It never routes or grants pending work, so the scheduler remains the
+// sole writer of routing decisions and outcome rows.
+func (s Store) ClaimOffered(id, holder string, pool *Pool, dur time.Duration, now time.Time) (Task, error) {
+	holder = strings.TrimSpace(holder)
+	var out Task
+	err := s.update(now, func(all *tasks) error {
+		t := all.get(strings.TrimSpace(id))
+		if t == nil {
+			return fmt.Errorf("%w: %q", ErrNotFound, id)
+		}
+		if t.State != StateInProgress || t.Lease == nil || t.Lease.Holder != holder || t.Lease.ClaimedAt != nil {
+			return fmt.Errorf("%w: task %s has no unclaimed offer for %s", ErrClaimOfferRequired, t.ID, holder)
+		}
+		if pool != nil && t.Pool != nil && !PoolServes(*pool, *t.Pool) {
+			return fmt.Errorf("%w: task %s is for %s, not %s", ErrClaimPoolMismatch, t.ID, t.Pool.Key(), pool.Key())
+		}
+		if err := requireLiveHolder(t, holder, now); err != nil {
+			return err
 		}
 		claim(t, dur, now)
 		all.touch(t.ID)
