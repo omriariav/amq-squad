@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 const strictRuleset = `[{"type":"non_fast_forward","ruleset_id":7},{"type":"pull_request","ruleset_id":7},{"type":"required_status_checks","ruleset_id":7,"parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"ci","integration_id":15368}]}}]`
@@ -23,9 +26,15 @@ func TestStrictBehindUsesPinnedCompareAndRebases(t *testing.T) {
 	f := newFixture(t)
 	setStrict(f)
 	id := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	store := f.tasks()
+	dependent, err := store.Add(task.AddInput{Title: "after updated #1", Class: "implement", DependsOn: []string{id}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
 	f.realRun(&req)
 	advanceBase(f, map[string]string{"base.txt": "advance\n"})
+	f.edit(func(s *fakeState) { s.AdvanceBaseBeforeRebase = []string{"1"} })
 	f.train.DryRun = true
 	plan, err := f.train.Run(context.Background(), req)
 	if err != nil || plan.PRs[0].Status != "planned" || !plan.PRs[0].RebaseForCI || plan.PRs[0].RebaseRule != RuleStrictUpToDate || plan.PRs[0].RebaseReason != "GitHub requires the branch to be up to date before merging" {
@@ -33,12 +42,54 @@ func TestStrictBehindUsesPinnedCompareAndRebases(t *testing.T) {
 	}
 	f.train.DryRun = false
 	res, err := f.train.Run(context.Background(), req)
-	if err != nil || res.PRs[0].Status != "merged" || res.PRs[0].Head == plan.PRs[0].Head || len(res.Digests) < 2 || res.Digests[0] != plan.Digest {
+	if err != nil || res.PRs[0].Status != "merged" || res.PRs[0].Head == plan.PRs[0].Head || len(res.Digests) < 2 || res.Digests[0] != plan.Digest || res.PRs[0].PatchProof == nil || !res.PRs[0].PatchProof.Match {
 		t.Fatalf("strict run: %v plan=%s result=%+v digests=%v", err, plan.Digest, res.PRs, res.Digests)
 	}
-	bound, _ := f.tasks().Get(id)
+	bound, _ := store.Get(id)
 	if bound.PRHead != res.PRs[0].Head || strings.Count(f.calls(), "commits/"+res.PRs[0].Head+"/check-runs") < 2 {
 		t.Fatalf("rebind or CI wait missing: task=%+v calls=\n%s", bound, f.calls())
+	}
+	all, _ := store.List()
+	if why := task.Blocker(dependent, all); why != "" {
+		t.Fatalf("updated merge did not release dependent: %s", why)
+	}
+}
+
+func TestChangedPatchAfterUpdateIsRefusedWithoutRebind(t *testing.T) {
+	f := newFixture(t)
+	setStrict(f)
+	id := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	old := f.head("pr1")
+	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
+	f.realRun(&req)
+	advanceBase(f, map[string]string{"base.txt": "advance\n"})
+	f.edit(func(s *fakeState) { s.AlterAfterRebase = []string{"1"} })
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].GateID != "" || res.PRs[0].PatchProof == nil || res.PRs[0].PatchProof.Match || res.PRs[0].Refusals[0].Rule != RuleRebasePatch || res.PRs[0].Refusals[0].Detail != "its change moved during the update" {
+		t.Fatalf("changed patch was not refused in words: %v %+v", err, res.PRs[0])
+	}
+	bound, _ := f.tasks().Get(id)
+	if bound.PRHead != old || strings.Contains(f.calls(), "-X PUT") {
+		t.Fatalf("changed patch was rebound or merged: task=%+v\n%s", bound, f.calls())
+	}
+}
+
+func TestIncompleteCompareRefusesWithoutRebind(t *testing.T) {
+	f := newFixture(t)
+	setStrict(f)
+	id := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	old := f.head("pr1")
+	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
+	f.realRun(&req)
+	advanceBase(f, map[string]string{"base.txt": "advance\n"})
+	f.edit(func(s *fakeState) { s.TruncateAfterRebase = []string{"1"} })
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Detail != "the update could not be proved: GitHub returned an incomplete diff" {
+		t.Fatalf("incomplete compare was not refused in words: %v %+v", err, res.PRs[0])
+	}
+	bound, _ := f.tasks().Get(id)
+	if bound.PRHead != old || strings.Contains(f.calls(), "-X PUT") {
+		t.Fatalf("incomplete compare was rebound or merged: task=%+v\n%s", bound, f.calls())
 	}
 }
 
