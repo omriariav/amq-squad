@@ -70,6 +70,18 @@ never `quarantined at`; the refusal stands either way. The sidecar carries
     body: commits.<handle>.seq<N>.json sha256 <hex>      (or: body: absent)
     head: commits.<handle>.seq<N>.head.json sha256 <hex> (or: head: absent)
 
+The copy is of the bytes the check refused (Codex's P1 on #893, commit
+`ca90cde6`): `readLedger` keeps the body and head it read, with their
+presence, in a `ledgerRaw` and hands it to `quarantine`, which reads no
+source file; the sidecar's digests are of those bytes. A writer that
+replaces the body between the refusal and the copy cannot make the alarm
+archive its body instead. The body bytes are exactly the checked ones;
+the head bytes are read right before `sealchain`'s own read of the head
+(`Absent`, `Check`), the closest this package gets without a `sealchain`
+change (outside the set): a head replaced in that gap would be copied as
+the later head. The seam `afterLedgerRefusal` (a test hook between the
+refusal and the copy) drives row A10.
+
 The refusing error is the refusal with the path appended:
 `commit ledger s1: ledger_tampered: the tag of commits.s1 link 1 fails; the
 refused document is quarantined at <root>/extensions/amq-squad/quarantine/commits.s1.seq1.json`.
@@ -144,6 +156,7 @@ copy); the typed block raised once is part B.
 | A7 | A planted link never passes as a copy. A symlink at the body path (to a file elsewhere): the refusal is still `ledger_tampered`, its error says `the quarantine copy failed: <body path> is a symlink` and not `quarantined at`, the link's target is unchanged, the directory holds the planted link alone. A symlink where the quarantine directory should be (to a directory elsewhere): the error says `the quarantine copy failed: the quarantine directory <dir> is a symlink`, and the target directory stays empty. | `internal/seatcommit` `TestPlantedSymlinkIsAQuarantineFailureNotACopy` (`body_path`, `directory`) |
 | A8 | A second, different refused body under one head seq takes the next slot: the error names `commits.<h>.seq<N>.2.json`, the first copy (body, head, sidecar) is untouched, the second slot's body is the second refused body, its head copy the head, its sidecar names its own body and digest; the same second body again names the second slot again; six files in all (two copies, not three). | `internal/seatcommit` `TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot` |
 | A9 | A head file planted in an empty slot (the quarantine directory made as the code makes it, 0700; `{"seq": 999}` at `commits.<h>.seq<N>.head.json`, not the head) makes the copy a named failure: the refusal is still `ledger_tampered`, its error says `the quarantine copy failed: <head path> exists with other content` and not `quarantined at`; the planted file is unchanged; no sidecar is written beside it; the body copy (the slot's claim) is there. | `internal/seatcommit` `TestPlantedHeadInAnEmptySlotIsAQuarantineFailure` |
+| A10 | The copy is of the refused bytes, never a later re-read: the body is swapped on disk through the `afterLedgerRefusal` seam (a concurrent writer's stand-in) after the refusal and before the copy; the quarantine body is the refused body (sha256 equal), the head copy the checked head, the sidecar carries the refused body's digest, and the swapped body stays on disk untouched. | `internal/seatcommit` `TestQuarantineHoldsTheRefusedBytesNotALaterSwap` |
 | A6 | Version skew as the tamper: a document a newer amq-squad wrote. Built from a real ledger with one discard entry: `attempt_note` added to the entry (this binary's `LedgerDiscard` already has 3.1.1's `attempt`, so the row uses a field this binary lacks, built the way `attempt` reached rc.1), sealed with the session's key as the next link over the body with the field (`sealchain.Seal`), the head moved to that link (`sealchain.WriteHead`). The row checks the premise both ways: the link verifies over the body with the field, and does not verify over this binary's decode of the same bytes. `CleanSeat` then refuses with `ledger_tampered: the tag of commits.s1 link <N> fails; the refused document is quarantined at ...`, the body copy is sha256-equal to the skewed bytes, the head copy equals the head, the sidecar carries that error text, the document is unchanged. | `internal/seatcommit` `TestVersionSkewIsQuarantinedLikeATamper` |
 
 A6 in one line: a seat whose ledger a newer amq-squad wrote is blocked on
@@ -152,9 +165,12 @@ recovery, and the verifier fix of a later brief turns this case into the
 distinct "written by a newer amq-squad" refusal; A6 does not call skew
 tampering, it proves the evidence survives whatever the cause.
 
-Rule 18: every row runs under `t.TempDir` roots (the seatcommit fixture's
-`amq/sess`, the schedproc live rig's root) with `HOME` set to a temp dir;
-nothing touches a real session root; no network.
+Rule 18: every row runs under a `t.TempDir` root (the seatcommit
+fixture's `amq/sess`; the schedproc live rig's root), nothing touches a
+real session root, no network. The seatcommit rows (A1 to A10, the A1
+guard) each set `HOME` to a temp dir with `t.Setenv`, since the fixture
+runs git; the schedproc row (A4's scheduler half, `newLiveRig`) runs no
+git and leaves `HOME` as it is.
 
 ## Revert runs
 
@@ -417,7 +433,34 @@ quarantine_test.go:274: the error does not say the copy failed ("the quarantine 
 `--- FAIL: TestPlantedHeadInAnEmptySlotIsAQuarantineFailure (0.17s)`;
 restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.445s`.
 
+### A10
+
+On `ca90cde6`:
+```
+go test -count=1 -run ^TestQuarantineHoldsTheRefusedBytesNotALaterSwap$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine.go:71` (the re-read of the body
+from disk, back):
+```
+	body, hasBody := raw.body, raw.hasBody
+```
+to
+```
+	body, hasBody, _ := readIfPresent(ledgerPath(root, handle))
+```
+First failing line:
+```
+quarantine_test.go:313: the quarantine holds the swapped body, not the refused one: sha256 12b2c4393dfdeffbd7599f2009acea370c370e099c902a09eb1326553bc460f3, refused 840abfe5b691edc0ae258e2ab95673df441260fb3ed645aa489784e4cc3d5004, swapped 12b2c4393dfdeffbd7599f2009acea370c370e099c902a09eb1326553bc460f3
+```
+`--- FAIL: TestQuarantineHoldsTheRefusedBytesNotALaterSwap (0.20s)`;
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.452s`.
+
 ## Gates
+
+On `ca90cde6` (the P1 fix; only `internal/seatcommit/` changed since
+`bbaddd49`), each exit 0: `go build ./...`; `go vet ./...`; `go test
+-count=1 ./internal/seatcommit/ ./internal/schedproc/` (both `ok`);
+`go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`.
 
 On `bbaddd49` (the A9 fix; only `internal/seatcommit/` changed since
 `bf26780d`, so the full `make ci` was not run again, as the lead said),
@@ -483,5 +526,14 @@ venv on PATH), which is why the merged-head run carries the venv.
 - The commit step still maps a write-time refusal to a deferral note; the
   read-time refusal is `ledger_tampered` as before. The typed block raised
   once, the recorded recovery and the prepare-loop suppression are part B.
+- The head bytes the quarantine copies are read just before `sealchain`
+  reads the head for its check; a head replaced inside that gap is copied
+  as the later head. Closing it needs a `sealchain` entry that takes the
+  head bytes it verified (outside this task's set).
+- Codex's remaining items on #893 (descriptor-anchored opens with
+  `O_NOFOLLOW` and type checks, source reads included; slot-set
+  consistency before "identical"; serialised slot allocation for
+  concurrent identical refusers) wait for the plan reviewer's ruling on
+  whether they are this PR's or 0c-B's.
 - `seatcommit.BinaryVersion` is unset until part B threads the CLI's
   version; the sidecar's fallback names the build's vcs revision.
