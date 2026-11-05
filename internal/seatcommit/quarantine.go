@@ -1,6 +1,7 @@
 package seatcommit
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -53,45 +54,180 @@ func quarantineBase(handle, seq string) string { return "commits." + handle + ".
 
 // quarantine copies the refused document of a seat's commit ledger and its
 // head, byte for byte, into QuarantineDir, named by the head's seq (unknown
-// when the head does not decode), once: each file is created exclusively
-// (O_EXCL), so a second refusal of the same seq leaves the first copy. A
-// sidecar carries the time, the writer verb, the binary version and the
-// error text. It returns the refusal extended with the quarantine path (the
-// body's; the head's when the body is absent). The refusal stands whatever
-// happens here: a copy that cannot be written is named in the error, never
-// a reason to pass.
+// when the head does not decode). The first refusal of a seq takes
+// commits.<handle>.seq<N>; a later refusal with the same body and head is
+// a no-op (the read path refuses on every tick: identical copies stay one),
+// and one with a different body or head takes the next free slot,
+// commits.<handle>.seq<N>.2, then .3 (the plan reviewer on #893: a second
+// different body under one seq was dropped before). Each file is created
+// exclusively (O_EXCL), so nothing is ever overwritten. A sidecar carries
+// the time, the writer verb, the binary version and the error text. It
+// returns the refusal extended with the quarantine path (the body's; the
+// head's when the body is absent). The refusal stands whatever happens
+// here: a copy that cannot be made is named in the error as a failed
+// copy, never as a quarantine.
 func quarantine(root, handle, verb string, refusal error) error {
-	body, berr := os.ReadFile(ledgerPath(root, handle))
-	if berr != nil && !errors.Is(berr, fs.ErrNotExist) {
-		return fmt.Errorf("%w; the refused document could not be read for quarantine: %v", refusal, berr)
+	body, hasBody, err := readIfPresent(ledgerPath(root, handle))
+	if err != nil {
+		return fmt.Errorf("%w; the quarantine copy failed: the refused document: %v", refusal, err)
 	}
-	head, herr := os.ReadFile(sealchain.HeadPath(root, ledgerHeadName(handle)))
-	if herr != nil && !errors.Is(herr, fs.ErrNotExist) {
-		return fmt.Errorf("%w; the refused document's head could not be read for quarantine: %v", refusal, herr)
+	head, hasHead, err := readIfPresent(sealchain.HeadPath(root, ledgerHeadName(handle)))
+	if err != nil {
+		return fmt.Errorf("%w; the quarantine copy failed: the refused document's head: %v", refusal, err)
 	}
 	dir := QuarantineDir(root)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("%w; the refused document could not be quarantined under %s: %v", refusal, dir, err)
+	if err := ensureQuarantineDir(dir); err != nil {
+		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
 	}
-	stem := quarantineBase(handle, headSeq(head))
-	bodyPath, headPath := filepath.Join(dir, stem+".json"), filepath.Join(dir, stem+".head.json")
-	named := bodyPath
-	var errs []error
-	if berr == nil {
-		errs = append(errs, writeOnce(bodyPath, body))
-	} else {
-		named = headPath
-	}
-	if herr == nil {
-		errs = append(errs, writeOnce(headPath, head))
-	} else if berr != nil {
-		named = filepath.Join(dir, stem+".txt")
-	}
-	errs = append(errs, writeOnce(filepath.Join(dir, stem+".txt"), sidecar(handle, verb, refusal, stem, body, berr == nil, head, herr == nil)))
-	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("%w; the refused document could not be quarantined under %s: %v", refusal, dir, err)
+	named, err := quarantineCopy(dir, quarantineBase(handle, headSeq(head)), handle, verb, refusal, body, hasBody, head, hasHead)
+	if err != nil {
+		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
 	}
 	return fmt.Errorf("%w; the refused document is quarantined at %s", refusal, named)
+}
+
+func readIfPresent(path string) ([]byte, bool, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	return b, err == nil, err
+}
+
+// quarantineSlots bounds the slots of one seq (a runaway edit loop cannot
+// fill the disk).
+const quarantineSlots = 100
+
+// quarantineCopy writes the set of one refusal into the first slot of base
+// that is free or holds this same body and head; it returns the path that
+// names the copy. The slot's primary file (the body; the head when the
+// body is absent; the sidecar when both are) claims the slot with an
+// exclusive create; an existing primary is compared byte for byte (with
+// the head copy beside it) to decide between a no-op and the next slot.
+func quarantineCopy(dir, base, handle, verb string, refusal error, body []byte, hasBody bool, head []byte, hasHead bool) (string, error) {
+	for n := 1; n <= quarantineSlots; n++ {
+		stem := base
+		if n > 1 {
+			stem += "." + strconv.Itoa(n)
+		}
+		bodyPath, headPath, sidePath := filepath.Join(dir, stem+".json"), filepath.Join(dir, stem+".head.json"), filepath.Join(dir, stem+".txt")
+		side := sidecar(handle, verb, refusal, stem, body, hasBody, head, hasHead)
+		var primary, secondary string
+		var pdata, sdata []byte
+		switch {
+		case hasBody:
+			primary, pdata = bodyPath, body
+			if hasHead {
+				secondary, sdata = headPath, head
+			}
+		case hasHead:
+			primary, pdata = headPath, head
+		default:
+			primary, pdata = sidePath, side
+		}
+		created, existing, err := createOnce(primary, pdata)
+		if err != nil {
+			return "", err
+		}
+		if !created {
+			if primary == sidePath {
+				return primary, nil // nothing to copy; the first sidecar stands
+			}
+			if !bytes.Equal(existing, pdata) {
+				continue
+			}
+			if secondary != "" {
+				ex, err := regularFileContent(secondary)
+				if err != nil {
+					return "", err
+				}
+				if !bytes.Equal(ex, sdata) {
+					continue
+				}
+			}
+			return primary, nil // an identical refusal: the first copy stands
+		}
+		if secondary != "" {
+			if _, _, err := createOnce(secondary, sdata); err != nil {
+				return "", err
+			}
+		}
+		if primary != sidePath {
+			if _, _, err := createOnce(sidePath, side); err != nil {
+				return "", err
+			}
+		}
+		return primary, nil
+	}
+	return "", fmt.Errorf("%s has %d copies already", filepath.Join(dir, base), quarantineSlots)
+}
+
+// ensureQuarantineDir creates the quarantine directory and checks what is
+// at its path: a directory itself (never a symlink: MkdirAll follows one),
+// mode 0700, owned by this process's user.
+func ensureQuarantineDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("the quarantine directory %s is a symlink", dir)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("the quarantine directory %s is not a directory", dir)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+		return fmt.Errorf("the quarantine directory %s has mode %04o, want 0700", dir, fi.Mode().Perm())
+	}
+	return ownedByCaller(dir, fi)
+}
+
+// createOnce creates path exclusively with data, 0600, fsynced with its
+// directory. When something is at path already: a regular file is an
+// existing copy, returned for comparison (created false); a symlink or any
+// other type is an error (a planted link must never pass as a copy).
+func createOnce(path string, data []byte) (created bool, existing []byte, err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		existing, err = regularFileContent(path)
+		return false, existing, err
+	}
+	if err != nil {
+		return false, nil, err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return false, nil, err
+	}
+	return true, nil, atomicfile.SyncDir(filepath.Dir(path))
+}
+
+// regularFileContent is the content of a regular file at path; nil when
+// nothing is there; an error for a symlink or any other type.
+func regularFileContent(path string) ([]byte, error) {
+	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s is a symlink", path)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return os.ReadFile(path)
 }
 
 // headSeq is the seq a head file names, read without verifying it (the
@@ -105,29 +241,6 @@ func headSeq(raw []byte) string {
 		return quarantineSeqUnknown
 	}
 	return strconv.Itoa(*h.Seq)
-}
-
-// writeOnce creates path exclusively with data, 0600, fsynced with its
-// directory; an existing file is kept as it is (the first copy stands).
-func writeOnce(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return err
-	}
-	return atomicfile.SyncDir(filepath.Dir(path))
 }
 
 // sidecar is the quarantine's record: when, which writer, which binary, the

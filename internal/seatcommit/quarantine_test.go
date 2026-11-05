@@ -169,10 +169,10 @@ func TestTamperedLedgerIsQuarantinedByEveryWriter(t *testing.T) {
 	}
 }
 
-// A2: a second refusal of the same seq leaves the first copy untouched: the
-// error names the same path, and the body, head and sidecar are the first
-// refusal's.
-func TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy(t *testing.T) {
+// A2: an identical second refusal of the same seq keeps the first copy:
+// the error names the same path, and the body, head and sidecar are the
+// first refusal's (the read path refuses on every tick; one copy).
+func TestIdenticalSecondRefusalKeepsTheFirstCopy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := newFixture(t)
 	first := tamperBase(t, f, f.base, '0')
@@ -182,10 +182,6 @@ func TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy(t *testing.T) {
 		t.Fatalf("first refusal: %v", err)
 	}
 	keep := [3][]byte{readFile(t, bodyQ), readFile(t, headQ), readFile(t, sideQ)}
-	second := tamperBase(t, f, strings.Repeat("0", len(f.base)), '1')
-	if bytes.Equal(second, first) {
-		t.Fatal("the second tamper equals the first")
-	}
 	_, err := RecordTarget(f.root, f.handle, f.target())
 	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+bodyQ) {
 		t.Fatalf("second refusal: %v", err)
@@ -195,13 +191,115 @@ func TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy(t *testing.T) {
 			t.Fatalf("the second refusal changed %s", p)
 		}
 	}
-	if got := readFile(t, bodyQ); !bytes.Equal(got, first) || bytes.Equal(got, second) {
+	if got := readFile(t, bodyQ); !bytes.Equal(got, first) {
 		t.Fatal("the quarantine body is not the first refused body")
 	}
 	ents, _ := os.ReadDir(QuarantineDir(f.root))
 	if len(ents) != 3 {
 		t.Fatalf("quarantine files: %d, want 3", len(ents))
 	}
+}
+
+// A8: a second, different refused body under one head seq takes the next
+// slot (commits.<h>.seq<N>.2.json with its own head copy and sidecar), the
+// first copy untouched; the same second body again is a no-op. Two
+// different bodies give two copies, the same body twice gives one.
+func TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newFixture(t)
+	first := tamperBase(t, f, f.base, '0')
+	seq, head := headSeqOf(t, f)
+	bodyQ, headQ, sideQ := quarantinePaths(f, seq)
+	if _, err := RecordTarget(f.root, f.handle, f.target()); !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+bodyQ) {
+		t.Fatalf("first refusal: %v", err)
+	}
+	keep := [3][]byte{readFile(t, bodyQ), readFile(t, headQ), readFile(t, sideQ)}
+	second := tamperBase(t, f, strings.Repeat("0", len(f.base)), '1')
+	if bytes.Equal(second, first) {
+		t.Fatal("the second edit equals the first")
+	}
+	stem2 := filepath.Join(QuarantineDir(f.root), "commits."+f.handle+".seq"+seq+".2")
+	for i := 0; i < 2; i++ {
+		_, err := RecordTarget(f.root, f.handle, f.target())
+		if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+stem2+".json") {
+			t.Fatalf("refusal %d of the second body does not name the second slot: %v", i+1, err)
+		}
+	}
+	for i, p := range []string{bodyQ, headQ, sideQ} {
+		if got := readFile(t, p); !bytes.Equal(got, keep[i]) {
+			t.Fatalf("the second body's refusal changed the first copy %s", p)
+		}
+	}
+	if got := readFile(t, stem2+".json"); !bytes.Equal(got, second) {
+		t.Fatal("the second slot's body is not the second refused body")
+	}
+	if got := readFile(t, stem2+".head.json"); !bytes.Equal(got, head) {
+		t.Fatal("the second slot's head copy is not the head")
+	}
+	if side := string(readFile(t, stem2+".txt")); !strings.Contains(side, "body: commits."+f.handle+".seq"+seq+".2.json sha256 "+sha(second)) {
+		t.Fatalf("the second slot's sidecar does not name its body:\n%s", side)
+	}
+	ents, _ := os.ReadDir(QuarantineDir(f.root))
+	if len(ents) != 6 {
+		t.Fatalf("quarantine files: %d, want 6 (two copies, not three)", len(ents))
+	}
+}
+
+// A7: a planted link never passes as a copy. A symlink at the body path,
+// or a symlink where the quarantine directory should be, makes the copy a
+// named failure ("the quarantine copy failed: ... is a symlink"), never a
+// "quarantined at"; the refusal stands; nothing lands at the link's target.
+func TestPlantedSymlinkIsAQuarantineFailureNotACopy(t *testing.T) {
+	t.Run("body path", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		f := newFixture(t)
+		tamperBase(t, f, f.base, '0')
+		seq, _ := headSeqOf(t, f)
+		bodyQ, _, _ := quarantinePaths(f, seq)
+		target := filepath.Join(t.TempDir(), "target")
+		write(t, target, "the attacker's file\n")
+		if err := os.MkdirAll(QuarantineDir(f.root), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, bodyQ); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		_, err := RecordTarget(f.root, f.handle, f.target())
+		if !errors.Is(err, sealchain.ErrTampered) {
+			t.Fatalf("not ledger_tampered: %v", err)
+		}
+		if want := "the quarantine copy failed: " + bodyQ + " is a symlink"; !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "quarantined at") {
+			t.Fatalf("the error does not say the copy failed (%q): %v", want, err)
+		}
+		if got := readFile(t, target); string(got) != "the attacker's file\n" {
+			t.Fatalf("the link's target was written: %q", got)
+		}
+		if ents, _ := os.ReadDir(QuarantineDir(f.root)); len(ents) != 1 {
+			t.Fatalf("quarantine entries: %d, want the planted link alone", len(ents))
+		}
+	})
+	t.Run("directory", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		f := newFixture(t)
+		tamperBase(t, f, f.base, '0')
+		elsewhere := t.TempDir()
+		if err := os.MkdirAll(filepath.Dir(QuarantineDir(f.root)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(elsewhere, QuarantineDir(f.root)); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		_, err := RecordTarget(f.root, f.handle, f.target())
+		if !errors.Is(err, sealchain.ErrTampered) {
+			t.Fatalf("not ledger_tampered: %v", err)
+		}
+		if want := "the quarantine copy failed: the quarantine directory " + QuarantineDir(f.root) + " is a symlink"; !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "quarantined at") {
+			t.Fatalf("the error does not say the copy failed (%q): %v", want, err)
+		}
+		if ents, _ := os.ReadDir(elsewhere); len(ents) != 0 {
+			t.Fatalf("the link's target directory got %d entries", len(ents))
+		}
+	})
 }
 
 // A3: a head that does not decode quarantines under seq unknown: the body
