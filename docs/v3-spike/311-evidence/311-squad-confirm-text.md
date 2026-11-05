@@ -31,13 +31,19 @@ the old doors text (internal/cli lead_start_test.go:289 and :480,
 team_confirm_test.go:89 and :151) now pin "/confirm in the lead's pane".
 
 **Row.** internal/cli/squad_text_test.go
-`TestNoTextNamesARemovedSquadSubcommand` walks the repository and fails on
-any line that names a `/squad` followed by a word in a Go source (every
-`.go` file, tests included), README.md, a user doc (`docs/**/*.md`) or a
-skill source (`plugins/skills-src/**`). Allowed: the historical notes under
-`docs/v3-spike/` and the release notes (`*release-notes*`), which keep what
-was true when written. The pattern is built at run time so the test does
-not carry it.
+`TestNoTextNamesARemovedSquadSubcommand` walks the repository and fails,
+naming the file and line, on any line that names a subcommand 3.1.1 removed
+(`/squad` followed by `add`, `reset`, `clear`, `answer` or `confirm`, as a
+word) in a Go source (every `.go` file, tests included), README.md, a user
+doc (`docs/**/*.md`) or a skill source (`plugins/skills-src/**`). A plain
+word after `/squad` ("/squad prints the commands") is no hit (Codex on
+#878: the first pattern took any word). Allowed by exact path only: the
+historical notes under `docs/v3-spike/`, and the release notes from 3.1.0 on
+by an anchored pattern (`docs/v3.<minor >= 1>.<patch>[-pre]-release-notes.md`),
+which keep what was true when written; a file whose name merely carries
+"release-notes" (`docs/x-release-notes-guide.md`) is scanned. The row pins
+the pattern and the allowlist on fixtures before it walks. The pattern is
+built at run time so the test does not carry it.
 
 ## B. The test binary's git under its own HOME
 
@@ -55,10 +61,23 @@ under (the plan reviewer: the shared fixture setup, so a later fixture is
 covered too): `TestMain` in fakegh_test.go makes a temporary HOME
 (`os.MkdirTemp`, removed at exit) and calls `isolateGitHome`, which sets
 `HOME` to it, unsets `XDG_CONFIG_HOME`, and sets `GIT_CONFIG_GLOBAL=/dev/null`
-and `GIT_CONFIG_NOSYSTEM=1` on the process before any test runs. `gitOut`,
+and `GIT_CONFIG_NOSYSTEM=1` on the process before any test runs. The first
+version (`96d02c2f`) also pointed `XDG_CONFIG_HOME` into the temporary
+home, so removing the HOME line alone did not fail the row (Codex on #878);
+since `15cade69` there is no XDG override: the variable is unset, so HOME
+alone governs `.config/git/ignore` (`~/.gitconfig` is covered by
+`GIT_CONFIG_GLOBAL`). It is unset rather than left alone because an
+owner's shell that sets `XDG_CONFIG_HOME` would otherwise point git at that
+owner's `git/ignore`. `gitOut`,
 `mustGit`, `newFixture`, production's `git patch-id`, the subprocess fake gh
 (the train starts it with the process environment) and any fixture a later
-test adds inherit it; `gitOut` keeps the author, committer and config
+test adds inherit it. On production's call (internal/mergetrain gh.go:229,
+`git patch-id --stable` over a diff on stdin): it inherits the process
+environment, which during the tests is now the isolated one; at
+`96d02c2f`, when only the fixture's git calls were isolated, it ran under the
+owner's HOME. `git patch-id` reads no configuration that changes its output
+(it hashes the diff it is given), so that was stated, not a fault in the
+output; `gitOut` keeps the author, committer and config
 variables it already set. It is the process and not `newFixture` because
 `t.Setenv` panics in a parallel test, and 22 of the tests that build a
 fixture run in parallel.
@@ -83,11 +102,11 @@ Each reverts production or fixture code only (the row's own test stays):
 | row | revert | result | the failing output's first line |
 | --- | --- | --- | --- |
 | A | the owner_only deny names "(/squad confirm)" again (internal/cli/hook_guard.go) | caught | `--- FAIL: TestNoTextNamesARemovedSquadSubcommand`: `internal/cli/hook_guard.go:262 names a removed subcommand of` `/squad` |
-| B | the test binary keeps the running HOME (the `HOME` line removed from `isolateGitHome`) | caught | `--- FAIL: TestTheTestBinarysGitDoesNotReadTheRunningHome`: `a git under the test binary's environment read the running home: status ""` |
+| B | the test binary keeps the running HOME (the `HOME` line alone removed from `isolateGitHome`, `_ = os.Setenv("HOME", home)`; run again for Codex on #878 at `15cade69`) | caught | `--- FAIL: TestTheTestBinarysGitDoesNotReadTheRunningHome`: `a git under the test binary's environment read the running home: status ""` |
 
 ## Gates
 
-At code head `15cade69`:
+At code head `bcffe9ff`:
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0, 56 packages ok, 0 FAIL lines. Tail:
 
@@ -108,7 +127,7 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 15434.255166
+ℹ duration_ms 15840.117709
 exit 0
 ```
 
@@ -122,6 +141,6 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 44291.588958
+ℹ duration_ms 43153.287042
 exit 0
 ```
