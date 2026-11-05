@@ -394,11 +394,16 @@ func TestAFileLockWaitNamesItsHolders(t *testing.T) {
 	st := Build(in)
 	for _, r := range st.Tasks {
 		want := "[]"
+		wantWaits := "[]"
 		if r.ID == "t26" {
 			want = `["t20","t23"]`
+			wantWaits = `[{"task_id":"t20","path":"internal/cli/up.go"},{"task_id":"t23","path":"pi/"}]`
 		}
 		if got, _ := json.Marshal(r.WaitHolders); string(got) != want {
 			t.Errorf("%s wait_holders %s, want %s", r.ID, got, want)
+		}
+		if got, _ := json.Marshal(r.WaitsFor); string(got) != wantWaits {
+			t.Errorf("%s waits_for %s, want %s", r.ID, got, wantWaits)
 		}
 	}
 }

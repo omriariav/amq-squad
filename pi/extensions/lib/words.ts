@@ -59,6 +59,7 @@ export type TaskWords = {
 	lease_holder?: string;
 	wait_reason?: string;
 	wait_holders?: string[];
+	waits_for?: { task_id: string; path: string }[];
 	wait_pool?: string;
 	block_reason?: string;
 	depends_on?: string[];
@@ -102,6 +103,9 @@ export const WAIT_WORDS: Record<string, (t: TaskWords, c: WaitContext) => string
 export function waitWords(t: TaskWords, c: WaitContext = {}): { line: string; record?: string } {
 	const r = t.wait_reason ?? "";
 	if (DEPENDENCY_MERGE.test(r)) return { line: `${t.id} ${r}` };
+	if (r === "file_lock" && (t.waits_for ?? []).length) {
+		return { line: (t.waits_for ?? []).map((w) => `${t.id} waits for ${clean(w.task_id, 40)}: both declare ${clean(w.path, 120)}`).join("; ") };
+	}
 	const f = own(WAIT_WORDS, r);
 	if (f) return { line: `${t.id} waiting: ${f(t, c)}` };
 	// a launch failure's code (internal/scheduler launchfail.go waitForSeat)
@@ -127,6 +131,25 @@ export function sizeCap(detail: string | undefined): string {
 	if (files) parts.push(`${files[1]} files over the cap of ${files[2]}`);
 	if (lines) parts.push(`${lines[1]} lines over the cap of ${lines[2]}`);
 	return parts.length ? parts.join(" and ") : "the diff is over the size cap";
+}
+
+// pinUnresolved keeps the pinned entry at the start, then shortens only the
+// class chain from its end. A long chain must never erase the fact the lead
+// needs in order to choose a new pin.
+export function pinUnresolved(detail: string | undefined, max = 240): string {
+	const whole = clean(detail, 4096);
+	if (!whole) return "the pool it is pinned to cannot run its class";
+	const match = /^(the pin .+?; class \S+ runs on )(.+)$/.exec(whole);
+	if (!match || whole.length <= max) return whole;
+	const chain = match[2].split(/,\s*/).filter(Boolean);
+	let keep = chain.length;
+	while (keep > 0) {
+		const hidden = chain.length - keep;
+		const suffix = hidden ? `${chain.slice(0, keep).join(", ")}, +${hidden} more` : chain.join(", ");
+		if ((match[1] + suffix).length <= max) return match[1] + suffix;
+		keep--;
+	}
+	return `${match[1]}+${chain.length} more`;
 }
 
 const COMMIT = "the commit step refused it";
@@ -183,7 +206,7 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	retries_exhausted: () => ["every retry failed", "/reset it onto another pool"],
 	class_unknown: () => ["its class is not in the routing table", "add it again with a known class"],
 	declared_tree_unchecked: () => ["its declared files could not be checked", RESET],
-	pin_unresolved: () => ["the pool it is pinned to cannot run its class", "/reset it onto another pool"],
+	pin_unresolved: (d) => [pinUnresolved(d.block_detail), "/reset it onto another pool"],
 	history_tampered: () => ["the routing history does not verify", "ask the owner to inspect it"],
 };
 
@@ -324,7 +347,7 @@ export function launchBlock(detail: string | undefined, reason: string): { stage
 // record (task show's block_detail): the size cap's numbers, and a reason
 // no table maps, which may be a launch failure's AMQ code.
 export function blockNeedsRecord(reason: string): boolean {
-	return reason === "size_cap_exceeded" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+	return reason === "size_cap_exceeded" || reason === "pin_unresolved" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
 }
 
 // blockHappened is a block's first half alone (a dialog label).
@@ -437,7 +460,7 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		"lease_expired", "lease_normalised", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
 		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
-		"task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
+		"task_budget_extended", "task_reset", "usage_limit", "wait_changed", "warning_cleared",
 	].map((k) => [k, true]),
 ) as Record<string, true>;
 

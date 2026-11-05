@@ -47,7 +47,7 @@ type SeatRow = {
 };
 // wait_pool: for a task waiting no_roster_seat, the pool its route names
 // and no roster seat serves (brief 3.1.1-2)
-type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; lease_expires_at?: string | null; budget?: number; budget_ends_at?: string | null; block_reason: string; wait_reason: string; wait_holders?: string[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
+export type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; lease_expires_at?: string | null; budget?: number; budget_ends_at?: string | null; block_reason: string; wait_reason: string; wait_holders?: string[]; waits_for?: { task_id: string; path: string }[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
 // question is the gate question's plain lines, the text above its rule, as
 // the owner reads it on the phone (brief 3.1.1-1); "" for a gate raised
 // before 3.1.1.
@@ -200,12 +200,45 @@ function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined, now:
 	return { line: `${t.id}: its state cannot be read`, record: `${t.id}: task_state ${clean(t.task_state, 40) || "empty"}` };
 }
 
+function taskRank(t: TaskRow): number {
+	switch (t.task_state) {
+		case "blocked": return 0;
+		case "in_progress": return 1;
+		case "pending": return 2;
+		case "completed":
+		case "cancelled": return 4;
+		default: return 3;
+	}
+}
+
+// taskRows orders actionable work before history and applies the task-area
+// height. Closed work is folded only after every open row has a place; it
+// can therefore never displace a blocked, running or pending task.
+function taskRows(tasks: TaskRow[], maxRows?: number): { tasks: TaskRow[]; tail?: string } {
+	const ordered = tasks.map((task, index) => ({ task, index }))
+		.sort((a, b) => taskRank(a.task) - taskRank(b.task) || a.index - b.index)
+		.map(({ task }) => task);
+	if (maxRows === undefined || !Number.isFinite(maxRows)) return { tasks: ordered };
+	const cap = Math.max(0, Math.floor(maxRows));
+	if (cap === 0) return { tasks: [], tail: tasks.length ? `+${tasks.length} more (/team for all)` : undefined };
+	const open = ordered.filter((t) => t.task_state !== "completed" && t.task_state !== "cancelled");
+	const closed = ordered.filter((t) => t.task_state === "completed" || t.task_state === "cancelled");
+	if (open.length > cap) {
+		const shown = open.slice(0, Math.max(0, cap - 1));
+		return { tasks: shown, tail: `+${tasks.length - shown.length} more (/team for all)` };
+	}
+	const room = cap - open.length;
+	if (closed.length <= room) return { tasks: [...open, ...closed] };
+	if (room > 0) return { tasks: open, tail: `${closed.length} closed` };
+	return { tasks: open };
+}
+
 // renderScreen is the screen's lines: the lead handle and the root, then the
 // blocks (seats, tasks, train, waiting on you, phone requests), each with
 // one plain line when empty; then the last action's outcome line; then the
 // rule and, below it, the codes, ids and digests for the record; and last,
 // the commands available now (brief 3.1.1-3 item 2).
-export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: KeyOutcome, details: Record<string, BlockDetail> = {}): string[] {
+export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: KeyOutcome, details: Record<string, BlockDetail> = {}, maxTaskRows?: number): string[] {
 	const lead = st.lead_handle ?? st.lead?.handle ?? "-";
 	const leadProc = st.lead ? ` (pid ${st.lead.pid}${st.lead.pane ? `, pane ${st.lead.pane}` : ""}${st.lead.live ? "" : ", not live"})` : "";
 	const out: string[] = [`amq-squad: lead ${lead}${leadProc} · root ${st.root}`];
@@ -245,11 +278,13 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 
 	out.push(`tasks (${st.tasks.length})`);
 	if (!st.tasks.length) out.push("  No tasks yet; add one with /add.");
-	for (const t of st.tasks) {
+	const visibleTasks = taskRows(st.tasks, maxTaskRows);
+	for (const t of visibleTasks.tasks) {
 		const l = taskLine(t, st, details[t.id], now);
 		out.push(`  ${l.line}`);
 		rec(l.record);
 	}
+	if (visibleTasks.tail) out.push(`  ${visibleTasks.tail}`);
 
 	const runs = st.train?.runs ?? [];
 	const current = runs.find((r) => !r.done);
@@ -457,9 +492,20 @@ export class Screen {
 				return;
 			}
 			if (this.expanded) {
-				const lines = renderScreen(this.last, new Date(), this.lastKey, this.details);
-				if (this.error) lines.splice(lines.length - 1, 0, `  (the screen may be stale: ${this.error})`);
-				ui.setWidget(SCREEN_KEY, lines, { placement: "belowEditor" });
+				const status = this.last;
+				ui.setWidget(SCREEN_KEY, (tui) => ({
+					render: () => {
+						const now = new Date();
+						const probe = renderScreen(status, now, this.lastKey, this.details, 0);
+						// The zero-row probe has one task overflow row. Everything else is
+						// fixed screen chrome, so the remainder of the pane is the task area.
+						const fixed = probe.length - (status.tasks.length ? 1 : 0) + (this.error ? 1 : 0);
+						const taskHeight = Math.max(1, tui.terminal.rows - fixed);
+						const lines = renderScreen(status, now, this.lastKey, this.details, taskHeight);
+						if (this.error) lines.splice(lines.length - 1, 0, `  (the screen may be stale: ${this.error})`);
+						return lines;
+					},
+				}), { placement: "belowEditor" });
 				ui.setStatus(SCREEN_KEY, undefined);
 			} else {
 				ui.setWidget(SCREEN_KEY, undefined);
