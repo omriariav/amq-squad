@@ -64,11 +64,25 @@ and the sidecar says `body: absent (<path> is a symlink (not copied))`
 N is the head file's `seq`, decoded without verifying the head (its tag
 may be what failed); `unknown` when the head does not decode or is
 absent, so `commits.<handle>.sequnknown/`. The set is written whole into
-a fresh temp directory beside the slots (`.copying-<hex>/`, each file
-created exclusively, 0600, fsynced, the directory fsynced) and published
+a fresh temp directory beside the slots (`.copying-<hex>/`) and published
 by one rename to the slot name, so no reader ever sees a partial set. A
 rename onto a directory that is not empty fails, which is what makes
 publication exclusive.
+
+**The staged copy is written through the temp directory's own
+descriptor** (Codex's P2 on `6c2b48fc`, commit `90dd2e77`): right after
+`Mkdirat` the temp directory is opened `O_DIRECTORY|O_NOFOLLOW` relative
+to the held root and checked on its descriptor (a directory, the
+caller's uid); every staged file is created (`O_CREAT|O_EXCL|O_NOFOLLOW`,
+0600, fsynced) and later unlinked relative to that descriptor, never as
+`<tmp>/body.json` relative to the root, where `O_NOFOLLOW` would have
+protected the last component only and a same-user swap of the temp
+directory for a link would have redirected the writes outside the
+quarantine (row A14). The staged directory is fsynced before the rename
+and the root after it (the second P2: a crash after a successful publish
+could otherwise leave a published slot missing files; row A15 records the
+order through a trace seam). A test seam `afterTempMkdir` sits between
+the mkdir and the open.
 
 **Identical is a no-op, different is the next k.** Before the rename the
 slot is looked at: absent, the rename is tried (and a rename that finds
@@ -95,11 +109,20 @@ owned by the process's uid. Everything after is relative to it:
 `Renameat`, `Unlinkat`, and `Openat` with `O_DIRECTORY|O_NOFOLLOW` for an
 existing slot and `O_NOFOLLOW` for each file read back for the compare,
 each read-back checked regular on its descriptor. A link anywhere on the
-way (the quarantine directory itself, a slot, a file in a slot) refuses
-the open; the error words what is there (`is a symlink`, else `is not a
-directory`; the `Lstat` behind the wording decides nothing). Off unix
-(`quarantine_other.go`) the same steps run by path with an `Lstat` before
-each open; 3.0 hosts are macOS and Linux.
+way (the quarantine directory itself, a slot, a staged directory, a file
+in a slot) refuses the open; the error words what is there (`is a
+symlink`, else `is not a directory`; the `Lstat` behind the wording
+decides nothing). The owner check (`ownedByCaller`, the fstat result's
+uid against `os.Getuid`) has a mismatch row built from a `Stat_t`
+(`TestQuarantineDirectoryOwnedByAnotherUIDIsRefused`), since a directory
+of another uid cannot be made on disk without root.
+
+Off unix, `quarantine_other.go` is a compatibility version, stated
+plainly: the same steps run by path with an `Lstat` before each open, so
+between the `Lstat` and the open the path can change; it has no owner
+check and no directory fsync (`sync` is a no-op; the rename is still one
+`os.Rename`). It keeps the package building for `GOOS=windows`; 3.0
+hosts are macOS and Linux, where the descriptor form runs.
 
 **Every failure is named, never softened.** A copy that cannot be made
 is `<refusal>; the quarantine copy failed: <why>`: `the quarantine
@@ -183,6 +206,9 @@ once is part B.
 | A10 | The copy is of the refused bytes, never a later re-read: the body is swapped on disk through the `afterLedgerRefusal` seam (a concurrent writer's stand-in) after the refusal and before the copy; the slot's body is the refused body (sha256 equal), its head the checked head, its sidecar carries the refused body's digest, and the swapped body stays on disk untouched. | `internal/seatcommit` `TestQuarantineHoldsTheRefusedBytesNotALaterSwap` |
 | A11 | A ledger that is a symlink to the session seed: the refusal is `ledger_tampered: <ledger path> is a symlink` and names the slot; the slot has no `body.json`, its `head.json` is the head, its sidecar says `body: absent (<path> is a symlink (not copied))`; no file of the slot carries the seed's bytes; the planted link is unmoved. | `internal/seatcommit` `TestLedgerSymlinkedToTheSeedIsRefusedAndNeverCopied` |
 | A12 | A body-absent refusal (the ledger deleted under a head past link 0) and then a tampered body under the same head are two refusals: two slots, the first with no `body.json` and `body: absent` in its sidecar, the second with the tampered body. | `internal/seatcommit` `TestAbsentBodyThenTamperedBodyUnderOneSeqGiveTwoSlots` |
+| A14 | The staged directory swapped for a link after its mkdir (the `afterTempMkdir` seam, a same-user process's stand-in, replaces `.copying-<hex>` with a symlink to a directory elsewhere): the refusal is still `ledger_tampered`, its error says `the quarantine copy failed: the staged copy .copying-<hex>: <path> is a symlink` and not `quarantined at`; the link's target stays empty (no staged write followed the swap); the planted link is left in place. | `internal/seatcommit` `TestStagedDirectorySwappedForALinkIsAQuarantineFailure` |
+| A15 | The staged directory is fsynced before it is renamed and the root after: the `quarantineTrace` seam records every `fsync` and `renameat` in order, and the row finds `fsync <quarantine>/.copying-<hex>` before `renameat .copying-<hex> -> commits.<h>.seq<N>` and `fsync <quarantine>` after it. | `internal/seatcommit` `TestStagedDirectoryIsFsyncedBeforeItsRename` |
+| owner | The uid check refuses a quarantine directory owned by another uid by name and passes the caller's own, on a `Stat_t` built in the test (no root needed; a mismatch cannot be made on disk without it). | `internal/seatcommit` `TestQuarantineDirectoryOwnedByAnotherUIDIsRefused` (unix) |
 | A13 | Eight concurrent identical refusers (readers of one tampered document at once through `ReadLedgerAs`, no lock) all name the one slot; the quarantine directory holds that slot alone (no `.2`, no leftover); its body is the refused body. | `internal/seatcommit` `TestConcurrentIdenticalRefusersPublishOneSlot` |
 
 A6 in one line: a seat whose ledger a newer amq-squad wrote is blocked on
@@ -193,8 +219,8 @@ tampering, it proves the evidence survives whatever the cause.
 
 Rule 18: every row runs under a `t.TempDir` root (the seatcommit
 fixture's `amq/sess`; the schedproc live rig's root), nothing touches a
-real session root, no network. The seatcommit rows (A1 to A13, the A1
-guard) each set `HOME` to a temp dir with `t.Setenv`, since the fixture
+real session root, no network. The seatcommit rows (A1 to A15, the A1
+guard, the owner row) each set `HOME` to a temp dir with `t.Setenv`, since the fixture
 runs git; the schedproc row (A4's scheduler half, `newLiveRig`) runs no
 git and leaves `HOME` as it is.
 
@@ -550,7 +576,72 @@ quarantine_test.go:470: refuser: commit ledger s1: ledger_tampered: the tag of c
 restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.514s`.
 
 
+### A14
+
+On `90dd2e77`:
+```
+go test -count=1 -run ^TestStagedDirectorySwappedForALinkIsAQuarantineFailure$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine_unix.go:171`
+```
+	fd, err := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+```
+to:
+```
+	fd, err := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+```
+First failing line:
+```
+quarantine_test.go:516: the error does not say the copy failed ("the quarantine copy failed: the staged copy .copying-c2e92ae178f74c38: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStagedDirectorySwappedForALinkIsAQuarantineFailure2593453016/002/amq/sess/extensions/amq-squad/quarantine/.copying-c2e92ae178f74c38 is a symlink"): commit ledger s1: ledger_tampered: the tag of commits.s1 link 1 fails; the refused document is quarantined at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStagedDirectorySwappedForALinkIsAQuarantineFailure2593453016/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1
+```
+`--- FAIL: TestStagedDirectorySwappedForALinkIsAQuarantineFailure (0.20s)`
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.503s`.
+
+### A15
+
+On `90dd2e77`:
+```
+go test -count=1 -run ^TestStagedDirectoryIsFsyncedBeforeItsRename$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine.go:299 to :309`
+```
+	if err := td.sync(); err != nil {
+		removeSlot(d, tmp, td, set)
+		td.close()
+		return "", nil, err
+	}
+	if err := d.sync(); err != nil {
+		removeSlot(d, tmp, td, set)
+		td.close()
+		return "", nil, err
+	}
+	return tmp, td, nil
+```
+to:
+```
+	if err := d.sync(); err != nil {
+		removeSlot(d, tmp, td, set)
+		td.close()
+		return "", nil, err
+	}
+	return tmp, td, nil
+```
+First failing line:
+```
+quarantine_test.go:562: the staged directory /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStagedDirectoryIsFsyncedBeforeItsRename1253614767/002/amq/sess/extensions/amq-squad/quarantine/.copying-8edb386ef6b52380 was not fsynced before its rename: [fsync /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStagedDirectoryIsFsyncedBeforeItsRename1253614767/002/amq/sess/extensions/amq-squad/quarantine renameat /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStagedDirectoryIsFsyncedBeforeItsRename1253614767/002/amq/sess/extensions/amq-squad/quarantine/.copying-8edb386ef6b52380 -> /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStagedDirectoryIsFsyncedBeforeItsRename1253614767/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1 fsync /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestStagedDirectoryIsFsyncedBeforeItsRename1253614767/002/amq/sess/extensions/amq-squad/quarantine]
+```
+`--- FAIL: TestStagedDirectoryIsFsyncedBeforeItsRename (0.19s)`
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.467s`.
+
 ## Gates
+
+On `90dd2e77` (the two P2 fixes; only `internal/seatcommit/` changed since
+`0ab0d35d`), each exit 0: `go build ./...`; `go vet ./...`;
+`GOOS=windows go build ./internal/seatcommit/`; `go test -count=1
+./internal/seatcommit/ ./internal/schedproc/` (both `ok`);
+`go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`.
+
+The full gates before that:
 
 On `0ab0d35d` (the directory layout; the head after this note's commit
 has the same Go tree), each exit 0, from the worktree root:
@@ -587,6 +678,8 @@ vet, the seatcommit and schedproc tests and the redact check).
   head bytes it verified (outside this task's set). The plan reviewer
   carried it to brief 0e, which rewrites the seal path; nothing under
   `internal/sealchain/` changes here.
+- Off unix the quarantine is the path-based compatibility version named
+  above (no descriptor anchoring, no owner check, no directory fsync).
 - Identity across refusals is the body, the head and the error text (and
   the binary line); the writer verb, the time and the leftovers seen are
   not part of it. Up to 100 slots per seq.
