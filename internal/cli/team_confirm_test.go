@@ -86,7 +86,7 @@ func TestTeamProposeFromAPlanPrintsThePlanAndDigestAndWritesOnlyTheProposal(t *t
 			t.Fatalf("plan lacks %q:\n%s", want, lines)
 		}
 	}
-	if !strings.Contains(d["doors"].(string), "/squad confirm "+team.DigestPrefix(digest)) || !strings.Contains(d["squad_yaml"].(string), "handle: impl-1") {
+	if !strings.Contains(d["doors"].(string), "/confirm in the lead's pane") || !strings.Contains(d["squad_yaml"].(string), "handle: impl-1") {
 		t.Fatalf("doors %v squad_yaml %v", d["doors"], d["squad_yaml"])
 	}
 	if got := snapshotTree(t, proj); !mapsEqual(got, before) {
@@ -148,7 +148,7 @@ func TestTheShellApplyProceedsOnlyWithNoLeadHoldingTheRoot(t *testing.T) {
 		t.Helper()
 		for _, args := range forms {
 			_, _, err := captureOutput(t, func() error { return runTeam(args) })
-			if err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") || !strings.Contains(err.Error(), "/squad confirm "+team.DigestPrefix(digest)) || !strings.Contains(err.Error(), `Buzz DM "yes `) {
+			if err == nil || !strings.HasPrefix(err.Error(), schedproc.ReasonLeadRunning+":") || !strings.Contains(err.Error(), "/confirm in the lead's pane") || !strings.Contains(err.Error(), "reply yes to the lead's Buzz post") {
 				t.Fatalf("%s: %v = %v", why, args[5:], err)
 			}
 		}

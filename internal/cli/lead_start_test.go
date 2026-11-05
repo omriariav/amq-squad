@@ -286,7 +286,7 @@ func TestTheApplyReachesTheLeadOverItsSocketAndOnlyFromItsDescendants(t *testing
 	t.Setenv("AM_ROOT", s.root)
 	t.Setenv(leadStartSocketEnv, sock)
 	out, _, err := captureOutput(t, func() error { return runTeam([]string{"apply", "--digest", digest, "--project", f.proj, "--json"}) })
-	if err == nil || !strings.HasPrefix(err.Error(), ReasonConfirmMissing+":") || !strings.Contains(err.Error(), "/squad confirm") {
+	if err == nil || !strings.HasPrefix(err.Error(), ReasonConfirmMissing+":") || !strings.Contains(err.Error(), "/confirm in the lead's pane") {
 		t.Fatalf("apply over the socket = %v\n%s", err, out)
 	}
 	var env struct {
@@ -477,7 +477,7 @@ func TestTheStartAcceptsOnlyAWitnessedFreshConfirmation(t *testing.T) {
 		if r.Refusal != name {
 			t.Fatalf("start = %+v, want %s", r, name)
 		}
-		for _, door := range []string{"two doors", "/squad confirm " + team.DigestPrefix(digest), `Buzz DM "yes ` + team.DigestPrefix(digest)} {
+		for _, door := range []string{"two doors", "/confirm in the lead's pane", "reply yes to the lead's Buzz post that relays this plan with its digest " + digest} {
 			if !strings.Contains(r.Detail, door) {
 				t.Fatalf("%s does not name the door %q: %s", name, door, r.Detail)
 			}

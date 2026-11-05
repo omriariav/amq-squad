@@ -9,6 +9,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // Phase 5 Codex re-pass on 3-2: one test row per item.
@@ -123,6 +126,52 @@ func TestRepassLostMergeResponseIsReconciled(t *testing.T) {
 	}
 	if e := lastFor(t, g, 1); e.Kind != "merge" || e.Merged != g.head("main") || !strings.Contains(e.Detail, "reconciled at the next run") {
 		t.Fatalf("next run, last entry: %+v", e)
+	}
+}
+
+func TestStaleJournalMergeDoesNotReleaseAReboundDependency(t *testing.T) {
+	for _, kind := range []string{"merge", "merge_intent"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t)
+			journalHead, boundHead := f.head("pr1"), strings.Repeat("b", 40)
+			first := f.bindTask(1, boundHead, []string{"pkg/a.go"})
+			s := f.tasks()
+			child, err := s.Add(task.AddInput{Title: "after #1", Class: "implement", DependsOn: []string{first}}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.bindTask(2, f.head("pr2"), []string{"pkg/b.go", "shared.txt"})
+			req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}, {Number: 2}}}
+			f.realRun(&req)
+			merged := f.head("main")
+			if kind == "merge_intent" {
+				f.edit(func(s *fakeState) {
+					s.PRs["1"].State, s.PRs["1"].MergeCommit = "MERGED", merged
+				})
+			}
+			if err := f.train.Audit.Append(Entry{Kind: kind, Repository: fixtureRepo, Base: "main", PR: 1, Task: first, Head: journalHead, Merged: merged}); err != nil {
+				t.Fatal(err)
+			}
+			res, err := f.train.Run(context.Background(), req)
+			if err != nil || len(res.PRs) != 2 || res.PRs[1].Status != "merged" {
+				t.Fatalf("reconcile aborted before the next PR: %v %+v", err, res.PRs)
+			}
+			got, err := s.Get(first)
+			if err != nil || got.PRMergeHead != "" || got.PRMergeCommit != "" {
+				t.Fatalf("stale journal merge was recorded: %v %+v", err, got)
+			}
+			all, _ := s.List()
+			if why := task.Blocker(child, all); why != task.DependencyMergeWait(first, 1) {
+				t.Fatalf("stale merge released dependent: %q", why)
+			}
+			entries, _ := f.train.Audit.Read()
+			source := strings.ReplaceAll(kind, "_", " ")
+			if !slices.ContainsFunc(entries, func(e Entry) bool {
+				return e.Kind == "reconcile" && strings.HasPrefix(e.Detail, "the journaled "+source+" does not match task "+first+"'s bound head") && strings.Contains(e.Detail, journalHead) && strings.Contains(e.Detail, boundHead)
+			}) {
+				t.Fatalf("words-first mismatch audit missing: %+v", entries)
+			}
+		})
 	}
 }
 

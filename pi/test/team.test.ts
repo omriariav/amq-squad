@@ -1,5 +1,6 @@
 // Brief 31-3, PR 1: the solo lead proposes a team (amq_team_propose), the
-// owner confirms at the TUI door (/squad confirm, a command, never a tool),
+// owner confirms at the TUI door (/confirm, a command, never a tool; brief
+// 3.1.1-3: through pi's confirm dialog, nothing to type),
 // the lead applies it (amq_team_apply); the solo lead's shell refuses tmux
 // and the owner's verbs. Every verb goes through an injected runner; the
 // record is written into a temp root; nothing reaches the real binary,
@@ -9,7 +10,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "../extensions/lib/hooks.ts";
-import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
+import { AMQ_SQUAD_ALLOW, digestPrefix, installSoloTeam, PLAN_KEY, PLAN_KIND, SoloTeam, soloShellRefusal, TUI_KIND } from "../extensions/lib/team.ts";
+import { installCommands } from "../extensions/lib/commands.ts";
 import * as net from "node:net";
 import { fileURLToPath } from "node:url";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
@@ -48,6 +50,14 @@ const plan = {
 	tasks: [{ title: "write the parser", class: "implement" }],
 };
 
+const DIGEST2 = "sha256:" + "fedcba9876543210".repeat(4) + "@absent";
+const proposed2 = envelope("team_propose", {
+	project_dir: PROJECT,
+	plan: ["goal: ship the lexer", "session s1, lead lead", "seat impl-2 (implementer) codex/gpt-5.6-sol/high"],
+	digest: DIGEST2,
+	prefix: "fedcba9876543210",
+	doors: "doors",
+});
 const proposed = envelope("team_propose", {
 	project_dir: PROJECT,
 	plan: ["goal: ship the parser", "session s1, lead lead", "seat impl-1 (implementer) claude/sonnet/medium"],
@@ -89,7 +99,7 @@ function provedApply(args: string[], data: Record<string, any>, nonce: string | 
 	return envelope("team_apply", nonce ? { ...data, proof: testProof(nonce, challenge, data) } : data);
 }
 
-function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "") {
+function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "", now: () => Date = () => new Date("2026-11-01T10:00:00Z")) {
 	const root = tmpdir();
 	const calls: { args: string[]; stdin?: string; timeoutMs: number }[] = [];
 	const runner = async (bin: string, args: string[], o: RunOptions): Promise<RunResult> => {
@@ -98,21 +108,37 @@ function rig(reply: (args: string[], o: RunOptions) => RunResult, socket = "") {
 		return reply(args, o);
 	};
 	const pi = new FakePi();
-	const team = installSoloTeam(pi as any, cfg(root), runner, () => new Date("2026-11-01T10:00:00Z"), socket, [], NONCE);
+	const team = installSoloTeam(pi as any, cfg(root), runner, now, socket, [], NONCE);
+	installCommands(pi as any, { phases: ["solo", "team"], phase: () => team.phase, solo: team });
 	const ctx = fakeCtx({ hasUI: true });
 	const notes: string[] = [];
 	ctx.ui.notify = (m: string) => {
 		notes.push(m);
 	};
-	const typed: string[] = [];
-	ctx.ui.input = async () => typed.shift();
-	const squad = async (args: string) => {
-		const cmd = pi.commands.get("squad");
-		assert.ok(cmd, "no /squad command");
+	// pi's dialogs, scripted: confirm answers the confirm dialog (it may
+	// run code while the dialog is open), select the select dialog
+	const dialogs: { kind: string; title: string; body: string }[] = [];
+	let confirm: () => Promise<boolean> = async () => true;
+	let select: (options: string[]) => string | undefined = () => undefined;
+	ctx.ui.confirm = async (title: string, message: string) => {
+		dialogs.push({ kind: "confirm", title, body: message });
+		return confirm();
+	};
+	ctx.ui.select = async (title: string, options: string[]) => {
+		dialogs.push({ kind: "select", title, body: options.join("\n") });
+		return select(options);
+	};
+	ctx.ui.input = async () => {
+		throw new Error("/confirm asks the owner to type nothing");
+	};
+	const command = async (name: string, args = "") => {
+		const cmd = pi.commands.get(name);
+		assert.ok(cmd, `no /${name} command`);
 		await cmd.handler(args, ctx);
 		return ctx.widgets[PLAN_KEY]?.lines ?? [];
 	};
-	return { root, pi, team, ctx, calls, notes, typed, squad };
+	const answer = { confirm: (f: () => Promise<boolean>) => (confirm = f), select: (f: (o: string[]) => string | undefined) => (select = f) };
+	return { root, pi, team, ctx, calls, notes, dialogs, answer, command };
 }
 
 async function propose(r: ReturnType<typeof rig>): Promise<string> {
@@ -137,7 +163,8 @@ test("amq_team_propose prints the plan and digest; amq_team_apply returns the ro
 	assert.match(text, /prefix 0123456789abcdef/);
 	const lines = r.ctx.widgets[PLAN_KEY].lines.join("\n");
 	assert.match(lines, /seat impl-1 \(implementer\) claude\/sonnet\/medium/);
-	assert.match(lines, /confirm: \/squad confirm 0123456789abcdef/);
+	assert.match(lines, /Confirm it with \/confirm \(a dialog quotes the plan; there is nothing to type\)/);
+	assert.doesNotMatch(lines.split("----------")[0], /0123456789abcdef/, "the prefix is above the rule");
 	assert.doesNotMatch(lines, /team confirm/, "the plan block names the dropped shell door");
 	const applied = await r.pi.tools.get("amq_team_apply").execute("c2", { digest: DIGEST }, undefined);
 	assert.deepEqual(r.calls[1].args.slice(0, -1), ["team", "apply", "--digest", DIGEST, "--project", PROJECT, "--json", "--challenge"]);
@@ -175,26 +202,40 @@ test("amq_team_apply acts on nothing of an unproved reply: lead_unproved, no own
 	}
 });
 
-// Row 1c: the TUI door. /squad confirm with the printed prefix sends the
-// digest and the pane to the lead over its start socket (the lead accepts it
-// only from its own pi and witnesses it); the plan block shows the lead's
-// answer; a prefix that is not the printed one, or no printed plan, sends
-// nothing; a refusal from the lead shows by its name. No file is written.
-test("/squad confirm with the printed prefix asks the lead to witness it", async () => {
+// Row 5 (brief 3.1.1-3): the TUI door with nothing to type. /confirm opens
+// pi's confirm dialog quoting the plan's goal line, the session and lead and
+// the seats with their runtimes and models; only its yes sends the digest
+// the dialog showed and the pane to the lead over its start socket (the
+// lead accepts it only from its own pi and witnesses it); a no or a cancel
+// sends nothing; no plan sends nothing; a refusal from the lead is in words
+// with its code below the rule. No file is written; no verb runs.
+test("/confirm: the dialog's yes asks the lead to witness the plan it showed; a no sends nothing", async () => {
 	let answer: any = { outcome: "witnessed", digest: DIGEST, detail: "witnessed by the lead" };
 	const lead = await fakeLead(() => answer);
 	try {
-		const r = rig(() => res(0, proposed), lead.socket);
-		await r.squad(`confirm ${PREFIX}`);
+		const r = rig((args) => res(0, args[1] === "propose" ? proposed : ""), lead.socket);
+		const none = await r.command("confirm");
+		assert.ok(none.includes("  /confirm: Nothing to confirm: the lead has proposed no plan in the last 30 minutes. Tell it what you want built and it proposes one."), none.join("\n"));
 		assert.equal(lead.got.length, 0, "a confirm with no plan reached the lead");
 		await propose(r);
-		const wrong = await r.squad("confirm fedcba9876543210");
-		assert.match(wrong.join("\n"), /key confirm refused: prefix_mismatch/);
-		assert.equal(lead.got.length, 0, "a wrong prefix reached the lead");
+		r.answer.confirm(async () => false);
+		const no = await r.command("confirm");
+		assert.ok(no.includes("  /confirm: Cancelled; nothing was confirmed."), no.join("\n"));
+		assert.equal(lead.got.length, 0, "a no reached the lead");
+		const quoted = r.dialogs.at(-1)!;
+		assert.equal(quoted.kind, "confirm");
+		assert.equal(quoted.title, "Start this team?");
+		for (const l of ["goal: ship the parser", "session s1, lead lead", "seat impl-1 (implementer) claude/sonnet/medium"]) assert.ok(quoted.body.split("\n").includes(l), quoted.body);
+		assert.doesNotMatch(quoted.body, /[0-9a-f]{16}/, "the dialog asks for no prefix");
+		// the plan reviewer: the yes binds the seats (squad.yaml under the
+		// digest), not the goal or the tasks, and the closing line says so
+		assert.equal(quoted.body.split("\n").at(-1), "Yes starts exactly these seats (for 30 minutes). The goal and the tasks are the lead's starting point; it can change them. A plan proposed after this dialog opened is not the one confirmed.");
+		assert.doesNotMatch(quoted.body, /exactly this plan/);
+		r.answer.confirm(async () => true);
 		process.env.TMUX_PANE = "%7";
 		try {
-			const ok = await r.squad(`confirm ${PREFIX}`);
-			assert.match(ok.join("\n"), /confirmed at 2026-11-01T10:00:00.000Z \(door tui, witnessed by the lead\)/);
+			const ok = await r.command("confirm");
+			assert.ok(ok.includes("  Confirmed at 2026-11-01T10:00:00.000Z at your pane, witnessed by the lead; the lead starts the team next."), ok.join("\n"));
 		} finally {
 			delete process.env.TMUX_PANE;
 		}
@@ -205,9 +246,52 @@ test("/squad confirm with the printed prefix asks the lead to witness it", async
 		assert.equal(r.calls.length, 1, "the confirm ran no verb");
 		assert.deepEqual(fs.readdirSync(r.root), [], "the confirm wrote a file");
 		answer = { outcome: "refused", refusal: "peer_not_lead_pi", detail: "pid 9 is not the pi process this lead spawned" };
-		r.typed.push(PREFIX);
-		const refused = await r.squad("confirm");
-		assert.match(refused.join("\n"), /key confirm refused: peer_not_lead_pi: /);
+		const refused = await r.command("confirm");
+		const rule = refused.indexOf("----------");
+		assert.ok(refused.slice(0, rule).includes("  /confirm: The lead did not take the confirmation, so nothing was confirmed: pid 9 is not the pi process this lead spawned"), refused.join("\n"));
+		assert.ok(refused.slice(rule).includes("  /confirm: peer_not_lead_pi: pid 9 is not the pi process this lead spawned"), refused.join("\n"));
+	} finally {
+		lead.close();
+	}
+});
+
+// Row 5: a proposal made while the dialog is open is not the one confirmed:
+// the yes sends the digest the dialog quoted. With two live proposals the
+// owner picks one by its goal line first (pi's select), then the dialog
+// quotes that one; a cancel at the select sends nothing.
+test("/confirm: a re-propose while the dialog is open does not change what is confirmed; two plans: select, then the dialog", async () => {
+	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
+	try {
+		let next = proposed;
+		const r = rig((args) => res(0, args[1] === "propose" ? next : ""), lead.socket);
+		await propose(r);
+		r.answer.confirm(async () => {
+			// the model proposes again between the owner's reading and the yes
+			next = proposed2;
+			await r.pi.tools.get("amq_team_propose").execute("c9", plan, undefined);
+			return true;
+		});
+		await r.command("confirm");
+		assert.equal(lead.got.length, 1);
+		assert.equal(lead.got[0].digest, DIGEST, "the yes confirmed a plan the dialog did not show");
+		assert.match(r.dialogs.at(-1)!.body, /goal: ship the parser/);
+		// two live plans now: the select over their goal lines, then the dialog
+		r.answer.confirm(async () => true);
+		r.answer.select((options) => options.find((o) => o.includes("goal: ship the parser")));
+		await r.command("confirm");
+		const sel = r.dialogs.at(-2)!;
+		assert.equal(sel.kind, "select");
+		assert.deepEqual(sel.body.split("\n"), ["1. goal: ship the lexer  (proposed 10:00:00, the newest)", "2. goal: ship the parser  (proposed 10:00:00)"]);
+		assert.match(r.dialogs.at(-1)!.body, /goal: ship the parser/);
+		assert.equal(lead.got.at(-1).digest, DIGEST);
+		r.answer.select((options) => options[0]);
+		await r.command("confirm");
+		assert.equal(lead.got.at(-1).digest, DIGEST2);
+		const before = lead.got.length;
+		r.answer.select(() => undefined);
+		const cancelled = await r.command("confirm");
+		assert.ok(cancelled.includes("  /confirm: Cancelled; nothing was confirmed."), cancelled.join("\n"));
+		assert.equal(lead.got.length, before, "a cancelled select reached the lead");
 	} finally {
 		lead.close();
 	}
@@ -216,8 +300,8 @@ test("/squad confirm with the printed prefix asks the lead to witness it", async
 // Row 1c: a model message containing the same text invokes nothing. The
 // whole extension runs as the solo lead; the text reaches it as the
 // model's prompt, its reply and a tool input, and no record is written:
-// only pi's command path (the owner's typed line) reaches /squad.
-test("a model message containing /squad confirm reaches no lead; the confirm is a command, never a tool", async () => {
+// only pi's command path (the owner's typed line) reaches /confirm.
+test("a model message containing /confirm reaches no lead; the confirm is a command, never a tool", async () => {
 	const { default: amqSquad } = await import("../extensions/amq-squad.ts");
 	const root = tmpdir();
 	const saved = { ...process.env };
@@ -228,14 +312,14 @@ test("a model message containing /squad confirm reaches no lead; the confirm is 
 		const pi = new FakePi();
 		amqSquad(pi as any);
 		const ctx = fakeCtx({ hasUI: true });
-		const text = `/squad confirm ${PREFIX}`;
+		const text = `/confirm and /squad confirm ${PREFIX}`;
 		await pi.emit("session_start", {}, ctx);
 		await pi.emit("before_agent_start", { prompt: text, systemPromptOptions: { sections: {} } }, ctx);
 		await pi.emit("message_end", { message: { role: "assistant", content: [{ type: "text", text }] } }, ctx);
 		await pi.emit("tool_call", { toolName: "amq_send", input: { to: "lead", body: text }, toolCallId: "t1" }, ctx);
 		assert.equal(lead.got.length, 0, "a model message reached the lead");
 		assert.equal(fs.existsSync(path.join(root, "extensions", "amq-squad", "confirm")), false, "a model message wrote a file");
-		assert.ok(pi.commands.has("squad"), "the TUI door is the /squad command");
+		assert.ok(pi.commands.has("confirm"), "the TUI door is the /confirm command");
 		const tools = [...pi.tools.keys()];
 		assert.ok(tools.includes("amq_team_propose") && tools.includes("amq_team_apply"), `solo tools ${tools}`);
 		assert.ok(!tools.some((t) => /confirm/.test(t)), `a confirm tool: ${tools}`);
@@ -311,4 +395,159 @@ test("the solo lead's shell sees through quoting, expansions and eval", () => {
 	assert.match(soloShellRefusal("exec_command", { cmd: ["sh", "-c", 't""mux ls'] }) ?? "", /^owner_only: /, "an argv sh -c line");
 	assert.match(soloShellRefusal("exec_command", { cmd: ["/usr/bin/TMUX", "ls"] }) ?? "", /^owner_only: /, "an argv TMUX");
 	assert.equal(soloShellRefusal("exec_command", { cmd: ["echo", "hello world"] }), undefined);
+});
+
+// Brief 3.1.1-1, row 3: the plan block asks for no typed prefix over Buzz:
+// on the phone the owner replies yes to the lead's post of the plan (the
+// `yes <prefix>` form keeps verifying, but no text asks for it).
+test("brief 3.1.1-1: the plan block asks for a bare yes to the plan's post, never yes <prefix>", () => {
+	const team = new SoloTeam(cfg(tmpdir()), async () => res(0, ""));
+	team.proposal = { digest: DIGEST, prefix: PREFIX, plan: ["lead  pi"], project_dir: PROJECT };
+	const text = team.planLines().join("\n");
+	assert.doesNotMatch(text, /yes [0-9a-f]{16}/);
+	assert.match(text, /reply yes to the lead's Buzz post of this plan/);
+});
+
+// Codex's rounds on #838: the lead process is the authority for which post
+// is its plan. With reply_to, amq_team_propose first records the exact text
+// with the lead over the start socket (plan-sent), then sends it as the
+// reply to the owner's phone request labelled team-plan:<content digest>
+// (routing for the relay); reply_to never reaches team propose; a lead that
+// does not record it means nothing is sent; without reply_to nothing is.
+test("brief 3.1.1-1: amq_team_propose with reply_to records the plan with the lead, then sends it labelled", async () => {
+	const calls: { bin: string; args: string[]; stdin?: string }[] = [];
+	const runner = async (bin: string, args: string[], o: RunOptions): Promise<RunResult> => {
+		calls.push({ bin, args, stdin: o.stdin });
+		return args[1] === "propose" ? res(0, proposed) : res(0, envelope("reply", { id: "r-1" }));
+	};
+	let answer: any = { outcome: "recorded", digest: DIGEST };
+	const lead = await fakeLead(() => answer);
+	try {
+		const team = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner, () => new Date("2026-11-01T10:00:00Z"), lead.socket, [], undefined, NONCE);
+		const out = await team.propose({ ...plan, reply_to: "m-phone-1" });
+		assert.deepEqual(JSON.parse(calls[0].stdin ?? ""), plan, "reply_to reached team propose");
+		assert.equal(lead.got.length, 1);
+		assert.equal(lead.got[0].kind, PLAN_KIND);
+		assert.equal(lead.got[0].digest, DIGEST);
+		assert.equal(calls.length, 2);
+		assert.equal(calls[1].bin, "/opt/amq");
+		assert.deepEqual(calls[1].args, ["reply", "--me", "lead", "--id", "m-phone-1", "--labels", "team-plan:" + "0123456789abcdef".repeat(4), "--json", "--body", "-"]);
+		assert.equal(calls[1].stdin, lead.got[0].body, "the text sent is the text the lead recorded");
+		assert.match(out, /sent as the reply to m-phone-1, marked as the team plan/);
+		calls.length = 0;
+		answer = { outcome: "refused", refusal: "peer_not_lead_pi", detail: "x" };
+		const refused = await team.propose({ ...plan, reply_to: "m-phone-2" });
+		assert.equal(calls.length, 1, "a plan the lead did not record was sent");
+		assert.match(refused, /not sent as the reply to m-phone-2: the lead did not record it \(peer_not_lead_pi/);
+		calls.length = 0;
+		await team.propose(plan);
+		assert.equal(calls.length, 1, "no reply without reply_to");
+		// with PR 2's proof (#837): a recorded reply the lead did not prove
+		// under this pi's nonce sends nothing
+		answer = { outcome: "recorded", digest: DIGEST };
+		calls.length = 0;
+		const other = new SoloTeam({ ...cfg(tmpdir()), amq: "/opt/amq" }, runner, () => new Date("2026-11-01T10:00:00Z"), lead.socket, [], undefined, "test-other-nonce");
+		const unproved = await other.propose({ ...plan, reply_to: "m-phone-3" });
+		assert.equal(calls.length, 1, "a plan record the lead did not prove led to a send");
+		assert.match(unproved, /not sent as the reply to m-phone-3: the lead did not record it \(lead_unproved/);
+	} finally {
+		lead.close();
+	}
+});
+
+// Codex re-check on #838, the second layer: the solo lead's shell refuses a
+// team-plan label in an argv form too (the command-string forms are in
+// solo-shell-forms.json, read by the guard's layer as well).
+test("brief 3.1.1-1: the solo shell refuses a team-plan label in an argv form", () => {
+	assert.match(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "team-plan:" + "ab".repeat(32), "--body", "-"] }) ?? "", /^owner_only: .*a team-plan label/);
+	assert.equal(soloShellRefusal("bash", { argv: ["amq", "reply", "--id", "m-1", "--labels", "progress", "--body", "-"] }), undefined);
+});
+
+// The plan reviewer on #863, item 2: live plans with the same goal,
+// proposed in the same second, have distinct labels (numbered), and the
+// pick maps back by its position: the last label's dialog quotes the oldest
+// plan's seats and its yes sends that plan's digest. Reverted (unnumbered
+// labels), the two older plans share a label and the pick maps to the
+// first of them.
+test("/confirm: plans with the same goal: the label picked confirms that plan", async () => {
+	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
+	try {
+		const same = (digest: string, seat: string) => envelope("team_propose", { project_dir: PROJECT, plan: ["goal: ship the parser", "session s1, lead lead", seat], digest, prefix: "p", doors: "d" });
+		let next = same(DIGEST, "seat impl-1 (implementer) claude/sonnet/medium");
+		const r = rig((args) => res(0, args[1] === "propose" ? next : ""), lead.socket);
+		await propose(r);
+		next = same(DIGEST2, "seat impl-2 (implementer) codex/gpt-5.6-sol/high");
+		await r.pi.tools.get("amq_team_propose").execute("c2", plan, undefined);
+		next = same("sha256:" + "aa".repeat(32) + "@absent", "seat impl-3 (implementer) pi/anthropic/claude-sonnet-5/high");
+		await r.pi.tools.get("amq_team_propose").execute("c3", plan, undefined);
+		r.answer.select((options) => options[2]);
+		r.answer.confirm(async () => true);
+		await r.command("confirm");
+		const sel = r.dialogs.at(-2)!;
+		assert.equal(sel.kind, "select");
+		const labels = sel.body.split("\n");
+		assert.equal(new Set(labels).size, 3, `the labels are not unique: ${labels}`);
+		// the last label is the oldest plan (the newest is first)
+		assert.match(r.dialogs.at(-1)!.body, /seat impl-1 \(implementer\) claude\/sonnet\/medium/);
+		assert.doesNotMatch(r.dialogs.at(-1)!.body, /impl-2|impl-3/);
+		assert.equal(lead.got.at(-1).digest, DIGEST);
+	} finally {
+		lead.close();
+	}
+});
+
+// The plan reviewer on #863, item 1: a plan line is the model's free text
+// (Go's oneLine folds only whitespace), so a goal carrying a credential
+// canary and a terminal control sequence (ESC[2K erases the line) shows
+// redacted and stripped on the plan block, in the confirm dialog and in the
+// select's label. Reverted (the lines raw), the ESC reaches the dialog.
+test("/confirm: a goal with a canary and ESC[2K shows redacted and stripped on the block, the dialog and the label", async () => {
+	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
+	try {
+		const canary = "Ab9" + "xY7q1";
+		const goal = `goal: ship it token=${canary} \u001b[2Kall clear`;
+		const dirty = (digest: string) => envelope("team_propose", { project_dir: PROJECT, plan: [goal, "session s1, lead lead", "seat impl-1 (implementer) claude/sonnet/medium\u0007"], digest, prefix: "p", doors: "d" });
+		let next = dirty(DIGEST);
+		const r = rig((args) => res(0, args[1] === "propose" ? next : ""), lead.socket);
+		await propose(r);
+		next = dirty(DIGEST2);
+		await r.pi.tools.get("amq_team_propose").execute("c2", plan, undefined);
+		r.answer.select((options) => options[0]);
+		r.answer.confirm(async () => true);
+		await r.command("confirm");
+		const block = (r.ctx.widgets[PLAN_KEY]?.lines ?? []).join("\n");
+		const label = r.dialogs.at(-2)!.body;
+		const dialog = r.dialogs.at(-1)!.body;
+		for (const [where, text] of [["the plan block", block], ["the select label", label], ["the dialog", dialog]]) {
+			assert.ok(!text.includes(canary), `${where} shows the canary: ${JSON.stringify(text)}`);
+			assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f]/.test(text), `${where} carries a control character: ${JSON.stringify(text)}`);
+			assert.ok(text.includes("goal: ship it token=<redacted> [2Kall clear"), `${where}: ${JSON.stringify(text)}`);
+		}
+		// the dialog quotes the plan's size from its own lines
+		assert.ok(dialog.split("\n").includes("and 0 tasks over 0 files"), dialog);
+	} finally {
+		lead.close();
+	}
+});
+
+// Codex on d1a557e1: the confirm dialog is the binding surface, so its
+// lines are cleaned but never cut: a seat line longer than 300 characters (a
+// long model name) shows whole, its tail included. Reverted (the 300 cut),
+// the tail is unseen.
+test("/confirm: a seat line longer than 300 characters shows whole in the dialog", async () => {
+	const lead = await fakeLead((req) => ({ outcome: "witnessed", digest: req.digest }));
+	try {
+		const model = "provider/" + "very-long-model-name-".repeat(16) + "TAIL-THE-OWNER-MUST-SEE";
+		const seat = `seat impl-1 (implementer) pi/${model}/high`;
+		assert.ok(seat.length > 300, String(seat.length));
+		const r = rig((args) => res(0, args[1] === "propose" ? envelope("team_propose", { project_dir: PROJECT, plan: ["goal: ship it", "session s1, lead lead", seat], digest: DIGEST, prefix: "p", doors: "d" }) : ""), lead.socket);
+		await propose(r);
+		r.answer.confirm(async () => true);
+		await r.command("confirm");
+		const dialog = r.dialogs.at(-1)!.body;
+		assert.ok(dialog.split("\n").includes(seat), `the dialog cut the seat line:\n${dialog}`);
+		assert.ok(dialog.includes("TAIL-THE-OWNER-MUST-SEE"));
+	} finally {
+		lead.close();
+	}
 });

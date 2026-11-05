@@ -55,26 +55,29 @@
       ]
     }
   ],
+  "stale_records": [
+    { "handle": "senior-dev", "session": "v31", "launch_id": "0de97c89a1b2c3d4" }
+  ],
   "tasks": [
     { "id": "t1", "title": "Fix the parser", "class": "implement", "task_state": "blocked", "state": "blocked", "reason_code": "outside_declared_files",
       "bucket": "working", "bucket_marker": "", "pool": null, "lease_holder": "", "lease_expires_at": null, "lease_claimed": false, "attempt": 1,
       "wait_reason": "", "block_reason": "outside_declared_files", "depends_on": [], "project_path": "/Users/owner/code/app",
-      "created_at": "2026-11-01T09:01:00Z", "updated_at": "2026-11-01T09:04:00Z", "evidence": "", "pr_repository": "", "pr_number": 0, "pr_head": "", "wait_holders": [] },
+      "created_at": "2026-11-01T09:01:00Z", "updated_at": "2026-11-01T09:04:00Z", "evidence": "", "pr_repository": "", "pr_number": 0, "pr_head": "", "wait_holders": [], "wait_pool": "" },
     { "id": "t2", "title": "Write the notes", "class": "summarize", "task_state": "in_progress", "state": "online", "reason_code": "lease_claimed",
       "bucket": "working", "bucket_marker": "", "pool": null, "lease_holder": "scribe", "lease_expires_at": null, "lease_claimed": true, "attempt": 1,
       "wait_reason": "", "block_reason": "", "depends_on": [], "project_path": "/Users/owner/code/app",
-      "created_at": "2026-11-01T09:01:30Z", "updated_at": "2026-11-01T09:03:00Z", "evidence": "", "pr_repository": "owner/app", "pr_number": 812, "pr_head": "4f1c2a9e0b5d6c7f8a9b0c1d2e3f4a5b6c7d8e9f", "wait_holders": [] },
+      "created_at": "2026-11-01T09:01:30Z", "updated_at": "2026-11-01T09:03:00Z", "evidence": "", "pr_repository": "owner/app", "pr_number": 812, "pr_head": "4f1c2a9e0b5d6c7f8a9b0c1d2e3f4a5b6c7d8e9f", "wait_holders": [], "wait_pool": "" },
     { "id": "t26", "title": "The answer path", "class": "implement", "task_state": "pending", "state": "waiting", "reason_code": "file_lock",
       "bucket": "working", "bucket_marker": "", "pool": null, "lease_holder": "", "lease_expires_at": null, "lease_claimed": false, "attempt": 0,
       "wait_reason": "file_lock", "block_reason": "", "depends_on": [], "project_path": "/Users/owner/code/app",
-      "created_at": "2026-11-01T05:00:00Z", "updated_at": "2026-11-01T05:00:00Z", "evidence": "", "pr_repository": "", "pr_number": 0, "pr_head": "", "wait_holders": ["t20", "t23"] }
+      "created_at": "2026-11-01T05:00:00Z", "updated_at": "2026-11-01T05:00:00Z", "evidence": "", "pr_repository": "", "pr_number": 0, "pr_head": "", "wait_holders": ["t20", "t23"], "wait_pool": "" }
   ],
   "attention": [
     { "id": "gate:g1", "kind": "gate", "severity": "high", "subject": "gate g1: tag 8502aa", "since": "2026-11-01T08:59:00Z", "seat": "qa", "task_id": "", "gate_id": "g1", "bucket": "needs_you", "action": null }
   ],
   "gates": [
-    { "id": "g1", "action_class": "tag", "target_digest": "sha256:8502aa0011223344", "state": "open", "raised_by": "qa" },
-    { "id": "g0", "action_class": "merge", "target_digest": "sha256:aa", "state": "accepted", "raised_by": "qa" }
+    { "id": "g1", "action_class": "tag", "target_digest": "sha256:8502aa0011223344", "state": "open", "raised_by": "qa", "question": "Create a tag named v1?\nAsked by qa.\nYes lets it run. No stops it." },
+    { "id": "g0", "action_class": "merge", "target_digest": "sha256:aa", "state": "accepted", "raised_by": "qa", "question": "" }
   ],
   "actions": { "new_task": { "id": "task.new", "label": "new task", "argv": ["amq-squad"], "inputs": [] } },
   "scheduler": { "max_seats": 3, "live_seats": 3, "usage_limit_since": null, "usage_limit_until": null, "pid": 4321, "started_at": "2026-11-01T09:00:01.100Z", "launch_start": "2026-11-01T09:00:00Z", "live": true },
@@ -88,7 +91,7 @@
   ],
   "train": {
     "runs": [
-      { "run": "r2", "started_at": "2026-11-01T08:50:00Z", "last_at": "2026-11-01T08:52:00Z", "last_kind": "refusal", "repository": "owner/app", "base": "main", "prs": [811, 812], "merged": [811], "refusal": "refusal PR #812 checks: a required check failed", "done": false, "dry_run": false },
+      { "run": "r2", "started_at": "2026-11-01T08:50:00Z", "last_at": "2026-11-01T08:52:00Z", "last_kind": "refusal", "repository": "owner/app", "base": "main", "prs": [811, 812], "merged": [811], "refusal": "refusal PR #812 ci_green: a required check failed", "done": false, "dry_run": false },
       { "run": "r1", "started_at": "2026-11-01T08:00:00Z", "last_at": "2026-11-01T08:03:00Z", "last_kind": "merge", "repository": "owner/app", "base": "main", "prs": [810], "merged": [810], "refusal": "", "done": true, "dry_run": false }
     ],
     "alerts": [ { "id": "a1", "kind": "ungated_tag", "detail": "tag v1.2.0 has no accepted gate", "gate_id": "", "at": "2026-11-01T08:40:00Z" } ]

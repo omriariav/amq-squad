@@ -102,7 +102,7 @@ func (r *RelayRecord) Validate(requestID string) error {
 		check(messageIDRe.MatchString(id), "seen[]")
 	}
 	for _, p := range r.Posts {
-		ok := messageIDRe.MatchString(p.ReplyID) && relayKind(p.Kind) && len(p.Events) > 0 && shaRe.MatchString(p.SHA256) && !p.At.IsZero()
+		ok := messageIDRe.MatchString(p.ReplyID) && relayKind(p.Kind) && len(p.Events) > 0 && shaRe.MatchString(p.SHA256) && !p.At.IsZero() && optional(eventIDRe, p.PlanFor)
 		for _, e := range p.Events {
 			ok = ok && eventIDRe.MatchString(e)
 		}
@@ -114,7 +114,7 @@ func (r *RelayRecord) Validate(requestID string) error {
 	}
 	check(optional(messageIDRe, r.Pending), "pending_progress")
 	if p := r.Posting; p != nil {
-		ok := messageIDRe.MatchString(p.ReplyID) && relayKind(p.Kind) && len(p.Parts) >= 1 && len(p.Parts) <= 3 && len(p.Events) <= len(p.Parts) && p.Tries >= 0 && p.Tries <= 2
+		ok := messageIDRe.MatchString(p.ReplyID) && relayKind(p.Kind) && len(p.Parts) >= 1 && len(p.Parts) <= 3 && len(p.Events) <= len(p.Parts) && p.Tries >= 0 && p.Tries <= 2 && optional(eventIDRe, p.PlanFor)
 		for _, x := range p.Parts {
 			ok = ok && shaRe.MatchString(x)
 		}
@@ -174,9 +174,10 @@ type RelayRecord struct {
 type RelayPosting struct {
 	ReplyID string   `json:"reply_id"`
 	Kind    string   `json:"kind"`
-	Parts   []string `json:"parts"`  // sha256 of each part, in order
-	Events  []string `json:"events"` // the event ids of the parts confirmed (all of them: done, its post not yet recorded)
-	Tries   int      `json:"tries"`  // publishes of part len(events) not confirmed
+	Parts   []string `json:"parts"`              // sha256 of each part, in order
+	Events  []string `json:"events"`             // the event ids of the parts confirmed (all of them: done, its post not yet recorded)
+	Tries   int      `json:"tries"`              // publishes of part len(events) not confirmed
+	PlanFor string   `json:"plan_for,omitempty"` // as RelayPost.PlanFor
 }
 
 // RelayTurn is one owner DM of the request and the AMQ message that took it
@@ -199,6 +200,11 @@ type RelayPost struct {
 	Events  []string  `json:"events"`
 	SHA256  string    `json:"sha256"` // of the posted text
 	At      time.Time `json:"at"`
+	// PlanFor is the content digest (64 hex) of the team proposal this post
+	// carries, when the lead's process marked the reply as its plan
+	// (brief 3.1.1-1: the label team-plan:<hex>); a bare yes replied to this
+	// post is the team confirmation of that proposal. Absent otherwise.
+	PlanFor string `json:"plan_for,omitempty"`
 }
 
 // RelayRefusal is one lead reply the relay did not post: the reason's name

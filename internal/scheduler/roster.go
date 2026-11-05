@@ -500,8 +500,11 @@ func (s *Scheduler) drainForRelaunch(list []task.Task, log func(Decision)) bool 
 func (s *Scheduler) rosterNoIdleSeat(t task.Task, p task.Pool, now time.Time, log func(Decision)) (*task.Task, error) {
 	serving := s.rosterFor(p)
 	if len(serving) == 0 {
-		log(Decision{Kind: "seat_request_failed", TaskID: t.ID, Pool: p.Key(), Reason: fmt.Sprintf("no free seat in the squad's seat list for pool %s (no roster seat serves it)", p.Key())})
-		return nil, nil
+		// A named wait, not a log line (brief 3.1.1-2 item 1): the task waits
+		// no_roster_seat with the pool, which status and the screen show,
+		// until the roster, the task or its route changes.
+		s.routeWaits[t.ID] = p
+		return nil, s.wait(t, WaitNoRosterSeat, now)
 	}
 	live := false
 	for _, rs := range serving {

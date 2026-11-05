@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -491,6 +492,7 @@ func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
 	f := newSubprocessFixture(t) // subprocess row: gh through the real exec path
 	mustGit(t, f.bare, "tag", "v0", "main")
 	f.train.ReleaseGates, f.train.Root = &f.store, filepath.Join(f.dir, "root")
+	f.train.VerifyGate = decisionAccepted // the binding rules; the signature check has its own rows (brief3112_test.go)
 	f.train.DryRun = true
 	f.req.PRs = f.req.PRs[:1]
 	if res, err := f.train.Run(context.Background(), f.req); err != nil || len(res.Alerts) != 0 {
@@ -506,8 +508,10 @@ func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
 	if got := ReadAlerts(f.train.Root); len(got) != 2 {
 		t.Fatalf("alerts on disk %+v", got)
 	}
-	// an accepted gate for the tag covers it; the release stays an alert
-	rec, err := gatestore.Render(gatestore.Spec{GateID: "rel-v1", Action: "tag", Target: "git tag v1", RaisedBy: "seat", Squad: SquadOf(f.train.Root)}, time.Now(), gateIdentity())
+	// an accepted gate for the tag at its commit covers it (a seat's gated
+	// `git tag v1` names no commit and covers nothing, Codex P2 3 on #854);
+	// the release stays an alert
+	rec, err := gatestore.Render(gatestore.Spec{GateID: "rel-v1", Action: "tag", Target: gatetarget.ReleaseTag(fixtureRepo, "v1", head), RaisedBy: "seat", Squad: SquadOf(f.train.Root)}, time.Now(), gateIdentity())
 	if err != nil || f.store.Create(rec) != nil {
 		t.Fatal(err)
 	}

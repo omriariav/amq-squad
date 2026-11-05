@@ -36,3 +36,8 @@ test("the lead's reset tool", () => {
 	assert.ok(registerTools(new FakePi() as any, cfg({ lead: true })).includes("amq_task_reset"));
 	assert.ok(!registerTools(new FakePi() as any, cfg()).includes("amq_task_reset"));
 });
+
+test("every seat has the typed block tool", () => {
+	assert.ok(registerTools(new FakePi() as any, cfg()).includes("amq_task_block"));
+	assert.deepEqual(toolArgv.taskBlock(cfg(), { id: "t1", reason: "widen_requested", paths: ["calc.go"] }), ["task", "block", "t1", "--me", "pi-lead", "--reason", "widen_requested", "--path", "calc.go"]);
+});

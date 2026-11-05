@@ -9,6 +9,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
 import { describe, run } from "./verbs.ts";
+import { RULE } from "./words.ts";
 import { repoList, repoRead } from "./repo.ts";
 
 const KINDS = ["brainstorm", "review_request", "review_response", "question", "answer", "decision", "status", "todo"];
@@ -78,6 +79,18 @@ export const toolArgv = {
 		if (!p.evidence?.trim()) throw new Error("evidence is required: the command you ran and its result");
 		return ["task", "done", p.id, "--me", cfg.me, "--evidence", p.evidence];
 	},
+	taskBlock(cfg: Config, p: { id: string; reason: string; paths?: string[]; detail?: string }): string[] {
+		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
+		const reason = p.reason?.trim();
+		if (!reason) throw new Error("reason is required");
+		const paths = (p.paths ?? []).map((x) => x.trim()).filter(Boolean);
+		if (reason === "widen_requested" && !paths.length) throw new Error("widen_requested needs at least one path");
+		if (reason !== "widen_requested" && paths.length) throw new Error("paths are only valid with reason widen_requested");
+		const a = ["task", "block", p.id, "--me", cfg.me, "--reason", reason];
+		for (const path of paths) a.push("--path", path);
+		if (p.detail?.trim()) a.push("--detail", p.detail.trim());
+		return a;
+	},
 	taskReset(cfg: Config, p: { id: string }): string[] {
 		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
 		return ["task", "reset", p.id, "--me", cfg.me];
@@ -122,20 +135,47 @@ export const toolArgv = {
 
 // refusedPaths is the exact paths a task's commit refusal recorded outside
 // its declared files: the task (from `amq-squad task show --json`) must be
-// blocked with outside_declared_files, and the paths are its refused_paths
+// blocked with outside_declared_files or widen_requested, and the paths are its refused_paths
 // list, which the commit step writes with the block (round 7). The display
 // text in block_detail is never read: it truncates and cannot carry a name
 // with ", " or " (" exactly. An empty or missing list is refused.
 export function refusedPaths(t: { id?: string; state?: string; block_reason?: string; refused_paths?: unknown }): string[] {
-	if (t.state !== "blocked" || t.block_reason !== "outside_declared_files") {
-		throw new Error(`task ${t.id ?? "?"} is not blocked for files outside its declared set (state ${t.state ?? "?"}, reason ${t.block_reason || "none"}); there is nothing to widen; for a seat's own block with a widen request, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT (until the typed block for a widen request exists, t20)`);
+	if (t.state !== "blocked" || !["outside_declared_files", "widen_requested"].includes(t.block_reason ?? "")) {
+		// brief 3.1.1-3: what happened and what to do in words, then the rule,
+		// then the state and the reason code for the record
+		throw new Error(
+			`task ${t.id ?? "?"} is not blocked for files outside its declared set or by a seat's widen request, so there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset ${t.id ?? "ID"} --pool RUNTIME:MODEL:EFFORT\n\n${RULE}\nstate ${t.state ?? "?"}, reason ${t.block_reason || "none"}`,
+		);
 	}
 	const list = t.refused_paths;
 	if (!Array.isArray(list) || !list.length || !list.every((x) => typeof x === "string" && x !== "")) {
-		throw new Error(`task ${t.id ?? "?"}: the refusal recorded no refused paths (refused_paths); widen with amq-squad task widen from the owner's decision`);
+		throw new Error(`task ${t.id ?? "?"}: its block recorded no paths to widen by; widen it with amq-squad task widen from the owner's decision\n\n${RULE}\nrefused_paths empty`);
 	}
 	return list as string[];
 }
+
+// TEAM_LEAD_TOOLS is the team lead's whole tool list, one source: Go's
+// piruntime.TeamLeadTools (internal/piruntime/launch.go), the eleven pi
+// enforces for lead --team as --tools (R19 under amendment 26). The solo
+// lead's tools switch to exactly these at the owner's yes. amq_task_claim
+// and amq_task_done are a seat's verbs: a lead holding them could take a
+// lease itself, so they are never a lead's (brief 3.1.1-2 item 4); so is
+// amq_task_block, the holder's verb and a seat's typed widen request (the
+// lead decides widens, it does not request them). A row equates this list
+// with Go's.
+export const TEAM_LEAD_TOOLS: readonly string[] = [
+	"amq_send",
+	"amq_drain",
+	"amq_reply",
+	"amq_task_list",
+	"amq_task_add",
+	"amq_task_reset",
+	"amq_task_widen",
+	"amq_scheduler_relaunch",
+	"amq_repo_read",
+	"amq_repo_list",
+	"amq_status",
+];
 
 export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = run): string[] {
 	const names: string[] = [];
@@ -143,6 +183,9 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 		pi.registerTool(def);
 		names.push(def.name);
 	};
+	// a seat's verbs (claim, done, block): active for a seat, registered
+	// inactive for a lead
+	const seatReg = (def: Parameters<ExtensionAPI["registerTool"]>[0]) => reg(cfg.lead || cfg.solo ? { ...def, defaultActive: false } : def);
 	reg({
 		name: "amq_send",
 		label: "AMQ send",
@@ -192,7 +235,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskList(cfg, p), undefined, cfg, signal);
 		},
 	});
-	reg({
+	seatReg({
 		name: "amq_task_claim",
 		label: "Task claim",
 		description: "Claim the task the scheduler leased to you (or a given id). Claim before you start work.",
@@ -201,13 +244,28 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			return call(runner, cfg.bin, toolArgv.taskClaim(cfg, p), undefined, cfg, signal);
 		},
 	});
-	reg({
+	seatReg({
 		name: "amq_task_done",
 		label: "Task done",
 		description: "Report your task done with evidence (the command you ran and its result). The harness commits the declared files.",
 		parameters: Type.Object({ id: Type.String(), evidence: Type.String() }),
 		async execute(_id, p, signal) {
 			return call(runner, cfg.bin, toolArgv.taskDone(cfg, p), undefined, cfg, signal);
+		},
+	});
+	seatReg({
+		name: "amq_task_block",
+		label: "Task block",
+		description: "Block your task for a decision. To request more scope, use reason widen_requested and list the exact paths needed.",
+		promptSnippet: "amq_task_block: block a task, including a typed widen request",
+		parameters: Type.Object({
+			id: Type.String(),
+			reason: Type.String({ description: "reason code; use widen_requested for more declared paths" }),
+			paths: Type.Optional(Type.Array(Type.String(), { description: "exact paths required with widen_requested" })),
+			detail: Type.Optional(Type.String()),
+		}),
+		async execute(_id, p, signal) {
+			return call(runner, cfg.bin, toolArgv.taskBlock(cfg, p), undefined, cfg, signal);
 		},
 	});
 	// The team lead's tools: active for the team lead; registered inactive
@@ -286,7 +344,7 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			name: "amq_task_widen",
 			label: "Task widen",
 			description:
-				"Widen a task the harness refused for changing files outside its declared files (outside_declared_files), by the paths that refusal names " +
+				"Widen a task blocked with outside_declared_files or widen_requested, by the exact paths that block records " +
 				"and no others; files, if given, must be among them. Give your decision as the reason.",
 			promptSnippet: "amq_task_widen: accept a refused task's out-of-scope paths",
 			parameters: Type.Object({

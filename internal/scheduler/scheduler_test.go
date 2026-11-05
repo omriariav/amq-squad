@@ -419,6 +419,25 @@ func TestNoRouteAndFileLockWaits(t *testing.T) {
 	}
 }
 
+func TestBoundDependencyGetsPlainMergeWait(t *testing.T) {
+	h := newHarness(t, Config{})
+	dep, err := h.store.Add(task.AddInput{Title: "dependency", Class: "implement", Pool: &sonnet}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.BindPR(dep.ID, "o/r", 31, strings.Repeat("a", 40), t0); err != nil {
+		t.Fatal(err)
+	}
+	child, err := h.store.Add(task.AddInput{Title: "child", Class: "implement", Pool: &sonnet, DependsOn: []string{dep.ID}}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.tick()
+	if got, want := h.get(child.ID).WaitReason, "waiting for t1's PR #31 to merge"; got != want {
+		t.Fatalf("scheduler wait reason = %q, want %q", got, want)
+	}
+}
+
 // Acceptance 3: the same store and the same event sequence give the same
 // decisions, 100 runs, with the events of each step posted from goroutines
 // in shuffled order and timing (run under -race).

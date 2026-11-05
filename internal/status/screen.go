@@ -21,14 +21,21 @@ import (
 // the deleted refusals. Every read is lock-free: the records are written by
 // rename or appended, and status never takes or probes a lock.
 
+// processLive is status's one process check: the pid answers and carries
+// the recorded raw start stamp, so a reused pid is not the process.
+func processLive(o CollectOptions, pid int, start string) bool {
+	if pid <= 0 || start == "" || !o.PIDAlive(pid) {
+		return false
+	}
+	stamp, ok := o.StartToken(pid)
+	return ok && stamp == start
+}
+
 // collectProcesses reads the lead record and the scheduler's launch record.
 func collectProcesses(o CollectOptions, in *Input, warn func(string, ...any)) {
 	if rec, err := schedproc.ReadLeadRecord(o.Root); err == nil {
 		l := &Lead{PID: rec.PID, Start: rec.Start, Pane: rec.Pane, RecordedAt: rec.At}
-		if rec.PID > 0 && o.PIDAlive(rec.PID) {
-			stamp, ok := o.StartToken(rec.PID)
-			l.Live = ok && stamp == rec.Start
-		}
+		l.Live = processLive(o, rec.PID, rec.Start)
 		if rec.Pane != "" {
 			l.Attach = "tmux attach -t " + rec.Pane
 		}

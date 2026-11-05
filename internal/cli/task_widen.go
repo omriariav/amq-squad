@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -140,7 +141,7 @@ func runTaskWiden(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "task widen %s: applied by the scheduler\n", id)
 	}
 	if !reply.OK {
-		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("task widen %s refused (%s): %s", id, reply.Code, reply.Detail)}
+		return &codedExitError{code: ExitCommitRefused, msg: widenReplyRefusal(id, reply)}
 	}
 	return nil
 }
@@ -176,10 +177,92 @@ func evalPath(p string) string {
 	return filepath.Clean(p)
 }
 
-// widenRefused is a refused widening with its reason code.
-type widenRefused struct{ code, msg string }
+// widenRefused is a refused widening with its reason code; plain, when
+// set, is its plain line composed from the decision's own record (the
+// growth gate's raise), else the code's (widenPlain).
+type widenRefused struct{ code, msg, plain string }
 
-func (e *widenRefused) Error() string { return fmt.Sprintf("widen refused (%s): %s", e.code, e.msg) }
+// widenRaiseGrowthGate raises a widening's growth gate (a test seam).
+var widenRaiseGrowthGate = raiseGrowthGate
+
+// Error is the refusal as the 3.1.1 gate questions read (brief 3.1.1-3
+// item 4): what happened and what to do in plain words, then the rule,
+// then the reason code and the detail for the record.
+func (e *widenRefused) Error() string {
+	plain := e.plain
+	if plain == "" {
+		plain = widenPlain(e.code)
+	}
+	return fmt.Sprintf("%s\n\n%s\nwiden refused (%s): %s", plain, gatestore.Rule, e.code, e.msg)
+}
+
+// widenPlain is a widening refusal's plain line, by its reason code.
+func widenPlain(code string) string {
+	switch code {
+	case "widen_invalid":
+		return "the widening's paths are not valid for this task"
+	case "widen_not_requested":
+		return "the task is not blocked by a seat's widen request or for files outside its declared set, so there is nothing to widen; to send it back to a seat, reset it onto a pool"
+	case "widen_paths_missing":
+		return "the task's block recorded no paths to widen by"
+	case "widen_paths_mismatch":
+		return "a path is not one the task's block recorded"
+	case task.RefusalFileLock:
+		return "the widened files overlap another active task's files; widen it once that task is done"
+	case task.ReasonGrowthGateRequired:
+		return "the widening needs the owner's growth gate"
+	case task.RefusalSelfWiden:
+		return "the seat that holds or reported the task cannot widen it; the lead decides a widening"
+	}
+	return "the widening was refused"
+}
+
+// widenReplyPlain is the plain line of a refusal the scheduler's decision
+// socket gave before the widening was tried.
+func widenReplyPlain(code string) string {
+	switch code {
+	case schedproc.RefusedNotLead:
+		return "the request does not come from the lead's pane"
+	case schedproc.RefusedOriginUnknown:
+		return "the scheduler cannot tell where the request came from"
+	case schedproc.RefusedStarting:
+		return "the scheduler is still starting; try again once it is up"
+	case schedproc.RefusedBusy:
+		return "the scheduler is busy with other decisions; try again"
+	case "not_squad":
+		return "the task is not this squad's"
+	}
+	return "the scheduler refused it"
+}
+
+// widenReplyRefusal is the verb's refusal: the plain line (the widening's
+// own, above the rule of its detail, else the socket's by code), then the
+// rule, then the code and the detail for the record.
+func widenReplyRefusal(id string, reply schedproc.DecideReply) string {
+	plain, record := widenReplyPlain(reply.Code), reply.Detail
+	if at := strings.Index(reply.Detail, "\n\n"+gatestore.Rule+"\n"); at >= 0 {
+		plain, record = reply.Detail[:at], reply.Detail[at+len(gatestore.Rule)+3:]
+	}
+	return fmt.Sprintf("task widen %s was refused: %s\n\n%s\nrefused (%s): %s", id, plain, gatestore.Rule, reply.Code, record)
+}
+
+var archiveWidenAttempt = seatcommit.ArchiveAttempt
+
+// archiveTypedWidenAttempt closes the one-tick window between a typed block
+// and scanAttempts. ArchiveAttempt owns the keyed dedup under the ledger lock,
+// so this path must not read that ledger before asking it to archive.
+func archiveTypedWidenAttempt(sel storeSelection, t task.Task, wo seatcommit.WidenOptions, d seatcommit.WidenDecision) seatcommit.WidenDecision {
+	if !typedWidenRequest(t) || wo.Commit == nil || wo.Commit.SnapshotAttempt != t.BlockAttempt {
+		return d
+	}
+	if _, err := archiveWidenAttempt(sel.root, wo.Commit.Handle, "", nil, t.ID, wo.Commit.SnapshotAttempt, taskNow()); err != nil {
+		// The decision observed before this best-effort archive remains the
+		// authoritative refusal. The scheduler scan retries the archive.
+		d.Detail = strings.TrimSpace(d.Detail + "; on-demand archive pending: " + err.Error())
+		return d
+	}
+	return seatcommit.CheckWiden(wo)
+}
 
 // applyLeadWiden applies a verified lead decision: the grant checks
 // (seatcommit.CheckWiden), the growth gate when a limit is crossed, then
@@ -190,12 +273,75 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	if err != nil {
 		return data, err
 	}
+	// Use the same canonical spellings WidenGated will persist before
+	// deciding whether an entry is an exact-looking literal. Otherwise a
+	// spelling such as ./link is widened as "link" by the store but misses
+	// link resolution, including the replacement of the alias by its target.
+	added, err := task.CleanDeclaredFiles(req.Files)
+	if err != nil {
+		return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+	}
+	exact, err := validateBlockedWiden(t, added)
+	if err != nil {
+		return data, err
+	}
 	g, gerr := grants.Load(t.ProjectPath)
-	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: req.Files, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
+	if len(exact) == 0 {
+		exact = literalWidenFiles(added)
+	}
+	var protected, resolutions []string
+	var links []gatestore.PathLink
+	if gerr == nil && len(exact) > 0 {
+		resolved, err := seatcommit.ResolveExactFiles(g.Grants, sel.root, t.ProjectPath, "", exact)
+		if err != nil {
+			return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+		}
+		replacements := make(map[string]string, len(resolved))
+		for _, r := range resolved {
+			literal, err := task.LiteralGlob(r.Path)
+			if err != nil {
+				return data, &widenRefused{code: "widen_invalid", msg: err.Error()}
+			}
+			alias, _ := task.LiteralGlob(r.Alias)
+			replacements[alias] = literal
+			if r.Protected {
+				protected = append(protected, literal)
+			}
+			if r.Alias != r.Path {
+				resolutions = append(resolutions, fmt.Sprintf("%q resolves to %q", r.Alias, r.Path))
+				links = append(links, gatestore.PathLink{Path: r.Path, Alias: r.Alias})
+			}
+		}
+		for i, p := range added {
+			if resolved, ok := replacements[p]; ok {
+				added[i] = resolved
+			}
+		}
+	}
+	wo := seatcommit.WidenOptions{Root: sel.root, Task: t, Added: added, ProtectedAdded: protected, Grants: g, GrantsErr: gerr, RepoRoot: t.ProjectPath, Gates: sel.gateChecker()}
 	if t.Report != nil {
 		wo.Commit = &seatcommit.Options{Root: sel.root, Handle: t.Report.By, Now: taskNow}
+	} else if typedWidenRequest(t) {
+		// The scheduler archives the stopped attempt when it observes the typed
+		// block. Select that immutable tree by the block's explicit attempt.
+		for _, attempt := range t.Attempts {
+			if attempt.N == t.BlockAttempt {
+				wo.Commit = &seatcommit.Options{Root: sel.root, Handle: attempt.Holder, SnapshotAttempt: attempt.N, Now: taskNow}
+				break
+			}
+		}
 	}
 	d := seatcommit.CheckWiden(wo)
+	d = archiveTypedWidenAttempt(sel, t, wo, d)
+	widenReason := req.Reason
+	if len(resolutions) > 0 {
+		note := "exact-path resolution: " + strings.Join(resolutions, "; ")
+		d.Notes = append(d.Notes, note)
+		widenReason += "; " + note
+		if d.ReasonCode == seatcommit.ReasonGrowthGate {
+			d.Detail += "; " + note
+		}
+	}
 	data.Decision = d
 	if !d.Allowed {
 		if d.ReasonCode == seatcommit.ReasonGrowthGate {
@@ -204,7 +350,7 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 				if c.Accepted {
 					continue
 				}
-				gid, err := raiseGrowthGate(sel, lead, t.ID, c.Target)
+				gid, err := widenRaiseGrowthGate(sel, lead, t.ID, t.Title, c.Target, links)
 				data.GateIDs = append(data.GateIDs, gid)
 				raised = append(raised, gid+" "+c.Target)
 				if err != nil {
@@ -217,9 +363,20 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 				}
 			}
 		}
-		return data, &widenRefused{code: d.ReasonCode, msg: d.Detail}
+		refused := &widenRefused{code: d.ReasonCode, msg: d.Detail}
+		if d.ReasonCode == seatcommit.ReasonGrowthGate {
+			// brief 3.1.1-3 (the plan reviewer): the plain line says what the
+			// raise did, from GateIDs and GateErrs; a failed raise's error
+			// goes below the rule
+			refused.plain = "the owner's growth gate is raised; the task waits for the answer"
+			if len(data.GateErrs) > 0 {
+				refused.plain = "the widening needs the owner's growth gate, and raising it failed; try /widen again"
+				refused.msg += "; the gate was not raised: " + strings.Join(data.GateErrs, "; ")
+			}
+		}
+		return data, refused
 	}
-	after, err := sel.store.WidenGated(t.ID, lead, req.Reason, wo.Added, d.Gates, taskLeaseDuration, taskNow())
+	after, err := sel.store.WidenGated(t.ID, lead, widenReason, wo.Added, d.Gates, taskLeaseDuration, taskNow())
 	var wr *task.WidenRefusal
 	if errors.As(err, &wr) {
 		data.Decision.ReasonCode, data.Decision.Detail = wr.ReasonCode, wr.Error()
@@ -230,4 +387,86 @@ func applyLeadWiden(sel storeSelection, lead string, req schedproc.WidenRequest)
 	}
 	data.Task = &after
 	return data, nil
+}
+
+// literalWidenFiles recovers exact names from LiteralGlob output while
+// leaving --files patterns alone. Re-encoding is the proof that a candidate
+// is one literal path rather than a broader glob.
+func literalWidenFiles(globs []string) []string {
+	var out []string
+	for _, g := range globs {
+		var b strings.Builder
+		literal := true
+		for i := 0; i < len(g); {
+			switch {
+			case strings.HasPrefix(g[i:], "[[]"):
+				b.WriteByte('[')
+				i += 3
+			case strings.HasPrefix(g[i:], "[*]"):
+				b.WriteByte('*')
+				i += 3
+			case strings.HasPrefix(g[i:], "[?]"):
+				b.WriteByte('?')
+				i += 3
+			case strings.ContainsRune("*?[", rune(g[i])):
+				literal = false
+				i = len(g)
+			default:
+				b.WriteByte(g[i])
+				i++
+			}
+		}
+		p := b.String()
+		if encoded, err := task.LiteralGlob(p); literal && err == nil && encoded == g {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// validateBlockedWiden limits a lead decision on a blocked task to the exact
+// paths recorded by the commit refusal or the seat's typed widen request.
+// Non-blocked widening keeps its legacy behavior.
+func validateBlockedWiden(t task.Task, requested []string) ([]string, error) {
+	if t.State != task.StateBlocked {
+		return nil, nil
+	}
+	// Keep the established growth-gate retry: a harness refusal for a
+	// protected path retains its done report while the same lead decision is
+	// checked, escalated, and retried after the owner accepts the gate.
+	if t.Report != nil && (t.BlockReason == seatcommit.ReasonProtected || t.BlockReason == seatcommit.ReasonGrowthGate) {
+		return nil, nil
+	}
+	if t.BlockReason != seatcommit.ReasonOutside && !typedWidenRequest(t) {
+		return nil, &widenRefused{code: "widen_not_requested", msg: fmt.Sprintf("task %s is not blocked for files outside its declared set or by a seat's widen request (state %s, reason %s); there is nothing to widen; to send it back to a seat, the lead returns the task with amq-squad task reset %s --pool RUNTIME:MODEL:EFFORT", t.ID, t.State, t.BlockReason, t.ID)}
+	}
+	if len(t.RefusedPaths) == 0 {
+		return nil, &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded no refused paths", t.ID)}
+	}
+	allowed := make(map[string]string, len(t.RefusedPaths))
+	for _, p := range t.RefusedPaths {
+		g, err := task.LiteralGlob(p)
+		if err != nil {
+			return nil, &widenRefused{code: "widen_paths_missing", msg: fmt.Sprintf("task %s recorded an invalid refused path %q", t.ID, p)}
+		}
+		allowed[g] = p
+	}
+	normalized, err := task.CleanDeclaredFiles(requested)
+	if err != nil {
+		return nil, &widenRefused{code: "widen_paths_mismatch", msg: err.Error()}
+	}
+	var exact []string
+	for _, p := range normalized {
+		raw, ok := allowed[p]
+		if !ok {
+			return nil, &widenRefused{code: "widen_paths_mismatch", msg: fmt.Sprintf("%q is not an exact path recorded by task %s", p, t.ID)}
+		}
+		exact = append(exact, raw)
+	}
+	return exact, nil
+}
+
+func typedWidenRequest(t task.Task) bool {
+	return t.Report == nil && t.BlockAttempt > 0 && len(t.RefusedPaths) > 0 &&
+		(t.BlockReason == task.ReasonWidenRequested || t.BlockReason == seatcommit.ReasonGrowthGate)
 }

@@ -125,7 +125,11 @@ type Train struct {
 	InSeat bool
 	// ReleaseGates and Root, when set, run the tag and release drift check at
 	// every run (Drift): an ungated tag or release becomes an owner alert.
+	// The check reads the gate store of every session under the AMQ root
+	// (Root's parent); VerifyGate is the owner-signed acceptance a gate must
+	// pass to clear one (nil: none clears).
 	ReleaseGates *gatestore.Store
+	VerifyGate   GateVerifier
 	// Binder re-binds a task to the head the train's own rebase pushed (lead
 	// ruling, P1-4): the binding stays the one source of truth for pr_head.
 	// Tasks is the store the binding is read back from at merge time. A bound
@@ -153,13 +157,28 @@ type PlanPR struct {
 	GateError string    `json:"gate_error,omitempty"`
 	Lifted    bool      `json:"lifted,omitempty"` // an accepted owner gate opened it
 	After     []int     `json:"after,omitempty"`  // earlier PRs whose files overlap: rebase after them
-	// RebaseForCI: no required check ran at this head and its base is behind;
-	// the real run rebases it (CI then runs) and re-checks.
-	RebaseForCI bool     `json:"rebase_for_ci,omitempty"`
-	Overlap     []string `json:"overlap,omitempty"`
-	Status      string   `json:"status"` // planned | refused | merged | stopped
-	Merged      string   `json:"merged,omitempty"`
-	base        string   // the PR's merge base, for RebaseForCI
+	// RebaseForCI rebases a behind head, waits for CI and re-checks it. The
+	// reason is either absent CI or strict branch protection.
+	RebaseForCI  bool        `json:"rebase_for_ci,omitempty"`
+	RebaseRule   string      `json:"rebase_rule,omitempty"`
+	RebaseReason string      `json:"rebase_reason,omitempty"`
+	PatchProof   *PatchProof `json:"patch_proof,omitempty"`
+	Overlap      []string    `json:"overlap,omitempty"`
+	Status       string      `json:"status"` // planned | refused | merged | stopped
+	Merged       string      `json:"merged,omitempty"`
+	title        string      // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
+	mergeable    string      // server mergeability at the checked head
+}
+
+// PatchProof is the stable patch identity checked before a rebased task is
+// bound to the server's new head. A dry run sets Required but cannot fill IDs.
+type PatchProof struct {
+	Required bool   `json:"required"`
+	OldHead  string `json:"old_head,omitempty"`
+	NewHead  string `json:"new_head,omitempty"`
+	OldID    string `json:"old_patch_id,omitempty"`
+	NewID    string `json:"new_patch_id,omitempty"`
+	Match    bool   `json:"match,omitempty"`
 }
 
 // ciAbsentOnly: the only refusal is CI with no run at the head.
@@ -255,10 +274,14 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		return res, err
 	}
 	if l, ok := t.Forge.(ReleaseLister); ok && t.ReleaseGates != nil && t.Root != "" {
-		alerts, derr := Drift(ctx, l, *t.ReleaseGates, t.Root, req.Repository, t.now())
+		alerts, resolved, derr := DriftResolved(ctx, l, t.VerifyGate, t.Root, req.Repository, t.now())
 		res.Alerts = alerts
 		for _, a := range alerts {
 			_ = entry(Entry{Kind: "alert", Detail: a.Detail, GateID: a.ID})
+		}
+		for _, a := range resolved {
+			// the alert's entry stays in the log; its clearing is recorded
+			_ = entry(Entry{Kind: "alert_cleared", Detail: a.Detail + "; a verified owner gate now covers it", GateID: a.ID})
 		}
 		if errors.Is(derr, ErrBaselineInvalid) {
 			res.Stopped = derr.Error()
@@ -297,6 +320,9 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	// merged is reported merged, never re-checked and refused.
 	landed := map[int]string{}
 	if !t.DryRun {
+		if err = t.reconcileRebinds(ctx, &req); err != nil {
+			return res, err
+		}
 		if landed, err = t.reconcileMerges(ctx, req, entry); err != nil {
 			return res, err
 		}
@@ -312,8 +338,17 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		if err != nil {
 			return res, err
 		}
-		if ciAbsentOnly(p.Refusals) && p.base != res.BaseSHA {
+		behind := false
+		if prot.Strict || ciAbsentOnly(p.Refusals) {
+			behind, err = t.Forge.Behind(ctx, req.Repository, res.BaseSHA, p.Head)
+			if err != nil {
+				return res, fmt.Errorf("compare #%d with pinned base: %w", p.Number, err)
+			}
+		}
+		t.applyStrict(&p, prot.Strict && behind, strictUnsafe(p))
+		if !prot.Strict && ciAbsentOnly(p.Refusals) && behind {
 			p.Refusals, p.RebaseForCI = nil, true
+			p.RebaseReason = "required CI is absent on a head behind " + req.Base
 		}
 		if len(p.Refusals) > 0 {
 			t.refuse(req, &p, entry)
@@ -321,6 +356,13 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		res.PRs = append(res.PRs, p)
 	}
 	order(res.PRs)
+	for i := range res.PRs {
+		p := &res.PRs[i]
+		it := item(req, p.Number)
+		if it.BoundHead != "" && (p.RebaseForCI || len(p.After) > 0 || p.mergeable == "CONFLICTING") {
+			p.PatchProof = &PatchProof{Required: true, OldHead: p.Head}
+		}
+	}
 	t.digest(&res, entry)
 	if t.DryRun {
 		return res, entry(Entry{Kind: "plan", BaseSHA: res.BaseSHA, Pairs: res.Pairs, Digest: res.Digest,
@@ -383,10 +425,36 @@ func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, 
 			return PlanPR{}, fmt.Errorf("PR #%d head kept moving while it was checked (%s -> %s)", it.Number, short(pr.HeadSHA), short(again.HeadSHA))
 		}
 	}
-	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", base: pr.BaseSHA}
+	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", title: pr.Title, mergeable: pr.Mergeable}
 	p.Refusals = check(checkInput{repository: req.Repository, base: req.Base, item: it, pr: pr, runs: runs, grant: t.Grants,
 		required: ci, trainHeads: t.Audit.trainHeads(req.Repository, it.Number)})
 	return p, nil
+}
+
+func strictUnsafe(p PlanPR) string {
+	switch {
+	case p.mergeable == "CONFLICTING":
+		return "the PR conflicts with the current base"
+	case slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }):
+		return "the PR head moved off its task binding"
+	default:
+		return ""
+	}
+}
+
+func (t *Train) applyStrict(p *PlanPR, behind bool, unsafe string) {
+	if !behind {
+		return
+	}
+	if unsafe != "" {
+		p.Refusals = append(p.Refusals, Refusal{Rule: RuleStrictUpToDate,
+			Detail: "the branch is behind and the train cannot bring it up to date: " + unsafe})
+		return
+	}
+	p.Refusals = slices.DeleteFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RuleCIGreen })
+	p.RebaseForCI = true
+	p.RebaseRule = RuleStrictUpToDate
+	p.RebaseReason = "GitHub requires the branch to be up to date before merging"
 }
 
 // refuse records a refusal and escalates it: an accepted owner gate for this
@@ -410,7 +478,9 @@ func (t *Train) refuse(req Request, p *PlanPR, entry func(Entry) error) {
 		p.GateError = "no gate writer attached"
 	default:
 		id := "merge-" + strings.TrimPrefix(gatetarget.Digest("spawn", target), "sha256:")[:16]
-		rec, err := t.Escalate.Raise(gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: t.Lead})
+		// the question's plain lines read the PR's title and the base the
+		// train merges into, both as read here (brief 3.1.1-1)
+		rec, err := t.Escalate.Raise(gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: t.Lead, Facts: gatestore.SafeFacts(p.title, req.Base)})
 		switch {
 		case err == nil, errors.Is(err, fs.ErrExist):
 			p.GateID = id
@@ -472,6 +542,26 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 	if err != nil {
 		return err
 	}
+	if res.Protection.Strict {
+		behind, err := t.Forge.Behind(ctx, req.Repository, res.BaseSHA, cur.HeadSHA)
+		if err != nil {
+			return fmt.Errorf("the train stopped while comparing PR #%d with the current base\nrule: branch freshness\ncompare error: %w", p.Number, err)
+		}
+		unsafe := ""
+		switch {
+		case cur.Mergeable == "CONFLICTING":
+			unsafe = "the PR conflicts with the current base"
+		case it.BoundHead != "" && cur.HeadSHA != it.BoundHead:
+			unsafe = "the PR head moved off its task binding"
+		}
+		t.applyStrict(p, behind, unsafe)
+		if len(p.Refusals) > 0 {
+			if t.refuse(req, p, entry); p.Status == "refused" {
+				t.digest(res, entry)
+				return nil
+			}
+		}
+	}
 	rebase := cur.Mergeable == "CONFLICTING" || p.RebaseForCI
 	for _, f := range p.Files {
 		if _, ok := merged[f]; ok {
@@ -483,6 +573,18 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		return fmt.Errorf("%w: no task store to read and write the binding of #%d", ErrBindingFailed, p.Number)
 	}
 	if rebase {
+		beforeBase := res.BaseSHA
+		oldPatch := ""
+		if bound {
+			oldPatch, err = t.Forge.PatchID(ctx, req.Repository, beforeBase, p.Head)
+			if errors.Is(err, ErrIncompleteDiff) {
+				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head}
+				return t.refusePatchProof(res, p, entry, "the update could not be proved: GitHub returned an incomplete diff")
+			}
+			if err != nil {
+				return fmt.Errorf("prove the reviewed patch before updating #%d: %w", p.Number, err)
+			}
+		}
 		// The rebase reports the head it produced (pinned to the head the
 		// train checked). The train binds that SHA only, never a read-back: a
 		// push after the rebase leaves the PR head off the binding and is
@@ -496,8 +598,26 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 				return err
 			}
 			if bound {
+				afterBase, err := t.Forge.BranchHead(ctx, req.Repository, req.Base)
+				if err != nil {
+					return fmt.Errorf("read %s head after updating #%d: %w", req.Base, p.Number, err)
+				}
+				res.BaseSHA = afterBase
+				newPatch, err := t.Forge.PatchID(ctx, req.Repository, afterBase, pushed)
+				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head, NewHead: pushed, OldID: oldPatch, NewID: newPatch, Match: err == nil && oldPatch == newPatch}
+				if errors.Is(err, ErrIncompleteDiff) {
+					p.Head = pushed
+					return t.refusePatchProof(res, p, entry, "the update could not be proved: GitHub returned an incomplete diff")
+				}
+				if err != nil {
+					return fmt.Errorf("prove the updated patch of #%d: %w", p.Number, err)
+				}
+				if oldPatch != newPatch {
+					p.Head = pushed
+					return t.refusePatchProof(res, p, entry, "its change moved during the update")
+				}
 				// audit first, then the binding write, both before the check
-				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed}); err != nil {
+				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed, Detail: "patch-id: " + oldPatch}); err != nil {
 					return err
 				}
 				if err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {
@@ -521,6 +641,7 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		return err
 	}
 	fresh.After, fresh.Overlap = p.After, p.Overlap
+	fresh.PatchProof = p.PatchProof
 	moved := fresh.Head != p.Head
 	*p = fresh
 	if moved {
@@ -561,11 +682,71 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		sha, detail = got, "reconciled: the server merged the pinned head; its response was lost ("+err.Error()+")"
 	}
 	p.Status, p.Merged = "merged", sha
+	if bound {
+		if err := t.recordTaskMerge(it.Task, req.Repository, p.Number, p.Head, sha); err != nil {
+			return err
+		}
+	}
 	for _, f := range p.Files {
 		merged[f] = p.Number
 	}
 	res.BaseSHA = sha
 	return entry(Entry{Kind: "merge", PR: p.Number, Task: p.Task, Head: p.Head, Merged: sha, Digest: res.Digest, Detail: detail})
+}
+
+func (t *Train) refusePatchProof(res *Result, p *PlanPR, entry func(Entry) error, detail string) error {
+	p.Refusals = append(p.Refusals, Refusal{Rule: RuleRebasePatch, Detail: detail})
+	p.Status = "refused"
+	e := Entry{Kind: "refusal", PR: p.Number, Task: p.Task, Rules: []string{RuleRebasePatch}, Detail: detail}
+	if proof := p.PatchProof; proof != nil {
+		e.Head, e.NewHead = proof.OldHead, proof.NewHead
+		e.Detail += "\nold patch-id: " + proof.OldID + "\nnew patch-id: " + proof.NewID
+	}
+	if err := entry(e); err != nil {
+		return err
+	}
+	t.digest(res, entry)
+	return nil
+}
+
+// reconcileRebinds finishes a proof-backed binding write when a previous run
+// stopped after journaling it. It emits no reconcile entry: the journaled head
+// and the server head must already be the same.
+func (t *Train) reconcileRebinds(ctx context.Context, req *Request) error {
+	if t.Binder == nil || t.Tasks == nil {
+		return nil
+	}
+	entries, err := t.Audit.Read()
+	if err != nil {
+		return err
+	}
+	for i := range req.PRs {
+		it := &req.PRs[i]
+		if it.BoundHead == "" {
+			continue
+		}
+		var pending Entry
+		for _, e := range entries {
+			if e.Kind == "rebind" && e.Repository == req.Repository && e.PR == it.Number && e.Task == it.Task && e.Head == it.BoundHead && strings.HasPrefix(e.Detail, "patch-id: ") {
+				pending = e
+			}
+		}
+		if pending.NewHead == "" {
+			continue
+		}
+		cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+		if err != nil {
+			return err
+		}
+		if cur.HeadSHA != pending.NewHead {
+			continue
+		}
+		if err := t.Binder.BindPR(it.Task, req.Repository, it.Number, pending.NewHead); err != nil {
+			return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pending.NewHead), err)
+		}
+		it.BoundHead = pending.NewHead
+	}
+	return nil
 }
 
 // mergedAt reads the PR back: its merge commit when the server merged it at
@@ -599,12 +780,63 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		e, ok := last[it.Number]
 		switch {
 		case !ok:
+			if it.BoundHead == "" && it.Unbound == "" {
+				continue // not a real-run item populated by BindTasks
+			}
+			cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+			if err != nil {
+				return nil, fmt.Errorf("read PR #%d while reconciling: %w", it.Number, err)
+			}
+			if cur.State != "MERGED" || cur.MergeCommit == "" {
+				continue
+			}
+			if it.BoundHead != "" {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, cur.HeadSHA, cur.MergeCommit, "server-reported merged head", entry)
+				if err != nil {
+					return nil, err
+				}
+				if !recorded {
+					continue
+				}
+			}
+			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: it.Task, Head: cur.HeadSHA, Merged: cur.MergeCommit,
+				Detail: "reconciled: the server already reported the PR merged"}); err != nil {
+				return nil, err
+			}
+			out[it.Number] = cur.MergeCommit
 		case e.Kind == "merge":
+			if it.BoundHead != "" {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, e.Merged, "journaled merge", entry)
+				if err != nil {
+					return nil, err
+				}
+				if !recorded {
+					continue
+				}
+			}
 			out[it.Number] = e.Merged
 		default:
+			if it.BoundHead != "" {
+				matches, err := t.reconcileBinding(it, req.Repository, e.Head, "journaled merge intent", entry)
+				if err != nil {
+					return nil, err
+				}
+				if !matches {
+					continue
+				}
+			}
 			sha, merged := t.mergedAt(ctx, req.Repository, it.Number, e.Head)
 			if !merged {
 				continue // not merged: the PR is checked again and a new intent journaled
+			}
+			if it.BoundHead != "" {
+				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, sha, "journaled merge intent", entry)
+				if err != nil {
+					return nil, err
+				}
+				if !recorded {
+					continue
+				}
 			}
 			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: e.Task, Head: e.Head, Merged: sha, Digest: e.Digest,
 				Detail: "reconciled at the next run: the server merged the journaled head (intent of run " + e.Run + ")"}); err != nil {
@@ -614,6 +846,81 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		}
 	}
 	return out, nil
+}
+
+// reconcileTaskMerge records a replay only while the task still has the
+// journaled binding. A stale replay is audited and skipped, not an abort.
+func (t *Train) reconcileTaskMerge(it Item, repository, head, commit, source string, entry func(Entry) error) (bool, error) {
+	matches, err := t.reconcileBinding(it, repository, head, source, entry)
+	if err != nil || !matches {
+		return false, err
+	}
+	if err := t.recordTaskMerge(it.Task, repository, it.Number, head, commit); err != nil {
+		var mismatch *MergeBindingMismatch
+		if errors.As(err, &mismatch) {
+			return false, t.auditReconcileMismatch(it, head, mismatch.BoundHead, source, entry)
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (t *Train) reconcileBinding(it Item, repository, head, source string, entry func(Entry) error) (bool, error) {
+	boundRepo, boundPR, boundHead := repository, it.Number, it.BoundHead
+	if t.Tasks != nil {
+		bound, err := t.Tasks.Get(it.Task)
+		if err != nil {
+			return false, err
+		}
+		boundRepo, boundPR, boundHead = bound.PRRepository, bound.PRNumber, bound.PRHead
+	}
+	if strings.EqualFold(boundRepo, repository) && boundPR == it.Number && boundHead == head {
+		return true, nil
+	}
+	return false, t.auditReconcileMismatch(it, head, boundHead, source, entry)
+}
+
+func (t *Train) auditReconcileMismatch(it Item, head, boundHead, source string, entry func(Entry) error) error {
+	headLabel := "journaled head"
+	if strings.HasPrefix(source, "server-") {
+		headLabel = "server head"
+	}
+	detail := fmt.Sprintf("the %s does not match task %s's bound head\n%s: %s\nbound head: %s\nmerge fact not recorded", source, it.Task, headLabel, head, boundHead)
+	return entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: head, NewHead: boundHead, Detail: detail})
+}
+
+// MergeBindingMismatch carries the full heads needed for words-first CLI
+// evidence while still matching ErrBindingFailed and its store cause.
+type MergeBindingMismatch struct {
+	Task, MergeHead, BoundHead string
+	Cause                      error
+}
+
+func (e *MergeBindingMismatch) Error() string {
+	return fmt.Sprintf("%s: merged head %s does not match task %s's bound head %s", ErrBindingFailed, e.MergeHead, e.Task, e.BoundHead)
+}
+func (e *MergeBindingMismatch) Unwrap() error { return e.Cause }
+func (e *MergeBindingMismatch) Is(target error) bool {
+	return target == ErrBindingFailed
+}
+
+func (t *Train) recordTaskMerge(taskID, repository string, pr int, head, commit string) error {
+	if t.Binder == nil {
+		return fmt.Errorf("%w: no task store to record the merge of #%d", ErrBindingFailed, pr)
+	}
+	if err := t.Binder.RecordPRMerge(taskID, repository, pr, head, commit); err != nil {
+		if errors.Is(err, task.ErrPRBindingMismatch) {
+			boundHead := ""
+			if t.Tasks != nil {
+				if bound, getErr := t.Tasks.Get(taskID); getErr == nil {
+					boundHead = bound.PRHead
+				}
+			}
+			return &MergeBindingMismatch{Task: taskID, MergeHead: head, BoundHead: boundHead, Cause: err}
+		}
+		return fmt.Errorf("%w: record task %s merge %s: %v", ErrBindingFailed, taskID, short(commit), err)
+	}
+	return nil
 }
 
 // waitCI polls the required checks at a new head until none is pending or

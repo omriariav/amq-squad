@@ -4,7 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { refusedPaths, registerTools, toolArgv } from "../extensions/lib/tools.ts";
+import { fileURLToPath } from "node:url";
+import { refusedPaths, registerTools, TEAM_LEAD_TOOLS, toolArgv } from "../extensions/lib/tools.ts";
 import { allowed, refOf } from "../extensions/lib/models.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import { FakePi, script, tmpdir } from "./fakepi.ts";
@@ -23,6 +24,9 @@ test("argv: bodies go on stdin, recipients and kinds are checked", () => {
 	assert.deepEqual(toolArgv.taskClaim(cfg(), {}), ["task", "claim", "--me", "pi-1"]);
 	assert.deepEqual(toolArgv.taskDone(cfg(), { id: "t1", evidence: "go test ok" }), ["task", "done", "t1", "--me", "pi-1", "--evidence", "go test ok"]);
 	assert.throws(() => toolArgv.taskDone(cfg(), { id: "t1", evidence: " " }), /evidence is required/);
+	assert.deepEqual(toolArgv.taskBlock(cfg(), { id: "t1", reason: "widen_requested", paths: ["src/*.go", "docs/a, b.md"], detail: "needed" }), ["task", "block", "t1", "--me", "pi-1", "--reason", "widen_requested", "--path", "src/*.go", "--path", "docs/a, b.md", "--detail", "needed"]);
+	assert.throws(() => toolArgv.taskBlock(cfg(), { id: "t1", reason: "widen_requested" }), /at least one path/);
+	assert.throws(() => toolArgv.taskBlock(cfg(), { id: "t1", reason: "decision", paths: ["x.go"] }), /only valid/);
 	assert.deepEqual(toolArgv.taskAdd(cfg(), { title: "Max", class: "implement", files: ["max.go", "max_test.go"] }), ["task", "add", "--title", "Max", "--class", "implement", "--files", "max.go,max_test.go"]);
 	assert.throws(() => toolArgv.taskAdd(cfg(), { title: "x", class: "code" }), /class must be/);
 });
@@ -34,15 +38,17 @@ test("registered tools run the configured binaries with the body on stdin", asyn
 	const bin = script(dir, "amq-squad", `echo "amq-squad $@" >> ${log}; echo '[]'`);
 	const pi = new FakePi();
 	const names = registerTools(pi as any, cfg({ amq, bin }));
-	assert.deepEqual(names, ["amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_claim", "amq_task_done"]);
+	assert.deepEqual(names, ["amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_claim", "amq_task_done", "amq_task_block"]);
 	const res = await pi.tools.get("amq_send").execute("c1", { to: "pi-lead", body: "@/etc/passwd is text" }, undefined, undefined, {});
 	assert.match(res.content[0].text, /ok/);
 	await pi.tools.get("amq_drain").execute("c2", {}, undefined, undefined, {});
 	await pi.tools.get("amq_task_claim").execute("c3", {}, undefined, undefined, {});
+	await pi.tools.get("amq_task_block").execute("c4", { id: "t1", reason: "widen_requested", paths: ["x.go"] }, undefined, undefined, {});
 	const lines = fs.readFileSync(log, "utf8");
 	assert.match(lines, /amq send --me pi-1 --to pi-lead --json --body -\n@\/etc\/passwd is text/);
 	assert.match(lines, /amq drain --me pi-1 --include-body --json/);
 	assert.match(lines, /amq-squad task claim --me pi-1/);
+	assert.match(lines, /amq-squad task block t1 --me pi-1 --reason widen_requested --path x.go/);
 	// The lead also gets the dispatch tool.
 	const lead = new FakePi();
 	assert.ok(registerTools(lead as any, cfg({ amq, bin, lead: true })).includes("amq_task_add"));
@@ -78,12 +84,14 @@ const refusedTask = {
 	block_detail: "outside_declared_files: src/, evil.go (note) and 2 more (declared: internal/a.go)",
 	refused_paths: ["internal/b.go", "src/ (note)", "docs/a, b.md", "src/*.go"],
 };
+const requestedTask = { ...refusedTask, block_reason: "widen_requested" };
 
 test("argv: the relaunch and the widening are the CLI verbs; the widening takes only the recorded refused paths", () => {
 	assert.deepEqual(toolArgv.schedulerRelaunch(cfg(), { reason: "rev-1 is gone" }), ["scheduler", "relaunch", "--reason", "rev-1 is gone", "--json"]);
 	assert.throws(() => toolArgv.schedulerRelaunch(cfg(), { reason: " " }), /reason is required/);
 	const refused = refusedPaths(refusedTask);
 	assert.deepEqual(refused, ["internal/b.go", "src/ (note)", "docs/a, b.md", "src/*.go"]);
+	assert.deepEqual(refusedPaths(requestedTask), refused);
 	// Every recorded path, each one exact --path: a name with " (" or ", " is
 	// one argument, a glob-like name is passed for the verb to make literal.
 	assert.deepEqual(toolArgv.taskWiden(cfg(), { id: "t3", reason: "they belong" }, refused), [
@@ -99,11 +107,20 @@ test("argv: the relaunch and the widening are the CLI verbs; the widening takes 
 	assert.throws(() => toolArgv.taskWiden(cfg(), { id: "t3", reason: " " }, refused), /reason is required/);
 	assert.throws(() => refusedPaths({ ...refusedTask, state: "pending" }), /not blocked for files outside/);
 	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "size_cap" }), /not blocked for files outside/);
-	// 3.0.2: the refusal says what the lead can do for a seat's own block
-	// with a widen request (task reset --pool, until t20's typed block).
+	// Other block reasons keep the pre-typed-flow reset guidance.
 	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "seat_request" }), /the lead returns the task with amq-squad task reset t3 --pool RUNTIME:MODEL:EFFORT/);
-	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: undefined }), /recorded no refused paths/);
-	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: [] }), /recorded no refused paths/);
+	// brief 3.1.1-2: the typed widen request exists, so the refusal names it
+	// and no longer points at t20
+	assert.throws(() => refusedPaths({ ...refusedTask, block_reason: "seat_request" }), /is not blocked for files outside its declared set or by a seat's widen request, so there is nothing to widen;[^]*\n\n----------\nstate blocked, reason seat_request$/);
+	assert.doesNotThrow(() => {
+		try {
+			refusedPaths({ ...refusedTask, block_reason: "seat_request" });
+		} catch (e) {
+			assert.doesNotMatch(String(e), /t20|until the typed block/);
+		}
+	});
+	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: undefined }), /recorded no paths to widen by/);
+	assert.throws(() => refusedPaths({ ...refusedTask, refused_paths: [] }), /recorded no paths to widen by/);
 });
 
 test("the lead's widen tool reads the recorded refusal and never widens by a fabricated path", async () => {
@@ -120,12 +137,16 @@ test("the lead's widen tool reads the recorded refusal and never widens by a fab
 	assert.ok(!registerTools(new FakePi() as any, cfg({ bin })).includes("amq_task_widen"), "a seat has no widen tool");
 	await pi.tools.get("amq_task_widen").execute("c1", { id: "t3", reason: "they belong" }, undefined, undefined, {});
 	await assert.rejects(pi.tools.get("amq_task_widen").execute("c2", { id: "t3", reason: "x", files: ["internal/evil.go"] }, undefined, undefined, {}), /not a path the commit step refused/);
-	await pi.tools.get("amq_scheduler_relaunch").execute("c3", { reason: "rev-1 is gone" }, undefined, undefined, {});
+	fs.writeFileSync(path.join(dir, "show.json"), JSON.stringify({ schema_version: 1, kind: "task", data: { root: "/r", task: requestedTask } }));
+	await pi.tools.get("amq_task_widen").execute("c3", { id: "t3", reason: "seat requested them", files: ["src/*.go"] }, undefined, undefined, {});
+	await pi.tools.get("amq_scheduler_relaunch").execute("c4", { reason: "rev-1 is gone" }, undefined, undefined, {});
 	const lines = fs.readFileSync(log, "utf8").trim().split("\n");
 	assert.deepEqual(lines, [
 		"[task][show][t3][--json]",
 		"[task][widen][t3][--path][internal/b.go][--path][src/ (note)][--path][docs/a, b.md][--path][src/*.go][--reason][they belong][--json]",
 		"[task][show][t3][--json]",
+		"[task][show][t3][--json]",
+		"[task][widen][t3][--path][src/*.go][--reason][seat requested them][--json]",
 		"[scheduler][relaunch][--reason][rev-1 is gone][--json]",
 	]);
 });
@@ -133,11 +154,28 @@ test("the lead's widen tool reads the recorded refusal and never widens by a fab
 // Brief 31-4, row 7: the two-way phone adds no lead tool. The lead replies
 // on the cockpit thread with amq_reply as before (a progress reply is
 // `kind: status`); the relay is the core's. The lead's tool list is the
-// exact thirteen.
-test("the lead's tool list is unchanged by the two-way phone: the exact thirteen", () => {
-	const names = registerTools(new FakePi() as any, cfg({ lead: true }));
-	assert.deepEqual(names, [
-		"amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_claim", "amq_task_done",
-		"amq_task_add", "amq_repo_read", "amq_repo_list", "amq_status", "amq_scheduler_relaunch", "amq_task_widen", "amq_task_reset",
-	]);
+// exact eleven (brief 3.1.1-2 item 4): claim, done and block are
+// registered inactive for a lead and active for a seat.
+test("the lead's tool list is unchanged by the two-way phone: the exact eleven", () => {
+	const lead = new FakePi();
+	registerTools(lead as any, cfg({ lead: true }));
+	assert.deepEqual(lead.getActiveTools().sort(), [...TEAM_LEAD_TOOLS].sort());
+	assert.equal(TEAM_LEAD_TOOLS.length, 11);
+	for (const verb of ["amq_task_claim", "amq_task_done", "amq_task_block"]) {
+		assert.ok(lead.tools.has(verb) && !lead.getActiveTools().includes(verb), `${verb} is active for a lead`);
+	}
+	const seat = new FakePi();
+	registerTools(seat as any, cfg());
+	for (const verb of ["amq_task_claim", "amq_task_done", "amq_task_block"]) assert.ok(seat.getActiveTools().includes(verb), `${verb} is inactive for a seat`);
+});
+
+// Brief 3.1.1-2 item 4: one lead tool list, one source. The extension's
+// team list is Go's TeamLeadTools, the --tools pi enforces for the lead
+// (internal/cli/pi.go), name for name and in order.
+test("the extension's team lead list is Go's TeamLeadTools", () => {
+	const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "internal", "piruntime", "launch.go"), "utf8");
+	const m = /var TeamLeadTools = \[\]string\{([^}]*)\}/.exec(src);
+	assert.ok(m, "TeamLeadTools is not in internal/piruntime/launch.go");
+	const goList = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+	assert.deepEqual([...TEAM_LEAD_TOOLS], goList);
 });

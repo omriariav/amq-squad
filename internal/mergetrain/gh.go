@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"slices"
@@ -86,12 +87,13 @@ func lines[T any](raw []byte) ([]T, error) {
 
 func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
 	n := strconv.Itoa(number)
-	raw, err := g.run(ctx, "pr", "view", n, "-R", repository, "--json", "number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable,mergeCommit")
+	raw, err := g.run(ctx, "pr", "view", n, "-R", repository, "--json", "number,title,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable,mergeCommit")
 	if err != nil {
 		return PRInfo{}, err
 	}
 	var v struct {
 		Number      int    `json:"number"`
+		Title       string `json:"title"`
 		State       string `json:"state"`
 		IsDraft     bool   `json:"isDraft"`
 		BaseRefName string `json:"baseRefName"`
@@ -105,7 +107,7 @@ func (g *GH) PR(ctx context.Context, repository string, number int) (PRInfo, err
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return PRInfo{}, fmt.Errorf("decode PR #%d: %w", number, err)
 	}
-	pr := PRInfo{Number: v.Number, State: v.State, Draft: v.IsDraft, Repository: repository, BaseRef: v.BaseRefName,
+	pr := PRInfo{Number: v.Number, Title: v.Title, State: v.State, Draft: v.IsDraft, Repository: repository, BaseRef: v.BaseRefName,
 		BaseSHA: v.BaseRefOid, HeadSHA: v.HeadRefOid, Mergeable: v.Mergeable}
 	if v.MergeCommit != nil {
 		pr.MergeCommit = v.MergeCommit.Oid
@@ -184,6 +186,64 @@ func (g *GH) Diff(ctx context.Context, repository, base, head string) ([]FileCha
 	return lines[FileChange](raw)
 }
 
+// Behind reads GitHub's ancestry result for the exact pinned base and head.
+func (g *GH) Behind(ctx context.Context, repository, base, head string) (bool, error) {
+	raw, err := g.run(ctx, "api", "repos/"+repository+"/compare/"+base+"..."+head, "--jq", ".behind_by")
+	if err != nil {
+		return false, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return false, fmt.Errorf("decode compare behind_by: %w", err)
+	}
+	return n > 0, nil
+}
+
+func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string, error) {
+	path := "repos/" + repository + "/compare/" + base + "..." + head
+	raw, err := g.run(ctx, "api", path, "--jq", `{file_count: (.files | length), missing_patch: ([.files[] | select(.patch == null)] | length)}`)
+	if err != nil {
+		if compareTooLarge(err) {
+			return "", ErrIncompleteDiff
+		}
+		return "", err
+	}
+	var meta struct {
+		FileCount    int `json:"file_count"`
+		MissingPatch int `json:"missing_patch"`
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return "", fmt.Errorf("decode compare completeness: %w", err)
+	}
+	if meta.FileCount >= MaxCompareFiles || meta.MissingPatch > 0 {
+		return "", ErrIncompleteDiff
+	}
+	diff, err := g.run(ctx, "api", path,
+		"-H", "Accept: application/vnd.github.diff")
+	if err != nil {
+		if compareTooLarge(err) {
+			return "", ErrIncompleteDiff
+		}
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, "git", "patch-id", "--stable")
+	cmd.Stdin = bytes.NewReader(diff)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git patch-id --stable: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return "", errors.New("git patch-id --stable returned no patch id")
+	}
+	return fields[0], nil
+}
+
+func compareTooLarge(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "diff too large") || strings.Contains(s, "http 406") || strings.Contains(s, "http 422")
+}
+
 func (g *GH) Checks(ctx context.Context, repository, sha string) ([]CheckRun, error) {
 	raw, err := g.run(ctx, "api", "--paginate", "repos/"+repository+"/commits/"+sha+"/check-runs?per_page=100",
 		"--jq", `.check_runs[] | {id, name, app_id: (.app.id // 0), status, conclusion: (.conclusion // "")}`)
@@ -213,7 +273,8 @@ type ruleJSON struct {
 	Type       string `json:"type"`
 	RulesetID  int    `json:"ruleset_id"`
 	Parameters struct {
-		RequiredStatusChecks []struct {
+		StrictRequiredStatusChecksPolicy bool `json:"strict_required_status_checks_policy"`
+		RequiredStatusChecks             []struct {
 			Context       string `json:"context"`
 			IntegrationID int    `json:"integration_id"`
 		} `json:"required_status_checks"`
@@ -223,6 +284,7 @@ type ruleJSON struct {
 // classicJSON is GET /repos/{r}/branches/{b}/protection.
 type classicJSON struct {
 	RequiredStatusChecks *struct {
+		Strict   bool     `json:"strict"`
 		Contexts []string `json:"contexts"`
 		Checks   []struct {
 			Context string `json:"context"`
@@ -311,6 +373,7 @@ func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJS
 				p.Notes = append(p.Notes, src+" has bypass actors: its required checks do not bind the owner")
 				continue
 			}
+			p.Strict = p.Strict || r.Parameters.StrictRequiredStatusChecksPolicy
 			for _, c := range r.Parameters.RequiredStatusChecks {
 				if c.IntegrationID <= 0 {
 					p.Notes = append(p.Notes, "ci_app_unbound: "+src+" requires "+c.Context+" from any app; bind it to its app in the ruleset")
@@ -335,6 +398,7 @@ func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJS
 			if !admins {
 				p.Notes = append(p.Notes, "classic required checks exempt admins (enforce_admins off): they do not bind the owner")
 			} else {
+				p.Strict = p.Strict || c.Strict
 				// contexts is the legacy app-less list beside checks: only
 				// app-bound checks count
 				for _, s := range c.Checks {

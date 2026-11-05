@@ -25,17 +25,75 @@ import (
 // (task_unbound).
 func BindTasks(store task.Store, repository string, req *Request) error {
 	for i := range req.PRs {
+		if err := bindItem(store, repository, &req.PRs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// BindUnnamed is BindTasks for the items that name no task and no declared
+// files (brief 3.1.1-2 item 6): a dry run reads their binding as the real
+// run does, so a request naming only the PR plans what the real run checks.
+// An item that names its task or its files is left as it is.
+func BindUnnamed(store task.Store, repository string, req *Request) error {
+	for i := range req.PRs {
+		if it := &req.PRs[i]; it.Task == "" && len(it.DeclaredFiles) == 0 {
+			if err := bindItem(store, repository, it); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// BindDryRun fills task data for the dry-run request forms. Named items keep
+// their requested task id, but read the binding by repository and PR exactly
+// as a real run does, so both paths check the same pushed head.
+func BindDryRun(store task.Store, repository string, req *Request) error {
+	for i := range req.PRs {
 		it := &req.PRs[i]
-		b, why, err := boundTask(store, repository, it.Number)
+		if it.Task == "" && len(it.DeclaredFiles) == 0 {
+			if err := bindItem(store, repository, it); err != nil {
+				return err
+			}
+			continue
+		}
+		if it.Task == "" || len(it.DeclaredFiles) > 0 {
+			continue
+		}
+		requested := it.Task
+		tk, err := store.Get(requested)
+		if err != nil {
+			return fmt.Errorf("PR #%d task %s: %w", it.Number, requested, err)
+		}
+		it.DeclaredFiles = tk.DeclaredFiles
+		bound, why, err := boundTask(store, repository, it.Number)
 		if err != nil {
 			return err
 		}
-		if why != "" {
+		switch {
+		case why != "":
 			it.Unbound = why
-			continue
+		case bound.ID != requested:
+			it.Unbound = fmt.Sprintf("task %s is named, but task %s is bound to %s#%d", requested, bound.ID, repository, it.Number)
+		default:
+			it.BoundHead = bound.PRHead
 		}
-		it.Task, it.DeclaredFiles, it.BoundHead = b.ID, b.DeclaredFiles, b.PRHead
 	}
+	return nil
+}
+
+func bindItem(store task.Store, repository string, it *Item) error {
+	b, why, err := boundTask(store, repository, it.Number)
+	if err != nil {
+		return err
+	}
+	if why != "" {
+		it.Unbound = why
+		return nil
+	}
+	it.Task, it.DeclaredFiles, it.BoundHead = b.ID, b.DeclaredFiles, b.PRHead
 	return nil
 }
 
@@ -67,6 +125,7 @@ var ErrBindingFailed = errors.New("binding_failed")
 // Binder writes a task's PR binding.
 type Binder interface {
 	BindPR(taskID, repository string, pr int, head string) error
+	RecordPRMerge(taskID, repository string, pr int, head, commit string) error
 }
 
 // StoreBinder binds through task.Store.BindPR.
@@ -81,5 +140,14 @@ func (b StoreBinder) BindPR(taskID, repository string, pr int, head string) erro
 		now = b.Now()
 	}
 	_, err := b.Store.BindPR(taskID, repository, pr, head, now)
+	return err
+}
+
+func (b StoreBinder) RecordPRMerge(taskID, repository string, pr int, head, commit string) error {
+	now := time.Now()
+	if b.Now != nil {
+		now = b.Now()
+	}
+	_, err := b.Store.RecordPRMerge(taskID, repository, pr, head, commit, now)
 	return err
 }

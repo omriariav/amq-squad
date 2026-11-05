@@ -125,21 +125,21 @@ func rejected(gateID, eventID string, err error) Result {
 	return Result{GateID: gateID, EventID: eventID, Outcome: "rejected", Code: code, Detail: err.Error()}
 }
 
-// ReaskText is the re-post in the gate thread (amendment 19).
+// ReaskText is the re-post in the gate thread (amendment 19), in plain words
+// (brief 3.1.1-1): one line above the rule, never a tuple to type; the gate
+// id below it, for the record.
 func ReaskText(a gatestore.Answer) string {
-	return "amq-squad gate " + a.GateID + ": that answer was not in this thread. Reply here to confirm, with one line:\n" +
-		strings.Join([]string{a.Verb, a.GateID, a.Class, a.DigestPrefix}, " ")
+	return "Reply yes or no to this message.\n\n" + gatestore.Rule + "\namq-squad gate " + a.GateID
 }
 
 // historyReaskMarker starts the history re-ask (HistoryReaskText).
 const historyReaskMarker = "the question's history changed"
 
 // HistoryReaskText is the re-ask of an altered_history refusal: the question
-// as raised (the record's text, which the core signed) and the answer line,
-// so what the owner answers is what the record holds.
+// as raised (the record's text, which the core signed), so what the owner
+// answers is what the record holds, and the plain way to answer it.
 func HistoryReaskText(rec gatestore.Record, a gatestore.Answer) string {
-	return "amq-squad gate " + rec.GateID + ": " + historyReaskMarker + " (an edit was deleted). This is the question as raised:\n\n" +
-		rec.Text + "\n\nReply here to confirm, with one line:\n" + strings.Join([]string{a.Verb, a.GateID, a.Class, a.DigestPrefix}, " ")
+	return "This is the question as it was asked: " + historyReaskMarker + " (an edit was deleted).\nReply yes or no to this message.\n\n" + rec.Text
 }
 
 // IsHistoryReask reports whether a stored re-ask is the history re-ask of
@@ -171,7 +171,15 @@ func (c *Core) handleEvent(ctx context.Context, raw []byte) Result {
 	}
 	a, err := gatestore.ParseAnswer(e.Content)
 	if err != nil {
-		return rejected("", e.ID, reject(RejectBadTuple, "%v", err))
+		verb, ok := gatestore.ParseBare(e.Content)
+		if !ok {
+			return rejected("", e.ID, reject(RejectBadTuple, "%v", err))
+		}
+		id, berr := c.bareGate(e)
+		if berr != nil {
+			return rejected("", e.ID, berr)
+		}
+		a = gatestore.Answer{Verb: verb, GateID: id}
 	}
 	rec, err := c.Store.Load(a.GateID)
 	if err != nil {
@@ -236,6 +244,55 @@ func (c *Core) handleEvent(ctx context.Context, raw []byte) Result {
 		return rejected(rec.GateID, e.ID, err)
 	}
 	return Result{GateID: rec.GateID, EventID: e.ID, Outcome: f.Decision, AuthorizationID: f.Envelope.Payload.AuthorizationID}
+}
+
+// bareGate is the gate a bare yes or no is for (brief 3.1.1-1): the one gate
+// whose stored question or re-ask every thread reference names. A bare
+// answer with no thread reference is for the one open gate, which Verify
+// then refuses as not in its thread and the core re-asks there; with no open
+// gate, or several, it names none. A reference to anything else (another
+// gate's question and this one's, a post that is no gate's) names none: the
+// thread is the binding.
+func (c *Core) bareGate(e nostr.Event) (string, error) {
+	ids, err := c.Store.IDs()
+	if err != nil {
+		return "", reject(RejectGateRecord, "%v", err)
+	}
+	refs := nostr.ThreadRefs(e)
+	now := c.now()
+	var open, named []string
+	for _, id := range ids {
+		rec, err := c.Store.Load(id)
+		if err != nil {
+			continue
+		}
+		if len(refs) == 0 {
+			if q, _ := c.Store.Question(id); q != nil && c.Store.State(rec, now) == gatestore.StateOpen {
+				open = append(open, id)
+			}
+			continue
+		}
+		var ours []string
+		if q, _ := c.Store.Question(id); q != nil {
+			ours = append(ours, q.EventID)
+		}
+		if r, _ := c.Store.ReadReask(id); r != nil {
+			ours = append(ours, r.EventID)
+		}
+		if slices.ContainsFunc(refs, func(ref string) bool { return slices.Contains(ours, ref) }) {
+			named = append(named, id)
+		}
+	}
+	if len(refs) == 0 {
+		if len(open) == 1 {
+			return open[0], nil
+		}
+		return "", reject(RejectThread, "a bare answer outside a gate thread names no gate (%d open); reply yes or no in the question's thread", len(open))
+	}
+	if len(named) != 1 {
+		return "", reject(RejectWrongThread, "a bare answer replies to %v, which is not exactly one gate's thread", refs)
+	}
+	return named[0], nil
 }
 
 // reask posts the gate's one "reply here to confirm" in the gate thread. The
