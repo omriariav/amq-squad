@@ -163,3 +163,31 @@ func TestDoorbellAndLeadNoticeSend(t *testing.T) {
 		t.Fatalf("sends: %q", got)
 	}
 }
+
+func TestCodexLaunchAdmissionControlsTheDoorbellManualRenewFallback(t *testing.T) {
+	slots := &Slots{Squad: seatlaunch.Squad{Seats: []seatlaunch.Seat{
+		{Handle: "codex", Runtime: "codex"}, {Handle: "claude", Runtime: "claude"},
+	}}}
+	if !slots.NeedsManualRenew("codex") || slots.NeedsManualRenew("claude") {
+		t.Fatal("an unadmitted Codex seat alone needs the fallback")
+	}
+	slots.AdmitCodexActivity("codex", true)
+	if slots.NeedsManualRenew("codex") {
+		t.Fatal("a trusted Codex launch kept the manual fallback")
+	}
+	slots.AdmitCodexActivity("codex", false)
+	var sent []string
+	s := Sender{AMQ: "/opt/amq", Root: "/r/s1", BaseRoot: "/r", Session: "s1", Run: func(_ context.Context, _ string, args, _ []string) ([]byte, error) {
+		sent = append([]string(nil), args...)
+		return nil, nil
+	}}
+	b := Doorbell{Sender: s, NeedsManualRenew: slots.NeedsManualRenew}
+	if err := b.Ring("codex", task.Task{ID: "t1", Title: "work", Class: "implement"}); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Join(sent, " ")
+	if !strings.Contains(body, `amq-squad task renew --me "$AM_ME" after every tool batch and at least every 5 minutes`) ||
+		!strings.Contains(body, "stop and block if renewal is refused") {
+		t.Fatalf("doorbell = %q", body)
+	}
+}

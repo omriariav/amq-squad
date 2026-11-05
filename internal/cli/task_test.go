@@ -117,6 +117,85 @@ func TestTaskCLIRefusals(t *testing.T) {
 	}
 }
 
+func TestTaskCLIPersistsAndExtendsTheAttemptBudget(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	now := withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	if _, err := taskCLI(t, "add", "--title", "bounded", "--class", "implement", "--budget", "45m", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	shown, err := taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if got.Budget != 45*time.Minute || got.Lease == nil || !got.Lease.BudgetEndsAt.Equal(now.Add(45*time.Minute)) {
+		t.Fatalf("bounded task = %+v", got)
+	}
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := extendBudgetDecision(storeSelection{store: store, root: root}, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: "t1", Reason: taskExtendDecisionPrefix + "30m"})
+	if !reply.OK {
+		t.Fatalf("extend decision: %+v", reply)
+	}
+	shown, err = taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if got.Budget != 75*time.Minute || got.Lease == nil || !got.Lease.BudgetEndsAt.Equal(now.Add(75*time.Minute)) || len(got.BudgetExtensions) != 1 {
+		t.Fatalf("extended task = %+v", got)
+	}
+}
+
+func TestManualRenewNormalizesAndBindsTheLegacyAttempt(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	now := withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	if _, err := taskCLI(t, "add", "--title", "legacy", "--class", "script"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(task.DirFor(root), "t1.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy task.Task
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Budget = 0
+	legacy.Lease.Attempt = 0
+	legacy.Lease.BudgetEndsAt = time.Time{}
+	raw, _ = json.Marshal(legacy)
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "renew", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := task.Open(root)
+	current, _ := got.Get("t1")
+	if current.Lease.Attempt != current.Attempt || current.Lease.BudgetEndsAt.IsZero() || current.Lease.ExpiresAt.After(current.Lease.BudgetEndsAt) {
+		t.Fatalf("manual renew bypassed normalization: %+v", current.Lease)
+	}
+	lines, err := schedproc.ReadDecisionsTail(root)
+	if err != nil || len(lines) != 1 || lines[0].Reason != "lease of t1 normalised: attempt 1, budget ends "+now.Add(task.DefaultTaskBudget).Format(time.RFC3339) {
+		t.Fatalf("normalization decisions = %+v, err %v", lines, err)
+	}
+}
+
 func TestTaskCLIBlockCarriesTypedWidenPaths(t *testing.T) {
 	root := t.TempDir()
 	chdir(t, root)

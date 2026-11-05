@@ -94,3 +94,43 @@ func TestCodexWakeDialogHookRowIsInDoctor(t *testing.T) {
 		t.Fatalf("no codex on the host, rows %+v", rows)
 	}
 }
+
+func TestCodexActivityTrustWarningUsesTheRequiredOwnerStep(t *testing.T) {
+	c := codexActivityTrustCheck(t.TempDir(), "/opt/amq-squad", "/opt/amq", "/home/owner")
+	want := "codex seats will not renew on their own until you trust the amq-squad hooks: launch one Codex seat, run /hooks, and trust the three /<session-flags>/config.toml amq-squad activity entries"
+	if c.Status != doctorWarn || !strings.Contains(c.Detail, want) ||
+		!strings.Contains(c.Detail, `'/opt/amq-squad' evidence ingest --me "$AM_ME"`) ||
+		!strings.Contains(c.Detail, `'/opt/amq' --no-update-check wake dialog --harness codex close`) ||
+		!strings.Contains(c.Detail, "Reinstalling amq-squad or amq at another path changes the command string and drops that trust") {
+		t.Fatalf("activity trust row = %+v, want %q", c, want)
+	}
+}
+
+func TestCodexActivityTrustWarningDerivesTwoEntriesWithoutAMQ(t *testing.T) {
+	c := codexActivityTrustCheck(t.TempDir(), "/opt/amq-squad", "", "/home/owner")
+	if c.Status != doctorWarn || !strings.Contains(c.Detail, "trust the two /<session-flags>/config.toml amq-squad activity entries") ||
+		strings.Contains(c.Detail, ":stop:0:1") {
+		t.Fatalf("two-entry activity trust row = %+v", c)
+	}
+}
+
+func TestCodexActivityTrustUsesTheResolvedSeatExecutable(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "amq-squad-real")
+	link := filepath.Join(dir, "amq-squad")
+	if err := os.WriteFile(real, []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := seatexec.ResolveExecutable(link)
+	if err != nil || resolved != real {
+		t.Fatalf("resolved executable = %q, err %v", resolved, err)
+	}
+	row := codexActivityTrustCheck(t.TempDir(), resolved, "", "/home/owner")
+	args := strings.Join(seatexec.CodexActivityHookArgsForHome(resolved, "", "/home/owner"), "\n")
+	if !strings.Contains(row.Detail, real) || strings.Contains(row.Detail, link+"'") || !strings.Contains(args, real) || strings.Contains(args, link+"'") {
+		t.Fatalf("doctor and seat command differ: row %q, args %q", row.Detail, args)
+	}
+}

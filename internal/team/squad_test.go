@@ -7,9 +7,24 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 )
+
+func TestTaskBudgetDefaultsAndRoundTrips(t *testing.T) {
+	s, err := ParseSquad(minimalSquad, "squad.yaml", grants.Defaults())
+	if err != nil || s.TaskBudget != 90*time.Minute {
+		t.Fatalf("default task budget: %+v, %v", s, err)
+	}
+	s, err = ParseSquad("task_budget: 2h\n"+minimalSquad, "squad.yaml", grants.Defaults())
+	if err != nil || s.TaskBudget != 2*time.Hour || !strings.Contains(Render(s), "task_budget: 2h0m0s") {
+		t.Fatalf("explicit task budget: %+v, %v\n%s", s, err, Render(s))
+	}
+	if _, err := ParseSquad("task_budget: 0s\n"+minimalSquad, "squad.yaml", grants.Defaults()); err == nil || !strings.Contains(err.Error(), "task_budget") {
+		t.Fatalf("non-positive task budget accepted: %v", err)
+	}
+}
 
 const minimalSquad = "schema: 1\nseats:\n  - handle: dev\n    runtime: claude\n"
 

@@ -45,6 +45,7 @@ var SquadKeys = []SquadKey{
 	{"target_project_root", "absolute path", "none", RelPlain},
 	{"shared_cwd_exception", "text", "none", RelPlain},
 	{"operator_interaction", "lead_pane | separate_terminal | noc", "none", RelPlain},
+	{"task_budget", "positive Go duration", "90m", RelPlain},
 	{"defaults", "map of runtime, model, effort, tools", "empty", RelPlain},
 	{"seats", "list of seat maps, at least one", "none (required)", RelPlain},
 	{"mode", "auto | manual", "the owner's", RelNarrow},

@@ -34,6 +34,11 @@ const ReasonGrowthGateRequired = "growth_gate_required"
 // measured in docs/v3-spike/2b1-execution.md).
 const DefaultLeaseDuration = 10 * time.Minute
 
+// DefaultTaskBudget is the lead's default time allowance for one task
+// attempt. A squad.yaml may choose another default and task add may override
+// it, but every renewal path is bounded by the value persisted on the task.
+const DefaultTaskBudget = 90 * time.Minute
+
 // ErrNotFound is returned for an unknown task id.
 var ErrNotFound = errors.New("task not found")
 
@@ -60,10 +65,14 @@ type Task struct {
 	Lease         *Lease    `json:"lease"`
 	Attempt       int       `json:"attempt"`
 	Attempts      []Attempt `json:"attempts,omitempty"`
-	WaitReason    string    `json:"wait_reason,omitempty"`
-	BlockReason   string    `json:"block_reason,omitempty"`
-	BlockRoute    string    `json:"block_route,omitempty"`
-	BlockDetail   string    `json:"block_detail,omitempty"`
+	// Budget is the maximum elapsed time of one attempt. Zero in a task
+	// written by an older build reads as DefaultTaskBudget.
+	Budget           time.Duration     `json:"budget,omitempty"`
+	BudgetExtensions []BudgetExtension `json:"budget_extensions,omitempty"`
+	WaitReason       string            `json:"wait_reason,omitempty"`
+	BlockReason      string            `json:"block_reason,omitempty"`
+	BlockRoute       string            `json:"block_route,omitempty"`
+	BlockDetail      string            `json:"block_detail,omitempty"`
 	// BlockAttempt binds a typed widen request to the live attempt that made
 	// it. Pending tasks cannot manufacture this binding from old history.
 	BlockAttempt int `json:"block_attempt,omitempty"`
@@ -103,6 +112,10 @@ type Lease struct {
 	ClaimedAt *time.Time `json:"claimed_at"`
 	RenewedAt *time.Time `json:"renewed_at"`
 	Renewals  int        `json:"renewals"`
+	// Attempt binds observed activity to the lease incarnation. BudgetEndsAt
+	// is persisted so all renewal callers enforce the same absolute bound.
+	Attempt      int       `json:"attempt"`
+	BudgetEndsAt time.Time `json:"budget_ends_at"`
 	// Snapshot is the tree the harness's verifier runs on in this attempt
 	// (RecordSnapshot: the commit step's snapshot, the probe's checkout).
 	Snapshot string `json:"snapshot,omitempty"`
@@ -116,6 +129,14 @@ type Lease struct {
 	// Verdict is the harness's verdict on this attempt (RecordVerdict): the
 	// only way a class with a mechanical verifier completes.
 	Verdict *Verdict `json:"verdict,omitempty"`
+}
+
+// BudgetExtension is the recorded lead decision that lengthened a task's
+// allowance. It is data, not an owner gate.
+type BudgetExtension struct {
+	Actor string        `json:"actor"`
+	At    time.Time     `json:"at"`
+	By    time.Duration `json:"by"`
 }
 
 // Attempt is one ended lease.
@@ -196,6 +217,7 @@ type AddInput struct {
 	Priority      int
 	ProjectPath   string
 	CreatedBy     string
+	Budget        time.Duration
 }
 
 // Add creates a pending task.
@@ -219,10 +241,14 @@ func (s Store) Add(in AddInput, now time.Time) (Task, error) {
 				return fmt.Errorf("depends-on task %q does not exist", d)
 			}
 		}
+		budget := in.Budget
+		if budget <= 0 {
+			budget = DefaultTaskBudget
+		}
 		created = Task{
 			Schema: Schema, ID: all.nextID(), Title: in.Title, Description: strings.TrimSpace(in.Description),
 			Class: in.Class, State: StatePending, Priority: in.Priority, DependsOn: deps, DeclaredFiles: files,
-			ProjectPath: strings.TrimSpace(in.ProjectPath), Pool: in.Pool, CreatedBy: strings.TrimSpace(in.CreatedBy),
+			ProjectPath: strings.TrimSpace(in.ProjectPath), Pool: in.Pool, CreatedBy: strings.TrimSpace(in.CreatedBy), Budget: budget,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		all.list = append(all.list, created)

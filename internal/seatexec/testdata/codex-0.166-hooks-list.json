@@ -1,0 +1,34 @@
+{
+  "codex_version": "0.166.0",
+  "source": "app-server hooks/list",
+  "entries": [
+    {
+      "key": "/<session-flags>/config.toml:post_tool_use:0:0",
+      "event_name": "post_tool_use",
+      "command": "'/private/tmp/amq-squad-t79-live/amq-squad' evidence ingest --me \"$AM_ME\"",
+      "timeout_sec": 5,
+      "current_hash": "sha256:3211749a85ae512e67686c7868d988c14bfed419f0fc200c9589d03284b1e8dd"
+    },
+    {
+      "key": "/<session-flags>/config.toml:stop:0:0",
+      "event_name": "stop",
+      "command": "'/private/tmp/amq-squad-t79-live/amq-squad' evidence ingest --me \"$AM_ME\"",
+      "timeout_sec": 5,
+      "current_hash": "sha256:9f40b529ea054a818eb16168b8a1d23a62477bc0207af3933b1233260bdb6077"
+    },
+    {
+      "key": "/<session-flags>/config.toml:stop:0:1",
+      "event_name": "stop",
+      "command": "AMQ_DIALOG_HOOK=1 [ -n \"${AM_ME-}\" ] && { case \"${AM_ROOT-}\" in */./*|*/../*|*/.|*/..) false ;; /*[[:alnum:]._/-]) ;; *) false ;; esac && case \"$AM_ME\" in *[![:alnum:]_-]*) false ;; esac && [ -d \"$AM_ROOT/agents/$AM_ME\" ] && [ ! -e \"$AM_ROOT/agents/$AM_ME/.wake.dialog\" ] && [ ! -L \"$AM_ROOT/agents/$AM_ME/.wake.dialog\" ]; } && exit 0; [ -n \"${AM_ME-}\" ] || [ -d '/private/tmp/amq-squad-t79-live/home/.amq/codex-threads/current' ] || exit 0; '/opt/homebrew/bin/amq' --no-update-check wake dialog --harness codex close || true",
+      "timeout_sec": 5,
+      "current_hash": "sha256:27fd4d322eedb71ac74ce168e1c736bca38bb4096517cdfd332a463b2c96e1ba"
+    },
+    {
+      "key": "/<session-flags>/config.toml:post_tool_use:0:0",
+      "event_name": "post_tool_use",
+      "command": "printf '&& > < \"'",
+      "timeout_sec": 5,
+      "current_hash": "sha256:c2a746bae3371cecb76a1c06cbad6f3684a7088e07d9ecf2327fa2893ec47ab4"
+    }
+  ]
+}

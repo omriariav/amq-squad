@@ -18,7 +18,8 @@ prints.
 | Symptom | Cause | Exact fix |
 |---|---|---|
 | `task claim: task not found: no eligible pending task for H` | Nothing pending in your pool | `task list`; the lead adds or resets tasks |
-| `task renew: no lease held` | Your lease expired or was never granted | `task list`; claim again if the task is back in the pool |
+| `task renew: no lease held` | Your lease expired or was never granted; normal runtime activity renews a live attempt automatically | `task list`; claim again if the task is back in the pool |
+| `task renew: task budget spent` | The persisted attempt budget ended, so activity can no longer renew it | Ask the lead to run `task extend ID --by DURATION` from the lead process |
 | `task add: depends-on task "ID" does not exist` | A dependency names a task the store has not got | Add the dependency first, then the dependent task |
 | `task widen: takes no --me` | Widening is proved from the lead's process, not a flag | Run it from the lead's seat without `--me` |
 | `task widen: no running scheduler for <root>` | The widening is the scheduler's to apply | Start the squad's scheduler (`lead --team` in the repository) |
