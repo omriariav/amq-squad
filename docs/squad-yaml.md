@@ -102,9 +102,11 @@ root (`~/.amq-squad/solo/<dir>-<digest>/root/extensions/amq-squad/confirm/propos
 it is an index, never a confirmation. Under the solo lead, `team apply
 --digest D` of that proposal starts the team only on the owner's
 confirmation (R55) of D that the lead's own process witnessed within the
-last 30 minutes, at one of two doors: `/squad confirm <prefix>` in the
-lead's pane, or the owner's signed Buzz DM `yes <prefix>` (the prefix is
-the first 16 hex of the content digest). No file is a confirmation, and a
+last 30 minutes, at one of two doors: `/confirm` in the lead's pane (pi's
+confirm dialog quotes the plan; there is nothing to type), or the owner's
+signed bare `yes` replied to the lead's Buzz post of the plan (a `yes
+<prefix>` still verifies, the prefix being the first 16 hex of the content
+digest, but no text asks for it). No file is a confirmation, and a
 lead restart forgets them. From a shell, while no lead holds the
 repository, the apply is the owner's confirmation by the act: it writes the
 files and the owner starts the team with `amq-squad up`; with a lead
@@ -184,7 +186,7 @@ compiles squad.yaml again as `scheduler run` does at its start:
   the relaunch decision, or before the start of the launch running now
   (the last relaunch's, else the scheduler's), is refused
   `start_out_of_range` before anything drains. The lead's screen runs propose, apply and the relaunch with
-  `/squad add`, `seat`, and one confirmation, and stamps the confirmation.
+  `/add seat` and one confirmation, and stamps the confirmation.
 - The lease cap (the leases held at once: the grant's `max_seats`, bounded
   by the squad's seat count, narrowed by `scheduler run --max-seats`) is
   recomputed from the new squad in the same step, with the grant read again

@@ -124,6 +124,21 @@ func TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection(t *test
 	if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].Parent != expectedParent || ledger.Discarded[0].Tree != expectedFirstTree || ledger.Discarded[0].Tree == secondTree {
 		t.Fatalf("surviving discard = %+v, expected parent/tree=(%s,%s), second tree=%s, err=%v", ledger.Discarded, expectedParent, expectedFirstTree, secondTree, err)
 	}
+	// The surviving tree's own content, independent of the captured tree (the
+	// plan reviewer on #879: without the comparison above, a snapshot that
+	// fell back to the parent tree passed): it is not the parent's tree, it
+	// carries the first writer's first.go with its content, and it does not
+	// carry the second writer's second.go.
+	survivor := ledger.Discarded[0].Tree
+	if parentTree := sh(t, f.wt, "rev-parse", expectedParent+"^{tree}"); survivor == parentTree {
+		t.Fatalf("surviving discard's tree %s is the parent's tree: the snapshot did not record the first writer's change", survivor)
+	}
+	if got := sh(t, f.wt, "cat-file", "-p", survivor+":first.go"); got != "package first" {
+		t.Fatalf("surviving discard's first.go = %q, want the first writer's", got)
+	}
+	if names := sh(t, f.wt, "ls-tree", "-r", "--name-only", survivor); strings.Contains("\n"+names+"\n", "\nsecond.go\n") {
+		t.Fatalf("surviving discard carries the second writer's second.go: %s", names)
+	}
 }
 
 func TestCleanSeatArchiveWinsBeforeLaterAttemptArchives(t *testing.T) {

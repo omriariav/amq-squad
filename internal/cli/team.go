@@ -67,7 +67,7 @@ Usage:
   amq-squad team apply --digest D [--project DIR]
                                          Apply a recorded proposal: under the solo lead the
                                          team starts in the lead's process on a confirmation
-                                         it witnessed (/squad confirm in its pane, or a bare
+                                         it witnessed (/confirm in its pane, or a bare
                                          yes replied to the lead's Buzz post of the plan);
                                          from a shell it runs only while no lead holds the
                                          repository, writes squad.yaml and the owner starts

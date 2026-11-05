@@ -303,7 +303,7 @@ func (s *leadStarter) answer(conn *net.UnixConn) {
 	case req.Kind == confirmShellKind:
 		// the shell door was dropped (no kernel read tells the owner's shell
 		// from a tree the model built); its kind is refused by name
-		reply.Refusal, reply.Detail = ReasonShellDoorRemoved, "the shell door was dropped: under one uid, no kernel read tells the owner's shell from a tree the model built; confirm at the lead's pane (/squad confirm) or over Buzz (reply yes to the lead's post of the plan)"
+		reply.Refusal, reply.Detail = ReasonShellDoorRemoved, "the shell door was dropped: under one uid, no kernel read tells the owner's shell from a tree the model built; confirm at the lead's pane (/confirm, a dialog with nothing to type) or over Buzz (reply yes to the lead's post of the plan)"
 	case req.Kind == confirmBuzzKind:
 		reply = s.witnessBuzz(req)
 	case req.Kind == planSentKind:
@@ -436,7 +436,7 @@ func (s *leadStarter) witnessTUI(pid int, req leadStartRequest) leadStartReply {
 	piPID, piStamp := s.piPID, s.piStamp
 	s.wmu.Unlock()
 	if piPID <= 1 || pid != piPID {
-		return leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); /squad confirm is typed in the lead's pane", pid, piPID)}
+		return leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d is not the pi process this lead spawned (pid %d); /confirm runs in the lead's pane, in the pi this lead spawned", pid, piPID)}
 	}
 	if now, ok := confirmStamp(pid); !ok || now != piStamp {
 		return leadStartReply{Outcome: "refused", Refusal: ReasonPeerNotLeadPi, Detail: fmt.Sprintf("pid %d does not carry the start stamp the lead read when it spawned pi", pid)}
