@@ -92,6 +92,17 @@ test("the requests block marks each phone request relayed or refused, the name b
 	assert.ok(!renderScreen({ ...fixture, requests: [] }, now).some((l) => l.startsWith("phone requests")));
 });
 
+test("an active seat and task show the lease and budget clocks", () => {
+	const clocks = {
+		...fixture,
+		decisions: [],
+		tasks: fixture.tasks.map((t) => t.id === "t2" ? { ...t, lease_expires_at: "2026-11-01T09:07:00Z", budget_ends_at: "2026-11-01T09:35:00Z" } : t),
+	};
+	const lines = renderScreen(clocks, now);
+	assert.ok(lines.some((l) => l.includes("scribe") && l.includes("its lease has 2m left; its budget has 30m left")), lines.join("\n"));
+	assert.ok(lines.some((l) => l.includes("t2 in progress") && l.includes("its lease has 2m left; its budget has 30m left")), lines.join("\n"));
+});
+
 // Row 19 (the screen's half): a Claude seat stalled at a dialog and a pi
 // seat with no key for its provider each show as a line with what the seat
 // is doing and its warning; neither is a last stop.

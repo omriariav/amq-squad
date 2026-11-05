@@ -557,6 +557,9 @@ var schedulerLeadParent = func() (int, string, bool) {
 // team-mode start (schedproc.SupervisingLead, 3.0.1 t16).
 func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
 	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
+		if _, ok := parseTaskExtendDecision(req); ok {
+			return extendBudgetDecision(sel, lead, req)
+		}
 		return widenDecision(sel, projectRoot, lead, req)
 	}, Warnings: status.CurrentSeatWarnings} // brief 31-2: a clear names a warning status shows
 	if schedulerDecideSeams != nil {

@@ -167,6 +167,8 @@ func prepare(o Options) (execPlan, error) {
 		if err := CheckCodexSandboxPins(o.Argv, slices.Contains(rec.EnvNeeds, CodexNetworkNeed)); err != nil {
 			return plan, err
 		}
+		plan.argv = append(append([]string(nil), o.Argv...), CodexActivityHookArgs(o.Self, rec.AMQPath)...)
+		plan.providerArgv = plan.argv
 	}
 	// A seat whose start stamp cannot be read could never be closed with a
 	// confirmed identity: refuse it (the identity_incomplete class).
@@ -450,10 +452,12 @@ func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self, token strin
 			}
 		}
 	}
-	if rec.Runtime == "pi" {
+	if rec.Runtime == "pi" || rec.Runtime == "codex" {
 		// The launcher (amq-squad pi run) starts the seat's pi with the
 		// launch record's amq; it forces the rest of the pi environment.
 		m["AMQ_SQUAD_AMQ"] = rec.AMQPath
+	}
+	if rec.Runtime == "pi" {
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"
 		m["PI_CODING_AGENT_DIR"] = piAgentDir(rec, home)
 	}

@@ -44,6 +44,7 @@ type hookLedgerLine struct {
 	Tool          string          `json:"tool,omitempty"`
 	ToolUseID     string          `json:"tool_use_id,omitempty"`
 	Outcome       string          `json:"outcome,omitempty"` // ok | error | the payload's own outcome
+	Attempt       int             `json:"attempt,omitempty"` // task attempt observed with this activity
 	PayloadSHA256 string          `json:"payload_sha256"`    // over the full raw stdin bytes
 	PayloadBytes  int64           `json:"payload_bytes"`
 	Malformed     bool            `json:"malformed,omitempty"`
@@ -71,6 +72,9 @@ func runEvidenceIngest(args []string) error {
 		return hookErrorf("evidence ingest: read stdin: %v", err)
 	}
 	line := newHookLedgerLine(id, head, hookNow())
+	if line.Attempt == 0 {
+		line.Attempt = activityAttempt(id)
+	}
 	if len(head) > hookMaxPayload { // keep hashing the rest; record the prefix only
 		rest, err := io.Copy(sum, hookStdin)
 		if err != nil {
@@ -105,14 +109,14 @@ var ingestLeaseRenewInterval = task.DefaultLeaseDuration / 10
 // for it; the next tool result renews), or "" when nothing was due. It never
 // fails the ingest.
 func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine) string {
-	if line.Tool == "" || line.Outcome == "" || line.Malformed || line.Truncated {
+	if !isLeaseActivity(line) || line.Attempt <= 0 || line.Malformed || line.Truncated {
 		return ""
 	}
 	store, err := task.Open(id.Root)
 	if err != nil {
 		return ""
 	}
-	_, renewed, err := store.RenewNoWait(id.Handle, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
+	_, renewed, err := store.RenewNoWaitAttempt(id.Handle, line.Attempt, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
 	switch {
 	case errors.Is(err, task.ErrBusy):
 		return "skipped"
@@ -120,6 +124,35 @@ func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine) string {
 		return "renewed"
 	}
 	return ""
+}
+
+// isLeaseActivity is the shared runtime producer contract. Claude and pi
+// feed PostToolUse/tool_result through their existing adapters; Codex feeds
+// PostToolUse and Stop. Prompt submission and permission waits are
+// deliberately absent because neither proves that the seat worked.
+func isLeaseActivity(line hookLedgerLine) bool {
+	switch line.Event {
+	case "Stop":
+		return true
+	case "PostToolUse", "tool_result":
+		return line.Tool != "" && line.Outcome != ""
+	case "receipt", "evidence_post":
+		return line.Outcome != ""
+	default:
+		return false
+	}
+}
+
+func activityAttempt(id hookIdentity) int {
+	list, err := task.Snapshot(task.DirFor(id.Root))
+	if err != nil {
+		return 0
+	}
+	t := task.HeldBy(id.Handle, list)
+	if t == nil || t.Lease == nil || t.Lease.ClaimedAt == nil {
+		return 0
+	}
+	return t.Attempt
 }
 
 func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLine {
@@ -143,6 +176,12 @@ func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLin
 		return ""
 	}
 	line.Event, line.Tool, line.ToolUseID, line.Outcome = str("hook_event_name", "type"), str("tool_name", "toolName"), str("tool_use_id", "toolCallId"), str("outcome")
+	for _, key := range []string{"attempt", "task_attempt"} {
+		if json.Unmarshal(p[key], &line.Attempt) == nil && line.Attempt > 0 {
+			break
+		}
+		line.Attempt = 0
+	}
 	for _, k := range []string{"tool_response", "toolResult", "result"} {
 		var r map[string]any
 		if line.Outcome == "" && len(p[k]) > 0 {

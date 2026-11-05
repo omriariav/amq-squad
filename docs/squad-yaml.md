@@ -228,6 +228,7 @@ required version key (`schema: 1`); a file without it is refused.
 | `target_project_root` | absolute path | none | plain |
 | `shared_cwd_exception` | text, the reason two mutation-capable seats share a tree | none | plain |
 | `operator_interaction` | `lead_pane`, `separate_terminal` or `noc` | none | plain |
+| `task_budget` | positive Go duration such as `90m` or `2h` | `90m` | plain |
 | `defaults` | map of runtime, model, effort, tools | empty | plain |
 | `seats` | list of seat maps, at least one | none, required | plain |
 | `mode` | `auto` or `manual` | the owner's | narrow |

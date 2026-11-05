@@ -88,7 +88,17 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 		t.Pool = &p
 	}
 	t.State, t.WaitReason, t.Attempt = StateInProgress, "", t.Attempt+1
-	t.Lease = &Lease{Holder: holder, GrantedAt: now, ExpiresAt: now.Add(dur)}
+	budget := t.Budget
+	if budget <= 0 {
+		budget = DefaultTaskBudget
+		t.Budget = budget
+	}
+	budgetEnd := now.Add(budget)
+	expires := now.Add(dur)
+	if expires.After(budgetEnd) {
+		expires = budgetEnd
+	}
+	t.Lease = &Lease{Holder: holder, GrantedAt: now, ExpiresAt: expires, Attempt: t.Attempt, BudgetEndsAt: budgetEnd}
 	return nil
 }
 
@@ -107,7 +117,11 @@ func claim(t *Task, dur time.Duration, now time.Time) {
 	if t.Lease.RenewedAt == nil || at.After(*t.Lease.RenewedAt) {
 		t.Lease.RenewedAt = &at
 	}
-	if exp := now.Add(dur); exp.After(t.Lease.ExpiresAt) {
+	exp := now.Add(dur)
+	if !t.Lease.BudgetEndsAt.IsZero() && exp.After(t.Lease.BudgetEndsAt) {
+		exp = t.Lease.BudgetEndsAt
+	}
+	if exp.After(t.Lease.ExpiresAt) {
 		t.Lease.ExpiresAt = exp
 	}
 }
@@ -228,17 +242,33 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 // renewal is younger than minInterval (renewed false). An unclaimed lease is
 // never renewed (ErrNoLease).
 func (s Store) Renew(holder string, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
-	return s.renew(s.update, holder, dur, minInterval, now)
+	return s.renew(s.update, holder, 0, dur, minInterval, now)
+}
+
+// RenewAttempt renews only the named live attempt. Runtime activity must use
+// this form so a late event from a previous incarnation cannot revive or
+// extend the current lease.
+func (s Store) RenewAttempt(holder string, attempt int, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
+	return s.renew(s.update, holder, attempt, dur, minInterval, now)
 }
 
 // RenewNoWait is Renew for the hook path (evidence ingest): it never waits
 // for the store lock and returns ErrBusy when another writer holds it. A
 // skipped renewal costs nothing: the next tool result renews.
 func (s Store) RenewNoWait(holder string, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
-	return s.renew(s.updateNoWait, holder, dur, minInterval, now)
+	return s.renew(s.updateNoWait, holder, 0, dur, minInterval, now)
 }
 
-func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder string, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
+// RenewNoWaitAttempt is the attempt-bound hook path.
+func (s Store) RenewNoWaitAttempt(holder string, attempt int, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
+	return s.renew(s.updateNoWait, holder, attempt, dur, minInterval, now)
+}
+
+// ErrBudgetSpent means activity was valid but the lead's task allowance is
+// exhausted. It is a normal non-renewal, not a reason to revive the lease.
+var ErrBudgetSpent = errors.New("task budget spent")
+
+func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder string, attempt int, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
 	list, err := Snapshot(s.Dir) // lock-free pre-check keeps the hook path cheap
 	if err != nil {
 		return Task{}, false, err
@@ -246,6 +276,12 @@ func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder st
 	held := HeldBy(holder, list)
 	if held == nil || held.Lease == nil || held.Lease.ClaimedAt == nil {
 		return Task{}, false, ErrNoLease
+	}
+	if attempt > 0 && (held.Attempt != attempt || held.Lease.Attempt != attempt) {
+		return Task{}, false, ErrNoLease
+	}
+	if !held.Lease.BudgetEndsAt.IsZero() && !now.Before(held.Lease.BudgetEndsAt) {
+		return *held, false, ErrBudgetSpent
 	}
 	if held.Lease.RenewedAt != nil && now.Sub(*held.Lease.RenewedAt) < minInterval && now.Before(held.Lease.ExpiresAt) {
 		return *held, false, nil
@@ -262,6 +298,12 @@ func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder st
 		}
 		if err := requireHolder(t, holder); err != nil || t.Lease.ClaimedAt == nil {
 			return ErrNoLease
+		}
+		if attempt > 0 && (t.Attempt != attempt || t.Lease.Attempt != attempt) {
+			return ErrNoLease
+		}
+		if !t.Lease.BudgetEndsAt.IsZero() && !now.Before(t.Lease.BudgetEndsAt) {
+			return ErrBudgetSpent
 		}
 		if !now.Before(t.Lease.ExpiresAt) {
 			return fmt.Errorf("%w: the lease on %s expired at %s", ErrNoLease, t.ID, t.Lease.ExpiresAt.Format(time.RFC3339))
@@ -281,6 +323,33 @@ func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder st
 		out.UpdatedAt = now
 	}
 	return out, err == nil && wrote, err
+}
+
+// ExtendBudget records a lead decision and moves the live attempt's absolute
+// budget end. Pending tasks retain the larger allowance for their next
+// attempt. The caller is responsible for proving that actor is the lead.
+func (s Store) ExtendBudget(id, actor string, by time.Duration, now time.Time) (Task, error) {
+	if by <= 0 {
+		return Task{}, fmt.Errorf("budget extension must be positive")
+	}
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		if Terminal(t.State) {
+			return fmt.Errorf("task %s is %s", t.ID, t.State)
+		}
+		if t.Budget <= 0 {
+			t.Budget = DefaultTaskBudget
+		}
+		t.Budget += by
+		t.BudgetExtensions = append(t.BudgetExtensions, BudgetExtension{Actor: strings.TrimSpace(actor), At: now, By: by})
+		if t.Lease != nil {
+			if t.Lease.BudgetEndsAt.IsZero() {
+				t.Lease.BudgetEndsAt = t.Lease.GrantedAt.Add(t.Budget)
+			} else {
+				t.Lease.BudgetEndsAt = t.Lease.BudgetEndsAt.Add(by)
+			}
+		}
+		return nil
+	})
 }
 
 // renewAfterPrecheck is a test seam between the lock-free pre-check and the
@@ -609,7 +678,11 @@ func (s Store) ExpireDue(now time.Time) ([]Task, error) {
 			if t.Lease.ClaimedAt == nil {
 				outcome = OutcomeUnclaimed
 			}
-			s.endAttempt(t, outcome, "lease expired at "+t.Lease.ExpiresAt.UTC().Format(time.RFC3339), now)
+			detail := "lease expired at " + t.Lease.ExpiresAt.UTC().Format(time.RFC3339)
+			if outcome == OutcomeExpired && !t.Lease.BudgetEndsAt.IsZero() && !t.Lease.ExpiresAt.Before(t.Lease.BudgetEndsAt) {
+				detail = fmt.Sprintf("task budget of %s spent", effectiveBudget(*t))
+			}
+			s.endAttempt(t, outcome, detail, now)
 			t.State = StatePending
 			all.touch(t.ID)
 			out = append(out, *t)
@@ -617,4 +690,11 @@ func (s Store) ExpireDue(now time.Time) ([]Task, error) {
 		return nil
 	})
 	return out, err
+}
+
+func effectiveBudget(t Task) time.Duration {
+	if t.Budget > 0 {
+		return t.Budget
+	}
+	return DefaultTaskBudget
 }

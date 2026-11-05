@@ -369,12 +369,20 @@ export function seatDoing(s: SeatWords, t: TaskWords | undefined): { text: strin
 // reason has no words of its own, what to do.
 // DecisionWho is the fields a decision records who it is about: the seat
 // (Seat) and the task (TaskID), each as Go writes it for the kind.
-export type DecisionWho = { seat?: string; task_id?: string };
+export type DecisionWho = { seat?: string; task_id?: string; reason?: string };
 
 // seatOf names a decision's seat, "a seat" when it records none: never the
 // task's id in a seat's place (Codex on #866).
 function seatOf(d: DecisionWho): string {
 	return d.seat ? `seat ${d.seat}` : "a seat";
+}
+
+const DURATION = String.raw`[0-9.]+(?:ns|µs|us|ms|s|m|h)(?:[0-9.]+(?:ns|µs|us|ms|s|m|h))*`;
+const BUDGET_ENDS = new RegExp(`^budget ends in ${DURATION}$`);
+const BUDGET_SPENT = new RegExp(`^task budget of ${DURATION} spent$`);
+
+function safeBudgetReason(reason: string | undefined, pattern: RegExp, fallback: string): string {
+	return reason && pattern.test(reason) ? reason : fallback;
 }
 
 export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]> = {
@@ -412,6 +420,8 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	tick_error: () => ["a scheduler tick failed", "nothing to do unless it repeats; the next tick retries"],
 	up_stopped_lead: () => ["amq-squad up stopped a lead", "read the record below the line"],
 	up_stopped_scheduler: () => ["amq-squad up stopped a scheduler", "read the record below the line"],
+	task_budget_warning: (d) => [`${d.task_id || "a task"}'s ${safeBudgetReason(d.reason, BUDGET_ENDS, "budget ends soon")} on ${seatOf(d)}`, "extend it or let it expire"],
+	task_budget_spent: (d) => [`${seatOf(d)}'s lease is no longer renewed${d.task_id ? ` for ${d.task_id}` : ""}`, `its ${safeBudgetReason(d.reason, BUDGET_SPENT, "task budget is spent")}`],
 };
 
 // ROUTINE_DECISIONS are the decision kinds that need no look from the lead
@@ -427,7 +437,7 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		"lease_expired", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
 		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
-		"task_reset", "usage_limit", "warning_cleared",
+		"task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
 	].map((k) => [k, true]),
 ) as Record<string, true>;
 
@@ -469,6 +479,8 @@ export const RESOLVED_BY: Record<string, { kinds: readonly string[]; match: "sea
 	scheduler_stopped: SCHEDULER_RESOLVED,
 	lead_unknown: SCHEDULER_RESOLVED,
 	up_stopped_scheduler: SCHEDULER_RESOLVED,
+	task_budget_warning: { kinds: ["task_budget_extended", "completed"], match: "task" },
+	task_budget_spent: { kinds: ["task_budget_extended", "task_reset", "completed"], match: "task" },
 };
 
 // resolved reports whether a later decision resolves the stop at index i:

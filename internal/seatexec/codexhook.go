@@ -3,8 +3,10 @@ package seatexec
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -21,12 +23,38 @@ import (
 // (internal/cli/wake_dialog_codex_unix.go:37-44 at AMQ v0.116.2).
 var CodexDialogHookEvents = []string{"Stop", "UserPromptSubmit", "Interrupt", "SessionStart", "SessionEnd", "PermissionRequest"}
 
+// CodexActivityHookEvents are the installed 0.166.0 catalogue events that
+// prove work. PostToolUse is the in-turn producer and Stop closes the turn.
+// PermissionRequest and UserPromptSubmit intentionally do not appear.
+var CodexActivityHookEvents = []string{"PostToolUse", "Stop"}
+
 // CodexDialogHookMarker prefixes every AMQ dialog hook command
 // (internal/cli/wake_dialog_unix.go:32 at AMQ v0.116.2).
 const CodexDialogHookMarker = "AMQ_DIALOG_HOOK=1 "
 
 // CodexDialogHookFix is the owner's step that installs the hook.
 const CodexDialogHookFix = "amq wake install-dialog-hook --harness codex, then open /hooks in Codex and trust the AMQ_DIALOG_HOOK entries"
+
+// CodexActivityHookArgs overlays per-seat activity handlers without writing
+// the owner's CODEX_HOME. The hooks send Codex's original stdin payload to
+// the same evidence/activity producer Claude and pi use. Stop also preserves
+// AMQ's dialog-close handler because a per-event overlay replaces that event.
+func CodexActivityHookArgs(squadBin, amqBin string) []string {
+	activity := shellWord(squadBin) + ` evidence ingest --me "$AM_ME"`
+	handler := func(command string, timeout int) string {
+		return fmt.Sprintf(`{type="command",command=%s,timeout=%d}`, strconv.Quote(command), timeout)
+	}
+	post := fmt.Sprintf(`hooks.PostToolUse=[{hooks=[%s]}]`, handler(activity, 5))
+	stopHandlers := handler(activity, 5)
+	if strings.TrimSpace(amqBin) != "" {
+		closeDialog := shellWord(amqBin) + ` --no-update-check wake dialog --harness codex close || true`
+		stopHandlers += "," + handler(closeDialog, 5)
+	}
+	stop := fmt.Sprintf(`hooks.Stop=[{hooks=[%s]}]`, stopHandlers)
+	return []string{"-c", post, "-c", stop}
+}
+
+func shellWord(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // CodexDir is the Codex home a seat reads: $CODEX_HOME, else ~/.codex
 // (seat-exec overrides neither).

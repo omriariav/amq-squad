@@ -60,6 +60,79 @@ func TestEvidenceIngestRenewsTheClaimedLease(t *testing.T) {
 	}
 }
 
+func TestActivityUsesTheMailboxIdentityAndFiltersNonWorkEvents(t *testing.T) {
+	f := newHookFixture(t)
+	store, _ := taskstore.Open(f.root)
+	for _, title := range []string{"A", "B"} {
+		if _, err := store.Add(taskstore.AddInput{Title: title, Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.root, "agents", "qa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t2", "qa", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	beforeB, _ := store.Get("t2")
+	// The untrusted body names qa, but the command runs from cto's mailbox.
+	// Only the hook identity is authoritative.
+	withHookStdin(t, []byte(`{"type":"receipt","handle":"qa","outcome":"drained"}`))
+	out, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest", "--me", "cto", "--json"}, "test") })
+	if err != nil || !strings.Contains(out, `"lease_renewed":true`) {
+		t.Fatalf("receipt activity: %v %s", err, out)
+	}
+	afterA, _ := store.Get("t1")
+	afterB, _ := store.Get("t2")
+	if afterA.Lease.Renewals != 1 || afterB.Lease.Renewals != 0 || !afterB.Lease.ExpiresAt.Equal(beforeB.Lease.ExpiresAt) {
+		t.Fatalf("mailbox attribution: A=%+v B=%+v", afterA.Lease, afterB.Lease)
+	}
+	for _, event := range []string{"PermissionRequest", "UserPromptSubmit"} {
+		if isLeaseActivity(hookLedgerLine{Event: event, Outcome: "ok"}) {
+			t.Fatalf("%s counted as work", event)
+		}
+	}
+	for _, line := range []hookLedgerLine{
+		{Event: "PostToolUse", Tool: "Bash", Outcome: "ok"},
+		{Event: "tool_result", Tool: "bash", Outcome: "ok"},
+	} {
+		if !isLeaseActivity(line) {
+			t.Fatalf("runtime work event was not shared activity: %+v", line)
+		}
+	}
+}
+
+func TestEvidencePayloadAttemptCannotRenewALaterAttempt(t *testing.T) {
+	f := newHookFixture(t)
+	store, _ := taskstore.Open(f.root)
+	if _, err := store.Add(taskstore.AddInput{Title: "attempt-bound", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-20*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ExpireDue(f.now.Add(-9 * time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute))
+	if err != nil || first.Attempt == second.Attempt {
+		t.Fatalf("second attempt: %+v %v", second, err)
+	}
+	withHookStdin(t, []byte(`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":{"stdout":"late"},"attempt":1}`))
+	out, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest", "--me", "cto", "--json"}, "test") })
+	if err != nil || strings.Contains(out, `"lease_renewed":true`) {
+		t.Fatalf("old attempt renewed: %v %s", err, out)
+	}
+	got, _ := store.Get("t1")
+	if got.Lease.Renewals != 0 {
+		t.Fatalf("late attempt changed lease: %+v", got.Lease)
+	}
+}
+
 // A held store lock (a scheduler tick, another writer) never blocks the
 // hook: the renewal is skipped and the ledger line says so (reviewer rule:
 // try-lock, at most 20 ms of waiting).

@@ -117,6 +117,44 @@ func TestTaskCLIRefusals(t *testing.T) {
 	}
 }
 
+func TestTaskCLIPersistsAndExtendsTheAttemptBudget(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	now := withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	if _, err := taskCLI(t, "add", "--title", "bounded", "--class", "implement", "--budget", "45m", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	shown, err := taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if got.Budget != 45*time.Minute || got.Lease == nil || !got.Lease.BudgetEndsAt.Equal(now.Add(45*time.Minute)) {
+		t.Fatalf("bounded task = %+v", got)
+	}
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := extendBudgetDecision(storeSelection{store: store, root: root}, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: "t1", Reason: taskExtendDecisionPrefix + "30m"})
+	if !reply.OK {
+		t.Fatalf("extend decision: %+v", reply)
+	}
+	shown, err = taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if got.Budget != 75*time.Minute || got.Lease == nil || !got.Lease.BudgetEndsAt.Equal(now.Add(75*time.Minute)) || len(got.BudgetExtensions) != 1 {
+		t.Fatalf("extended task = %+v", got)
+	}
+}
+
 func TestTaskCLIBlockCarriesTypedWidenPaths(t *testing.T) {
 	root := t.TempDir()
 	chdir(t, root)

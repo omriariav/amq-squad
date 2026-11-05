@@ -183,7 +183,7 @@ func TestDoorbellDroppedMidTurnLosesNothing(t *testing.T) {
 		h.bell.rung = nil // dropped in the middle of the turn
 		// Tool activity during the old turn does not renew an unclaimed lease.
 		h.clk.Add(3 * time.Minute)
-		h.s.Post(Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "seat-a"})
+		h.s.Post(Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "seat-a", Attempt: 1})
 		h.tick()
 		if got := h.get("t1"); !got.Lease.ExpiresAt.Equal(t0.Add(10 * time.Minute)) {
 			t.Fatalf("activity renewed an unclaimed lease: %+v", got.Lease)
@@ -199,7 +199,7 @@ func TestDoorbellDroppedMidTurnLosesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.clk.Add(8 * time.Minute) // past the original expiry; the claim moved it
-		h.s.Post(Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "seat-a"})
+		h.s.Post(Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "seat-a", Attempt: 1})
 		if d := h.tick(); has(d, "lease_expired", "t1", "") || !has(d, "lease_renewed", "t1", "seat-a") {
 			t.Fatalf("claimed lease: %+v", d)
 		}
@@ -299,7 +299,7 @@ func TestSeatCapAndUsageLimitStop(t *testing.T) {
 			t.Fatalf("a running seat lost its lease: %+v", got)
 		}
 		h.clk.Add(4 * time.Hour)
-		h.s.Post(Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "seat-a"})
+		h.s.Post(Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "seat-a", Attempt: 1})
 		h.tick()
 		// (seat-a's claimed lease expired in the four hours, so the seat is
 		// closed through the launcher (R3 of the 2b-2 B first pass) and t1 and
@@ -514,10 +514,10 @@ func scenario(t *testing.T, seed int64) []Decision {
 		}
 	}
 	at = h.clk.Now()
-	post(Event{Kind: SeatActivity, At: at, Handle: "s-a"}, Event{Kind: SeatActivity, At: at, Handle: "s-b"}, Event{Kind: SeatActivity, At: at, Handle: "s-c"})
+	post(Event{Kind: SeatActivity, At: at, Handle: "s-a", Attempt: 1}, Event{Kind: SeatActivity, At: at, Handle: "s-b", Attempt: 1}, Event{Kind: SeatActivity, At: at, Handle: "s-c", Attempt: 1})
 	step()
 	h.clk.Add(10 * time.Minute) // unclaimed leases lapse
-	post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-d"}, Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "s-a"})
+	post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "s-d"}, Event{Kind: SeatActivity, At: h.clk.Now(), Handle: "s-a", Attempt: 1})
 	step()
 	h.clk.Add(20 * time.Minute)
 	step()
