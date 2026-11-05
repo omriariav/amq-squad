@@ -264,3 +264,31 @@ func TestProtectionParsesStrictPolicy(t *testing.T) {
 		}
 	})
 }
+
+func TestMaxFileCompareRefusesWithoutRebind(t *testing.T) {
+	assertIncompleteCompareSignalRefused(t, func(s *fakeState) { s.CapCompareAfterRebase = []string{"1"} })
+}
+
+func TestHTTP422CompareRefusesWithoutRebind(t *testing.T) {
+	assertIncompleteCompareSignalRefused(t, func(s *fakeState) { s.RejectCompareAfterRebase = []string{"1"} })
+}
+
+func assertIncompleteCompareSignalRefused(t *testing.T, signal func(*fakeState)) {
+	t.Helper()
+	f := newFixture(t)
+	setStrict(f)
+	id := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	old := f.head("pr1")
+	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
+	f.realRun(&req)
+	advanceBase(f, map[string]string{"base.txt": "advance\n"})
+	f.edit(signal)
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Detail != "the update could not be proved: GitHub returned an incomplete diff" {
+		t.Fatalf("incomplete compare was not refused in words: %v %+v", err, res.PRs[0])
+	}
+	bound, _ := f.tasks().Get(id)
+	if bound.PRHead != old || strings.Contains(f.calls(), "-X PUT") {
+		t.Fatalf("incomplete compare was rebound or merged: task=%+v\n%s", bound, f.calls())
+	}
+}

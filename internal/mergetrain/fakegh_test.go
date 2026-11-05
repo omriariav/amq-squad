@@ -56,8 +56,12 @@ type fakeState struct {
 	AdvanceBaseBeforeRebase []string `json:"advance_base_before_rebase,omitempty"`
 	// TruncateAfterRebase omits a patch marker for the updated head.
 	TruncateAfterRebase []string `json:"truncate_after_rebase,omitempty"`
-	CIName              string   `json:"ci_name"`
-	FailMerge           bool     `json:"fail_merge,omitempty"`
+	// CapCompareAfterRebase reports MaxCompareFiles for the updated head.
+	CapCompareAfterRebase []string `json:"cap_compare_after_rebase,omitempty"`
+	// RejectCompareAfterRebase makes the updated compare metadata return HTTP 422.
+	RejectCompareAfterRebase []string `json:"reject_compare_after_rebase,omitempty"`
+	CIName                   string   `json:"ci_name"`
+	FailMerge                bool     `json:"fail_merge,omitempty"`
 	// LoseMergeResponse: the merge happens on the server, then the
 	// connection fails before the response (5 re-pass, P2-5).
 	LoseMergeResponse bool `json:"lose_merge_response,omitempty"`
@@ -69,11 +73,42 @@ type fakeState struct {
 // timelinePage is GitHub's page size of the force-push timeline query.
 const timelinePage = 100
 
+// fixtureHome is the HOME the whole test binary runs under (standing rule
+// 18: a test never reads the owner's home): a temporary directory made
+// once in TestMain, for the test binary's run and for the fake gh's own run
+// when the train calls it.
+var fixtureHome string
+
+// isolateGitHome points this process's environment at home for every git
+// it starts: the fixture helpers' (gitOut, mustGit, newFixture and any
+// fixture a later test adds), production's own (gh.go's git patch-id) and
+// the subprocess fake gh's, which inherit it. It is set on the process, not
+// per fixture, since t.Setenv panics in the parallel tests that build
+// fixtures. XDG_CONFIG_HOME is unset, so git's default ignore and
+// attributes files, which GIT_CONFIG_GLOBAL does not cover, are read from
+// under home only.
+func isolateGitHome(home string) {
+	_ = os.Setenv("HOME", home)
+	_ = os.Unsetenv("XDG_CONFIG_HOME")
+	_ = os.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
 func TestMain(m *testing.M) {
-	if path := os.Getenv("FAKE_GH_STATE"); path != "" {
-		os.Exit(fakeGH(path, os.Args[1:]))
+	home, err := os.MkdirTemp("", "mergetrain-fixture-home-")
+	if err != nil {
+		panic(err)
 	}
-	os.Exit(m.Run())
+	fixtureHome = home
+	isolateGitHome(home)
+	code := 0
+	if path := os.Getenv("FAKE_GH_STATE"); path != "" {
+		code = fakeGH(path, os.Args[1:])
+	} else {
+		code = m.Run()
+	}
+	_ = os.RemoveAll(home)
+	os.Exit(code)
 }
 
 func loadFake(path string) *fakeState {
@@ -97,6 +132,7 @@ func (s *fakeState) save(path string) {
 
 func gitOut(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	// HOME is the test binary's own (isolateGitHome, TestMain)
 	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=owner", "GIT_AUTHOR_EMAIL=owner@example.com",
 		"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
@@ -294,15 +330,27 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		case parts[0] == "compare" && len(parts) == 2:
 			base, head, _ := strings.Cut(parts[1], "...")
 			if slices.ContainsFunc(args, func(a string) bool { return strings.Contains(a, "missing_patch") }) {
+				for _, n := range s.RejectCompareAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						return fail("gh: compare result unavailable (HTTP 422)")
+					}
+				}
 				status, _ := gitOut(s.Bare, "diff", "--name-only", base+"..."+head)
-				missing := 0
+				fileCount, missing := len(strings.Fields(status)), 0
 				for _, n := range s.TruncateAfterRebase {
 					pushes := pr(n).ForcePushes
 					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
 						missing = 1
 					}
 				}
-				fmt.Fprintf(stdout, `{"file_count":%d,"missing_patch":%d}`+"\n", len(strings.Fields(status)), missing)
+				for _, n := range s.CapCompareAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						fileCount = MaxCompareFiles
+					}
+				}
+				fmt.Fprintf(stdout, `{"file_count":%d,"missing_patch":%d}`+"\n", fileCount, missing)
 				break
 			}
 			if slices.Contains(args, "Accept: application/vnd.github.diff") {

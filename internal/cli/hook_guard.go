@@ -259,7 +259,7 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 			return out("deny", "harness_only", a.harness+" is the harness's: the commit step runs the verifier and records the verdict, never a seat (v3-5-verifier rule 2)")
 		}
 		if a.ownerOnly != "" {
-			return out("deny", "owner_only", a.ownerOnly+" is the owner's: a team is confirmed from the owner's own shell, the lead's pane (/squad confirm) or the owner's signed Buzz DM, never by a seat or the lead's tools (R55)")
+			return out("deny", "owner_only", a.ownerOnly+" is the owner's: a team is confirmed from the owner's own shell, the lead's pane (/confirm, a dialog with nothing to type) or the owner's signed bare yes replied to the lead's Buzz post of the plan, never by a seat or the lead's tools (R55)")
 		}
 		for _, w := range a.writes {
 			if confirmRecordPath(w, a.env.cwd) {
