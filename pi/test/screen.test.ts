@@ -100,7 +100,10 @@ test("a seat stalled at a dialog and a keyless pi seat are screen lines with wha
 	const seats = block(lines, "seats");
 	const scribe = seats.findIndex((l) => l.startsWith("  scribe  claude sonnet medium  working on t2"));
 	assert.ok(scribe >= 0, seats.join("\n"));
-	assert.equal(seats[scribe + 1], "    ! it is stopped at a harness dialog open for 3m0s; answer the dialog in its pane");
+	// the plan reviewer (3.1.1): the field records a permission request made
+	// this turn, not a stop; the words say only that
+	assert.equal(seats[scribe + 1], "    ! seat scribe asked for a permission 3m0s ago this turn; if it is not moving, check its pane");
+	assert.ok(!seats.some((l) => /stalled|stopped at/.test(l)), seats.join("\n"));
 	const pi = seats.findIndex((l) => l.startsWith("  pi-dev  pi anthropic/claude-sonnet-5 medium  idle"));
 	assert.ok(pi >= 0, seats.join("\n"));
 	assert.equal(seats[pi + 1], "    ! its model anthropic/claude-sonnet-5 has no provider key, so it stalls at its first turn; add the key to its env needs or its pi login, then relaunch");

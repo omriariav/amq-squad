@@ -359,8 +359,8 @@ In the lead's pi, the team screen sits below the editor, on by default:
 the lead handle and the root, then the seats, each with its runtime and
 model and what it is doing ("working on t28: <title>", "idle", "starting",
 "waiting: ..." or "stopped", the launch budget at the end) and its
-warnings in words ("it is stopped at a harness dialog open for 3m0s;
-answer the dialog in its pane"), then the newest seat that stopped, with
+warnings in words ("seat scribe asked for a permission 3m0s ago this
+turn; if it is not moving, check its pane"), then the newest seat that stopped, with
 what to do ("seat old-dev did not stop cleanly: the commits ledger does not
 verify; ask the owner to inspect the commits ledger before anything
 commits"), the tasks
@@ -511,8 +511,9 @@ amq-squad gate status --project . --session issue-96 --json
   quarantined. seat-exec still denies a seat's write to the owner's global
   agent config. So are a seat over the launch ceiling
   (`launch_budget_exceeded`), a seat whose wake is off with AMQ's reason
-  (`wake_off`: a Codex seat without AMQ's dialog hook, a pi seat), a seat at
-  an open harness dialog (`seat_stalled_at_dialog`) and a pi seat with no key
+  (`wake_off`: a Codex seat without AMQ's dialog hook, a pi seat), a seat
+  that asked for a permission this turn (`seat_stalled_at_dialog`, AMQ's
+  dialog marker, which stays until the turn ends) and a pi seat with no key
   for its provider (`pi_provider_key_missing`).
 
 Check whether an action is approved, and the evidence of a merge or a release:
