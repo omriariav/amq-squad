@@ -162,7 +162,10 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
-	ledger_tampered: () => ["the commits ledger does not verify", "ask the owner to inspect the commits ledger before anything commits"],
+	// 3.2.0-0c-B rule 7: the tamper alarm's typed block (the scheduler's
+	// prepare, the commit step's write-time refusal), with the seat and the
+	// quarantine path on the record line below the rule (blockWords)
+	ledger_tampered: () => ["the seat's commit record failed its check", "the lead investigates before the seat works again"],
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
 	verifier_timeout: () => ["its verifier ran past its time limit", `${RESET}, or ask the owner to raise the limit`],
 	verifier_output_exceeded: () => ["its verifier printed more than the limit", `${RESET}, or ask the owner to raise the limit`],
@@ -291,7 +294,11 @@ export function blockWords(t: TaskWords, d: BlockDetail = {}, c: WaitContext = {
 	const f = own(BLOCK_WORDS, r);
 	if (f) {
 		const [happened, todo] = f(d);
-		return { line: `${t.id} blocked: ${happened}; ${todo}` };
+		// the tamper alarm's record (3.2.0-0c-B): the seat and the
+		// quarantine path, from the block's own detail (tamper.go's
+		// "seat H: quarantined at PATH (seq N): ...")
+		const record = r === "ledger_tampered" && d.block_detail ? `${t.id}: ${tamperRecord(d.block_detail)}` : undefined;
+		return { line: `${t.id} blocked: ${happened}; ${todo}`, record };
 	}
 	// the task's own record marks a launch failure's block: Go's
 	// blockOnLaunchFailure writes "the launch of seat ... failed N times in a
@@ -321,10 +328,24 @@ export function launchBlock(detail: string | undefined, reason: string): { stage
 }
 
 // blockNeedsRecord reports whether a block's words read the task's own
-// record (task show's block_detail): the size cap's numbers, and a reason
-// no table maps, which may be a launch failure's AMQ code.
+// record (task show's block_detail): the size cap's numbers, the tamper
+// alarm's seat and quarantine path, and a reason no table maps, which may
+// be a launch failure's AMQ code.
 export function blockNeedsRecord(reason: string): boolean {
-	return reason === "size_cap_exceeded" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+	return reason === "size_cap_exceeded" || reason === "ledger_tampered" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+}
+
+// TAMPER_DETAIL is the tamper alarm's detail (internal/scheduler
+// tamper.go tamperDetail, and the commit step's write-time refusal, which
+// carries the same "quarantined at PATH" from seatcommit): the seat and
+// the slot.
+const TAMPER_DETAIL = /seat (\S+):.*?quarantined at ([^\s;]+)/;
+
+// tamperRecord is the record line of a tamper block: the seat and the
+// quarantine path when the detail names them, else the detail itself.
+export function tamperRecord(detail: string): string {
+	const m = TAMPER_DETAIL.exec(detail ?? "");
+	return m ? `seat ${m[1]}, quarantined at ${m[2]}` : clean(detail, 200);
 }
 
 // blockHappened is a block's first half alone (a dialog label).
@@ -390,6 +411,8 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	seat_not_up: (d) => [`${seatOf(d)} did not come up`, "ask the lead to relaunch the roster"],
 	seat_launch_failed: (d) => [`${seatOf(d)}'s launch failed${d.task_id ? ` for ${d.task_id}` : ""}`, "ask the lead to relaunch the roster"],
 	seat_prepare_failed: (d) => [`${seatOf(d)} could not be prepared${d.task_id ? ` for ${d.task_id}` : ""}`, "ask the lead to relaunch the roster"],
+	// 3.2.0-0c-B rule 2: the count line after a prepare failure repeats
+	seat_prepare_suppressed: (d) => [`${seatOf(d)}'s prepare failure${d.task_id ? ` for ${d.task_id}` : ""} repeats`, "further repeats are counted, not shown, until the task, the seat or the reason changes"],
 	// Go records the task and no seat (scheduler.go): the sentence names it
 	seat_request_failed: (d) => [`a seat could not be requested${d.task_id ? ` for ${d.task_id}` : ""}`, "check the task's pool, or /reset it onto another"],
 	seat_refused: (d) => [`${seatOf(d)} was refused`, "ask the lead why; the record is below the line"],
@@ -438,6 +461,10 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
 		"task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
+		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger (its own
+		// decision; the task's return to pending is a task_reset) and the
+		// restart's restore of held seats
+		"ledger_recovered", "ledger_tampers_restored",
 	].map((k) => [k, true]),
 ) as Record<string, true>;
 
@@ -467,6 +494,7 @@ export const RESOLVED_BY: Record<string, { kinds: readonly string[]; match: "sea
 	seat_not_up: SEAT_RESOLVED,
 	seat_launch_failed: SEAT_RESOLVED,
 	seat_prepare_failed: SEAT_RESOLVED,
+	seat_prepare_suppressed: SEAT_RESOLVED,
 	seat_refused: SEAT_RESOLVED,
 	seat_gone: SEAT_RESOLVED,
 	seat_liveness_unknown: SEAT_RESOLVED,
@@ -690,7 +718,7 @@ export function plainDetail(text: string): string {
 }
 
 // The verb names a refusal starts with ("task reset: ...").
-const VERB_HEADS = new Set(["task add", "task reset", "task widen", "task show", "scheduler clear", "scheduler relaunch", "gate status", "gate post", "team propose", "team apply", "error"]);
+const VERB_HEADS = new Set(["task add", "task reset", "task widen", "task show", "scheduler clear", "scheduler relaunch", "scheduler recover", "gate status", "gate post", "team propose", "team apply", "error"]);
 
 // sentence is "<what happened>: <detail>." or "<what happened>." when the
 // detail has nothing plain to add.
