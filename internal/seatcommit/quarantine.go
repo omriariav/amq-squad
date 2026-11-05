@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
-	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // A tamper alarm preserves its evidence (3.2.0-0c-A). On 2026-11-05 the
@@ -65,16 +64,12 @@ func quarantineBase(handle, seq string) string { return "commits." + handle + ".
 // returns the refusal extended with the quarantine path (the body's; the
 // head's when the body is absent). The refusal stands whatever happens
 // here: a copy that cannot be made is named in the error as a failed
-// copy, never as a quarantine.
-func quarantine(root, handle, verb string, refusal error) error {
-	body, hasBody, err := readIfPresent(ledgerPath(root, handle))
-	if err != nil {
-		return fmt.Errorf("%w; the quarantine copy failed: the refused document: %v", refusal, err)
-	}
-	head, hasHead, err := readIfPresent(sealchain.HeadPath(root, ledgerHeadName(handle)))
-	if err != nil {
-		return fmt.Errorf("%w; the quarantine copy failed: the refused document's head: %v", refusal, err)
-	}
+// copy, never as a quarantine. raw is what the refusing read checked: the
+// copy is of those bytes, never a re-read of the files (Codex's P1 on
+// #893: a writer can replace the body between the check and the copy).
+func quarantine(root, handle, verb string, refusal error, raw ledgerRaw) error {
+	body, hasBody := raw.body, raw.hasBody
+	head, hasHead := raw.head, raw.hasHead
 	dir := QuarantineDir(root)
 	if err := ensureQuarantineDir(dir); err != nil {
 		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)

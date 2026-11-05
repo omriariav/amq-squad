@@ -284,6 +284,45 @@ func TestPlantedHeadInAnEmptySlotIsAQuarantineFailure(t *testing.T) {
 	}
 }
 
+// A10: the copy is of the bytes the check refused. A body swapped on disk
+// between the refusal and the copy (the afterLedgerRefusal seam stands in
+// for a concurrent writer) is not what gets quarantined: the quarantine
+// holds the refused bytes, its sidecar their digest; the swapped body stays
+// on disk (the writer moves nothing).
+func TestQuarantineHoldsTheRefusedBytesNotALaterSwap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newFixture(t)
+	refused := tamperBase(t, f, f.base, '0')
+	seq, head := headSeqOf(t, f)
+	bodyQ, headQ, sideQ := quarantinePaths(f, seq)
+	var swapped []byte
+	afterLedgerRefusal = func(root, handle string) {
+		if root == f.root && handle == f.handle && swapped == nil {
+			swapped = tamperBase(t, f, strings.Repeat("0", len(f.base)), '1')
+		}
+	}
+	t.Cleanup(func() { afterLedgerRefusal = nil })
+	_, err := RecordTarget(f.root, f.handle, f.target())
+	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+bodyQ) {
+		t.Fatalf("refusal: %v", err)
+	}
+	if swapped == nil || bytes.Equal(swapped, refused) {
+		t.Fatal("the swap did not happen between the refusal and the copy")
+	}
+	if got := readFile(t, bodyQ); !bytes.Equal(got, refused) {
+		t.Fatalf("the quarantine holds the swapped body, not the refused one: sha256 %s, refused %s, swapped %s", sha(got), sha(refused), sha(swapped))
+	}
+	if got := readFile(t, headQ); !bytes.Equal(got, head) {
+		t.Fatal("the quarantine head is not the checked head")
+	}
+	if side := string(readFile(t, sideQ)); !strings.Contains(side, "sha256 "+sha(refused)) {
+		t.Fatalf("the sidecar's digest is not the refused body's:\n%s", side)
+	}
+	if got := readFile(t, ledgerPath(f.root, f.handle)); !bytes.Equal(got, swapped) {
+		t.Fatal("the writer moved the swapped document")
+	}
+}
+
 // A7: a planted link never passes as a copy. A symlink at the body path,
 // or a symlink where the quarantine directory should be, makes the copy a
 // named failure ("the quarantine copy failed: ... is a symlink"), never a

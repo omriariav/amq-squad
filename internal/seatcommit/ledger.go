@@ -377,57 +377,86 @@ func ReadLedger(root, handle string) (Ledger, error) { return ReadLedgerAs(root,
 // ReadLedgerAs is ReadLedger with the caller's verb on the quarantine's
 // sidecar (the scheduler's prepare, each writer).
 func ReadLedgerAs(root, handle, verb string) (Ledger, error) {
-	l, err := readLedger(root, handle)
+	l, raw, err := readLedger(root, handle)
 	if errors.Is(err, sealchain.ErrTampered) {
-		err = quarantine(root, handle, verb, err)
+		if afterLedgerRefusal != nil {
+			afterLedgerRefusal(root, handle)
+		}
+		err = quarantine(root, handle, verb, err, raw)
 	}
 	return l, err
 }
 
+// afterLedgerRefusal is a test seam between a refusing read and its
+// quarantine (row A10: the copy is of the bytes the check refused, never a
+// re-read of a file a concurrent writer may have replaced since).
+var afterLedgerRefusal func(root, handle string)
+
+// ledgerRaw is what readLedger read and checked, byte for byte: the body
+// and the head with their presence. The quarantine copies these and never
+// re-reads the files (Codex's P1 on #893): between the check and the copy
+// a concurrent writer can replace the refused body, and the alarm must
+// archive what it refused, not what came after. The head bytes are read
+// right before sealchain's own read of the head (Absent, Check), the
+// closest this package gets without a sealchain change.
+type ledgerRaw struct {
+	body, head       []byte
+	hasBody, hasHead bool
+}
+
 // readLedger is the read and the check: the file, its schema and handle,
 // the seal under the session seed and the signed head (sealchain.Check).
-func readLedger(root, handle string) (Ledger, error) {
+func readLedger(root, handle string) (Ledger, ledgerRaw, error) {
 	var l Ledger
-	raw, err := os.ReadFile(ledgerPath(root, handle))
+	var raw ledgerRaw
+	snapHead := func() { raw.head, raw.hasHead, _ = readIfPresent(sealchain.HeadPath(root, ledgerHeadName(handle))) }
+	body, err := os.ReadFile(ledgerPath(root, handle))
+	raw.body, raw.hasBody = body, err == nil
 	if err != nil {
 		if os.IsNotExist(err) {
 			// only a ledger with no sealed head is absent; one whose head
 			// says it existed was removed (ledger_tampered, never "no
 			// ledger", "no base" or "unused")
+			snapHead()
 			if key, ok, kerr := sealchain.ReadKey(root); kerr != nil {
-				return l, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, kerr)
+				return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, kerr)
 			} else if ok {
 				if aerr := sealchain.Absent(root, ledgerHeadName(handle), key); aerr != nil {
-					return l, fmt.Errorf("commit ledger %s: %w", handle, aerr)
+					return l, raw, fmt.Errorf("commit ledger %s: %w", handle, aerr)
 				}
 			}
 		}
-		return l, err
+		return l, raw, err
 	}
 	// A sealed record that does not decode, or carries another schema or
 	// handle, is ledger_tampered for the owner, never a deferral (the fix
 	// round's item 25).
-	if err := json.Unmarshal(raw, &l); err != nil {
-		return l, sealchain.Tampered("commit ledger "+handle+" does not decode", err)
+	if err := json.Unmarshal(body, &l); err != nil {
+		snapHead()
+		return l, raw, sealchain.Tampered("commit ledger "+handle+" does not decode", err)
 	}
 	if l.Schema != LedgerSchema || l.Handle != handle {
-		return l, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))
+		snapHead()
+		return l, raw, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))
 	}
 	// The seal: a hand edit, an older copy, a stripped seal or a deleted
 	// head is ledger_tampered (sealchain.ErrTampered).
 	key, ok, err := sealchain.ReadKey(root)
 	if err != nil {
-		return l, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, err)
+		snapHead()
+		return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, err)
 	}
 	if !ok {
-		return l, fmt.Errorf("commit ledger %s: %w: the session seed that seals it is gone", handle, sealchain.ErrTampered)
+		snapHead()
+		return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed that seals it is gone", handle, sealchain.ErrTampered)
 	}
-	body := l
-	body.Seal = nil
-	if err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, body); err != nil {
-		return l, fmt.Errorf("commit ledger %s: %w", handle, err)
+	sealed := l
+	sealed.Seal = nil
+	snapHead()
+	if err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, sealed); err != nil {
+		return l, raw, fmt.Errorf("commit ledger %s: %w", handle, err)
 	}
-	return l, nil
+	return l, raw, nil
 }
 
 // writeLedger seals and saves a seat's ledger: the one point every write
