@@ -19,11 +19,19 @@ import (
 // owner_only deny's old "(/squad" + " confirm)" say), this fails naming the file and
 // line.
 func TestNoTextNamesARemovedSquadSubcommand(t *testing.T) {
+	// the pattern and the allowlist, pinned on fixtures first
+	pinRemovedSquadForms(t)
 	root := repoRootForText(t)
-	// built at run time, so this file does not carry the form it forbids
-	removed := regexp.MustCompile(regexp.QuoteMeta("/"+"squad") + `[ \t]+[a-z]`)
+	// the subcommands 3.1.1 removed (Codex on #878: not any word after
+	// /squad, so a line like "/squad prints the commands" is no hit), built
+	// at run time so this file does not carry the form it forbids
+	removed := regexp.MustCompile(regexp.QuoteMeta("/"+"squad") + `[ \t]+(add|reset|clear|answer|confirm)\b`)
+	// allowed by exact path: the historical notes and the release notes from
+	// 3.1.0 on, when /squad's subcommands came and went (an anchored
+	// pattern, not a name substring)
+	releaseNotes := regexp.MustCompile(`^docs/v3\.[1-9][0-9]*\.[0-9]+(-[a-z0-9.]+)?-release-notes\.md$`)
 	historical := func(rel string) bool {
-		return strings.HasPrefix(rel, "docs/v3-spike/") || strings.Contains(filepath.Base(rel), "release-notes")
+		return strings.HasPrefix(rel, "docs/v3-spike/") || releaseNotes.MatchString(rel)
 	}
 	var scanned int
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -82,5 +90,35 @@ func repoRootForText(t *testing.T) string {
 			t.Fatal("no go.mod above the test")
 		}
 		dir = parent
+	}
+}
+
+// pinRemovedSquadForms checks the scan's own pattern and allowlist (Codex on
+// #878): each removed subcommand is a hit and a plain word after /squad is
+// not; only the historical notes and the anchored 3.1.0-and-later release notes are
+// allowed, never a file whose name merely carries "release-notes".
+func pinRemovedSquadForms(t *testing.T) {
+	t.Helper()
+	removed := regexp.MustCompile(regexp.QuoteMeta("/"+"squad") + `[ \t]+(add|reset|clear|answer|confirm)\b`)
+	for _, sub := range []string{"add", "reset", "clear", "answer", "confirm"} {
+		if !removed.MatchString("type /" + "squad " + sub + " here") {
+			t.Errorf("the removed /squad %s is no hit", sub)
+		}
+	}
+	for _, line := range []string{"/" + "squad prints the commands", "the /" + "squad addendum", "`/" + "squad` lists"} {
+		if removed.MatchString(line) {
+			t.Errorf("a line that names no removed subcommand is a hit: %q", line)
+		}
+	}
+	releaseNotes := regexp.MustCompile(`^docs/v3\.[1-9][0-9]*\.[0-9]+(-[a-z0-9.]+)?-release-notes\.md$`)
+	for _, rel := range []string{"docs/v3.1.0-release-notes.md", "docs/v3.1.1-release-notes.md", "docs/v3.2.0-release-notes.md"} {
+		if !releaseNotes.MatchString(rel) {
+			t.Errorf("%s is not allowed", rel)
+		}
+	}
+	for _, rel := range []string{"docs/x-release-notes-guide.md", "docs/release-notes.md", "docs/squad-yaml.md", "docs/sub/v3.1.0-release-notes.md", "docs/v3.0.2-release-notes.md", "docs/v2.31.0-release-notes.md"} {
+		if releaseNotes.MatchString(rel) {
+			t.Errorf("%s is allowed", rel)
+		}
 	}
 }
