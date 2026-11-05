@@ -69,11 +69,25 @@ type fakeState struct {
 // timelinePage is GitHub's page size of the force-push timeline query.
 const timelinePage = 100
 
+// fixtureHome is the HOME of the fixture's git subprocesses (standing rule
+// 18: a test never reads the owner's home): a temporary directory for the
+// test binary's run, and for the fake gh's own run when the train calls it.
+var fixtureHome string
+
 func TestMain(m *testing.M) {
-	if path := os.Getenv("FAKE_GH_STATE"); path != "" {
-		os.Exit(fakeGH(path, os.Args[1:]))
+	home, err := os.MkdirTemp("", "mergetrain-fixture-home-")
+	if err != nil {
+		panic(err)
 	}
-	os.Exit(m.Run())
+	fixtureHome = home
+	code := 0
+	if path := os.Getenv("FAKE_GH_STATE"); path != "" {
+		code = fakeGH(path, os.Args[1:])
+	} else {
+		code = m.Run()
+	}
+	_ = os.RemoveAll(home)
+	os.Exit(code)
 }
 
 func loadFake(path string) *fakeState {
@@ -97,8 +111,12 @@ func (s *fakeState) save(path string) {
 
 func gitOut(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	// the fixture's own HOME and XDG config home: git reads files under them
+	// that GIT_CONFIG_GLOBAL does not cover (the default ignore and
+	// attributes files); the last value of a key in Env wins
 	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=owner", "GIT_AUTHOR_EMAIL=owner@example.com",
-		"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"HOME="+fixtureHome, "XDG_CONFIG_HOME="+filepath.Join(fixtureHome, ".config"))
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }

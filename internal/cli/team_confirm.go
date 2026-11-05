@@ -36,7 +36,8 @@ import (
 // confirmation of the exact digest. A lead restart forgets them all and the
 // owner confirms again.
 //
-//	tui:   `/squad confirm <prefix>`: the extension sends the digest and its
+//	tui:   `/confirm`: pi's confirm dialog quotes the plan, and on the
+//	       owner's yes the extension sends the digest the dialog showed and its
 //	       pane over the start socket; the lead accepts it only from the pi
 //	       process it spawned (its pid and the start stamp read at spawn).
 //	buzz:  the attachment fetches the owner's signed bare yes, replied to
@@ -182,8 +183,7 @@ func writeConfirmLog(root string, rec confirmRecord) (string, error) {
 
 // doorsText names the two doors for a refusal.
 func doorsText(digest string) string {
-	prefix := team.DigestPrefix(digest)
-	return fmt.Sprintf("confirm it at one of the two doors: (1) type /squad confirm %s in the lead's pane; (2) on the phone, reply yes to the lead's Buzz post that relays this plan with its digest %s", prefix, digest)
+	return fmt.Sprintf("confirm it at one of the two doors: (1) type /confirm in the lead's pane (a dialog quotes the plan; there is nothing to type); (2) on the phone, reply yes to the lead's Buzz post that relays this plan with its digest %s", digest)
 }
 
 // eventsDir is where the lead logs the Buzz event ids it witnessed.
