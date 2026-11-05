@@ -89,7 +89,7 @@ match, the entry gives the line that does.
 - **Checked:** the four lines as cited, in `printMergeTrain`. The t65b note
   already names "the plan header's base SHA" as a pre-existing limit.
 
-## 5. A passing compare read error in reconcile stops the run
+## 5. A passing read error in reconcile stops the run
 
 - **What:** while reconciling, a failed read of one PR returns an error, and
   the whole run stops with "read PR #N while reconciling". Running it again
