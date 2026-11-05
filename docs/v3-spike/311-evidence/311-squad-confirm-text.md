@@ -42,7 +42,10 @@ historical notes under `docs/v3-spike/`, and the release notes from 3.1.0 on
 by an anchored pattern (`docs/v3.<minor >= 1>.<patch>[-pre]-release-notes.md`),
 which keep what was true when written; a file whose name merely carries
 "release-notes" (`docs/x-release-notes-guide.md`) is scanned. The row pins
-the pattern and the allowlist on fixtures before it walks. The pattern is
+the pattern and the allowlist on fixtures before it walks, through the very
+definitions the walk uses (`removedSquadForm`, `squadTextHistorical`; Codex's
+re-check on #878: pins on their own copies stayed green when the scanner
+loosened). The pattern is
 built at run time so the test does not carry it.
 
 ## B. The test binary's git under its own HOME
@@ -102,6 +105,7 @@ Each reverts production or fixture code only (the row's own test stays):
 | row | revert | result | the failing output's first line |
 | --- | --- | --- | --- |
 | A | the owner_only deny names "(/squad confirm)" again (internal/cli/hook_guard.go) | caught | `--- FAIL: TestNoTextNamesARemovedSquadSubcommand`: `internal/cli/hook_guard.go:262 names a removed subcommand of` `/squad` |
+| A (pins) | the scanner's allowlist loosened to a name substring (`squadTextHistorical` returning `strings.Contains(filepath.Base(rel), "release-notes")` for the release notes) | caught | `--- FAIL: TestNoTextNamesARemovedSquadSubcommand`: `docs/x-release-notes-guide.md is allowed` |
 | B | the test binary keeps the running HOME (the `HOME` line alone removed from `isolateGitHome`, `_ = os.Setenv("HOME", home)`; run again for Codex on #878 at `15cade69`, and after the merge of origin/v3 `40974d2e` at `f42aa274`) | caught | `--- FAIL: TestTheTestBinarysGitDoesNotReadTheRunningHome`: `a git under the test binary's environment read the running home: status ""` |
 
 ## #879's lock row: the asked-for revert run

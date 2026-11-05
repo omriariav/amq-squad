@@ -22,17 +22,7 @@ func TestNoTextNamesARemovedSquadSubcommand(t *testing.T) {
 	// the pattern and the allowlist, pinned on fixtures first
 	pinRemovedSquadForms(t)
 	root := repoRootForText(t)
-	// the subcommands 3.1.1 removed (Codex on #878: not any word after
-	// /squad, so a line like "/squad prints the commands" is no hit), built
-	// at run time so this file does not carry the form it forbids
-	removed := regexp.MustCompile(regexp.QuoteMeta("/"+"squad") + `[ \t]+(add|reset|clear|answer|confirm)\b`)
-	// allowed by exact path: the historical notes and the release notes from
-	// 3.1.0 on, when /squad's subcommands came and went (an anchored
-	// pattern, not a name substring)
-	releaseNotes := regexp.MustCompile(`^docs/v3\.[1-9][0-9]*\.[0-9]+(-[a-z0-9.]+)?-release-notes\.md$`)
-	historical := func(rel string) bool {
-		return strings.HasPrefix(rel, "docs/v3-spike/") || releaseNotes.MatchString(rel)
-	}
+	removed, historical := removedSquadForm, squadTextHistorical
 	var scanned int
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -93,13 +83,31 @@ func repoRootForText(t *testing.T) string {
 	}
 }
 
-// pinRemovedSquadForms checks the scan's own pattern and allowlist (Codex on
-// #878): each removed subcommand is a hit and a plain word after /squad is
-// not; only the historical notes and the anchored 3.1.0-and-later release notes are
-// allowed, never a file whose name merely carries "release-notes".
+// removedSquadForm is the scan's one pattern: the subcommands 3.1.1 removed
+// (Codex on #878: not any word after /squad, so a line like "/squad prints
+// the commands" is no hit), built at run time so this file does not carry
+// the form it forbids. The walk and the pins both use it.
+var removedSquadForm = regexp.MustCompile(regexp.QuoteMeta("/"+"squad") + `[ \t]+(add|reset|clear|answer|confirm)\b`)
+
+// squadReleaseNotes is the release notes the scan allows: from 3.1.0 on,
+// when /squad's subcommands came and went, by an anchored path.
+var squadReleaseNotes = regexp.MustCompile(`^docs/v3\.[1-9][0-9]*\.[0-9]+(-[a-z0-9.]+)?-release-notes\.md$`)
+
+// squadTextHistorical is the scan's one allowlist, by exact path: the
+// historical notes and the release notes from 3.1.0 on, never a file whose
+// name merely carries "release-notes". The walk and the pins both use it.
+func squadTextHistorical(rel string) bool {
+	return strings.HasPrefix(rel, "docs/v3-spike/") || squadReleaseNotes.MatchString(rel)
+}
+
+// pinRemovedSquadForms checks the scan's own pattern and allowlist, the
+// same definitions the walk uses (Codex's re-check on #878: pins on copies
+// stayed green when the scanner loosened): each removed subcommand is a hit
+// and a plain word after /squad is not; only the historical notes and the
+// anchored 3.1.0-and-later release notes are allowed.
 func pinRemovedSquadForms(t *testing.T) {
 	t.Helper()
-	removed := regexp.MustCompile(regexp.QuoteMeta("/"+"squad") + `[ \t]+(add|reset|clear|answer|confirm)\b`)
+	removed := removedSquadForm
 	for _, sub := range []string{"add", "reset", "clear", "answer", "confirm"} {
 		if !removed.MatchString("type /" + "squad " + sub + " here") {
 			t.Errorf("the removed /squad %s is no hit", sub)
@@ -110,14 +118,13 @@ func pinRemovedSquadForms(t *testing.T) {
 			t.Errorf("a line that names no removed subcommand is a hit: %q", line)
 		}
 	}
-	releaseNotes := regexp.MustCompile(`^docs/v3\.[1-9][0-9]*\.[0-9]+(-[a-z0-9.]+)?-release-notes\.md$`)
-	for _, rel := range []string{"docs/v3.1.0-release-notes.md", "docs/v3.1.1-release-notes.md", "docs/v3.2.0-release-notes.md"} {
-		if !releaseNotes.MatchString(rel) {
+	for _, rel := range []string{"docs/v3.1.0-release-notes.md", "docs/v3.1.1-release-notes.md", "docs/v3.2.0-release-notes.md", "docs/v3-spike/311-evidence/311-squad-ux.md"} {
+		if !squadTextHistorical(rel) {
 			t.Errorf("%s is not allowed", rel)
 		}
 	}
-	for _, rel := range []string{"docs/x-release-notes-guide.md", "docs/release-notes.md", "docs/squad-yaml.md", "docs/sub/v3.1.0-release-notes.md", "docs/v3.0.2-release-notes.md", "docs/v2.31.0-release-notes.md"} {
-		if releaseNotes.MatchString(rel) {
+	for _, rel := range []string{"docs/x-release-notes-guide.md", "docs/release-notes.md", "docs/squad-yaml.md", "docs/sub/v3.1.0-release-notes.md", "docs/v3.0.2-release-notes.md", "docs/v2.31.0-release-notes.md", "docs/v3-spikes.md", "README.md"} {
+		if squadTextHistorical(rel) {
 			t.Errorf("%s is allowed", rel)
 		}
 	}
