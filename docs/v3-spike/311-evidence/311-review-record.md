@@ -202,3 +202,21 @@ match, the entry gives the line that does.
 - **Checked:** the task records' text ("direct typed widening is lead-only and
   was refused not_lead"), the 311-squad-ux.md row, and the decision log's
   relaunch line. The CLI output is the lead's quote; it is in no squad log.
+
+## 11. An owner gate can lift the up-to-date refusal, and GitHub still refuses the merge
+
+- **What:** when a behind PR cannot be brought up to date safely, the train
+  refuses it under the up-to-date rule. Like any refusal, it escalates to an
+  owner gate, and an accepted gate lifts it. The train then plans the merge,
+  but GitHub's strict protection refuses a branch that is behind.
+- **Where:** internal/mergetrain/train.go:449-451 (`applyStrict` adds the
+  `strict_required_status_checks_policy` refusal); :461-471 (`refuse`: an
+  accepted owner gate for this head and these rules lifts any refusal,
+  this one included).
+- **Found by:** Codex on PR #870. The pass's own date was not given; #870
+  merged on 2026-11-04.
+- **Ruling:** 3.1.2.
+- **Known-limits line:** An owner gate can lift the train's up-to-date
+  refusal. GitHub then refuses the merge anyway.
+- **Checked:** the code as cited. GitHub's refusal of a behind branch under
+  strict protection was not exercised here.
