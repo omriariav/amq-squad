@@ -372,6 +372,7 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		}
 		before, _ := seatcommit.ReadLedger(f.root, "s1")
 		firstBytes, _ := json.Marshal(before.Discarded[0])
+		firstTree := before.Discarded[0].Tree
 		if _, err := s.ResetBy(tk.ID, "lead", nil, time.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -382,6 +383,12 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		second, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
 		if err != nil || second.BlockAttempt != 2 {
 			t.Fatalf("attempt 2 block = %+v, %v", second, err)
+		}
+		gitT(t, wt, "add", "-A")
+		expectedSecondTree := gitT(t, wt, "write-tree")
+		gitT(t, wt, "reset", "-q")
+		if expectedSecondTree == firstTree {
+			t.Fatalf("attempt 2 tree equals attempt 1 tree: %s", firstTree)
 		}
 		g, gerr := grants.Load(repo)
 		literal, _ := task.LiteralGlob("extra.go")
@@ -395,8 +402,8 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 			t.Fatalf("attempt 2 widen = %+v, %v", data, err)
 		}
 		after, err := seatcommit.ReadLedger(f.root, "s1")
-		if err != nil || len(after.Discarded) != 2 || after.Discarded[1].Attempt != 2 || data.Decision.DryRun.Parent != after.Discarded[1].Parent || data.Decision.DryRun.Tree != after.Discarded[1].Tree {
-			t.Fatalf("attempt 2 ledger/dry run = %+v, %+v, %v", after.Discarded, data.Decision.DryRun, err)
+		if err != nil || len(after.Discarded) != 2 || after.Discarded[1].Attempt != 2 || after.Discarded[1].Tree != expectedSecondTree || after.Discarded[1].Tree == firstTree || data.Decision.DryRun.Parent != after.Discarded[1].Parent || data.Decision.DryRun.Tree != expectedSecondTree {
+			t.Fatalf("attempt 2 ledger/dry run = %+v, expected tree=%s, attempt 1 tree=%s, dry run=%+v, err=%v", after.Discarded, expectedSecondTree, firstTree, data.Decision.DryRun, err)
 		}
 		gotFirst, _ := json.Marshal(after.Discarded[0])
 		if !bytes.Equal(gotFirst, firstBytes) {
@@ -412,7 +419,8 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 		if _, err := s.Claim(tk.ID, "s1", nil, time.Hour, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now()); err != nil {
+		blocked, err := s.BlockWithPaths(tk.ID, "s1", task.ReasonWidenRequested, "", task.RouteLead, []string{"extra.go"}, time.Now())
+		if err != nil {
 			t.Fatal(err)
 		}
 		ledgerDir := seatcommit.LedgerDir(f.root)
@@ -423,10 +431,15 @@ func TestTypedWidenRetriesAfterGrowthGateAndDryRunsTheSeatDiff(t *testing.T) {
 			t.Fatal(err)
 		}
 		literal, _ := task.LiteralGlob("extra.go")
-		reply := widenDecision(storeSelection{store: s, root: f.root, release: func() {}}, repo, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
+		sel := storeSelection{store: s, root: f.root, release: func() {}}
+		g, gerr := grants.Load(repo)
+		first := seatcommit.CheckWiden(seatcommit.WidenOptions{Root: f.root, Task: blocked, Added: []string{literal}, Grants: g, GrantsErr: gerr, RepoRoot: repo, Gates: sel.gateChecker(),
+			Commit: &seatcommit.Options{Root: f.root, Handle: "s1", SnapshotAttempt: blocked.BlockAttempt, Now: taskNow}})
+		reply := widenDecision(sel, repo, "lead", schedproc.WidenRequest{Task: tk.ID, Files: []string{literal}, Reason: "needed"})
 		data := replyData(t, reply)
-		if reply.Code == "widen_failed" || reply.Code != data.Decision.ReasonCode || !strings.Contains(reply.Detail, "on-demand archive pending") {
-			t.Fatalf("filesystem archive failure replaced first decision: reply=%+v data=%+v", reply, data)
+		wantPrefix := first.Detail + "; on-demand archive pending:"
+		if reply.Code != first.ReasonCode || data.Decision.ReasonCode != first.ReasonCode || !strings.HasPrefix(data.Decision.Detail, wantPrefix) || !strings.Contains(reply.Detail, wantPrefix) {
+			t.Fatalf("filesystem archive failure replaced first decision: first=%+v reply=%+v data=%+v", first, reply, data)
 		}
 	})
 
