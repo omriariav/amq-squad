@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
@@ -199,6 +200,7 @@ func Run(ctx context.Context, o Options) error {
 	timer := time.NewTicker(o.Tick)
 	defer timer.Stop()
 	leadUnknown := false
+	var schedulerMu sync.Mutex
 	for {
 		if o.LeadState != nil {
 			switch st, why := o.LeadState(); st {
@@ -214,7 +216,9 @@ func Run(ctx context.Context, o Options) error {
 				leadUnknown = false
 			}
 		}
+		schedulerMu.Lock()
 		ds, err := s.Tick()
+		schedulerMu.Unlock()
 		if f, ok := o.Router.(Flusher); ok {
 			if err := f.Flush(); err != nil {
 				logLine(o.Log, o.Now(), scheduler.Decision{Kind: "routing_flush_failed", Reason: err.Error()})
@@ -245,6 +249,14 @@ func Run(ctx context.Context, o Options) error {
 		if o.Decisions != nil && srv == nil && s.Ready() {
 			d := *o.Decisions
 			d.Root, d.Lead = o.Root, o.Config.Lead
+			if d.Clean == nil {
+				clean := manualCleanDecision(s.Store, o.Liveness, o.Preparer)
+				d.Clean = func(lead string, req CleanRequest) DecideReply {
+					schedulerMu.Lock()
+					defer schedulerMu.Unlock()
+					return clean(lead, req)
+				}
+			}
 			if d.Relaunch == nil && len(o.Config.Roster) > 0 {
 				d.Relaunch = relaunchDecision(s, d.Reload, o.Start)
 			}
@@ -266,6 +278,49 @@ func Run(ctx context.Context, o Options) error {
 		case <-timer.C:
 		case <-o.Wake:
 		}
+	}
+}
+
+type stoppedSeatCleaner interface {
+	CleanStopped(handle string) (bool, error)
+}
+
+func manualCleanDecision(store task.Store, live scheduler.SeatLiveness, preparer scheduler.SeatPreparer) func(string, CleanRequest) DecideReply {
+	return func(_ string, req CleanRequest) DecideReply {
+		handle, err := task.SeatHandle(req.Seat)
+		if err != nil {
+			return DecideReply{Code: "seat_invalid", Detail: err.Error()}
+		}
+		list, err := store.List()
+		if err != nil {
+			return DecideReply{Code: "seat_clean_failed", Detail: err.Error()}
+		}
+		if task.HeldBy(handle, list) != nil {
+			return DecideReply{Code: "seat_running", Detail: fmt.Sprintf("seat %s is still running; stop it first", handle)}
+		}
+		if live == nil {
+			return DecideReply{Code: "seat_liveness_unknown", Detail: fmt.Sprintf("seat %s's process identity cannot be checked; refused", handle)}
+		}
+		gone, detail, err := live.SeatProcess(handle, "")
+		if err != nil {
+			return DecideReply{Code: "seat_liveness_unknown", Detail: err.Error()}
+		}
+		if !gone {
+			return DecideReply{Code: "seat_running", Detail: fmt.Sprintf("seat %s is still running; stop it first", handle)}
+		}
+		cleaner, ok := preparer.(stoppedSeatCleaner)
+		if !ok {
+			return DecideReply{Code: "seat_clean_unsupported", Detail: "this scheduler has no seat cleaner"}
+		}
+		discarded, err := cleaner.CleanStopped(handle)
+		if err != nil {
+			return DecideReply{Code: "seat_clean_failed", Detail: err.Error()}
+		}
+		b, _ := json.Marshal(struct {
+			Discarded bool   `json:"discarded"`
+			Liveness  string `json:"liveness,omitempty"`
+		}{discarded, detail})
+		return DecideReply{OK: true, Detail: fmt.Sprintf("seat %s's worktree was cleaned", handle), Data: b}
 	}
 }
 

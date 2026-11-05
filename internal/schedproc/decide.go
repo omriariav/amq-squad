@@ -90,6 +90,8 @@ type DecideOptions struct {
 	Lead string
 	// Apply applies a widening the lead decided (the verb's core).
 	Apply func(lead string, req WidenRequest) DecideReply
+	// Clean applies the lead's request to clean a stopped seat.
+	Clean func(lead string, req CleanRequest) DecideReply
 	// Relaunch takes the lead's relaunch of the roster (3.0.1 t16); nil
 	// refuses it (relaunch_unsupported: the scheduler runs no roster).
 	Relaunch func(lead string, req RelaunchRequest) DecideReply
@@ -276,7 +278,7 @@ func (s *DecisionServer) serve() {
 				var kind struct {
 					Kind string `json:"kind"`
 				}
-				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind) {
+				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind || kind.Kind == CleanRequestKind) {
 					// The fourth pass: the ledger is read again and the
 					// sender proved again after the request is read; a lead
 					// record replaced meanwhile refuses it.
@@ -298,6 +300,15 @@ func (s *DecisionServer) serve() {
 // apply runs a proved decision of a known kind.
 func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
 	switch kind {
+	case CleanRequestKind:
+		var req CleanRequest
+		if json.Unmarshal(line, &req) != nil {
+			return DecideReply{Code: "decision_malformed", Detail: "a seat clean that does not decode"}
+		}
+		if s.o.Clean == nil {
+			return DecideReply{Code: "seat_clean_unsupported", Detail: "this scheduler has no seat cleaner"}
+		}
+		return s.o.Clean(s.o.Lead, req)
 	case ClearRequestKind:
 		// brief 31-2: the owner's clear of a warning line, recorded here; it
 		// changes no seat's state, so it needs no hook of the scheduler's.
@@ -362,6 +373,12 @@ func SendDecision(root, path string, req WidenRequest) (DecideReply, error) {
 // socket (3.0.1 t16), proved and answered like a widening.
 func SendRelaunch(root, path string, req RelaunchRequest) (DecideReply, error) {
 	req.Kind = RelaunchRequestKind
+	return sendDecision(root, path, req)
+}
+
+// SendClean sends a lead's stopped-seat clean over the decision socket.
+func SendClean(root, path string, req CleanRequest) (DecideReply, error) {
+	req.Kind = CleanRequestKind
 	return sendDecision(root, path, req)
 }
 

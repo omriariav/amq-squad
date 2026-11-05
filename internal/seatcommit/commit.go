@@ -464,9 +464,16 @@ func (l Ledger) base(g grants.Resolved) string {
 // The whole reset runs under the task store's lock with the seat free (R3):
 // no claim can land between the check and the reset.
 func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discarded bool, err error) {
+	discarded, _, err = CleanSeatDetailed(root, handle, gitBin, env, now)
+	return discarded, err
+}
+
+// CleanSeatDetailed is CleanSeat with the marker-takeover decision that the
+// scheduler records.
+func CleanSeatDetailed(root, handle, gitBin string, env []string, now time.Time) (discarded bool, decision string, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
-			return false, err
+			return false, "", err
 		}
 	}
 	if env == nil {
@@ -474,31 +481,37 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discar
 	}
 	store, err := task.Open(root)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	// CleanSeat runs on the tick (the seat's preparation before a lease): a
 	// busy ledger is ErrLedgerBusy, never a wait.
-	err = withLedgerTryLock(root, handle, func() error {
+	err = withLedgerTryLock(root, handle, func() (retErr error) {
 		// Only between leases, never mid-task (condition 2 of the ruling):
 		// the store lock covers the state read with the seat's unclean marker
 		// and, in a second take, the marker's removal with the seat
 		// re-checked; the git work runs between them, outside the lock (no
 		// lock reachable from the tick is held across a subprocess). While
 		// the marker exists no grant or claim leases the seat; only a
-		// completed clean removes it, and only its own (the nonce): a clean
-		// that fails or dies leaves the seat unclean for the next CleanSeat.
-		list, nonce, err := store.ReserveSeat(handle, now)
+		// return removes it, and only its own (the nonce). A process death can
+		// leave it behind; the next CleanSeat proves that cleaner dead before
+		// taking it over.
+		list, nonce, markerDecision, err := store.ReserveSeatWithDecision(handle, now)
 		if err != nil {
 			return err
 		}
-		var derr error
-		discarded, derr = cleanSeat(root, handle, gitBin, env, list, now)
-		if derr != nil {
-			return derr
+		decision = markerDecision
+		defer func() {
+			if releaseErr := store.ReleaseSeat(handle, nonce); retErr == nil && releaseErr != nil {
+				retErr = releaseErr
+			}
+		}()
+		discarded, retErr = cleanSeat(root, handle, gitBin, env, list, now)
+		if retErr != nil {
+			return retErr
 		}
-		return store.ReleaseSeat(handle, nonce)
+		return nil
 	})
-	return discarded, err
+	return discarded, decision, err
 }
 
 // ArchiveAttempt seals the current worktree snapshot for one stopped typed
@@ -506,6 +519,11 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discar
 // scheduler-side half of CleanSeat's discard record and is idempotent by task
 // and attempt.
 func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, attempt int, now time.Time) (archived bool, err error) {
+	return ArchiveAttemptReason(root, handle, gitBin, env, taskID, attempt, "blocked: "+task.ReasonWidenRequested, now)
+}
+
+// ArchiveAttemptReason seals a stopped attempt under its task and attempt.
+func ArchiveAttemptReason(root, handle, gitBin string, env []string, taskID string, attempt int, reason string, now time.Time) (archived bool, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
 			return false, err
@@ -555,7 +573,7 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 		if err != nil {
 			return err
 		}
-		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: "blocked: " + task.ReasonWidenRequested, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
+		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: reason, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
 		if err := writeLedger(root, l, "archive attempt"); err != nil {
 			return err
 		}
@@ -589,9 +607,6 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 		return false, fmt.Errorf("the seat worktree %s is not a git checkout root: %v", rec.Worktree, err)
 	}
 	onTask := rp.HeadRef != "refs/heads/"+rec.Branch
-	if onTask && !l.knownBranch(rp.HeadRef) {
-		return false, fmt.Errorf("the seat worktree has %q checked out, not the seat branch %s or the task branch of the lease its commit ledger records", rp.HeadRef, rec.Branch)
-	}
 	henv := harnessEnv(env)
 	sh, err := newShadow(gitBin, henv, rp)
 	if err != nil {
@@ -611,6 +626,24 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	// The next lease starts at the base (3.0.2 t23, amendment 2b): the tip
 	// the launch recorded on the launch record, never the ledger's first base.
 	rest, _ := restTarget(rec, l)
+	if onTask {
+		workRepo := git{bin: gitBin, dir: rp.Worktree, env: henv}.with("GIT_DIR="+rp.GitDir, "GIT_WORK_TREE="+rp.Worktree)
+		workHead, herr := workRepo.line("rev-parse", "--verify", "HEAD^{commit}")
+		if herr != nil {
+			return false, fmt.Errorf("the seat worktree has %q checked out and its HEAD is unreadable: %v", rp.HeadRef, herr)
+		}
+		recorded := workHead == rest
+		for _, c := range l.Commits {
+			recorded = recorded || c.Commit == workHead
+		}
+		ahead, aerr := repo.line("rev-list", "--max-count=1", rest+".."+workHead)
+		if aerr != nil {
+			return false, aerr
+		}
+		if ahead != "" && !recorded {
+			return false, fmt.Errorf("seat_head_detached_unmerged: seat %s: the worktree's branch %s holds an unrecorded commit %s; the harness never discards a local commit", handle, strings.TrimPrefix(rp.HeadRef, "refs/heads/"), ahead)
+		}
+	}
 	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
 	if l.Lease == nil && !onTask && tree == parentTree && head == parent && parent == rest {
 		return false, nil

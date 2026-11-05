@@ -32,6 +32,8 @@ type Slots struct {
 	// Target is the launch's record of the owner's grant for each seat's
 	// commit step: repository, base branch and push URL (R2).
 	Target seatcommit.Target
+	// LogDecision records launch-time repairs such as a stale index refresh.
+	LogDecision func(scheduler.Decision)
 
 	mu    sync.Mutex
 	inUse map[string]string // handle -> request id
@@ -189,6 +191,13 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 		}
 	}
 	if statErr == nil {
+		refreshed, err := g.cleanWorktree(gd, seat)
+		if err != nil {
+			return seat, err
+		}
+		if refreshed && s.LogDecision != nil {
+			s.LogDecision(scheduler.Decision{Kind: "seat_index_refreshed", Seat: seat.Handle, Reason: fmt.Sprintf("seat %s's index was stale; refreshed", seat.Handle)})
+		}
 		if err := g.moveWorktree(gd, common, seat, head, tip, cur); err != nil {
 			return seat, fmt.Errorf("seat %s worktree to the base tip %s: %v", seat.Handle, short(tip), err)
 		}
@@ -225,6 +234,10 @@ const ReasonSeatHeadUnreadable = "seat_head_unreadable"
 // branch's checked value (a detached HEAD's local commit): the harness never
 // discards a local commit.
 const ReasonSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
+
+// ReasonSeatWorktreeDirty refuses a roster plan before read-tree can expose
+// git's lower-level text.
+const ReasonSeatWorktreeDirty = "seat_worktree_dirty"
 
 // ReasonSeatBranchUnpushed refuses a seat's launch when its local resting
 // branch holds commits the base tip does not: the harness never discards a
@@ -372,6 +385,26 @@ func (g baseGit) moveWorktree(gd, common string, seat seatlaunch.Seat, head, tip
 	}
 	_, err := g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "symbolic-ref", "HEAD", "refs/heads/"+seat.Branch)
 	return err
+}
+
+func (g baseGit) cleanWorktree(gd string, seat seatlaunch.Seat) (bool, error) {
+	index := filepath.Join(gd, "index")
+	before, _ := os.ReadFile(index)
+	env := []string{"GIT_DIR=" + gd, "GIT_WORK_TREE=" + seat.Worktree, "GIT_INDEX_FILE=" + index}
+	_, refreshErr := g.run(seat.Worktree, env, "update-index", "--refresh")
+	tracked, trackedErr := g.run(seat.Worktree, env, "diff-index", "--name-only", "HEAD", "--")
+	untracked, untrackedErr := g.run(seat.Worktree, env, "ls-files", "--others", "--exclude-standard")
+	if trackedErr != nil || untrackedErr != nil {
+		return false, fmt.Errorf("seat_worktree_check_failed: seat %s: the worktree cleanliness check failed", seat.Handle)
+	}
+	if tracked != "" || untracked != "" {
+		return false, fmt.Errorf("%s: seat %s: the worktree has local changes; archive or remove them before launch", ReasonSeatWorktreeDirty, seat.Handle)
+	}
+	if refreshErr != nil {
+		return false, fmt.Errorf("seat_worktree_check_failed: seat %s: the index refresh failed", seat.Handle)
+	}
+	after, _ := os.ReadFile(index)
+	return !bytes.Equal(before, after), nil
 }
 
 // baseGit is the launch-time base's git with the harness's R2 settings

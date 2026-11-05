@@ -46,6 +46,12 @@ type AttemptArchiver interface {
 	ArchiveAttempt(handle string, t task.Task, attempt task.Attempt) error
 }
 
+// AttemptCleaner archives and cleans a stopped cancelled attempt after the
+// seat process is confirmed gone.
+type AttemptCleaner interface {
+	CleanAttempt(handle, taskID string, attempt int, outcome string) error
+}
+
 // SeatExitRefusedNotifier is a LeadNotifier that also tells the lead about
 // a refusal at a seat exit (a hint; the decisions log is the record).
 type SeatExitRefusedNotifier interface {
@@ -63,8 +69,9 @@ type AsyncCloser interface {
 // closeExpired is the closing reason of a seat whose claimed lease expired;
 // closeRestart is a seat a previous incarnation left running.
 const (
-	closeExpired = "lease_expired"
-	closeRestart = "scheduler_restart"
+	closeExpired   = "lease_expired"
+	closeRestart   = "scheduler_restart"
+	closeCancelled = "task_cancelled"
 )
 
 // exitItem is one queued exit check. Gone marks a check queued at a
@@ -81,7 +88,8 @@ type exitItem struct {
 	Deferrals int `json:"deferrals,omitempty"`
 	// Attempt is the launch attempt a gone check is for: the request id the
 	// seat joined on (3.0.1 t17). One attempt's gone is checked once.
-	Attempt string `json:"attempt,omitempty"`
+	Attempt     string `json:"attempt,omitempty"`
+	TaskAttempt int    `json:"task_attempt,omitempty"`
 }
 
 // SeatGoneObserver is a SeatLauncher told when a gone seat may be forgotten
@@ -309,6 +317,10 @@ func (s *Scheduler) exitPendingItem(it exitItem) bool {
 // expired or unclaimed and was not checked yet by this scheduler (a restart
 // checks the store's history once).
 func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
+	return s.scanAttemptsLog(list, now, func(Decision) {})
+}
+
+func (s *Scheduler) scanAttemptsLog(list []task.Task, now time.Time, log func(Decision)) error {
 	if s.exitSeen == nil {
 		s.exitSeen = map[string]bool{}
 	}
@@ -332,6 +344,10 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
 			}
 			switch a.Outcome {
 			case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeUnclaimed:
+			case task.OutcomeCancelled:
+				if _, ok := s.Preparer.(AttemptCleaner); !ok {
+					continue
+				}
 			default:
 				continue
 			}
@@ -339,9 +355,15 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
 				continue
 			}
 			s.exitSeen[key] = true
-			it := exitItem{Handle: a.Holder, TaskID: t.ID, Why: a.Outcome, At: now}
+			it := exitItem{Handle: a.Holder, TaskID: t.ID, Why: a.Outcome, At: now, TaskAttempt: a.N}
 			if !s.exitPendingItem(it) {
 				s.queueExit(it)
+			}
+			if a.Outcome == task.OutcomeCancelled {
+				if st := s.seats[a.Holder]; st != nil && st.closing == "" {
+					st.closing = closeCancelled
+					log(Decision{Kind: "seat_closing", TaskID: t.ID, Seat: a.Holder, Reason: closeCancelled})
+				}
 			}
 		}
 	}
@@ -396,7 +418,21 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 				}
 			}
 		}
-		if it.Gone {
+		if it.Why == task.OutcomeCancelled && !r.Refused {
+			cleaner, ok := s.Preparer.(AttemptCleaner)
+			if !ok {
+				s.exitQueue = append(s.exitQueue, it)
+				log(Decision{Kind: "seat_clean_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: "the scheduler has no attempt cleaner"})
+				continue
+			}
+			if err := cleaner.CleanAttempt(it.Handle, it.TaskID, it.TaskAttempt, it.Why); err != nil {
+				s.exitQueue = append(s.exitQueue, it)
+				log(Decision{Kind: "seat_clean_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: err.Error()})
+				continue
+			}
+			log(Decision{Kind: "seat_cleaned", TaskID: it.TaskID, Seat: it.Handle, Reason: fmt.Sprintf("seat %s's work on %s attempt %d was archived and its worktree cleaned", it.Handle, it.TaskID, it.TaskAttempt)})
+		}
+		if it.Gone && !(it.Why == task.OutcomeCancelled && r.Refused) {
 			if s.toRelease == nil {
 				s.toRelease = map[string]bool{}
 			}

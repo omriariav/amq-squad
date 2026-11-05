@@ -3,6 +3,7 @@ package task
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,11 @@ func TestFarFutureMarkerIsInvalidAndTakenOver(t *testing.T) {
 // races the writes never sees a partial or empty marker.
 func TestMarkerWritesAreNeverSeenPartial(t *testing.T) {
 	s := newStore(t)
+	originalPID, originalStart := cleanerPID, cleanerStartToken
+	cleanerPID = func() int { return 4242 }
+	var stamp atomic.Int32
+	cleanerStartToken = func(int) (string, bool) { return fmt.Sprintf("stamp-%d", stamp.Add(1)), true }
+	t.Cleanup(func() { cleanerPID, cleanerStartToken = originalPID, originalStart })
 	var stop atomic.Bool
 	var torn atomic.Int32
 	done := make(chan struct{})

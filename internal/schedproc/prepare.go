@@ -43,11 +43,66 @@ func (c *CleanSeats) PrepareSeat(handle string) error {
 	} else if err != nil {
 		return fmt.Errorf("the commit ledger of seat %s: %w", handle, err)
 	}
-	discarded, err := seatcommit.CleanSeat(c.Root, handle, c.Git, nil, now())
+	discarded, markerDecision, err := seatcommit.CleanSeatDetailed(c.Root, handle, c.Git, nil, now())
+	if markerDecision != "" && c.log != nil {
+		logLine(c.log, now(), scheduler.Decision{Kind: "cleaner_marker_taken_over", Seat: handle, Reason: markerDecision})
+	}
 	if err == nil && discarded && c.log != nil {
 		logLine(c.log, now(), scheduler.Decision{Kind: "seat_cleaned", Seat: handle, Reason: "an earlier attempt's uncommitted diff kept on the ledger and removed from the worktree"})
 	}
 	return err
+}
+
+// CleanAttempt archives a stopped attempt and then cleans its worktree. The
+// archive is idempotent by task and attempt, so a failed clean can retry.
+func (c *CleanSeats) CleanAttempt(handle, taskID string, attempt int, outcome string) error {
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	if _, err := seatcommit.ArchiveAttemptReason(c.Root, handle, c.Git, nil, taskID, attempt, outcome, now()); err != nil {
+		return err
+	}
+	_, markerDecision, err := seatcommit.CleanSeatDetailed(c.Root, handle, c.Git, nil, now())
+	if markerDecision != "" && c.log != nil {
+		logLine(c.log, now(), scheduler.Decision{Kind: "cleaner_marker_taken_over", Seat: handle, Reason: markerDecision})
+	}
+	return err
+}
+
+// CleanStopped cleans a seat requested by the lead after the process check.
+func (c *CleanSeats) CleanStopped(handle string) (bool, error) {
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	store, err := task.Open(c.Root)
+	if err != nil {
+		return false, err
+	}
+	list, err := store.List()
+	if err != nil {
+		return false, err
+	}
+	var latestTask string
+	var latest task.Attempt
+	for _, t := range list {
+		for _, a := range t.Attempts {
+			if a.Holder == handle && (latestTask == "" || a.EndedAt.After(latest.EndedAt)) {
+				latestTask, latest = t.ID, a
+			}
+		}
+	}
+	if latestTask != "" {
+		if _, err := seatcommit.ArchiveAttemptReason(c.Root, handle, c.Git, nil, latestTask, latest.N, latest.Outcome, now()); err != nil {
+			return false, err
+		}
+	}
+	discarded, markerDecision, err := seatcommit.CleanSeatDetailed(c.Root, handle, c.Git, nil, now())
+	if markerDecision != "" && c.log != nil {
+		logLine(c.log, now(), scheduler.Decision{Kind: "cleaner_marker_taken_over", Seat: handle, Reason: markerDecision})
+	}
+	return discarded, err
 }
 
 // ArchiveAttempt records a typed block's stopped tree immediately, before a
@@ -63,3 +118,4 @@ func (c *CleanSeats) ArchiveAttempt(handle string, t task.Task, attempt task.Att
 
 var _ scheduler.SeatPreparer = (*CleanSeats)(nil)
 var _ scheduler.AttemptArchiver = (*CleanSeats)(nil)
+var _ scheduler.AttemptCleaner = (*CleanSeats)(nil)

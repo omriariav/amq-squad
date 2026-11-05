@@ -143,9 +143,6 @@ func TestTwoTasksOnOneSeatGetTwoBranchesAndTwoPRs(t *testing.T) {
 	f := newFixture(t)
 	gh, _, calls := branchGh(t, f)
 	t1 := f.leased("cmd/")
-	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+TaskBranch(f.handle, t1.ID) {
-		t.Fatalf("the leased worktree is on %s", got)
-	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// one\n")
 	first := Run(f.prOpts(f.done(t1.ID), gh))
 	if !first.OK || first.Branch != "seat/s1-"+t1.ID || first.Parent != f.base || first.PRNumber != 1 {
@@ -203,6 +200,9 @@ func TestLaterAttemptAppendsToItsOwnBranchAndPR(t *testing.T) {
 	f := newFixture(t)
 	gh, _, calls := branchGh(t, f)
 	tk := f.leased("cmd/")
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+TaskBranch(f.handle, tk.ID) {
+		t.Fatalf("the leased worktree is on %s", got)
+	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// attempt one\n")
 	first := Run(f.prOpts(f.done(tk.ID), gh))
 	if !first.OK || first.PRNumber != 1 {
@@ -243,25 +243,21 @@ func TestLaterAttemptAppendsToItsOwnBranchAndPR(t *testing.T) {
 // The reviewer's rule on seat/<handle>-<task id>: the name is a label only,
 // never parsed (a handle may carry a hyphen); the ledger's per-task record
 // says which task a branch carries. On seat "qa-2" a branch the seat made
-// that only looks like a task branch ("seat/qa-2-t9") is no task branch to
-// CleanSeat, which refuses and touches nothing; the branch the ledger
-// records for t1 is the task's, and the commit is recorded with it. Fails
-// when CleanSeat goes by the name's prefix.
+// that only looks like a task branch ("seat/qa-2-t9") is not trusted by
+// name. When its HEAD has no unrecorded commit, CleanSeat archives its diff
+// and returns it to the resting branch; the branch the ledger records for t1
+// is the task's, and the commit is recorded with it.
 func TestTaskBranchIsALabelTheRecordDecides(t *testing.T) {
 	f := newFixtureFor(t, "qa-2")
 	gh, _, _ := branchGh(t, f)
 	sh(t, f.wt, "checkout", "-q", "-b", "seat/qa-2-t9")
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// the seat's own\n")
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease its commit ledger records") {
-		t.Fatalf("a branch the ledger does not record was taken for a task branch: %v", err)
+	if discarded, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || !discarded {
+		t.Fatalf("a safe foreign branch was not archived and cleaned: discarded=%v err=%v", discarded, err)
 	}
-	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); !strings.Contains(string(raw), "the seat's own") || sh(t, f.wt, "symbolic-ref", "HEAD") != "refs/heads/seat/qa-2-t9" {
-		t.Fatal("CleanSeat touched a worktree on a branch the ledger does not record")
+	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); strings.Contains(string(raw), "the seat's own") || sh(t, f.wt, "symbolic-ref", "HEAD") != "refs/heads/"+f.branch {
+		t.Fatal("CleanSeat did not return the safe foreign branch to rest")
 	}
-	// The refused clean keeps the seat unclean; the next one takes the
-	// marker over after its TTL.
-	sh(t, f.wt, "checkout", "-q", "-f", f.branch)
-	f.now = f.now.Add(task.SeatReservationTTL + time.Minute)
 	tk := f.leased("cmd/")
 	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/seat/qa-2-"+tk.ID {
 		t.Fatalf("the leased worktree is on %s", got)
@@ -272,15 +268,38 @@ func TestTaskBranchIsALabelTheRecordDecides(t *testing.T) {
 	if !res.OK || res.Branch != "seat/qa-2-"+tk.ID || len(l.Commits) != 1 || l.Commits[0].Task != tk.ID || l.Commits[0].Branch != res.Branch || f.originRef(res.Branch) != res.Commit {
 		t.Fatalf("the qa-2 task: %+v\nledger %+v", res, l.Commits)
 	}
-	// After the step the lease is over: t1's branch, though a commit names it,
-	// is no lease of the seat, and CleanSeat refuses a worktree on it.
+	// After the step the lease is over. The task branch's commit is recorded
+	// and pushed, so CleanSeat may return it to the resting branch.
 	if _, err := f.store.CompleteBound(tk.ID, fixtureRepo, res.PRNumber, res.Commit, f.now); err != nil {
 		t.Fatal(err)
 	}
 	sh(t, f.wt, "checkout", "-q", res.Branch)
-	f.now = f.now.Add(task.SeatReservationTTL + time.Minute)
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || !strings.Contains(err.Error(), "task branch of the lease") {
-		t.Fatalf("a branch with no lease behind it was taken for the lease's: %v", err)
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil {
+		t.Fatalf("a recorded, pushed task branch was not cleaned: %v", err)
+	}
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+f.branch {
+		t.Fatalf("the cleaned worktree stayed on %s", got)
+	}
+}
+
+func TestCleanSeatRefusesAnUnrecordedCommitOnTheCancelledTaskBranch(t *testing.T) {
+	f := newFixture(t)
+	tk := f.leased("cmd/")
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+TaskBranch(f.handle, tk.ID) {
+		t.Fatalf("the cancelled worktree started on %s", got)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// local commit\n")
+	sh(t, f.wt, "add", "-A")
+	sh(t, f.wt, "commit", "-q", "-m", "seat local commit")
+	head := sh(t, f.wt, "rev-parse", "HEAD")
+	if _, err := f.store.Cancel(tk.ID, "lead", "stop", f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || !strings.Contains(err.Error(), "seat_head_detached_unmerged") {
+		t.Fatalf("an unrecorded task-branch commit was cleaned: %v", err)
+	}
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("the refused clean moved HEAD from %s to %s", head, got)
 	}
 }
 

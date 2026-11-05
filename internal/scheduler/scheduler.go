@@ -425,7 +425,7 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	// R3: the exit check on every terminal path that is not a done report.
 	s.loadExits()
 	if s.exitsLoaded {
-		if err := s.scanAttempts(list, now); err != nil {
+		if err := s.scanAttemptsLog(list, now, log); err != nil {
 			return out, err
 		}
 		if err := s.runExits(now, log); err != nil {
@@ -1051,7 +1051,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
-			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch) && s.closeUnconfirmed(h) {
+			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch || st.closing == closeCancelled) && s.closeUnconfirmed(h) {
 				st.awaitGone = true
 				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
 				continue
