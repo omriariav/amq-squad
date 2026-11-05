@@ -634,6 +634,8 @@ test("row 4: a seat's stop and the train's stop say what happened and what to do
 	// the plan reviewer on #873: a seat branch is never rebased by hand; the
 	// strict up-to-date rule's remedy is the lead's
 	assert.equal(trainStop("refusal PR #9 strict_required_status_checks_policy: the branch is behind and the train cannot bring it up to date: x"), "the merge train stopped at PR #9: its branch is behind its base; the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base");
+	// #874: the seat's patch moved during the train's update; the remedy is the lead's
+	assert.equal(trainStop("refusal PR #9 rebase_patch_changed: the seat patch changed: x"), "the merge train stopped at PR #9: its change moved during the update; reset the task so a seat redoes it on the current base");
 	for (const r of Object.keys(TRAIN_RULE_WORDS)) assert.equal(codeIn(trainStop(`refusal PR #9 ${r}: x`)), "", r);
 	assert.equal(trainStop("refusal PR #9 made_up_rule: x"), "the merge train stopped at PR #9; its rule is below the line");
 	const lines = renderScreen(fixture, now);

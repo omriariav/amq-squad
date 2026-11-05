@@ -29,6 +29,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The pi suite runs inside make ci (the pi-test target). Node is the
+      # floor pi/package.json's engines declares (>=22.19.0), exact.
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.19.0
+
       - name: Detect release validation scope
         if: github.event_name == 'pull_request'
         id: release

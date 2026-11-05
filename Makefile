@@ -1,4 +1,4 @@
-.PHONY: claude-hooks-test build test fmt fmt-check vet ci go-files-scope-test skill-command-check skill-invocation-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
+.PHONY: claude-hooks-test pi-test build test fmt fmt-check vet ci go-files-scope-test skill-command-check skill-invocation-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
 
 # Peer worktrees live under .worktrees/ inside this project, so a bare `find .` pulls in
 # other checkouts' .go files. Without the exclusion, fmt-check false-fails on another
@@ -61,7 +61,20 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check skill-invocation-check release-validator-test go-files-scope-test claude-hooks-test
+ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check skill-invocation-check release-validator-test go-files-scope-test claude-hooks-test pi-test
+
+# The pi extension's suite (pi/test): the screen rows, the /confirm door rows and
+# the words-table completeness row. Part of ci, so a red pi test fails the
+# required `make ci` check; before this target the suite guarded no merge and v3
+# went red on the words-table row unnoticed. `npm ci` is setup, not a test: it
+# reaches the registry when it must (CI) and NPM_FLAGS adds flags where it need
+# not (NPM_FLAGS=--offline make ci with a warm npm cache). --ignore-scripts is
+# fixed: no dependency install script runs.
+NPM_FLAGS ?=
+
+pi-test:
+	@command -v npm >/dev/null 2>&1 || { echo "npm is required for pi-test (Node per pi/package.json engines)" >&2; exit 1; }
+	cd pi && npm ci --ignore-scripts $(NPM_FLAGS) && npm test
 
 # Every CLI command and flag named in the skills must exist in the binary (#534).
 # The skills drifting from the binary has been a recurring release-note problem;
