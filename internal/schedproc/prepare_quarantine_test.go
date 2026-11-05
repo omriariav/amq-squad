@@ -50,7 +50,7 @@ func TestPrepareNamesTheQuarantineOfATamperedLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stem := filepath.Join(seatcommit.QuarantineDir(r.root), "commits."+handle+".seq1")
+	slot := filepath.Join(seatcommit.QuarantineDir(r.root), "commits."+handle+".seq1")
 	reason := ""
 	for i := 0; i < 4 && reason == ""; i++ {
 		d, err := r.tick(func() {})
@@ -66,16 +66,16 @@ func TestPrepareNamesTheQuarantineOfATamperedLedger(t *testing.T) {
 	if reason == "" {
 		t.Fatal("no seat_prepare_failed decision")
 	}
-	if !strings.Contains(reason, "ledger_tampered") || !strings.Contains(reason, "quarantined at "+stem+".json") {
-		t.Fatalf("seat_prepare_failed's reason does not name the quarantine %s.json: %q", stem, reason)
+	if !strings.Contains(reason, "ledger_tampered") || !strings.Contains(reason, "quarantined at "+slot) {
+		t.Fatalf("seat_prepare_failed's reason does not name the quarantine %s: %q", slot, reason)
 	}
-	if got, err := os.ReadFile(stem + ".json"); err != nil || !bytes.Equal(got, tampered) {
+	if got, err := os.ReadFile(filepath.Join(slot, "body.json")); err != nil || !bytes.Equal(got, tampered) {
 		t.Fatalf("the quarantine body is not the refused body: %v", err)
 	}
-	if got, err := os.ReadFile(stem + ".head.json"); err != nil || !bytes.Equal(got, head) {
+	if got, err := os.ReadFile(filepath.Join(slot, "head.json")); err != nil || !bytes.Equal(got, head) {
 		t.Fatalf("the quarantine head is not the head: %v", err)
 	}
-	if side, err := os.ReadFile(stem + ".txt"); err != nil || !strings.Contains(string(side), "writer: scheduler prepare\n") {
+	if side, err := os.ReadFile(filepath.Join(slot, "quarantine.txt")); err != nil || !strings.Contains(string(side), "writer: scheduler prepare\n") {
 		t.Fatalf("the sidecar does not name the prepare: %v\n%s", err, side)
 	}
 	if got, _ := os.ReadFile(p); !bytes.Equal(got, tampered) {

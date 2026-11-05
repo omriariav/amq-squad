@@ -2,6 +2,7 @@ package seatcommit
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,11 +13,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 )
 
 // A tamper alarm preserves its evidence (3.2.0-0c-A). On 2026-11-05 the
@@ -24,14 +24,30 @@ import (
 // link 150) on every tick for 65 minutes, and the refused seq-150 body was
 // overwritten by the next writer's re-seal 2 to 4 s after the restart and
 // lost: one seal per document, no history. Now the read that refuses copies
-// the refused document and its head, byte for byte, under the session root
+// the bytes it refused, the body and the head, under the session root
 // before anything else can touch them, and every write re-reads the
 // document on disk under the ledger lock first (writeLedger), so no writer
 // of this binary re-seals over a body a reader refused.
+//
+// The layout (the plan reviewer's ruling on #893): a quarantine is a
+// directory, one per distinct refusal of a head seq,
+//
+//	<root>/extensions/amq-squad/quarantine/commits.<handle>.seq<N>[.k]/
+//	    body.json        the refused body, byte for byte (when present)
+//	    head.json        its head, byte for byte (when present)
+//	    quarantine.txt   time, writer verb, binary version, error, digests
+//
+// written whole into a temp directory beside it and published by one
+// rename, so no reader sees a partial set; an identical refusal (the read
+// path refuses on every tick) is a no-op, a different one takes the next
+// k. Everything is created relative to one descriptor of the quarantine
+// directory, opened without following links, and every file is opened
+// O_NOFOLLOW: a planted link anywhere is a named copy failure, never a
+// copy through it. The files are evidence: never sealed, never read as a
+// ledger, never deleted by any verb.
 
 // QuarantineDir is the quarantine directory under an AMQ session root:
-// <root>/extensions/amq-squad/quarantine. Its files are evidence: never
-// sealed, never read as a ledger, never deleted by any verb.
+// <root>/extensions/amq-squad/quarantine.
 func QuarantineDir(root string) string {
 	return filepath.Join(root, "extensions", "amq-squad", "quarantine")
 }
@@ -46,190 +62,260 @@ var BinaryVersion string
 // not decode (no seq to name it by).
 const quarantineSeqUnknown = "unknown"
 
-// quarantineBase is the stem of a seat's quarantine files for one seq:
-// commits.<handle>.seq<N> (.json the body, .head.json the head, .txt the
-// sidecar).
-func quarantineBase(handle, seq string) string { return "commits." + handle + ".seq" + seq }
-
-// quarantine copies the refused document of a seat's commit ledger and its
-// head, byte for byte, into QuarantineDir, named by the head's seq (unknown
-// when the head does not decode). The first refusal of a seq takes
-// commits.<handle>.seq<N>; a later refusal with the same body and head is
-// a no-op (the read path refuses on every tick: identical copies stay one),
-// and one with a different body or head takes the next free slot,
-// commits.<handle>.seq<N>.2, then .3 (the plan reviewer on #893: a second
-// different body under one seq was dropped before). Each file is created
-// exclusively (O_EXCL), so nothing is ever overwritten. A sidecar carries
-// the time, the writer verb, the binary version and the error text. It
-// returns the refusal extended with the quarantine path (the body's; the
-// head's when the body is absent). The refusal stands whatever happens
-// here: a copy that cannot be made is named in the error as a failed
-// copy, never as a quarantine. raw is what the refusing read checked: the
-// copy is of those bytes, never a re-read of the files (Codex's P1 on
-// #893: a writer can replace the body between the check and the copy).
-func quarantine(root, handle, verb string, refusal error, raw ledgerRaw) error {
-	body, hasBody := raw.body, raw.hasBody
-	head, hasHead := raw.head, raw.hasHead
-	dir := QuarantineDir(root)
-	if err := ensureQuarantineDir(dir); err != nil {
-		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
-	}
-	named, err := quarantineCopy(dir, quarantineBase(handle, headSeq(head)), handle, verb, refusal, body, hasBody, head, hasHead)
-	if err != nil {
-		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
-	}
-	return fmt.Errorf("%w; the refused document is quarantined at %s", refusal, named)
-}
-
-func readIfPresent(path string) ([]byte, bool, error) {
-	b, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
-	}
-	return b, err == nil, err
-}
-
 // quarantineSlots bounds the slots of one seq (a runaway edit loop cannot
 // fill the disk).
 const quarantineSlots = 100
 
-// quarantineCopy writes the set of one refusal into the first slot of base
-// that is free or holds this same body and head; it returns the path that
-// names the copy. The slot's primary file (the body; the head when the
-// body is absent; the sidecar when both are) claims the slot with an
-// exclusive create; an existing primary is compared byte for byte (with
-// the head copy beside it) to decide between a no-op and the next slot.
-func quarantineCopy(dir, base, handle, verb string, refusal error, body []byte, hasBody bool, head []byte, hasHead bool) (string, error) {
-	for n := 1; n <= quarantineSlots; n++ {
-		stem := base
-		if n > 1 {
-			stem += "." + strconv.Itoa(n)
-		}
-		bodyPath, headPath, sidePath := filepath.Join(dir, stem+".json"), filepath.Join(dir, stem+".head.json"), filepath.Join(dir, stem+".txt")
-		side := sidecar(handle, verb, refusal, stem, body, hasBody, head, hasHead)
-		var primary, secondary string
-		var pdata, sdata []byte
-		switch {
-		case hasBody:
-			primary, pdata = bodyPath, body
-			if hasHead {
-				secondary, sdata = headPath, head
-			}
-		case hasHead:
-			primary, pdata = headPath, head
-		default:
-			primary, pdata = sidePath, side
-		}
-		created, existing, err := createOnce(primary, pdata)
-		if err != nil {
-			return "", err
-		}
-		if !created {
-			if primary == sidePath {
-				return primary, nil // nothing to copy; the first sidecar stands
-			}
-			if !bytes.Equal(existing, pdata) {
-				continue
-			}
-			if secondary != "" {
-				ex, err := regularFileContent(secondary)
-				if err != nil {
-					return "", err
-				}
-				if !bytes.Equal(ex, sdata) {
-					continue
-				}
-			}
-			return primary, nil // an identical refusal: the first copy stands
-		}
-		if secondary != "" {
-			created, existing, err := createOnce(secondary, sdata)
-			if err != nil {
-				return "", err
-			}
-			// A head already in a fresh slot (a crash's leftover, a planted
-			// file) is this refusal's only when it is byte-identical; the
-			// sidecar must never name a copy with another digest.
-			if !created && !bytes.Equal(existing, sdata) {
-				return "", fmt.Errorf("%s exists with other content", secondary)
-			}
-		}
-		if primary != sidePath {
-			if _, _, err := createOnce(sidePath, side); err != nil {
-				return "", err
-			}
-		}
-		return primary, nil
-	}
-	return "", fmt.Errorf("%s has %d copies already", filepath.Join(dir, base), quarantineSlots)
+// The files of a slot, and the prefix of a copy in progress (a leftover
+// of a crash is listed in the next sidecar, never reused, never removed).
+const (
+	quarantineBodyFile = "body.json"
+	quarantineHeadFile = "head.json"
+	quarantineSidecar  = "quarantine.txt"
+	quarantineTempPre  = ".copying-"
+)
+
+// quarantineBase is the stem of a seat's slots for one seq:
+// commits.<handle>.seq<N>.
+func quarantineBase(handle, seq string) string { return "commits." + handle + ".seq" + seq }
+
+// ledgerRaw is what readLedger read and checked, byte for byte: the body
+// and the head with their presence, and the note of one that could not be
+// read as a regular file (a symlink: refused, never copied through). The
+// quarantine copies these and never opens the live files (Codex's P1 on
+// #893): between the check and the copy a concurrent writer can replace the
+// refused body, and the alarm must archive what it refused, not what came
+// after.
+type ledgerRaw struct {
+	body, head         []byte
+	hasBody, hasHead   bool
+	bodyNote, headNote string
 }
 
-// ensureQuarantineDir creates the quarantine directory and checks what is
-// at its path: a directory itself (never a symlink: MkdirAll follows one),
-// mode 0700, owned by this process's user.
-func ensureQuarantineDir(dir string) error {
+// quarantine publishes the refused document (raw: the bytes the check
+// refused) as one slot of QuarantineDir and returns the refusal extended
+// with the slot's path. The refusal stands whatever happens here: a copy
+// that cannot be made is named in the error as a failed copy, never as a
+// quarantine.
+func quarantine(root, handle, verb string, refusal error, raw ledgerRaw) error {
+	dir := QuarantineDir(root)
+	d, err := openQuarantineDir(dir)
+	if err != nil {
+		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
+	}
+	defer d.close()
+	slot, err := quarantineCopy(d, quarantineBase(handle, headSeq(raw.head)), handle, verb, refusal, raw)
+	if err != nil {
+		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
+	}
+	return fmt.Errorf("%w; the refused document is quarantined at %s", refusal, filepath.Join(dir, slot))
+}
+
+// openQuarantineDir creates the quarantine directory when absent and opens
+// it by one descriptor (O_DIRECTORY, O_NOFOLLOW): the descriptor must be
+// a directory of mode 0700 owned by this process's user (checked on the
+// descriptor, never on a path that can be swapped under the check).
+func openQuarantineDir(dir string) (slotDir, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return nil, err
 	}
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return err
-	}
-	if fi.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("the quarantine directory %s is a symlink", dir)
-	}
-	if !fi.IsDir() {
-		return fmt.Errorf("the quarantine directory %s is not a directory", dir)
-	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
-		return fmt.Errorf("the quarantine directory %s has mode %04o, want 0700", dir, fi.Mode().Perm())
-	}
-	return ownedByCaller(dir, fi)
-}
-
-// createOnce creates path exclusively with data, 0600, fsynced with its
-// directory. When something is at path already: a regular file is an
-// existing copy, returned for comparison (created false); a symlink or any
-// other type is an error (a planted link must never pass as a copy).
-func createOnce(path string, data []byte) (created bool, existing []byte, err error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		existing, err = regularFileContent(path)
-		return false, existing, err
-	}
-	if err != nil {
-		return false, nil, err
-	}
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return false, nil, err
-	}
-	return true, nil, atomicfile.SyncDir(filepath.Dir(path))
-}
-
-// regularFileContent is the content of a regular file at path; nil when
-// nothing is there; an error for a symlink or any other type.
-func regularFileContent(path string) ([]byte, error) {
-	fi, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
+	d, err := openDirNoFollow(dir)
 	if err != nil {
 		return nil, err
 	}
-	if fi.Mode()&fs.ModeSymlink != 0 {
-		return nil, fmt.Errorf("%s is a symlink", path)
+	fi, err := d.stat()
+	if err != nil {
+		d.close()
+		return nil, err
 	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
+	if !fi.IsDir() {
+		d.close()
+		return nil, fmt.Errorf("the quarantine directory %s is not a directory", dir)
 	}
-	return os.ReadFile(path)
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+		d.close()
+		return nil, fmt.Errorf("the quarantine directory %s has mode %04o, want 0700", dir, fi.Mode().Perm())
+	}
+	if err := ownedByCaller(dir, fi); err != nil {
+		d.close()
+		return nil, err
+	}
+	return d, nil
+}
+
+// slotDir is a directory held by descriptor (or, off unix, by path with
+// link checks): every name is relative to it and nothing it opens follows
+// a link.
+type slotDir interface {
+	stat() (fs.FileInfo, error)
+	names() ([]string, error)
+	mkdir(name string) error
+	create(name string, data []byte) error  // exclusive, 0600, fsynced
+	read(name string) ([]byte, bool, error) // a regular file's bytes; false when absent
+	open(name string) (slotDir, error)      // a subdirectory, never through a link
+	rename(from, to string) error
+	remove(name string, isDir bool) error
+	sync() error
+	close() error
+}
+
+// slotSet is the set of one slot, by file name.
+type slotSet map[string][]byte
+
+// quarantineCopy writes the refusal's set into a fresh temp directory and
+// publishes it by rename as base, or base.k for the first k whose slot is
+// free, or returns the slot that already holds the identical set. A slot
+// that exists but is not a published set (a planted file, link or empty
+// directory, a set without its sidecar) is a failure: nothing is renamed
+// over it, nothing is compared through it.
+func quarantineCopy(d slotDir, base, handle, verb string, refusal error, raw ledgerRaw) (string, error) {
+	names, err := d.names()
+	if err != nil {
+		return "", err
+	}
+	var leftovers []string
+	for _, n := range names {
+		if strings.HasPrefix(n, quarantineTempPre) {
+			leftovers = append(leftovers, n)
+		}
+	}
+	sort.Strings(leftovers)
+	set := slotSet{quarantineSidecar: sidecar(handle, verb, refusal, raw, leftovers)}
+	if raw.hasBody {
+		set[quarantineBodyFile] = raw.body
+	}
+	if raw.hasHead {
+		set[quarantineHeadFile] = raw.head
+	}
+	tmp, err := writeTempSlot(d, set)
+	if err != nil {
+		return "", err
+	}
+	drop := func() { removeSlot(d, tmp, set) }
+	for k := 1; k <= quarantineSlots; k++ {
+		slot := base
+		if k > 1 {
+			slot += "." + strconv.Itoa(k)
+		}
+		for attempt := 0; attempt < 2; attempt++ {
+			same, present, err := sameSlot(d, slot, set)
+			if err != nil {
+				drop()
+				return "", err
+			}
+			if present {
+				if same {
+					drop()
+					return slot, nil // an identical refusal: the published slot stands
+				}
+				break // a different set: the next k
+			}
+			err = d.rename(tmp, slot)
+			if err == nil {
+				if err := d.sync(); err != nil {
+					return "", err
+				}
+				return slot, nil
+			}
+			if !slotTaken(err) {
+				drop()
+				return "", err
+			}
+			// Taken between the look and the rename (a concurrent
+			// refuser): look again, once.
+		}
+	}
+	drop()
+	return "", fmt.Errorf("%s has %d slots already", base, quarantineSlots)
+}
+
+// writeTempSlot writes set into a fresh temp directory beside the slots,
+// each file fsynced, and returns its name.
+func writeTempSlot(d slotDir, set slotSet) (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	tmp := quarantineTempPre + hex.EncodeToString(b[:])
+	if err := d.mkdir(tmp); err != nil {
+		return "", err
+	}
+	for _, name := range slotFiles() {
+		data, ok := set[name]
+		if !ok {
+			continue
+		}
+		if err := d.create(tmp+"/"+name, data); err != nil {
+			removeSlot(d, tmp, set)
+			return "", err
+		}
+	}
+	if err := d.sync(); err != nil {
+		removeSlot(d, tmp, set)
+		return "", err
+	}
+	return tmp, nil
+}
+
+func slotFiles() []string {
+	return []string{quarantineBodyFile, quarantineHeadFile, quarantineSidecar}
+}
+
+// removeSlot drops a temp directory this process made (its known files,
+// then the directory); a failure leaves a leftover the next sidecar lists.
+func removeSlot(d slotDir, name string, set slotSet) {
+	for file := range set {
+		_ = d.remove(name+"/"+file, false)
+	}
+	_ = d.remove(name, true)
+}
+
+// sameSlot reports whether slot is present, and whether it holds set: the
+// same files present with the same bytes, the sidecar compared without its
+// time and leftover lines. A slot that is present but is not a published
+// set (no sidecar, a link, a file) is an error.
+func sameSlot(d slotDir, slot string, set slotSet) (same, present bool, err error) {
+	s, err := d.open(slot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, true, err
+	}
+	defer s.close()
+	same = true
+	for _, name := range slotFiles() {
+		got, ok, err := s.read(name)
+		if err != nil {
+			return false, true, err
+		}
+		want, wantOK := set[name]
+		if name == quarantineSidecar {
+			if !ok {
+				return false, true, fmt.Errorf("%s is not a quarantine slot (no %s)", slot, quarantineSidecar)
+			}
+			got, want = sidecarStable(got), sidecarStable(want)
+		}
+		if ok != wantOK || !bytes.Equal(got, want) {
+			same = false
+		}
+	}
+	return same, true, nil
+}
+
+// sidecarStable is a sidecar without the lines that differ between two
+// identical refusals: the time, the leftovers seen, and the writer (a
+// prepare and then a writer refusing the same bytes with the same error
+// are one refusal; the slot records the first's verb and time).
+func sidecarStable(b []byte) []byte {
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "time: ") || strings.HasPrefix(line, "leftover: ") || strings.HasPrefix(line, "writer: ") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return []byte(strings.Join(out, "\n"))
 }
 
 // headSeq is the seq a head file names, read without verifying it (the
@@ -246,8 +332,9 @@ func headSeq(raw []byte) string {
 }
 
 // sidecar is the quarantine's record: when, which writer, which binary, the
-// error, and the copies with their digests.
-func sidecar(handle, verb string, refusal error, stem string, body []byte, hasBody bool, head []byte, hasHead bool) []byte {
+// error, the copies with their digests (or why one is absent), and the
+// leftovers of copies that did not finish.
+func sidecar(handle, verb string, refusal error, raw ledgerRaw, leftovers []string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "amq-squad commits ledger quarantine\n")
 	fmt.Fprintf(&b, "time: %s\n", time.Now().UTC().Format(time.RFC3339Nano))
@@ -255,15 +342,24 @@ func sidecar(handle, verb string, refusal error, stem string, body []byte, hasBo
 	fmt.Fprintf(&b, "writer: %s\n", verb)
 	fmt.Fprintf(&b, "binary: %s\n", binaryVersion())
 	fmt.Fprintf(&b, "error: %s\n", strings.ReplaceAll(refusal.Error(), "\n", " "))
-	if hasBody {
-		fmt.Fprintf(&b, "body: %s.json sha256 %s\n", stem, digestOf(body))
-	} else {
+	switch {
+	case raw.hasBody:
+		fmt.Fprintf(&b, "body: %s sha256 %s\n", quarantineBodyFile, digestOf(raw.body))
+	case raw.bodyNote != "":
+		fmt.Fprintf(&b, "body: absent (%s)\n", raw.bodyNote)
+	default:
 		fmt.Fprintf(&b, "body: absent\n")
 	}
-	if hasHead {
-		fmt.Fprintf(&b, "head: %s.head.json sha256 %s\n", stem, digestOf(head))
-	} else {
+	switch {
+	case raw.hasHead:
+		fmt.Fprintf(&b, "head: %s sha256 %s\n", quarantineHeadFile, digestOf(raw.head))
+	case raw.headNote != "":
+		fmt.Fprintf(&b, "head: absent (%s)\n", raw.headNote)
+	default:
 		fmt.Fprintf(&b, "head: absent\n")
+	}
+	for _, l := range leftovers {
+		fmt.Fprintf(&b, "leftover: %s (a copy that did not finish; kept, never reused)\n", l)
 	}
 	return []byte(b.String())
 }
