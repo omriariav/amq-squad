@@ -39,10 +39,13 @@ Babel TypeScript transform. Babel tracks scope and refuses the second
 | `export type HostFacts` | `f95b70ab` (2026-11-01 09:43, brief 31-3 PR 2, sections 4 and 5: the host line from status and context) | #837 (`v3-31-3b`) |
 | `export class HostFacts` | `43933bc4` (2026-11-01 10:08, the plan reviewer on #837: the line only on a key change) | #837 (`v3-31-3b`) |
 
-Both commits are in `v3.1.0` as well as `v3.1.1`. `firstturn.ts` is
-byte-identical at the two tags, and `amq-squad.ts` imports the class at
-both. So the defect shipped in 3.1.0, not first in 3.1.1. I did not run a
-3.1.0 binary to confirm its lead fails the same way.
+Both commits are in `v3.1.0` as well as `v3.1.1`, and neither is in
+`v3.1.0-rc.1` (rc.1 has no `firstturn.ts`). `firstturn.ts` is
+byte-identical at v3.1.0 and v3.1.1, and `amq-squad.ts` imports the class
+at both. So this is a 3.1.0 regression, first seen on 3.1.1. It went
+unseen because the installed binary on PATH stayed rc.1 through the 3.1.0
+and 3.1.1 cuts (`release-v3.1.1/README.md`), so no lead ran on 3.1.0. I did
+not run a 3.1.0 binary. The plan reviewer verified the tags.
 
 The scan for the same shape elsewhere covered every `.ts` under
 `pi/extensions/` and `pi/test/` (28 files at the base). It ran two checks:
@@ -60,6 +63,21 @@ parameter, `hostOf`'s return type and its cast. The class keeps the name
 `HostFacts`, which `amq-squad.ts` and `phase.test.ts` use. No other file
 named the type, so no test changed. A comment above the alias says why it
 has its own name. Types only, so there is no behaviour change.
+
+The plan reviewer preferred renaming the class. I kept the alias rename
+because it is the smaller change. The alias has four uses, all in
+`firstturn.ts`, so one file changes. The class is used in `amq-squad.ts`
+(its import and its `new`) and in `phase.test.ts` (its import and its
+`new`), and three comments name it. Renaming it would touch three files,
+including the extension's entry and a test.
+
+No `tsc --noEmit` step was added. TypeScript does not ship offline here.
+It is absent from `pi/node_modules`, from the 3.1.1 runtime's
+`pi/node_modules`, and from the S3 npm cache the runtime build uses. The
+pi package's lint says it runs "without a compiler download" (brief 4-1).
+Adding `typescript` as a devDependency would change the lockfile and need
+a registry fetch. That is a separate decision for the reviewer; row 1
+below covers the class of defect without a compiler.
 
 ## The row: `pi/test/piload.test.ts`
 
@@ -181,7 +199,12 @@ Pane is dead (status 1, Thu Nov  5 14:47:36 2026)
 Afterwards I rebuilt the fixed binary. The payload matched the first
 fixed build (`manifest_sha256 78652b33...`).
 
-## Gates (at `da8d97b3`)
+## Gates
+
+Run at `da8d97b3`, then all three again on the commit that adds the
+RELEASING.md step and these corrections. Both runs had the same results;
+the second run's pi suite had the stage, so it was pass 114, skipped 0.
+
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0. 56
   packages ok, 0 FAIL. The tail is `ok .../scripts 2.932s` and
@@ -193,9 +216,22 @@ fixed build (`manifest_sha256 78652b33...`).
 - `NPM_FLAGS=--offline make ci` with the PyYAML venv on PATH: exit 0.
   pi-test gave tests 114, pass 113, fail 0, skipped 1.
 
+## The cut procedure gains a step
+
+`RELEASING.md`, Patch Release Checklist, step 6 (in this PR):
+
+> Start the lead on the installed new binary before the release counts as
+> done. Install the binary built from the tag (`scripts/build-pi-runtime.sh
+> all`, the one attached to the release). Then either restart the squad's
+> own lead on it, or run `amq-squad lead --team -- --offline` in a scratch
+> repository (`git init` in an empty directory, no `squad.yaml`, a scratch
+> `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
+> 10 s, in the release evidence. A dead pane or any `Failed to load
+> extension` line means the release is not done.
+
 ## For the 3.1.2 release notes
 
-The lead starts again on the built-in pi. Since 3.1.0 the pi extension
+The lead starts again on the built-in pi. In 3.1.0 and 3.1.1 the pi extension
 declared `HostFacts` twice, as a type and as a class. pi's loader refused
 the module, and `amq-squad lead` exited with "Identifier 'HostFacts' has
 already been declared". The pi suite now loads the extension through pi
