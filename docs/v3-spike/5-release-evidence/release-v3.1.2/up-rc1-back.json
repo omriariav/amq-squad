@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "kind": "up",
+  "data": {
+    "project": "/Users/omri/code/amq-squad",
+    "root": "/Users/omri/code/amq-squad/.agent-mail/v31",
+    "session": "v31",
+    "lead": "cto",
+    "binary": "/Users/omri/go/bin/amq-squad",
+    "start": "2026-11-05T12:28:12.604994Z",
+    "tmux_session": "squad-lead-amq-squad-f42a4",
+    "attach": "tmux attach -t squad-lead-amq-squad-f42a4",
+    "steps": [
+      {
+        "name": "compile",
+        "outcome": "ok",
+        "detail": "3 seats, lead cto, session v31"
+      },
+      {
+        "name": "install",
+        "outcome": "ok",
+        "detail": "installed /Users/omri/go/bin/amq-squad.v3.1.0-rc.1 (v3.1.0-rc.1) at /Users/omri/go/bin/amq-squad by temp name and rename"
+      },
+      {
+        "name": "session",
+        "outcome": "skipped",
+        "detail": "skipped: the session root /Users/omri/code/amq-squad/.agent-mail/v31 exists"
+      },
+      {
+        "name": "doctor",
+        "outcome": "ok",
+        "detail": "39 checks, none failed (5 warnings)"
+      },
+      {
+        "name": "lead",
+        "outcome": "ok",
+        "detail": "no recorded lead or scheduler is running"
+      },
+      {
+        "name": "tmux",
+        "outcome": "ok",
+        "detail": "tmux session squad-lead-amq-squad-f42a4 runs /Users/omri/go/bin/amq-squad lead --team in /Users/omri/code/amq-squad"
+      },
+      {
+        "name": "roster",
+        "outcome": "ok",
+        "detail": "roster_incomplete: adopted dev; no launch: AMQ refuses a fresh seat into the present binding (binding_present_without_resumable_conversation), so a task for a missing seat's pool blocks for the lead's relaunch (amq-squad scheduler relaunch)"
+      }
+    ],
+    "roster": [
+      {
+        "handle": "cto",
+        "role": "",
+        "runtime": "",
+        "model": "",
+        "effort": "",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "",
+        "last_activity_at": "2026-11-05T04:39:11.383015Z",
+        "last_message_at": "2026-10-30T21:01:25.369744Z",
+        "last_message": "widen t20 (record): {\"decision\":{\"ok\":true,\"data\":{\"root\":\"/Users/omri/code/amq-squad/.agent-mail/v31\",\"decision\":{\"allowed\":true,\"crossings\":[],\"dry_run\":{\"ok\":true,\"task\":\"t20\",\"seat\":\"dev\",\"branch\"",
+        "prompt_state": "running",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "",
+        "branch": "",
+        "launch": null
+      },
+      {
+        "handle": "dev",
+        "role": "senior-dev",
+        "runtime": "codex",
+        "model": "gpt-5.6-terra",
+        "effort": "medium",
+        "state": "online",
+        "live": true,
+        "reason_code": "idle",
+        "bucket": "ready",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/dev",
+        "last_activity_at": "2026-11-05T12:27:53.363358Z",
+        "last_message_at": "2026-11-05T10:34:05.612252Z",
+        "last_message": "No active task available: Read assigned role and team rules. Queried v31 task queue; t69 is the only pending implementation item but its lease is held by reviewer, so no task is currently available fo",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/dev",
+        "branch": "seat/dev",
+        "launch": {
+          "launch_id": "269757872cfd5edd847f6481a04e1ce3",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-05T10:31:50.039303Z",
+            "seat_live": "2026-11-05T10:31:53.487987Z",
+            "first_message": null,
+            "to_seat_live_ms": 3448,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "prepare",
+                "ms": 2843
+              },
+              {
+                "name": "mint",
+                "ms": 74
+              },
+              {
+                "name": "apply",
+                "ms": 450
+              },
+              {
+                "name": "seat_exec",
+                "ms": 80
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "reviewer",
+        "role": "qa",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "online",
+        "live": true,
+        "reason_code": "lease_claimed",
+        "bucket": "working",
+        "bucket_marker": "",
+        "task_id": "t70",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/reviewer",
+        "last_activity_at": "2026-11-05T12:28:14.862944Z",
+        "last_message_at": "2026-11-05T10:35:11.505416Z",
+        "last_message": "t69 blocked: widen declared files for squad schema documentation: I claimed t69 and completed its first catalogue check: Codex CLI 0.166.0 exposes PostToolUse, so the catalogue stop condition does not",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/reviewer",
+        "branch": "seat/reviewer",
+        "launch": {
+          "launch_id": "269757872cfd5edd847f6481a04e1ce3",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-05T10:31:50.039303Z",
+            "seat_live": "2026-11-05T10:31:53.53316Z",
+            "first_message": null,
+            "to_seat_live_ms": 3493,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "prepare",
+                "ms": 2843
+              },
+              {
+                "name": "mint",
+                "ms": 74
+              },
+              {
+                "name": "apply",
+                "ms": 449
+              },
+              {
+                "name": "seat_exec",
+                "ms": 125
+              }
+            ]
+          },
+          "added_at": null
+        },
+        "warnings": [
+          "seat_stalled_at_dialog: a harness dialog has been open since 2026-11-05T12:27:26Z (49s); the seat waits at it and AMQ holds its doorbell"
+        ]
+      }
+    ]
+  }
+}

@@ -109,7 +109,16 @@ The timeline as seen in the v31 session's decision log (`.agent-mail/v31/extensi
 
 No ledger_tampered entry follows 13:50:17Z. Under the 3.1.2 scheduler the same chain was accepted.
 
-What the log does and does not show. By the lead session's account the 3.1.1 install ran the three short incarnations from 12:26:07Z, and rc.1 was installed at 12:43:50Z after the rollback from 3.1.1. The log itself shows incarnation a50f0aa880ed started at 12:28:14.654Z with no scheduler_stopped or scheduler_started between then and 13:50:12.543Z; the 12:43:50Z entries are a roster relaunch inside it. The log does not name the binary a scheduler ran, and no record found in the session does. So which installed version raised the t71 failures is not settled by these records.
+Which binary ran each incarnation, from the `up` records (up-311-4.json, up-rc1-back.json and up-312-3.json, each `up` starting the scheduler beside its lead) and the log:
+
+| Incarnation | Ran | Binary | Record |
+| --- | --- | --- | --- |
+| e8d657db060c | 12:26:07.775Z to 12:26:10.498Z | 3.1.1 | up-311-4.json (start 12:26:07.046Z), install "skipped: /Users/omri/go/bin/amq-squad already reports v3.1.1", roster_adopted; stopped when the 3.1.1 lead died |
+| 27d56d896552 | 12:27:18.100Z to 12:27:18.720Z | 3.1.1 | no `up` record; by the lead session's account the lead-diag run; lead-diag.log, written 12:27:18Z, holds the 3.1.1 lead's ParseError |
+| a50f0aa880ed | 12:28:14.654Z to 13:50:12.543Z | 3.1.0-rc.1 | up-rc1-back.json (start 12:28:12.605Z), install "installed /Users/omri/go/bin/amq-squad.v3.1.0-rc.1 (v3.1.0-rc.1) at /Users/omri/go/bin/amq-squad by temp name and rename", roster_incomplete; the rc.1 scheduler (pid 42375) beside the rc.1 lead (pid 42373), until the SIGTERM |
+| 5ecd55eb4fda | from 13:50:14.715Z | 3.1.2 | up-312-3.json, install of the tag build (v3.1.2) |
+
+So the 3.1.1 scheduler ran for about 3 s in all, over its two incarnations. Inside the first it wrote the ledger once, the 12:26:09.363Z seat_cleaned reviewer ("an earlier attempt's uncommitted diff kept on the ledger and removed from the worktree"), and at 12:26:10.450Z it dispatched t70 to reviewer. The rc.1 scheduler raised the rest: the t64 exit_refused "ledger_tampered at expired" at 12:28:14.907Z, the t70 exit_refused at 12:37:31.321Z, the roster relaunch at 12:43:50Z (the owner-approved line typed into the lead's pane, a relaunch inside the same incarnation) and all 1949 t71 seat_prepare_failed lines. The 3.1.2 scheduler accepted the same chain.
 
 One of the two verifiers is wrong about link 150, and which one is open. The restart may have hidden the alarm rather than cleared it. Code facts: `git diff --stat v3.1.0-rc.1..v3.1.2 -- internal/sealchain` is empty, and the only commit on internal/scheduler/exits.go or internal/routing/chain.go in that range is 3b4260b9 (#855, t43). The cause is not established.
 
@@ -136,4 +145,4 @@ Under R54 the installed binary cuts, and at prepare and at publish it printed `a
 
 All copied from the job's scratch records through `go run ./scripts/redact-evidence` (rule 18; it replaced no value, and `-check` is clean):
 
-attach-swap.txt, attach-v312.jsonl, build.log, down-v31.err, known-issue-312.md, lead-first-screen.txt, notes-body.sha256, owner-approvals.txt, release-api.json, release-prepare.json, release-publish.json, release-smoke.log, squadid-expected.txt, up-312.json, up-312-2.json, up-312-3.json. decisions-excerpt.jsonl and routing-head-commits.reviewer.json were read from the live v31 session root (`decisions.jsonl` and `routing/heads/commits.reviewer.json`), read only, and copied the same way. release-view.json was empty in the records and is not copied; its values (targetCommitish, draft, prerelease) are in release-api.json.
+attach-swap.txt, attach-v312.jsonl, build.log, down-v31.err, known-issue-312.md, lead-first-screen.txt, notes-body.sha256, owner-approvals.txt, release-api.json, release-prepare.json, release-publish.json, release-smoke.log, squadid-expected.txt, up-312.json, up-312-2.json, up-312-3.json; and from the 3.1.1 rollback's records, up-311-4.json, up-rc1-back.json and lead-diag.log. decisions-excerpt.jsonl and routing-head-commits.reviewer.json were read from the live v31 session root (`decisions.jsonl` and `routing/heads/commits.reviewer.json`), read only, and copied the same way. release-view.json was empty in the records and is not copied; its values (targetCommitish, draft, prerelease) are in release-api.json.
