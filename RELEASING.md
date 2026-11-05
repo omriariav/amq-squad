@@ -47,6 +47,21 @@ The smoke test installs `github.com/omriariav/amq-squad/v3/cmd/amq-squad@VERSION
 source tag works but the documented `go install` path reports `dev` or an old
 version.
 
+6. Start the lead on the installed new binary before the release counts as
+   done. Install the binary built from the tag (`scripts/build-pi-runtime.sh
+   all`, the one attached to the release). Then either restart the squad's own
+   lead on it, or run `amq-squad lead --team -- --offline` in a scratch
+   repository (`git init` in an empty directory, no `squad.yaml`, a scratch
+   `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
+   10 s, in the release evidence (`docs/v3-spike/5-release-evidence/release-<tag>/`).
+   A dead pane or any `Failed to load extension` line means the release is
+   not done. `make release-smoke` checks only the version, and CI stages no pi
+   runtime: 3.1.0 and 3.1.1 shipped a lead that exited at once. The first
+   instance is the 3.1.2 evidence: the built lead's first screen, and the
+   3.1.1 build's dead pane beside it, in
+   `docs/v3-spike/312-evidence/hotfix-hostfacts.md`. The 3.1.2 cut records
+   the installed binary's screen in `docs/v3-spike/5-release-evidence/release-v3.1.2/`.
+
 ## Minor release checklist
 
 Since v2.0.0, a minor release (for example v2.30.0) follows the same

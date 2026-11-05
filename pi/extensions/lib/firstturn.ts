@@ -29,7 +29,11 @@ type StatusDoc = {
 	gates?: { id: string; action_class?: string; state?: string }[];
 };
 
-export type HostFacts = { repository?: string; branch?: string; tip?: string; amq_version?: string };
+// ContextHost is context --json --host's host object (Go's hookHost). It is not
+// named HostFacts: a type and the class below of one name are two
+// declarations of one identifier to pi's loader (jiti's Babel transform),
+// which refuses the module, while Node's type stripping drops the type.
+export type ContextHost = { repository?: string; branch?: string; tip?: string; amq_version?: string };
 
 const MISSING = "missing";
 const CLOSED_TASKS = new Set(["completed", "cancelled", "done"]);
@@ -56,7 +60,7 @@ function fact(v: string | undefined): string {
 // hostLine is the system line from a status document and context's host
 // facts; either may be undefined (the verb failed), and its facts then read
 // missing.
-export function hostLine(st: StatusDoc | undefined, host: HostFacts | undefined): string {
+export function hostLine(st: StatusDoc | undefined, host: ContextHost | undefined): string {
 	const roster = st?.seats ? (st.seats.length ? st.seats.map((s) => `${fact(s.handle)} ${fact(s.runtime)}/${fact(s.model)}`).join(", ") : "none") : MISSING;
 	const tasks = st?.tasks ? st.tasks.filter((t) => !CLOSED_TASKS.has(t.task_state ?? "")) : undefined;
 	const gates = st?.gates ? st.gates.filter((g) => g.state === "open") : undefined;
@@ -86,8 +90,8 @@ export async function readStatus(cfg: Config, runner: Runner): Promise<StatusDoc
 
 // hostOf is context's host facts, undefined when context failed or gave
 // none.
-export function hostOf(c: { ok: true; data: ContextData } | { ok: false; why: string }): HostFacts | undefined {
-	return c.ok ? ((c.data as ContextData & { host?: HostFacts }).host ?? undefined) : undefined;
+export function hostOf(c: { ok: true; data: ContextData } | { ok: false; why: string }): ContextHost | undefined {
+	return c.ok ? ((c.data as ContextData & { host?: ContextHost }).host ?? undefined) : undefined;
 }
 
 // hostPollPaths are the files the host facts' key stats under the lead's
