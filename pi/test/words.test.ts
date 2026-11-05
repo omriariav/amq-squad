@@ -170,6 +170,8 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.ok(new Set(kinds).size >= 11, `the train's entry kinds were not found: ${kinds}`);
 	for (const k of kinds) assert.ok(has(TRAIN_KIND_WORDS, k), `train entry kind ${k} has no words`);
 	assert.equal(trainRunWords("made_up_kind"), "its last step is below the line");
+	// Codex on #873: reconcile is written for any binding change, not only a head mismatch
+	assert.equal(trainRunWords("reconcile"), "skipped recording a merge because its task binding no longer matches");
 	const relay = goRelayNames();
 	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
 	for (const r of relay) assert.ok(has(RELAY_WORDS, r), `relay refusal ${r} has no words`);

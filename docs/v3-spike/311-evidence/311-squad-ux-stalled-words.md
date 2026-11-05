@@ -37,15 +37,17 @@ paragraph has a line on why.
 At `2dcff7e2` the words table's completeness row (pi/test/words.test.ts,
 row 7) failed before this change: #871 added the merge train rule
 `strict_required_status_checks_policy` (internal/mergetrain checks.go
-`RuleStrictUpToDate`) and the journal entry kind `reconcile` (train.go,
-a replayed merge fact skipped because the task's bound head changed) had
-no words. Both are mapped here, so the pi gate is green again. The strict
+`RuleStrictUpToDate`) and the journal entry kind `reconcile` (train.go
+`reconcileBinding`: a merge not recorded because the task's binding no
+longer matches, whether its head, its repository or PR binding with the same
+SHA, or a merge the server reported) had no words. Both are mapped here, so the pi gate is green again. The strict
 rule's line is the lead's remedy, since a seat branch is never rebased by
 hand (the plan reviewer on #873): "the merge train stopped at PR #9: its
 branch is behind its base; the train brings it up to date and waits for its
 checks; if the train cannot, reset the task so a seat redoes it on the
-current base"; the `reconcile` entry reads "skipped a merge record whose
-head is no longer the task's". The row 4 stop test pins the strict line. Every other scan (waits, blocks, launch
+current base"; the `reconcile` entry reads "skipped recording a merge because its task
+binding no longer matches", not a head mismatch alone (Codex on #873). The
+row 4 stop test pins the strict line and row 7 the reconcile words. Every other scan (waits, blocks, launch
 codes, seat codes, warnings, relay names, decision kinds) found nothing
 unmapped at the tip.
 

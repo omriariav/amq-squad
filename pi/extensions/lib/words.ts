@@ -610,9 +610,11 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	alert: "raised an alert",
 	alert_cleared: "cleared an alert",
 	stop: "stopped",
-	// a replayed merge fact skipped: the task's bound head no longer matches
-	// (mergetrain train.go auditReconcileMismatch, after 3.1.1-3)
-	reconcile: "skipped a merge record whose head is no longer the task's",
+	// a merge not recorded because the task's binding no longer matches:
+	// its head, its repository or PR binding with the same SHA, or a merge
+	// the server reported (mergetrain train.go reconcileBinding; Codex on
+	// #873: not only a head mismatch)
+	reconcile: "skipped recording a merge because its task binding no longer matches",
 };
 
 // trainRunWords is what a run did last, in words; an unmapped kind says
