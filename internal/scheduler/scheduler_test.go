@@ -169,6 +169,30 @@ func TestUnclaimedLeaseReturnsToThePoolAndGoesToAnotherSeat(t *testing.T) {
 	}
 }
 
+func TestMaxAttemptExpiriesBlockForLead(t *testing.T) {
+	h := newHarness(t, Config{LeaseDuration: time.Minute, IdleTimeout: time.Hour})
+	h.add("hangs", &sonnet)
+	for _, seat := range []string{"seat-a", "seat-b", "seat-c"} {
+		h.up(seat, sonnet)
+	}
+	h.tick()
+	for n := 1; n <= 3; n++ {
+		got := h.get("t1")
+		if got.Lease == nil {
+			t.Fatalf("attempt %d has no lease: %+v", n, got)
+		}
+		if _, err := h.store.Claim(got.ID, got.Lease.Holder, nil, time.Minute, h.clk.Now()); err != nil {
+			t.Fatal(err)
+		}
+		h.clk.Add(time.Minute)
+		h.tick()
+	}
+	got := h.get("t1")
+	if got.State != task.StateBlocked || got.BlockReason != "retries_exhausted" || got.BlockRoute != task.RouteLead {
+		t.Fatalf("MaxAttempts expiries did not block for the lead: %+v", got)
+	}
+}
+
 // Acceptance 2 (S5 lead loop run 2): the doorbell reaches a seat in the
 // middle of a turn and is dropped; the lease, not the mail, decides.
 func TestDoorbellDroppedMidTurnLosesNothing(t *testing.T) {

@@ -24,6 +24,10 @@ func refused(pool string, n int, code string) task.Attempt {
 	return task.Attempt{N: n, Holder: "s", Pool: pl(pool), GrantedAt: t0, EndedAt: t0.Add(time.Minute), Outcome: task.OutcomeCommitRefused, Detail: code}
 }
 
+func expired(pool string, n int) task.Attempt {
+	return task.Attempt{N: n, Holder: "s", Pool: pl(pool), GrantedAt: t0, EndedAt: t0.Add(time.Minute), Outcome: task.OutcomeExpired}
+}
+
 // Brief 3.1.1-2 item 1, row 1: an attempt the commit step refused
 // size_cap_exceeded (t27 on 2026-11-01) is not a failed attempt: the retry
 // stays on the same tier and may take the same entry, and refusals past
@@ -71,6 +75,24 @@ func TestWorkFailureStillEscalates(t *testing.T) {
 	}
 }
 
+func TestExpiredAttemptCountsWithoutEscalating(t *testing.T) {
+	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	rn := f.runner()
+	tk := newTask("t64", "plan")
+	tk.Pool = pl("codex:gpt-5.6-sol:high")
+	first := rn.attempt(&tk, task.OutcomeExpired)
+	second, route := rn.r.Decide(tk, rn.cur)
+	if route.Pool == nil || first.Entry == nil || second.Entry == nil || second.Entry.Key() != first.Entry.Key() || second.UsedTier != first.UsedTier || second.Policy != PolicyLeadPin || hasSkip(second, first.Entry.Key(), SkipUsedBefore) || tk.Pool.Key() != first.Entry.Key() {
+		t.Fatalf("expiry escalated or dropped its pin: first=%+v second=%+v route=%+v pool=%+v", first, second, route, tk.Pool)
+	}
+	for len(tk.Attempts) < DefaultMaxAttempts {
+		rn.attempt(&tk, task.OutcomeExpired)
+	}
+	if _, route := rn.r.Decide(tk, rn.cur); route.Block != "retries_exhausted" {
+		t.Fatalf("%d expiries did not exhaust retries: %+v", len(tk.Attempts), route)
+	}
+}
+
 // Row 3: every reason code seatcommit can emit is classified in the one
 // table. The emitters are read from seatcommit's source: every Reason*
 // constant, and every expression handed to Result.refuse, assigned to a
@@ -96,6 +118,9 @@ func TestEveryCommitRefusalCodeIsClassified(t *testing.T) {
 	delete(short, seatcommit.ReasonSizeCap)
 	if got := unclassified(short, codes); !slices.Equal(got, []string{seatcommit.ReasonSizeCap}) {
 		t.Fatalf("a table without size_cap_exceeded: unclassified %v", got)
+	}
+	if got, ok := attemptOutcomeEffect[task.OutcomeExpired]; !ok || got.escalate || !got.count {
+		t.Fatalf("expired classification = %+v (present %v), want count without escalation", got, ok)
 	}
 }
 

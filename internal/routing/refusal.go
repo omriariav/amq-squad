@@ -9,14 +9,12 @@ import (
 
 // RefusalWorkFailure classifies every reason code the commit step can end
 // an attempt with, and the block reasons that ask for a decision (brief
-// 3.1.1-2 item 1): true when the code says the work
-// failed (its verifier failed it), false when the grant, the declared set,
-// a binding or the seat branch's data refused the diff. Only a work failure
-// moves the retry one tier up and counts toward MaxAttempts; any other
-// refusal retries on the same tier, after the lead's reset, widen or a
-// grant change (the commit step blocks the task; nothing re-dispatches it
-// alone). One table: a row fails when a code seatcommit can emit is not in
-// it, so a new code is never a failure by default.
+// 3.1.1-2 item 1). The three retry classes are: a work failure escalates and
+// counts; a policy refusal does neither; an expired lease counts without
+// escalating. This table distinguishes work failures from policy refusals;
+// attemptOutcomeEffect gives expiry its own row. One table: a row fails when
+// a code seatcommit can emit is not in it, so a new code is never a failure
+// by default.
 var RefusalWorkFailure = map[string]bool{
 	// The policy refusals: the grant or the declared set refused the diff.
 	seatcommit.ReasonSizeCap:    false,
@@ -68,22 +66,29 @@ var RefusalWorkFailure = map[string]bool{
 	seatcommit.ReasonVerifierOutput:  true,
 }
 
-// failure reports whether an attempt counts as a failed attempt of the
-// work: a retry moves one tier up and it counts toward MaxAttempts. A
-// failed or expired attempt is one. A commit refusal or a block counts only
-// when RefusalWorkFailure says its code is a work failure; a commit refusal
-// with a code the table does not name never counts, and a block with a code
-// it does not name (a seat's own block) still does. Unclaimed and released
-// attempts are seat or lead events and retry on the same tier.
-func failure(a task.Attempt) bool {
+type retryEffect struct{ escalate, count bool }
+
+// attemptOutcomeEffect classifies outcomes whose retry effect does not depend
+// on a refusal detail. Expired is deliberately counted without escalation.
+var attemptOutcomeEffect = map[string]retryEffect{
+	task.OutcomeFailed:  {escalate: true, count: true},
+	task.OutcomeExpired: {count: true},
+}
+
+func effect(a task.Attempt) retryEffect {
+	if got, ok := attemptOutcomeEffect[a.Outcome]; ok {
+		return got
+	}
 	switch a.Outcome {
-	case task.OutcomeFailed, task.OutcomeExpired:
-		return true
 	case task.OutcomeCommitRefused, task.OutcomeBlocked:
 		if work, ok := RefusalWorkFailure[a.Detail]; ok {
-			return work
+			return retryEffect{escalate: work, count: work}
 		}
-		return a.Outcome == task.OutcomeBlocked
+		work := a.Outcome == task.OutcomeBlocked
+		return retryEffect{escalate: work, count: work}
 	}
-	return false
+	return retryEffect{}
 }
+
+func failure(a task.Attempt) bool   { return effect(a).count }
+func escalates(a task.Attempt) bool { return effect(a).escalate }
