@@ -161,6 +161,7 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	pr_pending: () => ["the commit step is waiting for its PR to open", "wait, or /reset it if it stays"],
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
+	seat_head_detached_unmerged: () => ["the seat worktree holds a local commit the harness did not record", "push, merge or branch the commit before cleaning"],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
 	ledger_tampered: () => ["the commits ledger does not verify", "ask the owner to inspect the commits ledger before anything commits"],
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
@@ -219,6 +220,8 @@ export const LAUNCH_WORDS: Record<string, string> = {
 	// the scheduler's roster codes
 	seat_replacement_resource_present: "a gone seat's pane is still open, so no seat can replace it",
 	binding_present_without_resumable_conversation: "it could not resume its conversation",
+	seat_worktree_dirty: "its worktree has local changes",
+	seat_worktree_check_failed: "its worktree cleanliness could not be checked",
 	// seat-exec's refusals
 	argv_missing: "its command line is missing",
 	codex_approval_missing: "its Codex approval mode is missing",
@@ -422,6 +425,7 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	up_stopped_scheduler: () => ["amq-squad up stopped a scheduler", "read the record below the line"],
 	task_budget_warning: (d) => [`${d.task_id || "a task"}'s ${safeBudgetReason(d.reason, BUDGET_ENDS, "budget ends soon")} on ${seatOf(d)}`, "extend it or let it expire"],
 	task_budget_spent: (d) => [`${seatOf(d)}'s lease is no longer renewed${d.task_id ? ` for ${d.task_id}` : ""}`, `its ${safeBudgetReason(d.reason, BUDGET_SPENT, "task budget is spent")}`],
+	seat_clean_deferred: (d) => [`${seatOf(d)} could not be cleaned yet${d.task_id ? ` after ${d.task_id}` : ""}`, "inspect its worktree and retry the clean"],
 };
 
 // ROUTINE_DECISIONS are the decision kinds that need no look from the lead
@@ -435,7 +439,7 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		"blocked", "commit_adopted", "commit_cancelled", "commit_cancelling", "commit_deferred", "commit_refused", "commit_running", "completed",
 		"decision_socket_open", "discovery_stale", "dispatch_held", "dispatched", "exit_check_deferred", "exit_check_duplicate", "launch_failures_restored",
 		"lease_expired", "lease_normalised", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
-		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
+		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing", "seat_index_refreshed", "cleaner_marker_taken_over",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
 		"task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
 	].map((k) => [k, true]),

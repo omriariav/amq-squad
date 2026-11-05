@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
 // The unclean marker (v3-5-verifier, the fourth round). CleanSeat's git work
@@ -22,11 +23,11 @@ import (
 // <store>/reserved/<seat>, one JSON record with a nonce. While the marker
 // exists, whatever its age, Grant and Claim refuse the seat (seat_unclean):
 // only a completed CleanSeat removes it, and only its own (the nonce). The
-// TTL means one thing: after it another CleanSeat may take the marker over
-// (the seat's ledger try-lock keeps two cleaners apart, so a takeover happens
-// only when the first cleaner is dead or lost the ledger). A marker that is
-// malformed or cannot be read is seat_unclean too, never a free seat, and
-// status names it to the lead (SeatMarkerProblems).
+// A proved-live marker is never taken over by age. A proved-dead marker is
+// taken immediately. The TTL applies only when the marker carries no readable
+// process identity. A marker that is malformed or cannot be read is
+// seat_unclean too, never a free seat, and status names it to the lead
+// (SeatMarkerProblems).
 //
 // A marker whose time is more than one TTL in the future is invalid like a
 // malformed one (status names it, a CleanSeat takes it over): it would
@@ -40,8 +41,8 @@ import (
 // Limit, recorded with the others: a same-UID process can plant a marker and
 // keep a seat from every lease until the lead removes it or a CleanSeat runs.
 
-// SeatReservationTTL is how long a cleaner's marker is its own: after it a
-// new CleanSeat may take the marker over.
+// SeatReservationTTL is the takeover wait only for a marker whose cleaner
+// identity cannot be read.
 const SeatReservationTTL = 10 * time.Minute
 
 // Reason codes of the marker.
@@ -54,7 +55,15 @@ var (
 type seatMarker struct {
 	Nonce string    `json:"nonce"`
 	At    time.Time `json:"at"`
+	PID   int       `json:"pid,omitempty"`
+	Start string    `json:"start,omitempty"`
 }
+
+var (
+	cleanerPID        = os.Getpid
+	cleanerStartToken = procinfo.StartToken
+	cleanerAlive      = procinfo.Alive
+)
 
 func reservedDir(dir string) string { return filepath.Join(dir, "reserved") }
 
@@ -112,16 +121,24 @@ func unclean(dir, holder string) error {
 
 // ReserveSeat is CleanSeat's first take of the store lock: the state read
 // (the seat holds nothing) and the unclean marker,
-// with a fresh nonce, which the caller's ReleaseSeat must present. A fresh
-// marker of another cleaner refuses (seat_cleaning); one older than
-// SeatReservationTTL, or a malformed one, is taken over; one that cannot be
-// read refuses.
+// with a fresh nonce, which the caller's ReleaseSeat must present. A live
+// cleaner refuses regardless of age; a dead cleaner is taken over at once;
+// the TTL applies only to an unreadable identity. A marker file that cannot
+// be read refuses.
 func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, string, error) {
+	list, nonce, _, err := s.ReserveSeatWithDecision(handle, now)
+	return list, nonce, err
+}
+
+// ReserveSeatWithDecision is ReserveSeat with the one decision a caller
+// records when it takes over a marker whose proved cleaner is dead.
+func (s Store) ReserveSeatWithDecision(handle string, now time.Time) ([]Task, string, string, error) {
 	var out []Task
+	var decision string
 	nonce := newNonce()
 	handle, err := SeatHandle(handle)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	err = s.withLock(true, func() error {
 		list, err := readDir(s.Dir)
@@ -136,10 +153,31 @@ func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, string, error)
 			if _, rerr := os.ReadFile(markerPath(s.Dir, handle)); rerr != nil {
 				return fmt.Errorf("%w: %v", ErrSeatUnclean, merr) // unreadable: never overwritten blind
 			}
-		} else if m != nil && now.Sub(m.At) < SeatReservationTTL && !futureMarker(m, now) {
-			return fmt.Errorf("%w: seat %s is being cleaned since %s", ErrSeatCleaning, handle, m.At.UTC().Format(time.RFC3339))
+		} else if m != nil && !futureMarker(m, now) {
+			age := now.Sub(m.At).Round(time.Second)
+			if age < 0 {
+				age = 0
+			}
+			live, readable := false, m.PID > 1 && m.Start != ""
+			if readable {
+				if start, ok := cleanerStartToken(m.PID); ok {
+					live = start == m.Start
+				} else if cleanerAlive(m.PID) {
+					readable = false
+				}
+			}
+			switch {
+			case live:
+				return fmt.Errorf("%w: seat %s is being cleaned by pid %d for %s", ErrSeatCleaning, handle, m.PID, age)
+			case readable:
+				decision = fmt.Sprintf("seat %s's cleaner marker belonged to dead pid %d; taking it over", handle, m.PID)
+			case now.Sub(m.At) < SeatReservationTTL:
+				return fmt.Errorf("%w: seat %s is being cleaned for %s; its cleaner identity is unreadable", ErrSeatCleaning, handle, age)
+			}
 		}
-		raw, _ := json.Marshal(seatMarker{Nonce: nonce, At: now.UTC()})
+		pid := cleanerPID()
+		start, _ := cleanerStartToken(pid)
+		raw, _ := json.Marshal(seatMarker{Nonce: nonce, At: now.UTC(), PID: pid, Start: start})
 		if err := os.MkdirAll(reservedDir(s.Dir), 0o700); err != nil {
 			return err
 		}
@@ -150,10 +188,10 @@ func (s Store) ReserveSeat(handle string, now time.Time) ([]Task, string, error)
 		out = list
 		return nil
 	})
-	return out, nonce, err
+	return out, nonce, decision, err
 }
 
-// ReleaseSeat is a completed CleanSeat's second take: it removes the marker
+// ReleaseSeat is CleanSeat's deferred second take: it removes the marker
 // only when it is the cleaner's own (the nonce), else release_lost (a later
 // cleaner took it over; its git work was serialized by the ledger, so this
 // is a report, not a corruption), with the seat re-checked.
