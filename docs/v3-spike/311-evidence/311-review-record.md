@@ -179,10 +179,20 @@ match, the entry gives the line that does.
     ([311-squad-ux.md](311-squad-ux.md), section 4).
   - Live, during t42: the seat's own typed widen of its task was refused
     `not_lead`. The t42 and t43 task records say so; no note does.
-  - Live, on 2026-11-05: `scheduler relaunch` from a process that is not the
-    lead was refused `not_lead`. This is the lead's account. Neither the
-    decision log nor the scheduler log of session v31 holds a `not_lead`
-    line.
+  - Live, on 2026-11-05 at about 04:35Z: the lead session ran `scheduler
+    relaunch` from a process that is not the lead's, and it was refused
+    `not_lead`. Quoted from the lead session's transcript, not a squad log:
+
+    ```
+    $ amq-squad scheduler relaunch --root /Users/omri/code/amq-squad/.agent-mail/v31 --reason "..." --json
+    {"schema_version":1,"kind":"scheduler_relaunch","data":{"ok":false,"code":"not_lead","detail":"pid 31443 does not descend from the lead cto's recorded incarnation"}}
+    ```
+
+    The relaunch then ran only from the lead's own pi, after the owner typed
+    one line into its pane. The lead says the owner's approval is recorded in
+    the release evidence. Neither the decision log nor the scheduler log of
+    session v31 holds a `not_lead` line. The decision log does hold the
+    relaunch itself: `roster_relaunch_requested` at 2026-11-05T04:39:15Z.
 - **Found by:** the lead, from the run and the reviews.
 - **Ruling:** a known limit of 3.1.1: no execution note records the live
   refusals.
@@ -190,4 +200,5 @@ match, the entry gives the line that does.
   widen and a relaunch from outside the lead were refused. No execution note
   records it.
 - **Checked:** the task records' text ("direct typed widening is lead-only and
-  was refused not_lead") and the 311-squad-ux.md row.
+  was refused not_lead"), the 311-squad-ux.md row, and the decision log's
+  relaunch line. The CLI output is the lead's quote; it is in no squad log.
