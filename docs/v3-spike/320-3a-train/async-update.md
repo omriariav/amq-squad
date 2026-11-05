@@ -95,10 +95,17 @@ push after the update, never the update's result: refused `pr_head_moved`
 in words through `refuseUpdate`, nothing bound (the fix3 late-push row
 keeps its outcome: refused, the late head not bound).
 
-**Item 2, the rebase entry.** Written with the head read back, before the
-proof, as before, so `trainHeads` names it and the force-push rule stays
-quiet on the train's own update. The rebind entry's detail keeps its
-`patch-id: <id>` first line (`reconcileRebinds` matches it) and adds
+**Item 2, the rebase entry.** Written with the head read back, so
+`trainHeads` names it and the force-push rule stays quiet on the train's
+own update. For a bound PR it is written only after the proof has passed
+(the plan reviewer's blocker on #903, commit `2f28e5fd`): an entry written
+before the proof stayed in the journal when the proof failed, so
+`trainHeads` named an unproven head and the next run's force-push rule took
+that head for the train's own push, exactly the protection this PR
+restores. The order is the rebase entry, the rebind entry, the binding
+write, all before the check; an unbound PR (no task, so no proof) keeps
+the entry as before and the code says so. The rebind entry's detail keeps
+its `patch-id: <id>` first line (`reconcileRebinds` matches it) and adds
 `first parent: <sha>`.
 
 **Item 3, the recovery.** `Train.reconcileUpdates` runs at the start of a
@@ -128,7 +135,17 @@ entry naming it (`... binding not recovered`), the binding stays, and the
 check refuses as before. A moved head with no request on record is not
 touched: a force push with no train request on record is exactly the event
 `pr_head_moved` exists to stop, and the owner's identity on the push does
-not tell the train's push from the owner's own hand.
+not tell the train's push from the owner's own hand. The converse holds
+too: a journaled request whose mutation never ran (or was rejected),
+followed by a seat's own force push from the bound head, is accepted only
+when the proof holds, which is safe on content, since the patch-id proof
+is what matters, not who pushed; a changed patch in that case is refused
+(R3's `a differing patch-id` subtest: the journal entry exists, one force
+push from the bound head with a different patch-id, the reconcile entry
+says the head is `not its result`, nothing bound). `pushedAfter` compares
+at second precision and takes an equal second as after, since the
+timeline reports whole seconds and a push in the request's own second is
+the earliest the update can land.
 
 **Item 4, the fake gh.** `AsyncUpdate` (PR numbers): the mutation performs
 the rebase into `refs/pending/<branch>`, records it as pending and answers
@@ -180,6 +197,7 @@ row comes the first time the new code meets an asynchronous update.
 | R3 live | The update lands after the bounded wait: the run that asked refuses it unconfirmed; the next run recovers it from the journaled request (the `rebase` entry names `recovered: the update journaled by run <first run>`, then the `rebind`), binds the moved head and lands the PR. | `internal/mergetrain` `TestLateUpdateIsRecoveredByTheNextRun` |
 | R3 | The conditions, by hand (the request journaled, the branch rebased and force-pushed in the work clone with the timeline event): with the journal and one push onto the journaled base tip the PR is recovered and merged (rebase, rebind, merge in order); with the base moved since, onto the current tip, recovered and the record says `is the base's current tip`; the same push with no journal entry stays refused `pr_head_moved`, no reconcile attempted, the binding stays; a differing patch-id, a second force push, and a parent that is not the base tip each stay refused with one `reconcile` entry naming the part (`the change moved during the update`, `2 force pushes after the journaled request`, `first parent`) and `binding not recovered`, no `rebind`, nothing merged. | `internal/mergetrain` `TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof` (6 subtests) |
 | R4 | Every existing row passes with the synchronous fake (the package's suite). | `internal/mergetrain` (`go test`) |
+| proof first | #903's blocker: a failed proof leaves no rebase entry. With the fake altering the seat's hunk during the update (`rebase_patch_changed`) and with a push landing on the rebased head before the read-back (`pr_head_moved` on the parent), the first run is refused with no `rebase` entry for the PR, `trainHeads` does not name the head, the binding is unchanged, and the next run's check refuses the head on `force_push`; nothing merged. | `internal/mergetrain` `TestFailedProofLeavesNoRebaseEntry` (2 subtests) |
 | verb | `mergetrain.Rebind`: proved and bound (the batch base of an earlier run pinned, the base moved on since: the parent is `the base tip of run mt-earlier's batch`, the binding written, the `rebase` and `rebind` entries under an `mt-rebind-` run, the next real run lands the PR with the force-push rule quiet); onto the current tip; each failing part refused with nothing written (not a full SHA `rebind_invalid`; no task at the named head `rebind_unbound`; the PR head not the named head `rebind_head_mismatch`; no force push, two force pushes, a parent that is not a base tip, a differing patch-id, each `rebind_unproved` with the part in words). | `internal/mergetrain` `TestLeadRebindIsProvedBeforeTheBindingIsWritten` (9 subtests) |
 | socket | The re-bind kind over the decision socket: applied through the `Rebind` hook from the lead's pane; `not_lead` and nothing applied from any other process; `rebind_unsupported` with no hook. | `internal/schedproc` `TestRebindDecisionIsProvedLikeAWidening` |
 | not_lead | Through the verb, with the scheduler's production apply step behind the socket and the train's re-bind stubbed: from a seat's process the reply is `not_lead`, the train is asked nothing, the plain line is above the rule with the code below, exit 15, no decision line. | `internal/cli` `TestMergeTrainRebindFromASeatIsNotLead` |
@@ -532,6 +550,27 @@ merge_train_rebind_test.go:198: the refusal is not in words with the code below 
 `--- FAIL: TestMergeTrainPrintsTheUnconfirmedUpdateInWords (0.00s)`
 restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.323s`.
 
+### proof first (#903)
+
+On `2f28e5fd`:
+```
+go test -count=1 -timeout 300s -run ^TestFailedProofLeavesNoRebaseEntry$ ./internal/mergetrain/
+```
+Reverted `internal/mergetrain/train.go` (`land`, the entry's write)
+```
+		if !bound {
+```
+to:
+```
+		if true { // the old order: the entry before the proof
+```
+First failing line (the subtest `a differing patch-id`):
+```
+async_test.go:460: a rebase entry names the unproven head: [batch update_requested rebase refusal batch]
+```
+`--- FAIL: TestFailedProofLeavesNoRebaseEntry (1.65s)`
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.370s`.
+
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
 
@@ -592,6 +631,13 @@ the same Go tree), from the worktree root:
      `ℹ fail 0`, `ℹ skipped 1`, the staged-runtime row, local-only).
 - `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
   exit 0 (run again on this note's final text: exit 0).
+
+On `2f28e5fd` (#903's blocker, `internal/mergetrain/` only), from the
+worktree root: `go build ./... && go vet ./...` exit 0; `go test -count=1
+./internal/mergetrain/ ./internal/cli/ ./internal/schedproc/` all three
+`ok`, exit 0; `go run ./scripts/redact-evidence -check
+docs/v3-spike/320-3a-train/` on this note: exit 0. No further
+offline `make ci` (GitHub's CI is the full run, the lead's ruling).
 
 ## Residual risk
 
