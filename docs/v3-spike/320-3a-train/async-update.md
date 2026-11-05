@@ -237,8 +237,16 @@ that advanced the binding (and recorded a merge) between the proof and the
 write keeps its head; the stale re-bind is refused `rebind_head_mismatch`
 naming that the binding moved, and the two entries stay journaled
 (`reconcileRebinds` applies a rebind entry only to a task still bound at
-its old head, so they bind nothing later). A refusal whose decision line
-cannot be written names that in its detail, under the refusal's own code. The decision log carries one line either way:
+its old head, so they bind nothing later). On that path `Rebind` writes a
+terminal `rebind_superseded` entry (the PR, the task, the bound head, the
+named head, the reason) under the same run id (the plan reviewer on #903,
+commit `f707b9cd`): `Audit.trainHeads` (`audit.go`, the `switch` on the
+entry kind in its loop) adds a head on its `rebase` entry and deletes it
+again on a `rebind_superseded` entry that follows, so a push of exactly
+that head is not the train's own and a later run's force-push rule
+refuses it. The audit-first order is unchanged. A refusal whose decision
+line cannot be written names that in its detail, under the refusal's own
+code. The decision log carries one line either way:
 `merge_train_rebound` (the task, the heads, the parent and what it is, the
 patch-id, the force push, the audit run) or `merge_train_rebind_refused`
 with the code. The verb prints the proof, or the refusal with the plain line
@@ -281,6 +289,7 @@ row comes the first time the new code meets an asynchronous update.
 | journal at the mutation | Codex #903 (6): R1 reads the audit kinds the fake saw when the mutation was called: `update_requested` present, no `rebase`. | `internal/mergetrain` `TestAsyncUpdateBindsTheHeadReadBack` |
 | journaled base first | Codex #903 (8): a real-run batch base that is also the base's current tip names the parent as `the base tip of run mt-earlier's batch`. | `internal/mergetrain` `TestLeadRebindIsProvedBeforeTheBindingIsWritten` (`a journaled base that is also the current tip ...`) |
 | unwritten line | Codex #903 (5): the decisions log's path taken by a directory: the verb's refusal keeps its code and names `the decision line was not written: ...`. | `internal/cli` `TestMergeTrainRebindNamesAnUnwrittenDecisionLine` |
+| superseded | The reviewer on #903: after the stale-write refusal the rebase entry is journaled and a `rebind_superseded` entry follows it under the same run with the task, the heads and the reason; `trainHeads` lacks the head; a following real run's check refuses the PR (its head is that head, the binding elsewhere) on `force_push` as well as `pr_head_moved`. | `internal/mergetrain` `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 
 Rule 18: every row runs under a `t.TempDir` root; the mergetrain rows run
 the fake gh over a local bare repository under the test binary's temporary
@@ -739,6 +748,17 @@ async_test.go:794: definiteRefusal("gh api graphql: exit status 1: gh: Bad Gatew
 ```
 restored: `ok ... 0.262s`.
 
+### The superseded re-bind (one run, on `f707b9cd`)
+
+`903d the superseded exclusion`: `internal/mergetrain/audit.go`
+(`trainHeads`) `case "rebind_superseded":` to `case
+"rebind_superseded_ignored":` (the head stays the train's);
+`go test -count=1 -timeout 300s -run ^TestRebindRefusesWhenTheBindingMovedMeanwhile$ ./internal/mergetrain/`;
+```
+async_test.go:539: the superseded head stays the train's: rebase 0, superseded 2, trainHeads map[53a5af45fbfca052f57b5e66493695d0870f015f:true]
+```
+restored: `ok ... 1.076s`.
+
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
 
@@ -820,6 +840,12 @@ only): `go build ./... && go vet ./...` exit 0; `go test -count=1
 ./internal/task/` all four `ok`, exit 0; `go run ./scripts/redact-evidence
 -check docs/v3-spike/320-3a-train/` on this note: exit 0.
 
+On `f707b9cd` (the superseded re-bind, `internal/mergetrain/` only): `go
+build ./... && go vet ./...` exit 0; `go test -count=1
+./internal/mergetrain/ ./internal/cli/ ./internal/schedproc/
+./internal/task/` all four `ok`, exit 0; `go run ./scripts/redact-evidence
+-check docs/v3-spike/320-3a-train/` on this note: exit 0.
+
 ## Residual risk
 
 - The first-parent check assumes one commit per task on the seat branch,
@@ -846,9 +872,12 @@ only): `go build ./... && go vet ./...` exit 0; `go test -count=1
   by its window), never to the definite one, unless it carries `(HTTP 4`
   or the `GraphQL:` prefix with none of the vague phrases.
 - A stale re-bind refused on the conditional write leaves its `rebase` and
-  `rebind` entries journaled under the re-bind's run: the proof held on
-  content, the binding was simply elsewhere, and `reconcileRebinds` applies
-  a rebind entry only to a task still bound at its old head.
+  `rebind` entries journaled under the re-bind's run, followed by the
+  terminal `rebind_superseded` entry: `trainHeads` (`audit.go`, the kind
+  `switch` in its loop) deletes the head that entry names, so the force-push
+  rule treats a push of it as not the train's; `reconcileRebinds` applies a
+  rebind entry only to a task still bound at its old head, so the rebind
+  entry binds nothing later.
 - The lead verb's base candidates are the journaled bases first, then the
   base's current tip; the first match names the parent (a journaled base
   that is also the current tip is named as journaled), and a parent that
