@@ -18,16 +18,28 @@
 // Without AM_ME and AM_ROOT the package is inactive: the factory runs after
 // every module it imports is evaluated and registers only a session_start
 // note, so no row reaches a squad.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
-import { tmpdir } from "./fakepi.ts";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { tmpdir as fakeTmpdir } from "./fakepi.ts";
 
 const PI_VERSION = "1.3.0"; // scripts/build-pi-runtime.sh pi_version
-const here = path.dirname(new URL(import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: a checkout path with a space stays a path
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+// fakepi's tmpdir registers no cleanup; this file removes its own dirs
+const scratch: string[] = [];
+function tmpdir(): string {
+	const d = fakeTmpdir();
+	scratch.push(d);
+	return d;
+}
+after(() => {
+	for (const d of scratch) fs.rmSync(d, { recursive: true, force: true });
+});
 const pkgRoot = path.join(here, "..");
 const ext = path.join(pkgRoot, "extensions", "amq-squad.ts");
 const piDir = path.join(pkgRoot, "node_modules", "@earendil-works", "pi-coding-agent");
@@ -55,7 +67,7 @@ function walk(d: string, out: string[] = []): string[] {
 // startPi runs pi's bundled CLI with the extension, offline, in a scratch
 // HOME, agent dir and cwd, with only PATH from this environment (no
 // provider key, no AM_ME or AM_ROOT).
-function startPi(node: string, cli: string, preload?: string): { code: number | null; out: string } {
+function startPi(node: string, cli: string, preload?: string): { code: number | null; signal: NodeJS.Signals | null; out: string } {
 	const home = tmpdir();
 	const agent = path.join(home, "agent");
 	const cwd = path.join(home, "cwd");
@@ -64,19 +76,31 @@ function startPi(node: string, cli: string, preload?: string): { code: number | 
 	const args = [...(preload ? ["--require", preload] : []), cli, "--offline", "--no-session", "-p", "-e", ext, "hi"];
 	const r = spawnSync(node, args, {
 		cwd,
-		// JITI_FS_CACHE=false as the launcher sets it (internal/piruntime):
-		// jiti writes no transform cache outside the scratch HOME
-		env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: "1", JITI_FS_CACHE: "false" },
+		// JITI_FS_CACHE=false and NODE_DISABLE_COMPILE_CACHE=1 as the launcher
+		// sets them (internal/piruntime): the bundle calls Node's
+		// enableCompileCache() at its top, and jiti caches transforms; neither
+		// writes outside the scratch HOME. (The in-process rows import the
+		// unbundled loader, which never calls enableCompileCache.)
+		env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: "1", JITI_FS_CACHE: "false", NODE_DISABLE_COMPILE_CACHE: "1" },
 		encoding: "utf8",
 		timeout: 60_000,
 	});
-	return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}` };
+	return { code: r.status, signal: r.signal, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}` };
 }
 
-function assertLoaded(r: { code: number | null; out: string }): void {
+// NO_KEY_EXIT is pi 1.3.0's exit status at "No API key found" in print
+// mode: AgentSession.prompt() checks the provider's auth before it starts
+// a run (core/agent-session.js), so the prompt fails before any request
+// and pi exits 1, recorded by the run on 2026-11-05. A timeout ends with a
+// signal and no status.
+const NO_KEY_EXIT = 1;
+
+function assertLoaded(r: { code: number | null; signal: NodeJS.Signals | null; out: string }): void {
 	assert.doesNotMatch(r.out, /Failed to load extension/, r.out);
 	// past the extension load, stopped at the model step: no key, no call
 	assert.match(r.out, /No API key found/, r.out);
+	assert.equal(r.signal, null, `pi ended on ${r.signal}: ${r.out}`);
+	assert.equal(r.code, NO_KEY_EXIT, r.out);
 }
 
 test("pi's transform (jiti static, tryNative off) takes every extensions/ .ts", async () => {
