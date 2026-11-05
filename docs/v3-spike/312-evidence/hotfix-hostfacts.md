@@ -1,6 +1,6 @@
 # 3.1.2 hotfix: the HostFacts duplicate in the pi extension
 
-Branch `v3-312-hotfix` from `origin/v3` at `e10bbef40c072b186c288fc5226c613a93557e9e`.
+PR #883, branch `v3-312-hotfix`, from `origin/v3` at `e10bbef40c072b186c288fc5226c613a93557e9e`.
 
 ## The regression
 
@@ -218,7 +218,7 @@ the second run's pi suite had the stage, so it was pass 114, skipped 0.
 
 ## The cut procedure gains a step
 
-`RELEASING.md`, Patch Release Checklist, step 6 (in this PR):
+`RELEASING.md`, Patch Release Checklist, step 6 (in #883):
 
 > Start the lead on the installed new binary before the release counts as
 > done. Install the binary built from the tag (`scripts/build-pi-runtime.sh
