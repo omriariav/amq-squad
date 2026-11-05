@@ -69,10 +69,26 @@ type fakeState struct {
 // timelinePage is GitHub's page size of the force-push timeline query.
 const timelinePage = 100
 
-// fixtureHome is the HOME of the fixture's git subprocesses (standing rule
-// 18: a test never reads the owner's home): a temporary directory for the
-// test binary's run, and for the fake gh's own run when the train calls it.
+// fixtureHome is the HOME the whole test binary runs under (standing rule
+// 18: a test never reads the owner's home): a temporary directory made
+// once in TestMain, for the test binary's run and for the fake gh's own run
+// when the train calls it.
 var fixtureHome string
+
+// isolateGitHome points this process's environment at home for every git
+// it starts: the fixture helpers' (gitOut, mustGit, newFixture and any
+// fixture a later test adds), production's own (gh.go's git patch-id) and
+// the subprocess fake gh's, which inherit it. It is set on the process, not
+// per fixture, since t.Setenv panics in the parallel tests that build
+// fixtures. XDG_CONFIG_HOME is unset, so git's default ignore and
+// attributes files, which GIT_CONFIG_GLOBAL does not cover, are read from
+// under home only.
+func isolateGitHome(home string) {
+	_ = os.Setenv("HOME", home)
+	_ = os.Unsetenv("XDG_CONFIG_HOME")
+	_ = os.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
 
 func TestMain(m *testing.M) {
 	home, err := os.MkdirTemp("", "mergetrain-fixture-home-")
@@ -80,6 +96,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	fixtureHome = home
+	isolateGitHome(home)
 	code := 0
 	if path := os.Getenv("FAKE_GH_STATE"); path != "" {
 		code = fakeGH(path, os.Args[1:])
@@ -111,12 +128,9 @@ func (s *fakeState) save(path string) {
 
 func gitOut(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	// the fixture's own HOME and XDG config home: git reads files under them
-	// that GIT_CONFIG_GLOBAL does not cover (the default ignore and
-	// attributes files); the last value of a key in Env wins
+	// HOME is the test binary's own (isolateGitHome, TestMain)
 	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=owner", "GIT_AUTHOR_EMAIL=owner@example.com",
-		"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-		"HOME="+fixtureHome, "XDG_CONFIG_HOME="+filepath.Join(fixtureHome, ".config"))
+		"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
