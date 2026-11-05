@@ -36,6 +36,7 @@ Usage:
   amq-squad scheduler run --project DIR [--lead-pool r:m:e]... [--tick 2s] [--max-seats N] [--base-branch B] [--no-open-pr]
   amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--start STAMP] [--json]
   amq-squad scheduler clear --seat H --warning CODE --launch ID [--root DIR] [--json]
+  amq-squad scheduler recover --seat H --seq N [--slot K] [--carry TASK:COMMIT ...] --reason TEXT [--root DIR] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
@@ -121,6 +122,35 @@ seat now), clear_launch_stale (the seat's current launch is not the one
 named), clear_malformed; and the socket's: not_lead (the sender does not
 descend from the lead), origin_unknown (the sender's origin cannot be read
 or proved).
+
+scheduler recover is the lead's recovery of a seat whose commits ledger
+failed its check (3.2.0-0c-B). The refusing read quarantined the document
+under <root>/extensions/amq-squad/quarantine/commits.H.seqN[.K]/ and the
+task that reached the seat is blocked ledger_tampered for the lead; the
+seat is held out of every dispatch until this decision. It is sent over
+the same socket and proved the same way: the scheduler, never this verb,
+writes the new sealed chain with the session key. The chain continues at
+seq N+1 after the quarantined seq N and links to the quarantined head; the
+new body records the quarantined body's sha256 and the slot's path, the
+worktree and branch from the launch record, the base as the core observes
+the worktree now, and the owner's grant. --carry TASK:COMMIT (repeatable)
+carries a quarantined commit entry only when that commit is on origin's
+branch for the task and its tree equals the quarantined entry's; one entry
+that fails refuses the whole recovery and nothing is carried. --seq N is
+the seq in the slot's name (unknown for a slot whose head did not decode);
+--slot K is the slot's suffix (1 for the first). The quarantined copies are
+never read as a ledger, never sealed, never removed. The tasks blocked
+ledger_tampered on the seat return to pending at the next tick. A clear
+(scheduler clear) is not the recovery: ledger_tampered is no warning, and
+no clear makes the seat grantable. Refusals: recover_slot_missing,
+recover_slot_invalid (the slot's copies and sidecar disagree, or it is
+another seat's), recover_not_tampered (the ledger on disk verifies),
+recover_slot_stale (the ledger on disk is not the slot's document; it is
+quarantined in a slot of its own, named in the reply), recover_seq_unknown,
+recover_base_unobserved (no staged launch record or worktree HEAD),
+recover_entry_unknown, recover_entry_unpushed, recover_entry_tree_mismatch,
+recover_write_failed, recover_malformed; and the socket's not_lead and
+origin_unknown. Exit 15: refused.
 `
 
 func runScheduler(args []string) error {
@@ -137,8 +167,10 @@ func runScheduler(args []string) error {
 		return runSchedulerRelaunch(args[1:], os.Stdout)
 	case "clear":
 		return runSchedulerClear(args[1:], os.Stdout)
+	case "recover":
+		return runSchedulerRecover(args[1:], os.Stdout)
 	default:
-		return unknownSubcommandError("scheduler", args[0], "run", "relaunch", "clear")
+		return unknownSubcommandError("scheduler", args[0], "run", "relaunch", "clear", "recover")
 	}
 }
 
@@ -321,6 +353,9 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Start:       launchStart(),
 		// R4: the lead's decisions over the scheduler's own socket.
 		Decisions: decisions,
+		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger writes
+		// the chain here, with the launch's record of the grant.
+		Recover:   schedproc.Recovery{Root: root, Target: target}.Apply,
 		LeadState: leadGone,
 		Exits:     committer,
 		// The per-tick liveness of every roster seat from the launch ledger
