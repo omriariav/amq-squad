@@ -82,7 +82,7 @@ RELEASING.md step 6, its first run on a cut.
 
 PR #884 (https://github.com/omriariav/amq-squad/pull/884), "Join v3.1.2 into main", from branch main-312 into main, after the tag, as #881 was for 3.1.1. Head a831b0ac2f2c37169bc134a5b16383d00f2c6b12, a merge commit of v3.1.2 into main with parents e9950d00ac9123811ea058083f82a25ce6ed1a7a (origin/main, #881's merge) and 5bd394e6dcf9fd06254f80ebc846d92130dc9048 (`v3.1.2^{}`). Its tree is 6726bd2d0c8b94433400f01df97d61b83d7c60ea, equal to the tree of v3.1.2 (`git rev-parse 'origin/main-312^{tree}' 'v3.1.2^{tree}'` prints that one value twice), so main carries the tagged tree. `make release-check VERSION=v3.1.2 MARKETPLACE_REF=HEAD` on that head prints "release metadata matches v3.1.2".
 
-- Merge commit of #884: ____ (to be filled after the merge).
+#884 merged into main at 2026-11-05T14:00:51Z as 2fbcd9e46e4cd66a7f771b7e74654e185b97bb3e, with parents e9950d00ac9123811ea058083f82a25ce6ed1a7a (#881's merge) and a831b0ac2f2c37169bc134a5b16383d00f2c6b12 (#884's head). Its tree is 6726bd2d0c8b94433400f01df97d61b83d7c60ea, the tree of v3.1.2. `git merge-base --is-ancestor 'v3.1.2^{}' origin/main` is true, so main carries the tag.
 
 ## Things seen
 
