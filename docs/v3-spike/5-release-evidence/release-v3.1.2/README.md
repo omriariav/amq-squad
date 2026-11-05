@@ -76,14 +76,64 @@ RELEASING.md step 6, its first run on a cut.
   ```
 
   The team screen is up and there is no "Failed to load extension" line. The lead (pid 15270) and its scheduler (pid 15272) both run /Users/omri/go/bin/amq-squad, which prints `amq-squad v3.1.2` (the lead session's process listing). The 3.1.0 and 3.1.1 lead exited before this screen.
-- Seen on the screen and recorded, not a release matter: "seat reviewer could not be prepared for t71; ask the lead to relaunch the roster". t71 is a 3.2.0 task (a seat's lease renewal), and the warning is the squad's work, not the release's. The pane's tmux "extended-keys is off" warning is the owner's tmux configuration.
+- The screen's line "seat reviewer could not be prepared for t71; ask the lead to relaunch the roster" is recorded under Things seen, item 1. The pane's tmux "extended-keys is off" warning is the owner's tmux configuration.
 
 ## The main join
 
-PR #884, "Join v3.1.2 into main", from branch main-312 into main, after the tag, as #881 was for 3.1.1. Head a831b0ac2f2c37169bc134a5b16383d00f2c6b12, a merge commit of v3.1.2 into main with parents e9950d00ac9123811ea058083f82a25ce6ed1a7a (origin/main, #881's merge) and 5bd394e6dcf9fd06254f80ebc846d92130dc9048 (`v3.1.2^{}`). Its tree is 6726bd2d0c8b94433400f01df97d61b83d7c60ea, equal to the tree of v3.1.2 (`git rev-parse 'origin/main-312^{tree}' 'v3.1.2^{tree}'` prints that one value twice), so main carries the tagged tree. `make release-check VERSION=v3.1.2 MARKETPLACE_REF=HEAD` on that head prints "release metadata matches v3.1.2".
+PR #884 (https://github.com/omriariav/amq-squad/pull/884), "Join v3.1.2 into main", from branch main-312 into main, after the tag, as #881 was for 3.1.1. Head a831b0ac2f2c37169bc134a5b16383d00f2c6b12, a merge commit of v3.1.2 into main with parents e9950d00ac9123811ea058083f82a25ce6ed1a7a (origin/main, #881's merge) and 5bd394e6dcf9fd06254f80ebc846d92130dc9048 (`v3.1.2^{}`). Its tree is 6726bd2d0c8b94433400f01df97d61b83d7c60ea, equal to the tree of v3.1.2 (`git rev-parse 'origin/main-312^{tree}' 'v3.1.2^{tree}'` prints that one value twice), so main carries the tagged tree. `make release-check VERSION=v3.1.2 MARKETPLACE_REF=HEAD` on that head prints "release metadata matches v3.1.2".
+
+- Merge commit of #884: ____ (to be filled after the merge).
+
+## Things seen
+
+### 1. rc.1 and the 3.1.1 install raised ledger_tampered on reviewer links (150, and at expiry for t64 and t70) that the 3.1.2 scheduler accepts; cause open.
+
+The timeline as seen in the v31 session's decision log (`.agent-mail/v31/extensions/amq-squad/scheduler/decisions.jsonl`, read only; decisions-excerpt.jsonl has every entry from 12:26Z on, 41 of 2198 lines, with the two repeated runs cut to their first and last lines):
+
+| Time (UTC, 2026-11-05) | Entry |
+| --- | --- |
+| 12:26:07.775Z | scheduler_started, incarnation e8d657db060c; scheduler_stopped 12:26:10.498Z |
+| 12:27:18.100Z | scheduler_started, incarnation 27d56d896552; scheduler_stopped 12:27:18.720Z |
+| 12:28:14.654Z | scheduler_started, incarnation a50f0aa880ed (dev and reviewer adopted) |
+| 12:28:14.907Z | exit_refused t64 reviewer "ledger_tampered at expired"; seat_closed reviewer (exit_refused) |
+| 12:37:31.318Z | lease_expired t70 reviewer |
+| 12:37:31.321Z | exit_refused t70 reviewer "ledger_tampered at expired" |
+| 12:37:31.327Z to 12:44:32.803Z | seat_request_failed t70, 212 lines, "no free seat in the squad's seat list for pool claude:opus:high (no roster seat serves it)" |
+| 12:43:50.154Z | roster_relaunch_requested ("reviewer seat is gone and t70 is waiting on it"), roster_reloaded, roster_launched, seat_up dev and reviewer |
+| 12:45:13.647Z | t71 created (its task record's created_at) |
+| 12:45:14.798Z to 13:50:10.848Z | seat_prepare_failed t71 reviewer, 1949 lines, one per tick (about 2 s), each "the commit ledger of seat reviewer: commit ledger reviewer: ledger_tampered: the tag of commits.reviewer link 150 fails" |
+| 13:50:12.543Z | scheduler_stopped (the SIGTERM of step 6) |
+| 13:50:14.715Z | seat_adopted dev and reviewer; scheduler_started, incarnation 5ecd55eb4fda (the 3.1.2 scheduler) |
+| 13:50:16.628Z | the head of commits.reviewer is seq 152 (routing-head-commits.reviewer.json) |
+| 13:50:17.020Z | roster_adopted; dispatched t71 to reviewer |
+
+No ledger_tampered entry follows 13:50:17Z. Under the 3.1.2 scheduler the same chain was accepted.
+
+What the log does and does not show. By the lead session's account the 3.1.1 install ran the three short incarnations from 12:26:07Z, and rc.1 was installed at 12:43:50Z after the rollback from 3.1.1. The log itself shows incarnation a50f0aa880ed started at 12:28:14.654Z with no scheduler_stopped or scheduler_started between then and 13:50:12.543Z; the 12:43:50Z entries are a roster relaunch inside it. The log does not name the binary a scheduler ran, and no record found in the session does. So which installed version raised the t71 failures is not settled by these records.
+
+One of the two verifiers is wrong about link 150, and which one is open. The restart may have hidden the alarm rather than cleared it. Code facts: `git diff --stat v3.1.0-rc.1..v3.1.2 -- internal/sealchain` is empty, and the only commit on internal/scheduler/exits.go or internal/routing/chain.go in that range is 3b4260b9 (#855, t43). The cause is not established.
+
+Two observations, as seen:
+
+- **The prepare loop.** 1949 identical lines over 65 minutes, one per tick, with no escalation, and t71 stayed pending. It is the same flood shape as #854's seat_request_failed (here also: 212 identical seat_request_failed lines for t70).
+- **The screen's advice.** "ask the lead to relaunch the roster" was wrong for this reason: a relaunch does not change a ledger that fails its tag.
+
+For 3.2.0, the first item, ahead of the other defects: a read-only investigation of the chain. Run the rc.1, 3.1.1 and 3.1.2 verifiers on one scratch copy of the chain, through a test harness, never the live session.
+
+### 2. Step 6 needed a SIGTERM
+
+`up` refuses a running lead (`lead_running`), and 3.x has no verb to stop one (`amq-squad down`: unknown command). The owner approved the restart, and the rc.1 lead was stopped with SIGTERM. For 3.2.0: a lead stop or replace verb that `up --binary` can use. The cut procedure must not depend on a kill.
+
+### 3. The first known-issue edit did nothing
+
+The first `gh release edit` of the 3.1.0 and 3.1.1 bodies, at about 13:47Z, rewrote each body unchanged, because the line file was at the wrong path. The second, at about 13:48Z, applied it (the table above).
+
+### 4. The cut ran on rc.1
+
+Under R54 the installed binary cuts, and at prepare and at publish it printed `amq-squad v3.1.0-rc.1`. With 3.1.2 installed by step 6, the next cut runs on 3.1.2.
 
 ## The files
 
 All copied from the job's scratch records through `go run ./scripts/redact-evidence` (rule 18; it replaced no value, and `-check` is clean):
 
-attach-swap.txt, attach-v312.jsonl, build.log, down-v31.err, known-issue-312.md, lead-first-screen.txt, notes-body.sha256, owner-approvals.txt, release-api.json, release-prepare.json, release-publish.json, release-smoke.log, squadid-expected.txt, up-312.json, up-312-2.json, up-312-3.json. release-view.json was empty in the records and is not copied; its values (targetCommitish, draft, prerelease) are in release-api.json.
+attach-swap.txt, attach-v312.jsonl, build.log, down-v31.err, known-issue-312.md, lead-first-screen.txt, notes-body.sha256, owner-approvals.txt, release-api.json, release-prepare.json, release-publish.json, release-smoke.log, squadid-expected.txt, up-312.json, up-312-2.json, up-312-3.json. decisions-excerpt.jsonl and routing-head-commits.reviewer.json were read from the live v31 session root (`decisions.jsonl` and `routing/heads/commits.reviewer.json`), read only, and copied the same way. release-view.json was empty in the records and is not copied; its values (targetCommitish, draft, prerelease) are in release-api.json.
