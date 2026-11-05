@@ -86,7 +86,7 @@ PR #884 (https://github.com/omriariav/amq-squad/pull/884), "Join v3.1.2 into mai
 
 ## Things seen
 
-### 1. rc.1 and the 3.1.1 install raised ledger_tampered on reviewer links (150, and at expiry for t64 and t70) that the 3.1.2 scheduler accepts; cause open.
+### 1. The rc.1 scheduler raised ledger_tampered on reviewer links (150, and at expiry for t64 and t70) that the 3.1.2 scheduler accepts; cause open.
 
 The timeline as seen in the v31 session's decision log (`.agent-mail/v31/extensions/amq-squad/scheduler/decisions.jsonl`, read only; decisions-excerpt.jsonl has every entry from 12:26Z on, 41 of 2198 lines, with the two repeated runs cut to their first and last lines):
 
