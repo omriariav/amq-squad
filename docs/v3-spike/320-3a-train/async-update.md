@@ -7,7 +7,9 @@ backoff). Lead PR, built in a scratch worktree on `origin/v3` at `87fb71e9`
 (branch `v3-320-3a`). Declared files only: `internal/mergetrain/`,
 `internal/cli/` (`merge_train.go`, `merge_train_rebind.go`,
 `scheduler_run.go`), `internal/schedproc/` (`decide.go`),
-`docs/v3-spike/320-3a-train/`. `internal/scheduler/` and `internal/task/`
+`docs/v3-spike/320-3a-train/`, and `pi/extensions/lib/words.ts` (widened
+by the lead after the third gate run below, for the four words entries the
+pi words rows require). `internal/scheduler/` and `internal/task/`
 were in the declared set and needed no change: `scheduler.Decision` already
 carries the fields the decision line uses, and `task.Store.BindPR` already
 clears the merge fact when a binding moves.
@@ -576,8 +578,20 @@ the same Go tree), from the worktree root:
      `merge_train_rebound` under `ROUTINE_DECISIONS` and
      `merge_train_rebind_refused` as a stop under `DECISION_WORDS`, or the
      lead's ruling on where each goes).
+  4. The lead widened the declared set to `pi/extensions/lib/words.ts` for
+     exactly those four entries (commit `2b80bcd1`: the rule's two lines
+     `GitHub did not update the branch in time` / `run the train again; if
+     it repeats, ask the owner whether the update conflicts`; the kind's
+     line `asked GitHub to bring a PR up to date`; `merge_train_rebound` a
+     routine record; `merge_train_rebind_refused` a stop naming the lead Go
+     records as the seat, `read the proof's failing part below the line`).
+     On `2b80bcd1`, venv first on PATH: exit 0; `fmt-check`, `vet`, `test`
+     (70 packages `ok`, no `FAIL`), the readme and docs html checks, the
+     skill checks, `release-validator-test`, `go-files-scope-test`,
+     `claude-hooks-test` and `pi-test` (`ℹ tests 116`, `ℹ pass 115`,
+     `ℹ fail 0`, `ℹ skipped 1`, the staged-runtime row, local-only).
 - `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
-  exit 0.
+  exit 0 (run again on this note's final text: exit 0).
 
 ## Residual risk
 
