@@ -1,0 +1,13 @@
+# read-only snapshot (cp) for the 0d2 investigation (why t72-t74 showed bare 'pending' at about 14:00Z on 2026-11-05), lead session 2026-11-05T17:45:06Z; no seed, no ledger
+tasks/t71.json: size=10162 mtime=2026-11-05T16:36:44Z sha256=bed9568e32107881cb80ddf234d3ec06c665d59244910586b3c7c42be1536dc6
+tasks/t72.json: size=9645 mtime=2026-11-05T16:04:56Z sha256=10f6b1b985d82cf8af881485932c49d58431f75306f7b693c25930830366d68c
+tasks/t73.json: size=9974 mtime=2026-11-05T16:06:45Z sha256=74c07bbea62550f7cc78811d2cf76bbd5f2e5952baa35b9c8f686edaeca1d013
+tasks/t74.json: size=11043 mtime=2026-11-05T16:07:16Z sha256=0f49ff9812e17d18b0bdea9f184633716dc311aebe47f4f5385dc94d81cf2b2c
+tasks/t75.json: size=11463 mtime=2026-11-05T16:08:38Z sha256=d2e4679090e9506466943f643f27ead189b4231de48d3a9fe6b3df8713b00025
+tasks/t76.json: size=12008 mtime=2026-11-05T16:14:17Z sha256=5d5eeec8030dce80a7084ca24e7c03aba894602db369dd59f9c10b03fb012731
+decisions-1345-1415.jsonl: 167 lines sha256=0bc49408057fab781314cab0d96c94b3b3de2d7ee6108e43aecf3bb479d70c94
+routing-decisions-1345-1415.jsonl: 0 lines
+status-now.json: the status contract output at snapshot time (shape reference; state differs from 14:00Z)
+# the lead's own observations (from the lead session's transcript, 2026-11-05):
+# 14:03Z t72 added (plan, files docs/v3-spike/320-evidence/), cancelled ~14:05Z; t73 added ~14:06Z, cancelled ~14:06Z; t74 added ~14:06Z: `task show t74 --json` at 14:06:56Z printed state "pending", holder null, wait_reason "file_lock", attempt 0; `task list --json` showed t71 in_progress with 16 declared_files including docs/v3-spike/320-evidence/.
+# the lead's screen (tmux capture of squad-lead-amq-squad-f42a4 at ~14:0xZ) listed the tasks widget as "tasks (7x)" with the first rows "t7 cancelled: …", "t24 cancelled: …", "t9 cancelled: …" and "... (widget truncated)"; the lead session read t72-t74 as bare "pending" from `task show` output and from the widget's absence of any wait line; no capture of a t72-t74 row with a wait line exists.
