@@ -47,7 +47,7 @@ type SeatRow = {
 };
 // wait_pool: for a task waiting no_roster_seat, the pool its route names
 // and no roster seat serves (brief 3.1.1-2)
-type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; block_reason: string; wait_reason: string; wait_holders?: string[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
+type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; lease_expires_at?: string | null; budget?: number; budget_ends_at?: string | null; block_reason: string; wait_reason: string; wait_holders?: string[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
 // question is the gate question's plain lines, the text above its rule, as
 // the owner reads it on the phone (brief 3.1.1-1); "" for a gate raised
 // before 3.1.1.
@@ -104,6 +104,33 @@ function age(since: string, now: Date): string {
 	return `${Math.floor(s / 3600)}h`;
 }
 
+function timeLeft(until: string | null | undefined, now: Date): string {
+	const left = msLeft(until, now);
+	if (left === null) return "";
+	const s = Math.max(0, Math.ceil(left / 1000));
+	if (s < 120) return `${s}s`;
+	if (s < 7200) return `${Math.ceil(s / 60)}m`;
+	return `${Math.ceil(s / 3600)}h`;
+}
+
+function msLeft(until: string | null | undefined, now: Date): number | null {
+	const t = Date.parse(until ?? "");
+	return Number.isFinite(t) ? Math.max(0, t - now.getTime()) : null;
+}
+
+function taskClock(t: TaskRow, now: Date): string {
+	if (t.task_state !== "in_progress") return "";
+	const leaseMs = msLeft(t.lease_expires_at, now);
+	const budgetMs = msLeft(t.budget_ends_at, now);
+	// A normal ten-minute lease and a distant budget add noise. Once the
+	// lease has two minutes left, or the budget is one lease away, show both
+	// recorded clocks so the lead can decide whether to act.
+	if ((leaseMs === null || leaseMs > 2 * 60_000) && (budgetMs === null || budgetMs > 10 * 60_000)) return "";
+	const lease = timeLeft(t.lease_expires_at, now);
+	const budget = timeLeft(t.budget_ends_at, now);
+	return [lease && `its lease has ${lease} left`, budget && `its budget has ${budget} left`].filter(Boolean).join("; ");
+}
+
 // split is a Go text's plain part (above its rule) and the rest.
 function split(text: string): [string, string] {
 	const at = (text ?? "").indexOf(`\n\n${RULE}\n`);
@@ -155,12 +182,12 @@ function launchCodes(st: ScreenStatus): Set<string> {
 	return out;
 }
 
-function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined): { line: string; record?: string } {
+function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined, now: Date): { line: string; record?: string } {
 	const pr = t.pr_number ? `  PR #${t.pr_number}` : "";
 	const title = clean(t.title);
 	switch (t.task_state) {
 		case "in_progress":
-			return { line: `${t.id} in progress on ${t.lease_holder || "a seat"}${title ? `: ${title}` : ""}${pr}` };
+			return { line: `${t.id} in progress on ${t.lease_holder || "a seat"}${title ? `: ${title}` : ""}${pr}${taskClock(t, now) ? `  · ${taskClock(t, now)}` : ""}` };
 		case "pending":
 			return waitWords(t, { max_seats: st.scheduler?.max_seats, usage_limit_until: st.scheduler?.usage_limit_until ?? null, launch: launchCodes(st) });
 		case "blocked":
@@ -194,7 +221,8 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		const held = s.task_id ? st.tasks.find((t) => t.id === s.task_id) : undefined;
 		const doing = seatDoing(s, held);
 		rec(doing.record);
-		out.push(`  ${s.handle}  ${rt}  ${doing.text}${launchTiming(s.launch)}`);
+		const clock = held ? taskClock(held, now) : "";
+		out.push(`  ${s.handle}  ${rt}  ${doing.text}${clock ? `  · ${clock}` : ""}${launchTiming(s.launch)}`);
 		// brief 3.1.1-3 (the plan reviewer): each warning in words above the
 		// rule, its code and detail verbatim below it
 		for (const w of s.warnings ?? []) {
@@ -218,7 +246,7 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 	out.push(`tasks (${st.tasks.length})`);
 	if (!st.tasks.length) out.push("  No tasks yet; add one with /add.");
 	for (const t of st.tasks) {
-		const l = taskLine(t, st, details[t.id]);
+		const l = taskLine(t, st, details[t.id], now);
 		out.push(`  ${l.line}`);
 		rec(l.record);
 	}

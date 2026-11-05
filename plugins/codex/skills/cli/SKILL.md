@@ -91,13 +91,20 @@ data.
 The task store lives under the AMQ session root
 (`extensions/amq-squad/tasks/`). Classes: extract, summarize, script, implement,
 plan, review. The scheduler grants leases; a seat claims its lease (or pulls the next
-eligible task) and renews it through evidence ingest. An unclaimed lease returns to
-the pool when it expires.
+eligible task), and its runtime activity renews that attempt automatically until the
+task budget is spent. Manual `task renew` remains harmless but is not part of the
+normal work loop. An unclaimed lease returns to the pool when it expires.
+
+Codex activity hooks are exact-hash trusted session overlays. If launch says
+they are untrusted, renew manually after each tool batch, at least every five
+minutes, until the owner trusts the amq-squad entries in `/hooks`.
 
 ```sh
 amq-squad task list --project P --session S --json
 amq-squad task claim --me H --project P --session S
 amq-squad task renew --me H --project P --session S
+amq-squad task add --title "Bounded task" --class implement --budget 90m --project P --session S
+amq-squad task extend ID --by 30m --project P --session S
 amq-squad task done ID --me H --evidence "go test ./... ok" --project P --session S
 amq-squad task fail ID --me H --reason TEXT --project P --session S
 amq-squad task release ID --me H --reason TEXT --project P --session S

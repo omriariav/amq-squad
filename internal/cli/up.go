@@ -27,6 +27,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
@@ -307,11 +308,19 @@ func (u *upRun) install() (string, error) {
 		if target == "" {
 			return "", refuse("install_target_unknown", "no amq-squad on PATH to keep; install one (or pass --to PATH)")
 		}
+		if !filepath.IsAbs(target) {
+			var err error
+			if target, err = filepath.Abs(target); err != nil {
+				return "", err
+			}
+		}
 		v, err := u.checkPiBuild(target)
 		if err != nil {
 			return "", err
 		}
-		u.installed, u.report.Binary = target, target
+		if err := u.useInstalled(target); err != nil {
+			return "", err
+		}
 		return "skipped: " + target + " already reports " + v, nil
 	}
 	src := u.binary
@@ -335,15 +344,31 @@ func (u *upRun) install() (string, error) {
 	}
 	if a, aerr := os.Stat(src); aerr == nil {
 		if b, berr := os.Stat(target); berr == nil && os.SameFile(a, b) {
-			u.installed, u.report.Binary = target, target
+			if err := u.useInstalled(target); err != nil {
+				return "", err
+			}
 			return fmt.Sprintf("%s %s is already the installed binary", target, v), nil
 		}
 	}
 	if err := installByRename(src, target); err != nil {
 		return "", refuse("install_failed", "%v", err)
 	}
-	u.installed, u.report.Binary = target, target
+	if err := u.useInstalled(target); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("installed %s (%s) at %s by temp name and rename", src, v, target), nil
+}
+
+// useInstalled resolves only the executable that now exists and will launch
+// the lead and seats. The --to target is not resolved during compile because a
+// normal first install creates it.
+func (u *upRun) useInstalled(target string) error {
+	resolved, err := seatexec.ResolveExecutable(target)
+	if err != nil {
+		return refuse("install_failed", "resolve the installed amq-squad executable: %v", err)
+	}
+	u.installed, u.report.Binary, u.q.Wrapper = resolved, target, resolved
+	return nil
 }
 
 // installByRename copies src to a temporary name in target's directory and
@@ -495,10 +520,11 @@ func ensureSquadSession(ctx context.Context, amq string, q seatlaunch.Squad, han
 }
 
 // compile is the first step: squad.yaml as scheduler run reads it, before
-// anything is installed or created. The wrapper is the binary the install
-// step will put in place (its target), else this one.
+// anything is installed or created. It validates against the executable that
+// exists now; install later replaces q.Wrapper with the resolved executable it
+// actually created. The possibly absent --to target is never resolved here.
 func (u *upRun) compile() (string, error) {
-	q, lead, err := UpCompile(u.report.Project, u.to)
+	q, lead, err := UpCompile(u.report.Project, "")
 	if err != nil {
 		return "", err
 	}
@@ -527,6 +553,9 @@ func UpCompile(project, wrapper string) (seatlaunch.Squad, string, error) {
 	}
 	if q.Wrapper, err = filepath.Abs(q.Wrapper); err != nil {
 		return q, "", refuse("squad_invalid", "%v", err)
+	}
+	if q.Wrapper, err = seatexec.ResolveExecutable(q.Wrapper); err != nil {
+		return q, "", refuse("squad_invalid", "resolve the amq-squad executable: %v", err)
 	}
 	if q.AMQPath, err = upLookPath("amq"); err != nil {
 		return q, "", refuse("amq_missing", "the installed amq is required on PATH (R51): %v", err)
