@@ -35,9 +35,26 @@ N is the head file's `seq`, decoded without verifying the head (its tag
 may be what failed); `unknown` when the head does not decode or is absent,
 so the name is then `commits.<handle>.sequnknown.json` (the brief's
 `seq<N>` with N = unknown, taken literally). Each file is created with
-`O_WRONLY|O_CREATE|O_EXCL`, 0600, fsynced with its directory: a second
-refusal of the same seq finds the files and leaves them (an existing file
-is `nil`, never an error). The sidecar carries
+`O_WRONLY|O_CREATE|O_EXCL`, 0600, fsynced with its directory, so nothing
+is ever overwritten. Under one head seq (the plan reviewer on #893,
+commit `bf26780d`): a refusal whose body and head are byte-identical to
+an existing copy is a no-op (the read path refuses on every tick; one
+copy), and a refusal with a different body or head takes the next free
+slot, `commits.<handle>.seq<N>.2.json` with its own `.2.head.json` and
+`.2.txt`, then `.3`, up to 100 slots per seq. The slot's primary file (the
+body; the head when the body is absent) claims it with the exclusive
+create; an existing primary is compared byte for byte, with the head copy
+beside it.
+
+A planted link never passes as a copy (the same review): after `MkdirAll`
+(which follows a symlinked directory) the quarantine directory is
+`Lstat`ed and must be a directory itself, mode 0700, owned by the
+process's uid (unix; no owner check off unix); and a path that exists
+already counts as an existing copy only when `Lstat` says regular file.
+A symlink or any other type at either place is a named failure in the
+error, `the quarantine copy failed: <path> is a symlink` or `the
+quarantine copy failed: the quarantine directory <dir> is a symlink`,
+never `quarantined at`; the refusal stands either way. The sidecar carries
 
     amq-squad commits ledger quarantine
     time: <RFC3339Nano, UTC>
@@ -115,10 +132,12 @@ copy); the typed block raised once is part B.
 |---|---|---|
 | A1 | A tampered document (the base hand-edited; valid JSON, the tag fails) followed by each writer of the fixture set, driven through the seatcommit function its caller uses, leaves the quarantine body sha256-equal to the refused body and the head copy byte-equal to the head; the writer refuses as `ledger_tampered`, its error names the quarantine path, the sidecar names the writer; the document and head are unchanged after. One subtest per writer: `RecordBase`, `RecordWorktreeBase`, `RecordTarget`, `ArchiveAttempt`, `CleanSeat`, `StartTask`, `Run`. | `internal/seatcommit` `TestTamperedLedgerIsQuarantinedByEveryWriter` |
 | A1 guard | From the source: every function of `seatcommit` that calls `writeLedger` (`ArchiveAttempt, RecordTarget, StartTask, cleanSeat, commitAndPush, recordBase, settle`), every exported function that reaches one (`ArchiveAttempt, CheckWiden, CleanSeat, RecordBase, RecordTarget, RecordWorktreeBase, Run, StartTask`; `CheckWiden` reaches `Run` as a dry run), and every reference to such an entry in the module's other non-test Go files (read, not changed: `internal/cli/seat_commit.go:106` RecordBase, `:111` RecordTarget, `:217` Run; `internal/cli/task_widen.go:249` ArchiveAttempt, `:264` and `:334` CheckWiden; `internal/schedproc/prepare.go:46` CleanSeat, `:60` ArchiveAttempt; `internal/schedproc/slots.go:323` StartTask; `internal/seatlaunch/run.go:302` RecordWorktreeBase) must each map to an A1 row. A new writer fails this test until it has a row. | `internal/seatcommit` `TestEveryLedgerWriterHasAQuarantineRow` |
-| A2 | A second refusal of the same seq (a different edit, the head unmoved) names the same path and leaves the first body, head and sidecar byte-identical; the directory holds three files. | `internal/seatcommit` `TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy` |
+| A2 | An identical second refusal of the same seq (the same body and head, the read path's every-tick case) names the same path and leaves the first body, head and sidecar byte-identical; the directory holds three files. | `internal/seatcommit` `TestIdenticalSecondRefusalKeepsTheFirstCopy` |
 | A3 | A head that does not decode (`{not a head`) quarantines under `sequnknown`: the body copy is the document as it is, the head copy is the undecodable head, the sidecar carries the error; the head on disk is unchanged. | `internal/seatcommit` `TestUndecodableHeadQuarantinesUnderSeqUnknown` |
 | A4 | The refusing error is `ledger_tampered` and ends with `; the refused document is quarantined at <path>`, from the read that refuses (`ReadLedgerAs` with the prepare's verb; the sidecar names it). The scheduler half: the prepare on a tampered ledger logs `seat_prepare_failed` whose reason names `quarantined at <path>`, the copy is the refused body, the sidecar says `writer: scheduler prepare`, the task is not leased. | `internal/seatcommit` `TestRefusalNamesTheQuarantinePath`; `internal/schedproc` `TestPrepareNamesTheQuarantineOfATamperedLedger` |
 | A5 | The check runs under the lock. The first writer (`ArchiveAttempt`) is paused inside its critical section after its read and snapshot (the `beforeArchiveAttemptWrite` seam); the edit lands then; a second writer (`RecordTarget`, the blocking lock) does not return within 300 ms and no quarantine directory appears while the lock is held. Released, the first writer's `writeLedger` re-reads the disk, refuses and quarantines (it does not re-seal its stale in-memory copy over the edit); the second then refuses naming the same path; the document and head on disk are the edited ones; one copy (three files). | `internal/seatcommit` `TestWriteCheckRunsUnderTheLedgerLock` |
+| A7 | A planted link never passes as a copy. A symlink at the body path (to a file elsewhere): the refusal is still `ledger_tampered`, its error says `the quarantine copy failed: <body path> is a symlink` and not `quarantined at`, the link's target is unchanged, the directory holds the planted link alone. A symlink where the quarantine directory should be (to a directory elsewhere): the error says `the quarantine copy failed: the quarantine directory <dir> is a symlink`, and the target directory stays empty. | `internal/seatcommit` `TestPlantedSymlinkIsAQuarantineFailureNotACopy` (`body_path`, `directory`) |
+| A8 | A second, different refused body under one head seq takes the next slot: the error names `commits.<h>.seq<N>.2.json`, the first copy (body, head, sidecar) is untouched, the second slot's body is the second refused body, its head copy the head, its sidecar names its own body and digest; the same second body again names the second slot again; six files in all (two copies, not three). | `internal/seatcommit` `TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot` |
 | A6 | Version skew as the tamper: a document a newer amq-squad wrote. Built from a real ledger with one discard entry: `attempt_note` added to the entry (this binary's `LedgerDiscard` already has 3.1.1's `attempt`, so the row uses a field this binary lacks, built the way `attempt` reached rc.1), sealed with the session's key as the next link over the body with the field (`sealchain.Seal`), the head moved to that link (`sealchain.WriteHead`). The row checks the premise both ways: the link verifies over the body with the field, and does not verify over this binary's decode of the same bytes. `CleanSeat` then refuses with `ledger_tampered: the tag of commits.s1 link <N> fails; the refused document is quarantined at ...`, the body copy is sha256-equal to the skewed bytes, the head copy equals the head, the sidecar carries that error text, the document is unchanged. | `internal/seatcommit` `TestVersionSkewIsQuarantinedLikeATamper` |
 
 A6 in one line: a seat whose ledger a newer amq-squad wrote is blocked on
@@ -175,10 +194,11 @@ re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.321s`.
 
 ### A2
 
+On `bf26780d` (the reworded row):
 ```
-go test -count=1 -run ^TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy$ ./internal/seatcommit/
+go test -count=1 -run ^TestIdenticalSecondRefusalKeepsTheFirstCopy$ ./internal/seatcommit/
 ```
-Reverted `internal/seatcommit/quarantine.go:113`:
+Reverted `internal/seatcommit/quarantine.go:193`:
 ```
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 ```
@@ -188,10 +208,14 @@ to
 ```
 First failing line:
 ```
-quarantine_test.go:195: the second refusal changed /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy3176864031/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1.json
+quarantine_test.go:191: the second refusal changed /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestIdenticalSecondRefusalKeepsTheFirstCopy675128202/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1.txt
 ```
-`--- FAIL: TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy (0.20s)`;
-restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.450s`.
+`--- FAIL: TestIdenticalSecondRefusalKeepsTheFirstCopy (0.20s)`; restored
+and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.466s`.
+(The earlier form of this row, `TestSecondRefusalOfTheSameSeqKeepsTheFirstCopy`
+on `f6927bd7` with a different second edit, had the same revert at
+`quarantine.go:113` and failed at `quarantine_test.go:195: the second
+refusal changed .../commits.s1.seq1.json`; that behaviour is now A8's.)
 
 ### A3
 
@@ -296,7 +320,86 @@ sha256 comparison; `readFile` is a `t.Helper`, so the line is the row's.)
 `--- FAIL: TestVersionSkewIsQuarantinedLikeATamper (0.45s)`; restored and
 re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.732s`.
 
+### A7, the body path
+
+On `bf26780d`:
+```
+go test -count=1 -run ^TestPlantedSymlinkIsAQuarantineFailureNotACopy/body_path$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine.go:195` (the existing-copy read
+follows the link again):
+```
+		existing, err = regularFileContent(path)
+```
+to
+```
+		existing, err = os.ReadFile(path)
+```
+First failing line:
+```
+quarantine_test.go:272: the error does not say the copy failed ("the quarantine copy failed: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPlantedSymlinkIsAQuarantineFailureNotACopybody_path3387825039/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1.json is a symlink"): commit ledger s1: ledger_tampered: the tag of commits.s1 link 1 fails; the refused document is quarantined at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPlantedSymlinkIsAQuarantineFailureNotACopybody_path3387825039/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1.2.json
+```
+`--- FAIL: TestPlantedSymlinkIsAQuarantineFailureNotACopy (0.19s)`;
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.442s`.
+(Without the check the link's target is read as "the existing copy",
+differs, and the copy lands in slot 2 while the error names a path beside
+the planted link.)
+
+### A7, the directory
+
+```
+go test -count=1 -run ^TestPlantedSymlinkIsAQuarantineFailureNotACopy/directory$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine.go:176` to `:178`, the three
+lines removed:
+```
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("the quarantine directory %s is a symlink", dir)
+	}
+```
+First failing line:
+```
+quarantine_test.go:297: the error does not say the copy failed ("the quarantine copy failed: the quarantine directory /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPlantedSymlinkIsAQuarantineFailureNotACopydirectory1967638678/002/amq/sess/extensions/amq-squad/quarantine is a symlink"): commit ledger s1: ledger_tampered: the tag of commits.s1 link 1 fails; the quarantine copy failed: the quarantine directory /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPlantedSymlinkIsAQuarantineFailureNotACopydirectory1967638678/002/amq/sess/extensions/amq-squad/quarantine is not a directory
+```
+`--- FAIL: TestPlantedSymlinkIsAQuarantineFailureNotACopy (0.17s)`;
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.444s`.
+(The `IsDir` check behind it still refuses, with a different sentence;
+the row wants the link named.)
+
+### A8
+
+```
+go test -count=1 -run ^TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine.go:136` (any existing regular
+file counts as the same copy, the pre-fix rule):
+```
+			if !bytes.Equal(existing, pdata) {
+```
+to
+```
+			if existing == nil {
+```
+First failing line:
+```
+quarantine_test.go:225: refusal 1 of the second body does not name the second slot: commit ledger s1: ledger_tampered: the tag of commits.s1 link 1 fails; the refused document is quarantined at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot2139270044/002/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1.json
+```
+`--- FAIL: TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot (0.20s)`;
+restored and re-run: `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.481s`.
+(A first attempt removed the three lines of the compare; that does not
+compile, `existing` unused, so the flip above is the recorded run.)
+
 ## Gates
+
+On `bf26780d` (the #893 fixes: the symlink-safe copy and the per-body
+slots; the head after this note's commit has the same Go tree), each
+exit 0: `go build ./...`; `go vet ./...`; `go test -count=1 ./...` (56
+`ok`, no `FAIL`); `NPM_FLAGS=--offline make ci` with the scratch PyYAML
+venv on PATH (pi: `cd pi && npm ci --ignore-scripts --offline && npm
+test`, `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`, `ℹ skipped 1`);
+`go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`.
+
+The earlier runs, kept for the record:
 
 On the merged head `f5712d62` (the code commit `f6927bd7` plus #887's
 docs; the Go tree is the code commit's), each from the worktree root:
@@ -337,9 +440,9 @@ venv on PATH), which is why the merged-head run carries the venv.
 
 ## Residual risk and what part B takes
 
-- The quarantine is one copy per seq. A different edit of the same seq
-  after the first refusal is not copied (the brief's "once"); the sidecar
-  records the first refusal's time and error.
+- One copy per distinct body and head under a seq, up to 100 slots; an
+  identical refusal records nothing new, so the sidecar carries the first
+  refusal's time and error.
 - The copy is taken at the refusing read, outside the lock for readers that
   hold none (`slots.go`, `uninstall`, the commit step's first read). The
   writer-side check is under the lock, as the brief requires (A5).
