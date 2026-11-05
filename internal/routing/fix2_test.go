@@ -3,6 +3,7 @@ package routing
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func TestFix2HistoryIsCheckedNotTrusted(t *testing.T) {
 		if len(rn.rows) != 1 || rn.rows[0].Policy != PolicyManual || rn.rows[0].Propensity != 0 { // never lead_pin (pass 3, ruling 2)
 			t.Fatalf("hand dispatch row: %+v", rn.rows)
 		}
-		if _, route := rn.r.Decide(p, rn.cur); route.Block != BlockPinUnresolved || route.Pool != nil {
+		if _, route := rn.r.Decide(p, rn.cur); route.Block != BlockPinUnresolved || route.Pool != nil || !strings.HasPrefix(route.Detail, "the pin "+pool) || !strings.Contains(route.Detail, "class plan runs on") {
 			t.Fatalf("plan retried on %s's recorded tier: %+v", pool, route)
 		}
 	}

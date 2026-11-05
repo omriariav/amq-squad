@@ -197,11 +197,71 @@ test("a seat that is not the team lead gets no screen", async () => {
 // Day 3 (t26 sat four hours on a file lock nobody saw): a pending task
 // waiting on a file lock names the tasks holding it, and a file lock no task
 // holds any more shows as stale.
-test("a pending task waiting on a file lock names its holder tasks", () => {
+test("a pending task waiting on a file lock names its holder and shared declaration", () => {
 	const tasks = block(renderScreen(fixture, now), "tasks");
-	assert.ok(tasks.includes("  t26 waiting: t20, t23 hold its files"), tasks.join("\n"));
-	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [] } : t)) };
+	assert.ok(tasks.includes("  t26 waits for t71: both declare docs/v3-spike/320-evidence/"), tasks.join("\n"));
+	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [], waits_for: [] } : t)) };
 	assert.ok(block(renderScreen(stale, now), "tasks").includes("  t26 waiting: for a file lock no task holds any more (a stale wait)"));
+});
+
+test("a pin outside its class chain names both chains on the screen", () => {
+	const detail = "the pin codex:gpt-5.6-terra:medium is on the task tier (class implement); class plan runs on claude:opus:high, codex:gpt-5.6-sol:high";
+	const pinned = { ...fixture.tasks[0], id: "t75", block_reason: "pin_unresolved" };
+	const lines = renderScreen({ ...fixture, tasks: [pinned] }, now, undefined, { t75: { block_detail: detail } });
+	assert.ok(lines.includes(`  t75 blocked: ${detail}; /reset it onto another pool`), lines.join("\n"));
+});
+
+test("task rows put actionable work first and fold closed work into the available height", () => {
+	const closed = Array.from({ length: 73 }, (_, i) => ({ ...fixture.tasks[0], id: `c${i + 1}`, task_state: "completed", block_reason: "" }));
+	const open = [
+		{ ...fixture.tasks[2], id: "t74", task_state: "pending", wait_reason: "seat_cap", wait_holders: [] },
+		{ ...fixture.tasks[1], id: "t73", task_state: "in_progress", lease_holder: "reviewer" },
+		{ ...fixture.tasks[2], id: "t72", task_state: "blocked", block_reason: "verdict_failed", wait_reason: "" },
+	];
+	const tasks = block(renderScreen({ ...fixture, tasks: [...closed, ...open] }, now, undefined, {}, 3), "tasks");
+	assert.deepEqual(tasks.slice(1).map((line) => line.trim().split(" ")[0]), ["t72", "t73", "t74"]);
+	assert.ok(!tasks.some((line) => line.startsWith("  c")), tasks.join("\n"));
+
+	const withRoom = block(renderScreen({ ...fixture, tasks: [...closed.slice(0, 4), ...open.slice(0, 2)] }, now, undefined, {}, 3), "tasks");
+	assert.equal(withRoom.at(-1), "  4 closed");
+});
+
+test("task overflow reserves its last row for the /team summary", () => {
+	const pending = Array.from({ length: 5 }, (_, i) => ({ ...fixture.tasks[2], id: `t${80 + i}`, wait_reason: "seat_cap", wait_holders: [] }));
+	const tasks = block(renderScreen({ ...fixture, tasks: pending }, now, undefined, {}, 3), "tasks");
+	assert.equal(tasks.length, 4);
+	assert.equal(tasks.at(-1), "  +3 more (/team for all)");
+});
+
+test("the real pane-height probe budgets task records and never forces a row past the pane", () => {
+	const blocked = [
+		{ ...fixture.tasks[0], id: "t90", task_state: "blocked", block_reason: "custom_one" },
+		{ ...fixture.tasks[0], id: "t91", task_state: "blocked", block_reason: "custom_two" },
+	];
+	const status = { ...fixture, tasks: blocked };
+	const fixed = renderScreen(status, now, undefined, {}, 0).length;
+	const draw = (rows: number): string[] => {
+		const ctx = fakeCtx({ hasUI: true });
+		ctx.ui.setWidget = (key: string, content: any, opts?: { placement?: string }) => {
+			const lines = typeof content === "function" ? content({ terminal: { rows } }, {}).render(160) : content;
+			ctx.widgets[key] = { lines, placement: opts?.placement };
+		};
+		const screen = new Screen(cfg());
+		screen.last = status;
+		screen.ctx = ctx;
+		screen.render();
+		return ctx.widgets[SCREEN_KEY].lines ?? [];
+	};
+
+	const full = draw(fixed);
+	assert.ok(full.length <= fixed, `${full.length} lines in a ${fixed}-row pane\n${full.join("\n")}`);
+	assert.ok(!full.some((line) => line.includes("more (/team for all)")), full.join("\n"));
+	const one = draw(fixed + 1);
+	assert.ok(one.length <= fixed + 1, `${one.length} lines in a ${fixed + 1}-row pane\n${one.join("\n")}`);
+	assert.ok(one.includes("  +2 more (/team for all)"), one.join("\n"));
+	const two = draw(fixed + 2);
+	assert.ok(two.length <= fixed + 2, `${two.length} lines in a ${fixed + 2}-row pane\n${two.join("\n")}`);
+	assert.ok(two.includes("  +2 more (/team for all)"), two.join("\n"));
 });
 
 // Brief 3.1.1-2: t27 on 2026-11-01 routed to a pool no roster seat served,

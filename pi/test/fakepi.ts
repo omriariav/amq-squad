@@ -145,7 +145,8 @@ export function fakeCtx(over: Record<string, unknown> = {}): any {
 			},
 			confirm: async () => false,
 			select: async () => undefined,
-			setWidget: (k: string, lines: string[] | undefined, opts?: { placement?: string }) => {
+			setWidget: (k: string, content: string[] | ((tui: any, theme: any) => { render(width: number): string[] }) | undefined, opts?: { placement?: string }) => {
+				const lines = typeof content === "function" ? content({ terminal: { rows: 200 } }, {}).render(160) : content;
 				widgets[k] = { lines, placement: opts?.placement };
 			},
 		},
