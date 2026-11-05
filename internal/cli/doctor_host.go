@@ -36,10 +36,13 @@ type doctorHost struct {
 	Home      string
 	GOOS      string
 	CodexHome string
-	Env       registry.Env
-	Detect    func(ctx context.Context, env registry.Env) registry.Detection
-	Pmset     func(ctx context.Context) (string, error)
-	Catalog   agentcatalog.Catalog
+	// Executable is a test seam for the unresolved os.Executable path. The
+	// production path is resolved through seatexec.ResolveExecutable below.
+	Executable string
+	Env        registry.Env
+	Detect     func(ctx context.Context, env registry.Env) registry.Detection
+	Pmset      func(ctx context.Context) (string, error)
+	Catalog    agentcatalog.Catalog
 
 	WriteRegistry bool
 	UsageScan     time.Duration // > 0: report the session files that carried a limit signal in this window
@@ -394,7 +397,27 @@ func (h *doctorHost) codexChecks(det registry.Detection, projectDir string) []do
 	} else {
 		out = append(out, hostCheck("codex notify fan-out", doctorOK, "absent (candidate, plan 16.8; 'amq-squad trust' prints the line)"))
 	}
-	return append(out, codexDialogHookCheck(filepath.Dir(path)))
+	out = append(out, codexDialogHookCheck(filepath.Dir(path)))
+	self := h.Executable
+	if self == "" {
+		self, _ = os.Executable()
+	}
+	self, _ = seatexec.ResolveExecutable(self)
+	out = append(out, codexActivityTrustCheck(filepath.Dir(path), self, det.Tool("amq").Path, h.Home))
+	return out
+}
+
+func codexActivityTrustCheck(codexDir, squadBin, amqBin, home string) doctorCheck {
+	const name = "codex activity hook trust"
+	t := seatexec.ReadCodexActivityTrust(codexDir, squadBin, amqBin, home)
+	if !t.Ready() {
+		detail := seatexec.CodexActivityTrustWarning(squadBin, amqBin, home)
+		if t.Unreadable != "" {
+			detail += "; read " + t.ConfigPath + ": " + t.Unreadable
+		}
+		return hostCheck(name, doctorWarn, "%s", detail)
+	}
+	return hostCheck(name, doctorOK, "Codex trusts all %d exact amq-squad activity commands in %s", seatexec.CodexActivityTrustEntryCount(squadBin, amqBin, home), t.ConfigPath)
 }
 
 // codexDialogHookCheck (3.0.1) reports AMQ's Codex dialog hook through the

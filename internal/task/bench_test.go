@@ -39,12 +39,13 @@ func BenchmarkTransaction(b *testing.B) {
 // renewal is younger than the minimum interval: a lock-free read, no write.
 func BenchmarkRenewInsideInterval(b *testing.B) {
 	s := benchStore(b)
-	if _, err := s.Claim("t1", "h", nil, time.Hour, t0); err != nil {
+	claimed, err := s.Claim("t1", "h", nil, time.Hour, t0)
+	if err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := s.Renew("h", time.Hour, time.Minute, t0.Add(time.Second)); err != nil {
+		if _, _, err := s.RenewAttempt("h", claimed.Attempt, time.Hour, time.Minute, t0.Add(time.Second)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -53,12 +54,13 @@ func BenchmarkRenewInsideInterval(b *testing.B) {
 // BenchmarkRenewWrite is a renewal that writes.
 func BenchmarkRenewWrite(b *testing.B) {
 	s := benchStore(b)
-	if _, err := s.Claim("t1", "h", nil, time.Hour, t0); err != nil {
+	claimed, err := s.Claim("t1", "h", nil, time.Hour, t0)
+	if err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := s.Renew("h", time.Hour, 0, t0.Add(time.Duration(i+1)*time.Second)); err != nil {
+		if _, _, err := s.RenewAttempt("h", claimed.Attempt, time.Hour, 0, t0.Add(time.Duration(i+1)*time.Second)); err != nil {
 			b.Fatal(err)
 		}
 	}
