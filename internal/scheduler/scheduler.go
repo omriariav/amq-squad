@@ -225,6 +225,14 @@ type Scheduler struct {
 	// budgetWarned remembers the absolute end already warned for an attempt.
 	// An extension changes the end and permits one new warning.
 	budgetWarned map[string]time.Time
+	// tampered are the seats held by a tamper alarm (3.2.0-0c-B,
+	// tamper.go): never idle, never prepared, never granted until the
+	// lead's recovery; recovered are the recoveries received since the
+	// last tick (under mu); prepareFails the last non-tamper prepare
+	// failure of each seat, for the once-then-count log.
+	tampered     map[string]*LedgerTamper
+	recovered    []string
+	prepareFails map[string]*prepareFailure
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -606,6 +614,9 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			// lease renewal and writes its first-renewal decision itself.
 		}
 	}
+	if err := s.applyRecoveries(now, log); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	ask := s.relaunchAsk
 	s.relaunchAsk = nil
@@ -857,9 +868,18 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			}
 			if s.Preparer != nil {
 				if err := s.Preparer.PrepareSeat(handle); err != nil {
-					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+					// A tamper is the typed block, raised once (tamper.go);
+					// any other failure is logged once, then counted.
+					got, perr := s.prepareFailed(t, handle, err, now, log)
+					if perr != nil {
+						return perr
+					}
+					if got != nil {
+						list = replace(list, *got)
+					}
 					continue
 				}
+				s.preparePassed(handle)
 			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
 			var unverified *task.VerifierUnconfiguredError
@@ -1005,6 +1025,9 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 	}
 	var handles []string
 	for h, st := range s.seats {
+		if s.tamperedSeat(h) {
+			continue // held by a tamper alarm until the lead's recovery
+		}
 		serves := st.pool == p
 		if s.rosterMode() {
 			serves = PoolServes(st.pool, p)
@@ -1117,6 +1140,9 @@ type State struct {
 	// RouteWaits are the tasks that wait no_roster_seat, with the pool no
 	// roster seat serves (brief 3.1.1-2): status names it on the task row.
 	RouteWaits []RouteWait `json:"route_waits,omitempty"`
+	// LedgerTampered are the seats held by a tamper alarm until the lead's
+	// recovery (3.2.0-0c-B): restored at a restart (RestoreLedgerTampers).
+	LedgerTampered []LedgerTamper `json:"ledger_tampered,omitempty"`
 }
 
 // RouteWait is one task's named route wait.
@@ -1226,6 +1252,7 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 		st.RouteWaits = append(st.RouteWaits, RouteWait{TaskID: id, Reason: WaitNoRosterSeat, Pool: p})
 	}
 	sort.Slice(st.RouteWaits, func(i, j int) bool { return st.RouteWaits[i].TaskID < st.RouteWaits[j].TaskID })
+	st.LedgerTampered = s.ledgerTamperList()
 	raw, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
