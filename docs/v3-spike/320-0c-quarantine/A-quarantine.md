@@ -319,7 +319,17 @@ docs; the Go tree is the code commit's), each from the worktree root:
 - `go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`:
   exit 0.
 
-The same Go gates ran once before the merge on `f6927bd7` (exit 0, 56
+After #891 (the lease-renewal fix) merged, `origin/v3` `8302baf1` was
+merged in as `648b8c55` (a merge, no conflict; #891's schedproc change is
+`amq.go`, `slots.go` and `slots_test.go`, not `prepare.go`, so the merged
+`PrepareSeat` is this task's). The same gates ran again on `648b8c55`, each
+exit 0: `go build ./...`; `go vet ./...`; `go test -count=1 ./...` (56
+`ok`); `NPM_FLAGS=--offline make ci` with the venv on PATH (pi: `ℹ tests
+116`, `ℹ pass 115`, `ℹ fail 0`, `ℹ skipped 1`); the redact check. The
+commit that records this paragraph changes this note only; its Go tree is
+`648b8c55`'s.
+
+The same Go gates ran once before the merges on `f6927bd7` (exit 0, 56
 `ok`); that run's `make ci` stopped at skills-check with `PyYAML is
 required for skill generation: pip3 install pyyaml` (no python3 on this
 machine has PyYAML; the 3.1.1 notes ran ci the same way, with a PyYAML
