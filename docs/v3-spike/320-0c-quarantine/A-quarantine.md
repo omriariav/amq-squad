@@ -124,6 +124,15 @@ check and no directory fsync (`sync` is a no-op; the rename is still one
 `os.Rename`). It keeps the package building for `GOOS=windows`; 3.0
 hosts are macOS and Linux, where the descriptor form runs.
 
+**The threat line.** The descriptor work protects the evidence against
+links planted before or during a refusal, against a crash, and against a
+concurrent refuser. It cannot protect it from a process running as the
+same user: such a process can rename the staged directory before the
+renameat, or rewrite a published slot afterwards. The quarantine is
+evidence against accident and other writers, not a vault against the
+owner's own account. The next defense layer is 0e's raw-bytes seal: a
+rewritten slot no longer verifies against the chain.
+
 **Every failure is named, never softened.** A copy that cannot be made
 is `<refusal>; the quarantine copy failed: <why>`: `the quarantine
 directory <dir> is a symlink` / `has mode 0755, want 0700` / `is owned by
