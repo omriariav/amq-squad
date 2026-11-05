@@ -102,11 +102,46 @@ Each reverts production or fixture code only (the row's own test stays):
 | row | revert | result | the failing output's first line |
 | --- | --- | --- | --- |
 | A | the owner_only deny names "(/squad confirm)" again (internal/cli/hook_guard.go) | caught | `--- FAIL: TestNoTextNamesARemovedSquadSubcommand`: `internal/cli/hook_guard.go:262 names a removed subcommand of` `/squad` |
-| B | the test binary keeps the running HOME (the `HOME` line alone removed from `isolateGitHome`, `_ = os.Setenv("HOME", home)`; run again for Codex on #878 at `15cade69`) | caught | `--- FAIL: TestTheTestBinarysGitDoesNotReadTheRunningHome`: `a git under the test binary's environment read the running home: status ""` |
+| B | the test binary keeps the running HOME (the `HOME` line alone removed from `isolateGitHome`, `_ = os.Setenv("HOME", home)`; run again for Codex on #878 at `15cade69`, and after the merge of origin/v3 `40974d2e` at `f42aa274`) | caught | `--- FAIL: TestTheTestBinarysGitDoesNotReadTheRunningHome`: `a git under the test binary's environment read the running home: status ""` |
+
+## #879's lock row: the asked-for revert run
+
+The plan reviewer asked for one revert run against #879's merge (origin/v3
+`40974d2e2d7ccbf988653fd32cc0e8f325778b3e`, merged into this branch at
+`f42aa274`, no conflict): in internal/seatcommit/ledger_test.go's lock row
+`TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection`,
+remove the expected-tree comparison and run the row against a faulty
+snapshot that returns the parent tree (the fault #879's note used: the
+final `write-tree` of `snapshot`, internal/seatcommit/git.go:367, replaced by
+the parent's tree).
+
+- **Command:** `go test ./internal/seatcommit -run TestArchiveAttemptKeepsTheFirstWriterDuringTheLedgerCriticalSection -count=1`
+- **The fault:** git.go:367, old text `out, err = g.run(nil, nil, "write-tree")`, replaced by `out, err = g.run(nil, nil, "rev-parse", parent+"^{tree}")`.
+- **The line removed:** ledger_test.go:124, old text `if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].Parent != expectedParent || ledger.Discarded[0].Tree != expectedFirstTree || ledger.Discarded[0].Tree == secondTree {`, with only `ledger.Discarded[0].Tree != expectedFirstTree || ` removed.
+- **Result: the revert did NOT fail.** The row passed: its remaining checks (one discard, the recorded parent, the tree not the second writer's) cannot see a snapshot that falls back to the parent tree, so the expected-tree comparison was the only thing standing between the row and the bug it was written for. With the comparison present the fault fails it (`ledger_test.go:125: surviving discard = [...]`), as #879's note recorded.
+
+**The row strengthened (test only, `ec3473a0`).** By the reviewer's
+condition, the row now also checks the surviving discard's tree itself,
+independent of the captured tree: it is not the parent's tree (`git
+rev-parse <parent>^{tree}`), it carries the first writer's `first.go` with
+its content (`git cat-file -p <tree>:first.go` is `package first`), and it
+does not carry the second writer's `second.go` (`git ls-tree -r
+--name-only`). Its revert runs, the fault injected in each:
+
+| run | result | the first failing line |
+| --- | --- | --- |
+| the asked revert on the strengthened row (comparison removed) | caught | `ledger_test.go:134: surviving discard's tree ff6085a3... is the parent's tree: the snapshot did not record the first writer's change` |
+| comparison removed and the new block removed (the row as #879 left it, minus the comparison) | passes, as above | (none) |
+| the new block removed, the comparison present (#879's row) | caught | `ledger_test.go:125: surviving discard = [...]` |
+| no fault, comparison removed | passes (the row stays green on a correct snapshot) | (none) |
+
+Every file was restored from a saved copy after each run; the only
+committed changes are the strengthened row and this note.
 
 ## Gates
 
-At code head `bcffe9ff`:
+At code head `ec3473a0`, after the merge of origin/v3 `40974d2e` (#879) at
+`f42aa274`; the commit after it changes this note only:
 
 - `go build ./... && go vet ./... && go test -count=1 ./...`: exit 0, 56 packages ok, 0 FAIL lines. Tail:
 
@@ -127,7 +162,7 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 15840.117709
+ℹ duration_ms 14858.41625
 exit 0
 ```
 
@@ -141,6 +176,6 @@ exit 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 43153.287042
+ℹ duration_ms 15023.368375
 exit 0
 ```
