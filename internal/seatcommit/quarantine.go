@@ -148,8 +148,15 @@ func quarantineCopy(dir, base, handle, verb string, refusal error, body []byte, 
 			return primary, nil // an identical refusal: the first copy stands
 		}
 		if secondary != "" {
-			if _, _, err := createOnce(secondary, sdata); err != nil {
+			created, existing, err := createOnce(secondary, sdata)
+			if err != nil {
 				return "", err
+			}
+			// A head already in a fresh slot (a crash's leftover, a planted
+			// file) is this refusal's only when it is byte-identical; the
+			// sidecar must never name a copy with another digest.
+			if !created && !bytes.Equal(existing, sdata) {
+				return "", fmt.Errorf("%s exists with other content", secondary)
 			}
 		}
 		if primary != sidePath {

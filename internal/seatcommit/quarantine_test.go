@@ -245,6 +245,45 @@ func TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot(t *testing.T) {
 	}
 }
 
+// A9: a head file already in an empty slot (a crash's leftover, a
+// planted file) is not this refusal's head unless it is byte-identical:
+// with other content the copy is a named failure ("the quarantine copy
+// failed: <head path> exists with other content"), never "quarantined at",
+// and the refusal stands; the planted file is unchanged.
+func TestPlantedHeadInAnEmptySlotIsAQuarantineFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newFixture(t)
+	tamperBase(t, f, f.base, '0')
+	seq, head := headSeqOf(t, f)
+	bodyQ, headQ, sideQ := quarantinePaths(f, seq)
+	planted := []byte("{\"seq\": 999}\n")
+	if bytes.Equal(planted, head) {
+		t.Fatal("the planted head equals the head")
+	}
+	if err := os.MkdirAll(QuarantineDir(f.root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(headQ, planted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RecordTarget(f.root, f.handle, f.target())
+	if !errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("not ledger_tampered: %v", err)
+	}
+	if want := "the quarantine copy failed: " + headQ + " exists with other content"; !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "quarantined at") {
+		t.Fatalf("the error does not say the copy failed (%q): %v", want, err)
+	}
+	if got := readFile(t, headQ); !bytes.Equal(got, planted) {
+		t.Fatal("the planted head was changed")
+	}
+	if _, err := os.Stat(sideQ); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a sidecar was written beside a head that is not this refusal's")
+	}
+	if _, err := os.Stat(bodyQ); err != nil {
+		t.Fatalf("the body copy (the slot's claim) is missing: %v", err)
+	}
+}
+
 // A7: a planted link never passes as a copy. A symlink at the body path,
 // or a symlink where the quarantine directory should be, makes the copy a
 // named failure ("the quarantine copy failed: ... is a symlink"), never a
