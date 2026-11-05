@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -136,6 +137,12 @@ func quarantinePaths(f *fixture, seq string) (body, head, side string) {
 	return filepath.Join(slot, quarantineBodyFile), filepath.Join(slot, quarantineHeadFile), filepath.Join(slot, quarantineSidecar)
 }
 
+// namesSlot reports whether a refusal names exactly this slot ("quarantined
+// at <slot>" not followed by a further ".k").
+func namesSlot(detail, slot string) bool {
+	return regexp.MustCompile(`quarantined at ` + regexp.QuoteMeta(slot) + `(?:$|[^.0-9])`).MatchString(detail)
+}
+
 func sha(b []byte) string { return fmt.Sprintf("%x", sha256.Sum256(b)) }
 
 // slotNames are the entries of the quarantine directory (slots and
@@ -170,7 +177,7 @@ func TestTamperedLedgerIsQuarantinedByEveryWriter(t *testing.T) {
 			if !refused {
 				t.Fatalf("%s on a tampered ledger did not refuse as ledger_tampered: %q", w.name, detail)
 			}
-			if !strings.Contains(detail, "quarantined at "+slotOf(f, seq, 1)) {
+			if !namesSlot(detail, slotOf(f, seq, 1)) {
 				t.Fatalf("%s's error does not name the quarantine %s: %q", w.name, slotOf(f, seq, 1), detail)
 			}
 			if got := readFile(t, bodyQ); sha(got) != sha(tampered) {
@@ -213,7 +220,7 @@ func TestIdenticalSecondRefusalKeepsTheFirstCopy(t *testing.T) {
 	}
 	keep := [3][]byte{readFile(t, bodyQ), readFile(t, headQ), readFile(t, sideQ)}
 	_, err := RecordTarget(f.root, f.handle, f.target())
-	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slotOf(f, seq, 1)) {
+	if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {
 		t.Fatalf("second refusal: %v", err)
 	}
 	for i, p := range []string{bodyQ, headQ, sideQ} {
@@ -239,7 +246,7 @@ func TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot(t *testing.T) {
 	first := tamperBase(t, f, f.base, '0')
 	seq, head := headSeqOf(t, f)
 	bodyQ, headQ, sideQ := quarantinePaths(f, seq)
-	if _, err := RecordTarget(f.root, f.handle, f.target()); !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slotOf(f, seq, 1)) {
+	if _, err := RecordTarget(f.root, f.handle, f.target()); !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {
 		t.Fatalf("first refusal: %v", err)
 	}
 	keep := [3][]byte{readFile(t, bodyQ), readFile(t, headQ), readFile(t, sideQ)}
@@ -250,7 +257,7 @@ func TestDifferentSecondBodyUnderOneSeqTakesTheNextSlot(t *testing.T) {
 	slot2 := slotOf(f, seq, 2)
 	for i := 0; i < 2; i++ {
 		_, err := RecordTarget(f.root, f.handle, f.target())
-		if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slot2) {
+		if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slot2) {
 			t.Fatalf("refusal %d of the second body does not name the second slot: %v", i+1, err)
 		}
 	}
@@ -328,7 +335,7 @@ func TestQuarantineHoldsTheRefusedBytesNotALaterSwap(t *testing.T) {
 	}
 	t.Cleanup(func() { afterLedgerRefusal = nil })
 	_, err := RecordTarget(f.root, f.handle, f.target())
-	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slotOf(f, seq, 1)) {
+	if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {
 		t.Fatalf("refusal: %v", err)
 	}
 	if swapped == nil || bytes.Equal(swapped, refused) {
@@ -369,7 +376,7 @@ func TestLedgerSymlinkedToTheSeedIsRefusedAndNeverCopied(t *testing.T) {
 		t.Fatalf("a symlinked ledger: %v", err)
 	}
 	slot := slotOf(f, seq, 1)
-	if !strings.Contains(err.Error(), "quarantined at "+slot) {
+	if !namesSlot(err.Error(), slot) {
 		t.Fatalf("the refusal does not name the slot: %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(slot, quarantineBodyFile)); !errors.Is(err, os.ErrNotExist) {
@@ -407,7 +414,7 @@ func TestAbsentBodyThenTamperedBodyUnderOneSeqGiveTwoSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := RecordTarget(f.root, f.handle, f.target())
-	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slotOf(f, seq, 1)) {
+	if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {
 		t.Fatalf("the absent body: %v", err)
 	}
 	slot1 := slotOf(f, seq, 1)
@@ -426,7 +433,7 @@ func TestAbsentBodyThenTamperedBodyUnderOneSeqGiveTwoSlots(t *testing.T) {
 	tampered := tamperBase(t, f, f.base, '0')
 	_, err = RecordTarget(f.root, f.handle, f.target())
 	slot2 := slotOf(f, seq, 2)
-	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slot2) {
+	if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slot2) {
 		t.Fatalf("the tampered body does not take the second slot: %v", err)
 	}
 	if got := readFile(t, filepath.Join(slot2, quarantineBodyFile)); !bytes.Equal(got, tampered) {
@@ -459,7 +466,7 @@ func TestConcurrentIdenticalRefusersPublishOneSlot(t *testing.T) {
 	}
 	close(start)
 	for i := 0; i < n; i++ {
-		if err := <-errs; !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slot) {
+		if err := <-errs; !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slot) {
 			t.Fatalf("refuser: %v", err)
 		}
 	}
@@ -541,7 +548,7 @@ func TestUndecodableHeadQuarantinesUnderSeqUnknown(t *testing.T) {
 	}
 	bodyQ, headQ, sideQ := quarantinePaths(f, "unknown")
 	_, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
-	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "quarantined at "+slotOf(f, "unknown", 1)) {
+	if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slotOf(f, "unknown", 1)) {
 		t.Fatalf("CleanSeat under an undecodable head: %v", err)
 	}
 	if got := readFile(t, bodyQ); !bytes.Equal(got, doc) {
@@ -646,10 +653,10 @@ func TestWriteCheckRunsUnderTheLedgerLock(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the second writer did not finish")
 	}
-	if !errors.Is(first.err, sealchain.ErrTampered) || !strings.Contains(fmt.Sprint(first.err), "quarantined at "+slot) {
+	if !errors.Is(first.err, sealchain.ErrTampered) || !namesSlot(fmt.Sprint(first.err), slot) {
 		t.Fatalf("the first writer did not refuse the edited body at its write: %v", first.err)
 	}
-	if !errors.Is(second.err, sealchain.ErrTampered) || !strings.Contains(second.err.Error(), "quarantined at "+slot) {
+	if !errors.Is(second.err, sealchain.ErrTampered) || !namesSlot(second.err.Error(), slot) {
 		t.Fatalf("the second writer did not see the first's result: %v", second.err)
 	}
 	if got := readFile(t, bodyQ); !bytes.Equal(got, tampered) {
@@ -736,7 +743,7 @@ func TestVersionSkewIsQuarantinedLikeATamper(t *testing.T) {
 	bodyQ, headQ, sideQ := quarantinePaths(f, seq)
 	want := "ledger_tampered: the tag of " + ledgerHeadName(f.handle) + " link " + seq + " fails"
 	_, err = CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
-	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "quarantined at "+slotOf(f, seq, 1)) {
+	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), want) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {
 		t.Fatalf("CleanSeat on the skewed document: %v (want %q and the quarantine path)", err, want)
 	}
 	if got := readFile(t, bodyQ); sha(got) != sha(skewed) {
