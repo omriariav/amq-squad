@@ -5,16 +5,18 @@ package seatexec
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // Brief 5-amq-A acceptance 4: the sandbox pins travel in the launch request,
-// so seat-exec adds none and refuses an admitted argv that does not carry
+// so seat-exec adds no sandbox argument and refuses an admitted argv that does not carry
 // both exactly as the record requires (sandbox_pins_missing); the refusal is
-// published as the seat's exec record. A widening value keeps amendment 28's
-// codex_sandbox_missing.
+// published as the seat's exec record. It may append the task-activity hook
+// overlay after the admitted sandbox argv. A widening value keeps amendment
+// 28's codex_sandbox_missing.
 func TestSeatExecRefusesAnArgvWithoutTheSandboxPins(t *testing.T) {
 	base := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"}
 	roots, closed, open := []string{"-c", CodexWritableRootsPin + "=[]"}, []string{"-c", CodexNetworkAccessPin + "=false"}, []string{"-c", CodexNetworkAccessPin + "=true"}
@@ -49,8 +51,8 @@ func TestSeatExecRefusesAnArgvWithoutTheSandboxPins(t *testing.T) {
 			continue
 		}
 		if c.code == "" {
-			if !slices.Equal(f.execArgv, argv) {
-				t.Errorf("%s: exec argv %q, want the admitted argv unchanged", c.name, f.execArgv)
+			if len(f.execArgv) <= len(argv) || !slices.Equal(f.execArgv[:len(argv)], argv) || !slices.ContainsFunc(f.execArgv, func(a string) bool { return strings.HasPrefix(a, "hooks.PostToolUse=") }) {
+				t.Errorf("%s: exec argv %q, want admitted argv followed by activity hooks", c.name, f.execArgv)
 			}
 			continue
 		}

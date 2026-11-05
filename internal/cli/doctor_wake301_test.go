@@ -94,3 +94,14 @@ func TestCodexWakeDialogHookRowIsInDoctor(t *testing.T) {
 		t.Fatalf("no codex on the host, rows %+v", rows)
 	}
 }
+
+func TestCodexActivityTrustWarningUsesTheRequiredOwnerStep(t *testing.T) {
+	c := codexActivityTrustCheck(t.TempDir(), "/opt/amq-squad", "/opt/amq", "/home/owner")
+	want := "codex seats will not renew on their own until you trust the amq-squad hooks: launch one Codex seat, run /hooks, and trust the three /<session-flags>/config.toml amq-squad activity entries"
+	if c.Status != doctorWarn || !strings.Contains(c.Detail, want) ||
+		!strings.Contains(c.Detail, `'/opt/amq-squad' evidence ingest --me "$AM_ME"`) ||
+		!strings.Contains(c.Detail, `'/opt/amq' --no-update-check wake dialog --harness codex close`) ||
+		!strings.Contains(c.Detail, "Reinstalling amq-squad or amq at another path changes the command string and drops that trust") {
+		t.Fatalf("activity trust row = %+v, want %q", c, want)
+	}
+}

@@ -63,6 +63,9 @@ func Run(o Options) error {
 	if err != nil {
 		return err
 	}
+	if plan.warning != "" {
+		fmt.Fprintln(os.Stderr, plan.warning)
+	}
 	return o.Exec(plan.provider, plan.argv, plan.env)
 }
 
@@ -77,6 +80,7 @@ type execPlan struct {
 	launcherArgv  []string // a pi seat's embedded-runtime launcher argv (recorded)
 	published     *anchor
 	token         string // a Claude seat's credential (never logged or recorded)
+	warning       string // launch warning printed before exec, never persisted with secrets
 }
 
 func prepare(o Options) (execPlan, error) {
@@ -167,6 +171,11 @@ func prepare(o Options) (execPlan, error) {
 		if err := CheckCodexSandboxPins(o.Argv, slices.Contains(rec.EnvNeeds, CodexNetworkNeed)); err != nil {
 			return plan, err
 		}
+		if trust := ReadCodexActivityTrust(CodexDir(o.Home, Getenv(o.Env, "CODEX_HOME")), o.Self, rec.AMQPath, o.Home); !trust.Ready() {
+			plan.warning = "codex seats will not renew on their own until you trust the amq-squad hooks: " + CodexActivityTrustFix
+		}
+		plan.argv = append(append([]string(nil), o.Argv...), CodexActivityHookArgsForHome(o.Self, rec.AMQPath, o.Home)...)
+		plan.providerArgv = plan.argv
 	}
 	// A seat whose start stamp cannot be read could never be closed with a
 	// confirmed identity: refuse it (the identity_incomplete class).
@@ -450,10 +459,12 @@ func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self, token strin
 			}
 		}
 	}
-	if rec.Runtime == "pi" {
+	if rec.Runtime == "pi" || rec.Runtime == "codex" {
 		// The launcher (amq-squad pi run) starts the seat's pi with the
 		// launch record's amq; it forces the rest of the pi environment.
 		m["AMQ_SQUAD_AMQ"] = rec.AMQPath
+	}
+	if rec.Runtime == "pi" {
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"
 		m["PI_CODING_AGENT_DIR"] = piAgentDir(rec, home)
 	}

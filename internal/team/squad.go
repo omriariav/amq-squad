@@ -9,8 +9,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/yamlsub"
 )
 
@@ -25,6 +27,9 @@ import (
 const (
 	SquadSchema   = 1
 	SquadFileName = "squad.yaml"
+	// DefaultTaskBudget is the squad's default allowance for one task
+	// attempt. task add persists the effective value on each task.
+	DefaultTaskBudget = task.DefaultTaskBudget
 )
 
 // Runtimes a seat may name: the providers AMQ v0.116.2's launch adapters
@@ -80,9 +85,10 @@ type Squad struct {
 	SharedCwdException string `json:"shared_cwd_exception,omitempty"`
 	// OperatorInteraction is how the owner answers gates: lead_pane,
 	// separate_terminal or noc ("" is unspecified).
-	OperatorInteraction string       `json:"operator_interaction,omitempty"`
-	Defaults            SeatDefaults `json:"defaults"`
-	Seats               []Seat       `json:"seats"`
+	OperatorInteraction string        `json:"operator_interaction,omitempty"`
+	TaskBudget          time.Duration `json:"task_budget"`
+	Defaults            SeatDefaults  `json:"defaults"`
+	Seats               []Seat        `json:"seats"`
 	// Grants is the narrowing (mode, max_seats, cost_per_day_usd,
 	// permitted_runtimes, privacy_class, protected_paths, merge_repositories,
 	// merge_size_cap_lines), as grants.ParseSquadNarrowing reads it.
@@ -139,7 +145,7 @@ func LoadSquadWith(ownerPath, repoRoot string) (Squad, error) {
 // ParseSquad parses squad.yaml strictly against the owner grant: every key
 // known, every value valid, no field that widens the grant.
 func ParseSquad(text, source string, owner grants.Grants) (Squad, error) {
-	s := Squad{Schema: SquadSchema}
+	s := Squad{Schema: SquadSchema, TaskBudget: DefaultTaskBudget}
 	entries, err := yamlsub.Split(text, source, true)
 	if err != nil {
 		return s, err
@@ -186,6 +192,14 @@ func ParseSquad(text, source string, owner grants.Grants) (Squad, error) {
 		case "operator_interaction":
 			if s.OperatorInteraction, err = e.Scalar(); err == nil {
 				err = ValidateOperatorInteractionMode(s.OperatorInteraction)
+			}
+		case "task_budget":
+			var raw string
+			if raw, err = e.Scalar(); err == nil {
+				s.TaskBudget, err = time.ParseDuration(raw)
+				if err == nil && s.TaskBudget <= 0 {
+					err = e.Errf("must be a positive duration")
+				}
 			}
 		case "defaults":
 			s.Defaults, err = parseDefaults(e)
@@ -434,6 +448,9 @@ func Render(s Squad) string {
 	line("target_project_root", s.TargetProjectRoot)
 	line("shared_cwd_exception", s.SharedCwdException)
 	line("operator_interaction", s.OperatorInteraction)
+	if s.TaskBudget > 0 && s.TaskBudget != DefaultTaskBudget {
+		line("task_budget", s.TaskBudget.String())
+	}
 	g := s.Grants
 	line("mode", g.Mode)
 	if g.MaxSeats > 0 {
