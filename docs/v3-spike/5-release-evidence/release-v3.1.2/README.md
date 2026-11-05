@@ -127,6 +127,12 @@ Two observations, as seen:
 - **The prepare loop.** 1949 identical lines over 65 minutes, one per tick, with no escalation, and t71 stayed pending. It is the same flood shape as #854's seat_request_failed (here also: 212 identical seat_request_failed lines for t70).
 - **The screen's advice.** "ask the lead to relaunch the roster" was wrong for this reason: a relaunch does not change a ledger that fails its tag.
 
+**The refused body is lost.** The ledger document `commits/reviewer.json` carries one `seal` {prev, seq, tag} over its current body, and every write re-seals the whole document. Seq 150 was the body the rc.1 scheduler refused for 65 minutes. The 3.1.2 scheduler's first writes, at 13:50:14Z to 13:50:16Z (seat_adopted, roster_adopted), re-sealed the document as 151 and then 152. That was 2 to 4 s after the SIGTERM at 13:50:12.543Z, and 4 to 6 s after the last refusal at 13:50:10.848Z. So the next writer overwrote the refused body, and it exists only as the error string in the decision log. Read now, the document's seal is seq 152, with the head's link tag (`7150f4ba…`, routing-head-commits.reviewer.json), and the file was last written at 13:50:16Z.
+
+The lead session's read-only search, at about 14:1xZ, found no copy. Nothing under `.agent-mail/v31` or `~/.amq-squad` carries a seal of seq 150 or 151. The seats' session logs mention the ledger only through the dev seat's own t76 reads of the lead's snapshot, which is seq 152. `tmutil listlocalsnapshots /` lists no snapshot; I re-ran it for this note, with the same result. The investigation's first attempt, t76, blocked on this at 14:10:43Z (snapshot_ledger_history_missing), and it was re-added, narrowed, as t77.
+
+For 3.2.0: on any ledger_tampered, before any writer re-seals, the scheduler and the seat-side writer refuse to write. They copy the refused body and its head to a quarantine file under the session root, named by handle and seq. That is the next brief after t77.
+
 For 3.2.0, the first item, ahead of the other defects: a read-only investigation of the chain. Run the rc.1, 3.1.1 and 3.1.2 verifiers on one scratch copy of the chain, through a test harness, never the live session.
 
 ### 2. Step 6 needed a SIGTERM
