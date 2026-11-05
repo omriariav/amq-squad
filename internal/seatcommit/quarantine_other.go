@@ -60,12 +60,19 @@ func openDirNoFollow(path string) (slotDir, error) {
 	return &pathDir{path: path}, nil
 }
 
+func (d *pathDir) name() string               { return d.path }
 func (d *pathDir) stat() (fs.FileInfo, error) { return os.Lstat(d.path) }
-func (d *pathDir) sync() error                { return nil }
 func (d *pathDir) close() error               { return nil }
 func (d *pathDir) mkdir(name string) error    { return os.Mkdir(filepath.Join(d.path, name), 0o700) }
 
+// sync is a no-op off unix (no directory fsync by path).
+func (d *pathDir) sync() error {
+	trace("fsync", d.path)
+	return nil
+}
+
 func (d *pathDir) rename(from, to string) error {
+	trace("renameat", filepath.Join(d.path, from)+" -> "+filepath.Join(d.path, to))
 	if _, err := os.Lstat(filepath.Join(d.path, to)); err == nil {
 		return fs.ErrExist
 	}

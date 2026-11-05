@@ -98,12 +98,21 @@ func openDirNoFollow(path string) (slotDir, error) {
 	return &atDir{f: os.NewFile(uintptr(fd), path), path: path}, nil
 }
 
-func (d *atDir) fd() int                      { return int(d.f.Fd()) }
-func (d *atDir) stat() (fs.FileInfo, error)   { return d.f.Stat() }
-func (d *atDir) sync() error                  { return d.f.Sync() }
-func (d *atDir) close() error                 { return d.f.Close() }
-func (d *atDir) mkdir(name string) error      { return unix.Mkdirat(d.fd(), name, 0o700) }
-func (d *atDir) rename(from, to string) error { return unix.Renameat(d.fd(), from, d.fd(), to) }
+func (d *atDir) fd() int                    { return int(d.f.Fd()) }
+func (d *atDir) name() string               { return d.path }
+func (d *atDir) stat() (fs.FileInfo, error) { return d.f.Stat() }
+func (d *atDir) close() error               { return d.f.Close() }
+func (d *atDir) mkdir(name string) error    { return unix.Mkdirat(d.fd(), name, 0o700) }
+
+func (d *atDir) sync() error {
+	trace("fsync", d.path)
+	return d.f.Sync()
+}
+
+func (d *atDir) rename(from, to string) error {
+	trace("renameat", d.path+"/"+from+" -> "+d.path+"/"+to)
+	return unix.Renameat(d.fd(), from, d.fd(), to)
+}
 
 func (d *atDir) names() ([]string, error) {
 	if _, err := d.f.Seek(0, io.SeekStart); err != nil {

@@ -478,6 +478,94 @@ func TestConcurrentIdenticalRefusersPublishOneSlot(t *testing.T) {
 	}
 }
 
+// A14: the staged directory swapped for a link after its mkdir (the
+// afterTempMkdir seam stands in for a same-user process) is a named copy
+// failure: the staged writes go through the temp directory's own
+// descriptor, opened O_DIRECTORY|O_NOFOLLOW, so nothing is written at the
+// link's target, the error says the copy failed, and no slot is named.
+func TestStagedDirectorySwappedForALinkIsAQuarantineFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newFixture(t)
+	tamperBase(t, f, f.base, '0')
+	target := t.TempDir()
+	var swapped string
+	afterTempMkdir = func(dir, tmp string) {
+		if swapped != "" {
+			return
+		}
+		p := filepath.Join(dir, tmp)
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink(target, p); err != nil {
+			t.Error(err)
+			return
+		}
+		swapped = p
+	}
+	t.Cleanup(func() { afterTempMkdir = nil })
+	_, err := RecordTarget(f.root, f.handle, f.target())
+	if !errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("not ledger_tampered: %v", err)
+	}
+	if swapped == "" {
+		t.Fatal("the swap did not happen")
+	}
+	if want := "the quarantine copy failed: the staged copy " + filepath.Base(swapped) + ": " + swapped + " is a symlink"; !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "quarantined at") {
+		t.Fatalf("the error does not say the copy failed (%q): %v", want, err)
+	}
+	if ents, _ := os.ReadDir(target); len(ents) != 0 {
+		t.Fatalf("the link's target got %d entries: the staged writes followed the swap", len(ents))
+	}
+	if fi, err := os.Lstat(swapped); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the planted link was removed or replaced")
+	}
+}
+
+// A15: the staged directory is fsynced before it is renamed into place
+// (the quarantineTrace seam records every fsync and renameat in order), and
+// the root is fsynced after the rename: a crash after the publish cannot
+// leave a slot missing files.
+func TestStagedDirectoryIsFsyncedBeforeItsRename(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newFixture(t)
+	tamperBase(t, f, f.base, '0')
+	seq, _ := headSeqOf(t, f)
+	var ops []string
+	quarantineTrace = func(op, name string) { ops = append(ops, op+" "+name) }
+	t.Cleanup(func() { quarantineTrace = nil })
+	_, err := RecordTarget(f.root, f.handle, f.target())
+	if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {
+		t.Fatalf("refusal: %v", err)
+	}
+	rename, stagedSync, rootSyncAfter := -1, -1, -1
+	var tmp string
+	for i, op := range ops {
+		if strings.HasPrefix(op, "renameat ") && rename < 0 {
+			rename = i
+			tmp = strings.TrimPrefix(strings.SplitN(strings.TrimPrefix(op, "renameat "), " -> ", 2)[0], "")
+		}
+	}
+	if rename < 0 {
+		t.Fatalf("no renameat in the trace: %v", ops)
+	}
+	for i, op := range ops {
+		if op == "fsync "+tmp && i < rename && stagedSync < 0 {
+			stagedSync = i
+		}
+		if op == "fsync "+QuarantineDir(f.root) && i > rename {
+			rootSyncAfter = i
+		}
+	}
+	if stagedSync < 0 {
+		t.Fatalf("the staged directory %s was not fsynced before its rename: %v", tmp, ops)
+	}
+	if rootSyncAfter < 0 {
+		t.Fatalf("the root was not fsynced after the rename: %v", ops)
+	}
+}
+
 // A7: a planted link never passes as a copy. A symlink where the slot
 // would land, or a symlink where the quarantine directory should be, makes
 // the copy a named failure ("the quarantine copy failed: ... is a

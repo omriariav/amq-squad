@@ -147,6 +147,7 @@ func openQuarantineDir(dir string) (slotDir, error) {
 // link checks): every name is relative to it and nothing it opens follows
 // a link.
 type slotDir interface {
+	name() string // the path, for errors and the trace
 	stat() (fs.FileInfo, error)
 	names() ([]string, error)
 	mkdir(name string) error
@@ -157,6 +158,16 @@ type slotDir interface {
 	remove(name string, isDir bool) error
 	sync() error
 	close() error
+}
+
+// quarantineTrace is a test seam that records the durability calls in
+// order (row A15: the staged directory's fsync comes before its rename).
+var quarantineTrace func(op, name string)
+
+func trace(op, name string) {
+	if quarantineTrace != nil {
+		quarantineTrace(op, name)
+	}
 }
 
 // slotSet is the set of one slot, by file name.
@@ -187,11 +198,12 @@ func quarantineCopy(d slotDir, base, handle, verb string, refusal error, raw led
 	if raw.hasHead {
 		set[quarantineHeadFile] = raw.head
 	}
-	tmp, err := writeTempSlot(d, set)
+	tmp, td, err := writeTempSlot(d, set)
 	if err != nil {
 		return "", err
 	}
-	drop := func() { removeSlot(d, tmp, set) }
+	defer td.close()
+	drop := func() { removeSlot(d, tmp, td, set) }
 	for k := 1; k <= quarantineSlots; k++ {
 		slot := base
 		if k > 1 {
@@ -229,43 +241,84 @@ func quarantineCopy(d slotDir, base, handle, verb string, refusal error, raw led
 	return "", fmt.Errorf("%s has %d slots already", base, quarantineSlots)
 }
 
-// writeTempSlot writes set into a fresh temp directory beside the slots,
-// each file fsynced, and returns its name.
-func writeTempSlot(d slotDir, set slotSet) (string, error) {
+// afterTempMkdir is a test seam between the temp directory's creation and
+// its open (row A14: a same-user swap of the temp directory for a link
+// must not redirect the staged writes).
+var afterTempMkdir func(dir, tmp string)
+
+// writeTempSlot writes set into a fresh temp directory beside the slots
+// and returns its name and its descriptor. The temp directory is opened
+// by its own descriptor right after it is made (O_DIRECTORY|O_NOFOLLOW,
+// relative to the held root; Codex on 6c2b48fc: O_NOFOLLOW protects the
+// last component only, so a temp directory swapped for a link after the
+// mkdir would have redirected "<tmp>/body.json" outside the quarantine),
+// and every file is created, fsynced and later unlinked relative to that
+// descriptor. The staged directory is fsynced before the caller renames it
+// (a crash after the publish must not leave a slot missing files), and
+// the root after.
+func writeTempSlot(d slotDir, set slotSet) (string, slotDir, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	tmp := quarantineTempPre + hex.EncodeToString(b[:])
 	if err := d.mkdir(tmp); err != nil {
-		return "", err
+		return "", nil, err
+	}
+	if afterTempMkdir != nil {
+		afterTempMkdir(d.name(), tmp)
+	}
+	td, err := d.open(tmp)
+	if err != nil {
+		return "", nil, fmt.Errorf("the staged copy %s: %w", tmp, err)
+	}
+	fi, err := td.stat()
+	if err != nil {
+		td.close()
+		return "", nil, err
+	}
+	if !fi.IsDir() {
+		td.close()
+		return "", nil, fmt.Errorf("the staged copy %s is not a directory", tmp)
+	}
+	if err := ownedByCaller(d.name()+"/"+tmp, fi); err != nil {
+		td.close()
+		return "", nil, err
 	}
 	for _, name := range slotFiles() {
 		data, ok := set[name]
 		if !ok {
 			continue
 		}
-		if err := d.create(tmp+"/"+name, data); err != nil {
-			removeSlot(d, tmp, set)
-			return "", err
+		if err := td.create(name, data); err != nil {
+			removeSlot(d, tmp, td, set)
+			td.close()
+			return "", nil, err
 		}
 	}
-	if err := d.sync(); err != nil {
-		removeSlot(d, tmp, set)
-		return "", err
+	if err := td.sync(); err != nil {
+		removeSlot(d, tmp, td, set)
+		td.close()
+		return "", nil, err
 	}
-	return tmp, nil
+	if err := d.sync(); err != nil {
+		removeSlot(d, tmp, td, set)
+		td.close()
+		return "", nil, err
+	}
+	return tmp, td, nil
 }
 
 func slotFiles() []string {
 	return []string{quarantineBodyFile, quarantineHeadFile, quarantineSidecar}
 }
 
-// removeSlot drops a temp directory this process made (its known files,
-// then the directory); a failure leaves a leftover the next sidecar lists.
-func removeSlot(d slotDir, name string, set slotSet) {
+// removeSlot drops a temp directory this process made: its known files
+// through the directory's own descriptor, then the directory through the
+// root's; a failure leaves a leftover the next sidecar lists.
+func removeSlot(d slotDir, name string, td slotDir, set slotSet) {
 	for file := range set {
-		_ = d.remove(name+"/"+file, false)
+		_ = td.remove(file, false)
 	}
 	_ = d.remove(name, true)
 }
