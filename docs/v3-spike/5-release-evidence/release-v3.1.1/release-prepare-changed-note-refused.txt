@@ -1,0 +1,1 @@
+error: release prepare: release spec changed; in 3.0 a changed release is a new tag, a new parent gate and a new series
