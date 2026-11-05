@@ -36,7 +36,9 @@ func (c *CleanSeats) PrepareSeat(handle string) error {
 	// No commit ledger (no recorded base) leaves the seat as it is; any other
 	// read error (a tampered or unreadable ledger) is seat_prepare_failed:
 	// no grant of a seat whose cleanliness is unknown (the fifth round's (g)).
-	if _, err := seatcommit.ReadLedger(c.Root, handle); os.IsNotExist(err) {
+	// A read that refuses as tampered quarantines the refused document first
+	// (3.2.0-0c-A), and the reason names the copy.
+	if _, err := seatcommit.ReadLedgerAs(c.Root, handle, "scheduler prepare"); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("the commit ledger of seat %s: %w", handle, err)

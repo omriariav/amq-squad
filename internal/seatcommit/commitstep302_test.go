@@ -518,7 +518,7 @@ func TestRecordedCommitRetryIsCheckedAgainstTheGrantNow(t *testing.T) {
 		tk, _ := f.recordedThenRetried(gh, "package cmd\n// recorded\n")
 		l, _ := ReadLedger(f.root, f.handle)
 		l.Commits[0].DiffDigest = "sha256:" + strings.Repeat("0", 64)
-		if err := writeLedger(f.root, l); err != nil {
+		if err := writeLedger(f.root, l, "test"); err != nil {
 			t.Fatal(err)
 		}
 		res := Run(f.prOpts(tk, gh))

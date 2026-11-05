@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -368,54 +369,119 @@ func (l Ledger) taskStart(handle, taskID string) (branch, parent, base, why stri
 	return branch, parent, parent, ""
 }
 
-// ReadLedger loads a seat's ledger; os.ErrNotExist when there is none.
-func ReadLedger(root, handle string) (Ledger, error) {
+// ReadLedger loads a seat's ledger; os.ErrNotExist when there is none. A
+// refusal (sealchain.ErrTampered) first copies the refused document and its
+// head into the quarantine (QuarantineDir, 3.2.0-0c-A), and the error names
+// the copy: the evidence of a tamper alarm survives the next writer.
+func ReadLedger(root, handle string) (Ledger, error) { return ReadLedgerAs(root, handle, "read") }
+
+// ReadLedgerAs is ReadLedger with the caller's verb on the quarantine's
+// sidecar (the scheduler's prepare, each writer).
+func ReadLedgerAs(root, handle, verb string) (Ledger, error) {
+	l, raw, err := readLedger(root, handle)
+	if errors.Is(err, sealchain.ErrTampered) {
+		if afterLedgerRefusal != nil {
+			afterLedgerRefusal(root, handle)
+		}
+		err = quarantine(root, handle, verb, err, raw)
+	}
+	return l, err
+}
+
+// afterLedgerRefusal is a test seam between a refusing read and its
+// quarantine (row A10: the copy is of the bytes the check refused, never a
+// re-read of a file a concurrent writer may have replaced since).
+var afterLedgerRefusal func(root, handle string)
+
+// readLedger is the read and the check: the file, its schema and handle,
+// the seal under the session seed and the signed head (sealchain.Check).
+func readLedger(root, handle string) (Ledger, ledgerRaw, error) {
 	var l Ledger
-	raw, err := os.ReadFile(ledgerPath(root, handle))
-	if err != nil {
-		if os.IsNotExist(err) {
-			// only a ledger with no sealed head is absent; one whose head
-			// says it existed was removed (ledger_tampered, never "no
-			// ledger", "no base" or "unused")
-			if key, ok, kerr := sealchain.ReadKey(root); kerr != nil {
-				return l, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, kerr)
-			} else if ok {
-				if aerr := sealchain.Absent(root, ledgerHeadName(handle), key); aerr != nil {
-					return l, fmt.Errorf("commit ledger %s: %w", handle, aerr)
-				}
+	var raw ledgerRaw
+	// The source reads never follow a link (Codex on #893): a ledger or a
+	// head that is a symlink (to the seed, to anything) is a refusal in its
+	// own right, nothing is read or copied through it, and the sidecar
+	// names it.
+	headPath := sealchain.HeadPath(root, ledgerHeadName(handle))
+	snapHead := func() error {
+		var err error
+		raw.head, raw.hasHead, err = readNoFollow(headPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			raw.head, raw.hasHead, raw.headNote = nil, false, err.Error()+" (not copied)"
+			return fmt.Errorf("commit ledger %s: %w: the head %v", handle, sealchain.ErrTampered, err)
+		}
+		return nil
+	}
+	body, present, err := readNoFollow(ledgerPath(root, handle))
+	raw.body, raw.hasBody = body, err == nil && present
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		raw.bodyNote = err.Error() + " (not copied)"
+		_ = snapHead()
+		return l, raw, fmt.Errorf("commit ledger %s: %w: %v", handle, sealchain.ErrTampered, err)
+	}
+	if !present {
+		// only a ledger with no sealed head is absent; one whose head
+		// says it existed was removed (ledger_tampered, never "no
+		// ledger", "no base" or "unused")
+		if herr := snapHead(); herr != nil {
+			return l, raw, herr
+		}
+		if key, ok, kerr := sealchain.ReadKey(root); kerr != nil {
+			return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, kerr)
+		} else if ok {
+			if aerr := sealchain.Absent(root, ledgerHeadName(handle), key); aerr != nil {
+				return l, raw, fmt.Errorf("commit ledger %s: %w", handle, aerr)
 			}
 		}
-		return l, err
+		return l, raw, os.ErrNotExist
 	}
 	// A sealed record that does not decode, or carries another schema or
 	// handle, is ledger_tampered for the owner, never a deferral (the fix
 	// round's item 25).
-	if err := json.Unmarshal(raw, &l); err != nil {
-		return l, sealchain.Tampered("commit ledger "+handle+" does not decode", err)
+	if err := json.Unmarshal(body, &l); err != nil {
+		_ = snapHead()
+		return l, raw, sealchain.Tampered("commit ledger "+handle+" does not decode", err)
 	}
 	if l.Schema != LedgerSchema || l.Handle != handle {
-		return l, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))
+		_ = snapHead()
+		return l, raw, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))
 	}
 	// The seal: a hand edit, an older copy, a stripped seal or a deleted
 	// head is ledger_tampered (sealchain.ErrTampered).
 	key, ok, err := sealchain.ReadKey(root)
 	if err != nil {
-		return l, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, err)
+		_ = snapHead()
+		return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, err)
 	}
 	if !ok {
-		return l, fmt.Errorf("commit ledger %s: %w: the session seed that seals it is gone", handle, sealchain.ErrTampered)
+		_ = snapHead()
+		return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed that seals it is gone", handle, sealchain.ErrTampered)
 	}
-	body := l
-	body.Seal = nil
-	if err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, body); err != nil {
-		return l, fmt.Errorf("commit ledger %s: %w", handle, err)
+	sealed := l
+	sealed.Seal = nil
+	if herr := snapHead(); herr != nil {
+		return l, raw, herr
 	}
-	return l, nil
+	if err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, sealed); err != nil {
+		return l, raw, fmt.Errorf("commit ledger %s: %w", handle, err)
+	}
+	return l, raw, nil
 }
 
-func writeLedger(root string, l Ledger) error {
+// writeLedger seals and saves a seat's ledger: the one point every write
+// passes, under the ledger lock (each caller holds it). Before it writes it
+// reads and verifies the document on disk, the check ReadLedgerAs runs
+// (3.2.0-0c-A): a document that fails is refused, nothing is moved, the
+// refused body and head are quarantined, and the error names the copy. The
+// caller's own read is not enough: it happened before the caller's git
+// work, and the incident's refused body was lost to exactly such a re-seal.
+// verb is the writer's name on the quarantine's sidecar.
+func writeLedger(root string, l Ledger, verb string) error {
 	l.Schema = LedgerSchema
 	l.Seal = nil
+	if _, err := ReadLedgerAs(root, l.Handle, verb); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	key, err := sealchain.SessionKey(root)
 	if err != nil {
 		return fmt.Errorf("commit ledger %s: the session seed: %w", l.Handle, err)
@@ -476,16 +542,18 @@ func withLedgerLock(root, handle string, fn func() error) error {
 // the same worktree and branch is kept: a relaunch continues from the last
 // harness commit. It returns the ledger in effect.
 func RecordBase(root, handle, worktree, branch, base string, now time.Time) (Ledger, error) {
-	return recordBase(root, handle, worktree, branch, base, nil, now)
+	return recordBase(root, handle, worktree, branch, base, nil, now, "seat commit --base")
 }
 
-func recordBase(root, handle, worktree, branch, base string, target *Target, now time.Time) (Ledger, error) {
+// recordBase is RecordBase and RecordWorktreeBase; verb names the writer on
+// a quarantine's sidecar.
+func recordBase(root, handle, worktree, branch, base string, target *Target, now time.Time, verb string) (Ledger, error) {
 	if handle == "" || worktree == "" || branch == "" || len(strings.TrimSpace(base)) < 40 {
 		return Ledger{}, fmt.Errorf("record base: handle, worktree, branch and a full commit id are required")
 	}
 	var out Ledger
 	err := withLedgerLock(root, handle, func() error {
-		l, err := ReadLedger(root, handle)
+		l, err := ReadLedgerAs(root, handle, verb)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -497,7 +565,7 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 				l.Target = *target
 			}
 			out = l
-			return writeLedger(root, l)
+			return writeLedger(root, l, verb)
 		}
 		if err != nil || l.Worktree != worktree || l.Branch != branch {
 			l = Ledger{Handle: handle, Worktree: worktree, Branch: branch, Base: strings.TrimSpace(base), Commits: []LedgerCommit{}, At: now.UTC()}
@@ -510,7 +578,7 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 			l.Target = *target
 		}
 		out = l
-		return writeLedger(root, l)
+		return writeLedger(root, l, verb)
 	})
 	return out, err
 }
@@ -518,15 +586,16 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 // RecordTarget records the owner's grant for an existing ledger (seat
 // commit --base, the lead's base decision, records it with the base).
 func RecordTarget(root, handle string, target Target) (Ledger, error) {
+	const verb = "seat commit --base"
 	var out Ledger
 	err := withLedgerLock(root, handle, func() error {
-		l, err := ReadLedger(root, handle)
+		l, err := ReadLedgerAs(root, handle, verb)
 		if err != nil {
 			return err
 		}
 		l.Target = target
 		out = l
-		return writeLedger(root, l)
+		return writeLedger(root, l, verb)
 	})
 	return out, err
 }
@@ -552,5 +621,5 @@ func RecordWorktreeBase(gitBin, root, handle, worktree, branch string, target Ta
 	if err != nil {
 		return Ledger{}, err
 	}
-	return recordBase(root, handle, worktree, branch, head, &target, now)
+	return recordBase(root, handle, worktree, branch, head, &target, now, "launch record base")
 }
