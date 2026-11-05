@@ -228,6 +228,7 @@ required version key (`schema: 1`); a file without it is refused.
 | `target_project_root` | absolute path | none | plain |
 | `shared_cwd_exception` | text, the reason two mutation-capable seats share a tree | none | plain |
 | `operator_interaction` | `lead_pane`, `separate_terminal` or `noc` | none | plain |
+| `task_budget` | positive Go duration such as `90m` or `2h` | `90m` | plain |
 | `defaults` | map of runtime, model, effort, tools | empty | plain |
 | `seats` | list of seat maps, at least one | none, required | plain |
 | `mode` | `auto` or `manual` | the owner's | narrow |
@@ -274,6 +275,18 @@ keeps no list of its own, and a form AMQ does not list is refused before the
 launch. Quota and concurrency pools are registry entries (plan 5), not
 squad.yaml keys: a squad narrows what it uses through `permitted_runtimes`
 and `max_seats`.
+
+For Codex 0.166 seats, seat-exec adds `PostToolUse` and `Stop` activity handlers
+as session `-c` overlays. Codex treats those handlers as non-managed and runs
+them only after the owner trusts their exact hashes in `/hooks`. Doctor and the
+seat launch warn when trust is absent. The hash includes the command and its
+binary path, so moving the installed binary requires trust again. The owner step
+is: launch one Codex seat, run `/hooks`, and trust the three
+`/<session-flags>/config.toml` amq-squad activity entries. Until then the seat
+must use the manual `amq-squad task renew --me "$AM_ME"` instruction from its
+dispatch. The session `Stop` overlay replaces the owner's other `Stop` handlers
+for that seat process; amq-squad retains AMQ's exact dialog-close handler in the
+replacement.
 
 ### Never settable
 

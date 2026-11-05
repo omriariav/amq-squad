@@ -98,8 +98,8 @@ launch budget:
 
 Task row: `id`, `title`, `class`, `task_state` (the store state), `state`,
 `reason_code`, `bucket`, `bucket_marker`, `pool` (`{runtime, model,
-effort}` or null), `lease_holder`, `lease_expires_at`, `lease_claimed`,
-`attempt`, `wait_reason`, `block_reason`, `depends_on`, `project_path`,
+effort}` or null), `lease_holder`, `lease_expires_at`, `budget` (nanoseconds),
+`budget_ends_at`, `lease_claimed`, `attempt`, `wait_reason`, `block_reason`, `depends_on`, `project_path`,
 `created_at`, `updated_at`; and (brief 31-1) `evidence`, `pr_repository`,
 `pr_number`, `pr_head` (the PR the commit step, or the train's rebase,
 bound to it; empty and 0 when none); `wait_holders`, for a pending task

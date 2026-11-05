@@ -15,6 +15,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/catalog"
 	"github.com/omriariav/amq-squad/v3/internal/fleet"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -152,9 +153,7 @@ func (l seatRoster) Launch(ctx context.Context, req fleet.LaunchRequest) error {
 	if err != nil {
 		return err
 	}
-	if q.Wrapper, err = os.Executable(); err == nil {
-		q.Wrapper, err = filepath.EvalSymlinks(q.Wrapper)
-	}
+	q.Wrapper, err = seatexec.ResolveExecutable("")
 	if err != nil {
 		return fmt.Errorf("resolve the amq-squad executable: %w", err)
 	}

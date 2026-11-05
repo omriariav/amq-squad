@@ -12,7 +12,7 @@ import (
 // by null fails, and so does a null document.
 var NullableFields = map[string]bool{
 	"last_activity_at": true, "last_message_at": true, "tokens_in": true, "tokens_out": true, // seat
-	"pool": true, "lease_expires_at": true, // task
+	"pool": true, "lease_expires_at": true, "budget_ends_at": true, // task
 	"action":            true,                            // attention
 	"usage_limit_since": true, "usage_limit_until": true, // scheduler
 	"lead_handle": true, // document (4-3 acceptance 7)

@@ -36,6 +36,33 @@ type Slots struct {
 	mu    sync.Mutex
 	inUse map[string]string // handle -> request id
 	byReq map[string]string // request id -> handle
+	// codexActivityTrusted is the trust result admitted at that seat's most
+	// recent launch. Absence is conservative: a Codex seat gets the manual
+	// renewal instruction until a launch has admitted its activity hooks.
+	codexActivityTrusted map[string]bool
+}
+
+// AdmitCodexActivity records the launch-time exact-hash trust result.
+func (s *Slots) AdmitCodexActivity(handle string, trusted bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.codexActivityTrusted == nil {
+		s.codexActivityTrusted = map[string]bool{}
+	}
+	s.codexActivityTrusted[handle] = trusted
+}
+
+// NeedsManualRenew reports whether dispatch must tell this Codex seat to
+// renew by hand. Non-Codex seats use their established activity producers.
+func (s *Slots) NeedsManualRenew(handle string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, seat := range s.Squad.Seats {
+		if seat.Handle == handle {
+			return seat.Runtime == "codex" && !s.codexActivityTrusted[handle]
+		}
+	}
+	return false
 }
 
 func poolMatches(p task.Pool, seat seatlaunch.Seat) bool {

@@ -33,8 +33,8 @@ busy from stalled without opening your pane.
 
 ## Verify with evidence, not assertion
 
-Evidence is the hook ledger: every tool result in a Claude seat is one ledger line,
-written by the PostToolUse hook, and it renews your lease. Read it back with
+Evidence is the hook ledger: every real work event is one ledger line and renews the
+current attempt automatically until its task budget is spent. Read it back with
 `evidence list`, and name the checks you ran in `task done --evidence`:
 
 ```sh

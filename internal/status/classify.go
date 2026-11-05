@@ -294,7 +294,7 @@ func (c *Counts) add(b Bucket) {
 // classifyTask gives a task row its state and reason code.
 func classifyTask(t task.Task, now time.Time) Task {
 	row := Task{
-		ID: t.ID, Title: t.Title, Class: t.Class, TaskState: t.State, Attempt: t.Attempt, WaitReason: t.WaitReason,
+		ID: t.ID, Title: t.Title, Class: t.Class, TaskState: t.State, Attempt: t.Attempt, Budget: t.Budget, WaitReason: t.WaitReason,
 		BlockReason: t.BlockReason, DependsOn: append([]string{}, t.DependsOn...), ProjectPath: t.ProjectPath,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 		Evidence: t.Evidence, PRRepository: t.PRRepository, PRNumber: t.PRNumber, PRHead: t.PRHead, WaitHolders: []string{},
@@ -305,6 +305,10 @@ func classifyTask(t task.Task, now time.Time) Task {
 	if t.Lease != nil {
 		exp := t.Lease.ExpiresAt
 		row.LeaseHolder, row.LeaseExpiresAt, row.LeaseClaimed = t.Lease.Holder, &exp, t.Lease.ClaimedAt != nil
+		if !t.Lease.BudgetEndsAt.IsZero() {
+			budgetEnd := t.Lease.BudgetEndsAt
+			row.BudgetEndsAt = &budgetEnd
+		}
 	}
 	switch t.State {
 	case task.StatePending:

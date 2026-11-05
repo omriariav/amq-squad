@@ -27,6 +27,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
@@ -527,6 +528,9 @@ func UpCompile(project, wrapper string) (seatlaunch.Squad, string, error) {
 	}
 	if q.Wrapper, err = filepath.Abs(q.Wrapper); err != nil {
 		return q, "", refuse("squad_invalid", "%v", err)
+	}
+	if q.Wrapper, err = seatexec.ResolveExecutable(q.Wrapper); err != nil {
+		return q, "", refuse("squad_invalid", "resolve the amq-squad executable: %v", err)
 	}
 	if q.AMQPath, err = upLookPath("amq"); err != nil {
 		return q, "", refuse("amq_missing", "the installed amq is required on PATH (R51): %v", err)

@@ -73,6 +73,10 @@ type Event struct {
 	At     time.Time
 	Handle string
 	Pool   task.Pool
+	// Attempt is the task attempt observed by the activity producer. It is
+	// required for SeatActivity so late runtime events cannot renew a later
+	// incarnation of the same seat and task.
+	Attempt int
 	// RequestID is the SeatRequest.ID a launched seat carries back in its
 	// SeatUp (the launcher puts it in the seat's launch record; R52: identity
 	// comes from the record only). Arrival matches a reservation by this id,
@@ -218,6 +222,9 @@ type Scheduler struct {
 	// seatBackoff is each task and pool's backoff after a failed seat
 	// request (brief 3.1.1-2): logged once per step, retried after it.
 	seatBackoff map[string]*seatBackoff
+	// budgetWarned remembers the absolute end already warned for an attempt.
+	// An extension changes the end and permits one new warning.
+	budgetWarned map[string]time.Time
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -353,8 +360,18 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	if s.seats == nil {
 		s.seats = map[string]*seat{}
 	}
+	if s.budgetWarned == nil {
+		s.budgetWarned = map[string]time.Time{}
+	}
 	var out []Decision
 	log := func(d Decision) { out = append(out, d) }
+	normalized, err := s.Store.NormalizeLeases(now)
+	if err != nil {
+		return out, err
+	}
+	for _, n := range normalized {
+		log(Decision{Kind: "lease_normalised", TaskID: n.TaskID, Reason: fmt.Sprintf("lease of %s normalised: attempt %d, budget ends %s", n.TaskID, n.Attempt, n.BudgetEndsAt.UTC().Format(time.RFC3339))})
+	}
 
 	// The per-tick liveness of the roster's seats (3.0.1 t17): a seat whose
 	// process is gone is posted SeatGone and applied in this tick.
@@ -375,7 +392,11 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 		if st := s.seats[a.Holder]; st != nil && a.Outcome == task.OutcomeUnclaimed {
 			st.unresponsive = true
 		}
-		log(Decision{Kind: "lease_expired", TaskID: t.ID, Seat: a.Holder, Reason: a.Outcome})
+		if strings.HasPrefix(a.Detail, "task budget of ") {
+			log(Decision{Kind: "task_budget_spent", TaskID: t.ID, Seat: a.Holder, Reason: a.Detail})
+		} else {
+			log(Decision{Kind: "lease_expired", TaskID: t.ID, Seat: a.Holder, Reason: a.Outcome})
+		}
 		// R3: a seat that claimed and ran past its lease may still be working
 		// in its worktree; it is closed through the launcher and forgotten only
 		// once its termination is confirmed, so CleanSeat and a new dispatch
@@ -388,6 +409,18 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	list, err := s.Store.List()
 	if err != nil {
 		return out, err
+	}
+	for _, t := range list {
+		if t.State != task.StateInProgress || t.Lease == nil || t.Lease.ClaimedAt == nil || t.Report != nil || t.Lease.BudgetEndsAt.IsZero() {
+			continue
+		}
+		remaining := t.Lease.BudgetEndsAt.Sub(now)
+		key := fmt.Sprintf("%s#%d", t.ID, t.Attempt)
+		if remaining > 0 && remaining <= cfg.LeaseDuration && !s.budgetWarned[key].Equal(t.Lease.BudgetEndsAt) {
+			s.budgetWarned[key] = t.Lease.BudgetEndsAt
+			log(Decision{Kind: "task_budget_warning", TaskID: t.ID, Seat: t.Lease.Holder,
+				Reason: fmt.Sprintf("budget ends in %s", remaining.Round(time.Second))})
+		}
 	}
 	// R3: the exit check on every terminal path that is not a done report.
 	s.loadExits()
@@ -569,15 +602,8 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				st.lastActivity = ev.At
 			}
 			st.unresponsive = false
-			// Renewal on seat activity (review 1 ruling 3): the claimed lease
-			// only; an unclaimed lease is never renewed.
-			t, renewed, err := s.Store.Renew(ev.Handle, cfg.LeaseDuration, cfg.LeaseDuration/10, now)
-			if err != nil && !errors.Is(err, task.ErrNoLease) {
-				return err
-			}
-			if renewed {
-				log(Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: ev.Handle})
-			}
+			// SeatActivity is liveness compatibility only. Evidence ingest owns
+			// lease renewal and writes its first-renewal decision itself.
 		}
 	}
 	s.mu.Lock()
