@@ -89,7 +89,18 @@ func TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush(t *testing.T) {
 		t.Fatalf("a failed re-bind did not stop the run: %v %+v", err, hres.PRs)
 	}
 	hentries, _ := h.train.Audit.Read()
-	if !slices.ContainsFunc(hentries, func(e Entry) bool { return e.Kind == "rebind" && e.PR == 4 }) {
+	if !slices.ContainsFunc(hentries, func(e Entry) bool {
+		return e.Kind == "rebind" && e.PR == 4 && strings.HasPrefix(e.Detail, "patch-id: ")
+	}) {
 		t.Fatal("the rebind audit entry was not written before the binding write")
+	}
+	h.realRun(&hreq)
+	hres, err = h.train.Run(context.Background(), hreq)
+	if err != nil || hres.PRs[1].Status != "merged" {
+		t.Fatalf("journaled rebind did not resume: %v %+v", err, hres.PRs)
+	}
+	hentries, _ = h.train.Audit.Read()
+	if slices.ContainsFunc(hentries, func(e Entry) bool { return e.Kind == "reconcile" && e.PR == 4 }) {
+		t.Fatal("proof-backed rebind resumed as a mismatch")
 	}
 }

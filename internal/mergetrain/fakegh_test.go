@@ -50,8 +50,14 @@ type fakeState struct {
 	// PushAfterRebase are PR numbers that get a push right after the
 	// server-side rebase reports its head.
 	PushAfterRebase []string `json:"push_after_rebase,omitempty"`
-	CIName          string   `json:"ci_name"`
-	FailMerge       bool     `json:"fail_merge,omitempty"`
+	// AlterAfterRebase makes the fake server change a seat hunk while updating.
+	AlterAfterRebase []string `json:"alter_after_rebase,omitempty"`
+	// AdvanceBaseBeforeRebase moves the base after the train pins it.
+	AdvanceBaseBeforeRebase []string `json:"advance_base_before_rebase,omitempty"`
+	// TruncateAfterRebase omits a patch marker for the updated head.
+	TruncateAfterRebase []string `json:"truncate_after_rebase,omitempty"`
+	CIName              string   `json:"ci_name"`
+	FailMerge           bool     `json:"fail_merge,omitempty"`
 	// LoseMergeResponse: the merge happens on the server, then the
 	// connection fails before the response (5 re-pass, P2-5).
 	LoseMergeResponse bool `json:"lose_merge_response,omitempty"`
@@ -190,11 +196,23 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 			return fail("clone: %s", out)
 		}
 		w := filepath.Join(work, "w")
+		if slices.Contains(s.AdvanceBaseBeforeRebase, n) {
+			gitOut(w, "checkout", "-q", p.Base)
+			os.WriteFile(filepath.Join(w, "base-after-pin.txt"), []byte("advanced\n"), 0o644)
+			gitOut(w, "add", "-A")
+			gitOut(w, "commit", "-q", "-m", "base after pin")
+			gitOut(w, "push", "-q", "origin", p.Base)
+		}
 		if out, err := gitOut(w, "checkout", "-q", p.Head); err != nil {
 			return fail("checkout: %s", out)
 		}
 		if out, err := gitOut(w, "rebase", "-q", "origin/"+p.Base); err != nil {
 			return fail("rebase conflict: %s", out)
+		}
+		if slices.Contains(s.AlterAfterRebase, n) {
+			os.WriteFile(filepath.Join(w, "server-change.txt"), []byte("changed during update\n"), 0o644)
+			gitOut(w, "add", "-A")
+			gitOut(w, "commit", "-q", "--amend", "--no-edit")
 		}
 		if out, err := gitOut(w, "push", "-q", "--force", "origin", p.Head); err != nil {
 			return fail("push: %s", out)
@@ -275,6 +293,23 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		switch {
 		case parts[0] == "compare" && len(parts) == 2:
 			base, head, _ := strings.Cut(parts[1], "...")
+			if slices.ContainsFunc(args, func(a string) bool { return strings.Contains(a, "missing_patch") }) {
+				status, _ := gitOut(s.Bare, "diff", "--name-only", base+"..."+head)
+				missing := 0
+				for _, n := range s.TruncateAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						missing = 1
+					}
+				}
+				fmt.Fprintf(stdout, `{"file_count":%d,"missing_patch":%d}`+"\n", len(strings.Fields(status)), missing)
+				break
+			}
+			if slices.Contains(args, "Accept: application/vnd.github.diff") {
+				diff, _ := gitOut(s.Bare, "diff", "--binary", base+"..."+head)
+				fmt.Fprintln(stdout, diff)
+				break
+			}
 			if slices.Contains(args, ".behind_by") {
 				behind, _ := gitOut(s.Bare, "rev-list", "--count", head+".."+base)
 				fmt.Fprintln(stdout, behind)
