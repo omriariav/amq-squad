@@ -11,6 +11,8 @@ import { installCommands } from "../extensions/lib/commands.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx } from "./fakepi.ts";
 
+const { visibleWidth } = await import("@earendil-works/pi-tui");
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtureText = fs.readFileSync(path.join(here, "status-fixture.json"), "utf8");
 const fixture = JSON.parse(fixtureText) as ScreenStatus;
@@ -22,6 +24,30 @@ function cfg(): Config {
 
 function ok(stdout: string): RunResult {
 	return { code: 0, stdout, stderr: "", timedOut: false, spawnError: "", ms: 1 };
+}
+
+function drawScreen(status: ScreenStatus, rows: number, width = 160, error = ""): string[] {
+	const ctx = fakeCtx({ hasUI: true });
+	ctx.ui.setWidget = (key: string, content: any, opts?: { placement?: string }) => {
+		const lines = typeof content === "function" ? content({ terminal: { rows } }, {}).render(width) : content;
+		ctx.widgets[key] = { lines, placement: opts?.placement };
+	};
+	const screen = new Screen(cfg());
+	screen.last = status;
+	screen.error = error;
+	screen.ctx = ctx;
+	screen.render();
+	return ctx.widgets[SCREEN_KEY].lines ?? [];
+}
+
+// pi-tui's differential renderer stops and throws on this condition
+// (tui-main-screen.js:469-493). Keep it here so the width row proves the
+// crash is gone, rather than proving only that a line count stayed small.
+function acceptLikePiTui(lines: string[], width: number): void {
+	for (const [i, line] of lines.entries()) {
+		const actual = visibleWidth(line);
+		if (actual > width) throw new Error(`Rendered line ${i} exceeds terminal width (${actual} > ${width}).`);
+	}
 }
 
 // block returns the lines of one block: from its title to the next block's
@@ -197,11 +223,141 @@ test("a seat that is not the team lead gets no screen", async () => {
 // Day 3 (t26 sat four hours on a file lock nobody saw): a pending task
 // waiting on a file lock names the tasks holding it, and a file lock no task
 // holds any more shows as stale.
-test("a pending task waiting on a file lock names its holder tasks", () => {
+test("a pending task waiting on a file lock names its holder and shared declaration", () => {
 	const tasks = block(renderScreen(fixture, now), "tasks");
-	assert.ok(tasks.includes("  t26 waiting: t20, t23 hold its files"), tasks.join("\n"));
-	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [] } : t)) };
+	assert.ok(tasks.includes("  t26 waits for t71: both declare docs/v3-spike/320-evidence/"), tasks.join("\n"));
+	const stale = { ...fixture, tasks: fixture.tasks.map((t) => (t.id === "t26" ? { ...t, wait_holders: [], waits_for: [] } : t)) };
 	assert.ok(block(renderScreen(stale, now), "tasks").includes("  t26 waiting: for a file lock no task holds any more (a stale wait)"));
+});
+
+test("a pin outside its class chain names both chains on the screen", () => {
+	const detail = "the pin codex:gpt-5.6-terra:medium is on the task tier (class implement); class plan runs on claude:opus:high, codex:gpt-5.6-sol:high";
+	const pinned = { ...fixture.tasks[0], id: "t75", block_reason: "pin_unresolved" };
+	const lines = renderScreen({ ...fixture, tasks: [pinned] }, now, undefined, { t75: { block_detail: detail } });
+	assert.ok(lines.includes(`  t75 blocked: ${detail}; /reset it onto another pool`), lines.join("\n"));
+});
+
+test("task rows put actionable work first and fold closed work into the available height", () => {
+	const closed = Array.from({ length: 73 }, (_, i) => ({ ...fixture.tasks[0], id: `c${i + 1}`, task_state: "completed", block_reason: "" }));
+	const open = [
+		{ ...fixture.tasks[2], id: "t74", task_state: "pending", wait_reason: "seat_cap", wait_holders: [] },
+		{ ...fixture.tasks[1], id: "t73", task_state: "in_progress", lease_holder: "reviewer" },
+		{ ...fixture.tasks[2], id: "t72", task_state: "blocked", block_reason: "verdict_failed", wait_reason: "" },
+	];
+	const tasks = block(renderScreen({ ...fixture, tasks: [...closed, ...open] }, now, undefined, {}, 3), "tasks");
+	assert.deepEqual(tasks.slice(1, 4).map((line) => line.trim().split(" ")[0]), ["t72", "t73", "t74"]);
+	assert.equal(tasks.at(-1), "  73 closed");
+	assert.ok(!tasks.some((line) => line.startsWith("  c")), tasks.join("\n"));
+
+	const withRoom = block(renderScreen({ ...fixture, tasks: [...closed.slice(0, 4), ...open.slice(0, 2)] }, now, undefined, {}, 3), "tasks");
+	assert.equal(withRoom.at(-1), "  4 closed");
+
+	const exactOpenFit = block(renderScreen({ ...fixture, tasks: [...closed.slice(0, 4), ...open.slice(0, 2)] }, now, undefined, {}, 2), "tasks");
+	assert.deepEqual(exactOpenFit.slice(1).map((line) => line.trim().split(" ")[0]), ["t73", "t74", "4"]);
+	assert.equal(exactOpenFit.at(-1), "  4 closed");
+
+	const oneOpenManyClosed = { ...fixture, tasks: [...closed, open[1]] };
+	assert.deepEqual(
+		renderScreen(oneOpenManyClosed, now, undefined, {}, 10),
+		renderScreen(oneOpenManyClosed, now, undefined, {}, 73),
+		"a cap above the pane can fit only by folding the same closed rows as the pane-sized cap",
+	);
+});
+
+test("task overflow reserves its last row for the /team summary", () => {
+	const pending = Array.from({ length: 5 }, (_, i) => ({ ...fixture.tasks[2], id: `t${80 + i}`, wait_reason: "seat_cap", wait_holders: [] }));
+	const tasks = block(renderScreen({ ...fixture, tasks: pending }, now, undefined, {}, 3), "tasks");
+	assert.equal(tasks.length, 4);
+	assert.equal(tasks.at(-1), "  +3 more (/team for all)");
+});
+
+test("the widget measures the rendered screen with no fixed records, includes content at fixed plus three, and never exceeds the pane", () => {
+	const blocked = { ...fixture.tasks[0], id: "t90", task_state: "blocked", block_reason: "custom_one" };
+	const status: ScreenStatus = {
+		...fixture,
+		seats: [],
+		tasks: [blocked],
+		attention: [],
+		gates: [],
+		warnings: [],
+		decisions: [],
+		train: { runs: [], alerts: [] },
+		requests: [],
+	};
+	const fixed = renderScreen(status, now, undefined, {}, 0).length;
+	for (const rows of [fixed, fixed + 1, fixed + 2, fixed + 3]) {
+		const lines = drawScreen(status, rows);
+		assert.ok(lines.length <= rows, `${lines.length} lines in a ${rows}-row pane\n${lines.join("\n")}`);
+		if (rows === fixed + 3) {
+			assert.ok(lines.includes("  t90 blocked; its reason is below the line"), lines.join("\n"));
+			assert.ok(lines.includes("----------"), lines.join("\n"));
+			assert.ok(lines.includes("  t90 blocked: custom_one"), lines.join("\n"));
+		}
+	}
+});
+
+test("render(width) keeps long task, record, stale-error, and truncation lines within pi-tui's contract", () => {
+	const width = 50;
+	const untitled = { ...fixture.tasks[1], id: "t90", title: "", task_state: "in_progress", lease_holder: "reviewer", pr_number: 0, lease_expires_at: null, budget_ends_at: null };
+	const baseStatus: ScreenStatus = { ...fixture, root: "/", lead: null, lead_handle: "c", seats: [], tasks: [untitled], attention: [], gates: [], warnings: [], decisions: [], train: { runs: [], alerts: [] }, requests: [] };
+	const baseTaskLine = renderScreen(baseStatus, now, undefined, {}, 1).find((line) => line.startsWith("  t90 in progress"))!;
+	const longTitle = { ...untitled, title: "x".repeat(width + 1 - visibleWidth(baseTaskLine) - 2) };
+	const longRecord = { ...fixture.tasks[0], id: "t91", task_state: "blocked", block_reason: "custom_" + "record_".repeat(30) };
+	const status: ScreenStatus = { ...baseStatus, tasks: [longTitle, longRecord] };
+	const rawTaskLine = renderScreen(status, now, undefined, {}, 2).find((line) => line.startsWith("  t90 in progress"))!;
+	assert.equal(visibleWidth(rawTaskLine), width + 1, "the reverted task line is exactly one column too wide");
+	const lines = drawScreen(status, 40, width, "status --json failed: " + "detail ".repeat(20));
+	assert.doesNotThrow(() => acceptLikePiTui(lines, width));
+	assert.ok(lines.some((line) => line.startsWith("  t90 in progress on reviewer")), lines.join("\n"));
+	assert.ok(lines.some((line) => line.startsWith("  t91 blocked: custom_")), lines.join("\n"));
+	assert.ok(lines.some((line) => line.startsWith("  (the screen may be stale:")), lines.join("\n"));
+
+	const clipped = drawScreen(status, 1, width, "status --json failed: " + "detail ".repeat(20));
+	assert.equal(clipped.length, 1);
+	assert.match(clipped[0], /^… \d+ more lines/);
+	assert.doesNotThrow(() => acceptLikePiTui(clipped, width));
+	assert.deepEqual(drawScreen(status, 0, width), []);
+});
+
+test("the widget measures the existing fixture at all three pane heights", () => {
+	const blocked = [
+		{ ...fixture.tasks[0], id: "t90", task_state: "blocked", block_reason: "custom_one" },
+		{ ...fixture.tasks[0], id: "t91", task_state: "blocked", block_reason: "custom_two" },
+	];
+	const status = { ...fixture, tasks: blocked };
+	const fixed = renderScreen(status, now, undefined, {}, 0).length;
+
+	const full = drawScreen(status, fixed);
+	assert.ok(full.length <= fixed, `${full.length} lines in a ${fixed}-row pane\n${full.join("\n")}`);
+	assert.ok(!full.some((line) => line.includes("more (/team for all)")), full.join("\n"));
+	const one = drawScreen(status, fixed + 1);
+	assert.ok(one.length <= fixed + 1, `${one.length} lines in a ${fixed + 1}-row pane\n${one.join("\n")}`);
+	assert.ok(one.includes("  +2 more (/team for all)"), one.join("\n"));
+	const two = drawScreen(status, fixed + 2);
+	assert.ok(two.length <= fixed + 2, `${two.length} lines in a ${fixed + 2}-row pane\n${two.join("\n")}`);
+	assert.ok(two.includes("  +2 more (/team for all)"), two.join("\n"));
+});
+
+test("the widget replaces fixed-content overflow with a truncation line", () => {
+	const fixed = renderScreen(fixture, now, undefined, {}, 0);
+	const rows = 5;
+	const lines = drawScreen(fixture, rows);
+	assert.equal(lines.length, rows);
+	assert.equal(lines.at(-1), `… ${fixed.length - rows + 1} more lines; enlarge the pane`);
+});
+
+test("fixed-content overflow at rows one and zero keeps the pane boundary", () => {
+	const fixed = renderScreen(fixture, now, undefined, {}, 0);
+	assert.deepEqual(drawScreen(fixture, 1), [`… ${fixed.length} more lines; enlarge the pane`]);
+	assert.deepEqual(drawScreen(fixture, 0), []);
+});
+
+test("fixed-content overflow counts a stale-error line before truncating", () => {
+	const fixed = renderScreen(fixture, now, undefined, {}, 0);
+	const rows = 5;
+	const lines = drawScreen(fixture, rows, 160, "status --json failed: exit 1");
+	assert.equal(lines.length, rows);
+	assert.equal(lines.at(-1), `… ${fixed.length - rows + 2} more lines; enlarge the pane`);
 });
 
 // Brief 3.1.1-2: t27 on 2026-11-01 routed to a pool no roster seat served,

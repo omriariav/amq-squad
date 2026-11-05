@@ -299,6 +299,37 @@ func (r *Router) pinTier(class, tableTier string, escalated bool, pin task.Pool)
 	return "", "the entry is only on tiers the class may not run on (" + strings.Join(allowed, ", ") + " allowed)"
 }
 
+func (r *Router) pinUnresolvedDetail(class string, pin task.Pool) string {
+	spec := r.o.Table.Classes[class]
+	chain := r.o.Table.Tiers[spec.Tier].Chain
+	keys := make([]string, 0, len(chain))
+	for _, entry := range chain {
+		keys = append(keys, entry.Key())
+	}
+	detail := fmt.Sprintf("the pin %s", pin.Key())
+	pinTier := tierOf(r.o.Table, pin)
+	if pinTier == "" {
+		return fmt.Sprintf("%s is in no tier; class %s runs on %s", detail, class, strings.Join(keys, ", "))
+	}
+	classes := []string{}
+	for name, classSpec := range r.o.Table.Classes {
+		if classSpec.Tier == pinTier {
+			classes = append(classes, name)
+		}
+	}
+	slices.Sort(classes)
+	classWords := ""
+	if len(classes) == 1 {
+		classWords = "class " + classes[0]
+	} else if len(classes) > 1 {
+		classWords = "classes " + strings.Join(classes, ", ")
+	}
+	if classWords == "" {
+		return fmt.Sprintf("%s is on the %s tier; class %s runs on %s", detail, pinTier, class, strings.Join(keys, ", "))
+	}
+	return fmt.Sprintf("%s is on the %s tier (%s); class %s runs on %s", detail, pinTier, classWords, class, strings.Join(keys, ", "))
+}
+
 var _ scheduler.Router = (*Router)(nil)
 
 func key(id string, n int) string { return id + "/" + strconv.Itoa(n) }
@@ -545,7 +576,7 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 			base = spec.Tier
 		}
 		if base == "" {
-			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: fmt.Sprintf("routing: the first attempt of %s ran on %s, which is on no tier class %s may run on", t.ID, entry.Key(), t.Class)}
+			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: r.pinUnresolvedDetail(t.Class, entry)}
 		}
 		if d.Policy == PolicyLeadPin {
 			pin = &entry
@@ -557,9 +588,9 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 			base, pin = tableTier, nil
 		}
 	case t.Attempt == 0 && t.Pool != nil:
-		pinTier, why := r.pinTier(t.Class, tableTier, escalated, *t.Pool)
+		pinTier, _ := r.pinTier(t.Class, tableTier, escalated, *t.Pool)
 		if pinTier == "" {
-			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: fmt.Sprintf("routing: pin %s for class %s: %s", t.Pool.Key(), t.Class, why)}
+			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: r.pinUnresolvedDetail(t.Class, *t.Pool)}
 		}
 		p := *t.Pool
 		base, pin, d.Policy, d.Propensity = pinTier, &p, PolicyLeadPin, 1

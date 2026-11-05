@@ -14,17 +14,36 @@ var opusHigh = task.Pool{Runtime: "claude", Model: "opus", Effort: "high"}
 // Brief 3.1.1-2 item 1, row 4 (the scheduler's half): a route to a pool no
 // roster seat serves (t27's claude:opus:high on 2026-11-01) is the named
 // wait no_roster_seat, with the pool in the state file for status, and no
-// line in the decisions log on any tick. Reverted, every tick logged a
-// seat_request_failed (8000+ lines in two and a half hours).
-func TestNoRosterSeatIsANamedWaitNotALogLine(t *testing.T) {
+// one wait_changed line when that reason changes, and no repeated line.
+// Reverted, every tick logged a seat_request_failed (8000+ lines in two and
+// a half hours).
+func TestNoRosterSeatIsANamedWaitNotARepeatedLogLine(t *testing.T) {
 	h, _ := newRosterHarness(t, Config{MaxSeats: 2, StatePath: filepath.Join(t.TempDir(), "scheduler.json")}, RosterSeat{Handle: "dev", Pool: sonnet})
 	h.tick()
 	tk := h.add("t27", &opusHigh)
 	for i := 0; i < 50; i++ {
-		if ds := h.tick(); count(ds, "seat_request_failed") > 0 {
+		ds := h.tick()
+		if count(ds, "seat_request_failed") > 0 {
 			t.Fatalf("tick %d logged %+v", i, ds)
 		}
+		if want := 0; i == 0 {
+			want = 1
+			if count(ds, "wait_changed") != want || ds[len(ds)-1].Reason != WaitNoRosterSeat {
+				t.Fatalf("first wait change: %+v", ds)
+			}
+		} else if count(ds, "wait_changed") != want {
+			t.Fatalf("tick %d repeated wait change: %+v", i, ds)
+		}
 		h.clk.Add(2 * time.Second)
+	}
+	if _, err := h.store.SetWait(tk.ID, task.WaitSeatCap, h.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if ds := h.tick(); count(ds, "wait_changed") != 1 || ds[len(ds)-1].Reason != WaitNoRosterSeat {
+		t.Fatalf("changed wait reason: %+v", ds)
+	}
+	if ds := h.tick(); count(ds, "wait_changed") != 0 {
+		t.Fatalf("unchanged wait reason repeated: %+v", ds)
 	}
 	if got := h.get(tk.ID); got.State != task.StatePending || got.WaitReason != WaitNoRosterSeat {
 		t.Fatalf("t27: %+v", got)

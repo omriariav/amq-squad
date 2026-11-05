@@ -15,6 +15,8 @@ import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx } from "./fakepi.ts";
 
+const { truncateToWidth } = await import("@earendil-works/pi-tui");
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtureText = fs.readFileSync(path.join(here, "status-fixture.json"), "utf8");
 const fixture = JSON.parse(fixtureText) as ScreenStatus;
@@ -371,7 +373,8 @@ test("an unknown key, an old /squad subcommand, or a key without the interactive
 	const r = rig(() => res(0, ""), []);
 	await r.screen.poll();
 	const lines = await r.press("squad", "clear");
-	assert.equal(keyLine(lines), "  /squad: There is no /squad clear any more: each action is its own command. The commands you can use now: /add /reset /dismiss /answer /widen /team hide (/squad goes in 3.2)");
+	const oldCommandLine = "  /squad: There is no /squad clear any more: each action is its own command. The commands you can use now: /add /reset /dismiss /answer /widen /team hide (/squad goes in 3.2)";
+	assert.equal(keyLine(lines), truncateToWidth(oldCommandLine, 160));
 	assert.equal(r.calls.length, 0);
 	const keys = new Keys(cfg(), async () => res(0, ""));
 	const unknown = await keys.press("foo", fakeCtx({ hasUI: true }), fixture);

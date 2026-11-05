@@ -165,7 +165,7 @@ func Build(in Input) Status {
 	task.DispatchOrder(tasks)
 	for _, t := range tasks {
 		row := classifyTask(t, in.Now)
-		row.WaitHolders = lockHolders(t, in.Tasks)
+		row.WaitHolders, row.WaitsFor = lockHolders(t, in.Tasks)
 		row.WaitPool = routeWaitPool(t, in.Scheduler.RouteWaits)
 		row.Bucket, row.BucketMarker = BucketFor(row.State, t.State == task.StateBlocked && t.BlockRoute == task.RouteOwner, true)
 		s.Tasks = append(s.Tasks, row)
@@ -382,6 +382,10 @@ func redactDocument(s *Status) {
 		// the row's reason code and wait reason copy it
 		t.Title, t.Evidence = redact.Block(t.Title), redact.Block(t.Evidence)
 		t.BlockReason, t.ReasonCode, t.WaitReason = redact.Block(t.BlockReason), redact.Block(t.ReasonCode), redact.Block(t.WaitReason)
+		for j := range t.WaitsFor {
+			t.WaitsFor[j].TaskID = redact.Block(t.WaitsFor[j].TaskID)
+			t.WaitsFor[j].Path = redact.Block(t.WaitsFor[j].Path)
+		}
 	}
 	for i := range s.Seats {
 		s.Seats[i].ReasonCode = redact.Block(s.Seats[i].ReasonCode) // a held task's block reason
@@ -421,18 +425,22 @@ func redactDocument(s *Status) {
 // lockHolders are the tasks that hold a pending task's file lock, by the
 // task store's rule (task.Blocker): in progress or blocked, with declared
 // files overlapping its own. [] unless the task waits on a file lock.
-func lockHolders(t task.Task, all []task.Task) []string {
+func lockHolders(t task.Task, all []task.Task) ([]string, []FileWait) {
 	out := []string{}
+	waits := []FileWait{}
 	if t.State != task.StatePending || t.WaitReason != task.WaitFileLock {
-		return out
+		return out, waits
 	}
 	for _, o := range all {
 		if o.ID != t.ID && (o.State == task.StateInProgress || o.State == task.StateBlocked) && task.FilesOverlap(t.DeclaredFiles, o.DeclaredFiles) {
 			out = append(out, o.ID)
+			path, _ := task.OverlapDeclaration(t.DeclaredFiles, o.DeclaredFiles)
+			waits = append(waits, FileWait{TaskID: o.ID, Path: path})
 		}
 	}
 	sort.Strings(out)
-	return out
+	sort.Slice(waits, func(i, j int) bool { return waits[i].TaskID < waits[j].TaskID })
+	return out, waits
 }
 
 // classifySeat gives a seat row its state; routed is true when its blocker
