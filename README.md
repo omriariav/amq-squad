@@ -65,7 +65,7 @@ release of 3.1, which puts launch speed and the lead's screen first:
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.0
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.1
 amq-squad version
 ```
 
