@@ -116,6 +116,7 @@ type seat struct {
 	requestID    string // the request it joined on: the identity the liveness check reads the launch ledger by
 	freeSince    time.Time
 	lastActivity time.Time
+	joinedAt     time.Time // the current SeatUp; older lapsed attempts do not exclude a relaunched seat
 	unresponsive bool      // held a lease it never claimed; no dispatch until it shows activity
 	closing      string    // a close the launcher could not do yet: counted, never dispatched, retried each tick
 	awaitGone    bool      // closed, termination not yet confirmed: counted and never dispatched until SeatGone
@@ -555,7 +556,7 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				}
 				continue
 			}
-			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, requestID: ev.RequestID, launchedAt: requestedAt}
+			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, joinedAt: ev.At, requestID: ev.RequestID, launchedAt: requestedAt}
 			log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
 			s.clearLaunchFailures(ev.Pool)
 		case SeatLaunchFailed:
@@ -999,7 +1000,11 @@ func legacyMergeDependencies(t task.Task, list []task.Task) []string {
 func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string {
 	lapsed := map[string]bool{}
 	for _, a := range t.Attempts {
-		if a.Outcome == task.OutcomeUnclaimed || a.Outcome == task.OutcomeExpired {
+		joinedAt := time.Time{}
+		if st := s.seats[a.Holder]; st != nil {
+			joinedAt = st.joinedAt
+		}
+		if (a.Outcome == task.OutcomeUnclaimed || a.Outcome == task.OutcomeExpired) && (joinedAt.IsZero() || !a.GrantedAt.Before(joinedAt)) {
 			lapsed[a.Holder] = true
 		}
 	}
