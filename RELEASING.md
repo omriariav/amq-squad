@@ -56,8 +56,11 @@ version.
    10 s, in the release evidence (`docs/v3-spike/5-release-evidence/release-<tag>/`).
    A dead pane or any `Failed to load extension` line means the release is
    not done. `make release-smoke` checks only the version, and CI stages no pi
-   runtime: 3.1.0 and 3.1.1 shipped a lead that exited at once
-   (`docs/v3-spike/312-evidence/hotfix-hostfacts.md`).
+   runtime: 3.1.0 and 3.1.1 shipped a lead that exited at once. The first
+   instance is the 3.1.2 evidence: the built lead's first screen, and the
+   3.1.1 build's dead pane beside it, in
+   `docs/v3-spike/312-evidence/hotfix-hostfacts.md`. The 3.1.2 cut records
+   the installed binary's screen in `docs/v3-spike/5-release-evidence/release-v3.1.2/`.
 
 ## Minor release checklist
 
