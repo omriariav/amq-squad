@@ -1,0 +1,32 @@
+# amq-squad v3.1.1 release evidence (2026-11-05)
+
+- Tag: v3.1.1 -> 137d861376cae0d7e800c055b6f1ea966f22bd18, the merge commit of the bump PR #880 (the 3.1.1 version bump, the install lines and the README's 3.1.1 notes row, on top of #877's notes). `git rev-parse 'v3.1.1^{}'` after `git fetch --tags` prints that commit. Cut by the installed 3.1.0-rc.1 binary (R54).
+- Release: https://github.com/omriariav/amq-squad/releases/tag/v3.1.1, published 2026-11-05T09:57:43Z (`gh release view`: isPrerelease false, isDraft false, targetCommitish 137d8613). `gh api releases/latest` returns v3.1.1, so it is the latest release.
+- Before prepare: `make release-check VERSION=v3.1.1` at the tag commit, in a scratch worktree, without the marketplace flag: "release metadata matches v3.1.1". The main join had not happened (`git merge-base --is-ancestor origin/v3 origin/main` false), as for rc.1 and 3.1.0.
+- The notes file is docs/v3.1.1-release-notes.md at the tag, sha256 03900300cd6d76506c325eb0374daa8fd4fcf13312d0e4dc552348689b6487dc (notes-body.sha256), 37537 bytes. It was both prepare's and publish's `--notes-file`, with the gate note "release body set from docs/v3.1.1-release-notes.md at 137d8613; notes sha256 <that>".
+
+## Two gate series
+
+- Series v311 (inert). The session root `/Users/omri/code/amq-squad/.agent-mail/v311` was created before prepare, identity `root-sha256:a802b67632f7f687b370d89f424ccdfe0e03462f63ec459e3672602ae66e90da` (squadid-expected.txt). release-prepare.json: release id release-v1-3991f43719ac8f7904fe95e16395dc165caf2c29cb6cb927eaade861862fbcbd, gates rel-tag-826fe3c4d86edd2aa5bb and rel-gh-81fc07a92869d6a5d6cb, raised 2026-11-05T07:49:26Z with the window 07:48:26Z to 08:19:26Z (30 minutes). The owner's first two replies (07:50:11Z, 07:50:19Z, events 11b4f3b0… and e14b0461…) were plain "yes" DMs, not in the gate threads, so the attach routed them to the user mailbox and the gates stayed open. The in-thread answers came at 09:39:19Z (event 1d82ac85…, rel-tag) and 09:39:30Z (event efd4b4b4…, rel-gh); both were refused `outside_window` ("created_at … outside [2026-11-05T07:48:26Z, 2026-11-05T08:19:26Z]"). Not an error of the owner's key or of the flow: the window had lapsed. attach-v311.jsonl holds these events.
+- Why a new series. A second prepare with the same flags found the same release and the same gates and did not renew the window (release-prepare-v311-rerun-same-spec.json). A prepare with a changed gate note was refused: "release spec changed; in 3.0 a changed release is a new tag, a new parent gate and a new series" (release-prepare-changed-note-refused.txt). A new session root was therefore the way to a new series, as for 3.0.2's v303. Nothing was deleted by hand; the v311 records stay inert.
+- Series v311b (the one that cut the release). Root `/Users/omri/code/amq-squad/.agent-mail/v311b`, identity `root-sha256:50cdf3393b72e59ae2da15582038b20dfe8bd52d17ced28220d86c15943433ae` (squadid-expected-v311b.txt). release-prepare.json is the first series' record and release-prepare-2.json is this one's: release id release-v1-3c1f59c0e6c242ce416163838a5b91038d1a4a6979ec507aef0bca107b010e6d, gates rel-tag-a07ff3a24720771d62d5 ("git tag v3.1.1 137d861376cae0d7e800c055b6f1ea966f22bd18 on omriariav/amq-squad") and rel-gh-5977f1ea3ce6d65bc374 ("gh release create v3.1.1 on omriariav/amq-squad"), window 2026-11-05T09:41:42Z to 10:12:42Z.
+- The owner's approvals (attach-v311b.jsonl, the attach on the mailbox "user"): rel-tag approved at 09:43:00Z ("accepted rel-tag-a07ff3a24720771d62d5 tag", event aca9e54b8e8647df0c17bf4ce68848604616b0736296effb21289d9e50188c6b) and rel-gh approved at 09:43:05Z ("accepted rel-gh-5977f1ea3ce6d65bc374 github_release", event eed8dbfbcb89d5fb58ccc468b3b19cb9c95b3da02a58826c5cfce842f027f049).
+
+## The attach and the owner's other approvals
+
+- The attach swap. The v31 attach (pid 37212) was stopped by the lead on the owner's approval, because one attach may hold the mailbox. One attach for session v311 ran from 07:47:27Z until it was stopped before the v311b prepare (a second attach, for v311b, started 09:42:26Z). After publish the v311b attach was stopped and the usual v31 attach was started again at 09:58:38Z. The amq-remote endpoint (serve and up, running since 2026-10-30) was not ended by the swaps, so no `amq-remote up` was needed.
+- The pane line. On 2026-11-05 the owner approved the one typed line into the lead's pane (the roster relaunch, R4); that approval is the evidence of that step.
+- The publish. The agent's `release publish` was denied by the permission system ("Create Public Surface"). The lead ran it from the lead session on the owner's explicit approval ("Yes, publish"): exit 0, the tag step ran (result 137d861376cae0d7e800c055b6f1ea966f22bd18) and the github_release step ran (result the release URL). release-publish.json holds the output.
+- The courtesy line to the owner (an AMQ status message to the v311 root's user mailbox) was not relayed by the attach and was skipped; the owner had read the same text in the session.
+
+## The published body
+
+Checked after publish with `gh release view --json body`: the first 37537 bytes of the published body are the notes file byte for byte (`cmp` equal), followed by two blank lines and the release flow's own marker line `<!-- amq-squad-release-nonce: … -->`, 68 bytes in all. Nothing else differs.
+
+## The build
+
+Built from the tag in a scratch worktree with `scripts/build-pi-runtime.sh all` (build.log): the pi-1.3.0 / node 22.21.1 darwin-arm64 payload, exit 0, binary 72345074 bytes at `build/pi/amq-squad`; `amq-squad version` from it prints `amq-squad v3.1.1`.
+
+## The main join
+
+PR from v3 to main, after the tag, as #842 was for 3.1.0. Its number is in the lead's report.
