@@ -589,9 +589,10 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	task_unbound: ["no task is bound to it", "bind it through its task"],
 	pr_head_moved: ["its head moved after the check", "nothing to do; the train checks it again"],
 	history_incomplete: ["its push history could not be read whole", "the train tries again; ask the owner if it repeats"],
-	// #871: the branch protection's strict up-to-date rule, with a branch the
-	// train cannot bring up to date safely (mergetrain train.go applyStrict)
-	strict_required_status_checks_policy: ["its branch is behind its base and the train cannot bring it up to date safely", "rebase the PR by hand, then the train tries again"],
+	// #871: the branch protection's strict up-to-date rule (mergetrain
+	// train.go applyStrict). A seat branch is never rebased by hand: the
+	// remedy is the lead's (the plan reviewer on #873)
+	strict_required_status_checks_policy: ["its branch is behind its base", "the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base"],
 };
 
 // TRAIN_KIND_WORDS maps each entry kind the merge train journals

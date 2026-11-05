@@ -39,10 +39,13 @@ row 7) failed before this change: #871 added the merge train rule
 `strict_required_status_checks_policy` (internal/mergetrain checks.go
 `RuleStrictUpToDate`) and the journal entry kind `reconcile` (train.go,
 a replayed merge fact skipped because the task's bound head changed) had
-no words. Both are mapped here ("its branch is behind its base and the train
-cannot bring it up to date safely; rebase the PR by hand, then the train
-tries again"; "skipped a merge record whose head is no longer the task's"),
-so the pi gate is green again. Every other scan (waits, blocks, launch
+no words. Both are mapped here, so the pi gate is green again. The strict
+rule's line is the lead's remedy, since a seat branch is never rebased by
+hand (the plan reviewer on #873): "the merge train stopped at PR #9: its
+branch is behind its base; the train brings it up to date and waits for its
+checks; if the train cannot, reset the task so a seat redoes it on the
+current base"; the `reconcile` entry reads "skipped a merge record whose
+head is no longer the task's". The row 4 stop test pins the strict line. Every other scan (waits, blocks, launch
 codes, seat codes, warnings, relay names, decision kinds) found nothing
 unmapped at the tip.
 
