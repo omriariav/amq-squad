@@ -29,8 +29,9 @@ asked for; then `c267382d` and `f1edd375`, the notes on it; then
 `1cd21fa1`, the baseline removed (the plan reviewer on `f1edd375`, the
 section "The baseline removed"), and `c5754be4`, its note; then
 `28051cd6`, the alarm id and the decision by alarm (the plan reviewer's
-ruling on Codex's delta pass on `c267382d`, the section "The alarm id");
-then this note. The helper move of `8017ffea` is between
+ruling on Codex's delta pass on `c267382d`, the section "The alarm id"),
+and `5d2a576a`, its note; then `c83e6ef3`, the row for a decision whose
+hold is released before its record is sealed; then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -694,8 +695,15 @@ per hold as the root fix, with six conditions; as built:
    stale. The stale case is refused where it can still arise, at the
    socket: a decision naming an alarm the seat is not held by now is
    `recover_alarm_not_held`, answered to the lead (no tick line is
-   needed). The reviewer's condition named the notification; this
-   removal is put to them.
+   needed). This replaces the reviewer's condition 4 (the notification
+   carrying the id), and the reviewer accepted it on `5d2a576a` as better
+   than adding the id: the sealed `LedgerRecovery.Alarm` makes the release
+   a pure reconciliation from the ledger, so no in-process message is left
+   to go stale, and a stale id is refused at the socket. The one window the
+   socket's check cannot close (the check passes for A, then A's hold is
+   released by its slot and B is raised before A's record is sealed) is
+   closed by the record itself: it names A, so B stays held
+   (`TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold`, `c83e6ef3`).
 5. **Rows**, each with a revert run below: the no-slot hold released by
    its alarm after the ledger verifies (and across a restart); the
    lower-seq slot recovered by its own slot while X releases only by its
@@ -770,6 +778,7 @@ CLI.
 | no slot | A hold with no slot (seq 150): its block names its alarm (`; alarm ID)`); a record naming a slot at the hold's seq, and a decision by alarm for another alarm, release nothing over 10 ticks; the state file keeps the alarm and a restarted scheduler publishes it (`HeldAlarm`); the decision by its own alarm releases the hold, resets the task and dispatches it, and the seat is no longer published as held. | `internal/scheduler` `TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm` |
 | lower-seq slot | A hold on slot seq150; the ledger records the recovery of a lower-seq slot (seq1): 10 ticks release nothing; the decision by the hold's alarm releases it, and the release line names the alarm. | `internal/scheduler` `TestALowerSeqSlotLeavesTheHoldToItsAlarm` |
 | late decision | A newer hold (alarm B); the ledger records a decision by an earlier alarm A (landing late): 20 ticks release nothing; B's own decision releases it. | `internal/scheduler` `TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold` |
+| released before the seal | The decision by alarm for A passes the socket's check (`HeldAlarm` is A); before its record is sealed the lead cancels A's task, the ledger records A's slot and the next prepare is refused again: one tick releases A and raises B (a new id), the next task blocked; the record then sealed names A: 20 ticks release nothing, B stands; B's own decision releases it. | `internal/scheduler` `TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold` |
 | the decision by alarm | Real files through the apply step: a hold with no slot (alarm `3fa9c1d2`), its task blocked with its detail; on the tampered ledger the decision is `recover_alarm_unverified` and the ledger is unchanged; a wrong id is `recover_alarm_not_held` naming the held alarm; the document put back, 5 ticks release nothing; the decision is OK, `Verified`, link 2, the record names the alarm and no slot; the next ticks release, reset and dispatch; the decision line says "released alarm 3fa9c1d2 of seat ..."; the same id once the hold is gone is `recover_alarm_not_held`. | `internal/schedproc` `TestTheAlarmVerbReleasesAHoldWithNoSlot` |
 | the lowered head | Real files: the chain at link N; slot X at seq N; the decision by alarm on the tampered ledger is `recover_alarm_unverified`, nothing written; the head lowered to seq 1, slot Y; X refused while the live document is Y's; Y's recovery at link 2; X refused again, "behind the slot's seq N"; a decision by alarm with a carry is refused; the decision by alarm seals link 3 with the record naming the alarm (no slot, no seq, `Verified`), the body otherwise unchanged; sent again it is `AlreadyRecovered`. | `internal/seatcommit` `TestADecisionByAlarmAnswersAHoldNoSlotCan` |
 | the verb's flags | `scheduler recover --alarm` refuses `--seq`, `--slot`, `--carry`, an id that is not eight hex characters and a missing `--reason` before any send; a send carries the seat, the alarm and the reason only, and the output names the alarm and its link. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
@@ -2135,6 +2144,27 @@ scheduler_recover_test.go:55: alarm and seq: scheduler recover: no running sched
 ```
 restored and re-run (exit 0): `ok` 0.424s.
 
+### a record for a released alarm (`c83e6ef3`)
+
+```
+go test -count=1 -run ^TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:345` (a decision by alarm matched
+on the seat instead of the alarm):
+```
+		return rec.Alarm == tm.Alarm
+```
+to:
+```
+		return true // any decision by alarm for this seat
+```
+First failing line (exit 1):
+```
+tamper_test.go:908: A's late record released B: [{Kind:task_reset TaskID:t2 Seat:seat-a Pool: Reason:the commits ledger of seat seat-a was recovered by the lead; the task returns to pending Stage: ReasonCode:} ...]
+```
+`--- FAIL: TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold (0.16s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.419s`.
+
 ## Gates
 
 The PR lands in two phases (the plan reviewer's changed ruling on the
@@ -2149,7 +2179,16 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `28051cd6` (the alarm id; this note is the only change
+On `c83e6ef3` (one test row after `5d2a576a`; this note the only change
+after it), the gates the lead named for a row and a note:
+`go test -count=1 ./internal/scheduler/`: exit 0; `gate-lock.sh 904-gates
+-- sh -c 'go build ./... && go vet ./... && go test -count=1 ./...'` (the
+whole module, under the gate lock, printing `c83e6ef3`): exit 0, 56
+packages `ok`, no `FAIL`; `make fmt-check` with Go 1.26's gofmt: exit 0;
+the redact check and the skill checks on this note: exit 0. The other
+gates stand from `28051cd6` below (no file they read changed).
+
+Phase one, on `28051cd6` (the alarm id; `5d2a576a`'s note the only change
 after it), each from the worktree root. The whole-module test, `npm
 test` and `make ci` ran under the gate lock, one after another, each
 printing the head (`28051cd6`) inside the lock:
