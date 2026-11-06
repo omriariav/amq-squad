@@ -78,15 +78,20 @@ func prepareError(handle string, err error) error {
 
 // recoveryMark is a ledger's recovery record as the scheduler compares it.
 func recoveryMark(r seatcommit.LedgerRecovery) scheduler.RecoveryMark {
-	return scheduler.RecoveryMark{Seq: r.Seq, Slot: r.Slot, Alarm: r.Alarm}
+	return scheduler.RecoveryMark{Seq: r.Seq, Slot: r.Slot, SlotAlarm: r.Alarm}
 }
 
 // LedgerRecovery is the recovery the seat's sealed ledger records
 // (scheduler.RecoveryReader): the scheduler's tick releases a held seat
 // against it, never against a message.
 func (c *CleanSeats) LedgerRecovery(handle string) (scheduler.RecoveryMark, bool) {
-	r, ok := seatcommit.RecoveryOf(c.Root, handle)
-	return recoveryMark(r), ok
+	slot, alarms, ok := seatcommit.RecoveriesOf(c.Root, handle)
+	var m scheduler.RecoveryMark
+	if slot != nil {
+		m = recoveryMark(*slot)
+	}
+	m.Alarms = alarms
+	return m, ok
 }
 
 // ArchiveAttempt records a typed block's stopped tree immediately, before a

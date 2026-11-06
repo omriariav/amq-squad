@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -74,13 +75,17 @@ type LedgerTamper struct {
 	Alarm string `json:"alarm"`
 }
 
-// RecoveryMark is a recovery record as the scheduler reads it: the
-// quarantined seq and slot it continued from, or the alarm a decision by
-// alarm released (no slot, no seq).
+// RecoveryMark is what a seat's sealed ledger records of the lead's
+// recoveries, as the scheduler reads it: the chain's own record (the
+// quarantined seq and slot it continued from, and the alarm when a
+// decision by alarm made it, SlotAlarm), and the alarm id of every
+// decision by alarm the ledger keeps (one record per alarm, never
+// replaced; the plan reviewer's ruling on Codex's pass on 254f2c2c).
 type RecoveryMark struct {
-	Seq   int    `json:"seq"`
-	Slot  string `json:"slot"`
-	Alarm string `json:"alarm,omitempty"`
+	Seq       int      `json:"seq"`
+	Slot      string   `json:"slot"`
+	SlotAlarm string   `json:"slot_alarm,omitempty"`
+	Alarms    []string `json:"alarms,omitempty"`
 }
 
 // newAlarmID is a hold's alarm id: eight hex characters from the system's
@@ -299,7 +304,7 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 		delete(s.tampered, h)
 		s.preparePassed(h)
 		what := fmt.Sprintf("the lead's recovery from quarantine seq %d (%s)", seq, slot)
-		if rec.Alarm != "" {
+		if slices.Contains(rec.Alarms, tm.Alarm) {
 			what = "the lead's decision by alarm"
 		}
 		log(Decision{Kind: "ledger_hold_released", Seat: h, Reason: fmt.Sprintf("the commits ledger of seat %s records %s; alarm %s is released and the seat is grantable again", h, what, tm.Alarm)})
@@ -340,11 +345,24 @@ func reasonIdentity(reason string) string {
 // itself a lowered seq). A decision by alarm for any other alarm (an
 // earlier hold's, landing late) answers nothing, so it never releases a
 // newer hold. A hold with no slot is answered only by its alarm.
+//
+// The records are kept per alarm, so a decision for an earlier alarm that
+// is sealed after a newer one never takes the newer one's record away,
+// whatever the interleaving. The lock order is the ledger lock, then the
+// scheduler's mutex: the decision's guard (schedproc) reads HeldAlarm
+// under s.mu while it holds the ledger lock; the tick never holds s.mu
+// while it calls the preparer or the reader (every s.mu section is a
+// copy of a field), so it never takes them the other way round. The tick
+// changes the holds (s.tampered) without the ledger lock; a hold that
+// changes between a guard and its seal costs nothing, since the record
+// sealed names its own alarm only.
 func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
-	if rec.Alarm != "" {
-		return rec.Alarm == tm.Alarm
+	for _, a := range rec.Alarms {
+		if a == tm.Alarm {
+			return true
+		}
 	}
-	return tm.Quarantine != "" && rec.Slot == tm.Quarantine
+	return tm.Quarantine != "" && rec.Slot == tm.Quarantine && rec.SlotAlarm == ""
 }
 
 // names reports whether a task's block is this hold's own: blocked

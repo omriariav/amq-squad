@@ -311,6 +311,11 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 	}
 	l := Ledger{Schema: LedgerSchema, Handle: o.Handle, Worktree: rec.Worktree, Branch: rec.Branch, Base: base, Commits: carried, At: now,
 		Target: o.Target, EvidenceSeq: evidenceSeqOf(repo, o.Handle), Recovered: recovery}
+	if o.Alarm != "" {
+		// a decision by alarm recovering from its own copy: the new body's
+		// alarm records start with this decision's
+		l.AlarmRecoveries = []LedgerRecovery{*recovery}
+	}
 	if l.Commits == nil {
 		l.Commits = []LedgerCommit{}
 	}
@@ -409,14 +414,17 @@ func recordAlarm(o RecoverOptions) (RecoverResult, error) {
 	if live.Seal == nil {
 		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s has no seal", o.Handle)
 	}
-	if r := live.Recovered; r != nil && r.Alarm == o.Alarm {
-		return RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Verified: true, Alarm: o.Alarm, NewSeq: r.Link, Base: live.Base}, nil
+	for _, r := range live.alarmRecords() {
+		if r.Alarm == o.Alarm {
+			return RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Verified: true, Alarm: o.Alarm, Slot: r.Slot, NewSeq: r.Link, Base: live.Base}, nil
+		}
 	}
 	now := o.Now.UTC()
 	prev := live.Seal
 	l := live
 	l.Seal = nil
-	l.Recovered = &LedgerRecovery{Alarm: o.Alarm, By: o.Lead, Reason: o.Reason, At: now, Verified: true, Link: prev.Seq + 1}
+	// appended, never replacing another alarm's record (nor Recovered)
+	l.AlarmRecoveries = append(append([]LedgerRecovery(nil), live.AlarmRecoveries...), LedgerRecovery{Alarm: o.Alarm, By: o.Lead, Reason: o.Reason, At: now, Verified: true, Link: prev.Seq + 1})
 	if err := guard(o); err != nil {
 		return out, err
 	}
@@ -640,6 +648,32 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, common st
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out, nil
+}
+
+// alarmRecords are the ledger's decisions by alarm: the per-alarm list,
+// and the chain's own record when a decision by alarm made it.
+func (l Ledger) alarmRecords() []LedgerRecovery {
+	out := append([]LedgerRecovery(nil), l.AlarmRecoveries...)
+	if l.Recovered != nil && l.Recovered.Alarm != "" {
+		out = append(out, *l.Recovered)
+	}
+	return out
+}
+
+// RecoveriesOf is everything a seat's sealed ledger records of the lead's
+// recoveries, read without a quarantine, in one read: the chain's own
+// record (nil when none) and the alarm ids of every decision by alarm; ok
+// when the ledger verifies and records any. The scheduler's tick releases
+// a hold from it.
+func RecoveriesOf(root, handle string) (slot *LedgerRecovery, alarms []string, ok bool) {
+	l, _, err := readLedger(root, handle)
+	if err != nil {
+		return nil, nil, false
+	}
+	for _, r := range l.alarmRecords() {
+		alarms = append(alarms, r.Alarm)
+	}
+	return l.Recovered, alarms, l.Recovered != nil || len(alarms) > 0
 }
 
 // RecoveryOf is the recovery a seat's ledger records, read without a

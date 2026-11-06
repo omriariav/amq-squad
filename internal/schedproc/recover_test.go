@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -436,8 +437,8 @@ func TestTheAlarmVerbReleasesAHoldWithNoSlot(t *testing.T) {
 	if !reply.OK || json.Unmarshal(reply.Data, &res) != nil || res.Alarm != alarm || !res.Verified || res.NewSeq != 2 {
 		t.Fatalf("the decision by alarm: %+v", reply)
 	}
-	if rec, ok := seatcommit.RecoveryOf(r.root, r.handle); !ok || rec.Alarm != alarm || rec.Slot != "" || rec.Link != 2 {
-		t.Fatalf("the sealed record: %v %+v", ok, rec)
+	if l, err := seatcommit.ReadLedger(r.root, r.handle); err != nil || len(l.AlarmRecoveries) != 1 || l.AlarmRecoveries[0].Alarm != alarm || l.AlarmRecoveries[0].Slot != "" || l.AlarmRecoveries[0].Link != 2 {
+		t.Fatalf("the sealed record: %v %+v", err, l.AlarmRecoveries)
 	}
 	all := r.ticks(3)
 	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) || !has(all, "dispatched", r.tk.ID, r.handle) {
@@ -577,13 +578,51 @@ func TestADelayedAlarmDecisionNeverSealsOverANewerRecovery(t *testing.T) {
 	if replyA.OK || replyA.Code != RefusedRecoverAlarmNotHeld {
 		t.Fatalf("A after B's recovery: %+v", replyA)
 	}
-	if rec, ok := seatcommit.RecoveryOf(r.root, r.handle); !ok || rec.Alarm != b {
-		t.Fatalf("the record after A resumed: %v %+v", ok, rec)
+	if _, alarms, ok := seatcommit.RecoveriesOf(r.root, r.handle); !ok || !slices.Contains(alarms, b) || slices.Contains(alarms, a) {
+		t.Fatalf("the records after A resumed: %v %v", ok, alarms)
 	}
 	if all := r.ticks(2); !has(all, "ledger_hold_released", "", r.handle) {
 		t.Fatalf("B was not released: %+v", all)
 	}
 	if _, held := r.s.HeldAlarm(r.handle); held {
 		t.Fatal("the seat is still held")
+	}
+}
+
+// The plan reviewer's ruling on Codex's pass on 254f2c2c, the root fix:
+// the ledger keeps one record per alarm. B holds the seat and B's decision
+// by alarm is sealed; then an older alarm A's record lands after it (a
+// writer with no guard: a decision whose check passed long before). The
+// ledger keeps both records, and the next ticks release B, which stays
+// released. Reverted (the single field: A's record replaces B's), B is
+// never released.
+func TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if err := os.WriteFile(p, r.original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const a, b = "a0000001", "b0000002"
+	r.s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: r.handle, Seq: "1", Detail: "seat " + r.handle + ": the refused document could not be quarantined (seq 1; alarm " + b + "): x", At: r.now, Alarm: b}}})
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: b, Reason: "B, investigated"}); !reply.OK {
+		t.Fatalf("B's decision: %+v", reply)
+	}
+	// A's record lands after B's
+	if _, err := seatcommit.RecoverLedger(seatcommit.RecoverOptions{Root: r.root, Handle: r.handle, Alarm: a, Lead: "lead", Reason: "A, late", Now: r.now}); err != nil {
+		t.Fatalf("A's late record: %v", err)
+	}
+	all := r.ticks(3)
+	if !has(all, "ledger_hold_released", "", r.handle) {
+		t.Fatalf("B was not released after A's record landed: %+v", all)
+	}
+	if _, alarms, ok := seatcommit.RecoveriesOf(r.root, r.handle); !ok || !slices.Equal(alarms, []string{b, a}) {
+		t.Fatalf("the ledger's alarm records: %v %v, want [%s %s]", ok, alarms, b, a)
+	}
+	if more := r.ticks(5); len(kinds(more, "ledger_hold_released")) != 0 {
+		t.Fatalf("a second release: %+v", more)
+	}
+	if _, held := r.s.HeldAlarm(r.handle); held {
+		t.Fatal("B is held again")
 	}
 }

@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderScreen, type ScreenStatus } from "../extensions/lib/screen.ts";
-import { blockNeedsRecord, blockWords, decisionKind, decisionWords, tamperAlarm, tamperRecord } from "../extensions/lib/words.ts";
+import { blockNeedsRecord, blockWords, decisionKind, decisionWords, RECOVER_REFUSAL_WORDS, tamperAlarm, tamperRecord } from "../extensions/lib/words.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(fs.readFileSync(path.join(here, "status-fixture.json"), "utf8")) as ScreenStatus;
@@ -109,4 +109,22 @@ test("the alarm: the stop line and the block name the hold's alarm and the decis
 	const write = `the commits ledger refused the write: commit ledger dev: ledger_tampered: the tag of commits.dev link 150 fails; the refused document is quarantined at ${slot}`;
 	assert.equal(tamperAlarm(write), undefined);
 	assert.equal(blockWords(t, { block_detail: write }).line, "t7 blocked: the seat's commit record failed its check; the lead investigates before the seat works again");
+});
+
+// The plan reviewer's ruling on Codex's pass on 254f2c2c: the decision by
+// alarm's two refusal codes have words, and the codes are the ones Go
+// writes (read from the sources, so a renamed code fails here). Reverted
+// (an entry dropped), the row names the code without words.
+test("the alarm: the decision by alarm's refusals have words, for the codes Go writes", () => {
+	const repo = path.join(here, "..", "..");
+	const goCodes = [
+		...fs.readFileSync(path.join(repo, "internal", "schedproc", "recover.go"), "utf8").matchAll(/RefusedRecoverAlarmNotHeld = "([a-z_]+)"/g),
+		...fs.readFileSync(path.join(repo, "internal", "seatcommit", "recover.go"), "utf8").matchAll(/RecoverAlarmUnverified = "([a-z_]+)"/g),
+	].map((m) => m[1]);
+	assert.deepEqual(goCodes, ["recover_alarm_not_held", "recover_alarm_unverified"]);
+	for (const code of goCodes) {
+		const w = RECOVER_REFUSAL_WORDS[code];
+		assert.ok(w && w[0] && w[1], `${code} has no words`);
+		assert.ok(!/[a-z]+_[a-z_]+/.test(w.join(" ")), `${code}'s words carry a code: ${w.join("; ")}`);
+	}
 });

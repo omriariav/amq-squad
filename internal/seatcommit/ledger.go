@@ -75,6 +75,14 @@ type Ledger struct {
 	// link of a recovered chain carries it; the next write keeps it (the
 	// chain's record of where it continued from).
 	Recovered *LedgerRecovery `json:"recovered,omitempty"`
+	// AlarmRecoveries are the lead's decisions by alarm, one record per
+	// alarm id, appended and never replaced (the plan reviewer's ruling on
+	// Codex's pass on 254f2c2c: a single field let an older alarm's late
+	// decision replace a newer one's, stranding the newer hold). The
+	// scheduler releases a hold when any record names its alarm. A chain
+	// continuation starts a new body, which carries only its own decision's
+	// record. Every later write keeps the list, as it keeps Recovered.
+	AlarmRecoveries []LedgerRecovery `json:"alarm_recoveries,omitempty"`
 	// Seal is the ledger's link in its chain (the ruling of the phase 5
 	// re-pass): an HMAC tag keyed by the session seed over the ledger
 	// without its seal, its seq and the previous version's tag; the signed

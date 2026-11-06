@@ -760,8 +760,15 @@ func TestADecisionByAlarmAnswersAHoldNoSlotCan(t *testing.T) {
 	if err != nil || after.Seal.Seq != 3 || after.Seal.Prev != before.Seal.Tag {
 		t.Fatalf("the next link: %v %+v", err, after.Seal)
 	}
-	if r := after.Recovered; r == nil || r.Alarm != "3fa9c1d2" || r.Slot != "" || r.Seq != 0 || !r.Verified || r.Link != 3 || r.By != "cto" {
-		t.Fatalf("the record: %+v", after.Recovered)
+	if len(after.AlarmRecoveries) != 1 {
+		t.Fatalf("the alarm records: %+v", after.AlarmRecoveries)
+	}
+	if r := after.AlarmRecoveries[0]; r.Alarm != "3fa9c1d2" || r.Slot != "" || r.Seq != 0 || !r.Verified || r.Link != 3 || r.By != "cto" {
+		t.Fatalf("the record: %+v", r)
+	}
+	// the chain's own record (Y's recovery) stays; nothing replaces it
+	if after.Recovered == nil || after.Recovered.Slot != y.Slot {
+		t.Fatalf("Y's record: %+v", after.Recovered)
 	}
 	if len(after.Commits) != len(before.Commits) || after.Base != before.Base {
 		t.Fatalf("the body changed: %+v", after)

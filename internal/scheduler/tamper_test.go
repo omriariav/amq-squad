@@ -32,6 +32,20 @@ type recoveryRecord struct {
 	alarm string
 }
 
+// mark is the record as the reader answers it: a record with a slot is
+// the chain's own (its alarm, if any, is SlotAlarm), and its alarm is one
+// of the ledger's decisions by alarm.
+func (r recoveryRecord) mark() RecoveryMark {
+	m := RecoveryMark{Seq: r.seq, Slot: r.slot}
+	if r.alarm != "" {
+		m.Alarms = []string{r.alarm}
+		if r.slot != "" {
+			m.SlotAlarm = r.alarm
+		}
+	}
+	return m
+}
+
 func (p *tamperPreparer) PrepareSeat(h string) error {
 	if h == p.seat {
 		p.calls++
@@ -54,7 +68,7 @@ func (p *tamperPreparer) recover(h string, seq int, slot string) {
 
 func (p *tamperPreparer) LedgerRecovery(h string) (RecoveryMark, bool) {
 	r, ok := p.ledgers[h]
-	return RecoveryMark{Seq: r.seq, Slot: r.slot, Alarm: r.alarm}, ok
+	return r.mark(), ok
 }
 
 var _ RecoveryReader = (*tamperPreparer)(nil)
@@ -427,7 +441,7 @@ func (p *twoSeatPreparer) PrepareSeat(h string) error {
 
 func (p *twoSeatPreparer) LedgerRecovery(h string) (RecoveryMark, bool) {
 	r, ok := p.ledgers[h]
-	return RecoveryMark{Seq: r.seq, Slot: r.slot, Alarm: r.alarm}, ok
+	return r.mark(), ok
 }
 
 func intPtr(n int) *int { return &n }
