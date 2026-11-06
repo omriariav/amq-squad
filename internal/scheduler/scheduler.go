@@ -232,10 +232,6 @@ type Scheduler struct {
 	// exitRefused is the last refusal logged per cancelled attempt whose
 	// check holds the seat (exits.go, Codex's D on #898): once per reason.
 	exitRefused map[string]string
-	// held is each seat's lease (task#attempt) at the end of the previous
-	// tick (rememberHeld): a cancellation of one of these is a turn that is
-	// live on the seat, which is closed before its clean (3.2.0-2b-1).
-	held map[string]string
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -871,10 +867,12 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 					if s.prepareFailed == nil {
 						s.prepareFailed = map[string]string{}
 					}
-					key := handle + "#" + t.ID
-					if s.prepareFailed[key] != err.Error() {
+					// once per (seat, task, reason identity): a text with
+					// an advancing age is one reason (Codex's P2 on #909)
+					key, id := handle+"#"+t.ID, reasonIdentity(err.Error())
+					if s.prepareFailed[key] != id {
 						log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
-						s.prepareFailed[key] = err.Error()
+						s.prepareFailed[key] = id
 					}
 					continue
 				}
@@ -1048,9 +1046,6 @@ func (s *Scheduler) wait(t task.Task, reason string, now time.Time) error {
 }
 
 func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log func(Decision)) {
-	// The tick's last step on every path: the leases as they stand are what
-	// the next tick's cancel scan compares a cancellation against.
-	s.rememberHeld(list)
 	var handles []string
 	for h := range s.seats {
 		handles = append(handles, h)

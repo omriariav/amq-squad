@@ -61,16 +61,17 @@ func TestCancelledAttemptClosesThenArchivesAndCleansBeforeSlotRelease(t *testing
 }
 
 // Codex's P1 on #898 (exits.go:362) and the plan reviewer's note 1: a
-// restart over a store with old cancellations in its history closes no
-// seat. seat-a's old cancellation is superseded by its lease on a new task
-// (the lease boundary cleaned it): recorded, nothing checked or cleaned.
-// seat-b's old cancellation has no later lease and no record of a clean:
-// the clean is completed once after the restart, with no close (the new
-// incarnation never saw the lease held, and the seat may be parked). Both
-// run through a new Scheduler over the same store, never a reset of maps.
-// Reverted (the occupant match: the later-lease check, or the held check
-// that gates the close), seat-a's cancellation is checked and cleaned over
-// its new task, or seat-b is closed.
+// restart over a store with old cancellations in its history never closes
+// or cleans a seat that has moved on. seat-a's old cancellation is
+// superseded by its lease on a new task (the lease boundary cleaned it):
+// recorded, nothing closed, checked or cleaned. seat-b's old cancellation
+// has no later lease and no record of a clean, and seat-b is adopted up:
+// Codex's P1 on #909, the seat may still be working on it, so it is closed
+// first (its termination confirmed) and the clean completes once on the
+// next tick. Both run through a new Scheduler over the same store, never a
+// reset of maps. Reverted (the later-lease check), seat-a is closed and
+// cleaned over its new task; reverted (the close rule), seat-b is cleaned
+// in the first tick with no close.
 func TestRestartDoesNotReplayOldCancellationOverNewOccupant(t *testing.T) {
 	store, err := task.Open(t.TempDir())
 	if err != nil {
@@ -112,14 +113,18 @@ func TestRestartDoesNotReplayOldCancellationOverNewOccupant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if has(decisions, "seat_closing", "", "") || has(decisions, "seat_closed", "", "") || len(launcher.closed) != 0 {
-		t.Fatalf("a restart closed a seat for an old cancellation: decisions=%+v closed=%v", decisions, launcher.closed)
+	if !has(decisions, "seat_clean_superseded", oldA.ID, "seat-a") || has(decisions, "seat_closing", "", "seat-a") || called(launcher.closed, "seat-a") || called(exits.calls, "seat-a/"+oldA.ID+"/cancelled") || called(cleaner.cleaned, "seat-a/"+oldA.ID+"/1/cancelled") {
+		t.Fatalf("seat-a's superseded cancellation was replayed over its new task: decisions=%+v closed=%v exits=%v cleaned=%v", decisions, launcher.closed, exits.calls, cleaner.cleaned)
 	}
-	if !has(decisions, "seat_clean_superseded", oldA.ID, "seat-a") || called(exits.calls, "seat-a/"+oldA.ID+"/cancelled") || called(cleaner.cleaned, "seat-a/"+oldA.ID+"/1/cancelled") {
-		t.Fatalf("seat-a's superseded cancellation was replayed over its new task: decisions=%+v exits=%v cleaned=%v", decisions, exits.calls, cleaner.cleaned)
+	if !has(decisions, "seat_closing", oldB.ID, "seat-b") || !has(decisions, "seat_closed", "", "seat-b") || len(cleaner.cleaned) != 0 {
+		t.Fatalf("seat-b was not closed before its clean: decisions=%+v closed=%v cleaned=%v", decisions, launcher.closed, cleaner.cleaned)
+	}
+	decisions, err = s.Tick()
+	if err != nil {
+		t.Fatal(err)
 	}
 	if !has(decisions, "seat_cleaned", oldB.ID, "seat-b") || !called(cleaner.cleaned, "seat-b/"+oldB.ID+"/1/cancelled") || len(cleaner.cleaned) != 1 {
-		t.Fatalf("seat-b's unfinished cancellation was not completed once: decisions=%+v cleaned=%v", decisions, cleaner.cleaned)
+		t.Fatalf("seat-b's unfinished cancellation was not completed once after its close: decisions=%+v cleaned=%v", decisions, cleaner.cleaned)
 	}
 	for _, id := range []string{oldA.ID, oldB.ID} {
 		got, err := store.Get(id)

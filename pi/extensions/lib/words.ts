@@ -445,7 +445,7 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		"blocked", "commit_adopted", "commit_cancelled", "commit_cancelling", "commit_deferred", "commit_refused", "commit_running", "completed",
 		"decision_socket_open", "discovery_stale", "dispatch_held", "dispatched", "exit_check_deferred", "exit_check_duplicate", "launch_failures_restored",
 		"lease_expired", "lease_normalised", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
-		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing", "seat_index_refreshed", "cleaner_marker_taken_over", "seat_clean_superseded",
+		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing", "seat_index_refreshed", "cleaner_marker_taken_over", "seat_clean_superseded", "seat_clean_replay_dropped",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
 		"task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
 	].map((k) => [k, true]),

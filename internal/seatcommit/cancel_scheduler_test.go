@@ -184,6 +184,88 @@ func TestCancelledLiveWriterStopsBeforeItsFinalTreeIsArchivedAndCleaned(t *testi
 	}
 }
 
+// startCancelWriter starts the fake seat process of R1 on target and waits
+// for its first write.
+func startCancelWriter(t *testing.T, target string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCancelledSeatWriterHelper$")
+	cmd.Env = append(os.Environ(), "AMQ_TEST_CANCEL_WRITER="+target)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if body, err := os.ReadFile(target); err == nil && len(body) > 0 {
+			return cmd
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("writer did not create live.txt")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Codex's P1 on #909 (exits.go:394): the cancel lands before the old
+// scheduler persisted an exit item for it (here: before any scheduler
+// runs), so the new incarnation has neither a held lease nor a Close on
+// disk. It adopts the live roster seat as up; the seat's writer still
+// runs. The cancelled attempt is the seat's last lease, so it is
+// close-required: the seat is closed and its termination confirmed in the
+// first tick, nothing archived or cleaned; the next tick archives the
+// bytes at the stop and cleans. Reverted (the old adopt-and-clean path:
+// no Close for a cancellation the incarnation never saw held), the first
+// tick checks and cleans while the writer runs.
+func TestRestartClosesALiveWriterOfAnUnqueuedCancellationBeforeItsClean(t *testing.T) {
+	f := newFixture(t)
+	tk := f.leased("live.txt")
+	target := filepath.Join(f.wt, "live.txt")
+	cmd := startCancelWriter(t, target)
+	if _, err := f.store.Cancel(tk.ID, "lead", "stop the writer", f.now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	launcher := &cancellingProcessLauncher{cmd: cmd, target: target}
+	cleaner := &commitAttemptCleaner{f: f}
+	s, err := scheduler.New(scheduler.Options{Store: f.store, Now: func() time.Time { return f.now.Add(2 * time.Second) }, Launcher: launcher, Exits: commitExitChecker{f: f}, Preparer: cleaner, Config: scheduler.Config{IdleTimeout: time.Hour}, Incarnation: "restartwriter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AdoptUp(f.handle, task.Pool{Runtime: "test", Model: "writer"}, f.now.Add(2*time.Second))
+	first, err := s.Tick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaner.calls != 0 || len(launcher.stopped) == 0 || !decisionHas(first, "seat_closing") || !decisionHas(first, "seat_closed") || len(launcher.closed) != 1 || launcher.closed[0] != f.handle+":task_cancelled" {
+		t.Fatalf("restart stop pass: stopped=%q cleaner calls=%d closed=%v decisions=%+v", launcher.stopped, cleaner.calls, launcher.closed, first)
+	}
+	stopped := append([]byte(nil), launcher.stopped...)
+	second, err := s.Tick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaner.calls != 1 || !decisionHas(second, "seat_cleaned") {
+		t.Fatalf("restart clean pass: cleaner calls=%d decisions=%+v", cleaner.calls, second)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("live.txt remains after clean: %v", err)
+	}
+	ledger, err := ReadLedger(f.root, f.handle)
+	if err != nil || len(ledger.Discarded) != 1 || ledger.Discarded[0].TaskID != tk.ID || ledger.Discarded[0].Attempt != 1 {
+		t.Fatalf("discard ledger = %+v, %v", ledger.Discarded, err)
+	}
+	if archived := sh(t, f.wt, "cat-file", "-p", ledger.Discarded[0].Tree+":live.txt") + "\n"; archived != string(stopped) {
+		t.Fatalf("archived writer bytes = %q, stopped bytes = %q", archived, stopped)
+	}
+	if got, err := f.store.Get(tk.ID); err != nil || got.Attempts[0].CleanedAt == nil {
+		t.Fatalf("the cancelled attempt was not recorded cleaned: %+v, %v", got.Attempts, err)
+	}
+}
+
 // R7: a cancel under a tampered ledger (0c-A's ErrTampered at the exit
 // check) quarantines and refuses, once, and leaves the worktree untouched
 // with no discard: cleaning never writes past a tamper. The refusal holds
