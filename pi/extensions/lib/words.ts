@@ -639,6 +639,8 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	update_ambiguous: "asked GitHub to bring a PR up to date and got no answer",
 	// 3.2.0-3a: the lead's re-bind proved but not bound, the binding had moved
 	rebind_superseded: "proved a re-bind whose binding had moved on; bound nothing",
+	// 3.2.0-3a: the lead's re-bind applied; the head is the train's own again
+	rebind_readmitted: "re-bound a task by the lead's decision",
 	batch: "planned a batch",
 	plan: "finished a dry run",
 	protection: "read the branch protection",
