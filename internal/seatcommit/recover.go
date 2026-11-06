@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -245,17 +244,14 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 	if err != nil {
 		return out, refuseRecover(RecoverBaseUnobserved, "the worktree's HEAD %s: %v", rp.HeadRef, err)
 	}
-	// The carry checks run in the harness's own git directory (the shadow:
-	// the seat's objects, none of the seat repository's config), as the
-	// push does (Codex's P1 on #904): a url.*.insteadOf, a core.sshCommand
-	// or a transport setting the seat planted in its config never
-	// redirects the launch's push URL or runs in this process.
-	sh, err := newShadow(o.Git, henv, rp)
-	if err != nil {
-		return out, refuseRecover(RecoverWriteFailed, "the harness git directory: %v", err)
-	}
-	defer sh.close()
-	carried, err := carryEntries(o, slot, oldSeq, sh.g)
+	// The carry checks run in the harness's own shadow git directory on
+	// the seat's object store, with the fetch's credentials: the launch's
+	// base fetch's pair (BaseGit, NewBaseShadow, FetchCredentials; the
+	// plan reviewer on #904). None of the seat repository's config is read:
+	// a url.*.insteadOf, a core.sshCommand or a transport setting the seat
+	// planted never redirects the launch's push URL or runs in this
+	// process.
+	carried, err := carryEntries(o, slot, oldSeq, rp.Common)
 	if err != nil {
 		return out, err
 	}
@@ -385,7 +381,7 @@ func (q *quarantinedSlot) link() (seq int, prev string, err error) {
 // must be on origin's branch for the task (the entry's branch, else the
 // task's branch), and its tree must equal the entry's. Any failure refuses
 // the whole recovery: nothing is carried.
-func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, repo git) ([]LedgerCommit, error) {
+func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, common string) ([]LedgerCommit, error) {
 	if len(o.Carry) == 0 {
 		return nil, nil
 	}
@@ -396,10 +392,19 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, repo git)
 	if o.Target.PushURL == "" {
 		return nil, refuseRecover(RecoverEntryUnpushed, "the launch's grant records no push URL, so no entry is on origin; nothing can be carried")
 	}
-	args, env, why := pushCredentials(Options{Env: o.Env}, Ledger{Target: o.Target})
+	cred, credEnv, _, why := FetchCredentials(o.Target, o.Env)
 	if why != "" {
 		return nil, refuseRecover(RecoverEntryUnpushed, "origin cannot be read: %s", why)
 	}
+	g := BaseGit{Bin: o.Git, Env: o.Env}
+	sh, err := NewBaseShadow(g, common)
+	if err != nil {
+		return nil, refuseRecover(RecoverWriteFailed, "the harness git directory: %v", err)
+	}
+	defer os.RemoveAll(sh.Dir)
+	fg := BaseGit{Bin: o.Git, Pre: cred, Env: o.Env} // ls-remote only
+	fenv := append(append([]string(nil), sh.Env...), credEnv...)
+	repo := func(args ...string) (string, error) { return g.Run(sh.Dir, sh.Env, args...) }
 	var out []LedgerCommit
 	tips := map[string]string{}
 	for _, c := range o.Carry {
@@ -416,9 +421,12 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, repo git)
 		branch := firstNonEmpty(e.Branch, TaskBranch(o.Handle, c.Task))
 		tip, ok := tips[branch]
 		if !ok {
-			line, err := transport(repo.with(env...), append(args, "ls-remote", "--heads", o.Target.PushURL, "refs/heads/"+branch)...)
+			// the one network call, once per distinct branch, under the bound
+			ctx, cancel := context.WithTimeout(context.Background(), RecoverTransportTimeout)
+			line, err := fg.RunBounded(ctx, sh.Dir, fenv, "ls-remote", "--heads", "--", o.Target.PushURL, "refs/heads/"+branch)
+			cancel()
 			if err != nil {
-				return nil, refuseRecover(RecoverEntryUnpushed, "origin's %s cannot be read: %v", branch, err)
+				return nil, refuseRecover(RecoverEntryUnpushed, "origin's %s cannot be read (bound %s): %v", branch, RecoverTransportTimeout, err)
 			}
 			tip, _, _ = strings.Cut(line, "\t")
 			tip = strings.TrimSpace(tip)
@@ -427,13 +435,13 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, repo git)
 		if tip == "" {
 			return nil, refuseRecover(RecoverEntryUnpushed, "origin has no branch %s, so commit %s of task %s is not on it; nothing is carried", branch, c.Commit, c.Task)
 		}
-		if _, err := repo.run(nil, nil, "cat-file", "-e", tip+"^{commit}"); err != nil {
+		if _, err := repo("cat-file", "-e", tip+"^{commit}"); err != nil {
 			return nil, refuseRecover(RecoverEntryUnpushed, "origin's %s is at %s, which the seat repository does not hold; nothing is carried", branch, tip)
 		}
-		if _, err := repo.run(nil, nil, "merge-base", "--is-ancestor", c.Commit, tip); err != nil {
+		if _, err := repo("merge-base", "--is-ancestor", c.Commit, tip); err != nil {
 			return nil, refuseRecover(RecoverEntryUnpushed, "commit %s of task %s is not on origin's %s (at %s); nothing is carried", c.Commit, c.Task, branch, tip)
 		}
-		tree, err := repo.line("rev-parse", "--verify", "-q", c.Commit+"^{tree}")
+		tree, err := repo("rev-parse", "--verify", "-q", c.Commit+"^{tree}")
 		if err != nil || tree != e.Tree {
 			return nil, refuseRecover(RecoverEntryTreeMismatch, "commit %s of task %s has tree %q, not the quarantined entry's %s; nothing is carried", c.Commit, c.Task, tree, e.Tree)
 		}
@@ -443,39 +451,6 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, repo git)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out, nil
-}
-
-// RecoverTransportTimeout bounds the one network call of a recovery (the
-// ls-remote of origin's branch for a carried entry): past it the call's
-// process group is killed and the recovery refused (Codex's P2 on #904:
-// the decision server clears its deadline before the apply step, so an
-// unreachable origin would otherwise hold the ledger lock and the handler
-// for as long as git waits).
-var RecoverTransportTimeout = 30 * time.Second
-
-// transport runs one git transport call under RecoverTransportTimeout in
-// its own process group, so git's helpers (ssh, a credential helper) go
-// with it when the bound expires.
-func transport(g git, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), RecoverTransportTimeout)
-	defer cancel()
-	argv := append(append(safeConfig(), g.pre...), args...)
-	cmd := exec.CommandContext(ctx, g.bin, argv...)
-	cmd.Dir = g.dir
-	cmd.Env = append([]string(nil), g.env...)
-	ownGroup(cmd)
-	cmd.Cancel = func() error { killGroup(cmd); return nil }
-	cmd.WaitDelay = verifierWaitDelay
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
-	if ctx.Err() != nil {
-		return "", fmt.Errorf("git %s did not answer within %s; killed", args[len(args)-2], RecoverTransportTimeout)
-	}
-	if err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args[len(args)-3:len(args)-2], " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return strings.TrimSpace(stdout.String()), nil
 }
 
 // RecoveryOf is the recovery a seat's ledger records, read without a

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -313,11 +314,13 @@ func TestWriteTimeRefusalIsTheTypedBlock(t *testing.T) {
 // Codex's P1 on #904: the carry check ran ls-remote through the seat
 // repository's git, whose config the seat controls: a url.<evil>.insteadOf
 // of the launch's push URL redirected the check to a repository holding
-// the unpushed commit, and it passed. The check runs in the harness's own
-// git directory (the shadow, as the push does): the planted redirect
-// moves the seat's own git (shown) and not the recovery, which reads the
-// real origin and refuses the unpushed entry. Reverted (the seat's git),
-// the forged branch is carried.
+// the unpushed commit, and it passed; a core.sshCommand there would run a
+// seat-chosen command in the scheduler's process. The check runs in the
+// harness's own shadow git directory with the fetch's credentials (the
+// launch's base fetch's pair): the planted redirect moves the seat's own
+// git (shown) and not the recovery, which reads the real origin and
+// refuses the unpushed entry, and the planted ssh command never runs.
+// Reverted (the seat's git), the forged branch is carried.
 func TestCarryCheckIgnoresTheSeatsGitConfig(t *testing.T) {
 	f := newFixture(t)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// carried\n")
@@ -338,8 +341,20 @@ func TestCarryCheckIgnoresTheSeatsGitConfig(t *testing.T) {
 	sh(t, f.dir, "init", "-q", "--bare", evil)
 	sh(t, f.wt, "push", "-q", evil, unpushed+":refs/heads/"+real.Branch)
 	sh(t, f.wt, "config", "url."+evil+".insteadOf", f.origin)
+	marker := filepath.Join(f.dir, "ssh-ran")
+	sh(t, f.wt, "config", "core.sshCommand", "sh -c 'touch "+marker+"; exit 1' --")
 	if got := sh(t, f.wt, "ls-remote", "--heads", f.origin, "refs/heads/"+real.Branch); !strings.HasPrefix(got, unpushed) {
 		t.Fatalf("the planted redirect does not move the seat's own git: %q", got)
+	}
+	// the planted command is live in the seat's git: an ssh URL runs it
+	if out, err := runGit(t, f.wt, "--git-dir="+sh(t, f.wt, "rev-parse", "--path-format=absolute", "--git-common-dir"), "ls-remote", "ssh://planted.invalid/x.git", "refs/heads/main"); err == nil {
+		t.Fatalf("the planted ssh command did not refuse: %q", out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the planted ssh command is not live in the seat's git: %v", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(readFile(t, ledgerPath(f.root, f.handle)), &doc); err != nil {
@@ -358,16 +373,23 @@ func TestCarryCheckIgnoresTheSeatsGitConfig(t *testing.T) {
 	if _, err := ReadLedger(f.root, f.handle); !errors.Is(err, sealchain.ErrTampered) {
 		t.Fatalf("the refused recovery wrote something: %v", err)
 	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the recovery ran the seat's planted ssh command")
+	}
 	// the real entry still carries through the harness's git
 	if _, err := f.recover(q.Seq, 1, CarryEntry{Task: tk.ID, Commit: real.Commit}); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the carry ran the seat's planted ssh command")
 	}
 }
 
 // Codex's P2 on #904: an origin that does not answer (the ssh plumbing
 // stands in with a sleep) ends in a refusal within RecoverTransportTimeout,
-// its process group killed, with the ledger lock released and nothing
-// written. Reverted (no bound), the recovery waits for git.
+// its process group killed, with nothing written and the ledger lock
+// released: the next recovery takes the lock at once (and, carrying
+// nothing, completes). Reverted (no bound), the recovery waits for git.
 func TestStalledOriginEndsTheRecoveryWithinTheBound(t *testing.T) {
 	f := newFixture(t)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// stalled\n")
@@ -389,22 +411,80 @@ func TestStalledOriginEndsTheRecoveryWithinTheBound(t *testing.T) {
 	_, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Seq: q.Seq, Slot: 1, Carry: []CarryEntry{{Task: tk.ID, Commit: real.Commit}}, Target: target,
 		Git: gitBin(t), Env: append(f.testGitEnv(), "GIT_SSH_COMMAND=sh -c 'sleep 60' --"), Lead: "cto", Reason: "r", Now: f.now})
 	took := time.Since(start)
-	if recoverCode(t, err) != RecoverEntryUnpushed || !strings.Contains(err.Error(), "did not answer within 500ms; killed") {
+	if recoverCode(t, err) != RecoverEntryUnpushed || !strings.Contains(err.Error(), "(bound 500ms)") || !strings.Contains(err.Error(), "did not answer within its bound; killed") {
 		t.Fatalf("the stalled origin: %v", err)
 	}
 	if took > 10*time.Second {
 		t.Fatalf("the refusal took %s", took)
 	}
-	// the lock is free: another writer gets it at once
-	done := make(chan error, 1)
-	go func() { _, err := RecordTarget(f.root, f.handle, f.target()); done <- err }()
+	if _, err := ReadLedger(f.root, f.handle); !errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("the refused recovery wrote something: %v", err)
+	}
+	// the lock is free: the next recovery takes it at once
+	type outcome struct {
+		r   RecoverResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() { r, err := f.recover(q.Seq, 1); done <- outcome{r, err} }()
 	select {
-	case err := <-done:
-		if !errors.Is(err, sealchain.ErrTampered) {
-			t.Fatalf("the writer after the refusal: %v", err)
+	case got := <-done:
+		if got.err != nil || got.r.NewSeq != got.r.OldSeq+1 {
+			t.Fatalf("the recovery after the refusal: %v %+v", got.err, got.r)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the ledger lock is still held")
+	}
+}
+
+// Codex's P3 on #904, the compatibility row: a 3.1.2-shaped reader (its
+// Ledger has no Recovered and its entries no Note; it decodes, drops the
+// fields, re-encodes and verifies the tag) refuses a recovered ledger with
+// the tamper reason, while this binary's reader verifies it. The expected
+// behaviour until 0e lands (the rc.2 rule: a ledger a newer amq-squad
+// wrote is a distinct refusal); recorded, not fixed here.
+func TestOlderReaderRefusesARecoveredLedgerAsTampered(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// carried\n")
+	tk := f.reported("cmd/")
+	if res := f.run(tk); !res.OK {
+		t.Fatalf("the commit step: %+v", res)
+	}
+	l, _ := ReadLedger(f.root, f.handle)
+	real := l.Commits[0]
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	if _, err := f.recover(q.Seq, 1, CarryEntry{Task: tk.ID, Commit: real.Commit}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := ReadLedger(f.root, f.handle)
+	if err != nil || recovered.Recovered == nil || recovered.Commits[0].Note == "" {
+		t.Fatalf("this binary's reader: %v %+v", err, recovered.Recovered)
+	}
+	key, ok, err := sealchain.ReadKey(f.root)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	// this binary verifies the body it decoded
+	body := recovered
+	body.Seal = nil
+	if !recovered.Seal.Verify(key.Key, ledgerLabel, body) {
+		t.Fatal("this binary's decode does not verify")
+	}
+	// a 3.1.2 reader's decode: the same bytes without the fields it lacks
+	older := body
+	older.Recovered = nil
+	older.Commits = append([]LedgerCommit(nil), body.Commits...)
+	for i := range older.Commits {
+		older.Commits[i].Note = ""
+	}
+	if recovered.Seal.Verify(key.Key, ledgerLabel, older) {
+		t.Fatal("an older reader's decode verifies; the compatibility row no longer holds")
+	}
+	// the refusal it gives is sealchain.Check's tamper reason
+	err = sealchain.Check(f.root, "commits."+f.handle, key, ledgerLabel, recovered.Seal, older)
+	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), fmt.Sprintf("the tag of commits.%s link %d fails", f.handle, recovered.Seal.Seq)) {
+		t.Fatalf("the older reader's refusal: %v", err)
 	}
 }
 
