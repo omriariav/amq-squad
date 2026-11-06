@@ -114,7 +114,7 @@ func (r Recovery) Apply(lead string, req RecoverRequest) (seatcommit.RecoverResu
 // recoverDecision is the decision socket's apply step for a proved
 // recovery: the request's shape, the chain write, the decision line; the
 // scheduler releases the seat at its next tick from the ledger.
-func recoverDecision(_ *scheduler.Scheduler, root string, apply RecoverApply, now func() time.Time) func(lead string, req RecoverRequest) DecideReply {
+func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, now func() time.Time) func(lead string, req RecoverRequest) DecideReply {
 	return func(lead string, req RecoverRequest) DecideReply {
 		if !recoverSeatRe.MatchString(req.Seat) || !recoverSeqRe.MatchString(req.Seq) || req.Slot < 0 {
 			return DecideReply{Code: RefusedRecoverMalformed, Detail: "a recovery names a seat handle, the quarantined head seq (or unknown) and a slot number"}
@@ -148,6 +148,12 @@ func recoverDecision(_ *scheduler.Scheduler, root string, apply RecoverApply, no
 		at := now().UTC()
 		if err := AppendDecision(root, at, scheduler.Decision{Kind: DecisionLedgerRecovered, Seat: req.Seat, Reason: reason}); err != nil {
 			return DecideReply{Code: RefusedRecoverUnrecorded, Detail: "the chain is written and the scheduler releases the seat from it at its next tick, but the decision line could not be appended (send the decision again to record it): " + err.Error()}
+		}
+		// A hold with no slot is released only by this decision (the plan
+		// reviewer on af1a6124): the scheduler is told the record the ledger
+		// now answers, and releases the hold once its tick reads that record.
+		if rec, ok := seatcommit.RecoveryOf(root, req.Seat); ok && s != nil {
+			s.LeadRecovered(req.Seat, recoveryMark(rec))
 		}
 		data, _ := json.Marshal(res)
 		detail := fmt.Sprintf("seat %s recovered from quarantine seq %d: the chain continues at seq %d; %d entries carried; the scheduler releases the seat at its next tick", req.Seat, res.OldSeq, res.NewSeq, len(res.Carried))

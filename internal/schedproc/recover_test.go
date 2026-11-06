@@ -449,3 +449,39 @@ func TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline(t *testing.T) {
 		t.Fatalf("the baseline %+v is not the record read back %+v", e.Baseline, back)
 	}
 }
+
+// The plan reviewer on af1a6124, the process half of a hold with no slot:
+// the seat is held by an alarm that quarantined nothing (restored from a
+// state file, its task blocked with the alarm's detail); a later refused
+// read quarantined the document (slot seq1); the document put back
+// verifies, and ticks alone release nothing; the lead's recover verb on
+// that slot seals its decision and tells the scheduler, and the next tick
+// releases the seat (the record it was told is the one the ledger
+// answers). Reverted (the apply step does not tell the scheduler), the
+// hold stays.
+func TestTheLeadsVerbReleasesAHoldWithNoSlot(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	if _, err := seatcommit.ReadLedgerAs(r.root, r.handle, "the lead's inspection"); err == nil {
+		t.Fatal("the tampered document verified")
+	}
+	detail := "seat " + r.handle + ": the refused document could not be quarantined (seq 1): the copy failed"
+	if _, err := r.store.Block(r.tk.ID, "", scheduler.ReasonLedgerTampered, detail, task.RouteLead, r.now); err != nil {
+		t.Fatal(err)
+	}
+	r.s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: r.handle, Seq: "1", Detail: detail, At: r.now, Tasks: []string{r.tk.ID}}}})
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if err := os.WriteFile(p, r.original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if all := r.ticks(5); len(kinds(all, "ledger_hold_released")) != 0 || len(kinds(all, "dispatched")) != 0 {
+		t.Fatalf("ticks alone released a hold with no slot: %+v", all)
+	}
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "the copy failed; the document is back"}); !reply.OK {
+		t.Fatalf("the decision: %+v", reply)
+	}
+	all := r.ticks(3)
+	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) || !has(all, "dispatched", r.tk.ID, r.handle) {
+		t.Fatalf("the lead's verb did not release the hold with no slot: %+v", all)
+	}
+}

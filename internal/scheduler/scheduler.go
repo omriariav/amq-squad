@@ -161,6 +161,10 @@ type Scheduler struct {
 	// press and the reload) waiting for the next tick (RequestRelaunch,
 	// RequestRelaunchReload); set under mu.
 	relaunchAsk *relaunchAsk
+	// leadRecovered is the lead's recovery decisions, by seat, that the
+	// verb's apply step has just sealed (LeadRecovered), waiting for the
+	// next tick to move them onto a held seat with no slot; set under mu.
+	leadRecovered map[string]RecoveryMark
 
 	seats       map[string]*seat
 	requests    []request

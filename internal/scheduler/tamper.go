@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -69,6 +68,11 @@ type LedgerTamper struct {
 	// was raised (Codex on b250b951): it was not decided for this alarm, so
 	// it never releases the hold. Kept in the state file with the hold.
 	Baseline *RecoveryMark `json:"baseline,omitempty"`
+	// Decided is the lead's decision the recover verb sealed for a hold
+	// with no slot (the plan reviewer on af1a6124: such a hold is never
+	// covered by a record alone); the hold is released once the ledger
+	// records this decision. Kept in the state file with the hold.
+	Decided *RecoveryMark `json:"decided,omitempty"`
 }
 
 // RecoveryMark is a recovery record as the scheduler compares it: the
@@ -201,8 +205,8 @@ func (s *Scheduler) tamperedSeat(handle string) bool { return s.tampered[handle]
 // fails once, Codex on c9826c31).
 var (
 	storeGet   = func(st task.Store, id string) (task.Task, error) { return st.Get(id) }
-	storeReset = func(st task.Store, id string, now time.Time) (task.Task, error) {
-		return st.ResetIfBlocked(id, ReasonLedgerTampered, now)
+	storeReset = func(st task.Store, id string, match func(task.Task) bool, now time.Time) (task.Task, error) {
+		return st.ResetIfBlocked(id, ReasonLedgerTampered, match, now)
 	}
 )
 
@@ -216,6 +220,16 @@ var (
 // then counted (ledger_release_failed, ledger_release_suppressed): a
 // persistent store error never floods the log and never loses the hold.
 func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
+	s.mu.Lock()
+	asks := s.leadRecovered
+	s.leadRecovered = nil
+	s.mu.Unlock()
+	for h, rec := range asks {
+		if tm := s.tampered[h]; tm != nil && tm.Quarantine == "" {
+			rec := rec
+			tm.Decided = &rec
+		}
+	}
 	reader, ok := s.Preparer.(RecoveryReader)
 	if !ok || len(s.tampered) == 0 {
 		return nil
@@ -243,13 +257,14 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 				kept = true
 				continue
 			}
-			if t.State != task.StateBlocked || t.BlockReason != ReasonLedgerTampered {
-				continue // reset by the lead already
+			if !tm.names(t) {
+				continue // reset by the lead already, or blocked for something else
 			}
-			if _, err := storeReset(s.Store, id, now); errors.Is(err, task.ErrNotFound) || errors.Is(err, task.ErrBlockChanged) {
-				// gone, or no longer the tamper block: another decision
-				// (the lead's reset, a new block) came between the read and
-				// the reset, and it stands (Codex on b250b951)
+			if _, err := storeReset(s.Store, id, tm.names, now); errors.Is(err, task.ErrNotFound) || errors.Is(err, task.ErrBlockChanged) {
+				// gone, or no longer this hold's block: another decision
+				// (the lead's reset, a new block of another reason or slot)
+				// came between the read and the reset, and it stands (Codex
+				// on b250b951, the plan reviewer on af1a6124)
 				continue
 			} else if err != nil {
 				s.releaseFailed(id, h, "the task could not be returned to pending; the hold stays and the release is retried next tick: "+err.Error(), log)
@@ -292,21 +307,55 @@ func reasonIdentity(reason string) string {
 	return reasonDigits.ReplaceAllString(reasonPath.ReplaceAllString(reason, "<path>"), "#")
 }
 
-// covers reports whether a recovery record answers this hold: never the
-// record the ledger already carried when the alarm was raised (the
-// baseline: Codex on b250b951, an old recovery read again once the
-// document verifies again is not a decision for this alarm); otherwise the
-// slot the hold named, or any seq at or past the hold's (a hold of an
-// unknown seq is answered by its slot only).
+// covers reports whether a recovery record answers this hold (the plan
+// reviewer's ruling on af1a6124): a record that names the hold's exact
+// slot and is not the baseline (the record the ledger already carried
+// when the alarm was raised; Codex on b250b951). A seq never answers a
+// hold: slot names are unique by construction (commits.<h>.seq<N>[.k]),
+// a seq is not, and the head's seq the hold was named by was never
+// verified (the incident was itself a lowered seq). A hold with no slot
+// (a refusal that quarantined nothing) is answered only by the decision
+// the lead's recover verb sealed for it (Decided), never by a record
+// alone.
 func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
 	if tm.Baseline != nil && tm.Baseline.same(rec) {
 		return false
 	}
-	if tm.Quarantine != "" && rec.Slot == tm.Quarantine {
-		return true
+	if tm.Quarantine != "" {
+		return rec.Slot == tm.Quarantine
 	}
-	n, err := strconv.Atoi(tm.Seq)
-	return err == nil && rec.Seq >= n
+	return tm.Decided != nil && tm.Decided.same(rec)
+}
+
+// names reports whether a task's block is this hold's own: blocked
+// ledger_tampered with the detail the alarm wrote (tamperDetail), naming
+// the hold's slot, or, for a hold with no slot, the hold's own detail. A
+// tamper block raised for another slot, or by another writer, is not this
+// hold's and its release leaves it (the plan reviewer on af1a6124).
+func (tm *LedgerTamper) names(t task.Task) bool {
+	if t.State != task.StateBlocked || t.BlockReason != ReasonLedgerTampered {
+		return false
+	}
+	if tm.Quarantine != "" {
+		return strings.HasPrefix(t.BlockDetail, "seat "+tm.Handle+": quarantined at "+tm.Quarantine+" (seq ")
+	}
+	return t.BlockDetail == tm.Detail
+}
+
+// LeadRecovered is the recover verb's apply step telling the scheduler the
+// decision it has just sealed into seat handle's ledger (the record as the
+// ledger answers it). The next tick puts it on the seat's hold when the
+// hold has no slot (Decided), and the hold is released once the ledger
+// records that decision; a hold with a slot is released from its slot and
+// ignores it. A lost message loses nothing: the verb sent again answers
+// from the ledger and tells the scheduler again.
+func (s *Scheduler) LeadRecovered(handle string, rec RecoveryMark) {
+	s.mu.Lock()
+	if s.leadRecovered == nil {
+		s.leadRecovered = map[string]RecoveryMark{}
+	}
+	s.leadRecovered[handle] = rec
+	s.mu.Unlock()
 }
 
 // RestoreLedgerTampers takes the tamper alarms a previous incarnation
