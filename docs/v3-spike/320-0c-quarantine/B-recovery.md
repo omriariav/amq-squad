@@ -25,7 +25,9 @@ that name below), then `af1a6124`, the note; then `ad3330e0`, the plan
 reviewer's ruling on `af1a6124` (the section "The plan reviewer on
 af1a6124"), and `bd683f28`, its row for a hold on an earlier slot; then
 `ede2226c`, the note; then `e1fc443c`, the masked key's row the reviewer
-asked for; then `c267382d` and this note, the notes on it. The helper move of `8017ffea` is between
+asked for; then `c267382d` and `f1edd375`, the notes on it; then
+`1cd21fa1`, the baseline removed (the plan reviewer on `f1edd375`, the
+section "The baseline removed"); then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -453,7 +455,8 @@ gates below are the run evidence) and found three P2 and one P3.
   is gone, and a record that predates the alarm cannot name a slot the
   alarm created, so a refused body with no baseline, undecodable or
   stripped of its record, replays nothing; the one exception, a slot the
-  quarantine reuses for an identical refusal, is in that section.)
+  quarantine reuses for an identical refusal, is in that section. The
+  baseline itself was removed in `1cd21fa1`: "The baseline removed".)
 - **P2-2, temp names defeat the suppression.** `logOnce` compared the
   whole error text, so a persistent disk-full during `CleanSeat` that
   names a fresh `amq-squad-shadow-<random>` (or an atomic write's temp)
@@ -497,7 +500,8 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   by construction (`commits.<h>.seq<N>[.k]`); a seq is not, and the seq a
   hold is named by comes from a head that was never verified (the
   incident was itself a lowered seq). `covers` now accepts a record only
-  when it names the hold's own slot and is not the baseline; the seq
+  when it names the hold's own slot and is not the baseline (that part
+  removed in `1cd21fa1`); the seq
   path is gone. A lowered-seq replay of an older record is refused even
   when the refused body carried no baseline, and a recovery for another
   slot of the same seq (`.2`) is refused.
@@ -509,7 +513,7 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   (`Scheduler.LeadRecovered`, under the scheduler's lock, as the relaunch
   decision is); the next tick puts the decision on the hold
   (`LedgerTamper.Decided`, kept in the state file) and releases the hold
-  once the ledger answers that same record (and it is not the baseline).
+  once the ledger answers that same record.
   A message lost in a crash loses nothing: the verb sent again is
   answered from the ledger (`AlreadyRecovered`) and tells the scheduler
   again. A hold with a slot ignores the message (its slot answers it).
@@ -525,13 +529,9 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   writer (the commit step's refusal words it differently), is left as it
   is and the hold is released. One row's hand-made block named a slot
   (`/q`) the hold never had; it now uses the hold's own detail.
-- **The baseline can only withhold a release.** It is decoded from the
-  refused bytes without verification (the reviewer accepted this): a
-  forged or stale baseline can make `covers` refuse a record, never
-  accept one, since `covers` checks the baseline only to say no, and the
-  release still needs the exact slot (or, with no slot, the verb's sealed
-  decision). The worst a wrong baseline does is keep a seat held until
-  the lead decides again.
+- **The baseline can only withhold a release.** (Removed in `1cd21fa1`;
+  see "The baseline removed".) It was decoded from the refused bytes
+  without verification, and `covers` checked it only to say no.
 - **The masked suppression key (P2-2), accepted.** The reviewer accepted
   the reason with its paths and digit runs masked, in place of a fixed
   code, with a row stating the trade-off (`e1fc443c`): two failures whose
@@ -542,24 +542,20 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   only; the masked text keeps those apart at the cost of merging two
   failures that differ only in a path or a number, which are then
   counted, not shown (the full text of the first stays in its line).
-- **The baseline check stays (the reviewer's ruling on `ede2226c`).**
-  The reviewer holds it reachable in production on the slot-reuse path
-  below, so it is not test-only code, and it stays. The scheduler's row
-  builds its input by hand because no real-files sequence I found makes
-  the baseline decide: a slot is reused only for a byte-identical refusal
-  (`sameSlot`, `internal/seatcommit/quarantine.go:369`, compares the
-  body, the head and the stable sidecar), so the refused bytes that reuse
-  slot S are S's own copy, made when S was created, before any record
-  naming S could be sealed; the baseline they carry is never a record of
-  S. If the reviewer has a sequence in mind, a real-files row replaces the
-  hand-built input.
+- **The baseline check (withdrawn on `f1edd375`).** The reviewer first
+  held it reachable on the slot-reuse path below; on `f1edd375` they
+  agreed it is not (a reused slot's bytes predate any record naming it,
+  `sameSlot`, `internal/seatcommit/quarantine.go:369`) and withdrew the
+  ruling, so `1cd21fa1` removes it ("The baseline removed").
 - **The slot-reuse replay, residual risk for rc.2.** The one way a slot
   predates its hold is the quarantine's no-op for an identical refusal:
   the document recovered from slot X, then the exact refused bytes of X
   put back (a new hold, on X again), then the recovered document put back
   (it verifies and records X), which releases the new hold with no new
-  decision; the baseline does not stop it, since the refused bytes predate
-  the record of X. It needs two deliberate whole-file restores by a
+  decision; the exact-slot rule does not stop it (the record names X, the
+  hold's own slot), and no baseline of the earlier record is kept (it
+  could not have stopped it either: the refused bytes predate the record
+  of X). It needs two deliberate whole-file restores by a
   process running as the same user, which is outside the threat model
   0c-A stated ("The threat line", `A-quarantine.md`: the quarantine is
   evidence against accident and other writers, not a vault against the
@@ -577,6 +573,60 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   exists, the live chain is at or past its seq), whose record names the
   first slot and releases the hold (`bd683f28`'s row drives the pair on
   real files). Listed in "Residual risk".
+
+## The baseline removed (`1cd21fa1`, the plan reviewer on `f1edd375`)
+
+The reviewer agreed that the baseline check never decides on real files
+and withdrew the ruling that kept it; under the rule of no production
+code kept alive only by a test, `1cd21fa1` removes it.
+
+- **Why the exact slot subsumes it.** `covers` accepts only a record
+  that names the hold's exact slot. A record that predates the alarm
+  cannot name a slot the alarm created. The one way a slot predates its
+  hold is the quarantine's no-op for an identical refusal, and that reuse
+  needs byte-identical bytes (`sameSlot`,
+  `internal/seatcommit/quarantine.go:369`, compares the body, the head and
+  the stable sidecar), so the bytes that reuse a slot are the slot's own
+  copy, made before any record naming the slot could be sealed: they
+  never carry a record of that slot, and the baseline they gave could
+  never equal one. What the slot reuse does allow, the slot-reuse replay,
+  stays the stated same-uid residual for rc.2, closed by the 3.2.x item
+  "a quarantine slot named by a recovery record is never reused;
+  identical bytes refused again get a new .k slot" ("Residual risk").
+- **What went.** The check in `covers`; `LedgerTamper.Baseline` (the
+  state file's `baseline` field; a state file written with it still
+  decodes, the field ignored) and `LedgerTamperedError.Baseline`;
+  `QuarantinedError.Prior`, `priorRecovery` and the prepare alarm's
+  mapping (`prepareError`); the rows that only exercised them: the
+  hand-built `TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt`,
+  schedproc's `TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline`
+  and the quarantine's `Prior` half of
+  `TestAVerifiedRecoveryRetriedReportsItsLink` (its P3 half, the retry's
+  link and mode, stays). The revert runs of those rows above are kept as
+  the record of what was run; their code is gone.
+- **What stays.** `RecoveryMark` keeps its four fields (seq, slot, link,
+  time): `covers` reads the slot, and the verb's decision for a hold with
+  no slot (`LeadRecovered`, `Decided`) is matched on all four.
+  `covers` is now: a hold with a slot is answered by a record that names
+  that exact slot; a hold with no slot only by the decision the recover
+  verb sealed for it.
+- **The covers rows, all passing on `1cd21fa1`** (`go test -count=1
+  -v -run ...` by name, each `--- PASS`): `internal/scheduler`
+  `TestALoweredSeqReplayDoesNotReleaseTheHold` (the lowered-seq replay),
+  `TestARecoveryForAnotherSlotDoesNotReleaseTheHold`,
+  `TestAHoldWithNoSlotIsReleasedOnlyByTheLeadsVerb`,
+  `TestAnOlderRecoveryRecordDoesNotReleaseAHold`,
+  `TestRecoveryReleasesTheSeatAndReturnsTheTask`,
+  `TestRestartedHoldIsReleasedFromTheLedgersRecovery`,
+  `TestTwoHeldSeatsOneRecovered`, `TestARecoveryKeepsATamperBlockOfAnotherSlot`,
+  `TestARecoveryNeverClearsABlockRaisedAfterItsRead`,
+  `TestAStoreReadErrorKeepsTheHoldAndLogsOnce`,
+  `TestAFailedResetKeepsTheHoldForTheRetry`; `internal/schedproc`
+  `TestTheLeadsVerbReleasesAHoldWithNoSlot`,
+  `TestARestoredDocumentIsReleasedByTheLeadsDecision`;
+  `internal/seatcommit` `TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery`,
+  `TestAVerifiedRecoveryRetriedReportsItsLink`. No revert run for a
+  removal.
 
 ## The quarantine layout read
 
@@ -621,13 +671,11 @@ CLI.
 | read error | A hold whose seat's ledger records the recovery, the store's read failing (a seam) for 30 ticks: one `ledger_release_failed`, one `ledger_release_suppressed`, no release, the hold kept and the task blocked; the error cleared, the next tick releases (`ledger_hold_released`, `task_reset`, `dispatched`); a hold naming a task the store no longer has is released with no failure line. | `internal/scheduler` `TestAStoreReadErrorKeepsTheHoldAndLogsOnce` |
 | reset fails | The reset fails once (a seam): `ledger_release_failed`, no release, the hold kept and the task blocked; the next tick's retry resets, releases and dispatches. | `internal/scheduler` `TestAFailedResetKeepsTheHoldForTheRetry` |
 | child dead | The timeout row's stand-in writes its pid; after the bound's refusal the pid is dead (signal 0, polled up to 5 s), beside the refusal's text, the elapsed time and the lock taken by the next recovery. | `internal/seatcommit` `TestStalledOriginEndsTheRecoveryWithinTheBound` (unix: `processAlive` in `recover_unix_test.go`) |
-| P2-1 baseline | A hold on slot seq1 whose alarm carries, as its baseline, a record naming that same slot (link 4; an input built by hand, "The plan reviewer on af1a6124"); the reader answers that same record: 20 ticks release nothing; the state file keeps the baseline; a restarted scheduler restored from it releases nothing over 5 ticks and the task stays blocked; a new record (the lead's decision after the alarm) releases the hold and resets the task. | `internal/scheduler` `TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt` |
-| P2-1 the alarm's baseline | Real files: the lead's verified decision recorded (link 2); the head's seq changed to 1; `CleanSeats.PrepareSeat` refuses with `LedgerTamperedError` at seq 1 whose `Baseline` is the ledger's record; the head put back, `LedgerRecovery` answers a mark equal to the baseline. | `internal/schedproc` `TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline` |
 | P2-2 the masked key | Three ticks: a failure naming `amq-squad-shadow-4127`, the same naming `amq-squad-shadow-90355`, then one that says `permission denied`: two `seat_prepare_failed` lines; `reasonIdentity` equates the first pair and keeps the words apart. | `internal/scheduler` `TestReasonsDifferingOnlyInATempNameLogOnce` |
 | P2-2 temp names | A prepare failure naming a fresh `amq-squad-shadow-<n>` and byte count each tick for 30 ticks: one `seat_prepare_failed` (with the full text) and one `seat_prepare_suppressed`; a failure that says something else (`permission denied`) is logged again. | `internal/scheduler` `TestAFailureNamingAFreshTempFileIsLoggedOnce` |
 | P2-3 the conditional reset | Between the release's read and its reset the task is reset and blocked again (`lead_hold`): the new block stays with its reason, no `task_reset`, no dispatch, no failure line, the hold released. The store: `ResetIfBlocked` refuses another reason, a pending task (`ErrBlockChanged`) and an unknown id (`ErrNotFound`), and resets its own reason with the block's fields cleared. | `internal/scheduler` `TestARecoveryNeverClearsABlockRaisedAfterItsRead`; `internal/task` `TestResetIfBlockedResetsOnlyItsReason` |
-| P3 the retry's link | The transient alarm at seq 4, a second commit step (live link 7), the verified decision writes link 8; its retry is `AlreadyRecovered`, `Verified`, link 8; the record's `Link` is 8; then the head's seq changed to 1: the quarantine's `Prior` is that record (seq, slot, link, time), and the head put back, `RecoveryOf` answers it. | `internal/seatcommit` `TestAVerifiedRecoveryRetriedReportsItsLink` |
-| replay | The lowered-seq replay with no baseline: a hold on slot seq1; the ledger answers an older record (seq 3, its slot): 20 ticks and 5 more after a restart release nothing; the record of slot seq1 releases the hold and resets the task. | `internal/scheduler` `TestALoweredSeqReplayDoesNotReleaseTheHold` |
+| P3 the retry's link | The transient alarm at seq 4, a second commit step (live link 7), the verified decision writes link 8; its retry is `AlreadyRecovered`, `Verified`, link 8; the record's `Link` is 8. | `internal/seatcommit` `TestAVerifiedRecoveryRetriedReportsItsLink` |
+| replay | The lowered-seq replay: a hold on slot seq1; the ledger answers an older record (seq 3, its slot): 20 ticks and 5 more after a restart release nothing; the record of slot seq1 releases the hold and resets the task. | `internal/scheduler` `TestALoweredSeqReplayDoesNotReleaseTheHold` |
 | another slot | A hold on slot seq150; the ledger records a recovery from slot seq150.2 (the same seq): 10 ticks release nothing, the hold stands, the task stays blocked. | `internal/scheduler` `TestARecoveryForAnotherSlotDoesNotReleaseTheHold` |
 | no slot | A hold with no slot (seq 150); a record at seq 150 for 10 ticks releases nothing; the verb's message for another seat, and one with a link the ledger does not record, release nothing; the message naming the record the ledger answers releases the hold, resets the task and dispatches it. | `internal/scheduler` `TestAHoldWithNoSlotIsReleasedOnlyByTheLeadsVerb` |
 | no slot, the verb | Real files: a hold with no slot restored from a state file, its task blocked with the alarm's detail; a refused read made slot seq1; the document put back: 5 ticks release nothing; the lead's verb on slot 1 (OK), then the ticks release the hold, reset the task and dispatch it. | `internal/schedproc` `TestTheLeadsVerbReleasesAHoldWithNoSlot` |
@@ -1342,7 +1390,7 @@ expression asserted to occur once, the row run, the file restored from
 its copy and the row run again). A temp root in a failing line is
 written `<tmp>`, and a decision list is cut after its first entry.
 
-### P2-1 the baseline check
+### P2-1 the baseline check (removed in `1cd21fa1`)
 
 ```
 go test -count=1 -run ^TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt$ ./internal/scheduler/
@@ -1362,7 +1410,7 @@ tamper_test.go:567: the record present at the alarm released the hold: [{Kind:ta
 `--- FAIL: TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt (0.09s); FAIL`
 restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.655s`.
 
-### P2-1 the alarm's baseline
+### P2-1 the alarm's baseline (removed in `1cd21fa1`)
 
 ```
 go test -count=1 -run ^TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline$ ./internal/schedproc/
@@ -1382,7 +1430,7 @@ recover_test.go:442: the alarm: the commit ledger of seat seat-t1: commit ledger
 `--- FAIL: TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline (0.59s); FAIL`
 restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.158s`.
 
-### P2-1 the quarantine's prior record
+### P2-1 the quarantine's prior record (removed in `1cd21fa1`)
 
 ```
 go test -count=1 -run ^TestAVerifiedRecoveryRetriedReportsItsLink$ ./internal/seatcommit/
@@ -1700,7 +1748,7 @@ reset_if_test.go:40: a block the match refuses: <nil>
 `--- FAIL: TestResetIfBlockedResetsOnlyItsReason (0.16s); FAIL`
 restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/task	1.021s`.
 
-### the baseline on the hold's own slot
+### the baseline on the hold's own slot (removed in `1cd21fa1`)
 
 ```
 go test -count=1 -run ^TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt$ ./internal/scheduler/
@@ -1793,8 +1841,8 @@ restored exit 0:
 
 | Revert | On `ad3330e0` | First failing line | Restored |
 |---|---|---|---|
-| the alarm's baseline dropped | `internal/schedproc/prepare.go:77` | `recover_test.go:442: the alarm: ...` | `ok` 0.687s |
-| the quarantine's prior record nil | `internal/seatcommit/quarantine.go:112` | `recover_test.go:673: the quarantine's prior record: seq 1 <nil>, ...` | `ok` 1.321s |
+| the alarm's baseline dropped (removed in `1cd21fa1`) | `internal/schedproc/prepare.go:77` | `recover_test.go:442: the alarm: ...` | `ok` 0.687s |
+| the quarantine's prior record nil (removed in `1cd21fa1`) | `internal/seatcommit/quarantine.go:112` | `recover_test.go:673: the quarantine's prior record: seq 1 <nil>, ...` | `ok` 1.321s |
 | the raw text as the identity | `internal/scheduler/tamper.go:124` | `tamper_test.go:720: over 30 ticks of one failure with a fresh temp name: ...` | `ok` 0.388s |
 | an unconditional `Reset` | `internal/scheduler/tamper.go:209` | `tamper_test.go:764: the release touched the new block: ...` | `ok` 0.448s |
 | the store's reason not checked | `internal/task/reset_if.go:23` | `reset_if_test.go:22: another block's reset: <nil>` | `ok` 0.633s |
@@ -1816,8 +1864,30 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `e1fc443c` (the masked key's row after `ede2226c`; this
-note is the only change after it), each from the worktree root. The
+Phase one, on `1cd21fa1` (the baseline removed; this note is the only
+change after it), each from the worktree root. The whole-module test,
+`npm test` and `make ci` ran under the gate lock, one after another, each
+printing the head (`1cd21fa1`) inside the lock:
+
+- `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'` (the whole module): exit 0, 56 packages `ok`, no
+  `FAIL`.
+- `gate-lock.sh 904-pi -- sh -c 'cd pi && npm test'`: exit 0, `ℹ tests
+  118`, `ℹ pass 117`, `ℹ fail 0`, `ℹ skipped 1`; `cd pi && node
+  scripts/lint.mjs`: exit 0.
+- `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'`: exit 0, 70 `ok` (34 from the cache of
+  the whole-module run), no `FAIL`, the same four pi counts.
+- The format gate, Go 1.26's gofmt first on PATH, `make fmt-check`: exit
+  0; `GOOS=windows go build ./internal/seatcommit/`: exit 0;
+  `go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`:
+  exit 0 and `make skill-command-check skill-invocation-check`: exit 0
+  (both on this note).
+
+Every gate passed on its first run, none repeated.
+
+Before that, phase one on `e1fc443c` (the masked key's row after `ede2226c`; the
+notes `c267382d` and `f1edd375` the only changes after it), each from the worktree root. The
 whole-module test, `npm test` and `make ci` ran under the host's gate lock
 (`<job tmp>/gate-lock.sh <label> -- <command>`, the plan reviewer's rule,
 widened to `npm test`), one at a time, each printing the head
