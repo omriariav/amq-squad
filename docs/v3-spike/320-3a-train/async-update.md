@@ -339,7 +339,7 @@ naming the verb, nothing bound; `Rebind` reads it before its own write,
 to word its readmission entry (`it is the train's own again, after a
 superseded attempt`). Since Codex's fourth pass (commit `c31a4256`) the
 authoritative check is at the write itself: `bindAdmitted` (`binding.go`)
-is the only writer of a binding; under the audit log's lock it re-reads
+is the only binding writer in the train and the lead's verb (the harness's writers are named in round nine); under the audit log's lock it re-reads
 the journal, calls `headAdmitted` on that read and only then writes, so
 the earlier checks above are fast paths that keep a superseded head out
 of the journal's rebase and rebind entries, and a supersede that lands
@@ -351,8 +351,11 @@ sequence, never the entries' timestamps: a clock step cannot reorder a
 supersede and a readmit (`headAdmitted` never reads `At`). Only the lead's `merge-train rebind`
 verb brings H back (the reviewer's clarifications, commits `bf4c6458` and
 `75cf54a5`): its applied binding writes the terminal `rebind_readmitted`
-entry (the PR, the task, the heads) under the verb's own run, right after
-`BindPRFrom` succeeds; no train code path writes it (a source guard fails
+entry (the PR, the task, the heads) under the verb's own run, inside the
+binding write's critical section and before `BindPRFrom` (the reviewer's
+ruling, round eight: the journal before the mutation; a write that fails
+before the store's commit point is undone there by a terminal
+`rebind_superseded`); no train code path writes it (a source guard fails
 by file if one starts to), and the train never recovers a superseded head
 either: `reconcileUpdates` meets a head that is not admitted
 (`headAdmitted`) and leaves the binding where it is,
@@ -439,7 +442,7 @@ Two P2 on `82bc6856` (commit `c31a4256`):
    PR's `waitCI` can take twenty minutes), `reconcileRebinds` on a read
    taken before its PR reads, and the proof's network calls sat between
    the check and the write. `bindAdmitted(audit, binder, record, write)`
-   is now the one writer of a binding: under the journal lock
+   is now the one binding writer in the train and the lead's verb: under the journal lock
    (`Audit.AuditLockPath`, the lock `Append` takes) it re-reads the journal, calls
    `headAdmitted` on that read and then calls `BindPR` or, for the lead's
    conditional write, `BindPRFrom`; no entry can be appended between the
@@ -509,6 +512,45 @@ A readmission that cannot be appended writes no binding (the refusal
 `rebind_failed`, `the readmission entry was not written ...; nothing is
 bound`).
 
+## Codex's fifth pass (round nine)
+
+By reading at `d1bc30a5`: no deadlock and no lock-order inversion; the
+order and the rows hold. Two P2 and a P3, the plan reviewer's rulings
+(commit `47658307`):
+
+1. **A committed bind was undone (P2-1).** `task.Store.BindPRFrom` can
+   return `*task.CommittedError` (`internal/task/transaction.go`): the
+   commit point is crossed and the binding is durable, the after-image to
+   be replayed at the store's next locked access. `bindAdmitted` undid
+   any error, so a durable H was superseded. A `CommittedError` now counts
+   as written: the readmission stands, there is no undo, and the verb
+   reports the binding with the store's replay pending. The undo runs only
+   on an error from before the commit point.
+2. **The same-target race (P2-2).** The verb journals its replayable
+   `rebind` entry before its section, so a train's recovery can bind H
+   first; the verb's `BindPRFrom(old, H)` then met a binding at H and
+   superseded a correctly bound H. Under the store's lock, `BindPRFrom`
+   now treats a task already bound at exactly the target (the same
+   repository and PR number, `PRHead == H`) as a read-only success, no
+   write, merge facts untouched (`internal/task/bind.go`); any other head
+   is still `ErrPRBindingMismatch`. A rerun of the verb after it landed is
+   idempotent the same way.
+3. **The writer boundary (P3).** `bindAdmitted` is the only binding
+   writer in the train and the lead's verb; the guard scans
+   `internal/mergetrain/` only. The harness writes bindings outside that
+   claim: the commit step's `task.Store.BindPR`
+   (`internal/cli/seat_commit.go:221`, the `BindPR` hook of
+   `internal/seatcommit/commit.go:1415`) and `task.Store.CompleteBound`
+   (`internal/task/scope.go:140`, called from
+   `internal/cli/seat_commit.go:123` and
+   `internal/scheduler/scheduler.go:740`). Open item, placed in 3.2.x and
+   not part of this PR: Codex's `CompleteBound` race, a commit result
+   cached at the old head applied after the train bound H.
+
+The train's own callers of `bindAdmitted` (`land`, the reconciles) are
+unchanged on a `CommittedError`: they stop the run as on any binding
+error, and the durable binding is what the next run reads.
+
 ## Rows
 
 | Row | What it proves | Test |
@@ -544,7 +586,7 @@ bound`).
 | the verb restores H | The reviewer's clarification: after a superseded attempt, the task bound back at the old head and the verb applied (old to H): the binding is H, `rebind_readmitted` is journaled under the verb's run with the task and the heads, `trainHeads` has H, and the next real run lands the PR. | `internal/mergetrain` `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 | only the verb re-admits | A train run meeting a superseded head on a journaled request and a sound proof: the binding stays, no rebind, rebase or readmitted entry is written, the head stays out of `trainHeads`, the reconcile entry says `only merge-train rebind re-admits it`, and the check refuses the head on `force_push`; the verb then re-admits it and the next run lands the PR. The source guard: among the package's non-test files only `rebind.go` writes `Kind: "rebind_readmitted"`. | `internal/mergetrain` `TestTrainNeverReadmitsASupersededHead`; `TestOnlyTheRebindVerbWritesReadmitted` |
 | one row per refusal | The closed table, through `GH.run`'s wrapper (`ghFailure`: the exec error and gh's stderr as printed), one class row each, in both of gh's wrappers: `Head branch was modified. Review and try the update again.` as `gh: <message>` (as printed, in lower case, and as the fake prints it: its sentinel line, then the `gh:` line last) and as `GraphQL: <message> (updatePullRequestBranch)` (as printed and in lower case); `Resource not accessible by integration` as `gh: <message>` and under the mutation's path and a dotted path; the 4xx forms 422, 403, 404; ambiguous: the unknown wordings, `Pull request is not mergeable`, a bare `Forbidden`, `Internal server error`, `timed out`, `Something went wrong ...`, the 5xx forms, the transport errors, a killed gh with no text. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
-| the replay skip | Codex's third pass (1): the refused re-bind's journal as Rebind writes it (rebase, rebind with the `patch-id:` detail, then rebind_superseded), a journaled request and the push: `reconcileRebinds` does not replay the rebind entry and `reconcileUpdates` does not recover the head; two reconcile entries name the verb (`does not replay it`, `does not recover it`); the binding stays, the head stays out, the check refuses it on `force_push`; the verb re-admits it and the next run lands the PR. | `internal/mergetrain` `TestTrainNeverReadmitsASupersededHead` |
+| the replay skip | Codex's third pass (1): the refused re-bind's journal as Rebind wrote it at that pass (rebase, rebind with the `patch-id:` detail, then rebind_superseded; since round eight a refused re-bind also journals `rebind_readmitted` before its `rebind_superseded`, which `the replay (one admission)` below runs from the real operation), a journaled request and the push: `reconcileRebinds` does not replay the rebind entry and `reconcileUpdates` does not recover the head; two reconcile entries name the verb (`does not replay it`, `does not recover it`); the binding stays, the head stays out, the check refuses it on `force_push`; the verb re-admits it and the next run lands the PR. | `internal/mergetrain` `TestTrainNeverReadmitsASupersededHead` |
 | a killed gh read | Codex's third pass (3): the read-back through `GH.exec` (the real exec path, `CommandContext`) to a gh stand-in that sleeps past a 300 ms wait: the killed read is unmoved for its poll, the run ends refused unconfirmed within 5 s of the mutation, nothing bound. The in-process blocking fake's row (`TestStalledReadReturnsWithinTheBoundedWait`) stands beside it; both time the wait from the mutation's return, since the fake's git work runs under the suite's load. | `internal/mergetrain` `TestStalledGhReadIsUnmovedForThePoll` |
 | the run's bound in words | The reviewer's clarification on (3): the command under a 300 ms bound (a seam) with a gh stand-in that sleeps, its child holding the pipes past the kill, a dry run under a temp root with the default grants: the run ends within the bound and the error reads `merge-train: the run timed out after 300ms, a call to GitHub did not return; nothing more was merged, and the next run starts from the journal` above the rule and `refused (run_timeout): read branch protection: ...` below. | `internal/cli` `TestMergeTrainRunEndsAtItsBoundInWords` |
 | unknown wording | Codex's re-pass (1): `GraphQL: Internal server error` and a wording never seen are ambiguous in the class table; through the run, the fake performs the update and the Forge returns the unknown wording: `update_ambiguous`, no `update_failed`, the head read back, bound and merged. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError`; `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`an unknown GraphQL wording ...`) |
@@ -552,7 +594,7 @@ bound`).
 | the endpoints | Codex's re-pass (4): a force push stamped in the request's own second and one stamped in the window's last second (136 s) are recovered; one stamped a second before the request (`no force push in the journaled request's window`) and one a second past the window (`1 after the window, which ended at`) are refused with the reason in the reconcile entry. | `internal/mergetrain` `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (four subtests) |
 | the #894 shape | Codex's re-pass (4): a journaled request with no `update_failed` and no `update_ambiguous` (the run died after the mutation), the push stamped 5 s after it: recovered on the proof, the record naming the window; every recovered row's record names it. | `internal/mergetrain` `TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof` (`the run died after the mutation ...`) |
 | production cancel | Codex's re-pass (4): no Sleep seam; the context is cancelled 150 ms after the mutation, inside the first real 1 s backoff: the wait ends within 900 ms of the mutation, refused unconfirmed, nothing bound. | `internal/mergetrain` `TestCancellationEndsTheProductionSleep` |
-| the replay (one admission) | The plan reviewer's ruling on Codex's third pass, item 1, Codex's sequence: the real refused re-bind (a Binder that advances the binding right before the conditional write) journals `rebase(old->H)`, `rebind(old->H)`, `rebind_superseded(H)` in that order under one run; with the task bound back at old and the PR's head H, a real run leaves H unbound: the binding stays at old, no `rebase` or `rebind` entry under the run, a reconcile entry `does not replay it, only merge-train rebind re-admits it`, the check refuses H on `force_push`. | `internal/mergetrain` `TestRefusedRebindJournalLeavesTheHeadUnbound` |
+| the replay (one admission) | The plan reviewer's ruling on Codex's third pass, item 1, Codex's sequence: the real refused re-bind (a Binder that advances the binding right before the conditional write) journals `rebase(old->H)`, `rebind(old->H)`, then in the write's critical section `rebind_readmitted(H)` and its undo `rebind_superseded(H)` (`rebind_failed: the binding moved while the re-bind was proved ...`), in that order under one run, H not admitted; with the task bound back at old and the PR's head H, a real run leaves H unbound: the binding stays at old, no `rebase` or `rebind` entry under the run, a reconcile entry `does not replay it, only merge-train rebind re-admits it`, the check refuses H on `force_push`. | `internal/mergetrain` `TestRefusedRebindJournalLeavesTheHeadUnbound` |
 | the recovery (one admission) | A journaled request for the bound head, one force push to H on the base tip with the patch unchanged (the recovery's proof holds) and `rebind_superseded(H)` with no rebind entry: the run does not recover H, the binding stays, nothing rebound, a reconcile entry `does not recover it, only merge-train rebind re-admits it`. | `internal/mergetrain` `TestSupersededHeadIsNotRecoveredFromAJournaledRequest` |
 | land's bind (one admission) | The train's own update produces H, and `rebind_superseded(H)` is journaled before the read-back (a lead re-bind of H refused meanwhile): the proof holds and the run refuses H `pr_head_moved` with `superseded by a lead re-bind decision`; no `rebase` or `rebind` entry for the PR under the run, the binding unchanged, nothing merged. | `internal/mergetrain` `TestTrainUpdateOfASupersededHeadIsNotBound` |
 | the verb (one admission) | A first re-bind's readmission entry reads `the lead's re-bind bound this head; it is the train's own`; after the real refused re-bind of the same head it reads `... it is the train's own again, after a superseded attempt`, the head is admitted and bound, and the next run lands the PR. | `internal/mergetrain` `TestRebindWordsTheReadmissionAfterASupersededAttempt` (2 subtests) |
@@ -561,9 +603,11 @@ bound`).
 | superseded meanwhile | Codex's fourth pass (1): `rebind_superseded(H)` appended after the reconcile's journal snapshot, inside the recovery's proof (the hook on `FirstParent(H)`, a journaled request and one force push to H, the proof sound) and inside the replay's PR read (the hook on the first `PR` read, a journaled proof-backed rebind entry for the bound head): H is not bound, the binding stays, a reconcile entry reads `superseded by a lead re-bind decision before the binding write; the train does not bind it, only merge-train rebind re-admits it`, and the check refuses H. | `internal/mergetrain` `TestSupersededDuringTheRecoveryIsNotBound` (2 subtests) |
 | supersede first | The reviewer's order (a): the test holds the journal lock, starts `bindAdmitted` (it waits at the lock: nothing returns within 200 ms), appends `rebind_superseded(H)` under the lock and releases it; the write's fresh read sees the supersede and returns `ErrHeadSuperseded`, the head stays unbound. | `internal/mergetrain` `TestSupersedeFirstIsSeenByTheBindingWrite` |
 | binding first | The reviewer's order (b): with the train's `rebase(old->H)` journaled (`trainHeads` names H), `bindAdmitted` takes the lock and, inside the binding write, a supersede `Append` of H is started; it has not landed 200 ms into the write, and lands after it. The binding is H, the journal has the supersede after the rebase entry, `trainHeads` excludes H, and the next real run refuses H on `force_push`. | `internal/mergetrain` `TestBindingFirstThenSupersedeIsExcludedNextRun` |
-| a failed bind | Round eight: the verb's `BindPRFrom` fails with a store error (`disk full`): the refusal is `binding_failed` with `the binding could not be written: disk full; nothing is bound`; the journal has `rebind_readmitted(H)` and after it `rebind_superseded(H)` with `rebind_failed: the binding could not be written: disk full ...`, H is not admitted and the binding stays at old. The moved-binding failure is the `refusedRebind` helper's (`rebind_failed: the binding moved while the re-bind was proved`, H not admitted). | `internal/mergetrain` `TestFailedRebindWriteLeavesTheHeadNotAdmitted`; `TestRefusedRebindJournalLeavesTheHeadUnbound` |
+| a failed bind | Round eight: the verb's `BindPRFrom` fails with a store error (`disk full`) before the store's commit point (the stub returns before any write): the refusal is `binding_failed` with `the binding could not be written: disk full; nothing is bound`; the journal has `rebind_readmitted(H)` and after it `rebind_superseded(H)` with `rebind_failed: the binding could not be written: disk full ...`, H is not admitted and the binding stays at old. The moved-binding failure is the `refusedRebind` helper's (`rebind_failed: the binding moved while the re-bind was proved`, H not admitted). The committed case is not a failure: `the committed bind` below. | `internal/mergetrain` `TestFailedRebindWriteLeavesTheHeadNotAdmitted`; `TestRefusedRebindJournalLeavesTheHeadUnbound` |
 | the crash between | Round eight: a bind seam that panics after the readmission: H admitted (its latest terminal entry `rebind_readmitted`) and unbound, the lock released by the unwinding; the verb run again binds H, and the next real run lands the PR. | `internal/mergetrain` `TestCrashBetweenReadmissionAndBindIsRepairedByTheVerb` |
 | no supersede between | Round eight: a supersede `Append` of H started inside the verb's `BindPRFrom` has not landed 200 ms in, and lands after the section, as H's latest terminal entry (after the readmission): H is bound and not admitted, and the next real run refuses it on `force_push`. | `internal/mergetrain` `TestSupersedeCannotLandBetweenReadmissionAndBind` |
+| the committed bind | Codex's fifth pass (P2-1): a binder whose `BindPRFrom` binds durably and then returns `*task.CommittedError` (past the store's commit point, the after-image to be replayed): the verb succeeds and reports `the binding is written; the task store's replay is pending: ...`; no `rebind_superseded` under its run, H admitted and bound, and the next real run lands the PR. | `internal/mergetrain` `TestCommittedBindIsNotUndone` |
+| the same target first | Codex's fifth pass (P2-2): the train binds the task at H right before the verb's `BindPRFrom(old, H)` (a train's recovery that proved and bound the same head first): the store finds the task already bound at exactly the target (the same repository and PR number, `PRHead == H`) and returns a read-only success, so the verb succeeds with H admitted and bound. The stale-write row checks the store's side: `BindPRFrom` from the wrong head to a different target is still `ErrPRBindingMismatch`, and to the head already bound it is a success with no write (`UpdatedAt` and the recorded merge fact unchanged). | `internal/mergetrain` `TestTrainBindingTheSameHeadFirstIsTheVerbsSuccess`; `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 | the wrappers whole | Item 2 as ruled: the match strips one of gh's two wrappers whole from gh's last stderr line, `gh: <message>` or `GraphQL: <message> (<path>)`, and compares the rest exactly, case aside. Definite: the table text in either wrapper (rows (1) and (2): the fake's `gh:` refusal through the production path is `definite refusal` above). Ambiguous, never definite (row (3), the text with anything extra): around `gh: ` a path after the message, `Retry later.` after it, `gh: gh: `, `warning: gh: `, `gh:` with no space, a second line (gh api's newline between several errors, or gh's scopes line after it), `gh: HTTP 502`, `gh: HTTP 422`; around `GraphQL: ` no path, a second path, the old fake's `[fake: ...]` after the path, a line after it, two errors on one line, `warning: GraphQL: `, `graphql: `; each table message's fragment inside unfamiliar text (`... while checking expected head ...`, `Internal server error: Head branch was modified...`, `Head branch was modified... Retry later.`, `Something went wrong, resource not accessible by integration` in both wrappers, `Resource not accessible by integration token`, `... not mergeable by ...`), a prefix of a message (`Head branch was modified`, `Resource not accessible`, in both wrappers), and an error not from gh carrying the GraphQL text; the fake's pinned-head mismatch through `GH.run` is definite by its own exact output with no table entry. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
 
 Rule 18: every row runs under a `t.TempDir` root; the mergetrain rows run
@@ -1427,6 +1471,36 @@ admission_test.go:373: the supersede was appended during the binding write: <nil
 ```
 restored: `ok ... 1.542s`.
 
+### Codex's fifth pass (three runs, on `47658307`)
+
+`903o undo on every error`: `internal/mergetrain/binding.go`
+(`bindAdmitted`) `if err != nil && w.Undo != nil && !errors.As(err, &committed) {`
+to `... && (true || !errors.As(err, &committed)) {`;
+`go test -count=1 -timeout 300s -run ^TestCommittedBindIsNotUndone$ ./internal/mergetrain/`;
+```
+admission_test.go:546: the committed write was undone: admitted false, bound 225c3b106270b4262ae797f526af15e934a42190, [rebase rebind rebind_readmitted rebind_superseded]
+```
+restored: `ok ... 1.287s`.
+
+`903o the strict mismatch`: `internal/task/bind.go` (`BindPRFrom`) the
+identical-target check `if strings.EqualFold(t.PRRepository, repository) && t.PRNumber == pr && t.PRHead == strings.TrimSpace(head) {`
+to `... && false {`;
+`go test -count=1 -timeout 300s -run ^TestTrainBindingTheSameHeadFirstIsTheVerbsSuccess$ ./internal/mergetrain/`;
+```
+admission_test.go:576: the verb after the train bound the same head: rebind refused (rebind_head_mismatch): the binding moved while the re-bind was proved: PR binding mismatch: bind PR from 1e5ad1ba3598: task t1 is bound to owner/fixture#1 at ccd56c82a4af639d0784d8f82d97b7a2a6218756; nothing is bound (the proof's entries, the readmission and the superseded entry are journaled under run mt-rebind-20261106T091144Z-11bb0097)
+```
+restored: `ok ... 1.075s`.
+
+`903o the crash row, bind first` (the revert the crash row lacked):
+(`bindAdmitted`) the readmission's `appendLocked` moved after the write
+(appended only when the write returned);
+`go test -count=1 -timeout 300s -run ^TestCrashBetweenReadmissionAndBindIsRepairedByTheVerb$ ./internal/mergetrain/`;
+```
+admission_test.go:447: the crash state: admitted true, bound 762f11feef757f8002579896053f29fc577f7912, [rebase rebind]
+```
+(the crash left no readmission: nothing records the lead's decision)
+restored: `ok ... 1.355s`.
+
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
 
@@ -1680,6 +1754,27 @@ run one at a time across agents, through `gate-lock.sh`):
   `pi/` changed since `82bc6856`. Run under the gate lock (taken after
   150 s): exit 0, `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`, `ℹ skipped 1`.
   `node scripts/lint.mjs`: exit 0.
+- `make fmt-check` with the go1.26.10 toolchain's `bin/` first on PATH
+  and `GOTOOLCHAIN=go1.26.10`: exit 0.
+- `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
+  exit 0.
+
+On `47658307` (Codex's fifth pass: `internal/mergetrain/` and
+`internal/task/bind.go`; the note's commit after it has the same Go tree),
+the whole-module gate and `make ci` under the host's gate lock:
+
+- `gate-lock.sh 903-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'`: the lock taken after 15 s, exit 0, 56 packages
+  `ok`.
+- `gate-lock.sh 903-ci -- make ci` (`NPM_FLAGS=--offline`, the PyYAML venv
+  first on PATH): the lock taken after 300 s; exit 2 at `pi-test` (70 Go
+  packages `ok` before it) on one row, `R53: the owner's yes switches the
+  lead's tools ...` at 7.0 s (the 5 s guard budget; the host's load
+  average 12.5 from work outside the lock). Run once more
+  (`903-ci2`, the lock after 65 s): exit 0, 70 packages `ok`, pi-test
+  `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`.
+- `cd pi && npm test` (under the lock, after 0 s): exit 0, `ℹ tests 116`,
+  `ℹ pass 115`, `ℹ fail 0`, `ℹ skipped 1`; `node scripts/lint.mjs`: exit 0.
 - `make fmt-check` with the go1.26.10 toolchain's `bin/` first on PATH
   and `GOTOOLCHAIN=go1.26.10`: exit 0.
 - `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
