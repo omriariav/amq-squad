@@ -677,3 +677,38 @@ func TestAVerifiedRecoveryRetriedReportsItsLink(t *testing.T) {
 		t.Fatalf("the head put back: %v %+v", ok, back)
 	}
 }
+
+// The plan reviewer on af1a6124, a recovery from another slot: the
+// document refused at seq 1 (slot X), then refused again after another
+// edit (slot X.2, whose bytes are the live document's). The decision for X
+// is refused while the live document is X.2's; the recovery from X.2
+// continues the chain and names X.2; the document now verifies, and the
+// decision for X is then recorded in the verified mode, naming X, so a
+// hold on X is answerable (the scheduler's exact-slot rule). Reverted (the
+// verifying document refused), X stays unanswerable.
+func TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery(t *testing.T) {
+	f := newFixture(t)
+	original := readFile(t, ledgerPath(f.root, f.handle))
+	tamperBase(t, f, f.base, '0')
+	x := f.quarantined()
+	write(t, ledgerPath(f.root, f.handle), string(original))
+	tamperBase(t, f, f.base, '1')
+	y := f.quarantined()
+	if x.Seq != "1" || y.Seq != "1" || y.Slot != x.Slot+".2" {
+		t.Fatalf("the slots: %s %s / %s %s", x.Seq, x.Slot, y.Seq, y.Slot)
+	}
+	if _, err := f.recover("1", 1); err == nil {
+		t.Fatal("the decision for X was taken while the live document is X.2's")
+	}
+	later, err := f.recover("1", 2)
+	if err != nil || later.Slot != y.Slot || later.Verified {
+		t.Fatalf("the recovery from X.2: %v %+v", err, later)
+	}
+	first, err := f.recover("1", 1)
+	if err != nil || !first.Verified || first.Slot != x.Slot || first.NewSeq != later.NewSeq+1 {
+		t.Fatalf("the decision for X after X.2's recovery: %v %+v", err, first)
+	}
+	if rec, ok := RecoveryOf(f.root, f.handle); !ok || rec.Slot != x.Slot || !rec.Verified || rec.Link != first.NewSeq {
+		t.Fatalf("the record: %v %+v", ok, rec)
+	}
+}
