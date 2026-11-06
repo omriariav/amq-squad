@@ -3,6 +3,7 @@ package mergetrain
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -944,6 +945,94 @@ func TestSupersededHeadStaysOutWhateverTheOrder(t *testing.T) {
 	}
 	if got := a.trainHeads(fixtureRepo, 1); got[h] {
 		t.Fatalf("the superseded-again head is in: %v", got)
+	}
+	// "latest" is the journal's order, never the timestamps (the plan
+	// reviewer on #903): a readmitted entry stamped a day earlier but
+	// appended later wins, and a superseded entry stamped later but
+	// appended earlier does not
+	earlier := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	if err := a.Append(Entry{At: earlier, Kind: "rebind_readmitted", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.trainHeads(fixtureRepo, 1); !got[h] {
+		t.Fatalf("the later-appended, earlier-stamped readmission lost: %v", got)
+	}
+	later := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	if err := a.Append(Entry{At: later, Kind: "rebind_superseded", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Append(Entry{At: earlier, Kind: "rebind_readmitted", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.trainHeads(fixtureRepo, 1); !got[h] {
+		t.Fatalf("the timestamps reordered the terminal entries: %v", got)
+	}
+}
+
+// The plan reviewer on #903: only the lead's merge-train rebind verb
+// writes rebind_readmitted; no train path does. A train run that meets a
+// superseded head (a lead re-bind attempt on it refused on the conditional
+// write) never recovers it even on a journaled request and the proof: the
+// binding stays, no rebind or readmitted entry is written, the head stays
+// out of trainHeads, the reconcile entry names the lead's verb, and the
+// check refuses the head on force_push. The verb then re-admits it and the
+// next run lands the PR. Reverted (the recovery proceeding on a superseded
+// head), the binding moves and the row fails.
+func TestTrainNeverReadmitsASupersededHead(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "update_requested", Repository: fixtureRepo, Base: "main", PR: 1, Task: id, Head: old, BaseSHA: f.head("main")}); err != nil {
+		t.Fatal(err)
+	}
+	_, moved := moveBranch(f, "pr1", nil, true)
+	if err := f.train.Audit.Append(Entry{Run: "mt-rebind-earlier", Kind: "rebind_superseded", Repository: fixtureRepo, Base: "main", PR: 1, Task: id, Head: old, NewHead: moved, Detail: "a stale re-bind"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || !slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) || boundHead(t, f, id) != old {
+		t.Fatalf("the superseded head was recovered: %v %+v (bound %s)", err, res.PRs, boundHead(t, f, id))
+	}
+	entries, _ := f.train.Audit.Read()
+	if slices.ContainsFunc(entries, func(e Entry) bool {
+		return e.Kind == "rebind_readmitted" || (e.Run == res.Run && (e.Kind == "rebind" || e.Kind == "rebase"))
+	}) || f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
+		t.Fatalf("the train wrote a re-admission or a rebind: %v (trainHeads %v)", kinds(entries, 1), f.train.Audit.trainHeads(fixtureRepo, 1))
+	}
+	if rec := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "reconcile" && e.Run == res.Run }); rec < 0 || !strings.Contains(entries[rec].Detail, "only merge-train rebind re-admits it") {
+		t.Fatalf("the reconcile entry does not name the verb: %d", rec)
+	}
+	s := f.tasks()
+	if _, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: StoreBinder{Store: s}, PR: 1, From: old, To: moved, Lead: "lead"}); err != nil {
+		t.Fatalf("the verb did not re-admit: %v", err)
+	}
+	f.realRun(&req)
+	if res, err := f.train.Run(context.Background(), req); err != nil || res.PRs[0].Status != "merged" {
+		t.Fatalf("the re-admitted head did not land: %v %+v", err, res.PRs)
+	}
+}
+
+// The guard from the source: among the package's non-test files only
+// rebind.go (the lead's verb) writes a rebind_readmitted entry; a train path
+// that starts writing one fails here by file.
+func TestOnlyTheRebindVerbWritesReadmitted(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") || name == "rebind.go" {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), `Kind: "rebind_readmitted"`) {
+			t.Errorf("%s writes a rebind_readmitted entry; only the lead's verb (rebind.go) may", name)
+		}
+	}
+	raw, _ := os.ReadFile("rebind.go")
+	if !strings.Contains(string(raw), `Kind: "rebind_readmitted"`) {
+		t.Fatal("rebind.go no longer writes the re-admission")
 	}
 }
 

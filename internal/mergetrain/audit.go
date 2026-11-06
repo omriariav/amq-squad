@@ -168,31 +168,51 @@ func (a Audit) Read() ([]Entry, error) {
 // force push that lands on one of them is the train's, not a seat's. A
 // head is taken out again by a terminal rebind_superseded entry (the lead's
 // re-bind whose conditional binding write refused, rebind.go) and brought
-// back only by a terminal rebind_readmitted entry (the lead's re-bind
-// applied): the latest terminal entry of a head decides, and a rebase
-// entry never does once a terminal entry names the head, whatever the
-// order of the rebase entries (the plan reviewer on #903).
+// back only by a terminal rebind_readmitted entry, which only the lead's
+// merge-train rebind verb writes (its applied binding, over the decision
+// socket with the lead proof; no train code path writes it): the latest
+// terminal entry of a head decides, latest in the journal's order (the
+// append sequence), never by the entries' timestamps, and a rebase entry
+// never decides once a terminal entry names the head, whatever the order
+// of the rebase entries (the plan reviewer on #903).
 func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 	entries, _ := a.Read()
 	out := map[string]bool{}
-	terminal := map[string]string{} // head -> the latest terminal kind
 	for _, e := range entries {
-		if e.Repository != repository || e.PR != pr || e.NewHead == "" {
-			continue
-		}
-		switch e.Kind {
-		case "rebase":
+		if e.Kind == "rebase" && e.Repository == repository && e.PR == pr && e.NewHead != "" {
 			out[e.NewHead] = true
-		case "rebind_superseded", "rebind_readmitted":
-			terminal[e.NewHead] = e.Kind
 		}
 	}
-	for h, kind := range terminal {
+	for h, kind := range terminalKinds(entries, repository, pr) {
 		if kind == "rebind_superseded" {
 			delete(out, h)
 		}
 	}
 	return out
+}
+
+// terminalKinds is each head's latest terminal entry kind (rebind_superseded
+// or rebind_readmitted) for a PR, by the journal's order.
+func terminalKinds(entries []Entry, repository string, pr int) map[string]string {
+	terminal := map[string]string{} // head -> the latest terminal kind, in journal order
+	for _, e := range entries {
+		if e.Repository != repository || e.PR != pr || e.NewHead == "" {
+			continue
+		}
+		switch e.Kind {
+		case "rebind_superseded", "rebind_readmitted":
+			terminal[e.NewHead] = e.Kind
+		}
+	}
+	return terminal
+}
+
+// supersededHead reports a head whose latest terminal entry is
+// rebind_superseded: the train never binds or recovers it; only the lead's
+// merge-train rebind verb re-admits it.
+func (a Audit) supersededHead(repository string, pr int, head string) bool {
+	entries, _ := a.Read()
+	return terminalKinds(entries, repository, pr)[head] == "rebind_superseded"
 }
 
 // lastUpdateRequest is the latest journaled update_requested of a real run

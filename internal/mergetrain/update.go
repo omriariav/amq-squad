@@ -321,6 +321,16 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		if cur.HeadSHA == it.BoundHead {
 			continue // the update never landed (or was refused unconfirmed): the check decides
 		}
+		// a head a lead re-bind superseded is never the train's to recover
+		// (the plan reviewer on #903): only merge-train rebind re-admits it,
+		// and it needs the binding where it is
+		if t.Audit.supersededHead(req.Repository, it.Number, cur.HeadSHA) {
+			if err := entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: it.BoundHead, NewHead: cur.HeadSHA,
+				Detail: fmt.Sprintf("the current head %s was superseded by a lead re-bind decision; the train does not recover it, only merge-train rebind re-admits it\nbinding not recovered", short(cur.HeadSHA))}); err != nil {
+				return err
+			}
+			continue
+		}
 		// the request's window: GitHub lands the update inside the bounded
 		// wait, and a read that started before the deadline completes at
 		// most one poll after it; a push later than that is never the
