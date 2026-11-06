@@ -25,7 +25,7 @@ that name below), then `af1a6124`, the note; then `ad3330e0`, the plan
 reviewer's ruling on `af1a6124` (the section "The plan reviewer on
 af1a6124"), and `bd683f28`, its row for a hold on an earlier slot; then
 `ede2226c`, the note; then `e1fc443c`, the masked key's row the reviewer
-asked for; then this note. The helper move of `8017ffea` is between
+asked for; then `c267382d` and this note, the notes on it. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -465,8 +465,10 @@ gates below are the run evidence) and found three P2 and one P3.
   a prepare failure has no code of its own (any error of the ledger read
   or the clean), and a constant code would make a failure that says
   something else silent, which the changed-reason rows of #904 (B4's end,
-  the P2 per task) require to log again. The residual: two failures that
-  differ only in a path or a number are one failure, counted.
+  the P2 per task) require to log again. The trade-off: two failures
+  that differ only in a path or a digit run count as one (the first is
+  logged with its full text, the rest counted); a change of wording logs
+  again (`TestReasonsDifferingOnlyInATempNameLogOnce`, `e1fc443c`).
 - **P2-3, the recovery could clear an unrelated block.** The release read
   the task (blocked `ledger_tampered`) and then called the unconditional
   `Reset` under a second lock acquisition, so a decision in between (the
@@ -540,21 +542,31 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   only; the masked text keeps those apart at the cost of merging two
   failures that differ only in a path or a number, which are then
   counted, not shown (the full text of the first stays in its line).
-- **Where the baseline still decides.** Under slot-only matching the
-  baseline refuses a record that names the hold's own slot and was
-  already in the ledger at the alarm. On real files I found no path to
-  that input: a slot holds the bytes its refusal copied, and the record
-  naming the slot is written after the slot exists, in a later body. The
-  one way a slot predates its hold is the quarantine's no-op for an
-  identical refusal (the same bytes refused again reuse the slot): the
-  document recovered from slot X, then the exact refused bytes put back
-  (a new hold on X), then the recovered document put back again (it
-  verifies and records X). The baseline does not stop that: the refused
-  bytes predate the record of X. It needs two deliberate restores of
-  whole files by a same-uid process, outside the threat model this note
-  states ("Residual risk"); it is listed there for the reviewer. The
-  scheduler's baseline row builds its input by hand, and the check stays
-  as ruled.
+- **The baseline check stays (the reviewer's ruling on `ede2226c`).**
+  The reviewer holds it reachable in production on the slot-reuse path
+  below, so it is not test-only code, and it stays. The scheduler's row
+  builds its input by hand because no real-files sequence I found makes
+  the baseline decide: a slot is reused only for a byte-identical refusal
+  (`sameSlot`, `internal/seatcommit/quarantine.go:369`, compares the
+  body, the head and the stable sidecar), so the refused bytes that reuse
+  slot S are S's own copy, made when S was created, before any record
+  naming S could be sealed; the baseline they carry is never a record of
+  S. If the reviewer has a sequence in mind, a real-files row replaces the
+  hand-built input.
+- **The slot-reuse replay, residual risk for rc.2.** The one way a slot
+  predates its hold is the quarantine's no-op for an identical refusal:
+  the document recovered from slot X, then the exact refused bytes of X
+  put back (a new hold, on X again), then the recovered document put back
+  (it verifies and records X), which releases the new hold with no new
+  decision; the baseline does not stop it, since the refused bytes predate
+  the record of X. It needs two deliberate whole-file restores by a
+  process running as the same user, which is outside the threat model
+  0c-A stated ("The threat line", `A-quarantine.md`: the quarantine is
+  evidence against accident and other writers, not a vault against the
+  owner's own account). The reviewer accepted it as residual risk for
+  rc.2, with the 3.2.x item "a quarantine slot named by a recovery record
+  is never reused; identical bytes refused again get a new .k slot"
+  ("Residual risk").
 - **A recovery from another slot leaves the hold.** When the document
   changed again after the alarm (a later refused read quarantined it in
   another slot), the recovery must name the later slot (the decision is
@@ -1748,6 +1760,30 @@ tamper_test.go:836: 3 seat_prepare_failed lines, want 2 (the temp name alone is 
 `--- FAIL: TestReasonsDifferingOnlyInATempNameLogOnce (0.02s); FAIL`
 restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.621s`.
 
+### the masked key without the reason (the reviewer on `ede2226c`)
+
+```
+go test -count=1 -run ^TestReasonsDifferingOnlyInATempNameLogOnce$ ./internal/scheduler/
+go test -count=1 -run ^TestAFailureNamingAFreshTempFileIsLoggedOnce$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:124` (on `e1fc443c`), a key that
+drops the reason entirely:
+```
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), reasonIdentity(err.Error()), log)
+```
+to:
+```
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), "", log)
+```
+First failing lines (exit 1, each):
+```
+tamper_test.go:836: 1 seat_prepare_failed lines, want 2 (the temp name alone is one failure, the words another): [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason: Stage: ReasonCode:} ...]
+tamper_test.go:729: a changed reason was not logged: []
+```
+`--- FAIL: TestReasonsDifferingOnlyInATempNameLogOnce (0.05s)`,
+`--- FAIL: TestAFailureNamingAFreshTempFileIsLoggedOnce (0.05s)`;
+restored and both re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.412s`.
+
 ### The re-pass's reverts, run again on `ad3330e0`
 
 The revert runs of "Codex's re-pass on b250b951" above, run again on
@@ -1821,16 +1857,21 @@ runs, and its first run's R53 stop below is the case the widening names
   outside this PR's files, `R53: the owner's yes switches the lead's tools
   to exactly the team lead's eleven and refuses the solo set phase_team`
   (`amq-squad guard failed closed (timed out after 5000 ms)`, `actual:
-  'blocked'`, `expected: 'ran'`; 8.57 s), run while another agent's
-  `make ci` held the lock; run once more, exit 0: `ℹ tests 118`, `ℹ pass
-  117`, `ℹ fail 0`, `ℹ skipped 1`. `cd pi && node scripts/lint.mjs`: exit
+  'blocked'`, `expected: 'ran'`; 8.57 s). That run did not hold the gate
+  lock (the rule did not cover `npm test` yet) and ran while another
+  agent's `make ci` held it. Run once more, also outside the lock, exit
+  0: `ℹ tests 118`, `ℹ pass 117`, `ℹ fail 0`, `ℹ skipped 1`. (On
+  `e1fc443c` above, `npm test` ran under the lock and passed first time.) `cd pi && node scripts/lint.mjs`: exit
   0.
 - `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
-  NPM_FLAGS=--offline make ci'`: the first run exit 2, its `go test` on
+  NPM_FLAGS=--offline make ci'`: the first run, which held the gate lock
+  (`904-ci`), exit 2: `make: *** [test] Error 1`, its `go test` stopped on
   the known load flake `internal/seatlaunch`
-  `TestPiSeatPlansThroughTheUpstreamAdapter` (`amqpi_test.go:75: outcome
-  unsupported (launcher_not_available)`, 5.18 s; already on the 3.2.x
-  list); run once more, exit 0: 70 `ok` (55 from the cache of the
+  `TestPiSeatPlansThroughTheUpstreamAdapter`, failing line
+  `amqpi_test.go:75: outcome unsupported (launcher_not_available)`
+  (`--- FAIL: TestPiSeatPlansThroughTheUpstreamAdapter (5.18s)`; already
+  on the 3.2.x list), with the host's load from package-scoped runs the
+  lock does not cover; run once more under the lock, exit 0: 70 `ok` (55 from the cache of the
   whole-module run), no `FAIL`, `internal/seatlaunch` 21.2 s, the same
   four pi counts.
 - The format gate, Go 1.26's gofmt first on PATH, `make fmt-check`: exit
@@ -1996,14 +2037,17 @@ exit 0; the windows build exit 0.
   after 5000 ms)`); it stopped one `npm test` on `bd683f28` while another
   agent's `make ci` ran, and passed the run after it. Outside this PR's
   files.
-- For the reviewer (`ad3330e0`): a slot reused by the quarantine's no-op
-  for an identical refusal can predate its hold, so a record of an earlier
+- Residual risk for rc.2 (the reviewer's acceptance on `ede2226c`): the
+  slot-reuse replay. A slot reused by the quarantine's no-op for an
+  identical refusal can predate its hold, so the record of an earlier
   recovery from that slot, put back by hand after the same refused bytes
   were put back, releases the new hold; the baseline does not stop it
-  (the refused bytes predate the record). Two deliberate whole-file
-  restores by a same-uid process; the threat model above is unchanged.
-  Closing it would take a slot that is never reused once a recovery named
-  it, or a release that needs the verb's message for every hold.
+  (the refused bytes predate the record). It needs two deliberate
+  whole-file restores by a process running as the same user, outside the
+  threat model 0c-A stated ("The threat line" in `A-quarantine.md`).
+  For the 3.2.x list, by name: "a quarantine slot named by a recovery
+  record is never reused; identical bytes refused again get a new .k
+  slot".
 - A hold whose document changed again after its alarm is not answered by
   a recovery from the later slot (the recovery must name the slot whose
   bytes are the live document's); the lead then sends the verb for the
