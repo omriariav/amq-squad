@@ -9,7 +9,10 @@ backoff). Lead PR, built in a scratch worktree on `origin/v3` at `87fb71e9`
 `scheduler_run.go`), `internal/schedproc/` (`decide.go`),
 `docs/v3-spike/320-3a-train/`, and `pi/extensions/lib/words.ts` (widened
 by the lead after the third gate run below, for the four words entries the
-pi words rows require). `internal/scheduler/` was in the declared set and needed no change:
+pi words rows require). `internal/schedproc/` changes in this PR are `decide.go` (the re-bind
+decision kind of brief item 6, in the declared set) and `rebind_test.go`;
+the tail past `a097f8e1` touches no `internal/schedproc/` file. `internal/scheduler/`
+was in the declared set and needed no change:
 `scheduler.Decision` already carries the fields the decision line uses.
 `internal/task/` gained `Store.BindPRFrom` (Codex's second pass on #903,
 below); `BindPR` itself is unchanged. The pi words table carries every
@@ -95,7 +98,11 @@ stalled gh returns within the deadline (`GH.exec` uses
 `e058974a`, so a child of gh's holding its pipes past the kill, a
 credential helper or a pager, does not hold the read: the bound row's
 stand-in found `Output` waiting 30 s for the child); a read that times
-out counts as unmoved for that poll. The command runs the whole train
+out counts as unmoved for that poll, decided by the read context's own
+deadline, whatever gh's error says (Codex's third pass, commit
+`d8c0e0f8`: a gh killed by its context returns an exit error, not a
+context error, so the first form ended a stalled production read with
+that error instead of the unconfirmed refusal). The command runs the whole train
 under `mergetrain.RunBound(n)`, per PR the update wait, the CI wait and
 ten minutes, so a stalled call anywhere ends the run instead of hanging
 it, and says so in words (commit `bf4c6458`): `merge-train: the run timed
@@ -115,20 +122,26 @@ error text (`GH.run` wraps it as `gh api graphql: <exit>: <stderr>`):
   422 Validation Failed, 403 Forbidden, 404, 409), or a GraphQL error gh
   prints as `GraphQL: <message> (updatePullRequestBranch)` whose text is a
   known refusal from the closed table `graphQLRefusals` in `update.go`
-  (lower-cased substrings, each entry with its source in a comment, the
-  plan reviewer's clarification on #903, commit `bf4c6458`): `Head branch
-  was modified. Review and try the update again.` (GitHub's message when
-  `expectedHeadOid` is no longer the head; the REST "Update a pull request
-  branch" page documents the 422 with it, and the mutation answers the
-  same text), `not mergeable` (the mutation's conflict error, the GraphQL
-  `updatePullRequestBranch` reference), `forbidden` and `not accessible`
-  (REST 403 Forbidden; `Resource not accessible by integration` for an app
-  token), and the fake's `expected head X, the head is Y`
-  (`fakegh_test.go`). The run stops with `rebase: <error>`. Only these are
-  definite (Codex's re-pass on #903, commit `1491a9f1`: the first form
-  took any other GraphQL wording for a refusal and would have retired a
-  request GitHub had completed). A new refusal GitHub documents is one
-  table line with its source.
+  (each entry GitHub's exact message with its source in a comment, the
+  plan reviewer's clarification on #903, commit `bf4c6458`, and Codex's
+  third pass, commit `d8c0e0f8`: an entry is matched as the message
+  itself, the text after the `GraphQL:` prefix equal to or beginning with
+  it, case aside; a fragment inside another sentence is not it): `Head
+  branch was modified. Review and try the update again.` (GitHub's
+  message when `expectedHeadOid` is no longer the head; the REST "Update a
+  pull request branch" page documents the 422 with this body, and the
+  mutation answers the same text) and `Resource not accessible by
+  integration` (GitHub's GraphQL error for a token short of access). A
+  conflict's and a forbidden's GraphQL wordings are not evidenced exactly
+  and are not in the table (ambiguous: the request stays live, bounded by
+  its window; the HTTP 403 form is the 4xx rule). The fake gh emits the
+  first message for its pinned-head mismatch with its own detail appended
+  (`[fake: expected head X, the head is Y]`), so it is classed by the same
+  rule and has no table entry. The run stops with `rebase: <error>`. Only
+  these are definite (Codex's re-pass on #903, commit `1491a9f1`: the first
+  form took any other GraphQL wording for a refusal and would have retired
+  a request GitHub had completed). A new refusal GitHub documents is one
+  table line with its exact wording and source.
 - ambiguous, `update_ambiguous`, the request stays live, everything else:
   an HTTP 5xx (`(HTTP 500)`, `(HTTP 502)`, `(HTTP 503)`), a transport
   error (`Post "https://api.github.com/graphql": context deadline
@@ -289,7 +302,11 @@ by file if one starts to), and the train never recovers a superseded head
 either: `reconcileUpdates` meets a head whose latest terminal entry is
 superseded (`Audit.supersededHead`) and leaves the binding where it is,
 with a reconcile entry that names the verb, so the verb's proof reads the
-binding where it expects it. The audit-first order is unchanged. A refusal whose decision
+binding where it expects it; and `reconcileRebinds`, which runs before it
+and replays a journaled `rebind` entry whose head the server shows, skips
+a superseded head the same way (Codex's third pass, commit `d8c0e0f8`: the
+refused re-bind's own journal is rebase, rebind, then superseded, and the
+rebind entry is exactly what the replay would bind). The audit-first order is unchanged. A refusal whose decision
 line cannot be written names that in its detail, under the refusal's own
 code. The decision log carries one line either way:
 `merge_train_rebound` (the task, the heads, the parent and what it is, the
@@ -338,7 +355,9 @@ row comes the first time the new code meets an asynchronous update.
 | superseded, any order | Codex's re-pass (2): the entries `rebase(H)`, `rebind_superseded(H)`, `rebase(H)` leave H out of `trainHeads`; another PR's superseded entry does not touch this PR's heads; a `rebind_readmitted(H)` after them brings H back, and a `rebind_superseded(H)` after that takes it out again (the latest terminal entry decides); a readmitted entry stamped a day earlier but appended later wins, and a superseded entry stamped a day later but appended earlier does not (the journal's order, never timestamps). | `internal/mergetrain` `TestSupersededHeadStaysOutWhateverTheOrder` |
 | the verb restores H | The reviewer's clarification: after a superseded attempt, the task bound back at the old head and the verb applied (old to H): the binding is H, `rebind_readmitted` is journaled under the verb's run with the task and the heads, `trainHeads` has H, and the next real run lands the PR. | `internal/mergetrain` `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 | only the verb re-admits | A train run meeting a superseded head on a journaled request and a sound proof: the binding stays, no rebind, rebase or readmitted entry is written, the head stays out of `trainHeads`, the reconcile entry says `only merge-train rebind re-admits it`, and the check refuses the head on `force_push`; the verb then re-admits it and the next run lands the PR. The source guard: among the package's non-test files only `rebind.go` writes `Kind: "rebind_readmitted"`. | `internal/mergetrain` `TestTrainNeverReadmitsASupersededHead`; `TestOnlyTheRebindVerbWritesReadmitted` |
-| one row per refusal | The closed table, one class row each: `Head branch was modified`, `not mergeable`, `Resource not accessible`, `Forbidden` (GraphQL), the fake's `expected head`; the 4xx forms 422, 403, 404; and the unknown wordings ambiguous. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
+| one row per refusal | The closed table, one class row each: `Head branch was modified. Review and try the update again.` (with and without the `(updatePullRequestBranch)` suffix, in lower case, and as the fake emits it with its detail appended) and `Resource not accessible by integration`; the 4xx forms 422, 403, 404; ambiguous: the unknown wordings, `Pull request is not mergeable`, a bare `Forbidden`, each table message inside another sentence (`Internal server error: Head branch was modified...`, `Something went wrong, resource not accessible by integration`), the fragments `... while checking expected head ...` and `... not mergeable by ...`, and a prefix of a message (`Head branch was modified` alone). | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
+| the replay skip | Codex's third pass (1): the refused re-bind's journal as Rebind writes it (rebase, rebind with the `patch-id:` detail, then rebind_superseded), a journaled request and the push: `reconcileRebinds` does not replay the rebind entry and `reconcileUpdates` does not recover the head; two reconcile entries name the verb (`does not replay it`, `does not recover it`); the binding stays, the head stays out, the check refuses it on `force_push`; the verb re-admits it and the next run lands the PR. | `internal/mergetrain` `TestTrainNeverReadmitsASupersededHead` |
+| a killed gh read | Codex's third pass (3): the read-back through `GH.exec` (the real exec path, `CommandContext`) to a gh stand-in that sleeps past a 300 ms wait: the killed read is unmoved for its poll, the run ends refused unconfirmed within 5 s of the mutation, nothing bound. The in-process blocking fake's row (`TestStalledReadReturnsWithinTheBoundedWait`) stands beside it; both time the wait from the mutation's return, since the fake's git work runs under the suite's load. | `internal/mergetrain` `TestStalledGhReadIsUnmovedForThePoll` |
 | the run's bound in words | The reviewer's clarification on (3): the command under a 300 ms bound (a seam) with a gh stand-in that sleeps, its child holding the pipes past the kill, a dry run under a temp root with the default grants: the run ends within the bound and the error reads `merge-train: the run timed out after 300ms, a call to GitHub did not return; nothing more was merged, and the next run starts from the journal` above the rule and `refused (run_timeout): read branch protection: ...` below. | `internal/cli` `TestMergeTrainRunEndsAtItsBoundInWords` |
 | unknown wording | Codex's re-pass (1): `GraphQL: Internal server error` and a wording never seen are ambiguous in the class table; through the run, the fake performs the update and the Forge returns the unknown wording: `update_ambiguous`, no `update_failed`, the head read back, bound and merged. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError`; `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`an unknown GraphQL wording ...`) |
 | stalled read | Codex's re-pass (3): a Forge whose PR reads after the mutation block until their context ends, under a 300 ms wait on the real clock: the run ends refused unconfirmed within 3 s, nothing bound; `RunBound(3)` is three times the update wait, the CI wait and ten minutes, and `RunBound(0)` is one PR's. | `internal/mergetrain` `TestStalledReadReturnsWithinTheBoundedWait` |
@@ -949,6 +968,36 @@ merge_train_rebind_test.go:248: the run did not end at its bound: merge-train: t
 ```
 (after 30 s, the child's sleep) restored: `ok ... 2.745s`.
 
+### Codex's third pass (three runs, on `d8c0e0f8` and `6811a0ba`)
+
+`903h the replay skip`: `internal/mergetrain/train.go` (`reconcileRebinds`)
+`if terminalKinds(entries, req.Repository, it.Number)[pending.NewHead] == "rebind_superseded" {`
+to `... && false {` (the replay proceeding);
+`go test -count=1 -timeout 300s -run ^TestTrainNeverReadmitsASupersededHead$ ./internal/mergetrain/`;
+```
+async_test.go:1007: the superseded head was recovered: <nil> [{Number:1 Task:t1 Head:b1df76960f7703d86b0d274710199e0f8bf49773 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[{Rule:force_push Detail:head was force-pushed 970d7466487f -> b1df76960f77 by owner}] GateID:merge-b2ce10ef4b5ae171 GateError: Lifted:false After:[] RebaseForCI:false RebaseRule: RebaseReason: PatchProof:<nil> Overlap:[] Status:refused Merged: title: mergeable:MERGEABLE}] (bound b1df76960f77...)
+```
+(the replay bound the superseded head) restored: `ok ... 1.857s`.
+
+`903h the substring match`: `internal/mergetrain/update.go`
+(`definiteRefusal`) `if strings.HasPrefix(msg, strings.ToLower(refusal)) {`
+to `if strings.Contains(msg, strings.ToLower(refusal)) {` (the fragment
+anywhere); `go test -count=1 -timeout 300s -run ^TestDefiniteRefusalClassesTheGhError$ ./internal/mergetrain/`
+(on `6811a0ba`, whose rows carry a table message inside another sentence);
+```
+async_test.go:909: definiteRefusal("gh api graphql: exit status 1: GraphQL: Something went wrong, resource not accessible by integration (updatePullRequestBranch)") = true, want false
+```
+restored: `ok ... 0.416s`.
+
+`903h the error type alone`: `internal/mergetrain/update.go`
+(`readUpdatedHead`) `timedOut := readCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil`
+to `timedOut := errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil`;
+`go test -count=1 -timeout 300s -run ^TestStalledGhReadIsUnmovedForThePoll$ ./internal/mergetrain/`;
+```
+async_test.go:1168: the killed gh read: read #1 after its update: gh pr view 1: signal: killed:  [{Number:1 Task:t1 Head:07dcd571f322effe38ab92d5f20e2a6407c5987d Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:true RebaseRule:strict_required_status_checks_policy RebaseReason:GitHub requires the branch to be up to date before merging PatchProof:0x... Overlap:[] Status:planned Merged: title: mergeable:MERGEABLE}]
+```
+restored: `ok ... 1.535s`.
+
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
 
@@ -1077,6 +1126,14 @@ PR #905, which lands on v3 first. The production zero wait in
 the seat busy for a tick) is the plan reviewer's 3.2.x item, with the
 bounded-grace proposal; nothing under `internal/schedproc/` changes in
 this PR.
+
+On `9f00fcea` (Codex's third pass, `internal/mergetrain/` only, on the
+merged head `675508d4`): `go build ./... && go vet ./...` exit 0; `go
+test -count=1 ./internal/mergetrain/ ./internal/cli/ ./internal/schedproc/
+./internal/scheduler/ ./internal/task/` all five `ok`, exit 0; `cd pi &&
+node --test test/words.test.ts` 17 pass, 0 fail, exit 0; `go run
+./scripts/redact-evidence -check docs/v3-spike/320-3a-train/` on this
+note: exit 0.
 
 ## Residual risk
 
