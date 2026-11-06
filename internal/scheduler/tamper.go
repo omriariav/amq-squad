@@ -92,22 +92,30 @@ func (s *Scheduler) prepareFailed(t task.Task, handle string, err error, now tim
 	if errors.As(err, &tampered) {
 		return s.blockOnTamper(t, handle, tampered, now, log)
 	}
+	s.logOnce("seat_prepare_failed", "seat_prepare_suppressed", t.ID, handle, t.UpdatedAt.UTC().Format(time.RFC3339Nano), err.Error(),
+		"the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: ", log)
+	return nil, nil
+}
+
+// logOnce logs kind once per task (and its record's change, change), seat
+// and reason, then countKind once more when it repeats, then counts: the
+// prepare failures and the release retries (Codex and the plan reviewer on
+// c9826c31). preparePassed clears a seat's keys.
+func (s *Scheduler) logOnce(kind, countKind, taskID, handle, change, reason, countPrefix string, log func(Decision)) {
 	if s.prepareFails == nil {
 		s.prepareFails = map[string]*prepareFailure{}
 	}
-	key := t.UpdatedAt.UTC().Format(time.RFC3339Nano)
-	f := s.prepareFails[prepareKey(handle, t.ID)]
-	if f == nil || f.task != key || f.reason != err.Error() {
-		s.prepareFails[prepareKey(handle, t.ID)] = &prepareFailure{task: key, reason: err.Error(), count: 1}
-		log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
-		return nil, nil
+	key := prepareKey(handle, taskID) + "\x00" + kind
+	f := s.prepareFails[key]
+	if f == nil || f.task != change || f.reason != reason {
+		s.prepareFails[key] = &prepareFailure{task: change, reason: reason, count: 1}
+		log(Decision{Kind: kind, TaskID: taskID, Seat: handle, Reason: reason})
+		return
 	}
 	f.count++
 	if f.count == 2 {
-		log(Decision{Kind: "seat_prepare_suppressed", TaskID: t.ID, Seat: handle,
-			Reason: "the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: " + err.Error()})
+		log(Decision{Kind: countKind, TaskID: taskID, Seat: handle, Reason: countPrefix + reason})
 	}
-	return nil, nil
 }
 
 // preparePassed forgets a seat's repeated prepare failures once a prepare
@@ -161,11 +169,22 @@ func tamperDetail(handle string, e *LedgerTamperedError) string {
 // idle, never prepared, never granted).
 func (s *Scheduler) tamperedSeat(handle string) bool { return s.tampered[handle] != nil }
 
+// The store calls of the release (test seams: a read or a reset that
+// fails once, Codex on c9826c31).
+var (
+	storeGet   = func(st task.Store, id string) (task.Task, error) { return st.Get(id) }
+	storeReset = func(st task.Store, id string, now time.Time) (task.Task, error) { return st.Reset(id, nil, now) }
+)
+
 // applyRecoveries reconciles every held seat against its ledger's
 // recovery record, each tick: a hold whose slot the record names, or
 // whose seq the record's is at or past, is released and its tasks
-// returned to pending. A reset that fails returns the error and keeps the
-// hold: the tick is retried, and a task already returned is skipped.
+// returned to pending, the resets first and the hold deleted after. A
+// task the store no longer has is skipped; any other read error, or a
+// reset that fails, keeps the hold for the next tick (a task already
+// returned is skipped then) and is logged once per task, seat and reason,
+// then counted (ledger_release_failed, ledger_release_suppressed): a
+// persistent store error never floods the log and never loses the hold.
 func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 	reader, ok := s.Preparer.(RecoveryReader)
 	if !ok || len(s.tampered) == 0 {
@@ -182,15 +201,31 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 		if !ok || !tm.covers(seq, slot) {
 			continue
 		}
+		kept := false
 		for _, id := range tm.Tasks {
-			t, err := s.Store.Get(id)
-			if err != nil || t.State != task.StateBlocked || t.BlockReason != ReasonLedgerTampered {
-				continue // reset by the lead already, or gone
+			t, err := storeGet(s.Store, id)
+			if errors.Is(err, task.ErrNotFound) {
+				continue // gone
 			}
-			if _, err := s.Store.Reset(id, nil, now); err != nil {
-				return err
+			if err != nil {
+				s.logOnce("ledger_release_failed", "ledger_release_suppressed", id, h, "", "the task's record could not be read; the hold stays and the release is retried next tick: "+err.Error(),
+					"the release keeps failing; further repeats are counted, not logged, until the reason changes: ", log)
+				kept = true
+				continue
+			}
+			if t.State != task.StateBlocked || t.BlockReason != ReasonLedgerTampered {
+				continue // reset by the lead already
+			}
+			if _, err := storeReset(s.Store, id, now); err != nil {
+				s.logOnce("ledger_release_failed", "ledger_release_suppressed", id, h, "", "the task could not be returned to pending; the hold stays and the release is retried next tick: "+err.Error(),
+					"the release keeps failing; further repeats are counted, not logged, until the reason changes: ", log)
+				kept = true
+				continue
 			}
 			log(Decision{Kind: "task_reset", TaskID: id, Seat: h, Reason: "the commits ledger of seat " + h + " was recovered by the lead; the task returns to pending"})
+		}
+		if kept {
+			continue // the hold stays; the next tick tries again
 		}
 		delete(s.tampered, h)
 		s.preparePassed(h)

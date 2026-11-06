@@ -388,9 +388,12 @@ func TestCarryCheckIgnoresTheSeatsGitConfig(t *testing.T) {
 
 // Codex's P2 on #904: an origin that does not answer (the ssh plumbing
 // stands in with a sleep) ends in a refusal within RecoverTransportTimeout,
-// its process group killed, with nothing written and the ledger lock
-// released: the next recovery takes the lock at once (and, carrying
-// nothing, completes). Reverted (no bound), the recovery waits for git.
+// its process group killed (the stand-in's own pid, which it writes, is
+// dead after; Codex on c9826c31: killing git alone would leave it), with
+// nothing written and the ledger lock released: the next recovery takes
+// the lock at once (and, carrying nothing, completes). Reverted (no
+// bound), the recovery waits for git; reverted (git killed alone), the
+// stand-in lives on.
 func TestStalledOriginEndsTheRecoveryWithinTheBound(t *testing.T) {
 	f := newFixture(t)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// stalled\n")
@@ -408,10 +411,26 @@ func TestStalledOriginEndsTheRecoveryWithinTheBound(t *testing.T) {
 	t.Cleanup(func() { RecoverTransportTimeout = prev })
 	target := f.target()
 	target.PushURL = "ssh://stalled.invalid/x.git"
+	pidFile := filepath.Join(f.dir, "stand-in.pid")
 	start := time.Now()
 	_, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Seq: q.Seq, Slot: 1, Carry: []CarryEntry{{Task: tk.ID, Commit: real.Commit}}, Target: target,
-		Git: gitBin(t), Env: append(f.testGitEnv(), "GIT_SSH_COMMAND=sh -c 'sleep 60' --"), Lead: "cto", Reason: "r", Now: f.now})
+		Git: gitBin(t), Env: append(f.testGitEnv(), "GIT_SSH_COMMAND=sh -c 'echo $$ > "+pidFile+"; sleep 60' --"), Lead: "cto", Reason: "r", Now: f.now})
 	took := time.Since(start)
+	pidRaw, perr := os.ReadFile(pidFile)
+	if perr != nil {
+		t.Fatalf("the stand-in did not write its pid: %v", perr)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(pidRaw)))
+	alive := pid > 0
+	for i := 0; i < 50 && alive; i++ {
+		alive = processAlive(pid)
+		if alive {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if alive {
+		t.Fatalf("the transport's child %d is still alive after the bound", pid)
+	}
 	if recoverCode(t, err) != RecoverEntryUnpushed || !strings.Contains(err.Error(), "(bound 500ms)") || !strings.Contains(err.Error(), "did not answer within its bound; killed") {
 		t.Fatalf("the stalled origin: %v", err)
 	}

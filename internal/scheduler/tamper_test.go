@@ -458,3 +458,80 @@ func TestAnOlderRecoveryRecordDoesNotReleaseAHold(t *testing.T) {
 		t.Fatalf("the hold's own record did not release it: %+v", ds)
 	}
 }
+
+// Codex on c9826c31, with the plan reviewer's addition: a task-store read
+// error other than not-found keeps the hold (deleting it would leave the
+// task blocked with nothing to reconcile), is logged once per task, seat
+// and reason and then counted (one ledger_release_failed and one
+// ledger_release_suppressed over many ticks of a persistent error), and
+// the release completes when the error clears. A task the store no longer
+// has is skipped and the hold released. Reverted (any error skips the
+// task), the first erroring tick deletes the hold with the task blocked.
+func TestAStoreReadErrorKeepsTheHoldAndLogsOnce(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	p.recover("seat-a", 150, slotOf("seat-a", "150"))
+	prev := storeGet
+	t.Cleanup(func() { storeGet = prev })
+	storeGet = func(task.Store, string) (task.Task, error) {
+		return task.Task{}, errors.New("the store's disk is away")
+	}
+	var all []Decision
+	for i := 0; i < 30; i++ {
+		all = append(all, h.tick()...)
+		h.clk.Add(2 * time.Second)
+	}
+	if countOf(all, "ledger_release_failed", "seat-a") != 1 || countOf(all, "ledger_release_suppressed", "seat-a") != 1 || countOf(all, "ledger_hold_released", "seat-a") != 0 {
+		t.Fatalf("over 30 ticks of a read error: %+v", all)
+	}
+	if !h.s.tamperedSeat("seat-a") || h.get(tk.ID).State != task.StateBlocked {
+		t.Fatal("the read error dropped the hold or returned the task")
+	}
+	storeGet = prev
+	if ds := h.tick(); !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
+		t.Fatalf("the release after the error cleared: %+v", ds)
+	}
+	// a task the store no longer has: skipped, the hold released
+	h.s.tampered = map[string]*LedgerTamper{"seat-a": {Handle: "seat-a", Seq: "150", Quarantine: slotOf("seat-a", "150"), Tasks: []string{"t-gone"}}}
+	if ds := h.tick(); !has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "ledger_release_failed", "", "") {
+		t.Fatalf("a gone task: %+v", ds)
+	}
+}
+
+// Codex on c9826c31: the reset fails once; the hold stays and the task
+// stays blocked; the retry on the next tick completes the release.
+// Reverted (the hold deleted before the resets), the retry finds no hold
+// and the task stays blocked for good.
+func TestAFailedResetKeepsTheHoldForTheRetry(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	p.recover("seat-a", 150, slotOf("seat-a", "150"))
+	prev := storeReset
+	t.Cleanup(func() { storeReset = prev })
+	fails := 1
+	storeReset = func(st task.Store, id string, now time.Time) (task.Task, error) {
+		if fails > 0 {
+			fails--
+			return task.Task{}, errors.New("the store's journal is full")
+		}
+		return prev(st, id, now)
+	}
+	ds := h.tick()
+	if !has(ds, "ledger_release_failed", tk.ID, "seat-a") || has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", tk.ID, "") {
+		t.Fatalf("the failed reset: %+v", ds)
+	}
+	if !h.s.tamperedSeat("seat-a") || h.get(tk.ID).State != task.StateBlocked {
+		t.Fatal("the failed reset dropped the hold or returned the task")
+	}
+	if ds = h.tick(); !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
+		t.Fatalf("the retry: %+v", ds)
+	}
+}
