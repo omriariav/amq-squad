@@ -227,11 +227,10 @@ type Scheduler struct {
 	budgetWarned map[string]time.Time
 	// tampered are the seats held by a tamper alarm (3.2.0-0c-B,
 	// tamper.go): never idle, never prepared, never granted until the
-	// lead's recovery; recovered are the recoveries received since the
-	// last tick (under mu); prepareFails the last non-tamper prepare
-	// failure of each seat, for the once-then-count log.
+	// lead's recovery is in the seat's ledger; prepareFails the last
+	// non-tamper prepare failure of each task on each seat, for the
+	// once-then-count log.
 	tampered     map[string]*LedgerTamper
-	recovered    []string
 	prepareFails map[string]*prepareFailure
 }
 

@@ -76,6 +76,14 @@ func prepareError(handle string, err error) error {
 	return e
 }
 
+// LedgerRecovery is the recovery the seat's sealed ledger records
+// (scheduler.RecoveryReader): the scheduler's tick releases a held seat
+// against it, never against a message.
+func (c *CleanSeats) LedgerRecovery(handle string) (int, string, bool) {
+	r, ok := seatcommit.RecoveryOf(c.Root, handle)
+	return r.Seq, r.Slot, ok
+}
+
 // ArchiveAttempt records a typed block's stopped tree immediately, before a
 // lead can widen and before the seat can be cleaned or reused.
 func (c *CleanSeats) ArchiveAttempt(handle string, t task.Task, attempt task.Attempt) error {
@@ -89,3 +97,4 @@ func (c *CleanSeats) ArchiveAttempt(handle string, t task.Task, attempt task.Att
 
 var _ scheduler.SeatPreparer = (*CleanSeats)(nil)
 var _ scheduler.AttemptArchiver = (*CleanSeats)(nil)
+var _ scheduler.RecoveryReader = (*CleanSeats)(nil)

@@ -15,11 +15,19 @@ import (
 // failure is logged once, then counted; the hold survives a restart; the
 // lead's recovery releases the seat and returns the blocked task.
 
-// tamperPreparer refuses one seat as tampered and prepares every other.
+// tamperPreparer refuses one seat as tampered and prepares every other;
+// it answers the recovery reader from what the test puts in its ledger
+// stand-in (recover).
 type tamperPreparer struct {
-	seat  string
-	calls int
-	err   error
+	seat    string
+	calls   int
+	err     error
+	ledgers map[string]recoveryRecord
+}
+
+type recoveryRecord struct {
+	seq  int
+	slot string
 }
 
 func (p *tamperPreparer) PrepareSeat(h string) error {
@@ -30,8 +38,31 @@ func (p *tamperPreparer) PrepareSeat(h string) error {
 	return nil
 }
 
+// recover is the lead's recovery landing in the seat's sealed ledger (the
+// reader's source of truth); the seat's prepare passes from then on.
+func (p *tamperPreparer) recover(h string, seq int, slot string) {
+	if p.ledgers == nil {
+		p.ledgers = map[string]recoveryRecord{}
+	}
+	p.ledgers[h] = recoveryRecord{seq: seq, slot: slot}
+	if h == p.seat {
+		p.err = nil
+	}
+}
+
+func (p *tamperPreparer) LedgerRecovery(h string) (int, string, bool) {
+	r, ok := p.ledgers[h]
+	return r.seq, r.slot, ok
+}
+
+var _ RecoveryReader = (*tamperPreparer)(nil)
+
+func slotOf(seat, seq string) string {
+	return filepath.Join("/root/extensions/amq-squad/quarantine", "commits."+seat+".seq"+seq)
+}
+
 func tamperErr(seat, seq string) *LedgerTamperedError {
-	path := filepath.Join("/root/extensions/amq-squad/quarantine", "commits."+seat+".seq"+seq)
+	path := slotOf(seat, seq)
 	return &LedgerTamperedError{Handle: seat, Seq: seq, Quarantine: path,
 		Err: errors.New("the commit ledger of seat " + seat + ": commit ledger " + seat + ": ledger_tampered: the tag of commits." + seat + " link " + seq + " fails; the refused document is quarantined at " + path)}
 }
@@ -141,12 +172,15 @@ func TestTamperHoldSurvivesARestart(t *testing.T) {
 	}
 }
 
-// B2, the scheduler half: the lead's recovery (LedgerRecovered, which the
-// decision socket's apply step calls after the chain is written) releases
-// the seat at the next tick: the task blocked ledger_tampered returns to
-// pending (task_reset), the seat is prepared again and, the ledger now
-// passing, the task is dispatched to it. Reverted (the recovery not
-// applied), the seat stays held and the task blocked.
+// B2, the scheduler half: the lead's recovery in the seat's sealed ledger
+// (the preparer's RecoveryReader; the apply step writes the chain, the
+// tick reads it) releases the seat at the next tick: the task blocked
+// ledger_tampered returns to pending (task_reset), the hold is released
+// (ledger_hold_released), the seat is prepared again and, the ledger now
+// passing, the task is dispatched to it. A recovery record that covers
+// neither the hold's slot nor its seq (an older recovery) releases
+// nothing. Reverted (the ledger not read), the seat stays held and the
+// task blocked.
 func TestRecoveryReleasesTheSeatAndReturnsTheTask(t *testing.T) {
 	h := newHarness(t, Config{IdleTimeout: time.Hour})
 	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
@@ -178,10 +212,15 @@ func TestRecoveryReleasesTheSeatAndReturnsTheTask(t *testing.T) {
 	if _, err := h.store.Block(tk.ID, "", ReasonLedgerTampered, "seat seat-a: quarantined at /q (seq 150): x", task.RouteLead, h.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
-	p.err = nil // the ledger passes once recovered
-	h.s.LedgerRecovered("seat-a")
+	// an older recovery (seq 3, another slot) does not cover a seq-150 hold
+	p.recover("seat-a", 3, slotOf("seat-a", "3"))
+	p.err = tamperErr("seat-a", "150")
+	if ds := h.tick(); has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", tk.ID, "") {
+		t.Fatalf("an older recovery released the hold: %+v", ds)
+	}
+	p.recover("seat-a", 150, slotOf("seat-a", "150"))
 	ds := h.tick()
-	if !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
+	if !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
 		t.Fatalf("the recovery did not return the task and dispatch it: %+v", ds)
 	}
 	if p.calls != 2 {
@@ -235,17 +274,157 @@ func TestPrepareFailureIsLoggedOnceThenCounted(t *testing.T) {
 	if ds = h.tick(); !has(ds, "seat_prepare_failed", tk.ID, "seat-a") {
 		t.Fatalf("the changed task was not logged: %+v", ds)
 	}
-	// the prepare passes once, then fails again: logged again
+	// the prepare passes once (the task dispatched, then released by the
+	// lead), then the same seat fails for the same task again: logged again
 	p.err = nil
 	if ds = h.tick(); !has(ds, "dispatched", tk.ID, "seat-a") {
 		t.Fatalf("the passing prepare did not dispatch: %+v", ds)
 	}
-	b := h.add("b", &sonnet)
-	h.up("seat-b", sonnet)
-	p.seat, p.err = "seat-b", errors.New("the commit ledger of seat seat-b: dirty")
-	if ds = h.tick(); !has(ds, "seat_prepare_failed", b.ID, "seat-b") {
-		t.Fatalf("the other seat's failure was not logged: %+v", ds)
+	if _, err := h.store.Release(tk.ID, "seat-a", "back to the pool", h.clk.Now()); err != nil {
+		t.Fatal(err)
 	}
+	p.err = errors.New("the commit ledger of seat seat-a: worse")
+	if ds = h.tick(); !has(ds, "seat_prepare_failed", tk.ID, "seat-a") {
+		t.Fatalf("the failure after a passing prepare was not logged: %+v", ds)
+	}
+	if ds = h.tick(); !has(ds, "seat_prepare_suppressed", tk.ID, "seat-a") {
+		t.Fatalf("its repeat was not counted: %+v", ds)
+	}
+}
+
+// Codex's P2 on #904: two pending tasks on one failing seat alternate at
+// the dispatch; each is logged once and counted once (four lines over 200
+// ticks), never two lines a tick. Reverted (the key per seat only), 400.
+func TestTwoTasksOnOneFailingSeatAreEachLoggedOnce(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: errors.New("the commit ledger of seat seat-a: dirty")}
+	h.s.Preparer = p
+	a := h.add("a", &sonnet)
+	b := h.add("b", &sonnet)
+	h.up("seat-a", sonnet)
+	var all []Decision
+	for i := 0; i < 200; i++ {
+		all = append(all, h.tick()...)
+		h.clk.Add(2 * time.Second)
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		f, c := 0, 0
+		for _, d := range all {
+			if d.TaskID == id && d.Kind == "seat_prepare_failed" {
+				f++
+			}
+			if d.TaskID == id && d.Kind == "seat_prepare_suppressed" {
+				c++
+			}
+		}
+		if f != 1 || c != 1 {
+			t.Fatalf("task %s: %d failed lines and %d count lines over 200 ticks, want 1 and 1", id, f, c)
+		}
+	}
+}
+
+// Codex's P2 on #904, the interrupted completion: the chain is written and
+// the process ends before the state write and before anything else (a
+// crash, a lost decision line); the next incarnation restores the hold
+// from the state file and its first tick releases it from the ledger's
+// recovery record: the task returns to pending and is dispatched; the
+// state file no longer holds the seat. Reverted (no reconciliation), the
+// hold can never be released.
+func TestRestartedHoldIsReleasedFromTheLedgersRecovery(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour, StatePath: filepath.Join(t.TempDir(), "scheduler.json")})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	st, err := ReadState(h.s.Config.StatePath)
+	if err != nil || len(st.LedgerTampered) != 1 {
+		t.Fatalf("the hold is not in the state file: %v %+v", err, st)
+	}
+	// the chain is written (the ledger records the recovery); the process
+	// ends here
+	p.recover("seat-a", 150, slotOf("seat-a", "150"))
+	next := &Scheduler{Store: h.store, Now: h.clk.Now, Launcher: h.l, Doorbell: h.bell, Config: h.s.Config, Incarnation: "u", Preparer: p}
+	next.RestoreLedgerTampers(st)
+	next.requests = append(next.requests, request{req: SeatRequest{ID: "test-seat-a", Pool: sonnet}, at: h.clk.Now()})
+	next.Post(Event{Kind: SeatUp, At: h.clk.Now(), Handle: "seat-a", Pool: sonnet, RequestID: "test-seat-a"})
+	ds, err := next.Tick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
+		t.Fatalf("the restarted scheduler did not release the hold from the ledger: %+v", ds)
+	}
+	if st, err = ReadState(h.s.Config.StatePath); err != nil || len(st.LedgerTampered) != 0 {
+		t.Fatalf("the state file still holds the seat: %v %+v", err, st.LedgerTampered)
+	}
+}
+
+// Codex's P2 on #904: two seats held, one recovered; the other stays held
+// in the state file and across a restart, never prepared, while the
+// recovered one is granted. Reverted (every hold released on any
+// recovery), the unrecovered seat is prepared.
+func TestTwoHeldSeatsOneRecovered(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour, StatePath: filepath.Join(t.TempDir(), "scheduler.json")})
+	p := &twoSeatPreparer{errs: map[string]error{"seat-a": tamperErr("seat-a", "5"), "seat-b": tamperErr("seat-b", "9")}, calls: map[string]int{}}
+	h.s.Preparer = p
+	a := h.add("a", &sonnet)
+	b := h.add("b", &sonnet)
+	h.up("seat-a", sonnet)
+	h.up("seat-b", sonnet)
+	for i := 0; i < 3; i++ {
+		h.tick()
+	}
+	if h.get(a.ID).State != task.StateBlocked || h.get(b.ID).State != task.StateBlocked || p.calls["seat-a"] != 1 || p.calls["seat-b"] != 1 {
+		t.Fatalf("both seats were not held once each: %+v %s %s", p.calls, h.get(a.ID).State, h.get(b.ID).State)
+	}
+	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 5, slot: slotOf("seat-a", "5")}}
+	delete(p.errs, "seat-a")
+	ds := h.tick()
+	if !has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "ledger_hold_released", "", "seat-b") || !has(ds, "dispatched", "", "seat-a") {
+		t.Fatalf("seat-a released alone: %+v", ds)
+	}
+	st, err := ReadState(h.s.Config.StatePath)
+	if err != nil || len(st.LedgerTampered) != 1 || st.LedgerTampered[0].Handle != "seat-b" {
+		t.Fatalf("the state file after one recovery: %v %+v", err, st.LedgerTampered)
+	}
+	next := &Scheduler{Store: h.store, Now: h.clk.Now, Launcher: h.l, Doorbell: h.bell, Config: h.s.Config, Incarnation: "u", Preparer: p}
+	next.RestoreLedgerTampers(st)
+	for _, seat := range []string{"seat-a", "seat-b"} {
+		next.requests = append(next.requests, request{req: SeatRequest{ID: "test-" + seat, Pool: sonnet}, at: h.clk.Now()})
+		next.Post(Event{Kind: SeatUp, At: h.clk.Now(), Handle: seat, Pool: sonnet, RequestID: "test-" + seat})
+	}
+	c := h.add("c", &sonnet)
+	for i := 0; i < 10; i++ {
+		if ds, err := next.Tick(); err != nil {
+			t.Fatal(err)
+		} else if has(ds, "dispatched", "", "seat-b") || has(ds, "seat_prepare_failed", "", "seat-b") {
+			t.Fatalf("the held seat-b was tried after the restart: %+v", ds)
+		}
+	}
+	if p.calls["seat-b"] != 1 {
+		t.Fatalf("seat-b was prepared %d times across the restart, want 1", p.calls["seat-b"])
+	}
+	if got := h.get(c.ID); got.State != task.StatePending && got.Lease != nil && got.Lease.Holder == "seat-b" {
+		t.Fatalf("task c went to the held seat: %+v", got)
+	}
+}
+
+// twoSeatPreparer fails the seats in errs and reads recoveries from ledgers.
+type twoSeatPreparer struct {
+	errs    map[string]error
+	calls   map[string]int
+	ledgers map[string]recoveryRecord
+}
+
+func (p *twoSeatPreparer) PrepareSeat(h string) error {
+	p.calls[h]++
+	return p.errs[h]
+}
+
+func (p *twoSeatPreparer) LedgerRecovery(h string) (int, string, bool) {
+	r, ok := p.ledgers[h]
+	return r.seq, r.slot, ok
 }
 
 func intPtr(n int) *int { return &n }

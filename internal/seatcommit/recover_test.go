@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -306,5 +307,129 @@ func TestWriteTimeRefusalIsTheTypedBlock(t *testing.T) {
 	}
 	if got := readFile(t, ledgerPath(f.root, f.handle)); !bytes.Equal(got, tampered) {
 		t.Fatal("the step moved the document")
+	}
+}
+
+// Codex's P1 on #904: the carry check ran ls-remote through the seat
+// repository's git, whose config the seat controls: a url.<evil>.insteadOf
+// of the launch's push URL redirected the check to a repository holding
+// the unpushed commit, and it passed. The check runs in the harness's own
+// git directory (the shadow, as the push does): the planted redirect
+// moves the seat's own git (shown) and not the recovery, which reads the
+// real origin and refuses the unpushed entry. Reverted (the seat's git),
+// the forged branch is carried.
+func TestCarryCheckIgnoresTheSeatsGitConfig(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// carried\n")
+	tk := f.reported("cmd/")
+	res := f.run(tk)
+	if !res.OK || !res.Pushed {
+		t.Fatalf("the commit step: %+v", res)
+	}
+	l, err := ReadLedger(f.root, f.handle)
+	if err != nil || len(l.Commits) != 1 {
+		t.Fatal(err)
+	}
+	real := l.Commits[0]
+	unpushed := sh(t, f.wt, "commit-tree", real.Tree, "-p", real.Parent, "-m", "never pushed to origin")
+	// the evil repository holds the task branch at the unpushed commit,
+	// and the seat's config sends the origin's URL there
+	evil := filepath.Join(f.dir, "evil.git")
+	sh(t, f.dir, "init", "-q", "--bare", evil)
+	sh(t, f.wt, "push", "-q", evil, unpushed+":refs/heads/"+real.Branch)
+	sh(t, f.wt, "config", "url."+evil+".insteadOf", f.origin)
+	if got := sh(t, f.wt, "ls-remote", "--heads", f.origin, "refs/heads/"+real.Branch); !strings.HasPrefix(got, unpushed) {
+		t.Fatalf("the planted redirect does not move the seat's own git: %q", got)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(readFile(t, ledgerPath(f.root, f.handle)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["commits"] = append(doc["commits"].([]any), map[string]any{"task": tk.ID, "commit": unpushed, "parent": real.Parent, "tree": real.Tree, "at": real.At, "pushed": true, "branch": real.Branch, "base": real.Base})
+	tampered, _ := json.MarshalIndent(doc, "", "  ")
+	if err := os.WriteFile(ledgerPath(f.root, f.handle), tampered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	q := f.quarantined()
+	_, err = f.recover(q.Seq, 1, CarryEntry{Task: tk.ID, Commit: unpushed})
+	if recoverCode(t, err) != RecoverEntryUnpushed || !strings.Contains(err.Error(), "is not on origin's "+real.Branch) {
+		t.Fatalf("the redirected check: %v", err)
+	}
+	if _, err := ReadLedger(f.root, f.handle); !errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("the refused recovery wrote something: %v", err)
+	}
+	// the real entry still carries through the harness's git
+	if _, err := f.recover(q.Seq, 1, CarryEntry{Task: tk.ID, Commit: real.Commit}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Codex's P2 on #904: an origin that does not answer (the ssh plumbing
+// stands in with a sleep) ends in a refusal within RecoverTransportTimeout,
+// its process group killed, with the ledger lock released and nothing
+// written. Reverted (no bound), the recovery waits for git.
+func TestStalledOriginEndsTheRecoveryWithinTheBound(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// stalled\n")
+	tk := f.reported("cmd/")
+	res := f.run(tk)
+	if !res.OK || !res.Pushed {
+		t.Fatalf("the commit step: %+v", res)
+	}
+	l, _ := ReadLedger(f.root, f.handle)
+	real := l.Commits[0]
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	prev := RecoverTransportTimeout
+	RecoverTransportTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { RecoverTransportTimeout = prev })
+	target := f.target()
+	target.PushURL = "ssh://stalled.invalid/x.git"
+	start := time.Now()
+	_, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Seq: q.Seq, Slot: 1, Carry: []CarryEntry{{Task: tk.ID, Commit: real.Commit}}, Target: target,
+		Git: gitBin(t), Env: append(f.testGitEnv(), "GIT_SSH_COMMAND=sh -c 'sleep 60' --"), Lead: "cto", Reason: "r", Now: f.now})
+	took := time.Since(start)
+	if recoverCode(t, err) != RecoverEntryUnpushed || !strings.Contains(err.Error(), "did not answer within 500ms; killed") {
+		t.Fatalf("the stalled origin: %v", err)
+	}
+	if took > 10*time.Second {
+		t.Fatalf("the refusal took %s", took)
+	}
+	// the lock is free: another writer gets it at once
+	done := make(chan error, 1)
+	go func() { _, err := RecordTarget(f.root, f.handle, f.target()); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, sealchain.ErrTampered) {
+			t.Fatalf("the writer after the refusal: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the ledger lock is still held")
+	}
+}
+
+// Codex's P2 on #904, the retry: a recovery already in the sealed ledger,
+// decided again for the same slot, is answered as made (AlreadyRecovered,
+// the record's seqs, the carried entries) with the ledger unchanged; the
+// same slot named for another seq is not it. Reverted (the retry refused
+// recover_not_tampered), an interrupted completion can never be finished.
+func TestRecoveryDecidedAgainIsAnsweredFromTheLedger(t *testing.T) {
+	f := newFixture(t)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	first, err := f.recover("1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := readFile(t, ledgerPath(f.root, f.handle))
+	again, err := f.recover("1", 1)
+	if err != nil || !again.AlreadyRecovered || again.OldSeq != first.OldSeq || again.NewSeq != first.NewSeq || again.Slot != q.Slot || again.BodySHA256 != first.BodySHA256 {
+		t.Fatalf("the retry: %v %+v", err, again)
+	}
+	if !bytes.Equal(readFile(t, ledgerPath(f.root, f.handle)), written) {
+		t.Fatal("the retry wrote the ledger")
+	}
+	if _, err := f.recover("1", 2); recoverCode(t, err) != RecoverNotTampered {
+		t.Fatalf("another slot on a recovered ledger: %v", err)
 	}
 }

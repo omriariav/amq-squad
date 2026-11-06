@@ -2,11 +2,13 @@ package seatcommit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -72,17 +74,21 @@ type CarryEntry struct {
 	Commit string `json:"commit"`
 }
 
-// RecoverResult is a recovery as made.
+// RecoverResult is a recovery as made, or as found already made
+// (AlreadyRecovered: the ledger verifies and its recovery record names the
+// slot the decision names; a retry after an interrupted completion, Codex
+// on #904).
 type RecoverResult struct {
-	Handle     string         `json:"handle"`
-	Slot       string         `json:"slot"`
-	OldSeq     int            `json:"old_seq"`
-	NewSeq     int            `json:"new_seq"`
-	Prev       string         `json:"prev"`
-	BodySHA256 string         `json:"body_sha256,omitempty"`
-	HeadSHA256 string         `json:"head_sha256,omitempty"`
-	Base       string         `json:"base"`
-	Carried    []LedgerCommit `json:"carried,omitempty"`
+	Handle           string         `json:"handle"`
+	AlreadyRecovered bool           `json:"already_recovered,omitempty"`
+	Slot             string         `json:"slot"`
+	OldSeq           int            `json:"old_seq"`
+	NewSeq           int            `json:"new_seq"`
+	Prev             string         `json:"prev"`
+	BodySHA256       string         `json:"body_sha256,omitempty"`
+	HeadSHA256       string         `json:"head_sha256,omitempty"`
+	Base             string         `json:"base"`
+	Carried          []LedgerCommit `json:"carried,omitempty"`
 }
 
 // Refusal codes of a recovery (RecoverRefusal.Code). They are the verb's
@@ -173,8 +179,22 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 	// from the slot (a later edit, another refusal) is quarantined in its
 	// own slot and the decision is refused, so the lead decides on what is
 	// there, never on a copy of something else.
-	_, raw, rerr := readLedger(o.Root, o.Handle)
+	slotPath := filepath.Join(QuarantineDir(o.Root), RecoverSlotName(o.Handle, o.Seq, o.Slot))
+	live, raw, rerr := readLedger(o.Root, o.Handle)
 	switch {
+	case rerr == nil && live.Recovered != nil && live.Recovered.Slot == slotPath:
+		// The decision was applied and its completion interrupted (the
+		// decision line not appended, the hold not released): the retry
+		// returns the recovery as the sealed ledger records it, so the
+		// caller records and releases; nothing is written again.
+		out = RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Slot: slotPath, OldSeq: live.Recovered.Seq, NewSeq: live.Recovered.Seq + 1,
+			BodySHA256: live.Recovered.BodySHA256, HeadSHA256: live.Recovered.HeadSHA256, Base: live.Base}
+		for _, c := range live.Commits {
+			if c.Note != "" {
+				out.Carried = append(out.Carried, c)
+			}
+		}
+		return out, nil
 	case rerr == nil:
 		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s verifies; there is nothing to recover", o.Handle)
 	case errors.Is(rerr, os.ErrNotExist):
@@ -225,7 +245,17 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 	if err != nil {
 		return out, refuseRecover(RecoverBaseUnobserved, "the worktree's HEAD %s: %v", rp.HeadRef, err)
 	}
-	carried, err := carryEntries(o, slot, oldSeq, repo)
+	// The carry checks run in the harness's own git directory (the shadow:
+	// the seat's objects, none of the seat repository's config), as the
+	// push does (Codex's P1 on #904): a url.*.insteadOf, a core.sshCommand
+	// or a transport setting the seat planted in its config never
+	// redirects the launch's push URL or runs in this process.
+	sh, err := newShadow(o.Git, henv, rp)
+	if err != nil {
+		return out, refuseRecover(RecoverWriteFailed, "the harness git directory: %v", err)
+	}
+	defer sh.close()
+	carried, err := carryEntries(o, slot, oldSeq, sh.g)
 	if err != nil {
 		return out, err
 	}
@@ -386,7 +416,7 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, repo git)
 		branch := firstNonEmpty(e.Branch, TaskBranch(o.Handle, c.Task))
 		tip, ok := tips[branch]
 		if !ok {
-			line, err := repo.with(env...).line(append(args, "ls-remote", "--heads", o.Target.PushURL, "refs/heads/"+branch)...)
+			line, err := transport(repo.with(env...), append(args, "ls-remote", "--heads", o.Target.PushURL, "refs/heads/"+branch)...)
 			if err != nil {
 				return nil, refuseRecover(RecoverEntryUnpushed, "origin's %s cannot be read: %v", branch, err)
 			}
@@ -413,6 +443,52 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, repo git)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out, nil
+}
+
+// RecoverTransportTimeout bounds the one network call of a recovery (the
+// ls-remote of origin's branch for a carried entry): past it the call's
+// process group is killed and the recovery refused (Codex's P2 on #904:
+// the decision server clears its deadline before the apply step, so an
+// unreachable origin would otherwise hold the ledger lock and the handler
+// for as long as git waits).
+var RecoverTransportTimeout = 30 * time.Second
+
+// transport runs one git transport call under RecoverTransportTimeout in
+// its own process group, so git's helpers (ssh, a credential helper) go
+// with it when the bound expires.
+func transport(g git, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), RecoverTransportTimeout)
+	defer cancel()
+	argv := append(append(safeConfig(), g.pre...), args...)
+	cmd := exec.CommandContext(ctx, g.bin, argv...)
+	cmd.Dir = g.dir
+	cmd.Env = append([]string(nil), g.env...)
+	ownGroup(cmd)
+	cmd.Cancel = func() error { killGroup(cmd); return nil }
+	cmd.WaitDelay = verifierWaitDelay
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("git %s did not answer within %s; killed", args[len(args)-2], RecoverTransportTimeout)
+	}
+	if err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args[len(args)-3:len(args)-2], " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// RecoveryOf is the recovery a seat's ledger records, read without a
+// quarantine: ok when the ledger verifies and carries one. The scheduler's
+// tick reconciles a held seat against it (the sealed ledger is the source
+// of truth of a completed recovery; a decision line lost or a crash before
+// the state write loses nothing).
+func RecoveryOf(root, handle string) (LedgerRecovery, bool) {
+	l, _, err := readLedger(root, handle)
+	if err != nil || l.Recovered == nil {
+		return LedgerRecovery{}, false
+	}
+	return *l.Recovered, true
 }
 
 // evidenceSeqOf is the highest evidence ref number the seat repository

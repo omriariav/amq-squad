@@ -59,9 +59,15 @@ test("B9: the typed block reads with the same words, the seat and the path on it
 		line: "t7 blocked: the seat's commit record failed its check; the lead investigates before the seat works again",
 		record: `t7: seat dev, quarantined at ${slot}`,
 	});
-	// the commit step's write-time refusal (rule 4) carries the same path
+	// the commit step's write-time refusal (rule 4) carries the same path,
+	// in Go's own form (seatcommit commit.go writeOutcome: no "seat H:"
+	// prefix; Codex's P3 on #904): the record names the seat and the path
 	const write = `the commits ledger refused the write: commit ledger dev: ledger_tampered: the tag of commits.dev link 150 fails; the refused document is quarantined at ${slot}; nothing is recorded or pushed until the lead recovers the ledger (scheduler recover)`;
-	assert.equal(tamperRecord(`seat dev: ${write}`), `seat dev, quarantined at ${slot}`);
+	assert.equal(tamperRecord(write), `seat dev, quarantined at ${slot}`);
+	assert.deepEqual(blockWords(t, { block_detail: write }), {
+		line: "t7 blocked: the seat's commit record failed its check; the lead investigates before the seat works again",
+		record: `t7: seat dev, quarantined at ${slot}`,
+	});
 	// with no detail on record yet, the line still reads; no record line
 	assert.deepEqual(blockWords(t), { line: "t7 blocked: the seat's commit record failed its check; the lead investigates before the seat works again", record: undefined });
 	// the tasks block of the screen

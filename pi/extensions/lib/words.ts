@@ -335,11 +335,13 @@ export function blockNeedsRecord(reason: string): boolean {
 	return reason === "size_cap_exceeded" || reason === "ledger_tampered" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
 }
 
-// TAMPER_DETAIL is the tamper alarm's detail (internal/scheduler
-// tamper.go tamperDetail, and the commit step's write-time refusal, which
-// carries the same "quarantined at PATH" from seatcommit): the seat and
-// the slot.
-const TAMPER_DETAIL = /seat (\S+):.*?quarantined at ([^\s;]+)/;
+// TAMPER_DETAIL is the tamper alarm's detail, in both forms Go writes:
+// the prepare's (internal/scheduler tamper.go tamperDetail, "seat H:
+// quarantined at PATH (seq N): ...") and the commit step's write-time
+// refusal (internal/seatcommit commit.go writeOutcome, "the commits ledger
+// refused the write: commit ledger H: ...; the refused document is
+// quarantined at PATH; ..."): the seat and the slot.
+const TAMPER_DETAIL = /(?:seat|commit ledger) (\S+):.*?quarantined at ([^\s;]+)/;
 
 // tamperRecord is the record line of a tamper block: the seat and the
 // quarantine path when the detail names them, else the detail itself.
@@ -464,7 +466,7 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger (its own
 		// decision; the task's return to pending is a task_reset) and the
 		// restart's restore of held seats
-		"ledger_recovered", "ledger_tampers_restored",
+		"ledger_recovered", "ledger_tampers_restored", "ledger_hold_released",
 	].map((k) => [k, true]),
 ) as Record<string, true>;
 

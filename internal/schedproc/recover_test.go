@@ -3,6 +3,7 @@ package schedproc
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -295,5 +296,61 @@ func TestRecoveryIsProvedFromTheLeadsPane(t *testing.T) {
 	}, time.Now)
 	if reply := decide("lead", RecoverRequest{Seat: "dev", Seq: "unknown"}); reply.OK || reply.Code != seatcommit.RecoverSlotMissing || reply.Detail != "no slot" {
 		t.Fatalf("the writer's refusal: %+v", reply)
+	}
+}
+
+// Codex's P2 on #904, the interrupted completion: the chain is written and
+// the decision line cannot be appended (the log's path taken by a
+// directory): the reply is recover_unrecorded; the next tick releases the
+// seat from the ledger all the same (ledger_hold_released, task_reset,
+// dispatched); the decision sent again on the recovered ledger is answered
+// OK as already recovered and records the line, with the ledger unchanged.
+// Reverted (the release a message of the apply step), the hold outlives
+// the failed append.
+func TestInterruptedRecoveryCompletesFromTheLedger(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	r.ticks(3)
+	if got, _ := r.store.Get(r.tk.ID); got.State != task.StateBlocked {
+		t.Fatalf("not blocked: %+v", got)
+	}
+	if err := os.MkdirAll(DecisionsPath(r.root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	req := RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "understood"}
+	if reply := decide("lead", req); reply.OK || reply.Code != RefusedRecoverUnrecorded {
+		t.Fatalf("the failed append: %+v", reply)
+	}
+	written, err := os.ReadFile(filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l, err := seatcommit.ReadLedger(r.root, r.handle); err != nil || l.Recovered == nil {
+		t.Fatalf("the chain was not written: %v", err)
+	}
+	all := r.ticks(3)
+	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) || !has(all, "dispatched", r.tk.ID, r.handle) {
+		t.Fatalf("the hold was not released from the ledger: %+v", all)
+	}
+	if err := os.Remove(DecisionsPath(r.root)); err != nil {
+		t.Fatal(err)
+	}
+	reply := decide("lead", req)
+	var res seatcommit.RecoverResult
+	if !reply.OK || json.Unmarshal(reply.Data, &res) != nil || !res.AlreadyRecovered || res.OldSeq != 1 || res.NewSeq != 2 || !strings.Contains(reply.Detail, "already recovered") {
+		t.Fatalf("the retry: %+v", reply)
+	}
+	if after, _ := os.ReadFile(filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")); !bytes.Equal(after, written) {
+		t.Fatal("the retry wrote the ledger again")
+	}
+	lines, _ := ReadDecisionsTail(r.root)
+	n := 0
+	for _, l := range lines {
+		if l.Kind == DecisionLedgerRecovered && strings.Contains(l.Reason, "had recovered") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("the retry's decision line: %d, want 1", n)
 	}
 }

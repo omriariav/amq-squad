@@ -15,10 +15,15 @@ import (
 // The lead's recovery of a quarantined commits ledger (3.2.0-0c-B rule 3)
 // is a decision over the scheduler's socket, proved under R4 like a
 // widening: the CLI (scheduler recover) sends it, the scheduler writes the
-// new chain (seatcommit.RecoverLedger) with the session key, records one
+// new chain (seatcommit.RecoverLedger) with the session key and records one
 // ledger_recovered line in the decision log naming the seat, the old seq,
-// the quarantine path and the carried entries, and lets the seat be
-// granted again (scheduler.LedgerRecovered). The CLI never writes the
+// the quarantine path and the carried entries; the scheduler's next tick
+// reads the recovery from the sealed ledger (CleanSeats.LedgerRecovery)
+// and releases the seat. The completion is retryable (Codex's P2 on #904):
+// the ledger is the source of truth, a decision line that could not be
+// appended is answered recover_unrecorded with the chain written, and the
+// verb sent again on a recovered ledger records the line and replies OK
+// (RecoverResult.AlreadyRecovered) instead of refusing. The CLI never writes the
 // chain: a seat that can run the CLI could otherwise recover its own
 // tampered ledger. A clear (scheduler clear) is not the recovery: a clear
 // naming ledger_tampered is refused (it is no warning), and no clear makes
@@ -35,6 +40,10 @@ const (
 	RefusedRecoverMalformed   = "recover_malformed"
 	RefusedRecoverUnsupported = "recover_unsupported"
 	RefusedRecoverFailed      = "recover_failed"
+	// RefusedRecoverUnrecorded: the chain is written, the decision line is
+	// not; the seat is released from the ledger, the verb sent again
+	// records the line.
+	RefusedRecoverUnrecorded = "recover_unrecorded"
 )
 
 // RecoverRequest is the lead's recovery: the seat, the quarantined head
@@ -103,9 +112,9 @@ func (r Recovery) Apply(lead string, req RecoverRequest) (seatcommit.RecoverResu
 }
 
 // recoverDecision is the decision socket's apply step for a proved
-// recovery: the request's shape, the chain write, the decision line, then
-// the scheduler's release of the seat.
-func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, now func() time.Time) func(lead string, req RecoverRequest) DecideReply {
+// recovery: the request's shape, the chain write, the decision line; the
+// scheduler releases the seat at its next tick from the ledger.
+func recoverDecision(_ *scheduler.Scheduler, root string, apply RecoverApply, now func() time.Time) func(lead string, req RecoverRequest) DecideReply {
 	return func(lead string, req RecoverRequest) DecideReply {
 		if !recoverSeatRe.MatchString(req.Seat) || !recoverSeqRe.MatchString(req.Seq) || req.Slot < 0 {
 			return DecideReply{Code: RefusedRecoverMalformed, Detail: "a recovery names a seat handle, the quarantined head seq (or unknown) and a slot number"}
@@ -127,15 +136,22 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 		for _, c := range res.Carried {
 			carried = append(carried, c.Task+":"+c.Commit)
 		}
-		reason := fmt.Sprintf("the lead %s recovered the commits ledger of seat %s from quarantine seq %d (%s): the chain continues at seq %d after the quarantined head's link; carried entries: %s; base %s; reason: %s",
-			lead, req.Seat, res.OldSeq, res.Slot, res.NewSeq, firstOrNone(carried), res.Base, firstNonEmptyString(req.Reason, "none given"))
+		verb := "recovered"
+		if res.AlreadyRecovered {
+			verb = "had recovered (the decision sent again; the sealed ledger records it)"
+		}
+		reason := fmt.Sprintf("the lead %s %s the commits ledger of seat %s from quarantine seq %d (%s): the chain continues at seq %d after the quarantined head's link; carried entries: %s; base %s; reason: %s",
+			lead, verb, req.Seat, res.OldSeq, res.Slot, res.NewSeq, firstOrNone(carried), res.Base, firstNonEmptyString(req.Reason, "none given"))
 		at := now().UTC()
 		if err := AppendDecision(root, at, scheduler.Decision{Kind: DecisionLedgerRecovered, Seat: req.Seat, Reason: reason}); err != nil {
-			return DecideReply{Code: "recover_unrecorded", Detail: "the chain is written but the decision line is not: " + err.Error()}
+			return DecideReply{Code: RefusedRecoverUnrecorded, Detail: "the chain is written and the scheduler releases the seat from it at its next tick, but the decision line could not be appended (send the decision again to record it): " + err.Error()}
 		}
-		s.LedgerRecovered(req.Seat)
 		data, _ := json.Marshal(res)
-		return DecideReply{OK: true, Detail: fmt.Sprintf("seat %s recovered from quarantine seq %d: the chain continues at seq %d; %d entries carried", req.Seat, res.OldSeq, res.NewSeq, len(res.Carried)), Data: data}
+		detail := fmt.Sprintf("seat %s recovered from quarantine seq %d: the chain continues at seq %d; %d entries carried; the scheduler releases the seat at its next tick", req.Seat, res.OldSeq, res.NewSeq, len(res.Carried))
+		if res.AlreadyRecovered {
+			detail = fmt.Sprintf("seat %s was already recovered from quarantine seq %d (the chain is at seq %d or past it); the decision is recorded now", req.Seat, res.OldSeq, res.NewSeq)
+		}
+		return DecideReply{OK: true, Detail: detail, Data: data}
 	}
 }
 
