@@ -149,7 +149,10 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 	// its merge fact. A write that fails there (the binding moved, or a
 	// store error before its commit point) is undone in the same section by
 	// a terminal rebind_superseded entry with the reason rebind_failed, so
-	// the journal shows the head not admitted; a write past the commit
+	// the journal shows the head not admitted, but only on a definite
+	// outcome: the store's read under its lock succeeds and shows the
+	// binding not at To; a read that fails or shows To leaves the
+	// readmission standing and the verb stops with the outcome not known; a write past the commit
 	// point (task.CommittedError) is durable and counts as written. A
 	// binding already at the target (a train's recovery bound the same head
 	// first) is the store's read-only success. A crash between the readmission and the
@@ -178,6 +181,8 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 		res.Push += " (the binding is written; the task store's replay is pending: " + err.Error() + ")"
 	case errors.Is(err, errReadmittedNotWritten):
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: err.Error() + "; nothing is bound"}
+	case errors.Is(err, ErrBindingOutcomeUnknown):
+		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: err.Error() + " (the readmission is journaled under run " + res.Run + ")"}
 	case errors.Is(err, task.ErrPRBindingMismatch):
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindHead, Detail: bindFailure(err) + " (the proof's entries, the readmission and the superseded entry are journaled under run " + res.Run + ")"}
 	default:

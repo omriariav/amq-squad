@@ -177,8 +177,10 @@ type bindWrite struct {
 // takes it too): the fresh read of the journal, headAdmitted on that read,
 // for the lead's verb its rebind_readmitted entry (journaled before the
 // write, as update_requested before the update), the binding write, and,
-// when the write fails, the verb's undo entry (a terminal
-// rebind_superseded, so the journal shows the head not admitted).
+// when the write fails and the store's confirming read shows it did not
+// take effect, the verb's undo entry (a terminal rebind_superseded, so the
+// journal shows the head not admitted). Lock order: the journal lock, then
+// the task store's lock inside the write and the confirming read.
 // The two orders serialize: a supersede appended first is seen by the
 // fresh read and the write is refused; one appended after a binding write
 // lands in the journal after it, so trainHeads and every later admission
@@ -214,13 +216,33 @@ func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (adm
 		// a CommittedError crossed the store's commit point: the binding is
 		// durable and the store replays its after-image at the next locked
 		// access, so it counts as written (Codex's fifth pass on #903): the
-		// readmission stands and there is no undo. The undo runs only on an
-		// error from before the commit point.
+		// readmission stands and there is no undo.
 		var committed *task.CommittedError
-		if err != nil && w.Undo != nil && !errors.As(err, &committed) {
-			if uerr := a.appendLocked(w.Undo(err)); uerr != nil {
-				return errors.Join(err, fmt.Errorf("the undo entry was not written: %w", uerr))
+		if err == nil || w.Undo == nil || errors.As(err, &committed) {
+			return err
+		}
+		// The undo runs only on a definite outcome (Codex's sixth pass, the
+		// plan reviewer's rule): a store error can come after the write
+		// took effect (a journal renamed into place whose directory sync
+		// failed) or from replaying an earlier journal at the lock (a train
+		// bind past its commit point whose apply failed), and an undo then
+		// would supersede a head the store installs later. So the binding
+		// is read back through the store's normal read path, under its
+		// lock, still inside this section; the undo runs only when that
+		// read succeeds and shows the binding not at the target. A read
+		// that fails, or shows the target, leaves the readmission standing
+		// (the head admitted, as after a crash) and the outcome reported as
+		// not known yet.
+		tk, rerr := b.Binding(w.Task)
+		if rerr != nil || (strings.EqualFold(tk.PRRepository, w.Repository) && tk.PRNumber == w.PR && tk.PRHead == w.To) {
+			seen := "the store did not read: " + errString(rerr)
+			if rerr == nil {
+				seen = "the store reads the binding at " + short(w.To)
 			}
+			return fmt.Errorf("%w (the write failed: %v; %s)", ErrBindingOutcomeUnknown, err, seen)
+		}
+		if uerr := a.appendLocked(w.Undo(err)); uerr != nil {
+			return errors.Join(err, fmt.Errorf("the undo entry was not written: %w", uerr))
 		}
 		return err
 	})
@@ -231,6 +253,19 @@ func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (adm
 		}
 	}
 	return admitted, err
+}
+
+// ErrBindingOutcomeUnknown: the verb's binding write failed and the
+// confirming read could not show it did not take effect (the read failed,
+// or it shows the target): no undo, the readmission stands, and the verb
+// stops in these words (Codex's sixth pass on #903, the plan reviewer).
+var ErrBindingOutcomeUnknown = errors.New("the binding's outcome is not known yet; the task store's replay is pending; run merge-train rebind again once the store reads")
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // errReadmittedNotWritten: the verb's rebind_readmitted entry could not be
@@ -246,6 +281,10 @@ type Binder interface {
 	// otherwise).
 	BindPRFrom(taskID, repository string, pr int, from, head string) error
 	RecordPRMerge(taskID, repository string, pr int, head, commit string) error
+	// Binding reads the task through the store's normal read path (under
+	// the store's lock, replaying a committed journal first): the
+	// confirming read before an undo.
+	Binding(taskID string) (task.Task, error)
 }
 
 // StoreBinder binds through task.Store.BindPR.
@@ -271,6 +310,8 @@ func (b StoreBinder) BindPRFrom(taskID, repository string, pr int, from, head st
 	_, err := b.Store.BindPRFrom(taskID, repository, pr, from, head, now)
 	return err
 }
+
+func (b StoreBinder) Binding(taskID string) (task.Task, error) { return b.Store.Get(taskID) }
 
 func (b StoreBinder) RecordPRMerge(taskID, repository string, pr int, head, commit string) error {
 	now := time.Now()

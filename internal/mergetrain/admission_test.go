@@ -633,3 +633,77 @@ func TestCommittedTrainBindStopsInWords(t *testing.T) {
 		})
 	}
 }
+
+// uncertainBindFrom stands in for a store error whose outcome is not
+// definite. replay: the train's bind of the head crossed the store's
+// commit point and its apply failed, so the lock's replay fails for the
+// verb's write and for the confirming read alike (the head installed once
+// storage recovers). synced: the write's journal was renamed into place and
+// the directory sync failed: an ordinary error, and the read shows the head.
+type uncertainBindFrom struct {
+	StoreBinder
+	replay     bool
+	recovered  bool
+	readFailed bool
+}
+
+func (b *uncertainBindFrom) BindPRFrom(taskID, repository string, pr int, from, head string) error {
+	if b.replay {
+		// the train's committed bind of the head (installed after the replay)
+		if _, err := b.Store.BindPR(taskID, repository, pr, head, time.Now()); err != nil {
+			return err
+		}
+		return errors.New("apply task " + taskID + ": write task file: input/output error")
+	}
+	if err := b.StoreBinder.BindPRFrom(taskID, repository, pr, from, head); err != nil {
+		return err
+	}
+	return errors.New("sync task directory: input/output error")
+}
+
+func (b *uncertainBindFrom) Binding(taskID string) (task.Task, error) {
+	if b.replay && !b.recovered {
+		b.readFailed = true
+		return task.Task{}, errors.New("apply task " + taskID + ": write task file: input/output error")
+	}
+	return b.StoreBinder.Binding(taskID)
+}
+
+// Codex's sixth pass on #903, the plan reviewer's rule: the verb undoes a
+// failed write only on a definite outcome. The replay failure at the
+// store's lock (the confirming read fails too) and the directory-sync
+// failure after the journal's rename (the read shows the head) each leave
+// the readmission standing, H admitted, and the verb stopped in words; a
+// later read shows H bound. The definite failure, the read showing the old
+// head, still undoes (TestFailedRebindWriteLeavesTheHeadNotAdmitted).
+// Reverted (the undo on any error), H is superseded under a binding the
+// store installs.
+func TestUncertainBindOutcomeIsNotUndone(t *testing.T) {
+	const words = "the binding's outcome is not known yet; the task store's replay is pending; run merge-train rebind again once the store reads"
+	for name, replay := range map[string]bool{"the replay failure at the lock": true, "the directory sync after the rename": false} {
+		t.Run(name, func(t *testing.T) {
+			f, id, old, req := strictBound(t)
+			_, moved := moveBranch(f, "pr1", nil, true)
+			s := f.tasks()
+			b := &uncertainBindFrom{StoreBinder: StoreBinder{Store: s}, replay: replay}
+			_, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: b, PR: 1, From: old, To: moved, Lead: "lead"})
+			var refusal *RebindRefusal
+			if !errors.As(err, &refusal) || !strings.HasPrefix(refusal.Detail, words) || replay != b.readFailed {
+				t.Fatalf("the uncertain outcome's words: %v (the confirming read failed: %v)", err, b.readFailed)
+			}
+			entries, _ := f.train.Audit.Read()
+			if !headAdmitted(entries, fixtureRepo, 1, moved) || slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "rebind_superseded" }) {
+				t.Fatalf("the uncertain write was undone: %v", kinds(entries, 1))
+			}
+			b.recovered = true // storage recovers: the store reads, the head is installed
+			if tk, err := b.Binding(id); err != nil || tk.PRHead != moved {
+				t.Fatalf("a later read: %v %+v", err, tk)
+			}
+			f.train.Binder = StoreBinder{Store: s}
+			f.realRun(&req)
+			if run, err := f.train.Run(context.Background(), req); err != nil || run.PRs[0].Status != "merged" {
+				t.Fatalf("the installed, admitted head did not land: %v %+v", err, run.PRs)
+			}
+		})
+	}
+}
