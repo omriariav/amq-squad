@@ -604,6 +604,10 @@ after it), each exit 0, from the worktree root:
   alarm and the recovery gives that HEAD as the base, as it would at a
   relaunch. The next `StartTask` sets the lease's start from the base tip
   fetched at the grant, so the base matters until then.
+  The threat model is unchanged: the recovery offers no protection against
+  a same-uid process that moves the worktree HEAD (the recovered base is
+  the observed HEAD; the quarantined base, rest, lease, target and
+  `gh_path` are never carried).
 - The evidence refs of discards the quarantined body recorded are not
   carried (the discard records are untrusted); the refs stay in the seat
   repository under `refs/amq-squad/evidence/<seat>/...` and the counter
