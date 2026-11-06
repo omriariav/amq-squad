@@ -82,7 +82,7 @@ func runSchedulerRecover(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "scheduler recover: %s\n", reply.Detail)
 		var res seatcommit.RecoverResult
 		if json.Unmarshal(reply.Data, &res) == nil && res.Alarm != "" {
-			fmt.Fprintf(out, "  alarm %s: the decision is sealed at link %d\n", res.Alarm, res.NewSeq)
+			fmt.Fprintf(out, "  alarm %s: the decision is a sealed line of the seat's hold release file\n", res.Alarm)
 		} else if json.Unmarshal(reply.Data, &res) == nil {
 			fmt.Fprintf(out, "  slot %s\n  chain: seq %d after the quarantined seq %d; base %s\n", res.Slot, res.NewSeq, res.OldSeq, res.Base)
 			for _, c := range res.Carried {

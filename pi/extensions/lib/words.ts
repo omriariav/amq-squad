@@ -437,6 +437,9 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	seat_prepare_suppressed: (d) => [`${seatOf(d)}'s prepare failure${d.task_id ? ` for ${d.task_id}` : ""} repeats`, "further repeats are counted, not shown, until the task, the seat or the reason changes"],
 	// Codex on c9826c31: the release after the lead's recovery could not
 	// read or return a task; the hold stays and the next tick tries again
+	// 3.2.0-0c-B: a line of a seat's hold release file that does not
+	// verify (a torn tail, an edited or forged line); it releases nothing
+	hold_release_line_skipped: (d) => [`${seatOf(d)}'s hold release file has a line that does not verify`, "that line releases nothing and the others still count; the record is below the line"],
 	ledger_release_failed: (d) => [`${seatOf(d)}'s release after the lead's recovery could not update ${d.task_id || "its task"}`, "the hold stays and the next tick tries again; the error is below the line"],
 	ledger_release_suppressed: (d) => [`${seatOf(d)}'s release keeps failing for ${d.task_id || "its task"}`, "further repeats are counted, not shown, until the reason changes; the error is below the line"],
 	// Go records the task and no seat (scheduler.go): the sentence names it
@@ -521,6 +524,7 @@ export const RESOLVED_BY: Record<string, { kinds: readonly string[]; match: "sea
 	seat_launch_failed: SEAT_RESOLVED,
 	seat_prepare_failed: SEAT_RESOLVED,
 	seat_prepare_suppressed: SEAT_RESOLVED,
+	hold_release_line_skipped: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
 	ledger_release_failed: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
 	ledger_release_suppressed: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
 	seat_refused: SEAT_RESOLVED,

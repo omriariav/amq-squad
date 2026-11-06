@@ -434,11 +434,11 @@ func TestTheAlarmVerbReleasesAHoldWithNoSlot(t *testing.T) {
 	}
 	reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "the copy failed; the document is back"})
 	var res seatcommit.RecoverResult
-	if !reply.OK || json.Unmarshal(reply.Data, &res) != nil || res.Alarm != alarm || !res.Verified || res.NewSeq != 2 {
+	if !reply.OK || json.Unmarshal(reply.Data, &res) != nil || res.Alarm != alarm || !res.Verified {
 		t.Fatalf("the decision by alarm: %+v", reply)
 	}
-	if l, err := seatcommit.ReadLedger(r.root, r.handle); err != nil || len(l.AlarmRecoveries) != 1 || l.AlarmRecoveries[0].Alarm != alarm || l.AlarmRecoveries[0].Slot != "" || l.AlarmRecoveries[0].Link != 2 {
-		t.Fatalf("the sealed record: %v %+v", err, l.AlarmRecoveries)
+	if log, err := seatcommit.ReadAlarms(r.root, r.handle); err != nil || len(log.Decisions) != 1 || log.Decisions[0].Alarm != alarm || log.Decisions[0].Lead != "lead" {
+		t.Fatalf("the hold release file: %v %+v", err, log)
 	}
 	all := r.ticks(3)
 	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) || !has(all, "dispatched", r.tk.ID, r.handle) {
@@ -579,7 +579,7 @@ func TestALedgerChangedBeforeTheAlarmDecisionIsCopiedNotRebuilt(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(m[2], "body.json")); err != nil || !bytes.Equal(b, r.tampered) {
 		t.Fatalf("the copy is not the changed bytes: %v", err)
 	}
-	if _, alarms, _ := seatcommit.RecoveriesOf(r.root, r.handle); len(alarms) != 0 {
+	if _, alarms, _, _ := seatcommit.RecoveriesOf(r.root, r.handle); len(alarms) != 0 {
 		t.Fatalf("an alarm record was sealed: %v", alarms)
 	}
 	if all := r.ticks(3); len(kinds(all, "ledger_hold_released")) != 0 {
@@ -636,7 +636,7 @@ func TestADelayedAlarmDecisionNeverSealsOverANewerRecovery(t *testing.T) {
 	if replyA.OK || replyA.Code != RefusedRecoverAlarmNotHeld {
 		t.Fatalf("A after B's recovery: %+v", replyA)
 	}
-	if _, alarms, ok := seatcommit.RecoveriesOf(r.root, r.handle); !ok || !slices.Contains(alarms, b) || slices.Contains(alarms, a) {
+	if _, alarms, _, ok := seatcommit.RecoveriesOf(r.root, r.handle); !ok || !slices.Contains(alarms, b) || slices.Contains(alarms, a) {
 		t.Fatalf("the records after A resumed: %v %v", ok, alarms)
 	}
 	if all := r.ticks(2); !has(all, "ledger_hold_released", "", r.handle) {
@@ -647,13 +647,13 @@ func TestADelayedAlarmDecisionNeverSealsOverANewerRecovery(t *testing.T) {
 	}
 }
 
-// The plan reviewer's ruling on Codex's pass on 254f2c2c, the root fix:
-// the ledger keeps one record per alarm. B holds the seat and B's decision
-// by alarm is sealed; then an older alarm A's record lands after it (a
-// writer with no guard: a decision whose check passed long before). The
-// ledger keeps both records, and the next ticks release B, which stays
-// released. Reverted (the single field: A's record replaces B's), B is
-// never released.
+// The plan reviewer's ruling on Codex's pass on 254f2c2c, the root fix,
+// now in the hold release file (8cffafe7's successor): B holds the seat
+// and B's decision by alarm is written; then an older alarm A's line lands
+// after it (a writer with no guard: a decision whose check passed long
+// before). The file keeps both lines, and the next ticks release B, which
+// stays released. Reverted (the append replacing the file), B is never
+// released.
 func TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased(t *testing.T) {
 	r := newTamperedSeatRig(t)
 	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
@@ -674,7 +674,7 @@ func TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased(t *testing.T) {
 	if !has(all, "ledger_hold_released", "", r.handle) {
 		t.Fatalf("B was not released after A's record landed: %+v", all)
 	}
-	if _, alarms, ok := seatcommit.RecoveriesOf(r.root, r.handle); !ok || !slices.Equal(alarms, []string{b, a}) {
+	if _, alarms, _, ok := seatcommit.RecoveriesOf(r.root, r.handle); !ok || !slices.Equal(alarms, []string{b, a}) {
 		t.Fatalf("the ledger's alarm records: %v %v, want [%s %s]", ok, alarms, b, a)
 	}
 	if more := r.ticks(5); len(kinds(more, "ledger_hold_released")) != 0 {
@@ -682,5 +682,83 @@ func TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased(t *testing.T) {
 	}
 	if _, held := r.s.HeldAlarm(r.handle); held {
 		t.Fatal("B is held again")
+	}
+}
+
+// noSlotHold restores a hold with no slot on the rig's seat, its task
+// blocked with the hold's detail, on a ledger that verifies.
+func noSlotHold(t *testing.T, r *tamperedSeatRig, alarm string) {
+	t.Helper()
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if err := os.WriteFile(p, r.original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	detail := "seat " + r.handle + ": the refused document could not be quarantined (seq 1; alarm " + alarm + "): the copy failed"
+	if _, err := r.store.Block(r.tk.ID, "", scheduler.ReasonLedgerTampered, detail, task.RouteLead, r.now); err != nil {
+		t.Fatal(err)
+	}
+	r.s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: r.handle, Seq: "1", Detail: detail, At: r.now, Tasks: []string{r.tk.ID}, Alarm: alarm}}})
+}
+
+// The plan reviewer's ruling on Codex's pass on 8cffafe7, on real files: a
+// valid line of the hold release file followed by a torn tail (a crash
+// mid-write) still releases its alarm; the torn tail is skipped and logged
+// once (hold_release_line_skipped). Reverted (a torn tail fails the whole
+// file), the seat stays held.
+func TestAValidReleaseLineBeforeATornTailReleasesItsAlarm(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	const alarm = "3fa9c1d2"
+	noSlotHold(t, r, alarm)
+	decide := recoverDecision(r.s, r.root, NewRecovery(r.root, r.target).Apply, func() time.Time { return r.now })
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "investigated"}); !reply.OK {
+		t.Fatalf("the decision: %+v", reply)
+	}
+	f, err := os.OpenFile(seatcommit.AlarmsPath(r.root, r.handle), os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"seat":"` + r.handle + `","alarm":"0bad`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	all := r.ticks(3)
+	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) {
+		t.Fatalf("the valid line did not release its alarm: %+v", all)
+	}
+	if skipped := kinds(all, "hold_release_line_skipped"); len(skipped) != 1 || !strings.Contains(skipped[0].Reason, "a torn last line") {
+		t.Fatalf("the torn tail was not logged once: %+v", skipped)
+	}
+}
+
+// Codex on 8cffafe7 (2), on real files: B's decision by alarm is sealed in
+// the hold release file; before the tick reads it, the ledger is refused
+// and recovered from its slot (a chain continuation, a new ledger body).
+// The decision is not in the ledger body, so the continuation cannot drop
+// it: the next ticks release B. (With the decisions in the ledger body,
+// as in 37379e5b, this continuation dropped them.)
+func TestAnAlarmDecisionSurvivesALaterContinuation(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	const b = "b0000002"
+	noSlotHold(t, r, b)
+	decide := recoverDecision(r.s, r.root, NewRecovery(r.root, r.target).Apply, func() time.Time { return r.now })
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: b, Reason: "B, investigated"}); !reply.OK {
+		t.Fatalf("B's decision: %+v", reply)
+	}
+	// the continuation, before any tick: the ledger refused, then recovered
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if err := os.WriteFile(p, r.tampered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seatcommit.ReadLedgerAs(r.root, r.handle, "a reader"); err == nil {
+		t.Fatal("the tampered ledger verified")
+	}
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "the slot, read"}); !reply.OK {
+		t.Fatalf("the continuation: %+v", reply)
+	}
+	if _, alarms, _, ok := seatcommit.RecoveriesOf(r.root, r.handle); !ok || !slices.Contains(alarms, b) {
+		t.Fatalf("B's decision after the continuation: %v %v", ok, alarms)
+	}
+	if all := r.ticks(3); !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) {
+		t.Fatalf("B was not released after the continuation: %+v", all)
 	}
 }

@@ -698,10 +698,9 @@ func TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery(t *testing.T) {
 // document is Y's; Y's recovery continues the chain at link 2; X is then
 // refused again, its seq past the chain (no verified recovery can answer
 // it), so a hold on X is released only by the decision naming its alarm.
-// On the ledger that verifies it seals the next link with the record
-// naming the alarm (no slot, no seq, Verified), the body otherwise
-// unchanged; sent again it is answered from the ledger; a carry with it is
-// refused.
+// On the ledger that verifies it appends a sealed line naming the alarm to
+// the seat's hold release file, the ledger unchanged; sent again it is
+// answered from that file with no new line; a carry with it is refused.
 func TestADecisionByAlarmAnswersAHoldNoSlotCan(t *testing.T) {
 	f := newFixture(t)
 	for _, line := range []string{"// one\n", "// two\n"} {
@@ -753,18 +752,20 @@ func TestADecisionByAlarmAnswersAHoldNoSlotCan(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "3fa9c1d2", Lead: "cto", Reason: "X's alarm, investigated", Now: f.now})
-	if err != nil || !res.Verified || res.Alarm != "3fa9c1d2" || res.NewSeq != 3 {
+	if err != nil || !res.Verified || res.Alarm != "3fa9c1d2" {
 		t.Fatalf("the decision by alarm: %v %+v", err, res)
 	}
+	// the decision is a line of the hold release file; the ledger is unchanged
 	after, err := ReadLedger(f.root, f.handle)
-	if err != nil || after.Seal.Seq != 3 || after.Seal.Prev != before.Seal.Tag {
-		t.Fatalf("the next link: %v %+v", err, after.Seal)
+	if err != nil || after.Seal.Seq != before.Seal.Seq || after.Seal.Tag != before.Seal.Tag {
+		t.Fatalf("the ledger moved: %v %+v", err, after.Seal)
 	}
-	if len(after.AlarmRecoveries) != 1 {
-		t.Fatalf("the alarm records: %+v", after.AlarmRecoveries)
+	log, err := ReadAlarms(f.root, f.handle)
+	if err != nil || len(log.Problems) != 0 || len(log.Decisions) != 1 {
+		t.Fatalf("the hold release file: %v %+v", err, log)
 	}
-	if r := after.AlarmRecoveries[0]; r.Alarm != "3fa9c1d2" || r.Slot != "" || r.Seq != 0 || !r.Verified || r.Link != 3 || r.By != "cto" {
-		t.Fatalf("the record: %+v", r)
+	if d := log.Decisions[0]; d.Alarm != "3fa9c1d2" || d.Seat != f.handle || d.Lead != "cto" || d.Reason != "X's alarm, investigated" || !d.At.Equal(f.now.UTC()) {
+		t.Fatalf("the line: %+v", d)
 	}
 	// the chain's own record (Y's recovery) stays; nothing replaces it
 	if after.Recovered == nil || after.Recovered.Slot != y.Slot {
@@ -774,7 +775,10 @@ func TestADecisionByAlarmAnswersAHoldNoSlotCan(t *testing.T) {
 		t.Fatalf("the body changed: %+v", after)
 	}
 	again, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "3fa9c1d2", Lead: "cto", Reason: "again", Now: f.now})
-	if err != nil || !again.AlreadyRecovered || again.NewSeq != 3 {
+	if err != nil || !again.AlreadyRecovered {
 		t.Fatalf("the same decision again: %v %+v", err, again)
+	}
+	if log, _ := ReadAlarms(f.root, f.handle); len(log.Decisions) != 1 {
+		t.Fatalf("the repeat added a line: %+v", log)
 	}
 }

@@ -27,15 +27,16 @@ type tamperPreparer struct {
 }
 
 type recoveryRecord struct {
-	seq   int
-	slot  string
-	alarm string
+	seq      int
+	slot     string
+	alarm    string
+	problems []string
 }
 
 // mark is the record as the reader answers it: a slot names the chain's
 // own record, an alarm one of the ledger's decisions by alarm.
 func (r recoveryRecord) mark() RecoveryMark {
-	m := RecoveryMark{Seq: r.seq, Slot: r.slot}
+	m := RecoveryMark{Seq: r.seq, Slot: r.slot, Problems: r.problems}
 	if r.alarm != "" {
 		m.Alarms = []string{r.alarm}
 	}
@@ -925,5 +926,35 @@ func TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold(t *testing.T) {
 	p.ledgers["seat-a"] = recoveryRecord{alarm: b}
 	if ds := h.tick(); !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", t2.ID, "seat-a") {
 		t.Fatalf("B's own decision did not release it: %+v", ds)
+	}
+}
+
+// The plan reviewer's ruling on Codex's pass on 8cffafe7: a line of the
+// seat's hold release file that does not verify is logged once per seat
+// and problem (hold_release_line_skipped), however many ticks read it; a
+// new problem is logged once too; the lines that verify still release.
+// Reverted (logged every tick), the line repeats.
+func TestAHoldReleaseFileProblemIsLoggedOnce(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	alarm := h.s.tampered["seat-a"].Alarm
+	p.ledgers = map[string]recoveryRecord{"seat-a": {problems: []string{"line 2 fails its seal"}}}
+	var all []Decision
+	for i := 0; i < 10; i++ {
+		all = append(all, h.tick()...)
+		h.clk.Add(2 * time.Second)
+	}
+	if countOf(all, "hold_release_line_skipped", "seat-a") != 1 || countOf(all, "ledger_hold_released", "seat-a") != 0 {
+		t.Fatalf("over 10 ticks of one problem: %+v", all)
+	}
+	p.recover("seat-a", 0, "")
+	p.ledgers["seat-a"] = recoveryRecord{alarm: alarm, problems: []string{"line 2 fails its seal", "a torn last line of 9 bytes (no newline)"}}
+	ds := h.tick()
+	if countOf(ds, "hold_release_line_skipped", "seat-a") != 1 || !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") {
+		t.Fatalf("a new problem beside a verified line: %+v", ds)
 	}
 }

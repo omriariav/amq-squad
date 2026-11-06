@@ -164,6 +164,9 @@ type Scheduler struct {
 	// heldAlarms is the held seats' alarm ids as the last change left them
 	// (publishHolds), read by the decision socket (HeldAlarm); set under mu.
 	heldAlarms map[string]string
+	// releaseLines are the hold release file problems already logged, by
+	// seat and problem (the tick's own).
+	releaseLines map[string]bool
 
 	seats       map[string]*seat
 	requests    []request

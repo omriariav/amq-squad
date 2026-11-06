@@ -98,8 +98,8 @@ func TestSchedulerRecoverSendsTheDecisionOverTheSocket(t *testing.T) {
 	// the decision by alarm (Codex's delta pass on c267382d): the seat, the
 	// alarm and the reason are sent, no seq, slot or carry; the output names
 	// the alarm and its link
-	reply = schedproc.DecideReply{OK: true, Detail: "seat dev: alarm 3fa9c1d2 released by decision, sealed at link 8; the scheduler releases the seat at its next tick"}
-	reply.Data, _ = json.Marshal(seatcommit.RecoverResult{Handle: "dev", Verified: true, Alarm: "3fa9c1d2", OldSeq: 7, NewSeq: 8})
+	reply = schedproc.DecideReply{OK: true, Detail: "seat dev: alarm 3fa9c1d2 released by decision, a sealed line of its hold release file; the scheduler releases the seat at its next tick"}
+	reply.Data, _ = json.Marshal(seatcommit.RecoverResult{Handle: "dev", Verified: true, Alarm: "3fa9c1d2"})
 	stdout, _, err = captureOutput(t, func() error {
 		return runScheduler([]string{"recover", "--seat", "dev", "--alarm", "3fa9c1d2", "--reason", "investigated"})
 	})
@@ -109,7 +109,7 @@ func TestSchedulerRecoverSendsTheDecisionOverTheSocket(t *testing.T) {
 	if got := sent[1]; got.Seat != "dev" || got.Alarm != "3fa9c1d2" || got.Reason != "investigated" || got.Seq != "" || got.Slot != 0 || len(got.Carry) != 0 {
 		t.Fatalf("sent %+v", got)
 	}
-	if !strings.Contains(stdout, "alarm 3fa9c1d2 released by decision") || !strings.Contains(stdout, "alarm 3fa9c1d2: the decision is sealed at link 8") {
+	if !strings.Contains(stdout, "alarm 3fa9c1d2 released by decision") || !strings.Contains(stdout, "alarm 3fa9c1d2: the decision is a sealed line of the seat's hold release file") {
 		t.Fatalf("the output:\n%s", stdout)
 	}
 	// a refusal

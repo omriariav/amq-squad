@@ -197,10 +197,10 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 		if req.Alarm != "" {
 			verb = "released"
 			if res.AlreadyRecovered {
-				verb = "had released (the decision sent again; the sealed ledger records it)"
+				verb = "had released (the decision sent again; its hold release file has the line)"
 			}
-			reason = fmt.Sprintf("the lead %s %s alarm %s of seat %s by decision: its commits ledger verified when the decision came; the record naming the alarm is sealed into link %d, nothing restarted, nothing carried; reason: %s",
-				lead, verb, req.Alarm, req.Seat, res.NewSeq, firstNonEmptyString(req.Reason, "none given"))
+			reason = fmt.Sprintf("the lead %s %s alarm %s of seat %s by decision: its commits ledger verified when the decision came; the decision is a sealed line of %s, the ledger unchanged, nothing carried; reason: %s",
+				lead, verb, req.Alarm, req.Seat, seatcommit.AlarmsPath(root, req.Seat), firstNonEmptyString(req.Reason, "none given"))
 		}
 		at := now().UTC()
 		if err := AppendDecision(root, at, scheduler.Decision{Kind: DecisionLedgerRecovered, Seat: req.Seat, Reason: reason}); err != nil {
@@ -212,9 +212,9 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 			detail = fmt.Sprintf("seat %s was already recovered from quarantine seq %d (the chain is at seq %d or past it); the decision is recorded now", req.Seat, res.OldSeq, res.NewSeq)
 		}
 		if req.Alarm != "" {
-			detail = fmt.Sprintf("seat %s: alarm %s released by decision, sealed at link %d; the scheduler releases the seat at its next tick", req.Seat, req.Alarm, res.NewSeq)
+			detail = fmt.Sprintf("seat %s: alarm %s released by decision, a sealed line of its hold release file; the scheduler releases the seat at its next tick", req.Seat, req.Alarm)
 			if res.AlreadyRecovered {
-				detail = fmt.Sprintf("seat %s: alarm %s was already released by decision (link %d); the decision is recorded now", req.Seat, req.Alarm, res.NewSeq)
+				detail = fmt.Sprintf("seat %s: alarm %s was already released by decision (its hold release file has the line); the decision is recorded now", req.Seat, req.Alarm)
 			}
 		}
 		return DecideReply{OK: true, Detail: detail, Data: data}

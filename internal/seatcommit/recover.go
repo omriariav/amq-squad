@@ -374,9 +374,9 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResu
 // scheduler alarm, named by its id. It names no slot and no seq, so it
 // releases a hold whose refusal quarantined nothing, and a hold whose slot
 // the chain has moved past (a later slot at a lower seq recovered first).
-// On a ledger that verifies, the next link seals the same body with the
-// record naming the alarm appended; the same alarm decided again is
-// answered from the ledger (AlreadyRecovered). On a ledger that does not
+// On a ledger that verifies, a line naming the alarm is appended to the
+// seat's hold release file (alarms.go), the ledger itself unchanged; the
+// same alarm decided again is answered from that file (AlreadyRecovered). On a ledger that does not
 // verify (Codex on 254f2c2c: a refusal whose copy failed leaves a hold
 // with no slot and no read that makes one), the decision makes only the
 // lead's quarantine copy of the live bytes, the copy a refusing read
@@ -410,25 +410,22 @@ func recordAlarm(o RecoverOptions) (RecoverResult, error) {
 	if live.Seal == nil {
 		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s has no seal", o.Handle)
 	}
-	for _, r := range live.alarmRecords() {
-		if r.Alarm == o.Alarm {
-			return RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Verified: true, Alarm: o.Alarm, Slot: r.Slot, NewSeq: r.Link, Base: live.Base}, nil
-		}
+	// the decision goes to the seat's hold release file (alarms.go), never
+	// into the ledger body; the same alarm decided again is answered from it
+	have, err := ReadAlarms(o.Root, o.Handle)
+	if err != nil {
+		return out, refuseRecover(RecoverWriteFailed, "the hold release file of seat %s cannot be read: %v", o.Handle, err)
 	}
-	now := o.Now.UTC()
-	prev := live.Seal
-	l := live
-	l.Seal = nil
-	// appended, never replacing another alarm's record (nor Recovered)
-	l.AlarmRecoveries = append(append([]LedgerRecovery(nil), live.AlarmRecoveries...), LedgerRecovery{Alarm: o.Alarm, By: o.Lead, Reason: o.Reason, At: now, Verified: true, Link: prev.Seq + 1})
+	if have.Released(o.Alarm) {
+		return RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Verified: true, Alarm: o.Alarm, Base: live.Base}, nil
+	}
 	if err := guard(o); err != nil {
 		return out, err
 	}
-	link, err := sealWrite(o.Root, o.Handle, prev, l, now)
-	if err != nil {
-		return out, err
+	if err := appendAlarm(o.Root, AlarmDecision{Seat: o.Handle, Alarm: o.Alarm, Reason: o.Reason, At: o.Now.UTC(), Lead: o.Lead}); err != nil {
+		return out, refuseRecover(RecoverWriteFailed, "the hold release file of seat %s: %v", o.Handle, err)
 	}
-	return RecoverResult{Handle: o.Handle, Verified: true, Alarm: o.Alarm, OldSeq: prev.Seq, NewSeq: link.Seq, Prev: prev.Tag, Base: live.Base}, nil
+	return RecoverResult{Handle: o.Handle, Verified: true, Alarm: o.Alarm, Base: live.Base}, nil
 }
 
 // guard runs the options' Guard, inside the ledger lock, immediately
@@ -646,23 +643,25 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, common st
 	return out, nil
 }
 
-// alarmRecords are the ledger's decisions by alarm.
-func (l Ledger) alarmRecords() []LedgerRecovery { return l.AlarmRecoveries }
-
-// RecoveriesOf is everything a seat's sealed ledger records of the lead's
-// recoveries, read without a quarantine, in one read: the chain's own
-// record (nil when none) and the alarm ids of every decision by alarm; ok
-// when the ledger verifies and records any. The scheduler's tick releases
-// a hold from it.
-func RecoveriesOf(root, handle string) (slot *LedgerRecovery, alarms []string, ok bool) {
-	l, _, err := readLedger(root, handle)
+// RecoveriesOf is what the scheduler's tick releases a hold from: the
+// ledger's own chain record, read without a quarantine (nil when the
+// ledger does not verify or records none), the alarm ids of the verified
+// lines of the seat's hold release file (alarms.go), and that file's
+// problems (the lines that release nothing, for the lead); ok when either
+// names anything.
+func RecoveriesOf(root, handle string) (slot *LedgerRecovery, alarms []string, problems []string, ok bool) {
+	if l, _, err := readLedger(root, handle); err == nil {
+		slot = l.Recovered
+	}
+	log, err := ReadAlarms(root, handle)
 	if err != nil {
-		return nil, nil, false
+		problems = append(problems, "the hold release file cannot be read: "+err.Error())
 	}
-	for _, r := range l.alarmRecords() {
-		alarms = append(alarms, r.Alarm)
+	for _, d := range log.Decisions {
+		alarms = append(alarms, d.Alarm)
 	}
-	return l.Recovered, alarms, l.Recovered != nil || len(alarms) > 0
+	problems = append(problems, log.Problems...)
+	return slot, alarms, problems, slot != nil || len(alarms) > 0 || len(problems) > 0
 }
 
 // RecoveryOf is the recovery a seat's ledger records, read without a

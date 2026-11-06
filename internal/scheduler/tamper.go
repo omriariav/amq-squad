@@ -76,14 +76,17 @@ type LedgerTamper struct {
 }
 
 // RecoveryMark is what a seat's sealed ledger records of the lead's
-// recoveries, as the scheduler reads it: the chain's own record (the
-// quarantined seq and slot it continued from) and the alarm id of every
-// decision by alarm the ledger keeps (one record per alarm, never
-// replaced; the plan reviewer's ruling on Codex's pass on 254f2c2c).
+// recoveries, as the scheduler reads it: the ledger's own chain record
+// (the quarantined seq and slot it continued from), the alarm id of every
+// verified line of the seat's hold release file (seatcommit alarms.go: one
+// line per decision by alarm, never replaced; the plan reviewer's rulings
+// on Codex's passes on 254f2c2c and 8cffafe7), and that file's problems,
+// the lines that release nothing (logged once each).
 type RecoveryMark struct {
-	Seq    int      `json:"seq"`
-	Slot   string   `json:"slot"`
-	Alarms []string `json:"alarms,omitempty"`
+	Seq      int      `json:"seq"`
+	Slot     string   `json:"slot"`
+	Alarms   []string `json:"alarms,omitempty"`
+	Problems []string `json:"problems,omitempty"`
 }
 
 // newAlarmID is a hold's alarm id: eight hex characters from the system's
@@ -265,6 +268,16 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 	for _, h := range handles {
 		tm := s.tampered[h]
 		rec, ok := reader.LedgerRecovery(h)
+		for _, p := range rec.Problems {
+			// a line that releases nothing, said once per seat and problem
+			if s.releaseLines == nil {
+				s.releaseLines = map[string]bool{}
+			}
+			if k := h + "\x00" + p; !s.releaseLines[k] {
+				s.releaseLines[k] = true
+				log(Decision{Kind: "hold_release_line_skipped", Seat: h, Reason: "the hold release file of seat " + h + ": " + p + "; that line releases nothing, the others still count"})
+			}
+		}
 		if !ok || !tm.covers(rec) {
 			continue
 		}
@@ -334,26 +347,29 @@ func reasonIdentity(reason string) string {
 	return reasonDigits.ReplaceAllString(reasonPath.ReplaceAllString(reason, "<path>"), "#")
 }
 
-// covers reports whether a recovery record answers this hold (the plan
-// reviewer's rulings on af1a6124 and on Codex's delta pass on c267382d): a
-// decision by alarm that names this hold's alarm, or a record that names
-// this hold's exact slot. A seq never answers a hold: slot names are
+// covers reports whether a recovery answers this hold (the plan
+// reviewer's rulings on af1a6124, on Codex's delta pass on c267382d and on
+// Codex's pass on 8cffafe7): a verified line of the seat's hold release
+// file (seatcommit alarms.go) that names this hold's alarm, or the
+// ledger's own chain record naming this hold's exact slot. A seq never answers a hold: slot names are
 // unique by construction (commits.<h>.seq<N>[.k]), a seq is not, and the
 // head's seq the hold was named by was never verified (the incident was
 // itself a lowered seq). A decision by alarm for any other alarm (an
 // earlier hold's, landing late) answers nothing, so it never releases a
 // newer hold. A hold with no slot is answered only by its alarm.
 //
-// The records are kept per alarm, so a decision for an earlier alarm that
-// is sealed after a newer one never takes the newer one's record away,
-// whatever the interleaving. The lock order is the ledger lock, then the
+// The decisions are lines of the hold release file, one per decision,
+// appended and never replaced, so a decision for an earlier alarm written
+// after a newer one never takes the newer one's line away, whatever the
+// interleaving, and a chain continuation (a new ledger body) cannot drop
+// one. The lock order is the ledger lock, then the
 // scheduler's mutex: the decision's guard (schedproc) reads HeldAlarm
 // under s.mu while it holds the ledger lock; the tick never holds s.mu
 // while it calls the preparer or the reader (every s.mu section is a
 // copy of a field), so it never takes them the other way round. The tick
 // changes the holds (s.tampered) without the ledger lock; a hold that
-// changes between a guard and its seal costs nothing, since the record
-// sealed names its own alarm only.
+// changes between a guard and its append costs nothing, since the line
+// written names its own alarm only.
 func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
 	for _, a := range rec.Alarms {
 		if a == tm.Alarm {
