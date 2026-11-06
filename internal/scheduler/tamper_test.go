@@ -865,3 +865,55 @@ func TestReasonsDifferingOnlyInATempNameLogOnce(t *testing.T) {
 		t.Fatal("reasonIdentity does not mask the temp name or merges different words")
 	}
 }
+
+// The plan reviewer on 5d2a576a, the race the socket check cannot close:
+// the decision by alarm for A passes the socket's check (A holds the
+// seat), and before its record is sealed A's hold is released by its slot
+// and a new alarm B holds the seat (the next prepare refused again). The
+// record then sealed names A, so B stays held over many ticks and its task
+// stays blocked; B's own decision releases it. Reverted (a decision by
+// alarm matched on the seat, not the alarm), A's late record releases B.
+func TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	t1 := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	a, ok := h.s.HeldAlarm("seat-a")
+	if !ok || a != h.s.tampered["seat-a"].Alarm {
+		t.Fatalf("the socket's view of A: %q %v", a, ok)
+	}
+	// the verb for A is accepted here (A holds the seat); its record is not
+	// sealed yet. Meanwhile the lead cancels t1, t2 waits for the seat, the
+	// ledger records the recovery of A's slot, and the seat's next prepare
+	// is refused again: one tick releases A and raises B.
+	if _, err := h.store.Cancel(t1.ID, "lead", "replaced", h.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	t2 := h.add("b", &sonnet)
+	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 150, slot: slotOf("seat-a", "150")}}
+	p.err = tamperErr("seat-a", "151")
+	ds := h.tick()
+	b, held := h.s.HeldAlarm("seat-a")
+	if !has(ds, "ledger_hold_released", "", "seat-a") || !held || b == a || h.get(t2.ID).State != task.StateBlocked {
+		t.Fatalf("A released by its slot and B raised: held %v alarm %q (A %q): %+v", held, b, a, ds)
+	}
+	// the decision for A is sealed now: the record names A
+	p.ledgers["seat-a"] = recoveryRecord{alarm: a}
+	for i := 0; i < 20; i++ {
+		ds := h.tick()
+		h.clk.Add(2 * time.Second)
+		if has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", t2.ID, "") {
+			t.Fatalf("A's late record released B: %+v", ds)
+		}
+	}
+	if got, _ := h.s.HeldAlarm("seat-a"); got != b || h.get(t2.ID).State != task.StateBlocked {
+		t.Fatalf("B did not stand: %q, t2 %s", got, h.get(t2.ID).State)
+	}
+	p.err = nil
+	p.ledgers["seat-a"] = recoveryRecord{alarm: b}
+	if ds := h.tick(); !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", t2.ID, "seat-a") {
+		t.Fatalf("B's own decision did not release it: %+v", ds)
+	}
+}
