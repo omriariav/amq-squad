@@ -128,7 +128,8 @@ func cancelScheduler(t *testing.T, f *fixture, launcher scheduler.SeatLauncher, 
 // file remains in the worktree, and the archived bytes are the bytes at
 // the stop, never a write made during the archive. Reverted (the clean run
 // before the stop: runExits no longer waits for the closing seat), the
-// writer writes again after the clean and live.txt remains.
+// check runs against the live writer and only the identity rule stops the
+// clean (seat_may_be_writing in the stop pass).
 func TestCancelledLiveWriterStopsBeforeItsFinalTreeIsArchivedAndCleaned(t *testing.T) {
 	f := newFixture(t)
 	tk := f.leased("live.txt")
@@ -164,7 +165,10 @@ func TestCancelledLiveWriterStopsBeforeItsFinalTreeIsArchivedAndCleaned(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(launcher.stopped) == 0 || cleaner.calls != 0 || !decisionHas(first, "seat_closing") || !decisionHas(first, "seat_closed") || len(launcher.closed) != 1 || launcher.closed[0] != f.handle+":task_cancelled" {
+	// The check and the clean wait for the confirmed close: on the live
+	// path they never reach the identity rule while the writer runs (no
+	// seat_may_be_writing stop).
+	if len(launcher.stopped) == 0 || cleaner.calls != 0 || !decisionHas(first, "seat_closing") || !decisionHas(first, "seat_closed") || decisionHas(first, "seat_may_be_writing") || len(launcher.closed) != 1 || launcher.closed[0] != f.handle+":task_cancelled" {
 		t.Fatalf("stop pass: stopped=%q cleaner calls=%d closed=%v decisions=%+v", launcher.stopped, cleaner.calls, launcher.closed, first)
 	}
 	stopped := append([]byte(nil), launcher.stopped...)
@@ -251,7 +255,7 @@ func TestRestartClosesALiveWriterOfAnUnqueuedCancellationBeforeItsClean(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleaner.calls != 0 || len(launcher.stopped) == 0 || !decisionHas(first, "seat_closing") || !decisionHas(first, "seat_closed") || len(launcher.closed) != 1 || launcher.closed[0] != f.handle+":task_cancelled" {
+	if cleaner.calls != 0 || len(launcher.stopped) == 0 || !decisionHas(first, "seat_closing") || !decisionHas(first, "seat_closed") || decisionHas(first, "seat_may_be_writing") || len(launcher.closed) != 1 || launcher.closed[0] != f.handle+":task_cancelled" {
 		t.Fatalf("restart stop pass: stopped=%q cleaner calls=%d closed=%v decisions=%+v", launcher.stopped, cleaner.calls, launcher.closed, first)
 	}
 	stopped := append([]byte(nil), launcher.stopped...)
