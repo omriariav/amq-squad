@@ -36,8 +36,9 @@ hold is released before its record is sealed, `254f2c2c` and
 section "Codex on 254f2c2c"), and `16c62fb4`, its note; then `37379e5b`,
 the reviewer's rulings on that pass (the section "The reviewer on Codex's
 pass on 254f2c2c"), and `ff7b5530`, its note; then `cb4f7d13`, the
-refusal words dropped (the reviewer accepted leaving them out); then this
-note. The helper move of `8017ffea` is between
+refusal words dropped (the reviewer accepted leaving them out), and
+`8cffafe7`, its note; then `eff2fea1` and `97a05cc4`, Codex's pass on
+`8cffafe7` (the section "The hold release file"); then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -113,9 +114,11 @@ one `ledger_recovered` line naming the lead, the seat, the quarantined seq,
 the slot, the new seq, the carried entries, the base and the reason. The
 release is the scheduler's own reconciliation, every tick, against the
 seat's sealed ledger (Codex's P2 on #904, below): the preparer reads the
-recovery record the ledger carries (`RecoveryReader`, `CleanSeats` through
-`seatcommit.RecoveryOf`, no quarantine on a refusal), and a hold whose exact
-slot the record names, or whose alarm a decision by alarm released, is
+recovery record the ledger carries and the seat's hold release file
+(`RecoveryReader`, `CleanSeats` through `seatcommit.RecoveriesOf`, no
+quarantine on a refusal; "The hold release file"), and a hold whose exact
+slot the ledger's chain record names, or whose alarm a verified line of the
+hold release file names, is
 released (the seq rule this paragraph first described is gone: "The plan
 reviewer on af1a6124" and "The alarm id"): every task
 the alarm blocked `ledger_tampered` returns to pending (`task_reset`, "the
@@ -687,10 +690,14 @@ per hold as the root fix, with six conditions; as built:
    quarantined (seq N; alarm ID)`), so the stop line and the screen's
    seats and tasks blocks read: "seat H's commit record failed its check
    (alarm ID); after investigating, the lead runs amq-squad scheduler
-   recover --seat H --alarm ID" (`words.ts` `tamperAlarm`, the
+   recover --seat H --alarm ID --reason "REASON"" (`words.ts` `tamperAlarm`, the
    `ledger_tampered` block words, and `decisionWords` reading the
    decision's detail; `screen.ts` unchanged).
-3. **The decision by alarm.** `scheduler recover --seat H --alarm ID
+3. **The decision by alarm.** (Condition 3 is superseded: by the P2-1
+   ruling on `254f2c2c`, then by the hold release file of `97a05cc4`,
+   where the decision is a sealed line and the ledger is unchanged, and an
+   unverified ledger is copied and refused, never rebuilt; "The hold
+   release file".) `scheduler recover --seat H --alarm ID
    --reason R` goes through the decision socket with the lead-pane proof,
    as the verb does. The apply step refuses it `recover_alarm_not_held`
    unless the seat is held by that alarm now (`Scheduler.HeldAlarm`, the
@@ -712,7 +719,10 @@ per hold as the root fix, with six conditions; as built:
    `ledger_recovered` line is not recreated, and the lead tells the
    owner in words (the reply's `recover_unrecorded` says the chain is
    written).
-4. **The release names the alarm; no notification.** `covers` releases a
+4. **The release names the alarm; no notification.** (Condition 4 is
+   superseded by the hold release file of `97a05cc4`: the decision is a
+   verified line of that file, not a record in the ledger body; "The hold
+   release file".) `covers` releases a
    hold on a record that names its alarm, or its exact slot; a decision
    by alarm for any other alarm answers nothing. The release line ends
    "alarm ID is released and the seat is grantable again", for the slot
@@ -827,7 +837,10 @@ and recovered, which the copy-failure row covers.
   recovers from that slot in the same apply; the record names the slot and
   the alarm; it is refused only when the copy fails, in words. The row is
   Codex's sequence (`TestTheAlarmVerbRecoversALedgerWhoseCopyFailed`).
-- **P2-2, fixed at the root: one record per alarm.** The single
+- **P2-2, fixed at the root: one record per alarm.** (Superseded by
+  `97a05cc4`: `AlarmRecoveries` is removed and the decisions are lines of
+  the hold release file, which no chain continuation touches; "The hold
+  release file".) The single
   `Recovered` field let an older alarm's late decision replace a newer
   one's. The ledger now keeps `AlarmRecoveries` (`alarm_recoveries`), one
   record per alarm id: `recordAlarm` appends, never replaces another
@@ -838,7 +851,9 @@ and recovered, which the copy-failure row covers.
   record names this hold's exact slot and no alarm (`SlotAlarm` empty). A
   chain continuation starts a new body, which carries only its own
   decision's record (the earlier body is the refused one, so its records
-  are not trusted; one hold per seat means none is pending then). A's late
+  are not trusted). That dropped a decision sealed but not yet read by a
+  tick (Codex on `8cffafe7`), which is why the decisions left the ledger
+  body. A's late
   record therefore cannot take B's away, whatever the interleaving. The
   under-lock `HeldAlarm` guard of `40254653` stays on top, so an obsolete
   decision is refused at write time (`recover_alarm_not_held`) instead of
@@ -894,6 +909,111 @@ from `AlarmRecoveries` now (`TestTheAlarmVerbReleasesAHoldWithNoSlot`,
 chain record stays beside the alarm's). (The refusal words' row of
 `37379e5b` left with the table in `cb4f7d13`.)
 
+## The hold release file (`eff2fea1`, `97a05cc4`, the plan reviewer's ruling on Codex's pass on `8cffafe7`)
+
+Codex's pass on `8cffafe7` found three P2 and a P3: (1) the alarm branch
+returned before `RecoverLedger`'s defaults, and `scheduler run` builds its
+`Recovery` without Git, so the copy-and-recover path always failed in
+production (the row passed only because it set `Git: "git"`); (2) a chain
+continuation's fresh body kept only its own record, dropping a decision
+sealed but not yet read by a tick; (3) the decision by alarm could
+rebuild a ledger that changed between the lead's look and the apply,
+unseen; (4) `AlarmRecoveries` grew with the ledger forever. The reviewer
+accepted a simplification over patching:
+
+- **(c) The defaults before any branch** (`eff2fea1`): `RecoverLedger`
+  sets Git, env and the clock first; `scheduler run` builds its
+  `Recovery` through `schedproc.NewRecovery(root, target)`, the
+  constructor the rows use (Git omitted).
+- **(b) Copy only, never a rebuild** (`eff2fea1`): on a ledger that does
+  not verify, the decision by alarm makes only the lead's quarantine copy
+  (`quarantine`, the copy a refusing read makes) and refuses
+  `recover_alarm_unverified` with "seat H's ledger does not verify; it
+  was copied to slot S; recover it with `amq-squad scheduler recover
+  --seat H --seq N --reason ...`, which shows what it carries, then send
+  the alarm decision again" (`--slot K` added when the copy is not the
+  first slot of its seq, so the command runs as shown). Recovery is the
+  lead's two steps: the slot recovery, then the decision by alarm.
+- **(a) The decisions in a file of their own** (`97a05cc4`): the
+  decision by alarm is a line of the seat's hold release file,
+  `<root>/extensions/amq-squad/commits/<handle>.alarms.jsonl`
+  (`seatcommit.AlarmsPath`, `internal/seatcommit/alarms.go`), appended
+  under the seat's ledger lock, so the lock order is unchanged. A line is
+  the JSON body (seat, alarm, reason, time, and the lead the socket
+  proved), a tab, and the hex HMAC-SHA256 under the session seed's key of
+  the domain string "amq-squad scheduler hold release v1", a zero byte
+  and the body's bytes exactly as written (`alarmTag`). Readers verify the
+  HMAC over the bytes as read and never re-encode (`ReadAlarms`), so a
+  body with a field this build does not know verifies, and a later build
+  can add fields without an older one refusing the line; that rule is the
+  file's comment. No head and no chain: a deleted, truncated or reordered
+  line only keeps a hold held (the safe direction); a forged or edited
+  line fails the HMAC; a line from another session root fails under its
+  different key; a line from another seat's file names another seat; a
+  replayed line is idempotent, since it names one alarm. A last line
+  with no newline is a torn tail: skipped and reported, the lines before
+  it still count, and the next append terminates it first. Each line that
+  does not verify reaches the lead once per seat and problem
+  (`hold_release_line_skipped`, a stop with words, resolved by the seat's
+  release), and releases nothing while the others still count. On a
+  ledger that verifies, the decision appends its line and leaves the
+  ledger unchanged; a repeat is answered from the file with no new line.
+  `covers` releases a hold on a verified line naming its alarm, or on the
+  ledger's chain record naming its exact slot. `AlarmRecoveries` is
+  removed, and with it `recovered.alarm` and `RecoveryMark.SlotAlarm`.
+  The size: one line per decision by alarm on the seat, never pruned.
+- **Why not the router's chain.** The router's `decisions.jsonl`
+  (`routing.DecisionPath`) is sealed and chained, but `verifyDecisions`
+  (`routing/chain.go:154`) sends any line with a `kind` to
+  `tamperRecord.verify` (`routing/tamper.go:62`), which admits its four
+  tamper kinds only, and its tag is over the re-encoded `tamperRecord`
+  struct, not the raw line: a new kind fails on 3.1.2 (`5bd394e6`) and on
+  rc.1's base (`fcc0beb7`) after a rollback, as a chain problem
+  (`history_tampered`), and reusing a tamper kind would make the router
+  act on it (`applyTamper`). And one writer keeps that chain's head in
+  memory (`r.decHead`, `routing/durable.go:215`, `routing/tamper.go:97`):
+  a second writer would make the router's next line a duplicate seq.
+  `internal/routing` is outside #904's declared set as well.
+- **No reader of `commits/` takes the file for a ledger or a seat.** The
+  choice: the file stays at `commits/<handle>.alarms.jsonl`, beside the
+  ledger it belongs to (no rename, no `alarms/` directory), since every
+  reader of the directory, in each build, matches exactly or decodes:
+  - this branch (`97a05cc4`): `internal/status/collect.go:492`
+    (`pushURLMissing` lists only names ending exactly in `.json`; the
+    file ends `.jsonl`); `internal/uninstall/plan.go:225` (`commits/` is
+    one sealed op, removed whole with `--purge`, so the file goes with
+    its ledger) and `:335` (`commits()` plans a worktree only from a file
+    that decodes as a ledger naming one; the file's body is followed by a
+    tab and a hex string, which does not decode, and names no worktree);
+    seatcommit builds every `commits/` path from a handle
+    (`ledger.go:342` the ledger, `:557` and `:576` the lock, `:529` the
+    write's directory; `alarms.go:49` the hold release file) and never
+    lists the directory;
+  - 3.1.2 (`5bd394e6`): `internal/status/collect.go:492` (the same exact
+    suffix), `internal/uninstall/plan.go:222` and `:330-344` (the same
+    sealed op and decode);
+  - rc.1's base (`fcc0beb7`): `internal/status/collect.go:492`,
+    `internal/uninstall/plan.go:222` and `:330-344` (the same).
+  No build derives a seat from a `commits/` file name, and a handle
+  cannot hold a dot, so `<h>.alarms.jsonl` is never another seat's
+  `<x>.json`; the seat's `<handle>.lock` already sits there, read by none.
+- **Condition 3 and condition 4 are superseded** by this shape (the
+  sections "The alarm id" and "The reviewer on Codex's pass on 254f2c2c"
+  are marked), as is `AlarmRecoveries`.
+
+The rows (each with its revert run below): the seal
+(`TestTheHoldReleaseFileReleasesOnlyVerifiedLines`), the problem logged
+once (`TestAHoldReleaseFileProblemIsLoggedOnce`), a valid line before a
+torn tail (`TestAValidReleaseLineBeforeATornTailReleasesItsAlarm`), B's
+decision surviving a later continuation
+(`TestAnAlarmDecisionSurvivesALaterContinuation`), a ledger changed
+between look and apply (`TestALedgerChangedBeforeTheAlarmDecisionIsCopiedNotRebuilt`),
+the two steps through the production constructor
+(`TestACopyFailedHoldIsReleasedInTwoSteps`), an older alarm's line after
+B's (`TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased`, now in the
+file), and the `commits/` listing
+(`TestAlarmsFilesBesideTheLedgerAddNoSeatOrLedger`).
+
 ## The quarantine layout read
 
 A slot is `<root>/extensions/amq-squad/quarantine/commits.<handle>.seq<N>[.k]/`
@@ -946,14 +1066,20 @@ CLI.
 | no slot | A hold with no slot (seq 150): its block names its alarm (`; alarm ID)`); a record naming a slot at the hold's seq, and a decision by alarm for another alarm, release nothing over 10 ticks; the state file keeps the alarm and a restarted scheduler publishes it (`HeldAlarm`); the decision by its own alarm releases the hold, resets the task and dispatches it, and the seat is no longer published as held. | `internal/scheduler` `TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm` |
 | lower-seq slot | A hold on slot seq150; the ledger records the recovery of a lower-seq slot (seq1): 10 ticks release nothing; the decision by the hold's alarm releases it, and the release line names the alarm. | `internal/scheduler` `TestALowerSeqSlotLeavesTheHoldToItsAlarm` |
 | late decision | A newer hold (alarm B); the ledger records a decision by an earlier alarm A (landing late): 20 ticks release nothing; B's own decision releases it. | `internal/scheduler` `TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold` |
-| copy failed | Real files: the quarantine's mode 0755 refuses the prepare's copy (a hold with no slot, `seq unknown`); the decision by alarm is `recover_alarm_unverified` naming the copy's failure, the ledger unchanged; the mode repaired, the decision by alarm copies the live bytes and recovers from the copy (link 2, the record naming the slot and the alarm), the decision line naming the copy; the next ticks release, reset and dispatch. | `internal/schedproc` `TestTheAlarmVerbRecoversALedgerWhoseCopyFailed` |
-| older record after B's | Real files: B holds the seat and B's decision by alarm is sealed; an older alarm A's record lands after it (no guard); the ledger keeps both (`RecoveriesOf` answers `[B A]`); the next ticks release B and five more release nothing, B not held again. | `internal/schedproc` `TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased` |
+| two steps | Through `NewRecovery` (Git omitted, the production constructor): the quarantine's mode 0755 refuses the prepare's copy (a hold with no slot, `seq unknown`); the decision by alarm is refused naming the copy's failure; the mode repaired, it makes only the copy and is refused "seat H's ledger does not verify; it was copied to slot S; recover it with `amq-squad scheduler recover --seat H --seq 1 --reason ...`, which shows what it carries, then send the alarm decision again", the ledger unchanged, the slot holding the live bytes; step one, the slot recovery, carries nothing and releases nothing (the hold has no slot); step two, the decision by alarm, releases the seat. | `internal/schedproc` `TestACopyFailedHoldIsReleasedInTwoSteps` |
+| look, then change | The lead's look sees a ledger that verifies; it changes before the apply; the decision by alarm copies what it found and refuses with the slot and the command; the ledger is left as found, no line is written, no tick releases. | `internal/schedproc` `TestALedgerChangedBeforeTheAlarmDecisionIsCopiedNotRebuilt` |
+| the seal | The hold release file: a line from `appendAlarm` releases its alarm; a forged seal, a one-byte edit, a line under another root's seed and a line sealed for another seat release nothing, each one problem by its line number; a body with an unknown field verifies; a valid line before a torn tail releases, the tail one problem; the next append terminates the tail and its line verifies; the file is mode 0600. | `internal/seatcommit` `TestTheHoldReleaseFileReleasesOnlyVerifiedLines` |
+| logged once | A problem of the hold release file is one `hold_release_line_skipped` over 10 ticks; a new problem beside a verified line is one more, and the line releases. | `internal/scheduler` `TestAHoldReleaseFileProblemIsLoggedOnce` |
+| torn tail | Real files: a valid line, then a torn tail; the next ticks release the hold and log the torn tail once. | `internal/schedproc` `TestAValidReleaseLineBeforeATornTailReleasesItsAlarm` |
+| after a continuation | Real files: B's decision by alarm is a line; before any tick the ledger is refused and recovered from its slot (a new body); B's line is still read and B is released. | `internal/schedproc` `TestAnAlarmDecisionSurvivesALaterContinuation` |
+| commits/ listing | Uninstall's dry run with `seat-a.alarms.jsonl` and `zz-ghost.alarms.jsonl` in `commits/` is the dry run without them (no seat, worktree or ledger added, no `zz-ghost`); `--write` keeps the file, `--purge` removes it with `commits/`. | `internal/uninstall` `TestAlarmsFilesBesideTheLedgerAddNoSeatOrLedger` |
+| older record after B's | Real files: B holds the seat and B's decision by alarm is a line of the hold release file; an older alarm A's line lands after it (no guard); the file keeps both (`RecoveriesOf` answers `[B A]`); the next ticks release B and five more release nothing, B not held again. | `internal/schedproc` `TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased` |
 | delayed write | Real writers with a barrier: A's decision by alarm held after the socket's check; A released by its slot; B held and B's decision sealed; A resumed: `recover_alarm_not_held`, nothing written, the record still names B; the next ticks release B. | `internal/schedproc` `TestADelayedAlarmDecisionNeverSealsOverANewerRecovery` |
 | released before the seal | The decision by alarm for A passes the socket's check (`HeldAlarm` is A); before its record is sealed the lead cancels A's task, the ledger records A's slot and the next prepare is refused again: one tick releases A and raises B (a new id), the next task blocked; the record then sealed names A: 20 ticks release nothing, B stands; B's own decision releases it. | `internal/scheduler` `TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold` |
-| the decision by alarm | Real files through the apply step: a hold with no slot (alarm `3fa9c1d2`), its task blocked with its detail; on the tampered ledger the decision is `recover_alarm_unverified` and the ledger is unchanged; a wrong id is `recover_alarm_not_held` naming the held alarm; the document put back, 5 ticks release nothing; the decision is OK, `Verified`, link 2, the record names the alarm and no slot; the next ticks release, reset and dispatch; the decision line says "released alarm 3fa9c1d2 of seat ..."; the same id once the hold is gone is `recover_alarm_not_held`. | `internal/schedproc` `TestTheAlarmVerbReleasesAHoldWithNoSlot` |
-| the lowered head | Real files: the chain at link N; slot X at seq N; the decision by alarm on the tampered ledger is `recover_alarm_unverified`, nothing written; the head lowered to seq 1, slot Y; X refused while the live document is Y's; Y's recovery at link 2; X refused again, "behind the slot's seq N"; a decision by alarm with a carry is refused; the decision by alarm seals link 3 with the record naming the alarm (no slot, no seq, `Verified`), the body otherwise unchanged; sent again it is `AlreadyRecovered`. | `internal/seatcommit` `TestADecisionByAlarmAnswersAHoldNoSlotCan` |
-| the verb's flags | `scheduler recover --alarm` refuses `--seq`, `--slot`, `--carry`, an id that is not eight hex characters and a missing `--reason` before any send; a send carries the seat, the alarm and the reason only, and the output names the alarm and its link. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
-| the words | The prepare's detail with `(seq 150; alarm 3fa9c1d2)`: the stop line "seat dev could not be prepared for t7: seat dev's commit record failed its check (alarm 3fa9c1d2); after investigating, the lead runs amq-squad scheduler recover --seat dev --alarm 3fa9c1d2", the same words on the block's line and on the screen's seats and tasks blocks; a hold with no slot reads the same; the write-time refusal names no alarm and keeps its words. | `pi/test/recovery.test.ts` (the third test) |
+| the decision by alarm | Real files through the apply step: a hold with no slot (alarm `3fa9c1d2`), its task blocked with its detail; a wrong id is `recover_alarm_not_held` naming the held alarm; the document put back, 5 ticks release nothing; the decision is OK and `Verified`, the hold release file has one line naming the alarm and the lead; the next ticks release, reset and dispatch; the decision line says "released alarm 3fa9c1d2 of seat ..."; the same id once the hold is gone is `recover_alarm_not_held`. | `internal/schedproc` `TestTheAlarmVerbReleasesAHoldWithNoSlot` |
+| the lowered head | Real files: the chain at link N; slot X at seq N; the head lowered to seq 1, slot Y; X refused while the live document is Y's; Y's recovery at link 2; X refused again, "behind the slot's seq N"; a decision by alarm with a carry is refused; the decision by alarm appends a line to the hold release file, the ledger unchanged, and sent again it is answered from the file with no new line. | `internal/seatcommit` `TestADecisionByAlarmAnswersAHoldNoSlotCan` |
+| the verb's flags | `scheduler recover --alarm` refuses `--seq`, `--slot`, `--carry`, an id that is not eight hex characters and a missing `--reason` before any send; a send carries the seat, the alarm and the reason only, and the output names the alarm and the hold release file. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
+| the words | The prepare's detail with `(seq 150; alarm 3fa9c1d2)`: the stop line "seat dev could not be prepared for t7: seat dev's commit record failed its check (alarm 3fa9c1d2); after investigating, the lead runs amq-squad scheduler recover --seat dev --alarm 3fa9c1d2 --reason \"REASON\"", the same words on the block's line and on the screen's seats and tasks blocks; a hold with no slot reads the same; the write-time refusal names no alarm and keeps its words. | `pi/test/recovery.test.ts` (the third test) |
 | another slot's block | Between the release's read and its reset the task is blocked `ledger_tampered` again for slot seq151 (the alarm's words): that block stays with its detail, no `task_reset`, no dispatch, no failure line, the hold released. The store: a block the caller's match refuses is `ErrBlockChanged` and nothing moves. | `internal/scheduler` `TestARecoveryKeepsATamperBlockOfAnotherSlot`; `internal/task` `TestResetIfBlockedResetsOnlyItsReason` |
 | earlier slot | Slot X refused at seq 1, then X.2 after another edit: the decision for X is refused while the live document is X.2's; the recovery from X.2 continues the chain; the decision for X is then `Verified`, names X, at the link after X.2's; `RecoveryOf` answers X with that link. | `internal/seatcommit` `TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery` |
 | the verb | `scheduler recover` refuses missing or malformed flags and `--me` before any send; with no launch record it names the missing scheduler; a record with no socket is `scheduler_starting` (exit 15); a send carries the seat, seq, slot, carry and reason as given and prints the reply (the slot, the chain's seqs, each carried entry); the verb writes no ledger, quarantine or seed; a refusal is exit 15 with the code. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
@@ -2428,6 +2554,26 @@ entry dropped from `RECOVER_REFUSAL_WORDS` (`pi/extensions/lib/words.ts:721`,
 `not ok 4 - ... error: 'recover_alarm_unverified has no words'`; the table
 and its row were dropped in `cb4f7d13`).
 
+### The hold release file (`eff2fea1`, `97a05cc4`)
+
+Each by the same script, on the commit named, exit 1 on its row and
+restored exit 0:
+
+| Revert | Where | First failing line |
+|---|---|---|
+| the decision rebuilds from its copy (`eff2fea1`) | `internal/seatcommit/recover.go:405` | `recover_test.go:574: the decision on a changed ledger: {OK:true ... released by decision ...}` |
+| no Git default (`eff2fea1`) | `internal/seatcommit/recover.go:165` | `recover_test.go:528: step one, the slot recovery: {OK:false Code:recover_base_unobserved Detail:... exec: no command ...}` |
+| the seal not checked (`97a05cc4`) | `internal/seatcommit/alarms.go:122` | `alarms_test.go:101: bbbbbbb2 releases: ...` |
+| the seal checked over a re-encoding (`97a05cc4`) | `internal/seatcommit/alarms.go:122` | `alarms_test.go:96: eeeeeee5 does not release: ...` |
+| a torn tail fails the whole file (`97a05cc4`) | `internal/seatcommit/alarms.go:108` | `recover_test.go:726: the valid line did not release its alarm: ...` |
+| the append replaces the file (`97a05cc4`) | `internal/seatcommit/alarms.go:163` | `recover_test.go:675: B was not released after A's record landed: ...` |
+| the problem logged every tick (`97a05cc4`) | `internal/scheduler/tamper.go:276` | `tamper_test.go:952: over 10 ticks of one problem: ...` |
+
+The commands: `go test -count=1 -run ^<row>$ ./internal/<package>/` for
+the row named in the table of rows. (The first run of "the seal not
+checked" left the key unused and did not compile; it was run again with
+the key and the tag kept, and failed on its row as above.)
+
 ## Gates
 
 The PR lands in two phases (the plan reviewer's changed ruling on the
@@ -2442,8 +2588,28 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `cb4f7d13` (the refusal words dropped; this note is the
-only change after it), each from the worktree root; the whole-module
+Phase one, on `97a05cc4` (the hold release file; this note is the only
+change after it), each from the worktree root; the whole-module test,
+`npm test` with lint, and `make ci` under the gate lock, one after
+another, each printing `97a05cc4` inside the lock:
+
+- `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'`: exit 0, 56 packages `ok`, no `FAIL`.
+- `gate-lock.sh 904-pi -- sh -c 'cd pi && npm test && node
+  scripts/lint.mjs'`: exit 0, `ℹ tests 119`, `ℹ pass 118`, `ℹ fail 0`,
+  `ℹ skipped 1`, `lint ok: 30 files`.
+- `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'`: exit 0, 70 `ok` (34 from the cache), no
+  `FAIL`.
+- `make fmt-check` with Go 1.26's gofmt first on PATH: exit 0;
+  `GOOS=windows go build ./internal/seatcommit/`: exit 0; the redact
+  check and the skill checks on this note: exit 0.
+
+Every gate passed on its first run, none repeated. `eff2fea1` (b and c)
+ran the whole-module gate and `make ci` under the lock too, both exit 0.
+
+Before that, phase one on `cb4f7d13` (the refusal words dropped; the note
+`8cffafe7` the only change after it), each from the worktree root; the whole-module
 test, `npm test` and `make ci` under the gate lock, one after another,
 each printing `cb4f7d13` inside the lock:
 
@@ -2760,13 +2926,13 @@ exit 0; the windows build exit 0.
   either. This is the rc.2 rule (0e, before the release that carries
   0c-B): a ledger a newer amq-squad wrote is that distinct refusal, not a
   tamper; until then a downgrade reads a recovered seat as tampered, with
-  its evidence kept (0c-A) and this recovery the way back. The sealed
-  ledger's recovery field changes shape with the decision by alarm: the
-  chain's record gains `alarm` (`recovered.alarm`, `28051cd6`) and the
-  decisions by alarm are a list, one record per alarm
-  (`alarm_recoveries`, `37379e5b`); an older reader drops those fields too
-  and refuses the ledger the same way. #904 is rc.2, after 0e, so a newer ledger is 0e's distinct
-  refusal by then.
+  its evidence kept (0c-A) and this recovery the way back. The decision by
+  alarm no longer changes the ledger body (`recovered.alarm` and
+  `alarm_recoveries`, which `28051cd6` and `37379e5b` added, are gone in
+  `eff2fea1` and `97a05cc4`): it is a line of the seat's hold release file,
+  `commits/<handle>.alarms.jsonl`, which no released build opens, sealed
+  over its raw bytes so later builds can add fields. A rollback to 3.1.2 or
+  rc.1 leaves the file unread and the ledger as a slot recovery left it.
 - The evidence refs of discards the quarantined body recorded are not
   carried (the discard records are untrusted); the refs stay in the seat
   repository under `refs/amq-squad/evidence/<seat>/...` and the counter
